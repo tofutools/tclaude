@@ -17,12 +17,24 @@ import (
 // poison-blocked stage. Validation and normalization intentionally live here
 // so adapters and commands cannot acquire different decision semantics.
 type BlockResolutionRequest struct {
-	RunID       string
-	NodeID      string
-	Decision    state.BlockDecision
-	Actor       state.ActorRef
-	Reason      string
-	EvidenceRef string
+	RunID          string
+	NodeID         string
+	BlockedAttempt int
+	Decision       state.BlockDecision
+	Actor          state.ActorRef
+	Reason         string
+	EvidenceRef    string
+}
+
+// BindBlockResolution pins a decision intent to the currently blocked child
+// and attempt. Callers persist/pass the returned request to ResolveBlocked;
+// replaying it after a later poison generation is then rejected as stale.
+func BindBlockResolution(snapshot store.Snapshot, request BlockResolutionRequest) (BlockResolutionRequest, error) {
+	normalized, err := normalizeBlockResolution(snapshot, request, time.Time{}, false)
+	if err != nil {
+		return BlockResolutionRequest{}, err
+	}
+	return normalized.request, nil
 }
 
 type normalizedBlockResolution struct {
@@ -55,7 +67,7 @@ func (e *Executor) ResolveBlocked(ctx context.Context, request BlockResolutionRe
 				}
 			}
 		}
-		normalized, err := normalizeBlockResolution(snapshot, request, e.now())
+		normalized, err := normalizeBlockResolution(snapshot, request, e.now(), true)
 		if err != nil {
 			return nil, err
 		}
@@ -99,7 +111,7 @@ func (e *Executor) ResolveBlocked(ctx context.Context, request BlockResolutionRe
 	return nil, fmt.Errorf("resolve blocked node %q: exceeded %d CAS attempts", request.NodeID, maxObservationCASAttempts)
 }
 
-func normalizeBlockResolution(snapshot store.Snapshot, request BlockResolutionRequest, at time.Time) (normalizedBlockResolution, error) {
+func normalizeBlockResolution(snapshot store.Snapshot, request BlockResolutionRequest, at time.Time, requireBinding bool) (normalizedBlockResolution, error) {
 	request.RunID = strings.TrimSpace(request.RunID)
 	request.NodeID = strings.TrimSpace(request.NodeID)
 	request.Decision = state.BlockDecision(strings.ToLower(strings.TrimSpace(string(request.Decision))))
@@ -111,6 +123,12 @@ func normalizeBlockResolution(snapshot store.Snapshot, request BlockResolutionRe
 	}
 	if request.NodeID == "" {
 		return normalizedBlockResolution{}, fmt.Errorf("block resolution node id is required")
+	}
+	if request.BlockedAttempt < 0 {
+		return normalizedBlockResolution{}, fmt.Errorf("block resolution attempt must be positive")
+	}
+	if requireBinding && request.BlockedAttempt == 0 {
+		return normalizedBlockResolution{}, fmt.Errorf("block resolution request is not generation-bound; call BindBlockResolution first")
 	}
 	if !request.Decision.IsValid() {
 		return normalizedBlockResolution{}, fmt.Errorf("--decision must be retry, skip, or cancel")
@@ -131,6 +149,8 @@ func normalizeBlockResolution(snapshot store.Snapshot, request BlockResolutionRe
 	}
 	if selected.BlockResolution != nil && selected.Status != state.NodeStatusBlocked {
 		if resolutionMatchesRequest(*selected.BlockResolution, request) {
+			request.NodeID = selected.BlockResolution.NodeID
+			request.BlockedAttempt = selected.BlockResolution.BlockedAttempt
 			return normalizedBlockResolution{request: request, alreadyResolved: true}, nil
 		}
 		return normalizedBlockResolution{}, fmt.Errorf("node %q was already unblocked with decision %q", request.NodeID, selected.BlockResolution.Decision)
@@ -170,6 +190,9 @@ func normalizeBlockResolution(snapshot store.Snapshot, request BlockResolutionRe
 	if blockedAttempt <= 0 {
 		return normalizedBlockResolution{}, fmt.Errorf("blocked child %q has no attempt generation", childID)
 	}
+	if request.BlockedAttempt > 0 && request.BlockedAttempt != blockedAttempt {
+		return normalizedBlockResolution{}, fmt.Errorf("block resolution for node %q is stale: approved attempt %d, current blocked attempt %d", childID, request.BlockedAttempt, blockedAttempt)
+	}
 	if parent.BlockedAttempt > 0 && parent.BlockedAttempt != blockedAttempt {
 		return normalizedBlockResolution{}, fmt.Errorf("blocked mirror for child %q and parent %q has different attempt generations", childID, parentID)
 	}
@@ -180,6 +203,8 @@ func normalizeBlockResolution(snapshot store.Snapshot, request BlockResolutionRe
 		NodeID: childID, BlockedAttempt: blockedAttempt, Decision: request.Decision,
 		Actor: request.Actor, Reason: request.Reason, EvidenceRef: request.EvidenceRef, Timestamp: at,
 	}
+	request.NodeID = childID
+	request.BlockedAttempt = blockedAttempt
 	normalized := normalizedBlockResolution{
 		request: request, childID: childID, parentID: parentID,
 		resolution: resolution,
@@ -197,6 +222,6 @@ func normalizeBlockResolution(snapshot store.Snapshot, request BlockResolutionRe
 }
 
 func resolutionMatchesRequest(resolution state.BlockResolution, request BlockResolutionRequest) bool {
-	return resolution.Decision == request.Decision && resolution.Actor == request.Actor &&
+	return (request.BlockedAttempt == 0 || resolution.BlockedAttempt == request.BlockedAttempt) && resolution.Decision == request.Decision && resolution.Actor == request.Actor &&
 		resolution.Reason == request.Reason && resolution.EvidenceRef == request.EvidenceRef
 }

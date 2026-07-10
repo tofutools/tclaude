@@ -275,6 +275,9 @@ func planStageChild(st *state.State, tmpl *model.Template, nodeID string, node s
 	case state.NodeStatusSkipped:
 		// A skip is a completed-by-decision stage outcome. Its durable block
 		// resolution record, rather than a performer settle, supplies the audit.
+		if node.BlockResolution == nil || (node.BlockResolution.Decision != state.BlockDecisionSkip && node.BlockResolution.Decision != state.BlockDecisionCancel) {
+			return nil, fmt.Errorf("skipped stage child %q has no audited skip/cancel block resolution", nodeID)
+		}
 		return planSettledStageTransition(st, nodeID, node, parent, specs, "pass")
 	default:
 		return nil, nil

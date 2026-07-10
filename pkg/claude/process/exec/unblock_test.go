@@ -138,6 +138,62 @@ func TestStaleBlockResumeAfterRetryResolutionIsNoOp(t *testing.T) {
 	assertRunVerifies(t, fs, snapshot.Run.ID)
 }
 
+func TestDelayedResolutionRequestCannotResolveLaterPoison(t *testing.T) {
+	fs, snapshot := compoundExecutorFixture(t, "exit 1")
+	executor := New(fs, map[model.PerformerKind]Adapter{
+		model.PerformerProgram: ProgramAdapter{DefaultTimeout: 5 * time.Second},
+	})
+	if _, err := executor.Drive(t.Context(), snapshot.Run.ID); err != nil {
+		t.Fatal(err)
+	}
+	request := blockRequest(snapshot.Run.ID, state.BlockDecisionRetry)
+	if _, err := executor.ResolveBlocked(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+	reblocked, err := executor.Drive(t.Context(), snapshot.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := reblocked.State.Nodes["work.test.tests"]
+	if gate.Status != state.NodeStatusBlocked || gate.BlockedAttempt != 2 {
+		t.Fatalf("fresh retry did not reach a later poison generation: %#v", gate)
+	}
+	if _, err := executor.ResolveBlocked(t.Context(), request); err == nil || !strings.Contains(err.Error(), "stale") {
+		t.Fatalf("delayed attempt-1 request resolved attempt-2 poison: %v", err)
+	}
+	latest, err := fs.LoadRun(t.Context(), snapshot.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest.State.Nodes["work.test.tests"].Status != state.NodeStatusBlocked || latest.State.Nodes["work"].Status != state.NodeStatusBlocked {
+		t.Fatalf("stale request changed later blocked pair: child=%#v parent=%#v", latest.State.Nodes["work.test.tests"], latest.State.Nodes["work"])
+	}
+}
+
+func TestBindBlockResolutionPinsParentSelectionToChildGeneration(t *testing.T) {
+	fs, snapshot := compoundExecutorFixture(t, "exit 1")
+	executor := New(fs, map[model.PerformerKind]Adapter{
+		model.PerformerProgram: ProgramAdapter{DefaultTimeout: 5 * time.Second},
+	})
+	blocked, err := executor.Drive(t.Context(), snapshot.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := blockRequest(snapshot.Run.ID, state.BlockDecisionSkip)
+	request.NodeID = "work"
+	request.BlockedAttempt = 0
+	bound, err := BindBlockResolution(blocked, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bound.NodeID != "work.test.tests" || bound.BlockedAttempt != 1 {
+		t.Fatalf("bound request = %#v", bound)
+	}
+	if _, err := executor.ResolveBlocked(t.Context(), bound); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestNormalizeBlockResolutionRejectsInvalidInputs(t *testing.T) {
 	fs, snapshot := compoundExecutorFixture(t, "exit 1")
 	executor := New(fs, map[model.PerformerKind]Adapter{
@@ -169,7 +225,7 @@ func TestNormalizeBlockResolutionRejectsInvalidInputs(t *testing.T) {
 
 func blockRequest(runID string, decision state.BlockDecision) BlockResolutionRequest {
 	return BlockResolutionRequest{
-		RunID: runID, NodeID: "work.test.tests", Decision: decision,
+		RunID: runID, NodeID: "work.test.tests", BlockedAttempt: 1, Decision: decision,
 		Actor: "human:operator", Reason: "operator reviewed poison", EvidenceRef: "decision:TCL-279",
 	}
 }

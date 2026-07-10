@@ -210,7 +210,7 @@ func applyEvent(st *State, event Event) error {
 			return fmt.Errorf("invalid node status %q", event.NodeStatus)
 		}
 		switch event.NodeStatus {
-		case NodeStatusReady, NodeStatusCompleted, NodeStatusSkipped:
+		case NodeStatusReady, NodeStatusCompleted:
 		default:
 			return fmt.Errorf("node_status_set cannot set status %q", event.NodeStatus)
 		}
@@ -1032,7 +1032,7 @@ func commandIsActive(command OutstandingCommand) bool {
 
 func canSetNodeStatusDirectly(status NodeStatus) bool {
 	switch status {
-	case NodeStatusReady, NodeStatusCompleted, NodeStatusFailed, NodeStatusSkipped:
+	case NodeStatusReady, NodeStatusCompleted, NodeStatusFailed:
 		return true
 	default:
 		return false

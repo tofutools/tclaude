@@ -55,14 +55,23 @@ func runUnblock(cmd *cobra.Command, p *unblockParams, out io.Writer) error {
 		actor = defaultActor()
 	}
 	executor := processexec.New(fs, nil)
-	resolved, err := executor.ResolveBlocked(cmd.Context(), processexec.BlockResolutionRequest{
+	request := processexec.BlockResolutionRequest{
 		RunID:       p.RunID,
 		NodeID:      p.NodeID,
 		Decision:    state.BlockDecision(p.Decision),
 		Actor:       actor,
 		Reason:      p.Reason,
 		EvidenceRef: p.EvidenceRef,
-	})
+	}
+	snapshot, err := fs.LoadRun(cmd.Context(), strings.TrimSpace(p.RunID))
+	if err != nil {
+		return err
+	}
+	request, err = processexec.BindBlockResolution(snapshot, request)
+	if err != nil {
+		return err
+	}
+	resolved, err := executor.ResolveBlocked(cmd.Context(), request)
 	if err != nil {
 		return err
 	}

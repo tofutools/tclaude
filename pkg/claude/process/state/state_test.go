@@ -578,6 +578,7 @@ func TestReducerErrors(t *testing.T) {
 		{name: "invalid run status", st: base, event: Event{Type: EventRunStatusSet, Seq: 11, RunStatus: "bogus"}, want: "invalid run status"},
 		{name: "node status set without status", st: base, event: Event{Type: EventNodeStatusSet, Seq: 11, NodeID: "implement"}, want: "requires nodeStatus"},
 		{name: "invalid node status set", st: base, event: Event{Type: EventNodeStatusSet, Seq: 11, NodeID: "implement", NodeStatus: "bogus"}, want: "invalid node status"},
+		{name: "node status set cannot forge skip decision", st: base, event: Event{Type: EventNodeStatusSet, Seq: 11, NodeID: "implement", NodeStatus: NodeStatusSkipped}, want: "cannot set status"},
 		{name: "node status set cannot imply missing wait", st: base, event: Event{Type: EventNodeStatusSet, Seq: 11, NodeID: "implement", NodeStatus: NodeStatusWaitingHuman}, want: "cannot set status"},
 		{name: "undeclared node", st: base, event: Event{Type: EventNodeBlocked, Seq: 11, NodeID: "missing"}, want: "not declared"},
 		{name: "start while running", st: running, event: Event{Type: EventNodeAttemptStarted, Seq: 11, NodeID: "implement", Actor: "agent:agt_dev123"}, want: "active attempt"},
@@ -733,6 +734,13 @@ func TestInvariants(t *testing.T) {
 				"a": {Status: NodeStatusBlocked, BlockedReason: "blocked"},
 			}),
 			code: "blocked_node_without_reason_owner",
+		},
+		{
+			name: "skipped node without block resolution",
+			st: stateWithNodes(map[string]NodeState{
+				"a": {Status: NodeStatusSkipped},
+			}),
+			code: "skipped_node_without_block_resolution",
 		},
 		{
 			name: "invalid decision actor",

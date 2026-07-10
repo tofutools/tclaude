@@ -23,6 +23,7 @@ func CheckInvariants(st *State) Diagnostics {
 	diagnostics = append(diagnostics, CompletedDecisionsHaveOneChosenEdge(st)...)
 	diagnostics = append(diagnostics, BlockedNodesHaveReasonAndOwner(st)...)
 	diagnostics = append(diagnostics, BlockResolutionsAreAudited(st)...)
+	diagnostics = append(diagnostics, SkippedNodesHaveBlockResolution(st)...)
 	diagnostics = append(diagnostics, DecisionActorsAreValid(st)...)
 	diagnostics = append(diagnostics, CompoundLinkageIsConsistent(st)...)
 	diagnostics = append(diagnostics, CompletedStageChildrenHaveEvidence(st)...)
@@ -648,6 +649,31 @@ func BlockResolutionsAreAudited(st *State) Diagnostics {
 		if !hasBlockResolutionAudit(st.AdminRecords, resolution) {
 			diagnostics = append(diagnostics, diagError("block_resolution_without_audit", path, fmt.Sprintf("node %q block resolution has no matching run audit record", nodeID)))
 		}
+	}
+	return diagnostics
+}
+
+// SkippedNodesHaveBlockResolution reserves skipped for the audited poison
+// resolution flow. Without this invariant, a raw node_status_set could forge
+// completed-by-decision semantics without an actor, reason, or evidence.
+func SkippedNodesHaveBlockResolution(st *State) Diagnostics {
+	if st == nil {
+		return Diagnostics{diagError("nil_state", "", "process state is nil")}
+	}
+	var diagnostics Diagnostics
+	for _, nodeID := range sortedKeys(st.Nodes) {
+		node := st.Nodes[nodeID]
+		if node.Status != NodeStatusSkipped {
+			continue
+		}
+		if node.BlockResolution != nil && (node.BlockResolution.Decision == BlockDecisionSkip || node.BlockResolution.Decision == BlockDecisionCancel) {
+			continue
+		}
+		diagnostics = append(diagnostics, diagError(
+			"skipped_node_without_block_resolution",
+			"nodes."+nodeID+".status",
+			fmt.Sprintf("skipped node %q requires an audited skip or cancel block resolution", nodeID),
+		))
 	}
 	return diagnostics
 }

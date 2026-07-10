@@ -435,6 +435,15 @@ func TestPlanBlockedCompoundEmitsNothing(t *testing.T) {
 	}
 }
 
+func TestPlanRejectsUnauditedSkippedStage(t *testing.T) {
+	st := expandedPlannerState(map[string]state.NodeState{
+		"implement.test.tests": {Status: state.NodeStatusSkipped, Attempt: 1},
+	})
+	if _, err := Plan(st, compoundTemplate()); err == nil || !strings.Contains(err.Error(), "no audited skip/cancel") {
+		t.Fatalf("expected unaudited skip refusal, got %v", err)
+	}
+}
+
 func TestPlanGateSettleIsWindowTerminal(t *testing.T) {
 	// Gate settles always carry maxAttempts=1: a failed gate never re-readies
 	// itself — the feedback loop re-enters it via pending — so the settle must
