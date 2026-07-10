@@ -205,7 +205,7 @@ func TestPlanPoisonsExhaustedWorkStage(t *testing.T) {
 	if len(got) != 1 || got[0].Kind != CommandKindBlockNode {
 		t.Fatalf("commands = %#v", got)
 	}
-	if got[0].NodeID != "implement.do" || got[0].TargetNodeID != "implement" {
+	if got[0].NodeID != "implement.do" || got[0].TargetNodeID != "implement" || got[0].Attempt != 2 {
 		t.Fatalf("block command = %#v", got[0])
 	}
 	if !strings.Contains(got[0].Reason, "exhausted its budget of 2 attempts") || got[0].Owner != DefaultBlockedOwner {
@@ -223,7 +223,7 @@ func TestPlanPoisonsGateWithExhaustedBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0].Kind != CommandKindBlockNode || got[0].NodeID != "implement.test.tests" || got[0].TargetNodeID != "implement" {
+	if len(got) != 1 || got[0].Kind != CommandKindBlockNode || got[0].NodeID != "implement.test.tests" || got[0].TargetNodeID != "implement" || got[0].Attempt != 1 {
 		t.Fatalf("commands = %#v", got)
 	}
 	if !strings.Contains(got[0].Reason, `gate "implement.test.tests" exhausted its budget of 1 failed verdicts`) {

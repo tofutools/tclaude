@@ -50,6 +50,8 @@ func KindForEvent(t state.EventType) EntryKind {
 	switch t {
 	case state.EventNodeStatusSet, state.EventRunStatusSet, state.EventRunPaused, state.EventRunResumed:
 		return EntryKindStatus
+	case state.EventBlockResolutionRecorded:
+		return EntryKindAdmin
 	default:
 		return EntryKindGate
 	}

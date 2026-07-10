@@ -271,16 +271,28 @@ func TestReducerSequences(t *testing.T) {
 					EvidenceRef: "admin/repair#1",
 				},
 				{
-					Type:   EventNodeUnblocked,
-					Seq:    4,
-					NodeID: "implement",
+					Type:        EventBlockResolutionRecorded,
+					Seq:         4,
+					At:          testTime,
+					Actor:       "human:johan",
+					Reason:      "credentials added",
+					EvidenceRef: "admin/repair#1",
+					Resolution:  &BlockResolution{NodeID: "implement", BlockedAttempt: 1, Decision: BlockDecisionRetry, Actor: "human:johan", Reason: "credentials added", EvidenceRef: "admin/repair#1", Timestamp: testTime},
+				},
+				{
+					Type:       EventNodeUnblocked,
+					Seq:        5,
+					At:         testTime,
+					NodeID:     "implement",
+					NodeStatus: NodeStatusReady,
+					Resolution: &BlockResolution{NodeID: "implement", BlockedAttempt: 1, Decision: BlockDecisionRetry, Actor: "human:johan", Reason: "credentials added", EvidenceRef: "admin/repair#1", Timestamp: testTime},
 				},
 			},
 			assert: func(t *testing.T, st State) {
 				if st.Status != RunStatusDirty {
 					t.Fatalf("run status = %q", st.Status)
 				}
-				if len(st.AdminRecords) != 1 || st.AdminRecords[0].Type != EventAdminRepairRecorded {
+				if len(st.AdminRecords) != 2 || st.AdminRecords[0].Type != EventAdminRepairRecorded || st.AdminRecords[1].Type != EventBlockResolutionRecorded {
 					t.Fatalf("admin records = %#v", st.AdminRecords)
 				}
 				node := st.Nodes["implement"]
@@ -991,7 +1003,8 @@ func unblockedDecision(t *testing.T, st State) State {
 	if err != nil {
 		t.Fatal(err)
 	}
-	unblocked, err := Apply(blocked, Event{Type: EventNodeUnblocked, Seq: 11, NodeID: "decide"})
+	resolution := &BlockResolution{NodeID: "decide", BlockedAttempt: 1, Decision: BlockDecisionRetry, Actor: "human:johan", Reason: "recheck", EvidenceRef: "decision:recheck", Timestamp: testTime}
+	unblocked, err := Apply(blocked, Event{Type: EventNodeUnblocked, Seq: 11, At: testTime, NodeID: "decide", NodeStatus: NodeStatusReady, Resolution: resolution})
 	if err != nil {
 		t.Fatal(err)
 	}

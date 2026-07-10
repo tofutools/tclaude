@@ -22,6 +22,7 @@ func CheckInvariants(st *State) Diagnostics {
 	diagnostics = append(diagnostics, OutstandingCommandsAreWellFormed(st)...)
 	diagnostics = append(diagnostics, CompletedDecisionsHaveOneChosenEdge(st)...)
 	diagnostics = append(diagnostics, BlockedNodesHaveReasonAndOwner(st)...)
+	diagnostics = append(diagnostics, BlockResolutionsAreAudited(st)...)
 	diagnostics = append(diagnostics, DecisionActorsAreValid(st)...)
 	diagnostics = append(diagnostics, CompoundLinkageIsConsistent(st)...)
 	diagnostics = append(diagnostics, CompletedStageChildrenHaveEvidence(st)...)
@@ -225,7 +226,7 @@ func checkExpandedParent(st *State, nodeID string, node NodeState) Diagnostics {
 		if child.Stage == model.StageDone && child.Status == NodeStatusCompleted {
 			doneCompleted = true
 		}
-		if child.Stage != model.StageDone && child.Status != NodeStatusCompleted {
+		if child.Stage != model.StageDone && child.Status != NodeStatusCompleted && child.Status != NodeStatusSkipped {
 			incompleteStages = append(incompleteStages, childID)
 		}
 		// A stage may only be active (activated but not yet settled) when every
@@ -239,7 +240,7 @@ func checkExpandedParent(st *State, nodeID string, node NodeState) Diagnostics {
 				fmt.Sprintf("stage child %q is %s but an earlier stage of node %q has not completed", childID, child.Status, nodeID),
 			))
 		}
-		priorCompleted = priorCompleted && child.Status == NodeStatusCompleted
+		priorCompleted = priorCompleted && (child.Status == NodeStatusCompleted || child.Status == NodeStatusSkipped)
 	}
 	if (doneCompleted || node.Status == NodeStatusCompleted) && len(incompleteStages) > 0 {
 		diagnostics = append(diagnostics, diagError(
@@ -616,6 +617,48 @@ func BlockedNodesHaveReasonAndOwner(st *State) Diagnostics {
 		))
 	}
 	return diagnostics
+}
+
+// BlockResolutionsAreAudited checks the durable tombstone left by every
+// unblock. The status-mirror invariants above catch a child-only or parent-only
+// clear; this check additionally makes silent/unaudited clears unverifiable.
+func BlockResolutionsAreAudited(st *State) Diagnostics {
+	if st == nil {
+		return Diagnostics{diagError("nil_state", "", "process state is nil")}
+	}
+	var diagnostics Diagnostics
+	for _, nodeID := range sortedKeys(st.Nodes) {
+		node := st.Nodes[nodeID]
+		if node.BlockResolution == nil {
+			continue
+		}
+		path := "nodes." + nodeID + ".blockResolution"
+		resolution := *node.BlockResolution
+		if node.Status == NodeStatusBlocked || strings.TrimSpace(node.BlockedReason) != "" || strings.TrimSpace(node.BlockedOwner) != "" {
+			diagnostics = append(diagnostics, diagError("resolved_block_still_blocked", path, fmt.Sprintf("node %q has a block resolution but still carries blocked state", nodeID)))
+		}
+		if resolution.NodeID == "" || resolution.BlockedAttempt <= 0 || !resolution.Decision.IsValid() ||
+			!ValidateActorRef(resolution.Actor) || IsEngineActor(resolution.Actor) || strings.TrimSpace(resolution.Reason) == "" || strings.TrimSpace(resolution.EvidenceRef) == "" || resolution.Timestamp.IsZero() {
+			diagnostics = append(diagnostics, diagError("invalid_block_resolution", path, fmt.Sprintf("node %q has an incomplete block resolution", nodeID)))
+			continue
+		}
+		if node.BlockedAttempt != resolution.BlockedAttempt {
+			diagnostics = append(diagnostics, diagError("block_resolution_generation_mismatch", path+".blockedAttempt", fmt.Sprintf("node %q tombstone attempt %d does not match resolution attempt %d", nodeID, node.BlockedAttempt, resolution.BlockedAttempt)))
+		}
+		if !hasBlockResolutionAudit(st.AdminRecords, resolution) {
+			diagnostics = append(diagnostics, diagError("block_resolution_without_audit", path, fmt.Sprintf("node %q block resolution has no matching run audit record", nodeID)))
+		}
+	}
+	return diagnostics
+}
+
+func hasBlockResolutionAudit(records []AdminRecord, resolution BlockResolution) bool {
+	for _, record := range records {
+		if record.Type == EventBlockResolutionRecorded && record.Resolution != nil && *record.Resolution == resolution {
+			return true
+		}
+	}
+	return false
 }
 
 func DecisionActorsAreValid(st *State) Diagnostics {

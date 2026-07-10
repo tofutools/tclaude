@@ -25,6 +25,7 @@ const (
 	EventDecisionRecorded         EventType = "decision_recorded"
 	EventNodeBlocked              EventType = "node_blocked"
 	EventNodeUnblocked            EventType = "node_unblocked"
+	EventBlockResolutionRecorded  EventType = "block_resolution_recorded"
 	EventWaitCreated              EventType = "wait_created"
 	EventWaitSatisfied            EventType = "wait_satisfied"
 	EventTimerCreated             EventType = "timer_created"
@@ -80,9 +81,10 @@ type Event struct {
 	Timer   *TimerRecord `json:"timer,omitempty"`
 	TimerID string       `json:"timerId,omitempty"`
 
-	Reason      string `json:"reason,omitempty"`
-	Owner       string `json:"owner,omitempty"`
-	EvidenceRef string `json:"evidenceRef,omitempty"`
+	Reason      string           `json:"reason,omitempty"`
+	Owner       string           `json:"owner,omitempty"`
+	EvidenceRef string           `json:"evidenceRef,omitempty"`
+	Resolution  *BlockResolution `json:"resolution,omitempty"`
 
 	// Gate feedback-loop fields. EvidenceHash is the hash of THIS settle's
 	// evidence; WorkEvidenceHash is the work-evidence hash a gate verdict
@@ -542,15 +544,69 @@ func applyEvent(st *State, event Event) error {
 		if strings.TrimSpace(event.Reason) == "" || strings.TrimSpace(event.Owner) == "" {
 			return fmt.Errorf("node_blocked requires reason and owner")
 		}
+		blockedAttempt := event.Attempt
+		if blockedAttempt <= 0 {
+			blockedAttempt = node.Attempt
+		}
+		// The resolution is a generation tombstone. A delayed block for that
+		// attempt (or an older one) is idempotent success, not permission to
+		// undo an explicit retry/skip/cancel decision.
+		blockedNodeID := strings.TrimSpace(event.FromNodeID)
+		if blockedNodeID == "" {
+			blockedNodeID = event.NodeID
+		}
+		if node.BlockResolution != nil && node.BlockResolution.NodeID == blockedNodeID && blockedAttempt <= node.BlockResolution.BlockedAttempt {
+			return nil
+		}
+		if node.Status == NodeStatusBlocked && node.BlockedNodeID == blockedNodeID && node.BlockedAttempt == blockedAttempt {
+			return nil
+		}
 		node.Status = NodeStatusBlocked
 		node.BlockedReason = event.Reason
 		node.BlockedOwner = event.Owner
+		node.BlockedAttempt = blockedAttempt
+		node.BlockedNodeID = blockedNodeID
+		node.BlockResolution = nil
+		st.StateSchemaVersion = StateSchemaVersion
 		st.Nodes[event.NodeID] = node
 		return nil
 	case EventNodeUnblocked:
 		node, err := getNode(st, event.NodeID)
 		if err != nil {
 			return err
+		}
+		resolution, err := normalizedBlockResolution(event.Resolution, event.At)
+		if err != nil {
+			return fmt.Errorf("node_unblocked: %w", err)
+		}
+		if node.BlockResolution != nil {
+			if *node.BlockResolution == resolution {
+				return nil
+			}
+			return fmt.Errorf("node %q was already unblocked with a different resolution", event.NodeID)
+		}
+		if node.Status != NodeStatusBlocked {
+			return fmt.Errorf("node %q is %s; only blocked nodes can be unblocked", event.NodeID, node.Status)
+		}
+		// A zero generation is accepted for state replayed from pre-v5 block
+		// events, which did not carry the child's attempt on the parent mirror.
+		if node.BlockedAttempt > 0 && node.BlockedAttempt != resolution.BlockedAttempt {
+			return fmt.Errorf("node %q blocked attempt %d does not match resolution attempt %d", event.NodeID, node.BlockedAttempt, resolution.BlockedAttempt)
+		}
+		if node.BlockedNodeID != "" && node.BlockedNodeID != resolution.NodeID {
+			return fmt.Errorf("node %q mirrors blocked child %q, not resolution child %q", event.NodeID, node.BlockedNodeID, resolution.NodeID)
+		}
+		expectedStatus := NodeStatusRunning
+		if node.Parent != "" || len(node.Children) == 0 {
+			expectedStatus = NodeStatusSkipped
+			if resolution.Decision == BlockDecisionRetry {
+				expectedStatus = NodeStatusReady
+			}
+		} else if !nodeListsChild(node, resolution.NodeID) {
+			return fmt.Errorf("node %q does not mirror resolution child %q", event.NodeID, resolution.NodeID)
+		}
+		if event.NodeStatus != expectedStatus {
+			return fmt.Errorf("node_unblocked decision %q requires nodeStatus %q for node %q", resolution.Decision, expectedStatus, event.NodeID)
 		}
 		node.BlockedReason = ""
 		node.BlockedOwner = ""
@@ -559,8 +615,19 @@ func applyEvent(st *State, event Event) error {
 			return fmt.Errorf("invalid node status %q", node.Status)
 		}
 		if node.Status == "" || node.Status == NodeStatusBlocked {
-			node.Status = NodeStatusReady
+			return fmt.Errorf("node_unblocked requires a non-blocked nodeStatus")
 		}
+		node.BlockedAttempt = resolution.BlockedAttempt
+		node.BlockedNodeID = resolution.NodeID
+		node.BlockResolution = &resolution
+		if resolution.Decision == BlockDecisionRetry {
+			// A retry is an explicit fresh budget window. In particular, a gate
+			// must not immediately short-circuit against the same evidence and
+			// recreate the poison without invoking its performer.
+			node.FailCount = 0
+			node.LastEvidenceHash = ""
+		}
+		st.StateSchemaVersion = StateSchemaVersion
 		st.Nodes[event.NodeID] = node
 		return nil
 	case EventWaitCreated:
@@ -839,13 +906,28 @@ func applyEvent(st *State, event Event) error {
 		st.StateSchemaVersion = StateSchemaVersion
 		st.Contacts[contact.CommandID] = contact
 		return nil
-	case EventAdminRepairRecorded, EventAdminProgramsAllowed:
+	case EventAdminRepairRecorded, EventAdminProgramsAllowed, EventBlockResolutionRecorded:
+		var resolution *BlockResolution
+		if event.Type == EventBlockResolutionRecorded {
+			normalized, err := normalizedBlockResolution(event.Resolution, event.At)
+			if err != nil {
+				return fmt.Errorf("block_resolution_recorded: %w", err)
+			}
+			resolution = &normalized
+		}
 		record := AdminRecord{
 			Type:        event.Type,
 			Actor:       normalizeActor(event.Actor),
 			Reason:      event.Reason,
 			EvidenceRef: event.EvidenceRef,
 			Timestamp:   event.At,
+			Resolution:  resolution,
+		}
+		if resolution != nil {
+			record.Actor = resolution.Actor
+			record.Reason = resolution.Reason
+			record.EvidenceRef = resolution.EvidenceRef
+			record.Timestamp = resolution.Timestamp
 		}
 		st.AdminRecords = append(st.AdminRecords, record)
 		if event.RunStatus != "" {
@@ -901,11 +983,47 @@ func requirePriorStagesCompleted(st *State, childID string, child NodeState) err
 			return nil
 		}
 		sibling, ok := st.Nodes[siblingID]
-		if !ok || sibling.Status != NodeStatusCompleted {
+		if !ok || (sibling.Status != NodeStatusCompleted && sibling.Status != NodeStatusSkipped) {
 			return fmt.Errorf("stage child %q cannot activate before earlier stage %q completes", childID, siblingID)
 		}
 	}
 	return fmt.Errorf("stage child %q is not listed in parent %q children", childID, child.Parent)
+}
+
+func normalizedBlockResolution(input *BlockResolution, at time.Time) (BlockResolution, error) {
+	if input == nil {
+		return BlockResolution{}, fmt.Errorf("block resolution is required")
+	}
+	resolution := *input
+	resolution.NodeID = strings.TrimSpace(resolution.NodeID)
+	resolution.Actor = normalizeActor(resolution.Actor)
+	resolution.Reason = strings.TrimSpace(resolution.Reason)
+	resolution.EvidenceRef = strings.TrimSpace(resolution.EvidenceRef)
+	if resolution.Timestamp.IsZero() {
+		resolution.Timestamp = at
+	}
+	if resolution.NodeID == "" || resolution.BlockedAttempt <= 0 {
+		return BlockResolution{}, fmt.Errorf("block resolution requires node id and blocked attempt")
+	}
+	if !resolution.Decision.IsValid() {
+		return BlockResolution{}, fmt.Errorf("invalid block decision %q", resolution.Decision)
+	}
+	if !ValidateActorRef(resolution.Actor) || IsEngineActor(resolution.Actor) {
+		return BlockResolution{}, fmt.Errorf("block resolution requires a non-engine actor")
+	}
+	if resolution.Reason == "" || resolution.EvidenceRef == "" {
+		return BlockResolution{}, fmt.Errorf("block resolution requires reason and evidence ref")
+	}
+	return resolution, nil
+}
+
+func nodeListsChild(node NodeState, childID string) bool {
+	for _, candidate := range node.Children {
+		if candidate == childID {
+			return true
+		}
+	}
+	return false
 }
 
 func commandIsActive(command OutstandingCommand) bool {

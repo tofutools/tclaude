@@ -272,6 +272,10 @@ func planStageChild(st *state.State, tmpl *model.Template, nodeID string, node s
 		return planSettledStageTransition(st, nodeID, node, parent, specs, EffectiveStageOutcome(node))
 	case state.NodeStatusFailed:
 		return planSettledStageTransition(st, nodeID, node, parent, specs, "fail")
+	case state.NodeStatusSkipped:
+		// A skip is a completed-by-decision stage outcome. Its durable block
+		// resolution record, rather than a performer settle, supplies the audit.
+		return planSettledStageTransition(st, nodeID, node, parent, specs, "pass")
 	default:
 		return nil, nil
 	}
@@ -379,6 +383,7 @@ func poisonCommands(st *state.State, nodeID string, node state.NodeState, transi
 	block := newCommand(CommandKindBlockNode, st.RunID, nodeID, "block", fmt.Sprintf("attempt-%d", node.Attempt))
 	block.NodeID = nodeID
 	block.TargetNodeID = node.Parent
+	block.Attempt = node.Attempt
 	block.Reason = transition.Reason
 	block.Owner = transition.Owner
 	if commandOutstanding(st, block.ID) {
