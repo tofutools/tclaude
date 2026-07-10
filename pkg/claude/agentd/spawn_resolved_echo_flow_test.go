@@ -308,3 +308,100 @@ func TestSpawnResolvedEcho_TracksValueAppliedAtLaunch(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "sonnet", launched)
 }
+
+func TestSpawnResolution_DashboardExplicitClaudeBeatsCodexDefault(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "codex-default", "harness": "codex", "model": "gpt-5.6-sol",
+	}).Code)
+	require.Equal(t, http.StatusOK, setGlobalProfile(t, f, "codex-default").Code)
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
+		"name": "worker", "harness": "claude", "sandbox": "inherit", "remote_control": false,
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "modal-shaped spawn body=%s", spawn.Raw)
+	var decoded agent.SpawnResponse
+	require.NoError(t, json.Unmarshal(spawn.Raw, &decoded))
+	require.NotNil(t, decoded.Resolved)
+	assert.Equal(t, agent.ResolvedField{Value: "claude", Source: agent.ProvExplicit}, decoded.Resolved.Harness)
+}
+
+func TestSpawnResolution_LegacyBlankHarnessProfileMeansClaude(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "legacy", "model": "sonnet",
+	}).Code)
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "codex-global", "harness": "codex", "model": "gpt-5.6-sol",
+	}).Code)
+	require.Equal(t, http.StatusOK, setGroupProfile(t, f, "alpha", "legacy").Code)
+	require.Equal(t, http.StatusOK, setGlobalProfile(t, f, "codex-global").Code)
+
+	resp, _ := runSpawnCLI(t, f, &agent.SpawnParams{Group: "alpha", Name: "worker"})
+	source := `group default profile "legacy"`
+	assert.Equal(t, agent.ResolvedField{Value: "claude", Source: source}, resp.Resolved.Harness)
+	assert.Equal(t, agent.ResolvedField{Value: "sonnet", Source: source}, resp.Resolved.Model)
+}
+
+func TestSpawnResolution_ForeignFalseBoolDoesNotShadowMatchingLowerTier(t *testing.T) {
+	t.Run("remote control for claude", func(t *testing.T) {
+		f := newFlow(t)
+		f.HaveGroup("alpha")
+		require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+			"name": "foreign", "harness": "codex", "remote_control": false,
+		}).Code)
+		require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+			"name": "matching", "harness": "claude", "remote_control": true,
+		}).Code)
+		require.Equal(t, http.StatusOK, setGroupProfile(t, f, "alpha", "foreign").Code)
+		require.Equal(t, http.StatusOK, setGlobalProfile(t, f, "matching").Code)
+
+		spawn := f.AsHuman().SpawnWith("alpha", map[string]any{"name": "worker", "harness": "claude"})
+		require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+		value, ok := f.World.SpawnRemoteControl(spawn.ConvID)
+		require.True(t, ok)
+		assert.True(t, value)
+	})
+
+	t.Run("auto review for codex", func(t *testing.T) {
+		f := newFlow(t)
+		f.HaveGroup("alpha")
+		require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+			"name": "foreign", "harness": "claude", "auto_review": false,
+		}).Code)
+		require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+			"name": "matching", "harness": "codex", "auto_review": true,
+		}).Code)
+		require.Equal(t, http.StatusOK, setGroupProfile(t, f, "alpha", "foreign").Code)
+		require.Equal(t, http.StatusOK, setGlobalProfile(t, f, "matching").Code)
+
+		spawn := f.AsHuman().SpawnWith("alpha", map[string]any{"name": "worker", "harness": "codex"})
+		require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+		value, ok := f.World.SpawnAutoReview(spawn.ConvID)
+		require.True(t, ok)
+		assert.True(t, value)
+	})
+}
+
+func TestSpawnResolution_DisclosesEveryIgnoredModelTier(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	for _, profile := range []map[string]any{
+		{"name": "named", "harness": "codex", "model": "gpt-5.6-sol"},
+		{"name": "group", "harness": "codex", "model": "gpt-5.6-terra"},
+		{"name": "global", "harness": "claude", "model": "sonnet"},
+	} {
+		require.Equal(t, http.StatusCreated, createProfile(t, f, profile).Code)
+	}
+	require.Equal(t, http.StatusOK, setGroupProfile(t, f, "alpha", "group").Code)
+	require.Equal(t, http.StatusOK, setGlobalProfile(t, f, "global").Code)
+
+	resp, _ := runSpawnCLI(t, f, &agent.SpawnParams{
+		Group: "alpha", Name: "worker", Harness: "claude", Profile: "named",
+	})
+	assert.Equal(t, "sonnet", resp.Resolved.Model.Value)
+	assert.Contains(t, resp.Resolved.Model.Note, `profile "named" model ignored`)
+	assert.Contains(t, resp.Resolved.Model.Note, `group default profile "group" model ignored`)
+}

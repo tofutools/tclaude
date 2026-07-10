@@ -147,9 +147,9 @@ func TestDashboardHTML_SpawnHarnessMenusWired(t *testing.T) {
 	must("function activeSpawnModelEl()", "submit reads whichever Model control is active")
 	must("populateModelSelect($('#agent-spawn-model'), h.models)", "the Model dropdown is rebuilt from the selected harness catalog")
 
-	// modal-spawn.js: the spawn POST body carries the chosen harness (only
-	// when non-default) and sandbox.
-	must("body.harness = harness", "non-default harness is sent in the spawn body")
+	// modal-spawn.js: the spawn POST body always carries the dropdown's explicit
+	// harness selection (including Claude) and sandbox.
+	must("if (harness) body.harness = harness", "selected harness is always sent in the spawn body")
 	must("body.sandbox = sandbox", "the chosen sandbox is sent in the spawn body")
 
 	// AskUserQuestion idle-timeout (Claude-Code-only) — the row + selector exist,

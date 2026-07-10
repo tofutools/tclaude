@@ -1000,7 +1000,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		return req
 	}
 	if err := DaemonRequestWithWriteProof(http.MethodPost, path, spawnReq, &resp, DaemonOpts{AskHuman: ask}); err != nil {
-		fmt.Fprintf(stderr, "Error: %s\n", spawnDaemonErrorMessage(err))
+		fmt.Fprintf(stderr, "Error: %v\n", err)
 		// The spawn failed after we created a worktree for it. Remove the
 		// now-orphaned worktree so a retry starts clean — except on a 504
 		// conv-id-poll timeout: there the spawn subprocess DID launch and
@@ -1050,25 +1050,6 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		fmt.Fprintf(stdout, "  Worktree: %s (branch %s)\n", wtPath, wt)
 	}
 	return &resp, rcOK
-}
-
-// spawnDaemonErrorMessage preserves the daemon's structured validation text.
-// The real transport already populates DaemonError.Msg; flow-test bridges and
-// older compatible transports may provide only Raw, so decode that envelope as
-// a fallback for invalid_* launch-shape failures.
-func spawnDaemonErrorMessage(err error) string {
-	de, ok := err.(*DaemonError)
-	if !ok || de.Msg != "" || len(de.Raw) == 0 {
-		return err.Error()
-	}
-	var envelope struct {
-		Error string `json:"error"`
-		Code  string `json:"code"`
-	}
-	if json.Unmarshal(de.Raw, &envelope) == nil && strings.HasPrefix(envelope.Code, "invalid_") && envelope.Error != "" {
-		return envelope.Error
-	}
-	return err.Error()
 }
 
 // printResolvedLaunch prints the resolved harness/model/effort with provenance,

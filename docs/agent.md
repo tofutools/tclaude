@@ -25,6 +25,11 @@ the daemon resolves from its live conv-id (re-read on every request, so
 authenticates with an operator token. A caller it can confirm as
 neither is refused. See [Identity](#identity).
 
+> **Upgrade compatibility:** restart `agentd` after upgrading `tclaude`.
+> The CLI and daemon share an evolving request schema; for example, a new CLI
+> talking to an old daemon silently drops `--profile` launch fields because the
+> old daemon does not understand the profile reference.
+
 ## What you can do
 
 - **Talk between conversations.** Send messages, replies, and

@@ -52,7 +52,14 @@ func bridgeAgentClientToMux(t *testing.T, h http.Handler) {
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, r)
 		if rr.Code >= 400 {
-			return &agent.DaemonError{Status: rr.Code, Raw: rr.Body.Bytes()}
+			var envelope struct {
+				Error string `json:"error"`
+				Code  string `json:"code"`
+			}
+			_ = json.Unmarshal(rr.Body.Bytes(), &envelope)
+			return &agent.DaemonError{
+				Status: rr.Code, Code: envelope.Code, Msg: envelope.Error, Raw: rr.Body.Bytes(),
+			}
 		}
 		if out != nil && rr.Body.Len() > 0 {
 			return json.Unmarshal(rr.Body.Bytes(), out)

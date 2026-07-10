@@ -1616,8 +1616,8 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if strings.TrimSpace(body.Harness) == "" {
 		harnessSource = agent.ProvHarnessDefault
 		for _, tier := range profileTiers {
-			if tier.profile != nil && strings.TrimSpace(tier.profile.Harness) != "" {
-				body.Harness = strings.TrimSpace(tier.profile.Harness)
+			if tier.profile != nil {
+				body.Harness = harnessOrDefault(tier.profile.Harness)
 				harnessSource = tier.source
 				break
 			}
@@ -1739,22 +1739,8 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		}
 	}
 
-	// Validate the requested effort before building the spawn params.
-	// Empty → "" (downstream omits the flag); a bad level becomes a 400
-	// here rather than a silent 504 once the forked session exits.
-	effort, effErr := h.Models.ValidateEffort(body.Effort)
-	if effErr != nil {
-		writeError(w, http.StatusBadRequest, "invalid_effort", effErr.Error())
-		return
-	}
-
-	// Same treatment for the requested model: empty omits the flag, a
-	// bad alias becomes a 400 here rather than a silent 504.
-	model, modelErr := h.Models.ValidateModel(body.Model)
-	if modelErr != nil {
-		writeError(w, http.StatusBadRequest, "invalid_model", modelErr.Error())
-		return
-	}
+	// resolveStringLaunchField already validated and normalized both values.
+	effort, model := body.Effort, body.Model
 
 	// Resolve the sandbox mode for the chosen harness: a Codex agent gets its
 	// secure default (the managed tclaude-agent profile) when unset, a Claude
@@ -1943,29 +1929,27 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// A policy-DERIVED force-on is then clamped to off for a harness with no Remote
 	// Access — a group/profile default must not fail a Codex spawn (an EXPLICIT
 	// opt-in for Codex already 400'd above). See resolveRemoteControlIntent.
-	// The profile's remote-control default applies only when the spawn actually
-	// runs on the profile's harness — the SAME gate the launch-field overlay
-	// above uses. A spawn that pins a different harness skipped the profile's
-	// other fields, so its remote-control default must be skipped too, or a
-	// claude profile's default would leak onto a foreign-harness spawn. Today the
-	// CanRemoteControl clamp below already forces a non-claude spawn off, so this
-	// is belt-and-braces for that case; it becomes load-bearing the day a second
-	// remote-control-capable harness is registered.
+	// Profile bools participate only when their profile harness matches the
+	// resolved harness. This gate applies even to false: unlike string catalogs,
+	// false validates everywhere and would otherwise shadow a matching lower
+	// tier's true.
 	var profileRemoteControl *bool
 	for _, tier := range profileTiers[1:] { // named --profile remote_control remains CLI-inapplicable by contract
 		prof := tier.profile
 		if prof == nil || prof.RemoteControl == nil {
 			continue
 		}
+		if !profileMatchesHarness(prof, h.Name) {
+			resolvedLaunch.Notes = append(resolvedLaunch.Notes,
+				fmt.Sprintf("%s remote_control ignored (not valid for %s)", tier.source, h.Name))
+			continue
+		}
 		if _, err := harness.ResolveRemoteControl(h, *prof.RemoteControl); err == nil {
 			profileRemoteControl = prof.RemoteControl
 			break
-		} else if profileMatchesHarness(prof, h.Name) {
+		} else {
 			writeError(w, http.StatusBadRequest, "invalid_remote_control", fmt.Sprintf("profile %q: %v", prof.Name, err))
 			return
-		} else {
-			resolvedLaunch.Notes = append(resolvedLaunch.Notes,
-				fmt.Sprintf("%s remote_control ignored (not valid for %s)", tier.source, h.Name))
 		}
 	}
 	remoteControl := resolveRemoteControlIntent(g.RemoteControl, profileRemoteControl, body.RemoteControl)
@@ -2462,8 +2446,7 @@ func profileSource(prof *db.SpawnProfile, format func(string) string) string {
 }
 
 func profileMatchesHarness(prof *db.SpawnProfile, harnessName string) bool {
-	return prof != nil && strings.TrimSpace(prof.Harness) != "" &&
-		harnessOrDefault(prof.Harness) == harnessOrDefault(harnessName)
+	return prof != nil && harnessOrDefault(prof.Harness) == harnessOrDefault(harnessName)
 }
 
 // resolveStringLaunchField applies explicit > named > group > global for one
@@ -2485,6 +2468,7 @@ func resolveStringLaunchField(
 		}
 		return value, agent.ProvExplicit, "", nil
 	}
+	var notes []string
 	for _, tier := range tiers {
 		if tier.profile == nil {
 			continue
@@ -2495,17 +2479,15 @@ func resolveStringLaunchField(
 		}
 		value, err := validate(raw)
 		if err == nil {
-			return value, tier.source, note, nil
+			return value, tier.source, strings.Join(notes, "; "), nil
 		}
 		if profileMatchesHarness(tier.profile, harnessName) {
 			return "", "", "", &spawnFailure{http.StatusBadRequest, "invalid_" + field,
 				fmt.Sprintf("profile %q: %v", tier.profile.Name, err)}
 		}
-		if note == "" {
-			note = fmt.Sprintf("%s %s ignored (not valid for %s)", tier.source, field, harnessName)
-		}
+		notes = append(notes, fmt.Sprintf("%s %s ignored (not valid for %s)", tier.source, field, harnessName))
 	}
-	return "", agent.ProvHarnessDefault, note, nil
+	return "", agent.ProvHarnessDefault, strings.Join(notes, "; "), nil
 }
 
 func resolveBoolLaunchField(
@@ -2526,17 +2508,20 @@ func resolveBoolLaunchField(
 		if tier.profile == nil || profileValue(tier.profile) == nil {
 			continue
 		}
+		if !profileMatchesHarness(tier.profile, harnessName) {
+			if note == "" {
+				note = fmt.Sprintf("%s %s ignored (not valid for %s)", tier.source, field, harnessName)
+			} else {
+				note += "; " + fmt.Sprintf("%s %s ignored (not valid for %s)", tier.source, field, harnessName)
+			}
+			continue
+		}
 		value, err := validate(*profileValue(tier.profile))
 		if err == nil {
 			return value, true, note, nil
 		}
-		if profileMatchesHarness(tier.profile, harnessName) {
-			return false, false, "", &spawnFailure{http.StatusBadRequest, "invalid_" + field,
-				fmt.Sprintf("profile %q: %v", tier.profile.Name, err)}
-		}
-		if note == "" {
-			note = fmt.Sprintf("%s %s ignored (not valid for %s)", tier.source, field, harnessName)
-		}
+		return false, false, "", &spawnFailure{http.StatusBadRequest, "invalid_" + field,
+			fmt.Sprintf("profile %q: %v", tier.profile.Name, err)}
 	}
 	return false, false, note, nil
 }
@@ -2567,8 +2552,8 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	for _, prof := range profiles {
 		if prof != nil {
 			tiers = append(tiers, launchProfileTier{profile: prof})
-			if strings.TrimSpace(p.Harness) == "" && strings.TrimSpace(prof.Harness) != "" {
-				p.Harness = strings.TrimSpace(prof.Harness)
+			if strings.TrimSpace(p.Harness) == "" {
+				p.Harness = harnessOrDefault(prof.Harness)
 			}
 		}
 	}

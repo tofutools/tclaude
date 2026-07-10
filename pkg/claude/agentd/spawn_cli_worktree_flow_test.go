@@ -344,11 +344,11 @@ func TestSpawnCLI_WorktreeTornDownWhenSpawnRejected(t *testing.T) {
 		new(bytes.Buffer), stderr, new(bytes.Buffer),
 	)
 	// The spawn was rejected — no response, a non-zero rc. The daemon
-	// returned 409 group_full (the bridge surfaces the status; the
-	// human-readable body isn't decoded in the test transport).
+	// returned group_full and the bridge decodes the human-readable body exactly
+	// like the production transport.
 	require.Nilf(t, resp, "a rejected spawn returns no response; stderr=%s", stderr.String())
 	require.NotEqual(t, 0, rc, "a rejected spawn returns a non-zero rc")
-	assert.Contains(t, stderr.String(), "409", "the rejection status is surfaced")
+	assert.Contains(t, stderr.String(), "member cap", "the rejection reason is surfaced")
 	assert.Contains(t, stderr.String(), "removed the worktree",
 		"RunSpawn should report it cleaned up the orphaned worktree")
 
