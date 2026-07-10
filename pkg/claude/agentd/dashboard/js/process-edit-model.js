@@ -415,12 +415,13 @@ export class ProcessEditModel {
     this.template.start = to;
   }
 
-  setTemplateMeta({ id, name, description } = {}) {
+  setTemplateMeta({ id, name, description, doc } = {}) {
     // Same no-op discipline as renameNode/setJoin/setEdgeOutcome: a change
     // event that commits the current value must not dirty the model.
     const changed = (id !== undefined && id !== this.template.id)
       || (name !== undefined && (name || undefined) !== this.template.name)
-      || (description !== undefined && (description || undefined) !== this.template.description);
+      || (description !== undefined && (description || undefined) !== this.template.description)
+      || (doc !== undefined && (doc || undefined) !== this.template.doc);
     if (!changed) return;
     this.begin();
     if (id !== undefined) this.template.id = id;
@@ -431,6 +432,10 @@ export class ProcessEditModel {
     if (description !== undefined) {
       if (description) this.template.description = description;
       else delete this.template.description;
+    }
+    if (doc !== undefined) {
+      if (doc) this.template.doc = doc;
+      else delete this.template.doc;
     }
   }
 

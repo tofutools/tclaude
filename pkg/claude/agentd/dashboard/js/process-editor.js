@@ -120,19 +120,21 @@ export class ProcessTemplateEditor {
     });
     this.idInput.value = this.model.template.id || '';
     this.titleLabel = h('strong', { class: 'process-editor-title' });
+    this.identity = h('span', { class: 'process-editor-identity' });
 
     this.undoButton = h('button', { class: 'process-action', type: 'button', title: 'Undo (Ctrl+Z)', text: '↶ undo' });
     this.redoButton = h('button', { class: 'process-action', type: 'button', title: 'Redo (Ctrl+Shift+Z)', text: '↷ redo' });
+    this.settingsButton = h('button', { class: 'process-action', type: 'button', title: 'Edit template name and description', text: 'template settings…' });
     this.paletteButton = h('button', { class: 'process-action', type: 'button', title: 'Toggle the node palette', text: '⬒ palette' });
     this.saveButton = h('button', { class: 'process-action primary', type: 'button', title: 'Save a new version', text: 'Save' });
 
     const header = h('div', { class: 'process-editor-header' },
-      this.blank ? this.idInput : this.titleLabel,
+      this.identity,
       this.versionBadge,
       this.dirtyBadge,
       this.statusLine,
       h('span', { class: 'spacer' }),
-      this.undoButton, this.redoButton, this.paletteButton, this.saveButton,
+      this.settingsButton, this.undoButton, this.redoButton, this.paletteButton, this.saveButton,
     );
 
     this.palette = this.buildPalette();
@@ -176,6 +178,7 @@ export class ProcessTemplateEditor {
     this.saveButton.addEventListener('click', () => this.save(), { signal });
     this.undoButton.addEventListener('click', () => this.applyHistory('undo'), { signal });
     this.redoButton.addEventListener('click', () => this.applyHistory('redo'), { signal });
+    this.settingsButton.addEventListener('click', () => this.setSelection({ type: 'template' }), { signal });
     this.paletteButton.addEventListener('click', () => {
       this.palette.hidden = !this.palette.hidden;
     }, { signal });
@@ -244,12 +247,14 @@ export class ProcessTemplateEditor {
     this.titleLabel.textContent = model.template.name
       ? `${model.template.name} (${model.template.id})`
       : model.template.id || 'untitled';
+    // Template ids are store keys, not editable metadata. Only a never-saved
+    // blank template gets the id field; the first successful save replaces it
+    // with the immutable title instead of leaving a copy-producing rename trap.
+    this.idInput.disabled = !this.blank;
+    this.identity.replaceChildren(this.blank ? this.idInput : this.titleLabel);
     this.versionBadge.textContent = model.semanticHash ? `v ${shortHash(model.semanticHash)}` : 'unsaved';
     this.versionBadge.title = model.semanticHash || 'This template has never been saved';
     this.dirtyBadge.hidden = !model.dirty;
-    // The id is only editable until the first version exists; after that the
-    // id is the store key and renaming means a different template.
-    this.idInput.disabled = !!model.sourceHash;
     this.undoButton.disabled = !model.canUndo;
     this.redoButton.disabled = !model.canRedo;
     this.saveButton.disabled = !model.dirty && !!model.sourceHash;
@@ -286,7 +291,39 @@ export class ProcessTemplateEditor {
     const parts = [];
     const sel = this.selection;
     const selected = selectionItems(sel);
-    if (selected.length > 1) {
+    if (sel?.type === 'template') {
+      parts.push(h('span', { class: 'process-inspector-kind', text: 'template' }));
+      const idInput = h('input', {
+        class: 'process-inspector-input process-template-id-locked', type: 'text',
+        value: this.model.template.id || '', disabled: '',
+        title: 'Template ids are immutable after creation', 'aria-label': 'Template id (immutable)',
+      });
+      const nameInput = h('input', {
+        class: 'process-inspector-input', type: 'text', spellcheck: 'false',
+        placeholder: 'display name', 'aria-label': 'Template display name',
+      });
+      nameInput.value = this.model.template.name || '';
+      nameInput.addEventListener('change', () => {
+        this.mutate(() => this.model.setTemplateMeta({ name: nameInput.value.trim() }));
+      });
+      const descriptionInput = h('input', {
+        class: 'process-inspector-input process-template-description', type: 'text', spellcheck: 'true',
+        placeholder: 'description', 'aria-label': 'Template description',
+      });
+      descriptionInput.value = this.model.template.description || '';
+      descriptionInput.addEventListener('change', () => {
+        this.mutate(() => this.model.setTemplateMeta({ description: descriptionInput.value.trim() }));
+      });
+      const docInput = h('input', {
+        class: 'process-inspector-input process-template-doc', type: 'text', spellcheck: 'true',
+        placeholder: 'documentation', 'aria-label': 'Template documentation',
+      });
+      docInput.value = this.model.template.doc || '';
+      docInput.addEventListener('change', () => {
+        this.mutate(() => this.model.setTemplateMeta({ doc: docInput.value.trim() }));
+      });
+      parts.push(idInput, nameInput, descriptionInput, docInput);
+    } else if (selected.length > 1) {
       const nodeCount = selected.filter((item) => item.type === 'node').length;
       const edgeCount = selected.length - nodeCount;
       parts.push(h('span', { class: 'process-inspector-kind', text: 'multiple selection' }));

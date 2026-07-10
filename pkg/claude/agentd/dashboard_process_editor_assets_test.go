@@ -62,6 +62,14 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"resolveConflict",
 		"'Reload their version (discard mine)'",
 		"'Save as new version anyway'",
+		// IDs are creation-time store keys. Existing templates render only the
+		// title, and a blank template swaps its id input out after first save.
+		"this.idInput.disabled = !this.blank",
+		"this.identity.replaceChildren(this.blank ? this.idInput : this.titleLabel)",
+		// Template-level metadata has an explicit editor affordance and travels
+		// through setTemplateMeta, the same dirty/undo gate as graph edits.
+		"text: 'template settings…'",
+		"this.model.setTemplateMeta({ name:",
 		// Rewire affordance on mid-graph node deletion.
 		"'Delete + rewire through'",
 		// Hand-drawn self-loops are blocked at the gesture with a message.
@@ -139,6 +147,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		// Inline controls are explicitly dark-themed (UA-white trap).
 		".process-inspector-select",
 		"body.wizard .process-palette-card",
+		"body.wizard .process-editor .process-action",
 		// Live-validation issues panel, explicitly themed on both skins.
 		".process-issues-panel",
 		".process-issue:hover, .process-issue:focus-visible",

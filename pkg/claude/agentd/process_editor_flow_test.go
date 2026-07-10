@@ -70,6 +70,67 @@ func TestProcessEditorSaveRoundTripsNodeEdgeJoinAndPin(t *testing.T) {
 	assert.NotEqual(t, edit.SemanticHash, next.SemanticHash, "adding a node is a semantic change")
 }
 
+func TestProcessEditorRenameDisplayNameCreatesVersionAndUpdatesReadSurfaces(t *testing.T) {
+	f, root := processEngineFlow(t)
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	original, err := fs.PutTemplate(t.Context(), processRESTTemplate("rename-display", "before rename", 40))
+	require.NoError(t, err)
+
+	// Given the versioned edit view an editor opened.
+	getRec := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates/rename-display", nil)
+	require.Equal(t, http.StatusOK, getRec.Code, getRec.Body.String())
+	var edit processEditResponse
+	testharness.DecodeJSON(t, getRec, &edit)
+	opened := edit
+	opened.Template = semanticProcessTemplate(edit.Template)
+
+	// When the display name is edited and saved through the normal CAS path.
+	edit.Template.Name = "Renamed release train"
+	saveRec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/rename-display", edit)
+	require.Equal(t, http.StatusCreated, saveRec.Code, saveRec.Body.String())
+	var saved struct {
+		Ref          string `json:"ref"`
+		SemanticHash string `json:"semanticHash"`
+		SourceHash   string `json:"sourceHash"`
+	}
+	testharness.DecodeJSON(t, saveRec, &saved)
+	assert.NotEqual(t, original.Ref, saved.Ref)
+	assert.NotEqual(t, edit.SemanticHash, saved.SemanticHash, "display name is semantic template content")
+	assert.NotEqual(t, edit.SourceHash, saved.SourceHash)
+
+	// Then the Templates list and editor-header edit data both expose the new
+	// name, and the canonical YAML persists it as the second version.
+	listRec := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates", nil)
+	require.Equal(t, http.StatusOK, listRec.Code, listRec.Body.String())
+	var list struct {
+		Templates []struct {
+			ID           string `json:"id"`
+			Name         string `json:"name"`
+			VersionCount int    `json:"versionCount"`
+		} `json:"templates"`
+	}
+	testharness.DecodeJSON(t, listRec, &list)
+	require.Len(t, list.Templates, 1)
+	assert.Equal(t, "rename-display", list.Templates[0].ID)
+	assert.Equal(t, "Renamed release train", list.Templates[0].Name)
+	assert.Equal(t, 2, list.Templates[0].VersionCount)
+
+	reloadRec := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates/rename-display", nil)
+	require.Equal(t, http.StatusOK, reloadRec.Code, reloadRec.Body.String())
+	var reloaded processEditResponse
+	testharness.DecodeJSON(t, reloadRec, &reloaded)
+	assert.Equal(t, "Renamed release train", reloaded.Template.Name)
+	assert.Contains(t, reloaded.Source, "name: Renamed release train")
+
+	// The content edit does not bypass CAS: the view opened before the rename
+	// is stale and still receives the editor's established 409 contract.
+	opened.Template.Name = "Stale rename"
+	conflictRec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/rename-display", opened)
+	assert.Equal(t, http.StatusConflict, conflictRec.Code, conflictRec.Body.String())
+	assert.Contains(t, conflictRec.Body.String(), `"code":"process_template_conflict"`)
+}
+
 func TestProcessEditorConflictDialogDataAndBothResolutions(t *testing.T) {
 	f, root := processEngineFlow(t)
 	fs, err := store.NewFS(root)

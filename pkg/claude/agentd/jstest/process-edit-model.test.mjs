@@ -230,6 +230,24 @@ test('regression: no-op setTemplateMeta neither dirties nor burns an undo slot',
   assert.equal(model.dirty, true);
 });
 
+test('template metadata edits are undoable and preserve the immutable id', () => {
+  const model = new ProcessEditModel(view());
+  model.setTemplateMeta({
+    name: 'Freight train',
+    description: 'Move releases safely',
+    doc: 'Operator-facing release procedure',
+  });
+  assert.equal(model.template.id, 'release');
+  assert.equal(model.template.name, 'Freight train');
+  assert.equal(model.template.description, 'Move releases safely');
+  assert.equal(model.template.doc, 'Operator-facing release procedure');
+  assert.equal(model.dirty, true);
+  assert.equal(model.undo(), true);
+  assert.equal(model.template.name, 'Release train');
+  assert.equal(model.template.description, undefined);
+  assert.equal(model.template.doc, undefined);
+});
+
 test('regression: markSaved at the payload rev keeps in-flight edits dirty', () => {
   const model = new ProcessEditModel(view());
   model.moveNode('build', 5, 5);
