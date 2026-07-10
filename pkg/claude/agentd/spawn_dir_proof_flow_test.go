@@ -375,7 +375,9 @@ func TestSpawnDirProof_CodexManagedSpawnPinsEmptyGitCommonDir(t *testing.T) {
 	body := map[string]any{"name": "codex-worker", "cwd": cwd, "harness": harness.CodexName}
 	ch := decodeWriteProofChallenge(t,
 		agentReq(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn", body))
-	assert.Equal(t, []string{cwd}, ch.WriteProof.Dirs)
+	resolvedCwd, err := filepath.EvalSymlinks(cwd)
+	require.NoError(t, err)
+	assert.Equal(t, []string{resolvedCwd}, ch.WriteProof.Dirs)
 	answerChallenge(t, ch)
 	body["write_proof_token"] = ch.WriteProof.Token
 	rec := agentReq(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn", body)
