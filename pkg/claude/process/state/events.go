@@ -220,6 +220,9 @@ func applyEvent(st *State, event Event) error {
 			}
 		}
 		node.Status = event.NodeStatus
+		if node.Type == model.NodeTypeDecision && event.NodeStatus == NodeStatusReady && event.Attempt > 0 {
+			node.Attempt = event.Attempt
+		}
 		st.Nodes[event.NodeID] = node
 		// Completing the done marker IS completing the compound parent: one
 		// event, so no checkpoint ever shows a completed done stage under a

@@ -219,7 +219,26 @@ func TestProcessEngineCodeChangePoisonDecisionCancel(t *testing.T) {
 	capstoneReportAgent(t, f, fs, "capstone-cancel", "implement.do", "commit:cancel-2")
 	capstoneTickWaiting(t, host, "escalate")
 	capstoneReplyHuman(t, fs, "capstone-cancel", "escalate", "cancel do not merge")
-	result := capstoneTick(t, host)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	crashStore := &cancelAfterResolveClaimStore{Store: fs, cancel: cancel}
+	beforeRestart := processengine.New(crashStore, "agentd:cancel-before-restart", nil)
+	results, err := agentd.RunProcessEngineTickForTest(ctx, beforeRestart)
+	if err != nil {
+		assert.ErrorIs(t, err, context.Canceled)
+	} else {
+		require.Len(t, results, 1)
+		assert.Contains(t, results[0].Error, context.Canceled.Error())
+	}
+	claimed, err := fs.LoadRun(t.Context(), "capstone-cancel")
+	require.NoError(t, err)
+	resolveID := outstandingCommandForNode(t, claimed.State, "escalate", state.CommandKindResolveBlock)
+	assert.Equal(t, state.NodeStatusBlocked, claimed.State.Nodes["implement"].Status)
+	assert.Equal(t, state.NodeStatusPending, claimed.State.Nodes["canceled"].Status)
+
+	restarted, err := agentd.NewProcessEngineHostForTest(root)
+	require.NoError(t, err)
+	result := capstoneTick(t, restarted)
 	assert.Equal(t, state.RunStatusCanceled, result.Status)
 
 	snapshot, err := fs.LoadRun(t.Context(), "capstone-cancel")
@@ -227,6 +246,7 @@ func TestProcessEngineCodeChangePoisonDecisionCancel(t *testing.T) {
 	require.NotNil(t, snapshot.State.Nodes["implement"].BlockResolution)
 	assert.Equal(t, state.BlockDecisionCancel, snapshot.State.Nodes["implement"].BlockResolution.Decision)
 	assert.Equal(t, 1, blockResolutionCount(snapshot.State))
+	assert.Equal(t, state.CommandStatusObserved, snapshot.State.OutstandingCommands[resolveID].Status)
 	var cancelCommand state.OutstandingCommand
 	for _, command := range snapshot.State.OutstandingCommands {
 		if command.Kind == state.CommandKindResolveBlock {

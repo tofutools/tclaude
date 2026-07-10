@@ -20,6 +20,7 @@ func Validate(tmpl *Template, edges []Edge) Diagnostics {
 	diagnostics = append(diagnostics, validateNodes(tmpl)...)
 	diagnostics = append(diagnostics, validateExpansionCollisions(tmpl)...)
 	diagnostics = append(diagnostics, validateEdges(tmpl, edges)...)
+	diagnostics = append(diagnostics, validatePoisonEscalations(tmpl)...)
 	diagnostics = append(diagnostics, validateReachability(tmpl, edges)...)
 	diagnostics = append(diagnostics, validateAcyclic(tmpl, edges)...)
 	diagnostics = append(diagnostics, validateParamRefs(tmpl)...)
@@ -354,6 +355,56 @@ func validateReachability(tmpl *Template, edges []Edge) Diagnostics {
 	return diagnostics
 }
 
+// validatePoisonEscalations reserves the human decision reached by a compound
+// fail edge for the engine's generation-bound poison resolution bridge. The
+// v1 bridge intentionally supports only retrying that compound or canceling
+// the run, so an unsupported choice is rejected before a run can be created.
+func validatePoisonEscalations(tmpl *Template) Diagnostics {
+	var diagnostics Diagnostics
+	for _, sourceID := range sortedKeys(tmpl.Nodes) {
+		source := tmpl.Nodes[sourceID]
+		if !source.IsCompound() {
+			continue
+		}
+		decisionID := poisonFailTarget(source.Next)
+		decision, ok := tmpl.Nodes[decisionID]
+		if decisionID == "" || !ok || decision.Type != NodeTypeDecision || decision.Performer == nil || decision.Performer.Kind != PerformerHuman {
+			continue
+		}
+		path := "nodes." + decisionID + ".next"
+		if len(decision.Next) != 2 {
+			diagnostics = append(diagnostics, diagError("invalid_poison_escalation", path, "poison escalation requires exactly retry and cancel choices"))
+		}
+		if retryTarget, ok := decision.Next["retry"]; !ok || retryTarget != sourceID {
+			diagnostics = append(diagnostics, diagError("invalid_poison_escalation", path+".retry", fmt.Sprintf("poison escalation retry must target compound node %q", sourceID)))
+		}
+		cancelTarget, ok := decision.Next["cancel"]
+		cancelNode, targetOK := tmpl.Nodes[cancelTarget]
+		if !ok || !targetOK || cancelNode.Type != NodeTypeEnd || !isCanceledResult(cancelNode.Result) {
+			diagnostics = append(diagnostics, diagError("invalid_poison_escalation", path+".cancel", "poison escalation cancel must target an end node with result canceled"))
+		}
+	}
+	return diagnostics
+}
+
+func poisonFailTarget(next Next) string {
+	for _, outcome := range []string{"fail", "failed", "failure", "error"} {
+		if target := next[outcome]; target != "" {
+			return target
+		}
+	}
+	return ""
+}
+
+func isCanceledResult(result string) bool {
+	switch strings.ToLower(strings.TrimSpace(result)) {
+	case "cancel", "canceled", "cancelled":
+		return true
+	default:
+		return false
+	}
+}
+
 func validateAcyclic(tmpl *Template, edges []Edge) Diagnostics {
 	acyclicEdges := make([]Edge, 0, len(edges))
 	for _, edge := range edges {
@@ -408,7 +459,7 @@ func isPoisonEscalationRetryEdge(tmpl *Template, edge Edge) bool {
 	decision, decisionOK := tmpl.Nodes[edge.From]
 	target, targetOK := tmpl.Nodes[edge.To]
 	return decisionOK && targetOK && decision.Type == NodeTypeDecision && decision.Performer != nil && decision.Performer.Kind == PerformerHuman &&
-		target.IsCompound() && target.Next["fail"] == edge.From
+		target.IsCompound() && poisonFailTarget(target.Next) == edge.From
 }
 
 func adjacency(edges []Edge) map[string][]string {

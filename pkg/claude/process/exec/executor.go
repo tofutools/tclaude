@@ -135,6 +135,10 @@ func (e *Executor) Execute(ctx context.Context, command plan.Command) (Result, e
 	if err := validateCurrentPlan(ctx, e.Store, snapshot, command); err != nil {
 		return Result{}, err
 	}
+	// Bind the run parameters into the durable issued payload. Recovery must
+	// replay the exact performer request that was claimed, even if run.json is
+	// edited after the claim or the store is restarted.
+	command = materializePerformer(command, snapshot.Run.Params)
 
 	var adapter Adapter
 	var request Request
@@ -992,6 +996,7 @@ func observationEntries(command plan.Command, observation Observation, snapshot 
 		entries = append(entries, nodeEntry(command.TargetNodeID, state.Event{
 			Type:       state.EventNodeStatusSet,
 			NodeStatus: command.NodeStatus,
+			Attempt:    command.Attempt,
 		}, "", at))
 	case plan.CommandKindExpandNode:
 		// The children come from the command's durable payload, so a crashed
@@ -1151,6 +1156,15 @@ func performerRequest(run store.RunRecord, command plan.Command) Request {
 			Params:  params,
 		},
 	}
+}
+
+func materializePerformer(command plan.Command, params map[string]string) plan.Command {
+	if command.Performer == nil {
+		return command
+	}
+	performer := model.InterpolatePerformer(*command.Performer, params)
+	command.Performer = &performer
+	return command
 }
 
 func commandEntry(command plan.Command, event state.Event, evidenceRef string, at time.Time) evidence.LogEntry {

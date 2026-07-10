@@ -467,7 +467,7 @@ func blockedEscalationState(choice string) *state.State {
 	st.Nodes["canceled"] = state.NodeState{Type: model.NodeTypeEnd, Status: state.NodeStatusPending}
 	if choice != "" {
 		st.Nodes["escalate"] = state.NodeState{
-			Type: model.NodeTypeDecision, Status: state.NodeStatusCompleted, ChosenEdge: choice,
+			Type: model.NodeTypeDecision, Status: state.NodeStatusCompleted, Attempt: 2, ChosenEdge: choice,
 			Decisions: []state.DecisionRecord{{Actor: "human:operator", Verdict: choice, EvidenceRef: "human-message:42", Timestamp: fixedTime()}},
 		}
 	}
@@ -481,7 +481,7 @@ func TestPlanBlockedCompoundActivatesOnlyDecisionFailEdge(t *testing.T) {
 	}
 	assertCommands(t, got, []commandWant{{
 		Kind: CommandKindActivateNode, NodeID: "implement", TargetNodeID: "escalate",
-		SourceNodeStatus: state.NodeStatusBlocked, NodeStatus: state.NodeStatusReady,
+		SourceNodeStatus: state.NodeStatusBlocked, NodeStatus: state.NodeStatusReady, Attempt: 2,
 		Key: "run_1/activate_node/implement/blocked-to/escalate/attempt-2",
 	}})
 
@@ -546,20 +546,26 @@ func TestPlanDoesNotReuseConsumedEscalationDecision(t *testing.T) {
 	parent := st.Nodes["implement"]
 	parent.BlockedAttempt = 3
 	st.Nodes["implement"] = parent
-	resolution := &state.BlockResolution{
-		NodeID: "implement.test.tests", BlockedAttempt: 2, Decision: state.BlockDecisionRetry,
-		Actor: "human:operator", Reason: "retry", EvidenceRef: "human-message:42", Timestamp: fixedTime(),
-	}
-	st.AdminRecords = append(st.AdminRecords, state.AdminRecord{
-		Type: state.EventBlockResolutionRecorded, Actor: resolution.Actor, Reason: resolution.Reason,
-		EvidenceRef: resolution.EvidenceRef, Timestamp: resolution.Timestamp, Resolution: resolution,
-	})
 	got, err := Plan(st, escalationTemplate())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(got) != 0 {
 		t.Fatalf("consumed decision replayed into later poison: %#v", got)
+	}
+}
+
+func TestPlanDoesNotReuseDecisionCompletedBeforePoison(t *testing.T) {
+	st := blockedEscalationState("retry")
+	decision := st.Nodes["escalate"]
+	decision.Attempt = 0
+	st.Nodes["escalate"] = decision
+	got, err := Plan(st, escalationTemplate())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("decision predating poison replayed into resolution: %#v", got)
 	}
 }
 

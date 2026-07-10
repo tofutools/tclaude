@@ -52,7 +52,7 @@ nodes:
       kind: human
       ask: "Retries exhausted. Continue?"
     next:
-      ship-anyway: done
+      retry: implement
       cancel: canceled
   done:
     type: end
@@ -98,13 +98,33 @@ func TestParseValidTemplate(t *testing.T) {
 }
 
 func TestParseAllowsPoisonEscalationRetryCycle(t *testing.T) {
-	data := strings.Replace(validTemplateYAML, "ship-anyway: done", "retry: implement", 1)
-	parsed, err := Parse([]byte(data))
+	parsed, err := Parse([]byte(validTemplateYAML))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if parsed.Diagnostics.HasErrors() {
 		t.Fatalf("poison escalation retry diagnostics: %#v", parsed.Diagnostics.Errors())
+	}
+}
+
+func TestParseRejectsUnsupportedPoisonEscalationChoices(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		data string
+	}{
+		{name: "extra choice", data: strings.Replace(validTemplateYAML, "      cancel: canceled", "      cancel: canceled\n      ship-anyway: done", 1)},
+		{name: "retry targets other node", data: strings.Replace(validTemplateYAML, "      retry: implement", "      retry: done", 1)},
+		{name: "cancel targets successful end", data: strings.Replace(validTemplateYAML, "      cancel: canceled", "      cancel: done", 1)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			parsed, err := Parse([]byte(test.data))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !hasDiagnostic(parsed.Diagnostics, SeverityError, "invalid_poison_escalation") {
+				t.Fatalf("diagnostics = %#v", parsed.Diagnostics)
+			}
+		})
 	}
 }
 

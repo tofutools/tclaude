@@ -100,6 +100,42 @@ func TestExecutePerformerCommandRecordsObservationAndSettlement(t *testing.T) {
 	}
 }
 
+func TestExecuteBindsRenderedPerformerIntoIssuedPayload(t *testing.T) {
+	fs, snapshot := executorFixture(t, true, model.Performer{
+		Kind: model.PerformerProgram,
+		Run:  "/fake/{{ params.ticket }}",
+		Args: []string{"--ticket={{ params.ticket }}"},
+	})
+	adapter := &fakeAdapter{observation: Observation{Actor: "program:fake@exit0", Verdict: "pass"}}
+	executor := New(fs, map[model.PerformerKind]Adapter{model.PerformerProgram: adapter})
+	commands, err := plan.Plan(snapshot.State, mustTemplate(t, fs, snapshot.Run.TemplateRef))
+	if err != nil || len(commands) != 1 {
+		t.Fatalf("commands = %#v, err = %v", commands, err)
+	}
+	if _, err := executor.Execute(t.Context(), commands[0]); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := fs.LoadRun(t.Context(), snapshot.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outstanding := loaded.State.OutstandingCommands[commands[0].ID]
+	var issued plan.Command
+	if err := json.Unmarshal(outstanding.Payload, &issued); err != nil {
+		t.Fatal(err)
+	}
+	if issued.Performer == nil || issued.Performer.Run != "/fake/TCL-274" || len(issued.Performer.Args) != 1 || issued.Performer.Args[0] != "--ticket=TCL-274" {
+		t.Fatalf("issued performer was not parameter-bound: %#v", issued.Performer)
+	}
+	if got := adapter.requests[0].Performer; got.Run != issued.Performer.Run || got.Args[0] != issued.Performer.Args[0] {
+		t.Fatalf("adapter request %#v differs from durable payload %#v", got, issued.Performer)
+	}
+	recovered := performerRequest(store.RunRecord{ID: snapshot.Run.ID, Params: map[string]string{"ticket": "TCL-999"}}, issued)
+	if recovered.Performer.Run != "/fake/TCL-274" || recovered.Performer.Args[0] != "--ticket=TCL-274" {
+		t.Fatalf("recovery re-rendered durable payload from mutable params: %#v", recovered.Performer)
+	}
+}
+
 func TestClaimedCommandIsNeverReperformedAfterCrash(t *testing.T) {
 	fs, snapshot := executorFixture(t, true, model.Performer{Kind: model.PerformerProgram, Run: "/fake"})
 	adapter := &fakeAdapter{observation: Observation{Actor: "program:fake@exit0", Verdict: "pass"}}

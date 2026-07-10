@@ -104,6 +104,7 @@ func planBlockedNode(st *state.State, tmpl *model.Template, nodeID string, node 
 	cmd.TargetNodeID = targetID
 	cmd.SourceNodeStatus = state.NodeStatusBlocked
 	cmd.NodeStatus = state.NodeStatusReady
+	cmd.Attempt = node.BlockedAttempt
 	if commandOutstanding(st, cmd.ID) {
 		return nil, nil
 	}
@@ -156,8 +157,18 @@ func planReadyNode(st *state.State, tmpl *model.Template, nodeID string, node st
 		}
 		return []Command{cmd}, nil
 	case model.NodeTypeDecision:
+		if node.Attempt > 0 {
+			_, source, linked, err := poisonEscalationSource(st, tmpl, nodeID)
+			if err != nil {
+				return nil, err
+			}
+			if linked && (source.Status != state.NodeStatusBlocked || source.BlockedAttempt != node.Attempt) {
+				return nil, nil
+			}
+		}
 		cmd := newCommand(CommandKindRecordDecision, st.RunID, nodeID, "decision")
 		cmd.NodeID = nodeID
+		cmd.Attempt = node.Attempt
 		cmd.Performer = templateNode.Performer
 		if commandOutstanding(st, cmd.ID) {
 			return nil, nil
@@ -227,39 +238,22 @@ func escalationResolutionCommand(st *state.State, tmpl *model.Template, decision
 	if !ok || decisionTemplate.Performer == nil || decisionTemplate.Performer.Kind != model.PerformerHuman {
 		return Command{}, false, nil
 	}
-	var blockedID string
-	for _, candidateID := range sortedNodeIDs(st.Nodes) {
-		candidate := st.Nodes[candidateID]
-		if candidate.Parent != "" || candidate.Status != state.NodeStatusBlocked || candidate.BlockedNodeID == "" {
-			continue
-		}
-		templateNode, ok := tmpl.Nodes[candidateID]
-		if !ok || ResolveFailEdge(templateNode.Next) != decisionID {
-			continue
-		}
-		if blockedID != "" {
-			return Command{}, false, fmt.Errorf("decision node %q escalates multiple blocked nodes (%q and %q)", decisionID, blockedID, candidateID)
-		}
-		blockedID = candidateID
+	blockedID, blocked, linked, err := poisonEscalationSource(st, tmpl, decisionID)
+	if err != nil {
+		return Command{}, false, err
 	}
-	if blockedID == "" {
+	if !linked {
 		return Command{}, false, nil
+	}
+	if decision.Attempt <= 0 || blocked.Status != state.NodeStatusBlocked || blocked.BlockedAttempt != decision.Attempt || blocked.BlockedNodeID == "" {
+		// This decision was never offered for the current poison generation,
+		// or explicit unblock already made it stale. Suppress ordinary routing.
+		return Command{}, true, nil
 	}
 	if len(decision.Decisions) == 0 {
 		return Command{}, false, fmt.Errorf("completed escalation decision %q has no decision record", decisionID)
 	}
 	record := decision.Decisions[len(decision.Decisions)-1]
-	blocked := st.Nodes[blockedID]
-	for _, admin := range st.AdminRecords {
-		if admin.Type == state.EventBlockResolutionRecorded && admin.Resolution != nil &&
-			admin.Resolution.NodeID == blocked.BlockedNodeID && admin.Resolution.Actor == record.Actor &&
-			admin.Resolution.EvidenceRef == record.EvidenceRef {
-			// The audited resolution consumed this single-use decision. A later
-			// poison generation must wait for explicit process unblock rather
-			// than silently replaying the old human verdict.
-			return Command{}, true, nil
-		}
-	}
 
 	resolution := state.BlockDecision("")
 	if targetID == blockedID {
@@ -278,9 +272,33 @@ func escalationResolutionCommand(st *state.State, tmpl *model.Template, decision
 	cmd.Reason = fmt.Sprintf("decision by %s selected %q", record.Actor, record.Verdict)
 	cmd.EvidenceRef = record.EvidenceRef
 	if commandOutstanding(st, cmd.ID) {
-		return Command{}, false, nil
+		// The decision is linked and its generation-bound resolution is already
+		// claimed. Suppress ordinary edge routing while recovery resumes it.
+		return Command{}, true, nil
 	}
 	return cmd, true, nil
+}
+
+func poisonEscalationSource(st *state.State, tmpl *model.Template, decisionID string) (string, state.NodeState, bool, error) {
+	var sourceID string
+	for _, candidateID := range sortedNodeIDs(st.Nodes) {
+		candidate := st.Nodes[candidateID]
+		if candidate.Parent != "" {
+			continue
+		}
+		templateNode, ok := tmpl.Nodes[candidateID]
+		if !ok || !templateNode.IsCompound() || ResolveFailEdge(templateNode.Next) != decisionID {
+			continue
+		}
+		if sourceID != "" {
+			return "", state.NodeState{}, false, fmt.Errorf("decision node %q escalates multiple compound nodes (%q and %q)", decisionID, sourceID, candidateID)
+		}
+		sourceID = candidateID
+	}
+	if sourceID == "" {
+		return "", state.NodeState{}, false, nil
+	}
+	return sourceID, st.Nodes[sourceID], true, nil
 }
 
 func planFailedNode(st *state.State, tmpl *model.Template, nodeID string, templateNode model.Node) ([]Command, error) {
