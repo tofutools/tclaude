@@ -1,9 +1,12 @@
 package agentd_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -62,6 +65,151 @@ func TestNudgeQueue_SenderReturnsImmediately_WithDepth(t *testing.T) {
 	f.AssertSentContains(tmux+":0.0", fmt.Sprintf("new agent message #%d", r2.ID), 2*time.Second)
 }
 
+// TestNudgeQueue_HungLivenessProbeDoesNotWedgeTarget reproduces TCL-281's
+// signature: the first delivery worker gets stuck before it can atomically
+// claim the message, every later enqueue coalesces behind running=true, and a
+// daemon restart (which clears nudgeState) is the only recovery. The simulator
+// hangs exactly the production boundary implicated by the live DB/log evidence
+// — tmux has-session inside deliverablePane — while SQLite, routing, claiming,
+// and the async dispatcher remain production code.
+func TestNudgeQueue_HungLivenessProbeDoesNotWedgeTarget(t *testing.T) {
+	f := newFlow(t)
+	t.Cleanup(agentd.SetTmuxCommandTimeoutForTest(25 * time.Millisecond))
+	f.HaveGroup("team")
+	const sender = "nq05-send-bbbb-cccc-000000000001"
+	const recipient = "nq05-recv-bbbb-cccc-000000000002"
+	const tmux = "tclaude-nq05-r"
+	f.HaveConvWithTitle(sender, "po")
+	f.HaveConvWithTitle(recipient, "worker")
+	f.HaveEnrolledAgent(sender)
+	f.HaveEnrolledAgent(recipient)
+	f.HaveMember("team", sender)
+	f.HaveMember("team", recipient)
+	f.HaveAliveSession(recipient, "spwn-nq05-r", tmux, "/tmp/work")
+
+	// A local tmux command should finish in milliseconds. Sleeping much longer
+	// than the delivery deadline models the anomalous client that parked the
+	// live daemon's worker before ClaimAgentMessageNudge.
+	f.World.Tmux.HangNextCommand("has-session", 5*time.Second)
+	r1 := mustSend(t, f, sender, map[string]any{"to": recipient, "body": "one"})
+	require.Eventually(t, func() bool {
+		return f.World.Tmux.CommandCount("has-session") >= 1
+	}, time.Second, time.Millisecond, "first worker reaches the hung liveness probe")
+
+	// Arrive while the first pass is still in flight. The dispatcher marks the
+	// target `again`; once the timed-out probe returns, that pass must release
+	// and the re-armed pass must drain both rows without a daemon restart.
+	r2 := mustSend(t, f, sender, map[string]any{"to": recipient, "body": "two"})
+	assert.Equal(t, 2, r2.Pending, "both messages are unclaimed while the probe is hung")
+	drainStarted := time.Now()
+	agentd.WaitForBackgroundForTest()
+	assert.Less(t, time.Since(drainStarted), time.Second,
+		"the command deadline must recover well before the simulated tmux hang ends")
+
+	for _, id := range []int64{r1.ID, r2.ID} {
+		m, err := db.GetAgentMessage(id)
+		require.NoError(t, err)
+		assert.False(t, m.DeliveredAt.IsZero(), "message #%d delivered after the probe timeout", id)
+		f.AssertSentContains(tmux+":0.0", fmt.Sprintf("new agent message #%d", id), 2*time.Second)
+	}
+}
+
+// TestNudgeQueue_HungSendKeysIsRetriedByReaper is the exact live TCL-281
+// shape. The first row is durably claimed, its tmux send-keys never returns,
+// and a second row arrives behind the target's running latch. The command
+// deadline must release the latch, failed delivery must release only its own
+// durable claim, the second row may proceed, and the regular reaper cadence
+// must retry the first after its per-message backoff.
+func TestNudgeQueue_HungSendKeysIsRetriedByReaper(t *testing.T) {
+	f := newFlow(t)
+	t.Cleanup(agentd.SetTmuxCommandTimeoutForTest(25 * time.Millisecond))
+	// Keep the coalesced `again` pass from retrying #1 before we can assert
+	// the failed state. The test switches backoff off explicitly when it is
+	// ready to drive the periodic reaper.
+	t.Cleanup(agentd.SetNudgeRetryTimingForTest(time.Minute, time.Minute))
+	f.HaveGroup("team")
+	const sender = "nq06-send-bbbb-cccc-000000000001"
+	const recipient = "nq06-recv-bbbb-cccc-000000000002"
+	const tmux = "tclaude-nq06-r"
+	f.HaveConvWithTitle(sender, "po")
+	f.HaveConvWithTitle(recipient, "worker")
+	f.HaveEnrolledAgent(sender)
+	f.HaveEnrolledAgent(recipient)
+	f.HaveMember("team", sender)
+	f.HaveMember("team", recipient)
+	f.HaveAliveSession(recipient, "spwn-nq06-r", tmux, "/tmp/work")
+
+	f.World.Tmux.HangNextCommand("send-keys", 500*time.Millisecond)
+	r1 := mustSend(t, f, sender, map[string]any{"to": recipient, "body": "one"})
+	require.Eventually(t, func() bool {
+		return f.World.Tmux.CommandCount("send-keys") >= 1
+	}, time.Second, time.Millisecond, "first worker reaches the hung send-keys")
+	r2 := mustSend(t, f, sender, map[string]any{"to": recipient, "body": "two"})
+	assert.Equal(t, 2, r2.Pending, "in-flight-but-unconfirmed #1 remains part of the durable queue")
+
+	agentd.WaitForBackgroundForTest()
+	m1, err := db.GetAgentMessage(r1.ID)
+	require.NoError(t, err)
+	assert.True(t, m1.DeliveredAt.IsZero(), "timed-out send is not falsely marked delivered")
+	assert.True(t, m1.NudgeClaimedAt.IsZero(), "failed attempt released its claim")
+	assert.Equal(t, 1, m1.NudgeAttempts, "failed attempt persisted for backoff")
+	m2, err := db.GetAgentMessage(r2.ID)
+	require.NoError(t, err)
+	assert.False(t, m2.DeliveredAt.IsZero(), "later row is not wedged behind the failed attempt")
+	f.AssertSentContains(tmux+":0.0", fmt.Sprintf("new agent message #%d", r2.ID), 2*time.Second)
+	assertNoSendKeys(t, f, tmux+":0.0", fmt.Sprintf("new agent message #%d", r1.ID))
+
+	// The recipient makes no request. Make the durable retry due, then drive
+	// the existing 30s reaper path that regularly re-arms delivery.
+	t.Cleanup(agentd.SetNudgeRetryTimingForTest(0, 0))
+	agentd.RunReaperTickForTest(time.Now())
+	agentd.WaitForBackgroundForTest()
+	m1, err = db.GetAgentMessage(r1.ID)
+	require.NoError(t, err)
+	assert.False(t, m1.DeliveredAt.IsZero(), "reaper retry completes first delivery")
+	assert.Equal(t, 2, m1.NudgeAttempts, "retry attempt is durable")
+	f.AssertSentContains(tmux+":0.0", fmt.Sprintf("new agent message #%d", r1.ID), 2*time.Second)
+}
+
+// TestNudgeQueue_StaleUndeliveredWarnNamesTargetAndMessage pins the operator's
+// observability requirement: an old durable row emits a WARN naming the queue
+// key, oldest message id, and elapsed time, throttled per target.
+func TestNudgeQueue_StaleUndeliveredWarnNamesTargetAndMessage(t *testing.T) {
+	f := newFlow(t)
+	t.Cleanup(agentd.SetStaleNudgeTimingForTest(0, time.Hour))
+	f.HaveGroup("team")
+	const sender = "nq07-send-bbbb-cccc-000000000001"
+	const recipient = "nq07-recv-bbbb-cccc-000000000002"
+	f.HaveConvWithTitle(sender, "po")
+	f.HaveConvWithTitle(recipient, "worker")
+	f.HaveEnrolledAgent(sender)
+	f.HaveEnrolledAgent(recipient)
+	f.HaveMember("team", sender)
+	f.HaveMember("team", recipient)
+	f.HaveAliveSession(recipient, "spwn-nq07-r", "tclaude-nq07-r", "/tmp/work")
+	f.SetSessionStatus(recipient, "awaiting_permission")
+
+	r := mustSend(t, f, sender, map[string]any{"to": recipient, "body": "held"})
+	agentd.WaitForBackgroundForTest()
+
+	prev := slog.Default()
+	var logs bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	agentd.RunReaperTickForTest(time.Now())
+	agentd.WaitForBackgroundForTest()
+	agentd.RunReaperTickForTest(time.Now().Add(time.Second))
+	agentd.WaitForBackgroundForTest()
+
+	got := logs.String()
+	assert.Contains(t, got, "level=WARN msg=\"nudge delivery queue stuck\"")
+	assert.Contains(t, got, "target=agent:")
+	assert.Contains(t, got, fmt.Sprintf("msg_id=%d", r.ID))
+	assert.Contains(t, got, "elapsed=")
+	assert.Equal(t, 1, strings.Count(got, "nudge delivery queue stuck"), "warning throttled per target")
+}
+
 // TestNudgeQueue_SurvivesReincarnation is the headline correctness win: a
 // message queued to an agent while it is offline is delivered to the agent's
 // CURRENT head generation even after the conv-id rotated (reincarnate / /clear)
@@ -90,7 +238,7 @@ func TestNudgeQueue_SurvivesReincarnation(t *testing.T) {
 	// while gen1 is still OFFLINE, so it HOLDS the backlog — the canDeliver gate
 	// runs before the claim — instead of racing the explicit drain below. Without
 	// this, a late-scheduled worker can run after gen2 comes online, resolve the
-	// agent head to gen2, and win the atomic ClaimAgentMessageDelivery first,
+	// agent head to gen2, and win the atomic ClaimAgentMessageNudge first,
 	// leaving the synchronous drain to claim 0 (the macOS-CI flake). Mirrors
 	// TestNudgeQueue_HoldsThenDeliversBacklog's pre-online WaitForBackgroundForTest.
 	agentd.WaitForBackgroundForTest()

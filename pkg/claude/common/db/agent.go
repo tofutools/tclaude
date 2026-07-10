@@ -399,14 +399,21 @@ type AgentMessage struct {
 	// (any value preset on the struct is ignored), and they are '' when
 	// the conv is not an actor (a plain conv, or a since-deleted agent).
 	// On read, scanAgentMessage fills them from the stored columns.
-	FromAgent         string
-	ToAgent           string
-	Subject           string
-	Body              string
-	ParentID          int64
-	CreatedAt         time.Time
-	DeliveredAt       time.Time
-	ReadAt            time.Time
+	FromAgent   string
+	ToAgent     string
+	Subject     string
+	Body        string
+	ParentID    int64
+	CreatedAt   time.Time
+	DeliveredAt time.Time
+	ReadAt      time.Time
+	// NudgeClaimedAt is a short-lived delivery lease. It is separate from
+	// DeliveredAt so a failed/hung send never masquerades as success.
+	// NudgeAttemptedAt/NudgeAttempts persist retry history across daemon
+	// restarts and drive bounded per-message backoff.
+	NudgeClaimedAt    time.Time
+	NudgeAttemptedAt  time.Time
+	NudgeAttempts     int
 	ToRecipients      []string
 	CcRecipients      []string
 	ToRecipientAgents []string
@@ -1989,7 +1996,7 @@ func MarkAgentMessageDelivered(id int64) error {
 	if err != nil {
 		return err
 	}
-	_, err = db.Exec(`UPDATE agent_messages SET delivered_at = ? WHERE id = ?`,
+	_, err = db.Exec(`UPDATE agent_messages SET delivered_at = ?, nudge_claimed_at = '' WHERE id = ?`,
 		time.Now().Format(time.RFC3339Nano), id)
 	return err
 }
@@ -2017,7 +2024,7 @@ func ListUndeliveredAgentMessagesFor(toConv string) ([]*AgentMessage, error) {
 	}
 	q := `SELECT ` + agentMessageColumns + `
 		FROM agent_messages
-		WHERE to_conv = ? AND delivered_at = ''
+		WHERE to_conv = ? AND delivered_at = '' AND read_at = ''
 		ORDER BY id ASC`
 	rows, err := db.Query(q, toConv)
 	if err != nil {
@@ -2053,7 +2060,7 @@ func ListUndeliveredForAgent(agentID string) ([]*AgentMessage, error) {
 	}
 	q := `SELECT ` + agentMessageColumns + `
 		FROM agent_messages
-		WHERE to_agent = ? AND pin_gen = 0 AND delivered_at = ''
+		WHERE to_agent = ? AND pin_gen = 0 AND delivered_at = '' AND read_at = ''
 		ORDER BY id ASC`
 	rows, err := db.Query(q, agentID)
 	if err != nil {
@@ -2089,7 +2096,7 @@ func ListUndeliveredForExactConv(convID string) ([]*AgentMessage, error) {
 	}
 	q := `SELECT ` + agentMessageColumns + `
 		FROM agent_messages
-		WHERE to_conv = ? AND (pin_gen = 1 OR to_agent = '') AND delivered_at = ''
+		WHERE to_conv = ? AND (pin_gen = 1 OR to_agent = '') AND delivered_at = '' AND read_at = ''
 		ORDER BY id ASC`
 	rows, err := db.Query(q, convID)
 	if err != nil {
@@ -2122,7 +2129,7 @@ func CountUndeliveredForAgent(agentID string) (int, error) {
 	}
 	var n int
 	err = db.QueryRow(
-		`SELECT COUNT(*) FROM agent_messages WHERE to_agent = ? AND pin_gen = 0 AND delivered_at = ''`,
+		`SELECT COUNT(*) FROM agent_messages WHERE to_agent = ? AND pin_gen = 0 AND delivered_at = '' AND read_at = ''`,
 		agentID).Scan(&n)
 	return n, err
 }
@@ -2140,9 +2147,35 @@ func CountUndeliveredForExactConv(convID string) (int, error) {
 	}
 	var n int
 	err = db.QueryRow(
-		`SELECT COUNT(*) FROM agent_messages WHERE to_conv = ? AND (pin_gen = 1 OR to_agent = '') AND delivered_at = ''`,
+		`SELECT COUNT(*) FROM agent_messages WHERE to_conv = ? AND (pin_gen = 1 OR to_agent = '') AND delivered_at = '' AND read_at = ''`,
 		convID).Scan(&n)
 	return n, err
+}
+
+// ListAllUndeliveredAgentMessages returns every unread message whose first
+// nudge has not completed, in insertion order. It feeds the daemon's periodic
+// stale-queue health scan; delivery itself stays partitioned by agent/conv via
+// the narrower list functions above.
+func ListAllUndeliveredAgentMessages() ([]*AgentMessage, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT ` + agentMessageColumns + ` FROM agent_messages
+		WHERE delivered_at = '' AND read_at = '' ORDER BY id ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []*AgentMessage
+	for rows.Next() {
+		m, err := scanAgentMessage(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
 }
 
 // ListDeliveredUnreadAgentMessages returns every message that has been
@@ -2183,29 +2216,87 @@ func ListDeliveredUnreadAgentMessages() ([]*AgentMessage, error) {
 	return out, rows.Err()
 }
 
-// ClaimAgentMessageDelivery atomically marks a message as delivered
-// IF it wasn't already. Returns true when this caller won the race —
-// in that case the caller is responsible for actually delivering the
-// nudge. Returns false (with no error) when another goroutine got
-// there first; the caller must NOT re-deliver.
-//
-// This is the concurrency primitive that makes the flush-on-online
-// path safe: every request that resolves to a conv-id can speculatively
-// flush, and only one delivery path will fire per message.
-func ClaimAgentMessageDelivery(id int64) (bool, error) {
+type AgentMessageNudgeClaim struct {
+	ClaimedAt string
+	Attempt   int
+}
+
+// ClaimAgentMessageNudge atomically acquires a short-lived nudge lease without
+// marking the message delivered. The returned token is the exact timestamp
+// plus monotonically-incremented per-message attempt number stored by the same
+// UPDATE. Completion/release must present both, so even two RFC3339Nano stamps
+// that serialize identically cannot let a stale worker mutate a newer claim.
+func ClaimAgentMessageNudge(id int64, now time.Time) (token AgentMessageNudgeClaim, claimed bool, err error) {
 	db, err := Open()
+	if err != nil {
+		return token, false, err
+	}
+	token.ClaimedAt = now.Format(time.RFC3339Nano)
+	err = db.QueryRow(
+		`UPDATE agent_messages
+		 SET nudge_claimed_at = ?, nudge_attempted_at = ?, nudge_attempts = nudge_attempts + 1
+		 WHERE id = ? AND delivered_at = '' AND read_at = '' AND nudge_claimed_at = ''
+		 RETURNING nudge_attempts`,
+		token.ClaimedAt, token.ClaimedAt, id).Scan(&token.Attempt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AgentMessageNudgeClaim{}, false, nil
+	}
+	if err != nil {
+		return AgentMessageNudgeClaim{}, false, err
+	}
+	return token, true, nil
+}
+
+// CompleteAgentMessageNudge converts token's in-flight lease into successful
+// delivery. The token guard prevents a stale worker from completing a newer
+// claim. Returns false when the lease no longer belongs to this worker.
+func CompleteAgentMessageNudge(id int64, token AgentMessageNudgeClaim, now time.Time) (bool, error) {
+	d, err := Open()
 	if err != nil {
 		return false, err
 	}
-	res, err := db.Exec(
-		`UPDATE agent_messages SET delivered_at = ?
-		 WHERE id = ? AND delivered_at = ''`,
-		time.Now().Format(time.RFC3339Nano), id)
+	res, err := d.Exec(`UPDATE agent_messages
+		SET delivered_at = ?, nudge_claimed_at = ''
+		WHERE id = ? AND delivered_at = '' AND nudge_claimed_at = ? AND nudge_attempts = ?`,
+		now.Format(time.RFC3339Nano), id, token.ClaimedAt, token.Attempt)
 	if err != nil {
 		return false, err
 	}
 	n, _ := res.RowsAffected()
 	return n == 1, nil
+}
+
+// ReleaseAgentMessageNudge releases token's lease after a failed send while
+// preserving its durable attempt count/time for retry backoff.
+func ReleaseAgentMessageNudge(id int64, token AgentMessageNudgeClaim) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	res, err := d.Exec(`UPDATE agent_messages SET nudge_claimed_at = ''
+		WHERE id = ? AND delivered_at = '' AND nudge_claimed_at = ? AND nudge_attempts = ?`,
+		id, token.ClaimedAt, token.Attempt)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
+}
+
+// ReleaseAllAgentMessageNudgeClaims clears leases left by the previous daemon
+// process. It is safe only at daemon startup, before this process launches any
+// delivery worker.
+func ReleaseAllAgentMessageNudgeClaims() (int64, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	res, err := d.Exec(`UPDATE agent_messages SET nudge_claimed_at = ''
+		WHERE delivered_at = '' AND nudge_claimed_at != ''`)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // MarkAgentMessageRead sets read_at = now for the given message ID.
@@ -3112,11 +3203,11 @@ func scanAgentGroupMember(s rowScanner) (*AgentGroupMember, error) {
 const agentMessageColumns = `id, group_id, from_conv, to_conv, from_agent, to_agent, ` +
 	`subject, body, parent_id, created_at, delivered_at, read_at, ` +
 	`to_recipients, cc_recipients, to_recipient_agents, cc_recipient_agents, ` +
-	`original_to_conv, pin_gen`
+	`original_to_conv, pin_gen, nudge_claimed_at, nudge_attempted_at, nudge_attempts`
 
 func scanAgentMessage(s rowScanner) (*AgentMessage, error) {
 	var m AgentMessage
-	var createdAt, deliveredAt, readAt string
+	var createdAt, deliveredAt, readAt, nudgeClaimedAt, nudgeAttemptedAt string
 	var toRecipients, ccRecipients string
 	var toRecipientAgents, ccRecipientAgents string
 	var pinGen int
@@ -3125,12 +3216,15 @@ func scanAgentMessage(s rowScanner) (*AgentMessage, error) {
 		&m.Subject, &m.Body, &m.ParentID,
 		&createdAt, &deliveredAt, &readAt,
 		&toRecipients, &ccRecipients,
-		&toRecipientAgents, &ccRecipientAgents, &m.OriginalToConv, &pinGen); err != nil {
+		&toRecipientAgents, &ccRecipientAgents, &m.OriginalToConv, &pinGen,
+		&nudgeClaimedAt, &nudgeAttemptedAt, &m.NudgeAttempts); err != nil {
 		return nil, err
 	}
 	m.CreatedAt = parseTimeOrZero(createdAt)
 	m.DeliveredAt = parseTimeOrZero(deliveredAt)
 	m.ReadAt = parseTimeOrZero(readAt)
+	m.NudgeClaimedAt = parseTimeOrZero(nudgeClaimedAt)
+	m.NudgeAttemptedAt = parseTimeOrZero(nudgeAttemptedAt)
 	m.ToRecipients = recipientsFromJSON(toRecipients)
 	m.CcRecipients = recipientsFromJSON(ccRecipients)
 	m.ToRecipientAgents = recipientsFromJSON(toRecipientAgents)

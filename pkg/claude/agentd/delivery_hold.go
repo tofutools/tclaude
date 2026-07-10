@@ -51,9 +51,10 @@ func isAwaitingHumanInput(status string) bool {
 
 // deliverablePane reports whether convID has an alive pane we may nudge into
 // RIGHT NOW: it exists AND is not blocked on a human. It is the gate the async
-// drains (flushAgent / flush) check BEFORE claiming a message — claiming stamps
-// delivered_at, so claiming a message we then can't deliver would consume it.
-// Returning false leaves the whole queue undelivered for a later drain.
+// drains (flushAgent / flush) check before claiming a message. The durable
+// claim is retryable now, but acquiring it while the pane is known unsafe
+// would still create needless attempts and injected-dialog risk. Returning
+// false leaves the whole queue untouched for a later drain.
 //
 // It folds the two "don't deliver yet" cases the async model must handle into
 // one gate, because both want the same outcome (leave it queued, retry later):
@@ -63,10 +64,10 @@ func isAwaitingHumanInput(status string) bool {
 //     the JOH-308 hold: a nudge typed in now would be captured by the open
 //     dialog as the human's answer, and the real notification lost.
 //
-// It reuses pickAliveSession (the same most-recent-alive selector
-// sendNudgeBracket uses), so the status it reads belongs to the pane a nudge
-// would actually land in.
+// It reuses pickNudgeSession (the same most-recent-alive, timeout-bounded
+// selector sendNudgeBracket uses), so the status it reads belongs to the pane
+// a nudge would actually land in.
 func deliverablePane(convID string) bool {
-	sess := pickAliveSession(convID)
+	sess := pickNudgeSession(convID)
 	return sess != nil && !isAwaitingHumanInput(sess.Status)
 }

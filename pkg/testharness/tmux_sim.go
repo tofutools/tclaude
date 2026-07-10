@@ -25,6 +25,11 @@ var (
 	// answers it with `echo <pane-pid>` so the caller's .Output() reads the
 	// pid back, the same hermetic-absolute-path discipline as true/false.
 	echoBin = resolveCoreutil("echo")
+	// sleepBin lets a flow test model a tmux client process that starts but
+	// never answers promptly. Production callers must bound that subprocess;
+	// otherwise one stuck has-session/send-keys holds a per-target delivery
+	// worker forever. As with true/false/echo, keep the path hermetic.
+	sleepBin = resolveCoreutil("sleep")
 )
 
 // resolveCoreutil returns an absolute path to the named coreutil from a
@@ -96,12 +101,23 @@ type TmuxSim struct {
 	// has-session calls". An accessor rather than a getter on the
 	// whole map so the lock stays internal.
 	commandCounts map[string]int
+	// commandFaults are one-shot subprocess faults, keyed by tmux verb. They
+	// are consumed before the verb's ordinary simulated behavior: fail makes
+	// Run exit 1; hang makes it run `sleep` for the requested duration. These
+	// model the two real delivery failures that matter at this boundary while
+	// keeping the queue/database paths fully production.
+	commandFaults map[string][]tmuxCommandFault
 	// nextPID hands each newly-registered session a distinct, launch-unique
 	// fake pane pid (mirrors tmux giving every new pane process a fresh OS
 	// pid). Re-registering the same name — the test stand-in for a resume
 	// reusing a conv-id-derived tmux name — therefore yields a DIFFERENT pid,
 	// which is exactly what the soft-exit retry's livePanePID guard keys on.
 	nextPID int
+}
+
+type tmuxCommandFault struct {
+	fail bool
+	hang time.Duration
 }
 
 type tmuxSession struct {
@@ -116,6 +132,7 @@ func newTmuxSim() *TmuxSim {
 		sessions:      map[string]*tmuxSession{},
 		buffers:       map[string]string{},
 		commandCounts: map[string]int{},
+		commandFaults: map[string][]tmuxCommandFault{},
 	}
 }
 
@@ -129,6 +146,12 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 		t.mu.Lock()
 		t.commandCounts[args[0]]++
 		t.mu.Unlock()
+		if fault, ok := t.takeCommandFault(args[0]); ok {
+			if fault.fail {
+				return exec.Command(falseBin)
+			}
+			return exec.Command(sleepBin, strconv.FormatFloat(fault.hang.Seconds(), 'f', 3, 64))
+		}
 	}
 	switch {
 	case len(args) >= 3 && args[0] == "has-session" && args[1] == "-t":
@@ -163,6 +186,40 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 		return t.listPanes(args[2])
 	}
 	return exec.Command(trueBin)
+}
+
+// FailNextCommand makes the next invocation of verb return exit status 1
+// without applying its ordinary simulated behavior. Faults queue FIFO so a
+// flow can describe a short sequence of failures deterministically.
+func (t *TmuxSim) FailNextCommand(verb string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.commandFaults[verb] = append(t.commandFaults[verb], tmuxCommandFault{fail: true})
+}
+
+// HangNextCommand makes the next invocation of verb remain in Run for d
+// before exiting successfully, without applying its ordinary simulated
+// behavior. Use a duration longer than the production timeout under test.
+func (t *TmuxSim) HangNextCommand(verb string, d time.Duration) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.commandFaults[verb] = append(t.commandFaults[verb], tmuxCommandFault{hang: d})
+}
+
+func (t *TmuxSim) takeCommandFault(verb string) (tmuxCommandFault, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	faults := t.commandFaults[verb]
+	if len(faults) == 0 {
+		return tmuxCommandFault{}, false
+	}
+	fault := faults[0]
+	if len(faults) == 1 {
+		delete(t.commandFaults, verb)
+	} else {
+		t.commandFaults[verb] = faults[1:]
+	}
+	return fault, true
 }
 
 // listPanes models `tmux list-panes -t <target> -F '#{pane_pid}'` for the

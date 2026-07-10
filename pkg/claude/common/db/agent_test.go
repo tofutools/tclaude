@@ -517,10 +517,10 @@ func TestListUndeliveredAgentMessagesForWholeSecondOrdering(t *testing.T) {
 	assert.Equal(t, newer, out[1].ID, "newer (fractional) message must come second")
 }
 
-// TestClaimAgentMessageDelivery validates the race-safe claim
-// primitive: first claim returns true, subsequent claims return
-// false without error.
-func TestClaimAgentMessageDelivery(t *testing.T) {
+// TestClaimAgentMessageNudge validates the attempt-safe lease: delivered_at is
+// not stamped until completion, only one worker owns the row, and an old token
+// cannot release or complete a newer attempt.
+func TestClaimAgentMessageNudge(t *testing.T) {
 	setupTestDB(t)
 	g, _ := CreateAgentGroup("alpha", "")
 
@@ -529,24 +529,52 @@ func TestClaimAgentMessageDelivery(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	got, err := ClaimAgentMessageDelivery(id)
+	t1 := time.Date(2026, 7, 10, 1, 2, 3, 123456789, time.UTC)
+	token1, got, err := ClaimAgentMessageNudge(id, t1)
 	require.NoError(t, err, "first claim err")
 	require.True(t, got, "first claim: want true")
 
-	// Second claim must lose: the row is no longer delivered_at = ''.
-	got, err = ClaimAgentMessageDelivery(id)
+	// Second claim must lose while token1 owns the lease.
+	_, got, err = ClaimAgentMessageNudge(id, t1.Add(time.Nanosecond))
 	require.NoError(t, err, "second claim err")
 	require.False(t, got, "second claim: want false")
 
-	// And delivered_at must be populated.
+	// Claiming alone is not delivery.
 	m, err := GetAgentMessage(id)
 	require.NoError(t, err, "GetAgentMessage")
-	require.NotNil(t, m, "GetAgentMessage")
-	assert.False(t, m.DeliveredAt.IsZero(), "delivered_at should be set after a successful claim")
+	assert.True(t, m.DeliveredAt.IsZero())
+	assert.Equal(t, token1.ClaimedAt, m.NudgeClaimedAt.Format(time.RFC3339Nano))
+	assert.Equal(t, 1, token1.Attempt)
+	assert.Equal(t, 1, m.NudgeAttempts)
 
-	// Claiming an already-delivered or unknown row must return false
-	// (not error) so the flush goroutine can keep going.
-	got, err = ClaimAgentMessageDelivery(99999)
+	released, err := ReleaseAgentMessageNudge(id, token1)
+	require.NoError(t, err)
+	require.True(t, released)
+	// Deliberately reuse the exact timestamp: attempt number, not TEXT time
+	// uniqueness, must distinguish the new lease.
+	token2, got, err := ClaimAgentMessageNudge(id, t1)
+	require.NoError(t, err)
+	require.True(t, got)
+	assert.NotEqual(t, token1.Attempt, token2.Attempt)
+	assert.Equal(t, token1.ClaimedAt, token2.ClaimedAt)
+
+	// Stale token1 cannot resurrect or complete token2's attempt.
+	released, err = ReleaseAgentMessageNudge(id, token1)
+	require.NoError(t, err)
+	assert.False(t, released)
+	completed, err := CompleteAgentMessageNudge(id, token1, t1.Add(2*time.Millisecond))
+	require.NoError(t, err)
+	assert.False(t, completed)
+	completed, err = CompleteAgentMessageNudge(id, token2, t1.Add(3*time.Millisecond))
+	require.NoError(t, err)
+	assert.True(t, completed)
+	m, err = GetAgentMessage(id)
+	require.NoError(t, err)
+	assert.False(t, m.DeliveredAt.IsZero())
+	assert.True(t, m.NudgeClaimedAt.IsZero())
+	assert.Equal(t, 2, m.NudgeAttempts)
+
+	_, got, err = ClaimAgentMessageNudge(99999, time.Now())
 	assert.NoError(t, err, "nonexistent id err")
 	assert.False(t, got, "nonexistent id got")
 }
