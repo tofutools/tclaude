@@ -105,6 +105,7 @@ func planBlockedNode(st *state.State, tmpl *model.Template, nodeID string, node 
 	cmd.SourceNodeStatus = state.NodeStatusBlocked
 	cmd.NodeStatus = state.NodeStatusReady
 	cmd.Attempt = node.BlockedAttempt
+	cmd.PoisonedNodeID = node.BlockedNodeID
 	if commandOutstanding(st, cmd.ID) {
 		return nil, nil
 	}
@@ -162,13 +163,14 @@ func planReadyNode(st *state.State, tmpl *model.Template, nodeID string, node st
 			if err != nil {
 				return nil, err
 			}
-			if linked && (source.Status != state.NodeStatusBlocked || source.BlockedAttempt != node.Attempt) {
+			if linked && (source.Status != state.NodeStatusBlocked || source.BlockedAttempt != node.Attempt || source.BlockedNodeID != node.PoisonedNodeID) {
 				return nil, nil
 			}
 		}
 		cmd := newCommand(CommandKindRecordDecision, st.RunID, nodeID, "decision")
 		cmd.NodeID = nodeID
 		cmd.Attempt = node.Attempt
+		cmd.PoisonedNodeID = node.PoisonedNodeID
 		cmd.Performer = templateNode.Performer
 		if commandOutstanding(st, cmd.ID) {
 			return nil, nil
@@ -245,7 +247,7 @@ func escalationResolutionCommand(st *state.State, tmpl *model.Template, decision
 	if !linked {
 		return Command{}, false, nil
 	}
-	if decision.Attempt <= 0 || blocked.Status != state.NodeStatusBlocked || blocked.BlockedAttempt != decision.Attempt || blocked.BlockedNodeID == "" {
+	if decision.Attempt <= 0 || blocked.Status != state.NodeStatusBlocked || blocked.BlockedAttempt != decision.Attempt || blocked.BlockedNodeID == "" || blocked.BlockedNodeID != decision.PoisonedNodeID {
 		// This decision was never offered for the current poison generation,
 		// or explicit unblock already made it stale. Suppress ordinary routing.
 		return Command{}, true, nil

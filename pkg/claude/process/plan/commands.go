@@ -48,6 +48,10 @@ type Command struct {
 	Until            string           `json:"until,omitempty"`
 	Signal           string           `json:"signal,omitempty"`
 	Performer        *model.Performer `json:"performer,omitempty"`
+	// ParamsBound marks Performer and Params as the exact materialized request
+	// claimed by the executor. Recovery must not render that payload again.
+	Params      map[string]string `json:"params,omitempty"`
+	ParamsBound bool              `json:"paramsBound,omitempty"`
 
 	// Compound expansion and poison blocking (TCL-276).
 	Children []state.NodeInit `json:"children,omitempty"`
@@ -55,9 +59,11 @@ type Command struct {
 	Owner    string           `json:"owner,omitempty"`
 	// ResolveBlock composes an authored escalation decision with the audited
 	// poison-resolution funnel. The decision record supplies provenance; the
-	// blocked attempt pins the command to the poison generation it releases.
+	// blocked child identity and attempt pin the command to the poison
+	// generation it releases.
 	BlockDecision  state.BlockDecision `json:"blockDecision,omitempty"`
 	BlockedAttempt int                 `json:"blockedAttempt,omitempty"`
+	PoisonedNodeID string              `json:"poisonedNodeId,omitempty"`
 	Actor          state.ActorRef      `json:"actor,omitempty"`
 
 	// Gate feedback loops (TCL-276 PR2). RetryMode is the adapter-visible

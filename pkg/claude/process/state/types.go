@@ -165,6 +165,9 @@ type NodeState struct {
 	ActiveAttempt *AttemptState    `json:"activeAttempt,omitempty"`
 	Decisions     []DecisionRecord `json:"decisions,omitempty"`
 	ChosenEdge    string           `json:"chosenEdge,omitempty"`
+	// PoisonedNodeID binds a human escalation decision to the exact compound
+	// child whose exhausted budget caused that decision to be offered.
+	PoisonedNodeID string `json:"poisonedNodeId,omitempty"`
 
 	BlockedReason string `json:"blockedReason,omitempty"`
 	BlockedOwner  string `json:"blockedOwner,omitempty"`

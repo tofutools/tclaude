@@ -852,6 +852,11 @@ func validateCommand(snapshot store.Snapshot, command plan.Command, at time.Time
 			return fmt.Errorf("process command %q has invalid block resolution provenance", command.ID)
 		}
 	}
+	if command.Kind == plan.CommandKindActivateNode && command.SourceNodeStatus == state.NodeStatusBlocked {
+		if command.Attempt <= 0 || strings.TrimSpace(command.PoisonedNodeID) == "" {
+			return fmt.Errorf("process command %q has an invalid poison generation", command.ID)
+		}
+	}
 	return nil
 }
 
@@ -994,9 +999,10 @@ func observationEntries(command plan.Command, observation Observation, snapshot 
 			}
 		}
 		entries = append(entries, nodeEntry(command.TargetNodeID, state.Event{
-			Type:       state.EventNodeStatusSet,
-			NodeStatus: command.NodeStatus,
-			Attempt:    command.Attempt,
+			Type:           state.EventNodeStatusSet,
+			NodeStatus:     command.NodeStatus,
+			Attempt:        command.Attempt,
+			PoisonedNodeID: command.PoisonedNodeID,
 		}, "", at))
 	case plan.CommandKindExpandNode:
 		// The children come from the command's durable payload, so a crashed
@@ -1141,11 +1147,19 @@ func commandDueAt(command plan.Command, at time.Time) (time.Time, error) {
 }
 
 func performerRequest(run store.RunRecord, command plan.Command) Request {
-	params := make(map[string]string, len(run.Params))
-	for key, value := range run.Params {
+	paramsSource := run.Params
+	performer := *command.Performer
+	if command.ParamsBound {
+		paramsSource = command.Params
+	} else {
+		// Compatibility for performer commands issued before request
+		// materialization was added.
+		performer = model.InterpolatePerformer(performer, run.Params)
+	}
+	params := make(map[string]string, len(paramsSource))
+	for key, value := range paramsSource {
 		params[key] = value
 	}
-	performer := model.InterpolatePerformer(*command.Performer, params)
 	return Request{
 		Command:   command,
 		Performer: performer,
@@ -1164,6 +1178,11 @@ func materializePerformer(command plan.Command, params map[string]string) plan.C
 	}
 	performer := model.InterpolatePerformer(*command.Performer, params)
 	command.Performer = &performer
+	command.Params = make(map[string]string, len(params))
+	for key, value := range params {
+		command.Params[key] = value
+	}
+	command.ParamsBound = true
 	return command
 }
 

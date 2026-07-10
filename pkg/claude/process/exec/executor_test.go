@@ -131,8 +131,23 @@ func TestExecuteBindsRenderedPerformerIntoIssuedPayload(t *testing.T) {
 		t.Fatalf("adapter request %#v differs from durable payload %#v", got, issued.Performer)
 	}
 	recovered := performerRequest(store.RunRecord{ID: snapshot.Run.ID, Params: map[string]string{"ticket": "TCL-999"}}, issued)
-	if recovered.Performer.Run != "/fake/TCL-274" || recovered.Performer.Args[0] != "--ticket=TCL-274" {
+	if recovered.Performer.Run != "/fake/TCL-274" || recovered.Performer.Args[0] != "--ticket=TCL-274" || recovered.Input.Params["ticket"] != "TCL-274" {
 		t.Fatalf("recovery re-rendered durable payload from mutable params: %#v", recovered.Performer)
+	}
+}
+
+func TestMaterializedPerformerIsNotRecursivelyInterpolated(t *testing.T) {
+	command := plan.Command{Performer: &model.Performer{Kind: model.PerformerProgram, Run: "{{ params.ticket }}"}}
+	issued := materializePerformer(command, map[string]string{
+		"ticket": "{{ params.other }}",
+		"other":  "original",
+	})
+	recovered := performerRequest(store.RunRecord{ID: "run", Params: map[string]string{
+		"ticket": "changed",
+		"other":  "changed",
+	}}, issued)
+	if !issued.ParamsBound || recovered.Performer.Run != "{{ params.other }}" || recovered.Input.Params["other"] != "original" {
+		t.Fatalf("materialized request changed during recovery: issued=%#v recovered=%#v", issued, recovered)
 	}
 }
 

@@ -81,10 +81,11 @@ type Event struct {
 	Timer   *TimerRecord `json:"timer,omitempty"`
 	TimerID string       `json:"timerId,omitempty"`
 
-	Reason      string           `json:"reason,omitempty"`
-	Owner       string           `json:"owner,omitempty"`
-	EvidenceRef string           `json:"evidenceRef,omitempty"`
-	Resolution  *BlockResolution `json:"resolution,omitempty"`
+	Reason         string           `json:"reason,omitempty"`
+	Owner          string           `json:"owner,omitempty"`
+	PoisonedNodeID string           `json:"poisonedNodeId,omitempty"`
+	EvidenceRef    string           `json:"evidenceRef,omitempty"`
+	Resolution     *BlockResolution `json:"resolution,omitempty"`
 
 	// Gate feedback-loop fields. EvidenceHash is the hash of THIS settle's
 	// evidence; WorkEvidenceHash is the work-evidence hash a gate verdict
@@ -221,7 +222,11 @@ func applyEvent(st *State, event Event) error {
 		}
 		node.Status = event.NodeStatus
 		if node.Type == model.NodeTypeDecision && event.NodeStatus == NodeStatusReady && event.Attempt > 0 {
+			if strings.TrimSpace(event.PoisonedNodeID) == "" {
+				return fmt.Errorf("generation-bound decision activation requires poisonedNodeId")
+			}
 			node.Attempt = event.Attempt
+			node.PoisonedNodeID = event.PoisonedNodeID
 		}
 		st.Nodes[event.NodeID] = node
 		// Completing the done marker IS completing the compound parent: one
