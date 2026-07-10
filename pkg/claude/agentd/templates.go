@@ -2048,6 +2048,7 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 		WorktreePath      string                    `json:"worktree_path,omitempty"`
 		WorktreeBranch    string                    `json:"worktree_branch,omitempty"`
 		PerAgentWorktrees *db.WavePerAgentWorktrees `json:"per_agent_worktrees,omitempty"`
+		WriteProofToken   string                    `json:"write_proof_token,omitempty"`
 		Descr             string                    `json:"descr,omitempty"`
 		Parent            string                    `json:"parent,omitempty"`
 		// DescrOverride mirrors ContextOverride's grammar for the group's
@@ -2112,6 +2113,15 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Dir write-proof (spawn_dir_proof.go) — an agent caller instantiating a
+	// template picks the cast's launch cwd (and worktree/repo) just like a
+	// spawn, so it must prove its own sandbox can write there. Humans pass
+	// through. Gates before any child spawns; pins the cast to the resolved
+	// dirs on success.
+	cwd, worktreePath, ok = requireTemplateDirWriteProof(w, caller, body.WriteProofToken, cwd, worktreePath, templateRepoAnchor(perAgentWorktrees))
+	if !ok {
+		return
+	}
 	descr := strings.TrimSpace(body.Descr)
 	if descr == "" {
 		descr = "Instantiated from template " + tmpl.Name
@@ -2170,6 +2180,17 @@ func validateInstantiationParent(w http.ResponseWriter, groupName, parentName st
 		return "", false
 	}
 	return parentName, true
+}
+
+// templateRepoAnchor returns the per-agent-worktree repo — the directory the
+// daemon cuts each child's worktree under, i.e. the write anchor a per-agent
+// cast needs the caller to prove — or "" when no per-agent worktrees are
+// configured (the shared-cwd / shared-worktree case, already covered).
+func templateRepoAnchor(perAgent *db.WavePerAgentWorktrees) string {
+	if perAgent == nil {
+		return ""
+	}
+	return strings.TrimSpace(perAgent.Repo)
 }
 
 func resolveTemplateWorktreeInputs(w http.ResponseWriter, rawSharedPath string, rawPerAgent *db.WavePerAgentWorktrees) (string, *db.WavePerAgentWorktrees, bool) {
@@ -2615,6 +2636,7 @@ func handleTemplateDeploy(w http.ResponseWriter, r *http.Request) {
 		WorktreePath      string                    `json:"worktree_path,omitempty"`
 		WorktreeBranch    string                    `json:"worktree_branch,omitempty"`
 		PerAgentWorktrees *db.WavePerAgentWorktrees `json:"per_agent_worktrees,omitempty"`
+		WriteProofToken   string                    `json:"write_proof_token,omitempty"`
 		Descr             string                    `json:"descr,omitempty"`
 		Parent            string                    `json:"parent,omitempty"`
 		// Mirrors the instantiate endpoint's override grammar so the dashboard
@@ -2680,6 +2702,11 @@ func handleTemplateDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	worktreePath, perAgentWorktrees, ok := resolveTemplateWorktreeInputs(w, body.WorktreePath, body.PerAgentWorktrees)
+	if !ok {
+		return
+	}
+	// Dir write-proof for an agent caller — same gate as instantiate.
+	cwd, worktreePath, ok = requireTemplateDirWriteProof(w, caller, body.WriteProofToken, cwd, worktreePath, templateRepoAnchor(perAgentWorktrees))
 	if !ok {
 		return
 	}
@@ -2765,6 +2792,7 @@ func handleTemplateReinforce(w http.ResponseWriter, r *http.Request) {
 		WorktreePath      string                    `json:"worktree_path,omitempty"`
 		WorktreeBranch    string                    `json:"worktree_branch,omitempty"`
 		PerAgentWorktrees *db.WavePerAgentWorktrees `json:"per_agent_worktrees,omitempty"`
+		WriteProofToken   string                    `json:"write_proof_token,omitempty"`
 		// AgentProfiles — the deploy form's per-member launch-profile resolution;
 		// see handleTemplateDeploy's body for the full contract. Reinforce prefills
 		// the form's default from the target group's own default profile, so a
@@ -2824,6 +2852,13 @@ func handleTemplateReinforce(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	worktreePath, perAgentWorktrees, ok := resolveTemplateWorktreeInputs(w, body.WorktreePath, body.PerAgentWorktrees)
+	if !ok {
+		return
+	}
+	// Dir write-proof for an agent caller — reinforce is also reachable via the
+	// group-owner bypass, so a group owner reinforcing into a dir it cannot
+	// itself write is exactly the escape this gate closes.
+	cwd, worktreePath, ok = requireTemplateDirWriteProof(w, caller, body.WriteProofToken, cwd, worktreePath, templateRepoAnchor(perAgentWorktrees))
 	if !ok {
 		return
 	}

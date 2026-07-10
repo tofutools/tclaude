@@ -156,8 +156,12 @@ func TestSpawnSandboxLineage_TemplateInstantiateRejected(t *testing.T) {
 	require.Equalf(t, http.StatusCreated,
 		humanReq(t, f, http.MethodPost, "/v1/templates", createBody).Code, "create template")
 
-	rec := agentReq(t, f, parent, http.MethodPost, "/v1/templates/weak-template/instantiate",
-		map[string]any{"group_name": "weak-cast"})
+	// Pass a writable cwd and answer the dir write-proof (the agent caller can
+	// write there) so the request reaches the wave spawn — the point of this
+	// test is that the LOOSER-SANDBOX child is then rejected by the lineage
+	// guard, not the dir proof.
+	rec := agentReqProof(t, f, parent, http.MethodPost, "/v1/templates/weak-template/instantiate",
+		map[string]any{"group_name": "weak-cast", "cwd": t.TempDir()})
 	require.Equalf(t, http.StatusCreated, rec.Code, "instantiate: %s", rec.Body.String())
 
 	var res instantiateResult
@@ -186,8 +190,8 @@ func TestSpawnSandboxLineage_StagedTemplateWaveRejected(t *testing.T) {
 	require.Equalf(t, http.StatusCreated,
 		humanReq(t, f, http.MethodPost, "/v1/templates", createBody).Code, "create template")
 
-	rec := agentReq(t, f, parent, http.MethodPost, "/v1/templates/staged-weak/deploy",
-		map[string]any{"group_name": "staged-cast", "mission": "exercise delayed wave guard"})
+	rec := agentReqProof(t, f, parent, http.MethodPost, "/v1/templates/staged-weak/deploy",
+		map[string]any{"group_name": "staged-cast", "mission": "exercise delayed wave guard", "cwd": t.TempDir()})
 	require.Equalf(t, http.StatusCreated, rec.Code, "deploy: %s", rec.Body.String())
 	var res waveDeployResult
 	testharness.DecodeJSON(t, rec, &res)

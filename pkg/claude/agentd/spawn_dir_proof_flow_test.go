@@ -60,6 +60,32 @@ func answerChallenge(t *testing.T, ch writeProofChallengeResp) {
 	}
 }
 
+// agentReqProof issues an agent-caller request and, if the daemon answers
+// with a dir write-proof challenge, creates the proof files and retries once
+// with the token folded into the body — the raw-wire equivalent of the CLI's
+// transparent handling. body must be a map[string]any. Use it for agent
+// callers on the proof-gated surfaces (spawn / clone / template instantiate /
+// deploy / reinforce) when the test cares about what happens AFTER the proof,
+// not the challenge itself.
+func agentReqProof(t *testing.T, f *testharness.Flow, convID, method, path string, body map[string]any) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := agentReq(t, f, convID, method, path, body)
+	if rec.Code != http.StatusForbidden {
+		return rec
+	}
+	var ch writeProofChallengeResp
+	if json.Unmarshal(rec.Body.Bytes(), &ch) != nil || ch.Code != "write_proof_required" {
+		return rec
+	}
+	answerChallenge(t, ch)
+	retry := make(map[string]any, len(body)+1)
+	for k, v := range body {
+		retry[k] = v
+	}
+	retry["write_proof_token"] = ch.WriteProof.Token
+	return agentReq(t, f, convID, method, path, retry)
+}
+
 // Scenario: a sandboxed agent spawns a worker into a directory of its
 // choosing. The daemon first refuses with a write-proof challenge; after the
 // agent creates the token-named file there, the identical request with the
@@ -322,6 +348,42 @@ func TestSpawnDirProof_HarnessAnswersTransparently(t *testing.T) {
 		assert.False(t, strings.HasPrefix(e.Name(), ".tclaude-write-proof-"),
 			"no proof litter may remain after the dance")
 	}
+}
+
+// Scenario: an agent with templates.instantiate deploys a whole team into a
+// directory it cannot write. Without a proof answer the instantiate is
+// refused with a challenge — closing the template bypass. This is the
+// template twin of TestSpawnDirProof_MissingProofRefused.
+func TestSpawnDirProof_TemplateInstantiateChallenged(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parent = "parent-wtpl-aaaa-bbbb-cccc-111111111111"
+	haveSpawnCapableSandboxParent(t, f, "alpha", parent, harness.DefaultName, harness.ClaudeSandboxInherit)
+	require.NoError(t, db.GrantAgentPermission(parent, agentd.PermTemplatesUse, "test"))
+
+	createBody := map[string]any{
+		"name":   "team",
+		"agents": []map[string]any{{"name": "worker"}},
+	}
+	require.Equalf(t, http.StatusCreated,
+		humanReq(t, f, http.MethodPost, "/v1/templates", createBody).Code, "create template")
+
+	dir := t.TempDir()
+	body := map[string]any{"group_name": "team-cast", "cwd": dir}
+
+	// Unanswered → challenge, and nothing is created.
+	ch := decodeWriteProofChallenge(t,
+		agentReq(t, f, parent, http.MethodPost, "/v1/templates/team/instantiate", body))
+	resolvedDir, err := filepath.EvalSymlinks(dir)
+	require.NoError(t, err)
+	assert.Equal(t, []string{resolvedDir}, ch.WriteProof.Dirs)
+	assert.Nil(t, func() *db.AgentGroup { g, _ := db.GetAgentGroupByName("team-cast"); return g }(),
+		"a challenged instantiate must not create the group")
+
+	// Answered → the cast lands.
+	rec := agentReqProof(t, f, parent, http.MethodPost, "/v1/templates/team/instantiate", body)
+	require.Equalf(t, http.StatusCreated, rec.Code, "proved instantiate; body=%s", rec.Body.String())
+	assert.Equal(t, 1, memberCount(t, "team-cast"))
 }
 
 // Scenario: an agent self-clones with a cwd override — the same dir-granting

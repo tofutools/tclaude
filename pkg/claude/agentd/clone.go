@@ -56,7 +56,18 @@ func (e *cloneSpawnError) write(w http.ResponseWriter) {
 //
 // Extracted from runCloneOrchestration so groups-clone can reuse the
 // same race handling without duplicating it.
-func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model string) (newConv, newTmux, label, warn string, spawnErr *cloneSpawnError) {
+// proofDirs, when non-empty, are the write-proof-verified launch dirs (an
+// agent caller's cwd override); cloneSpawnOnce re-asserts they are still
+// canonical immediately before each fork, closing the verify→launch window
+// the same way executeSpawn does for spawns. nil for callers that take no
+// request-controlled cwd (export, groups-clone) and for exempt callers.
+func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model string, proofDirs []string) (newConv, newTmux, label, warn string, spawnErr *cloneSpawnError) {
+	reassertFail := func() *cloneSpawnError {
+		if fail := reassertDirWriteProof(proofDirs); fail != nil {
+			return &cloneSpawnError{Status: fail.Status, Code: fail.Kind, Msg: fail.Msg}
+		}
+		return nil
+	}
 	// Clone under the same harness the source ran on — a Codex agent's
 	// clone must relaunch as Codex. "" for an untagged/claude source omits
 	// the flag (the default).
@@ -77,6 +88,9 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model strin
 		// cwd (trustDir=false — that edits ~/.codex/config.toml and is an explicit
 		// fresh-spawn opt-in) — same rationale as approvalForHarness re-defaulting
 		// rather than carrying per-conv state.
+		if fail := reassertFail(); fail != nil {
+			return "", "", "", "", fail
+		}
 		if err := SpawnDetachedTclaudeNew(clcommon.SpawnArgs{
 			Label:                  label,
 			Cwd:                    cwd,
@@ -127,6 +141,9 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model strin
 		}
 	}
 	newConv = copyResult.NewConvID
+	if fail := reassertFail(); fail != nil {
+		return "", "", "", "", fail
+	}
 	if err := SpawnDetachedTclaudeResume(clcommon.SpawnArgs{
 		ConvID:                 newConv,
 		Cwd:                    cwd,
@@ -439,6 +456,7 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm string, b
 		return
 	}
 	cwd := oldSess.Cwd
+	var proofDirs []string
 	if cwdOverride != "" {
 		resolved, err := resolveSpawnCwd(cwdOverride)
 		if err != nil {
@@ -465,6 +483,9 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm string, b
 				if v := proofed[cwd]; v != "" {
 					cwd = v
 				}
+				// Re-asserted just before the clone fork (cloneSpawnOnce), closing
+				// the verify→launch window the same way executeSpawn does.
+				proofDirs = []string{cwd}
 			}
 		}
 	}
@@ -543,7 +564,7 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm string, b
 	// model + effort (inheritedLaunchFlags; "" falls back to claude's
 	// default) — a fork should run what the original runs.
 	effort, model := inheritedLaunchFlags(oldSess.ID)
-	newConv, newTmux, label, warn, spawnErr := cloneSpawnOnce(target, cwd, noCopyConv, effort, model)
+	newConv, newTmux, label, warn, spawnErr := cloneSpawnOnce(target, cwd, noCopyConv, effort, model, proofDirs)
 	if spawnErr != nil {
 		spawnErr.write(w)
 		return

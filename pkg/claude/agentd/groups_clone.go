@@ -143,7 +143,7 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 		// Each clone runs the model + effort its own source is live on
 		// (inheritedLaunchFlags; "" falls back to claude's default).
 		effort, model := inheritedLaunchFlags(oldSess.ID)
-		newConv, _, label, warn, spawnErr := cloneSpawnOnce(m.ConvID, oldSess.Cwd, body.NoCopyConv, effort, model)
+		newConv, _, label, warn, spawnErr := cloneSpawnOnce(m.ConvID, oldSess.Cwd, body.NoCopyConv, effort, model, nil)
 		if spawnErr != nil {
 			results = append(results, memberResult{
 				SrcConv: m.ConvID,

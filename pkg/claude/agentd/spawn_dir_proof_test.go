@@ -87,6 +87,31 @@ func TestResolveDirWriteProofDirs(t *testing.T) {
 	assert.Len(t, resolved, 2)
 }
 
+func TestReassertDirWriteProof(t *testing.T) {
+	// Empty (exempt / unverified) is always fine.
+	assert.Nil(t, reassertDirWriteProof(nil))
+
+	base := t.TempDir()
+	real := filepath.Join(base, "real")
+	require.NoError(t, os.Mkdir(real, 0o755))
+
+	// A canonical, unchanged dir passes.
+	assert.Nil(t, reassertDirWriteProof([]string{real}))
+
+	// Swapped for a symlink to elsewhere → refused (the TOCTOU case).
+	other := filepath.Join(base, "other")
+	require.NoError(t, os.Mkdir(other, 0o755))
+	require.NoError(t, os.RemoveAll(real))
+	require.NoError(t, os.Symlink(other, real))
+	fail := reassertDirWriteProof([]string{real})
+	require.NotNil(t, fail)
+	assert.Equal(t, "write_proof_failed", fail.Kind)
+
+	// Removed entirely → refused.
+	require.NoError(t, os.Remove(real))
+	assert.NotNil(t, reassertDirWriteProof([]string{real}))
+}
+
 func TestChildSandboxGrantsDirWrite(t *testing.T) {
 	assert.False(t, childSandboxGrantsDirWrite(harness.CodexName, harness.SandboxReadOnly))
 	assert.True(t, childSandboxGrantsDirWrite(harness.CodexName, harness.SandboxWorkspaceWrite))
