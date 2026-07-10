@@ -1940,18 +1940,34 @@ func DefaultConfig() *Config {
 	}
 }
 
-// ConfigDir returns the tclaude config directory (~/.tclaude).
+// ConfigDir returns the tclaude root directory (~/.tclaude). It stays the ROOT
+// of the layout; private state lives under DataDir() and the agent-reachable
+// socket under APIDir(). See pkg/common.TclaudeDir for the rationale.
 func ConfigDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".tclaude")
+	return common.TclaudeDir()
 }
 
-// ConfigPath returns the path to the config file (~/.tclaude/config.json).
+// DataDir returns the private state directory (~/.tclaude/data) that is denied
+// to sandboxed agents. It is the home for db.sqlite, operator_token,
+// processes/, the logs, and config.json. Delegates to pkg/common so the
+// low-level state packages (which cannot import config without a cycle) and
+// this package resolve the same path.
+func DataDir() string {
+	return common.TclaudeDataDir()
+}
+
+// APIDir returns the agent-reachable directory (~/.tclaude/api) that holds the
+// agentd Unix socket. Unlike DataDir(), it stays reachable from a sandboxed
+// agent so coordination (`tclaude agent …`) keeps working.
+func APIDir() string {
+	return common.TclaudeAPIDir()
+}
+
+// ConfigPath returns the path to the config file
+// (~/.tclaude/data/config.json — private daemon state, migrated automatically
+// from the legacy ~/.tclaude/config.json location by the daemon at startup).
 func ConfigPath() string {
-	return filepath.Join(ConfigDir(), "config.json")
+	return filepath.Join(DataDir(), "config.json")
 }
 
 // Load loads the config from ~/.tclaude/config.json.
@@ -2108,8 +2124,11 @@ func Save(config *Config) error {
 }
 
 func saveLocked(config *Config) error {
-	dir := ConfigDir()
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	// config.json lives in the private state dir (~/.tclaude/data). Write the
+	// temp file there too so the rename below is same-directory (atomic, never
+	// cross-filesystem) and never fails because data/ does not exist yet.
+	dir := DataDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 

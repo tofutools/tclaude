@@ -150,8 +150,12 @@ func resolveSymlinks(p string) string {
 // unwritable by a sandboxed agent — the daemon state + identity files
 // docs/sandbox-hardening.md names, plus Codex's own config/state home
 // (~/.codex holds hooks.json + state_5.sqlite + the rollout tree).
+//
+// Only ~/.tclaude/data (the private-state subtree) is protected, NOT the whole
+// ~/.tclaude root: the agent-reachable socket under ~/.tclaude/api and the
+// shared scribe workdir under ~/.tclaude/scribe must stay reachable/writable.
 var codexProtectedSubdirs = []string{
-	".tclaude",
+	filepath.Join(".tclaude", "data"),
 	".codex",
 	filepath.Join(".claude", "sessions"),
 }

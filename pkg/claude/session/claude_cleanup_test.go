@@ -102,16 +102,17 @@ func TestApplyClaudeCleanupPeriod_IdempotentNoRewrite(t *testing.T) {
 	assert.Equal(t, 365, days)
 }
 
-// End-to-end: a positive claude_cleanup_period_days in ~/.tclaude/config.json
-// is read live and synced into ~/.claude/settings.json cleanupPeriodDays.
+// End-to-end: a positive claude_cleanup_period_days in
+// ~/.tclaude/data/config.json is read live and synced into
+// ~/.claude/settings.json cleanupPeriodDays.
 func TestEnsureClaudeCleanupPeriod_SyncsFromConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
 
-	tclaudeDir := filepath.Join(tmpDir, ".tclaude")
-	require.NoError(t, os.MkdirAll(tclaudeDir, 0o755))
+	dataDir := filepath.Join(tmpDir, ".tclaude", "data")
+	require.NoError(t, os.MkdirAll(dataDir, 0o700))
 	require.NoError(t, os.WriteFile(
-		filepath.Join(tclaudeDir, "config.json"),
+		filepath.Join(dataDir, "config.json"),
 		[]byte(`{"claude_cleanup_period_days": 99999}`), 0o644))
 
 	require.NoError(t, EnsureClaudeCleanupPeriod())

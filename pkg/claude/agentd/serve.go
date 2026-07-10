@@ -142,7 +142,10 @@ func serveSocketPaths(requested string) []string {
 		return []string{requested}
 	}
 	paths := []string{SocketPath()}
-	return appendSocketPath(paths, LegacySocketPath())
+	for _, legacy := range LegacySocketPaths() {
+		paths = appendSocketPath(paths, legacy)
+	}
+	return paths
 }
 
 func configureServeSocketEnv(requested string) error {
@@ -168,14 +171,21 @@ func runServe(p *serveParams) error {
 	if sockPath == "" {
 		return fmt.Errorf("could not determine socket path; pass --socket")
 	}
-	legacySockPath := ""
-	if len(socketPaths) > 1 {
-		legacySockPath = socketPaths[1]
-	}
+	legacySockPaths := socketPaths[1:]
 	for _, path := range socketPaths {
 		if err := prepareSocketPath(path); err != nil {
 			return err
 		}
+	}
+
+	// Relocate any pre-split daemon state into ~/.tclaude/data BEFORE opening
+	// the DB — but AFTER prepareSocketPath above rejected an already-running
+	// daemon, so exactly one process ever migrates (a second `agentd serve`
+	// aborts before reaching here). The DB and its sidecars must be moved as a
+	// group before the first Open() so we never open a db.sqlite whose -wal/-shm
+	// were left behind at the old path.
+	if err := migrateStateIntoDataDir(); err != nil {
+		return fmt.Errorf("relocate daemon state into data dir: %w", err)
 	}
 
 	// Open (and, if needed, migrate) the SQLite DB now — AFTER rejecting an
@@ -439,10 +449,12 @@ func runServe(p *serveParams) error {
 	// goroutines so the main goroutine is free for the tray loop
 	// (systray needs the main thread on every supported platform).
 	serveErrCh := make(chan error, len(listeners))
-	slog.Info("agentd listening", "socket", sockPath, "legacy_socket", legacySockPath, "popup", popupBaseURL)
+	slog.Info("agentd listening", "socket", sockPath, "legacy_sockets", legacySockPaths, "popup", popupBaseURL)
 	fmt.Printf("tclaude agentd listening on %s\n", sockPath)
-	if legacySockPath != "" && filepath.Clean(legacySockPath) != filepath.Clean(sockPath) {
-		fmt.Printf("  legacy compatibility socket: %s\n", legacySockPath)
+	for _, legacy := range legacySockPaths {
+		if legacy != "" && filepath.Clean(legacy) != filepath.Clean(sockPath) {
+			fmt.Printf("  legacy compatibility socket: %s\n", legacy)
+		}
 	}
 	if popupBaseURL != "" {
 		dashLoc := "loopback"

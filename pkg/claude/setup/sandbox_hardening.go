@@ -38,8 +38,8 @@ func sandboxHardeningSpec() map[string]any {
 		"sandbox": harness.ClaudeSandboxOnBlock(),
 		"permissions": map[string]any{
 			"deny": []any{
-				"Edit(~/.tclaude/**)",
-				"Read(~/.tclaude/**)",
+				"Edit(~/.tclaude/data/**)",
+				"Read(~/.tclaude/data/**)",
 				"Edit(~/.claude/sessions/**)",
 				"Read(~/.claude/sessions/**)",
 			},
@@ -315,10 +315,10 @@ func sandboxHardeningSocketMigrationError() error {
 		return fmt.Errorf("sandbox hardening requires the canonical agentd socket %s; "+
 			"custom socket %s is unsupported", canonical, explicit)
 	}
-	legacy := agentipc.LegacySocketPath()
-	if !agentipc.SocketReachable(canonical) && agentipc.SocketReachable(legacy) {
-		return fmt.Errorf("agentd is still listening only on the legacy socket %s; "+
-			"restart agentd after upgrading tclaude before installing sandbox hardening", legacy)
+	if !agentipc.SocketReachable(canonical) && agentipc.AnyLegacySocketReachable() {
+		return fmt.Errorf("agentd is still listening only on a pre-split legacy socket (%v); "+
+			"restart agentd after upgrading tclaude before installing sandbox hardening",
+			agentipc.LegacySocketPaths())
 	}
 	return nil
 }

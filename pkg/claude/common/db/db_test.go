@@ -435,8 +435,8 @@ func TestLegacyImport(t *testing.T) {
 	_, err = os.Stat(sessDir + ".migrated")
 	assert.NoError(t, err, "expected .migrated sessions dir")
 
-	// Verify debug.log moved to new location
-	newDebugLog := dir + "/.tclaude/debug.log"
+	// Verify debug.log moved to the new (private data/) location
+	newDebugLog := dir + "/.tclaude/data/debug.log"
 	if data, err := os.ReadFile(newDebugLog); err != nil {
 		assert.Fail(t, "expected debug.log at new location")
 	} else {

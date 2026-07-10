@@ -96,12 +96,14 @@ var (
 	exportJobsCleanupInterval = 10 * time.Minute
 )
 
-// exportsBaseDir is ~/.tclaude/exports — the root for every job's artifact.
+// exportsBaseDir is ~/.tclaude/data/exports — the root for every job's
+// artifact. Exports hold conversation transcripts, so they live under the
+// private data/ subtree denied to sandboxed agents.
 func exportsBaseDir() string {
-	return filepath.Join(config.ConfigDir(), "exports")
+	return filepath.Join(config.DataDir(), "exports")
 }
 
-// exportJobDir is the per-job artifact directory, ~/.tclaude/exports/<id>.
+// exportJobDir is the per-job artifact directory, ~/.tclaude/data/exports/<id>.
 func exportJobDir(id int64) string {
 	return filepath.Join(exportsBaseDir(), strconv.FormatInt(id, 10))
 }

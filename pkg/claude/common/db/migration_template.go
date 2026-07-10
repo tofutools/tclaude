@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/tofutools/tclaude/pkg/common"
 )
 
 // Test-only migration template.
@@ -57,7 +59,10 @@ func maybeSeedFromTemplate(dbPath string) bool {
 	if !testTemplateEnabled || len(testTemplateBytes) == 0 {
 		return false
 	}
-	if legacySourcesPresent(filepath.Dir(dbPath)) {
+	// Legacy import inputs live at the tclaude ROOT (~/.tclaude/claude-sessions,
+	// ~/.tclaude/notify-state), one level above the DB's data/ dir. Check there,
+	// not filepath.Dir(dbPath) (which is ~/.tclaude/data).
+	if legacySourcesPresent(common.TclaudeDir()) {
 		return false
 	}
 	if _, err := os.Stat(dbPath); err == nil {
@@ -73,13 +78,13 @@ func maybeSeedFromTemplate(dbPath string) bool {
 // process-wide template cache via VACUUM INTO (which yields a self-contained
 // single-file copy regardless of WAL state). No-op unless the fast-path is
 // armed, the cache is empty, and no legacy data was imported into this db.
-func maybeCaptureTemplate(d *sql.DB, dbPath string) {
+func maybeCaptureTemplate(d *sql.DB) {
 	testTemplateMu.Lock()
 	defer testTemplateMu.Unlock()
 	if !testTemplateEnabled || len(testTemplateBytes) > 0 {
 		return
 	}
-	if legacySourcesPresent(filepath.Dir(dbPath)) {
+	if legacySourcesPresent(common.TclaudeDir()) {
 		return
 	}
 	tmp, err := os.CreateTemp("", "tclaude-dbtmpl-*.sqlite")

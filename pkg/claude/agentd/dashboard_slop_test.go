@@ -86,7 +86,7 @@ func TestDashboardSlopVolumes_GetClampsHandEditedValues(t *testing.T) {
 	// Validate flags it in the Config tab, but GET must still hand the
 	// browser a usable 0–100 — otherwise the mixer shows "500%" and
 	// every subsequent POST echoing it back is rejected.
-	require.NoError(t, os.MkdirAll(config.ConfigDir(), 0o755))
+	require.NoError(t, os.MkdirAll(config.DataDir(), 0o700))
 	require.NoError(t, os.WriteFile(config.ConfigPath(),
 		[]byte(`{"slop":{"music_volume":500,"effects_volume":-3}}`), 0o644))
 
@@ -117,7 +117,7 @@ func TestDashboardSlopVolumes_PostRefusesCorruptConfig(t *testing.T) {
 	setupTestDB(t)
 	withDashboardAuth(t)
 
-	require.NoError(t, os.MkdirAll(config.ConfigDir(), 0o755))
+	require.NoError(t, os.MkdirAll(config.DataDir(), 0o700))
 	require.NoError(t, os.WriteFile(config.ConfigPath(), []byte("{not json"), 0o644))
 
 	w, resp := serveSlopVolumes(t, http.MethodPost, `{"music_volume":50}`)

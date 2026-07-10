@@ -121,7 +121,7 @@ func TestDashboardCostFactor_GetClampsHandEdited(t *testing.T) {
 	setupTestDB(t)
 	withDashboardAuth(t)
 
-	require.NoError(t, os.MkdirAll(config.ConfigDir(), 0o755))
+	require.NoError(t, os.MkdirAll(config.DataDir(), 0o700))
 	require.NoError(t, os.WriteFile(config.ConfigPath(),
 		[]byte(`{"cost":{"estimate_factor":1000}}`), 0o644))
 
@@ -135,7 +135,7 @@ func TestDashboardCostFactor_PostRefusesCorruptConfig(t *testing.T) {
 	setupTestDB(t)
 	withDashboardAuth(t)
 
-	require.NoError(t, os.MkdirAll(config.ConfigDir(), 0o755))
+	require.NoError(t, os.MkdirAll(config.DataDir(), 0o700))
 	require.NoError(t, os.WriteFile(config.ConfigPath(), []byte("{not json"), 0o644))
 
 	w, resp := serveCostFactor(t, http.MethodPost, `{"estimate_factor":1.1}`)

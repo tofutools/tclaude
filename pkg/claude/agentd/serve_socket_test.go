@@ -57,7 +57,7 @@ func TestServeSocketPaths(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	assert.Equal(t,
-		[]string{SocketPath(), LegacySocketPath()},
+		append([]string{SocketPath()}, LegacySocketPaths()...),
 		serveSocketPaths(""))
 
 	custom := filepath.Join(home, "isolated.sock")

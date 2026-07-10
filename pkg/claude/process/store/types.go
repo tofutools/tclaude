@@ -5,24 +5,24 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/process/evidence"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
+	"github.com/tofutools/tclaude/pkg/common"
 )
 
 // DefaultRoot is the filesystem store shared by the agentd engine and manual
-// process CLI inspection. Commands may still accept an explicit root for
-// portable stores and tests.
+// process CLI inspection (~/.tclaude/data/processes — private daemon state).
+// Commands may still accept an explicit root for portable stores and tests.
 func DefaultRoot() string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
+	dataDir := common.TclaudeDataDir()
+	if dataDir == "" {
 		return ""
 	}
-	return filepath.Join(home, ".tclaude", "processes")
+	return filepath.Join(dataDir, "processes")
 }
 
 var (

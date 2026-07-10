@@ -33,7 +33,7 @@ func TestApplyAgentSocketEnv(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			env := map[string]string{}
 			require.NoError(t, ApplyAgentSocketEnv(tc.harness, tc.sandbox, tc.permission, env))
-			assert.Equal(t, filepath.Join(home, ".tclaude-agentd.sock"), env[agentipc.SocketEnv])
+			assert.Equal(t, filepath.Join(home, ".tclaude", "api", "agentd.sock"), env[agentipc.SocketEnv])
 		})
 	}
 }
@@ -73,6 +73,7 @@ func TestApplyAgentSocketEnvAcceptsCanonicalDaemon(t *testing.T) {
 	t.Cleanup(func() { _ = os.RemoveAll(home) })
 	t.Setenv("HOME", home)
 	t.Setenv(agentipc.SocketEnv, "")
+	require.NoError(t, os.MkdirAll(filepath.Dir(agentipc.CanonicalSocketPath()), 0o700))
 	canonical, err := net.Listen("unix", agentipc.CanonicalSocketPath())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = canonical.Close() })

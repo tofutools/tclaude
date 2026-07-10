@@ -228,11 +228,11 @@ func keychainLookup() (tok string, found bool, err error) {
 // degrades to an ephemeral token). A var so tests can redirect it at a temp
 // dir without touching the real ~/.tclaude.
 var operatorTokenFilePath = func() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
+	dataDir := config.DataDir()
+	if dataDir == "" {
 		return ""
 	}
-	return filepath.Join(home, ".tclaude", "operator_token")
+	return filepath.Join(dataDir, "operator_token")
 }
 
 // existingFileToken returns the token currently stored in the fallback file

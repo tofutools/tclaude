@@ -77,7 +77,7 @@ func TestInstallResumeThresholdOverride_Idempotent(t *testing.T) {
 // rather than overwriting the operator's unparseable config with defaults.
 func TestInstallResumeThresholdOverride_CorruptConfigNotClobbered(t *testing.T) {
 	tempHome(t)
-	require.NoError(t, os.MkdirAll(config.ConfigDir(), 0o755))
+	require.NoError(t, os.MkdirAll(config.DataDir(), 0o700))
 	const garbage = "{ this is not valid json"
 	require.NoError(t, os.WriteFile(config.ConfigPath(), []byte(garbage), 0o644))
 
