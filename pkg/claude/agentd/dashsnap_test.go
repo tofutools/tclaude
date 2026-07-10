@@ -472,6 +472,55 @@ func baseStates() []dashsnap.State {
 			SettleMS: 1100,
 		},
 		{
+			Key:      "process-node-dialog-task-agent",
+			Title:    "Process node dialog — task, agent work performer",
+			Caption:  "The compound task's stage editor (TCL-298): plan stage with approval policy, agent work performer (profile/prompt/model/effort + contact schedule), ordered checks, review gate, retry policy, captures, and the read-only edges summary.",
+			JS:       nodeDialogStateJS(`ed.openNodeSettings('implement');` + nodeDialogSelfCheck("agent")),
+			SettleMS: 1200,
+		},
+		{
+			Key:      "process-node-dialog-task-human",
+			Title:    "Process node dialog — task, human work performer",
+			Caption:  "The same shared performer editor keyed to human: ask text, choices, assignee — scrolled to the work section. No per-kind component forks (uniform performer contract).",
+			JS: nodeDialogStateJS(`ed.model.updateNode('implement', function(n){
+    n.performer = {kind: 'human', profile: 'operator', ask: 'Apply the manual registry update', choices: ['done', 'blocked'], assignee: 'johan'};
+  });
+  ed.openNodeSettings('implement');` + nodeDialogSelfCheck("human") + nodeDialogScrollToWork),
+			SettleMS: 1200,
+		},
+		{
+			Key:      "process-node-dialog-task-program",
+			Title:    "Process node dialog — task, program work performer",
+			Caption:  "The shared performer editor keyed to program: command + per-line arguments and the explicit ⚠ command-execution security note (§10) — scrolled to the work section.",
+			JS: nodeDialogStateJS(`ed.model.updateNode('implement', function(n){
+    n.performer = {kind: 'program', profile: 'ci', run: 'go', args: ['test', './...']};
+  });
+  ed.openNodeSettings('implement');` + nodeDialogSelfCheck("program") + `
+  if (!document.querySelector('.process-node-security-note')) throw new Error('program security note missing');` + nodeDialogScrollToWork),
+			SettleMS: 1200,
+		},
+		{
+			Key:      "process-node-dialog-decision",
+			Title:    "Process node dialog — decision node",
+			Caption:  "Decision node dialog: the decider performer (human, with choices) and the read-only choices → edges mapping pointing at the canvas for topology edits.",
+			JS: nodeDialogStateJS(`ed.openNodeSettings('escalate');` + `
+  var choiceHead = Array.from(document.querySelectorAll('.process-node-section-title')).find(function(el){ return el.textContent === 'choices → edges'; });
+  if (!choiceHead) throw new Error('decision dialog missing the choices → edges section');`),
+			SettleMS: 1200,
+		},
+		{
+			Key:      "process-node-card-readonly",
+			Title:    "Process node detail card — read-only mode",
+			Caption:  "The exact same component in view mode (the viewer's node detail card): read-only badge, every control disabled, zero duplicated markup — the §9 unlock later flips this flag back to edit.",
+			JS: nodeDialogStateJS(`ed.model.config.nodeEditable = function(){ return false; };
+  ed.openNodeSettings('implement');
+  if (!document.querySelector('.process-node-readonly-badge')) throw new Error('read-only badge missing');
+  if (!document.querySelector('.process-node-detail.is-readonly')) throw new Error('detail card is not in read-only mode');
+  var enabled = document.querySelector('.process-node-detail select:not(:disabled), .process-node-detail input:not(:disabled), .process-node-detail textarea:not(:disabled)');
+  if (enabled) throw new Error('read-only card left a control enabled: ' + enabled.className);`),
+			SettleMS: 1200,
+		},
+		{
 			Key:     "groups",
 			Title:   "Groups tab",
 			Caption: "Groups tab, members expanded: the task-force info card (mission/roles) atop frontend-squad, its 🎯 hide-info toggle in the action row, tf: chips, owner ★, online + offline, task links.",
@@ -840,6 +889,55 @@ func processGraphStateJS(title, graph string, colorSchemes ...string) string {
   });
 });`, title, graph, colorScheme, title)
 }
+
+// nodeDialogStateJS builds on the editor harness: it grows the seeded
+// release-train template into a compound task ("implement": plan + agent
+// work + ordered checks + review gate + retry + captures) and a human
+// decision ("escalate") purely through the client edit model, then runs the
+// state's dialog-driving JS. `return` matters — MustEval awaits the promise,
+// so the self-checks (throws) gate the capture.
+func nodeDialogStateJS(extraJS string) string {
+	const seed = `ed.model.addNode('task', {x: 470, y: 90, id: 'implement', name: 'Implement'});
+  ed.model.updateNode('implement', function(n){
+    n.performer = {kind: 'agent', profile: 'dev', prompt: 'Implement the change', model: 'opus', effort: 'high',
+      contact: {cadence: '10m', budget: 3, escalationTarget: 'human:operator'}};
+    n.plan = {id: 'plan', approval: 'human', performer: {kind: 'agent', profile: 'dev', prompt: 'Plan the implementation'}};
+    n.checks = [
+      {id: 'tests', performer: {kind: 'program', run: 'go', args: ['test', './...']}},
+      {id: 'cold-review', performer: {kind: 'agent', profile: 'reviewer', prompt: 'Cold-review the diff'}},
+    ];
+    n.review = {id: 'merge-approval', performer: {kind: 'human', profile: 'operator', ask: 'Approve merge?'}};
+    n.retry = {maxAttempts: 3, onFail: 'feedback-same-session'};
+    n.captures = ['diff', 'test-report'];
+  });
+  ed.model.addNode('decision', {x: 660, y: 240, id: 'escalate', name: 'Escalate'});
+  ed.model.updateNode('escalate', function(n){
+    n.performer = {kind: 'human', profile: 'operator', ask: 'Retries exhausted. Continue?', choices: ['retry', 'cancel']};
+  });
+  ed.model.addEdge('implement', 'pass', 'ship');
+  ed.model.addEdge('implement', 'fail', 'escalate');
+  ed.model.addEdge('escalate', 'cancel', 'ship');
+  ed.refresh({fit: true});
+  `
+	return "return " + processEditorStateJS(seed+extraJS)
+}
+
+// nodeDialogSelfCheck asserts the dialog is open with the work performer's
+// kind select showing `kind` — a broken dialog fails the run instead of
+// passing as a silent blank capture.
+func nodeDialogSelfCheck(kind string) string {
+	return fmt.Sprintf(`
+  if (!document.querySelector('.process-node-modal .process-node-detail')) throw new Error('node dialog did not open');
+  var kinds = Array.from(document.querySelectorAll('.process-node-modal .process-node-select'));
+  if (!kinds.some(function(sel){ return sel.value === %q; })) throw new Error('no performer editor shows kind %s');`, kind, kind)
+}
+
+// nodeDialogScrollToWork scrolls the dialog body so the work section's
+// performer editor is the visible content in the capture.
+const nodeDialogScrollToWork = `
+  var workHead = Array.from(document.querySelectorAll('.process-node-section-title')).find(function(el){ return el.textContent === 'work'; });
+  if (!workHead) throw new Error('work section missing');
+  workHead.scrollIntoView();`
 
 // processEditorStateJS opens the seeded release-train template in the graph
 // editor (Processes tab → Templates → open) and waits for the lazily imported

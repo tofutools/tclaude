@@ -27,6 +27,7 @@ import {
   ProcessEditModel, blankEditView, graphEdgeID,
   PALETTE_PRIMITIVES, PALETTE_SNIPPETS,
 } from './process-edit-model.js';
+import { openNodeDialog } from './process-node-dialog.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 // Custom drag payload MIME (dock-dnd idiom): withholding text/plain keeps
@@ -280,7 +281,8 @@ export class ProcessTemplateEditor {
       }
       parts.push(h('button', {
         class: 'process-action', type: 'button', text: 'node settings…',
-        title: 'Node edit dialogs land in a later ticket (TCL-298)', disabled: '',
+        title: 'Open the structured node editor: stages, performers, retry, captures',
+        onclick: () => this.openNodeSettings(sel.id),
       }));
       parts.push(h('button', {
         class: 'process-action process-action-danger', type: 'button', text: 'delete node',
@@ -304,7 +306,7 @@ export class ProcessTemplateEditor {
         onclick: () => this.deleteSelection(),
       }));
     } else {
-      parts.push(h('span', { class: 'process-inspector-hint', text: 'Select a node or edge to edit it. Double-click a node to rename in place.' }));
+      parts.push(h('span', { class: 'process-inspector-hint', text: 'Select a node or edge to edit it. Double-click a node to open its stage editor.' }));
     }
     this.inspector.replaceChildren(...parts);
   }
@@ -316,10 +318,32 @@ export class ProcessTemplateEditor {
     this.setSelection({ type: 'node', id: node.id });
   }
 
+  // Double-click is the logical-zoom gesture (design §8a): zoom into the
+  // node's structured editing surface. In-place rename stays available via
+  // the inspector's label input.
   onNodeDblClick({ node }) {
     if (!node) return;
     this.setSelection({ type: 'node', id: node.id });
-    this.openInlineNodeRename(node.id);
+    this.openNodeSettings(node.id);
+  }
+
+  // openNodeSettings opens the shared node dialog (TCL-298). The TCL-296
+  // editability seam decides the mode: a node the view may not edit renders
+  // the exact same component read-only — the viewer's detail card.
+  openNodeSettings(nodeId) {
+    if (!this.model.node(nodeId)) return;
+    this.modalDispose?.(null);
+    const mode = this.model.config.nodeEditable(nodeId) ? 'edit' : 'view';
+    const dispose = openNodeDialog({
+      model: this.model,
+      nodeId,
+      mode,
+      onMutated: () => this.refresh(),
+      onClosed: () => {
+        if (this.modalDispose === dispose) this.modalDispose = null;
+      },
+    });
+    this.modalDispose = dispose;
   }
 
   onEdgeClick({ edge }) {
@@ -574,15 +598,6 @@ export class ProcessTemplateEditor {
     this.inlineHandlers = null;
     input.hidden = true;
     if (apply && commit) commit(input.value.trim());
-  }
-
-  openInlineNodeRename(nodeId) {
-    const laid = this.graph.layout.nodes.find((candidate) => candidate.id === nodeId);
-    if (!laid) return;
-    const node = this.model.node(nodeId);
-    this.openInline(laid.x, laid.y, node?.name || '', (value) => {
-      this.mutate(() => this.model.renameNode(nodeId, value));
-    });
   }
 
   openInlineOutcomeEdit(from, outcome) {

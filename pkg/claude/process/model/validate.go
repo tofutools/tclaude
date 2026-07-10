@@ -3,6 +3,7 @@ package model
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -69,6 +70,7 @@ func validateNodes(tmpl *Template) Diagnostics {
 		if node.Type != NodeTypeEnd && !isBlank(node.Result) {
 			diagnostics = append(diagnostics, diagError("result_on_non_end_node", path+".result", "result is only valid on end nodes"))
 		}
+		diagnostics = append(diagnostics, validateCaptures(node, path)...)
 		switch node.Type {
 		case NodeTypeTask:
 			if node.Performer == nil {
@@ -137,6 +139,33 @@ func validateNodes(tmpl *Template) Diagnostics {
 	}
 	if startNodeCount > 1 {
 		diagnostics = append(diagnostics, diagError("multiple_start_nodes", "nodes", "at most one node may have type start"))
+	}
+	return diagnostics
+}
+
+// validateCaptures keeps capture names task-scoped, id-shaped, and unique so
+// they can graduate into upstream-capture references without a breaking
+// change when the runtime plumbing lands.
+func validateCaptures(node Node, path string) Diagnostics {
+	if len(node.Captures) == 0 {
+		return nil
+	}
+	var diagnostics Diagnostics
+	if node.Type != NodeTypeTask {
+		diagnostics = append(diagnostics, diagError("captures_on_non_task_node", path+".captures", "captures are only valid on task nodes"))
+	}
+	seen := map[string]int{}
+	for i, name := range node.Captures {
+		capturePath := fmt.Sprintf("%s.captures[%d]", path, i)
+		if !idPattern.MatchString(name) {
+			diagnostics = append(diagnostics, diagError("invalid_id", capturePath, "capture name must match "+idPattern.String()))
+			continue
+		}
+		if first, ok := seen[name]; ok {
+			diagnostics = append(diagnostics, diagError("duplicate_capture", capturePath, fmt.Sprintf("capture name %q is already used by captures[%d]", name, first)))
+			continue
+		}
+		seen[name] = i
 	}
 	return diagnostics
 }
@@ -232,6 +261,7 @@ func validatePerformer(performer Performer, path string) Diagnostics {
 	default:
 		diagnostics = append(diagnostics, diagError("invalid_performer_kind", path+".kind", fmt.Sprintf("unsupported performer kind %q", performer.Kind)))
 	}
+	diagnostics = append(diagnostics, validateKindScopedFields(performer, path)...)
 	diagnostics = append(diagnostics, checkInertParamRef(path+".profile", performer.Profile)...)
 	diagnostics = append(diagnostics, checkInertParamRef(path+".timeout", performer.Timeout)...)
 	diagnostics = append(diagnostics, validateDuration(path+".timeout", performer.Timeout)...)
@@ -246,6 +276,53 @@ func validatePerformer(performer Performer, path string) Diagnostics {
 		if strings.TrimSpace(performer.Contact.EscalationTarget) == "" {
 			diagnostics = append(diagnostics, diagError("missing_escalation_target", path+".contact.escalationTarget", "contact schedule requires an escalation target"))
 		}
+	}
+	return diagnostics
+}
+
+// validateKindScopedFields enforces the uniform-contract discipline rule
+// (design §2): a kind-scoped field set on the wrong kind is a hard authoring
+// error, never something the runtime silently ignores — a stray field the
+// editing surface does not even show for the current kind (say, a run
+// command on a human performer) must not lurk until a kind switch makes it
+// live. Ask/run/args were historically unchecked on wrong kinds; they are
+// scoped here alongside the new fields. Prompt is shared by design: agent
+// instruction text or a human's long-form context. An unrecognized kind gets
+// its own invalid_performer_kind error; skip the scoping noise then.
+func validateKindScopedFields(performer Performer, path string) Diagnostics {
+	if performer.Kind != PerformerHuman && performer.Kind != PerformerAgent && performer.Kind != PerformerProgram {
+		return nil
+	}
+	var diagnostics Diagnostics
+	scoped := func(field string, set bool, kinds ...PerformerKind) {
+		if !set || slices.Contains(kinds, performer.Kind) {
+			return
+		}
+		kindNames := make([]string, len(kinds))
+		for i, kind := range kinds {
+			kindNames[i] = string(kind)
+		}
+		diagnostics = append(diagnostics, diagError("kind_scoped_field", path+"."+field,
+			fmt.Sprintf("%s is only valid on %s performers", field, strings.Join(kindNames, " or "))))
+	}
+	scoped("ask", !isBlank(performer.Ask), PerformerHuman)
+	scoped("choices", len(performer.Choices) > 0, PerformerHuman)
+	scoped("assignee", !isBlank(performer.Assignee), PerformerHuman)
+	scoped("prompt", !isBlank(performer.Prompt), PerformerAgent, PerformerHuman)
+	scoped("model", !isBlank(performer.Model), PerformerAgent)
+	scoped("effort", !isBlank(performer.Effort), PerformerAgent)
+	scoped("run", !isBlank(performer.Run), PerformerProgram)
+	scoped("args", len(performer.Args) > 0, PerformerProgram)
+	for i, choice := range performer.Choices {
+		if isBlank(choice) {
+			diagnostics = append(diagnostics, diagError("invalid_choice", fmt.Sprintf("%s.choices[%d]", path, i), "choices must not be blank"))
+		}
+	}
+	diagnostics = append(diagnostics, checkInertParamRef(path+".assignee", performer.Assignee)...)
+	diagnostics = append(diagnostics, checkInertParamRef(path+".model", performer.Model)...)
+	diagnostics = append(diagnostics, checkInertParamRef(path+".effort", performer.Effort)...)
+	for i, choice := range performer.Choices {
+		diagnostics = append(diagnostics, checkInertParamRef(fmt.Sprintf("%s.choices[%d]", path, i), choice)...)
 	}
 	return diagnostics
 }

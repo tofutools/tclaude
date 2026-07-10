@@ -10584,3 +10584,136 @@ body.wizard .process-editor-palette { background: #181226; border-color: #4a3d6b
 body.wizard .process-palette-card { background: #2c2042; border-color: #4a3d6b; }
 body.wizard .process-palette-card:hover { border-color: #d4af37; }
 body.wizard .process-editor-band { stroke: #d4af37; }
+
+/* === Node edit dialog / detail card (process-node-dialog.js, TCL-298) ======
+   One component, two modes: the editor's modal and the viewer's read-only
+   detail card share every rule below; .is-readonly only dims the controls. */
+.process-node-modal .process-node-dialog {
+  width: min(680px, 94vw);
+  max-width: 680px; /* the base .modal caps at 480px — the stage sections need more */
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 16px;
+}
+.process-node-dialog-body { overflow-y: auto; min-height: 0; }
+.process-node-detail { display: flex; flex-direction: column; gap: 10px; }
+.process-node-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #161b22; /* matches .modal so scrolled sections pass under it */
+}
+.process-node-detail-head .spacer { flex: 1; }
+.process-node-readonly-badge {
+  color: #e3a341;
+  border: 1px solid #e3a341;
+  border-radius: 10px;
+  padding: 1px 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+/* Explicitly dark-themed button (UA-white trap for row-inline buttons). */
+.process-node-close {
+  background: #21262d;
+  color: #c9d1d9;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 2px 9px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.process-node-close:hover { border-color: #58a6ff; }
+.process-node-section {
+  border: 1px solid #21262d;
+  border-radius: 8px;
+  padding: 8px 12px 10px;
+  background: #0d1117;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.process-node-section-title {
+  margin: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: #8b949e;
+}
+.process-node-field { display: flex; flex-direction: column; gap: 3px; margin: 0; }
+.process-node-field-label { font-size: 11px; color: #7d8590; }
+.process-node-input,
+.process-node-textarea,
+.process-node-select {
+  background: #161b22;
+  color: #e6edf3;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 13px;
+  font-family: inherit;
+}
+.process-node-textarea { resize: vertical; min-height: 30px; }
+.process-node-input:focus,
+.process-node-textarea:focus,
+.process-node-select:focus { border-color: #58a6ff; outline: none; }
+.process-node-detail.is-readonly .process-node-input:disabled,
+.process-node-detail.is-readonly .process-node-textarea:disabled,
+.process-node-detail.is-readonly .process-node-select:disabled,
+.process-node-detail.is-readonly .process-node-toggle:disabled { opacity: .65; cursor: default; }
+.process-performer-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-left: 2px solid #30363d;
+  padding-left: 10px;
+}
+.process-node-security-note { margin: 0; color: #e3a341; font-size: 11px; }
+.process-node-contact {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+.process-node-contact > .process-node-field-label { grid-column: 1 / -1; }
+.process-node-stage-toggle { display: flex; align-items: center; gap: 7px; color: #c9d1d9; font-size: 13px; cursor: pointer; }
+.process-node-check {
+  border: 1px solid #21262d;
+  border-radius: 6px;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: #10151c;
+}
+.process-node-check-head { display: flex; align-items: flex-end; gap: 6px; }
+.process-node-check-head .process-node-field { flex: 1; }
+.process-node-check-head .spacer { flex: 0; }
+.process-node-add { align-self: flex-start; }
+.process-node-empty { margin: 0; color: #8b949e; font-size: 12px; }
+.process-node-edges { display: flex; flex-direction: column; gap: 3px; }
+.process-node-edge-row { display: flex; gap: 8px; align-items: baseline; font-size: 13px; }
+.process-node-edge-outcome { color: #79c0ff; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.process-node-edge-arrow { color: #8b949e; }
+.process-node-edge-target { color: #e6edf3; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.process-node-edges-note { margin: 2px 0 0; color: #8b949e; font-size: 11px; }
+.process-node-status { margin: 6px 0 0; min-height: 16px; font-size: 12px; color: #8b949e; }
+.process-node-status.is-error { color: #f85149; }
+.process-node-missing { color: #f85149; }
+/* Wizard skin: violet chrome, gold accents — explicitly themed so no control
+   falls back to UA defaults. */
+body.wizard .process-node-section { background: #181226; border-color: #4a3d6b; }
+body.wizard .process-node-check { background: #211832; border-color: #4a3d6b; }
+body.wizard .process-node-input,
+body.wizard .process-node-textarea,
+body.wizard .process-node-select,
+body.wizard .process-node-close { background: #2c2042; border-color: #4a3d6b; color: #efe6ff; }
+body.wizard .process-node-input:focus,
+body.wizard .process-node-textarea:focus,
+body.wizard .process-node-select:focus { border-color: #d4af37; }
+body.wizard .process-node-close:hover { border-color: #d4af37; }
+body.wizard .process-performer-editor { border-left-color: #4a3d6b; }
+body.wizard .process-node-readonly-badge { color: #d4af37; border-color: #d4af37; }

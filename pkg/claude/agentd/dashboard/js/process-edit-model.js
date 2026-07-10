@@ -243,6 +243,27 @@ export class ProcessEditModel {
     this.layout.nodes[id] = { x, y };
   }
 
+  // updateNode is the node dialogs' single mutation gate (TCL-298): the
+  // mutator receives a DRAFT clone of the node, so a thrown error can never
+  // half-apply, and a mutation that leaves the node deep-equal to the current
+  // value is a no-op — no dirty, no undo slot (the same discipline as
+  // renameNode/setJoin). Structural mutations (stages, checks, performers,
+  // retry, captures) all flow through here; topology stays with the
+  // dedicated edge/node ops above.
+  updateNode(id, mutate) {
+    const node = this.template.nodes[id];
+    if (!node) throw new Error(`unknown node ${id}`);
+    this.assertNodeEditable(id);
+    const draft = clone(node);
+    mutate(draft);
+    // Key insertion order is preserved by structuredClone and in-place field
+    // assignment, so serialized equality is a faithful no-op test here.
+    if (JSON.stringify(draft) === JSON.stringify(node)) return false;
+    this.begin();
+    this.template.nodes[id] = draft;
+    return true;
+  }
+
   renameNode(id, name) {
     const node = this.template.nodes[id];
     if (!node) throw new Error(`unknown node ${id}`);

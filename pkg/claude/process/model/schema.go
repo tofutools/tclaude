@@ -9,13 +9,17 @@ import (
 var (
 	templateFields  = stringSet("apiVersion", "kind", "id", "name", "description", "doc", "params", "start", "nodes", "layout")
 	paramFields     = stringSet("type", "name", "description", "doc", "required", "default")
-	nodeFields      = stringSet("type", "name", "description", "doc", "performer", "plan", "checks", "review", "retry", "wait", "next", "result", "metadata")
+	nodeFields      = stringSet("type", "name", "description", "doc", "performer", "plan", "checks", "review", "retry", "wait", "next", "result", "captures", "metadata")
 	stepFields      = stringSet("id", "name", "description", "doc", "performer", "approval", "approvalRetry", "retry")
 	performerFields = stringSet(
 		"kind",
 		"profile",
 		"prompt",
 		"ask",
+		"choices",
+		"assignee",
+		"model",
+		"effort",
 		"run",
 		"args",
 		"timeout",
