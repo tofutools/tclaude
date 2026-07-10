@@ -227,8 +227,10 @@ function morphNode(from, to) {
 // their attributes once dirtied, so setAttribute alone can't fix them — we set
 // the property directly. Guarded by an inequality check so we never disturb a
 // control that already agrees. Text `value` is only synced when the control is
-// NOT focused, so a hypothetical editable field being typed into is never
-// clobbered (today no editable text input lives inside a morphed pane).
+// NOT focused, so an editable field being typed into is never clobbered — the
+// worklist's per-row comment input (process-worklist.js) lives inside a morphed
+// pane and DEPENDS on this focused-value guard (its unfocused value is covered
+// separately by the draft map the fresh render re-emits).
 function syncFormProps(from, to) {
   const tag = from.nodeName;
   // `document` is absent under the Node unit test; treat "nothing focused".

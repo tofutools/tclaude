@@ -67,6 +67,8 @@ func TestProcessWorklistUIActionRoundTripReflectsResolution(t *testing.T) {
 	assert.Equal(t, "human:operator", item.Assignee)
 	assert.Equal(t, "Ship the dashboard release?", item.Summary)
 	assert.False(t, item.CreatedAt.IsZero(), "human obligations carry createdAt (the Age cell)")
+	assert.Equal(t, item.CreatedAt, item.ChangedAt,
+		"a pending item's last change IS its creation (the Recently-changed window)")
 	require.NotNil(t, item.Nudge, "the nudge schedule line is the point of the surface")
 	assert.False(t, item.Nudge.NextContactAt.IsZero())
 	assert.Equal(t, 5, item.Nudge.BudgetMax)
@@ -94,6 +96,8 @@ func TestProcessWorklistUIActionRoundTripReflectsResolution(t *testing.T) {
 	require.Len(t, listing.Items, 1)
 	assert.Equal(t, "satisfied", string(listing.Items[0].Status),
 		"refresh after the action must show the item resolved")
+	assert.True(t, listing.Items[0].ChangedAt.After(listing.Items[0].CreatedAt),
+		"resolution must advance changedAt past creation — the bounded Recently-changed view sorts on it")
 
 	// And the pending-only views (everything except Recently changed) drop it:
 	// the status filter the chips would apply server- or client-side agrees.

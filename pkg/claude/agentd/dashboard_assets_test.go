@@ -711,11 +711,20 @@ func TestDashboardAssets_ProcessWorklistWired(t *testing.T) {
 		`id="process-worklist-badge"`,
 		`id="process-worklist-refresh"`,
 		// process-worklist.js — the REST consumption: list fetch, the action
-		// POST with a fresh idempotency key per click, and the advertised-
-		// spelling + required-comment funnel from the core module.
+		// POST through the retained-idempotency-key funnel (same key on a
+		// retry of the same logical action, cleared only on a definitive
+		// 2xx), and the advertised-spelling + required-comment gate from the
+		// core module.
 		"processJSON('/v1/process/worklist')",
-		"crypto.randomUUID()",
-		"buildWorklistAction(item, action, comment, crypto.randomUUID())",
+		"retainedActionKey(actionKeys, item, action, comment)",
+		"buildWorklistAction(item, action, comment, key)",
+		"actionKeys.delete(payload)",
+		// The comment-required affordance renders from STATE (an imperative
+		// classList.add would be stripped by the next poll's morph).
+		"commentMissing.has(item.id)",
+		// process-worklist-core.js — the secure-context-safe uuid mint
+		// (crypto.randomUUID is absent on plain-http non-loopback binds).
+		"export function mintUUID(",
 		// process-worklist-core.js — the action request builder the funnel
 		// rides (URL-escaped item id, advertised spelling resolution).
 		"/v1/process/worklist/${encodeURIComponent(item.id)}/action",

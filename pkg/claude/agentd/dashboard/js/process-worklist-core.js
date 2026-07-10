@@ -21,6 +21,15 @@ export const DUE_SOON_MS = 24 * 60 * 60 * 1000;
 // the last 24h.
 export const RECENT_MS = 24 * 60 * 60 * 1000;
 
+// changedAtMs: when the item last changed. The backend derives changedAt
+// from the durable records (obligation resolvedAt / block-resolution
+// timestamp, else creation); createdAt is the fallback for older payloads.
+// NaN when neither is recorded (pending blocked items until TCL-303).
+export function changedAtMs(item) {
+  const changed = timeMs(item.changedAt);
+  return Number.isNaN(changed) ? timeMs(item.createdAt) : changed;
+}
+
 // The seven §8c views, in display order. Keys double as the chip data-attr
 // and the persisted dashPref value.
 export const WORKLIST_VIEWS = [
@@ -66,10 +75,50 @@ export function advertisedAction(item, action) {
   return '';
 }
 
+// mintUUID returns an RFC-4122 v4 id for the action idempotency key.
+// crypto.randomUUID is SECURE-CONTEXT-ONLY — a dashboard served over plain
+// http from a non-loopback bind (http://192.168.x.y:port) doesn't have it,
+// which would silently break every worklist action. getRandomValues is
+// available in insecure contexts, so fall back to composing v4 by hand.
+// `cryptoObj` is injectable for tests; defaults to the environment's crypto.
+export function mintUUID(cryptoObj) {
+  const c = cryptoObj || globalThis.crypto;
+  if (typeof c.randomUUID === 'function') return c.randomUUID();
+  const bytes = new Uint8Array(16);
+  c.getRandomValues(bytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
+  bytes[8] = (bytes[8] & 0x3f) | 0x80; // RFC-4122 variant
+  const hex = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+// retainedActionKey resolves the idempotency key for one LOGICAL action —
+// (item, advertised action, trimmed comment) — minting on first use and
+// returning the SAME key for the same payload on a retry. This is what makes
+// an ambiguous failure (daemon recorded the action, response lost) safely
+// retryable: the replay carries the original key, so the backend's
+// same-key/same-payload contract turns it into an idempotent no-op instead
+// of a fresh submission the already-observed command would 409 forever.
+// A payload change (edited comment, different action) IS a new logical action
+// and naturally maps to a new entry/key — matching the backend's
+// same-key/different-payload 409. The caller deletes the entry only on a
+// definitive 2xx. `keyStore` is a caller-owned Map (payload → key).
+export function retainedActionKey(keyStore, item, action, comment, mint = mintUUID) {
+  const advertised = advertisedAction(item, action);
+  const payload = `${item.id}\x00${advertised}\x00${String(comment || '').trim()}`;
+  let key = keyStore.get(payload);
+  if (!key) {
+    key = mint();
+    keyStore.set(payload, key);
+  }
+  return { payload, key };
+}
+
 // buildWorklistAction assembles the exact request the action endpoint expects:
 // the advertised action spelling, the operator's comment (required by the API),
-// and a caller-supplied fresh idempotency key (one per click — a retry of the
-// SAME click reuses the key, a new click mints a new one).
+// and a caller-supplied idempotency key — obtained via retainedActionKey so a
+// retry of the same logical action replays the same key, while any payload
+// change maps to a fresh one.
 // Returns null when the action isn't advertised on the item or the comment is
 // blank, so the caller can surface the problem instead of collecting a 4xx.
 export function buildWorklistAction(item, action, comment, idempotencyKey) {
@@ -220,16 +269,18 @@ export function viewItems(items, view, now) {
     case 'review':
       return sortItems(pending.filter(i => i.kind === 'review-needed'), now);
     case 'recent': {
-      // Resolved items (satisfied/canceled) plus anything created inside the
-      // window. The backend has no changed-at timestamp yet, so this is the
-      // honest approximation: resolution flips status, creation stamps
-      // createdAt. Newest creations first; undated (blocked, TCL-303) last.
-      const recent = all.filter(i => i.status !== 'pending'
-        || (!Number.isNaN(timeMs(i.createdAt)) && now - timeMs(i.createdAt) <= RECENT_MS));
+      // Anything — pending or resolved — whose last change falls inside the
+      // window, newest change first. Bounded on purpose: admitting every
+      // resolved item forever would grow the chip monotonically and sort
+      // stale. Items with no recorded timestamp at all (pending blocked
+      // items until TCL-303) can't claim recency and are excluded.
+      const recent = all.filter(i => {
+        const changed = changedAtMs(i);
+        return !Number.isNaN(changed) && now - changed <= RECENT_MS;
+      });
       return recent.sort((a, b) => {
-        const ca = timeMs(a.createdAt), cb = timeMs(b.createdAt);
-        if (Number.isNaN(ca) !== Number.isNaN(cb)) return Number.isNaN(ca) ? 1 : -1;
-        if (!Number.isNaN(ca) && ca !== cb) return cb - ca;
+        const ca = changedAtMs(a), cb = changedAtMs(b);
+        if (ca !== cb) return cb - ca;
         return String(a.id).localeCompare(String(b.id));
       });
     }

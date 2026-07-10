@@ -19,7 +19,7 @@ import { processJSON, activateProcessSubtab, processNotice } from './processes.j
 import {
   WORKLIST_VIEWS, kindMeta, actorLabel, nudgeLine, fmtAge, fmtDue, dueBucket,
   viewItems, viewCounts, groupWaitingOn, actionableCount, isActionable,
-  isDestructiveAction, buildWorklistAction,
+  isDestructiveAction, buildWorklistAction, retainedActionKey,
 } from './process-worklist-core.js';
 
 const VIEW_PREF_KEY = 'tclaude.dash.worklist.view';
@@ -29,11 +29,28 @@ const VIEW_PREF_KEY = 'tclaude.dash.worklist.view';
 let lastWorklist = null;
 let activeView = 'my-work';
 const commentDrafts = new Map();
+// commentMissing marks items whose action was clicked with a blank comment.
+// State, not just a live classList toggle, because the 2s morph re-derives
+// every row's class attribute from the FRESH render — an imperatively-added
+// class would be stripped on the next poll. renderItemActions consults it;
+// typing in the input clears it.
+const commentMissing = new Set();
+// actionKeys retains the idempotency key per LOGICAL action (payload → key,
+// see retainedActionKey in the core module): an ambiguous failure keeps its
+// key so the user's retry replays the SAME submission (idempotent no-op on
+// the backend) instead of minting a fresh key the already-observed command
+// would 409 forever. Cleared only on a definitive 2xx; pruned when the item
+// leaves the worklist.
+const actionKeys = new Map();
 // actionInFlight serializes the action funnel: one confirm + POST at a time.
 // Guards both double-submission AND concurrent use of the shared confirmModal
 // singleton (concurrent confirmModal calls double its listeners — one click
 // would resolve both).
 let actionInFlight = false;
+// worklistSeq tokens each loadProcessWorklist so a slow older response can't
+// land after a newer one and overwrite lastWorklist with staler data (the
+// same guard refresh.js grew for its snapshot fetch).
+let worklistSeq = 0;
 
 export function initProcessWorklist() {
   const panel = $('#process-panel-worklist');
@@ -60,6 +77,9 @@ export function initProcessWorklist() {
     const id = input.dataset.worklistComment;
     if (input.value) commentDrafts.set(id, input.value);
     else commentDrafts.delete(id);
+    // Clear the comment-required affordance in state (so the next fresh
+    // render agrees) AND on the live node (so it lifts before the next poll).
+    commentMissing.delete(id);
     input.classList.remove('wl-comment-missing');
   });
 
@@ -91,8 +111,12 @@ export function initProcessWorklist() {
 export async function loadProcessWorklist({ quiet = false } = {}) {
   const mount = $('#process-worklist-list');
   if (!mount) return;
+  const seq = ++worklistSeq;
   try {
     const body = await processJSON('/v1/process/worklist');
+    // A newer load started while this one was in flight (manual refresh vs
+    // the 2s poll) — drop the stale response instead of overwriting.
+    if (seq !== worklistSeq) return;
     lastWorklist = { items: body.items || [], degradedRuns: body.degradedRuns || [] };
     renderFromCache();
     if (!quiet && worklistPanelActive()) {
@@ -100,6 +124,7 @@ export async function loadProcessWorklist({ quiet = false } = {}) {
       processNotice(`${n} actionable item${n === 1 ? '' : 's'}`);
     }
   } catch (error) {
+    if (seq !== worklistSeq) return;
     // A fetch fault must not blank a previously-rendered list (poll parity
     // with stitchListPage): keep the stale rows, surface the failure.
     if (!lastWorklist) morphInto(mount, `<p class="error">Could not load worklist: ${esc(error.message)}</p>`);
@@ -119,6 +144,19 @@ function renderFromCache() {
   if (!lastWorklist) return;
   const now = Date.now();
   const { items, degradedRuns } = lastWorklist;
+
+  // Prune per-item state for items no longer in the worklist (resolved
+  // elsewhere, run deleted): comment drafts, the comment-required marker,
+  // and retained action keys (payloads are prefixed with the item id).
+  const live = new Set(items.map(i => i.id));
+  for (const id of commentDrafts.keys()) if (!live.has(id)) commentDrafts.delete(id);
+  for (const id of commentMissing) if (!live.has(id)) commentMissing.delete(id);
+  for (const payload of actionKeys.keys()) {
+    if (!live.has(payload.slice(0, payload.indexOf('\x00')))) actionKeys.delete(payload);
+  }
+  // Items reappeared: drop the cached empty-state text so the NEXT transition
+  // to empty re-derives a fresh run count.
+  if (items.length) emptyStateCache = null;
 
   const badge = $('#process-worklist-badge');
   if (badge) {
@@ -212,16 +250,29 @@ function renderItemActions(item) {
   }
   if (!isActionable(item)) return '—';
   const draft = commentDrafts.get(item.id) || '';
+  // The comment-required affordance comes from STATE so the fresh render
+  // carries it — an imperative classList.add alone would be stripped by the
+  // next poll's attribute morph.
+  const missing = commentMissing.has(item.id) ? ' wl-comment-missing' : '';
   const buttons = (item.availableActions || []).map(a =>
     `<button class="process-action wl-action" data-worklist-action="${esc(a)}" data-worklist-item="${esc(item.id)}" type="button">${esc(a)}</button>`,
   ).join('');
-  return `<input class="wl-comment" type="text" data-worklist-comment="${esc(item.id)}" placeholder="Comment (required)" value="${esc(draft)}" aria-label="Comment for ${esc(item.summary || item.id)}"><div class="wl-action-row">${buttons}</div>`;
+  return `<input class="wl-comment${missing}" type="text" data-worklist-comment="${esc(item.id)}" placeholder="Comment (required)" value="${esc(draft)}" aria-label="Comment for ${esc(item.summary || item.id)}"><div class="wl-action-row">${buttons}</div>`;
 }
 
-// describeEmptyWorklist upgrades the bare zero-state after the fact: one extra
-// runs fetch (only on the empty path — never on the 2s poll with items) tells
-// apart "no runs exist yet" from "runs are flowing and nothing needs you".
+// describeEmptyWorklist upgrades the bare zero-state after the fact: an extra
+// runs fetch tells apart "no runs exist yet" from "runs are flowing and
+// nothing needs you". The empty worklist is the POLL'S steady state and the
+// runs endpoint verifies every run per call, so the enriched text is cached
+// for EMPTY_STATE_TTL_MS (a slightly stale run count is cosmetic) instead of
+// re-fetching on every 2s tick.
+const EMPTY_STATE_TTL_MS = 30_000;
+let emptyStateCache = null; // { html, at }
 async function describeEmptyWorklist(mount) {
+  if (emptyStateCache && Date.now() - emptyStateCache.at < EMPTY_STATE_TTL_MS) {
+    morphInto(mount, emptyStateCache.html);
+    return;
+  }
   let text = '<h3>All caught up</h3><p>No process run is waiting on anyone.</p>';
   try {
     const body = await processJSON('/v1/process/runs');
@@ -234,10 +285,12 @@ async function describeEmptyWorklist(mount) {
         + `${running ? ` (${running} running)` : ''} — nothing is waiting on a human right now.</p>`;
     }
   } catch { /* keep the generic zero-state */ }
+  const html = `<div class="process-placeholder">${text}</div>`;
+  emptyStateCache = { html, at: Date.now() };
   // Re-check emptiness: a poll may have landed items while the runs fetch was
   // in flight.
   if (lastWorklist && lastWorklist.items.length) return;
-  morphInto(mount, `<div class="process-placeholder">${text}</div>`);
+  morphInto(mount, html);
 }
 
 // submitWorklistAction is the single action funnel: required comment,
@@ -249,6 +302,7 @@ async function submitWorklistAction(itemID, action) {
   if (!item) return;
   const comment = (commentDrafts.get(itemID) || '').trim();
   if (!comment) {
+    commentMissing.add(itemID);
     const input = document.querySelector(`input[data-worklist-comment="${CSS.escape(itemID)}"]`);
     if (input) { input.classList.add('wl-comment-missing'); input.focus(); }
     processNotice('A comment is required for every worklist action.');
@@ -265,8 +319,21 @@ async function submitWorklistAction(itemID, action) {
       });
       if (!ok) return;
     }
-    const request = buildWorklistAction(item, action, comment, crypto.randomUUID());
-    if (!request) return;
+    // The idempotency key is retained per logical action across failures: an
+    // ambiguous fault (recorded server-side, response lost) keeps its key, so
+    // the user's retry replays the SAME submission and the backend treats it
+    // as an idempotent no-op. Cleared only on a definitive 2xx below.
+    const { payload, key } = retainedActionKey(actionKeys, item, action, comment);
+    const request = buildWorklistAction(item, action, comment, key);
+    if (!request) {
+      // The action stopped being advertised between render and click (the
+      // item advanced under us) — say so instead of a silent no-op; the
+      // refresh below shows the new truth.
+      processNotice(`“${action}” is no longer available for this item.`);
+      actionInFlight = false;
+      await loadProcessWorklist();
+      return;
+    }
     const response = await fetch(request.path, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -275,6 +342,7 @@ async function submitWorklistAction(itemID, action) {
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(body.message || body.error || `${response.status} ${response.statusText}`);
+    actionKeys.delete(payload);
     commentDrafts.delete(itemID);
     toast(`${request.body.action} recorded for ${item.node}`);
   } catch (error) {

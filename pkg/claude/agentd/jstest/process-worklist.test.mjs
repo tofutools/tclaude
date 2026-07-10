@@ -4,7 +4,7 @@ import {
   OPERATOR_ASSIGNEE, WORKLIST_VIEWS, kindMeta, actorLabel, nudgeLine,
   fmtAge, fmtDue, fmtClock, dueBucket, sortItems, viewItems, viewCounts,
   groupWaitingOn, actionableCount, isActionable, isDestructiveAction,
-  advertisedAction, buildWorklistAction,
+  advertisedAction, buildWorklistAction, mintUUID, retainedActionKey,
 } from '../dashboard/js/process-worklist-core.js';
 
 // A fixed "now" keeps every duration/bucket assertion deterministic.
@@ -58,6 +58,22 @@ test('viewItems: recent view includes resolved items and recent creations, newes
   assert.ok(ids.includes('wi_6'), 'satisfied item belongs to recently-changed');
   assert.ok(!ids.includes('wi_7'), '30h-old pending item is not recent');
   assert.equal(ids[0], 'wi_1', 'newest creation sorts first');
+});
+
+test('recent view is BOUNDED: old resolved items age out, fresh resolutions sort first', () => {
+  const items = [
+    item({ id: 1 }),                                                     // pending, created 2h ago
+    item({ id: 2, status: 'satisfied', createdAt: iso(-72 * HOUR), changedAt: iso(-10 * 60 * 1000) }), // resolved 10m ago
+    item({ id: 3, status: 'satisfied', createdAt: iso(-72 * HOUR), changedAt: iso(-70 * HOUR) }),      // resolved 70h ago
+    item({ id: 4, status: 'satisfied', createdAt: iso(-30 * HOUR) }),    // no changedAt, old createdAt fallback
+    item({ id: 5, kind: 'blocked', status: 'pending', createdAt: undefined }), // no timestamps at all (TCL-303)
+  ];
+  const ids = viewItems(items, 'recent', NOW).map(i => i.id);
+  assert.deepEqual(ids, ['wi_2', 'wi_1'],
+    'fresh resolution first, then the recent creation; stale/undated items excluded');
+  assert.ok(!ids.includes('wi_3'), '70h-old resolution must age out (the chip cannot grow forever)');
+  assert.ok(!ids.includes('wi_4'), 'resolved item whose only timestamp is 30h old ages out too');
+  assert.ok(!ids.includes('wi_5'), 'an item with no recorded timestamp cannot claim recency');
 });
 
 test('sortItems: overdue → due-soon → dated → undated, stable id tiebreak', () => {
@@ -151,6 +167,47 @@ test('item ids are URL-escaped into the action path', () => {
   odd.id = 'wi/../oops';
   const req = buildWorklistAction(odd, 'approve', 'c', 'k');
   assert.equal(req.path, '/v1/process/worklist/wi%2F..%2Foops/action');
+});
+
+test('mintUUID prefers crypto.randomUUID and falls back to getRandomValues v4', () => {
+  assert.equal(mintUUID({ randomUUID: () => 'from-randomUUID' }), 'from-randomUUID');
+  // Insecure-context shape: getRandomValues only (crypto.randomUUID is
+  // secure-context-only, absent on plain-http non-loopback dashboards).
+  const insecure = {
+    getRandomValues(bytes) {
+      for (let i = 0; i < bytes.length; i++) bytes[i] = (i * 37 + 11) & 0xff;
+      return bytes;
+    },
+  };
+  const id = mintUUID(insecure);
+  assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    'fallback must be a well-formed RFC-4122 v4 uuid (version nibble 4, variant 8-b)');
+  assert.notEqual(mintUUID(insecure), '', 'fallback never returns empty');
+});
+
+test('retainedActionKey: a retry of the same logical action replays the SAME key', () => {
+  let minted = 0;
+  const mint = () => `key-${++minted}`;
+  const store = new Map();
+  const decision = item({ id: 9, availableActions: ['Approve', 'Reject'] });
+
+  const first = retainedActionKey(store, decision, 'approve', 'ship it', mint);
+  const retry = retainedActionKey(store, decision, 'APPROVE', 'ship it', mint);
+  assert.equal(retry.key, first.key, 'same payload (case-insensitive action) → same retained key');
+  assert.equal(minted, 1, 'the retry must NOT mint a fresh key');
+
+  // A payload change is a NEW logical action → new key (matches the
+  // backend's same-key/different-payload 409 contract).
+  const edited = retainedActionKey(store, decision, 'approve', 'ship it now', mint);
+  assert.notEqual(edited.key, first.key);
+  const other = retainedActionKey(store, decision, 'reject', 'ship it', mint);
+  assert.notEqual(other.key, first.key);
+
+  // Definitive success clears the entry; the next identical action is a new
+  // submission with a new key.
+  store.delete(first.payload);
+  const after = retainedActionKey(store, decision, 'approve', 'ship it', mint);
+  assert.notEqual(after.key, first.key);
 });
 
 test('isDestructiveAction matches case-insensitively', () => {
