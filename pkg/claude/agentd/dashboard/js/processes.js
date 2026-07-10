@@ -21,10 +21,13 @@ export function initProcessesTab() {
   });
   $('#process-runs-refresh')?.addEventListener('click', () => loadProcessRuns());
   $('#process-template-new')?.addEventListener('click', () => openProcessEditor('new-process', true));
-  tab.addEventListener('click', e => {
+  tab.addEventListener('click', async e => {
     const close = e.target.closest('[data-process-close-view]');
     if (close) {
-      maybeCloseProcessCanvasViews();
+      // Awaited with a swallow so a rejection (e.g. a failed dynamic import
+      // inside the dirty check) never becomes an unhandled rejection. Failing
+      // SAFE means staying open: closing here would be a silent discard.
+      await maybeCloseProcessCanvasViews().catch(() => {});
       return;
     }
     const action = e.target.closest('button[data-process-action]');
