@@ -183,6 +183,28 @@ func EnsureCodexAgentProfileForCwd(cwd string) (string, error) {
 	return ensureCodexAgentProfile(sock, privateStateDir, gitCommonDir)
 }
 
+// EnsureCodexAgentProfileForGitCommonDir is the daemon-spawn variant used
+// after agentd has already resolved, proved, and pinned a Git common dir. It
+// intentionally does not recompute from cwd in the forked session launcher.
+func EnsureCodexAgentProfileForGitCommonDir(gitCommonDir string) (string, error) {
+	sock, privateStateDir, err := codexAgentSandboxPaths()
+	if err != nil {
+		return "", err
+	}
+	gitCommonDir = strings.TrimSpace(gitCommonDir)
+	if gitCommonDir != "" {
+		gitCommonDir = filepath.Clean(gitCommonDir)
+	}
+	return ensureCodexAgentProfile(sock, privateStateDir, gitCommonDir)
+}
+
+// CodexGitCommonDir resolves the Git common dir for cwd. Daemon spawn paths use
+// this before dir write-proof verification so linked-worktree metadata grants
+// are proven and pinned instead of being recomputed after launch.
+func CodexGitCommonDir(cwd string) (string, error) {
+	return codexGitCommonDir(cwd)
+}
+
 func codexAgentSandboxPaths() (socketPath, privateStateDir string, err error) {
 	socketPath = agentipc.CanonicalSocketPath()
 	home, err := os.UserHomeDir()

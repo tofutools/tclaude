@@ -18,6 +18,31 @@ func TestSessionNewArgs_EffortOmittedWhenUnset(t *testing.T) {
 	}
 }
 
+func TestSessionNewArgs_InternalWriteProofFlags(t *testing.T) {
+	bare := sessionNewArgs(clcommon.SpawnArgs{Label: "lbl", Cwd: "/tmp/x"})
+	if slices.Contains(bare, "--cwd-write-proof") {
+		t.Fatalf("unset cwd proof must omit the internal flag, got %v", bare)
+	}
+	if slices.Contains(bare, "--codex-git-common-dir") {
+		t.Fatalf("unset git common dir must omit the internal flag, got %v", bare)
+	}
+
+	withProof := sessionNewArgs(clcommon.SpawnArgs{
+		Label: "lbl", Cwd: "/tmp/x", CwdWriteProof: "proof_123", CodexGitCommonDir: "/tmp/repo/.git",
+	})
+	if i := slices.Index(withProof, "--cwd-write-proof"); i < 0 || i+1 >= len(withProof) || withProof[i+1] != "proof_123" {
+		t.Fatalf("cwd proof must ride into the forked session launcher, got %v", withProof)
+	}
+	if i := slices.Index(withProof, "--codex-git-common-dir"); i < 0 || i+1 >= len(withProof) || withProof[i+1] != "/tmp/repo/.git" {
+		t.Fatalf("pinned git common dir must ride into the forked session launcher, got %v", withProof)
+	}
+
+	resume := sessionResumeArgs(clcommon.SpawnArgs{ConvID: "conv", Cwd: "/tmp/x", CwdWriteProof: "proof_456"})
+	if i := slices.Index(resume, "--cwd-write-proof"); i < 0 || i+1 >= len(resume) || resume[i+1] != "proof_456" {
+		t.Fatalf("resume cwd proof must ride into clone resume launches, got %v", resume)
+	}
+}
+
 // TestSessionNewArgs_CodexGetsInitialPromptSeed checks the JOH-205 first-turn
 // seed: a daemon-spawned Codex carries `--initial-prompt <seed>` so it takes a
 // turn (materialising its conv-id) without a human, while Claude Code — which

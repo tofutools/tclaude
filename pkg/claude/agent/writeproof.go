@@ -119,8 +119,10 @@ func DaemonRequestWithWriteProof(method, path string, mkBody func(writeProofToke
 	if ansErr != nil {
 		return ansErr
 	}
-	defer cleanup()
 	retryErr := DaemonRequest(method, path, mkBody(ch.Token), out, opts)
+	if retryErr != nil {
+		cleanup()
+	}
 	if writeProofChallengeFromError(retryErr) != nil {
 		// A second challenge in a row means the daemon would loop us —
 		// surface it rather than retrying forever.

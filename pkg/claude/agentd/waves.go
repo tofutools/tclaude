@@ -104,7 +104,8 @@ func partitionWaves(agents []db.GroupTemplateAgent) []db.WaveGroup {
 // stays inert for any non-template caller of this path.
 func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process []db.ProcessPhase,
 	groupContext, cwd, sharedWorktreePath, sharedWorktreeBranch string, perAgentWorktrees *db.WavePerAgentWorktrees,
-	caller, granter, templateName string, existing map[string]string, suppressOwner bool) waveSpawnResult {
+	caller, granter, templateName string, existing map[string]string, suppressOwner bool,
+	proofToken string, proofDirs []string) waveSpawnResult {
 	wr := waveSpawnResult{
 		Results:      []instantiateAgentResult{},
 		SpawnedConvs: map[string]string{},
@@ -176,6 +177,10 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			agentContext = appendRoleBlock(groupContext, role.Brief)
 		}
 		agentContext = appendProcessBlock(agentContext, process, a.Role)
+		cwdProofToken := ""
+		if proofToken != "" && agentCwd == cwd {
+			cwdProofToken = proofToken
+		}
 		outcome, fail := executeSpawn(g, spawnParams{
 			Name:                   finalName,
 			Role:                   a.Role,
@@ -184,6 +189,9 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			Cwd:                    agentCwd,
 			WorktreePath:           agentWorktreePath,
 			WorktreeBranch:         agentWorktreeBranch,
+			DirWriteProofDirs:      proofDirs,
+			DirWriteProofToken:     proofToken,
+			CwdWriteProofToken:     cwdProofToken,
 			Harness:                launch.Harness,
 			Model:                  launch.Model,
 			Effort:                 launch.Effort,
@@ -553,12 +561,14 @@ func advanceChoreographyIfReady(c *db.WaveChoreography) {
 	if g == nil {
 		slog.Info("wave runner: group gone; dropping choreography", "group", c.GroupName)
 		_ = db.DeleteWaveChoreography(c.GroupID)
+		cleanupDirWriteProofMarkers(c.ProofToken, c.ProofDirs)
 		return
 	}
 	if c.NextWave >= len(c.Waves) {
 		// Nothing left to spawn — a stale row (shouldn't happen; the last-wave
 		// path deletes it). Clean it up.
 		_ = db.DeleteWaveChoreography(c.GroupID)
+		cleanupDirWriteProofMarkers(c.ProofToken, c.ProofDirs)
 		return
 	}
 
@@ -582,7 +592,8 @@ func advanceChoreographyIfReady(c *db.WaveChoreography) {
 		"agents", len(wave.Agents), "index", c.NextWave, "of", len(c.Waves))
 	wr := spawnWaveAgents(g, wave.Agents, c.Process, c.GroupContext, c.Cwd,
 		c.WorktreePath, c.WorktreeBranch, c.PerAgentWorktrees,
-		c.Caller, c.Granter, c.TemplateName, groupMemberNames(g), c.SuppressOwner)
+		c.Caller, c.Granter, c.TemplateName, groupMemberNames(g), c.SuppressOwner,
+		c.ProofToken, c.ProofDirs)
 
 	// Accumulate the spawns for the final work-pattern routing.
 	maps.Copy(c.SpawnedConvs, wr.SpawnedConvs)
@@ -606,6 +617,7 @@ func advanceChoreographyIfReady(c *db.WaveChoreography) {
 		if err := db.DeleteWaveChoreography(c.GroupID); err != nil {
 			slog.Warn("wave runner: delete choreography failed", "group", c.GroupName, "error", err)
 		}
+		cleanupDirWriteProofMarkers(c.ProofToken, c.ProofDirs)
 		return
 	}
 
@@ -622,6 +634,7 @@ func advanceChoreographyIfReady(c *db.WaveChoreography) {
 	if still, err := db.GetAgentGroupByID(c.GroupID); err == nil && still == nil {
 		slog.Info("wave runner: group deleted mid-spawn; dropping choreography", "group", c.GroupName)
 		_ = db.DeleteWaveChoreography(c.GroupID)
+		cleanupDirWriteProofMarkers(c.ProofToken, c.ProofDirs)
 		return
 	}
 	if err := db.UpsertWaveChoreography(c); err != nil {

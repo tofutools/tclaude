@@ -2118,9 +2118,14 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 	// spawn, so it must prove its own sandbox can write there. Humans pass
 	// through. Gates before any child spawns; pins the cast to the resolved
 	// dirs on success.
-	cwd, worktreePath, ok = requireTemplateDirWriteProof(w, caller, body.WriteProofToken, cwd, worktreePath, templateRepoAnchor(perAgentWorktrees))
+	var proofDirs []string
+	var resolvedRepo string
+	cwd, worktreePath, resolvedRepo, proofDirs, ok = requireTemplateDirWriteProof(w, caller, body.WriteProofToken, cwd, worktreePath, templateRepoAnchor(perAgentWorktrees))
 	if !ok {
 		return
+	}
+	if perAgentWorktrees != nil {
+		perAgentWorktrees.Repo = resolvedRepo
 	}
 	descr := strings.TrimSpace(body.Descr)
 	if descr == "" {
@@ -2148,6 +2153,8 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 		worktreePath:      worktreePath,
 		worktreeBranch:    strings.TrimSpace(body.WorktreeBranch),
 		perAgentWorktrees: perAgentWorktrees,
+		proofToken:        strings.TrimSpace(body.WriteProofToken),
+		proofDirs:         proofDirs,
 		descr:             descr,
 		mission:           task,
 		sourceTemplate:    tmpl.Name,
@@ -2246,6 +2253,8 @@ type instantiateSpec struct {
 	worktreePath      string // optional shared worktree path, already resolved
 	worktreeBranch    string
 	perAgentWorktrees *db.WavePerAgentWorktrees
+	proofToken        string
+	proofDirs         []string
 	descr             string // already defaulted
 	mission           string // stored on the group row; "" for a plain instantiate
 	sourceTemplate    string // stored on the group row
@@ -2460,6 +2469,7 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 	// spawns nobody — mirror the pre-JOH-244 empty-roster behaviour instead of
 	// indexing waves[0].
 	if len(waves) == 0 {
+		cleanupDirWriteProofMarkers(spec.proofToken, spec.proofDirs)
 		resp := map[string]any{
 			"group":             spec.groupName,
 			"template":          tmpl.Name,
@@ -2493,7 +2503,7 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 	// group.
 	wr := spawnWaveAgents(g, waves[0].Agents, procPhases, groupContext, spec.cwd,
 		spec.worktreePath, spec.worktreeBranch, spec.perAgentWorktrees,
-		spec.caller, granter, tmpl.Name, nil, reinforce)
+		spec.caller, granter, tmpl.Name, nil, reinforce, spec.proofToken, spec.proofDirs)
 
 	resp := map[string]any{
 		"group":    spec.groupName,
@@ -2510,6 +2520,7 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 	}
 
 	if len(waves) == 1 {
+		cleanupDirWriteProofMarkers(spec.proofToken, spec.proofDirs)
 		// Single wave: the roster is already whole, so deliver the work pattern
 		// now — exactly the pre-JOH-244 path.
 		delivered, patErrs := deliverWorkPattern(g, tmpl.WorkPattern, tmpl.Name, assignment, spec.caller,
@@ -2529,6 +2540,8 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 			WorktreePath:      spec.worktreePath,
 			WorktreeBranch:    spec.worktreeBranch,
 			PerAgentWorktrees: spec.perAgentWorktrees,
+			ProofToken:        spec.proofToken,
+			ProofDirs:         spec.proofDirs,
 			Caller:            spec.caller,
 			Granter:           granter,
 			Assignment:        assignment,
@@ -2546,6 +2559,7 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 		}
 		if err := db.UpsertWaveChoreography(choreo); err != nil {
 			slog.Warn("instantiate: persist choreography failed", "group", spec.groupName, "error", err)
+			cleanupDirWriteProofMarkers(spec.proofToken, spec.proofDirs)
 		}
 		pendingAgents := pendingAgentCount(choreo)
 		resp["pattern_delivered"] = 0
@@ -2706,9 +2720,14 @@ func handleTemplateDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Dir write-proof for an agent caller — same gate as instantiate.
-	cwd, worktreePath, ok = requireTemplateDirWriteProof(w, caller, body.WriteProofToken, cwd, worktreePath, templateRepoAnchor(perAgentWorktrees))
+	var proofDirs []string
+	var resolvedRepo string
+	cwd, worktreePath, resolvedRepo, proofDirs, ok = requireTemplateDirWriteProof(w, caller, body.WriteProofToken, cwd, worktreePath, templateRepoAnchor(perAgentWorktrees))
 	if !ok {
 		return
+	}
+	if perAgentWorktrees != nil {
+		perAgentWorktrees.Repo = resolvedRepo
 	}
 
 	descr := strings.TrimSpace(body.Descr)
@@ -2734,6 +2753,8 @@ func handleTemplateDeploy(w http.ResponseWriter, r *http.Request) {
 		worktreePath:      worktreePath,
 		worktreeBranch:    strings.TrimSpace(body.WorktreeBranch),
 		perAgentWorktrees: perAgentWorktrees,
+		proofToken:        strings.TrimSpace(body.WriteProofToken),
+		proofDirs:         proofDirs,
 		descr:             descr,
 		mission:           mission,
 		sourceTemplate:    tmpl.Name,
@@ -2858,9 +2879,14 @@ func handleTemplateReinforce(w http.ResponseWriter, r *http.Request) {
 	// Dir write-proof for an agent caller — reinforce is also reachable via the
 	// group-owner bypass, so a group owner reinforcing into a dir it cannot
 	// itself write is exactly the escape this gate closes.
-	cwd, worktreePath, ok = requireTemplateDirWriteProof(w, caller, body.WriteProofToken, cwd, worktreePath, templateRepoAnchor(perAgentWorktrees))
+	var proofDirs []string
+	var resolvedRepo string
+	cwd, worktreePath, resolvedRepo, proofDirs, ok = requireTemplateDirWriteProof(w, caller, body.WriteProofToken, cwd, worktreePath, templateRepoAnchor(perAgentWorktrees))
 	if !ok {
 		return
+	}
+	if perAgentWorktrees != nil {
+		perAgentWorktrees.Repo = resolvedRepo
 	}
 
 	// Up-front, whole-or-nothing validation — nothing is spawned until all of
@@ -2880,6 +2906,8 @@ func handleTemplateReinforce(w http.ResponseWriter, r *http.Request) {
 		worktreePath:      worktreePath,
 		worktreeBranch:    strings.TrimSpace(body.WorktreeBranch),
 		perAgentWorktrees: perAgentWorktrees,
+		proofToken:        strings.TrimSpace(body.WriteProofToken),
+		proofDirs:         proofDirs,
 		intoExisting:      g,
 		agentProfiles:     body.AgentProfiles,
 	})

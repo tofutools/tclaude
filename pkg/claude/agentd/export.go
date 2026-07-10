@@ -254,7 +254,7 @@ func runExportClone(jobID int64, originalConv, cwd, effort, model string, sameGr
 	// 1. Clone the original (copy path → the clone carries the full history) and
 	// spawn it as its own session. Reuses the internal clone spawn so the race
 	// handling (poll for the new conv-id + tmux registration) is shared.
-	newConv, _, _, warn, spawnErr := cloneSpawnOnce(originalConv, cwd, false /* copy conv */, effort, model, nil)
+	newConv, _, _, warn, spawnErr := cloneSpawnOnce(originalConv, cwd, false /* copy conv */, effort, model, "", nil)
 	if spawnErr != nil {
 		slog.Warn("export clone: spawn failed", "job", jobID, "orig", originalConv, "error", spawnErr.Msg)
 		failExportJobAndReap(jobID, "", "could not clone the conversation to export it: "+spawnErr.Msg)

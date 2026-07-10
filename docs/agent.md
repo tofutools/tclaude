@@ -465,19 +465,24 @@ passed): the daemon answers the first request with a
 `403 write_proof_required` challenge naming a single-use token, the caller
 creates an empty file named `.tclaude-write-proof-<token>` in each listed
 directory, and retries the same request with `write_proof_token` set; the
-daemon verifies and deletes the files, then re-asserts the verified paths are
-still canonical immediately before the child launches (so a swap performed
-after verification is caught, not launched into). `tclaude agent spawn` runs
-the handshake automatically — inside the caller's own sandbox, which is
-exactly the capability being proven — so a permitted spawn just works, and a
-forbidden one fails with a clear "cannot prove write access" error. Humans,
-fully-open parents (Claude `off` / Codex `danger-full-access`), and Codex
-`read-only` children (no cwd write to prove) are exempt. The same handshake
-guards a clone's `cwd` override and the template spawn surfaces
-(`instantiate` / `deploy` / `reinforce` — the whole cast shares one proven
-launch cwd, plus any shared worktree and the per-agent-worktree repo); the
-matching `tclaude agent templates …` / `task-force` CLIs answer it
-transparently too.
+daemon verifies the files and pins the request to the resolved paths. The
+launch wrapper then checks the cwd marker from inside the tmux pane after
+tmux has established the pane's cwd inode, and agentd re-asserts the verified
+paths immediately before every fork. That combination catches both symlink
+retargeting and real-directory swaps between HTTP validation and launch.
+`tclaude agent spawn` runs the handshake automatically — inside the caller's
+own sandbox, which is exactly the capability being proven — so a permitted
+spawn just works, and a forbidden one fails with a clear "cannot prove write
+access" error. Humans, fully-open parents (Claude `off` / Codex
+`danger-full-access`), and Codex `read-only` children (no cwd write to prove)
+are exempt. The same handshake guards a clone's `cwd` override and the
+template spawn surfaces (`instantiate` / `deploy` / `reinforce` — the whole
+cast shares one proven launch cwd, plus any shared worktree and the
+per-agent-worktree repo); the matching `tclaude agent templates …` /
+`task-force` CLIs answer it transparently too. Agent-originated Codex spawns
+may not set `trust_dir`, and any linked-worktree Git common dir grant for the
+managed Codex profile is resolved, proved, and pinned before launch rather
+than recomputed from a mutable cwd.
 
 ### clone / reincarnate / compact / context-info
 

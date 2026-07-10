@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
@@ -48,7 +49,7 @@ const (
 	// dirWriteProofFilePrefix + token is the proof file's name. Hidden
 	// (dot-prefixed) because it is transient plumbing: agentd deletes it as
 	// part of verification, and the CLI best-effort removes it on failure.
-	dirWriteProofFilePrefix = ".tclaude-write-proof-"
+	dirWriteProofFilePrefix = clcommon.SpawnDirWriteProofPrefix
 
 	// dirWriteProofMaxPerConv caps outstanding challenges per caller so a
 	// looping agent cannot grow the challenge table unboundedly; minting
@@ -235,8 +236,6 @@ func requireDirWriteProof(w http.ResponseWriter, callerConvID, token string, raw
 			missing = append(missing, dir)
 			continue
 		}
-		// The proof is consumed either way; a leftover file is just litter.
-		_ = os.Remove(path)
 	}
 	if len(missing) > 0 {
 		slog.Warn("spawn dir write-proof refused: proof file missing",
@@ -282,6 +281,20 @@ func reassertDirWriteProof(dirs []string) *spawnFailure {
 	return nil
 }
 
+func cleanupDirWriteProofMarkers(token string, dirs []string) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return
+	}
+	filename := dirWriteProofFilePrefix + token
+	for _, dir := range dirs {
+		if dir == "" {
+			continue
+		}
+		_ = os.Remove(filepath.Join(dir, filename))
+	}
+}
+
 // requireTemplateDirWriteProof gates the template spawn surfaces (instantiate
 // / deploy / reinforce) behind the dir write-proof for an AGENT caller. The
 // whole cast shares one launch cwd, so proving it once covers every child; a
@@ -296,9 +309,9 @@ func reassertDirWriteProof(dirs []string) *spawnFailure {
 // template roster mixes harnesses, and proving the shared launch dirs once is
 // simpler and strictly safe. A caller that can write the dirs (the common
 // "deploy into my project" case) clears it transparently via the CLI.
-func requireTemplateDirWriteProof(w http.ResponseWriter, caller, token, cwd, worktreePath, repo string) (resolvedCwd, resolvedWorktree string, ok bool) {
+func requireTemplateDirWriteProof(w http.ResponseWriter, caller, token, cwd, worktreePath, repo string) (resolvedCwd, resolvedWorktree, resolvedRepo string, proofDirs []string, ok bool) {
 	if caller == "" {
-		return cwd, worktreePath, true
+		return cwd, worktreePath, repo, nil, true
 	}
 	// Order fixed so the raw→resolved mapping keys are unambiguous.
 	dirs := []string{cwd}
@@ -310,10 +323,10 @@ func requireTemplateDirWriteProof(w http.ResponseWriter, caller, token, cwd, wor
 	}
 	resolved, proofOK := requireDirWriteProof(w, caller, token, dirs)
 	if !proofOK {
-		return "", "", false
+		return "", "", "", nil, false
 	}
 	if resolved == nil { // exempt caller (fully-open sandbox)
-		return cwd, worktreePath, true
+		return cwd, worktreePath, repo, nil, true
 	}
 	resolvedCwd = cwd
 	if v := resolved[cwd]; v != "" {
@@ -325,7 +338,20 @@ func requireTemplateDirWriteProof(w http.ResponseWriter, caller, token, cwd, wor
 			resolvedWorktree = v
 		}
 	}
-	return resolvedCwd, resolvedWorktree, true
+	resolvedRepo = repo
+	if repo != "" {
+		if v := resolved[repo]; v != "" {
+			resolvedRepo = v
+		}
+	}
+	proofDirs = []string{resolvedCwd}
+	if resolvedWorktree != "" && resolvedWorktree != resolvedCwd {
+		proofDirs = append(proofDirs, resolvedWorktree)
+	}
+	if resolvedRepo != "" && resolvedRepo != resolvedCwd && resolvedRepo != resolvedWorktree {
+		proofDirs = append(proofDirs, resolvedRepo)
+	}
+	return resolvedCwd, resolvedWorktree, resolvedRepo, proofDirs, true
 }
 
 // writeDirWriteProofChallenge mints a challenge and writes the 403 response

@@ -2,6 +2,7 @@ package testharness
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -113,6 +114,9 @@ type simSpawner struct {
 // before the seam, so the production Spawner signature is satisfied with no
 // behaviour change for Claude Code.
 func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
+	if err := checkSpawnDirProofMarker(args); err != nil {
+		return err
+	}
 	if args.Harness == codexHarnessName {
 		return s.spawnNewCodex(args)
 	}
@@ -197,6 +201,9 @@ func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 // relaunches its CodexSim (located by conv-id, or hydrated from the
 // on-disk rollout); everything else re-attaches a CCSim exactly as before.
 func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
+	if err := checkSpawnDirProofMarker(args); err != nil {
+		return err
+	}
 	if args.Harness == codexHarnessName {
 		return s.spawnResumeCodex(args)
 	}
@@ -238,6 +245,21 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	}
 	s.w.Tmux.Register(label, cc.Cwd, cc)
 	s.w.CCs.Set(label, cc)
+	return nil
+}
+
+func checkSpawnDirProofMarker(args clcommon.SpawnArgs) error {
+	if args.CwdWriteProof == "" {
+		return nil
+	}
+	marker := filepath.Join(args.Cwd, clcommon.SpawnDirWriteProofPrefix+args.CwdWriteProof)
+	info, err := os.Lstat(marker)
+	if err != nil {
+		return fmt.Errorf("spawn dir proof marker: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Size() != 0 {
+		return fmt.Errorf("spawn dir proof marker is not an empty regular file")
+	}
 	return nil
 }
 
@@ -1332,14 +1354,15 @@ func (f *Flow) answerWriteProofChallenge(rec *httptest.ResponseRecorder, method,
 		return rec
 	}
 	var created []string
-	defer func() {
+	cleanup := func() {
 		for _, p := range created {
 			_ = os.Remove(p)
 		}
-	}()
+	}
 	for _, dir := range challenge.WriteProof.Dirs {
 		p := filepath.Join(dir, challenge.WriteProof.Filename)
 		if err := os.WriteFile(p, nil, 0o600); err != nil {
+			cleanup()
 			return rec // unwritable dir — the test asserts the refusal
 		}
 		created = append(created, p)
@@ -1349,5 +1372,9 @@ func (f *Flow) answerWriteProofChallenge(rec *httptest.ResponseRecorder, method,
 		retry[k] = v
 	}
 	retry["write_proof_token"] = challenge.WriteProof.Token
-	return f.doOnce(method, path, retry)
+	retryRec := f.doOnce(method, path, retry)
+	if retryRec.Code >= 400 {
+		cleanup()
+	}
+	return retryRec
 }
