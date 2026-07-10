@@ -411,9 +411,18 @@ type AgentMessage struct {
 	// DeliveredAt so a failed/hung send never masquerades as success.
 	// NudgeAttemptedAt/NudgeAttempts persist retry history across daemon
 	// restarts and drive bounded per-message backoff.
-	NudgeClaimedAt    time.Time
-	NudgeAttemptedAt  time.Time
-	NudgeAttempts     int
+	NudgeClaimedAt   time.Time
+	NudgeAttemptedAt time.Time
+	NudgeAttempts    int
+	// NudgeCancelledAt marks nudge delivery as permanently abandoned — the
+	// reaper's orphan sweep stamps it when the recipient is retired or deleted,
+	// so no drain can ever reach a pane. A cancelled row leaves every
+	// undelivered predicate (drains, queue depths, the stale-queue watchdog)
+	// but the message itself stays readable in the inbox; it is NOT a
+	// delivered/read claim. Reinstating a retired agent clears it so queued
+	// mail resumes delivery. NudgeCancelReason is the human-readable why.
+	NudgeCancelledAt  time.Time
+	NudgeCancelReason string
 	ToRecipients      []string
 	CcRecipients      []string
 	ToRecipientAgents []string
@@ -2024,7 +2033,7 @@ func ListUndeliveredAgentMessagesFor(toConv string) ([]*AgentMessage, error) {
 	}
 	q := `SELECT ` + agentMessageColumns + `
 		FROM agent_messages
-		WHERE to_conv = ? AND delivered_at = '' AND read_at = ''
+		WHERE to_conv = ? AND delivered_at = '' AND read_at = '' AND nudge_cancelled_at = ''
 		ORDER BY id ASC`
 	rows, err := db.Query(q, toConv)
 	if err != nil {
@@ -2060,7 +2069,7 @@ func ListUndeliveredForAgent(agentID string) ([]*AgentMessage, error) {
 	}
 	q := `SELECT ` + agentMessageColumns + `
 		FROM agent_messages
-		WHERE to_agent = ? AND pin_gen = 0 AND delivered_at = '' AND read_at = ''
+		WHERE to_agent = ? AND pin_gen = 0 AND delivered_at = '' AND read_at = '' AND nudge_cancelled_at = ''
 		ORDER BY id ASC`
 	rows, err := db.Query(q, agentID)
 	if err != nil {
@@ -2096,7 +2105,7 @@ func ListUndeliveredForExactConv(convID string) ([]*AgentMessage, error) {
 	}
 	q := `SELECT ` + agentMessageColumns + `
 		FROM agent_messages
-		WHERE to_conv = ? AND (pin_gen = 1 OR to_agent = '') AND delivered_at = '' AND read_at = ''
+		WHERE to_conv = ? AND (pin_gen = 1 OR to_agent = '') AND delivered_at = '' AND read_at = '' AND nudge_cancelled_at = ''
 		ORDER BY id ASC`
 	rows, err := db.Query(q, convID)
 	if err != nil {
@@ -2129,7 +2138,7 @@ func CountUndeliveredForAgent(agentID string) (int, error) {
 	}
 	var n int
 	err = db.QueryRow(
-		`SELECT COUNT(*) FROM agent_messages WHERE to_agent = ? AND pin_gen = 0 AND delivered_at = '' AND read_at = ''`,
+		`SELECT COUNT(*) FROM agent_messages WHERE to_agent = ? AND pin_gen = 0 AND delivered_at = '' AND read_at = '' AND nudge_cancelled_at = ''`,
 		agentID).Scan(&n)
 	return n, err
 }
@@ -2147,7 +2156,7 @@ func CountUndeliveredForExactConv(convID string) (int, error) {
 	}
 	var n int
 	err = db.QueryRow(
-		`SELECT COUNT(*) FROM agent_messages WHERE to_conv = ? AND (pin_gen = 1 OR to_agent = '') AND delivered_at = '' AND read_at = ''`,
+		`SELECT COUNT(*) FROM agent_messages WHERE to_conv = ? AND (pin_gen = 1 OR to_agent = '') AND delivered_at = '' AND read_at = '' AND nudge_cancelled_at = ''`,
 		convID).Scan(&n)
 	return n, err
 }
@@ -2162,7 +2171,7 @@ func ListAllUndeliveredAgentMessages() ([]*AgentMessage, error) {
 		return nil, err
 	}
 	rows, err := d.Query(`SELECT ` + agentMessageColumns + ` FROM agent_messages
-		WHERE delivered_at = '' AND read_at = '' ORDER BY id ASC`)
+		WHERE delivered_at = '' AND read_at = '' AND nudge_cancelled_at = '' ORDER BY id ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -2235,7 +2244,7 @@ func ClaimAgentMessageNudge(id int64, now time.Time) (token AgentMessageNudgeCla
 	err = db.QueryRow(
 		`UPDATE agent_messages
 		 SET nudge_claimed_at = ?, nudge_attempted_at = ?, nudge_attempts = nudge_attempts + 1
-		 WHERE id = ? AND delivered_at = '' AND read_at = '' AND nudge_claimed_at = ''
+		 WHERE id = ? AND delivered_at = '' AND read_at = '' AND nudge_claimed_at = '' AND nudge_cancelled_at = ''
 		 RETURNING nudge_attempts`,
 		token.ClaimedAt, token.ClaimedAt, id).Scan(&token.Attempt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -2297,6 +2306,41 @@ func ReleaseAllAgentMessageNudgeClaims() (int64, error) {
 		return 0, err
 	}
 	return res.RowsAffected()
+}
+
+// CancelAgentMessageNudge durably abandons nudge delivery for one message —
+// the reaper's orphan sweep calls it when the recipient is retired or deleted,
+// so no pane can ever receive the nudge. The row leaves every undelivered
+// predicate but stays readable in the inbox: this is NOT a delivered/read
+// stamp. The nudge_claimed_at = '' guard leaves an in-flight delivery alone
+// (its worker owns the row until it completes or releases). Returns true iff
+// this call cancelled the row, so the caller can log exactly once.
+//
+// targetAgentID is the actor the caller resolved as unavailable; the UPDATE
+// re-validates that verdict atomically with the stamp (`no ACTIVE agents row
+// with this id` covers both retired and deleted). Without this, the sweep's
+// read-then-write could race ReinstateAgentByID: reinstate clears existing
+// cancellations in its transaction, then a sweep holding a stale "retired"
+// verdict stamps a fresh one that nothing would ever clear again. SQLite
+// serializes the writers, so whichever of reinstate/cancel commits second
+// sees the other's effect and converges correctly.
+func CancelAgentMessageNudge(id int64, targetAgentID string, now time.Time, reason string) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	res, err := d.Exec(`UPDATE agent_messages
+		SET nudge_cancelled_at = ?, nudge_cancel_reason = ?
+		WHERE id = ? AND delivered_at = '' AND read_at = ''
+		  AND nudge_claimed_at = '' AND nudge_cancelled_at = ''
+		  AND NOT EXISTS (
+			SELECT 1 FROM agents WHERE agent_id = ? AND retired_at = '')`,
+		now.Format(time.RFC3339Nano), reason, id, targetAgentID)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
 }
 
 // MarkAgentMessageRead sets read_at = now for the given message ID.
@@ -3203,11 +3247,13 @@ func scanAgentGroupMember(s rowScanner) (*AgentGroupMember, error) {
 const agentMessageColumns = `id, group_id, from_conv, to_conv, from_agent, to_agent, ` +
 	`subject, body, parent_id, created_at, delivered_at, read_at, ` +
 	`to_recipients, cc_recipients, to_recipient_agents, cc_recipient_agents, ` +
-	`original_to_conv, pin_gen, nudge_claimed_at, nudge_attempted_at, nudge_attempts`
+	`original_to_conv, pin_gen, nudge_claimed_at, nudge_attempted_at, nudge_attempts, ` +
+	`nudge_cancelled_at, nudge_cancel_reason`
 
 func scanAgentMessage(s rowScanner) (*AgentMessage, error) {
 	var m AgentMessage
 	var createdAt, deliveredAt, readAt, nudgeClaimedAt, nudgeAttemptedAt string
+	var nudgeCancelledAt string
 	var toRecipients, ccRecipients string
 	var toRecipientAgents, ccRecipientAgents string
 	var pinGen int
@@ -3217,7 +3263,8 @@ func scanAgentMessage(s rowScanner) (*AgentMessage, error) {
 		&createdAt, &deliveredAt, &readAt,
 		&toRecipients, &ccRecipients,
 		&toRecipientAgents, &ccRecipientAgents, &m.OriginalToConv, &pinGen,
-		&nudgeClaimedAt, &nudgeAttemptedAt, &m.NudgeAttempts); err != nil {
+		&nudgeClaimedAt, &nudgeAttemptedAt, &m.NudgeAttempts,
+		&nudgeCancelledAt, &m.NudgeCancelReason); err != nil {
 		return nil, err
 	}
 	m.CreatedAt = parseTimeOrZero(createdAt)
@@ -3225,6 +3272,7 @@ func scanAgentMessage(s rowScanner) (*AgentMessage, error) {
 	m.ReadAt = parseTimeOrZero(readAt)
 	m.NudgeClaimedAt = parseTimeOrZero(nudgeClaimedAt)
 	m.NudgeAttemptedAt = parseTimeOrZero(nudgeAttemptedAt)
+	m.NudgeCancelledAt = parseTimeOrZero(nudgeCancelledAt)
 	m.ToRecipients = recipientsFromJSON(toRecipients)
 	m.CcRecipients = recipientsFromJSON(ccRecipients)
 	m.ToRecipientAgents = recipientsFromJSON(toRecipientAgents)
