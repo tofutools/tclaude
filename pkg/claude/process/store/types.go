@@ -57,6 +57,7 @@ func IsConflict(err error) bool {
 type Templates interface {
 	PutTemplate(ctx context.Context, tmpl *model.Template) (TemplateRecord, error)
 	GetTemplate(ctx context.Context, ref string) (*model.Template, error)
+	GetTemplateSource(ctx context.Context, ref string) ([]byte, error)
 	ListTemplates(ctx context.Context) ([]TemplateRecord, error)
 }
 

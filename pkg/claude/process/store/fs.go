@@ -62,6 +62,19 @@ func (s *FS) SetNowForTest(now func() time.Time) func() {
 }
 
 func (s *FS) PutTemplate(ctx context.Context, tmpl *model.Template) (TemplateRecord, error) {
+	return s.putTemplate(ctx, tmpl, false)
+}
+
+// PutTemplateEditorSource persists an editor save. Semantic content remains
+// immutable and content-addressed exactly like PutTemplate; the only extra
+// behavior is updating the layout-bearing canonical source attachment when
+// the semantic ref already exists. Callers must perform sourceHash optimistic
+// concurrency before invoking it.
+func (s *FS) PutTemplateEditorSource(ctx context.Context, tmpl *model.Template) (TemplateRecord, error) {
+	return s.putTemplate(ctx, tmpl, true)
+}
+
+func (s *FS) putTemplate(ctx context.Context, tmpl *model.Template, updateEditorSource bool) (TemplateRecord, error) {
 	if err := ctx.Err(); err != nil {
 		return TemplateRecord{}, err
 	}
@@ -80,6 +93,10 @@ func (s *FS) PutTemplate(ctx context.Context, tmpl *model.Template) (TemplateRec
 	if err != nil {
 		return TemplateRecord{}, err
 	}
+	source, err := model.CanonicalYAML(tmpl)
+	if err != nil {
+		return TemplateRecord{}, err
+	}
 	dir, err := s.templateDir(tmpl.ID, semanticHash)
 	if err != nil {
 		return TemplateRecord{}, err
@@ -92,10 +109,29 @@ func (s *FS) PutTemplate(ctx context.Context, tmpl *model.Template) (TemplateRec
 		if !bytes.Equal(existing, body) {
 			return TemplateRecord{}, fmt.Errorf("%w: %s", ErrTemplateConflict, ref)
 		}
+		if updateEditorSource {
+			// Layout is mutable presentation state attached to a semantic
+			// version. Replacing template.yaml here is sanctioned: layout is
+			// excluded from CanonicalSemanticJSON, so run-pinned semantics and
+			// their audit identity do not change. The REST boundary guards this
+			// last-write-wins update with the client's base sourceHash.
+			if err := writeFileAtomic(filepath.Join(dir, "template.yaml"), source, 0o644); err != nil {
+				return TemplateRecord{}, err
+			}
+		}
 		return TemplateRecord{ID: tmpl.ID, Ref: ref, SemanticHash: semanticHash, StoredAt: fileModTime(bodyPath)}, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return TemplateRecord{}, fmt.Errorf("read existing template: %w", err)
 	}
+	// The run-pinned template.json intentionally excludes editor-only layout,
+	// while template.yaml keeps the complete canonical authoring document.
+	// Legacy versions created before template.yaml was introduced are handled by GetTemplateSource's
+	// canonical fallback rather than being rewritten in place.
+	if err := writeFileAtomic(filepath.Join(dir, "template.yaml"), source, 0o644); err != nil {
+		return TemplateRecord{}, err
+	}
+	// Publish template.json last: ListTemplates treats that file as the commit
+	// marker, so an interrupted first write cannot expose a half-version.
 	if err := writeFileAtomic(bodyPath, body, 0o644); err != nil {
 		return TemplateRecord{}, err
 	}
@@ -135,6 +171,36 @@ func (s *FS) GetTemplate(ctx context.Context, ref string) (*model.Template, erro
 		return nil, fmt.Errorf("%w: template ref %q points at semantic hash %q", ErrContentMismatch, ref, semanticHash)
 	}
 	return &tmpl, nil
+}
+
+// GetTemplateSource returns the complete canonical authoring document for a
+// template version, including editor-owned layout. Older stores contain only
+// template.json; synthesizing canonical YAML for those records keeps them
+// readable without mutating an already-addressed version.
+func (s *FS) GetTemplateSource(ctx context.Context, ref string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	id, hash, err := parseTemplateRef(ref)
+	if err != nil {
+		return nil, err
+	}
+	dir, err := s.templateDir(id, hash)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "template.yaml"))
+	if err == nil {
+		return data, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("read template source: %w", err)
+	}
+	tmpl, err := s.GetTemplate(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	return model.CanonicalYAML(tmpl)
 }
 
 func (s *FS) ListTemplates(ctx context.Context) ([]TemplateRecord, error) {

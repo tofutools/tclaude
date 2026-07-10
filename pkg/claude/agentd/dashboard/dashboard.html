@@ -16,7 +16,7 @@
      tab (#tab-terminals) and the standalone /terminals pop-out page. -->
 <link rel="stylesheet" href="/static/mux.css">
 </head>
-<body>
+<body class="hide-processes">
 <header>
   <!-- .bar-inner pins the header's content to the viewport width so its
        right-aligned controls don't fly off when the bar is widened to the
@@ -150,6 +150,7 @@
        the badge counts the live terminals. -->
   <button data-tab="terminals" title="Live in-browser terminals — appears while ≥1 web terminal / window is open. Each can be popped out into its own browser window."><span class="tab-label-regular">Terminals</span><span class="tab-label-wizard">🔮 Scrying</span><span id="terminals-badge" class="tab-badge count" hidden></span></button>
   <button data-tab="jobs" title="Jobs — agent export jobs (live progress; finished ones stay until dismissed) and recurring cron schedules"><span class="tab-label-regular">Jobs</span><span class="tab-label-wizard">⚒ Labours</span><span id="jobs-badge" class="tab-badge count" hidden></span></button>
+  <button data-tab="processes" title="Processes — reusable graph templates, instantiated runs, and human work"><span class="tab-label-regular">Processes</span><span class="tab-label-wizard">🕸 Rites</span></button>
   <button data-tab="plugins"><span class="tab-label-regular">Plugins</span><span class="tab-label-wizard">🔧 Contraptions</span><span id="plugins-badge" class="tab-badge warn" hidden></span></button>
   <button data-tab="access" title="Agent access control — permanent permissions, the slug registry, and time-bounded sudo grants"><span class="tab-label-regular">Access</span><span class="tab-label-wizard">🛡 Wards</span></button>
   <button data-tab="messages"><span class="tab-label-regular">Messages</span><span class="tab-label-wizard">🕊 Missives</span><span id="messages-badge" class="tab-badge" hidden></span></button>
@@ -247,6 +248,41 @@
       <button id="cron-create-open" class="primary" title="Schedule a new recurring cron job"><span class="cron-open-label-regular">+ new cron job</span><span class="cron-open-label-wizard">⏳ Bind a recurring ritual</span></button>
     </div>
     <div id="jobs-list"></div>
+  </section>
+  <!-- Experimental Processes home. The editor and live viewer tickets mount
+       their full-canvas surfaces into the stable editor/viewer nodes below;
+       this ticket owns only the tab shell, lists, and REST-backed navigation. -->
+  <section id="tab-processes">
+    <div class="process-subnav" role="tablist" aria-label="Process views">
+      <button class="process-subtab active" data-process-subtab="templates" role="tab" aria-selected="true" aria-controls="process-panel-templates">Templates</button>
+      <button class="process-subtab" data-process-subtab="runs" role="tab" aria-selected="false" aria-controls="process-panel-runs">Runs</button>
+      <button class="process-subtab" data-process-subtab="worklist" role="tab" aria-selected="false" aria-controls="process-panel-worklist">Worklist</button>
+      <span class="spacer"></span>
+      <span id="process-notice" class="process-notice" role="status"></span>
+    </div>
+    <div id="process-panel-templates" class="process-panel active" role="tabpanel" aria-label="Process templates">
+      <div class="filter-bar process-toolbar">
+        <strong>Reusable process graphs</strong>
+        <span class="spacer"></span>
+        <button id="process-template-new" class="process-action primary" type="button">+ new template</button>
+      </div>
+      <div id="process-templates-list" class="process-list"><p class="muted">Open this view to load templates.</p></div>
+    </div>
+    <div id="process-panel-runs" class="process-panel" role="tabpanel" aria-label="Process runs">
+      <div class="filter-bar process-toolbar"><strong>Instantiated runs</strong><span class="spacer"></span><button id="process-runs-refresh" class="process-action" type="button">↻ refresh</button></div>
+      <div id="process-runs-list" class="process-list"><p class="muted">Open this view to load runs.</p></div>
+    </div>
+    <div id="process-panel-worklist" class="process-panel" role="tabpanel" aria-label="Process worklist">
+      <div class="process-placeholder"><h3>Worklist</h3><p>Human and agent obligations will appear here when the worklist surface lands.</p></div>
+    </div>
+    <div id="process-editor-view" class="process-canvas-view" hidden>
+      <button class="process-action" data-process-close-view type="button">← templates</button>
+      <div id="process-editor-canvas" class="process-canvas-mount" data-process-mount="editor"></div>
+    </div>
+    <div id="process-viewer-view" class="process-canvas-view" hidden>
+      <button class="process-action" data-process-close-view type="button">← runs</button>
+      <div id="process-viewer-canvas" class="process-canvas-mount" data-process-mount="viewer"></div>
+    </div>
   </section>
   <section id="tab-plugins">
     <div class="filter-bar">

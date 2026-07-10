@@ -865,6 +865,10 @@ func buildMux() http.Handler {
 	// Experimental process engine surfaces remain registered so off means a
 	// stable 404 rather than a different mux shape. processRoute reloads the
 	// feature flag per request.
+	mux.HandleFunc("GET /v1/process/templates", processRoute(handleProcessTemplates))
+	mux.HandleFunc("GET /v1/process/templates/{id}", processRoute(handleProcessTemplate))
+	mux.HandleFunc("POST /v1/process/templates/{id}", processRoute(handleProcessTemplate))
+	mux.HandleFunc("POST /v1/process/validate", processRoute(handleProcessValidate))
 	mux.HandleFunc("GET /v1/process/runs", processRoute(handleProcessRuns))
 	mux.HandleFunc("GET /v1/process/runs/{id}", processRoute(handleProcessRun))
 	mux.HandleFunc("POST /v1/process/runs/{id}/nodes/{node}/report", processRoute(handleProcessReport))

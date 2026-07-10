@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -172,15 +173,51 @@ func handleProcessRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type runView struct {
-		ID           string               `json:"id"`
-		TemplateRef  string               `json:"templateRef"`
-		Verification processverify.Report `json:"verification"`
+		ID              string               `json:"id"`
+		TemplateRef     string               `json:"templateRef"`
+		Status          state.RunStatus      `json:"status"`
+		Started         time.Time            `json:"started"`
+		CurrentActivity string               `json:"currentActivity,omitempty"`
+		Verification    processverify.Report `json:"verification"`
 	}
 	views := make([]runView, 0, len(runs))
 	for _, run := range runs {
-		views = append(views, runView{ID: run.ID, TemplateRef: run.TemplateRef, Verification: processverify.StoreRun(r.Context(), fs, run.ID)})
+		verification := processverify.StoreRun(r.Context(), fs, run.ID)
+		st, _ := fs.LoadRunState(r.Context(), run.ID)
+		views = append(views, runView{
+			ID: run.ID, TemplateRef: run.TemplateRef, Status: verification.EffectiveStatus,
+			Started: run.CreatedAt, CurrentActivity: currentProcessActivity(st), Verification: verification,
+		})
 	}
 	writeProcessJSON(w, http.StatusOK, map[string]any{"runs": views})
+}
+
+func currentProcessActivity(st *state.State) string {
+	if st == nil {
+		return ""
+	}
+	ids := make([]string, 0, len(st.Nodes))
+	for id := range st.Nodes {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	for _, status := range []state.NodeStatus{
+		state.NodeStatusRunning,
+		state.NodeStatusWaitingHuman,
+		state.NodeStatusWaitingAgent,
+		state.NodeStatusWaitingProgram,
+		state.NodeStatusWaitingTimer,
+		state.NodeStatusWaitingSignal,
+		state.NodeStatusBlocked,
+		state.NodeStatusReady,
+	} {
+		for _, id := range ids {
+			if st.Nodes[id].Status == status {
+				return id
+			}
+		}
+	}
+	return ""
 }
 
 func handleProcessRun(w http.ResponseWriter, r *http.Request) {

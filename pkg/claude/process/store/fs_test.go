@@ -52,6 +52,57 @@ func TestTemplatePutGetIsContentAddressed(t *testing.T) {
 	}
 }
 
+func TestTemplateSourcePreservesAndUpdatesEditorLayoutWithoutChangingRef(t *testing.T) {
+	ctx := t.Context()
+	fs := newStore(t)
+	tmpl := storetest.Template()
+	tmpl.Layout = &model.Layout{Nodes: map[string]model.LayoutNode{
+		tmpl.Start: {X: 12, Y: 34},
+	}}
+	record, err := fs.PutTemplate(ctx, tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := fs.GetTemplateSource(ctx, record.Ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := model.Parse(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := parsed.Template.Layout.Nodes[tmpl.Start].X; got != 12 {
+		t.Fatalf("initial layout x = %v, want 12", got)
+	}
+
+	tmpl.Layout.Nodes[tmpl.Start] = model.LayoutNode{X: 98, Y: 76}
+	updated, err := fs.PutTemplateEditorSource(ctx, tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Ref != record.Ref {
+		t.Fatalf("layout-only save ref = %q, want %q", updated.Ref, record.Ref)
+	}
+	source, err = fs.GetTemplateSource(ctx, record.Ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err = model.Parse(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := parsed.Template.Layout.Nodes[tmpl.Start].X; got != 98 {
+		t.Fatalf("updated layout x = %v, want 98", got)
+	}
+	pinned, err := fs.GetTemplate(ctx, record.Ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pinned.Layout != nil {
+		t.Fatalf("run-pinned semantic template unexpectedly contains layout: %#v", pinned.Layout)
+	}
+}
+
 func TestTemplateGetRejectsTamperedContent(t *testing.T) {
 	ctx := t.Context()
 	root := t.TempDir()

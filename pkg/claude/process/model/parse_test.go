@@ -2,10 +2,73 @@ package model
 
 import (
 	"bytes"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
 )
+
+// FuzzCanonicalYAMLRoundTrip pins the editor's lossless Go round-trip
+// contract across every parseable template shape the fuzzer discovers.
+// Comments are intentionally canonicalized away; modeled content, including
+// layout and all name/description/doc fields, must survive exactly while the
+// semantic identity remains stable.
+func FuzzCanonicalYAMLRoundTrip(f *testing.F) {
+	f.Add([]byte(validTemplateYAML))
+	f.Add([]byte(`
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: documented
+name: Documented template
+description: Template description
+doc: |
+  Template documentation.
+params:
+  issue:
+    type: string
+    name: Issue
+    description: Issue description
+    doc: Issue documentation
+start: begin
+nodes:
+  begin:
+    type: start
+    name: Begin
+    description: Start description
+    doc: Start documentation
+    next: { pass: done }
+  done:
+    type: end
+    name: Done
+    description: End description
+    doc: End documentation
+    result: success
+layout:
+  nodes:
+    begin: { x: 10.5, y: -4 }
+    done: { x: 220, y: 30 }
+`))
+	f.Fuzz(func(t *testing.T, source []byte) {
+		parsed, err := Parse(source)
+		if err != nil {
+			return
+		}
+		canonical, err := CanonicalYAML(parsed.Template)
+		if err != nil {
+			t.Fatalf("canonicalize: %v", err)
+		}
+		roundTrip, err := Parse(canonical)
+		if err != nil {
+			t.Fatalf("parse canonical output: %v\n%s", err, canonical)
+		}
+		if parsed.SemanticHash != roundTrip.SemanticHash {
+			t.Fatalf("semantic hash changed: %s != %s", parsed.SemanticHash, roundTrip.SemanticHash)
+		}
+		if !reflect.DeepEqual(parsed.Template, roundTrip.Template) {
+			t.Fatalf("modeled template changed\nbefore: %#v\nafter:  %#v", parsed.Template, roundTrip.Template)
+		}
+	})
+}
 
 const validTemplateYAML = `
 apiVersion: tclaude.dev/v1alpha1

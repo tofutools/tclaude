@@ -664,6 +664,31 @@ func TestDashboardAssets_FeatureFlagsWired(t *testing.T) {
 	}
 }
 
+// TestDashboardAssets_ProcessesTabWired pins the feature-gated tab shell and
+// the stable editor/viewer mount contract consumed by the follow-on graph UI
+// tickets. The module has no build step, so literal asset pins catch a renamed
+// DOM id or route before it becomes a browser-only failure.
+func TestDashboardAssets_ProcessesTabWired(t *testing.T) {
+	for _, needle := range []string{
+		`<button data-tab="processes"`,
+		`data-process-subtab="templates"`,
+		`data-process-subtab="runs"`,
+		`data-process-subtab="worklist"`,
+		`id="process-editor-canvas"`,
+		`data-process-mount="editor"`,
+		`id="process-viewer-canvas"`,
+		`data-process-mount="viewer"`,
+		"processJSON('/v1/process/templates')",
+		"processJSON('/v1/process/runs')",
+		"applyProcessesTabVisibility(data)",
+		`body.hide-processes nav button[data-tab="processes"]`,
+	} {
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard assets missing %q — Processes tab contract broken", needle)
+		}
+	}
+}
+
 // TestDashboardAssets_ClaudeCleanupPeriodWired guards the Claude Code
 // transcript-retention override (config claude_cleanup_period_days → Claude
 // Code's cleanupPeriodDays), whose Config-tab pieces span dashboard.html +
