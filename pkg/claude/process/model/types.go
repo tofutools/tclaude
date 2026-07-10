@@ -96,13 +96,19 @@ type Performer struct {
 	Prompt string `json:"prompt,omitempty" yaml:"prompt,omitempty"`
 	// Ask, Choices, and Assignee are human-scoped: the question to put to the
 	// human, an optional closed answer set, and an optional specific person
-	// (defaults to whoever holds the profile).
+	// (defaults to whoever holds the profile). Choices and Assignee are
+	// authoring-only in v1 — the dispatch plumbing that honors them
+	// (assignee-directed obligations, choice-driven available actions on
+	// task-stage gates) lands with the engine tickets under TCL-311; a
+	// decision node's choices already realize as its outcome edges.
 	Ask      string   `json:"ask,omitempty" yaml:"ask,omitempty"`
 	Choices  []string `json:"choices,omitempty" yaml:"choices,omitempty"`
 	Assignee string   `json:"assignee,omitempty" yaml:"assignee,omitempty"`
 	// Model and Effort are agent-scoped overrides on top of the profile.
-	// Freeform strings: legal values are harness-specific and validated at
-	// spawn time, not template time.
+	// Freeform strings: legal values are harness-specific. Authoring-only in
+	// v1 — agent spawns currently read model/effort from the spawn profile;
+	// the plumbing that consults these per-performer overrides lands with
+	// TCL-311.
 	Model  string `json:"model,omitempty" yaml:"model,omitempty"`
 	Effort string `json:"effort,omitempty" yaml:"effort,omitempty"`
 	// Run and Args are program-scoped: command execution (design §10).
