@@ -1592,6 +1592,15 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		body.Cwd = g.DefaultCwd
 	}
 
+	// Snapshot which echoed launch fields the request set BEFORE any mutation
+	// (the harness pin below, then the profile overlays) so the resolved-shape
+	// echo can tell an explicit value apart from a profile-supplied one (TCL-304).
+	explicitLaunch := launchExplicit{
+		harness: strings.TrimSpace(body.Harness) != "",
+		model:   strings.TrimSpace(body.Model) != "",
+		effort:  strings.TrimSpace(body.Effort) != "",
+	}
+
 	// A request that omits harness AND every harness-specific launch field is
 	// genuinely blank: group/global profiles may choose its harness. Once the
 	// caller supplies model/effort/sandbox/etc., preserve the historical default
@@ -1634,6 +1643,13 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		autoReviewSet: body.AutoReviewSpecified(),
 		trustDirSet:   body.TrustDirSpecified(),
 	}
+	// Whether the harness was still blank when the overlays ran — only then can a
+	// profile actually assign it. After the pin above, an explicit launch field
+	// (e.g. --model) has already set body.Harness to the default, so a
+	// participating claude profile must NOT be credited for the harness: the
+	// explicit field defaulted it, the profile only rode along. Used by the
+	// resolved-shape echo's harness attribution (TCL-304).
+	explicitLaunch.harnessBlankAtOverlay = strings.TrimSpace(body.Harness) == ""
 	groupProfileApplied := overlayProfileLaunch(&body, groupProfile, &overlayState)
 	globalProfileApplied := overlayProfileLaunch(&body, globalProfile, &overlayState)
 
@@ -1998,6 +2014,14 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		"label":        outcome.Label,
 		"tmux_session": outcome.TmuxSession,
 		"attach_cmd":   "tclaude session attach " + outcome.Label,
+		// Echo the fully-resolved launch shape + per-field provenance so the
+		// caller can see WHERE harness/model/effort came from — the TCL-304
+		// mistake-preventer for a blank spawn silently inheriting a default
+		// profile's vendor. Resolution above is final on this HTTP path
+		// (executeSpawn's safety-net overlay is a no-op here), so h/model/effort
+		// are the launched values.
+		"resolved": resolveLaunchProvenance(explicitLaunch, h.Name, model, effort,
+			groupProfile, globalProfile, groupProfileApplied, globalProfileApplied),
 	}
 	// Lead with the spawned agent's stable id when its conv has already
 	// enrolled (conv-id resolved inline); a pending spawn has no conv yet,
@@ -2340,6 +2364,83 @@ func harnessOrDefault(name string) string {
 		return harness.DefaultName
 	}
 	return name
+}
+
+// launchExplicit records which echoed launch fields the spawn request set
+// explicitly, snapshotted before any profile overlay. Used only to attribute
+// provenance in the resolved-shape echo (TCL-304).
+type launchExplicit struct {
+	harness bool
+	model   bool
+	effort  bool
+	// harnessBlankAtOverlay is true when the harness was still blank when the
+	// profile overlays ran — the only case where a profile could assign it.
+	// False once an explicit --harness OR the launch-field pin has set it, so a
+	// participating profile is not credited for a harness it merely rode along
+	// with. Set after the pin, before the overlays.
+	harnessBlankAtOverlay bool
+}
+
+// resolveLaunchProvenance builds the resolved-shape echo for a spawn response:
+// the resolved harness/model/effort values plus the resolution tier each came
+// from (TCL-304). It reuses the SAME inputs the overlay already consumed — the
+// pre-overlay explicit snapshot, the two profiles, and whether each participated
+// (harness-compatible) — so the reported source can never disagree with what the
+// overlay actually did. Per field the tiers are, highest first: explicit request
+// field > group default profile > global default profile > harness default. The
+// CLI --profile tier is folded into the request client-side, so a value it
+// supplied reads as "explicit" here; RunSpawn relabels those before printing.
+func resolveLaunchProvenance(
+	explicit launchExplicit,
+	resolvedHarness, resolvedModel, resolvedEffort string,
+	groupProfile, globalProfile *db.SpawnProfile,
+	groupApplied, globalApplied bool,
+) *agent.ResolvedLaunch {
+	// source picks the tier that supplied a field's value. groupApplied /
+	// globalApplied already fold in harness compatibility, and a non-participating
+	// tier's value is never read — mirroring overlayProfileLaunch's blank-fill.
+	source := func(explicitSet bool, groupVal, globalVal string) string {
+		switch {
+		case explicitSet:
+			return agent.ProvExplicit
+		case groupApplied && strings.TrimSpace(groupVal) != "":
+			return agent.ProvGroupProfileSource(groupProfile.Name)
+		case globalApplied && strings.TrimSpace(globalVal) != "":
+			return agent.ProvGlobalProfileSource(globalProfile.Name)
+		default:
+			return agent.ProvHarnessDefault
+		}
+	}
+	// gv / glv read a profile field only when that tier participated, so a nil or
+	// non-participating profile contributes no value (and no attribution).
+	gv := func(get func(*db.SpawnProfile) string) string {
+		if groupApplied && groupProfile != nil {
+			return get(groupProfile)
+		}
+		return ""
+	}
+	glv := func(get func(*db.SpawnProfile) string) string {
+		if globalApplied && globalProfile != nil {
+			return get(globalProfile)
+		}
+		return ""
+	}
+	harnessGet := func(p *db.SpawnProfile) string { return p.Harness }
+	modelGet := func(p *db.SpawnProfile) string { return p.Model }
+	effortGet := func(p *db.SpawnProfile) string { return p.Effort }
+	// A profile is credited for the harness only if the harness was blank when
+	// the overlays ran; otherwise the pin (an explicit non-harness launch field)
+	// or an explicit --harness already fixed it, and the harness reads as
+	// explicit (handled above) or harness default — never the profile.
+	harnessGroupVal, harnessGlobalVal := "", ""
+	if explicit.harnessBlankAtOverlay {
+		harnessGroupVal, harnessGlobalVal = gv(harnessGet), glv(harnessGet)
+	}
+	return &agent.ResolvedLaunch{
+		Harness: agent.ResolvedField{Value: resolvedHarness, Source: source(explicit.harness, harnessGroupVal, harnessGlobalVal)},
+		Model:   agent.ResolvedField{Value: resolvedModel, Source: source(explicit.model, gv(modelGet), glv(modelGet))},
+		Effort:  agent.ResolvedField{Value: resolvedEffort, Source: source(explicit.effort, gv(effortGet), glv(effortGet))},
+	}
 }
 
 // overlayProfileLaunch fills only blank launch fields, preserving the

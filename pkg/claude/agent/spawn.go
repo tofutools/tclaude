@@ -30,7 +30,63 @@ type SpawnResponse struct {
 	Label       string `json:"label"`
 	TmuxSession string `json:"tmux_session"`
 	AttachCmd   string `json:"attach_cmd"`
+
+	// Resolved echoes the launch shape after the daemon's default-resolution
+	// chain, with per-field provenance so the caller can SEE where each value
+	// came from — the mistake-preventer for TCL-304, where a blank spawn
+	// silently inherited a default profile's harness/model (flipping vendor).
+	// Additive on the wire: an older client that ignores it keeps working. nil
+	// only for a response from a daemon that predates this field.
+	Resolved *ResolvedLaunch `json:"resolved,omitempty"`
 }
+
+// ResolvedLaunch is the resolved launch shape echoed in a spawn response — the
+// harness/model/effort that actually took effect, each tagged with the tier of
+// the resolution chain it came from. See ResolvedField.Source for the tier
+// vocabulary. Kept to the three vendor-carrying fields the TCL-304 incident
+// turned on; add more here (and in resolveLaunchProvenance) if a future
+// silently-defaulted field needs surfacing.
+type ResolvedLaunch struct {
+	Harness ResolvedField `json:"harness"`
+	Model   ResolvedField `json:"model"`
+	Effort  ResolvedField `json:"effort"`
+}
+
+// ResolvedField pairs a resolved launch value with its provenance. Value is the
+// value that took effect ("" when nothing pinned it and the harness uses its
+// own default). Source names the resolution tier that supplied Value, one of:
+//
+//	explicit                            — a flag / request field set it
+//	profile "<name>"                    — a CLI --profile filled it (CLI-side only)
+//	group default profile "<name>"      — the group's default spawn profile
+//	global default profile "<name>"     — the dashboard/global default profile
+//	harness default                     — nothing pinned it; the harness decides
+//
+// The daemon fills Source with everything except the profile "<name>" tier,
+// which is a CLI-side fold it cannot see; RunSpawn relabels those before print.
+type ResolvedField struct {
+	Value  string `json:"value"`
+	Source string `json:"source"`
+}
+
+// Provenance source labels for ResolvedField.Source. The profile-name tiers are
+// formatted with the profile name appended (see provGroupProfile etc.).
+const (
+	ProvExplicit       = "explicit"
+	ProvHarnessDefault = "harness default"
+)
+
+// ProvGroupProfileSource / ProvGlobalProfileSource / ProvCLIProfileSource format
+// the three name-bearing provenance tiers. Exported so the daemon (which fills
+// the group/global tiers) and the CLI relabel path (which fills the --profile
+// tier) emit byte-identical Source strings.
+func ProvGroupProfileSource(name string) string  { return `group default profile ` + quoteName(name) }
+func ProvGlobalProfileSource(name string) string { return `global default profile ` + quoteName(name) }
+func ProvCLIProfileSource(name string) string    { return `profile ` + quoteName(name) }
+
+// quoteName wraps a profile name in double quotes for a provenance label,
+// matching the spec's `global default profile "gpt5.6-sol-high"` shape.
+func quoteName(name string) string { return `"` + name + `"` }
 
 // SpawnRequest is the JSON body of POST /v1/groups/{name}/spawn — the
 // single shared request shape behind every spawn surface. The
@@ -348,20 +404,20 @@ type SpawnParams struct {
 	// (which assigns the first free letter in field order) cannot steal
 	// a short from any existing field. No explicit shorts — `--effort`
 	// and `--model` only.
-	Effort string `long:"effort" optional:"true" help:"Reasoning effort for the new agent: low|medium|high|xhigh|max. Unset = the harness's own default (no flag passed)"`
-	Model  string `long:"model" optional:"true" help:"Model for the new agent. Claude: fable|fable[1m]|opus|opus[1m]|sonnet|sonnet[1m]|haiku|opusplan or a full model ID. Codex: a codex model name. Unset = group default, then global default, then the harness's own default"`
+	Effort string `long:"effort" optional:"true" help:"Reasoning effort for the new agent: low|medium|high|xhigh|max. Unset = filled by the default-profile chain, then the harness's own default. See 'Default resolution' in the command help"`
+	Model  string `long:"model" optional:"true" help:"Model for the new agent. Claude: fable|fable[1m]|opus|opus[1m]|sonnet|sonnet[1m]|haiku|opusplan or a full model ID. Codex: a codex model name. Unset = filled by the default-profile chain, then the harness's own default. See 'Default resolution' in the command help"`
 
 	// Harness picks the coding harness the new agent runs. Declared last
 	// (no explicit short) for the same reason as Effort/Model — boa's
 	// short-flag enricher must not steal a letter from an existing field.
-	Harness string `long:"harness" optional:"true" help:"Coding harness for the new agent: claude (default) | codex. Effort/model are validated against the chosen harness's own rules"`
+	Harness string `long:"harness" optional:"true" help:"Coding harness for the new agent: claude | codex. Unset does NOT force claude — it is filled from the group default profile's harness, then the global default profile's harness, then claude. A default profile carries its own harness, so an unset --harness can land on codex. See 'Default resolution' in the command help"`
 
 	// Sandbox is the launch-time OS-sandbox mode for the new agent. Codex takes
 	// a native --sandbox enum; Claude Code has no launch flag, so its
 	// inherit/on/off modes are delivered as a `--settings` override (see
 	// harness.claudeSandbox). Declared last (no explicit short) for the same
 	// reason as the fields above.
-	Sandbox string `long:"sandbox" optional:"true" help:"Launch containment for the new agent (per-harness modes). Codex: tclaude-agent (managed profile, keeps agentd reachable) | workspace-write | read-only | danger-full-access. Claude Code: inherit (use settings.json as-is) | on (force the OS sandbox on via --settings, agentd reachable) | off. Unset = the harness default (Codex: tclaude-agent; Claude: inherit)"`
+	Sandbox string `long:"sandbox" optional:"true" help:"Launch containment for the new agent (per-harness modes). Codex: tclaude-agent (managed profile, keeps agentd reachable) | workspace-write | read-only | danger-full-access. Claude Code: inherit (use settings.json as-is) | on (force the OS sandbox on via --settings, agentd reachable) | off. Unset = filled by the default-profile chain, then the harness default (Codex: tclaude-agent; Claude: inherit). See 'Default resolution' in the command help"`
 
 	// AskUserQuestionTimeout is the Claude Code AskUserQuestion idle-timeout
 	// override for the new agent, delivered via `--settings`. Declared last (no
@@ -409,6 +465,23 @@ func spawnCmd() *cobra.Command {
 			"whose code work belongs in a nested sub-repo, point --worktree-repo at the " +
 			"sub-repo: the agent then launches in --cwd and the worktree rides into its " +
 			"welcome message. " +
+			"\n\n" +
+			"Default resolution. Each launch field (--harness, --model, --effort, " +
+			"--sandbox, --ask-for-approval, --ask-user-question-timeout) is resolved " +
+			"independently through this precedence, highest first:\n" +
+			"  1. the explicit flag\n" +
+			"  2. --profile (a saved spawn profile you name)\n" +
+			"  3. the group's default spawn profile\n" +
+			"  4. the global (dashboard) default spawn profile\n" +
+			"  5. the harness's own default\n" +
+			"A spawn profile carries its OWN harness, so an unset --harness is NOT the " +
+			"same as claude: if a default profile at tier 3 or 4 selects codex, a " +
+			"no-flag spawn lands on codex (and that profile's model). When a policy " +
+			"requires a specific vendor/model, pass explicit --harness + --model (or a " +
+			"--profile that pins them) rather than relying on the default. The spawn " +
+			"output echoes the resolved Harness/Model/Effort and where each came from; " +
+			"inspect the defaults up front with `tclaude agent profiles default show` " +
+			"and `tclaude agent groups ls` (PROFILE column). " +
 			"\n\n" +
 			"Requires the `groups.spawn` permission (default: human-only).",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -934,6 +1007,15 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	if resp.AttachCmd != "" {
 		fmt.Fprintf(stdout, "  Attach:  %s\n", resp.AttachCmd)
 	}
+	// Echo the resolved launch shape + provenance so a spawn that inherited a
+	// default profile's harness/model (the TCL-304 incident) is visible at a
+	// glance instead of needing `profiles default show` to reverse-engineer.
+	// The daemon can't see the CLI-side --profile fold or harness pin, so
+	// reconcile those fields against the raw flags before printing.
+	if resp.Resolved != nil {
+		reconcileCLIProvenance(resp.Resolved, p, prof)
+		printResolvedLaunch(stdout, resp.Resolved)
+	}
 	// Surface the worktree so the user can see where the agent landed
 	// (or, in the monorepo case, where its code work belongs).
 	if wt := strings.TrimSpace(p.Worktree); wt != "" {
@@ -944,4 +1026,87 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		fmt.Fprintf(stdout, "  Worktree: %s (branch %s)\n", wtPath, wt)
 	}
 	return &resp, rcOK
+}
+
+// reconcileCLIProvenance corrects the daemon-reported provenance for the two
+// CLI-side folds the daemon cannot see: the --profile pre-fill and the
+// harness-pin. The daemon reports both as "explicit" (they arrive in the request
+// body), but here the raw flags are visible, so the printed provenance can be
+// made faithful. Order matters: relabel profile-sourced fields first, then demote
+// a harness the CLI pinned from an explicit non-harness launch field.
+func reconcileCLIProvenance(rl *ResolvedLaunch, p *SpawnParams, prof *profileJSON) {
+	if rl == nil {
+		return
+	}
+	relabelCLIProfileProvenance(rl, p, prof)
+	// The CLI pins the harness to the resolved default whenever an explicit
+	// non-harness launch field is set (mirroring the daemon's pin), so a bare
+	// `--model sonnet` sends harness="claude" and the daemon calls it "explicit".
+	// If the user never passed --harness and the profile didn't supply it (still
+	// "explicit" after the relabel above), the harness was defaulted, not chosen
+	// — report the harness-default tier.
+	if strings.TrimSpace(p.Harness) == "" && rl.Harness.Source == ProvExplicit {
+		rl.Harness.Source = ProvHarnessDefault
+	}
+}
+
+// relabelCLIProfileProvenance rewrites the Source of any resolved field the
+// daemon reported as "explicit" that actually came from the CLI's --profile.
+// The CLI folds --profile into the request body before it reaches the daemon
+// (so precedence works), which makes a profile-supplied value indistinguishable
+// from a real flag on the wire — the daemon calls it "explicit". Here, where the
+// raw flags and the profile are both visible, a field the flag left blank that
+// the profile filled is relabelled to the `profile "<name>"` tier so the printed
+// provenance is faithful. A field a real flag set stays "explicit". Only the
+// three echoed fields (harness/model/effort) are considered.
+func relabelCLIProfileProvenance(rl *ResolvedLaunch, p *SpawnParams, prof *profileJSON) {
+	if rl == nil || prof == nil {
+		return
+	}
+	// The profile's launch fields participate only when the effective harness
+	// matches the profile's (or no --harness was pinned, adopting the profile's)
+	// — the same gate mergeProfileIntoSpawn applies.
+	profLaunch := strings.TrimSpace(p.Harness) == "" || harnessEquivalent(p.Harness, prof.Harness)
+	if !profLaunch {
+		return
+	}
+	label := ProvCLIProfileSource(prof.Name)
+	// fromProfile reports whether the flag was blank and the profile supplied a
+	// value — the exact condition under which mergeProfileIntoSpawn folded the
+	// profile's value into the request as if explicit.
+	fromProfile := func(flag, profileVal string) bool {
+		return strings.TrimSpace(flag) == "" && strings.TrimSpace(profileVal) != ""
+	}
+	relabel := func(field *ResolvedField, flag, profileVal string) {
+		if field.Source == ProvExplicit && fromProfile(flag, profileVal) {
+			field.Source = label
+		}
+	}
+	relabel(&rl.Harness, p.Harness, prof.Harness)
+	relabel(&rl.Model, p.Model, prof.Model)
+	relabel(&rl.Effort, p.Effort, prof.Effort)
+}
+
+// printResolvedLaunch prints the resolved harness/model/effort with provenance,
+// aligned with the existing Label/Tmux/Attach lines. Harness always carries a
+// value (the default harness at minimum); a model/effort left unpinned prints as
+// "(harness default)" so the reader sees the harness decides, not a blank line.
+func printResolvedLaunch(stdout io.Writer, rl *ResolvedLaunch) {
+	if rl == nil {
+		return
+	}
+	fmt.Fprintf(stdout, "  Harness: %s\n", formatResolvedField(rl.Harness))
+	fmt.Fprintf(stdout, "  Model:   %s\n", formatResolvedField(rl.Model))
+	fmt.Fprintf(stdout, "  Effort:  %s\n", formatResolvedField(rl.Effort))
+}
+
+// formatResolvedField renders one resolved field as "value (source)", or just
+// "(harness default)" when nothing pinned a value (an empty value only ever
+// pairs with the harness-default tier — a profile that set the field would have
+// produced a non-empty value).
+func formatResolvedField(f ResolvedField) string {
+	if strings.TrimSpace(f.Value) == "" {
+		return "(" + ProvHarnessDefault + ")"
+	}
+	return fmt.Sprintf("%s (%s)", f.Value, f.Source)
 }

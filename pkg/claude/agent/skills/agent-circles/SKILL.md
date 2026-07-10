@@ -120,6 +120,17 @@ Each roster agent (`templateAgentJSON`):
 | `wave` | int (0–64) | Staged-spawn wave. All-zero (default) = one synchronous spawn pass; higher waves spawn later, in ascending order. |
 | `effective_is_owner` | bool, **read-only** | DERIVED by the daemon in `show --json` output: the owner bit a deploy would grant right now, composed across the tiers (referenced profile's owner default → `profile_inline.is_owner` tri-state → the legacy `is_owner` flag). Ignored on create/edit/import — don't set it; to change ownership edit the tier that grants it. Absent = false. |
 
+> ⚠️ **A `spawn_profile` / `profile_inline` carries its own `harness`.** A roster
+> agent that pins no inline `harness` adopts the referenced profile's — so a
+> template can land its members on a different vendor (e.g. `codex`) than you
+> assumed. And on the *direct* `tclaude agent spawn` path, an unset `--harness`
+> is filled from the group's default profile, then the global default profile,
+> then `claude` — never simply `claude`. When a member's vendor/model is
+> policy-bound, pin it explicitly (inline `harness`+`model`, or a profile that
+> does). See the **`agent-coord`** skill's "Spawning workers — default
+> resolution" section for the full precedence chain and the resolved-shape echo
+> that surfaces what each spawn actually launched with.
+
 `work_pattern` entry (`workPatternEntryJSON`):
 - `send_to` — a roster agent's `name`, or `"all"` (broadcast to every member).
 - `value` — the message; may contain `{{task}}`, replaced with the
