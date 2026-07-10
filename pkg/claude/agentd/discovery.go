@@ -1,17 +1,12 @@
 package agentd
 
-import (
-	"os"
-	"path/filepath"
-)
+import "github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 
-// SocketPath is the well-known location for the daemon's Unix socket.
-// Clients use it directly (curl --unix-socket, tclaude agent CLI fallback,
-// etc.) — no port-discovery file needed.
+// SocketPath is the canonical, state-free location for agentd's Unix socket.
 func SocketPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".tclaude", "agentd.sock")
+	return agentipc.CanonicalSocketPath()
 }
+
+// LegacySocketPath remains live during the migration window for older clients
+// and previously installed Claude sandbox settings.
+func LegacySocketPath() string { return agentipc.LegacySocketPath() }

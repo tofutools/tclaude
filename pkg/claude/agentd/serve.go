@@ -20,6 +20,7 @@ import (
 	"fyne.io/systray"
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/terminal"
@@ -27,7 +28,7 @@ import (
 )
 
 type serveParams struct {
-	Socket               string `long:"socket" short:"s" optional:"true" help:"Unix socket path (default ~/.tclaude/agentd.sock)"`
+	Socket               string `long:"socket" short:"s" optional:"true" help:"Unix socket path (default ~/.tclaude-agentd.sock)"`
 	NoTray               bool   `long:"no-tray" help:"Don't show a system tray icon. Use on headless / CI hosts. Also settable via agent.disable_tray in config.json."`
 	AutoLaunchDashboard  bool   `long:"auto-launch-dashboard" help:"Open the agentd dashboard in your browser on startup (also settable via agent.auto_launch_dashboard in config.json)."`
 	Slop                 bool   `long:"slop" help:"Open the auto-launched dashboard in 🎰 slop machine theme — a purely cosmetic re-skin, same data."`
@@ -60,31 +61,120 @@ func serveCmd() *cobra.Command {
 // case ask-human flows return immediately denied.
 var popupBaseURL string
 
-func runServe(p *serveParams) error {
-	sockPath := p.Socket
-	if sockPath == "" {
-		sockPath = SocketPath()
-		if sockPath == "" {
-			return fmt.Errorf("could not determine socket path; pass --socket")
-		}
-	}
-	if err := os.MkdirAll(filepath.Dir(sockPath), 0o755); err != nil {
+// prepareSocketPath creates the parent and removes a stale Unix socket without
+// ever clobbering a regular file or a live daemon endpoint.
+func prepareSocketPath(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("mkdir socket dir: %w", err)
 	}
-	// Clean up any stale socket file from a crashed previous run. We don't
-	// want to clobber a live one — error out if something is already
-	// listening — and we explicitly refuse to delete anything that isn't
-	// a Unix socket, in case a user pointed --socket at a regular file.
-	if fi, err := os.Lstat(sockPath); err == nil {
-		if fi.Mode()&os.ModeSocket == 0 {
-			return fmt.Errorf("refusing to remove non-socket path %s", sockPath)
+	fi, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect socket path %s: %w", path, err)
+	}
+	if fi.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("refusing to remove non-socket path %s", path)
+	}
+	if c, derr := net.Dial("unix", path); derr == nil {
+		_ = c.Close()
+		return fmt.Errorf("agentd is already listening on %s", path)
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove stale socket %s: %w", path, err)
+	}
+	return nil
+}
+
+func closeListeners(listeners []net.Listener) {
+	for _, ln := range listeners {
+		_ = ln.Close()
+	}
+}
+
+func listenUnixSockets(paths []string) ([]net.Listener, []string, error) {
+	listeners := make([]net.Listener, 0, len(paths))
+	createdPaths := make([]string, 0, len(paths))
+	for _, path := range paths {
+		ln, err := net.Listen("unix", path)
+		if err != nil {
+			closeListeners(listeners)
+			removeSocketPaths(createdPaths)
+			return nil, nil, fmt.Errorf("listen %s: %w", path, err)
 		}
-		if c, derr := net.Dial("unix", sockPath); derr == nil {
-			_ = c.Close()
-			return fmt.Errorf("agentd is already listening on %s", sockPath)
+		createdPaths = append(createdPaths, path)
+		if err := os.Chmod(path, 0o600); err != nil {
+			_ = ln.Close()
+			closeListeners(listeners)
+			removeSocketPaths(createdPaths)
+			return nil, nil, fmt.Errorf("chmod socket %s: %w", path, err)
 		}
-		if err := os.Remove(sockPath); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("remove stale socket: %w", err)
+		listeners = append(listeners, ln)
+	}
+	return listeners, createdPaths, nil
+}
+
+func removeSocketPaths(paths []string) {
+	for _, path := range paths {
+		fi, err := os.Lstat(path)
+		if err == nil && fi.Mode()&os.ModeSocket != 0 {
+			_ = os.Remove(path)
+		}
+	}
+}
+
+func appendSocketPath(paths []string, path string) []string {
+	if path == "" {
+		return paths
+	}
+	want := filepath.Clean(path)
+	for _, existing := range paths {
+		if filepath.Clean(existing) == want {
+			return paths
+		}
+	}
+	return append(paths, path)
+}
+
+func serveSocketPaths(requested string) []string {
+	if requested != "" {
+		return []string{requested}
+	}
+	paths := []string{SocketPath()}
+	return appendSocketPath(paths, LegacySocketPath())
+}
+
+func configureServeSocketEnv(requested string) error {
+	if requested == "" {
+		return nil
+	}
+	abs, err := filepath.Abs(requested)
+	if err != nil {
+		return fmt.Errorf("resolve custom socket path %s: %w", requested, err)
+	}
+	if err := os.Setenv(agentipc.SocketEnv, abs); err != nil {
+		return fmt.Errorf("export custom socket path: %w", err)
+	}
+	return nil
+}
+
+func runServe(p *serveParams) error {
+	if err := configureServeSocketEnv(p.Socket); err != nil {
+		return err
+	}
+	socketPaths := serveSocketPaths(p.Socket)
+	sockPath := socketPaths[0]
+	if sockPath == "" {
+		return fmt.Errorf("could not determine socket path; pass --socket")
+	}
+	legacySockPath := ""
+	if len(socketPaths) > 1 {
+		legacySockPath = socketPaths[1]
+	}
+	for _, path := range socketPaths {
+		if err := prepareSocketPath(path); err != nil {
+			return err
 		}
 	}
 
@@ -102,15 +192,12 @@ func runServe(p *serveParams) error {
 		return fmt.Errorf("open database: %w", err)
 	}
 
-	ln, err := net.Listen("unix", sockPath)
+	listeners, createdSocketPaths, err := listenUnixSockets(socketPaths)
 	if err != nil {
-		return fmt.Errorf("listen %s: %w", sockPath, err)
+		return err
 	}
-	if err := os.Chmod(sockPath, 0o600); err != nil {
-		_ = ln.Close()
-		return fmt.Errorf("chmod socket: %w", err)
-	}
-	defer func() { _ = os.Remove(sockPath) }()
+	defer removeSocketPaths(createdSocketPaths)
+	defer closeListeners(listeners)
 
 	srv := &http.Server{
 		Handler:           withIdentity(buildMux()),
@@ -351,21 +438,25 @@ func runServe(p *serveParams) error {
 	// Both the Unix-socket server and the popup server run in
 	// goroutines so the main goroutine is free for the tray loop
 	// (systray needs the main thread on every supported platform).
-	serveErrCh := make(chan error, 1)
-	go func() {
-		slog.Info("agentd listening", "socket", sockPath, "popup", popupBaseURL)
-		fmt.Printf("tclaude agentd listening on %s\n", sockPath)
-		if popupBaseURL != "" {
-			dashLoc := "loopback"
-			if !isLoopbackHost(dashboardBindHost) {
-				dashLoc = "bind " + dashboardBindHost
-			}
-			fmt.Printf("  agent dashboard:        run `tclaude agent dashboard` (%s %s)\n", dashLoc, popupBaseURL)
-			fmt.Printf("  human approvals + access requests appear in the dashboard's Messages tab\n")
+	serveErrCh := make(chan error, len(listeners))
+	slog.Info("agentd listening", "socket", sockPath, "legacy_socket", legacySockPath, "popup", popupBaseURL)
+	fmt.Printf("tclaude agentd listening on %s\n", sockPath)
+	if legacySockPath != "" && filepath.Clean(legacySockPath) != filepath.Clean(sockPath) {
+		fmt.Printf("  legacy compatibility socket: %s\n", legacySockPath)
+	}
+	if popupBaseURL != "" {
+		dashLoc := "loopback"
+		if !isLoopbackHost(dashboardBindHost) {
+			dashLoc = "bind " + dashboardBindHost
 		}
-		printOperatorTokenBanner(operatorTok, tokenSrc, p.NoPrintHumanToken)
-		serveErrCh <- srv.Serve(ln)
-	}()
+		fmt.Printf("  agent dashboard:        run `tclaude agent dashboard` (%s %s)\n", dashLoc, popupBaseURL)
+		fmt.Printf("  human approvals + access requests appear in the dashboard's Messages tab\n")
+	}
+	printOperatorTokenBanner(operatorTok, tokenSrc, p.NoPrintHumanToken)
+	for _, ln := range listeners {
+		ln := ln
+		go func() { serveErrCh <- srv.Serve(ln) }()
+	}
 
 	quit := newQuitter()
 

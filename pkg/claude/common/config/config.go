@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -1955,6 +1956,13 @@ func Load() (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
+			return DefaultConfig(), nil
+		}
+		// A managed Codex agent deliberately cannot read ~/.tclaude. Its
+		// agent-facing socket override is sufficient for permission-gated CLI
+		// calls, so treat the inaccessible operator config like an absent config
+		// instead of printing a warning before every `tclaude agent` command.
+		if os.IsPermission(err) && os.Getenv(agentipc.SocketEnv) != "" {
 			return DefaultConfig(), nil
 		}
 		slog.Warn("Unable to load config", "err", err)

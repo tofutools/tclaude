@@ -72,7 +72,12 @@ neither is refused. See [Identity](#identity).
 
 The daemon binds two sockets:
 
-- `~/.tclaude/agentd.sock` — Unix socket for `tclaude agent` traffic.
+- `~/.tclaude-agentd.sock` — canonical, state-free Unix socket for all
+  `tclaude agent` traffic. Keeping it outside `~/.tclaude` lets every
+  harness deny the private state tree wholesale.
+- `~/.tclaude/agentd.sock` — temporary compatibility listener for older
+  clients and previously installed Claude sandbox settings. New clients and
+  generated settings do not use it.
 - `127.0.0.1:<random>` — loopback HTTP for the human-approval popup
   and the [dashboard](dashboard.md).
 

@@ -2,6 +2,7 @@ package setup
 
 import (
 	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 )
 
 // decodeTree decodes a JSON object string into the generic tree shape
@@ -31,6 +33,31 @@ func freshSpecTree(t *testing.T) map[string]any {
 	b, err := json.Marshal(sandboxHardeningSpec())
 	require.NoError(t, err)
 	return decodeTree(t, string(b))
+}
+
+func TestSandboxHardeningRequiresRestartForLegacyOnlyDaemon(t *testing.T) {
+	home, err := os.MkdirTemp("/tmp", "tc-setup-sock-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	t.Setenv("HOME", home)
+	require.NoError(t, os.MkdirAll(filepath.Dir(agentipc.LegacySocketPath()), 0o755))
+	legacy, err := net.Listen("unix", agentipc.LegacySocketPath())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = legacy.Close() })
+
+	err = sandboxHardeningSocketMigrationError()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "restart agentd")
+}
+
+func TestSandboxHardeningRejectsCustomSocket(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv(agentipc.SocketEnv, filepath.Join(home, "custom.sock"))
+
+	err := sandboxHardeningSocketMigrationError()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "custom socket")
 }
 
 // runMerge merges the hardening spec into tree and returns the report.

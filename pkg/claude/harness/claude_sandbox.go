@@ -32,12 +32,11 @@ const (
 	ClaudeSandboxOff     = "off"
 )
 
-// tclaudeAgentdSocketTilde is the agentd Unix socket as a ~-relative path, the
-// form Claude Code's settings.json sandbox rules expect (it expands ~ itself).
-// Mirrors agent.SocketPath()'s ~/.tclaude/agentd.sock; kept as a literal here
-// rather than importing the agent package (which would pull a heavier dep into
-// the harness seam for one constant).
-const tclaudeAgentdSocketTilde = "~/.tclaude/agentd.sock"
+// tclaudeAgentdSocketTilde is agentd's state-free canonical Unix socket as a
+// ~-relative path, the form Claude Code's settings.json sandbox rules expect
+// (it expands ~ itself). It deliberately sits outside ~/.tclaude so that tree
+// can remain denied without a child-path exception.
+const tclaudeAgentdSocketTilde = "~/.tclaude-agentd.sock"
 
 // claudeSandbox is Claude Code's SandboxCatalog. The default is `inherit`: a
 // tclaude-spawned Claude agent's containment is whatever the operator already
@@ -119,8 +118,9 @@ func (claudeSandbox) ModeHelp(mode string) string {
 // never drift (docs/sandbox-hardening.md is the human-facing source of truth).
 //
 // It enables the sandbox AND preserves the two properties a daemon-spawned
-// agent needs: the agentd Unix socket stays reachable (network allowlist +
-// filesystem read allowance) so the agent can still run `tclaude agent`, and
+// agent needs: the state-free agentd Unix socket stays reachable (network
+// allowlist + filesystem read allowance) so the agent can still run
+// `tclaude agent`, and
 // ~/.tclaude / ~/.claude/sessions are denied (read + write) so a sandboxed
 // agent can neither tamper with nor snoop on the shared daemon state. The
 // block is cross-platform: macOS honors per-path `allowUnixSockets`, Linux/WSL2
