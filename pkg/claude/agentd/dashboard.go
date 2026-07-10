@@ -106,8 +106,25 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/costs", handleDashboardCosts)
 	mux.HandleFunc("/api/audit", handleDashboardAudit)
 	mux.HandleFunc("/api/logs", handleDashboardLogs)
+	// The Processes tab consumes the same versioned REST surface as other
+	// clients. Dashboard auth wraps it before the dynamic feature gate.
+	mux.HandleFunc("GET /v1/process/templates", dashboardProcessRoute(handleProcessTemplates))
+	mux.HandleFunc("GET /v1/process/templates/{id}", dashboardProcessRoute(handleProcessTemplate))
+	mux.HandleFunc("POST /v1/process/templates/{id}", dashboardProcessRoute(handleProcessTemplate))
+	mux.HandleFunc("POST /v1/process/validate", dashboardProcessRoute(handleProcessValidate))
+	mux.HandleFunc("GET /v1/process/runs", dashboardProcessRoute(handleProcessRuns))
+	mux.HandleFunc("GET /v1/process/runs/{id}", dashboardProcessRoute(handleProcessRun))
 	mux.Handle("/static/", handleDashboardStatic())
 	registerDashboardEditRoutes(mux)
+}
+
+func dashboardProcessRoute(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !checkDashboardAuth(w, r) {
+			return
+		}
+		processRoute(next)(w, asDashboardHumanPeer(r))
+	}
 }
 
 // handleDashboardStatic serves the dashboard's static assets — the
@@ -666,6 +683,10 @@ type snapshotPayload struct {
 	// Plugins nav button + section entirely — the "don't show an empty
 	// Plugins tab" rule for the majority of users who never define one.
 	PluginsTabVisible bool `json:"plugins_tab_visible"`
+	// ProcessesEnabled gates both the experimental tab chrome and its REST
+	// surface. It is re-read on every snapshot so changing config takes effect
+	// without restarting agentd, matching processRoute.
+	ProcessesEnabled bool `json:"processes_enabled"`
 	// UserDefaultModel is the "model" key from the user-level
 	// ~/.claude/settings.json — what every claude launched without
 	// --model falls back to. "" = unset (claude's built-in default).
@@ -1568,6 +1589,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		DefaultTerminal:      cfg.DefaultTerminal(),
 		ShowAgentHideButton:  cfg.ShowAgentHideButton(),
 		ShowGroupDescription: cfg.ShowGroupDescription(),
+		ProcessesEnabled:     cfg.ProcessesEnabled(),
 		Permissions: snapshotPermissionsView{
 			Defaults:  defaults,
 			Grants:    map[string][]string{},

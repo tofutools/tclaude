@@ -22,6 +22,7 @@ import {
 } from './tabs.js';
 import { renderTemplatesTab } from './modal-templates.js';
 import { renderPluginsTab, renderPluginsBadge } from './plugins.js';
+import { applyProcessesTabVisibility } from './processes.js';
 import { morphInto } from './morph.js';
 import { renderDock } from './dock.js';
 // renameEditing (row-actions.js) and dndDragActive (dnd.js) are owned by
@@ -529,6 +530,7 @@ export async function refresh(opts = {}) {
     renderPluginsTab();
     renderPluginsBadge(data.plugins_warn || 0);
     applyPluginsTabVisibility(data);
+    applyProcessesTabVisibility(data);
     // Permissions + Slug registry now live as sub-panels of the merged
     // "Access" tab; the renderers write into the per-panel mount divs.
     // morphInto reconciles rather than swapping innerHTML, so a selection in

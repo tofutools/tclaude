@@ -4722,6 +4722,42 @@ body.hide-costs #groups-cost-toggle { display: none; }
 body.hide-plugins nav button[data-tab="plugins"],
 body.hide-plugins #tab-plugins { display: none; }
 
+/* Processes is a dark-launched feature. The page starts with hide-processes
+   on <body>; refresh.js removes it only when the server snapshot confirms the
+   feature flag, preventing a flash of experimental chrome while config loads. */
+body.hide-processes nav button[data-tab="processes"],
+body.hide-processes #tab-processes { display: none; }
+
+/* Processes tab shell — deliberately neutral and compact so the graph editor
+   and live viewer can replace the list panels with their full-canvas mounts. */
+.process-subnav {
+  display: flex; align-items: center; gap: 6px; margin-bottom: 12px;
+  padding-bottom: 10px; border-bottom: 1px solid #30363d;
+}
+.process-subtab, .process-action {
+  border: 1px solid #30363d; border-radius: 6px; background: #161b22;
+  color: #c9d1d9; padding: 6px 12px; cursor: pointer; font: inherit;
+}
+.process-subtab:hover, .process-action:hover { background: #21262d; border-color: #484f58; }
+.process-subtab.active { color: #fff; background: #1f6feb; border-color: #388bfd; }
+.process-action.primary { color: #fff; background: #238636; border-color: #2ea043; }
+.process-action.primary:hover { background: #2ea043; }
+.process-panel { display: none; }
+.process-panel.active { display: block; }
+.process-toolbar { min-height: 34px; }
+.process-notice { color: #8b949e; font-size: 12px; }
+.process-list table { width: 100%; border-collapse: collapse; }
+.process-list th, .process-list td { padding: 9px 10px; border-bottom: 1px solid #21262d; text-align: left; vertical-align: top; }
+.process-list th { color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.process-list .process-actions { display: flex; gap: 6px; justify-content: flex-end; }
+.process-list .process-actions .process-action { padding: 4px 8px; font-size: 12px; white-space: nowrap; }
+.process-hash { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #79c0ff; }
+.process-description, .process-secondary { color: #8b949e; font-size: 12px; }
+.process-status { display: inline-block; padding: 2px 7px; border-radius: 10px; background: #21262d; color: #c9d1d9; }
+.process-placeholder { padding: 30px; text-align: center; border: 1px dashed #30363d; border-radius: 8px; color: #8b949e; }
+.process-canvas-view { min-height: 62vh; }
+.process-canvas-mount { min-height: 55vh; margin-top: 10px; border: 1px dashed #30363d; border-radius: 8px; padding: 20px; color: #8b949e; }
+
 /* Terminals-tab auto-hide. body.hide-terminals is set by js/terminals-tab.js
    whenever no terminal pane is open — the tab exists only while ≥1 web terminal
    / window is live. Unlike Costs/Plugins (server flags), this is driven

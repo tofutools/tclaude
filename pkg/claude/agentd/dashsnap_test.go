@@ -32,7 +32,11 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/agentd/dashsnap"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/process/model"
+	"github.com/tofutools/tclaude/pkg/claude/process/state"
+	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -188,6 +192,50 @@ func seedDashSnapFixture(t *testing.T, f *testharness.Flow) {
 	}
 
 	seedPalette(t, f)
+	seedProcessDashSnap(t, f)
+}
+
+func seedProcessDashSnap(t *testing.T, f *testharness.Flow) {
+	t.Helper()
+	requireNoError := func(label string, err error) {
+		if err != nil {
+			t.Fatalf("%s: %v", label, err)
+		}
+	}
+	requireNoError("enable Processes", config.Save(&config.Config{
+		Features: &config.FeaturesConfig{Processes: true},
+	}))
+	root := filepath.Join(f.World.HomeDir, ".tclaude", "processes")
+	t.Cleanup(agentd.SetProcessStoreRootForTest(root))
+	fs, err := store.NewFS(root)
+	requireNoError("create process store", err)
+	tmpl := &model.Template{
+		APIVersion:  model.APIVersion,
+		Kind:        model.Kind,
+		ID:          "release-train",
+		Name:        "Release train",
+		Description: "Plan, implement, review, and ship a dashboard release.",
+		Start:       "begin",
+		Nodes: map[string]model.Node{
+			"begin": {Type: model.NodeTypeStart, Next: model.Next{"pass": "ship"}},
+			"ship":  {Type: model.NodeTypeEnd, Result: "success"},
+		},
+		Layout: &model.Layout{Nodes: map[string]model.LayoutNode{
+			"begin": {X: 80, Y: 120}, "ship": {X: 360, Y: 120},
+		}},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	requireNoError("seed process template", err)
+	initial := state.New("dashsnap-release-42", record.Ref, record.Ref, []state.NodeInit{
+		{ID: "begin", Type: model.NodeTypeStart, Status: state.NodeStatusReady},
+		{ID: "ship", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+	})
+	initial.Status = state.RunStatusRunning
+	_, err = fs.CreateRun(t.Context(), store.RunRecord{
+		ID: "dashsnap-release-42", TemplateRef: record.Ref,
+		CreatedAt: time.Now().Add(-12 * time.Minute),
+	}, initial)
+	requireNoError("seed process run", err)
 }
 
 func seedMember(t *testing.T, f *testharness.Flow, groupID int64, group string, m dashMemberSpec) {
@@ -325,6 +373,20 @@ func baseStates() []dashsnap.State {
   }
 })();`
 	states := []dashsnap.State{
+		{
+			Key:      "processes-templates",
+			Title:    "Processes — templates",
+			Caption:  "Feature-gated Processes tab with a populated versioned template list and dark-themed actions.",
+			JS:       processTabJS("templates", `[data-process-template="release-train"]`),
+			SettleMS: 900,
+		},
+		{
+			Key:      "processes-runs",
+			Title:    "Processes — runs",
+			Caption:  "Processes Runs sub-view with a populated live run row, status, current activity, and viewer action.",
+			JS:       processTabJS("runs", `[data-process-run="dashsnap-release-42"]`),
+			SettleMS: 900,
+		},
 		{
 			Key:     "groups",
 			Title:   "Groups tab",
@@ -693,6 +755,22 @@ func processGraphStateJS(title, graph string, colorSchemes ...string) string {
     }); });
   });
 });`, title, graph, colorScheme, title)
+}
+
+func processTabJS(subtab, readySelector string) string {
+	return fmt.Sprintf(`(async function(){
+  var nav = document.querySelector('nav button[data-tab="processes"]');
+  if (!nav || nav.offsetParent === null) throw new Error('Processes nav is not visible');
+  nav.click();
+  var sub = document.querySelector('[data-process-subtab="%s"]');
+  if (!sub) throw new Error('Processes subtab %s missing');
+  sub.click();
+  var deadline = Date.now() + 3000;
+  while (!document.querySelector('%s') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  if (!document.querySelector('%s')) throw new Error('Processes populated row did not render');
+})();`, subtab, subtab, readySelector, readySelector)
 }
 
 // scrollClearJS builds a self-checking JOH-388 req-3 state: on the groups tab

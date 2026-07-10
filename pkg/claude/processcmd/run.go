@@ -70,7 +70,7 @@ func runRun(cmd *cobra.Command, p *runParams, out io.Writer) error {
 	}
 	templateRef := loaded.Ref
 	if templateRef == "" {
-		record, err := fs.PutTemplate(cmd.Context(), tmpl)
+		record, err := fs.PutTemplateVersion(cmd.Context(), tmpl)
 		if err != nil {
 			return err
 		}

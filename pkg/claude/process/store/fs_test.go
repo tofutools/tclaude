@@ -52,6 +52,157 @@ func TestTemplatePutGetIsContentAddressed(t *testing.T) {
 	}
 }
 
+func TestTemplateSourcePreservesAndUpdatesEditorLayoutWithoutChangingRef(t *testing.T) {
+	ctx := t.Context()
+	fs := newStore(t)
+	tmpl := storetest.Template()
+	tmpl.Layout = &model.Layout{Nodes: map[string]model.LayoutNode{
+		tmpl.Start: {X: 12, Y: 34},
+	}}
+	record, err := fs.PutTemplate(ctx, tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := fs.GetTemplateSource(ctx, record.Ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := model.Parse(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := parsed.Template.Layout.Nodes[tmpl.Start].X; got != 12 {
+		t.Fatalf("initial layout x = %v, want 12", got)
+	}
+
+	tmpl.Layout.Nodes[tmpl.Start] = model.LayoutNode{X: 98, Y: 76}
+	updated, err := fs.PutTemplateEditorSource(ctx, tmpl, parsed.SourceHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Ref != record.Ref {
+		t.Fatalf("layout-only save ref = %q, want %q", updated.Ref, record.Ref)
+	}
+	source, err = fs.GetTemplateSource(ctx, record.Ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err = model.Parse(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := parsed.Template.Layout.Nodes[tmpl.Start].X; got != 98 {
+		t.Fatalf("updated layout x = %v, want 98", got)
+	}
+	pinned, err := fs.GetTemplate(ctx, record.Ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pinned.Layout != nil {
+		t.Fatalf("run-pinned semantic template unexpectedly contains layout: %#v", pinned.Layout)
+	}
+}
+
+func TestTemplateEditorSourceCASRejectsConcurrentLayoutSave(t *testing.T) {
+	ctx := t.Context()
+	root := t.TempDir()
+	first := newStoreAt(t, root)
+	second := newStoreAt(t, root)
+	base := storetest.Template()
+	base.Layout = &model.Layout{Nodes: map[string]model.LayoutNode{
+		base.Start: {X: 1, Y: 2},
+	}}
+	record, err := first.PutTemplate(ctx, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := first.GetTemplateSource(ctx, record.Ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := model.Parse(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	left := storetest.Template()
+	left.Layout = &model.Layout{Nodes: map[string]model.LayoutNode{left.Start: {X: 10, Y: 20}}}
+	right := storetest.Template()
+	right.Layout = &model.Layout{Nodes: map[string]model.LayoutNode{right.Start: {X: 30, Y: 40}}}
+	results := make(chan error, 2)
+	var wg sync.WaitGroup
+	for _, save := range []struct {
+		fs   *store.FS
+		tmpl *model.Template
+	}{{first, left}, {second, right}} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, saveErr := save.fs.PutTemplateEditorSource(ctx, save.tmpl, parsed.SourceHash)
+			results <- saveErr
+		}()
+	}
+	wg.Wait()
+	close(results)
+	var saved, conflicted int
+	for saveErr := range results {
+		switch {
+		case saveErr == nil:
+			saved++
+		case errors.Is(saveErr, store.ErrTemplateSourceConflict):
+			conflicted++
+		default:
+			t.Fatalf("unexpected save error: %v", saveErr)
+		}
+	}
+	if saved != 1 || conflicted != 1 {
+		t.Fatalf("saved=%d conflicted=%d, want one of each", saved, conflicted)
+	}
+}
+
+func TestPutTemplateVersionFreezesLegacyHeadBeforePublishing(t *testing.T) {
+	ctx := t.Context()
+	root := t.TempDir()
+	fs := newStoreAt(t, root)
+	latest := storetest.Template()
+	latest.Description = "latest editor head"
+	latestRecord, err := fs.PutTemplate(ctx, latest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headPath := filepath.Join(root, "templates", latest.ID, "head")
+	if err := os.Remove(headPath); err != nil {
+		t.Fatal(err)
+	}
+	// A directory at the pointer path forces the pre-publication atomic head
+	// write to fail while leaving version directories otherwise writable.
+	if err := os.Mkdir(headPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	older := storetest.Template()
+	older.Description = "older file-backed version"
+	if _, err := fs.PutTemplateVersion(ctx, older); err == nil {
+		t.Fatal("expected head-freeze failure")
+	}
+	records, err := fs.ListTemplates(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0].Ref != latestRecord.Ref {
+		t.Fatalf("failed head freeze published a version: %#v", records)
+	}
+	if err := os.Remove(headPath); err != nil {
+		t.Fatal(err)
+	}
+	head, err := fs.GetTemplateHead(ctx, latest.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if head.Ref != latestRecord.Ref {
+		t.Fatalf("legacy fallback head = %s, want %s", head.Ref, latestRecord.Ref)
+	}
+}
+
 func TestTemplateGetRejectsTamperedContent(t *testing.T) {
 	ctx := t.Context()
 	root := t.TempDir()
