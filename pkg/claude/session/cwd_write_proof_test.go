@@ -11,6 +11,25 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 )
 
+func TestSpawnCwdReadinessFileLivesInPrivateDataDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	path, cleanup, err := newSpawnCwdReadinessFile()
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+	assert.Equal(t, filepath.Join(home, ".tclaude", "data", "spawn-readiness"), filepath.Dir(path))
+
+	// The guard is a shell prefix executed before harnessCmd starts the
+	// sandboxed harness, so it can acknowledge readiness in the denied data
+	// subtree without granting that subtree to the agent.
+	cmd := exec.Command("sh", "-c", guardHarnessCommandWithDirProof("true", "", path, false, nil))
+	require.NoError(t, cmd.Run())
+	status, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, "ok", string(status))
+}
+
 func TestGuardHarnessCommandWithCwdProof_ChecksMarkerThenRuns(t *testing.T) {
 	dir := t.TempDir()
 	proof := "valid_proof-123"

@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -23,7 +25,9 @@ func RelocateLegacyState() error {
 		return nil
 	}
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
-		return fmt.Errorf("create data dir %s: %w", dataDir, err)
+		slog.Warn("failed to create data dir for legacy-state relocation; continuing on the active layout",
+			"path", dataDir, "error", err)
+		return nil
 	}
 	names := []string{
 		"operator_token", "debug.log", "config.json", "plugins.json",
@@ -40,17 +44,37 @@ func RelocateLegacyState() error {
 	for _, name := range names {
 		oldPath := filepath.Join(root, name)
 		newPath := filepath.Join(dataDir, name)
-		if err := relocateLegacyStateEntry(oldPath, newPath); err != nil {
-			return fmt.Errorf("relocate %s: %w", name, err)
+		if err := relocateLegacyStateEntry(oldPath, newPath, strings.HasPrefix(name, "output.log")); err != nil {
+			// Mixed-version processes may recreate legacy entries after the first
+			// migration. Never brick every CLI command from PersistentPreRunE:
+			// TclaudeStatePath keeps readers on the only existing copy, or prefers
+			// data/ when both exist. Preserve non-log conflicts for the operator.
+			slog.Warn("failed to relocate legacy state; continuing on the active layout",
+				"name", name, "from", oldPath, "to", newPath, "error", err)
 		}
 	}
 	return nil
 }
 
-func relocateLegacyStateEntry(oldPath, newPath string) error {
+func relocateLegacyStateEntry(oldPath, newPath string, quarantineConflict bool) error {
 	if _, err := os.Lstat(newPath); err == nil {
 		if _, oldErr := os.Lstat(oldPath); oldErr == nil {
-			return fmt.Errorf("both migration source and destination exist (%s and %s); refusing to discard either", oldPath, newPath)
+			if quarantineConflict {
+				quarantinePath := fmt.Sprintf("%s.legacy-%s-%d", newPath,
+					time.Now().UTC().Format("20060102T150405.000000000Z"), os.Getpid())
+				if err := os.Rename(oldPath, quarantinePath); err != nil {
+					if os.IsNotExist(err) {
+						return nil // a racing invocation already moved it
+					}
+					return fmt.Errorf("quarantine recreated legacy log %s -> %s: %w", oldPath, quarantinePath, err)
+				}
+				slog.Warn("quarantined recreated legacy log; canonical data log remains active",
+					"from", oldPath, "quarantine", quarantinePath, "active", newPath)
+				return nil
+			}
+			slog.Warn("legacy and data state both exist; preferring data and preserving legacy entry for operator recovery",
+				"legacy", oldPath, "active", newPath)
+			return nil
 		} else if !os.IsNotExist(oldErr) {
 			return fmt.Errorf("stat %s: %w", oldPath, oldErr)
 		}

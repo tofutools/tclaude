@@ -33,16 +33,54 @@ func TestOpenRelocatesLegacyDatabaseWithoutLosingRows(t *testing.T) {
 	assert.FileExists(t, filepath.Join(root, "data", "db.sqlite"))
 }
 
-func TestOpenRefusesConflictingLegacyAndNewDatabases(t *testing.T) {
+func TestOpenQuarantinesRecreatedLegacyDatabaseAndUsesCanonical(t *testing.T) {
 	setupTestDB(t)
 	root := filepath.Join(os.Getenv("HOME"), ".tclaude")
-	require.NoError(t, os.MkdirAll(filepath.Join(root, "data"), 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(root, "db.sqlite"), []byte("legacy"), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(root, "data", "db.sqlite"), []byte("new"), 0o600))
-
 	d, err := Open()
-	assert.Nil(t, d)
-	require.ErrorContains(t, err, "both legacy and new databases exist")
+	require.NoError(t, err)
+	_, err = d.Exec(`CREATE TABLE canonical_probe (value TEXT NOT NULL);
+		INSERT INTO canonical_probe(value) VALUES ('canonical');`)
+	require.NoError(t, err)
+	Close()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "db.sqlite"), []byte("stale recreate"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "db.sqlite-wal"), []byte("stray wal"), 0o600))
+
+	d, err = Open()
+	require.NoError(t, err)
+	var got string
+	require.NoError(t, d.QueryRow(`SELECT value FROM canonical_probe`).Scan(&got))
+	assert.Equal(t, "canonical", got)
+	assert.NoFileExists(t, filepath.Join(root, "db.sqlite"))
+	assert.NoFileExists(t, filepath.Join(root, "db.sqlite-wal"))
+	quarantines, err := filepath.Glob(filepath.Join(root, "data", "legacy-db-recreated-*"))
+	require.NoError(t, err)
+	require.Len(t, quarantines, 1)
+	assert.FileExists(t, filepath.Join(quarantines[0], "db.sqlite"))
+	assert.FileExists(t, filepath.Join(quarantines[0], "db.sqlite-wal"))
+}
+
+func TestRelocateLegacyDBFilesReplacesStalePartialSidecarWithLiveRootSidecar(t *testing.T) {
+	setupTestDB(t)
+	root := filepath.Join(os.Getenv("HOME"), ".tclaude")
+	dataDir := filepath.Join(root, "data")
+	require.NoError(t, os.MkdirAll(dataDir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "db.sqlite"), []byte("live main"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "db.sqlite-wal"), []byte("live wal"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "db.sqlite-wal"), []byte("stale orphan wal"), 0o600))
+
+	require.NoError(t, relocateLegacyDBFiles())
+	main, err := os.ReadFile(filepath.Join(dataDir, "db.sqlite"))
+	require.NoError(t, err)
+	assert.Equal(t, "live main", string(main))
+	wal, err := os.ReadFile(filepath.Join(dataDir, "db.sqlite-wal"))
+	require.NoError(t, err)
+	assert.Equal(t, "live wal", string(wal), "root sidecar is authoritative while canonical main is absent")
+	orphans, err := filepath.Glob(filepath.Join(dataDir, "db.sqlite-wal.orphan-*"))
+	require.NoError(t, err)
+	require.Len(t, orphans, 1)
+	stale, err := os.ReadFile(orphans[0])
+	require.NoError(t, err)
+	assert.Equal(t, "stale orphan wal", string(stale))
 }
 
 func TestOpenKeepsLegacyDatabaseWhilePreSplitDaemonIsLive(t *testing.T) {
