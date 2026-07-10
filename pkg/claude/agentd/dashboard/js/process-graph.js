@@ -63,6 +63,7 @@ function overlayText(overlay) {
   if (overlay.attempt != null || overlay.attempts != null) bits.push(`attempt ${overlay.attempt ?? overlay.attempts}`);
   if (overlay.retry != null || overlay.retries != null) bits.push(`retry ${overlay.retry ?? overlay.retries}`);
   if (overlay.badge) bits.push(String(overlay.badge));
+  if (overlay.severity) bits.push(`has ${overlay.severity}`);
   return bits.join(', ');
 }
 
@@ -172,7 +173,7 @@ function renderOverlay(parent, node) {
   const x = node.width / 2 - 9;
   const y = -node.height / 2 + 9;
   const group = svgElement('g', {
-    class: `process-overlay-anchor${overlay ? ' has-overlay' : ''}`,
+    class: `process-overlay-anchor${overlay ? ' has-overlay' : ''}${overlay?.severity ? ` overlay-${overlay.severity}` : ''}`,
     transform: `translate(${x} ${y})`,
     'aria-hidden': 'true',
   });
@@ -352,6 +353,17 @@ export class ProcessGraph {
       text.textContent = label;
       labelGroup.append(text);
       group.append(labelGroup);
+    }
+    // Optional badge glyph at the label anchor (validation and future state
+    // decorations). Severity is glyph-coded AND class-coded — never color-only.
+    if (edge.badge) {
+      const badge = svgElement('text', {
+        class: `process-edge-badge process-edge-badge-${edge.badgeSeverity || 'error'}`,
+        x: edge.label.x, y: edge.label.y - 13,
+        'text-anchor': edge.back ? 'end' : 'middle', 'aria-hidden': 'true',
+      });
+      badge.textContent = String(edge.badge);
+      group.append(badge);
     }
     return group;
   }
@@ -643,6 +655,17 @@ export class ProcessGraph {
     this.view.k = zoom;
     this.view.x = (rect.width - bounds.width * zoom) / 2 - bounds.x * zoom;
     this.view.y = (rect.height - bounds.height * zoom) / 2 - bounds.y * zoom;
+    this.applyView();
+  }
+
+  // centerOn pans the view so graph point (x, y) sits at the viewport center,
+  // keeping the current zoom. Used by consumers that jump to a node/edge
+  // (e.g. the editor's issues panel).
+  centerOn(x, y) {
+    const rect = this.svg.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    this.view.x = rect.width / 2 - x * this.view.k;
+    this.view.y = rect.height / 2 - y * this.view.k;
     this.applyView();
   }
 
