@@ -100,6 +100,11 @@ Bash/file tools are restricted.
 
 ## How to configure it
 
+After upgrading from a version that used `~/.tclaude/agentd.sock`, restart
+`tclaude agentd serve` before installing the updated hardening. The installer
+refuses to rewrite the socket allowance while it detects a legacy-only daemon,
+so it cannot strand newly sandboxed agents on an unreachable endpoint.
+
 Claude Code enforces filesystem restrictions through **two layers**, and
 you need **both** — each covers a hole the other leaves open:
 

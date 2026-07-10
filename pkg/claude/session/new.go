@@ -561,7 +561,7 @@ func runNew(params *NewParams) error {
 	}
 	// Pin managed Codex sessions to agentd's canonical state-free socket. That
 	// socket lives outside the profile's denied ~/.tclaude private-state tree.
-	if err := ApplyCodexAgentSocketEnv(params.PermissionProfile, additionalEnv); err != nil {
+	if err := ApplyAgentSocketEnv(h.Name, params.Sandbox, params.PermissionProfile, additionalEnv); err != nil {
 		return err
 	}
 	// Keep Claude Code's interactive "Resume from summary" chooser from blocking

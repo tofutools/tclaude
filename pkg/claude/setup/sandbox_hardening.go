@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
@@ -292,6 +293,9 @@ func applySandboxHardening(settingsPath string) (*hardeningResult, error) {
 // point: it resolves the user-level Claude Code settings path, applies
 // the hardening, and prints a summary of what changed.
 func installSandboxHardening() error {
+	if err := sandboxHardeningSocketMigrationError(); err != nil {
+		return err
+	}
 	settingsPath := session.ClaudeSettingsPath()
 	if settingsPath == "" {
 		return fmt.Errorf("cannot determine Claude settings path")
@@ -302,6 +306,16 @@ func installSandboxHardening() error {
 		return err
 	}
 	printHardeningReport(res)
+	return nil
+}
+
+func sandboxHardeningSocketMigrationError() error {
+	canonical := agentipc.CanonicalSocketPath()
+	legacy := agentipc.LegacySocketPath()
+	if !agentipc.SocketReachable(canonical) && agentipc.SocketReachable(legacy) {
+		return fmt.Errorf("agentd is still listening only on the legacy socket %s; "+
+			"restart agentd after upgrading tclaude before installing sandbox hardening", legacy)
+	}
 	return nil
 }
 

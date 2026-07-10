@@ -1,9 +1,11 @@
 package agentipc
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // SocketEnv explicitly selects the agentd Unix socket used by tclaude agent
@@ -54,4 +56,19 @@ func ClientSocketPaths() []string {
 		paths = append(paths, legacy)
 	}
 	return paths
+}
+
+// SocketReachable reports whether a process is accepting connections at path.
+// It is used only for short migration preflights, never as a substitute for an
+// authenticated daemon request.
+func SocketReachable(path string) bool {
+	if path == "" {
+		return false
+	}
+	conn, err := net.DialTimeout("unix", path, 100*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }
