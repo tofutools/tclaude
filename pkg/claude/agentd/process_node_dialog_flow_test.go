@@ -70,7 +70,7 @@ func TestProcessNodeDialogEditPathSaveRoundTrip(t *testing.T) {
 		ID: "sign-off",
 		Performer: model.Performer{
 			Kind: model.PerformerHuman, Profile: "operator", Ask: "Ship it?",
-			Choices: []string{"ship", "hold"}, Assignee: "johan",
+			Choices: []string{"ship", "hold"}, ChoiceOutcomes: map[string]string{"ship": "pass", "hold": "fail"}, Assignee: "johan",
 		},
 	}
 	work.Captures = []string{"diff", "test-report"}
@@ -109,7 +109,7 @@ func TestProcessNodeDialogEditPathSaveRoundTrip(t *testing.T) {
 		"kind: program", "run: go", "maxAttempts: 5", "onFail: fresh-attempt",
 		"captures:", "- diff", "- test-report",
 		"approval: human", "model: opus", "effort: high",
-		"choices:", "- ship", "- hold", "assignee: johan",
+		"choices:", "- ship", "- hold", "choiceOutcomes:", "ship: pass", "hold: fail", "assignee: johan",
 		"cadence: 10m", "escalationTarget: human:operator",
 	} {
 		assert.Contains(t, next.Source, needle, "canonical YAML must carry the dialog edit %q", needle)

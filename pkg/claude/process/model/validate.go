@@ -78,7 +78,7 @@ func validateNodes(tmpl *Template) Diagnostics {
 			if node.Performer == nil {
 				diagnostics = append(diagnostics, diagError("missing_performer", path+".performer", "task node requires a performer"))
 			} else {
-				diagnostics = append(diagnostics, validatePerformer(*node.Performer, path+".performer")...)
+				diagnostics = append(diagnostics, validatePerformer(*node.Performer, path+".performer", false)...)
 			}
 			checkIDs := map[string]int{}
 			for i, check := range node.Checks {
@@ -107,7 +107,7 @@ func validateNodes(tmpl *Template) Diagnostics {
 			if node.Performer == nil {
 				diagnostics = append(diagnostics, diagError("missing_performer", path+".performer", "decision node requires a decider performer"))
 			} else {
-				diagnostics = append(diagnostics, validatePerformer(*node.Performer, path+".performer")...)
+				diagnostics = append(diagnostics, validatePerformer(*node.Performer, path+".performer", true)...)
 			}
 			if len(node.Next) == 0 {
 				diagnostics = append(diagnostics, diagError("missing_next", path+".next", "decision node requires outcome edges"))
@@ -207,7 +207,7 @@ func validateStep(step Step, path string, allowApproval bool) Diagnostics {
 	case step.Approval != PlanApprovalHuman:
 		diagnostics = append(diagnostics, diagError("approval_retry_without_human_approval", path+".approvalRetry", "approvalRetry requires approval: human"))
 	}
-	diagnostics = append(diagnostics, validatePerformer(step.Performer, path+".performer")...)
+	diagnostics = append(diagnostics, validatePerformer(step.Performer, path+".performer", false)...)
 	diagnostics = append(diagnostics, validateRetry(step.ApprovalRetry, path+".approvalRetry")...)
 	diagnostics = append(diagnostics, validateRetry(step.Retry, path+".retry")...)
 	return diagnostics
@@ -245,7 +245,7 @@ func validateExpansionCollisions(tmpl *Template) Diagnostics {
 	return diagnostics
 }
 
-func validatePerformer(performer Performer, path string) Diagnostics {
+func validatePerformer(performer Performer, path string, decision bool) Diagnostics {
 	var diagnostics Diagnostics
 	switch performer.Kind {
 	case PerformerAgent:
@@ -264,6 +264,7 @@ func validatePerformer(performer Performer, path string) Diagnostics {
 		diagnostics = append(diagnostics, diagError("invalid_performer_kind", path+".kind", fmt.Sprintf("unsupported performer kind %q", performer.Kind)))
 	}
 	diagnostics = append(diagnostics, validateKindScopedFields(performer, path)...)
+	diagnostics = append(diagnostics, validateChoiceOutcomes(performer, path, decision)...)
 	diagnostics = append(diagnostics, checkInertParamRef(path+".profile", performer.Profile)...)
 	diagnostics = append(diagnostics, checkInertParamRef(path+".timeout", performer.Timeout)...)
 	diagnostics = append(diagnostics, validateDuration(path+".timeout", performer.Timeout)...)
@@ -309,6 +310,7 @@ func validateKindScopedFields(performer Performer, path string) Diagnostics {
 	}
 	scoped("ask", !isBlank(performer.Ask), PerformerHuman)
 	scoped("choices", len(performer.Choices) > 0, PerformerHuman)
+	scoped("choiceOutcomes", len(performer.ChoiceOutcomes) > 0, PerformerHuman)
 	scoped("assignee", !isBlank(performer.Assignee), PerformerHuman)
 	scoped("prompt", !isBlank(performer.Prompt), PerformerAgent, PerformerHuman)
 	scoped("model", !isBlank(performer.Model), PerformerAgent)
@@ -325,6 +327,72 @@ func validateKindScopedFields(performer Performer, path string) Diagnostics {
 	diagnostics = append(diagnostics, checkInertParamRef(path+".effort", performer.Effort)...)
 	for i, choice := range performer.Choices {
 		diagnostics = append(diagnostics, checkInertParamRef(fmt.Sprintf("%s.choices[%d]", path, i), choice)...)
+	}
+	return diagnostics
+}
+
+// ValidateChoiceRouting defensively validates the persisted performer shape at
+// dispatch/reconcile time. Authoring normally catches these diagnostics first,
+// but old or manually edited run records must fail loudly rather than expose
+// actions that cannot settle an attempt.
+func ValidateChoiceRouting(performer Performer, decision bool) error {
+	diagnostics := validateChoiceOutcomes(performer, "performer", decision)
+	if len(diagnostics) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%s: %s", diagnostics[0].Path, diagnostics[0].Message)
+}
+
+func validateChoiceOutcomes(performer Performer, path string, decision bool) Diagnostics {
+	if performer.Kind != PerformerHuman {
+		return nil
+	}
+	if decision {
+		if len(performer.ChoiceOutcomes) > 0 {
+			return Diagnostics{diagError("choice_outcomes_on_decision", path+".choiceOutcomes",
+				"decision performer choices route through outcome edges; choiceOutcomes is not applicable")}
+		}
+		return nil
+	}
+	var diagnostics Diagnostics
+	labels := make(map[string]int, len(performer.Choices))
+	canonical := make(map[string]struct{}, len(performer.Choices))
+	for i, raw := range performer.Choices {
+		label := strings.TrimSpace(raw)
+		choicePath := fmt.Sprintf("%s.choices[%d]", path, i)
+		if label == "" {
+			continue // invalid_choice is emitted by validateKindScopedFields.
+		}
+		if raw != label {
+			diagnostics = append(diagnostics, diagError("noncanonical_choice", choicePath,
+				"choice labels must not have leading or trailing whitespace"))
+		}
+		folded := strings.ToLower(label)
+		if first, ok := labels[folded]; ok {
+			diagnostics = append(diagnostics, diagError("duplicate_choice", choicePath,
+				fmt.Sprintf("choice %q conflicts with choices[%d] under case-insensitive matching", label, first)))
+		} else {
+			labels[folded] = i
+		}
+		canonical[label] = struct{}{}
+		outcome, ok := performer.ChoiceOutcomes[label]
+		if !ok {
+			diagnostics = append(diagnostics, diagError("missing_choice_outcome", path+".choiceOutcomes."+label,
+				fmt.Sprintf("choice %q requires an explicit pass or fail outcome", label)))
+			continue
+		}
+		switch strings.TrimSpace(outcome) {
+		case "pass", "fail":
+		default:
+			diagnostics = append(diagnostics, diagError("invalid_choice_outcome", path+".choiceOutcomes."+label,
+				fmt.Sprintf("choice outcome must be pass or fail; got %q", outcome)))
+		}
+	}
+	for key := range performer.ChoiceOutcomes {
+		if _, ok := canonical[key]; !ok {
+			diagnostics = append(diagnostics, diagError("extra_choice_outcome", path+".choiceOutcomes."+key,
+				fmt.Sprintf("choice outcome key %q does not exactly match an authored choice label", key)))
+		}
 	}
 	return diagnostics
 }

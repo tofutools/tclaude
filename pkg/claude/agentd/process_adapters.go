@@ -8,10 +8,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	processexec "github.com/tofutools/tclaude/pkg/claude/process/exec"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
+	"github.com/tofutools/tclaude/pkg/claude/process/state"
 )
 
 var processCommandIDPattern = regexp.MustCompile(`^cmd_[a-f0-9]{24}$`)
@@ -87,13 +89,16 @@ func processSpawnParams(profile *db.SpawnProfile, request processexec.Request) (
 	if err != nil {
 		return spawnParams{}, err
 	}
-	modelName, err := h.Models.ValidateModel(profile.Model)
-	if err != nil {
-		return spawnParams{}, err
+	tiers := []launchProfileTier{{profile: profile, source: profileSource(profile, agent.ProvCLIProfileSource)}}
+	modelName, _, _, fail := resolveStringLaunchField("model", request.Performer.Model, h.Name, tiers,
+		func(p *db.SpawnProfile) string { return p.Model }, h.Models.ValidateModel)
+	if fail != nil {
+		return spawnParams{}, fmt.Errorf("%s", fail.Msg)
 	}
-	effort, err := h.Models.ValidateEffort(profile.Effort)
-	if err != nil {
-		return spawnParams{}, err
+	effort, _, _, fail := resolveStringLaunchField("effort", request.Performer.Effort, h.Name, tiers,
+		func(p *db.SpawnProfile) string { return p.Effort }, h.Models.ValidateEffort)
+	if fail != nil {
+		return spawnParams{}, fmt.Errorf("%s", fail.Msg)
 	}
 	sandbox, err := harness.ResolveSandboxMode(h, profile.Sandbox)
 	if err != nil {
@@ -274,6 +279,9 @@ func (processHumanAdapter) Validate(request processexec.Request) error {
 	if strings.TrimSpace(request.Performer.Ask) == "" && strings.TrimSpace(request.Performer.Prompt) == "" {
 		return fmt.Errorf("human performer requires instructions")
 	}
+	if err := model.ValidateChoiceRouting(request.Performer, request.Command.Kind == state.CommandKindRecordDecision); err != nil {
+		return fmt.Errorf("human performer choice routing: %w", err)
+	}
 	return nil
 }
 
@@ -285,7 +293,10 @@ func (a processHumanAdapter) Dispatch(_ context.Context, request processexec.Req
 	if err := a.Validate(request); err != nil {
 		return processexec.DispatchResult{}, err
 	}
-	assignee := strings.TrimSpace(request.Performer.Profile)
+	assignee := strings.TrimSpace(request.Performer.Assignee)
+	if assignee == "" {
+		assignee = strings.TrimSpace(request.Performer.Profile)
+	}
 	if assignee == "" {
 		assignee = "human:operator"
 	} else if !strings.HasPrefix(assignee, "human:") && !strings.HasPrefix(assignee, "role:") {
@@ -307,16 +318,26 @@ func (a processHumanAdapter) Dispatch(_ context.Context, request processexec.Req
 			return processexec.DispatchResult{}, err
 		}
 	}
+	actions := []string{"approve", "reject", "ask-changes"}
+	if request.Command.Kind != state.CommandKindRecordDecision && len(request.Performer.Choices) > 0 {
+		actions = make([]string, 0, len(request.Performer.Choices))
+		for _, choice := range request.Performer.Choices {
+			actions = append(actions, strings.TrimSpace(choice))
+		}
+	}
 	return processexec.DispatchResult{
 		ExternalRef:      "obligation:" + request.Command.ID,
 		Assignee:         assignee,
 		Summary:          summary,
-		AvailableActions: []string{"approve", "reject", "ask-changes"},
+		AvailableActions: actions,
 		CreateObligation: true,
 	}, nil
 }
 
-func (processHumanAdapter) ReconcileDeferred(_ context.Context, _ processexec.Request) (processexec.Observation, processexec.DeferredStatus, error) {
+func (a processHumanAdapter) ReconcileDeferred(_ context.Context, request processexec.Request) (processexec.Observation, processexec.DeferredStatus, error) {
+	if err := a.Validate(request); err != nil {
+		return processexec.Observation{}, processexec.DeferredMissing, err
+	}
 	return processexec.Observation{}, processexec.DeferredInFlight, nil
 }
 

@@ -96,19 +96,19 @@ type Performer struct {
 	Prompt string `json:"prompt,omitempty" yaml:"prompt,omitempty"`
 	// Ask, Choices, and Assignee are human-scoped: the question to put to the
 	// human, an optional closed answer set, and an optional specific person
-	// (defaults to whoever holds the profile). Choices and Assignee are
-	// authoring-only in v1 — the dispatch plumbing that honors them
-	// (assignee-directed obligations, choice-driven available actions on
-	// task-stage gates) lands with the engine tickets under TCL-311; a
-	// decision node's choices already realize as its outcome edges.
+	// (defaults to whoever holds the profile). A decision node's choices realize
+	// as its outcome edges; task-stage choices are constrained by the engine's
+	// pass/fail routing vocabulary.
 	Ask      string   `json:"ask,omitempty" yaml:"ask,omitempty"`
 	Choices  []string `json:"choices,omitempty" yaml:"choices,omitempty"`
 	Assignee string   `json:"assignee,omitempty" yaml:"assignee,omitempty"`
+	// ChoiceOutcomes routes a human task-stage vocabulary onto the engine's
+	// existing binary attempt outcomes. Decision performers remain edge-driven
+	// and therefore reject this field.
+	ChoiceOutcomes map[string]string `json:"choiceOutcomes,omitempty" yaml:"choiceOutcomes,omitempty"`
 	// Model and Effort are agent-scoped overrides on top of the profile.
-	// Freeform strings: legal values are harness-specific. Authoring-only in
-	// v1 — agent spawns currently read model/effort from the spawn profile;
-	// the plumbing that consults these per-performer overrides lands with
-	// TCL-311.
+	// Freeform strings: legal values are harness-specific and are validated at
+	// the process-agent spawn boundary.
 	Model  string `json:"model,omitempty" yaml:"model,omitempty"`
 	Effort string `json:"effort,omitempty" yaml:"effort,omitempty"`
 	// Run and Args are program-scoped: command execution (design §10).

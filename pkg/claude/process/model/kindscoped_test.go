@@ -37,6 +37,9 @@ nodes:
         choices:
           - ship
           - hold
+        choiceOutcomes:
+          ship: pass
+          hold: fail
         assignee: johan
     next:
       pass: done
@@ -69,7 +72,7 @@ func TestKindScopedFieldsParseAndRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, needle := range []string{"model: opus", "effort: high", "captures:", "- diff", "- test-report", "choices:", "- ship", "assignee: johan"} {
+	for _, needle := range []string{"model: opus", "effort: high", "captures:", "- diff", "- test-report", "choices:", "- ship", "choiceOutcomes:", "ship: pass", "hold: fail", "assignee: johan"} {
 		if !strings.Contains(string(canonical), needle) {
 			t.Errorf("canonical YAML missing %q:\n%s", needle, canonical)
 		}

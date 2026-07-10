@@ -385,14 +385,24 @@ func normalizeObligationObservation(snapshot store.Snapshot, command plan.Comman
 			continue
 		}
 		allowed := append([]string(nil), obligation.AvailableActions...)
-		if command.Kind != plan.CommandKindRecordDecision {
+		customChoices := command.Kind != plan.CommandKindRecordDecision && command.Performer != nil && len(command.Performer.Choices) > 0
+		if command.Kind != plan.CommandKindRecordDecision && !customChoices {
 			allowed = append(allowed, "pass", "fail")
 		}
 		canonical, ok := CanonicalObligationAction(allowed, observation.Verdict)
 		if !ok {
 			return Observation{}, fmt.Errorf("verdict %q is not allowed for obligation %q; allowed: %s", observation.Verdict, obligation.ID, strings.Join(allowed, ", "))
 		}
-		normalized, err := NormalizeObligationAction(command.Kind, canonical)
+		var normalized string
+		var err error
+		if customChoices {
+			normalized = strings.TrimSpace(command.Performer.ChoiceOutcomes[canonical])
+			if normalized != "pass" && normalized != "fail" {
+				return Observation{}, fmt.Errorf("choice %q has no pass/fail outcome for obligation %q", canonical, obligation.ID)
+			}
+		} else {
+			normalized, err = NormalizeObligationAction(command.Kind, canonical)
+		}
 		if err != nil {
 			return Observation{}, fmt.Errorf("%w for obligation %q; allowed: %s", err, obligation.ID, strings.Join(allowed, ", "))
 		}
