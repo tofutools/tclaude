@@ -33,6 +33,12 @@ let spawnPermOverrides = {};
 // model, while an actual namespace switch still clears it.
 let appliedSpawnHarness = '';
 
+// trust_dir is tri-state at the spawn boundary. False is sent only when a
+// loaded profile explicitly set it or the human touched the checkbox; an
+// untouched false stays omitted so a sparse group profile can fall through to
+// the compatible global profile.
+let spawnTrustDirSpecified = false;
+
 
 // ---- Agent spawn modal --------------------------------------------------
 //
@@ -228,7 +234,10 @@ function applySpawnHarness(harnessName) {
   // same way the body below gates `harness !== 'claude'`.
   const isCodexHarness = !!(h && h.name === 'codex');
   $('#agent-spawn-trust-dir-row').style.display = isCodexHarness ? '' : 'none';
-  if (!isCodexHarness) $('#agent-spawn-trust-dir').checked = false;
+  if (!isCodexHarness) {
+    $('#agent-spawn-trust-dir').checked = false;
+    spawnTrustDirSpecified = false;
+  }
 
   // Remote-control opt-in (JOH-258): "start with Remote Access on", gated on the
   // harness having built-in Remote Access (Claude Code's can_remote_control) —
@@ -686,7 +695,10 @@ function applyProfileToSpawnForm(p) {
   // trust_dir is a *bool — apply only when the profile set it (null = unset).
   // The row is Codex-only and hidden otherwise; setting the checkbox while
   // hidden is harmless (submit reads it only for Codex).
-  if (p.trust_dir != null) $('#agent-spawn-trust-dir').checked = !!p.trust_dir;
+  if (p.trust_dir != null) {
+    spawnTrustDirSpecified = true;
+    $('#agent-spawn-trust-dir').checked = !!p.trust_dir;
+  }
 
   // remote_control is a *bool too (JOH-262): pre-fill the spawn dialog's Remote
   // Access box, with the group's remote-control policy (optin/deny) taking
@@ -723,6 +735,7 @@ function applyProfileToSpawnForm(p) {
 // of a profile. Mirrors the blank-init subset of openAgentSpawnModal; shared
 // by the Clear button and the selector's "(none)" choice.
 function clearSpawnProfileFields() {
+  spawnTrustDirSpecified = false;
   $('#agent-spawn-name').value = '';
   $('#agent-spawn-role').value = '';
   $('#agent-spawn-descr').value = '';
@@ -1147,6 +1160,7 @@ function openAgentSpawnModal(opts) {
   $('#agent-spawn-descr').value = '';
   $('#agent-spawn-task').value = '';
   $('#agent-spawn-init-msg').value = '';
+  spawnTrustDirSpecified = false;
   // '' also drops any out-of-catalog option a prior open's profile-apply added.
   setModelSelectValue($('#agent-spawn-model'), '');
   syncCustomModelRow('agent-spawn-model');
@@ -1389,10 +1403,12 @@ async function submitAgentSpawn() {
     // AskUserQuestion timeout (Claude Code) — inherit/blank normalizes to no
     // override server-side, so send it only when a concrete value was chosen.
     if (askTimeout) body.ask_user_question_timeout = askTimeout;
-    // Dir-trust (Codex only): send the checkbox state explicitly so a loaded
-    // profile's false remains authoritative over group/global true defaults.
-    // The daemon pre-trusts cwd only for true; false performs no host mutation.
-    if (harness === 'codex') body.trust_dir = $('#agent-spawn-trust-dir').checked;
+    // Dir-trust (Codex only): send only a profile-specified or user-touched
+    // state. Untouched false remains omitted so sparse profile tiers fall
+    // through server-side; explicit false remains authoritative.
+    if (harness === 'codex' && spawnTrustDirSpecified) {
+      body.trust_dir = $('#agent-spawn-trust-dir').checked;
+    }
     // Remote-control (Claude Code only): the checkbox is the authoritative
     // per-spawn intent (JOH-262 revised), so send its state explicitly — true OR
     // false — and the daemon honours it over the group/profile default. Sent only
@@ -1552,6 +1568,7 @@ function bindAgentSpawnModal() {
       if (p) applyProfileToSpawnForm(p);
     } catch (_) { /* fetch error — leave the form as-is */ }
   });
+  $('#agent-spawn-trust-dir').addEventListener('change', () => { spawnTrustDirSpecified = true; });
   // Clear resets the profile-controlled fields (leaving group/cwd/worktree).
   $('#agent-spawn-clear').addEventListener('click', clearSpawnProfileFields);
   // Save as profile: open the profile editor pre-filled from the current
