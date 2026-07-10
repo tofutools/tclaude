@@ -17,8 +17,8 @@ import (
 // limits at all, so a spawn-capable agent stuck in a loop could fork
 // CC instances and tmux sessions until the host fell over.
 //
-// checkSpawnGuardrails applies three checks before handleGroupSpawn
-// launches anything:
+// checkSpawnGuardrails (1 and 2) and claimSpawnRateSlot (3) apply three
+// checks before handleGroupSpawn launches anything:
 //
 //  1. Max group size — a hard property of the group
 //     (agent_groups.max_members). Enforced for EVERY caller, the human
@@ -101,13 +101,13 @@ func resolveSpawnGuardrailConfig(cfg *config.Config) string {
 		SpawnGroupRestriction, SpawnAllowedGroups, rate)
 }
 
-// checkSpawnGuardrails runs the three spawn guardrails for a request
-// into group g by caller spawnerConvID ("" for the human). On a
-// rejection it writes the HTTP error and returns false; the caller
-// (handleGroupSpawn) just returns. On success it returns true — and,
-// for an agent caller, has already recorded a rate-limit slot, so the
-// caller must proceed (or the slot is consumed by a non-spawn, which
-// is the intended "failed attempt still counts" behaviour).
+// checkSpawnGuardrails runs guardrails 1 and 2 for a request into group g
+// by caller spawnerConvID ("" for the human). On a rejection it writes the
+// HTTP error and returns false; the caller (handleGroupSpawn) just returns.
+// The rate limit (guardrail 3) is claimed separately via claimSpawnRateSlot
+// once the request has fully validated — in particular AFTER the dir
+// write-proof gate, so the proof challenge round-trip (one 403 + one retry
+// per spawn) costs one slot, not two.
 func checkSpawnGuardrails(w http.ResponseWriter, g *db.AgentGroup, spawnerConvID string) bool {
 	// 1. Max group size. A hard property of the group — binds every
 	//    caller, the human included.
@@ -133,13 +133,20 @@ func checkSpawnGuardrails(w http.ResponseWriter, g *db.AgentGroup, spawnerConvID
 	}
 
 	// 2. Group restriction.
-	if !checkSpawnGroupRestriction(w, g, spawnerConvID) {
-		return false
-	}
+	return checkSpawnGroupRestriction(w, g, spawnerConvID)
+}
 
-	// 3. Rate limit. LAST, because a successful claim records the
-	//    attempt — running it before the cheaper checks would let a
-	//    spawn rejected by guardrail 2 burn a slot anyway.
+// claimSpawnRateSlot enforces guardrail 3 for an agent caller ("" — the
+// human — passes untouched): at most SpawnMaxPerWindow spawns per caller per
+// SpawnRateWindow. A successful claim records the attempt, so the caller
+// must proceed to the actual spawn (a later failure still counts — the
+// intended runaway-prevention behaviour). Called after every validation
+// gate, so a request refused earlier (bad cwd, missing write-proof, …)
+// costs no slot.
+func claimSpawnRateSlot(w http.ResponseWriter, spawnerConvID string) bool {
+	if spawnerConvID == "" {
+		return true
+	}
 	if err := db.ClaimSpawnSlot(spawnerConvID, SpawnMaxPerWindow, SpawnRateWindow, time.Now().UTC()); err != nil {
 		if errors.Is(err, db.ErrSpawnRateLimited) {
 			writeError(w, http.StatusTooManyRequests, "rate_limited",

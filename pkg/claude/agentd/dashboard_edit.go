@@ -1086,11 +1086,11 @@ func dashboardCloneAgent(w http.ResponseWriter, r *http.Request, convSelector st
 		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
 		return
 	}
-	followUp, noCopyConv, cwd, ok := decodeCloneBody(w, r)
+	body, ok := decodeCloneBody(w, r)
 	if !ok {
 		return
 	}
-	runCloneOrchestration(w, res.ConvID, dashboardGranter, "", followUp, noCopyConv, cwd)
+	runCloneOrchestration(w, res.ConvID, dashboardGranter, "", body)
 }
 
 // reincarnateMode* are the two modes the dashboard reincarnate button

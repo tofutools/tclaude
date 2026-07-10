@@ -333,16 +333,24 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 	// never re-engaged (autoReview=false) — it is an explicit fresh-spawn opt-in.
 	// trustDir=false for the same reason: pre-trusting the cwd edits the user's
 	// ~/.codex/config.toml and is only ever an explicit fresh-spawn opt-in.
+	reincarnateSandbox := sandboxForHarness(oldSess.Harness)
+	codexGitCommonDir, gerr := codexManagedProfileGitCommonDir(oldSess.Harness, reincarnateSandbox, cwd)
+	if gerr != nil {
+		writeError(w, http.StatusInternalServerError, "io", gerr.Error())
+		return
+	}
 	if err := SpawnDetachedTclaudeNew(clcommon.SpawnArgs{
-		Label:                  label,
-		Cwd:                    cwd,
-		Effort:                 effort,
-		Model:                  model,
-		Harness:                oldSess.Harness,
-		Sandbox:                sandboxForHarness(oldSess.Harness),
-		Approval:               approvalForHarness(oldSess.Harness),
-		AskUserQuestionTimeout: askTimeoutForRelaunch(target),
-		RemoteControl:          remoteControl,
+		Label:                   label,
+		Cwd:                     cwd,
+		Effort:                  effort,
+		Model:                   model,
+		Harness:                 oldSess.Harness,
+		Sandbox:                 reincarnateSandbox,
+		CodexGitCommonDir:       codexGitCommonDir,
+		CodexGitCommonDirPinned: codexManagedProfileUsesPinnedGitCommonDir(oldSess.Harness, reincarnateSandbox),
+		Approval:                approvalForHarness(oldSess.Harness),
+		AskUserQuestionTimeout:  askTimeoutForRelaunch(target),
+		RemoteControl:           remoteControl,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "spawn",
 			"failed to launch tclaude session new: "+err.Error())

@@ -143,7 +143,17 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 		// Each clone runs the model + effort its own source is live on
 		// (inheritedLaunchFlags; "" falls back to claude's default).
 		effort, model := inheritedLaunchFlags(oldSess.ID)
-		newConv, _, label, warn, spawnErr := cloneSpawnOnce(m.ConvID, oldSess.Cwd, body.NoCopyConv, effort, model)
+		srcHarness := harnessForConv(m.ConvID).Name
+		cloneSandbox := sandboxForHarness(srcHarness)
+		codexGitCommonDir, gerr := codexManagedProfileGitCommonDir(srcHarness, cloneSandbox, oldSess.Cwd)
+		if gerr != nil {
+			results = append(results, memberResult{
+				SrcConv: m.ConvID,
+				Error:   "spawn: " + gerr.Error(),
+			})
+			continue
+		}
+		newConv, _, label, warn, spawnErr := cloneSpawnOnce(m.ConvID, oldSess.Cwd, body.NoCopyConv, effort, model, "", nil, codexGitCommonDir)
 		if spawnErr != nil {
 			results = append(results, memberResult{
 				SrcConv: m.ConvID,

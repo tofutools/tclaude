@@ -421,16 +421,25 @@ func resumeOneConvRecreate(convID string, recreateMissingDir bool) memberOpResul
 	remoteControl := remoteControlForRelaunch(convID, harnessName)
 	// Relaunch never re-engages the experimental guardian (auto-review is an
 	// explicit fresh-spawn opt-in, not persisted per-conv), so AutoReview stays false.
+	relaunchSandbox := sandboxForHarness(harnessName)
+	codexGitCommonDir, gerr := codexManagedProfileGitCommonDir(harnessName, relaunchSandbox, cwd)
+	if gerr != nil {
+		res.Action = "error"
+		res.Detail = gerr.Error()
+		return res
+	}
 	if err := SpawnDetachedTclaudeResume(clcommon.SpawnArgs{
-		ConvID:                 convID,
-		Cwd:                    cwd,
-		Effort:                 effort,
-		Model:                  model,
-		Harness:                harnessName,
-		Sandbox:                sandboxForHarness(harnessName),
-		Approval:               approvalForHarness(harnessName),
-		AskUserQuestionTimeout: askTimeoutForRelaunch(convID),
-		RemoteControl:          remoteControl,
+		ConvID:                  convID,
+		Cwd:                     cwd,
+		Effort:                  effort,
+		Model:                   model,
+		Harness:                 harnessName,
+		Sandbox:                 relaunchSandbox,
+		CodexGitCommonDir:       codexGitCommonDir,
+		CodexGitCommonDirPinned: codexManagedProfileUsesPinnedGitCommonDir(harnessName, relaunchSandbox),
+		Approval:                approvalForHarness(harnessName),
+		AskUserQuestionTimeout:  askTimeoutForRelaunch(convID),
+		RemoteControl:           remoteControl,
 	}); err != nil {
 		res.Action = "error"
 		res.Detail = "spawn: " + err.Error()
@@ -1269,11 +1278,13 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	}
 
 	// Spawn guardrails — runaway-prevention for an agent that the human
-	// granted `groups.spawn`. Three checks: the group's hard member cap
-	// (binds the human too), and — for agent callers only (spawnerConvID
-	// != "") — the group restriction and the per-caller rate limit. Run
-	// here, before any subprocess is launched, so a rejected spawn costs
-	// nothing. See spawn_guardrails.go.
+	// granted `groups.spawn`. The group's hard member cap (binds the human
+	// too) and — for agent callers only (spawnerConvID != "") — the group
+	// restriction run here, before any subprocess is launched, so a rejected
+	// spawn costs nothing. The third guardrail, the per-caller rate limit,
+	// is claimed after the validation gates below (claimSpawnRateSlot) so a
+	// refused request — including the dir write-proof challenge round-trip —
+	// never burns a slot. See spawn_guardrails.go.
 	if !checkSpawnGuardrails(w, g, spawnerConvID) {
 		return
 	}
@@ -1527,6 +1538,83 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 
+	// Sandbox lineage — the child may not launch with a looser sandbox MODE
+	// than the caller currently has (spawn_sandbox_guard.go). Checked HERE,
+	// before claimSpawnRateSlot below, so a refused escalation costs the
+	// caller no rate slot. executeSpawn re-runs the same (idempotent) check
+	// for the other spawn callers (templates/waves/process adapters) that
+	// don't pass through this HTTP boundary.
+	if fail := spawnSandboxLineageFailure(spawnerConvID, h.Name, sandboxMode); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	}
+
+	// Dir write-proof — the launch-directory half of the spawn sandbox guard
+	// (spawn_dir_proof.go). The lineage guard above caps the child's sandbox
+	// MODE; this caps its anchor: an agent caller must prove its own sandbox
+	// can write in every directory the child would get write access to (the
+	// launch cwd, plus the designated worktree when one is passed), otherwise
+	// spawning a child there would be a write-permission escape. The gate
+	// challenges (403 write_proof_required) or verifies; on success it pins
+	// cwd/worktree to the symlink-resolved paths the proof was verified in, so
+	// a link swapped after verification cannot retarget the grant. Humans,
+	// fully-open callers, and no-cwd-write children (Codex read-only) pass
+	// untouched — requireDirWriteProof/childSandboxGrantsDirWrite decide.
+	var proofDirs []string
+	var proofToken string
+	var codexGitCommonDir string
+	codexGitCommonDirPinned := codexManagedProfileUsesPinnedGitCommonDir(h.Name, sandboxMode)
+	if codexGitCommonDirPinned {
+		var gerr error
+		codexGitCommonDir, gerr = codexManagedProfileGitCommonDir(h.Name, sandboxMode, cwd)
+		if gerr != nil {
+			writeError(w, http.StatusInternalServerError, "io", gerr.Error())
+			return
+		}
+	}
+	if spawnerConvID != "" && childSandboxGrantsDirWrite(h.Name, sandboxMode) {
+		dirs := []string{cwd}
+		if worktreePath != "" {
+			dirs = append(dirs, worktreePath)
+		}
+		if codexGitCommonDirPinned {
+			if codexGitCommonDir != "" && codexGitCommonDir != cwd && codexGitCommonDir != worktreePath {
+				dirs = append(dirs, codexGitCommonDir)
+			}
+		}
+		resolved, ok := requireDirWriteProof(w, spawnerConvID, body.WriteProofToken, dirs)
+		if !ok {
+			return
+		}
+		if resolved != nil {
+			proofToken = strings.TrimSpace(body.WriteProofToken)
+			if v := resolved[cwd]; v != "" {
+				cwd = v
+			}
+			if worktreePath != "" {
+				if v := resolved[worktreePath]; v != "" {
+					worktreePath = v
+				}
+			}
+			if codexGitCommonDir != "" {
+				if v := resolved[codexGitCommonDir]; v != "" {
+					codexGitCommonDir = v
+				}
+			}
+			// Carry the verified, symlink-resolved dirs to executeSpawn, which
+			// re-asserts they are still canonical immediately before the fork —
+			// closing the window between verification here and the child's
+			// launch (a swap after verification is caught, not launched into).
+			proofDirs = []string{cwd}
+			if worktreePath != "" {
+				proofDirs = append(proofDirs, worktreePath)
+			}
+			if codexGitCommonDir != "" && codexGitCommonDir != cwd && codexGitCommonDir != worktreePath {
+				proofDirs = append(proofDirs, codexGitCommonDir)
+			}
+		}
+	}
+
 	// Resolve the approval/permission posture for the chosen harness: a Codex
 	// agent gets its non-escalating default (never) when unset, a Claude agent
 	// gets its inherit default (normalized to "" — no `--permission-mode`), and
@@ -1573,6 +1661,11 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	trustDir, tdErr := harness.ResolveTrustDir(h, body.TrustDir)
 	if tdErr != nil {
 		writeError(w, http.StatusBadRequest, "invalid_trust_dir", tdErr.Error())
+		return
+	}
+	if spawnerConvID != "" && trustDir {
+		writeError(w, http.StatusForbidden, "trust_dir_restricted",
+			"agent-initiated spawns may not edit the operator's global Codex trust configuration; leave trust_dir off or ask the human to spawn this child")
 		return
 	}
 
@@ -1633,39 +1726,54 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		}
 	}
 
+	// Rate limit (guardrail 3) — claimed only now, after every validation
+	// gate: a request refused above (bad arg, sandbox lineage, missing dir
+	// write-proof / its challenge round-trip) costs no slot, while anything
+	// past this point counts even if the spawn itself then fails — the
+	// intended runaway-prevention behaviour.
+	if !claimSpawnRateSlot(w, spawnerConvID) {
+		return
+	}
+
 	// Hand the validated request to the shared spawn core. executeSpawn
 	// owns the label → subprocess → conv-id poll → membership →
 	// post-init sequence; the group-template instantiator drives the
 	// same function in a loop. handleGroupSpawn keeps only the HTTP
 	// shape — decode + validate above, error/JSON mapping below.
 	p := spawnParams{
-		Name:                   body.Name,
-		Role:                   body.Role,
-		Descr:                  body.Descr,
-		TaskURL:                strings.TrimSpace(body.TaskURL),
-		TaskLabel:              strings.TrimSpace(body.TaskLabel),
-		InitialMessage:         body.InitialMessage,
-		Attachments:            attachments,
-		Cwd:                    cwd,
-		WorktreePath:           worktreePath,
-		WorktreeBranch:         worktreeBranch,
-		AutoFocus:              body.AutoFocus,
-		Effort:                 effort,
-		Model:                  model,
-		Harness:                h.Name,
-		SandboxMode:            sandboxMode,
-		AskUserQuestionTimeout: askTimeout,
-		ApprovalPolicy:         approvalPolicy,
-		AutoReview:             autoReview,
-		AutoReviewSet:          overlayState.autoReviewSet,
-		TrustDir:               trustDir,
-		TrustDirSet:            overlayState.trustDirSet,
-		RemoteControl:          remoteControl,
-		ReplyToConv:            replyToConv,
-		SpawnedByConv:          spawnerConvID,
-		IsOwner:                body.IsOwner,
-		PermissionOverrides:    permOverrides,
-		Timeout:                timeout,
+		Name:                    body.Name,
+		Role:                    body.Role,
+		Descr:                   body.Descr,
+		TaskURL:                 strings.TrimSpace(body.TaskURL),
+		TaskLabel:               strings.TrimSpace(body.TaskLabel),
+		InitialMessage:          body.InitialMessage,
+		Attachments:             attachments,
+		Cwd:                     cwd,
+		WorktreePath:            worktreePath,
+		WorktreeBranch:          worktreeBranch,
+		DirWriteProofDirs:       proofDirs,
+		DirWriteProofToken:      proofToken,
+		CwdWriteProofToken:      proofToken,
+		CleanupDirWriteProof:    true,
+		CodexGitCommonDir:       codexGitCommonDir,
+		CodexGitCommonDirPinned: codexGitCommonDirPinned,
+		AutoFocus:               body.AutoFocus,
+		Effort:                  effort,
+		Model:                   model,
+		Harness:                 h.Name,
+		SandboxMode:             sandboxMode,
+		AskUserQuestionTimeout:  askTimeout,
+		ApprovalPolicy:          approvalPolicy,
+		AutoReview:              autoReview,
+		AutoReviewSet:           overlayState.autoReviewSet,
+		TrustDir:                trustDir,
+		TrustDirSet:             overlayState.trustDirSet,
+		RemoteControl:           remoteControl,
+		ReplyToConv:             replyToConv,
+		SpawnedByConv:           spawnerConvID,
+		IsOwner:                 body.IsOwner,
+		PermissionOverrides:     permOverrides,
+		Timeout:                 timeout,
 		// Verbatim snapshot of the spawn request, recorded onto the new actor's
 		// agents.initial_spawn_config in enrollSpawnedConv (a durable, agent-level
 		// "what was this spawned with" record). Marshalling the already-decoded
@@ -1747,7 +1855,20 @@ type spawnParams struct {
 	Cwd            string // resolved absolute directory
 	WorktreePath   string // resolved absolute directory, or ""
 	WorktreeBranch string
-	AutoFocus      bool
+	// DirWriteProofDirs are the symlink-resolved directories a dir write-proof
+	// (spawn_dir_proof.go) verified for this spawn — the launch cwd and, when
+	// present, the worktree. executeSpawn re-asserts each is still canonical
+	// (unchanged, no symlink swapped in) immediately before the fork, closing
+	// the window between HTTP-boundary verification and the child's launch.
+	// Empty for exempt callers (humans, fully-open parents) — nothing to
+	// re-assert.
+	DirWriteProofDirs       []string
+	DirWriteProofToken      string
+	CwdWriteProofToken      string
+	CleanupDirWriteProof    bool
+	CodexGitCommonDir       string
+	CodexGitCommonDirPinned bool
+	AutoFocus               bool
 	// Effort is the validated Claude reasoning effort to forward to the
 	// new session's `tclaude session new --effort`, or "" to omit it.
 	Effort string
@@ -2198,6 +2319,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
+	if p.CleanupDirWriteProof {
+		defer cleanupDirWriteProofMarkers(p.DirWriteProofToken, p.DirWriteProofDirs)
+	}
 
 	// Fill blank launch fields from group then global default spawn profiles
 	// and apply the harness's secure launch defaults. On the handleGroupSpawn
@@ -2207,6 +2331,18 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// sandboxed. A value invalid for the harness is a typed failure.
 	if fail := applyDefaultProfile(g, &p); fail != nil {
 		return nil, fail
+	}
+	if codexManagedProfileUsesPinnedGitCommonDir(p.Harness, p.SandboxMode) && !p.CodexGitCommonDirPinned {
+		gitCommonDir, err := codexManagedProfileGitCommonDir(p.Harness, p.SandboxMode, p.Cwd)
+		if err != nil {
+			return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+		}
+		p.CodexGitCommonDir = gitCommonDir
+		p.CodexGitCommonDirPinned = true
+	}
+	if p.SpawnedByConv != "" && p.TrustDir {
+		return nil, &spawnFailure{http.StatusForbidden, "trust_dir_restricted",
+			"agent-initiated spawns may not edit the operator's global Codex trust configuration; leave trust_dir off or ask the human to spawn this child"}
 	}
 	if fail := spawnSandboxLineageFailure(p.SpawnedByConv, p.Harness, p.SandboxMode); fail != nil {
 		return nil, fail
@@ -2219,17 +2355,20 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	label := generateSpawnLabel()
 
 	spawnArgs := clcommon.SpawnArgs{
-		Label:                  label,
-		Cwd:                    p.Cwd,
-		Effort:                 p.Effort,
-		Model:                  p.Model,
-		Harness:                p.Harness,
-		Sandbox:                p.SandboxMode,
-		AskUserQuestionTimeout: p.AskUserQuestionTimeout,
-		Approval:               p.ApprovalPolicy,
-		AutoReview:             p.AutoReview,
-		TrustDir:               p.TrustDir,
-		RemoteControl:          p.RemoteControl,
+		Label:                   label,
+		Cwd:                     p.Cwd,
+		CwdWriteProof:           p.CwdWriteProofToken,
+		CodexGitCommonDir:       p.CodexGitCommonDir,
+		CodexGitCommonDirPinned: p.CodexGitCommonDirPinned,
+		Effort:                  p.Effort,
+		Model:                   p.Model,
+		Harness:                 p.Harness,
+		Sandbox:                 p.SandboxMode,
+		AskUserQuestionTimeout:  p.AskUserQuestionTimeout,
+		Approval:                p.ApprovalPolicy,
+		AutoReview:              p.AutoReview,
+		TrustDir:                p.TrustDir,
+		RemoteControl:           p.RemoteControl,
 	}
 
 	// Launch-enrollment path (Claude Code, unless reverted via config): the
@@ -2312,6 +2451,20 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		spawnArgs.InitialPrompt = buildSpawnSeedPrompt(p.Name, p.Role, p.Descr, groupName,
 			p.InitialMessage != "", spawnContextBody, p.WorktreePath, p.WorktreeBranch,
 			resolveSpawnerTitle(p.SpawnedByConv, p.SpawnedByAgent), spawnInlineMaxChars())
+	}
+
+	// Final dir write-proof re-assertion, as late as possible before the fork:
+	// confirm every proof-verified dir is still exactly the canonical path it
+	// was verified as (unchanged and not turned into a symlink). This shrinks
+	// the verify→launch TOCTOU window to the microscopic gap between this check
+	// and the child inheriting the cwd — a swap performed after verification is
+	// caught here rather than launched into. Only proof-verified spawns carry
+	// DirWriteProofDirs, so human / exempt / no-override spawns are untouched.
+	if fail := reassertDirWriteProof(p.DirWriteProofDirs); fail != nil {
+		if launchEnroll {
+			rollbackSpawnEnrollment(g, preConvID, preMsgID)
+		}
+		return nil, fail
 	}
 
 	if err := SpawnDetachedTclaudeNew(spawnArgs); err != nil {
@@ -3462,6 +3615,15 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	if a.Cwd != "" {
 		args = append(args, "-C", a.Cwd)
 	}
+	if a.CwdWriteProof != "" {
+		args = append(args, "--cwd-write-proof", a.CwdWriteProof)
+	}
+	if a.CodexGitCommonDir != "" {
+		args = append(args, "--codex-git-common-dir", a.CodexGitCommonDir)
+	}
+	if a.CodexGitCommonDirPinned {
+		args = append(args, "--codex-git-common-dir-pinned")
+	}
 	// Launch-enrollment fields (set only on the launch-args spawn path, CC):
 	// the preset conv-id, display name, and welcome ride in as launch flags so
 	// `claude` is named + greeted at startup with no post-connect injection.
@@ -3524,6 +3686,15 @@ func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 	args := []string{"session", "new", "-r", a.ConvID, "-d", "--global"}
 	if a.Cwd != "" {
 		args = append(args, "-C", a.Cwd)
+	}
+	if a.CwdWriteProof != "" {
+		args = append(args, "--cwd-write-proof", a.CwdWriteProof)
+	}
+	if a.CodexGitCommonDir != "" {
+		args = append(args, "--codex-git-common-dir", a.CodexGitCommonDir)
+	}
+	if a.CodexGitCommonDirPinned {
+		args = append(args, "--codex-git-common-dir-pinned")
 	}
 	if a.Effort != "" {
 		args = append(args, "--effort", a.Effort)
@@ -3718,6 +3889,15 @@ func liveSpawnNew(a clcommon.SpawnArgs) error {
 		return err
 	}
 	pid := cmd.Process.Pid
+	if a.CwdWriteProof != "" {
+		if err := cmd.Wait(); err != nil {
+			slog.Error("spawn subprocess exited with error",
+				"label", label, "pid", pid, "err", err,
+				"stderr", stderr.String(), "stderr_truncated", stderr.Truncated())
+			return fmt.Errorf("spawn session wrapper failed: %w: %s", err, stderr.String())
+		}
+		return nil
+	}
 	go func() {
 		if err := cmd.Wait(); err != nil {
 			slog.Error("spawn subprocess exited with error",
@@ -3765,6 +3945,15 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 		return err
 	}
 	pid := cmd.Process.Pid
+	if a.CwdWriteProof != "" {
+		if err := cmd.Wait(); err != nil {
+			slog.Error("resume subprocess exited with error",
+				"conv", convID, "pid", pid, "err", err,
+				"stderr", stderr.String(), "stderr_truncated", stderr.Truncated())
+			return fmt.Errorf("resume session wrapper failed: %w: %s", err, stderr.String())
+		}
+		return nil
+	}
 	// Reap the wrapper when it finishes so we don't leak zombies. The
 	// wrapper exits quickly (after `tmux new-session -d` returns); the
 	// real CC process keeps running under the tmux server.

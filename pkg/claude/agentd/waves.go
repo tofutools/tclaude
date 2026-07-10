@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -104,7 +106,8 @@ func partitionWaves(agents []db.GroupTemplateAgent) []db.WaveGroup {
 // stays inert for any non-template caller of this path.
 func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process []db.ProcessPhase,
 	groupContext, cwd, sharedWorktreePath, sharedWorktreeBranch string, perAgentWorktrees *db.WavePerAgentWorktrees,
-	caller, granter, templateName string, existing map[string]string, suppressOwner bool) waveSpawnResult {
+	caller, granter, templateName string, existing map[string]string, suppressOwner bool,
+	proofToken string, proofDirs []string, codexGitCommonDir string) waveSpawnResult {
 	wr := waveSpawnResult{
 		Results:      []instantiateAgentResult{},
 		SpawnedConvs: map[string]string{},
@@ -176,29 +179,60 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			agentContext = appendRoleBlock(groupContext, role.Brief)
 		}
 		agentContext = appendProcessBlock(agentContext, process, a.Role)
+		cwdProofToken := ""
+		spawnProofDirs := proofDirs
+		cleanupCwdProof := func() {}
+		if proofToken != "" && agentCwd == cwd {
+			cwdProofToken = proofToken
+		} else if proofToken != "" && perAgentWorktrees != nil && perAgentWorktrees.WorktreeAsCwd && agentCwd == agentWorktreePath {
+			resolvedAgentCwd, proofDirsWithAgentCwd, cleanup, err := preparePerAgentCwdWriteProof(proofToken, proofDirs, agentCwd)
+			if err != nil {
+				res.Error = "prepare cwd write-proof: " + err.Error()
+				wr.Failed++
+				wr.Results = append(wr.Results, res)
+				continue
+			}
+			agentCwd = resolvedAgentCwd
+			agentWorktreePath = resolvedAgentCwd
+			res.WorktreePath = resolvedAgentCwd
+			spawnProofDirs = proofDirsWithAgentCwd
+			cleanupCwdProof = cleanup
+			cwdProofToken = proofToken
+		}
+		spawnCodexGitCommonDir := ""
+		spawnCodexGitCommonDirPinned := codexManagedProfileUsesPinnedGitCommonDir(launch.Harness, launch.Sandbox)
+		if spawnCodexGitCommonDirPinned {
+			spawnCodexGitCommonDir = codexGitCommonDir
+		}
 		outcome, fail := executeSpawn(g, spawnParams{
-			Name:                   finalName,
-			Role:                   a.Role,
-			Descr:                  a.Descr,
-			InitialMessage:         a.InitialMessage,
-			Cwd:                    agentCwd,
-			WorktreePath:           agentWorktreePath,
-			WorktreeBranch:         agentWorktreeBranch,
-			Harness:                launch.Harness,
-			Model:                  launch.Model,
-			Effort:                 launch.Effort,
-			SandboxMode:            launch.Sandbox,
-			ApprovalPolicy:         launch.Approval,
-			TrustDir:               launch.TrustDir,
-			TrustDirSet:            launch.TrustDirSet,
-			AutoReview:             launch.AutoReview,
-			AutoReviewSet:          launch.AutoReviewSet,
-			RemoteControl:          launch.RemoteControl,
-			AskUserQuestionTimeout: launch.AskUserQuestionTimeout,
-			GroupContext:           agentContext,
-			ReplyToConv:            caller,
-			SpawnedByConv:          caller,
+			Name:                    finalName,
+			Role:                    a.Role,
+			Descr:                   a.Descr,
+			InitialMessage:          a.InitialMessage,
+			Cwd:                     agentCwd,
+			WorktreePath:            agentWorktreePath,
+			WorktreeBranch:          agentWorktreeBranch,
+			DirWriteProofDirs:       spawnProofDirs,
+			DirWriteProofToken:      proofToken,
+			CwdWriteProofToken:      cwdProofToken,
+			CodexGitCommonDir:       spawnCodexGitCommonDir,
+			CodexGitCommonDirPinned: spawnCodexGitCommonDirPinned,
+			Harness:                 launch.Harness,
+			Model:                   launch.Model,
+			Effort:                  launch.Effort,
+			SandboxMode:             launch.Sandbox,
+			ApprovalPolicy:          launch.Approval,
+			TrustDir:                launch.TrustDir,
+			TrustDirSet:             launch.TrustDirSet,
+			AutoReview:              launch.AutoReview,
+			AutoReviewSet:           launch.AutoReviewSet,
+			RemoteControl:           launch.RemoteControl,
+			AskUserQuestionTimeout:  launch.AskUserQuestionTimeout,
+			GroupContext:            agentContext,
+			ReplyToConv:             caller,
+			SpawnedByConv:           caller,
 		})
+		cleanupCwdProof()
 		if fail != nil {
 			res.Error = fail.Msg
 			wr.Failed++
@@ -254,6 +288,35 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 		wr.Results = append(wr.Results, res)
 	}
 	return wr
+}
+
+func preparePerAgentCwdWriteProof(token string, proofDirs []string, cwd string) (string, []string, func(), error) {
+	resolvedCwd, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	parent := filepath.Dir(resolvedCwd)
+	if !dirListContains(proofDirs, parent) {
+		return "", nil, nil, fmt.Errorf("worktree parent %s was not write-proofed", parent)
+	}
+	marker := filepath.Join(resolvedCwd, dirWriteProofFilePrefix+token)
+	if err := os.WriteFile(marker, nil, 0o600); err != nil {
+		return "", nil, nil, err
+	}
+	dirs := append([]string{}, proofDirs...)
+	if !dirListContains(dirs, resolvedCwd) {
+		dirs = append(dirs, resolvedCwd)
+	}
+	return resolvedCwd, dirs, func() { _ = os.Remove(marker) }, nil
+}
+
+func dirListContains(dirs []string, want string) bool {
+	for _, dir := range dirs {
+		if dir == want {
+			return true
+		}
+	}
+	return false
 }
 
 func perAgentBranchName(prefix, agentName, finalName string) string {
@@ -553,12 +616,14 @@ func advanceChoreographyIfReady(c *db.WaveChoreography) {
 	if g == nil {
 		slog.Info("wave runner: group gone; dropping choreography", "group", c.GroupName)
 		_ = db.DeleteWaveChoreography(c.GroupID)
+		cleanupDirWriteProofMarkers(c.ProofToken, c.ProofDirs)
 		return
 	}
 	if c.NextWave >= len(c.Waves) {
 		// Nothing left to spawn — a stale row (shouldn't happen; the last-wave
 		// path deletes it). Clean it up.
 		_ = db.DeleteWaveChoreography(c.GroupID)
+		cleanupDirWriteProofMarkers(c.ProofToken, c.ProofDirs)
 		return
 	}
 
@@ -582,7 +647,8 @@ func advanceChoreographyIfReady(c *db.WaveChoreography) {
 		"agents", len(wave.Agents), "index", c.NextWave, "of", len(c.Waves))
 	wr := spawnWaveAgents(g, wave.Agents, c.Process, c.GroupContext, c.Cwd,
 		c.WorktreePath, c.WorktreeBranch, c.PerAgentWorktrees,
-		c.Caller, c.Granter, c.TemplateName, groupMemberNames(g), c.SuppressOwner)
+		c.Caller, c.Granter, c.TemplateName, groupMemberNames(g), c.SuppressOwner,
+		c.ProofToken, c.ProofDirs, c.CodexGitCommonDir)
 
 	// Accumulate the spawns for the final work-pattern routing.
 	maps.Copy(c.SpawnedConvs, wr.SpawnedConvs)
@@ -606,6 +672,7 @@ func advanceChoreographyIfReady(c *db.WaveChoreography) {
 		if err := db.DeleteWaveChoreography(c.GroupID); err != nil {
 			slog.Warn("wave runner: delete choreography failed", "group", c.GroupName, "error", err)
 		}
+		cleanupDirWriteProofMarkers(c.ProofToken, c.ProofDirs)
 		return
 	}
 
@@ -622,6 +689,7 @@ func advanceChoreographyIfReady(c *db.WaveChoreography) {
 	if still, err := db.GetAgentGroupByID(c.GroupID); err == nil && still == nil {
 		slog.Info("wave runner: group deleted mid-spawn; dropping choreography", "group", c.GroupName)
 		_ = db.DeleteWaveChoreography(c.GroupID)
+		cleanupDirWriteProofMarkers(c.ProofToken, c.ProofDirs)
 		return
 	}
 	if err := db.UpsertWaveChoreography(c); err != nil {

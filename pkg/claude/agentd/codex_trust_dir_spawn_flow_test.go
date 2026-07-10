@@ -1,11 +1,13 @@
 package agentd_test
 
 import (
+	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // Flow coverage for JOH-205 inc4 Part B — the opt-in dir-trust flag threading
@@ -71,4 +73,20 @@ func TestCodexSpawn_TrustDirRejectedForClaude(t *testing.T) {
 		"trust_dir": true, // no harness → Claude Code, which has no dir-trust
 	})
 	assert.Equal(t, 400, spawn.Code, "trust_dir for Claude Code must be a 400; body=%s", string(spawn.Raw))
+}
+
+func TestCodexSpawn_TrustDirRejectedForAgentCaller(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("squad")
+	const parent = "parent-trst-aaaa-bbbb-cccc-111111111111"
+	haveSpawnCapableSandboxParent(t, f, "squad", parent, harness.CodexName, harness.SandboxManagedProfile)
+
+	rec := agentReqProof(t, f, parent, http.MethodPost, "/v1/groups/squad/spawn", map[string]any{
+		"name":      "cdx-trusted",
+		"cwd":       t.TempDir(),
+		"harness":   "codex",
+		"trust_dir": true,
+	})
+	require.Equal(t, http.StatusForbidden, rec.Code, "body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "trust_dir_restricted")
 }

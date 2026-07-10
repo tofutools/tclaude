@@ -145,9 +145,12 @@ func runTaskForceDeploy(p *taskForceDeployParams, stdin io.Reader, stdout, stder
 	var resp deployResponse
 	// Deploying a whole team spawns each agent sequentially (each polls for a
 	// conv-id), so it can run well past the default 10s budget — same as
-	// instantiate.
-	err := DaemonRequest(http.MethodPost, "/v1/templates/"+url.PathEscape(name)+"/deploy",
-		body, &resp, DaemonOpts{Timeout: 5 * time.Minute})
+	// instantiate. Transparent dir write-proof handling (see writeproof.go).
+	deployBody := func(writeProofToken string) any {
+		return withWriteProofToken(body, writeProofToken)
+	}
+	err := DaemonRequestWithWriteProof(http.MethodPost, "/v1/templates/"+url.PathEscape(name)+"/deploy",
+		deployBody, &resp, DaemonOpts{Timeout: 5 * time.Minute})
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		// The deploy failed after we created a worktree for it. Remove the

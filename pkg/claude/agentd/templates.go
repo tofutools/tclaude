@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -2048,6 +2049,7 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 		WorktreePath      string                    `json:"worktree_path,omitempty"`
 		WorktreeBranch    string                    `json:"worktree_branch,omitempty"`
 		PerAgentWorktrees *db.WavePerAgentWorktrees `json:"per_agent_worktrees,omitempty"`
+		WriteProofToken   string                    `json:"write_proof_token,omitempty"`
 		Descr             string                    `json:"descr,omitempty"`
 		Parent            string                    `json:"parent,omitempty"`
 		// DescrOverride mirrors ContextOverride's grammar for the group's
@@ -2112,6 +2114,26 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Dir write-proof (spawn_dir_proof.go) — an agent caller instantiating a
+	// template picks the cast's launch cwd (and worktree/repo) just like a
+	// spawn, so it must prove its own sandbox can write there. Humans pass
+	// through. Gates before any child spawns; pins the cast to the resolved
+	// dirs on success.
+	var proofDirs []string
+	var resolvedRepo string
+	codexGitCommonDir, err := templateCodexGitCommonDir(cwd, perAgentWorktrees)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	cwd, worktreePath, resolvedRepo, codexGitCommonDir, proofDirs, ok = requireTemplateDirWriteProof(w, caller, body.WriteProofToken, cwd, worktreePath,
+		templateRepoAnchor(perAgentWorktrees), templatePerAgentWorktreeParent(perAgentWorktrees), codexGitCommonDir)
+	if !ok {
+		return
+	}
+	if perAgentWorktrees != nil {
+		perAgentWorktrees.Repo = resolvedRepo
+	}
 	descr := strings.TrimSpace(body.Descr)
 	if descr == "" {
 		descr = "Instantiated from template " + tmpl.Name
@@ -2138,6 +2160,9 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 		worktreePath:      worktreePath,
 		worktreeBranch:    strings.TrimSpace(body.WorktreeBranch),
 		perAgentWorktrees: perAgentWorktrees,
+		proofToken:        strings.TrimSpace(body.WriteProofToken),
+		proofDirs:         proofDirs,
+		codexGitCommonDir: codexGitCommonDir,
 		descr:             descr,
 		mission:           task,
 		sourceTemplate:    tmpl.Name,
@@ -2170,6 +2195,36 @@ func validateInstantiationParent(w http.ResponseWriter, groupName, parentName st
 		return "", false
 	}
 	return parentName, true
+}
+
+// templateRepoAnchor returns the per-agent-worktree repo — the git anchor the
+// daemon uses when cutting each child's worktree — or "" when no per-agent
+// worktrees are configured (the shared-cwd / shared-worktree case, already
+// covered).
+func templateRepoAnchor(perAgent *db.WavePerAgentWorktrees) string {
+	if perAgent == nil {
+		return ""
+	}
+	return strings.TrimSpace(perAgent.Repo)
+}
+
+// templatePerAgentWorktreeParent returns the directory that AddWorktreeIn's
+// default `../<repo>-<branch>` paths are created under. A caller that proves
+// only the repo can still be unable to write that sibling parent, so template
+// proofing challenges this parent too.
+func templatePerAgentWorktreeParent(perAgent *db.WavePerAgentWorktrees) string {
+	repo := templateRepoAnchor(perAgent)
+	if repo == "" {
+		return ""
+	}
+	return filepath.Dir(repo)
+}
+
+func templateCodexGitCommonDir(cwd string, perAgent *db.WavePerAgentWorktrees) (string, error) {
+	if perAgent != nil && perAgent.WorktreeAsCwd {
+		return codexManagedProfileGitCommonDir(harness.CodexName, harness.SandboxManagedProfile, perAgent.Repo)
+	}
+	return codexManagedProfileGitCommonDir(harness.CodexName, harness.SandboxManagedProfile, cwd)
 }
 
 func resolveTemplateWorktreeInputs(w http.ResponseWriter, rawSharedPath string, rawPerAgent *db.WavePerAgentWorktrees) (string, *db.WavePerAgentWorktrees, bool) {
@@ -2225,6 +2280,9 @@ type instantiateSpec struct {
 	worktreePath      string // optional shared worktree path, already resolved
 	worktreeBranch    string
 	perAgentWorktrees *db.WavePerAgentWorktrees
+	proofToken        string
+	proofDirs         []string
+	codexGitCommonDir string
 	descr             string // already defaulted
 	mission           string // stored on the group row; "" for a plain instantiate
 	sourceTemplate    string // stored on the group row
@@ -2439,6 +2497,7 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 	// spawns nobody — mirror the pre-JOH-244 empty-roster behaviour instead of
 	// indexing waves[0].
 	if len(waves) == 0 {
+		cleanupDirWriteProofMarkers(spec.proofToken, spec.proofDirs)
 		resp := map[string]any{
 			"group":             spec.groupName,
 			"template":          tmpl.Name,
@@ -2472,7 +2531,7 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 	// group.
 	wr := spawnWaveAgents(g, waves[0].Agents, procPhases, groupContext, spec.cwd,
 		spec.worktreePath, spec.worktreeBranch, spec.perAgentWorktrees,
-		spec.caller, granter, tmpl.Name, nil, reinforce)
+		spec.caller, granter, tmpl.Name, nil, reinforce, spec.proofToken, spec.proofDirs, spec.codexGitCommonDir)
 
 	resp := map[string]any{
 		"group":    spec.groupName,
@@ -2489,6 +2548,7 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 	}
 
 	if len(waves) == 1 {
+		cleanupDirWriteProofMarkers(spec.proofToken, spec.proofDirs)
 		// Single wave: the roster is already whole, so deliver the work pattern
 		// now — exactly the pre-JOH-244 path.
 		delivered, patErrs := deliverWorkPattern(g, tmpl.WorkPattern, tmpl.Name, assignment, spec.caller,
@@ -2508,6 +2568,9 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 			WorktreePath:      spec.worktreePath,
 			WorktreeBranch:    spec.worktreeBranch,
 			PerAgentWorktrees: spec.perAgentWorktrees,
+			ProofToken:        spec.proofToken,
+			ProofDirs:         spec.proofDirs,
+			CodexGitCommonDir: spec.codexGitCommonDir,
 			Caller:            spec.caller,
 			Granter:           granter,
 			Assignment:        assignment,
@@ -2525,6 +2588,7 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 		}
 		if err := db.UpsertWaveChoreography(choreo); err != nil {
 			slog.Warn("instantiate: persist choreography failed", "group", spec.groupName, "error", err)
+			cleanupDirWriteProofMarkers(spec.proofToken, spec.proofDirs)
 		}
 		pendingAgents := pendingAgentCount(choreo)
 		resp["pattern_delivered"] = 0
@@ -2615,6 +2679,7 @@ func handleTemplateDeploy(w http.ResponseWriter, r *http.Request) {
 		WorktreePath      string                    `json:"worktree_path,omitempty"`
 		WorktreeBranch    string                    `json:"worktree_branch,omitempty"`
 		PerAgentWorktrees *db.WavePerAgentWorktrees `json:"per_agent_worktrees,omitempty"`
+		WriteProofToken   string                    `json:"write_proof_token,omitempty"`
 		Descr             string                    `json:"descr,omitempty"`
 		Parent            string                    `json:"parent,omitempty"`
 		// Mirrors the instantiate endpoint's override grammar so the dashboard
@@ -2683,6 +2748,22 @@ func handleTemplateDeploy(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Dir write-proof for an agent caller — same gate as instantiate.
+	var proofDirs []string
+	var resolvedRepo string
+	codexGitCommonDir, err := templateCodexGitCommonDir(cwd, perAgentWorktrees)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	cwd, worktreePath, resolvedRepo, codexGitCommonDir, proofDirs, ok = requireTemplateDirWriteProof(w, caller, body.WriteProofToken, cwd, worktreePath,
+		templateRepoAnchor(perAgentWorktrees), templatePerAgentWorktreeParent(perAgentWorktrees), codexGitCommonDir)
+	if !ok {
+		return
+	}
+	if perAgentWorktrees != nil {
+		perAgentWorktrees.Repo = resolvedRepo
+	}
 
 	descr := strings.TrimSpace(body.Descr)
 	if descr == "" {
@@ -2707,6 +2788,9 @@ func handleTemplateDeploy(w http.ResponseWriter, r *http.Request) {
 		worktreePath:      worktreePath,
 		worktreeBranch:    strings.TrimSpace(body.WorktreeBranch),
 		perAgentWorktrees: perAgentWorktrees,
+		proofToken:        strings.TrimSpace(body.WriteProofToken),
+		proofDirs:         proofDirs,
+		codexGitCommonDir: codexGitCommonDir,
 		descr:             descr,
 		mission:           mission,
 		sourceTemplate:    tmpl.Name,
@@ -2765,6 +2849,7 @@ func handleTemplateReinforce(w http.ResponseWriter, r *http.Request) {
 		WorktreePath      string                    `json:"worktree_path,omitempty"`
 		WorktreeBranch    string                    `json:"worktree_branch,omitempty"`
 		PerAgentWorktrees *db.WavePerAgentWorktrees `json:"per_agent_worktrees,omitempty"`
+		WriteProofToken   string                    `json:"write_proof_token,omitempty"`
 		// AgentProfiles — the deploy form's per-member launch-profile resolution;
 		// see handleTemplateDeploy's body for the full contract. Reinforce prefills
 		// the form's default from the target group's own default profile, so a
@@ -2827,6 +2912,24 @@ func handleTemplateReinforce(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Dir write-proof for an agent caller — reinforce is also reachable via the
+	// group-owner bypass, so a group owner reinforcing into a dir it cannot
+	// itself write is exactly the escape this gate closes.
+	var proofDirs []string
+	var resolvedRepo string
+	codexGitCommonDir, err := templateCodexGitCommonDir(cwd, perAgentWorktrees)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	cwd, worktreePath, resolvedRepo, codexGitCommonDir, proofDirs, ok = requireTemplateDirWriteProof(w, caller, body.WriteProofToken, cwd, worktreePath,
+		templateRepoAnchor(perAgentWorktrees), templatePerAgentWorktreeParent(perAgentWorktrees), codexGitCommonDir)
+	if !ok {
+		return
+	}
+	if perAgentWorktrees != nil {
+		perAgentWorktrees.Repo = resolvedRepo
+	}
 
 	// Up-front, whole-or-nothing validation — nothing is spawned until all of
 	// these pass, so a rejection leaves the group exactly as it was.
@@ -2845,6 +2948,9 @@ func handleTemplateReinforce(w http.ResponseWriter, r *http.Request) {
 		worktreePath:      worktreePath,
 		worktreeBranch:    strings.TrimSpace(body.WorktreeBranch),
 		perAgentWorktrees: perAgentWorktrees,
+		proofToken:        strings.TrimSpace(body.WriteProofToken),
+		proofDirs:         proofDirs,
+		codexGitCommonDir: codexGitCommonDir,
 		intoExisting:      g,
 		agentProfiles:     body.AgentProfiles,
 	})

@@ -18,6 +18,51 @@ func TestSessionNewArgs_EffortOmittedWhenUnset(t *testing.T) {
 	}
 }
 
+func TestSessionNewArgs_InternalWriteProofFlags(t *testing.T) {
+	bare := sessionNewArgs(clcommon.SpawnArgs{Label: "lbl", Cwd: "/tmp/x"})
+	if slices.Contains(bare, "--cwd-write-proof") {
+		t.Fatalf("unset cwd proof must omit the internal flag, got %v", bare)
+	}
+	if slices.Contains(bare, "--codex-git-common-dir") {
+		t.Fatalf("unset git common dir must omit the internal flag, got %v", bare)
+	}
+	if slices.Contains(bare, "--codex-git-common-dir-pinned") {
+		t.Fatalf("unset git common dir pin must omit the internal flag, got %v", bare)
+	}
+
+	withProof := sessionNewArgs(clcommon.SpawnArgs{
+		Label: "lbl", Cwd: "/tmp/x", CwdWriteProof: "proof_123", CodexGitCommonDir: "/tmp/repo/.git", CodexGitCommonDirPinned: true,
+	})
+	if i := slices.Index(withProof, "--cwd-write-proof"); i < 0 || i+1 >= len(withProof) || withProof[i+1] != "proof_123" {
+		t.Fatalf("cwd proof must ride into the forked session launcher, got %v", withProof)
+	}
+	if i := slices.Index(withProof, "--codex-git-common-dir"); i < 0 || i+1 >= len(withProof) || withProof[i+1] != "/tmp/repo/.git" {
+		t.Fatalf("pinned git common dir must ride into the forked session launcher, got %v", withProof)
+	}
+	if !slices.Contains(withProof, "--codex-git-common-dir-pinned") {
+		t.Fatalf("git common dir pin-presence must ride into the forked session launcher, got %v", withProof)
+	}
+
+	pinnedEmpty := sessionNewArgs(clcommon.SpawnArgs{Label: "lbl", Cwd: "/tmp/x", CodexGitCommonDirPinned: true})
+	if slices.Contains(pinnedEmpty, "--codex-git-common-dir") || !slices.Contains(pinnedEmpty, "--codex-git-common-dir-pinned") {
+		t.Fatalf("proved absence must ride as pin-presence without a path, got %v", pinnedEmpty)
+	}
+
+	resume := sessionResumeArgs(clcommon.SpawnArgs{
+		ConvID: "conv", Cwd: "/tmp/x", CwdWriteProof: "proof_456",
+		CodexGitCommonDir: "/tmp/repo/.git", CodexGitCommonDirPinned: true,
+	})
+	if i := slices.Index(resume, "--cwd-write-proof"); i < 0 || i+1 >= len(resume) || resume[i+1] != "proof_456" {
+		t.Fatalf("resume cwd proof must ride into clone resume launches, got %v", resume)
+	}
+	if i := slices.Index(resume, "--codex-git-common-dir"); i < 0 || i+1 >= len(resume) || resume[i+1] != "/tmp/repo/.git" {
+		t.Fatalf("resume must forward the pinned git common dir, got %v", resume)
+	}
+	if !slices.Contains(resume, "--codex-git-common-dir-pinned") {
+		t.Fatalf("resume must forward git common dir pin-presence, got %v", resume)
+	}
+}
+
 // TestSessionNewArgs_CodexGetsInitialPromptSeed checks the JOH-205 first-turn
 // seed: a daemon-spawned Codex carries `--initial-prompt <seed>` so it takes a
 // turn (materialising its conv-id) without a human, while Claude Code — which

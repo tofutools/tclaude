@@ -1,5 +1,11 @@
 package common
 
+// SpawnDirWriteProofPrefix is the fixed basename prefix for the short-lived
+// marker an agent caller creates in a child spawn directory. It lives in this
+// shared package so the CLI, daemon, session launcher, and flow simulator agree
+// on the wire-visible filename without creating an import cycle.
+const SpawnDirWriteProofPrefix = ".tclaude-write-proof-"
+
 // SpawnArgs carries the parameters for a detached `tclaude session new`
 // invocation — the agentd Spawner seam (`Spawner.SpawnNew`/`SpawnResume`, the
 // `SpawnDetachedTclaude*` facades, and the `sessionNewArgs`/`sessionResumeArgs`
@@ -55,6 +61,21 @@ type SpawnArgs struct {
 
 	// Cwd is the working directory to launch in; "" omits -C.
 	Cwd string
+
+	// CwdWriteProof is the daemon challenge token whose marker must still exist
+	// in Cwd after tmux has established the pane's working-directory inode. The
+	// forked session launcher checks it immediately before executing the harness,
+	// closing pathname-swap races between daemon validation and launch. Fresh
+	// agent spawn only; empty on human launches and resumes.
+	CwdWriteProof string
+
+	// CodexGitCommonDir is a daemon-pinned Git common dir grant for the managed
+	// Codex profile. CodexGitCommonDirPinned distinguishes a proved empty grant
+	// (the cwd was not a Git repo) from an unpinned direct-human launch, which may
+	// derive the common dir from cwd. Daemon-managed Codex launches set the bit
+	// even when the path is empty.
+	CodexGitCommonDir       string
+	CodexGitCommonDirPinned bool
 
 	// Effort is the reasoning-effort flag; "" omits --effort. Resume surfaces
 	// pass the predecessor's inherited effort so the agent stays on it

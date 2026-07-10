@@ -15,6 +15,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/ratelimit"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -22,12 +23,23 @@ import (
 )
 
 type NewParams struct {
-	Dir              string `short:"C" long:"dir" optional:"true" help:"Directory to start session in (defaults to current directory)"`
-	Resume           string `long:"resume" short:"r" optional:"true" help:"Resume an existing conversation by ID"`
-	Global           bool   `short:"g" help:"Search for conversation across all projects (with --resume)"`
-	Label            string `long:"label" optional:"true" help:"Custom label for the session"`
-	Detached         bool   `long:"detached" short:"d" help:"Start detached (don't attach to session)"`
-	WaitForRateLimit bool   `long:"wait-for-rate-limit" short:"w" help:"Wait for rate limit (5-hour and 7-day) to reset before starting session"`
+	Dir string `short:"C" long:"dir" optional:"true" help:"Directory to start session in (defaults to current directory)"`
+	// CwdWriteProof is an internal daemon-to-session capability. The harness
+	// command checks its marker only after tmux has established the pane's cwd
+	// inode. Hidden from normal CLI help.
+	CwdWriteProof string `long:"cwd-write-proof" optional:"true" help:"Internal: verify a daemon-issued cwd marker before launching the harness"`
+	// CodexGitCommonDir is an internal, daemon-pinned linked-worktree metadata
+	// grant. It is used only with the managed Codex profile and hidden from
+	// normal CLI help.
+	CodexGitCommonDir string `long:"codex-git-common-dir" optional:"true" help:"Internal: pinned Git common dir for the managed Codex profile"`
+	// CodexGitCommonDirPinned disambiguates an intentionally empty daemon pin
+	// from a direct launch that should derive the common dir from cwd.
+	CodexGitCommonDirPinned bool   `long:"codex-git-common-dir-pinned" help:"Internal: use the daemon-pinned Git common-dir result, including an empty result"`
+	Resume                  string `long:"resume" short:"r" optional:"true" help:"Resume an existing conversation by ID"`
+	Global                  bool   `short:"g" help:"Search for conversation across all projects (with --resume)"`
+	Label                   string `long:"label" optional:"true" help:"Custom label for the session"`
+	Detached                bool   `long:"detached" short:"d" help:"Start detached (don't attach to session)"`
+	WaitForRateLimit        bool   `long:"wait-for-rate-limit" short:"w" help:"Wait for rate limit (5-hour and 7-day) to reset before starting session"`
 
 	// Effort sets Claude Code's reasoning effort for the session via
 	// `claude --effort <level>`. Empty (the default) omits the flag so
@@ -173,6 +185,9 @@ func NewCmd() *cobra.Command {
 
 	// Allow arbitrary args so post-'--' args pass through to claude without cobra rejecting them.
 	cmd.Args = cobra.ArbitraryArgs
+	_ = cmd.Flags().MarkHidden("cwd-write-proof")
+	_ = cmd.Flags().MarkHidden("codex-git-common-dir")
+	_ = cmd.Flags().MarkHidden("codex-git-common-dir-pinned")
 
 	// Register completion for --resume flag
 	_ = cmd.RegisterFlagCompletionFunc("resume", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
@@ -293,6 +308,13 @@ func runNew(params *NewParams) error {
 		if !clcommon.IsValidUUID(params.SessionID) {
 			return fmt.Errorf("--session-id must be a valid UUID, got %q", params.SessionID)
 		}
+	}
+	params.CwdWriteProof = strings.TrimSpace(params.CwdWriteProof)
+	if params.CwdWriteProof != "" && !isValidSpawnCwdProofToken(params.CwdWriteProof) {
+		return fmt.Errorf("invalid internal cwd write proof")
+	}
+	if err := validateCodexGitCommonDirPin(params); err != nil {
+		return err
 	}
 
 	// Validate --sandbox up front WITHOUT defaulting it: a direct
@@ -596,8 +618,8 @@ func runNew(params *NewParams) error {
 	// Only the tclaude-owned profile is auto-created; any other name must
 	// already be defined by the user's own config.
 	if params.PermissionProfile == harness.CodexAgentProfile {
-		if _, eerr := harness.EnsureCodexAgentProfileForCwd(cwd); eerr != nil {
-			return fmt.Errorf("ensure codex permission profile %q: %w", params.PermissionProfile, eerr)
+		if err := ensureCodexManagedProfile(params, cwd); err != nil {
+			return err
 		}
 	}
 
@@ -645,10 +667,26 @@ func runNew(params *NewParams) error {
 		RemoteControl:          remoteControl,
 		InitialPrompt:          params.InitialPrompt,
 	})
+	proofReadyPath := ""
+	if params.CwdWriteProof != "" {
+		path, cleanupProofReady, readyErr := newSpawnCwdReadinessFile()
+		if readyErr != nil {
+			return readyErr
+		}
+		defer cleanupProofReady()
+		proofReadyPath = path
+		harnessCmd = guardHarnessCommandWithCwdProof(harnessCmd, params.CwdWriteProof, proofReadyPath)
+	}
 
 	// Create the detached tmux session running the harness command.
 	if err := launchDetachedTmuxSession(tmuxSession, cwd, harnessCmd); err != nil {
 		return err
+	}
+	if proofReadyPath != "" {
+		if err := waitForSpawnCwdReadiness(proofReadyPath); err != nil {
+			_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
+			return err
+		}
 	}
 
 	applyTmuxWindowTitle(tmuxSession, sessionID)
@@ -711,6 +749,35 @@ func runNew(params *NewParams) error {
 	return announceAndAttach(fmt.Sprintf("Created session %s", tmuxSession), sessionID, tmuxSession, cwd, params.Detached)
 }
 
+func validateCodexGitCommonDirPin(params *NewParams) error {
+	params.CodexGitCommonDir = strings.TrimSpace(params.CodexGitCommonDir)
+	if params.CodexGitCommonDir == "" {
+		return nil
+	}
+	if !params.CodexGitCommonDirPinned {
+		return fmt.Errorf("internal Codex git-common-dir grant requires a pinned result")
+	}
+	if !filepath.IsAbs(params.CodexGitCommonDir) {
+		return fmt.Errorf("internal Codex git-common-dir grant must be absolute")
+	}
+	return nil
+}
+
+func ensureCodexManagedProfile(params *NewParams, cwd string) error {
+	var err error
+	if params.CodexGitCommonDirPinned && params.CodexGitCommonDir != "" {
+		_, err = harness.EnsureCodexAgentProfileForGitCommonDir(params.CodexGitCommonDir)
+	} else if params.CodexGitCommonDirPinned {
+		_, err = harness.EnsureCodexAgentProfile()
+	} else {
+		_, err = harness.EnsureCodexAgentProfileForCwd(cwd)
+	}
+	if err != nil {
+		return fmt.Errorf("ensure codex permission profile %q: %w", params.PermissionProfile, err)
+	}
+	return nil
+}
+
 // The CC launch-command builder lives behind the harness seam now —
 // see claudeSpawner.BuildCommand in pkg/claude/harness/claude.go.
 
@@ -750,6 +817,94 @@ func launchDetachedTmuxSession(tmuxSession, cwd, cmd string) error {
 		return fmt.Errorf("failed to create tmux session: %w", err)
 	}
 	return nil
+}
+
+// isValidSpawnCwdProofToken accepts the daemon's challenge token alphabet
+// before the value enters a sh -c command. The larger length bound leaves room
+// for a wire-compatible format revision.
+func isValidSpawnCwdProofToken(proof string) bool {
+	if len(proof) == 0 || len(proof) > 128 {
+		return false
+	}
+	for _, r := range proof {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '-' || r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// guardHarnessCommandWithCwdProof prefixes the harness command with a marker
+// check performed by the shell tmux starts after tmux has chdir'd the pane. At
+// that point the shell's cwd is an inode, not a future path lookup: a path swap
+// before launch lands in a directory without the unpredictable marker and the
+// harness never starts.
+func guardHarnessCommandWithCwdProof(harnessCmd, proof, readyPath string) string {
+	marker := clcommon.SpawnDirWriteProofPrefix + proof
+	ready := clcommon.ShellQuoteArg(readyPath)
+	fail := func(reason string) string {
+		return "printf '%s' " + clcommon.ShellQuoteArg("error:"+reason) + " > " + ready + "; exit 126"
+	}
+	return "tclaude_cwd_proof=" + clcommon.ShellQuoteArg(marker) + "; " +
+		"if [ ! -f \"$tclaude_cwd_proof\" ] || [ -L \"$tclaude_cwd_proof\" ] || [ -s \"$tclaude_cwd_proof\" ]; then " +
+		"echo 'tclaude: spawn cwd write proof missing or invalid; refusing harness launch' >&2; " + fail("proof") + "; fi; " +
+		"printf '%s' ok > " + ready + " || exit 126; " + harnessCmd
+}
+
+func newSpawnCwdReadinessFile() (string, func(), error) {
+	base := strings.TrimSpace(config.ConfigDir())
+	if base == "" {
+		return "", func() {}, fmt.Errorf("resolve private spawn-readiness directory")
+	}
+	dir := filepath.Join(base, "spawn-readiness")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", func() {}, fmt.Errorf("create spawn-readiness directory: %w", err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return "", func() {}, fmt.Errorf("protect spawn-readiness directory: %w", err)
+	}
+	f, err := os.CreateTemp(dir, "cwd-proof-")
+	if err != nil {
+		return "", func() {}, fmt.Errorf("create cwd-proof readiness file: %w", err)
+	}
+	path := f.Name()
+	cleanup := func() { _ = os.Remove(path) }
+	if err := f.Chmod(0o600); err != nil {
+		_ = f.Close()
+		cleanup()
+		return "", func() {}, fmt.Errorf("protect cwd-proof readiness file: %w", err)
+	}
+	if _, err := f.WriteString("pending"); err != nil {
+		_ = f.Close()
+		cleanup()
+		return "", func() {}, fmt.Errorf("initialize cwd-proof readiness file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		cleanup()
+		return "", func() {}, fmt.Errorf("close cwd-proof readiness file: %w", err)
+	}
+	return path, cleanup, nil
+}
+
+func waitForSpawnCwdReadiness(path string) error {
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read cwd-proof launch readiness: %w", err)
+		}
+		status := strings.TrimSpace(string(raw))
+		if status == "ok" {
+			return nil
+		}
+		if strings.HasPrefix(status, "error:") {
+			return fmt.Errorf("spawn cwd bootstrap refused launch (%s)", strings.TrimPrefix(status, "error:"))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return fmt.Errorf("timed out waiting for spawn cwd bootstrap")
 }
 
 // applyTmuxWindowTitle sets this session's tmux window title to

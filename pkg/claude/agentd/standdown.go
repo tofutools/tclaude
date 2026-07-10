@@ -115,6 +115,8 @@ func standDownSweep(g *db.AgentGroup) standDownSweptCounts {
 		if err := db.DeleteWaveChoreography(g.ID); err != nil {
 			slog.Warn("stand-down: could not cancel wave choreography", "group", g.Name, "err", err)
 			out.waves = 0
+		} else {
+			cleanupDirWriteProofMarkers(choreo.ProofToken, choreo.ProofDirs)
 		}
 	}
 

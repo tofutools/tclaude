@@ -56,7 +56,21 @@ func (e *cloneSpawnError) write(w http.ResponseWriter) {
 //
 // Extracted from runCloneOrchestration so groups-clone can reuse the
 // same race handling without duplicating it.
-func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model string) (newConv, newTmux, label, warn string, spawnErr *cloneSpawnError) {
+// proofDirs, when non-empty, are the write-proof-verified launch dirs (an
+// agent caller's cwd override); cloneSpawnOnce re-asserts they are still
+// canonical immediately before each fork, closing the verify→launch window
+// the same way executeSpawn does for spawns. nil for callers that take no
+// request-controlled cwd (export, groups-clone) and for exempt callers.
+func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proofToken string, proofDirs []string, codexGitCommonDir string) (newConv, newTmux, label, warn string, spawnErr *cloneSpawnError) {
+	if proofToken != "" {
+		defer cleanupDirWriteProofMarkers(proofToken, proofDirs)
+	}
+	reassertFail := func() *cloneSpawnError {
+		if fail := reassertDirWriteProof(proofDirs); fail != nil {
+			return &cloneSpawnError{Status: fail.Status, Code: fail.Kind, Msg: fail.Msg}
+		}
+		return nil
+	}
 	// Clone under the same harness the source ran on — a Codex agent's
 	// clone must relaunch as Codex. "" for an untagged/claude source omits
 	// the flag (the default).
@@ -66,6 +80,8 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model strin
 	// original is the operator-decided semantics — drive either from the phone.
 	// False (and so omitted) for an unarmed source or a Codex source.
 	remoteControl := remoteControlForRelaunch(sourceConv, srcHarness)
+	cloneSandbox := sandboxForHarness(srcHarness)
+	codexGitCommonDirPinned := codexManagedProfileUsesPinnedGitCommonDir(srcHarness, cloneSandbox)
 	// Preserve the source's per-agent AskUserQuestion timeout onto the sibling
 	// (schema v97) — unlike sandbox/approval, which re-default. "" for a source
 	// that recorded none (a non-Claude or pre-column source).
@@ -77,16 +93,22 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model strin
 		// cwd (trustDir=false — that edits ~/.codex/config.toml and is an explicit
 		// fresh-spawn opt-in) — same rationale as approvalForHarness re-defaulting
 		// rather than carrying per-conv state.
+		if fail := reassertFail(); fail != nil {
+			return "", "", "", "", fail
+		}
 		if err := SpawnDetachedTclaudeNew(clcommon.SpawnArgs{
-			Label:                  label,
-			Cwd:                    cwd,
-			Effort:                 effort,
-			Model:                  model,
-			Harness:                srcHarness,
-			Sandbox:                sandboxForHarness(srcHarness),
-			Approval:               approvalForHarness(srcHarness),
-			AskUserQuestionTimeout: askTimeout,
-			RemoteControl:          remoteControl,
+			Label:                   label,
+			Cwd:                     cwd,
+			CwdWriteProof:           proofToken,
+			Effort:                  effort,
+			Model:                   model,
+			Harness:                 srcHarness,
+			Sandbox:                 cloneSandbox,
+			CodexGitCommonDir:       codexGitCommonDir,
+			CodexGitCommonDirPinned: codexGitCommonDirPinned,
+			Approval:                approvalForHarness(srcHarness),
+			AskUserQuestionTimeout:  askTimeout,
+			RemoteControl:           remoteControl,
 		}); err != nil {
 			return "", "", "", "", &cloneSpawnError{
 				Status: http.StatusInternalServerError, Code: "spawn",
@@ -127,16 +149,22 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model strin
 		}
 	}
 	newConv = copyResult.NewConvID
+	if fail := reassertFail(); fail != nil {
+		return "", "", "", "", fail
+	}
 	if err := SpawnDetachedTclaudeResume(clcommon.SpawnArgs{
-		ConvID:                 newConv,
-		Cwd:                    cwd,
-		Effort:                 effort,
-		Model:                  model,
-		Harness:                srcHarness,
-		Sandbox:                sandboxForHarness(srcHarness),
-		Approval:               approvalForHarness(srcHarness),
-		AskUserQuestionTimeout: askTimeout,
-		RemoteControl:          remoteControl,
+		ConvID:                  newConv,
+		Cwd:                     cwd,
+		CwdWriteProof:           proofToken,
+		Effort:                  effort,
+		Model:                   model,
+		Harness:                 srcHarness,
+		Sandbox:                 cloneSandbox,
+		CodexGitCommonDir:       codexGitCommonDir,
+		CodexGitCommonDirPinned: codexGitCommonDirPinned,
+		Approval:                approvalForHarness(srcHarness),
+		AskUserQuestionTimeout:  askTimeout,
+		RemoteControl:           remoteControl,
 	}); err != nil {
 		return "", "", "", "", &cloneSpawnError{
 			Status: http.StatusInternalServerError, Code: "spawn",
@@ -337,11 +365,11 @@ func handleWhoamiClone(w http.ResponseWriter, r *http.Request) {
 			"this endpoint clones the calling agent's own conversation; humans should use `tclaude conv copy` directly, or use POST /v1/agent/{conv}/clone to clone another agent")
 		return
 	}
-	followUp, noCopyConv, cwd, ok := decodeCloneBody(w, r)
+	body, ok := decodeCloneBody(w, r)
 	if !ok {
 		return
 	}
-	runCloneOrchestration(w, caller, caller, PermSelfClone, followUp, noCopyConv, cwd)
+	runCloneOrchestration(w, caller, caller, PermSelfClone, body)
 }
 
 // handleAgentClone handles POST /v1/agent/{conv}/clone (cross-agent).
@@ -355,28 +383,41 @@ func handleAgentClone(w http.ResponseWriter, r *http.Request, targetConv string)
 	if !ok {
 		return
 	}
-	followUp, noCopyConv, cwd, ok := decodeCloneBody(w, r)
+	body, ok := decodeCloneBody(w, r)
 	if !ok {
 		return
 	}
-	runCloneOrchestration(w, targetConv, caller, PermAgentClone, followUp, noCopyConv, cwd)
+	runCloneOrchestration(w, targetConv, caller, PermAgentClone, body)
 }
 
-// decodeCloneBody parses + validates the optional follow_up,
-// no_copy_conv and cwd body fields. cwd is an optional override for
-// where the clone's CC session is spawned — empty means "inherit the
-// source's cwd" (the historical behaviour); a worktree path lets the
-// human fork a clone onto a parallel branch.
-func decodeCloneBody(w http.ResponseWriter, r *http.Request) (followUp string, noCopyConv bool, cwd string, ok bool) {
-	var body struct {
-		FollowUp   string `json:"follow_up"`
-		NoCopyConv bool   `json:"no_copy_conv"`
-		Cwd        string `json:"cwd"`
-	}
+// cloneBody is the decoded, validated POST body shared by the clone
+// endpoints (self / cross-agent / dashboard).
+type cloneBody struct {
+	// FollowUp is the optional first-turn prompt for the clone.
+	FollowUp string `json:"follow_up"`
+	// NoCopyConv spawns the clone with a fresh context instead of copying
+	// the source's conversation jsonl.
+	NoCopyConv bool `json:"no_copy_conv"`
+	// Cwd is an optional override for where the clone's session is spawned —
+	// empty means "inherit the source's cwd" (the historical behaviour); a
+	// worktree path lets the human fork a clone onto a parallel branch.
+	Cwd string `json:"cwd"`
+	// WriteProofToken answers the dir write-proof challenge an agent caller
+	// receives when it sets Cwd — same contract as SpawnRequest's field: the
+	// caller must prove its own sandbox can write in the override directory
+	// before it may aim a clone's write access there. Unused (and not
+	// required) for humans and for clones that inherit the source's cwd.
+	WriteProofToken string `json:"write_proof_token"`
+}
+
+// decodeCloneBody parses + validates the optional follow_up, no_copy_conv,
+// cwd and write_proof_token body fields.
+func decodeCloneBody(w http.ResponseWriter, r *http.Request) (cloneBody, bool) {
+	var body cloneBody
 	if r.ContentLength != 0 {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
-			return "", false, "", false
+			return cloneBody{}, false
 		}
 	}
 	body.FollowUp = strings.TrimSpace(body.FollowUp)
@@ -390,9 +431,10 @@ func decodeCloneBody(w http.ResponseWriter, r *http.Request) (followUp string, n
 				"and tabs are allowed (a grouped clone receives the handoff in its "+
 				"inbox, like a spawn brief), but NUL / escape / other control "+
 				"characters are not.", agent.MaxInitialMessageBytes))
-		return "", false, "", false
+		return cloneBody{}, false
 	}
-	return body.FollowUp, body.NoCopyConv, strings.TrimSpace(body.Cwd), true
+	body.Cwd = strings.TrimSpace(body.Cwd)
+	return body, true
 }
 
 // runCloneOrchestration is the target-agnostic body shared by self
@@ -407,12 +449,15 @@ func decodeCloneBody(w http.ResponseWriter, r *http.Request) (followUp string, n
 //     (PermSelfClone / PermAgentClone / "" for human dashboard). Used
 //     to annotate `granted_by` with `:via-sudo:grant-id=<n>` when the
 //     call only passed because of a sudo grant.
-//   - cwdOverride, when non-empty, is the directory the clone's CC
+//   - body.Cwd, when non-empty, is the directory the clone's CC
 //     session is spawned into instead of the source's cwd — typically
 //     a git worktree path so a clone can pick up work on a parallel
 //     branch. It's validated (exists, is a directory, "~" expanded)
-//     before use; a bad value fails the whole clone with a 400.
-func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp string, noCopyConv bool, cwdOverride string) {
+//     before use; a bad value fails the whole clone with a 400. An
+//     AGENT caller must additionally pass the dir write-proof for it
+//     (see below).
+func runCloneOrchestration(w http.ResponseWriter, target, caller, perm string, body cloneBody) {
+	followUp, noCopyConv, cwdOverride := body.FollowUp, body.NoCopyConv, body.Cwd
 	// 1. Snapshot target state. Same shape as reincarnate's snapshot
 	// pass.
 	oldSess := pickAliveSession(target)
@@ -422,6 +467,15 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp
 		return
 	}
 	cwd := oldSess.Cwd
+	var proofDirs []string
+	var proofToken string
+	srcHarness := harnessForConv(target).Name
+	cloneSandbox := sandboxForHarness(srcHarness)
+	codexGitCommonDir, gerr := codexManagedProfileGitCommonDir(srcHarness, cloneSandbox, cwd)
+	if gerr != nil {
+		writeError(w, http.StatusInternalServerError, "io", gerr.Error())
+		return
+	}
 	if cwdOverride != "" {
 		resolved, err := resolveSpawnCwd(cwdOverride)
 		if err != nil {
@@ -429,6 +483,48 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp
 			return
 		}
 		cwd = resolved
+		codexGitCommonDir, gerr = codexManagedProfileGitCommonDir(srcHarness, cloneSandbox, cwd)
+		if gerr != nil {
+			writeError(w, http.StatusInternalServerError, "io", gerr.Error())
+			return
+		}
+
+		// Dir write-proof (spawn_dir_proof.go) — a cwd override aims the
+		// clone's write access at a directory of the CALLER's choosing, so an
+		// agent caller must prove its own sandbox can write there, exactly as
+		// for a spawn. A clone that inherits the source's cwd mints no new
+		// directory authority (the target already lives there) and passes
+		// untouched, as do humans (the dashboard's clone modal / cwd picker)
+		// and clones of a no-cwd-write target (Codex read-only — the clone
+		// relaunches with the target's own harness+sandbox, so the target's
+		// recorded posture is the child posture here).
+		if caller != "" && childSandboxGrantsDirWrite(srcHarness, cloneSandbox) {
+			dirs := []string{cwd}
+			if codexGitCommonDir != "" && codexGitCommonDir != cwd {
+				dirs = append(dirs, codexGitCommonDir)
+			}
+			proofed, ok := requireDirWriteProof(w, caller, body.WriteProofToken, dirs)
+			if !ok {
+				return
+			}
+			if proofed != nil {
+				proofToken = strings.TrimSpace(body.WriteProofToken)
+				if v := proofed[cwd]; v != "" {
+					cwd = v
+				}
+				if codexGitCommonDir != "" {
+					if v := proofed[codexGitCommonDir]; v != "" {
+						codexGitCommonDir = v
+					}
+				}
+				// Re-asserted just before the clone fork (cloneSpawnOnce), closing
+				// the verify→launch window the same way executeSpawn does.
+				proofDirs = []string{cwd}
+				if codexGitCommonDir != "" && codexGitCommonDir != cwd {
+					proofDirs = append(proofDirs, codexGitCommonDir)
+				}
+			}
+		}
 	}
 
 	// Snapshot group membership up-front — before the rate-limit claim
@@ -505,7 +601,7 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp
 	// model + effort (inheritedLaunchFlags; "" falls back to claude's
 	// default) — a fork should run what the original runs.
 	effort, model := inheritedLaunchFlags(oldSess.ID)
-	newConv, newTmux, label, warn, spawnErr := cloneSpawnOnce(target, cwd, noCopyConv, effort, model)
+	newConv, newTmux, label, warn, spawnErr := cloneSpawnOnce(target, cwd, noCopyConv, effort, model, proofToken, proofDirs, codexGitCommonDir)
 	if spawnErr != nil {
 		spawnErr.write(w)
 		return

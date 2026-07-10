@@ -2,9 +2,12 @@ package testharness
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -111,6 +114,9 @@ type simSpawner struct {
 // before the seam, so the production Spawner signature is satisfied with no
 // behaviour change for Claude Code.
 func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
+	if err := checkSpawnDirProofMarker(args); err != nil {
+		return err
+	}
 	if args.Harness == codexHarnessName {
 		return s.spawnNewCodex(args)
 	}
@@ -159,6 +165,9 @@ func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 	s.w.RecordSpawnAutoReview(cc.ConvID, args.AutoReview)
 	s.w.RecordSpawnTrustDir(cc.ConvID, args.TrustDir)
 	s.w.RecordSpawnRemoteControl(cc.ConvID, args.RemoteControl)
+	s.w.RecordSpawnCwdWriteProof(cc.ConvID, args.CwdWriteProof)
+	s.w.RecordSpawnCodexGitCommonDir(cc.ConvID, args.CodexGitCommonDir)
+	s.w.RecordSpawnCodexGitCommonDirPinned(cc.ConvID, args.CodexGitCommonDirPinned)
 	s.w.RecordSpawnName(cc.ConvID, args.Name)
 	s.w.RecordSpawnInitialPrompt(cc.ConvID, args.InitialPrompt)
 	// Use cc.Cwd (post-default-substitution) so the SessionRow agrees
@@ -195,6 +204,9 @@ func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 // relaunches its CodexSim (located by conv-id, or hydrated from the
 // on-disk rollout); everything else re-attaches a CCSim exactly as before.
 func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
+	if err := checkSpawnDirProofMarker(args); err != nil {
+		return err
+	}
 	if args.Harness == codexHarnessName {
 		return s.spawnResumeCodex(args)
 	}
@@ -219,6 +231,9 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	s.w.RecordSpawnApproval(convID, args.Approval)
 	s.w.RecordSpawnAutoReview(convID, args.AutoReview)
 	s.w.RecordSpawnRemoteControl(convID, args.RemoteControl)
+	s.w.RecordSpawnCwdWriteProof(convID, args.CwdWriteProof)
+	s.w.RecordSpawnCodexGitCommonDir(convID, args.CodexGitCommonDir)
+	s.w.RecordSpawnCodexGitCommonDirPinned(convID, args.CodexGitCommonDirPinned)
 	label := generateResumeLabel()
 	// Resume mints a fresh session row / TCLAUDE_SESSION_ID; track it.
 	cc.SessionID = label
@@ -236,6 +251,21 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	}
 	s.w.Tmux.Register(label, cc.Cwd, cc)
 	s.w.CCs.Set(label, cc)
+	return nil
+}
+
+func checkSpawnDirProofMarker(args clcommon.SpawnArgs) error {
+	if args.CwdWriteProof == "" {
+		return nil
+	}
+	marker := filepath.Join(args.Cwd, clcommon.SpawnDirWriteProofPrefix+args.CwdWriteProof)
+	info, err := os.Lstat(marker)
+	if err != nil {
+		return fmt.Errorf("spawn dir proof marker: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Size() != 0 {
+		return fmt.Errorf("spawn dir proof marker is not an empty regular file")
+	}
 	return nil
 }
 
@@ -281,6 +311,9 @@ func (s *simSpawner) spawnNewCodex(args clcommon.SpawnArgs) error {
 	s.w.RecordSpawnAutoReview(cx.ConvID, args.AutoReview)
 	s.w.RecordSpawnTrustDir(cx.ConvID, args.TrustDir)
 	s.w.RecordSpawnRemoteControl(cx.ConvID, args.RemoteControl)
+	s.w.RecordSpawnCwdWriteProof(cx.ConvID, args.CwdWriteProof)
+	s.w.RecordSpawnCodexGitCommonDir(cx.ConvID, args.CodexGitCommonDir)
+	s.w.RecordSpawnCodexGitCommonDirPinned(cx.ConvID, args.CodexGitCommonDirPinned)
 	// A daemon-spawned Codex pane carries a positional first-turn seed (its
 	// conv-id seed, which now also delivers the [system: ...] welcome). Capture
 	// it keyed by conv-id so a flow test can assert what the launch prompt
@@ -329,6 +362,9 @@ func (s *simSpawner) spawnResumeCodex(args clcommon.SpawnArgs) error {
 	// Always false for Codex (no built-in Remote Access), but recorded so a
 	// flow test can positively assert a Codex relaunch never carries it (JOH-261).
 	s.w.RecordSpawnRemoteControl(convID, args.RemoteControl)
+	s.w.RecordSpawnCwdWriteProof(convID, args.CwdWriteProof)
+	s.w.RecordSpawnCodexGitCommonDir(convID, args.CodexGitCommonDir)
+	s.w.RecordSpawnCodexGitCommonDirPinned(convID, args.CodexGitCommonDirPinned)
 	label := generateResumeLabel()
 	if err := db.SaveSession(&db.SessionRow{
 		ID:                     label,
@@ -1286,9 +1322,71 @@ func (f *Flow) AssertDeleted(convID string) {
 
 func (f *Flow) do(method, path string, body any) *httptest.ResponseRecorder {
 	f.T.Helper()
+	rec := f.doOnce(method, path, body)
+	return f.answerWriteProofChallenge(rec, method, path, body)
+}
+
+func (f *Flow) doOnce(method, path string, body any) *httptest.ResponseRecorder {
+	f.T.Helper()
 	r := JSONRequest(f.T, method, path, body)
 	if f.currPeer != nil {
 		r = f.currPeer(r)
 	}
 	return Serve(f.Mux, r)
+}
+
+// answerWriteProofChallenge mirrors the production CLI's transparent dir
+// write-proof handling (pkg/claude/agent/writeproof.go): when the daemon
+// answers a spawn/clone with the 403 "write_proof_required" challenge, the
+// harness creates the token-named proof file in each challenged directory
+// and retries once with the token folded into the body — so agent-caller
+// flow tests see the same end result the CLI user sees. A challenge whose
+// proof file cannot be created (a deliberately unwritable dir) returns the
+// original 403 for the test to assert on. Tests that want the raw challenge
+// itself use agentReq / Serve directly, which bypass Flow.do.
+func (f *Flow) answerWriteProofChallenge(rec *httptest.ResponseRecorder, method, path string, body any) *httptest.ResponseRecorder {
+	f.T.Helper()
+	if rec.Code != http.StatusForbidden {
+		return rec
+	}
+	var challenge struct {
+		Code       string `json:"code"`
+		WriteProof struct {
+			Token    string   `json:"token"`
+			Filename string   `json:"filename"`
+			Dirs     []string `json:"dirs"`
+		} `json:"write_proof"`
+	}
+	if json.Unmarshal(rec.Body.Bytes(), &challenge) != nil ||
+		challenge.Code != "write_proof_required" || challenge.WriteProof.Token == "" {
+		return rec
+	}
+	bodyMap, isMap := body.(map[string]any)
+	if body != nil && !isMap {
+		return rec
+	}
+	var created []string
+	cleanup := func() {
+		for _, p := range created {
+			_ = os.Remove(p)
+		}
+	}
+	for _, dir := range challenge.WriteProof.Dirs {
+		p := filepath.Join(dir, challenge.WriteProof.Filename)
+		if err := os.WriteFile(p, nil, 0o600); err != nil {
+			cleanup()
+			return rec // unwritable dir — the test asserts the refusal
+		}
+		created = append(created, p)
+	}
+	retry := make(map[string]any, len(bodyMap)+1)
+	for k, v := range bodyMap {
+		retry[k] = v
+	}
+	retry["write_proof_token"] = challenge.WriteProof.Token
+	retryRec := f.doOnce(method, path, retry)
+	if retryRec.Code >= 400 {
+		cleanup()
+	}
+	return retryRec
 }

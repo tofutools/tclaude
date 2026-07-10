@@ -45,6 +45,11 @@ type WaveChoreography struct {
 	// agent before spawning it. Stored in the JSON state so delayed waves match
 	// the synchronous first wave without a schema migration.
 	PerAgentWorktrees *WavePerAgentWorktrees `json:"per_agent_worktrees,omitempty"`
+	// ProofToken/ProofDirs carry the spawn-dir write proof for delayed waves.
+	// They live in the JSON state so no schema migration is needed.
+	ProofToken        string   `json:"proof_token,omitempty"`
+	ProofDirs         []string `json:"proof_dirs,omitempty"`
+	CodexGitCommonDir string   `json:"codex_git_common_dir,omitempty"`
 	// Caller is the conv that deployed (reply-to / spawned-by attribution for
 	// later-wave spawns + the work-pattern deliveries). May be "" (human).
 	Caller string `json:"caller,omitempty"`

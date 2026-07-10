@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -89,6 +90,37 @@ func TestGroupsClone_DefaultsSuffix(t *testing.T) {
 	require.NotNil(t, newGroup, "team-c-1 should exist")
 	newMembers, _ := db.ListAgentGroupMembers(newGroup.ID)
 	assert.Len(t, newMembers, 2, "new group member count")
+}
+
+func TestGroupsClone_CodexCopyForwardsPinnedGitCommonDir(t *testing.T) {
+	f := newFlow(t)
+	const source = "92e452c0-eef5-4fa3-beb9-51f4f8722336"
+	repo, _ := initRepoOnMain(t)
+	commonDir, err := harness.CodexGitCommonDir(repo)
+	require.NoError(t, err)
+	f.HaveAliveSession(source, "spwn-group-copy", "tclaude-spwn-group-copy", repo)
+	markSessionAsCodex(t, "spwn-group-copy")
+	installCodexCopyCompatSpawner(t)
+	f.HaveGroup("codex-team")
+	f.HaveMember("codex-team", source)
+
+	r := agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost,
+		"/v1/groups/codex-team/clone", map[string]any{}))
+	rec := testharness.Serve(f.Mux, r)
+	require.Equalf(t, http.StatusOK, rec.Code, "group clone: body=%s", rec.Body.String())
+	var resp cloneGroupResp
+	testharness.DecodeJSON(t, rec, &resp)
+	require.Len(t, resp.Members, 1)
+	require.Empty(t, resp.Members[0].Error)
+	cloneConv := resp.Members[0].NewConv
+	require.NotEmpty(t, cloneConv)
+
+	got, ok := f.World.SpawnCodexGitCommonDir(cloneConv)
+	require.True(t, ok)
+	assert.Equal(t, commonDir, got)
+	pinned, ok := f.World.SpawnCodexGitCommonDirPinned(cloneConv)
+	require.True(t, ok)
+	assert.True(t, pinned, "group clone copy resume must carry pin-presence")
 }
 
 // Scenario: clone with an explicit name that doesn't collide.

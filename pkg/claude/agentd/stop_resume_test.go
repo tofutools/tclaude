@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -157,6 +158,9 @@ func TestResumeOneConv_UsesCodexNativeStoreWhenTclaudeCacheMissing(t *testing.T)
 	require.NoError(t, err)
 	cwd := filepath.Join(home, "repo")
 	require.NoError(t, os.MkdirAll(cwd, 0o755))
+	require.NoError(t, exec.Command("git", "init", "-q", cwd).Run())
+	commonDir, err := harness.CodexGitCommonDir(cwd)
+	require.NoError(t, err)
 
 	const convID = "019ec663-3bef-7c41-abf8-ad956ed94a01"
 	cx := testharness.NewCodexSimWithID(t, home, convID, cwd)
@@ -172,6 +176,9 @@ func TestResumeOneConv_UsesCodexNativeStoreWhenTclaudeCacheMissing(t *testing.T)
 	assert.Equal(t, convID, rec.convID)
 	assert.Equal(t, cwd, rec.cwd)
 	assert.Equal(t, harness.CodexName, rec.harness)
+	assert.Equal(t, commonDir, rec.codexGitCommonDir)
+	assert.True(t, rec.codexGitCommonDirPinned,
+		"ordinary Codex lifecycle resume must carry the daemon pin-presence bit")
 }
 
 // A resume whose recorded launch dir was deleted must NOT spawn into the
@@ -264,8 +271,8 @@ func TestHandleAgentResume_RecreateParamCreatesMissingDir(t *testing.T) {
 }
 
 type recordingResumeSpawner struct {
-	convID, cwd, effort, model, harness, sandbox, approval string
-	autoReview                                             bool
+	convID, cwd, effort, model, harness, sandbox, approval, codexGitCommonDir string
+	autoReview, codexGitCommonDirPinned                                       bool
 }
 
 func installRecordingResumeSpawner(t *testing.T) *recordingResumeSpawner {
@@ -290,6 +297,8 @@ func (s *recordingResumeSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	s.sandbox = args.Sandbox
 	s.approval = args.Approval
 	s.autoReview = args.AutoReview
+	s.codexGitCommonDir = args.CodexGitCommonDir
+	s.codexGitCommonDirPinned = args.CodexGitCommonDirPinned
 	return nil
 }
 
