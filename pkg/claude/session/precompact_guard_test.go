@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // TestPreCompactFloor pins the window→floor matching: exact windows,
@@ -153,9 +154,10 @@ func TestRunHookCallback_PreCompactEmitsBlockOnStdout(t *testing.T) {
 	require.NoError(t, config.Save(cfg))
 
 	require.NoError(t, SaveSessionState(&SessionState{
-		ID:     "pc-sess",
-		ConvID: "conv-pc",
-		Status: StatusIdle,
+		ID:      "pc-sess",
+		ConvID:  "conv-pc",
+		Status:  StatusIdle,
+		Harness: harness.CodexName,
 	}))
 	// 20% of a 1M window = ~200K used, below the 800K floor → block.
 	require.NoError(t, db.UpdateContextSnapshot("pc-sess", 20, 1, 0, 1_000_000))
@@ -165,6 +167,7 @@ func TestRunHookCallback_PreCompactEmitsBlockOnStdout(t *testing.T) {
 		"hook_event_name": "PreCompact",
 		"trigger":         "auto",
 		"cwd":             dir,
+		"model":           "gpt-5.5",
 	})
 
 	var dec preCompactDecision
@@ -172,6 +175,13 @@ func TestRunHookCallback_PreCompactEmitsBlockOnStdout(t *testing.T) {
 		"stdout should carry a JSON block decision, got %q", out)
 	assert.Equal(t, "block", dec.Decision)
 	assert.NotEmpty(t, dec.Reason)
+
+	snap, err := db.GetContextSnapshot("pc-sess")
+	require.NoError(t, err)
+	assert.Equal(t, "gpt-5.5", snap.Model,
+		"a blocked PreCompact still captures Codex's active model")
+	assert.Equal(t, "gpt-5.5", snap.ModelID,
+		"the resume-safe model id converges before the guard returns")
 }
 
 // captureHookStdout runs runHookCallback with payload on stdin and

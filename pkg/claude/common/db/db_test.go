@@ -163,7 +163,7 @@ func TestContextSnapshotRoundTrip(t *testing.T) {
 
 // TestUpdateSessionModelRoundTrip covers the per-agent model the
 // statusline hook records (sessions.model) and the dashboard reads back
-// via GetContextSnapshot.Model: a fresh row reads '', a write round-trips,
+// via GetContextSnapshot.Model: a fresh row reads ”, a write round-trips,
 // an empty-model write is a no-op (never blanks a good value), and a
 // SaveSession hook tick — which does NOT list the model column — leaves
 // it intact, the same out-of-band guarantee the context columns rely on.
@@ -201,6 +201,40 @@ func TestUpdateSessionModelRoundTrip(t *testing.T) {
 	require.NoError(t, UpdateSessionModel("model-001", "Sonnet 4.6"), "switch model")
 	got, _ = GetContextSnapshot("model-001")
 	assert.Equal(t, "Sonnet 4.6", got.Model, "model updates on switch")
+}
+
+// Codex reports one active model slug for both the dashboard label and the
+// resume-safe model ID. A trigger that rejects any UPDATE exposing different
+// values proves UpdateSessionModelSlug changes both columns in one statement;
+// the former pair of independent setters would fail on its first UPDATE.
+func TestUpdateSessionModelSlugIsAtomic(t *testing.T) {
+	setupTestDB(t)
+
+	s := &SessionRow{ID: "codex-model-001", Status: "idle", CreatedAt: time.Now()}
+	require.NoError(t, SaveSession(s), "SaveSession")
+
+	d, err := Open()
+	require.NoError(t, err, "Open")
+	_, err = d.Exec(`CREATE TRIGGER require_consistent_model_slug
+		BEFORE UPDATE OF model, model_id ON sessions
+		WHEN NEW.model <> NEW.model_id
+		BEGIN
+			SELECT RAISE(ABORT, 'model slug columns diverged');
+		END`)
+	require.NoError(t, err, "install consistency trigger")
+
+	require.NoError(t, UpdateSessionModelSlug("codex-model-001", "gpt-5.5"),
+		"one statement must advance both model columns")
+	got, err := GetContextSnapshot("codex-model-001")
+	require.NoError(t, err, "GetContextSnapshot")
+	assert.Equal(t, "gpt-5.5", got.Model)
+	assert.Equal(t, "gpt-5.5", got.ModelID)
+
+	require.NoError(t, UpdateSessionModelSlug("codex-model-001", ""), "empty slug is a no-op")
+	got, err = GetContextSnapshot("codex-model-001")
+	require.NoError(t, err, "GetContextSnapshot after empty slug")
+	assert.Equal(t, "gpt-5.5", got.Model)
+	assert.Equal(t, "gpt-5.5", got.ModelID)
 }
 
 // TestUpdateContextSnapshotEmptyDoesNotClobber locks down the guard
