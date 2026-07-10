@@ -47,6 +47,7 @@ function stableNodes(graph) {
 
 function stableEdges(graph, byID) {
   const occurrences = new Map();
+  const explicitIDs = new Set();
   return (graph.edges || []).map((raw, inputIndex) => {
     const from = String(raw.from || '');
     const to = String(raw.to || '');
@@ -56,9 +57,12 @@ function stableEdges(graph, byID) {
     const semantic = JSON.stringify([from, to, raw.outcome || '', raw.joinOnTarget || '', raw.back === true]);
     const occurrence = occurrences.get(semantic) || 0;
     occurrences.set(semantic, occurrence + 1);
-    const id = raw.id != null && String(raw.id) !== ''
-      ? `id:${String(raw.id)}`
-      : `semantic:${encodeURIComponent(semantic)}:${occurrence}`;
+    const explicitID = raw.id != null ? String(raw.id) : '';
+    if (explicitID && explicitIDs.has(explicitID)) {
+      throw new Error(`process layout: duplicate edge id ${explicitID}`);
+    }
+    if (explicitID) explicitIDs.add(explicitID);
+    const id = explicitID ? `id:${explicitID}` : `semantic:${encodeURIComponent(semantic)}:${occurrence}`;
     return {
       ...raw,
       from,
@@ -313,12 +317,16 @@ function orthogonalRoute(from, to, nodes, lane, edgeSep) {
     && point.y > box.top && point.y < box.bottom);
   const points = [];
   const byKey = new Map();
+  const columns = new Map(xs.map((x) => [x, []]));
+  const rows = new Map(ys.map((y) => [y, []]));
   for (const x of xs) {
     for (const y of ys) {
       const point = { x, y };
       if (!inside(point)) {
         points.push(point);
         byKey.set(pointKey(point), point);
+        columns.get(x).push(point);
+        rows.get(y).push(point);
       }
     }
   }
@@ -334,30 +342,60 @@ function orthogonalRoute(from, to, nodes, lane, edgeSep) {
       adjacency.get(pointKey(b)).push({ point: a, distance });
     }
   };
-  for (const x of xs) connectLine(points.filter((point) => point.x === x));
-  for (const y of ys) connectLine(points.filter((point) => point.y === y));
+  for (const x of xs) connectLine(columns.get(x));
+  for (const y of ys) connectLine(rows.get(y));
 
   const startKey = pointKey({ x: from.x, y: from.y });
   const endKey = pointKey({ x: to.x, y: to.y });
   const distance = new Map([[startKey, 0]]);
   const previous = new Map();
-  const pending = new Set(byKey.keys());
-  while (pending.size) {
-    let current = null;
-    for (const key of pending) {
-      if (!distance.has(key)) continue;
-      if (current === null || distance.get(key) < distance.get(current)
-        || (distance.get(key) === distance.get(current) && cmpText(key, current) < 0)) current = key;
+  const visited = new Set();
+  const heap = [];
+  const heapLess = (a, b) => a.cost < b.cost || (a.cost === b.cost && cmpText(a.key, b.key) < 0);
+  const heapPush = (entry) => {
+    heap.push(entry);
+    let index = heap.length - 1;
+    while (index > 0) {
+      const parent = Math.floor((index - 1) / 2);
+      if (!heapLess(heap[index], heap[parent])) break;
+      [heap[index], heap[parent]] = [heap[parent], heap[index]];
+      index = parent;
     }
-    if (current === null || current === endKey) break;
-    pending.delete(current);
+  };
+  const heapPop = () => {
+    const first = heap[0];
+    const last = heap.pop();
+    if (heap.length && last) {
+      heap[0] = last;
+      let index = 0;
+      while (true) {
+        const left = index * 2 + 1;
+        const right = left + 1;
+        let smallest = index;
+        if (left < heap.length && heapLess(heap[left], heap[smallest])) smallest = left;
+        if (right < heap.length && heapLess(heap[right], heap[smallest])) smallest = right;
+        if (smallest === index) break;
+        [heap[index], heap[smallest]] = [heap[smallest], heap[index]];
+        index = smallest;
+      }
+    }
+    return first;
+  };
+  heapPush({ key: startKey, cost: 0 });
+  while (heap.length) {
+    const entry = heapPop();
+    const current = entry.key;
+    if (visited.has(current) || entry.cost !== distance.get(current)) continue;
+    visited.add(current);
+    if (current === endKey) break;
     for (const next of adjacency.get(current)) {
       const key = pointKey(next.point);
-      if (!pending.has(key)) continue;
+      if (visited.has(key)) continue;
       const candidate = distance.get(current) + next.distance;
       if (!distance.has(key) || candidate < distance.get(key)) {
         distance.set(key, candidate);
         previous.set(key, current);
+        heapPush({ key, cost: candidate });
       }
     }
   }

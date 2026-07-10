@@ -381,6 +381,7 @@ export class ProcessGraph {
     this.svg.addEventListener('pointermove', (event) => this.onPointerMove(event), { signal });
     this.svg.addEventListener('pointerup', (event) => this.onPointerUp(event), { signal });
     this.svg.addEventListener('pointercancel', (event) => this.onPointerUp(event), { signal });
+    this.svg.addEventListener('pointerleave', () => this.updatePortHover(null), { signal });
     this.svg.addEventListener('click', (event) => this.onClick(event), { signal });
     this.svg.addEventListener('dblclick', (event) => this.onDoubleClick(event), { signal });
     this.svg.addEventListener('keydown', (event) => this.onKeyDown(event), { signal });
@@ -403,6 +404,14 @@ export class ProcessGraph {
     return { node, edge, port };
   }
 
+  updatePortHover(event) {
+    const target = event ? this.eventTarget(event) : { node: null };
+    const nodeID = target.node?.dataset.nodeId || null;
+    this.portLayer.querySelectorAll('.process-node-ports').forEach((ports) => {
+      ports.classList.toggle('is-node-hover', ports.dataset.nodeId === nodeID);
+    });
+  }
+
   onPointerDown(event) {
     if (event.button !== 0) return;
     const target = this.eventTarget(event);
@@ -423,6 +432,7 @@ export class ProcessGraph {
   }
 
   onPointerMove(event) {
+    this.updatePortHover(event);
     if (!this.pointer || this.pointer.id !== event.pointerId) return;
     const dx = event.clientX - this.pointer.startClientX;
     const dy = event.clientY - this.pointer.startClientY;

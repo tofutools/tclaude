@@ -620,6 +620,12 @@ func processGraphStateJS(title, graph string) string {
       instance.fitToView();
       if (!host.querySelector('.process-graph-svg')) throw new Error('process graph SVG did not render');
       if (!host.hasAttribute('data-morph-owned')) throw new Error('process graph host lacks morph ownership boundary');
+      var hoverNode = host.querySelector('.process-node');
+      hoverNode.dispatchEvent(new PointerEvent('pointermove', {bubbles:true}));
+      var hoverPorts = host.querySelector('.process-node-ports[data-node-id="' + CSS.escape(hoverNode.dataset.nodeId) + '"]');
+      if (!hoverPorts.classList.contains('is-node-hover')) throw new Error('node hover did not reveal sibling-layer ports');
+      host.querySelector('.process-graph-svg').dispatchEvent(new PointerEvent('pointerleave'));
+      if (hoverPorts.classList.contains('is-node-hover')) throw new Error('port hover affordance did not clear');
       var ports = host.querySelectorAll('.process-port');
       ports[0].focus();
       ports[0].dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true}));

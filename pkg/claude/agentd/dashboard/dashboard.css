@@ -10232,6 +10232,7 @@ body.wizard #agent-dock .dock-card-menu-item.danger:hover {
   fill: var(--pg-bg); stroke: var(--pg-accent); stroke-width: 2; vector-effect: non-scaling-stroke;
   opacity: 0.28; cursor: crosshair;
 }
+.process-node-ports.is-node-hover .process-port,
 .process-node-ports:hover .process-port, .process-port:hover, .process-port:active { opacity: 1; }
 .process-port:focus, .process-port.is-keyboard-source { opacity: 1; stroke-width: 4; outline: none; }
 .process-port.is-keyboard-source { fill: var(--pg-accent); }

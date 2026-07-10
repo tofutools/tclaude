@@ -192,6 +192,16 @@ test('semantic edge identity survives unrelated insertion and reorder', () => {
   assert.equal(after.edges.find((edge) => edge.from === 'b').id, identity);
 });
 
+test('duplicate explicit edge IDs are rejected before interaction identity can alias', () => {
+  assert.throws(() => layoutProcessGraph({
+    nodes: ['a', 'b', 'c'].map((id) => ({ id, type: 'task' })),
+    edges: [
+      { id: 'same', from: 'a', to: 'b' },
+      { id: 'same', from: 'b', to: 'c' },
+    ],
+  }), /duplicate edge id same/);
+});
+
 test('cycle-breaking heuristic stays isolated at the feedback-arc seam', () => {
   let called = 0;
   const result = layoutProcessGraph({
