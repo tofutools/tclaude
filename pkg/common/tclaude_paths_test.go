@@ -11,7 +11,11 @@ import (
 )
 
 func TestPreSplitAgentdReachableDistinguishesNewDaemon(t *testing.T) {
-	home := t.TempDir()
+	// Keep the socket path below macOS's short sockaddr_un limit. t.TempDir's
+	// /var/folders/... path is already too long before the socket suffix.
+	home, err := os.MkdirTemp("/tmp", "tc-paths-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	legacyPath := filepath.Join(home, ".tclaude-agentd.sock")

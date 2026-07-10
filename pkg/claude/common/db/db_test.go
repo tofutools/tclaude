@@ -46,8 +46,14 @@ func TestOpenRefusesConflictingLegacyAndNewDatabases(t *testing.T) {
 }
 
 func TestOpenKeepsLegacyDatabaseWhilePreSplitDaemonIsLive(t *testing.T) {
-	setupTestDB(t)
-	home := os.Getenv("HOME")
+	// Keep the socket path below macOS's short sockaddr_un limit. t.TempDir's
+	// /var/folders/... path is already too long before the socket suffix.
+	home, err := os.MkdirTemp("/tmp", "tc-db-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	ResetForTest()
 	legacySocket, err := net.Listen("unix", filepath.Join(home, ".tclaude-agentd.sock"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = legacySocket.Close() })
