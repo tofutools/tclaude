@@ -343,9 +343,8 @@ func runSetup(params *Params) error {
 	// bogus ".git" directory in the sibling-worktree container (e.g. ~/git),
 	// which breaks every `go build` under it with "VCS status: exit 128". An
 	// empty ".git" placeholder file occupies the path so the sandbox and Go
-	// both leave it alone. No-op unless setup runs inside a worktree whose
-	// grantable container is derivable.
-	fmt.Println("\n=== Sandbox .git Placeholder ===")
+	// both leave it alone. No-op (and silent) unless setup runs inside a
+	// worktree whose grantable container is derivable.
 	installWorktreeContainerGitPlaceholder(params.Yes)
 
 	// 5. Optional extras layered on top of the baseline.

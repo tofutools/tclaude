@@ -43,8 +43,11 @@ func installWorktreeContainerGitPlaceholder(assumeYes bool) {
 	}
 	container := harness.SandboxWorktreeContainer(commonDir, home)
 	if container == "" {
+		// Not inside a worktree with a grantable container — nothing to
+		// reconcile, and no section header so a plain setup stays quiet.
 		return
 	}
+	fmt.Println("\n=== Sandbox .git Placeholder ===")
 	applyGitPlaceholder(filepath.Join(container, ".git"), assumeYes)
 }
 
@@ -99,6 +102,15 @@ func applyGitPlaceholder(placeholder string, assumeYes bool) {
 	if !askYesNo("Replace it with an empty .git placeholder file?", true, assumeYes) {
 		fmt.Println("  Left as-is. Builds under this directory may fail with 'exit 128';")
 		fmt.Println("  set GOFLAGS=-buildvcs=false, or re-run setup to fix it later.")
+		return
+	}
+	// Re-verify immediately before the destructive step. The confirmation
+	// prompt above is a wide window (human think-time) in which real repo
+	// content could appear; never RemoveAll something that has stopped looking
+	// like the phantom since we checked.
+	if !looksLikeSandboxGitPhantom(placeholder) {
+		fmt.Printf("  %s changed and no longer looks like the sandbox phantom — leaving it untouched.\n",
+			placeholder)
 		return
 	}
 	if rerr := os.RemoveAll(placeholder); rerr != nil {
