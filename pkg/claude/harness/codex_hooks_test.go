@@ -25,6 +25,14 @@ func seedTclaudeOnPath(t *testing.T) {
 	bin := filepath.Join(dir, "tclaude")
 	require.NoError(t, os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755))
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	oldCommand := codexHookCommandString
+	oldVersion := codexVersionOutput
+	codexHookCommandString = func() string { return bin + " session hook-callback" }
+	codexVersionOutput = func() ([]byte, error) { return []byte("codex-cli 0.144.1\n"), nil }
+	t.Cleanup(func() {
+		codexHookCommandString = oldCommand
+		codexVersionOutput = oldVersion
+	})
 }
 
 // TestCodexHookInstaller_InstallAndCheck installs into a temp ~/.codex and
@@ -34,6 +42,7 @@ func seedTclaudeOnPath(t *testing.T) {
 func TestCodexHookInstaller_InstallAndCheck(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	seedTclaudeOnPath(t)
 
 	inst := codexHookInstaller{}
 	require.Equal(t, filepath.Join(home, ".codex", "hooks.json"), inst.ConfigTarget())
@@ -100,6 +109,12 @@ func TestCodexHookInstaller_Idempotent(t *testing.T) {
 	assert.Equal(t, 1, count, "exactly one tclaude hook per event after re-install")
 }
 
+func TestIsOurCodexHook_QuotedAbsolutePath(t *testing.T) {
+	assert.True(t, isOurCodexHook(`'/Applications/T Claude/bin/tclaude' session hook-callback`))
+	assert.True(t, isOurCodexHook(`'/tmp/it'"'"'s/tclaude' session hook-callback`))
+	assert.False(t, isOurCodexHook(`'/Applications/T Claude/bin/other' session hook-callback`))
+}
+
 // TestCodexHookInstaller_PreservesUserContent confirms install is surgical:
 // a non-tclaude hook and an unrelated top-level key survive.
 func TestCodexHookInstaller_PreservesUserContent(t *testing.T) {
@@ -147,6 +162,7 @@ func TestCodexHookInstaller_PreservesUserContent(t *testing.T) {
 func TestCodexHookInstaller_RepairsStale(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	seedTclaudeOnPath(t)
 	dir := filepath.Join(home, ".codex")
 	require.NoError(t, os.MkdirAll(dir, 0o755))
 	seed := `{"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "/old/path/tclaude session hook-callback"}]}]}}`
@@ -168,6 +184,7 @@ func TestCodexHookInstaller_RepairsStale(t *testing.T) {
 func TestCodexHookInstaller_PreservesUserHookOptionalFields(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	seedTclaudeOnPath(t)
 	dir := filepath.Join(home, ".codex")
 	require.NoError(t, os.MkdirAll(dir, 0o755))
 	// A user hook in the SAME event tclaude registers (SessionStart), with
@@ -215,6 +232,7 @@ func TestCodexHookInstaller_PreservesUserHookOptionalFields(t *testing.T) {
 func TestCodexHookInstaller_EmptyFileTreatedAsNoHooks(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	seedTclaudeOnPath(t)
 	dir := filepath.Join(home, ".codex")
 	require.NoError(t, os.MkdirAll(dir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "hooks.json"), []byte("   \n"), 0o644))
@@ -256,5 +274,5 @@ func TestCodexHarness_HasHooks(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, h.SupportsHooks(), "codex harness must expose a HookInstaller")
 	assert.Equal(t, filepath.Join(home, ".codex", "hooks.json"), h.Hooks.ConfigTarget())
-	assert.NotEmpty(t, h.Hooks.TrustNote(), "codex requires a trust step, so TrustNote is non-empty")
+	assert.NotEmpty(t, h.Hooks.TrustNote(), "auto-added Codex hooks retain an explicit trust instruction")
 }

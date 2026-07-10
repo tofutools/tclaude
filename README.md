@@ -68,7 +68,7 @@ tclaude agent spawn --group g --name w --harness codex   # spawn a Codex agent
 | Rename | ✅ in-pane `/rename` | ✅ out-of-band title store |
 | Compact | ✅ `/compact` | ✅ `/compact` |
 | Graceful stop | ✅ `/exit` | ✅ `/quit` |
-| Hooks / live status | ✅ `settings.json` | ✅ `~/.codex/hooks.json` (+ trust) |
+| Hooks / live status | ✅ `settings.json` | ✅ `~/.codex/hooks.json` (+ setup-managed trust) |
 | OS sandbox at spawn | ⚙️ via `settings.json` | ✅ `--sandbox` (secure default for agents) |
 | Approval posture at spawn | ⚙️ via `settings.json` | ✅ `--ask-for-approval` (non-blocking default) |
 | Auto-approve review | ⚙️ `auto` permission mode | ⚙️ opt-in `--auto-review` (guardian, experimental) |

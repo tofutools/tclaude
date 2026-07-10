@@ -69,27 +69,21 @@ type codexHookInstaller struct{}
 
 func (codexHookInstaller) ConfigTarget() string { return codexHooksPath() }
 
-// TrustNote: Codex runs a non-managed command hook only after it's trusted
-// (a sha256 trusted_hash persisted in config.toml [hooks.state]). Because
-// tclaude's hook lives in the user-level ~/.codex/hooks.json and Codex
-// keys trust on a config-derived hash (event + command, repo-independent),
-// approving it ONCE in Codex's startup hooks review persists across every
-// future session and repo — so this is a one-time step, not per-launch.
-// (A scoped --dangerously-bypass-hook-trust toggle for fully-unattended
-// first runs is a possible future enhancement; the default is safe.)
+// TrustNote explains the intentionally declaration-only auto-install path.
+// Setup grants execution trust only when Codex is explicitly selected.
 func (codexHookInstaller) TrustNote() string {
-	return "Codex runs command hooks only after they're trusted: on the first Codex launch, approve the tclaude hook in the startup hooks review. " +
-		"The approval persists across all future sessions and repos, so it's a one-time step. " +
-		"(For fully-unattended/headless deployments, the Codex Spawner can launch with hook-trust bypassed — at the cost of also running any repo-local ./.codex hooks unprompted, a supply-chain trade-off; default is safe.)"
+	return "Codex hooks are installed but not trusted. Run 'tclaude setup --harness codex' to trust only tclaude's installed hooks; unrelated hooks remain on Codex's normal review path."
 }
 
 // codexHookCommandStr is the callback command tclaude installs — the same
 // `tclaude session hook-callback` every harness invokes (the callback
 // reads a snake_case JSON payload from stdin; Codex's payload matches
 // Claude Code's field-for-field).
-func codexHookCommandStr() string {
-	return clcommon.DetectCmd("session", "hook-callback")
+var codexHookCommandString = func() string {
+	return clcommon.DetectAbsoluteCmd("session", "hook-callback")
 }
+
+func codexHookCommandStr() string { return codexHookCommandString() }
 
 // isOurCodexHook reports whether a hook command belongs to tclaude — any
 // path whose basename is "tclaude" (mirrors session.isOurHook for CC). The
@@ -99,11 +93,50 @@ func codexHookCommandStr() string {
 // that happens to share the name would be replaced on install (vanishingly
 // unlikely, and the same assumption CC's installer makes).
 func isOurCodexHook(command string) bool {
-	fields := strings.Fields(command)
-	if len(fields) == 0 {
+	first := firstShellCommandWord(command)
+	if first == "" {
 		return false
 	}
-	return filepath.Base(fields[0]) == "tclaude"
+	return filepath.Base(first) == "tclaude"
+}
+
+// firstShellCommandWord decodes the quoting forms emitted by ShellQuoteArg so
+// an absolute tclaude path containing spaces/apostrophes is still recognized
+// and repaired on upgrade. It intentionally parses only the first shell word.
+func firstShellCommandWord(command string) string {
+	command = strings.TrimSpace(command)
+	var out strings.Builder
+	var quote byte
+	for i := 0; i < len(command); i++ {
+		c := command[i]
+		if quote == 0 {
+			switch c {
+			case ' ', '\t', '\r', '\n':
+				return out.String()
+			case '\'', '"':
+				quote = c
+			case '\\':
+				if i+1 < len(command) {
+					i++
+					out.WriteByte(command[i])
+				}
+			default:
+				out.WriteByte(c)
+			}
+			continue
+		}
+		if c == quote {
+			quote = 0
+			continue
+		}
+		if quote == '"' && c == '\\' && i+1 < len(command) {
+			i++
+			out.WriteByte(command[i])
+			continue
+		}
+		out.WriteByte(c)
+	}
+	return out.String()
 }
 
 // Check reports whether the tclaude callback is installed for every
@@ -136,21 +169,36 @@ func (codexHookInstaller) Check() (installed bool, missing []string, needsRepair
 	return len(missing) == 0, missing, needsRepair
 }
 
+type codexHookInstallPlan struct {
+	path  string
+	out   []byte
+	hooks map[string]json.RawMessage
+	want  string
+}
+
 // Install installs or repairs the tclaude callback for every required
 // Codex event, preserving any other top-level keys and non-tclaude matcher
 // groups. Idempotent.
 func (codexHookInstaller) Install() error {
+	plan, err := planCodexHookInstall()
+	if err != nil {
+		return err
+	}
+	if err := atomicWritePreservingMode(plan.path, plan.out, 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", plan.path, err)
+	}
+	return nil
+}
+
+func planCodexHookInstall() (codexHookInstallPlan, error) {
 	path := codexHooksPath()
 	if path == "" {
-		return fmt.Errorf("cannot determine codex hooks path")
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create ~/.codex: %w", err)
+		return codexHookInstallPlan{}, fmt.Errorf("cannot determine codex hooks path")
 	}
 
 	hooks, top, err := readCodexHooks(path)
 	if err != nil && !os.IsNotExist(err) {
-		return err
+		return codexHookInstallPlan{}, err
 	}
 	if hooks == nil {
 		hooks = map[string]json.RawMessage{}
@@ -166,7 +214,7 @@ func (codexHookInstaller) Install() error {
 	for event, groupsRaw := range hooks {
 		cleaned, removed, err := removeOurCodexHooks(groupsRaw)
 		if err != nil {
-			return fmt.Errorf("clean codex hooks for %s: %w", event, err)
+			return codexHookInstallPlan{}, fmt.Errorf("clean codex hooks for %s: %w", event, err)
 		}
 		if removed {
 			if cleaned == nil {
@@ -182,36 +230,33 @@ func (codexHookInstaller) Install() error {
 	group := codexMatcherGroup{Hooks: []codexHookCommand{{Type: "command", Command: want}}}
 	groupJSON, err := json.Marshal(group)
 	if err != nil {
-		return err
+		return codexHookInstallPlan{}, err
 	}
 	for _, event := range codexHookEvents {
 		var groups []json.RawMessage
 		if existing, ok := hooks[event]; ok {
 			if err := json.Unmarshal(existing, &groups); err != nil {
-				return fmt.Errorf("parse codex hooks for %s: %w", event, err)
+				return codexHookInstallPlan{}, fmt.Errorf("parse codex hooks for %s: %w", event, err)
 			}
 		}
 		groups = append(groups, groupJSON)
 		merged, err := json.Marshal(groups)
 		if err != nil {
-			return err
+			return codexHookInstallPlan{}, err
 		}
 		hooks[event] = merged
 	}
 
 	hooksJSON, err := json.Marshal(hooks)
 	if err != nil {
-		return err
+		return codexHookInstallPlan{}, err
 	}
 	top["hooks"] = hooksJSON
 	out, err := json.MarshalIndent(top, "", "  ")
 	if err != nil {
-		return err
+		return codexHookInstallPlan{}, err
 	}
-	if err := os.WriteFile(path, out, 0o644); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
-	}
-	return nil
+	return codexHookInstallPlan{path: path, out: out, hooks: hooks, want: want}, nil
 }
 
 // readCodexHooks reads ~/.codex/hooks.json and returns the event→groups

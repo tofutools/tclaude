@@ -182,13 +182,23 @@ func runSetup(params *Params) error {
 	// installed gets its Codex hooks without anyone having to pass
 	// `--harness codex`. Installing hooks for a harness you don't actively
 	// use is harmless: the status state machine tolerates a harness firing
-	// fewer events, and Codex won't run the callback until it's trusted (see
-	// codexHookInstaller.TrustNote).
+	// fewer events. A non-selected trust-capable harness gets an explicit prompt;
+	// declining leaves both its declarations and trust store untouched.
 	for i, hh := range hookInstallTargets(h, harnessOnPath) {
 		if i > 0 {
 			fmt.Println()
 		}
-		if err := installHooksForHarness(hh); err != nil {
+		grantTrust := hh.Name == h.Name
+		if !grantTrust {
+			if _, trustCapable := hh.Hooks.(harness.TrustedHookInstaller); trustCapable {
+				if !consentToDetectedHookTrust(hh, params.Yes) {
+					fmt.Printf("• Skipped %s hooks (no hook trust was granted)\n", hh.DisplayName)
+					continue
+				}
+				grantTrust = true
+			}
+		}
+		if err := installHooksForHarness(hh, grantTrust); err != nil {
 			return err
 		}
 	}
@@ -476,6 +486,11 @@ func installDefaultMusicVolume() error {
 	return nil
 }
 
+func consentToDetectedHookTrust(h *harness.Harness, assumeYes bool) bool {
+	prompt := fmt.Sprintf("Install and trust tclaude hooks for detected %s?", h.DisplayName)
+	return askYesNo(prompt, false, assumeYes)
+}
+
 // hookInstallTargets returns the harnesses whose tclaude callback hooks the
 // baseline should install: the selected harness always (hooks are the
 // mandatory core, installed regardless of whether its CLI is on PATH), plus
@@ -516,28 +531,59 @@ func harnessOnPath(h *harness.Harness) bool {
 // installHooksForHarness installs or repairs the tclaude callback hooks for
 // one harness, printing its section. A harness with no HookInstaller in this
 // build is skipped with a note rather than failing the whole run.
-func installHooksForHarness(h *harness.Harness) error {
+func installHooksForHarness(h *harness.Harness, grantTrust bool) error {
 	fmt.Printf("=== Hooks (%s) ===\n", h.DisplayName)
 	if !h.SupportsHooks() {
 		fmt.Printf("  (no hook installer for harness %q in this build; skipping)\n", h.Name)
 		return nil
 	}
+	trustedInstaller, hasTrust := h.Hooks.(harness.TrustedHookInstaller)
+	trustSupported := false
+	trustReason := ""
+	if grantTrust && hasTrust {
+		trustSupported, trustReason = trustedInstaller.AutoTrustSupported()
+	}
 	installed, missing, needsRepair := h.Hooks.Check()
-	if installed && !needsRepair {
-		fmt.Println("✓ All hooks already installed")
+	trusted := hasTrust && trustedInstaller.Trusted()
+	if installed && !needsRepair && (!grantTrust || !trustSupported || trusted) {
+		if hasTrust && trusted {
+			fmt.Println("✓ All hooks already installed and trusted")
+		} else {
+			fmt.Println("✓ All hooks already installed")
+		}
 	} else {
 		if needsRepair {
-			fmt.Println("  Repairing stale/duplicate hooks...")
+			fmt.Println("  Repairing hook configuration...")
 		}
 		if len(missing) > 0 {
 			fmt.Printf("  Installing hooks for: %v\n", missing)
 		}
-		if err := h.Hooks.Install(); err != nil {
-			return fmt.Errorf("failed to install hooks: %w", err)
+		switch {
+		case grantTrust && hasTrust && trustSupported && (!installed || needsRepair):
+			if err := trustedInstaller.InstallTrusted(); err != nil {
+				return fmt.Errorf("failed to install and trust hooks: %w", err)
+			}
+		case grantTrust && hasTrust && trustSupported:
+			if err := trustedInstaller.TrustInstalled(); err != nil {
+				return fmt.Errorf("failed to trust installed hooks: %w", err)
+			}
+		default:
+			if err := h.Hooks.Install(); err != nil {
+				return fmt.Errorf("failed to install hooks: %w", err)
+			}
 		}
-		fmt.Printf("✓ Hooks installed (%s)\n", h.Hooks.ConfigTarget())
+		trusted = hasTrust && trustedInstaller.Trusted()
+		if trusted {
+			fmt.Printf("✓ Hooks installed and trusted (%s)\n", h.Hooks.ConfigTarget())
+		} else {
+			fmt.Printf("✓ Hooks installed (%s)\n", h.Hooks.ConfigTarget())
+		}
 	}
-	if note := h.Hooks.TrustNote(); note != "" {
+	if grantTrust && hasTrust && !trustSupported {
+		fmt.Printf("  ⚠ Automatic hook trust skipped: %s\n", trustReason)
+	}
+	if hasTrust && !trusted {
+		note := h.Hooks.TrustNote()
 		fmt.Printf("  ⚠ %s\n", note)
 	}
 	// For Codex, also install the tclaude-managed permission profile that lets a
@@ -561,20 +607,32 @@ func installHooksForHarness(h *harness.Harness) error {
 
 // checkHooksForHarness reports one harness's hook-install status in the
 // `tclaude setup --check` output.
-func checkHooksForHarness(h *harness.Harness) {
+func checkHooksForHarness(h *harness.Harness, expectTrust bool) {
 	fmt.Printf("\n=== Hooks (%s) ===\n", h.DisplayName)
 	if !h.SupportsHooks() {
 		fmt.Printf("  (no hook installer for harness %q in this build)\n", h.Name)
 		return
 	}
+	trustedInstaller, hasTrust := h.Hooks.(harness.TrustedHookInstaller)
 	installed, missing, needsRepair := h.Hooks.Check()
 	if needsRepair {
-		fmt.Println("⚠ Stale or duplicate hooks detected (need repair)")
+		fmt.Println("⚠ Hook configuration needs repair")
 	}
 	if installed {
-		fmt.Println("✓ All hooks installed")
+		if hasTrust && trustedInstaller.Trusted() {
+			fmt.Println("✓ All hooks installed and trusted")
+		} else {
+			fmt.Println("✓ All hooks installed")
+		}
 	} else {
 		fmt.Printf("✗ Missing hooks: %v\n", missing)
+	}
+	if expectTrust && hasTrust && !trustedInstaller.Trusted() {
+		if supported, reason := trustedInstaller.AutoTrustSupported(); !supported {
+			fmt.Printf("⚠ Automatic hook trust unavailable: %s\n", reason)
+		} else {
+			fmt.Println("⚠ Installed hooks are not trusted; run setup to repair")
+		}
 	}
 	// For Codex, also report the managed agentd permission profile (the
 	// JOH-207 baseline artifact installed by installHooksForHarness), so a
@@ -799,7 +857,7 @@ func checkStatus(harnessName string) error {
 		checkTargets = hookInstallTargets(h, harnessOnPath)
 	}
 	for _, hh := range checkTargets {
-		checkHooksForHarness(hh)
+		checkHooksForHarness(hh, harnessName == "" || hh.Name == h.Name)
 	}
 
 	// Check status bar
