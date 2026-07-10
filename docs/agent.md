@@ -461,9 +461,9 @@ check, a parent whose sandbox cannot touch a directory could spawn a child
 into it and use the child as its writable proxy. A sandboxed agent caller
 must therefore prove it can itself write in every directory the child would
 get write access to (the launch cwd, an explicit worktree, and—when Git-backed
-sandbox support applies—the safe sibling-worktree container, original/main
-worktree, and shared Git common dir): the daemon answers the first request
-with a `403 write_proof_required` challenge naming a single-use token, the caller
+sandbox support applies—the minimal repository root covering the sibling
+container, original/main worktree, and shared Git metadata): the daemon answers
+the first request with a `403 write_proof_required` challenge naming a single-use token, the caller
 creates an empty file named `.tclaude-write-proof-<token>` in each listed
 directory, and retries the same request with `write_proof_token` set; the
 daemon verifies the files and pins the request to the resolved paths. The
@@ -487,6 +487,12 @@ trust-folder modal. Other agent-selected paths remain forbidden. All extra
 repository write grants are resolved, proved, and pinned before launch rather
 than recomputed from a mutable cwd; Codex consumes them through its managed
 profile and Claude Code through merged `sandbox.filesystem.allowWrite` paths.
+Agent-triggered clone, reincarnate, and resume operations prove the inherited
+child cwd plus any repository root added by the current sandbox profile. The
+forked session binds the cwd marker after tmux changes directory and checks the
+same marker in every pinned root immediately before starting the harness.
+Recreating a missing resume cwd remains human-only because the daemon cannot
+prove an agent can write inside a path that does not yet exist.
 
 ### clone / reincarnate / compact / context-info
 

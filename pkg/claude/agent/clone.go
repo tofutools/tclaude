@@ -126,7 +126,9 @@ func runClone(p *cloneParams, stdin io.Reader, stdout, stderr io.Writer) int {
 		MessageID     int64    `json:"message_id,omitempty"`
 		Note          string   `json:"note,omitempty"`
 	}
-	if err := DaemonRequest(http.MethodPost, path, body, &resp, DaemonOpts{AskHuman: ask}); err != nil {
+	if err := DaemonRequestWithWriteProof(http.MethodPost, path,
+		func(token string) any { return withWriteProofToken(body, token) },
+		&resp, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}

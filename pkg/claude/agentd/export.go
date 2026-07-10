@@ -262,7 +262,7 @@ func runExportClone(jobID int64, originalConv, cwd, effort, model string, sameGr
 		failExportJobAndReap(jobID, "", "could not clone the conversation to export it: "+gerr.Error())
 		return
 	}
-	newConv, _, _, warn, spawnErr := cloneSpawnOnce(originalConv, cwd, false /* copy conv */, effort, model, "", nil, codexGitCommonDir)
+	newConv, _, _, warn, spawnErr := cloneSpawnOnce(originalConv, cwd, false /* copy conv */, effort, model, "", false, nil, codexGitCommonDir, nil)
 	if spawnErr != nil {
 		slog.Warn("export clone: spawn failed", "job", jobID, "orig", originalConv, "error", spawnErr.Msg)
 		failExportJobAndReap(jobID, "", "could not clone the conversation to export it: "+spawnErr.Msg)

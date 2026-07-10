@@ -36,7 +36,7 @@ func TestHandleAgentStop_SkipsOfflineTarget(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/v1/agent/w/stop", nil)
 	r = r.WithContext(context.WithValue(r.Context(), peerKey{},
-		&peer{PID: 1, HasClaudeAncestor: true, ConvID: "manager"}))
+		&peer{PID: 1, HumanTokenValid: true}))
 	handleAgentByConv(w, r)
 
 	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
@@ -90,7 +90,7 @@ func TestHandleAgentResume_AttemptsSpawnForOfflineTarget(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/v1/agent/w/resume", nil)
 	r = r.WithContext(context.WithValue(r.Context(), peerKey{},
-		&peer{PID: 1, HasClaudeAncestor: true, ConvID: "manager"}))
+		&peer{PID: 1, HumanTokenValid: true}))
 	handleAgentByConv(w, r)
 
 	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
@@ -159,9 +159,6 @@ func TestResumeOneConv_UsesCodexNativeStoreWhenTclaudeCacheMissing(t *testing.T)
 	cwd := filepath.Join(home, "repo")
 	require.NoError(t, os.MkdirAll(cwd, 0o755))
 	require.NoError(t, exec.Command("git", "init", "-q", cwd).Run())
-	commonDir, err := harness.CodexGitCommonDir(cwd)
-	require.NoError(t, err)
-
 	const convID = "019ec663-3bef-7c41-abf8-ad956ed94a01"
 	cx := testharness.NewCodexSimWithID(t, home, convID, cwd)
 	require.NoError(t, cx.Start())
@@ -176,9 +173,9 @@ func TestResumeOneConv_UsesCodexNativeStoreWhenTclaudeCacheMissing(t *testing.T)
 	assert.Equal(t, convID, rec.convID)
 	assert.Equal(t, cwd, rec.cwd)
 	assert.Equal(t, harness.CodexName, rec.harness)
-	assert.Equal(t, commonDir, rec.codexGitCommonDir)
-	assert.True(t, rec.codexGitCommonDirPinned,
-		"ordinary Codex lifecycle resume must carry the daemon pin-presence bit")
+	assert.Empty(t, rec.codexGitCommonDir,
+		"proofless human relaunch lets the child derive its own repository root")
+	assert.False(t, rec.codexGitCommonDirPinned)
 }
 
 // A resume whose recorded launch dir was deleted must NOT spawn into the
@@ -248,7 +245,7 @@ func TestHandleAgentResume_RecreateParamCreatesMissingDir(t *testing.T) {
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodPost, "/v1/agent/"+convID+"/resume"+query, nil)
 		r = r.WithContext(context.WithValue(r.Context(), peerKey{},
-			&peer{PID: 1, HasClaudeAncestor: true, ConvID: "manager"}))
+			&peer{PID: 1, HumanTokenValid: true}))
 		handleAgentByConv(w, r)
 		require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 		var resp map[string]any
@@ -270,9 +267,28 @@ func TestHandleAgentResume_RecreateParamCreatesMissingDir(t *testing.T) {
 	assert.Equal(t, gone, rec.cwd)
 }
 
+func TestHandleAgentResume_AgentCannotRecreateMissingDir(t *testing.T) {
+	setupTestDB(t)
+	gone := filepath.Join(t.TempDir(), "deleted-worktree")
+	const convID = "agent-recreate-target-12345678"
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID: convID, ProjectPath: gone, IndexedAt: time.Now(),
+	}))
+	require.NoError(t, db.GrantAgentPermission("manager", PermAgentResume, "<test>"))
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/v1/agent/"+convID+"/resume?recreate=1", nil)
+	r = r.WithContext(context.WithValue(r.Context(), peerKey{},
+		&peer{PID: 1, HasClaudeAncestor: true, ConvID: "manager"}))
+	handleAgentByConv(w, r)
+	require.Equal(t, http.StatusForbidden, w.Code, "body=%s", w.Body.String())
+	assert.Contains(t, w.Body.String(), "recreate_dir_restricted")
+	assert.NoDirExists(t, gone)
+}
+
 type recordingResumeSpawner struct {
-	convID, cwd, effort, model, harness, sandbox, approval, codexGitCommonDir string
-	autoReview, codexGitCommonDirPinned                                       bool
+	convID, cwd, cwdWriteProof, effort, model, harness, sandbox, approval, codexGitCommonDir string
+	autoReview, codexGitCommonDirPinned                                                      bool
 }
 
 func installRecordingResumeSpawner(t *testing.T) *recordingResumeSpawner {
@@ -291,6 +307,7 @@ func (s *recordingResumeSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 func (s *recordingResumeSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	s.convID = args.ConvID
 	s.cwd = args.Cwd
+	s.cwdWriteProof = args.CwdWriteProof
 	s.effort = args.Effort
 	s.model = args.Model
 	s.harness = args.Harness
@@ -318,4 +335,34 @@ func TestResumeOneConv_ConvIndexProjectDirFallback(t *testing.T) {
 	require.Equal(t, "resumed", res.Action, "detail=%s", res.Detail)
 	assert.Equal(t, cwd, rec.cwd)
 	assert.True(t, rec.harness == "" || strings.EqualFold(rec.harness, harness.DefaultName))
+}
+
+func TestResumeOneConvWithGrant_OnlineProofSnapshotCannotBecomeLaunch(t *testing.T) {
+	setupTestDB(t)
+	rec := installRecordingResumeSpawner(t)
+	const convID = "online-at-proof-conv-12345678"
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID: convID, ProjectPath: t.TempDir(), IndexedAt: time.Now(),
+	}))
+
+	// The sentinel is recorded by requireResumeWriteProofs while the member is
+	// online. At execution time this test has no live tmux row, modelling the
+	// online→offline transition that can occur behind an earlier bulk resume.
+	res := resumeOneConvWithGrant(convID, false, &resumeGrant{SkipOnline: true}, "", nil)
+	require.Equal(t, "skipped:already_online", res.Action, "detail=%s", res.Detail)
+	assert.Empty(t, rec.convID, "proof-time-online member must not turn into an unproved launch")
+}
+
+func TestResumeOneConvWithGrant_DoesNotPassAnotherMembersProof(t *testing.T) {
+	setupTestDB(t)
+	rec := installRecordingResumeSpawner(t)
+	const convID = "unproved-group-member-conv-12345678"
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID: convID, ProjectPath: t.TempDir(), IndexedAt: time.Now(),
+	}))
+
+	res := resumeOneConvWithGrant(convID, false, nil, "other-member-proof", nil)
+	require.Equal(t, "resumed", res.Action, "detail=%s", res.Detail)
+	assert.Empty(t, rec.cwdWriteProof,
+		"member without a cwd grant must not receive another member's group proof")
 }

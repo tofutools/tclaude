@@ -286,6 +286,14 @@ func StubApprovalForTest(decision bool) func() {
 	return func() { RequestHumanApprovalImpl = prev }
 }
 
+// SetGroupCloneAfterProofForTest installs a one-shot observation seam between
+// an agent group-clone's proof snapshot and member loop.
+func SetGroupCloneAfterProofForTest(fn func()) func() {
+	prev := groupCloneAfterProofForTest
+	groupCloneAfterProofForTest = fn
+	return func() { groupCloneAfterProofForTest = prev }
+}
+
 // StubAlwaysAllowApprovalForTest swaps the popup with a stub that drives
 // the "Always allow for this agent" outcome (JOH-367): it routes through
 // the REAL applyApprovalOutcome, so it audits AND persists the allow

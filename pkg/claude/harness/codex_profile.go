@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 )
@@ -20,7 +21,9 @@ import (
 // rest of $HOME writable.
 //
 // It is realised as a layered config-profile file the Spawner selects with
-// `codex -p <name>` — NOT a `--sandbox` flag — because the two sandbox models
+// `codex -p <name>` — the installed baseline is tclaude-agent, while each
+// launch uses a unique tclaude-agent-<launch-id> copy so proof-scoped
+// repository grants cannot race. This is NOT a `--sandbox` flag because the two sandbox models
 // do not compose: whenever a `sandbox_mode` / `--sandbox` is in play Codex
 // uses the older sandbox settings and silently ignores permission profiles
 // (verified firsthand against codex-cli 0.139.0; JOH-207). And only the
@@ -29,6 +32,8 @@ import (
 // `[sandbox_workspace_write]` table has all-or-nothing `network_access` only.
 const CodexAgentProfile = "tclaude-agent"
 
+const codexAgentLaunchProfileMaxAge = 24 * time.Hour
+
 // codexProfileNameRe restricts a permission-profile name to a simple
 // identifier. The name becomes a `codex -p <name>` launch arg, the
 // <name>.config.toml filename, AND a TOML table key, so confining it to
@@ -36,6 +41,8 @@ const CodexAgentProfile = "tclaude-agent"
 // metacharacter at the boundary where untrusted input could enter (the
 // human-facing --permission-profile flag).
 var codexProfileNameRe = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+var codexAgentLaunchIDRe = regexp.MustCompile(`^[0-9a-f]{16}$`)
+var codexAgentLaunchProfileFileRe = regexp.MustCompile(`^tclaude-agent-[0-9a-f]{16}\.config\.toml$`)
 
 // ValidateCodexProfileName trims and validates a Codex permission-profile
 // name. "" passes through unchanged (the caller omits the flag); any other
@@ -70,19 +77,30 @@ func codexConfigDir() (string, error) {
 // CodexAgentProfilePath is the managed profile file that `codex -p
 // tclaude-agent` resolves: <codex-home>/tclaude-agent.config.toml.
 func CodexAgentProfilePath() (string, error) {
+	return codexAgentProfilePath(CodexAgentProfile)
+}
+
+func codexAgentProfilePath(name string) (string, error) {
+	name, err := ValidateCodexProfileName(name)
+	if err != nil {
+		return "", err
+	}
+	if name == "" {
+		return "", fmt.Errorf("codex permission profile name is required")
+	}
 	dir, err := codexConfigDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, CodexAgentProfile+".config.toml"), nil
+	return filepath.Join(dir, name+".config.toml"), nil
 }
 
 // codexAgentProfileContent renders the managed profile's TOML for the given
 // absolute agent-facing socket and private-state paths. When gitCommonDir is
-// non-empty, the profile grants the narrow repository path set
-// GitWorktreeWriteDirs derives from it: the sibling-worktree container,
-// original/main worktree, and shared Git metadata. That lets the agent create
-// a default ../<repo>-<branch> worktree and commit from it without making the
+// non-empty, the profile grants the minimal repository root
+// GitWorktreeWriteDirs derives from it. That root covers the sibling-worktree
+// container, original/main worktree, and shared Git metadata. It lets the agent
+// create a default ../<repo>-<branch> worktree and commit from it without making the
 // rest of $HOME writable. Paths are
 // embedded as TOML basic-string keys, so a path carrying a double-quote,
 // backslash, or control char is rejected rather than allowed to corrupt the
@@ -93,8 +111,8 @@ func CodexAgentProfilePath() (string, error) {
 //   - extends the built-in `:workspace` profile (cwd-subtree writable, $HOME
 //     read-only), then denies all access to ~/.tclaude. The canonical agentd
 //     socket lives outside that private-state tree;
-//   - optionally allows writes to the current repository's main worktree, Git
-//     common dir (objects/refs/logs), and safe sibling-worktree container;
+//   - optionally allows writes to the minimal stable root covering the current
+//     repository and safe sibling-worktree container;
 //   - enables the network sandbox and allowlists exactly the agentd socket.
 //     `network.enabled = true` is REQUIRED for the Unix-socket allowlist to
 //     take effect (verified: with it unset the socket connect is denied). It
@@ -103,24 +121,39 @@ func CodexAgentProfilePath() (string, error) {
 //   - sets `default_permissions` so `codex -p <name>` activates the profile —
 //     the TUI/exec have no `-P` flag, so selection is via default_permissions.
 func codexAgentProfileContent(socketPath, privateStateDir, gitCommonDir string) (string, error) {
-	if err := validateCodexProfilePath("agentd socket path", socketPath); err != nil {
-		return "", err
-	}
-	if err := validateCodexProfilePath("tclaude private state dir", privateStateDir); err != nil {
-		return "", err
-	}
 	if gitCommonDir != "" {
 		if err := validateCodexProfilePath("git common dir", gitCommonDir); err != nil {
 			return "", err
 		}
 	}
 	writeDirs := GitWorktreeWriteDirs(gitCommonDir, filepath.Dir(privateStateDir))
+	return codexAgentProfileContentForWriteDirs(socketPath, privateStateDir, writeDirs)
+}
+
+func codexAgentProfileContentForWriteDirs(socketPath, privateStateDir string, writeDirs []string) (string, error) {
+	return codexAgentProfileContentForNameAndWriteDirs(CodexAgentProfile, socketPath, privateStateDir, writeDirs)
+}
+
+func codexAgentProfileContentForNameAndWriteDirs(profileName, socketPath, privateStateDir string, writeDirs []string) (string, error) {
+	profileName, err := ValidateCodexProfileName(profileName)
+	if err != nil {
+		return "", err
+	}
+	if profileName == "" {
+		return "", fmt.Errorf("codex permission profile name is required")
+	}
+	if err := validateCodexProfilePath("agentd socket path", socketPath); err != nil {
+		return "", err
+	}
+	if err := validateCodexProfilePath("tclaude private state dir", privateStateDir); err != nil {
+		return "", err
+	}
 	for _, dir := range writeDirs {
 		if err := validateCodexProfilePath("git worktree write dir", dir); err != nil {
 			return "", err
 		}
 	}
-	p := CodexAgentProfile
+	p := profileName
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Managed by tclaude (TCL-283) — do not edit; regenerated by `tclaude setup`\n")
 	fmt.Fprintf(&b, "# and at spawn time. Selected per-spawn via `codex -p %s` for\n", p)
@@ -207,6 +240,88 @@ func EnsureCodexAgentProfileForGitCommonDir(gitCommonDir string) (string, error)
 	return ensureCodexAgentProfile(sock, privateStateDir, gitCommonDir)
 }
 
+// EnsureCodexAgentProfileForWriteDirs renders the managed profile from the
+// daemon-proofed permission roots verbatim. The child must not re-derive them
+// from a path the caller could mutate between verification and launch.
+func EnsureCodexAgentProfileForWriteDirs(writeDirs []string) (string, error) {
+	sock, privateStateDir, err := codexAgentSandboxPaths()
+	if err != nil {
+		return "", err
+	}
+	return ensureCodexAgentProfileForWriteDirs(sock, privateStateDir, writeDirs)
+}
+
+// EnsureCodexAgentLaunchProfile writes a launch-unique managed profile and
+// returns both its Codex profile name and file path. A fixed global profile is
+// unsafe for proof-scoped grants: concurrent launches for different
+// repositories could overwrite one another before Codex reads the file. The
+// launch ID is restricted by the normal profile-name gate and becomes part of
+// both the profile name and filename.
+func EnsureCodexAgentLaunchProfile(writeDirs []string, launchID string) (profileName, path string, err error) {
+	launchID = strings.TrimSpace(launchID)
+	if launchID == "" {
+		return "", "", fmt.Errorf("managed Codex launch profile requires a launch ID")
+	}
+	if !codexAgentLaunchIDRe.MatchString(launchID) {
+		return "", "", fmt.Errorf("managed Codex launch profile ID must be 16 lowercase hex characters")
+	}
+	if err := CleanupStaleCodexAgentLaunchProfiles(codexAgentLaunchProfileMaxAge); err != nil {
+		return "", "", err
+	}
+	profileName, err = ValidateCodexProfileName(CodexAgentProfile + "-" + launchID)
+	if err != nil {
+		return "", "", err
+	}
+	sock, privateStateDir, err := codexAgentSandboxPaths()
+	if err != nil {
+		return "", "", err
+	}
+	path, err = ensureCodexAgentProfileForWriteDirsNamed(profileName, sock, privateStateDir, writeDirs)
+	return profileName, path, err
+}
+
+// CleanupStaleCodexAgentLaunchProfiles removes launch-unique managed profiles
+// left behind by a forced tmux stop or host/process crash. Normal pane exit
+// removes its own file; this age-bounded sweep prevents abnormal exits from
+// accumulating proof-scoped authority files indefinitely without touching the
+// installed tclaude-agent baseline or a recently started launch.
+func CleanupStaleCodexAgentLaunchProfiles(maxAge time.Duration) error {
+	dir, err := codexConfigDir()
+	if err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("scan stale Codex launch profiles: %w", err)
+	}
+	cutoff := time.Now().Add(-maxAge)
+	var failures []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if !codexAgentLaunchProfileFileRe.MatchString(name) {
+			continue
+		}
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			failures = append(failures, name+": "+infoErr.Error())
+			continue
+		}
+		if maxAge > 0 && info.ModTime().After(cutoff) {
+			continue
+		}
+		if removeErr := os.Remove(filepath.Join(dir, name)); removeErr != nil && !os.IsNotExist(removeErr) {
+			failures = append(failures, name+": "+removeErr.Error())
+		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("remove stale Codex launch profiles: %s", strings.Join(failures, "; "))
+	}
+	return nil
+}
+
 // CodexGitCommonDir resolves the Git common dir for cwd. Daemon spawn paths use
 // this before dir write-proof verification so linked-worktree metadata grants
 // are proven and pinned instead of being recomputed after launch.
@@ -227,11 +342,20 @@ func codexAgentSandboxPaths() (socketPath, privateStateDir string, err error) {
 // EnsureCodexAgentProfile, split out so tests can drive it without depending
 // on the caller's $HOME layout.
 func ensureCodexAgentProfile(socketPath, privateStateDir, gitCommonDir string) (string, error) {
-	content, err := codexAgentProfileContent(socketPath, privateStateDir, gitCommonDir)
+	writeDirs := GitWorktreeWriteDirs(gitCommonDir, filepath.Dir(privateStateDir))
+	return ensureCodexAgentProfileForWriteDirs(socketPath, privateStateDir, writeDirs)
+}
+
+func ensureCodexAgentProfileForWriteDirs(socketPath, privateStateDir string, writeDirs []string) (string, error) {
+	return ensureCodexAgentProfileForWriteDirsNamed(CodexAgentProfile, socketPath, privateStateDir, writeDirs)
+}
+
+func ensureCodexAgentProfileForWriteDirsNamed(profileName, socketPath, privateStateDir string, writeDirs []string) (string, error) {
+	content, err := codexAgentProfileContentForNameAndWriteDirs(profileName, socketPath, privateStateDir, writeDirs)
 	if err != nil {
 		return "", err
 	}
-	path, err := CodexAgentProfilePath()
+	path, err := codexAgentProfilePath(profileName)
 	if err != nil {
 		return "", err
 	}

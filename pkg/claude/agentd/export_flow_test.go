@@ -13,7 +13,6 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
-	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -263,13 +262,11 @@ func TestExportFlow_OfflineOriginalStillExports(t *testing.T) {
 	assertCloneRetired(t, workerConv, 3*time.Second)
 }
 
-func TestExportFlow_CodexCopyForwardsPinnedGitCommonDir(t *testing.T) {
+func TestExportFlow_CodexCopyLeavesProoflessRepositoryDerivationToChild(t *testing.T) {
 	f := newFlow(t)
 	dash := agentd.BuildDashboardHandlerForTest()
 	const source = "f93c855a-72fe-4caa-8052-731c68ca753b"
 	repo, _ := initRepoOnMain(t)
-	commonDir, err := harness.CodexGitCommonDir(repo)
-	require.NoError(t, err)
 	f.HaveAliveSession(source, "spwn-export-copy", "tclaude-spwn-export-copy", repo)
 	markSessionAsCodex(t, "spwn-export-copy")
 	installCodexCopyCompatSpawner(t)
@@ -278,10 +275,10 @@ func TestExportFlow_CodexCopyForwardsPinnedGitCommonDir(t *testing.T) {
 	workerConv, _ := awaitExportClone(t, jobID, 5*time.Second)
 	got, ok := f.World.SpawnCodexGitCommonDir(workerConv)
 	require.True(t, ok)
-	assert.Equal(t, commonDir, got)
+	assert.Empty(t, got, "proofless human export clone derives repository grants in the child")
 	pinned, ok := f.World.SpawnCodexGitCommonDirPinned(workerConv)
 	require.True(t, ok)
-	assert.True(t, pinned, "export copy resume must carry pin-presence")
+	assert.False(t, pinned, "proofless human export clone must not carry internal pinned paths")
 }
 
 // TestExportFlow_StandaloneCloneIsIsolated proves the DEFAULT clone is standalone

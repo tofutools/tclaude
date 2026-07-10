@@ -5,7 +5,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 // TestCodexAgentProfileContent pins the managed profile's TOML shape — the
@@ -51,13 +53,14 @@ func TestCodexAgentProfileContent_WithGitCommonDir(t *testing.T) {
 	for _, want := range []string{
 		`[permissions.tclaude-agent.filesystem]`,
 		`"/home/dev/git" = "write"`,
-		`"/home/dev/git/project" = "write"`,
-		`"/home/dev/git/project/.git" = "write"`,
 		`[permissions.tclaude-agent.network]`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("profile content missing %q\n--- got ---\n%s", want, got)
 		}
+	}
+	if strings.Contains(got, `"/home/dev/git/project" = "write"`) {
+		t.Fatalf("profile should use the minimal stable ancestor grant\n%s", got)
 	}
 }
 
@@ -160,6 +163,93 @@ func TestEnsureCodexAgentProfile(t *testing.T) {
 	healed, _ := os.ReadFile(path)
 	if string(healed) != content {
 		t.Fatalf("ensure did not self-heal a corrupted profile file")
+	}
+}
+
+func TestEnsureCodexAgentLaunchProfiles_DoNotRaceAuthority(t *testing.T) {
+	t.Setenv("CODEX_HOME", t.TempDir())
+	const sock = "/home/dev/.tclaude-agentd.sock"
+	const stateDir = "/home/dev/.tclaude"
+	type result struct {
+		name, dir, path string
+		err             error
+	}
+	start := make(chan struct{})
+	results := make(chan result, 2)
+	var wg sync.WaitGroup
+	for _, tc := range []struct{ name, dir string }{
+		{"launch-a", "/work/repo-a"},
+		{"launch-b", "/work/repo-b"},
+	} {
+		wg.Add(1)
+		go func(name, dir string) {
+			defer wg.Done()
+			<-start
+			path, err := ensureCodexAgentProfileForWriteDirsNamed(name, sock, stateDir, []string{dir})
+			results <- result{name: name, dir: dir, path: path, err: err}
+		}(CodexAgentProfile+"-"+tc.name, tc.dir)
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+
+	seenPaths := map[string]bool{}
+	for got := range results {
+		if got.err != nil {
+			t.Fatalf("ensure %s: %v", got.name, got.err)
+		}
+		if seenPaths[got.path] {
+			t.Fatalf("concurrent launches shared profile path %s", got.path)
+		}
+		seenPaths[got.path] = true
+		raw, err := os.ReadFile(got.path)
+		if err != nil {
+			t.Fatalf("read %s: %v", got.path, err)
+		}
+		content := string(raw)
+		if !strings.Contains(content, `default_permissions = "`+got.name+`"`) ||
+			!strings.Contains(content, `"`+got.dir+`" = "write"`) {
+			t.Fatalf("profile %s did not retain its own authority:\n%s", got.name, content)
+		}
+		otherDir := "/work/repo-a"
+		if got.dir == otherDir {
+			otherDir = "/work/repo-b"
+		}
+		if strings.Contains(content, otherDir) {
+			t.Fatalf("profile %s picked up concurrent authority %s", got.name, otherDir)
+		}
+	}
+}
+
+func TestCleanupStaleCodexAgentLaunchProfiles(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CODEX_HOME", dir)
+	base := filepath.Join(dir, CodexAgentProfile+".config.toml")
+	oldLaunch := filepath.Join(dir, CodexAgentProfile+"-1111111111111111.config.toml")
+	freshLaunch := filepath.Join(dir, CodexAgentProfile+"-2222222222222222.config.toml")
+	userProfile := filepath.Join(dir, CodexAgentProfile+"-custom.config.toml")
+	for _, path := range []string{base, oldLaunch, freshLaunch, userProfile} {
+		if err := os.WriteFile(path, []byte("test"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(oldLaunch, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(userProfile, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := CleanupStaleCodexAgentLaunchProfiles(24 * time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(oldLaunch); !os.IsNotExist(err) {
+		t.Fatalf("old launch profile still exists: %v", err)
+	}
+	for _, path := range []string{base, freshLaunch, userProfile} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("cleanup removed retained profile %s: %v", path, err)
+		}
 	}
 }
 

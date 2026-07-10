@@ -108,7 +108,10 @@ safe and non-blocking:
   options: **`tclaude-agent`** (the recommended default), plus the three raw
   Codex modes `workspace-write` | `read-only` | `danger-full-access`.
   - **`tclaude-agent`** is *not* a Codex `--sandbox` mode — it selects a
-    tclaude-managed **permission profile** launched as `codex -p tclaude-agent`.
+    tclaude-managed **permission profile**. Each session launches with a
+    unique `codex -p tclaude-agent-<launch-id>` profile derived from the
+    `tclaude-agent` baseline, so concurrent agents cannot overwrite one
+    another's repository grants.
     It gives the same `workspace-write` containment (only the working directory
     plus `/tmp`/`$TMPDIR` writable; `$HOME` read-only) while explicitly
     denying all filesystem access to `~/.tclaude`. The daemon exposes a
@@ -117,10 +120,12 @@ safe and non-blocking:
     block, so only under this profile can a sandboxed agent run
     `tclaude agent …`. At spawn
     time, when the launch directory is inside a Git repo, the profile also grants
-    write access to the original/main worktree, its Git common dir, and the safe
-    repository container where tclaude creates default sibling worktrees. That
-    lets an agent create `../<repo>-<branch>` and commit there while the rest of
-    `$HOME` stays read-only. A container at/above `$HOME` is never granted. The
+    write access to one minimal repository root: normally the safe container
+    where tclaude creates default sibling worktrees, which also covers the
+    original/main worktree and Git common dir. That lets an agent create
+    `../<repo>-<branch>` and commit there while the rest of `$HOME` stays
+    read-only. A container at/above `$HOME` is never granted; in that layout the
+    original worktree is the narrow fallback root. The
     operator, Codex, and Claude Code all use the same canonical state-free
     endpoint; agentd temporarily also serves the legacy
     `~/.tclaude/agentd.sock` path for
@@ -146,9 +151,10 @@ These are launch-time flags only. Directory trust is the one exception:
 an explicit `trust_dir` opt-in, and every verified default sibling worktree,
 adds an idempotent trusted-project entry to `~/.codex/config.toml` before Codex
 starts so a detached agent cannot freeze on the trust-folder modal. The managed
-sandbox itself lives in a standalone `~/.codex/tclaude-agent.config.toml`
-(the permission profile above), installed by `tclaude setup` and self-healed at
-spawn time; your own config and profiles are left untouched. The research behind
+sandbox baseline lives in `~/.codex/tclaude-agent.config.toml`, installed by
+`tclaude setup`. Spawn-time copies use launch-unique filenames and are removed
+when their Codex process exits. A bounded startup sweep removes old copies left
+by forced stops or host crashes; your own config and profiles are left untouched. The research behind
 the defaults lives in the `tclaude-harness-independence` Linear project
 (JOH-166/JOH-167/JOH-200/JOH-207).
 
@@ -169,8 +175,8 @@ outrank it). Three modes:
   (where no flag means *no* sandbox, so the daemon must impose one), Claude Code's
   `settings.json` *is* the operator's chosen posture. For daemon-spawned agents
   inside a Git repository, tclaude merges only proof-pinned `filesystem.allowWrite`
-  entries for the original worktree, shared Git metadata, and safe sibling-worktree
-  container; Claude Code merges these arrays with the operator's existing scopes.
+  entries using the same minimal repository root; Claude Code merges these
+  arrays with the operator's existing scopes.
 - **`on`** — forces the OS sandbox **on** for this session even if `settings.json`
   leaves it off. It injects the same `sandbox` block as the global hardening
   (single source of truth), so the **agentd Unix socket stays reachable** (the

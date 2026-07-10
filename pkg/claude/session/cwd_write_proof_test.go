@@ -20,8 +20,8 @@ func TestGuardHarnessCommandWithCwdProof_ChecksMarkerThenRuns(t *testing.T) {
 	ready := filepath.Join(dir, "ready")
 	require.NoError(t, os.WriteFile(ready, []byte("pending"), 0o600))
 
-	cmd := exec.Command("sh", "-c", guardHarnessCommandWithCwdProof(
-		"printf launched > "+clcommon.ShellQuoteArg(launched), proof, ready))
+	cmd := exec.Command("sh", "-c", guardHarnessCommandWithDirProof(
+		"printf launched > "+clcommon.ShellQuoteArg(launched), proof, ready, true, nil))
 	cmd.Dir = dir
 	require.NoError(t, cmd.Run())
 
@@ -48,8 +48,8 @@ func TestGuardHarnessCommandWithCwdProof_RejectsPathSwap(t *testing.T) {
 	ready := filepath.Join(root, "ready")
 	require.NoError(t, os.WriteFile(ready, []byte("pending"), 0o600))
 
-	cmd := exec.Command("sh", "-c", guardHarnessCommandWithCwdProof(
-		"printf launched > "+clcommon.ShellQuoteArg(launched), proof, ready))
+	cmd := exec.Command("sh", "-c", guardHarnessCommandWithDirProof(
+		"printf launched > "+clcommon.ShellQuoteArg(launched), proof, ready, true, nil))
 	cmd.Dir = target
 	err := cmd.Run()
 	require.Error(t, err)
@@ -57,6 +57,51 @@ func TestGuardHarnessCommandWithCwdProof_RejectsPathSwap(t *testing.T) {
 	status, readErr := os.ReadFile(ready)
 	require.NoError(t, readErr)
 	assert.Equal(t, "error:proof", string(status))
+}
+
+func TestGuardHarnessCommandWithDirProofRejectsSwappedRepositoryRoot(t *testing.T) {
+	root := t.TempDir()
+	cwd := filepath.Join(root, "cwd")
+	grant := filepath.Join(root, "grant")
+	forbidden := filepath.Join(root, "forbidden")
+	require.NoError(t, os.Mkdir(cwd, 0o700))
+	require.NoError(t, os.Mkdir(grant, 0o700))
+	require.NoError(t, os.Mkdir(forbidden, 0o700))
+	proof := "valid_proof-789"
+	marker := clcommon.SpawnDirWriteProofPrefix + proof
+	require.NoError(t, os.WriteFile(filepath.Join(cwd, marker), nil, 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(grant, marker), nil, 0o600))
+	require.NoError(t, os.Rename(grant, grant+"-old"))
+	require.NoError(t, os.Symlink(forbidden, grant))
+	ready := filepath.Join(root, "ready")
+	require.NoError(t, os.WriteFile(ready, []byte("pending"), 0o600))
+
+	cmd := exec.Command("sh", "-c", guardHarnessCommandWithDirProof("true", proof, ready, true, []string{grant}))
+	cmd.Dir = cwd
+	require.Error(t, cmd.Run())
+	status, err := os.ReadFile(ready)
+	require.NoError(t, err)
+	assert.Equal(t, "error:repository-proof", string(status))
+}
+
+func TestGuardHarnessCommandWithDirProofChecksRepositoryWithoutCwdMarker(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	cwd := filepath.Join(root, "cwd")
+	grant := filepath.Join(root, "grant")
+	require.NoError(t, os.Mkdir(cwd, 0o700))
+	require.NoError(t, os.Mkdir(grant, 0o700))
+	proof := "valid_proof-extra"
+	require.NoError(t, os.WriteFile(filepath.Join(grant, clcommon.SpawnDirWriteProofPrefix+proof), nil, 0o600))
+	ready := filepath.Join(root, "ready")
+	require.NoError(t, os.WriteFile(ready, []byte("pending"), 0o600))
+
+	cmd := exec.Command("sh", "-c", guardHarnessCommandWithDirProof("true", proof, ready, false, []string{grant}))
+	cmd.Dir = cwd
+	require.NoError(t, cmd.Run())
+	status, err := os.ReadFile(ready)
+	require.NoError(t, err)
+	assert.Equal(t, "ok", string(status))
 }
 
 func TestSpawnCwdProofTokenValidation(t *testing.T) {

@@ -1140,7 +1140,7 @@ func dashboardReincarnateAgent(w http.ResponseWriter, r *http.Request, convSelec
 	// `mode` / `focus_hint` fields. The 64 KiB MaxBytesReader bounds the
 	// raw JSON request so an abusive payload can't be slurped whole; the
 	// real per-field caps (follow_up / focus_hint length + charset) live
-	// downstream in decodeReincarnateFollowUp / isValidInitialMessage.
+	// downstream in decodeReincarnateBody / isValidInitialMessage.
 	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<10))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "read body: "+err.Error())

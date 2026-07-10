@@ -1,7 +1,10 @@
 package agentd_test
 
 import (
+	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -17,8 +20,27 @@ import (
 // skipped, so the permission verdict shows up purely in the status code.
 func serveGroupVerbAs(t *testing.T, f *testharness.Flow, verb, group, convID string) int {
 	t.Helper()
+	path := "/v1/groups/" + group + "/" + verb
 	rec := testharness.Serve(f.Mux,
-		agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/groups/"+group+"/"+verb, nil), convID))
+		agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, path, nil), convID))
+	var challenge struct {
+		Code       string `json:"code"`
+		WriteProof struct {
+			Token    string   `json:"token"`
+			Filename string   `json:"filename"`
+			Dirs     []string `json:"dirs"`
+		} `json:"write_proof"`
+	}
+	if rec.Code == http.StatusForbidden && json.Unmarshal(rec.Body.Bytes(), &challenge) == nil &&
+		challenge.Code == "write_proof_required" {
+		for _, dir := range challenge.WriteProof.Dirs {
+			marker := filepath.Join(dir, challenge.WriteProof.Filename)
+			require.NoError(t, os.WriteFile(marker, nil, 0o600))
+			t.Cleanup(func() { _ = os.Remove(marker) })
+		}
+		rec = testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t,
+			http.MethodPost, path, map[string]any{"write_proof_token": challenge.WriteProof.Token}), convID))
+	}
 	return rec.Code
 }
 

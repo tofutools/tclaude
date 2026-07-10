@@ -56,15 +56,11 @@ func TestClone_RateLimitBlocksRapidSecondClone(t *testing.T) {
 	c1 := f.AsAgent(oldConv).CloneFresh(oldConv)
 	require.NotEmpty(t, c1.NewConv, "first clone returned empty NewConv: %s", c1.Raw)
 
-	// Second clone of the same source — should be 429. Use the raw
-	// helper because CloneFresh fatals on non-200.
-	r := testharness.JSONRequest(t, http.MethodPost,
-		"/v1/agent/"+oldConv+"/clone",
-		map[string]any{"no_copy_conv": true})
-	r = agentd.AsAgentPeer(r, oldConv)
-	rec := testharness.Serve(f.Mux, r)
-	require.Equal(t, http.StatusTooManyRequests, rec.Code,
-		"second clone status. body=%s", rec.Body.String())
+	// Second clone of the same source — should be 429. CloneWith answers the
+	// cwd proof challenge first, just like the production CLI.
+	c2 := f.AsAgent(oldConv).CloneWith(oldConv, map[string]any{"no_copy_conv": true})
+	require.Equal(t, http.StatusTooManyRequests, c2.Code,
+		"second clone status. body=%s", c2.Raw)
 
 	// Real-surface invariant: only the successful first attempt
 	// consumed a slot. INSERT-WHERE-NOT-EXISTS must leave the table

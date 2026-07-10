@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // reincarnateSuffixRegex matches a trailing reincarnation suffix in
@@ -212,11 +214,11 @@ func handleWhoamiReincarnate(w http.ResponseWriter, r *http.Request) {
 			"this endpoint operates on the calling agent's own conversation; humans should manage CC sessions directly, or use POST /v1/agent/{conv}/reincarnate to reincarnate another agent")
 		return
 	}
-	followUp, ok := decodeReincarnateFollowUp(w, r)
+	body, ok := decodeReincarnateBody(w, r)
 	if !ok {
 		return
 	}
-	runReincarnationOrchestration(w, caller, caller, PermSelfReincarnate, followUp)
+	runReincarnationOrchestration(w, caller, caller, PermSelfReincarnate, body)
 }
 
 // handleAgentReincarnate handles POST /v1/agent/{conv}/reincarnate
@@ -231,14 +233,19 @@ func handleAgentReincarnate(w http.ResponseWriter, r *http.Request, targetConv s
 	if !ok {
 		return
 	}
-	followUp, ok := decodeReincarnateFollowUp(w, r)
+	body, ok := decodeReincarnateBody(w, r)
 	if !ok {
 		return
 	}
-	runReincarnationOrchestration(w, targetConv, caller, PermAgentReincarnate, followUp)
+	runReincarnationOrchestration(w, targetConv, caller, PermAgentReincarnate, body)
 }
 
-// decodeReincarnateFollowUp parses + validates the REQUIRED follow_up
+type reincarnateBody struct {
+	FollowUp        string `json:"follow_up"`
+	WriteProofToken string `json:"write_proof_token"`
+}
+
+// decodeReincarnateBody parses + validates the REQUIRED follow_up
 // body field. Returns (followUp, true) on success; on failure the error
 // response is already written and the caller should return. An empty
 // or missing follow_up is rejected: the new pane comes up with a clean
@@ -246,14 +253,12 @@ func handleAgentReincarnate(w http.ResponseWriter, r *http.Request, targetConv s
 // concrete next directive should pass a short summary of the previous
 // "life" (what was being worked on, where the relevant files are) so
 // the successor has something to start from.
-func decodeReincarnateFollowUp(w http.ResponseWriter, r *http.Request) (string, bool) {
-	var body struct {
-		FollowUp string `json:"follow_up"`
-	}
+func decodeReincarnateBody(w http.ResponseWriter, r *http.Request) (reincarnateBody, bool) {
+	var body reincarnateBody
 	if r.ContentLength != 0 {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
-			return "", false
+			return reincarnateBody{}, false
 		}
 	}
 	body.FollowUp = strings.TrimSpace(body.FollowUp)
@@ -264,7 +269,7 @@ func decodeReincarnateFollowUp(w http.ResponseWriter, r *http.Request) (string, 
 				"directive, summarise your previous 'life' (what you were doing, "+
 				"where the relevant files are, what's next) so the successor has "+
 				"something to start from.")
-		return "", false
+		return reincarnateBody{}, false
 	}
 	// Charset/length: validate against the inbox rule. Every handoff —
 	// grouped or solo — rides the inbox as an agent_messages row (the
@@ -276,9 +281,10 @@ func decodeReincarnateFollowUp(w http.ResponseWriter, r *http.Request) (string, 
 				"and tabs are allowed (a grouped successor receives the handoff in "+
 				"its inbox, like a spawn brief), but NUL / escape / other control "+
 				"characters are not.", agent.MaxInitialMessageBytes))
-		return "", false
+		return reincarnateBody{}, false
 	}
-	return body.FollowUp, true
+	body.WriteProofToken = strings.TrimSpace(body.WriteProofToken)
+	return body, true
 }
 
 // runReincarnationOrchestration is the target-agnostic body shared by
@@ -301,7 +307,8 @@ func decodeReincarnateFollowUp(w http.ResponseWriter, r *http.Request) (string, 
 //     auditedCaller to annotate via-sudo grants in the audit trail.
 //
 // Writes the JSON response (or error) directly to w.
-func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, followUp string) {
+func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm string, body reincarnateBody) {
+	followUp := body.FollowUp
 	// 1. Snapshot target conv state. We require an alive tmux session
 	// for the target — that's the cwd source and the target of the
 	// final /exit injection.
@@ -339,18 +346,69 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 		writeError(w, http.StatusInternalServerError, "io", gerr.Error())
 		return
 	}
+	var proofDirs, gitWriteDirs []string
+	proofToken := ""
+	if spawnUsesPinnedGitCommonDir(oldSess.Harness, reincarnateSandbox) {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		gitWriteDirs = harness.GitWorktreeWriteDirs(codexGitCommonDir, home)
+	}
+	if !isHumanCloneCaller(caller) && childSandboxGrantsDirWrite(oldSess.Harness, reincarnateSandbox) {
+		dirs := appendUniqueDirs([]string{cwd}, gitWriteDirs...)
+		resolved, ok := requireDirWriteProof(w, caller, body.WriteProofToken, dirs)
+		if !ok {
+			return
+		}
+		if resolved != nil {
+			proofToken = strings.TrimSpace(body.WriteProofToken)
+			if v := resolved[cwd]; v != "" {
+				cwd = v
+			}
+			for i, dir := range gitWriteDirs {
+				if v := resolved[dir]; v != "" {
+					gitWriteDirs[i] = v
+				}
+			}
+			for _, dir := range dirs {
+				proofDirs = appendUniqueDirs(proofDirs, resolved[dir])
+			}
+		}
+	}
+	if proofToken != "" {
+		defer cleanupDirWriteProofMarkers(proofToken, proofDirs)
+	}
+	if fail := reassertDirWriteProof(proofDirs); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	}
+	gitWriteDirs, grantFail := canonicalizeRepositoryWriteDirs(gitWriteDirs, proofDirs, proofToken)
+	if grantFail != nil {
+		writeError(w, grantFail.Status, grantFail.Kind, grantFail.Msg)
+		return
+	}
+	exactGrantPinned := spawnUsesPinnedGitCommonDir(oldSess.Harness, reincarnateSandbox) && proofToken != ""
+	if !exactGrantPinned {
+		gitWriteDirs = nil
+		codexGitCommonDir = ""
+	}
 	if err := SpawnDetachedTclaudeNew(clcommon.SpawnArgs{
-		Label:                   label,
-		Cwd:                     cwd,
-		Effort:                  effort,
-		Model:                   model,
-		Harness:                 oldSess.Harness,
-		Sandbox:                 reincarnateSandbox,
-		CodexGitCommonDir:       codexGitCommonDir,
-		CodexGitCommonDirPinned: spawnUsesPinnedGitCommonDir(oldSess.Harness, reincarnateSandbox),
-		Approval:                approvalForHarness(oldSess.Harness),
-		AskUserQuestionTimeout:  askTimeoutForRelaunch(target),
-		RemoteControl:           remoteControl,
+		Label:                      label,
+		Cwd:                        cwd,
+		CwdWriteProof:              proofToken,
+		Effort:                     effort,
+		Model:                      model,
+		Harness:                    oldSess.Harness,
+		Sandbox:                    reincarnateSandbox,
+		CodexGitCommonDir:          codexGitCommonDir,
+		CodexGitCommonDirPinned:    exactGrantPinned,
+		GitWorktreeWriteDirs:       gitWriteDirs,
+		GitWorktreeWriteDirsPinned: exactGrantPinned,
+		Approval:                   approvalForHarness(oldSess.Harness),
+		AskUserQuestionTimeout:     askTimeoutForRelaunch(target),
+		RemoteControl:              remoteControl,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "spawn",
 			"failed to launch tclaude session new: "+err.Error())

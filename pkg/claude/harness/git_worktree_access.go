@@ -34,45 +34,36 @@ func GitCommonDir(cwd string) (string, error) {
 	return filepath.Clean(dir), nil
 }
 
-// GitWorktreeWriteDirs returns the extra repository paths a sandboxed agent
-// needs in order to create and use tclaude's default sibling worktrees:
-//
-//   - the repository container where ../<repo>-<branch> is created;
-//   - the original/main worktree; and
-//   - the shared Git common directory.
+// GitWorktreeWriteDirs returns the minimal repository root a sandboxed agent
+// needs in order to create and use tclaude's default sibling worktrees. When
+// safe, that is the repository container where ../<repo>-<branch> is created;
+// the grant also covers the original/main worktree and shared Git metadata.
 //
 // The container grant is deliberately omitted when it would cover home (or an
 // ancestor of home). Granting that path would make ~/.tclaude, ~/.codex, and
 // ~/.claude writable and undo the sandbox's protected-state posture. The main
-// worktree and common-dir grants remain narrow descendants and are retained.
+// worktree grant remains a narrow descendant and is retained.
 func GitWorktreeWriteDirs(gitCommonDir, home string) []string {
 	gitCommonDir = filepath.Clean(strings.TrimSpace(gitCommonDir))
 	if gitCommonDir == "." || !filepath.IsAbs(gitCommonDir) {
 		return nil
 	}
 
-	var candidates []string
-	if filepath.Base(gitCommonDir) == ".git" {
-		mainWorktree := filepath.Dir(gitCommonDir)
-		candidates = append(candidates, filepath.Dir(mainWorktree), mainWorktree)
-	}
-	candidates = append(candidates, gitCommonDir)
-
 	home = filepath.Clean(strings.TrimSpace(home))
-	seen := map[string]bool{}
-	out := make([]string, 0, len(candidates))
-	for _, dir := range candidates {
-		dir = filepath.Clean(dir)
-		if dir == "." || !filepath.IsAbs(dir) || seen[dir] {
-			continue
-		}
-		if home != "." && filepath.IsAbs(home) && pathContains(dir, home) {
-			continue
-		}
-		seen[dir] = true
-		out = append(out, dir)
+	if resolvedHome, err := filepath.EvalSymlinks(home); err == nil {
+		home = resolvedHome
 	}
-	return out
+	if filepath.Base(gitCommonDir) != ".git" {
+		return []string{gitCommonDir}
+	}
+	mainWorktree := filepath.Dir(gitCommonDir)
+	container := filepath.Dir(mainWorktree)
+	if home != "." && filepath.IsAbs(home) && pathContains(container, home) {
+		// Granting home (or an ancestor) would expose private agent state. The
+		// main worktree is the narrowest root that still covers its .git data.
+		return []string{mainWorktree}
+	}
+	return []string{container}
 }
 
 // IsDefaultSiblingWorktree reports whether cwd is a linked worktree at the
