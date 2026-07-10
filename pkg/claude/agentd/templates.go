@@ -715,6 +715,10 @@ type templateAgentLaunch struct {
 	// path). Off by default; only a referenced profile turns them on.
 	TrustDir   bool
 	AutoReview bool
+	// Set bits preserve an explicit false from the winning profile tier when
+	// executeSpawn applies group/global safety-net defaults.
+	TrustDirSet   bool
+	AutoReviewSet bool
 	// RemoteControl / AskUserQuestionTimeout are the remaining launch fields a
 	// spawn profile (template-local or referenced) carries, resolved from the
 	// profile tiers like TrustDir/AutoReview and threaded into spawnParams so a
@@ -1100,7 +1104,9 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd stri
 		Sandbox:                sandbox,
 		Approval:               approval,
 		TrustDir:               trustDir,
+		TrustDirSet:            acc.trustDir != nil,
 		AutoReview:             autoReview,
+		AutoReviewSet:          acc.autoReview != nil,
 		RemoteControl:          remoteControl,
 		AskUserQuestionTimeout: askTimeout,
 	}, nil

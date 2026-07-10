@@ -90,3 +90,28 @@ func TestGroupTemplate_TrustDirOffByDefault(t *testing.T) {
 	require.Truef(t, ok, "no spawn recorded for conv %s", conv)
 	assert.False(t, got, "a template agent whose profile omits trust_dir must default off")
 }
+
+func TestGroupTemplate_TrustDirExplicitFalseBlocksGlobalTrue(t *testing.T) {
+	f := newFlow(t)
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "explicit-off", "harness": "codex", "trust_dir": false,
+	}).Code)
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "global-on", "harness": "codex", "trust_dir": true,
+	}).Code)
+	require.Equal(t, http.StatusOK, setGlobalProfile(t, f, "global-on").Code)
+
+	require.Equal(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
+		"name":   "codex-team",
+		"agents": []map[string]any{{"name": "cdx", "spawn_profile": "explicit-off"}},
+	}).Code)
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/codex-team/instantiate",
+		map[string]any{"group_name": "global-blocked"})
+	require.Equalf(t, http.StatusCreated, rec.Code, "instantiate: %s", rec.Body.String())
+	var res instantiateResult
+	testharness.DecodeJSON(t, rec, &res)
+	require.Equal(t, 1, res.Spawned)
+	trustDir, ok := f.World.SpawnTrustDir(res.Agents[0].ConvID)
+	require.True(t, ok)
+	assert.False(t, trustDir)
+}

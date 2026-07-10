@@ -80,6 +80,7 @@ func TestDashboardHTML_SpawnProfilesUI(t *testing.T) {
 	present(`/api/spawn-profile-default`, "global default uses the validated operational endpoint")
 	present(`await setDashDefaultProfile(name)`, "picker waits for persistence before reporting success")
 	present(`refreshDashDefaultProfile()`, "open dashboards reconcile CLI changes during refresh")
+	present(`body.trust_dir = $('#agent-spawn-trust-dir').checked`, "profile false trust intent stays explicit on spawn")
 
 	// The retired user-level default-MODEL chip and its inline editor are gone.
 	// (The backend /api/claude-settings/default-model endpoint and the

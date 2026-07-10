@@ -241,6 +241,33 @@ func TestSpawnProfilePrecedence_ExplicitAPIFalseBoolsBlockGlobalTrue(t *testing.
 	assert.False(t, trustDir)
 }
 
+func TestSpawnProfilePrecedence_ExplicitCLIProfileFalseBoolsBlockLowerTrue(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "explicit", "harness": "codex", "auto_review": false, "trust_dir": false,
+	}).Code)
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "global", "harness": "codex", "auto_review": true, "trust_dir": true,
+	}).Code)
+	require.Equal(t, http.StatusOK, setGlobalProfile(t, f, "global").Code)
+	bridgeAgentClientToMux(t, f.Mux)
+	chdirTo(t, resolveSym(t, t.TempDir()))
+
+	stderr := new(bytes.Buffer)
+	resp, rc := agent.RunSpawn(&agent.SpawnParams{
+		Group: "alpha", Name: "worker", Profile: "explicit",
+	}, new(bytes.Buffer), stderr, new(bytes.Buffer))
+	require.Equal(t, 0, rc, "RunSpawn stderr=%s", stderr.String())
+	require.NotNil(t, resp)
+	autoReview, ok := f.World.SpawnAutoReview(resp.ConvID)
+	require.True(t, ok)
+	assert.False(t, autoReview)
+	trustDir, ok := f.World.SpawnTrustDir(resp.ConvID)
+	require.True(t, ok)
+	assert.False(t, trustDir)
+}
+
 func TestSpawnProfilePrecedence_RemoteControlPinsDefaultHarness(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")

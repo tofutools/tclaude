@@ -1389,10 +1389,10 @@ async function submitAgentSpawn() {
     // AskUserQuestion timeout (Claude Code) — inherit/blank normalizes to no
     // override server-side, so send it only when a concrete value was chosen.
     if (askTimeout) body.ask_user_question_timeout = askTimeout;
-    // Opt-in dir-trust (Codex only): the daemon pre-trusts the cwd by editing
-    // ~/.codex/config.toml, so it is sent ONLY when the human explicitly
-    // ticked the checkbox — never defaulted.
-    if (harness === 'codex' && $('#agent-spawn-trust-dir').checked) body.trust_dir = true;
+    // Dir-trust (Codex only): send the checkbox state explicitly so a loaded
+    // profile's false remains authoritative over group/global true defaults.
+    // The daemon pre-trusts cwd only for true; false performs no host mutation.
+    if (harness === 'codex') body.trust_dir = $('#agent-spawn-trust-dir').checked;
     // Remote-control (Claude Code only): the checkbox is the authoritative
     // per-spawn intent (JOH-262 revised), so send its state explicitly — true OR
     // false — and the daemon honours it over the group/profile default. Sent only

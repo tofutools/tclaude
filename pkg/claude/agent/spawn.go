@@ -253,6 +253,36 @@ func (r *SpawnRequest) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// MarshalJSON keeps an explicitly selected false from an explicit profile on
+// the wire despite the public bool fields' historical omitempty tags.
+func (r SpawnRequest) MarshalJSON() ([]byte, error) {
+	type alias SpawnRequest
+	data, err := json.Marshal(alias(r))
+	if err != nil {
+		return nil, err
+	}
+	if !r.autoReviewSpecified && !r.trustDirSpecified {
+		return data, nil
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return nil, err
+	}
+	if r.autoReviewSpecified {
+		fields["auto_review"] = json.RawMessage("false")
+		if r.AutoReview {
+			fields["auto_review"] = json.RawMessage("true")
+		}
+	}
+	if r.trustDirSpecified {
+		fields["trust_dir"] = json.RawMessage("false")
+		if r.TrustDir {
+			fields["trust_dir"] = json.RawMessage("true")
+		}
+	}
+	return json.Marshal(fields)
+}
+
 // AutoReviewSpecified reports whether auto_review appeared in decoded JSON.
 func (r SpawnRequest) AutoReviewSpecified() bool { return r.autoReviewSpecified }
 
@@ -791,6 +821,8 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		IsOwner:                merged.IsOwner,
 		PermissionOverrides:    merged.PermissionOverrides,
 	}
+	req.autoReviewSpecified = p.AutoReview || (prof != nil && prof.AutoReview != nil)
+	req.trustDirSpecified = prof != nil && prof.TrustDir != nil
 	// --remote-control is opt-in only on the CLI: send &true when the flag is set,
 	// and leave the pointer nil otherwise so the daemon's group/profile
 	// remote-control policy fills it (the dashboard form is the surface that sends
