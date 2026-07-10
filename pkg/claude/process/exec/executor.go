@@ -384,45 +384,52 @@ func normalizeObligationObservation(snapshot store.Snapshot, command plan.Comman
 		if obligation.CommandID != command.ID || obligation.Status != state.WaitStatusPending {
 			continue
 		}
-		raw := strings.ToLower(strings.TrimSpace(observation.Verdict))
-		allowed := make([]string, 0, len(obligation.AvailableActions)+2)
-		allowedSet := map[string]struct{}{}
-		addAllowed := func(value string) {
-			value = strings.ToLower(strings.TrimSpace(value))
-			if value == "" {
-				return
-			}
-			if _, exists := allowedSet[value]; exists {
-				return
-			}
-			allowedSet[value] = struct{}{}
-			allowed = append(allowed, value)
-		}
-		for _, action := range obligation.AvailableActions {
-			addAllowed(action)
-		}
+		allowed := append([]string(nil), obligation.AvailableActions...)
 		if command.Kind != plan.CommandKindRecordDecision {
-			addAllowed("pass")
-			addAllowed("fail")
+			allowed = append(allowed, "pass", "fail")
 		}
-		if _, ok := allowedSet[raw]; !ok {
+		canonical, ok := CanonicalObligationAction(allowed, observation.Verdict)
+		if !ok {
 			return Observation{}, fmt.Errorf("verdict %q is not allowed for obligation %q; allowed: %s", observation.Verdict, obligation.ID, strings.Join(allowed, ", "))
 		}
-		if command.Kind == plan.CommandKindRecordDecision {
-			observation.Verdict = raw
-			return observation, nil
+		normalized, err := NormalizeObligationAction(command.Kind, canonical)
+		if err != nil {
+			return Observation{}, fmt.Errorf("%w for obligation %q; allowed: %s", err, obligation.ID, strings.Join(allowed, ", "))
 		}
-		switch raw {
-		case "pass", "approve":
-			observation.Verdict = "pass"
-		case "fail", "reject", "ask-changes":
-			observation.Verdict = "fail"
-		default:
-			return Observation{}, fmt.Errorf("action %q has no pass/fail semantics for obligation %q; allowed: %s", observation.Verdict, obligation.ID, strings.Join(allowed, ", "))
-		}
+		observation.Verdict = normalized
 		return observation, nil
 	}
 	return observation, nil
+}
+
+// CanonicalObligationAction matches an action using the executor's
+// case-insensitive obligation semantics and returns the advertised spelling.
+func CanonicalObligationAction(available []string, action string) (string, bool) {
+	action = strings.TrimSpace(action)
+	for _, candidate := range available {
+		candidate = strings.TrimSpace(candidate)
+		if candidate != "" && strings.EqualFold(candidate, action) {
+			return candidate, true
+		}
+	}
+	return "", false
+}
+
+// NormalizeObligationAction maps task-action aliases to their pass/fail
+// verdict while preserving a decision edge's canonical advertised spelling.
+func NormalizeObligationAction(kind state.CommandKind, action string) (string, error) {
+	action = strings.TrimSpace(action)
+	if kind == state.CommandKindRecordDecision {
+		return action, nil
+	}
+	switch strings.ToLower(action) {
+	case "pass", "approve":
+		return "pass", nil
+	case "fail", "reject", "ask-changes":
+		return "fail", nil
+	default:
+		return "", fmt.Errorf("action %q has no pass/fail semantics", action)
+	}
 }
 
 func sortedObligationIDs(obligations map[string]state.ObligationRecord) []string {

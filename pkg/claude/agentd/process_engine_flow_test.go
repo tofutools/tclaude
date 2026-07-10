@@ -26,6 +26,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	processverify "github.com/tofutools/tclaude/pkg/claude/process/verify"
+	"github.com/tofutools/tclaude/pkg/claude/process/worklist"
 	"github.com/tofutools/tclaude/pkg/claude/processcmd"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -33,6 +34,12 @@ import (
 func TestProcessEngineRoutes404WhenFeatureOff(t *testing.T) {
 	f := newFlow(t)
 	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/process/runs", nil)))
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+	rec = testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/process/worklist", nil)))
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+	rec = testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/process/worklist/wi_missing/action", map[string]string{
+		"action": "approve", "comment": "reviewed", "idempotencyKey": "off-1",
+	})))
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
 
@@ -542,6 +549,204 @@ func TestProcessEngineHumanDecisionAdvertisesAndPreservesEdgeVerdict(t *testing.
 	snapshot, err = fs.LoadRun(t.Context(), "human-decision-run")
 	require.NoError(t, err)
 	assert.Equal(t, "approve", snapshot.State.Nodes["decide"].ChosenEdge)
+}
+
+func TestProcessWorklistActionUsesObservationFunnelAndIsIdempotent(t *testing.T) {
+	f, root := processEngineFlow(t)
+	performer := model.Performer{
+		Kind: model.PerformerHuman, Profile: "operator", Ask: "Approve the release?",
+		Contact: &model.ContactSchedule{Cadence: "30m", Budget: 5, EscalationTarget: "human:oncall"},
+	}
+	fs := createEngineRun(t, root, "worklist-decision-run", decisionTemplate("worklist-decision", performer), false)
+	host, err := agentd.NewProcessEngineHostForTest(root)
+	require.NoError(t, err)
+	_, err = agentd.RunProcessEngineTickForTest(t.Context(), host)
+	require.NoError(t, err)
+	corruptDir := filepath.Join(root, "runs", "corrupt-run")
+	require.NoError(t, os.MkdirAll(corruptDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(corruptDir, "run.json"), []byte("{not-json"), 0o644))
+
+	rec := processEngineGet(t, f, "/v1/process/worklist?assignee=human:operator&kind=decision-needed&status=pending")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var listing struct {
+		Items        []worklist.Item `json:"items"`
+		DegradedRuns []struct {
+			Run   string `json:"run"`
+			Error string `json:"error"`
+		} `json:"degradedRuns"`
+	}
+	testharness.DecodeJSON(t, rec, &listing)
+	require.Len(t, listing.Items, 1)
+	require.Len(t, listing.DegradedRuns, 1)
+	assert.Equal(t, "corrupt-run", listing.DegradedRuns[0].Run)
+	assert.NotEmpty(t, listing.DegradedRuns[0].Error)
+	item := listing.Items[0]
+	require.NotNil(t, item.Nudge)
+	assert.Equal(t, 0, item.Nudge.BudgetUsed)
+	assert.Equal(t, 5, item.Nudge.BudgetMax)
+	assert.Equal(t, "human:oncall", item.Nudge.EscalationTarget)
+	assert.False(t, item.Nudge.NextContactAt.IsZero())
+
+	body := map[string]string{"action": "approve", "comment": "release reviewed", "idempotencyKey": "dashboard-submit-1"}
+	rec = humanReq(t, f, http.MethodPost, "/v1/process/worklist/"+item.ID+"/action", body)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	afterFirst, err := fs.LoadRun(t.Context(), "worklist-decision-run")
+	require.NoError(t, err)
+	firstSeq := afterFirst.State.LastLogSeq
+	assert.Equal(t, state.WaitStatusSatisfied, firstObligation(afterFirst.State).Status)
+
+	// The same submission goes through RecordOutstandingObservation again;
+	// its existing observed-command check makes it a true no-op.
+	rec = humanReq(t, f, http.MethodPost, "/v1/process/worklist/"+item.ID+"/action", body)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	afterReplay, err := fs.LoadRun(t.Context(), "worklist-decision-run")
+	require.NoError(t, err)
+	assert.Equal(t, firstSeq, afterReplay.State.LastLogSeq)
+	conflicting := map[string]string{"action": "approve", "comment": "different payload", "idempotencyKey": "dashboard-submit-1"}
+	rec = humanReq(t, f, http.MethodPost, "/v1/process/worklist/"+item.ID+"/action", conflicting)
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+
+	_, err = agentd.RunProcessEngineTickForTest(t.Context(), host)
+	require.NoError(t, err)
+	settled, err := fs.LoadRun(t.Context(), "worklist-decision-run")
+	require.NoError(t, err)
+	require.Len(t, settled.State.Nodes["decide"].Decisions, 1)
+	decision := settled.State.Nodes["decide"].Decisions[0]
+	assert.Equal(t, state.ActorRef("human:operator"), decision.Actor)
+	assert.Equal(t, "approve", decision.Verdict)
+	assert.Contains(t, decision.EvidenceRef, "worklist-action:sha256:")
+}
+
+func TestProcessWorklistDecisionActionPreservesAdvertisedCasing(t *testing.T) {
+	f, root := processEngineFlow(t)
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "capital-decision", Start: "decide",
+		Nodes: map[string]model.Node{
+			"decide": {
+				Type:      model.NodeTypeDecision,
+				Performer: &model.Performer{Kind: model.PerformerHuman, Profile: "operator", Ask: "Approve release?"},
+				Next:      model.Next{"Approve": "end", "Reject": "failed"},
+			},
+			"end": {Type: model.NodeTypeEnd}, "failed": {Type: model.NodeTypeEnd, Result: "failed"},
+		},
+	}
+	fs := createEngineRun(t, root, "capital-decision-run", tmpl, false)
+	host, err := agentd.NewProcessEngineHostForTest(root)
+	require.NoError(t, err)
+	_, err = agentd.RunProcessEngineTickForTest(t.Context(), host)
+	require.NoError(t, err)
+
+	rec := processEngineGet(t, f, "/v1/process/worklist?run=capital-decision-run&status=pending")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var listing struct {
+		Items []worklist.Item `json:"items"`
+	}
+	testharness.DecodeJSON(t, rec, &listing)
+	require.Len(t, listing.Items, 1)
+	assert.Equal(t, []string{"Approve", "Reject"}, listing.Items[0].AvailableActions)
+	rec = humanReq(t, f, http.MethodPost, "/v1/process/worklist/"+listing.Items[0].ID+"/action", map[string]string{
+		"action": "approve", "comment": "capitalized edge reviewed", "idempotencyKey": "capital-1",
+	})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	_, err = agentd.RunProcessEngineTickForTest(t.Context(), host)
+	require.NoError(t, err)
+	snapshot, err := fs.LoadRun(t.Context(), "capital-decision-run")
+	require.NoError(t, err)
+	assert.Equal(t, "Approve", snapshot.State.Nodes["decide"].ChosenEdge)
+}
+
+func TestProcessWorklistRejectsAgentObligationActionWithoutEvidence(t *testing.T) {
+	f, root := processEngineFlow(t)
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "worklist-agent", Harness: "claude"})
+	require.NoError(t, err)
+	fs := createEngineRun(t, root, "agent-obligation-run", programTemplate("agent-obligation", model.Performer{
+		Kind: model.PerformerAgent, Profile: "worklist-agent", Prompt: "Implement the change",
+	}), false)
+	host, err := agentd.NewProcessEngineHostForTest(root)
+	require.NoError(t, err)
+	_, err = agentd.RunProcessEngineTickForTest(t.Context(), host)
+	require.NoError(t, err)
+
+	rec := processEngineGet(t, f, "/v1/process/worklist?run=agent-obligation-run&kind=agent-obligation&status=pending")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var listing struct {
+		Items []worklist.Item `json:"items"`
+	}
+	testharness.DecodeJSON(t, rec, &listing)
+	require.Len(t, listing.Items, 1)
+	snapshot, err := fs.LoadRun(t.Context(), "agent-obligation-run")
+	require.NoError(t, err)
+	commandID := outstandingCommandForNode(t, snapshot.State, "work", state.CommandKindStartAttempt)
+	agentRow, err := db.AgentForProcessCommand(commandID)
+	require.NoError(t, err)
+	require.NotNil(t, agentRow)
+	req := testharness.JSONRequest(t, http.MethodPost, "/v1/process/worklist/"+listing.Items[0].ID+"/action", map[string]string{
+		"action": "pass", "comment": "no durable artifact", "idempotencyKey": "agent-action-1",
+	})
+	rec = testharness.Serve(f.Mux, agentd.AsAgentPeer(req, agentRow.CurrentConvID))
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "report route")
+	after, err := fs.LoadRun(t.Context(), "agent-obligation-run")
+	require.NoError(t, err)
+	assert.Equal(t, state.CommandStatusIssued, after.State.OutstandingCommands[commandID].Status)
+}
+
+func TestProcessWorklistBlockedActionUsesUnblockFunnel(t *testing.T) {
+	f, root := processEngineFlow(t)
+	fs, _ := createCapstoneRun(t, root, "worklist-blocked-run", 99)
+	host, err := agentd.NewProcessEngineHostForTest(root)
+	require.NoError(t, err)
+
+	capstoneReachDo(t, f, fs, host, "worklist-blocked-run")
+	capstoneReportAgent(t, f, fs, "worklist-blocked-run", "implement.do", "commit:block-1")
+	capstoneTickWaiting(t, host, "implement.do")
+	capstoneReportAgent(t, f, fs, "worklist-blocked-run", "implement.do", "commit:block-2")
+	capstoneTickWaiting(t, host, "escalate")
+
+	rec := processEngineGet(t, f, "/v1/process/worklist?run=worklist-blocked-run&kind=blocked&status=pending")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var listing struct {
+		Items []worklist.Item `json:"items"`
+	}
+	testharness.DecodeJSON(t, rec, &listing)
+	require.Len(t, listing.Items, 1)
+	item := listing.Items[0]
+	assert.Equal(t, "implement.test.tests", item.Node)
+	assert.Contains(t, item.Summary, "exhausted its budget")
+	assert.Equal(t, "human:operator", item.Assignee)
+	blockedSnapshot, err := fs.LoadRun(t.Context(), "worklist-blocked-run")
+	require.NoError(t, err)
+	var foreignAgentConv string
+	for commandID := range blockedSnapshot.State.OutstandingCommands {
+		agentRow, lookupErr := db.AgentForProcessCommand(commandID)
+		require.NoError(t, lookupErr)
+		if agentRow != nil {
+			foreignAgentConv = agentRow.CurrentConvID
+			break
+		}
+	}
+	require.NotEmpty(t, foreignAgentConv)
+	foreignReq := testharness.JSONRequest(t, http.MethodPost, "/v1/process/worklist/"+item.ID+"/action", map[string]string{
+		"action": "retry", "comment": "agent must not resolve human work", "idempotencyKey": "foreign-agent-1",
+	})
+	rec = testharness.Serve(f.Mux, agentd.AsAgentPeer(foreignReq, foreignAgentConv))
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+
+	body := map[string]string{"action": "retry", "comment": "transient failure reviewed", "idempotencyKey": "blocked-submit-1"}
+	rec = humanReq(t, f, http.MethodPost, "/v1/process/worklist/"+item.ID+"/action", body)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	resolved, err := fs.LoadRun(t.Context(), "worklist-blocked-run")
+	require.NoError(t, err)
+	assert.Equal(t, 1, blockResolutionCount(resolved.State))
+	require.NotNil(t, resolved.State.Nodes["implement.test.tests"].BlockResolution)
+	assert.Equal(t, state.BlockDecisionRetry, resolved.State.Nodes["implement.test.tests"].BlockResolution.Decision)
+	assert.Equal(t, state.ActorRef("human:operator"), resolved.State.Nodes["implement.test.tests"].BlockResolution.Actor)
+
+	rec = humanReq(t, f, http.MethodPost, "/v1/process/worklist/"+item.ID+"/action", body)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	replayed, err := fs.LoadRun(t.Context(), "worklist-blocked-run")
+	require.NoError(t, err)
+	assert.Equal(t, 1, blockResolutionCount(replayed.State), "idempotent replay appended another resolution audit")
 }
 
 func TestProcessEngineNudgeBudgetEscalatesAndResetsOnRecovery(t *testing.T) {
