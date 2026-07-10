@@ -16,6 +16,36 @@ func TestGitWorktreeWriteDirs(t *testing.T) {
 	}
 }
 
+func TestSandboxWorktreeContainer(t *testing.T) {
+	home := filepath.FromSlash("/home/dev")
+
+	// Normal linked-worktree layout: the container (parent of the main
+	// worktree) is the grantable sandbox root, so it is returned.
+	common := filepath.FromSlash("/home/dev/git/project/.git")
+	want := filepath.FromSlash("/home/dev/git")
+	if got := SandboxWorktreeContainer(common, home); got != want {
+		t.Fatalf("SandboxWorktreeContainer() = %q, want %q", got, want)
+	}
+
+	// Home-guarded: the container would be home itself, so GitWorktreeWriteDirs
+	// grants only the main worktree and there is no bare container to protect.
+	homeContainer := filepath.FromSlash("/home/dev/project/.git")
+	if got := SandboxWorktreeContainer(homeContainer, home); got != "" {
+		t.Fatalf("SandboxWorktreeContainer() home-guarded = %q, want \"\"", got)
+	}
+
+	// A non-".git" common dir (bare repo / unusual layout) has no sibling
+	// container to protect.
+	if got := SandboxWorktreeContainer(filepath.FromSlash("/home/dev/git/bare.git"), home); got != "" {
+		t.Fatalf("SandboxWorktreeContainer() non-.git = %q, want \"\"", got)
+	}
+
+	// Empty / relative input is a no-op.
+	if got := SandboxWorktreeContainer("", home); got != "" {
+		t.Fatalf("SandboxWorktreeContainer(\"\") = %q, want \"\"", got)
+	}
+}
+
 func TestGitWorktreeWriteDirsDoesNotGrantHomeContainer(t *testing.T) {
 	home := filepath.FromSlash("/home/dev")
 	common := filepath.FromSlash("/home/dev/project/.git")

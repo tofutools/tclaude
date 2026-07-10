@@ -66,6 +66,37 @@ func GitWorktreeWriteDirs(gitCommonDir, home string) []string {
 	return []string{container}
 }
 
+// SandboxWorktreeContainer returns the worktree-container directory that
+// GitWorktreeWriteDirs grants as a sandbox write root — the parent of the main
+// worktree, where tclaude's default ../<repo>-<branch> siblings are created —
+// or "" when there is no such container to protect.
+//
+// It returns "" when gitCommonDir is not an absolute ".git" path, or when the
+// home-guard in GitWorktreeWriteDirs collapsed the grant down to the main
+// worktree (a real repository, which already has its own ".git" and needs no
+// placeholder). The non-empty result is exactly the directory where an OS
+// sandbox that denies writes to ".git" inside a writable root would otherwise
+// materialize a bogus ".git" DIRECTORY (a set of /dev/null mount stubs) — which
+// breaks `go build` VCS stamping. Callers plant an empty ".git" FILE there so
+// the sandbox leaves the path alone and Go (which treats only a ".git"
+// DIRECTORY as a VCS root) ignores it.
+func SandboxWorktreeContainer(gitCommonDir, home string) string {
+	clean := filepath.Clean(strings.TrimSpace(gitCommonDir))
+	if clean == "." || !filepath.IsAbs(clean) || filepath.Base(clean) != ".git" {
+		return ""
+	}
+	container := filepath.Dir(filepath.Dir(clean))
+	// Reuse GitWorktreeWriteDirs so the home-guard lives in one place: it grants
+	// [container] only when the container is safe to expose; a home-guarded run
+	// grants [mainWorktree] instead, in which case there is no bare container to
+	// protect and we return "".
+	dirs := GitWorktreeWriteDirs(gitCommonDir, home)
+	if len(dirs) == 1 && dirs[0] == container {
+		return container
+	}
+	return ""
+}
+
 // IsDefaultSiblingWorktree reports whether cwd is a linked worktree at the
 // exact location AddWorktreeIn chooses by default: a sibling named
 // <main-repo>-<branch>. gitCommonDir must have been resolved from cwd, which
