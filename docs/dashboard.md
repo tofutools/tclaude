@@ -269,7 +269,10 @@ required concepts. A full template can carry:
 - staged-spawn **waves** — agents tagged with a wave number spawn in ascending
   order, each wave holding until the previous one has come up and gone idle;
 - **rhythms** — recurring nudges that become ordinary group cron jobs when the
-  force is deployed (see [The rhythm model](#the-rhythm-model)).
+  force is deployed (see [The rhythm model](#the-rhythm-model));
+- an optional **per-agent worktrees** default — pre-checks the deploy dialog's
+  “Give each agent its own worktree” option without locking it, so each spawn
+  can still override the template preference.
 
 > **Templates authored before the profile picker** may carry inline launch
 > fields or an inline permission list on an agent. Those still apply when you
@@ -563,7 +566,10 @@ falls back to the template name. Type over the field to name the group
 yourself. The group name is also the prefix for every agent — template agent
 `PO` lands as `<group>-PO` (the modal previews the final names). The optional
 **worktree** branch lands the whole force on its own branch in a git worktree,
-which becomes the force's working directory.
+which becomes the force's working directory. **Give each agent its own
+worktree** instead fans that branch prefix out across the roster. A template
+may pre-check this choice by default; changing it in the deploy modal affects
+only that spawn and does not edit the template.
 
 When creating a new force, the modal can also **mirror settings from an existing
 group**: description and default cwd are copied into editable fields before

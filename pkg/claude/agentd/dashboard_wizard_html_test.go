@@ -1705,3 +1705,28 @@ func TestDashboardHTML_TemplateWavesAndRhythms(t *testing.T) {
 	must("function groupWavesChip(", "the wave chip renderer exists")
 	must(".group-waves-chip", "the wave chip has the dark-theme skin")
 }
+
+// TestDashboardHTML_TemplatePerAgentWorktreesDefault pins the template-level
+// default for the deploy dialog's existing per-agent-worktree choice. The
+// editor persists it, and opening or switching templates seeds (but does not
+// disable) the spawn-time checkbox, so a human may override it for that run.
+func TestDashboardHTML_TemplatePerAgentWorktreesDefault(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	must(`id="template-editor-per-agent-worktrees"`, "the template editor exposes the default")
+	must("per_agent_worktrees: $('#template-editor-per-agent-worktrees').checked",
+		"template saves persist the default")
+	must("!!(tmpl && tmpl.per_agent_worktrees)", "template edits restore the stored default")
+	must("function applyDeployTemplateWorktreeDefault()", "the deploy prefill has one shared implementation")
+	must("const perAgent = !!(tmpl && tmpl.per_agent_worktrees)",
+		"the deploy checkbox is seeded from the selected template")
+	must("applyDeployWtSync();\n  renderDeployPreview();",
+		"mission-driven group prefills resync the worktree branch prefix before repainting")
+	must(`id="template-deploy-wt-per-agent" type="checkbox"`,
+		"the seeded deploy choice remains an enabled per-run checkbox")
+}

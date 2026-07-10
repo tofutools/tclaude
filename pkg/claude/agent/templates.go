@@ -146,11 +146,12 @@ type processPhaseJSON struct {
 }
 
 type templateJSON struct {
-	Name           string                 `json:"name"`
-	Descr          string                 `json:"descr,omitempty"`
-	DefaultContext string                 `json:"default_context,omitempty"`
-	Agents         []templateAgentJSON    `json:"agents"`
-	WorkPattern    []workPatternEntryJSON `json:"work_pattern,omitempty"`
+	Name              string                 `json:"name"`
+	Descr             string                 `json:"descr,omitempty"`
+	DefaultContext    string                 `json:"default_context,omitempty"`
+	PerAgentWorktrees bool                   `json:"per_agent_worktrees,omitempty"`
+	Agents            []templateAgentJSON    `json:"agents"`
+	WorkPattern       []workPatternEntryJSON `json:"work_pattern,omitempty"`
 	// Process is the template's declarative process spec (JOH-242): an ordered
 	// list of phases. Empty/absent = no process.
 	Process []processPhaseJSON `json:"process,omitempty"`
@@ -338,6 +339,9 @@ func renderTemplateHuman(stdout io.Writer, t templateJSON) {
 			fmt.Fprintf(stdout, "    %s\n", line)
 		}
 	}
+	if t.PerAgentWorktrees {
+		fmt.Fprintln(stdout, "  per_agent_worktrees: true (deploy default; overridable per spawn)")
+	}
 	fmt.Fprintf(stdout, "  agents (%d):\n", len(t.Agents))
 	for i, a := range t.Agents {
 		tags := []string{}
@@ -463,7 +467,7 @@ func templatesCreateCmd() *cobra.Command {
 		Use:   "create --file <path>",
 		Short: "Create a group template from a JSON file",
 		Long: "Reads a template definition as JSON from --file (or --file - for stdin) and creates it. The JSON " +
-			"shape is what 'templates show <name> --json' emits: {name, descr, default_context, agents:[{name, " +
+			"shape is what 'templates show <name> --json' emits: {name, descr, default_context, per_agent_worktrees, agents:[{name, " +
 			"role, descr, initial_message, is_owner, permissions, spawn_profile, harness, model, effort, sandbox, " +
 			"approval}]}. A template is structured (nested agents with " +
 			"multi-line briefs), so it is supplied as a file rather than via flags. Bootstrap one with " +

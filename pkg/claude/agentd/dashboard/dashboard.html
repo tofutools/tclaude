@@ -1725,6 +1725,10 @@
       <span class="cron-create-label">Default context</span>
       <textarea id="template-editor-context" class="modal-context-textarea" rows="4" placeholder="optional — reusable group-wide boilerplate; the per-instantiation task is appended to this and delivered to every spawned agent's inbox" spellcheck="false"></textarea>
     </label>
+    <label class="cron-create-enabled cron-check-aligned" title="Default the summon/deploy dialog to one fresh git worktree per roster agent. This is only a template default: it can still be toggled for each spawn.">
+      <input id="template-editor-per-agent-worktrees" type="checkbox" />
+      <span><span class="tpl-word-regular">Give each agent its own worktree by default</span><span class="tpl-word-wizard">Give each familiar its own enchanted grove by default</span></span>
+    </label>
     <div class="template-agents-head">
       <span><span class="tpl-word-regular">Agents</span><span class="tpl-word-wizard">Familiars</span></span>
       <button type="button" id="template-editor-add-agent" class="tool"><span class="tpl-word-regular">+ add agent</span><span class="tpl-word-wizard">+ add familiar</span></button>

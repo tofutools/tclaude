@@ -138,11 +138,14 @@ type processPhaseJSON struct {
 // templateJSON is the wire shape for a whole template. CreatedAt /
 // UpdatedAt are response-only (ignored on input).
 type templateJSON struct {
-	Name           string                 `json:"name"`
-	Descr          string                 `json:"descr,omitempty"`
-	DefaultContext string                 `json:"default_context,omitempty"`
-	Agents         []templateAgentJSON    `json:"agents"`
-	WorkPattern    []workPatternEntryJSON `json:"work_pattern"`
+	Name           string `json:"name"`
+	Descr          string `json:"descr,omitempty"`
+	DefaultContext string `json:"default_context,omitempty"`
+	// PerAgentWorktrees seeds the deploy dialog's existing per-run checkbox.
+	// It is a default, not a mandate: the human may toggle it for each spawn.
+	PerAgentWorktrees bool                   `json:"per_agent_worktrees,omitempty"`
+	Agents            []templateAgentJSON    `json:"agents"`
+	WorkPattern       []workPatternEntryJSON `json:"work_pattern"`
 	// Process is the template's declarative process spec (JOH-242): an ordered
 	// list of phases. Empty/absent = no process (the feature is off).
 	Process []processPhaseJSON `json:"process"`
@@ -161,14 +164,15 @@ type templateJSON struct {
 // non-nil slices so the dashboard's JS .map() never trips on null.
 func templateToJSON(t *db.GroupTemplate) templateJSON {
 	out := templateJSON{
-		Name:           t.Name,
-		Descr:          t.Descr,
-		DefaultContext: t.DefaultContext,
-		Agents:         []templateAgentJSON{},
-		WorkPattern:    []workPatternEntryJSON{},
-		Process:        []processPhaseJSON{},
-		Rhythms:        []rhythmJSON{},
-		WaveMaxWait:    t.WaveMaxWait,
+		Name:              t.Name,
+		Descr:             t.Descr,
+		DefaultContext:    t.DefaultContext,
+		PerAgentWorktrees: t.PerAgentWorktrees,
+		Agents:            []templateAgentJSON{},
+		WorkPattern:       []workPatternEntryJSON{},
+		Process:           []processPhaseJSON{},
+		Rhythms:           []rhythmJSON{},
+		WaveMaxWait:       t.WaveMaxWait,
 	}
 	for _, e := range t.WorkPattern {
 		out.WorkPattern = append(out.WorkPattern, workPatternEntryJSON{SendTo: e.SendTo, Value: e.Value})
@@ -355,10 +359,11 @@ func buildTemplateFromJSON(body templateJSON) (*db.GroupTemplate, *spawnFailure)
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg", err.Error()}
 	}
 	t := &db.GroupTemplate{
-		Name:           name,
-		Descr:          strings.TrimSpace(body.Descr),
-		DefaultContext: ctx,
-		Agents:         []db.GroupTemplateAgent{},
+		Name:              name,
+		Descr:             strings.TrimSpace(body.Descr),
+		DefaultContext:    ctx,
+		PerAgentWorktrees: body.PerAgentWorktrees,
+		Agents:            []db.GroupTemplateAgent{},
 	}
 	seenNames := map[string]bool{}
 	for i, a := range body.Agents {
@@ -3276,6 +3281,9 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 		// blueprint choreography (JOH-336), curated in the editor like the
 		// briefs, so an update re-snapshot always keeps the existing one.
 		t.WorkPattern = existing.WorkPattern
+		// A live group has no template-default worktree preference to trace. Keep
+		// the curated value when refreshing a template from its running group.
+		t.PerAgentWorktrees = existing.PerAgentWorktrees
 		t.ID = existing.ID
 		if err := db.UpdateGroupTemplate(t); err != nil {
 			if errors.Is(err, sql.ErrNoRows) && attempt == 0 {

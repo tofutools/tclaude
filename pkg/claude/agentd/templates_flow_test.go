@@ -528,9 +528,10 @@ func TestGroupTemplate_FromGroupUpdateResnapshot(t *testing.T) {
 	f := newFlow(t)
 
 	createBody := map[string]any{
-		"name":            "crew",
-		"descr":           "curated descr",
-		"default_context": "CREW-CONTEXT",
+		"name":                "crew",
+		"descr":               "curated descr",
+		"default_context":     "CREW-CONTEXT",
+		"per_agent_worktrees": true,
 		"agents": []templateAgentSpec{
 			{Name: "lead", Role: "lead", InitialMessage: "Lead the crew.", IsOwner: true},
 			{Name: "dev1", Role: "dev", InitialMessage: "Build features."},
@@ -605,6 +606,8 @@ func TestGroupTemplate_FromGroupUpdateResnapshot(t *testing.T) {
 	// with "Instantiated from template crew", which must NOT leak back
 	// into the blueprint's own description on a re-snapshot.
 	assert.Equal(t, "curated descr", tmpl.Descr, "instance descr never clobbers curated template descr")
+	assert.True(t, tmpl.PerAgentWorktrees,
+		"the template-only worktree default survives the update re-snapshot")
 
 	// The work pattern is blueprint choreography — a live group has none
 	// to trace, so the update re-snapshot must keep the curated one.
@@ -661,6 +664,8 @@ func TestGroupTemplate_FromGroupUpdateResnapshot(t *testing.T) {
 	}
 	require.Len(t, tmpl.WorkPattern, 1, "work pattern survives repeated re-snapshots")
 	assert.Equal(t, "lead", tmpl.WorkPattern[0].SendTo)
+	assert.True(t, tmpl.PerAgentWorktrees,
+		"the template-only worktree default survives repeated re-snapshots")
 }
 
 // Scenario (JOH-337): update:true against a name with NO existing

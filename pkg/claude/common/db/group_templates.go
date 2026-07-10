@@ -28,8 +28,12 @@ type GroupTemplate struct {
 	// instantiated group's default_context (with the per-instantiation
 	// task text appended), so every spawned agent sees it.
 	DefaultContext string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	// PerAgentWorktrees is the template's default for the deploy dialog's
+	// existing "Give each agent its own worktree" option. It only seeds the
+	// per-run choice; the human may still override it when spawning the team.
+	PerAgentWorktrees bool
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 	// Agents is the ordered list of agents the template spawns, sorted
 	// by Ordinal ascending.
 	Agents []GroupTemplateAgent
@@ -283,9 +287,9 @@ func CreateGroupTemplate(t *GroupTemplate) (int64, error) {
 
 	now := time.Now().Format(time.RFC3339Nano)
 	res, err := tx.Exec(
-		`INSERT INTO group_templates (name, descr, default_context, work_pattern, process, rhythms, wave_max_wait, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.Name, t.Descr, t.DefaultContext, workPatternToJSON(t.WorkPattern), processToJSON(t.Process),
+		`INSERT INTO group_templates (name, descr, default_context, per_agent_worktrees, work_pattern, process, rhythms, wave_max_wait, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.Name, t.Descr, t.DefaultContext, t.PerAgentWorktrees, workPatternToJSON(t.WorkPattern), processToJSON(t.Process),
 		rhythmsToJSON(t.Rhythms), t.WaveMaxWait, now, now)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -323,9 +327,9 @@ func UpdateGroupTemplate(t *GroupTemplate) error {
 	defer func() { _ = tx.Rollback() }()
 
 	res, err := tx.Exec(
-		`UPDATE group_templates SET name = ?, descr = ?, default_context = ?, work_pattern = ?, process = ?, rhythms = ?, wave_max_wait = ?, updated_at = ?
+		`UPDATE group_templates SET name = ?, descr = ?, default_context = ?, per_agent_worktrees = ?, work_pattern = ?, process = ?, rhythms = ?, wave_max_wait = ?, updated_at = ?
 		 WHERE id = ?`,
-		t.Name, t.Descr, t.DefaultContext, workPatternToJSON(t.WorkPattern), processToJSON(t.Process),
+		t.Name, t.Descr, t.DefaultContext, t.PerAgentWorktrees, workPatternToJSON(t.WorkPattern), processToJSON(t.Process),
 		rhythmsToJSON(t.Rhythms), t.WaveMaxWait, time.Now().Format(time.RFC3339Nano), t.ID)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -381,7 +385,7 @@ func GetGroupTemplate(name string) (*GroupTemplate, error) {
 		return nil, err
 	}
 	t, err := scanGroupTemplate(d.QueryRow(
-		`SELECT id, name, descr, default_context, work_pattern, process, rhythms, wave_max_wait, created_at, updated_at
+		`SELECT id, name, descr, default_context, per_agent_worktrees, work_pattern, process, rhythms, wave_max_wait, created_at, updated_at
 		 FROM group_templates WHERE name = ?`, name))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -403,7 +407,7 @@ func ListGroupTemplates() ([]*GroupTemplate, error) {
 		return nil, err
 	}
 	rows, err := d.Query(
-		`SELECT id, name, descr, default_context, work_pattern, process, rhythms, wave_max_wait, created_at, updated_at
+		`SELECT id, name, descr, default_context, per_agent_worktrees, work_pattern, process, rhythms, wave_max_wait, created_at, updated_at
 		 FROM group_templates ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -487,7 +491,7 @@ func listTemplateAgents(d *sql.DB, templateID int64) ([]GroupTemplateAgent, erro
 func scanGroupTemplate(s rowScanner) (*GroupTemplate, error) {
 	var t GroupTemplate
 	var createdAt, updatedAt, workPattern, process, rhythms string
-	if err := s.Scan(&t.ID, &t.Name, &t.Descr, &t.DefaultContext, &workPattern, &process, &rhythms, &t.WaveMaxWait, &createdAt, &updatedAt); err != nil {
+	if err := s.Scan(&t.ID, &t.Name, &t.Descr, &t.DefaultContext, &t.PerAgentWorktrees, &workPattern, &process, &rhythms, &t.WaveMaxWait, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
 	t.CreatedAt = parseTimeOrZero(createdAt)

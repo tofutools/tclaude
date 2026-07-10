@@ -233,7 +233,7 @@ CREATE TABLE group_templates (
 			default_context TEXT NOT NULL DEFAULT '',
 			created_at      TEXT NOT NULL,
 			updated_at      TEXT NOT NULL
-		, work_pattern TEXT NOT NULL DEFAULT '', process TEXT NOT NULL DEFAULT '', rhythms TEXT NOT NULL DEFAULT '', wave_max_wait INTEGER NOT NULL DEFAULT 0);
+		, work_pattern TEXT NOT NULL DEFAULT '', process TEXT NOT NULL DEFAULT '', rhythms TEXT NOT NULL DEFAULT '', wave_max_wait INTEGER NOT NULL DEFAULT 0, per_agent_worktrees INTEGER NOT NULL DEFAULT 0);
 
 CREATE TABLE group_template_agents (
 			id              INTEGER PRIMARY KEY AUTOINCREMENT,
