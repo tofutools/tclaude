@@ -15,6 +15,7 @@ import (
 func TestApplyAgentSocketEnv(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv(agentipc.SocketEnv, "")
 
 	env := map[string]string{}
 	require.NoError(t, ApplyAgentSocketEnv(harness.DefaultName, harness.ClaudeSandboxInherit, "", env))
@@ -42,6 +43,7 @@ func TestApplyAgentSocketEnvRequiresRestartForLegacyOnlyDaemon(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(home) })
 	t.Setenv("HOME", home)
+	t.Setenv(agentipc.SocketEnv, "")
 	require.NoError(t, os.MkdirAll(filepath.Dir(agentipc.LegacySocketPath()), 0o755))
 	legacy, err := net.Listen("unix", agentipc.LegacySocketPath())
 	require.NoError(t, err)
@@ -70,6 +72,7 @@ func TestApplyAgentSocketEnvAcceptsCanonicalDaemon(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(home) })
 	t.Setenv("HOME", home)
+	t.Setenv(agentipc.SocketEnv, "")
 	canonical, err := net.Listen("unix", agentipc.CanonicalSocketPath())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = canonical.Close() })

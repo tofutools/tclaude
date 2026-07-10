@@ -529,6 +529,12 @@ func TestRunLookup(t *testing.T) {
 
 func TestRunWhoami_HumanFallback(t *testing.T) {
 	setupTestDB(t)
+	// The test runner may itself be a tclaude agent with a live daemon socket.
+	// Stub the final peer-credential fallback so this direct-path unit test can
+	// never reach (or identify itself through) the operator's real daemon.
+	prevWhoami := whoamiViaDaemon
+	whoamiViaDaemon = func() string { return "" }
+	t.Cleanup(func() { whoamiViaDaemon = prevWhoami })
 	// Force findClaudePID to report no CC ancestor — the actual process tree
 	// may include one (e.g. when `go test` is run from inside Claude Code),
 	// but the test premise is "human shell, no ancestor".

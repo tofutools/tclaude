@@ -28,10 +28,11 @@ type NewParams struct {
 	// command checks its marker only after tmux has established the pane's cwd
 	// inode. Hidden from normal CLI help.
 	CwdWriteProof string `long:"cwd-write-proof" optional:"true" help:"Internal: verify a daemon-issued cwd marker before launching the harness"`
-	// CodexGitCommonDir is an internal, daemon-pinned linked-worktree metadata
-	// grant. It is used only with the managed Codex profile and hidden from
+	// CodexGitCommonDir is the historical name for an internal, daemon-pinned
+	// linked-worktree metadata result. The managed Codex profile and Claude
+	// Code's per-session sandbox allowWrite overlay both consume it. Hidden from
 	// normal CLI help.
-	CodexGitCommonDir string `long:"codex-git-common-dir" optional:"true" help:"Internal: pinned Git common dir for the managed Codex profile"`
+	CodexGitCommonDir string `long:"codex-git-common-dir" optional:"true" help:"Internal: pinned Git common dir for repository sandbox grants"`
 	// CodexGitCommonDirPinned disambiguates an intentionally empty daemon pin
 	// from a direct launch that should derive the common dir from cwd.
 	CodexGitCommonDirPinned bool   `long:"codex-git-common-dir-pinned" help:"Internal: use the daemon-pinned Git common-dir result, including an empty result"`
@@ -660,6 +661,7 @@ func runNew(params *NewParams) error {
 		Model:                  model,
 		ExtraArgs:              extraArgs,
 		SandboxMode:            sandboxMode,
+		SandboxWriteDirs:       claudeGitWorktreeWriteDirs(params, h.Name, sandboxMode),
 		AskUserQuestionTimeout: askTimeout,
 		PermissionProfile:      params.PermissionProfile,
 		ApprovalPolicy:         approvalPolicy,
@@ -747,6 +749,18 @@ func runNew(params *NewParams) error {
 	}
 
 	return announceAndAttach(fmt.Sprintf("Created session %s", tmuxSession), sessionID, tmuxSession, cwd, params.Detached)
+}
+
+func claudeGitWorktreeWriteDirs(params *NewParams, harnessName, sandboxMode string) []string {
+	if harnessName != harness.DefaultName || sandboxMode == harness.ClaudeSandboxOff ||
+		!params.CodexGitCommonDirPinned || params.CodexGitCommonDir == "" {
+		return nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	return harness.GitWorktreeWriteDirs(params.CodexGitCommonDir, home)
 }
 
 func validateCodexGitCommonDirPin(params *NewParams) error {

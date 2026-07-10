@@ -336,7 +336,7 @@ func TestSpawnDirProof_CodexManagedSpawnProvesAndPinsGitCommonDir(t *testing.T) 
 	f.HaveGroup("alpha")
 	const parent = "parent-wrgc-aaaa-bbbb-cccc-111111111111"
 	haveSpawnCapableSandboxParent(t, f, "alpha", parent, harness.DefaultName, harness.ClaudeSandboxInherit)
-	repo, _ := initRepoOnMain(t)
+	repo, repoParent := initRepoOnMain(t)
 	commonDir, err := harness.CodexGitCommonDir(repo)
 	require.NoError(t, err)
 	require.NotEmpty(t, commonDir)
@@ -344,7 +344,7 @@ func TestSpawnDirProof_CodexManagedSpawnProvesAndPinsGitCommonDir(t *testing.T) 
 	body := map[string]any{"name": "codex-worker", "cwd": repo, "harness": harness.CodexName}
 	ch := decodeWriteProofChallenge(t,
 		agentReq(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn", body))
-	assert.ElementsMatch(t, []string{repo, commonDir}, ch.WriteProof.Dirs)
+	assert.ElementsMatch(t, []string{repoParent, repo, commonDir}, ch.WriteProof.Dirs)
 	answerChallenge(t, ch)
 	body["write_proof_token"] = ch.WriteProof.Token
 	rec := agentReq(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn", body)
@@ -363,6 +363,40 @@ func TestSpawnDirProof_CodexManagedSpawnProvesAndPinsGitCommonDir(t *testing.T) 
 	assert.True(t, pinned, "managed Codex spawn must carry pin-presence")
 	assertNoDirWriteProofMarkers(t, repo)
 	assertNoDirWriteProofMarkers(t, commonDir)
+	assertNoDirWriteProofMarkers(t, repoParent)
+}
+
+func TestSpawnDirProof_ClaudeSpawnProvesAndPinsWorktreeWriteDirs(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parent = "parent-wrcc-aaaa-bbbb-cccc-111111111111"
+	haveSpawnCapableSandboxParent(t, f, "alpha", parent, harness.DefaultName, harness.ClaudeSandboxInherit)
+	repo, repoParent := initRepoOnMain(t)
+	commonDir, err := harness.GitCommonDir(repo)
+	require.NoError(t, err)
+
+	body := map[string]any{
+		"name": "claude-worker", "cwd": repo,
+		"harness": harness.DefaultName, "sandbox": harness.ClaudeSandboxOn,
+	}
+	ch := decodeWriteProofChallenge(t,
+		agentReq(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn", body))
+	assert.ElementsMatch(t, []string{repoParent, repo, commonDir}, ch.WriteProof.Dirs)
+	answerChallenge(t, ch)
+	body["write_proof_token"] = ch.WriteProof.Token
+	rec := agentReq(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn", body)
+	require.Equalf(t, http.StatusOK, rec.Code, "proved claude spawn; body=%s", rec.Body.String())
+
+	var resp struct {
+		ConvID string `json:"conv_id"`
+	}
+	testharness.DecodeJSON(t, rec, &resp)
+	got, ok := f.World.SpawnCodexGitCommonDir(resp.ConvID)
+	require.True(t, ok)
+	assert.Equal(t, commonDir, got, "Claude launch must receive the same pinned repository layout")
+	pinned, ok := f.World.SpawnCodexGitCommonDirPinned(resp.ConvID)
+	require.True(t, ok)
+	assert.True(t, pinned)
 }
 
 func TestSpawnDirProof_CodexManagedSpawnPinsEmptyGitCommonDir(t *testing.T) {
@@ -575,7 +609,7 @@ func TestSpawnDirProof_CodexCloneCwdOverrideProvesAndPinsGitCommonDir(t *testing
 	f.HaveMember("alpha", caller)
 	f.HaveAliveCodexSession(caller, "spwn-codex-clone", "tclaude-spwn-codex-clone", t.TempDir())
 	require.NoError(t, db.GrantAgentPermission(caller, agentd.PermSelfClone, "test"))
-	repo, _ := initRepoOnMain(t)
+	repo, repoParent := initRepoOnMain(t)
 	commonDir, err := harness.CodexGitCommonDir(repo)
 	require.NoError(t, err)
 	require.NotEmpty(t, commonDir)
@@ -583,7 +617,7 @@ func TestSpawnDirProof_CodexCloneCwdOverrideProvesAndPinsGitCommonDir(t *testing
 	body := map[string]any{"no_copy_conv": true, "cwd": repo}
 	ch := decodeWriteProofChallenge(t,
 		agentReq(t, f, caller, http.MethodPost, "/v1/whoami/clone", body))
-	assert.ElementsMatch(t, []string{repo, commonDir}, ch.WriteProof.Dirs)
+	assert.ElementsMatch(t, []string{repoParent, repo, commonDir}, ch.WriteProof.Dirs)
 	answerChallenge(t, ch)
 	body["write_proof_token"] = ch.WriteProof.Token
 	rec := agentReq(t, f, caller, http.MethodPost, "/v1/whoami/clone", body)
@@ -602,6 +636,7 @@ func TestSpawnDirProof_CodexCloneCwdOverrideProvesAndPinsGitCommonDir(t *testing
 	assert.True(t, pinned, "no-copy clone must carry pin-presence")
 	assertNoDirWriteProofMarkers(t, repo)
 	assertNoDirWriteProofMarkers(t, commonDir)
+	assertNoDirWriteProofMarkers(t, repoParent)
 }
 
 func TestSpawnDirProof_CodexCloneCopyForwardsPinnedGitCommonDirOnResume(t *testing.T) {
@@ -618,13 +653,14 @@ func TestSpawnDirProof_CodexCloneCopyForwardsPinnedGitCommonDirOnResume(t *testi
 	markSessionAsCodex(t, "spwn-codex-copy")
 	installCodexCopyCompatSpawner(t)
 	require.NoError(t, db.GrantAgentPermission(caller, agentd.PermSelfClone, "test"))
-	repo, _ := initRepoOnMain(t)
+	repo, repoParent := initRepoOnMain(t)
 	commonDir, err := harness.CodexGitCommonDir(repo)
 	require.NoError(t, err)
 
 	body := map[string]any{"cwd": repo}
 	ch := decodeWriteProofChallenge(t,
 		agentReq(t, f, caller, http.MethodPost, "/v1/whoami/clone", body))
+	assert.ElementsMatch(t, []string{repoParent, repo, commonDir}, ch.WriteProof.Dirs)
 	answerChallenge(t, ch)
 	body["write_proof_token"] = ch.WriteProof.Token
 	rec := agentReq(t, f, caller, http.MethodPost, "/v1/whoami/clone", body)
@@ -641,6 +677,9 @@ func TestSpawnDirProof_CodexCloneCopyForwardsPinnedGitCommonDirOnResume(t *testi
 	pinned, ok := f.World.SpawnCodexGitCommonDirPinned(resp.NewConv)
 	require.True(t, ok)
 	assert.True(t, pinned, "copy clone resume must carry pin-presence")
+	assertNoDirWriteProofMarkers(t, repoParent)
+	assertNoDirWriteProofMarkers(t, repo)
+	assertNoDirWriteProofMarkers(t, commonDir)
 }
 
 func TestSpawnDirProof_CodexTemplateProvesAndPinsGitCommonDir(t *testing.T) {
@@ -649,7 +688,7 @@ func TestSpawnDirProof_CodexTemplateProvesAndPinsGitCommonDir(t *testing.T) {
 	const parent = "parent-tpgc-aaaa-bbbb-cccc-111111111111"
 	haveSpawnCapableSandboxParent(t, f, "alpha", parent, harness.DefaultName, harness.ClaudeSandboxInherit)
 	require.NoError(t, db.GrantAgentPermission(parent, agentd.PermTemplatesUse, "test"))
-	repo, _ := initRepoOnMain(t)
+	repo, repoParent := initRepoOnMain(t)
 	commonDir, err := harness.CodexGitCommonDir(repo)
 	require.NoError(t, err)
 	require.NotEmpty(t, commonDir)
@@ -666,7 +705,7 @@ func TestSpawnDirProof_CodexTemplateProvesAndPinsGitCommonDir(t *testing.T) {
 	body := map[string]any{"group_name": "codex-cast", "cwd": repo}
 	ch := decodeWriteProofChallenge(t,
 		agentReq(t, f, parent, http.MethodPost, "/v1/templates/codex-template/instantiate", body))
-	assert.ElementsMatch(t, []string{repo, commonDir}, ch.WriteProof.Dirs)
+	assert.ElementsMatch(t, []string{repoParent, repo, commonDir}, ch.WriteProof.Dirs)
 	answerChallenge(t, ch)
 	body["write_proof_token"] = ch.WriteProof.Token
 	rec := agentReq(t, f, parent, http.MethodPost, "/v1/templates/codex-template/instantiate", body)
@@ -684,6 +723,7 @@ func TestSpawnDirProof_CodexTemplateProvesAndPinsGitCommonDir(t *testing.T) {
 	assert.True(t, pinned, "template child must carry pin-presence")
 	assertNoDirWriteProofMarkers(t, repo)
 	assertNoDirWriteProofMarkers(t, commonDir)
+	assertNoDirWriteProofMarkers(t, repoParent)
 }
 
 // Scenario: an agent self-clones with a cwd override — the same dir-granting

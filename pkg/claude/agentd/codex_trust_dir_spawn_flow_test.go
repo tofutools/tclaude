@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -8,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/worktree"
 )
 
 // Flow coverage for JOH-205 inc4 Part B — the opt-in dir-trust flag threading
@@ -75,7 +77,7 @@ func TestCodexSpawn_TrustDirRejectedForClaude(t *testing.T) {
 	assert.Equal(t, 400, spawn.Code, "trust_dir for Claude Code must be a 400; body=%s", string(spawn.Raw))
 }
 
-func TestCodexSpawn_TrustDirRejectedForAgentCaller(t *testing.T) {
+func TestCodexSpawn_TrustDirRejectedForAgentCallerOutsideSiblingWorktree(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("squad")
 	const parent = "parent-trst-aaaa-bbbb-cccc-111111111111"
@@ -89,4 +91,33 @@ func TestCodexSpawn_TrustDirRejectedForAgentCaller(t *testing.T) {
 	})
 	require.Equal(t, http.StatusForbidden, rec.Code, "body=%s", rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "trust_dir_restricted")
+}
+
+func TestCodexSpawn_DefaultSiblingWorktreeAutoTrustedForAgentCaller(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("squad")
+	const parent = "parent-trst-sibling-cccc-111111111111"
+	haveSpawnCapableSandboxParent(t, f, "squad", parent, harness.CodexName, harness.SandboxManagedProfile)
+
+	repo, _ := initRepoOnMain(t)
+	worktreeDir, err := worktree.AddWorktreeIn(repo, "agent-child", "main", "")
+	require.NoError(t, err)
+
+	// No trust_dir field: a verified default ../<repo>-<branch> worktree is
+	// trusted automatically so the detached Codex child cannot freeze on its
+	// onboarding modal. The agent caller proves every repository path the child
+	// receives (container, main worktree, and shared Git metadata).
+	rec := agentReqProof(t, f, parent, http.MethodPost, "/v1/groups/squad/spawn", map[string]any{
+		"name":    "cdx-sibling",
+		"cwd":     worktreeDir,
+		"harness": "codex",
+	})
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var resp struct {
+		ConvID string `json:"conv_id"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	got, ok := f.World.SpawnTrustDir(resp.ConvID)
+	require.True(t, ok)
+	assert.True(t, got, "default sibling worktree must always be pre-trusted")
 }

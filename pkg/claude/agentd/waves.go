@@ -200,7 +200,7 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			cwdProofToken = proofToken
 		}
 		spawnCodexGitCommonDir := ""
-		spawnCodexGitCommonDirPinned := codexManagedProfileUsesPinnedGitCommonDir(launch.Harness, launch.Sandbox)
+		spawnCodexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(launch.Harness, launch.Sandbox)
 		if spawnCodexGitCommonDirPinned {
 			spawnCodexGitCommonDir = codexGitCommonDir
 		}

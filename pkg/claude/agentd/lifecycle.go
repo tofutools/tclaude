@@ -422,7 +422,7 @@ func resumeOneConvRecreate(convID string, recreateMissingDir bool) memberOpResul
 	// Relaunch never re-engages the experimental guardian (auto-review is an
 	// explicit fresh-spawn opt-in, not persisted per-conv), so AutoReview stays false.
 	relaunchSandbox := sandboxForHarness(harnessName)
-	codexGitCommonDir, gerr := codexManagedProfileGitCommonDir(harnessName, relaunchSandbox, cwd)
+	codexGitCommonDir, gerr := spawnGitCommonDir(harnessName, relaunchSandbox, cwd)
 	if gerr != nil {
 		res.Action = "error"
 		res.Detail = gerr.Error()
@@ -436,7 +436,7 @@ func resumeOneConvRecreate(convID string, recreateMissingDir bool) memberOpResul
 		Harness:                 harnessName,
 		Sandbox:                 relaunchSandbox,
 		CodexGitCommonDir:       codexGitCommonDir,
-		CodexGitCommonDirPinned: codexManagedProfileUsesPinnedGitCommonDir(harnessName, relaunchSandbox),
+		CodexGitCommonDirPinned: spawnUsesPinnedGitCommonDir(harnessName, relaunchSandbox),
 		Approval:                approvalForHarness(harnessName),
 		AskUserQuestionTimeout:  askTimeoutForRelaunch(convID),
 		RemoteControl:           remoteControl,
@@ -1563,25 +1563,28 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	var proofDirs []string
 	var proofToken string
 	var codexGitCommonDir string
-	codexGitCommonDirPinned := codexManagedProfileUsesPinnedGitCommonDir(h.Name, sandboxMode)
+	codexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(h.Name, sandboxMode)
+	var gitWorktreeWriteDirs []string
 	if codexGitCommonDirPinned {
 		var gerr error
-		codexGitCommonDir, gerr = codexManagedProfileGitCommonDir(h.Name, sandboxMode, cwd)
+		codexGitCommonDir, gerr = spawnGitCommonDir(h.Name, sandboxMode, cwd)
 		if gerr != nil {
 			writeError(w, http.StatusInternalServerError, "io", gerr.Error())
 			return
 		}
+		if home, herr := os.UserHomeDir(); herr == nil {
+			gitWorktreeWriteDirs = harness.GitWorktreeWriteDirs(codexGitCommonDir, home)
+		}
+	}
+	autoTrustSiblingWorktree, trustLayoutErr := defaultSiblingWorktreeTrust(h.Name, cwd, codexGitCommonDir)
+	if trustLayoutErr != nil {
+		writeError(w, http.StatusInternalServerError, "io", trustLayoutErr.Error())
+		return
 	}
 	if spawnerConvID != "" && childSandboxGrantsDirWrite(h.Name, sandboxMode) {
 		dirs := []string{cwd}
-		if worktreePath != "" {
-			dirs = append(dirs, worktreePath)
-		}
-		if codexGitCommonDirPinned {
-			if codexGitCommonDir != "" && codexGitCommonDir != cwd && codexGitCommonDir != worktreePath {
-				dirs = append(dirs, codexGitCommonDir)
-			}
-		}
+		dirs = appendUniqueDirs(dirs, worktreePath)
+		dirs = appendUniqueDirs(dirs, gitWorktreeWriteDirs...)
 		resolved, ok := requireDirWriteProof(w, spawnerConvID, body.WriteProofToken, dirs)
 		if !ok {
 			return
@@ -1605,12 +1608,13 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			// re-asserts they are still canonical immediately before the fork —
 			// closing the window between verification here and the child's
 			// launch (a swap after verification is caught, not launched into).
-			proofDirs = []string{cwd}
-			if worktreePath != "" {
-				proofDirs = append(proofDirs, worktreePath)
-			}
-			if codexGitCommonDir != "" && codexGitCommonDir != cwd && codexGitCommonDir != worktreePath {
-				proofDirs = append(proofDirs, codexGitCommonDir)
+			proofDirs = make([]string, 0, len(dirs))
+			for _, raw := range dirs {
+				resolvedDir := raw
+				if v := resolved[raw]; v != "" {
+					resolvedDir = v
+				}
+				proofDirs = appendUniqueDirs(proofDirs, resolvedDir)
 			}
 		}
 	}
@@ -1656,16 +1660,19 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// cwd in ~/.codex/config.toml) and, unlike sandbox/approval, edits the
 	// user's config — so requesting it for a harness with no trust modal
 	// (Claude Code) is a 400 here rather than a flag silently dropped. Off by
-	// default and never auto-defaulted; only an explicit dashboard checkbox /
-	// CLI flag sets it. See JOH-205 inc4.
+	// default except for a verified tclaude-style sibling worktree, which must
+	// be trusted before a detached Codex child starts. See JOH-205 inc4.
 	trustDir, tdErr := harness.ResolveTrustDir(h, body.TrustDir)
 	if tdErr != nil {
 		writeError(w, http.StatusBadRequest, "invalid_trust_dir", tdErr.Error())
 		return
 	}
-	if spawnerConvID != "" && trustDir {
+	if autoTrustSiblingWorktree {
+		trustDir = true
+	}
+	if spawnerConvID != "" && trustDir && !autoTrustSiblingWorktree {
 		writeError(w, http.StatusForbidden, "trust_dir_restricted",
-			"agent-initiated spawns may not edit the operator's global Codex trust configuration; leave trust_dir off or ask the human to spawn this child")
+			"agent-initiated spawns may pre-trust only tclaude's verified default sibling worktrees; leave trust_dir off or ask the human to spawn this child")
 		return
 	}
 
@@ -1862,10 +1869,12 @@ type spawnParams struct {
 	// the window between HTTP-boundary verification and the child's launch.
 	// Empty for exempt callers (humans, fully-open parents) — nothing to
 	// re-assert.
-	DirWriteProofDirs       []string
-	DirWriteProofToken      string
-	CwdWriteProofToken      string
-	CleanupDirWriteProof    bool
+	DirWriteProofDirs    []string
+	DirWriteProofToken   string
+	CwdWriteProofToken   string
+	CleanupDirWriteProof bool
+	// Historical field name: both the managed Codex profile and Claude Code's
+	// per-session allowWrite overlay consume this pinned repository layout.
 	CodexGitCommonDir       string
 	CodexGitCommonDirPinned bool
 	AutoFocus               bool
@@ -2332,17 +2341,24 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	if fail := applyDefaultProfile(g, &p); fail != nil {
 		return nil, fail
 	}
-	if codexManagedProfileUsesPinnedGitCommonDir(p.Harness, p.SandboxMode) && !p.CodexGitCommonDirPinned {
-		gitCommonDir, err := codexManagedProfileGitCommonDir(p.Harness, p.SandboxMode, p.Cwd)
+	if spawnUsesPinnedGitCommonDir(p.Harness, p.SandboxMode) && !p.CodexGitCommonDirPinned {
+		gitCommonDir, err := spawnGitCommonDir(p.Harness, p.SandboxMode, p.Cwd)
 		if err != nil {
 			return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
 		}
 		p.CodexGitCommonDir = gitCommonDir
 		p.CodexGitCommonDirPinned = true
 	}
-	if p.SpawnedByConv != "" && p.TrustDir {
+	autoTrustSiblingWorktree, err := defaultSiblingWorktreeTrust(p.Harness, p.Cwd, p.CodexGitCommonDir)
+	if err != nil {
+		return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+	}
+	if autoTrustSiblingWorktree {
+		p.TrustDir = true
+	}
+	if p.SpawnedByConv != "" && p.TrustDir && !autoTrustSiblingWorktree {
 		return nil, &spawnFailure{http.StatusForbidden, "trust_dir_restricted",
-			"agent-initiated spawns may not edit the operator's global Codex trust configuration; leave trust_dir off or ask the human to spawn this child"}
+			"agent-initiated spawns may pre-trust only tclaude's verified default sibling worktrees; leave trust_dir off or ask the human to spawn this child"}
 	}
 	if fail := spawnSandboxLineageFailure(p.SpawnedByConv, p.Harness, p.SandboxMode); fail != nil {
 		return nil, fail
