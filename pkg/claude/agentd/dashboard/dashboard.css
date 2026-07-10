@@ -10341,6 +10341,8 @@ body.wizard #agent-dock .dock-card-menu-item.danger:hover {
   --pg-accent: #58a6ff;
   --pg-return: #e3a341;
   --pg-focus: #79c0ff;
+  --pg-error: #f85149;
+  --pg-warn: #e3a341;
   position: relative;
   min-height: 320px;
   height: 100%;
@@ -10365,6 +10367,8 @@ body.wizard #agent-dock .dock-card-menu-item.danger:hover {
   --pg-accent: #0969da;
   --pg-return: #9a5b00;
   --pg-focus: #0550ae;
+  --pg-error: #cf222e;
+  --pg-warn: #9a5b00;
   border-color: #c9d2dd;
 }
 .process-graph:focus-visible { box-shadow: 0 0 0 2px var(--pg-focus); }
@@ -10426,6 +10430,20 @@ body.wizard #agent-dock .dock-card-menu-item.danger:hover {
 .process-overlay-glyph { fill: var(--pg-text); font-size: 11px; font-weight: 800; }
 .process-overlay-detail, .process-overlay-badge, .process-overlay-status { fill: var(--pg-text); font-size: 10px; font-weight: 700; }
 .process-overlay-badge { fill: var(--pg-return); }
+/* Validation severities on the badge anchor: glyph-coded in the renderer,
+   color-coded here (both, never color-only). */
+.process-overlay-anchor.overlay-error .process-overlay-ring { stroke: var(--pg-error); fill: var(--pg-bg); }
+.process-overlay-anchor.overlay-error .process-overlay-glyph,
+.process-overlay-anchor.overlay-error .process-overlay-badge { fill: var(--pg-error); }
+.process-overlay-anchor.overlay-warning .process-overlay-ring { stroke: var(--pg-warn); fill: var(--pg-bg); }
+.process-overlay-anchor.overlay-warning .process-overlay-glyph,
+.process-overlay-anchor.overlay-warning .process-overlay-badge { fill: var(--pg-warn); }
+.process-edge-badge {
+  font-size: 12px; font-weight: 800;
+  paint-order: stroke; stroke: var(--pg-bg); stroke-width: 5; stroke-linejoin: round;
+}
+.process-edge-badge-error { fill: var(--pg-error); }
+.process-edge-badge-warning { fill: var(--pg-warn); }
 .process-graph-controls { position: absolute; top: 10px; right: 10px; display: flex; gap: 6px; }
 .process-fit-button {
   appearance: none;
@@ -10455,6 +10473,8 @@ body.wizard .process-graph {
   --pg-accent: #d4af37;
   --pg-return: #e78a9c;
   --pg-focus: #d4af37;
+  --pg-error: #ff7b72;
+  --pg-warn: #e3a341;
   border-color: #4a3d6b;
   background-image: radial-gradient(circle at 50% 10%, rgba(98, 69, 145, 0.16), transparent 55%);
 }
@@ -10576,8 +10596,71 @@ body.wizard .process-fit-button { box-shadow: 0 2px 12px rgba(75, 48, 119, 0.5);
 .process-action-danger { color: #f85149; }
 .process-action-danger:hover { border-color: #f85149; }
 .process-editor-modal .modal-buttons button { min-width: 0; }
+/* Live-validation issues panel (TCL-299): collapsible, floats over the canvas
+   bottom-left. Every control explicitly dark-themed (never UA-white). */
+.process-issues-panel {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  z-index: 20;
+  max-width: min(430px, 75%);
+  background: rgba(22, 27, 34, .94);
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  color: #c9d1d9;
+  font-size: 12px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, .45);
+}
+.process-issues-summary {
+  cursor: pointer;
+  padding: 6px 10px;
+  color: #e6edf3;
+  font-weight: 600;
+  user-select: none;
+  white-space: nowrap;
+}
+.process-issues-panel[open] .process-issues-summary { border-bottom: 1px solid #30363d; }
+.process-issues-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.process-issue {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  padding: 4px 6px;
+  color: #c9d1d9;
+  font-size: 12px;
+  cursor: pointer;
+}
+.process-issue:hover, .process-issue:focus-visible { background: #1d2631; outline: none; }
+.process-issue-glyph { flex: none; font-weight: 800; }
+.process-issue-error .process-issue-glyph { color: #f85149; }
+.process-issue-warning .process-issue-glyph { color: #e3a341; }
+.process-issue-target {
+  flex: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #79c0ff;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.process-issue-message { color: #8b949e; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Wizard skin: keep the editor chrome legible on the parchment/violet theme;
    the graph core repaints itself via its own body.wizard variable block. */
+body.wizard .process-issues-panel { background: rgba(33, 24, 50, .95); border-color: #4a3d6b; }
+body.wizard .process-issues-panel[open] .process-issues-summary { border-color: #4a3d6b; }
+body.wizard .process-issue:hover, body.wizard .process-issue:focus-visible { background: #2c2042; }
+body.wizard .process-issue-target { color: #d4af37; }
 body.wizard .process-editor-header,
 body.wizard .process-editor-inspector { background: #211832; border-color: #4a3d6b; }
 body.wizard .process-editor-palette { background: #181226; border-color: #4a3d6b; }

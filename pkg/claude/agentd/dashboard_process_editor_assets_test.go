@@ -77,6 +77,45 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		t.Error("process-editor.js must not use innerHTML; template content is untrusted at render time")
 	}
 
+	validation := read("js/process-validation.js")
+	mustContain("process-validation.js", validation,
+		"export class ValidationScheduler",
+		"export class LiveValidation",
+		"export function mapDiagnostics(",
+		"export function decorateGraph(",
+		// Stale-response guard: a response is dropped unless it belongs to the
+		// newest issued request.
+		"seq !== this.seq",
+		"'/v1/process/validate'",
+		// An unserializable/rejected draft skips the round, never crashes it.
+		"if (payload == null) return;",
+		"if (!response.ok) return null;",
+		// Badges are glyph-coded per severity, never color-only.
+		"severityGlyph",
+		"process-issues-panel",
+	)
+	if strings.Contains(validation, "innerHTML") {
+		t.Error("process-validation.js must not use innerHTML; diagnostic text is untrusted at render time")
+	}
+	if strings.Contains(validation, "localStorage") {
+		t.Error("localStorage is banned; panel prefs belong in dashPrefs -> SQLite")
+	}
+
+	mustContain("process-editor.js", editor,
+		// Live validation wires through the editor's single post-mutation
+		// choke point: decorate on refresh, debounce-schedule after.
+		"new LiveValidation(",
+		"this.validation.decorate(this.model.graph())",
+		"this.validation?.schedule()",
+		// Save/reload must sync the validation controller (cold-review
+		// finding): a failed debounce round keeps prior diagnostics, so
+		// markSaved and the 409-reload model swap each push their fresh
+		// diagnostics into LiveValidation — otherwise badges/panel stay
+		// stale until the next mutation.
+		"this.validation?.applyDiagnostics(body.diagnostics || [])",
+		"this.validation?.applyDiagnostics(view.diagnostics || [])",
+	)
+
 	processes := read("js/processes.js")
 	mustContain("processes.js", processes,
 		// The editor loads lazily after the feature-gated tab opens.
@@ -96,13 +135,20 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		// Inline controls are explicitly dark-themed (UA-white trap).
 		".process-inspector-select",
 		"body.wizard .process-palette-card",
+		// Live-validation issues panel, explicitly themed on both skins.
+		".process-issues-panel",
+		".process-issue:hover, .process-issue:focus-visible",
+		"body.wizard .process-issues-panel",
 	)
 
-	// The graph core stays out of every eager entry module: only the lazily
-	// imported editor may import it (flag-off page loads render nothing).
+	// The graph core and validation loop stay out of every eager entry module:
+	// only the lazily imported editor may import them (flag-off page loads
+	// render nothing).
 	for _, entry := range []string{"js/dashboard.js", "js/tabs.js", "js/processes.js"} {
-		if strings.Contains(read(entry), "process-graph.js") {
-			t.Errorf("%s eagerly imports process-graph.js; flag-off must render nothing", entry)
+		for _, banned := range []string{"process-graph.js", "process-validation.js"} {
+			if strings.Contains(read(entry), banned) {
+				t.Errorf("%s eagerly imports %s; flag-off must render nothing", entry, banned)
+			}
 		}
 	}
 }

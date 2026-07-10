@@ -21,6 +21,8 @@ func Validate(tmpl *Template, edges []Edge) Diagnostics {
 	diagnostics = append(diagnostics, validateNodes(tmpl)...)
 	diagnostics = append(diagnostics, validateExpansionCollisions(tmpl)...)
 	diagnostics = append(diagnostics, validateEdges(tmpl, edges)...)
+	diagnostics = append(diagnostics, validateOutcomeRouting(tmpl)...)
+	diagnostics = append(diagnostics, validateLoopBudgets(tmpl)...)
 	diagnostics = append(diagnostics, validatePoisonEscalations(tmpl)...)
 	diagnostics = append(diagnostics, validateReachability(tmpl, edges)...)
 	diagnostics = append(diagnostics, validateAcyclic(tmpl, edges)...)
@@ -397,6 +399,119 @@ func validateEdges(tmpl *Template, edges []Edge) Diagnostics {
 		if _, ok := tmpl.Nodes[edge.To]; !ok {
 			diagnostics = append(diagnostics, diagError("unknown_target", "nodes."+edge.From+".next."+edge.Outcome, fmt.Sprintf("target node %q is not declared", edge.To)))
 		}
+	}
+	return diagnostics
+}
+
+// validateOutcomeRouting checks each node's outcome map against the runtime
+// edge-resolution rules (plan.ResolvePassEdge / model.FailTarget), so edges
+// that can never be taken — or plain-pass outcomes that have nowhere to go and
+// would stall the run — surface at authoring time. Decision nodes are exempt:
+// their edges are matched exactly against free-form verdicts.
+func validateOutcomeRouting(tmpl *Template) Diagnostics {
+	var diagnostics Diagnostics
+	for _, nodeID := range sortedKeys(tmpl.Nodes) {
+		node := tmpl.Nodes[nodeID]
+		// A single edge always resolves via the runtime's lone-edge fallback,
+		// and missing_next already covers empty maps.
+		if len(node.Next) < 2 {
+			continue
+		}
+		path := "nodes." + nodeID + ".next"
+		passWinner := firstPresentLabel(node.Next, passOutcomeLabels[:])
+		switch node.Type {
+		case NodeTypeTask:
+			// Cancel-labeled edges can never be taken from a task: the runtime
+			// classifies cancel verdicts as failures (state.IsFailOutcome), and
+			// fail routing (FailTarget) only consults the fail vocabulary.
+			for _, outcome := range sortedKeys(node.Next) {
+				if IsCanceledResult(outcome) {
+					diagnostics = append(diagnostics, diagWarning("dead_edge", path+"."+outcome,
+						fmt.Sprintf("cancel verdicts route through the fail edge; outcome %q can never be taken", outcome)))
+				}
+			}
+			if passWinner == "" {
+				failOnly := true
+				for _, outcome := range sortedKeys(node.Next) {
+					if !IsFailOutcomeLabel(outcome) && !IsCanceledResult(outcome) {
+						failOnly = false
+						break
+					}
+				}
+				if failOnly {
+					diagnostics = append(diagnostics, diagError("missing_pass_edge", path,
+						"task node has only fail/cancel edges; a passing attempt cannot route and stalls the run (add a pass, done, success, or next edge)"))
+				} else {
+					diagnostics = append(diagnostics, diagWarning("missing_pass_edge", path,
+						"task node has no pass, done, success, or next edge; an attempt that passes without a custom verdict matching an edge stalls the run"))
+				}
+			} else {
+				for _, outcome := range passOutcomeLabels {
+					if outcome != passWinner && node.Next[outcome] != "" {
+						// Not a dead edge: pass routing checks the exact attempt
+						// verdict before the alias fallback, so an exact-match
+						// verdict still takes this edge.
+						diagnostics = append(diagnostics, diagWarning("ambiguous_pass_edge", path+"."+outcome,
+							fmt.Sprintf("outcome edge %q is shadowed by %q for plain pass outcomes (resolution order: %s); an exact %q attempt verdict still routes here", outcome, passWinner, strings.Join(passOutcomeLabels[:], ", "), outcome)))
+					}
+				}
+			}
+			failWinner := firstPresentLabel(node.Next, failOutcomeLabels[:])
+			for _, outcome := range failOutcomeLabels {
+				if failWinner != "" && outcome != failWinner && node.Next[outcome] != "" {
+					diagnostics = append(diagnostics, diagWarning("ambiguous_fail_edge", path+"."+outcome,
+						fmt.Sprintf("fail edge %q is shadowed by %q (resolution order: %s)", outcome, failWinner, strings.Join(failOutcomeLabels[:], ", "))))
+				}
+			}
+		case NodeTypeWait, NodeTypeStart:
+			if passWinner == "" {
+				diagnostics = append(diagnostics, diagError("missing_pass_edge", path,
+					fmt.Sprintf("%s node routes only through a pass edge; none of its outcomes is pass, done, success, or next, so it stalls the run", node.Type)))
+				continue
+			}
+			for _, outcome := range sortedKeys(node.Next) {
+				if outcome != passWinner {
+					diagnostics = append(diagnostics, diagWarning("dead_edge", path+"."+outcome,
+						fmt.Sprintf("%s node only follows its %q edge; outcome %q can never be taken", node.Type, passWinner, outcome)))
+				}
+			}
+		}
+	}
+	return diagnostics
+}
+
+func firstPresentLabel(next Next, labels []string) string {
+	for _, label := range labels {
+		if next[label] != "" {
+			return label
+		}
+	}
+	return ""
+}
+
+// validateLoopBudgets surfaces budget-less retry loops (design §8a). The one
+// sanctioned v1 loop is the poison-escalation retry edge back into a compound
+// task; without a declared retry budget on that compound, every escalation
+// round runs a single attempt and immediately re-poisons, so the loop's real
+// window is implicit. Advisory: the loop stays human-gated either way.
+func validateLoopBudgets(tmpl *Template) Diagnostics {
+	var diagnostics Diagnostics
+	for _, sourceID := range sortedKeys(tmpl.Nodes) {
+		source := tmpl.Nodes[sourceID]
+		if !source.IsCompound() || source.Retry != nil {
+			continue
+		}
+		decisionID := FailTarget(source.Next)
+		decision, ok := tmpl.Nodes[decisionID]
+		if decisionID == "" || !ok || decision.Type != NodeTypeDecision || decision.Next["retry"] != sourceID {
+			continue
+		}
+		if decision.Performer == nil || decision.Performer.Kind != PerformerHuman {
+			// Not the sanctioned loop shape; validateAcyclic reports the cycle.
+			continue
+		}
+		diagnostics = append(diagnostics, diagWarning("retry_loop_without_budget", "nodes."+sourceID+".retry",
+			fmt.Sprintf("retry loop through decision %q has no declared budget on %q; each round runs one attempt before re-escalating (declare retry.maxAttempts to size the loop window)", decisionID, sourceID)))
 	}
 	return diagnostics
 }

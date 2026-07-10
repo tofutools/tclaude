@@ -52,7 +52,12 @@ func TestDashboardProcessGraphAssets(t *testing.T) {
 		"'data-edge-id': edge.id",
 		"'aria-pressed': 'false'",
 		"process-shape-decision",
-		"process-shape-compound")
+		"process-shape-compound",
+		// TCL-299 badge surface: severity class on the overlay anchor, badge
+		// glyph on edges, and viewport centering for issue navigation.
+		"overlay-${overlay.severity}",
+		"process-edge-badge-${edge.badgeSeverity || 'error'}",
+		"centerOn(x, y)")
 	layoutBeforeOwnership := strings.Index(graph, "this.layout = layoutProcessGraph(this.graph")
 	ownershipAfterRender := strings.Index(graph, "container.setAttribute('data-morph-owned', 'process-graph')")
 	if layoutBeforeOwnership < 0 || ownershipAfterRender < 0 || layoutBeforeOwnership > ownershipAfterRender {
@@ -69,7 +74,12 @@ func TestDashboardProcessGraphAssets(t *testing.T) {
 		".process-graph[data-color-scheme=\"light\"]",
 		".process-edge-back .process-edge-path",
 		"body.wizard .process-graph",
-		".process-fit-button")
+		".process-fit-button",
+		// Severity palette exists in all three skins (dark/light/wizard set
+		// their own --pg-error/--pg-warn values).
+		"--pg-error",
+		".process-overlay-anchor.overlay-error .process-overlay-ring",
+		".process-edge-badge-warning")
 
 	// The core must stay inert and feature-flag-safe: no production dashboard
 	// entry module imports it. The Processes host ticket imports it only after

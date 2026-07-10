@@ -24,10 +24,11 @@
 
 import { ProcessGraph } from './process-graph.js';
 import {
-  ProcessEditModel, blankEditView, graphEdgeID,
+  ProcessEditModel, blankEditView,
   PALETTE_PRIMITIVES, PALETTE_SNIPPETS,
 } from './process-edit-model.js';
 import { openNodeDialog } from './process-node-dialog.js';
+import { LiveValidation } from './process-validation.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 // Custom drag payload MIME (dock-dnd idiom): withholding text/plain keeps
@@ -86,6 +87,10 @@ export class ProcessTemplateEditor {
       onPortDragEnd: (e) => this.onPortDragEnd(e),
       onCanvasDrop: (e) => this.onCanvasDrop(e),
     });
+    // Live validation (TCL-299): debounced POST /v1/process/validate on every
+    // model mutation, inline badges + issues panel. Constructed after the
+    // graph so its initial diagnostics paint can decorate it.
+    this.validation = new LiveValidation(this, options.validation || {});
     this.bindEditorEvents();
     this.updateChrome();
     // Test/automation handle (dashsnap drives states through this; not an API).
@@ -199,6 +204,8 @@ export class ProcessTemplateEditor {
   destroy() {
     this.abort.abort();
     this.closeInline(false);
+    this.validation?.destroy();
+    this.validation = null;
     this.graph.destroy();
     this.modalDispose?.(null);
     delete this.mount.__processEditor;
@@ -209,7 +216,12 @@ export class ProcessTemplateEditor {
   // ---- chrome ------------------------------------------------------------
 
   refresh({ fit = false } = {}) {
-    this.graph.setGraph(this.model.graph(), { fit });
+    // decorate() re-anchors the last known diagnostics on the fresh graph
+    // (badges for deleted targets drop immediately); schedule() debounces the
+    // next validation round for the mutated draft.
+    const graph = this.validation ? this.validation.decorate(this.model.graph()) : this.model.graph();
+    this.graph.setGraph(graph, { fit });
+    this.validation?.schedule();
     this.updateChrome();
   }
 
@@ -237,11 +249,21 @@ export class ProcessTemplateEditor {
 
   // ---- selection + inspector ----------------------------------------------
 
+  // laidEdge resolves an edge in the CORE's layout by its semantic identity.
+  // The layout mints its own display ids (an "id:" prefix over the input id),
+  // so matching on from/outcome — which the layout spreads through — is the
+  // only stable lookup.
+  laidEdge(from, outcome) {
+    return this.graph.layout.edges.find((edge) => edge.from === from && edge.outcome === outcome);
+  }
+
   setSelection(selection) {
     this.selection = selection;
     if (selection?.type === 'node') this.graph.select({ type: 'node', id: selection.id });
-    else if (selection?.type === 'edge') this.graph.select({ type: 'edge', id: graphEdgeID(selection.from, selection.outcome) });
-    else this.graph.select(null);
+    else if (selection?.type === 'edge') {
+      const laid = this.laidEdge(selection.from, selection.outcome);
+      this.graph.select(laid ? { type: 'edge', id: laid.id } : null);
+    } else this.graph.select(null);
     this.renderInspector();
   }
 
@@ -601,7 +623,7 @@ export class ProcessTemplateEditor {
   }
 
   openInlineOutcomeEdit(from, outcome) {
-    const laid = this.graph.layout.edges.find((candidate) => candidate.id === graphEdgeID(from, outcome));
+    const laid = this.laidEdge(from, outcome);
     const anchor = laid?.label || this.portPoint(from, 'out');
     this.openInline(anchor.x, anchor.y, outcome, (value) => {
       this.renameEdgeOutcome(from, outcome, value);
@@ -636,6 +658,13 @@ export class ProcessTemplateEditor {
         return;
       }
       this.model.markSaved(body, savedAtRev);
+      // Sync the validation controller with the save verdict: a failed
+      // debounced round deliberately keeps prior diagnostics, so without this
+      // the badges/panel stay stale until the next mutation. The follow-up
+      // schedule() re-validates the live draft in case edits landed while the
+      // POST was in flight (its seq guard drops any out-of-order result).
+      this.validation?.applyDiagnostics(body.diagnostics || []);
+      this.validation?.schedule();
       this.blank = false;
       const diagCount = (body.diagnostics || []).length;
       this.status(`Saved version ${shortHash(body.semanticHash)}${diagCount ? ` · ${diagCount} advisory finding${diagCount === 1 ? '' : 's'}` : ''}.`);
@@ -674,6 +703,10 @@ export class ProcessTemplateEditor {
         this.blank = false;
         this.selection = null;
         this.refresh({ fit: true });
+        // The model swap replaced this.model.diagnostics; without an explicit
+        // sync the validation controller keeps the OLD model's set until a
+        // network round happens to succeed.
+        this.validation?.applyDiagnostics(view.diagnostics || []);
         this.status(`Reloaded their version ${shortHash(view.semanticHash)}.`);
       } catch (error) {
         this.status(`Reload failed: ${error.message}`, true);

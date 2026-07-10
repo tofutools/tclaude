@@ -521,6 +521,30 @@ func baseStates() []dashsnap.State {
 			SettleMS: 1200,
 		},
 		{
+			Key:     "process-editor-validation",
+			Title:   "Process editor — live validation",
+			Caption: "Live validation (TCL-299): an orphaned task carries the ✕ error badge with an ×3 count, the extra 'later' start edge gets a ⚠ dead-edge badge at its label, and the open issues panel lists every diagnostic (errors first); the first issue was clicked, selecting + centering the orphan node.",
+			// The edits go through the editor's real refresh() choke point, so the
+			// badges come from a genuine debounce → POST /v1/process/validate →
+			// decorate round against the daemon, not injected fixtures.
+			JS: processEditorStateJS(`ed.model.addNode('task', {x: 470, y: 40, name: 'Orphan'});
+  ed.model.addEdge('begin', 'later', 'ship');
+  ed.refresh({fit: true});
+  var vDeadline = Date.now() + 6000;
+  var vReady = function() {
+    return document.querySelector('.process-overlay-anchor.overlay-error')
+      && document.querySelector('.process-edge-badge-warning')
+      && document.querySelector('.process-issues-list .process-issue');
+  };
+  while (!vReady() && Date.now() < vDeadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 60); });
+  }
+  if (!vReady()) throw new Error('validation badges/panel did not render');
+  ed.validation.panel.open = true;
+  document.querySelector('.process-issues-list .process-issue').click();`),
+			SettleMS: 2500,
+		},
+		{
 			Key:     "groups",
 			Title:   "Groups tab",
 			Caption: "Groups tab, members expanded: the task-force info card (mission/roles) atop frontend-squad, its 🎯 hide-info toggle in the action row, tf: chips, owner ★, online + offline, task links.",

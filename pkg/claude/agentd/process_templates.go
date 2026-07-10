@@ -239,7 +239,7 @@ func handleProcessTemplateSave(w http.ResponseWriter, r *http.Request, fs *store
 		"ref":          record.Ref,
 		"semanticHash": view.SemanticHash,
 		"sourceHash":   view.SourceHash,
-		"diagnostics":  diagnosticsForEditor(parsed.Diagnostics),
+		"diagnostics":  diagnosticsForEditor(parsed.Diagnostics, parsed.Template),
 	})
 }
 
@@ -267,7 +267,7 @@ func handleProcessValidate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "process_template_unserializable", err.Error())
 		return
 	}
-	writeProcessJSON(w, http.StatusOK, map[string]any{"diagnostics": diagnosticsForEditor(parsed.Diagnostics)})
+	writeProcessJSON(w, http.StatusOK, map[string]any{"diagnostics": diagnosticsForEditor(parsed.Diagnostics, parsed.Template)})
 }
 
 func decodeProcessEditView(w http.ResponseWriter, r *http.Request) (*processTemplateEditView, error) {
@@ -357,7 +357,7 @@ func loadProcessTemplateEditView(r *http.Request, fs *store.FS, ref string) (*pr
 		SourceHash:   parsed.SourceHash,
 		SemanticHash: parsed.SemanticHash,
 		Source:       string(source),
-		Diagnostics:  diagnosticsForEditor(parsed.Diagnostics),
+		Diagnostics:  diagnosticsForEditor(parsed.Diagnostics, parsed.Template),
 	}, nil
 }
 
@@ -431,10 +431,10 @@ func processSourceHash(source []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func diagnosticsForEditor(diagnostics model.Diagnostics) []processEditDiag {
+func diagnosticsForEditor(diagnostics model.Diagnostics, tmpl *model.Template) []processEditDiag {
 	out := make([]processEditDiag, 0, len(diagnostics))
 	for _, diagnostic := range diagnostics {
-		scope, target := diagnosticEditorTarget(diagnostic.Path)
+		scope, target := diagnosticEditorTarget(diagnostic.Path, tmpl)
 		out = append(out, processEditDiag{
 			Scope: scope, TargetID: target, Severity: diagnostic.Severity,
 			Code: diagnostic.Code, Message: diagnostic.Message,
@@ -443,16 +443,42 @@ func diagnosticsForEditor(diagnostics model.Diagnostics) []processEditDiag {
 	return out
 }
 
-func diagnosticEditorTarget(path string) (string, string) {
-	parts := strings.Split(path, ".")
-	if len(parts) >= 4 && parts[0] == "nodes" && parts[2] == "next" {
-		return "edge", parts[1] + ":" + strings.Join(parts[3:], ".")
+func diagnosticEditorTarget(path string, tmpl *model.Template) (string, string) {
+	if rest, ok := strings.CutPrefix(path, "layout.nodes."); ok && rest != "" {
+		return "node", rest
 	}
-	if len(parts) >= 2 && parts[0] == "nodes" {
-		return "node", parts[1]
+	rest, ok := strings.CutPrefix(path, "nodes.")
+	if !ok || rest == "" {
+		return "template", ""
 	}
-	if len(parts) >= 3 && parts[0] == "layout" && parts[1] == "nodes" {
-		return "node", parts[2]
+	nodeID, field := splitDiagnosticNodePath(rest, tmpl)
+	if outcome, isEdge := strings.CutPrefix(field, "next."); isEdge {
+		return "edge", nodeID + ":" + outcome
 	}
-	return "template", ""
+	return "node", nodeID
+}
+
+// splitDiagnosticNodePath separates a diagnostic path's node id from its field
+// path. Node ids may themselves contain dots ("a.test"), so a naive split on
+// the first dot misanchors badges; the declared node set disambiguates — the
+// longest declared id that prefixes the path wins. Undeclared ids (e.g. a
+// derived child-stage id in an expansion-collision diagnostic) fall back to
+// treating everything before a known field-ish suffix as unavailable and use
+// the first segment.
+func splitDiagnosticNodePath(rest string, tmpl *model.Template) (string, string) {
+	best := ""
+	if tmpl != nil {
+		for id := range tmpl.Nodes {
+			if len(id) <= len(best) {
+				continue
+			}
+			if rest == id || (strings.HasPrefix(rest, id) && rest[len(id)] == '.') {
+				best = id
+			}
+		}
+	}
+	if best == "" {
+		best, _, _ = strings.Cut(rest, ".")
+	}
+	return best, strings.TrimPrefix(strings.TrimPrefix(rest, best), ".")
 }

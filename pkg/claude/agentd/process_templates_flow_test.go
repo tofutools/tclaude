@@ -284,6 +284,74 @@ func TestProcessValidateReturnsEditorScopedAdvisoryDiagnostics(t *testing.T) {
 	assert.Contains(t, saveRec.Body.String(), "unknown_target")
 }
 
+// TestProcessValidateSurfacesSection8aDiagnostics posts a deliberately broken
+// edit model and pins one endpoint-level diagnostic per §8a class the live
+// editor badges: unreachable nodes, missing/ambiguous outcome edges,
+// undeclared param refs, and budget-less retry loops. The task node under
+// test has a DOTTED id, so it also pins the longest-prefix targetId
+// anchoring (a naive first-dot split would emit "work").
+func TestProcessValidateSurfacesSection8aDiagnostics(t *testing.T) {
+	f, _ := processEngineFlow(t)
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion,
+		Kind:       model.Kind,
+		ID:         "broken-fixture",
+		Start:      "begin",
+		Nodes: map[string]model.Node{
+			"begin": {Type: model.NodeTypeStart, Next: model.Next{"pass": "work.impl"}},
+			"work.impl": {
+				Type:      model.NodeTypeTask,
+				Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "Fix {{ params.issue }}"},
+				Next:      model.Next{"pass": "gone", "done": "implement"},
+			},
+			"island": {
+				Type:      model.NodeTypeTask,
+				Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "Never reached"},
+				Next:      model.Next{"pass": "done"},
+			},
+			"implement": {
+				Type:      model.NodeTypeTask,
+				Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "Implement it"},
+				Checks:    []model.Step{{ID: "tests", Performer: model.Performer{Kind: model.PerformerProgram, Run: "go test ./..."}}},
+				Next:      model.Next{"pass": "done", "fail": "escalate"},
+			},
+			"escalate": {
+				Type:      model.NodeTypeDecision,
+				Performer: &model.Performer{Kind: model.PerformerHuman, Ask: "Retries exhausted. Continue?"},
+				Next:      model.Next{"retry": "implement", "cancel": "canceled"},
+			},
+			"done":     {Type: model.NodeTypeEnd, Result: "success"},
+			"canceled": {Type: model.NodeTypeEnd, Result: "canceled"},
+		},
+	}
+	body := processEditResponse{Template: tmpl, Edges: model.NormalizeEdges(tmpl)}
+	rec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/validate", body)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var response struct {
+		Diagnostics []processEditDiag `json:"diagnostics"`
+	}
+	testharness.DecodeJSON(t, rec, &response)
+
+	requireDiag := func(want processEditDiag) {
+		t.Helper()
+		for _, diag := range response.Diagnostics {
+			if diag.Code == want.Code && diag.Scope == want.Scope && diag.TargetID == want.TargetID && diag.Severity == want.Severity {
+				return
+			}
+		}
+		t.Errorf("missing diagnostic %+v in %+v", want, response.Diagnostics)
+	}
+	// §8a class 1: unreachable node.
+	requireDiag(processEditDiag{Scope: "node", TargetID: "island", Severity: model.SeverityError, Code: "unreachable_node"})
+	// §8a class 2: missing/ambiguous outcome edges, anchored on the dotted id.
+	requireDiag(processEditDiag{Scope: "edge", TargetID: "work.impl:pass", Severity: model.SeverityError, Code: "unknown_target"})
+	requireDiag(processEditDiag{Scope: "edge", TargetID: "work.impl:done", Severity: model.SeverityWarning, Code: "ambiguous_pass_edge"})
+	// §8a class 3: undeclared param reference, node-scoped for badge anchoring.
+	requireDiag(processEditDiag{Scope: "node", TargetID: "work.impl", Severity: model.SeverityError, Code: "undeclared_param_ref"})
+	// §8a class 4: budget-less sanctioned retry loop.
+	requireDiag(processEditDiag{Scope: "node", TargetID: "implement", Severity: model.SeverityWarning, Code: "retry_loop_without_budget"})
+}
+
 func TestProcessValidateRejectsDuplicateNormalizedEdges(t *testing.T) {
 	f, _ := processEngineFlow(t)
 	tmpl := processRESTTemplate("duplicate-edge", "ambiguous graph", 10)
