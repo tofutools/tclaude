@@ -7,10 +7,10 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 )
 
-// StateSchemaVersion 4 adds durable performer obligations and contact/nudge
-// state. Older binaries must see ErrNewerSchemaVersion instead of a
-// DisallowUnknownFields decode error.
-const StateSchemaVersion = 4
+// StateSchemaVersion 5 adds poison-block generation binding and durable block
+// resolution records. Older binaries must see ErrNewerSchemaVersion instead
+// of a DisallowUnknownFields decode error.
+const StateSchemaVersion = 5
 
 type RunStatus string
 
@@ -167,6 +167,12 @@ type NodeState struct {
 
 	BlockedReason string `json:"blockedReason,omitempty"`
 	BlockedOwner  string `json:"blockedOwner,omitempty"`
+	// BlockedAttempt remains after resolution as a generation tombstone so a
+	// delayed poison command cannot silently re-block a deliberately released
+	// node. BlockResolution is mirrored onto the child and expanded parent.
+	BlockedAttempt  int              `json:"blockedAttempt,omitempty"`
+	BlockedNodeID   string           `json:"blockedNodeId,omitempty"`
+	BlockResolution *BlockResolution `json:"blockResolution,omitempty"`
 }
 
 // FeedbackRef records which gate verdict a work stage must answer on its next
@@ -283,12 +289,42 @@ type DecisionRecord struct {
 	Timestamp   time.Time `json:"timestamp,omitzero"`
 }
 
+type BlockDecision string
+
+const (
+	BlockDecisionRetry  BlockDecision = "retry"
+	BlockDecisionSkip   BlockDecision = "skip"
+	BlockDecisionCancel BlockDecision = "cancel"
+)
+
+func (d BlockDecision) IsValid() bool {
+	switch d {
+	case BlockDecisionRetry, BlockDecisionSkip, BlockDecisionCancel:
+		return true
+	default:
+		return false
+	}
+}
+
+// BlockResolution is the durable audit payload for releasing a poisoned
+// stage. NodeID always names the stage child, including on the parent mirror.
+type BlockResolution struct {
+	NodeID         string        `json:"nodeId"`
+	BlockedAttempt int           `json:"blockedAttempt,omitempty"`
+	Decision       BlockDecision `json:"decision"`
+	Actor          ActorRef      `json:"actor"`
+	Reason         string        `json:"reason"`
+	EvidenceRef    string        `json:"evidenceRef"`
+	Timestamp      time.Time     `json:"timestamp,omitzero"`
+}
+
 type AdminRecord struct {
-	Type        EventType `json:"type,omitempty"`
-	Actor       ActorRef  `json:"actor"`
-	Reason      string    `json:"reason"`
-	EvidenceRef string    `json:"evidenceRef,omitempty"`
-	Timestamp   time.Time `json:"timestamp,omitzero"`
+	Type        EventType        `json:"type,omitempty"`
+	Actor       ActorRef         `json:"actor"`
+	Reason      string           `json:"reason"`
+	EvidenceRef string           `json:"evidenceRef,omitempty"`
+	Timestamp   time.Time        `json:"timestamp,omitzero"`
+	Resolution  *BlockResolution `json:"resolution,omitempty"`
 }
 
 type NodeInit struct {

@@ -22,6 +22,9 @@ func CheckInvariants(st *State) Diagnostics {
 	diagnostics = append(diagnostics, OutstandingCommandsAreWellFormed(st)...)
 	diagnostics = append(diagnostics, CompletedDecisionsHaveOneChosenEdge(st)...)
 	diagnostics = append(diagnostics, BlockedNodesHaveReasonAndOwner(st)...)
+	diagnostics = append(diagnostics, BlockResolutionsAreAudited(st)...)
+	diagnostics = append(diagnostics, BlockMirrorsAreConsistent(st)...)
+	diagnostics = append(diagnostics, SkippedNodesHaveBlockResolution(st)...)
 	diagnostics = append(diagnostics, DecisionActorsAreValid(st)...)
 	diagnostics = append(diagnostics, CompoundLinkageIsConsistent(st)...)
 	diagnostics = append(diagnostics, CompletedStageChildrenHaveEvidence(st)...)
@@ -225,7 +228,7 @@ func checkExpandedParent(st *State, nodeID string, node NodeState) Diagnostics {
 		if child.Stage == model.StageDone && child.Status == NodeStatusCompleted {
 			doneCompleted = true
 		}
-		if child.Stage != model.StageDone && child.Status != NodeStatusCompleted {
+		if child.Stage != model.StageDone && child.Status != NodeStatusCompleted && child.Status != NodeStatusSkipped {
 			incompleteStages = append(incompleteStages, childID)
 		}
 		// A stage may only be active (activated but not yet settled) when every
@@ -239,7 +242,7 @@ func checkExpandedParent(st *State, nodeID string, node NodeState) Diagnostics {
 				fmt.Sprintf("stage child %q is %s but an earlier stage of node %q has not completed", childID, child.Status, nodeID),
 			))
 		}
-		priorCompleted = priorCompleted && child.Status == NodeStatusCompleted
+		priorCompleted = priorCompleted && (child.Status == NodeStatusCompleted || child.Status == NodeStatusSkipped)
 	}
 	if (doneCompleted || node.Status == NodeStatusCompleted) && len(incompleteStages) > 0 {
 		diagnostics = append(diagnostics, diagError(
@@ -616,6 +619,129 @@ func BlockedNodesHaveReasonAndOwner(st *State) Diagnostics {
 		))
 	}
 	return diagnostics
+}
+
+// BlockResolutionsAreAudited checks the durable tombstone left by every
+// unblock. The status-mirror invariants above catch a child-only or parent-only
+// clear; this check additionally makes silent/unaudited clears unverifiable.
+func BlockResolutionsAreAudited(st *State) Diagnostics {
+	if st == nil {
+		return Diagnostics{diagError("nil_state", "", "process state is nil")}
+	}
+	var diagnostics Diagnostics
+	for _, nodeID := range sortedKeys(st.Nodes) {
+		node := st.Nodes[nodeID]
+		if node.BlockResolution == nil {
+			continue
+		}
+		path := "nodes." + nodeID + ".blockResolution"
+		resolution := *node.BlockResolution
+		if node.Status == NodeStatusBlocked || strings.TrimSpace(node.BlockedReason) != "" || strings.TrimSpace(node.BlockedOwner) != "" {
+			diagnostics = append(diagnostics, diagError("resolved_block_still_blocked", path, fmt.Sprintf("node %q has a block resolution but still carries blocked state", nodeID)))
+		}
+		if resolution.NodeID == "" || resolution.BlockedAttempt <= 0 || !resolution.Decision.IsValid() ||
+			!ValidateActorRef(resolution.Actor) || IsEngineActor(resolution.Actor) || strings.TrimSpace(resolution.Reason) == "" || strings.TrimSpace(resolution.EvidenceRef) == "" || resolution.Timestamp.IsZero() {
+			diagnostics = append(diagnostics, diagError("invalid_block_resolution", path, fmt.Sprintf("node %q has an incomplete block resolution", nodeID)))
+			continue
+		}
+		if node.BlockedAttempt != resolution.BlockedAttempt {
+			diagnostics = append(diagnostics, diagError("block_resolution_generation_mismatch", path+".blockedAttempt", fmt.Sprintf("node %q tombstone attempt %d does not match resolution attempt %d", nodeID, node.BlockedAttempt, resolution.BlockedAttempt)))
+		}
+		if !hasBlockResolutionAudit(st.AdminRecords, resolution) {
+			diagnostics = append(diagnostics, diagError("block_resolution_without_audit", path, fmt.Sprintf("node %q block resolution has no matching run audit record", nodeID)))
+		}
+	}
+	return diagnostics
+}
+
+// BlockMirrorsAreConsistent cross-checks the expanded parent tombstone with
+// the child it names. Per-node audit checks alone cannot detect two different,
+// individually valid resolutions forged onto the two sides of the mirror.
+func BlockMirrorsAreConsistent(st *State) Diagnostics {
+	if st == nil {
+		return Diagnostics{diagError("nil_state", "", "process state is nil")}
+	}
+	var diagnostics Diagnostics
+	for _, parentID := range sortedKeys(st.Nodes) {
+		parent := st.Nodes[parentID]
+		childID := strings.TrimSpace(parent.BlockedNodeID)
+		if len(parent.Children) == 0 || childID == "" {
+			continue
+		}
+		path := "nodes." + parentID
+		child, ok := st.Nodes[childID]
+		if !ok || child.Parent != parentID || !slices.Contains(parent.Children, childID) {
+			diagnostics = append(diagnostics, diagError(
+				"block_mirror_unknown_child",
+				path+".blockedNodeId",
+				fmt.Sprintf("expanded parent %q block tombstone names non-child %q", parentID, childID),
+			))
+			continue
+		}
+		if child.BlockedNodeID != childID || child.BlockedAttempt != parent.BlockedAttempt {
+			diagnostics = append(diagnostics, diagError(
+				"block_mirror_tombstone_mismatch",
+				path+".blockedAttempt",
+				fmt.Sprintf("expanded parent %q tombstone (%q, attempt %d) does not match child %q tombstone (%q, attempt %d)", parentID, childID, parent.BlockedAttempt, childID, child.BlockedNodeID, child.BlockedAttempt),
+			))
+		}
+		if !blockResolutionPointersEqual(parent.BlockResolution, child.BlockResolution) {
+			diagnostics = append(diagnostics, diagError(
+				"block_mirror_resolution_mismatch",
+				path+".blockResolution",
+				fmt.Sprintf("expanded parent %q and child %q carry different block resolutions", parentID, childID),
+			))
+		}
+	}
+	return diagnostics
+}
+
+func blockResolutionPointersEqual(left, right *BlockResolution) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
+// SkippedNodesHaveBlockResolution reserves skipped for the audited poison
+// resolution flow. Without this invariant, a raw node_status_set could forge
+// completed-by-decision semantics without an actor, reason, or evidence.
+func SkippedNodesHaveBlockResolution(st *State) Diagnostics {
+	if st == nil {
+		return Diagnostics{diagError("nil_state", "", "process state is nil")}
+	}
+	var diagnostics Diagnostics
+	for _, nodeID := range sortedKeys(st.Nodes) {
+		node := st.Nodes[nodeID]
+		if node.Status != NodeStatusSkipped {
+			continue
+		}
+		if node.BlockResolution != nil && (node.BlockResolution.Decision == BlockDecisionSkip || node.BlockResolution.Decision == BlockDecisionCancel) {
+			if node.BlockResolution.Decision == BlockDecisionCancel && st.Status != RunStatusCanceled {
+				diagnostics = append(diagnostics, diagError(
+					"cancel_resolution_without_canceled_run",
+					"nodes."+nodeID+".blockResolution.decision",
+					fmt.Sprintf("node %q has a cancel resolution but run status is %q", nodeID, st.Status),
+				))
+			}
+			continue
+		}
+		diagnostics = append(diagnostics, diagError(
+			"skipped_node_without_block_resolution",
+			"nodes."+nodeID+".status",
+			fmt.Sprintf("skipped node %q requires an audited skip or cancel block resolution", nodeID),
+		))
+	}
+	return diagnostics
+}
+
+func hasBlockResolutionAudit(records []AdminRecord, resolution BlockResolution) bool {
+	for _, record := range records {
+		if record.Type == EventBlockResolutionRecorded && record.Resolution != nil && *record.Resolution == resolution {
+			return true
+		}
+	}
+	return false
 }
 
 func DecisionActorsAreValid(st *State) Diagnostics {

@@ -24,6 +24,7 @@ func Cmd() *cobra.Command {
 			runCmd(),
 			showCmd(),
 			advanceCmd(),
+			unblockCmd(),
 			observeCmd(),
 			resolveCmd(),
 			reportCmd(),

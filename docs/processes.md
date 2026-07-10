@@ -253,6 +253,14 @@ Rules that make compound runs trustworthy:
   budget (or the target work stage's attempt budget) is spent, the gate blocks
   itself and its parent with a reason and owner; the run keeps running and a
   human (or later, a decision node) resolves it.
+- **Poison resolution is explicit and audited.** Resolve the blocked stage
+  child (or its blocked parent mirror) with `process unblock`. The engine
+  clears both mirrors in one append batch and records the actor, decision,
+  reason, evidence reference, and blocked attempt. `retry` opens a fresh gate
+  budget window and starts a new attempt, `skip` completes the stage by
+  decision, and `cancel` settles the run as canceled. A replayed resolution is
+  idempotent, and the recorded attempt generation prevents a delayed poison
+  command from silently re-blocking the node.
 - **Unchanged evidence short-circuits a re-entered gate.** When a gate
   re-enters but the work stage settled with the same evidence hash its
   previous verdict evaluated, the engine does not re-run the gate's performer:
@@ -276,6 +284,21 @@ tclaude process advance demo-1 implement.plan --store-root "$STORE" --verdict pa
 tclaude process advance demo-1 implement.do --store-root "$STORE" --verdict pass --evidence commit:abc123 --evidence-hash "$(sha256sum diff.patch | cut -d' ' -f1)"
 tclaude process advance demo-1 implement.test.tests --store-root "$STORE" --verdict fail --feedback "unit tests fail on TestFoo"   # re-readies implement.do with feedback
 ```
+
+Resolve a stage after its retry budget poisons it:
+
+```bash
+tclaude process unblock demo-1 implement.test.tests \
+  --store-root "$STORE" \
+  --decision retry \
+  --actor human:$USER \
+  --reason "transient CI outage confirmed" \
+  --evidence incident:ci-2026-07-10
+```
+
+`--decision` accepts `retry`, `skip`, or `cancel`. `--reason` and
+`--evidence` are required so the reconstructed event log always explains the
+release; `--actor` defaults to the current human user.
 
 `--evidence-hash` records the content hash of the settle's evidence — on a
 work stage it is the hash later gate verdicts evaluate, which powers the

@@ -270,6 +270,148 @@ func TestCompoundLinkageInvariants(t *testing.T) {
 	}
 }
 
+func TestResolvedBlockMirrorAndAuditInvariants(t *testing.T) {
+	resolution := BlockResolution{
+		NodeID: "implement.plan", BlockedAttempt: 1, Decision: BlockDecisionSkip,
+		Actor: "human:johan", Reason: "plan accepted out of band", EvidenceRef: "decision:42", Timestamp: testTime,
+	}
+	valid := expandedState(t)
+	child := valid.Nodes[resolution.NodeID]
+	child.Status = NodeStatusSkipped
+	child.BlockedAttempt = resolution.BlockedAttempt
+	child.BlockedNodeID = resolution.NodeID
+	child.BlockResolution = &resolution
+	valid.Nodes[resolution.NodeID] = child
+	parent := valid.Nodes["implement"]
+	parent.BlockedAttempt = resolution.BlockedAttempt
+	parent.BlockedNodeID = resolution.NodeID
+	parent.BlockResolution = &resolution
+	valid.Nodes["implement"] = parent
+	valid.AdminRecords = append(valid.AdminRecords, AdminRecord{
+		Type: EventBlockResolutionRecorded, Actor: resolution.Actor, Reason: resolution.Reason,
+		EvidenceRef: resolution.EvidenceRef, Timestamp: resolution.Timestamp, Resolution: &resolution,
+	})
+	if diagnostics := CheckInvariants(&valid); diagnostics.HasErrors() {
+		t.Fatalf("resolved blocked state must verify: %#v", diagnostics)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*State)
+		code   string
+	}{
+		{
+			name: "child cleared but parent remains blocked",
+			mutate: func(st *State) {
+				parent := st.Nodes["implement"]
+				parent.Status = NodeStatusBlocked
+				parent.BlockedReason = "poison"
+				parent.BlockedOwner = "human:operator"
+				parent.BlockResolution = nil
+				st.Nodes["implement"] = parent
+			},
+			code: "blocked_parent_without_blocked_child",
+		},
+		{
+			name: "parent cleared but child remains blocked",
+			mutate: func(st *State) {
+				child := st.Nodes[resolution.NodeID]
+				child.Status = NodeStatusBlocked
+				child.BlockedReason = "poison"
+				child.BlockedOwner = "human:operator"
+				child.BlockResolution = nil
+				st.Nodes[resolution.NodeID] = child
+			},
+			code: "blocked_child_unblocked_parent",
+		},
+		{
+			name:   "resolution without audit",
+			mutate: func(st *State) { st.AdminRecords = nil },
+			code:   "block_resolution_without_audit",
+		},
+		{
+			name: "parent and child carry different audited resolutions",
+			mutate: func(st *State) {
+				other := resolution
+				other.Decision = BlockDecisionRetry
+				other.Reason = "retry instead"
+				parent := st.Nodes["implement"]
+				parent.BlockResolution = &other
+				st.Nodes["implement"] = parent
+				st.AdminRecords = append(st.AdminRecords, AdminRecord{
+					Type: EventBlockResolutionRecorded, Actor: other.Actor, Reason: other.Reason,
+					EvidenceRef: other.EvidenceRef, Timestamp: other.Timestamp, Resolution: &other,
+				})
+			},
+			code: "block_mirror_resolution_mismatch",
+		},
+		{
+			name: "parent and child carry different audited attempts",
+			mutate: func(st *State) {
+				other := resolution
+				other.BlockedAttempt = 2
+				parent := st.Nodes["implement"]
+				parent.BlockedAttempt = 2
+				parent.BlockResolution = &other
+				st.Nodes["implement"] = parent
+				st.AdminRecords = append(st.AdminRecords, AdminRecord{
+					Type: EventBlockResolutionRecorded, Actor: other.Actor, Reason: other.Reason,
+					EvidenceRef: other.EvidenceRef, Timestamp: other.Timestamp, Resolution: &other,
+				})
+			},
+			code: "block_mirror_tombstone_mismatch",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := Clone(valid)
+			tt.mutate(&st)
+			if diagnostics := CheckInvariants(&st); !hasDiagnostic(diagnostics, tt.code) {
+				t.Fatalf("expected %q, got %#v", tt.code, diagnostics)
+			}
+		})
+	}
+}
+
+func TestParentBlockGenerationIsScopedToPoisonedChild(t *testing.T) {
+	st := expandedState(t)
+	resolution := BlockResolution{
+		NodeID: "implement.plan", BlockedAttempt: 1, Decision: BlockDecisionSkip,
+		Actor: "human:johan", Reason: "skip plan", EvidenceRef: "decision:plan", Timestamp: testTime,
+	}
+	parent := st.Nodes["implement"]
+	parent.BlockedAttempt = 1
+	parent.BlockedNodeID = resolution.NodeID
+	parent.BlockResolution = &resolution
+	st.Nodes["implement"] = parent
+
+	// A delayed block for the resolved child is a no-op.
+	stale, err := Apply(st, Event{
+		Type: EventNodeBlocked, NodeID: "implement", FromNodeID: resolution.NodeID,
+		Attempt: 1, Reason: "old poison", Owner: "human:operator",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stale.Nodes["implement"].Status != NodeStatusRunning {
+		t.Fatalf("stale poison re-blocked parent: %#v", stale.Nodes["implement"])
+	}
+
+	// Another stage may poison on its own attempt 1; the old child's
+	// generation tombstone must not suppress that distinct block.
+	newer, err := Apply(stale, Event{
+		Type: EventNodeBlocked, NodeID: "implement", FromNodeID: "implement.test.tests",
+		Attempt: 1, Reason: "test poison", Owner: "human:operator",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent = newer.Nodes["implement"]
+	if parent.Status != NodeStatusBlocked || parent.BlockedNodeID != "implement.test.tests" || parent.BlockResolution != nil {
+		t.Fatalf("new child's poison was suppressed: %#v", parent)
+	}
+}
+
 func TestStageSkipForgeryIsDetected(t *testing.T) {
 	// Forged completion: done stage and parent claim completion while the do
 	// and test stages never ran. Verify must not bless the run.

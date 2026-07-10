@@ -264,14 +264,17 @@ func planStageAdvance(snapshot store.Snapshot, tmpl *model.Template, nodeID stri
 		settleEvent.NodeStatus = state.NodeStatusFailed
 		entries = append(entries, nodeLogEntry(nodeID, evidence.EntryKindAttempt, settleEvent, evidenceRef, at))
 		entries = append(entries, nodeLogEntry(nodeID, evidence.EntryKindGate, state.Event{
-			Type:   state.EventNodeBlocked,
-			Reason: transition.Reason,
-			Owner:  transition.Owner,
+			Type:    state.EventNodeBlocked,
+			Attempt: attempt,
+			Reason:  transition.Reason,
+			Owner:   transition.Owner,
 		}, evidenceRef, at))
 		entries = append(entries, nodeLogEntry(node.Parent, evidence.EntryKindGate, state.Event{
-			Type:   state.EventNodeBlocked,
-			Reason: transition.Reason,
-			Owner:  transition.Owner,
+			Type:       state.EventNodeBlocked,
+			Attempt:    attempt,
+			FromNodeID: nodeID,
+			Reason:     transition.Reason,
+			Owner:      transition.Owner,
 		}, evidenceRef, at))
 		return entries, nil
 	case processplan.TransitionActivateChild:

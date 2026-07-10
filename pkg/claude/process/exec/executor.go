@@ -976,19 +976,25 @@ func observationEntries(command plan.Command, observation Observation, snapshot 
 		// idempotent success and must not re-apply: replaying could overwrite
 		// a newer reason, and once the poison-resolution flow lands it would
 		// silently re-block a deliberately released node.
-		if node, ok := snapshot.State.Nodes[command.NodeID]; ok && node.Status == state.NodeStatusBlocked {
-			return entries, nil
+		if node, ok := snapshot.State.Nodes[command.NodeID]; ok {
+			if node.Status == state.NodeStatusBlocked ||
+				node.BlockResolution != nil && command.Attempt <= node.BlockResolution.BlockedAttempt {
+				return entries, nil
+			}
 		}
 		entries = append(entries, commandEntry(command, state.Event{
-			Type:   state.EventNodeBlocked,
-			Reason: command.Reason,
-			Owner:  command.Owner,
+			Type:    state.EventNodeBlocked,
+			Attempt: command.Attempt,
+			Reason:  command.Reason,
+			Owner:   command.Owner,
 		}, "", at))
 		if command.TargetNodeID != "" {
 			entries = append(entries, nodeEntry(command.TargetNodeID, state.Event{
-				Type:   state.EventNodeBlocked,
-				Reason: command.Reason,
-				Owner:  command.Owner,
+				Type:       state.EventNodeBlocked,
+				Attempt:    command.Attempt,
+				FromNodeID: command.NodeID,
+				Reason:     command.Reason,
+				Owner:      command.Owner,
 			}, "", at))
 		}
 	case plan.CommandKindCompleteRun:

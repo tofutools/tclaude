@@ -20,6 +20,10 @@ func Clone(st State) State {
 			feedback := *value.PendingFeedback
 			value.PendingFeedback = &feedback
 		}
+		if value.BlockResolution != nil {
+			resolution := *value.BlockResolution
+			value.BlockResolution = &resolution
+		}
 		value.Children = append([]string(nil), value.Children...)
 		value.Decisions = append([]DecisionRecord(nil), value.Decisions...)
 		out.Nodes[key] = value
@@ -47,5 +51,11 @@ func Clone(st State) State {
 		out.Contacts[key] = value
 	}
 	out.AdminRecords = append([]AdminRecord(nil), st.AdminRecords...)
+	for i := range out.AdminRecords {
+		if out.AdminRecords[i].Resolution != nil {
+			resolution := *out.AdminRecords[i].Resolution
+			out.AdminRecords[i].Resolution = &resolution
+		}
+	}
 	return out
 }

@@ -271,16 +271,28 @@ func TestReducerSequences(t *testing.T) {
 					EvidenceRef: "admin/repair#1",
 				},
 				{
-					Type:   EventNodeUnblocked,
-					Seq:    4,
-					NodeID: "implement",
+					Type:        EventBlockResolutionRecorded,
+					Seq:         4,
+					At:          testTime,
+					Actor:       "human:johan",
+					Reason:      "credentials added",
+					EvidenceRef: "admin/repair#1",
+					Resolution:  &BlockResolution{NodeID: "implement", BlockedAttempt: 1, Decision: BlockDecisionRetry, Actor: "human:johan", Reason: "credentials added", EvidenceRef: "admin/repair#1", Timestamp: testTime},
+				},
+				{
+					Type:       EventNodeUnblocked,
+					Seq:        5,
+					At:         testTime,
+					NodeID:     "implement",
+					NodeStatus: NodeStatusReady,
+					Resolution: &BlockResolution{NodeID: "implement", BlockedAttempt: 1, Decision: BlockDecisionRetry, Actor: "human:johan", Reason: "credentials added", EvidenceRef: "admin/repair#1", Timestamp: testTime},
 				},
 			},
 			assert: func(t *testing.T, st State) {
 				if st.Status != RunStatusDirty {
 					t.Fatalf("run status = %q", st.Status)
 				}
-				if len(st.AdminRecords) != 1 || st.AdminRecords[0].Type != EventAdminRepairRecorded {
+				if len(st.AdminRecords) != 2 || st.AdminRecords[0].Type != EventAdminRepairRecorded || st.AdminRecords[1].Type != EventBlockResolutionRecorded {
 					t.Fatalf("admin records = %#v", st.AdminRecords)
 				}
 				node := st.Nodes["implement"]
@@ -566,6 +578,7 @@ func TestReducerErrors(t *testing.T) {
 		{name: "invalid run status", st: base, event: Event{Type: EventRunStatusSet, Seq: 11, RunStatus: "bogus"}, want: "invalid run status"},
 		{name: "node status set without status", st: base, event: Event{Type: EventNodeStatusSet, Seq: 11, NodeID: "implement"}, want: "requires nodeStatus"},
 		{name: "invalid node status set", st: base, event: Event{Type: EventNodeStatusSet, Seq: 11, NodeID: "implement", NodeStatus: "bogus"}, want: "invalid node status"},
+		{name: "node status set cannot forge skip decision", st: base, event: Event{Type: EventNodeStatusSet, Seq: 11, NodeID: "implement", NodeStatus: NodeStatusSkipped}, want: "cannot set status"},
 		{name: "node status set cannot imply missing wait", st: base, event: Event{Type: EventNodeStatusSet, Seq: 11, NodeID: "implement", NodeStatus: NodeStatusWaitingHuman}, want: "cannot set status"},
 		{name: "undeclared node", st: base, event: Event{Type: EventNodeBlocked, Seq: 11, NodeID: "missing"}, want: "not declared"},
 		{name: "start while running", st: running, event: Event{Type: EventNodeAttemptStarted, Seq: 11, NodeID: "implement", Actor: "agent:agt_dev123"}, want: "active attempt"},
@@ -578,6 +591,7 @@ func TestReducerErrors(t *testing.T) {
 		{name: "decision chosen edge verdict mismatch", st: base, event: Event{Type: EventDecisionRecorded, Seq: 11, NodeID: "decide", ChosenEdge: "approve", Decision: &DecisionRecord{Actor: "human:johan", Verdict: "reject"}}, want: "must match verdict"},
 		{name: "block without reason", st: base, event: Event{Type: EventNodeBlocked, Seq: 11, NodeID: "implement", Owner: "human:johan"}, want: "requires reason and owner"},
 		{name: "block without owner", st: base, event: Event{Type: EventNodeBlocked, Seq: 11, NodeID: "implement", Reason: "blocked"}, want: "requires reason and owner"},
+		{name: "block resolution without timestamp", st: base, event: Event{Type: EventBlockResolutionRecorded, Seq: 11, Resolution: &BlockResolution{NodeID: "implement", BlockedAttempt: 1, Decision: BlockDecisionRetry, Actor: "human:johan", Reason: "retry", EvidenceRef: "decision:retry"}}, want: "requires timestamp"},
 		{name: "unknown wait", st: base, event: Event{Type: EventWaitSatisfied, Seq: 11, WaitID: "missing"}, want: "not declared"},
 		{name: "invalid wait kind", st: base, event: Event{Type: EventWaitCreated, Seq: 11, Wait: &WaitRecord{ID: "wait", NodeID: "wait-human", Kind: "bogus"}}, want: "invalid wait kind"},
 		{name: "invalid wait status", st: base, event: Event{Type: EventWaitCreated, Seq: 11, Wait: &WaitRecord{ID: "wait", NodeID: "wait-human", Kind: WaitKindHuman, Status: "bogus"}}, want: "invalid wait status"},
@@ -721,6 +735,31 @@ func TestInvariants(t *testing.T) {
 				"a": {Status: NodeStatusBlocked, BlockedReason: "blocked"},
 			}),
 			code: "blocked_node_without_reason_owner",
+		},
+		{
+			name: "skipped node without block resolution",
+			st: stateWithNodes(map[string]NodeState{
+				"a": {Status: NodeStatusSkipped},
+			}),
+			code: "skipped_node_without_block_resolution",
+		},
+		{
+			name: "cancel resolution without canceled run",
+			st: func() State {
+				resolution := &BlockResolution{
+					NodeID: "a", BlockedAttempt: 1, Decision: BlockDecisionCancel,
+					Actor: "human:johan", Reason: "operator canceled", EvidenceRef: "decision:cancel", Timestamp: testTime,
+				}
+				st := stateWithNodes(map[string]NodeState{
+					"a": {Status: NodeStatusSkipped, BlockedAttempt: 1, BlockedNodeID: "a", BlockResolution: resolution},
+				})
+				st.AdminRecords = []AdminRecord{{
+					Type: EventBlockResolutionRecorded, Actor: resolution.Actor, Reason: resolution.Reason,
+					EvidenceRef: resolution.EvidenceRef, Timestamp: resolution.Timestamp, Resolution: resolution,
+				}}
+				return st
+			}(),
+			code: "cancel_resolution_without_canceled_run",
 		},
 		{
 			name: "invalid decision actor",
@@ -991,7 +1030,8 @@ func unblockedDecision(t *testing.T, st State) State {
 	if err != nil {
 		t.Fatal(err)
 	}
-	unblocked, err := Apply(blocked, Event{Type: EventNodeUnblocked, Seq: 11, NodeID: "decide"})
+	resolution := &BlockResolution{NodeID: "decide", BlockedAttempt: 1, Decision: BlockDecisionRetry, Actor: "human:johan", Reason: "recheck", EvidenceRef: "decision:recheck", Timestamp: testTime}
+	unblocked, err := Apply(blocked, Event{Type: EventNodeUnblocked, Seq: 11, At: testTime, NodeID: "decide", NodeStatus: NodeStatusReady, Resolution: resolution})
 	if err != nil {
 		t.Fatal(err)
 	}
