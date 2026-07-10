@@ -66,6 +66,9 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		// title, and a blank template swaps its id input out after first save.
 		"this.idInput.disabled = !this.blank",
 		"this.identity.replaceChildren(this.blank ? this.idInput : this.titleLabel)",
+		"this.model.setTemplateID(this.idInput.value.trim())",
+		"const savedID = id",
+		"this.model.template.id = savedID",
 		// Template-level metadata has an explicit editor affordance and travels
 		// through setTemplateMeta, the same dirty/undo gate as graph edits.
 		"text: 'template settings…'",

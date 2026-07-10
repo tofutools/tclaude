@@ -10535,7 +10535,7 @@ body.wizard .process-fit-button { box-shadow: 0 2px 12px rgba(75, 48, 119, 0.5);
 .process-editor-id-input:disabled { color: #8b949e; }
 .process-template-id-locked { color: #8b949e; max-width: 180px; }
 .process-template-description { min-width: min(300px, 30vw); }
-.process-template-doc { min-width: min(260px, 26vw); }
+.process-template-doc { min-width: min(260px, 26vw); resize: vertical; }
 .process-editor-body { display: flex; flex: 1; min-height: 0; align-items: stretch; }
 .process-editor-palette {
   width: 200px;

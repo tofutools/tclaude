@@ -220,7 +220,6 @@ test('regression: no-op rename and no-op join neither dirty nor burn an undo slo
 
 test('regression: no-op setTemplateMeta neither dirties nor burns an undo slot', () => {
   const model = new ProcessEditModel(view());
-  model.setTemplateMeta({ id: 'release' });          // unchanged id
   model.setTemplateMeta({ name: 'Release train' });  // unchanged name
   model.setTemplateMeta({ description: '' });        // absent stays absent
   assert.equal(model.dirty, false);
@@ -235,17 +234,28 @@ test('template metadata edits are undoable and preserve the immutable id', () =>
   model.setTemplateMeta({
     name: 'Freight train',
     description: 'Move releases safely',
-    doc: 'Operator-facing release procedure',
+    doc: 'Operator-facing release procedure\nKeep the run history intact.',
   });
   assert.equal(model.template.id, 'release');
   assert.equal(model.template.name, 'Freight train');
   assert.equal(model.template.description, 'Move releases safely');
-  assert.equal(model.template.doc, 'Operator-facing release procedure');
+  assert.equal(model.template.doc, 'Operator-facing release procedure\nKeep the run history intact.');
   assert.equal(model.dirty, true);
   assert.equal(model.undo(), true);
   assert.equal(model.template.name, 'Release train');
   assert.equal(model.template.description, undefined);
   assert.equal(model.template.doc, undefined);
+});
+
+test('template id is creation-only and never restored by undo history', () => {
+  const model = new ProcessEditModel(blankEditView('new-process'));
+  model.addNode('task', { id: 'draft' }); // history snapshot contains the old id
+  model.setTemplateID('release');
+  assert.equal(model.undo(), true);
+  assert.equal(model.template.id, 'release', 'undo preserves the chosen store key');
+  model.markSaved({ sourceHash: 'saved-source' });
+  assert.throws(() => model.setTemplateID('copy'), /immutable/);
+  assert.equal(model.template.id, 'release');
 });
 
 test('regression: markSaved at the payload rev keeps in-flight edits dirty', () => {

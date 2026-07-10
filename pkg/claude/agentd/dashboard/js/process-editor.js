@@ -184,7 +184,7 @@ export class ProcessTemplateEditor {
     }, { signal });
     if (this.blank) {
       this.idInput.addEventListener('change', () => {
-        this.model.setTemplateMeta({ id: this.idInput.value.trim() });
+        this.model.setTemplateID(this.idInput.value.trim());
         this.updateChrome();
       }, { signal });
     }
@@ -314,8 +314,8 @@ export class ProcessTemplateEditor {
       descriptionInput.addEventListener('change', () => {
         this.mutate(() => this.model.setTemplateMeta({ description: descriptionInput.value.trim() }));
       });
-      const docInput = h('input', {
-        class: 'process-inspector-input process-template-doc', type: 'text', spellcheck: 'true',
+      const docInput = h('textarea', {
+        class: 'process-inspector-input process-template-doc', rows: '2', spellcheck: 'true',
         placeholder: 'documentation', 'aria-label': 'Template documentation',
       });
       docInput.value = this.model.template.doc || '';
@@ -704,7 +704,9 @@ export class ProcessTemplateEditor {
       this.status('Template id is required before saving.', true);
       return;
     }
+    const savedID = id;
     this.saveButton.disabled = true;
+    this.idInput.disabled = true;
     // The canvas stays interactive during the POST: capture the rev the
     // payload was built at, so edits made in flight keep the model dirty.
     const savedAtRev = this.model.rev;
@@ -723,6 +725,11 @@ export class ProcessTemplateEditor {
         this.status(body.message || body.error || `${response.status} ${response.statusText}`, true);
         return;
       }
+      // The POST path is the creation-time identity. Discard any draft id
+      // change made while the request was in flight before locking the model;
+      // history restoration also preserves this pinned id.
+      this.model.template.id = savedID;
+      this.idInput.value = savedID;
       this.model.markSaved(body, savedAtRev);
       // Sync the validation controller with the save verdict: a failed
       // debounced round deliberately keeps prior diagnostics, so without this

@@ -118,7 +118,12 @@ export class ProcessEditModel {
   }
 
   restoreState(snapshot) {
+    // The template id is a creation-time store key, never undoable content.
+    // A blank template may choose it before first save, but graph/metadata
+    // history must not resurrect an earlier key after that save succeeds.
+    const id = this.template.id;
     this.template = snapshot.template;
+    this.template.id = id;
     this.edges = snapshot.edges;
     this.layout = snapshot.layout;
     this.rev = snapshot.rev;
@@ -415,16 +420,19 @@ export class ProcessEditModel {
     this.template.start = to;
   }
 
-  setTemplateMeta({ id, name, description, doc } = {}) {
+  setTemplateID(id) {
+    if (this.sourceHash) throw new Error('template id is immutable after first save');
+    this.template.id = id;
+  }
+
+  setTemplateMeta({ name, description, doc } = {}) {
     // Same no-op discipline as renameNode/setJoin/setEdgeOutcome: a change
     // event that commits the current value must not dirty the model.
-    const changed = (id !== undefined && id !== this.template.id)
-      || (name !== undefined && (name || undefined) !== this.template.name)
+    const changed = (name !== undefined && (name || undefined) !== this.template.name)
       || (description !== undefined && (description || undefined) !== this.template.description)
       || (doc !== undefined && (doc || undefined) !== this.template.doc);
     if (!changed) return;
     this.begin();
-    if (id !== undefined) this.template.id = id;
     if (name !== undefined) {
       if (name) this.template.name = name;
       else delete this.template.name;
