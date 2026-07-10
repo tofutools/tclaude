@@ -442,6 +442,36 @@ func baseStates() []dashsnap.State {
 			SettleMS: 900,
 		},
 		{
+			Key:      "process-editor-palette",
+			Title:    "Process editor — palette open",
+			Caption:  "Template editor over release-train: header (version badge, undo/redo/save), palette dock with primitives + snippets, graph canvas, inspector hint strip.",
+			JS:       processEditorStateJS(``),
+			SettleMS: 1100,
+		},
+		{
+			Key:      "process-editor-selected",
+			Title:    "Process editor — node selected",
+			Caption:  "A selected node: accent outline on the canvas and the inspector strip showing type, id, label input, and dark-themed action buttons.",
+			JS:       processEditorStateJS(`ed.setSelection({type: 'node', id: 'begin'});`),
+			SettleMS: 1100,
+		},
+		{
+			Key:      "process-editor-dirty",
+			Title:    "Process editor — dirty",
+			Caption:  "After adding a task node and pinning a move: the ● modified badge lights, Save arms, and undo becomes available.",
+			JS:       processEditorStateJS(`ed.model.addNode('task', {x: 470, y: 120, name: 'Review'}); ed.model.moveNode('begin', 140, 260); ed.refresh({fit: true});`),
+			SettleMS: 1100,
+		},
+		{
+			Key:     "process-editor-wizard",
+			Title:   "Process editor — wizard skin",
+			Caption: "The same editor (palette + selection + dirty) under the wizard skin: violet chrome, gold accents, explicitly themed cards and controls.",
+			Wizard:  true,
+			JS: processEditorStateJS(`ed.model.addNode('task', {x: 470, y: 120, name: 'Review'}); ed.refresh({fit: true});
+  ed.setSelection({type: 'node', id: 'begin'});`),
+			SettleMS: 1100,
+		},
+		{
 			Key:     "groups",
 			Title:   "Groups tab",
 			Caption: "Groups tab, members expanded: the task-force info card (mission/roles) atop frontend-squad, its 🎯 hide-info toggle in the action row, tf: chips, owner ★, online + offline, task links.",
@@ -809,6 +839,35 @@ func processGraphStateJS(title, graph string, colorSchemes ...string) string {
     }); });
   });
 });`, title, graph, colorScheme, title)
+}
+
+// processEditorStateJS opens the seeded release-train template in the graph
+// editor (Processes tab → Templates → open) and waits for the lazily imported
+// editor to mount its canvas, then runs extraJS with `ed` bound to the editor
+// instance (its dashsnap/test handle) to drive selection/dirty states.
+func processEditorStateJS(extraJS string) string {
+	return fmt.Sprintf(`(async function(){
+  var nav = document.querySelector('nav button[data-tab="processes"]');
+  if (!nav || nav.offsetParent === null) throw new Error('Processes nav is not visible');
+  nav.click();
+  var sub = document.querySelector('[data-process-subtab="templates"]');
+  if (!sub) throw new Error('Processes templates subtab missing');
+  sub.click();
+  var deadline = Date.now() + 5000;
+  var openSel = 'button[data-process-action="edit"][data-id="release-train"]';
+  while (!document.querySelector(openSel) && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  var open = document.querySelector(openSel);
+  if (!open) throw new Error('release-train open button did not render');
+  open.click();
+  while (!document.querySelector('#process-editor-canvas .process-graph-svg') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  var ed = document.querySelector('#process-editor-canvas').__processEditor;
+  if (!ed) throw new Error('process editor instance missing after mount');
+  %s
+})();`, extraJS)
 }
 
 func processTabJS(subtab, readySelector string) string {

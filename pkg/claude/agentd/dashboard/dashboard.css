@@ -10484,6 +10484,7 @@ body.wizard .process-fit-button { box-shadow: 0 2px 12px rgba(75, 48, 119, 0.5);
   border-radius: 8px 8px 0 0;
 }
 .process-editor-title { color: #e6edf3; }
+.process-editor .process-action:disabled { opacity: .45; cursor: default; }
 .process-editor-version { font-size: 12px; }
 .process-editor-dirty { color: #e3a341; font-size: 12px; white-space: nowrap; }
 .process-editor-status { color: #8b949e; font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
