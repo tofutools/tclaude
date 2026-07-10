@@ -115,9 +115,9 @@ type simSpawner struct {
 // behaviour change for Claude Code.
 func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 	// Model the production session launcher's second cwd-proof check. It runs
-	// after tmux has resolved args.Cwd, so a pathname swapped after agentd's
-	// first validation no longer contains the unpredictable marker and the
-	// harness never starts.
+	// after tmux has resolved args.Cwd, and the outer session wrapper waits for
+	// its readiness result, so a pathname swapped after agentd's first
+	// validation synchronously fails instead of starting or recording a pane.
 	if args.CwdWriteProof != "" {
 		marker := filepath.Join(args.Cwd, clcommon.SpawnCwdProofPrefix+args.CwdWriteProof)
 		info, err := os.Lstat(marker)

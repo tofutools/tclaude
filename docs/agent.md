@@ -465,6 +465,12 @@ rename/symlink swap between daemon validation and launch. Human/dashboard
 spawns bypass this check. Custom clients of the spawn API must perform the same
 `POST /v1/spawn-cwd-proof` preflight.
 
+For the same reason, an agent-originated Codex spawn may not set `trust_dir`,
+and its managed profile uses the base workspace policy without persisting a
+cwd-derived Git-common-directory grant. Those are global path-based config
+writes that cannot remain inode-bound after launch. A human spawn keeps the
+existing opt-in trust and linked-worktree Git grant behavior.
+
 ### clone / reincarnate / compact / context-info
 
 Lifecycle commands. By default they target the calling agent itself;

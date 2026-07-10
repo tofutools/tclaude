@@ -133,6 +133,7 @@ func Cmd() *cobra.Command {
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			NewCmd(),
+			prepareSpawnCwdCmd(),
 			ListCmd(),
 			WatchCmd(),
 			AttachCmd(),

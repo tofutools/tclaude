@@ -15,6 +15,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/ratelimit"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -591,7 +592,7 @@ func runNew(params *NewParams) error {
 	// The managed tclaude-agent profile extends :workspace (same cwd-subtree
 	// writability), so guard it exactly as workspace-write.
 	guardMode := sandboxMode
-	if params.PermissionProfile == harness.CodexAgentProfile {
+	if params.PermissionProfile == harness.CodexAgentProfile && params.CwdWriteProof == "" {
 		guardMode = harness.SandboxWorkspaceWrite
 	}
 	if home, herr := os.UserHomeDir(); herr == nil && harness.CodexSandboxCwdConflict(guardMode, cwd, home) {
@@ -624,7 +625,7 @@ func runNew(params *NewParams) error {
 	// rather than corrupt), the agent still launches and the operator can clear
 	// the trust-folder modal on the pending pane via the dashboard focus button
 	// (Part A). So warn and continue rather than fail the spawn.
-	if params.TrustDir && h.Name == harness.CodexName {
+	if params.TrustDir && h.Name == harness.CodexName && params.CwdWriteProof == "" {
 		if err := harness.EnsureCodexDirTrusted(cwd); err != nil {
 			slog.Warn("could not pre-trust the launch dir for codex; the trust-folder modal may appear — clear it via the dashboard focus button",
 				"cwd", cwd, "err", err)
@@ -657,13 +658,28 @@ func runNew(params *NewParams) error {
 		RemoteControl:          remoteControl,
 		InitialPrompt:          params.InitialPrompt,
 	})
+	proofReadyPath := ""
 	if params.CwdWriteProof != "" {
-		harnessCmd = guardHarnessCommandWithCwdProof(harnessCmd, params.CwdWriteProof)
+		path, cleanupProofReady, readyErr := newSpawnCwdReadinessFile()
+		if readyErr != nil {
+			return readyErr
+		}
+		defer cleanupProofReady()
+		proofReadyPath = path
+		prepareCmd := spawnCwdPrepareCommand(params.PermissionProfile == harness.CodexAgentProfile)
+		harnessCmd = guardHarnessCommandWithCwdProof(
+			harnessCmd, params.CwdWriteProof, prepareCmd, proofReadyPath)
 	}
 
 	// Create the detached tmux session running the harness command.
 	if err := launchDetachedTmuxSession(tmuxSession, cwd, harnessCmd); err != nil {
 		return err
+	}
+	if proofReadyPath != "" {
+		if err := waitForSpawnCwdReadiness(proofReadyPath); err != nil {
+			_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
+			return err
+		}
 	}
 
 	applyTmuxWindowTitle(tmuxSession, sessionID)
@@ -792,13 +808,76 @@ func isValidSpawnCwdProofToken(proof string) bool {
 // this process and the exec'd harness remain in the verified directory object.
 // A pre-launch pathname swap instead lands the shell in a directory without
 // the unpredictable marker, so the harness never starts.
-func guardHarnessCommandWithCwdProof(harnessCmd, proof string) string {
+func guardHarnessCommandWithCwdProof(harnessCmd, proof, prepareCmd, readyPath string) string {
 	marker := clcommon.SpawnCwdProofPrefix + proof
 	quoted := clcommon.ShellQuoteArg(marker)
+	ready := clcommon.ShellQuoteArg(readyPath)
+	fail := func(reason string) string {
+		return "printf '%s' " + clcommon.ShellQuoteArg("error:"+reason) + " > " + ready + "; exit 126"
+	}
+	prepare := ""
+	if prepareCmd != "" {
+		prepare = "if ! " + prepareCmd + "; then " + fail("prepare") + "; fi; "
+	}
 	return "tclaude_cwd_proof=" + quoted + "; " +
 		"if [ ! -f \"$tclaude_cwd_proof\" ] || [ -L \"$tclaude_cwd_proof\" ] || [ -s \"$tclaude_cwd_proof\" ]; then " +
-		"echo 'tclaude: spawn cwd write proof missing or invalid; refusing harness launch' >&2; exit 126; fi; " +
-		"rm -f -- \"$tclaude_cwd_proof\" || exit 126; " + harnessCmd
+		"echo 'tclaude: spawn cwd write proof missing or invalid; refusing harness launch' >&2; " + fail("proof") + "; fi; " +
+		"if ! rm -f -- \"$tclaude_cwd_proof\"; then " + fail("proof-cleanup") + "; fi; " +
+		prepare + "printf '%s' ok > " + ready + " || exit 126; " + harnessCmd
+}
+
+func newSpawnCwdReadinessFile() (string, func(), error) {
+	base := strings.TrimSpace(config.ConfigDir())
+	if base == "" {
+		return "", func() {}, fmt.Errorf("resolve private spawn-readiness directory")
+	}
+	dir := filepath.Join(base, "spawn-readiness")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", func() {}, fmt.Errorf("create spawn-readiness directory: %w", err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return "", func() {}, fmt.Errorf("protect spawn-readiness directory: %w", err)
+	}
+	f, err := os.CreateTemp(dir, "cwd-proof-")
+	if err != nil {
+		return "", func() {}, fmt.Errorf("create cwd-proof readiness file: %w", err)
+	}
+	path := f.Name()
+	cleanup := func() { _ = os.Remove(path) }
+	if err := f.Chmod(0o600); err != nil {
+		_ = f.Close()
+		cleanup()
+		return "", func() {}, fmt.Errorf("protect cwd-proof readiness file: %w", err)
+	}
+	if _, err := f.WriteString("pending"); err != nil {
+		_ = f.Close()
+		cleanup()
+		return "", func() {}, fmt.Errorf("initialize cwd-proof readiness file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		cleanup()
+		return "", func() {}, fmt.Errorf("close cwd-proof readiness file: %w", err)
+	}
+	return path, cleanup, nil
+}
+
+func waitForSpawnCwdReadiness(path string) error {
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read cwd-proof launch readiness: %w", err)
+		}
+		status := strings.TrimSpace(string(raw))
+		if status == "ok" {
+			return nil
+		}
+		if strings.HasPrefix(status, "error:") {
+			return fmt.Errorf("spawn cwd bootstrap refused launch (%s)", strings.TrimPrefix(status, "error:"))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return fmt.Errorf("timed out waiting for spawn cwd bootstrap")
 }
 
 // applyTmuxWindowTitle sets this session's tmux window title to

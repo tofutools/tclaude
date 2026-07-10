@@ -17,13 +17,18 @@ func TestGuardHarnessCommandWithCwdProof_ConsumesMarkerThenRuns(t *testing.T) {
 	marker := filepath.Join(dir, clcommon.SpawnCwdProofPrefix+proof)
 	require.NoError(t, os.WriteFile(marker, nil, 0o600))
 	launched := filepath.Join(dir, "launched")
+	ready := filepath.Join(dir, "ready")
+	require.NoError(t, os.WriteFile(ready, []byte("pending"), 0o600))
 	cmd := exec.Command("sh", "-c", guardHarnessCommandWithCwdProof(
-		"printf launched > "+clcommon.ShellQuoteArg(launched), proof))
+		"printf launched > "+clcommon.ShellQuoteArg(launched), proof, "", ready))
 	cmd.Dir = dir
 	require.NoError(t, cmd.Run())
 	assert.FileExists(t, launched)
 	_, err := os.Lstat(marker)
 	assert.True(t, os.IsNotExist(err), "proof marker should be consumed; err=%v", err)
+	status, err := os.ReadFile(ready)
+	require.NoError(t, err)
+	assert.Equal(t, "ok", string(status))
 }
 
 func TestGuardHarnessCommandWithCwdProof_RejectsPathSwap(t *testing.T) {
@@ -43,12 +48,20 @@ func TestGuardHarnessCommandWithCwdProof_RejectsPathSwap(t *testing.T) {
 	require.NoError(t, os.Rename(target, proved))
 	require.NoError(t, os.Symlink(forbidden, target))
 	launched := filepath.Join(forbidden, "launched")
+	mutated := filepath.Join(forbidden, "privileged-setup-ran")
+	ready := filepath.Join(root, "ready")
+	require.NoError(t, os.WriteFile(ready, []byte("pending"), 0o600))
+	prepare := "printf mutated > " + clcommon.ShellQuoteArg(mutated)
 	cmd := exec.Command("sh", "-c", guardHarnessCommandWithCwdProof(
-		"printf launched > "+clcommon.ShellQuoteArg(launched), proof))
+		"printf launched > "+clcommon.ShellQuoteArg(launched), proof, prepare, ready))
 	cmd.Dir = target
 	err := cmd.Run()
 	require.Error(t, err)
 	assert.NoFileExists(t, launched)
+	assert.NoFileExists(t, mutated, "cwd-dependent privileged setup must not run after a path swap")
+	status, readErr := os.ReadFile(ready)
+	require.NoError(t, readErr)
+	assert.Equal(t, "error:proof", string(status))
 }
 
 func TestSpawnCwdProofTokenValidation(t *testing.T) {
@@ -56,4 +69,15 @@ func TestSpawnCwdProofTokenValidation(t *testing.T) {
 	assert.False(t, isValidSpawnCwdProofToken(""))
 	assert.False(t, isValidSpawnCwdProofToken("abc/../../escape"))
 	assert.False(t, isValidSpawnCwdProofToken("abc; touch nope"))
+}
+
+func TestWaitForSpawnCwdReadiness(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ready")
+	require.NoError(t, os.WriteFile(path, []byte("ok"), 0o600))
+	require.NoError(t, waitForSpawnCwdReadiness(path))
+
+	require.NoError(t, os.WriteFile(path, []byte("error:proof"), 0o600))
+	err := waitForSpawnCwdReadiness(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "proof")
 }

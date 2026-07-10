@@ -166,3 +166,17 @@ func TestSpawnCwdProof_HumanDoesNotNeedProof(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.JSONEq(t, `{"required":false}`, rec.Body.String())
 }
+
+func TestSpawnCwdProof_AgentCannotEditGlobalCodexTrust(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const lead = "lead-proof-eeee-ffff-aaaa-555555555555"
+	spawnProofCapableAgent(t, f, "alpha", lead)
+
+	resp := f.AsAgent(lead).SpawnWith("alpha", map[string]any{
+		"name": "worker", "cwd": t.TempDir(), "harness": "codex", "trust_dir": true,
+	})
+	require.Equalf(t, http.StatusForbidden, resp.Code, "spawn response: %s", resp.Raw)
+	assert.Contains(t, string(resp.Raw), "trust_dir_restricted")
+	assert.Len(t, f.ListGroupMembers("alpha"), 1, "trust-dir refusal must not enroll a child")
+}

@@ -1603,6 +1603,11 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, http.StatusBadRequest, "invalid_trust_dir", tdErr.Error())
 		return
 	}
+	if spawnerConvID != "" && trustDir {
+		writeError(w, http.StatusForbidden, "trust_dir_restricted",
+			"agent-initiated spawns may not edit the operator's global Codex trust configuration; leave trust_dir off or ask the human to spawn this child")
+		return
+	}
 
 	// Gate the explicit "start with remote control" opt-in: it is a Claude Code
 	// feature (the --remote-control launch flag), so an EXPLICIT request for a
