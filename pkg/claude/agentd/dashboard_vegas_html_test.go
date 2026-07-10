@@ -60,6 +60,14 @@ func TestDashboardHTML_VegasTab(t *testing.T) {
 	must("rememberPlayIntent('pause')", "pressing pause records the suppress-autoplay intent")
 	must("rememberPlayIntent('play')", "pressing play records the resume-autoplay intent")
 
+	// A channel switch (theme-default re-tune on a slop→wizard flip, or a late
+	// loadChannel) rebuilds the player, but must PRESERVE the paused transport
+	// state — otherwise startMusic()'s default autoplay would start the stream
+	// the operator paused. Pin the preserve-state rebuild so a regression that
+	// drops it fails here instead of silently blasting music on a mode switch.
+	must("const wasPlaying = !audio.paused", "applyChannel preserves the transport state across a channel switch")
+	must("startMusic({ autoplay: wasPlaying })", "the re-tuned player keeps its paused state rather than force-autoplaying")
+
 	// HTML hooks: the nav button, its section, and the player host
 	// vegas.js injects the iframe into.
 	must(`data-tab="vegas"`, "the Vegas nav button ships")
