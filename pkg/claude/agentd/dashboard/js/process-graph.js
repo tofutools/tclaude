@@ -175,6 +175,12 @@ function renderOverlay(parent, node) {
     glyph.textContent = String(overlay.glyph);
     group.append(glyph);
   }
+  const status = overlay?.label || overlay?.status;
+  if (status) {
+    const statusLabel = svgElement('text', { class: 'process-overlay-status', x: -16, y: 4, 'text-anchor': 'end' });
+    statusLabel.textContent = String(status);
+    group.append(statusLabel);
+  }
   const progress = overlay?.progress;
   const progressText = typeof progress === 'string'
     ? progress
@@ -183,12 +189,12 @@ function renderOverlay(parent, node) {
   const retry = overlay?.retry ?? overlay?.retries;
   const detail = [progressText, attempt != null ? `#${attempt}` : '', retry != null ? `↻${retry}` : ''].filter(Boolean).join(' ');
   if (detail) {
-    const text = svgElement('text', { class: 'process-overlay-detail', x: -16, y: node.height - 8, 'text-anchor': 'end' });
+    const text = svgElement('text', { class: 'process-overlay-detail', x: -16, y: node.height - 20, 'text-anchor': 'end' });
     text.textContent = detail;
     group.append(text);
   }
   if (overlay?.badge) {
-    const badge = svgElement('text', { class: 'process-overlay-badge', x: -16, y: 4, 'text-anchor': 'end' });
+    const badge = svgElement('text', { class: 'process-overlay-badge', x: -16, y: status ? 17 : 4, 'text-anchor': 'end' });
     badge.textContent = String(overlay.badge);
     group.append(badge);
   }
@@ -360,9 +366,9 @@ export class ProcessGraph {
   }
 
   eventTarget(event) {
-    const node = event.target.closest?.('[data-node-id]');
-    const edge = event.target.closest?.('[data-edge-index]');
-    const port = event.target.closest?.('[data-port]');
+    const node = event.target?.closest?.('[data-node-id]');
+    const edge = event.target?.closest?.('[data-edge-index]');
+    const port = event.target?.closest?.('[data-port]');
     return { node, edge, port };
   }
 
@@ -413,7 +419,11 @@ export class ProcessGraph {
     const pointer = this.pointer;
     const point = this.clientToGraph(event.clientX, event.clientY);
     if (pointer.mode === 'port') {
-      const target = this.eventTarget(event);
+      // Pointer capture retargets pointerup to the SVG, so event.target cannot
+      // identify the node/port actually under the cursor. Hit-test the document
+      // at release time before notifying the editor consumer.
+      const hit = document.elementFromPoint(event.clientX, event.clientY);
+      const target = this.eventTarget({ target: hit });
       hook(this.options, 'onPortDragEnd')({
         nodeId: pointer.nodeID, port: pointer.port, point,
         targetNodeId: target.node?.dataset.nodeId || null,

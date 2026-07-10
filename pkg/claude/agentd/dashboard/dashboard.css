@@ -10246,12 +10246,13 @@ body.wizard #agent-dock .dock-card-menu-item.danger:hover {
 .process-arrowhead-back { fill: var(--pg-return); }
 .process-edge-label text { fill: currentColor; font-size: 11px; font-weight: 650; paint-order: stroke; stroke: var(--pg-bg); stroke-width: 5; stroke-linejoin: round; }
 .process-overlay-anchor { pointer-events: none; }
+.process-overlay-anchor:not(.has-overlay) { opacity: 0.38; }
 .process-overlay-ring {
   fill: var(--pg-node); stroke: var(--pg-muted); stroke-width: 1.5; stroke-dasharray: 2 2; vector-effect: non-scaling-stroke;
 }
 .process-overlay-anchor.has-overlay .process-overlay-ring { stroke: var(--pg-accent); stroke-dasharray: none; }
 .process-overlay-glyph { fill: var(--pg-text); font-size: 11px; font-weight: 800; }
-.process-overlay-detail, .process-overlay-badge { fill: var(--pg-text); font-size: 10px; font-weight: 700; }
+.process-overlay-detail, .process-overlay-badge, .process-overlay-status { fill: var(--pg-text); font-size: 10px; font-weight: 700; }
 .process-overlay-badge { fill: var(--pg-return); }
 .process-graph-controls { position: absolute; top: 10px; right: 10px; display: flex; gap: 6px; }
 .process-fit-button {
