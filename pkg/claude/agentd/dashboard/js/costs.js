@@ -38,8 +38,11 @@ let fillEmptyWeekdays = false;
 const INCLUDE_WEEKENDS_KEY = 'tclaude.dash.costs.includeWeekends';
 let includeWeekends = false;
 
-// Sticky harness subset for the breakdown table. Empty/missing means "all
-// currently present harnesses", so newly-added harnesses appear by default.
+// Sticky harness subset for the tab. Empty/missing means "all currently
+// present harnesses", so newly-added harnesses appear by default. The
+// subset narrows the whole tab — the chart, the summary/projection and
+// the breakdown table alike (see costDataForSelectedHarnesses) — so
+// every figure on screen describes the same set of rows.
 const HARNESS_FILTER_KEY = 'tclaude.dash.costs.harnesses';
 
 // Sticky toggle for the per-agent cost badge on the Groups/Agents rows
@@ -107,10 +110,13 @@ const COST_COLUMNS = [
 // state — it survives re-polls and span changes but resets on reload.
 let costSort = 'activity';
 let costDir = 'desc';
-// The last /api/costs payload, kept so a header click can re-sort and
-// re-render the table without refetching (the chart/summary are unchanged
-// by a sort, only the table re-renders).
+// The last /api/costs payload (and the span it was fetched for), kept so
+// a header click, a filter keystroke or a harness-checkbox toggle can
+// re-render from the data already in hand without refetching. Sort and
+// the text filter redraw just the table; the harness checkboxes redraw
+// the chart and summary too (reRenderCosts).
 let lastCostData = null;
+let lastCostSpan = 'month';
 
 let lastFetchedAt = 0;
 // The WHAT-IF mode the last load fetched under. A flip (the opt-in toggled,
@@ -476,6 +482,36 @@ function saveSelectedCostHarnesses(selected, allHarnesses) {
   else dashPrefs.setItem(HARNESS_FILTER_KEY, JSON.stringify([...selected]));
 }
 
+// costDataForSelectedHarnesses derives the payload the chart, summary and
+// month projection render from: the server's totals narrowed to the
+// selected harness subset. The server computes days/total_usd and the
+// per-agent slices from the same in-span deltas (see collectCosts), so
+// re-summing the slices per day reproduces the per-day bars for the
+// subset. With every harness selected (or only one present — no filter
+// UI) the payload is returned untouched, so the unfiltered view keeps the
+// server's to-the-cent totals rather than drifting on float re-summation.
+// first_day is left as-is: it anchors the projection's elapsed-day count
+// at tclaude's first-ever costed day, a property of the install rather
+// than of the subset.
+function costDataForSelectedHarnesses(payload) {
+  const agents = payload.agents || [];
+  const harnesses = costHarnesses(agents);
+  const selected = selectedCostHarnesses(harnesses);
+  if (harnesses.length <= 1 || selected.size === harnesses.length) return payload;
+  const byDay = {};
+  let total = 0;
+  for (const a of agents) {
+    if (!selected.has(harnessLabel(a.harness))) continue;
+    byDay[a.day] = (byDay[a.day] || 0) + (a.cost_usd || 0);
+    total += a.cost_usd || 0;
+  }
+  return {
+    ...payload,
+    days: (payload.days || []).map(d => ({ day: d.day, cost_usd: byDay[d.day] || 0 })),
+    total_usd: total,
+  };
+}
+
 function renderHarnessFilter(agents) {
   const wrap = $('#filter-costs-harnesses');
   if (!wrap) return { selected: new Set() };
@@ -525,7 +561,9 @@ function renderHarnessFilter(agents) {
 // title / agent id / conv id / model) so a specific agent can be isolated; the
 // footer then totals just the visible rows, and the count chip reads
 // matched/all. Sort and filter are display-only over the data already
-// fetched — neither refetches; the chart and summary stay on the full set.
+// fetched — neither refetches. Sort and the text filter are table-only
+// (the chart and summary don't move); the harness checkboxes narrow the
+// chart and summary too (renderCosts / costDataForSelectedHarnesses).
 function renderTable(data) {
   const agents = data.agents || [];
   const bar = $('#costs-table-filter');
@@ -677,6 +715,28 @@ function reRenderCostTable() {
   if (lastCostData) renderTable(lastCostData);
 }
 
+// renderCosts paints all three panes from a /api/costs payload. The chart,
+// summary and month projection render from the harness-filtered view so
+// the harness checkboxes narrow the whole tab in lockstep; the table gets
+// the full payload — it applies the same harness subset itself
+// (renderTable) plus its own table-only text filter, and its count chip
+// needs the unfiltered set for the "/ all" denominator.
+function renderCosts(payload, span) {
+  const data = costDataForSelectedHarnesses(payload);
+  const proj = span === 'month' ? monthProjection(data, fillEmptyWeekdays, includeWeekends) : null;
+  renderSummary(data, proj, span);
+  renderChart(data, proj);
+  renderTable(payload);
+}
+
+// reRenderCosts re-paints the whole tab (chart + summary + table) from the
+// payload already in hand — the harness-checkbox path, which moves the
+// chart/summary totals as well as the table rows. No refetch: the subset
+// is a client-side narrowing of rows already fetched.
+function reRenderCosts() {
+  if (lastCostData) renderCosts(lastCostData, lastCostSpan);
+}
+
 // bindCostsSort wires the clickable column headers (delegated on the
 // re-rendered #costs-table). Clicking the active column flips its
 // direction; a fresh column takes its natural default (text A→Z,
@@ -734,7 +794,7 @@ function bindCostsHarnessFilter() {
     const all = checks.map(x => x.dataset.harness);
     const selected = new Set(checks.filter(x => x.checked).map(x => x.dataset.harness));
     saveSelectedCostHarnesses(selected, all);
-    reRenderCostTable();
+    reRenderCosts();
   });
 }
 
@@ -764,13 +824,11 @@ async function loadCosts() {
     // Kept for the sort/filter re-render path, which redraws the table
     // from this payload without refetching.
     lastCostData = data;
+    lastCostSpan = span;
     // first_day (earliest recorded spend) may now bound how far ‹ can
     // step, so refresh the stepper's enabled state against the payload.
     syncMonthNav();
-    const proj = span === 'month' ? monthProjection(data, fillEmptyWeekdays, includeWeekends) : null;
-    renderSummary(data, proj, span);
-    renderChart(data, proj);
-    renderTable(data);
+    renderCosts(data, span);
   } catch (e) {
     if (seq !== loadSeq) return;
     lastCostData = null;

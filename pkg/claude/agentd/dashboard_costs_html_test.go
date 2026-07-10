@@ -131,6 +131,11 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	must(`id="filter-costs-harnesses"`, "harness filter mount present")
 	must("function bindCostsHarnessFilter", "harness checkbox filter wired")
 	must("tclaude.dash.costs.harnesses", "harness filter persisted")
+	// The harness subset narrows the whole tab, not just the table: the
+	// chart/summary/projection render from the filtered derivation, and a
+	// checkbox toggle re-paints all three panes from the payload in hand.
+	must("function costDataForSelectedHarnesses", "harness subset narrows the chart/summary totals")
+	must("renderCosts(lastCostData, lastCostSpan)", "checkbox toggle re-renders chart + summary + table without refetch")
 	must(`id="filter-costs"`, "breakdown filter input present")
 	must(`id="filter-costs-count"`, "filter match-count chip present")
 	must(`id="filter-costs-clear"`, "filter clear button present")
