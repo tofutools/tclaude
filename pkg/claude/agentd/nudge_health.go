@@ -22,6 +22,82 @@ type staleNudgeQueue struct {
 	count  int
 }
 
+// cancelUnavailableNudgeTargets abandons queued nudges whose recipient can
+// never receive them: the target agent is retired or its actor row is gone.
+// Without this, such rows sat "undelivered" forever and the stale-queue
+// watchdog re-warned about them on every daemon start (the operator's boot
+// noise). Running in the reaper tick — rather than only at retire time —
+// makes the cleanup self-healing: it also catches a message that raced past
+// a retire (observed live: a send landing seconds after its target retired)
+// and anything already stuck from before this sweep existed.
+//
+// Cancellation is durable (CancelAgentMessageNudge) and logged exactly once
+// per message; the message itself stays readable in the recipient's inbox.
+// Reinstating the agent clears the marker (see db.ReinstateAgentByID), so a
+// soft retire remains fully reversible. It runs BEFORE warnStaleNudgeQueues
+// so a cancelled queue never also warns as stuck.
+func cancelUnavailableNudgeTargets(now time.Time) {
+	msgs, err := db.ListAllUndeliveredAgentMessages()
+	if err != nil {
+		slog.Warn("nudge queue cancel scan failed", "error", err)
+		return
+	}
+	agents := map[string]*db.Agent{}
+	for _, m := range msgs {
+		reason := nudgeTargetGoneReason(m, agents)
+		if reason == "" {
+			continue
+		}
+		cancelled, err := db.CancelAgentMessageNudge(m.ID, now, reason)
+		if err != nil {
+			slog.Warn("nudge cancel failed", "error", err, "msg_id", m.ID)
+			continue
+		}
+		if cancelled {
+			slog.Warn("nudge delivery cancelled; target unavailable",
+				"msg_id", m.ID,
+				"target", nudgeQueueKey(m),
+				"reason", reason,
+				"queued_for", now.Sub(m.CreatedAt).Round(time.Second))
+		}
+	}
+}
+
+// nudgeTargetGoneReason reports why message m's nudge can never be delivered
+// ("" when it still can). A head-following or prev-gen-pinned message names
+// its actor in to_agent; non-actor conv mail resolves the conv's owning actor
+// at scan time (an actor may have been enrolled after the send). A plain conv
+// with no actor is left queued — it may simply be offline and come back. Any
+// lookup error also leaves the row queued: never cancel on uncertainty.
+// agents caches actor rows across one sweep so a deep queue costs one lookup
+// per target rather than per message.
+func nudgeTargetGoneReason(m *db.AgentMessage, agents map[string]*db.Agent) string {
+	agentID := m.ToAgent
+	if agentID == "" {
+		id, err := db.AgentIDForConv(m.ToConv)
+		if err != nil || id == "" {
+			return ""
+		}
+		agentID = id
+	}
+	a, cached := agents[agentID]
+	if !cached {
+		var err error
+		a, err = db.GetAgent(agentID)
+		if err != nil {
+			return ""
+		}
+		agents[agentID] = a
+	}
+	if a == nil {
+		return "target agent deleted"
+	}
+	if !a.Active() {
+		return "target agent retired"
+	}
+	return ""
+}
+
 // warnStaleNudgeQueues is the WARN-level watchdog for durable delivery. It
 // runs before the reaper performs any tmux I/O, so even a wedged liveness probe
 // cannot suppress the incident line. One aggregate per target names the queue

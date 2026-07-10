@@ -141,7 +141,10 @@ func enrollOnlineSession(st *session.SessionState) {
 func (r *sessionReaper) tick(now time.Time) (reaped int) {
 	// Health reporting is deliberately first: it is DB-only and must still
 	// emit the target/msg/elapsed WARN if the subsequent tmux sweep itself
-	// blocks or fails.
+	// blocks or fails. The cancel sweep precedes the watchdog so a queue
+	// whose target is retired/deleted is cancelled (with its own one-time
+	// WARN) instead of warning as stuck forever.
+	cancelUnavailableNudgeTargets(now)
 	warnStaleNudgeQueues(now)
 	releaseExpiredNudgeClaims(now)
 	states, err := session.ListSessionStates()

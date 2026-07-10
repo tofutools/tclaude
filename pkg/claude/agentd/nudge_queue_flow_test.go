@@ -335,6 +335,82 @@ func TestNudgeQueue_PrevGenRejectsForeignConv(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code, "gen of a foreign agent must be rejected; body=%s", rec.Body.String())
 }
 
+// TestNudgeQueue_RetiredTargetCancelsQueuedNudges pins the retired-target
+// cleanup: a message queued for an agent that is then retired must be
+// CANCELLED by the reaper sweep — one WARN naming the message and reason,
+// no "stuck" watchdog noise on later ticks (the operator's every-boot
+// warning spam) — while staying unread in the inbox. Reinstating the agent
+// revives the queue and delivery completes once the agent comes online.
+func TestNudgeQueue_RetiredTargetCancelsQueuedNudges(t *testing.T) {
+	f := newFlow(t)
+	// Zero staleness threshold: any queue the cancel sweep left behind would
+	// warn as stuck on the very first tick, so the "no stuck warning" assert
+	// below is meaningful.
+	t.Cleanup(agentd.SetStaleNudgeTimingForTest(0, time.Hour))
+	f.HaveGroup("team")
+	const sender = "nq08-send-bbbb-cccc-000000000001"
+	const recipient = "nq08-recv-bbbb-cccc-000000000002"
+	f.HaveConvWithTitle(sender, "po")
+	f.HaveConvWithTitle(recipient, "worker")
+	f.HaveEnrolledAgent(sender)
+	f.HaveEnrolledAgent(recipient)
+	f.HaveMember("team", sender)
+	f.HaveMember("team", recipient)
+	// recipient is OFFLINE — the message queues durably.
+
+	r := mustSend(t, f, sender, map[string]any{"to": recipient, "body": "orphaned"})
+	require.True(t, r.Queued)
+	agentd.WaitForBackgroundForTest()
+
+	agentID, err := db.AgentIDForConv(recipient)
+	require.NoError(t, err)
+	require.NotEmpty(t, agentID)
+	retired, err := db.RetireAgentByID(agentID, "human", "test cleanup")
+	require.NoError(t, err)
+	require.True(t, retired)
+
+	prev := slog.Default()
+	var logs bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	agentd.RunReaperTickForTest(time.Now())
+	agentd.WaitForBackgroundForTest()
+	agentd.RunReaperTickForTest(time.Now().Add(time.Second))
+	agentd.WaitForBackgroundForTest()
+
+	got := logs.String()
+	assert.Contains(t, got, "level=WARN msg=\"nudge delivery cancelled; target unavailable\"")
+	assert.Contains(t, got, fmt.Sprintf("msg_id=%d", r.ID))
+	assert.Contains(t, got, "reason=\"target agent retired\"")
+	assert.Equal(t, 1, strings.Count(got, "nudge delivery cancelled"), "cancellation logged exactly once")
+	assert.NotContains(t, got, "nudge delivery queue stuck", "cancelled queue no longer warns as stuck")
+
+	// Cancelled ≠ delivered/read: the message is still readable in the inbox,
+	// only its nudge delivery is abandoned.
+	m, err := db.GetAgentMessage(r.ID)
+	require.NoError(t, err)
+	assert.True(t, m.DeliveredAt.IsZero(), "cancel is not a delivery stamp")
+	assert.True(t, m.ReadAt.IsZero(), "cancel is not a read stamp")
+	assert.False(t, m.NudgeCancelledAt.IsZero(), "cancellation is durable")
+	assert.Equal(t, "target agent retired", m.NudgeCancelReason)
+
+	// Soft retire stays reversible: reinstating clears the cancellation and
+	// the queue delivers once the agent comes back online.
+	reinstated, err := db.ReinstateAgentByID(agentID)
+	require.NoError(t, err)
+	require.True(t, reinstated)
+	m, err = db.GetAgentMessage(r.ID)
+	require.NoError(t, err)
+	assert.True(t, m.NudgeCancelledAt.IsZero(), "reinstate revives the queued nudge")
+	assert.Empty(t, m.NudgeCancelReason)
+
+	const tmux = "tclaude-nq08-r"
+	f.HaveAliveSession(recipient, "spwn-nq08-r", tmux, "/tmp/work")
+	assert.Equal(t, 1, agentd.FlushUndeliveredForTest(recipient), "revived message delivers")
+	f.AssertSentContains(tmux+":0.0", fmt.Sprintf("new agent message #%d", r.ID), 2*time.Second)
+}
+
 // mustSend POSTs a message and decodes the queue-centric response, asserting a
 // 200. Shared by the nudge-queue tests.
 func mustSend(t *testing.T, f *testharness.Flow, fromConv string, body map[string]any) sendRespView {

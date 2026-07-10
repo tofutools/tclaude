@@ -547,6 +547,13 @@ func RetireAgentByID(agentID, by, reason string) (bool, error) {
 
 // ReinstateAgentByID clears the retired flag, returning a retired actor to
 // active status. Returns false (no error) when the agent was not retired.
+//
+// Reinstating also revives the agent's cancelled nudge queue: undelivered
+// messages the reaper's orphan sweep abandoned while the agent was retired
+// (CancelAgentMessageNudge) get their cancellation cleared, so queued mail
+// resumes delivery once the agent comes back online. Both updates run in one
+// transaction so a reinstated agent can never be observed with a
+// still-cancelled queue.
 func ReinstateAgentByID(agentID string) (bool, error) {
 	agentID = strings.TrimSpace(agentID)
 	if agentID == "" {
@@ -556,14 +563,33 @@ func ReinstateAgentByID(agentID string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	res, err := d.Exec(`UPDATE agents
+	tx, err := d.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.Exec(`UPDATE agents
 		SET retired_at = '', retired_by = '', retire_reason = '', retired_by_agent = ''
 		WHERE agent_id = ? AND retired_at != ''`, agentID)
 	if err != nil {
 		return false, err
 	}
 	n, _ := res.RowsAffected()
-	return n > 0, nil
+	if n == 0 {
+		return false, tx.Commit()
+	}
+	// Head-following mail is keyed by to_agent; prev-gen-pinned and non-actor
+	// mail cancelled via the conv's owning actor is keyed by to_conv, so the
+	// revive matches either the stable agent_id or any of its generations.
+	if _, err := tx.Exec(`UPDATE agent_messages
+		SET nudge_cancelled_at = '', nudge_cancel_reason = ''
+		WHERE nudge_cancelled_at != '' AND delivered_at = '' AND read_at = ''
+		  AND (to_agent = ? OR to_conv IN (
+			SELECT conv_id FROM agent_conversations WHERE agent_id = ?))`,
+		agentID, agentID); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
 }
 
 // ListActiveAgents / ListRetiredAgents return the actor-level rosters — the
