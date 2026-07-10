@@ -1,9 +1,11 @@
 // processes.js — feature-gated Processes tab shell and REST-backed lists.
-// The graph editor, live viewer, and worklist own later tickets; this module
-// leaves stable full-canvas mount points for them and keeps actions as stubs.
+// The graph editor and live viewer own later tickets; this module leaves
+// stable full-canvas mount points for them and keeps actions as stubs. The
+// Worklist sub-view lives in process-worklist.js (TCL-297).
 
 import { $, $$, esc, relTime } from './helpers.js';
 import { morphInto } from './morph.js';
+import { initProcessWorklist, loadProcessWorklist } from './process-worklist.js';
 
 let activeProcessSubtab = 'templates';
 
@@ -33,6 +35,7 @@ export function initProcessesTab() {
       case 'view': openProcessViewer(id); break;
     }
   });
+  initProcessWorklist();
 }
 
 export function applyProcessesTabVisibility(data) {
@@ -47,7 +50,7 @@ export function applyProcessesTabVisibility(data) {
   }
 }
 
-function activateProcessSubtab(name) {
+export function activateProcessSubtab(name) {
   activeProcessSubtab = name;
   closeProcessCanvasViews();
   $$('.process-subtab').forEach(button => {
@@ -62,9 +65,10 @@ function activateProcessSubtab(name) {
 function loadProcessSubtab(name) {
   if (name === 'templates') loadProcessTemplates();
   if (name === 'runs') loadProcessRuns();
+  if (name === 'worklist') loadProcessWorklist();
 }
 
-async function processJSON(path) {
+export async function processJSON(path) {
   const response = await fetch(path);
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.message || body.error || `${response.status} ${response.statusText}`);
@@ -154,7 +158,7 @@ function closeProcessCanvasViews() {
   $$('.process-panel').forEach(panel => panel.classList.toggle('active', panel.id === `process-panel-${activeProcessSubtab}`));
 }
 
-function processNotice(message) {
+export function processNotice(message) {
   const notice = $('#process-notice');
   if (notice) notice.textContent = message;
 }

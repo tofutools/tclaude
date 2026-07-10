@@ -256,7 +256,7 @@
     <div class="process-subnav" role="tablist" aria-label="Process views">
       <button class="process-subtab active" data-process-subtab="templates" role="tab" aria-selected="true" aria-controls="process-panel-templates">Templates</button>
       <button class="process-subtab" data-process-subtab="runs" role="tab" aria-selected="false" aria-controls="process-panel-runs">Runs</button>
-      <button class="process-subtab" data-process-subtab="worklist" role="tab" aria-selected="false" aria-controls="process-panel-worklist">Worklist</button>
+      <button class="process-subtab" data-process-subtab="worklist" role="tab" aria-selected="false" aria-controls="process-panel-worklist">Worklist<span id="process-worklist-badge" class="tab-badge warn" hidden></span></button>
       <span class="spacer"></span>
       <span id="process-notice" class="process-notice" role="status"></span>
     </div>
@@ -273,7 +273,21 @@
       <div id="process-runs-list" class="process-list"><p class="muted">Open this view to load runs.</p></div>
     </div>
     <div id="process-panel-worklist" class="process-panel" role="tabpanel" aria-label="Process worklist">
-      <div class="process-placeholder"><h3>Worklist</h3><p>Human and agent obligations will appear here when the worklist surface lands.</p></div>
+      <div class="filter-bar process-toolbar">
+        <div class="process-worklist-views" role="group" aria-label="Worklist views">
+          <button class="process-view-chip" data-worklist-view="my-work" type="button" title="Pending items assigned to you (the operator)">My work<span class="wl-view-count"></span></button>
+          <button class="process-view-chip" data-worklist-view="waiting-on" type="button" title="Everything pending, grouped by whom it waits on">Waiting on<span class="wl-view-count"></span></button>
+          <button class="process-view-chip" data-worklist-view="due" type="button" title="Pending items with a deadline inside 24h or already past it">Due / overdue<span class="wl-view-count"></span></button>
+          <button class="process-view-chip" data-worklist-view="blocked" type="button" title="Nodes that exhausted their budget and wait on a retry / skip / cancel decision">Blocked<span class="wl-view-count"></span></button>
+          <button class="process-view-chip" data-worklist-view="decision" type="button" title="Decision nodes waiting on a human verdict">Needs decision<span class="wl-view-count"></span></button>
+          <button class="process-view-chip" data-worklist-view="review" type="button" title="Gate-stage items waiting on a human review">Needs review<span class="wl-view-count"></span></button>
+          <button class="process-view-chip" data-worklist-view="recent" type="button" title="Recently created or resolved items">Recently changed<span class="wl-view-count"></span></button>
+        </div>
+        <span class="spacer"></span>
+        <button id="process-worklist-refresh" class="process-action" type="button">↻ refresh</button>
+      </div>
+      <div id="process-worklist-degraded" class="wl-degraded" role="alert" hidden></div>
+      <div id="process-worklist-list" class="process-list"><p class="muted">Open this view to load the worklist.</p></div>
     </div>
     <div id="process-editor-view" class="process-canvas-view" hidden>
       <button class="process-action" data-process-close-view type="button">← templates</button>

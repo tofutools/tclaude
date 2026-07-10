@@ -4758,6 +4758,63 @@ body.hide-processes #tab-processes { display: none; }
 .process-canvas-view { min-height: 62vh; }
 .process-canvas-mount { min-height: 55vh; margin-top: 10px; border: 1px dashed #30363d; border-radius: 8px; padding: 20px; color: #8b949e; }
 
+/* Worklist sub-view (TCL-297). View chips filter one item list; the amber
+   ⚠ degraded strip names unreadable runs (never silently dropped); rows carry
+   glyph+text kind cells, the nudge-schedule line, and inline dark-themed
+   action buttons with a required comment input. */
+.process-worklist-views { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.process-view-chip {
+  border: 1px solid #30363d; border-radius: 14px; background: #161b22;
+  color: #c9d1d9; padding: 3px 11px; cursor: pointer; font: inherit; font-size: 12px;
+}
+.process-view-chip:hover { background: #21262d; border-color: #484f58; }
+.process-view-chip.active { color: #fff; background: #1f6feb; border-color: #388bfd; }
+.wl-view-count { margin-left: 5px; color: #8b949e; font-size: 11px; }
+.process-view-chip.active .wl-view-count { color: #c6dbff; }
+.wl-view-count:empty { display: none; }
+.wl-degraded {
+  display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap;
+  margin: 0 0 10px; padding: 8px 12px; border: 1px solid #9e6a03;
+  border-radius: 6px; background: #2d2305; color: #e3b341; font-size: 12px;
+}
+.wl-degraded-glyph { font-size: 14px; }
+.wl-degraded-run { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; text-decoration: underline dotted; }
+.wl-row .wl-kind { white-space: nowrap; }
+.wl-row.wl-resolved .wl-summary { color: #8b949e; }
+/* Overdue/due-soon: a left accent bar + tinted due cell; the ⚠/"in Nh" text
+   in the cell carries the meaning for color-blind readers. */
+.wl-row.wl-overdue td:first-child { box-shadow: inset 3px 0 0 #f85149; }
+.wl-row.wl-overdue .wl-due { color: #f85149; font-weight: 600; }
+.wl-row.wl-due-soon td:first-child { box-shadow: inset 3px 0 0 #e3b341; }
+.wl-row.wl-due-soon .wl-due { color: #e3b341; }
+.wl-nudge { margin-top: 3px; }
+.wl-nudge.wl-paused { color: #e3b341; }
+.wl-group-head td {
+  padding-top: 14px; color: #c9d1d9; font-weight: 600; font-size: 12px;
+  text-transform: none; letter-spacing: normal; border-bottom: 1px solid #30363d;
+}
+.wl-link {
+  border: none; background: none; padding: 0; cursor: pointer; font: inherit;
+  color: #58a6ff; text-decoration: underline dotted; text-underline-offset: 2px;
+}
+.wl-link:hover { color: #79c0ff; }
+.wl-link-node { font-size: 12px; }
+.wl-age, .wl-due { white-space: nowrap; }
+.wl-actions { min-width: 220px; }
+.wl-comment {
+  width: 100%; box-sizing: border-box; margin-bottom: 6px; padding: 4px 8px;
+  border: 1px solid #30363d; border-radius: 6px; background: #0d1117;
+  color: #c9d1d9; font: inherit; font-size: 12px;
+}
+.wl-comment:focus { outline: none; border-color: #388bfd; }
+.wl-comment.wl-comment-missing { border-color: #f85149; }
+.wl-comment.wl-comment-missing::placeholder { color: #f85149; }
+.wl-action-row { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.wl-action-row .wl-action { padding: 4px 8px; font-size: 12px; white-space: nowrap; }
+/* Deep-link landing flash on the Runs row a worklist run/node link targets. */
+@keyframes wl-run-flash { 0% { background: #1f6feb55; } 100% { background: transparent; } }
+.wl-run-flash { animation: wl-run-flash 1.6s ease-out 1; }
+
 /* Terminals-tab auto-hide. body.hide-terminals is set by js/terminals-tab.js
    whenever no terminal pane is open — the tab exists only while ≥1 web terminal
    / window is live. Unlike Costs/Plugins (server flags), this is driven
