@@ -10231,3 +10231,141 @@ body.wizard #agent-dock .dock-card-menu-item.danger:hover {
 /* (The top-bar #dock-toggle-top wizard "on" accent was removed with the button
    itself — JOH-390 item 7. The one sanctioned body.wizard exception outside
    #agent-dock is gone; the dock's arcane skin stays scoped under #agent-dock.) */
+
+/* === Shared process graph core (process-graph.js) ==========================
+   The SVG uses currentColor + these component variables so editor and viewer
+   share one vocabulary. Explicit data-color-scheme values make the standalone
+   component correct on light hosts even though today's dashboard is dark. */
+.process-graph {
+  --pg-bg: #0d1117;
+  --pg-panel: #161b22;
+  --pg-node: #1d2631;
+  --pg-node-strong: #263445;
+  --pg-border: #718096;
+  --pg-text: #e6edf3;
+  --pg-muted: #8b949e;
+  --pg-edge: #7d8da3;
+  --pg-accent: #58a6ff;
+  --pg-return: #e3a341;
+  --pg-focus: #79c0ff;
+  position: relative;
+  min-height: 320px;
+  height: 100%;
+  overflow: hidden;
+  color: var(--pg-text);
+  background: var(--pg-bg);
+  border: 1px solid #30363d;
+  border-radius: 10px;
+  outline: none;
+  touch-action: none;
+  user-select: none;
+}
+.process-graph[data-color-scheme="light"] {
+  --pg-bg: #f7f9fc;
+  --pg-panel: #ffffff;
+  --pg-node: #ffffff;
+  --pg-node-strong: #eef4fb;
+  --pg-border: #526173;
+  --pg-text: #182230;
+  --pg-muted: #657386;
+  --pg-edge: #617185;
+  --pg-accent: #0969da;
+  --pg-return: #9a5b00;
+  --pg-focus: #0550ae;
+  border-color: #c9d2dd;
+}
+.process-graph:focus-visible { box-shadow: 0 0 0 2px var(--pg-focus); }
+.process-graph-svg { width: 100%; height: 100%; min-height: inherit; display: block; cursor: grab; }
+.process-graph-svg:active { cursor: grabbing; }
+.process-node { cursor: pointer; color: var(--pg-text); outline: none; }
+.process-node-shape, .process-end-inner {
+  fill: var(--pg-node);
+  stroke: var(--pg-border);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+.process-shape-compound { fill: var(--pg-node-strong); stroke-width: 2.5; }
+.process-shape-start { fill: var(--pg-bg); stroke-width: 2; }
+.process-shape-end { fill: var(--pg-bg); stroke-width: 4; }
+.process-end-inner { fill: none; stroke-width: 1.5; }
+.process-shape-decision { fill: var(--pg-node-strong); }
+.process-node:hover .process-node-shape,
+.process-node:focus .process-node-shape,
+.process-node.is-selected .process-node-shape { stroke: var(--pg-accent); }
+.process-node.is-selected .process-node-shape { stroke-width: 4; }
+.process-node-label { fill: currentColor; font-size: 13px; font-weight: 650; pointer-events: none; }
+.process-node-label-peripheral { font-size: 11px; fill: var(--pg-muted); }
+.process-clock-face, .process-clock-hand {
+  fill: none; stroke: currentColor; stroke-width: 2; vector-effect: non-scaling-stroke; pointer-events: none;
+}
+.process-clock-hand { stroke-linecap: round; stroke-linejoin: round; }
+.process-stage-stack, .process-expand-plus {
+  fill: none; stroke: var(--pg-muted); stroke-width: 1.7; stroke-linecap: round; vector-effect: non-scaling-stroke;
+}
+.process-expand-ring { fill: var(--pg-bg); stroke: var(--pg-muted); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.process-stage-count { fill: var(--pg-muted); font-size: 9px; }
+.process-port {
+  fill: var(--pg-bg); stroke: var(--pg-accent); stroke-width: 2; vector-effect: non-scaling-stroke;
+  opacity: 0.28; cursor: crosshair;
+}
+.process-node-ports.is-node-hover .process-port,
+.process-node-ports:hover .process-port, .process-port:hover, .process-port:active { opacity: 1; }
+.process-port:focus, .process-port.is-keyboard-source { opacity: 1; stroke-width: 4; outline: none; }
+.process-port.is-keyboard-source { fill: var(--pg-accent); }
+.process-edge { color: var(--pg-edge); cursor: pointer; outline: none; }
+.process-edge-path {
+  stroke: currentColor; stroke-width: 2; vector-effect: non-scaling-stroke; pointer-events: none;
+}
+.process-edge-hit { stroke: transparent; stroke-width: 18; vector-effect: non-scaling-stroke; pointer-events: stroke; }
+.process-edge:hover, .process-edge:focus, .process-edge.is-selected { color: var(--pg-accent); }
+.process-edge.is-selected .process-edge-path { stroke-width: 4; }
+.process-edge-back { color: var(--pg-return); }
+.process-edge-back .process-edge-path { stroke-dasharray: 8 6; }
+.process-arrowhead { fill: var(--pg-edge); }
+.process-arrowhead-back { fill: var(--pg-return); }
+.process-edge-label text { fill: currentColor; font-size: 11px; font-weight: 650; paint-order: stroke; stroke: var(--pg-bg); stroke-width: 5; stroke-linejoin: round; }
+.process-overlay-anchor { pointer-events: none; }
+.process-overlay-anchor:not(.has-overlay) { opacity: 0.38; }
+.process-overlay-ring {
+  fill: var(--pg-node); stroke: var(--pg-muted); stroke-width: 1.5; stroke-dasharray: 2 2; vector-effect: non-scaling-stroke;
+}
+.process-overlay-anchor.has-overlay .process-overlay-ring { stroke: var(--pg-accent); stroke-dasharray: none; }
+.process-overlay-glyph { fill: var(--pg-text); font-size: 11px; font-weight: 800; }
+.process-overlay-detail, .process-overlay-badge, .process-overlay-status { fill: var(--pg-text); font-size: 10px; font-weight: 700; }
+.process-overlay-badge { fill: var(--pg-return); }
+.process-graph-controls { position: absolute; top: 10px; right: 10px; display: flex; gap: 6px; }
+.process-fit-button {
+  appearance: none;
+  background: var(--pg-panel);
+  color: var(--pg-text);
+  border: 1px solid var(--pg-border);
+  border-radius: 6px;
+  padding: 5px 11px;
+  font: 600 12px/1.25 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.24);
+}
+.process-fit-button:hover { border-color: var(--pg-accent); background: var(--pg-node-strong); }
+.process-fit-button:focus-visible { outline: 2px solid var(--pg-focus); outline-offset: 2px; }
+
+/* Wizard keeps the same semantic shapes and non-colour state anchors, with a
+   parchment/violet skin. Controls are explicitly themed (never UA-white). */
+body.wizard .process-graph {
+  --pg-bg: #100c1b;
+  --pg-panel: #211832;
+  --pg-node: #20172f;
+  --pg-node-strong: #2c2042;
+  --pg-border: #a28bd4;
+  --pg-text: #f3e6c0;
+  --pg-muted: #b39ddb;
+  --pg-edge: #a997cc;
+  --pg-accent: #d4af37;
+  --pg-return: #e78a9c;
+  --pg-focus: #d4af37;
+  border-color: #4a3d6b;
+  background-image: radial-gradient(circle at 50% 10%, rgba(98, 69, 145, 0.16), transparent 55%);
+}
+body.wizard .process-fit-button { box-shadow: 0 2px 12px rgba(75, 48, 119, 0.5); }
+@media (prefers-reduced-motion: reduce) {
+  .process-graph *, .process-graph *::before, .process-graph *::after { transition: none !important; animation: none !important; }
+}

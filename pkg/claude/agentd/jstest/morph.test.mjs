@@ -180,6 +180,24 @@ test('changed text is rewritten in place on the SAME text node (relTime churn)',
   assert.equal(keptTextNode.nodeValue, '32s ago', 'value updated in place');
 });
 
+test('data-morph-owned forms a live imperative subtree boundary', () => {
+  const liveChild = el('svg', {}, [el('g', { transform: 'translate(12 8) scale(2)' })]);
+  const from = el('div', { id: 'graph-host', class: 'old', 'data-morph-owned': 'process-graph' }, [liveChild]);
+  const to = el('div', { id: 'graph-host', class: 'fresh', 'aria-label': 'updated host' }, []);
+  morphNode(from, to);
+  assert.equal(from.childNodes[0], liveChild, 'fresh empty host must not delete the live SVG');
+  assert.equal(from.getAttribute('data-morph-owned'), 'process-graph', 'ownership marker stays live-owned');
+  assert.equal(from.getAttribute('class'), 'fresh', 'fresh host chrome still updates');
+  assert.equal(from.getAttribute('aria-label'), 'updated host', 'fresh host ARIA still updates');
+});
+
+test('morphChildren respects ownership when the host is the direct morphInto target', () => {
+  const liveChild = el('svg', {}, [el('g', { transform: 'translate(12 8) scale(2)' })]);
+  const host = el('div', { 'data-morph-owned': 'process-graph' }, [liveChild]);
+  morphChildren(host, el('div'));
+  assert.equal(host.childNodes[0], liveChild, 'innerHTML reconciliation must stop at the owned host itself');
+});
+
 // ---- keyed reordering ----------------------------------------------------
 
 test('keyed rows reorder by moving nodes (identity preserved), not rebuilding', () => {
