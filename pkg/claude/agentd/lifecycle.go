@@ -1405,6 +1405,21 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		body.Cwd = g.DefaultCwd
 	}
 
+	// A request that omits harness AND every harness-specific launch field is
+	// genuinely blank: group/global profiles may choose its harness. Once the
+	// caller supplies model/effort/sandbox/etc., preserve the historical default
+	// Claude catalog used for that explicit value; a lower-tier Codex profile
+	// must not reinterpret it or turn an otherwise-valid explicit model into a
+	// cross-harness validation error. The CLI mirrors this pin before marshaling.
+	if strings.TrimSpace(body.Harness) == "" && (strings.TrimSpace(body.Model) != "" ||
+		strings.TrimSpace(body.Effort) != "" ||
+		strings.TrimSpace(body.SandboxMode) != "" ||
+		strings.TrimSpace(body.AskUserQuestionTimeout) != "" ||
+		strings.TrimSpace(body.ApprovalPolicy) != "" ||
+		body.AutoReview || body.TrustDir) {
+		body.Harness = harness.DefaultName
+	}
+
 	// Overlay the group's default spawn profile and then the global default
 	// profile onto blank launch fields BEFORE harness/model/sandbox resolution — the same way
 	// the default_cwd fill above reaches every spawn path. Doing it here (not
