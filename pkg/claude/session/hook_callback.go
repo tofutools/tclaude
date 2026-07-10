@@ -451,8 +451,24 @@ func runHookCallback() error {
 	// {"decision":"block"} back to Claude Code to refuse an early
 	// auto-compaction. Handle it on its own path (it does not flow
 	// through ApplyHook's status machinery) and emit any decision to
-	// the hook's stdout.
+	// the hook's stdout. Codex still reports its active model on this
+	// event, so persist it first when the hook belongs to the tracked
+	// main conversation; a blocked compaction has no PostCompact backstop.
 	if input.HookEventName == "PreCompact" {
+		sessionKey := envSessionID
+		if sessionKey == "" {
+			sessionKey = input.ConvID
+		}
+		if sessionKey != "" {
+			unlock, err := acquireHookLock(sessionKey)
+			if err != nil {
+				return fmt.Errorf("failed to acquire PreCompact hook lock: %w", err)
+			}
+			defer unlock()
+		}
+		if state, err := LoadSessionState(envSessionID); err == nil {
+			persistCodexHookModel(state, input)
+		}
 		return decidePreCompact(input, envSessionID, os.Stdout)
 	}
 
@@ -669,6 +685,11 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 			return SaveSessionState(state)
 		}
 	}
+
+	// Capture before event-specific early returns such as PostCompact. The
+	// helper independently verifies the conversation match because PostCompact
+	// is exempt from the status machine's foreign-process guard above.
+	persistCodexHookModel(state, input)
 
 	// Update state based on hook event. This switch is tclaude's
 	// cross-harness event→status map. Claude Code and Codex deliver the
@@ -1080,17 +1101,6 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 		return err
 	}
 
-	if state.Harness == harness.CodexName && input.Model != "" {
-		if err := db.UpdateSessionModel(state.ID, input.Model); err != nil {
-			slog.Warn("codex-model: failed to update session model",
-				"session_id", state.ID, "error", err, "module", "hooks")
-		}
-		if err := db.UpdateSessionModelID(state.ID, input.Model); err != nil {
-			slog.Warn("codex-model: failed to update session model id",
-				"session_id", state.ID, "error", err, "module", "hooks")
-		}
-	}
-
 	persistCodexWorkspaceSnapshot(state, input)
 
 	// Lift Codex's context-window telemetry off its rollout onto the
@@ -1145,6 +1155,40 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	}
 
 	return nil
+}
+
+// persistCodexHookModel records Codex's active model slug when a hook belongs
+// to the tracked main conversation. The conversation check is intentionally
+// local to this helper: PreCompact bypasses ApplyHook, while PostCompact is
+// exempt from ApplyHook's foreign-process guard so it can still reset compact
+// state after a legitimate conv-id rotation. Neither exception may let a
+// child/foreign Codex process overwrite the host session's model.
+func persistCodexHookModel(state *SessionState, input HookCallbackInput) {
+	if state == nil || state.Harness != harness.CodexName || state.ID == "" ||
+		input.Model == "" || input.AgentID != "" {
+		return
+	}
+	if state.ConvID != "" && input.ConvID != state.ConvID {
+		if input.ConvID == "" {
+			return
+		}
+		pending, err := db.GetSessionPendingConv(state.ID)
+		if err != nil {
+			slog.Warn("codex-model: failed to verify pending conversation",
+				"session_id", state.ID, "conv_id", input.ConvID, "error", err, "module", "hooks")
+			return
+		}
+		if pending != input.ConvID {
+			return
+		}
+	}
+
+	// Codex's hook `model` field is both the dashboard label and the
+	// machine-facing value a successor can pass back to `codex --model`.
+	if err := db.UpdateSessionModelSlug(state.ID, input.Model); err != nil {
+		slog.Warn("codex-model: failed to update session model slug",
+			"session_id", state.ID, "error", err, "module", "hooks")
+	}
 }
 
 func shouldEnrollLaunchedSessionFromHook(state *SessionState, input HookCallbackInput, envSessionID string) bool {

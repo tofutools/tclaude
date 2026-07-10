@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -422,26 +423,31 @@ func TestRunHookCallback_PendingConvHookStillProcessed(t *testing.T) {
 // PostCompact is exempt from the foreign-process guard: it may
 // legitimately arrive carrying a rotated conv-id (compaction can
 // rotate the conversation before the SessionStart(compact) is
-// processed), and all it does is reset per-env-session post-compaction
-// state — it returns before any status or conv mutation. The observable
-// proof it passed the guard: the nudged_pct ladder is zeroed.
+// processed). It may reset per-env-session post-compaction state, but a
+// mismatched conv-id must not let a foreign child overwrite the host's model.
+// The observable proof the event still passed the guard: the nudged_pct ladder
+// is zeroed while the model remains unchanged.
 func TestRunHookCallback_PostCompactExemptFromForeignGuard(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
 
 	require.NoError(t, SaveSessionState(&SessionState{
-		ID:     "pc-sess",
-		ConvID: "conv-pc",
-		Status: StatusWorking,
+		ID:      "pc-sess",
+		ConvID:  "conv-pc",
+		Status:  StatusWorking,
+		Harness: harness.CodexName,
 	}))
 	require.NoError(t, db.SetNudgedPct("pc-sess", 70),
 		"precondition: nudged_pct stamped")
+	require.NoError(t, db.UpdateSessionModelSlug("pc-sess", "gpt-5.4"),
+		"precondition: host model stamped")
 
 	feedHook(t, "pc-sess", map[string]any{
 		"session_id":      "conv-pc-rotated",
 		"hook_event_name": "PostCompact",
 		"cwd":             dir,
+		"model":           "gpt-5.5",
 	})
 
 	nudged, err := db.GetNudgedPct("pc-sess")
@@ -453,6 +459,12 @@ func TestRunHookCallback_PostCompactExemptFromForeignGuard(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "conv-pc", got.ConvID,
 		"PostCompact must not advance the conv-id (its case returns early)")
+	snap, err := db.GetContextSnapshot("pc-sess")
+	require.NoError(t, err)
+	assert.Equal(t, "gpt-5.4", snap.Model,
+		"a mismatched PostCompact must not overwrite the host model")
+	assert.Equal(t, "gpt-5.4", snap.ModelID,
+		"a mismatched PostCompact must not overwrite the resume-safe model id")
 }
 
 // A SessionStart carrying agent_id fired inside a subagent. Subagents

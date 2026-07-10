@@ -720,6 +720,27 @@ func UpdateSessionModelID(sessionID, modelID string) error {
 	return err
 }
 
+// UpdateSessionModelSlug stores a model token that is both the human-facing
+// model name and the machine-facing resume ID. Codex hook payloads have this
+// shape: their `model` field is the active model slug, so the dashboard's
+// display value and the lifecycle inheritance value must advance together.
+//
+// Keeping this as one UPDATE avoids a partially-refreshed row if a process is
+// interrupted between the two writes. Claude Code continues using the two
+// independent setters above because its statusline reports distinct display
+// and ID fields. An empty slug is a no-op, matching those setters.
+func UpdateSessionModelSlug(sessionID, model string) error {
+	if model == "" {
+		return nil
+	}
+	db, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`UPDATE sessions SET model = ?, model_id = ? WHERE id = ?`, model, model, sessionID)
+	return err
+}
+
 // SessionModels returns the model display name of every session that
 // has reported one, keyed by session id — the Costs tab's per-agent
 // model lookup. Since v71 the model is denormalised onto each

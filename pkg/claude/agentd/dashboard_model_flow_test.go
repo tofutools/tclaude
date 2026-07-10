@@ -52,7 +52,7 @@ func TestDashboardSnapshot_ModelSurfaced(t *testing.T) {
 // Scenario: a freshly-spawned agent whose statusline hook has not yet
 // fired has no model recorded. /api/snapshot must report an empty model
 // rather than garbage; the dashboard then omits the harness line
-// entirely (harnessLine returns '') so the row stays clean.
+// entirely (harnessLine returns an empty string) so the row stays clean.
 func TestDashboardSnapshot_ModelEmptyWhenNotReported(t *testing.T) {
 	const conv = "modu-1111-2222-3333-4444"
 	const label = "spwn-modu"
@@ -108,4 +108,91 @@ func TestDashboardSnapshot_CodexModelAndEffortSurfaced(t *testing.T) {
 	require.NotNil(t, memberRow, "agent %s missing from group squad members", conv)
 	assert.Equal(t, "gpt-5-codex", memberRow.State.Model, "Members[] Codex model")
 	assert.Equal(t, "high", memberRow.State.EffortLevel, "Members[] Codex effort level")
+}
+
+// Regression: changing a running Codex thread's model does not fire a
+// dedicated model-change hook. Codex does, however, put the active model slug
+// on every later lifecycle hook. The first accepted main-thread event must
+// advance both sessions.model (dashboard display) and sessions.model_id (resume /
+// reincarnate inheritance). Reasoning effort is not in Codex's hook payload,
+// so it deliberately converges from the rollout at the next Stop instead of
+// introducing a dashboard file poller.
+func TestDashboardSnapshot_CodexRuntimeModelAndEffortChangesConvergeFromHooks(t *testing.T) {
+	const conv = "019ec004-4250-79b1-9ade-ebaea41590ab"
+	const label = "spwn-codx-switch"
+
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+	f.HaveGroup("squad")
+	cx := f.HaveAliveCodexSession(conv, label, "tmux-codx-switch", "/tmp/codx-switch")
+	f.HaveMember("squad", conv)
+
+	// Establish the original runtime configuration through a completed turn.
+	cx.Model = "gpt-5.4"
+	cx.Effort = "medium"
+	require.NoError(t, cx.WriteUserInput("first turn"))
+	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
+		HookEventName:  "Stop",
+		ConvID:         conv,
+		Cwd:            "/tmp/codx-switch",
+		Model:          "gpt-5.4",
+		TranscriptPath: cx.RolloutPath,
+	}, label))
+
+	original := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	originalAgent := findDashAgent(original, conv)
+	require.NotNil(t, originalAgent)
+	assert.Equal(t, "gpt-5.4", originalAgent.State.Model)
+	assert.Equal(t, "medium", originalAgent.State.EffortLevel)
+
+	// The operator switches model + effort. A subsequent PostCompact carries
+	// the new active model but no effort field. PostCompact is important here:
+	// it returns early from the status machine, so model capture must happen
+	// before that return.
+	cx.Model = "gpt-5.5"
+	cx.Effort = "xhigh"
+	require.NoError(t, cx.WriteUserInput("second turn"))
+	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
+		HookEventName:  "PostCompact",
+		ConvID:         conv,
+		Cwd:            "/tmp/codx-switch",
+		Model:          "gpt-5.5",
+		TranscriptPath: cx.RolloutPath,
+	}, label))
+
+	afterCompact := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	compactAgent := findDashAgent(afterCompact, conv)
+	require.NotNil(t, compactAgent)
+	assert.Equal(t, "gpt-5.5", compactAgent.State.Model,
+		"the next accepted Codex hook advances the dashboard model")
+	assert.Equal(t, "medium", compactAgent.State.EffortLevel,
+		"effort waits for the turn-ending rollout read")
+
+	dbSnap, err := db.GetContextSnapshot(label)
+	require.NoError(t, err)
+	assert.Equal(t, "gpt-5.5", dbSnap.ModelID,
+		"the same hook atomically advances the resume-safe model id")
+
+	// Stop is the explicit, event-driven convergence point for effort. There
+	// is still no dashboard rollout polling for model or reasoning effort.
+	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
+		HookEventName:  "Stop",
+		ConvID:         conv,
+		Cwd:            "/tmp/codx-switch",
+		Model:          "gpt-5.5",
+		TranscriptPath: cx.RolloutPath,
+	}, label))
+
+	afterStop := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	stoppedAgent := findDashAgent(afterStop, conv)
+	require.NotNil(t, stoppedAgent)
+	assert.Equal(t, "gpt-5.5", stoppedAgent.State.Model)
+	assert.Equal(t, "xhigh", stoppedAgent.State.EffortLevel,
+		"Stop converges the changed Codex reasoning effort")
+
+	member := findDashMember(afterStop, "squad", conv)
+	require.NotNil(t, member)
+	assert.Equal(t, "gpt-5.5", member.State.Model, "group member model")
+	assert.Equal(t, "xhigh", member.State.EffortLevel, "group member effort")
 }
