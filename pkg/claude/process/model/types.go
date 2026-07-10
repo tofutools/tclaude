@@ -60,7 +60,12 @@ type Node struct {
 	Wait        *WaitConfig  `json:"wait,omitempty" yaml:"wait,omitempty"`
 	Next        Next         `json:"next,omitempty" yaml:"next,omitempty"`
 	Result      string       `json:"result,omitempty" yaml:"result,omitempty"`
-	Metadata    Metadata     `json:"metadata,omitempty" yaml:"metadata,omitempty"`
+	// Captures names the outputs a task node publishes for downstream nodes
+	// (design §2: performer input = instructions + upstream captures). Names
+	// only in v1 — the runtime capture plumbing is a later ticket; validation
+	// keeps names id-shaped and unique so they can become references later.
+	Captures []string `json:"captures,omitempty" yaml:"captures,omitempty"`
+	Metadata Metadata `json:"metadata,omitempty" yaml:"metadata,omitempty"`
 }
 
 type Step struct {
@@ -78,11 +83,29 @@ type Step struct {
 	Retry         *RetryPolicy `json:"retry,omitempty" yaml:"retry,omitempty"`
 }
 
+// Performer is the uniform slot contract (design §2): kind, profile, timeout,
+// and contact apply to every kind; the remaining fields are explicitly
+// kind-scoped and validated as such. The discipline rule for growing this
+// struct: define a new field for all three kinds or kind-scope it here (types
+// + validate + schema) before any UI surfaces it.
 type Performer struct {
-	Kind    PerformerKind    `json:"kind" yaml:"kind"`
-	Profile string           `json:"profile,omitempty" yaml:"profile,omitempty"`
-	Prompt  string           `json:"prompt,omitempty" yaml:"prompt,omitempty"`
-	Ask     string           `json:"ask,omitempty" yaml:"ask,omitempty"`
+	Kind    PerformerKind `json:"kind" yaml:"kind"`
+	Profile string        `json:"profile,omitempty" yaml:"profile,omitempty"`
+	// Prompt is the instruction text for agent performers; human performers
+	// may use it as long-form context alongside (or instead of) Ask.
+	Prompt string `json:"prompt,omitempty" yaml:"prompt,omitempty"`
+	// Ask, Choices, and Assignee are human-scoped: the question to put to the
+	// human, an optional closed answer set, and an optional specific person
+	// (defaults to whoever holds the profile).
+	Ask      string   `json:"ask,omitempty" yaml:"ask,omitempty"`
+	Choices  []string `json:"choices,omitempty" yaml:"choices,omitempty"`
+	Assignee string   `json:"assignee,omitempty" yaml:"assignee,omitempty"`
+	// Model and Effort are agent-scoped overrides on top of the profile.
+	// Freeform strings: legal values are harness-specific and validated at
+	// spawn time, not template time.
+	Model  string `json:"model,omitempty" yaml:"model,omitempty"`
+	Effort string `json:"effort,omitempty" yaml:"effort,omitempty"`
+	// Run and Args are program-scoped: command execution (design §10).
 	Run     string           `json:"run,omitempty" yaml:"run,omitempty"`
 	Args    []string         `json:"args,omitempty" yaml:"args,omitempty"`
 	Timeout string           `json:"timeout,omitempty" yaml:"timeout,omitempty"`
