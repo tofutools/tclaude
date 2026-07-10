@@ -40,11 +40,16 @@ func TestDashboardProcessGraphAssets(t *testing.T) {
 		"data-morph-owned",
 		"onPortDragStart",
 		"onCanvasDrop",
+		"this.nodeLayer.contains(node)",
+		"captureFocus()",
+		"'aria-pressed': 'false'",
 		"process-shape-decision",
 		"process-shape-compound")
 
 	morph := read("js/morph.js")
-	mustContain("morph.js", morph, "if (from.hasAttribute('data-morph-owned')) return;")
+	mustContain("morph.js", morph,
+		"if (from.hasAttribute('data-morph-owned')) {",
+		"if (fromParent.nodeType === 1 && fromParent.hasAttribute('data-morph-owned')) return;")
 
 	css := read("dashboard.css")
 	mustContain("dashboard.css", css,

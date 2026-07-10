@@ -106,6 +106,35 @@ test('pinned nodes retain exact editor-owned coordinates and auto nodes avoid th
   assert.equal(overlaps(nodes.get('pinned'), nodes.get('auto')), false);
 });
 
+test('long forward edges route outside intermediate ranks', () => {
+  const result = layoutProcessGraph({
+    nodes: ['a', 'b', 'c', 'd'].map((id) => ({ id, type: 'task' })),
+    edges: [
+      { from: 'a', to: 'b' }, { from: 'b', to: 'c' },
+      { from: 'c', to: 'd' }, { from: 'a', to: 'd', outcome: 'skip' },
+    ],
+  });
+  const long = result.edges.find((edge) => edge.from === 'a' && edge.to === 'd');
+  const intermediates = result.nodes.filter((node) => node.id === 'b' || node.id === 'c');
+  const outsideX = long.points[1].x;
+  assert.ok(outsideX < Math.min(...intermediates.map((node) => node.x - node.width / 2)), 'long lane stays left of intermediate nodes');
+  assert.match(long.path, / L /, 'long edge uses explicit obstacle waypoints');
+});
+
+test('pinned visual inversion exits and enters the facing rectangle sides', () => {
+  const result = layoutProcessGraph({
+    nodes: [
+      { id: 'lower-source', type: 'task', pinned: { x: 240, y: 480 } },
+      { id: 'upper-target', type: 'task', pinned: { x: 240, y: 120 } },
+    ],
+    edges: [{ from: 'lower-source', to: 'upper-target' }],
+  });
+  const nodes = byID(result);
+  const edge = result.edges[0];
+  assert.equal(edge.points[0].y, nodes.get('lower-source').y - nodes.get('lower-source').height / 2, 'source exits its top face');
+  assert.equal(edge.points.at(-1).y, nodes.get('upper-target').y + nodes.get('upper-target').height / 2, 'target enters its bottom face');
+});
+
 test('same input produces byte-for-byte deterministic layout output', () => {
   const graph = {
     nodes: [

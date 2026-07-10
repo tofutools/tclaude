@@ -587,7 +587,8 @@ func processGraphStates() []dashsnap.State {
   edges: [
     {from:'start',to:'draft'}, {from:'draft',to:'review'},
     {from:'review',to:'revise',outcome:'changes'}, {from:'review',to:'end',outcome:'approve'},
-    {from:'revise',to:'review',outcome:'resubmit',back:true}
+    {from:'revise',to:'review',outcome:'resubmit',back:true},
+    {from:'start',to:'end',outcome:'fast path'}
   ]
 }`),
 		},
@@ -606,12 +607,38 @@ func processGraphStateJS(title, graph string) string {
   host.style.cssText = 'min-height:0;height:100%%';
   shell.append(heading, host);
   document.body.append(shell);
-  var instance = mod.createProcessGraph(host, %s, {fitOnRender:false, ariaLabel:%q});
+  var graph = %s;
+  var portEvents = [];
+  var instance = mod.createProcessGraph(host, graph, {
+    fitOnRender:false,
+    ariaLabel:%q,
+    onPortDragStart:function(e){ portEvents.push(['start', e]); },
+    onPortDragEnd:function(e){ portEvents.push(['end', e]); }
+  });
   return new Promise(function(resolve) {
     requestAnimationFrame(function() { requestAnimationFrame(function() {
       instance.fitToView();
       if (!host.querySelector('.process-graph-svg')) throw new Error('process graph SVG did not render');
       if (!host.hasAttribute('data-morph-owned')) throw new Error('process graph host lacks morph ownership boundary');
+      var ports = host.querySelectorAll('.process-port');
+      ports[0].focus();
+      ports[0].dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true}));
+      ports[1].dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true}));
+      if (portEvents.length !== 2 || !portEvents[0][1].keyboard || !portEvents[1][1].keyboard) throw new Error('keyboard port hooks did not complete');
+      var focusedID = host.querySelector('.process-node').dataset.nodeId;
+      host.querySelector('.process-node').focus();
+      instance.setGraph(graph);
+      if (!document.activeElement || document.activeElement.dataset.nodeId !== focusedID) throw new Error('setGraph did not restore node focus');
+      var foreignNode = document.createElement('div');
+      foreignNode.dataset.nodeId = 'foreign';
+      var foreignPort = document.createElement('span');
+      foreignPort.dataset.port = 'out';
+      foreignNode.append(foreignPort);
+      shell.append(foreignNode);
+      var foreignHit = instance.eventTarget({target:foreignPort});
+      foreignNode.remove();
+      if (foreignHit.node || foreignHit.port || foreignHit.edge) throw new Error('graph accepted a foreign interaction target');
+      instance.fitToView();
       resolve();
     }); });
   });

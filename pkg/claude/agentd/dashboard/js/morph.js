@@ -173,7 +173,15 @@ function morphNode(from, to) {
   // fresh host is empty; reconciling inside it would delete the SVG every poll.
   // The host remains a normal keyed/positional child of its parent, so removing
   // the host from fresh output still removes the whole widget as expected.
-  if (from.hasAttribute('data-morph-owned')) return;
+  if (from.hasAttribute('data-morph-owned')) {
+    // The subtree is live-owned, but the host's server-rendered chrome is not.
+    // Sync fresh class/hidden/ARIA/style, then restore the ownership marker
+    // that exists only on the live element and stop before its children.
+    const owner = from.getAttribute('data-morph-owned');
+    morphAttributes(from, to);
+    from.setAttribute('data-morph-owned', owner);
+    return;
+  }
 
   // A form control carries LIVE PROPERTY state (a checkbox's `checked`, a
   // <select>'s `value`) that isEqualNode does NOT compare — it only looks at
@@ -237,6 +245,12 @@ function syncFormProps(from, to) {
 // single left-to-right pass, matching keyed children by key (moving them when
 // reordered) and unkeyed children positionally.
 function morphChildren(fromParent, toParent) {
+  // morphInto(host, html) begins here rather than in morphNode(host, fresh), so
+  // enforce the imperative-widget boundary at both entry points. Container
+  // attributes are outside morphInto's innerHTML-only contract; its live SVG
+  // children must still survive a fresh empty render.
+  if (fromParent.nodeType === 1 && fromParent.hasAttribute('data-morph-owned')) return;
+
   // Pre-pass: drop every live keyed child whose key is GONE from the fresh
   // render (a retired agent, a completed job, a filtered-out group, …). This
   // is load-bearing, not an optimisation: the main loop's unkeyed positional

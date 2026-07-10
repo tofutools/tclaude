@@ -260,13 +260,42 @@ function boundaryPoint(node, toward, outgoing) {
     const radius = Math.min(node.width, node.height) / 2;
     return { x: node.x + dx / length * radius, y: node.y + dy / length * radius };
   }
-  return { x: node.x, y: node.y + (outgoing ? node.height / 2 : -node.height / 2) };
+  // Task/compound pins are absolute and may deliberately invert the visual
+  // direction of a semantic edge. Intersect the centre-to-centre ray with the
+  // rectangle instead of assuming every exit is bottom and every entry top.
+  if (dx === 0 && dy === 0) return { x: node.x, y: node.y + (outgoing ? node.height / 2 : -node.height / 2) };
+  const xScale = dx === 0 ? Infinity : (node.width / 2) / Math.abs(dx);
+  const yScale = dy === 0 ? Infinity : (node.height / 2) / Math.abs(dy);
+  const scale = Math.min(xScale, yScale);
+  return { x: node.x + dx * scale, y: node.y + dy * scale };
 }
 
-function routeForward(edge, from, to, lane) {
-  const start = boundaryPoint(from, to, true);
-  const end = boundaryPoint(to, from, false);
-  const midY = (start.y + end.y) / 2 + lane;
+function routeForward(edge, from, to, lane, nodes, edgeSep) {
+  let start = boundaryPoint(from, to, true);
+  let end = boundaryPoint(to, from, false);
+  if (to.layer - from.layer > 1) {
+    // Sugiyama normally inserts dummy nodes for every crossed rank. Small
+    // process graphs need only the equivalent obstacle guarantee: take a
+    // deterministic lane left of every intermediate-rank rectangle, keeping
+    // the long edge out of aligned nodes while back-edges own the right side.
+    const intermediate = nodes.filter((node) => node.layer > from.layer && node.layer < to.layer);
+    const left = Math.min(from.x - from.width / 2, to.x - to.width / 2,
+      ...intermediate.map((node) => node.x - node.width / 2));
+    const outsideX = left - 44 - lane * edgeSep;
+    // Enter the outside lane from each shape's leftmost boundary. Using a
+    // centre-to-centre circle/diamond intersection here could make the first
+    // horizontal segment cut back through its own endpoint shape.
+    start = { x: from.x - from.width / 2, y: from.y };
+    end = { x: to.x - to.width / 2, y: to.y };
+    const path = `M ${start.x} ${start.y} L ${outsideX} ${start.y} L ${outsideX} ${end.y} L ${end.x} ${end.y}`;
+    return {
+      path,
+      points: [start, { x: outsideX, y: start.y }, { x: outsideX, y: end.y }, end],
+      label: { x: outsideX + 7, y: (start.y + end.y) / 2 },
+    };
+  }
+  const laneOffset = ((lane % 3) - 1) * edgeSep;
+  const midY = (start.y + end.y) / 2 + laneOffset;
   const path = `M ${start.x} ${start.y} C ${start.x} ${midY}, ${end.x} ${midY}, ${end.x} ${end.y}`;
   return { path, points: [start, { x: start.x, y: midY }, { x: end.x, y: midY }, end], label: { x: (start.x + end.x) / 2, y: midY - 8 } };
 }
@@ -311,7 +340,7 @@ export function layoutProcessGraph(graph, overrides = {}) {
     const to = laidByID.get(edge.to);
     const route = edge.back
       ? routeBack(edge, from, to, backLane++ * options.edgeSep, bounds)
-      : routeForward(edge, from, to, ((forwardLane++ % 3) - 1) * options.edgeSep);
+      : routeForward(edge, from, to, forwardLane++, laidNodes, options.edgeSep);
     return { ...edge, ...route, kind: edge.back ? 'back' : 'forward' };
   });
   const routedBounds = graphBounds([
