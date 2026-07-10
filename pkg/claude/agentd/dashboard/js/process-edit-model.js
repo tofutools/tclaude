@@ -332,6 +332,12 @@ export class ProcessEditModel {
   }
 
   setTemplateMeta({ id, name, description } = {}) {
+    // Same no-op discipline as renameNode/setJoin/setEdgeOutcome: a change
+    // event that commits the current value must not dirty the model.
+    const changed = (id !== undefined && id !== this.template.id)
+      || (name !== undefined && (name || undefined) !== this.template.name)
+      || (description !== undefined && (description || undefined) !== this.template.description);
+    if (!changed) return;
     this.begin();
     if (id !== undefined) this.template.id = id;
     if (name !== undefined) {

@@ -182,6 +182,18 @@ test('regression: no-op rename and no-op join neither dirty nor burn an undo slo
   assert.equal(model.canUndo, false);
 });
 
+test('regression: no-op setTemplateMeta neither dirties nor burns an undo slot', () => {
+  const model = new ProcessEditModel(view());
+  model.setTemplateMeta({ id: 'release' });          // unchanged id
+  model.setTemplateMeta({ name: 'Release train' });  // unchanged name
+  model.setTemplateMeta({ description: '' });        // absent stays absent
+  assert.equal(model.dirty, false);
+  assert.equal(model.canUndo, false);
+  model.setTemplateMeta({ name: 'Freight train' });  // a real change still lands
+  assert.equal(model.template.name, 'Freight train');
+  assert.equal(model.dirty, true);
+});
+
 test('regression: markSaved at the payload rev keeps in-flight edits dirty', () => {
   const model = new ProcessEditModel(view());
   model.moveNode('build', 5, 5);
