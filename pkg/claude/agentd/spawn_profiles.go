@@ -360,12 +360,12 @@ func handleSpawnProfiles(w http.ResponseWriter, r *http.Request) {
 func handleGlobalDefaultSpawnProfile(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		name, _, err := db.GetDashboardPref(dashboardDefaultProfilePrefKey)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", err.Error())
-			return
+		prof := globalDefaultProfile()
+		name := ""
+		if prof != nil {
+			name = prof.Name
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"name": strings.TrimSpace(name)})
+		writeJSON(w, http.StatusOK, map[string]any{"name": name})
 	case http.MethodPut:
 		if _, ok := requirePermission(w, r, PermProfilesManage); !ok {
 			return
@@ -391,7 +391,7 @@ func handleGlobalDefaultSpawnProfile(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "not_found", "no such profile")
 			return
 		}
-		if err := db.SetDashboardPref(dashboardDefaultProfilePrefKey, name); err != nil {
+		if err := db.SetDashboardProfileRef(dashboardDefaultProfilePrefKey, dashboardDefaultProfileIDPrefKey, name, prof.ID); err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
 		}
@@ -400,7 +400,7 @@ func handleGlobalDefaultSpawnProfile(w http.ResponseWriter, r *http.Request) {
 		if _, ok := requirePermission(w, r, PermProfilesManage); !ok {
 			return
 		}
-		if err := db.DeleteDashboardPref(dashboardDefaultProfilePrefKey); err != nil {
+		if err := db.DeleteDashboardProfileRef(dashboardDefaultProfilePrefKey, dashboardDefaultProfileIDPrefKey); err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
 		}

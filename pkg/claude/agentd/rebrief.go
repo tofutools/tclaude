@@ -56,7 +56,13 @@ func handleGroupRebrief(w http.ResponseWriter, r *http.Request, g *db.AgentGroup
 		return
 	}
 
-	tmpl, err := db.GetGroupTemplate(g.SourceTemplate)
+	var tmpl *db.GroupTemplate
+	var err error
+	if g.SourceTemplateID > 0 {
+		tmpl, err = db.GetGroupTemplateByID(g.SourceTemplateID)
+	} else {
+		tmpl, err = db.GetGroupTemplate(g.SourceTemplate)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return

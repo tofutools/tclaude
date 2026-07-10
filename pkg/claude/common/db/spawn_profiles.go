@@ -145,7 +145,12 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 	if err != nil {
 		return err
 	}
-	res, err := d.Exec(
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.Exec(
 		`UPDATE spawn_profiles SET
 		   name = ?, harness = ?, model = ?, effort = ?, sandbox = ?, approval = ?,
 		   ask_user_question_timeout = ?,
@@ -176,7 +181,26 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 	if n == 0 {
 		return sql.ErrNoRows
 	}
-	return nil
+	// Names are API/export snapshots; the durable *_id columns are the actual
+	// references. Refresh every snapshot in the same transaction so all UIs
+	// immediately present the profile's current name after a rename.
+	for _, stmt := range []string{
+		`UPDATE agent_groups SET default_profile = ? WHERE default_profile_id = ?`,
+		`UPDATE group_template_agents SET spawn_profile = ? WHERE spawn_profile_id = ?`,
+		`UPDATE roles SET spawn_profile = ? WHERE spawn_profile_id = ?`,
+	} {
+		if _, err := tx.Exec(stmt, p.Name, p.ID); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`UPDATE dashboard_prefs SET value = ?, updated_at = ?
+		WHERE key = 'tclaude.dash.default_profile'
+		  AND EXISTS (SELECT 1 FROM dashboard_prefs ids
+		               WHERE ids.key = 'tclaude.dash.default_profile_id' AND ids.value = CAST(? AS TEXT))`,
+		p.Name, time.Now().Format(time.RFC3339Nano), p.ID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // GetSpawnProfile returns the profile with the given name, or (nil, nil) when
@@ -187,6 +211,24 @@ func GetSpawnProfile(name string) (*SpawnProfile, error) {
 		return nil, err
 	}
 	p, err := scanSpawnProfile(d.QueryRow(spawnProfileSelect+` WHERE name = ?`, name))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+// GetSpawnProfileByID returns the profile with the stable row id. Registry
+// references use this path so renaming the human-facing handle cannot detach
+// them.
+func GetSpawnProfileByID(id int64) (*SpawnProfile, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	p, err := scanSpawnProfile(d.QueryRow(spawnProfileSelect+` WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -227,11 +269,46 @@ func DeleteSpawnProfile(name string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	res, err := d.Exec(`DELETE FROM spawn_profiles WHERE name = ?`, name)
+	tx, err := d.Begin()
 	if err != nil {
 		return 0, err
 	}
-	return res.RowsAffected()
+	defer func() { _ = tx.Rollback() }()
+	var id int64
+	if err := tx.QueryRow(`SELECT id FROM spawn_profiles WHERE name = ?`, name).Scan(&id); errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	} else if err != nil {
+		return 0, err
+	}
+	// Clear resolved references before deleting. This prevents a later profile
+	// that reuses the same name from silently inheriting the old links.
+	for _, stmt := range []string{
+		`UPDATE agent_groups SET default_profile = '', default_profile_id = NULL WHERE default_profile_id = ?`,
+		`UPDATE group_template_agents SET spawn_profile = '', spawn_profile_id = NULL WHERE spawn_profile_id = ?`,
+		`UPDATE roles SET spawn_profile = '', spawn_profile_id = NULL WHERE spawn_profile_id = ?`,
+	} {
+		if _, err := tx.Exec(stmt, id); err != nil {
+			return 0, err
+		}
+	}
+	if _, err := tx.Exec(`DELETE FROM dashboard_prefs
+		WHERE key IN ('tclaude.dash.default_profile', 'tclaude.dash.default_profile_id')
+		  AND EXISTS (SELECT 1 FROM dashboard_prefs ids
+		               WHERE ids.key = 'tclaude.dash.default_profile_id' AND ids.value = CAST(? AS TEXT))`, id); err != nil {
+		return 0, err
+	}
+	res, err := tx.Exec(`DELETE FROM spawn_profiles WHERE id = ?`, id)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 const spawnProfileSelect = `SELECT id, name, harness, model, effort, sandbox, approval,

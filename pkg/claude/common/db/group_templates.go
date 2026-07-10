@@ -134,20 +134,24 @@ type GroupTemplateAgent struct {
 	// validated at the wire boundary, following SpawnProfile. "" = no role.
 	RoleRef string
 
-	// Per-role launch profile (JOH-239). SpawnProfile is a by-name reference
-	// to a spawn_profiles row (no DB-level FK — existence is validated at the
-	// wire boundary, following resolveGroupDefaultProfileName). The five inline
+	// Per-role launch profile (JOH-239). SpawnProfile is the current display
+	// name for the stable SpawnProfileID reference (existence is validated at
+	// the wire boundary, following resolveGroupDefaultProfileName). The five inline
 	// fields are per-agent launch overrides that win over the referenced
 	// profile. All "" = unset: the resolver falls through to the referenced
 	// profile, then the group default profile, then the harness default. At
 	// instantiate the effective launch shape is
 	//   per-agent inline override → referenced profile → group default → harness default.
 	SpawnProfile string
-	Harness      string
-	Model        string
-	Effort       string
-	Sandbox      string
-	Approval     string
+	// SpawnProfileID is the durable registry reference. It is omitted from the
+	// public template JSON but carried in staged-wave state so a rename between
+	// waves cannot detach the remaining agents.
+	SpawnProfileID int64 `json:"spawn_profile_id,omitempty"`
+	Harness        string
+	Model          string
+	Effort         string
+	Sandbox        string
+	Approval       string
 
 	// ProfileInline is the agent's template-LOCAL spawn profile (nil = none),
 	// stored as a JSON object in the profile_inline column. It carries the same
@@ -350,6 +354,9 @@ func UpdateGroupTemplate(t *GroupTemplate) error {
 	if err := insertTemplateAgents(tx, t.ID, t.Agents); err != nil {
 		return err
 	}
+	if _, err := tx.Exec(`UPDATE agent_groups SET source_template = ? WHERE source_template_id = ?`, t.Name, t.ID); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
@@ -362,14 +369,22 @@ func insertTemplateAgents(tx *sql.Tx, templateID int64, agents []GroupTemplateAg
 		if a.IsOwner {
 			owner = 1
 		}
+		profileID := sql.NullInt64{Int64: a.SpawnProfileID, Valid: a.SpawnProfileID > 0}
+		var err error
+		if !profileID.Valid {
+			profileID, err = registryIDByName(tx, "spawn_profiles", a.SpawnProfile)
+		}
+		if err != nil {
+			return err
+		}
 		if _, err := tx.Exec(
 			`INSERT INTO group_template_agents
 			   (template_id, ordinal, name, role, descr, initial_message, is_owner, permissions,
-			    role_ref, spawn_profile, harness, model, effort, sandbox, approval, wave, profile_inline)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			    role_ref, spawn_profile, spawn_profile_id, harness, model, effort, sandbox, approval, wave, profile_inline)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			templateID, a.Ordinal, a.Name, a.Role, a.Descr, a.InitialMessage,
 			owner, permsToJSON(a.Permissions),
-			a.RoleRef, a.SpawnProfile, a.Harness, a.Model, a.Effort, a.Sandbox, a.Approval, a.Wave,
+			a.RoleRef, a.SpawnProfile, profileID, a.Harness, a.Model, a.Effort, a.Sandbox, a.Approval, a.Wave,
 			inlineProfileToJSON(a.ProfileInline)); err != nil {
 			return err
 		}
@@ -387,6 +402,27 @@ func GetGroupTemplate(name string) (*GroupTemplate, error) {
 	t, err := scanGroupTemplate(d.QueryRow(
 		`SELECT id, name, descr, default_context, per_agent_worktrees, work_pattern, process, rhythms, wave_max_wait, created_at, updated_at
 		 FROM group_templates WHERE name = ?`, name))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if t.Agents, err = listTemplateAgents(d, t.ID); err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
+// GetGroupTemplateByID returns a template through its stable registry id.
+func GetGroupTemplateByID(id int64) (*GroupTemplate, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	t, err := scanGroupTemplate(d.QueryRow(
+		`SELECT id, name, descr, default_context, per_agent_worktrees, work_pattern, process, rhythms, wave_max_wait, created_at, updated_at
+		 FROM group_templates WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -431,7 +467,9 @@ func ListGroupTemplates() ([]*GroupTemplate, error) {
 	// an N+1 query when the editor list is rendered.
 	agentRows, err := d.Query(
 		`SELECT id, template_id, ordinal, name, role, descr, initial_message, is_owner, permissions,
-		        role_ref, spawn_profile, harness, model, effort, sandbox, approval, wave, profile_inline
+		        role_ref, CASE WHEN spawn_profile_id IS NULL THEN spawn_profile
+		                          ELSE COALESCE((SELECT name FROM spawn_profiles WHERE id = spawn_profile_id), '') END,
+		        COALESCE(spawn_profile_id, 0), harness, model, effort, sandbox, approval, wave, profile_inline
 		 FROM group_template_agents ORDER BY template_id, ordinal, id`)
 	if err != nil {
 		return nil, err
@@ -460,18 +498,38 @@ func DeleteGroupTemplate(name string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	res, err := d.Exec(`DELETE FROM group_templates WHERE name = ?`, name)
+	tx, err := d.Begin()
 	if err != nil {
 		return 0, err
 	}
-	return res.RowsAffected()
+	defer func() { _ = tx.Rollback() }()
+	var id int64
+	if err := tx.QueryRow(`SELECT id FROM group_templates WHERE name = ?`, name).Scan(&id); errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	} else if err != nil {
+		return 0, err
+	}
+	res, err := tx.Exec(`DELETE FROM group_templates WHERE id = ?`, id)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 // listTemplateAgents loads one template's agent rows, ordered.
 func listTemplateAgents(d *sql.DB, templateID int64) ([]GroupTemplateAgent, error) {
 	rows, err := d.Query(
 		`SELECT id, template_id, ordinal, name, role, descr, initial_message, is_owner, permissions,
-		        role_ref, spawn_profile, harness, model, effort, sandbox, approval, wave, profile_inline
+		        role_ref, CASE WHEN spawn_profile_id IS NULL THEN spawn_profile
+		                          ELSE COALESCE((SELECT name FROM spawn_profiles WHERE id = spawn_profile_id), '') END,
+		        COALESCE(spawn_profile_id, 0), harness, model, effort, sandbox, approval, wave, profile_inline
 		 FROM group_template_agents WHERE template_id = ? ORDER BY ordinal, id`, templateID)
 	if err != nil {
 		return nil, err
@@ -509,7 +567,7 @@ func scanGroupTemplateAgent(s rowScanner) (*GroupTemplateAgent, error) {
 	var perms, profileInline string
 	if err := s.Scan(&a.ID, &a.TemplateID, &a.Ordinal, &a.Name, &a.Role,
 		&a.Descr, &a.InitialMessage, &owner, &perms,
-		&a.RoleRef, &a.SpawnProfile, &a.Harness, &a.Model, &a.Effort, &a.Sandbox, &a.Approval, &a.Wave,
+		&a.RoleRef, &a.SpawnProfile, &a.SpawnProfileID, &a.Harness, &a.Model, &a.Effort, &a.Sandbox, &a.Approval, &a.Wave,
 		&profileInline); err != nil {
 		return nil, err
 	}

@@ -22,7 +22,7 @@ func TestMigrateV88toV89_FreshSchema(t *testing.T) {
 
 // TestMigrateV88toV89_AddsColumns drives the real v88→v89 ALTER over a
 // v88-pinned DB: it asserts the six launch columns appear, that a pre-existing
-// template agent reads them back as '' (no override), that the version
+// template agent reads them back as ” (no override), that the version
 // advances, and that a re-run is a clean no-op.
 func TestMigrateV88toV89_AddsColumns(t *testing.T) {
 	setupTestDB(t)
@@ -31,6 +31,8 @@ func TestMigrateV88toV89_AddsColumns(t *testing.T) {
 
 	// Pin back to v88 and drop the new columns so we re-add them from a true v88
 	// shape (the fresh chain already ran v89). SQLite supports DROP COLUMN.
+	mustExec(t, d, `DROP TRIGGER IF EXISTS stable_ref_template_agent_profile_insert`)
+	mustExec(t, d, `DROP TRIGGER IF EXISTS stable_ref_template_agent_profile_update`)
 	for _, col := range []string{"spawn_profile", "harness", "model", "effort", "sandbox", "approval"} {
 		mustExec(t, d, `ALTER TABLE group_template_agents DROP COLUMN `+col)
 	}

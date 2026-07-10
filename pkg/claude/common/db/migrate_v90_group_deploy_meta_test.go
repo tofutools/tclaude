@@ -9,7 +9,7 @@ import (
 
 // TestMigrateV89toV90_AddsColumns drives the real v89→v90 ALTER over a
 // v89-pinned DB: it asserts the two deployment-provenance columns appear, that
-// a pre-existing group reads them back as '' (no provenance), that the version
+// a pre-existing group reads them back as ” (no provenance), that the version
 // advances, and that a re-run is a clean no-op.
 func TestMigrateV89toV90_AddsColumns(t *testing.T) {
 	setupTestDB(t)
@@ -18,6 +18,8 @@ func TestMigrateV89toV90_AddsColumns(t *testing.T) {
 
 	// Pin back to v89 and drop the new columns so we re-add them from a true v89
 	// shape (the fresh chain already ran v90). SQLite supports DROP COLUMN.
+	mustExec(t, d, `DROP TRIGGER IF EXISTS stable_ref_group_template_insert`)
+	mustExec(t, d, `DROP TRIGGER IF EXISTS stable_ref_group_template_update`)
 	for _, col := range []string{"mission", "source_template"} {
 		mustExec(t, d, `ALTER TABLE agent_groups DROP COLUMN `+col)
 	}
