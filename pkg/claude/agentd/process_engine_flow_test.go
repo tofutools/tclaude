@@ -1,12 +1,15 @@
 package agentd_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -22,6 +25,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
+	processverify "github.com/tofutools/tclaude/pkg/claude/process/verify"
 	"github.com/tofutools/tclaude/pkg/claude/processcmd"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -114,6 +118,126 @@ func TestProcessEngineDrivesProgramRunEndToEnd(t *testing.T) {
 	loads, leases := counting.counts()
 	assert.Zero(t, loads, "terminal checkpoint must not load evidence")
 	assert.Zero(t, leases, "terminal checkpoint must not churn leases")
+}
+
+func TestProcessEngineDrivesCodeChangeStrawmanHappyPath(t *testing.T) {
+	f, root := processEngineFlow(t)
+	fs, marker := createCapstoneRun(t, root, "capstone-happy", 1)
+	host, err := agentd.NewProcessEngineHostForTest(root)
+	require.NoError(t, err)
+
+	capstoneTickWaiting(t, host, "implement.plan")
+	capstoneReportAgent(t, f, fs, "capstone-happy", "implement.plan", "artifact:plan")
+	capstoneTickWaiting(t, host, "implement.plan.approval")
+	capstoneReplyHuman(t, fs, "capstone-happy", "implement.plan.approval", "approve plan reviewed")
+	capstoneTickWaiting(t, host, "implement.do")
+	capstoneReportAgent(t, f, fs, "capstone-happy", "implement.do", "commit:happy")
+
+	// The real hermetic program check executes inside this tick, after which
+	// the engine advances unattended to the agent cold-review obligation.
+	capstoneTickWaiting(t, host, "implement.test.cold-review")
+	capstoneReportAgent(t, f, fs, "capstone-happy", "implement.test.cold-review", "review:happy")
+	capstoneTickWaiting(t, host, "implement.review")
+	capstoneReplyHuman(t, fs, "capstone-happy", "implement.review", "approve merge")
+	result := capstoneTick(t, host)
+	assert.Equal(t, state.RunStatusCompleted, result.Status)
+
+	data, err := os.ReadFile(marker)
+	require.NoError(t, err)
+	assert.Equal(t, "1\n", string(data))
+	assertCapstoneAuditableFromRunDir(t, root, "capstone-happy")
+}
+
+func TestProcessEngineCodeChangePoisonDecisionRetrySurvivesRestart(t *testing.T) {
+	f, root := processEngineFlow(t)
+	fs, marker := createCapstoneRun(t, root, "capstone-retry", 3)
+	host, err := agentd.NewProcessEngineHostForTest(root)
+	require.NoError(t, err)
+
+	capstoneReachDo(t, f, fs, host, "capstone-retry")
+	capstoneReportAgent(t, f, fs, "capstone-retry", "implement.do", "commit:retry-1")
+	capstoneTickWaiting(t, host, "implement.do") // first check failure feeds back
+	capstoneReportAgent(t, f, fs, "capstone-retry", "implement.do", "commit:retry-2")
+	capstoneTickWaiting(t, host, "escalate") // second failure poisons, then offers the decision
+
+	blocked, err := fs.LoadRun(t.Context(), "capstone-retry")
+	require.NoError(t, err)
+	assert.Equal(t, state.NodeStatusBlocked, blocked.State.Nodes["implement"].Status)
+	assert.Equal(t, state.NodeStatusBlocked, blocked.State.Nodes["implement.test.tests"].Status)
+	assert.Contains(t, blocked.State.Nodes["implement"].BlockedReason, "exhausted its budget of 2 failed verdicts")
+	capstoneReplyHuman(t, fs, "capstone-retry", "escalate", "retry transient failure reviewed")
+
+	// Simulate daemon death immediately after the planner/executor has durably
+	// claimed resolve_block, before it can append the audited resolution.
+	ctx, cancel := context.WithCancel(t.Context())
+	crashStore := &cancelAfterResolveClaimStore{Store: fs, cancel: cancel}
+	beforeRestart := processengine.New(crashStore, "agentd:capstone-before-restart", nil)
+	results, err := agentd.RunProcessEngineTickForTest(ctx, beforeRestart)
+	if err != nil {
+		assert.ErrorIs(t, err, context.Canceled)
+	} else {
+		require.Len(t, results, 1)
+		assert.Contains(t, results[0].Error, context.Canceled.Error())
+	}
+	claimed, err := fs.LoadRun(t.Context(), "capstone-retry")
+	require.NoError(t, err)
+	resolveID := outstandingCommandForNode(t, claimed.State, "escalate", state.CommandKindResolveBlock)
+	assert.Equal(t, state.CommandStatusIssued, claimed.State.OutstandingCommands[resolveID].Status)
+	assert.Equal(t, state.NodeStatusBlocked, claimed.State.Nodes["implement"].Status)
+
+	// A fresh production host rediscovers the claimed command, applies the
+	// existing ResolveBlocked funnel exactly once, and continues into attempt 3.
+	restarted, err := agentd.NewProcessEngineHostForTest(root)
+	require.NoError(t, err)
+	capstoneTickWaiting(t, restarted, "implement.test.cold-review")
+	resolved, err := fs.LoadRun(t.Context(), "capstone-retry")
+	require.NoError(t, err)
+	assert.Equal(t, state.CommandStatusObserved, resolved.State.OutstandingCommands[resolveID].Status)
+	assert.Equal(t, 1, blockResolutionCount(resolved.State))
+	assert.Equal(t, state.BlockDecisionRetry, resolved.State.Nodes["implement"].BlockResolution.Decision)
+
+	capstoneReportAgent(t, f, fs, "capstone-retry", "implement.test.cold-review", "review:retry")
+	capstoneTickWaiting(t, restarted, "implement.review")
+	capstoneReplyHuman(t, fs, "capstone-retry", "implement.review", "approve merge")
+	result := capstoneTick(t, restarted)
+	assert.Equal(t, state.RunStatusCompleted, result.Status)
+	data, err := os.ReadFile(marker)
+	require.NoError(t, err)
+	assert.Equal(t, "3\n", string(data), "restart must not execute a program idempotency key twice")
+	assertCapstoneAuditableFromRunDir(t, root, "capstone-retry")
+}
+
+func TestProcessEngineCodeChangePoisonDecisionCancel(t *testing.T) {
+	f, root := processEngineFlow(t)
+	fs, marker := createCapstoneRun(t, root, "capstone-cancel", 99)
+	host, err := agentd.NewProcessEngineHostForTest(root)
+	require.NoError(t, err)
+
+	capstoneReachDo(t, f, fs, host, "capstone-cancel")
+	capstoneReportAgent(t, f, fs, "capstone-cancel", "implement.do", "commit:cancel-1")
+	capstoneTickWaiting(t, host, "implement.do")
+	capstoneReportAgent(t, f, fs, "capstone-cancel", "implement.do", "commit:cancel-2")
+	capstoneTickWaiting(t, host, "escalate")
+	capstoneReplyHuman(t, fs, "capstone-cancel", "escalate", "cancel do not merge")
+	result := capstoneTick(t, host)
+	assert.Equal(t, state.RunStatusCanceled, result.Status)
+
+	snapshot, err := fs.LoadRun(t.Context(), "capstone-cancel")
+	require.NoError(t, err)
+	require.NotNil(t, snapshot.State.Nodes["implement"].BlockResolution)
+	assert.Equal(t, state.BlockDecisionCancel, snapshot.State.Nodes["implement"].BlockResolution.Decision)
+	assert.Equal(t, 1, blockResolutionCount(snapshot.State))
+	var cancelCommand state.OutstandingCommand
+	for _, command := range snapshot.State.OutstandingCommands {
+		if command.Kind == state.CommandKindResolveBlock {
+			cancelCommand = command
+		}
+	}
+	assert.Equal(t, state.CommandStatusObserved, cancelCommand.Status, "cancel must atomically close its resolve command before the run becomes terminal")
+	data, err := os.ReadFile(marker)
+	require.NoError(t, err)
+	assert.Equal(t, "2\n", string(data))
+	assertCapstoneAuditableFromRunDir(t, root, "capstone-cancel")
 }
 
 func TestProcessEngineAgentSpawnReportSettleAndResumeSuppression(t *testing.T) {
@@ -651,31 +775,41 @@ func TestProcessEngineInconsistentRunHaltsWithVisibleReason(t *testing.T) {
 		Run:  "/bin/sh",
 		Args: []string{"-c", `touch "$1"`, "process-test", output},
 	}), true)
-	snapshot, err := fs.LoadRun(t.Context(), "dirty-run")
+	manifestPath := filepath.Join(root, "runs", "dirty-run", "manifest.jsonl")
+	body, err := os.ReadFile(manifestPath)
 	require.NoError(t, err)
-	node := snapshot.State.Nodes["work"]
-	node.Status = state.NodeStatusRunning
-	node.ActiveAttempt = nil
-	snapshot.State.Nodes["work"] = node
-	body, err := state.Encode(snapshot.State)
+	lines := bytes.Split(bytes.TrimSpace(body), []byte("\n"))
+	require.NotEmpty(t, lines)
+	var entry evidence.ManifestEntry
+	require.NoError(t, json.Unmarshal(lines[0], &entry))
+	entry.EntryChecksum = "deliberately-corrupted"
+	lines[0], err = json.Marshal(entry)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(root, "runs", "dirty-run", "state.json"), body, 0o644))
+	require.NoError(t, os.WriteFile(manifestPath, append(bytes.Join(lines, []byte("\n")), '\n'), 0o644))
 
 	host := processengine.New(fs, "agentd:dirty", map[model.PerformerKind]processexec.Adapter{
 		model.PerformerProgram: processexec.ProgramAdapter{},
 	})
-	results, err := agentd.RunProcessEngineTickForTest(t.Context(), host)
-	require.NoError(t, err)
-	require.Len(t, results, 1)
-	assert.Equal(t, state.RunStatusDirty, results[0].Status)
-	assert.Contains(t, results[0].Waiting, "running_attempt_without_command_or_actor")
+	var firstReason string
+	for tick := 0; tick < 2; tick++ {
+		results, err := agentd.RunProcessEngineTickForTest(t.Context(), host)
+		require.NoError(t, err)
+		require.Len(t, results, 1)
+		assert.Equal(t, state.RunStatusInconsistent, results[0].Status)
+		assert.Contains(t, results[0].Waiting, "checksum")
+		if tick == 0 {
+			firstReason = results[0].Waiting
+		} else {
+			assert.Equal(t, firstReason, results[0].Waiting, "inconsistent run must stay halted across ticks")
+		}
+	}
 	_, err = os.Stat(output)
 	assert.ErrorIs(t, err, os.ErrNotExist)
 
 	rec := processEngineGet(t, f, "/v1/process/runs/dirty-run")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	assert.Contains(t, rec.Body.String(), `"effectiveStatus":"dirty"`)
-	assert.Contains(t, rec.Body.String(), "running_attempt_without_command_or_actor")
+	assert.Contains(t, rec.Body.String(), `"effectiveStatus":"inconsistent"`)
+	assert.Contains(t, rec.Body.String(), "checksum")
 }
 
 func processEngineFlow(t *testing.T) (*testharness.Flow, string) {
@@ -730,6 +864,157 @@ func createEngineRun(t *testing.T, root, runID string, tmpl *model.Template, all
 		require.NoError(t, err)
 	}
 	return fs
+}
+
+func createCapstoneRun(t *testing.T, root, runID string, programPassAt int) (*store.FS, string) {
+	t.Helper()
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "dev", Harness: "claude"})
+	require.NoError(t, err)
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "reviewer", Harness: "claude"})
+	require.NoError(t, err)
+
+	source, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "examples", "code-change-with-review.yaml"))
+	require.NoError(t, err)
+	parsed, err := model.Parse(source)
+	require.NoError(t, err)
+	require.False(t, parsed.Diagnostics.HasErrors(), "template diagnostics: %#v", parsed.Diagnostics.Errors())
+	tmpl := parsed.Template
+	implement := tmpl.Nodes["implement"]
+	require.Len(t, implement.Checks, 2)
+	marker := filepath.Join(t.TempDir(), runID+"-program-count")
+	implement.Checks[0].Performer.Run = "/bin/sh"
+	implement.Checks[0].Performer.Args = []string{
+		"-c",
+		`count=0; if [ -f "$1" ]; then read -r count < "$1"; fi; count=$((count + 1)); printf '%s\n' "$count" > "$1"; [ "$count" -ge "$2" ]`,
+		"process-capstone", marker, strconv.Itoa(programPassAt),
+	}
+	tmpl.Nodes["implement"] = implement
+	return createEngineRun(t, root, runID, tmpl, true), marker
+}
+
+func capstoneReachDo(t *testing.T, f *testharness.Flow, fs *store.FS, host *processengine.Host, runID string) {
+	t.Helper()
+	capstoneTickWaiting(t, host, "implement.plan")
+	capstoneReportAgent(t, f, fs, runID, "implement.plan", "artifact:plan")
+	capstoneTickWaiting(t, host, "implement.plan.approval")
+	capstoneReplyHuman(t, fs, runID, "implement.plan.approval", "approve plan reviewed")
+	capstoneTickWaiting(t, host, "implement.do")
+}
+
+func capstoneTick(t *testing.T, host *processengine.Host) processengine.RunResult {
+	t.Helper()
+	results, err := agentd.RunProcessEngineTickForTest(t.Context(), host)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Empty(t, results[0].Error)
+	return results[0]
+}
+
+func capstoneTickWaiting(t *testing.T, host *processengine.Host, nodeID string) processengine.RunResult {
+	t.Helper()
+	result := capstoneTick(t, host)
+	snapshot, err := host.Store.LoadRun(t.Context(), result.RunID)
+	require.NoError(t, err)
+	commandID := outstandingCommandForNode(t, snapshot.State, nodeID, "")
+	assert.Equal(t, state.CommandStatusIssued, snapshot.State.OutstandingCommands[commandID].Status)
+	return result
+}
+
+func outstandingCommandForNode(t *testing.T, st *state.State, nodeID string, kind state.CommandKind) string {
+	t.Helper()
+	for commandID, command := range st.OutstandingCommands {
+		if command.NodeID == nodeID && command.Status == state.CommandStatusIssued && (kind == "" || command.Kind == kind) {
+			return commandID
+		}
+	}
+	t.Fatalf("no issued %s command for node %s", kind, nodeID)
+	return ""
+}
+
+func capstoneReportAgent(t *testing.T, f *testharness.Flow, fs *store.FS, runID, nodeID, evidenceRef string) {
+	t.Helper()
+	snapshot, err := fs.LoadRun(t.Context(), runID)
+	require.NoError(t, err)
+	commandID := outstandingCommandForNode(t, snapshot.State, nodeID, state.CommandKindStartAttempt)
+	agentRow, err := db.AgentForProcessCommand(commandID)
+	require.NoError(t, err)
+	require.NotNil(t, agentRow)
+	body := map[string]string{"command_id": commandID, "verdict": "pass", "evidence_ref": evidenceRef}
+	req := testharness.JSONRequest(t, http.MethodPost, "/v1/process/runs/"+runID+"/nodes/"+nodeID+"/report", body)
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(req, agentRow.CurrentConvID))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+}
+
+func capstoneReplyHuman(t *testing.T, fs *store.FS, runID, nodeID, reply string) {
+	t.Helper()
+	snapshot, err := fs.LoadRun(t.Context(), runID)
+	require.NoError(t, err)
+	commandID := ""
+	for id, command := range snapshot.State.OutstandingCommands {
+		if command.NodeID == nodeID && command.Status == state.CommandStatusIssued &&
+			(command.Kind == state.CommandKindRecordDecision || command.Kind == state.CommandKindStartAttempt) {
+			commandID = id
+			break
+		}
+	}
+	require.NotEmpty(t, commandID, "no issued human command for %s", nodeID)
+	message, err := db.FindHumanMessageForProcessCommand(commandID, "Process obligation")
+	require.NoError(t, err)
+	require.NotNil(t, message)
+	rec := postDashReply(t, dashMessageMux(t), map[string]any{"id": message.ID, "body": reply})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+}
+
+func blockResolutionCount(st *state.State) int {
+	count := 0
+	for _, record := range st.AdminRecords {
+		if record.Type == state.EventBlockResolutionRecorded {
+			count++
+		}
+	}
+	return count
+}
+
+func assertCapstoneAuditableFromRunDir(t *testing.T, root, runID string) {
+	t.Helper()
+	runDir := filepath.Join(root, "runs", runID)
+	for _, relative := range []string{"run.json", "state.json", "manifest.jsonl", filepath.Join("run", "log.jsonl")} {
+		info, err := os.Stat(filepath.Join(runDir, relative))
+		require.NoError(t, err, relative)
+		assert.Positive(t, info.Size(), relative)
+	}
+	nodeLogs, err := filepath.Glob(filepath.Join(runDir, "nodes", "*", "log.jsonl"))
+	require.NoError(t, err)
+	assert.NotEmpty(t, nodeLogs)
+	artifacts, err := os.ReadDir(filepath.Join(runDir, "artifacts"))
+	require.NoError(t, err)
+	assert.NotEmpty(t, artifacts)
+
+	// Reconstruction uses only a fresh store pointed at the run directory's
+	// parent; no engine or database state participates in verification.
+	fresh, err := store.NewFS(root)
+	require.NoError(t, err)
+	report := processverify.StoreRun(t.Context(), fresh, runID)
+	assert.False(t, report.HasErrors(), "run-dir verification: %#v", report.Diagnostics)
+}
+
+type cancelAfterResolveClaimStore struct {
+	store.Store
+	cancel context.CancelFunc
+	once   sync.Once
+}
+
+func (s *cancelAfterResolveClaimStore) Append(ctx context.Context, runID string, expectedSeq int64, entries []evidence.LogEntry) (store.AppendResult, error) {
+	result, err := s.Store.Append(ctx, runID, expectedSeq, entries)
+	if err != nil {
+		return result, err
+	}
+	for _, entry := range entries {
+		if entry.Event != nil && entry.Event.Type == state.EventCommandIssued && entry.Event.Command != nil && entry.Event.Command.Kind == state.CommandKindResolveBlock {
+			s.once.Do(s.cancel)
+		}
+	}
+	return result, nil
 }
 
 func programTemplate(id string, performer model.Performer) *model.Template {

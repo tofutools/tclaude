@@ -160,6 +160,14 @@ func (e *Executor) Execute(ctx context.Context, command plan.Command) (Result, e
 		return Result{Command: command, State: claimState}, nil
 	}
 	result := Result{Command: command, Claimed: true, State: claimState}
+	if command.Kind == plan.CommandKindResolveBlock {
+		resolved, resolveErr := e.applyResolveBlockCommand(ctx, command)
+		if resolveErr != nil {
+			return result, resolveErr
+		}
+		result.State = resolved
+		return result, nil
+	}
 
 	if deferred, ok := adapter.(DeferredAdapter); ok {
 		dispatched, dispatchErr := deferred.Dispatch(ctx, request)
@@ -592,10 +600,33 @@ func (e *Executor) ResumeIssued(ctx context.Context, command plan.Command) (*sta
 	if outstanding.Status != state.CommandStatusIssued {
 		return nil, fmt.Errorf("process command %q is %s and cannot be resumed", command.ID, outstanding.Status)
 	}
+	if command.Kind == plan.CommandKindResolveBlock {
+		return e.applyResolveBlockCommand(ctx, command)
+	}
 	if !plan.AllowsExecution(snapshot.State.Status) {
 		return nil, fmt.Errorf("process run %q is %s and command %q cannot be resumed", command.RunID, snapshot.State.Status, command.ID)
 	}
 	return e.appendObservation(ctx, command, Observation{Verdict: "pass"})
+}
+
+// applyResolveBlockCommand is the crash-safe decision-node bridge into the
+// shared poison-resolution funnel. The command is claimed before this method
+// runs. If the process stops after the audited resolution append but before
+// command_observed, ResumeOutstanding repeats the idempotent resolution and
+// marks the original command observed without issuing a second decision.
+func (e *Executor) applyResolveBlockCommand(ctx context.Context, command plan.Command) (*state.State, error) {
+	snapshot, err := e.Store.LoadRun(ctx, command.RunID)
+	if err != nil {
+		return nil, err
+	}
+	request, err := BindBlockResolution(snapshot, BlockResolutionRequest{
+		RunID: command.RunID, NodeID: command.TargetNodeID, BlockedAttempt: command.BlockedAttempt,
+		Decision: command.BlockDecision, Actor: command.Actor, Reason: command.Reason, EvidenceRef: command.EvidenceRef,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return e.resolveBlocked(ctx, request, &command)
 }
 
 // ResumeOutstanding recovers an internal command directly from its durable
@@ -809,6 +840,14 @@ func validateCommand(snapshot store.Snapshot, command plan.Command, at time.Time
 			return err
 		}
 	}
+	if command.Kind == plan.CommandKindResolveBlock {
+		if command.TargetNodeID == "" || command.BlockedAttempt <= 0 || !command.BlockDecision.IsValid() {
+			return fmt.Errorf("process command %q has an invalid block resolution target", command.ID)
+		}
+		if !state.ValidateActorRef(command.Actor) || state.IsEngineActor(command.Actor) || strings.TrimSpace(command.Reason) == "" || strings.TrimSpace(command.EvidenceRef) == "" {
+			return fmt.Errorf("process command %q has invalid block resolution provenance", command.ID)
+		}
+	}
 	return nil
 }
 
@@ -997,6 +1036,11 @@ func observationEntries(command plan.Command, observation Observation, snapshot 
 				Owner:      command.Owner,
 			}, "", at))
 		}
+	case plan.CommandKindResolveBlock:
+		// resolveBlocked handles this command because its observation must be
+		// atomic with the audited release (especially when cancel turns the run
+		// terminal). Reaching the generic observation path is a programming bug.
+		return nil, fmt.Errorf("resolve-block command %q requires the resolution funnel", command.ID)
 	case plan.CommandKindCompleteRun:
 		entries = append(entries, runEntry(state.Event{
 			Type:      state.EventRunStatusSet,

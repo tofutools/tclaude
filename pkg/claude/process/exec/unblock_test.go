@@ -170,6 +170,75 @@ func TestDelayedResolutionRequestCannotResolveLaterPoison(t *testing.T) {
 	}
 }
 
+func TestStaleDecisionResolutionCommandCannotResolveLaterPoison(t *testing.T) {
+	fs, snapshot := compoundExecutorFixture(t, "exit 1")
+	executor := New(fs, map[model.PerformerKind]Adapter{
+		model.PerformerProgram: ProgramAdapter{DefaultTimeout: 5 * time.Second},
+	})
+	blocked, err := executor.Drive(t.Context(), snapshot.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := plan.Command{
+		ID: "cmd_0123456789abcdef01234567", IdempotencyKey: snapshot.Run.ID + "/resolve_block/escalate/work/attempt-1/retry",
+		Kind: plan.CommandKindResolveBlock, RunID: snapshot.Run.ID, NodeID: "work", TargetNodeID: "work",
+		BlockedAttempt: 1, BlockDecision: state.BlockDecisionRetry, Actor: "human:operator",
+		Reason: "escalation decision chose retry", EvidenceRef: "human-message:42:reply",
+	}
+	claimed, _, err := executor.claim(t.Context(), blocked, command)
+	if err != nil || !claimed {
+		t.Fatalf("claim decision resolution = %v, err = %v", claimed, err)
+	}
+	if _, err := executor.ResolveBlocked(t.Context(), blockRequest(snapshot.Run.ID, state.BlockDecisionRetry)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Drive only the fresh gate-attempt commands, leaving the deliberately
+	// delayed resolve command issued until attempt 2 poisons the node again.
+	for round := 0; round < 20; round++ {
+		latest, loadErr := fs.LoadRun(t.Context(), snapshot.Run.ID)
+		if loadErr != nil {
+			t.Fatal(loadErr)
+		}
+		gate := latest.State.Nodes["work.test.tests"]
+		if gate.Status == state.NodeStatusBlocked && gate.BlockedAttempt == 2 {
+			break
+		}
+		commands, planErr := plan.Plan(latest.State, mustTemplate(t, fs, latest.Run.TemplateRef))
+		if planErr != nil {
+			t.Fatal(planErr)
+		}
+		if len(commands) == 0 {
+			t.Fatal("later poison made no progress")
+		}
+		for _, next := range commands {
+			if next.ID == command.ID {
+				continue
+			}
+			if _, executeErr := executor.Execute(t.Context(), next); executeErr != nil {
+				t.Fatal(executeErr)
+			}
+		}
+	}
+	latest, err := fs.LoadRun(t.Context(), snapshot.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gate := latest.State.Nodes["work.test.tests"]; gate.Status != state.NodeStatusBlocked || gate.BlockedAttempt != 2 {
+		t.Fatalf("later poison = %#v", gate)
+	}
+	if _, err := executor.ResumeOutstanding(t.Context(), snapshot.Run.ID, command.ID); err == nil || !strings.Contains(err.Error(), "stale") {
+		t.Fatalf("stale decision command resolved attempt 2: %v", err)
+	}
+	latest, err = fs.LoadRun(t.Context(), snapshot.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest.State.Nodes["work"].Status != state.NodeStatusBlocked {
+		t.Fatalf("stale decision changed later poison: %#v", latest.State.Nodes["work"])
+	}
+}
+
 func TestBindBlockResolutionPinsParentSelectionToChildGeneration(t *testing.T) {
 	fs, snapshot := compoundExecutorFixture(t, "exit 1")
 	executor := New(fs, map[model.PerformerKind]Adapter{

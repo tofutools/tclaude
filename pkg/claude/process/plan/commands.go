@@ -23,6 +23,7 @@ const (
 	CommandKindShortCircuit   = state.CommandKindShortCircuit
 	CommandKindGateFeedback   = state.CommandKindGateFeedback
 	CommandKindBlockNode      = state.CommandKindBlockNode
+	CommandKindResolveBlock   = state.CommandKindResolveBlock
 	CommandKindSetTimer       = state.CommandKindSetTimer
 	CommandKindWaitSignal     = state.CommandKindWaitSignal
 	CommandKindCompleteRun    = state.CommandKindCompleteRun
@@ -52,6 +53,12 @@ type Command struct {
 	Children []state.NodeInit `json:"children,omitempty"`
 	Reason   string           `json:"reason,omitempty"`
 	Owner    string           `json:"owner,omitempty"`
+	// ResolveBlock composes an authored escalation decision with the audited
+	// poison-resolution funnel. The decision record supplies provenance; the
+	// blocked attempt pins the command to the poison generation it releases.
+	BlockDecision  state.BlockDecision `json:"blockDecision,omitempty"`
+	BlockedAttempt int                 `json:"blockedAttempt,omitempty"`
+	Actor          state.ActorRef      `json:"actor,omitempty"`
 
 	// Gate feedback loops (TCL-276 PR2). RetryMode is the adapter-visible
 	// on-fail policy axis for work-stage attempts; Feedback/FeedbackFrom

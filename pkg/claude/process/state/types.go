@@ -74,6 +74,7 @@ const (
 	CommandKindShortCircuit   CommandKind = "short_circuit_gate"
 	CommandKindGateFeedback   CommandKind = "gate_feedback"
 	CommandKindBlockNode      CommandKind = "block_node"
+	CommandKindResolveBlock   CommandKind = "resolve_block"
 	CommandKindSetTimer       CommandKind = "set_timer"
 	CommandKindWaitSignal     CommandKind = "wait_signal"
 	CommandKindCompleteRun    CommandKind = "complete_run"

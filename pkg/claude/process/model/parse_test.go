@@ -97,6 +97,17 @@ func TestParseValidTemplate(t *testing.T) {
 	}
 }
 
+func TestParseAllowsPoisonEscalationRetryCycle(t *testing.T) {
+	data := strings.Replace(validTemplateYAML, "ship-anyway: done", "retry: implement", 1)
+	parsed, err := Parse([]byte(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Diagnostics.HasErrors() {
+		t.Fatalf("poison escalation retry diagnostics: %#v", parsed.Diagnostics.Errors())
+	}
+}
+
 func TestCanonicalYAMLRoundTripPreservesSemantics(t *testing.T) {
 	parsed, err := Parse([]byte(validTemplateYAML))
 	if err != nil {

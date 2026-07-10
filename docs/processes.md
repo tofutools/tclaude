@@ -25,54 +25,38 @@ mkdir -p "$STORE"
 
 ## Quickstart
 
-Create a template:
-
-```yaml
-apiVersion: tclaude.dev/v1alpha1
-kind: ProcessTemplate
-id: manual-demo
-params:
-  ticket:
-    type: string
-    required: true
-start: implement
-nodes:
-  implement:
-    type: task
-    performer:
-      kind: human
-      ask: Implement the change
-    retry:
-      maxAttempts: 2
-    next:
-      pass: decide
-      fail: failed
-  decide:
-    type: decision
-    performer:
-      kind: human
-      ask: Ship it?
-    next:
-      approve: end
-      reject: failed
-  failed:
-    type: end
-    result: failed
-  end:
-    type: end
-```
-
-Run it manually:
+Start `agentd` after enabling the flag, and make sure the `dev` and `reviewer`
+spawn profiles referenced by the bundled
+[`code-change-with-review`](examples/code-change-with-review.yaml) example
+exist (create them in the dashboard Profiles editor or with `tclaude agent
+profiles create`). Then instantiate the run in the daemon's default store:
 
 ```bash
-tclaude process run manual-demo.yaml --store-root "$STORE" --run-id demo-1 --param ticket=TCL-271
-tclaude process verify demo-1 --store-root "$STORE"
-tclaude process advance demo-1 implement --store-root "$STORE" --verdict fail --actor human:$USER
-tclaude process advance demo-1 implement --store-root "$STORE" --verdict pass --actor human:$USER
-tclaude process advance demo-1 decide --store-root "$STORE" --verdict approve --actor human:$USER
-tclaude process show demo-1 --store-root "$STORE"
-tclaude process show demo-1 --store-root "$STORE" --mermaid
+tclaude agentd serve
+
+# In another terminal:
+tclaude process run docs/examples/code-change-with-review.yaml \
+  --store-root "$STORE" \
+  --run-id change-1 \
+  --param issue=TCL-278 \
+  --allow-programs
+while true; do
+  clear
+  tclaude process show change-1 --store-root "$STORE"
+  sleep 1
+done
 ```
+
+No `process advance` is needed. The engine expands the task, launches the plan
+and implementation agents, runs `go test ./...` as a real program performer,
+launches the cold reviewer, and waits only at the two human obligations. Those
+obligations appear in the dashboard Messages channel; reply with the advertised
+action (for example `approve`) and the engine continues on its next tick.
+
+Stopping `agentd` with Ctrl-C and starting the same command again resumes the
+run from `state.json`. Issued commands carry deterministic command IDs and
+idempotency keys; the daemon rediscovers bound agents and claimed internal
+commands instead of spawning or executing them twice.
 
 If a daemon restart parks an issued performer command as
 `needs_reconcile`, record the human-confirmed external result without rerunning
@@ -252,7 +236,18 @@ Rules that make compound runs trustworthy:
 - **Exhausted budgets poison, they never auto-fail the run.** When a gate's
   budget (or the target work stage's attempt budget) is spent, the gate blocks
   itself and its parent with a reason and owner; the run keeps running and a
-  human (or later, a decision node) resolves it.
+  human through `process unblock` or the authored escalation decision resolves
+  it.
+- **A poisoned fail-edge decision is a resolution surface, not failure
+  routing.** When a blocked compound node's authored `fail` edge targets a
+  human decision node, the engine readies that decision while leaving the
+  parent and poisoned child blocked. The v1 bridge accepts only the strawman's
+  `retry` edge back to the blocked parent and `cancel` edge to a canceled end.
+  The planner emits a generation-bound `resolve_block` command; the executor
+  claims it and applies the same audited poison-resolution funnel as `process
+  unblock`. A restart between the human verdict and the resolution append
+  rediscovers that command. Non-decision fail targets stay inactive, so poison
+  cannot silently turn into failure or continuation.
 - **Poison resolution is explicit and audited.** Resolve the blocked stage
   child (or its blocked parent mirror) with `process unblock`. The engine
   clears both mirrors in one append batch and records the actor, decision,
@@ -305,14 +300,47 @@ work stage it is the hash later gate verdicts evaluate, which powers the
 evidence-unchanged short-circuit; `--feedback` is the gate payload the next
 work attempt answers.
 
+## Reconstruct a run from disk
+
+The run directory is the audit boundary. After a run completes—or with no
+engine running—you can reconstruct it using only these files:
+
+```bash
+RUN_DIR="$STORE/runs/change-1"
+
+# Materialized lifecycle, node attempts, obligations, decisions, blocks,
+# outstanding command IDs, and the final run status.
+less "$RUN_DIR/state.json"
+
+# Immutable run metadata and the ordered checksum chain over every event.
+less "$RUN_DIR/run.json"
+less "$RUN_DIR/manifest.jsonl"
+
+# Per-node and run-scoped evidence logs, including performer verdicts,
+# feedback loops, human decisions, and admin block resolutions.
+find "$RUN_DIR/nodes" "$RUN_DIR/run" -name log.jsonl -type f -print
+
+# Content-addressed program evidence and any other stored artifacts.
+find "$RUN_DIR/artifacts" -type f -print
+
+# Re-check the checksum chain and semantic invariants without starting agentd.
+tclaude process verify change-1 --store-root "$STORE"
+```
+
+`state.json` answers what the latest materialized state was; the node/run logs
+answer which actors and verdicts produced it; `manifest.jsonl` proves ordering
+and integrity; artifact filenames are their content hashes. Together they are
+enough to explain retries, human approvals, escalation decisions, crash
+recovery, and the terminal result without consulting SQLite or a live daemon.
+
 ## Notes
 
 - `advance` runs `verify` first and refuses dirty or inconsistent runs.
 - All state changes go through `store.Append`, the manifest, and reducer events.
 - Template params are validated and stored on the run record; interpolation is
   not executed by this phase.
-- Retry support is node-level `retry.maxAttempts`; repair remains a later
-  phase. The daemon host verifies and leases every run before advancing it,
+- Retry support is node-level `retry.maxAttempts`; repair and poison release
+  are always explicit audited operations. The daemon host verifies and leases every run before advancing it,
   persists timer and rate-limit waits, and parks commands whose external side
   effect cannot be safely rediscovered after a restart.
 - A manual `advance` of another ready node while a run is paused is an

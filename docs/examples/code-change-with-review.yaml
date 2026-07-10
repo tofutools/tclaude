@@ -1,0 +1,70 @@
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: code-change-with-review
+name: Code change with review
+description: Implement an issue, run checks, review the diff, and approve merge.
+params:
+  issue:
+    type: string
+    required: true
+start: implement
+nodes:
+  implement:
+    type: task
+    performer:
+      kind: agent
+      profile: dev
+      prompt: Implement {{ params.issue }}
+    plan:
+      id: plan
+      approval: human
+      approvalRetry:
+        maxAttempts: 2
+      retry:
+        maxAttempts: 2
+      performer:
+        kind: agent
+        profile: dev
+        prompt: Plan the implementation of {{ params.issue }}
+    checks:
+      - id: tests
+        performer:
+          kind: program
+          run: go
+          args: [test, ./...]
+        retry:
+          maxAttempts: 2
+      - id: cold-review
+        performer:
+          kind: agent
+          profile: reviewer
+          prompt: Cold-review the diff for {{ params.issue }}
+        retry:
+          maxAttempts: 2
+    review:
+      id: merge-approval
+      performer:
+        kind: human
+        profile: operator
+        ask: Approve merge?
+    retry:
+      maxAttempts: 3
+      onFail: feedback-same-session
+    next:
+      pass: done
+      fail: escalate
+  escalate:
+    type: decision
+    performer:
+      kind: human
+      profile: operator
+      ask: Retries exhausted. Continue?
+    next:
+      retry: implement
+      cancel: canceled
+  done:
+    type: end
+    result: success
+  canceled:
+    type: end
+    result: canceled
