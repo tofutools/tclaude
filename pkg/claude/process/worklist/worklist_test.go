@@ -1,12 +1,17 @@
 package worklist
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
+	processexec "github.com/tofutools/tclaude/pkg/claude/process/exec"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
+	"github.com/tofutools/tclaude/pkg/claude/process/plan"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
+	processverify "github.com/tofutools/tclaude/pkg/claude/process/verify"
 )
 
 func TestDeriveProjectsObligationKindsAndNudgeSchedule(t *testing.T) {
@@ -69,6 +74,67 @@ func TestEveryVerifiedHumanWaitDerivesOneItem(t *testing.T) {
 	items := Derive([]store.Snapshot{{Run: store.RunRecord{ID: st.RunID}, State: st}})
 	byNode := itemNodes(items)
 	for nodeID, node := range st.Nodes {
+		if node.Status != state.NodeStatusWaitingHuman {
+			continue
+		}
+		if _, ok := byNode[nodeID]; !ok {
+			t.Fatalf("verified human wait %q has no work item: %#v", nodeID, items)
+		}
+	}
+}
+
+func TestEveryHumanWaitInVerifiedStoreSnapshotDerivesOneItem(t *testing.T) {
+	fs, err := store.NewFS(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "verified-worklist", Start: "approve",
+		Nodes: map[string]model.Node{
+			"approve": {
+				Type:      model.NodeTypeTask,
+				Performer: &model.Performer{Kind: model.PerformerHuman, Profile: "johan", Ask: "Approve release?"},
+				Next:      model.Next{"pass": "end"},
+			},
+			"end": {Type: model.NodeTypeEnd},
+		},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial := state.New("verified-worklist", record.Ref, record.Ref, []state.NodeInit{
+		{ID: "approve", Type: model.NodeTypeTask, Status: state.NodeStatusReady},
+		{ID: "end", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+	})
+	initial.Status = state.RunStatusRunning
+	if _, err := fs.CreateRun(t.Context(), store.RunRecord{ID: "verified-worklist", TemplateRef: record.Ref}, initial); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := fs.LoadRun(t.Context(), "verified-worklist")
+	if err != nil {
+		t.Fatal(err)
+	}
+	commands, err := plan.Plan(snapshot.State, tmpl)
+	if err != nil || len(commands) != 1 {
+		t.Fatalf("commands=%#v err=%v", commands, err)
+	}
+	executor := processexec.New(fs, map[model.PerformerKind]processexec.Adapter{
+		model.PerformerHuman: verifiedHumanAdapter{},
+	})
+	if _, err := executor.Execute(t.Context(), commands[0]); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err = fs.LoadRun(t.Context(), "verified-worklist")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report := processverify.SnapshotWithTemplate(snapshot, tmpl); report.HasErrors() {
+		t.Fatalf("fixture must pass complete verification: %#v", report.Diagnostics)
+	}
+	items := Derive([]store.Snapshot{snapshot})
+	byNode := itemNodes(items)
+	for nodeID, node := range snapshot.State.Nodes {
 		if node.Status != state.NodeStatusWaitingHuman {
 			continue
 		}
@@ -163,4 +229,23 @@ func itemNodes(items []Item) map[string]Item {
 		out[item.Node] = item
 	}
 	return out
+}
+
+type verifiedHumanAdapter struct{}
+
+func (verifiedHumanAdapter) Validate(processexec.Request) error { return nil }
+
+func (verifiedHumanAdapter) Perform(context.Context, processexec.Request) (processexec.Observation, error) {
+	return processexec.Observation{}, errors.New("human performer is deferred")
+}
+
+func (verifiedHumanAdapter) Dispatch(_ context.Context, request processexec.Request) (processexec.DispatchResult, error) {
+	return processexec.DispatchResult{
+		ExternalRef: "obligation:" + request.Command.ID, Assignee: "human:johan",
+		Summary: "Approve release?", AvailableActions: []string{"approve", "reject"}, CreateObligation: true,
+	}, nil
+}
+
+func (verifiedHumanAdapter) ReconcileDeferred(context.Context, processexec.Request) (processexec.Observation, processexec.DeferredStatus, error) {
+	return processexec.Observation{}, processexec.DeferredInFlight, nil
 }
