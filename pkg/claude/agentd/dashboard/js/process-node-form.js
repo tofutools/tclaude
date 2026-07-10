@@ -86,8 +86,8 @@ export function setContactField(performer, key, value) {
   if (!['cadence', 'budget', 'escalationTarget'].includes(key)) throw new Error(`unknown contact field ${key}`);
   const contact = { ...(performer.contact || {}) };
   if (key === 'budget') {
-    const budget = Number.parseInt(value, 10);
-    if (Number.isFinite(budget) && budget > 0) contact.budget = budget;
+    const budget = parsePositiveInt(value);
+    if (budget) contact.budget = budget;
     else delete contact.budget;
   } else {
     const text = (value || '').trim();
@@ -104,8 +104,8 @@ export function setRetryField(holder, key, value) {
   if (!['maxAttempts', 'onFail', 'backoff'].includes(key)) throw new Error(`unknown retry field ${key}`);
   const retry = { ...(holder.retry || {}) };
   if (key === 'maxAttempts') {
-    const attempts = Number.parseInt(value, 10);
-    if (Number.isFinite(attempts) && attempts > 0) retry.maxAttempts = attempts;
+    const attempts = parsePositiveInt(value);
+    if (attempts) retry.maxAttempts = attempts;
     else delete retry.maxAttempts;
   } else {
     const text = (value || '').trim();
@@ -212,6 +212,16 @@ export function setNodeText(node, key, value) {
   const text = (value || '').trim();
   if (text) node[key] = text;
   else delete node[key];
+}
+
+// parsePositiveInt accepts only a whole positive decimal integer; anything
+// else ("2.5", "3oops", "1e2") returns 0 so the caller clears the field
+// instead of silently persisting a truncated number the author never typed.
+function parsePositiveInt(value) {
+  const text = String(value ?? '').trim();
+  if (!/^\d+$/.test(text)) return 0;
+  const n = Number(text);
+  return Number.isSafeInteger(n) && n > 0 ? n : 0;
 }
 
 export function parseLines(text) {

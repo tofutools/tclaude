@@ -168,7 +168,7 @@ export function buildNodeDetail(model, nodeId, { mode = 'edit', commit = null, o
         onclick: () => commit((draft) => { draft.performer = defaultPerformer('agent'); }),
       })));
     } else {
-      root.append(section('work', performerEditor(node.performer, (draft) => {
+      root.append(section('work', performerEditor(node.performer || defaultPerformer('agent'), (draft) => {
         if (!draft.performer) draft.performer = defaultPerformer('agent');
         return draft.performer;
       })));
@@ -216,7 +216,10 @@ export function buildNodeDetail(model, nodeId, { mode = 'edit', commit = null, o
   }
 
   if (type === 'decision') {
-    root.append(section('decider', performerEditor(node.performer, (draft) => {
+    // The displayed performer and the one the first edit mints must agree:
+    // a missing decider renders (and is created) as human, so the field set
+    // shown is the field set written to.
+    root.append(section('decider', performerEditor(node.performer || defaultPerformer('human'), (draft) => {
       if (!draft.performer) draft.performer = defaultPerformer('human');
       return draft.performer;
     })));

@@ -135,6 +135,12 @@ test('contact schedule edits build and dissolve the per-slot schedule', () => {
   assert.deepEqual(performer.contact, { cadence: '30m', budget: 5, escalationTarget: 'human:oncall' });
   setContactField(performer, 'budget', 'not-a-number');
   assert.deepEqual(performer.contact, { cadence: '30m', escalationTarget: 'human:oncall' });
+  // Malformed near-integers are rejected outright, never truncated into a
+  // number the author did not type.
+  setContactField(performer, 'budget', '2.5');
+  assert.equal(performer.contact.budget, undefined);
+  setContactField(performer, 'budget', '3oops');
+  assert.equal(performer.contact.budget, undefined);
   setContactField(performer, 'cadence', '');
   setContactField(performer, 'escalationTarget', '');
   assert.equal(performer.contact, undefined, 'empty schedule is removed (kind default applies)');
@@ -193,6 +199,8 @@ test('retry policy edits validate modes upstream and dissolve when cleared', () 
   setRetryField(node, 'maxAttempts', '4');
   setRetryField(node, 'onFail', 'fresh-attempt');
   assert.deepEqual(node.retry, { maxAttempts: 4, onFail: 'fresh-attempt' });
+  setRetryField(node, 'maxAttempts', '1e2');
+  assert.equal(node.retry.maxAttempts, undefined, 'scientific notation is not a retry budget');
   setRetryField(node, 'maxAttempts', '0');
   setRetryField(node, 'onFail', '');
   assert.equal(node.retry, undefined);
