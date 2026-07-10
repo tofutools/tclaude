@@ -91,7 +91,13 @@ func TestReassertDirWriteProof(t *testing.T) {
 	// Empty (exempt / unverified) is always fine.
 	assert.Nil(t, reassertDirWriteProof(nil))
 
-	base := t.TempDir()
+	// Canonicalise the temp base up front: production only ever hands
+	// reassertDirWriteProof paths that were already resolved by
+	// resolveDirWriteProofDirs, and on macOS t.TempDir() sits under the
+	// /var -> /private/var symlink, so a raw temp path is non-canonical and
+	// would (correctly) be rejected — that is not the case under test here.
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	real := filepath.Join(base, "real")
 	require.NoError(t, os.Mkdir(real, 0o755))
 
