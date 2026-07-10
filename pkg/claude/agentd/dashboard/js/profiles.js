@@ -153,11 +153,32 @@ function getDashDefaultProfile() {
   return dashPrefs.getItem(DASH_DEFAULT_PROFILE_KEY) || '';
 }
 
-// setDashDefaultProfile records (or, with a blank name, clears) the
-// dashboard-level default profile.
-function setDashDefaultProfile(name) {
-  if (name) dashPrefs.setItem(DASH_DEFAULT_PROFILE_KEY, name);
-  else dashPrefs.removeItem(DASH_DEFAULT_PROFILE_KEY);
+// setDashDefaultProfile persists (or clears) the operational global default
+// through the same validated handler the CLI uses, then updates dashPrefs'
+// synchronous UI cache without queuing a redundant generic-pref write. The
+// immediate awaited write avoids debounce/failure swallowing for a value that
+// now affects daemon spawn behavior.
+async function setDashDefaultProfile(name) {
+  const r = await fetch('/api/spawn-profile-default', {
+    method: name ? 'PUT' : 'DELETE', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: name ? JSON.stringify({ name }) : undefined,
+  });
+  if (!r.ok) throw new Error((await r.text()) || `HTTP ${r.status}`);
+  dashPrefs.syncItem(DASH_DEFAULT_PROFILE_KEY, name);
+}
+
+// refreshDashDefaultProfile reconciles an already-open dashboard after the CLI
+// changes the global value. The 2s dashboard refresh loop calls this alongside
+// its snapshot fetch; failures are best-effort and leave the last known cache.
+async function refreshDashDefaultProfile() {
+  try {
+    const r = await fetch('/api/spawn-profile-default', { credentials: 'same-origin' });
+    if (!r.ok) return;
+    const body = await r.json();
+    const name = (body && body.name) || '';
+    dashPrefs.syncItem(DASH_DEFAULT_PROFILE_KEY, name);
+  } catch (_) {}
 }
 
 // profileSummary builds a compact one-line summary of a profile's set fields
@@ -199,6 +220,6 @@ export {
   loadProfiles, cachedProfiles, invalidateProfiles, getProfile,
   createProfile, updateProfile, deleteProfile,
   exportProfiles, inspectProfileImport, importProfiles,
-  getDashDefaultProfile, setDashDefaultProfile,
+  getDashDefaultProfile, setDashDefaultProfile, refreshDashDefaultProfile,
   DASH_DEFAULT_PROFILE_KEY, profileSummary,
 };

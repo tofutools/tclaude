@@ -21,8 +21,10 @@ import "net/http"
 //	GET    /api/spawn-profiles/{name}       → fetch one profile
 //	PATCH  /api/spawn-profiles/{name}       → replace a profile
 //	DELETE /api/spawn-profiles/{name}       → delete a profile
+//	GET/PUT/DELETE /api/spawn-profile-default → manage the global default
 func registerDashboardSpawnProfileRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/spawn-profiles", dashboardSpawnProfilesRoute(handleSpawnProfiles))
+	mux.HandleFunc("/api/spawn-profile-default", dashboardSpawnProfilesRoute(handleGlobalDefaultSpawnProfile))
 	// Literal segments are more specific than {name}, so the mux picks them
 	// unambiguously (mirrors /api/templates/from-group/import/export).
 	mux.HandleFunc("POST /api/spawn-profiles/from-agent", dashboardSpawnProfilesRoute(handleSpawnProfileFromAgent))

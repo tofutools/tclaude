@@ -153,6 +153,15 @@ const dashPrefs = {
     pending.set(key, { value: null });
     scheduleFlush();
   },
+  // syncItem updates only the in-memory mirror after another validated API
+  // already persisted the value (or a poll observed an external CLI change).
+  // It also cancels any older debounced write for this key so stale UI state
+  // cannot race and overwrite the authoritative operation.
+  syncItem(key, value) {
+    pending.delete(key);
+    if (value == null || value === '') delete cache[key];
+    else cache[key] = String(value);
+  },
 };
 
 // pagehide covers tab close / navigation / bfcache; visibilitychange→

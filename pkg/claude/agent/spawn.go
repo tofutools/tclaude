@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -225,7 +226,38 @@ type SpawnRequest struct {
 	// or an owner of the target group. Empty for a spawn that takes the
 	// group's default permissions.
 	PermissionOverrides map[string]string `json:"permission_overrides,omitempty"`
+
+	// Presence bits preserve an explicit JSON false across profile overlays.
+	// They are populated by UnmarshalJSON and intentionally stay off the wire.
+	autoReviewSpecified bool
+	trustDirSpecified   bool
 }
+
+// UnmarshalJSON records whether the two plain-bool launch fields appeared on
+// the wire. Their values alone cannot distinguish omitted from explicit false,
+// but profile precedence must: an explicit false beats every profile, and a
+// higher-tier profile's false beats a lower-tier true.
+func (r *SpawnRequest) UnmarshalJSON(data []byte) error {
+	type alias SpawnRequest
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	*r = SpawnRequest(decoded)
+	_, r.autoReviewSpecified = fields["auto_review"]
+	_, r.trustDirSpecified = fields["trust_dir"]
+	return nil
+}
+
+// AutoReviewSpecified reports whether auto_review appeared in decoded JSON.
+func (r SpawnRequest) AutoReviewSpecified() bool { return r.autoReviewSpecified }
+
+// TrustDirSpecified reports whether trust_dir appeared in decoded JSON.
+func (r SpawnRequest) TrustDirSpecified() bool { return r.trustDirSpecified }
 
 // SpawnParams drives `tclaude agent spawn <group>`. The daemon does
 // the actual spawn + group-join; this struct just shapes the request.
@@ -732,6 +764,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		strings.TrimSpace(merged.Sandbox) != "" ||
 		strings.TrimSpace(merged.AskUserQuestionTimeout) != "" ||
 		strings.TrimSpace(merged.Approval) != "" || merged.AutoReview || merged.TrustDir
+	launchFieldPinsHarness = launchFieldPinsHarness || p.RemoteControl
 	if requestHarness == "" && (prof != nil || launchFieldPinsHarness) {
 		requestHarness = h.Name
 	}

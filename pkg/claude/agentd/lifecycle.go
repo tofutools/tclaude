@@ -1416,7 +1416,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		strings.TrimSpace(body.SandboxMode) != "" ||
 		strings.TrimSpace(body.AskUserQuestionTimeout) != "" ||
 		strings.TrimSpace(body.ApprovalPolicy) != "" ||
-		body.AutoReview || body.TrustDir) {
+		body.AutoReviewSpecified() || body.TrustDirSpecified() || body.RemoteControl != nil) {
 		body.Harness = harness.DefaultName
 	}
 
@@ -1443,8 +1443,12 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// remote-control policy resolution below (JOH-262).
 	groupProfile := groupDefaultProfile(g)
 	globalProfile := globalDefaultProfile()
-	groupProfileApplied := overlayProfileLaunch(&body, groupProfile)
-	globalProfileApplied := overlayProfileLaunch(&body, globalProfile)
+	overlayState := profileLaunchOverlayState{
+		autoReviewSet: body.AutoReviewSpecified(),
+		trustDirSet:   body.TrustDirSpecified(),
+	}
+	groupProfileApplied := overlayProfileLaunch(&body, groupProfile, &overlayState)
+	globalProfileApplied := overlayProfileLaunch(&body, globalProfile, &overlayState)
 
 	// Validate the requested cwd before doing any work. Expands "~",
 	// makes the path absolute, and confirms it exists as a directory.
@@ -1653,7 +1657,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		AskUserQuestionTimeout: askTimeout,
 		ApprovalPolicy:         approvalPolicy,
 		AutoReview:             autoReview,
+		AutoReviewSet:          overlayState.autoReviewSet,
 		TrustDir:               trustDir,
+		TrustDirSet:            overlayState.trustDirSet,
 		RemoteControl:          remoteControl,
 		ReplyToConv:            replyToConv,
 		SpawnedByConv:          spawnerConvID,
@@ -1777,6 +1783,9 @@ type spawnParams struct {
 	// the params; experimental/undocumented upstream, so only an explicit
 	// opt-in sets it true. See JOH-200 part 2.
 	AutoReview bool
+	// AutoReviewSet / TrustDirSet preserve a higher tier's explicit false
+	// through executeSpawn's safety-net overlay.
+	AutoReviewSet bool
 	// TrustDir opts the spawn into pre-trusting its launch cwd for Codex,
 	// forwarding `--trust-dir` to `tclaude session new` so the daemon writes
 	// the [projects."<cwd>"] trust entry into ~/.codex/config.toml before
@@ -1785,7 +1794,8 @@ type spawnParams struct {
 	// strictly opt-in (it edits the user's config) — gated at the spawn
 	// boundary (handleGroupSpawn → harness.ResolveTrustDir) and never set on a
 	// relaunch (reincarnate/clone), exactly like AutoReview.
-	TrustDir bool
+	TrustDir    bool
+	TrustDirSet bool
 	// RemoteControl arms the new agent's built-in Remote Access at launch
 	// (Claude Code's --remote-control), forwarding `--remote-control` to
 	// `tclaude session new` so the agent is reachable from the Claude app from
@@ -2022,7 +2032,12 @@ func harnessOrDefault(name string) string {
 // profile is compatible with (and therefore participates in) the effective
 // harness. A blank harness adopts the profile's harness; a profile whose own
 // harness is blank explicitly means the default Claude harness.
-func overlayProfileLaunch(p *agent.SpawnRequest, prof *db.SpawnProfile) bool {
+type profileLaunchOverlayState struct {
+	autoReviewSet bool
+	trustDirSet   bool
+}
+
+func overlayProfileLaunch(p *agent.SpawnRequest, prof *db.SpawnProfile, state *profileLaunchOverlayState) bool {
 	if prof == nil {
 		return false
 	}
@@ -2048,11 +2063,13 @@ func overlayProfileLaunch(p *agent.SpawnRequest, prof *db.SpawnProfile) bool {
 	if strings.TrimSpace(p.AskUserQuestionTimeout) == "" {
 		p.AskUserQuestionTimeout = prof.AskUserQuestionTimeout
 	}
-	if !p.AutoReview && prof.AutoReview != nil {
+	if !state.autoReviewSet && prof.AutoReview != nil {
 		p.AutoReview = *prof.AutoReview
+		state.autoReviewSet = true
 	}
-	if !p.TrustDir && prof.TrustDir != nil {
+	if !state.trustDirSet && prof.TrustDir != nil {
 		p.TrustDir = *prof.TrustDir
+		state.trustDirSet = true
 	}
 	return true
 }
@@ -2085,6 +2102,10 @@ func overlayProfileLaunch(p *agent.SpawnRequest, prof *db.SpawnProfile) bool {
 func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	profiles := []*db.SpawnProfile{groupDefaultProfile(g), globalDefaultProfile()}
 	applied := false
+	overlayState := profileLaunchOverlayState{
+		autoReviewSet: p.AutoReviewSet || p.AutoReview,
+		trustDirSet:   p.TrustDirSet || p.TrustDir,
+	}
 	for _, prof := range profiles {
 		if prof == nil || (p.Harness != "" && harnessOrDefault(p.Harness) != harnessOrDefault(prof.Harness)) {
 			continue
@@ -2108,11 +2129,13 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 		if p.AskUserQuestionTimeout == "" {
 			p.AskUserQuestionTimeout = prof.AskUserQuestionTimeout
 		}
-		if !p.AutoReview && prof.AutoReview != nil {
+		if !overlayState.autoReviewSet && prof.AutoReview != nil {
 			p.AutoReview = *prof.AutoReview
+			overlayState.autoReviewSet = true
 		}
-		if !p.TrustDir && prof.TrustDir != nil {
+		if !overlayState.trustDirSet && prof.TrustDir != nil {
 			p.TrustDir = *prof.TrustDir
+			overlayState.trustDirSet = true
 		}
 	}
 

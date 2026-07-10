@@ -39,6 +39,7 @@ import { lastSnapshot, setLastSnapshot } from './dashboard.js';
 import { setVegasRegularMode, isWizardActive } from './slop.js';
 import { setHScrollFollow } from './hscroll.js';
 import { noteConnected, noteDisconnected } from './connection.js';
+import { refreshDashDefaultProfile } from './profiles.js';
 
 // refreshSuspended() is the single source of truth for whether the
 // auto-refresh is allowed to re-render the DOM right now. refresh()
@@ -440,6 +441,7 @@ export async function refresh(opts = {}) {
       (onGroups && conversationsVisible()) ? get('/api/conversations?' + listParams('conversations', groupsQ)) : Promise.resolve(undefined),
       (onGroups && replacedVisible()) ? get('/api/replaced?' + listParams('replaced', groupsQ)) : Promise.resolve(undefined),
       jobsTabActive() ? get('/api/jobs?' + listParams('jobs', jobsQ)) : Promise.resolve(undefined),
+      refreshDashDefaultProfile(),
     ]);
     // agentd answered this poll (any HTTP status) — we're connected. Clear the
     // disconnect banner + resume music if it had been raised. Done before the

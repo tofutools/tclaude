@@ -58,6 +58,23 @@ func TestScribeSpawnHarness_DefaultsToClaude_CodexFromProfile(t *testing.T) {
 	assert.Equal(t, harness.CodexName, scribeSpawnHarness(cx), "codex default profile → codex")
 }
 
+func TestScribeSpawnHarness_UsesGlobalDefault(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+	db.ResetForTest()
+
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "global-codex", Harness: harness.CodexName})
+	require.NoError(t, err)
+	require.NoError(t, db.SetDashboardPref(dashboardDefaultProfilePrefKey, "global-codex"))
+	groupID, err := db.CreateAgentGroup("bare-scribe", scribeGroupDescr)
+	require.NoError(t, err)
+	g, err := db.GetAgentGroupByID(groupID)
+	require.NoError(t, err)
+	assert.Equal(t, harness.CodexName, scribeSpawnHarness(g),
+		"trust seed harness must match the global profile executeSpawn adopts")
+}
+
 func TestSeedScribeDirTrust_SeedsThePerHarnessStore(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

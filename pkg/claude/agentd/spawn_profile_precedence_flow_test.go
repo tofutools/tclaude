@@ -200,6 +200,75 @@ func TestSpawnProfilePrecedence_SparseExplicitProfileFallsThrough(t *testing.T) 
 	assert.Equal(t, "high", effort, "explicit-profile effort still wins")
 }
 
+func TestSpawnProfilePrecedence_GroupFalseBoolDefaultsBlockGlobalTrue(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "group", "harness": "codex", "auto_review": false, "trust_dir": false,
+	}).Code)
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "global", "harness": "codex", "auto_review": true, "trust_dir": true,
+	}).Code)
+	require.Equal(t, http.StatusOK, setGroupProfile(t, f, "alpha", "group").Code)
+	require.Equal(t, http.StatusOK, setGlobalProfile(t, f, "global").Code)
+
+	spawn := f.AsHuman().SpawnHarness("alpha", "worker", "codex")
+	autoReview, ok := f.World.SpawnAutoReview(spawn.ConvID)
+	require.True(t, ok)
+	assert.False(t, autoReview, "group's explicit false blocks global true")
+	trustDir, ok := f.World.SpawnTrustDir(spawn.ConvID)
+	require.True(t, ok)
+	assert.False(t, trustDir, "group's explicit false blocks global true")
+}
+
+func TestSpawnProfilePrecedence_ExplicitAPIFalseBoolsBlockGlobalTrue(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "global", "harness": "codex", "auto_review": true, "trust_dir": true,
+	}).Code)
+	require.Equal(t, http.StatusOK, setGlobalProfile(t, f, "global").Code)
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
+		"name": "worker", "harness": "codex", "auto_review": false, "trust_dir": false,
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	autoReview, ok := f.World.SpawnAutoReview(spawn.ConvID)
+	require.True(t, ok)
+	assert.False(t, autoReview)
+	trustDir, ok := f.World.SpawnTrustDir(spawn.ConvID)
+	require.True(t, ok)
+	assert.False(t, trustDir)
+}
+
+func TestSpawnProfilePrecedence_RemoteControlPinsDefaultHarness(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	require.Equal(t, http.StatusCreated, createProfile(t, f,
+		map[string]any{"name": "global", "harness": "codex", "model": "gpt-5.6-sol"}).Code)
+	require.Equal(t, http.StatusOK, setGlobalProfile(t, f, "global").Code)
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
+		"name": "worker", "remote_control": true,
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	remote, ok := f.World.SpawnRemoteControl(spawn.ConvID)
+	require.True(t, ok)
+	assert.True(t, remote)
+
+	bridgeAgentClientToMux(t, f.Mux)
+	chdirTo(t, resolveSym(t, t.TempDir()))
+	stderr := new(bytes.Buffer)
+	resp, rc := agent.RunSpawn(&agent.SpawnParams{
+		Group: "alpha", Name: "cli-worker", RemoteControl: true,
+	}, new(bytes.Buffer), stderr, new(bytes.Buffer))
+	require.Equal(t, 0, rc, "RunSpawn stderr=%s", stderr.String())
+	require.NotNil(t, resp)
+	remote, ok = f.World.SpawnRemoteControl(resp.ConvID)
+	require.True(t, ok)
+	assert.True(t, remote)
+}
+
 // A global preference may become stale after profile deletion. Spawn degrades
 // to the next tier instead of failing; setting an already-missing profile is
 // rejected eagerly by the API.
