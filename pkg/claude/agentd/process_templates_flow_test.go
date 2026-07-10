@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -149,6 +150,51 @@ func TestProcessTemplateSavePersistsLayoutOnlyEditAtSameRef(t *testing.T) {
 	testharness.DecodeJSON(t, reopenRec, &reopened)
 	assert.Equal(t, float64(444), reopened.Layout.Nodes["begin"].X)
 	assert.Equal(t, saved.SourceHash, reopened.SourceHash)
+}
+
+func TestProcessTemplateSaveCanRevertHeadToExistingSemanticVersion(t *testing.T) {
+	f, root := processEngineFlow(t)
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	first := processRESTTemplate("revert", "first", 10)
+	firstRecord, err := fs.PutTemplate(t.Context(), first)
+	require.NoError(t, err)
+	second := processRESTTemplate("revert", "second", 20)
+	_, err = fs.PutTemplate(t.Context(), second)
+	require.NoError(t, err)
+
+	getRec := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates/revert", nil)
+	require.Equal(t, http.StatusOK, getRec.Code, getRec.Body.String())
+	var edit processEditResponse
+	testharness.DecodeJSON(t, getRec, &edit)
+	assert.Equal(t, "second", edit.Template.Description)
+	edit.Template = semanticProcessTemplate(first)
+	edit.Edges = model.NormalizeEdges(first)
+	edit.Layout = first.Layout
+
+	saveRec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/revert", edit)
+	require.Equal(t, http.StatusCreated, saveRec.Code, saveRec.Body.String())
+	assert.Contains(t, saveRec.Body.String(), firstRecord.Ref)
+	reopenRec := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates/revert", nil)
+	require.Equal(t, http.StatusOK, reopenRec.Code, reopenRec.Body.String())
+	var reopened processEditResponse
+	testharness.DecodeJSON(t, reopenRec, &reopened)
+	assert.Equal(t, "first", reopened.Template.Description)
+	assert.Equal(t, float64(10), reopened.Layout.Nodes["begin"].X)
+}
+
+func TestProcessTemplateSaveRequiresTemplatesManageForAgent(t *testing.T) {
+	f, _ := processEngineFlow(t)
+	const intruder = "proc-intruder-aaaa-bbbb"
+	tmpl := processRESTTemplate("agent-owned", "agent draft", 10)
+	body := processEditResponse{
+		Template: semanticProcessTemplate(tmpl), Edges: model.NormalizeEdges(tmpl), Layout: tmpl.Layout,
+	}
+	rec := agentReq(t, f, intruder, http.MethodPost, "/v1/process/templates/agent-owned", body)
+	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	require.NoError(t, db.GrantAgentPermission(intruder, agentd.PermTemplatesManage, "test"))
+	rec = agentReq(t, f, intruder, http.MethodPost, "/v1/process/templates/agent-owned", body)
+	assert.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 }
 
 func TestProcessValidateReturnsEditorScopedAdvisoryDiagnostics(t *testing.T) {

@@ -123,7 +123,7 @@ func dashboardProcessRoute(next http.HandlerFunc) http.HandlerFunc {
 		if !checkDashboardAuth(w, r) {
 			return
 		}
-		processRoute(next)(w, r)
+		processRoute(next)(w, asDashboardHumanPeer(r))
 	}
 }
 

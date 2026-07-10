@@ -26,11 +26,12 @@ func DefaultRoot() string {
 }
 
 var (
-	ErrNotFound         = errors.New("process store record not found")
-	ErrTemplateConflict = errors.New("process template content conflict")
-	ErrContentMismatch  = errors.New("process store content does not match its ref")
-	ErrLeaseHeld        = errors.New("process run lease is held")
-	ErrRunInconsistent  = errors.New("process run state is inconsistent with evidence")
+	ErrNotFound               = errors.New("process store record not found")
+	ErrTemplateConflict       = errors.New("process template content conflict")
+	ErrTemplateSourceConflict = errors.New("process template source conflict")
+	ErrContentMismatch        = errors.New("process store content does not match its ref")
+	ErrLeaseHeld              = errors.New("process run lease is held")
+	ErrRunInconsistent        = errors.New("process run state is inconsistent with evidence")
 )
 
 type ConflictError struct {
@@ -51,15 +52,31 @@ func IsConflict(err error) bool {
 	return errors.As(err, &conflict)
 }
 
-// Templates stores immutable, content-addressed process template semantics.
-// Implementations may persist only model.CanonicalSemanticJSON: callers should
-// treat Layout as source/editor metadata, not as part of the run-pinned copy.
+// Templates stores immutable, content-addressed process template semantics and
+// their canonical authoring source. Callers must treat Layout as mutable
+// source/editor metadata attached to a semantic version, never as part of the
+// run-pinned copy or its semantic identity.
 type Templates interface {
 	PutTemplate(ctx context.Context, tmpl *model.Template) (TemplateRecord, error)
 	GetTemplate(ctx context.Context, ref string) (*model.Template, error)
 	GetTemplateSource(ctx context.Context, ref string) ([]byte, error)
+	GetTemplateHead(ctx context.Context, id string) (TemplateRecord, error)
 	ListTemplates(ctx context.Context) ([]TemplateRecord, error)
 }
+
+type TemplateSourceConflictError struct {
+	CurrentRef        string
+	CurrentSourceHash string
+}
+
+func (e *TemplateSourceConflictError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return fmt.Sprintf("%v: current head %q has source hash %q", ErrTemplateSourceConflict, e.CurrentRef, e.CurrentSourceHash)
+}
+
+func (e *TemplateSourceConflictError) Unwrap() error { return ErrTemplateSourceConflict }
 
 type Runs interface {
 	CreateRun(ctx context.Context, run RunRecord, initial state.State) (RunRecord, error)

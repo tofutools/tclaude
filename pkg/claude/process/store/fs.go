@@ -62,19 +62,66 @@ func (s *FS) SetNowForTest(now func() time.Time) func() {
 }
 
 func (s *FS) PutTemplate(ctx context.Context, tmpl *model.Template) (TemplateRecord, error) {
-	return s.putTemplate(ctx, tmpl, false)
+	if tmpl == nil {
+		return TemplateRecord{}, fmt.Errorf("nil process template")
+	}
+	unlock, err := s.lockTemplate(ctx, tmpl.ID)
+	if err != nil {
+		return TemplateRecord{}, err
+	}
+	defer unlock()
+	record, err := s.putTemplateUnlocked(ctx, tmpl, false)
+	if err != nil {
+		return TemplateRecord{}, err
+	}
+	if err := s.writeTemplateHead(record); err != nil {
+		return TemplateRecord{}, err
+	}
+	return record, nil
 }
 
 // PutTemplateEditorSource persists an editor save. Semantic content remains
 // immutable and content-addressed exactly like PutTemplate; the only extra
 // behavior is updating the layout-bearing canonical source attachment when
-// the semantic ref already exists. Callers must perform sourceHash optimistic
-// concurrency before invoking it.
-func (s *FS) PutTemplateEditorSource(ctx context.Context, tmpl *model.Template) (TemplateRecord, error) {
-	return s.putTemplate(ctx, tmpl, true)
+// the semantic ref already exists. expectedSourceHash is compared to the
+// current head under the same cross-process filesystem lock as the write and
+// head-pointer update, so two editors cannot silently lose layout changes.
+func (s *FS) PutTemplateEditorSource(ctx context.Context, tmpl *model.Template, expectedSourceHash string) (TemplateRecord, error) {
+	if tmpl == nil {
+		return TemplateRecord{}, fmt.Errorf("nil process template")
+	}
+	unlock, err := s.lockTemplate(ctx, tmpl.ID)
+	if err != nil {
+		return TemplateRecord{}, err
+	}
+	defer unlock()
+	head, headErr := s.getTemplateHeadUnlocked(ctx, tmpl.ID)
+	currentHash := ""
+	if headErr == nil {
+		source, err := s.GetTemplateSource(ctx, head.Ref)
+		if err != nil {
+			return TemplateRecord{}, err
+		}
+		currentHash = sourceHash(source)
+	} else if !errors.Is(headErr, ErrNotFound) {
+		return TemplateRecord{}, headErr
+	}
+	if expectedSourceHash != currentHash {
+		return TemplateRecord{}, &TemplateSourceConflictError{
+			CurrentRef: head.Ref, CurrentSourceHash: currentHash,
+		}
+	}
+	record, err := s.putTemplateUnlocked(ctx, tmpl, true)
+	if err != nil {
+		return TemplateRecord{}, err
+	}
+	if err := s.writeTemplateHead(record); err != nil {
+		return TemplateRecord{}, err
+	}
+	return record, nil
 }
 
-func (s *FS) putTemplate(ctx context.Context, tmpl *model.Template, updateEditorSource bool) (TemplateRecord, error) {
+func (s *FS) putTemplateUnlocked(ctx context.Context, tmpl *model.Template, updateEditorSource bool) (TemplateRecord, error) {
 	if err := ctx.Err(); err != nil {
 		return TemplateRecord{}, err
 	}
@@ -113,8 +160,8 @@ func (s *FS) putTemplate(ctx context.Context, tmpl *model.Template, updateEditor
 			// Layout is mutable presentation state attached to a semantic
 			// version. Replacing template.yaml here is sanctioned: layout is
 			// excluded from CanonicalSemanticJSON, so run-pinned semantics and
-			// their audit identity do not change. The REST boundary guards this
-			// last-write-wins update with the client's base sourceHash.
+			// their audit identity do not change. PutTemplateEditorSource guards
+			// this last-write-wins update with a filesystem-locked sourceHash CAS.
 			if err := writeFileAtomic(filepath.Join(dir, "template.yaml"), source, 0o644); err != nil {
 				return TemplateRecord{}, err
 			}
@@ -136,6 +183,78 @@ func (s *FS) putTemplate(ctx context.Context, tmpl *model.Template, updateEditor
 		return TemplateRecord{}, err
 	}
 	return TemplateRecord{ID: tmpl.ID, Ref: ref, SemanticHash: semanticHash, StoredAt: s.now().UTC()}, nil
+}
+
+// GetTemplateHead returns the explicitly selected editor head. Stores created
+// before head pointers existed fall back to their newest template.json mtime.
+func (s *FS) GetTemplateHead(ctx context.Context, id string) (TemplateRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return TemplateRecord{}, err
+	}
+	return s.getTemplateHeadUnlocked(ctx, id)
+}
+
+func (s *FS) getTemplateHeadUnlocked(ctx context.Context, id string) (TemplateRecord, error) {
+	if err := safeSegment(id); err != nil {
+		return TemplateRecord{}, fmt.Errorf("invalid template id: %w", err)
+	}
+	headPath := filepath.Join(s.root, "templates", id, "head")
+	if data, err := os.ReadFile(headPath); err == nil {
+		ref := strings.TrimSpace(string(data))
+		records, err := templateRecordsForID(ctx, s, id)
+		if err != nil {
+			return TemplateRecord{}, err
+		}
+		for _, record := range records {
+			if record.Ref == ref {
+				return record, nil
+			}
+		}
+		return TemplateRecord{}, fmt.Errorf("%w: template head %q", ErrContentMismatch, ref)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return TemplateRecord{}, fmt.Errorf("read template head: %w", err)
+	}
+	records, err := templateRecordsForID(ctx, s, id)
+	if err != nil {
+		return TemplateRecord{}, err
+	}
+	if len(records) == 0 {
+		return TemplateRecord{}, ErrNotFound
+	}
+	slices.SortFunc(records, func(a, b TemplateRecord) int {
+		if !a.StoredAt.Equal(b.StoredAt) {
+			if a.StoredAt.After(b.StoredAt) {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(b.SemanticHash, a.SemanticHash)
+	})
+	return records[0], nil
+}
+
+func templateRecordsForID(ctx context.Context, s *FS, id string) ([]TemplateRecord, error) {
+	records, err := s.ListTemplates(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]TemplateRecord, 0)
+	for _, record := range records {
+		if record.ID == id {
+			out = append(out, record)
+		}
+	}
+	return out, nil
+}
+
+func (s *FS) writeTemplateHead(record TemplateRecord) error {
+	path := filepath.Join(s.root, "templates", record.ID, "head")
+	return writeFileAtomic(path, []byte(record.Ref+"\n"), 0o644)
+}
+
+func sourceHash(source []byte) string {
+	sum := sha256.Sum256(source)
+	return hex.EncodeToString(sum[:])
 }
 
 func (s *FS) GetTemplate(ctx context.Context, ref string) (*model.Template, error) {
@@ -1040,6 +1159,39 @@ func (s *FS) lockRun(ctx context.Context, runID string) (func(), error) {
 			return func() {}, err
 		}
 		return func() {}, fmt.Errorf("lock run: lock not acquired")
+	}
+	return func() {
+		_ = fl.Unlock()
+		localLock.Unlock()
+	}, nil
+}
+
+func (s *FS) lockTemplate(ctx context.Context, id string) (func(), error) {
+	if err := safeSegment(id); err != nil {
+		return func() {}, fmt.Errorf("invalid template id: %w", err)
+	}
+	lockValue, _ := processLocks.LoadOrStore(s.root+"\x00template\x00"+id, newLocalRunLock())
+	localLock := lockValue.(*localRunLock)
+	if err := localLock.Lock(ctx); err != nil {
+		return func() {}, err
+	}
+	lockDir := filepath.Join(s.root, ".locks")
+	if err := os.MkdirAll(lockDir, 0o755); err != nil {
+		localLock.Unlock()
+		return func() {}, fmt.Errorf("create lock dir: %w", err)
+	}
+	fl := flock.New(filepath.Join(lockDir, "template-"+id+".lock"))
+	locked, err := fl.TryLockContext(ctx, 10*time.Millisecond)
+	if err != nil {
+		localLock.Unlock()
+		return func() {}, fmt.Errorf("lock template: %w", err)
+	}
+	if !locked {
+		localLock.Unlock()
+		if err := ctx.Err(); err != nil {
+			return func() {}, err
+		}
+		return func() {}, fmt.Errorf("lock template: lock not acquired")
 	}
 	return func() {
 		_ = fl.Unlock()

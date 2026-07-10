@@ -115,13 +115,21 @@ function renderProcessRuns(runs) {
   if (!runs.length) return '<div class="process-placeholder"><h3>No process runs yet</h3><p>Instantiate a template to create a durable run.</p></div>';
   const rows = runs.map(run => `<tr data-process-run="${esc(run.id)}">
     <td><strong>${esc(run.id)}</strong></td>
-    <td><span class="process-hash">${esc(run.templateRef || '—')}</span></td>
+    <td><span class="process-hash" title="${esc(run.templateRef || '')}">${esc(shortProcessRef(run.templateRef) || '—')}</span></td>
     <td><span class="process-status">${esc(run.status || 'unknown')}</span></td>
     <td>${run.started ? esc(relTime(run.started)) : '—'}</td>
     <td>${esc(run.currentActivity || '—')}</td>
     <td class="process-actions"><button class="process-action" data-process-action="view" data-id="${esc(run.id)}" type="button">open</button></td>
   </tr>`).join('');
   return `<table><thead><tr><th>Run</th><th>Template</th><th>Status</th><th>Started</th><th>Current activity</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function shortProcessRef(ref) {
+  if (!ref) return '';
+  const marker = '@sha256:';
+  const at = ref.indexOf(marker);
+  if (at < 0) return ref;
+  return `${ref.slice(0, at)}${marker}${ref.slice(at + marker.length, at + marker.length + 10)}`;
 }
 
 function openProcessEditor(id, blank) {

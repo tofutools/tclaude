@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
@@ -18,8 +17,6 @@ import (
 )
 
 const maxProcessEditBody = 4 << 20
-
-var processTemplateSaveMu sync.Mutex
 
 type processTemplateVersionView struct {
 	Ref          string    `json:"ref"`
@@ -82,6 +79,25 @@ func handleProcessTemplates(w http.ResponseWriter, r *http.Request) {
 	views := make([]processTemplateListView, 0, len(ids))
 	for _, id := range ids {
 		versions := grouped[id]
+		head, headErr := fs.GetTemplateHead(r.Context(), id)
+		if headErr != nil {
+			writeError(w, http.StatusInternalServerError, "process_template_head", headErr.Error())
+			return
+		}
+		// A writer publishes immutable version content before atomically moving
+		// the head pointer. If that happens between the collection snapshot above
+		// and this head read, include the newly selected head so latestVersion,
+		// versions, and description still describe one internally consistent view.
+		headListed := false
+		for _, version := range versions {
+			if version.Ref == head.Ref {
+				headListed = true
+				break
+			}
+		}
+		if !headListed {
+			versions = append(versions, head)
+		}
 		slices.SortFunc(versions, compareTemplateRecordsNewest)
 		view := processTemplateListView{
 			ID:           id,
@@ -96,8 +112,13 @@ func handleProcessTemplates(w http.ResponseWriter, r *http.Request) {
 			}
 			view.Versions = append(view.Versions, version)
 		}
-		view.LatestVersion = view.Versions[0]
-		latest, loadErr := fs.GetTemplate(r.Context(), versions[0].Ref)
+		for _, version := range view.Versions {
+			if version.Ref == head.Ref {
+				view.LatestVersion = version
+				break
+			}
+		}
+		latest, loadErr := fs.GetTemplate(r.Context(), head.Ref)
 		if loadErr != nil {
 			writeError(w, http.StatusInternalServerError, "process_template", loadErr.Error())
 			return
@@ -145,6 +166,9 @@ func handleProcessTemplateGet(w http.ResponseWriter, r *http.Request, fs *store.
 }
 
 func handleProcessTemplateSave(w http.ResponseWriter, r *http.Request, fs *store.FS) {
+	if _, ok := requirePermission(w, r, PermTemplatesManage); !ok {
+		return
+	}
 	body, err := decodeProcessEditView(w, r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "json", err.Error())
@@ -163,40 +187,6 @@ func handleProcessTemplateSave(w http.ResponseWriter, r *http.Request, fs *store
 		return
 	}
 	assembleProcessEditModel(body)
-	processTemplateSaveMu.Lock()
-	defer processTemplateSaveMu.Unlock()
-
-	// Optimistic concurrency is checked against the current head's canonical
-	// source, not its semantic hash: layout-only edits and canonicalized source
-	// changes must conflict just like semantic edits.
-	records, err := processTemplateRecords(r, fs, id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "process_templates", err.Error())
-		return
-	}
-	if len(records) > 0 {
-		headSource, sourceErr := fs.GetTemplateSource(r.Context(), records[0].Ref)
-		if sourceErr != nil {
-			writeError(w, http.StatusInternalServerError, "process_template", sourceErr.Error())
-			return
-		}
-		currentHash := processSourceHash(headSource)
-		if body.SourceHash != currentHash {
-			writeProcessJSON(w, http.StatusConflict, map[string]any{
-				"error":             "process_template_conflict",
-				"message":           "template head changed since it was opened",
-				"currentSourceHash": currentHash,
-				"currentRef":        records[0].Ref,
-			})
-			return
-		}
-	} else if body.SourceHash != "" {
-		writeProcessJSON(w, http.StatusConflict, map[string]any{
-			"error":   "process_template_conflict",
-			"message": "template no longer has the head version that was opened",
-		})
-		return
-	}
 
 	canonical, err := model.CanonicalYAML(body.Template)
 	if err != nil {
@@ -211,8 +201,19 @@ func handleProcessTemplateSave(w http.ResponseWriter, r *http.Request, fs *store
 	// Validation findings are deliberately advisory for editor saves. The
 	// draft remains serializable and content-addressed, so persisting it lets a
 	// human fix multi-step graph edits without the server discarding their work.
-	// Only malformed JSON / a model CanonicalYAML cannot represent is blocked.
-	record, err := fs.PutTemplateEditorSource(r.Context(), parsed.Template)
+	// Only malformed JSON, a model CanonicalYAML cannot represent, or a template
+	// identity the content-addressed store cannot safely key is blocked.
+	record, err := fs.PutTemplateEditorSource(r.Context(), parsed.Template, body.SourceHash)
+	var conflict *store.TemplateSourceConflictError
+	if errors.As(err, &conflict) {
+		writeProcessJSON(w, http.StatusConflict, map[string]any{
+			"error":             "process_template_conflict",
+			"message":           "template head changed since it was opened",
+			"currentSourceHash": conflict.CurrentSourceHash,
+			"currentRef":        conflict.CurrentRef,
+		})
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "process_template_unserializable", err.Error())
 		return
@@ -347,7 +348,7 @@ func resolveProcessTemplateVersion(r *http.Request, fs *store.FS, id, version st
 	}
 	version = strings.TrimSpace(version)
 	if version == "" {
-		return records[0], nil
+		return fs.GetTemplateHead(r.Context(), id)
 	}
 	wantHash := version
 	if refID, refHash, ok := strings.Cut(version, "@sha256:"); ok {

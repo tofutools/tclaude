@@ -76,7 +76,7 @@ func TestTemplateSourcePreservesAndUpdatesEditorLayoutWithoutChangingRef(t *test
 	}
 
 	tmpl.Layout.Nodes[tmpl.Start] = model.LayoutNode{X: 98, Y: 76}
-	updated, err := fs.PutTemplateEditorSource(ctx, tmpl)
+	updated, err := fs.PutTemplateEditorSource(ctx, tmpl, parsed.SourceHash)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,6 +100,63 @@ func TestTemplateSourcePreservesAndUpdatesEditorLayoutWithoutChangingRef(t *test
 	}
 	if pinned.Layout != nil {
 		t.Fatalf("run-pinned semantic template unexpectedly contains layout: %#v", pinned.Layout)
+	}
+}
+
+func TestTemplateEditorSourceCASRejectsConcurrentLayoutSave(t *testing.T) {
+	ctx := t.Context()
+	root := t.TempDir()
+	first := newStoreAt(t, root)
+	second := newStoreAt(t, root)
+	base := storetest.Template()
+	base.Layout = &model.Layout{Nodes: map[string]model.LayoutNode{
+		base.Start: {X: 1, Y: 2},
+	}}
+	record, err := first.PutTemplate(ctx, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := first.GetTemplateSource(ctx, record.Ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := model.Parse(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	left := storetest.Template()
+	left.Layout = &model.Layout{Nodes: map[string]model.LayoutNode{left.Start: {X: 10, Y: 20}}}
+	right := storetest.Template()
+	right.Layout = &model.Layout{Nodes: map[string]model.LayoutNode{right.Start: {X: 30, Y: 40}}}
+	results := make(chan error, 2)
+	var wg sync.WaitGroup
+	for _, save := range []struct {
+		fs   *store.FS
+		tmpl *model.Template
+	}{{first, left}, {second, right}} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, saveErr := save.fs.PutTemplateEditorSource(ctx, save.tmpl, parsed.SourceHash)
+			results <- saveErr
+		}()
+	}
+	wg.Wait()
+	close(results)
+	var saved, conflicted int
+	for saveErr := range results {
+		switch {
+		case saveErr == nil:
+			saved++
+		case errors.Is(saveErr, store.ErrTemplateSourceConflict):
+			conflicted++
+		default:
+			t.Fatalf("unexpected save error: %v", saveErr)
+		}
+	}
+	if saved != 1 || conflicted != 1 {
+		t.Fatalf("saved=%d conflicted=%d, want one of each", saved, conflicted)
 	}
 }
 
