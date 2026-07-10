@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { defaultFeedbackArc, layoutProcessGraph } from '../dashboard/js/process-layout.js';
+import { defaultFeedbackArc, edgeEndpoint, layoutProcessGraph } from '../dashboard/js/process-layout.js';
 
 const linear = {
   nodes: [
@@ -162,6 +162,41 @@ test('pinned visual inversion exits and enters the facing rectangle sides', () =
   const edge = result.edges[0];
   assert.equal(edge.points[0].y, nodes.get('lower-source').y - nodes.get('lower-source').height / 2, 'source exits its top face');
   assert.equal(edge.points.at(-1).y, nodes.get('upper-target').y + nodes.get('upper-target').height / 2, 'target enters its bottom face');
+});
+
+test('natural top-down geometry snaps every node shape to its fixed port anchors', () => {
+  const shapes = [
+    { type: 'task', width: 168, height: 68 },
+    { type: 'decision', width: 108, height: 108 },
+    { type: 'wait', width: 78, height: 78 },
+    { type: 'start', width: 58, height: 58 },
+    { type: 'end', width: 62, height: 62 },
+    { type: 'task', compound: { collapsed: true }, width: 190, height: 88 },
+  ];
+  for (const shape of shapes) {
+    const source = { ...shape, x: 100, y: 100 };
+    const target = { ...shape, x: 180, y: 260 };
+    assert.deepEqual(edgeEndpoint(source, target, true), {
+      x: source.x, y: source.y + source.height / 2,
+    }, `${shape.compound ? 'compound' : shape.type} output snaps`);
+    assert.deepEqual(edgeEndpoint(target, source, false), {
+      x: target.x, y: target.y - target.height / 2,
+    }, `${shape.compound ? 'compound' : shape.type} input snaps`);
+  }
+});
+
+test('inverted and sideways geometry retains the shape-boundary fallback', () => {
+  const task = { type: 'task', x: 100, y: 100, width: 168, height: 68 };
+  assert.deepEqual(edgeEndpoint(task, { x: 100, y: 20 }, true), { x: 100, y: 66 });
+  assert.deepEqual(edgeEndpoint(task, { x: 320, y: 140 }, true), { x: 184, y: 115.27272727272728 });
+
+  const decision = { type: 'decision', x: 100, y: 100, width: 108, height: 108 };
+  assert.deepEqual(edgeEndpoint(decision, { x: 320, y: 140 }, true), { x: 145.69230769230768, y: 108.3076923076923 });
+
+  const wait = { type: 'wait', x: 100, y: 100, width: 78, height: 78 };
+  const sideways = edgeEndpoint(wait, { x: 320, y: 140 }, true);
+  assert.ok(sideways.x > 138 && sideways.x < 139);
+  assert.ok(sideways.y > 106 && sideways.y < 108);
 });
 
 test('same input produces byte-for-byte deterministic layout output', () => {
