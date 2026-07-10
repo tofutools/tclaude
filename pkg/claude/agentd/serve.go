@@ -836,6 +836,7 @@ func buildMux() http.Handler {
 	// launch config into an unsaved seed. Register the literal segment before the
 	// {name} wildcard so it isn't read as a profile named "from-agent".
 	mux.HandleFunc("/v1/spawn-profiles", handleSpawnProfiles)
+	mux.HandleFunc("/v1/spawn-profile-default", handleGlobalDefaultSpawnProfile)
 	mux.HandleFunc("POST /v1/spawn-profiles/from-agent", handleSpawnProfileFromAgent)
 	mux.HandleFunc("GET /v1/spawn-profiles/export", handleSpawnProfilesExport)
 	mux.HandleFunc("POST /v1/spawn-profiles/import/inspect", handleSpawnProfilesImportInspect)

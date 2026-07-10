@@ -353,6 +353,63 @@ func handleSpawnProfiles(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleGlobalDefaultSpawnProfile exposes the single server-persisted default
+// profile used after a group's own default. The dashboard edits the same value
+// through its DB-backed preferences API; this endpoint gives the CLI an
+// inspect/set/clear surface without creating a second source of truth.
+func handleGlobalDefaultSpawnProfile(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		name, _, err := db.GetDashboardPref(dashboardDefaultProfilePrefKey)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"name": strings.TrimSpace(name)})
+	case http.MethodPut:
+		if _, ok := requirePermission(w, r, PermProfilesManage); !ok {
+			return
+		}
+		var body struct {
+			Name string `json:"name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+			return
+		}
+		name := strings.TrimSpace(body.Name)
+		if name == "" {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "profile name is required")
+			return
+		}
+		prof, err := db.GetSpawnProfile(name)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		if prof == nil {
+			writeError(w, http.StatusBadRequest, "not_found", "no such profile")
+			return
+		}
+		if err := db.SetDashboardPref(dashboardDefaultProfilePrefKey, name); err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"name": name})
+	case http.MethodDelete:
+		if _, ok := requirePermission(w, r, PermProfilesManage); !ok {
+			return
+		}
+		if err := db.DeleteDashboardPref(dashboardDefaultProfilePrefKey); err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"name": ""})
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method", "GET, PUT or DELETE")
+	}
+}
+
 // handleSpawnProfileFromAgent captures a LIVE agent's observable launch config
 // into an UNSAVED spawn-profile seed (JOH-393) — the reverse of the palette
 // dock's spawn-from-profile drag. It never persists: the dashboard's

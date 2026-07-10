@@ -18,10 +18,10 @@ import { dashPrefs } from './prefs.js';
 
 const API = '/api/spawn-profiles';
 
-// The dashboard-level default profile is a pure client preference (it only
-// pre-fills the spawn dialog as a fallback), so it lives in dashPrefs — the
-// generic key→string store — not on the server. Exported so the editor and
-// the pickers share the one key.
+// The dashboard-level default profile lives in dashPrefs' server-backed SQLite
+// store. It pre-fills dashboard forms AND is the daemon's global spawn fallback
+// after a group's own default, so the picker, CLI and raw spawn API share one
+// value. Exported so the editor and pickers share the one key.
 const DASH_DEFAULT_PROFILE_KEY = 'tclaude.dash.default_profile';
 
 // In-memory cache of the full profile list (each entry is a complete

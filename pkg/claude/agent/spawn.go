@@ -244,8 +244,8 @@ type SpawnParams struct {
 	// the CLI twin of the dashboard's "Load from profile" picker. An explicit
 	// short is pinned so boa's short-flag enricher doesn't hand `-p` elsewhere.
 	// Precedence: explicit flags override the profile, which overrides the
-	// group / harness defaults (see mergeProfileIntoSpawn).
-	Profile string `long:"profile" short:"p" optional:"true" help:"Pre-fill spawn fields from a saved spawn profile (see 'tclaude agent profiles ls'). Explicit flags override the profile; the profile overrides the group/harness defaults. remote_control is NOT taken from the profile — use --remote-control"`
+	// group / global / harness defaults (see mergeProfileIntoSpawn).
+	Profile string `long:"profile" short:"p" optional:"true" help:"Pre-fill spawn fields from a saved spawn profile (see 'tclaude agent profiles ls'). Explicit flags override the profile; the profile overrides group/global/harness defaults. remote_control is NOT taken from the profile — use --remote-control"`
 
 	Worktree     string `long:"worktree" short:"w" optional:"true" help:"Create (or reuse) a git worktree on this branch and spawn the agent into it. The worktree is created in the repo containing --cwd, unless --worktree-repo points elsewhere. Mirrors the dashboard spawn modal's worktree picker"`
 	WorktreeBase string `long:"worktree-base" optional:"true" help:"Base branch for a newly-created --worktree (default: the repo's default branch). Ignored when the --worktree branch already exists"`
@@ -276,7 +276,7 @@ type SpawnParams struct {
 	// a short from any existing field. No explicit shorts — `--effort`
 	// and `--model` only.
 	Effort string `long:"effort" optional:"true" help:"Reasoning effort for the new agent: low|medium|high|xhigh|max. Unset = the harness's own default (no flag passed)"`
-	Model  string `long:"model" optional:"true" help:"Model for the new agent. Claude: fable|fable[1m]|opus|opus[1m]|sonnet|sonnet[1m]|haiku|opusplan or a full model ID. Codex: a codex model name. Unset = the group's default model, else the harness's own default"`
+	Model  string `long:"model" optional:"true" help:"Model for the new agent. Claude: fable|fable[1m]|opus|opus[1m]|sonnet|sonnet[1m]|haiku|opusplan or a full model ID. Codex: a codex model name. Unset = group default, then global default, then the harness's own default"`
 
 	// Harness picks the coding harness the new agent runs. Declared last
 	// (no explicit short) for the same reason as Effort/Model — boa's
@@ -356,7 +356,8 @@ func spawnCmd() *cobra.Command {
 // been folded under the CLI's explicit flags. It is the CLI-side twin of the
 // dashboard's applyProfileToSpawnForm: an explicit flag wins; a field the flag
 // left blank takes the profile's value; a field neither sets stays blank, for
-// the daemon to fill from the group default profile, then the harness default.
+// the daemon to fill from the group default profile, global default profile,
+// then the harness default.
 // Pure data — RunSpawn validates these against the resolved harness and builds
 // the SpawnRequest from them.
 type resolvedSpawnFields struct {
@@ -402,9 +403,9 @@ func harnessEquivalent(a, b string) bool {
 // mergeProfileIntoSpawn folds a spawn profile's fields under the CLI's explicit
 // flags, mirroring the dashboard's client-side pre-fill (JOH-210). Precedence,
 // per field: explicit flag > profile > blank. The daemon then fills a still-
-// blank field from the group's default profile, then the harness default — so
-// the intended order is flag > --profile > group-default profile > harness
-// default. This holds for sandbox/approval too: the CLI VALIDATES those without
+// blank field from the group's default profile, then the global profile, then
+// the harness default — so the intended order is flag > --profile > group >
+// global > harness. This holds for sandbox/approval too: the CLI VALIDATES those without
 // applying the harness default (see RunSpawn), so an omitted flag reaches the
 // daemon still blank and the group-default-profile layer applies uniformly
 // across all launch fields, not just harness/model/effort. An explicit
@@ -590,7 +591,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	}
 	// Fold the profile under the explicit flags (flag > profile > blank). The
 	// daemon then fills any still-blank launch field from the group's default
-	// profile, then the harness default.
+	// profile, global default profile, then the harness default.
 	merged := mergeProfileIntoSpawn(p, explicitMessage, prof)
 
 	// Effective brief: an explicit one was cap-checked above; a profile one was
@@ -720,6 +721,16 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		}
 	}
 
+	// Keep an omitted harness omitted on the wire so the daemon can apply the
+	// group and global default-profile tiers before falling back to Claude. An
+	// explicit --profile whose harness is blank still means "Claude", so pin
+	// the catalog-resolved name in that case; otherwise a lower-tier Codex
+	// profile could incorrectly displace the explicitly selected profile.
+	requestHarness := strings.TrimSpace(merged.Harness)
+	if prof != nil && requestHarness == "" {
+		requestHarness = h.Name
+	}
+
 	req := SpawnRequest{
 		Name:                   name,
 		Role:                   merged.Role,
@@ -733,7 +744,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		AutoFocus:              merged.AutoFocus,
 		Effort:                 effort,
 		Model:                  model,
-		Harness:                h.Name,
+		Harness:                requestHarness,
 		SandboxMode:            sandboxMode,
 		AskUserQuestionTimeout: askTimeout,
 		ApprovalPolicy:         approvalPolicy,

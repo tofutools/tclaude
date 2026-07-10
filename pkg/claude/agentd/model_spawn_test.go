@@ -2,18 +2,28 @@ package agentd
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // TestSessionNewArgs_ModelOmittedWhenUnset is the acceptance check for
 // the spawn path's forked `tclaude session new`: with no model chosen,
 // the argv must carry no --model flag, so claude uses its own default.
 func TestSessionNewArgs_ModelOmittedWhenUnset(t *testing.T) {
-	args := sessionNewArgs(clcommon.SpawnArgs{Label: "lbl", Cwd: "/tmp/x"})
+	args := sessionNewArgs(clcommon.SpawnArgs{Label: "lbl", Cwd: "/tmp/x", Harness: harness.CodexName})
 	if slices.Contains(args, "--model") {
 		t.Fatalf("unset model must omit --model, got %v", args)
+	}
+	h, err := harness.Resolve(harness.CodexName)
+	if err != nil {
+		t.Fatalf("resolve codex: %v", err)
+	}
+	cmd := h.Spawn.BuildCommand(harness.SpawnSpec{})
+	if strings.Contains(cmd, "--model") {
+		t.Fatalf("unset model must also omit --model from the final Codex argv, got %q", cmd)
 	}
 }
 

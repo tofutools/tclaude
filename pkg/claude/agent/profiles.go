@@ -25,7 +25,7 @@ import (
 // twin of its Profiles editor, plus the source of the names you pass to
 // `tclaude agent spawn --profile <name>`.
 //
-// Verbs: `ls`, `show`, `create`, `edit`, `rm` — the CLI twin of the dashboard's
+// Verbs: `ls`, `show`, `create`, `edit`, `rm`, `default` — the CLI twin of the dashboard's
 // profile editor, mirroring `roles ls/show/create/edit/rm`. Reads (ls/show) are
 // open; writes (create/edit/rm) rewrite shared spawn config and so are gated
 // daemon-side on profiles.manage (effectively human-only — an agent without the
@@ -84,18 +84,129 @@ func profilesCmd() *cobra.Command {
 			"the spawn-agent dialog's fields — a launch shape (harness/model/effort/sandbox/approval + toggles), " +
 			"identity (name/role/descr/initial message) and birth-time access (owner + permission overrides). Pass a " +
 			"profile name to `tclaude agent spawn --profile <name>` to pre-fill those fields; explicit spawn flags " +
-			"override the profile, and the profile overrides the group / harness defaults.\n\n" +
+			"override the profile, and the profile overrides the group / global / harness defaults.\n\n" +
 			"The CLI twin of the dashboard's Profiles editor. Reads (ls / show) are open; writes (create / edit / rm) " +
 			"are gated daemon-side on profiles.manage (effectively human-only). Mirrors `roles`.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			profilesLsCmd(),
 			profilesShowCmd(),
+			profilesDefaultCmd(),
 			profilesCreateCmd(),
 			profilesEditCmd(),
 			profilesRmCmd(),
 		},
 	}.ToCobra()
+}
+
+// ---- global default ----
+
+func profilesDefaultCmd() *cobra.Command {
+	return boa.CmdT[struct{}]{
+		Use:         "default",
+		Short:       "Show, set or clear the global default spawn profile",
+		Long:        "Manage the global default profile used after a group's own default. The dashboard's global profile picker edits this same server-persisted value.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		SubCmds: []*cobra.Command{
+			profilesDefaultShowCmd(),
+			profilesDefaultSetCmd(),
+			profilesDefaultClearCmd(),
+		},
+	}.ToCobra()
+}
+
+func profilesDefaultShowCmd() *cobra.Command {
+	return boa.CmdT[struct{}]{
+		Use:         "show",
+		Short:       "Show the global default spawn profile",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
+			os.Exit(runProfilesDefaultShow(os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+type profilesDefaultSetParams struct {
+	Name string `pos:"true" help:"Profile name (from 'tclaude agent profiles ls')."`
+}
+
+func profilesDefaultSetCmd() *cobra.Command {
+	return boa.CmdT[profilesDefaultSetParams]{
+		Use:         "set <name>",
+		Short:       "Set the global default spawn profile",
+		Long:        "Set the profile whose fields fill spawn parameters left blank by explicit flags, an explicit --profile and the target group's default profile. Gated on profiles.manage.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *profilesDefaultSetParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Name).SetAlternativesFunc(completeSpawnProfileNames)
+			return nil
+		},
+		RunFunc: func(p *profilesDefaultSetParams, _ *cobra.Command, _ []string) {
+			os.Exit(runProfilesDefaultSet(p, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func profilesDefaultClearCmd() *cobra.Command {
+	return boa.CmdT[struct{}]{
+		Use:         "clear",
+		Short:       "Clear the global default spawn profile",
+		Long:        "Clear the global spawn-profile fallback. Gated on profiles.manage.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
+			os.Exit(runProfilesDefaultClear(os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+type profilesDefaultResponse struct {
+	Name string `json:"name"`
+}
+
+func runProfilesDefaultShow(stdout, stderr io.Writer) int {
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	var resp profilesDefaultResponse
+	if err := DaemonRequest(http.MethodGet, "/v1/spawn-profile-default", nil, &resp, DaemonOpts{}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	if resp.Name == "" {
+		fmt.Fprintln(stdout, "(no global default spawn profile)")
+	} else {
+		fmt.Fprintln(stdout, resp.Name)
+	}
+	return rcOK
+}
+
+func runProfilesDefaultSet(p *profilesDefaultSetParams, stdout, stderr io.Writer) int {
+	name := strings.TrimSpace(p.Name)
+	if name == "" {
+		fmt.Fprintln(stderr, "Error: a profile name is required")
+		return rcInvalidArg
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	var resp profilesDefaultResponse
+	if err := DaemonRequest(http.MethodPut, "/v1/spawn-profile-default", map[string]string{"name": name}, &resp, DaemonOpts{}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	fmt.Fprintf(stdout, "Global default profile set to %s\n", resp.Name)
+	return rcOK
+}
+
+func runProfilesDefaultClear(stdout, stderr io.Writer) int {
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	if err := DaemonRequest(http.MethodDelete, "/v1/spawn-profile-default", nil, nil, DaemonOpts{}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	fmt.Fprintln(stdout, "Global default profile cleared")
+	return rcOK
 }
 
 // ---- ls ----
