@@ -1592,66 +1592,40 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		body.Cwd = g.DefaultCwd
 	}
 
-	// Snapshot which echoed launch fields the request set BEFORE any mutation
-	// (the harness pin below, then the profile overlays) so the resolved-shape
-	// echo can tell an explicit value apart from a profile-supplied one (TCL-304).
-	explicitLaunch := launchExplicit{
-		harness: strings.TrimSpace(body.Harness) != "",
-		model:   strings.TrimSpace(body.Model) != "",
-		effort:  strings.TrimSpace(body.Effort) != "",
+	// Resolve the harness independently through the complete chain. Other launch
+	// fields never pin it: explicit request > named CLI profile > group default
+	// profile > global default profile > Claude. Field candidates are validated
+	// against this resolved harness below.
+	var namedProfile *db.SpawnProfile
+	if name := strings.TrimSpace(body.Profile); name != "" {
+		var profileErr error
+		namedProfile, profileErr = db.GetSpawnProfile(name)
+		if profileErr != nil || namedProfile == nil {
+			writeError(w, http.StatusBadRequest, "invalid_profile", fmt.Sprintf("spawn profile %q does not exist", name))
+			return
+		}
 	}
-
-	// A request that omits harness AND every harness-specific launch field is
-	// genuinely blank: group/global profiles may choose its harness. Once the
-	// caller supplies model/effort/sandbox/etc., preserve the historical default
-	// Claude catalog used for that explicit value; a lower-tier Codex profile
-	// must not reinterpret it or turn an otherwise-valid explicit model into a
-	// cross-harness validation error. The CLI mirrors this pin before marshaling.
-	if strings.TrimSpace(body.Harness) == "" && (strings.TrimSpace(body.Model) != "" ||
-		strings.TrimSpace(body.Effort) != "" ||
-		strings.TrimSpace(body.SandboxMode) != "" ||
-		strings.TrimSpace(body.AskUserQuestionTimeout) != "" ||
-		strings.TrimSpace(body.ApprovalPolicy) != "" ||
-		body.AutoReviewSpecified() || body.TrustDirSpecified() || body.RemoteControl != nil) {
-		body.Harness = harness.DefaultName
-	}
-
-	// Overlay the group's default spawn profile and then the global default
-	// profile onto blank launch fields BEFORE harness/model/sandbox resolution — the same way
-	// the default_cwd fill above reaches every spawn path. Doing it here (not
-	// only in executeSpawn) is what makes a group whose default profile selects
-	// a Codex harness+model resolve harness-correctly: the harness resolver
-	// below sees the profile's harness and validates the profile's model
-	// against THAT harness's catalog (the #343 fix), instead of defaulting the
-	// blank request to Claude Code. A field the request set wins; the profile's
-	// launch fields were validated against their own harness at save and are
-	// re-validated here as if the caller had typed them. The toggles are bool
-	// in the request, so a profile that sets them true fills a request that
-	// left them at the false default.
-	//
-	// The profile is only inherited when the spawn will run on the profile's
-	// harness. A request that pins a DIFFERENT harness brings its own
-	// harness-specific fields (model/sandbox/approval/…, which the profile
-	// validated against ITS harness), so copying the profile's onto a foreign
-	// harness would just produce a confusing 400 at resolution; we skip the
-	// profile entirely instead. A blank request adopts the profile's harness.
-	// Load each profile once; both are reused for launch-field overlay and the
-	// remote-control policy resolution below (JOH-262).
 	groupProfile := groupDefaultProfile(g)
 	globalProfile := globalDefaultProfile()
-	overlayState := profileLaunchOverlayState{
-		autoReviewSet: body.AutoReviewSpecified(),
-		trustDirSet:   body.TrustDirSpecified(),
+	profileTiers := []launchProfileTier{
+		{profile: namedProfile, source: profileSource(namedProfile, agent.ProvCLIProfileSource)},
+		{profile: groupProfile, source: profileSource(groupProfile, agent.ProvGroupProfileSource)},
+		{profile: globalProfile, source: profileSource(globalProfile, agent.ProvGlobalProfileSource)},
 	}
-	// Whether the harness was still blank when the overlays ran — only then can a
-	// profile actually assign it. After the pin above, an explicit launch field
-	// (e.g. --model) has already set body.Harness to the default, so a
-	// participating claude profile must NOT be credited for the harness: the
-	// explicit field defaulted it, the profile only rode along. Used by the
-	// resolved-shape echo's harness attribution (TCL-304).
-	explicitLaunch.harnessBlankAtOverlay = strings.TrimSpace(body.Harness) == ""
-	groupProfileApplied := overlayProfileLaunch(&body, groupProfile, &overlayState)
-	globalProfileApplied := overlayProfileLaunch(&body, globalProfile, &overlayState)
+	harnessSource := agent.ProvExplicit
+	if strings.TrimSpace(body.Harness) == "" {
+		harnessSource = agent.ProvHarnessDefault
+		for _, tier := range profileTiers {
+			if tier.profile != nil && strings.TrimSpace(tier.profile.Harness) != "" {
+				body.Harness = strings.TrimSpace(tier.profile.Harness)
+				harnessSource = tier.source
+				break
+			}
+		}
+	}
+	if strings.TrimSpace(body.Harness) == "" {
+		body.Harness = harness.DefaultName
+	}
 
 	// Validate the requested cwd before doing any work. Expands "~",
 	// makes the path absolute, and confirms it exists as a directory.
@@ -1688,6 +1662,81 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if harnessErr != nil {
 		writeError(w, http.StatusBadRequest, "invalid_harness", harnessErr.Error())
 		return
+	}
+	validateModel := func(raw string) (string, error) {
+		value, err := h.Models.ValidateModel(raw)
+		if err == nil {
+			return value, nil
+		}
+		other := "codex"
+		if h.Name == "codex" {
+			other = harness.DefaultName
+		}
+		return "", fmt.Errorf("model %q is not valid for %s; pass --harness %s or a matching --model: %w",
+			strings.TrimSpace(raw), h.Name, other, err)
+	}
+	var fieldFail *spawnFailure
+	var modelSource, modelNote, effortSource, effortNote string
+	body.Model, modelSource, modelNote, fieldFail = resolveStringLaunchField(
+		"model", body.Model, h.Name, profileTiers, func(p *db.SpawnProfile) string { return p.Model }, validateModel)
+	if fieldFail != nil {
+		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
+		return
+	}
+	body.Effort, effortSource, effortNote, fieldFail = resolveStringLaunchField(
+		"effort", body.Effort, h.Name, profileTiers, func(p *db.SpawnProfile) string { return p.Effort }, h.Models.ValidateEffort)
+	if fieldFail != nil {
+		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
+		return
+	}
+	var sandboxNote, approvalNote, askTimeoutNote string
+	body.SandboxMode, _, sandboxNote, fieldFail = resolveStringLaunchField(
+		"sandbox", body.SandboxMode, h.Name, profileTiers, func(p *db.SpawnProfile) string { return p.Sandbox },
+		func(raw string) (string, error) { return harness.ValidateSandboxMode(h, raw) })
+	if fieldFail != nil {
+		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
+		return
+	}
+	body.ApprovalPolicy, _, approvalNote, fieldFail = resolveStringLaunchField(
+		"approval", body.ApprovalPolicy, h.Name, profileTiers, func(p *db.SpawnProfile) string { return p.Approval },
+		func(raw string) (string, error) { return harness.ValidateApprovalPolicy(h, raw) })
+	if fieldFail != nil {
+		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
+		return
+	}
+	body.AskUserQuestionTimeout, _, askTimeoutNote, fieldFail = resolveStringLaunchField(
+		"ask_user_question_timeout", body.AskUserQuestionTimeout, h.Name, profileTiers,
+		func(p *db.SpawnProfile) string { return p.AskUserQuestionTimeout },
+		func(raw string) (string, error) { return harness.ResolveAskTimeoutMode(h, raw) })
+	if fieldFail != nil {
+		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
+		return
+	}
+	var autoReviewSet, trustDirSet bool
+	var autoReviewNote, trustDirNote string
+	body.AutoReview, autoReviewSet, autoReviewNote, fieldFail = resolveBoolLaunchField(
+		"auto_review", body.AutoReview, body.AutoReviewSpecified(), h.Name, profileTiers,
+		func(p *db.SpawnProfile) *bool { return p.AutoReview }, func(v bool) (bool, error) { return harness.ResolveAutoReview(h, v) })
+	if fieldFail != nil {
+		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
+		return
+	}
+	body.TrustDir, trustDirSet, trustDirNote, fieldFail = resolveBoolLaunchField(
+		"trust_dir", body.TrustDir, body.TrustDirSpecified(), h.Name, profileTiers,
+		func(p *db.SpawnProfile) *bool { return p.TrustDir }, func(v bool) (bool, error) { return harness.ResolveTrustDir(h, v) })
+	if fieldFail != nil {
+		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
+		return
+	}
+	resolvedLaunch := &agent.ResolvedLaunch{
+		Harness: agent.ResolvedField{Value: h.Name, Source: harnessSource},
+		Model:   agent.ResolvedField{Value: body.Model, Source: modelSource, Note: modelNote},
+		Effort:  agent.ResolvedField{Value: body.Effort, Source: effortSource, Note: effortNote},
+	}
+	for _, note := range []string{sandboxNote, approvalNote, askTimeoutNote, autoReviewNote, trustDirNote} {
+		if note != "" {
+			resolvedLaunch.Notes = append(resolvedLaunch.Notes, note)
+		}
 	}
 
 	// Validate the requested effort before building the spawn params.
@@ -1903,10 +1952,21 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// is belt-and-braces for that case; it becomes load-bearing the day a second
 	// remote-control-capable harness is registered.
 	var profileRemoteControl *bool
-	if groupProfileApplied && groupProfile.RemoteControl != nil {
-		profileRemoteControl = groupProfile.RemoteControl
-	} else if globalProfileApplied && globalProfile.RemoteControl != nil {
-		profileRemoteControl = globalProfile.RemoteControl
+	for _, tier := range profileTiers[1:] { // named --profile remote_control remains CLI-inapplicable by contract
+		prof := tier.profile
+		if prof == nil || prof.RemoteControl == nil {
+			continue
+		}
+		if _, err := harness.ResolveRemoteControl(h, *prof.RemoteControl); err == nil {
+			profileRemoteControl = prof.RemoteControl
+			break
+		} else if profileMatchesHarness(prof, h.Name) {
+			writeError(w, http.StatusBadRequest, "invalid_remote_control", fmt.Sprintf("profile %q: %v", prof.Name, err))
+			return
+		} else {
+			resolvedLaunch.Notes = append(resolvedLaunch.Notes,
+				fmt.Sprintf("%s remote_control ignored (not valid for %s)", tier.source, h.Name))
+		}
 	}
 	remoteControl := resolveRemoteControlIntent(g.RemoteControl, profileRemoteControl, body.RemoteControl)
 	if remoteControl && !h.CanRemoteControl() {
@@ -1971,9 +2031,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		AskUserQuestionTimeout:     askTimeout,
 		ApprovalPolicy:             approvalPolicy,
 		AutoReview:                 autoReview,
-		AutoReviewSet:              overlayState.autoReviewSet,
+		AutoReviewSet:              autoReviewSet,
 		TrustDir:                   trustDir,
-		TrustDirSet:                overlayState.trustDirSet,
+		TrustDirSet:                trustDirSet,
 		RemoteControl:              remoteControl,
 		ReplyToConv:                replyToConv,
 		SpawnedByConv:              spawnerConvID,
@@ -2002,12 +2062,28 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		p.GroupContext = g.DefaultContext
 	}
 
+	if beforeExecuteSpawnForTest != nil {
+		beforeExecuteSpawnForTest()
+	}
 	outcome, fail := executeSpawn(g, p)
 	if fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
 
+	// executeSpawn intentionally re-reads default profiles as a safety net for
+	// non-HTTP callers. If state changed after the handler snapshot, report the
+	// values that actually reached the spawner and label the late fill honestly.
+	for field, launched := range map[*agent.ResolvedField]string{
+		&resolvedLaunch.Harness: outcome.Harness,
+		&resolvedLaunch.Model:   outcome.Model,
+		&resolvedLaunch.Effort:  outcome.Effort,
+	} {
+		if field.Value != launched {
+			field.Value = launched
+			field.Source = agent.ProvLaunchDefault
+		}
+	}
 	resp := map[string]any{
 		"group":        g.Name,
 		"conv_id":      outcome.ConvID,
@@ -2017,11 +2093,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		// Echo the fully-resolved launch shape + per-field provenance so the
 		// caller can see WHERE harness/model/effort came from — the TCL-304
 		// mistake-preventer for a blank spawn silently inheriting a default
-		// profile's vendor. Resolution above is final on this HTTP path
-		// (executeSpawn's safety-net overlay is a no-op here), so h/model/effort
-		// are the launched values.
-		"resolved": resolveLaunchProvenance(explicitLaunch, h.Name, model, effort,
-			groupProfile, globalProfile, groupProfileApplied, globalProfileApplied),
+		// profile's vendor. Values come from executeSpawn's final params so the
+		// echo remains truthful even if a default profile changed mid-request.
+		"resolved": resolvedLaunch,
 	}
 	// Lead with the spawned agent's stable id when its conv has already
 	// enrolled (conv-id resolved inline); a pending spawn has no conv yet,
@@ -2223,6 +2297,9 @@ type spawnOutcome struct {
 	ConvID      string
 	Label       string
 	TmuxSession string
+	Harness     string
+	Model       string
+	Effort      string
 	// FocusMode reports what the auto-focus attempt (if AutoFocus was
 	// requested) actually did: "" (not requested, or the pane never came
 	// up within the poll), "native" (a real GUI terminal window opened),
@@ -2257,6 +2334,12 @@ type spawnFailure struct {
 // A var, not a const, so a flow test can shrink it (SetAsyncSpawnInlineGrace-
 // ForTest) and drive the pending path without a multi-second real wait.
 var asyncSpawnInlineGrace = 6 * time.Second
+
+// beforeExecuteSpawnForTest is a deterministic seam for proving that the
+// resolved-shape echo follows the final parameters when default-profile state
+// changes between the handler snapshot and executeSpawn's safety-net overlay.
+// It is nil and unreachable in production behavior.
+var beforeExecuteSpawnForTest func()
 
 // codexAsyncSpawnResponseGrace bounds how long the HTTP spawn endpoint waits
 // for a seed-needing harness (Codex) before returning a visible Pending row.
@@ -2366,128 +2449,96 @@ func harnessOrDefault(name string) string {
 	return name
 }
 
-// launchExplicit records which echoed launch fields the spawn request set
-// explicitly, snapshotted before any profile overlay. Used only to attribute
-// provenance in the resolved-shape echo (TCL-304).
-type launchExplicit struct {
-	harness bool
-	model   bool
-	effort  bool
-	// harnessBlankAtOverlay is true when the harness was still blank when the
-	// profile overlays ran — the only case where a profile could assign it.
-	// False once an explicit --harness OR the launch-field pin has set it, so a
-	// participating profile is not credited for a harness it merely rode along
-	// with. Set after the pin, before the overlays.
-	harnessBlankAtOverlay bool
+type launchProfileTier struct {
+	profile *db.SpawnProfile
+	source  string
 }
 
-// resolveLaunchProvenance builds the resolved-shape echo for a spawn response:
-// the resolved harness/model/effort values plus the resolution tier each came
-// from (TCL-304). It reuses the SAME inputs the overlay already consumed — the
-// pre-overlay explicit snapshot, the two profiles, and whether each participated
-// (harness-compatible) — so the reported source can never disagree with what the
-// overlay actually did. Per field the tiers are, highest first: explicit request
-// field > group default profile > global default profile > harness default. The
-// CLI --profile tier is folded into the request client-side, so a value it
-// supplied reads as "explicit" here; RunSpawn relabels those before printing.
-func resolveLaunchProvenance(
-	explicit launchExplicit,
-	resolvedHarness, resolvedModel, resolvedEffort string,
-	groupProfile, globalProfile *db.SpawnProfile,
-	groupApplied, globalApplied bool,
-) *agent.ResolvedLaunch {
-	// source picks the tier that supplied a field's value. groupApplied /
-	// globalApplied already fold in harness compatibility, and a non-participating
-	// tier's value is never read — mirroring overlayProfileLaunch's blank-fill.
-	source := func(explicitSet bool, groupVal, globalVal string) string {
-		switch {
-		case explicitSet:
-			return agent.ProvExplicit
-		case groupApplied && strings.TrimSpace(groupVal) != "":
-			return agent.ProvGroupProfileSource(groupProfile.Name)
-		case globalApplied && strings.TrimSpace(globalVal) != "":
-			return agent.ProvGlobalProfileSource(globalProfile.Name)
-		default:
-			return agent.ProvHarnessDefault
-		}
-	}
-	// gv / glv read a profile field only when that tier participated, so a nil or
-	// non-participating profile contributes no value (and no attribution).
-	gv := func(get func(*db.SpawnProfile) string) string {
-		if groupApplied && groupProfile != nil {
-			return get(groupProfile)
-		}
-		return ""
-	}
-	glv := func(get func(*db.SpawnProfile) string) string {
-		if globalApplied && globalProfile != nil {
-			return get(globalProfile)
-		}
-		return ""
-	}
-	harnessGet := func(p *db.SpawnProfile) string { return p.Harness }
-	modelGet := func(p *db.SpawnProfile) string { return p.Model }
-	effortGet := func(p *db.SpawnProfile) string { return p.Effort }
-	// A profile is credited for the harness only if the harness was blank when
-	// the overlays ran; otherwise the pin (an explicit non-harness launch field)
-	// or an explicit --harness already fixed it, and the harness reads as
-	// explicit (handled above) or harness default — never the profile.
-	harnessGroupVal, harnessGlobalVal := "", ""
-	if explicit.harnessBlankAtOverlay {
-		harnessGroupVal, harnessGlobalVal = gv(harnessGet), glv(harnessGet)
-	}
-	return &agent.ResolvedLaunch{
-		Harness: agent.ResolvedField{Value: resolvedHarness, Source: source(explicit.harness, harnessGroupVal, harnessGlobalVal)},
-		Model:   agent.ResolvedField{Value: resolvedModel, Source: source(explicit.model, gv(modelGet), glv(modelGet))},
-		Effort:  agent.ResolvedField{Value: resolvedEffort, Source: source(explicit.effort, gv(effortGet), glv(effortGet))},
-	}
-}
-
-// overlayProfileLaunch fills only blank launch fields, preserving the
-// per-parameter precedence established by the caller. It returns whether the
-// profile is compatible with (and therefore participates in) the effective
-// harness. A blank harness adopts the profile's harness; a profile whose own
-// harness is blank explicitly means the default Claude harness.
-type profileLaunchOverlayState struct {
-	autoReviewSet bool
-	trustDirSet   bool
-}
-
-func overlayProfileLaunch(p *agent.SpawnRequest, prof *db.SpawnProfile, state *profileLaunchOverlayState) bool {
+func profileSource(prof *db.SpawnProfile, format func(string) string) string {
 	if prof == nil {
-		return false
+		return ""
 	}
-	requestedHarness := strings.TrimSpace(p.Harness)
-	if requestedHarness != "" && harnessOrDefault(requestedHarness) != harnessOrDefault(prof.Harness) {
-		return false
+	return format(prof.Name)
+}
+
+func profileMatchesHarness(prof *db.SpawnProfile, harnessName string) bool {
+	return prof != nil && strings.TrimSpace(prof.Harness) != "" &&
+		harnessOrDefault(prof.Harness) == harnessOrDefault(harnessName)
+}
+
+// resolveStringLaunchField applies explicit > named > group > global for one
+// launch field. Explicit values are direct intent and fail loudly. A profile
+// value invalid for a foreign resolved harness is ambient configuration: skip
+// it, disclose the skip, and continue to the next tier. A profile claiming the
+// resolved harness but carrying an invalid value is self-inconsistent and
+// remains a loud error.
+func resolveStringLaunchField(
+	field, explicitValue, harnessName string,
+	tiers []launchProfileTier,
+	profileValue func(*db.SpawnProfile) string,
+	validate func(string) (string, error),
+) (value, source, note string, fail *spawnFailure) {
+	if raw := strings.TrimSpace(explicitValue); raw != "" {
+		value, err := validate(raw)
+		if err != nil {
+			return "", "", "", &spawnFailure{http.StatusBadRequest, "invalid_" + field, err.Error()}
+		}
+		return value, agent.ProvExplicit, "", nil
 	}
-	if requestedHarness == "" {
-		p.Harness = harnessOrDefault(prof.Harness)
+	for _, tier := range tiers {
+		if tier.profile == nil {
+			continue
+		}
+		raw := strings.TrimSpace(profileValue(tier.profile))
+		if raw == "" {
+			continue
+		}
+		value, err := validate(raw)
+		if err == nil {
+			return value, tier.source, note, nil
+		}
+		if profileMatchesHarness(tier.profile, harnessName) {
+			return "", "", "", &spawnFailure{http.StatusBadRequest, "invalid_" + field,
+				fmt.Sprintf("profile %q: %v", tier.profile.Name, err)}
+		}
+		if note == "" {
+			note = fmt.Sprintf("%s %s ignored (not valid for %s)", tier.source, field, harnessName)
+		}
 	}
-	if strings.TrimSpace(p.Model) == "" {
-		p.Model = prof.Model
+	return "", agent.ProvHarnessDefault, note, nil
+}
+
+func resolveBoolLaunchField(
+	field string, explicitValue, explicitSet bool, harnessName string,
+	tiers []launchProfileTier,
+	profileValue func(*db.SpawnProfile) *bool,
+	validate func(bool) (bool, error),
+) (bool, bool, string, *spawnFailure) {
+	if explicitSet {
+		value, err := validate(explicitValue)
+		if err != nil {
+			return false, false, "", &spawnFailure{http.StatusBadRequest, "invalid_" + field, err.Error()}
+		}
+		return value, true, "", nil
 	}
-	if strings.TrimSpace(p.Effort) == "" {
-		p.Effort = prof.Effort
+	var note string
+	for _, tier := range tiers {
+		if tier.profile == nil || profileValue(tier.profile) == nil {
+			continue
+		}
+		value, err := validate(*profileValue(tier.profile))
+		if err == nil {
+			return value, true, note, nil
+		}
+		if profileMatchesHarness(tier.profile, harnessName) {
+			return false, false, "", &spawnFailure{http.StatusBadRequest, "invalid_" + field,
+				fmt.Sprintf("profile %q: %v", tier.profile.Name, err)}
+		}
+		if note == "" {
+			note = fmt.Sprintf("%s %s ignored (not valid for %s)", tier.source, field, harnessName)
+		}
 	}
-	if strings.TrimSpace(p.SandboxMode) == "" {
-		p.SandboxMode = prof.Sandbox
-	}
-	if strings.TrimSpace(p.ApprovalPolicy) == "" {
-		p.ApprovalPolicy = prof.Approval
-	}
-	if strings.TrimSpace(p.AskUserQuestionTimeout) == "" {
-		p.AskUserQuestionTimeout = prof.AskUserQuestionTimeout
-	}
-	if !state.autoReviewSet && prof.AutoReview != nil {
-		p.AutoReview = *prof.AutoReview
-		state.autoReviewSet = true
-	}
-	if !state.trustDirSet && prof.TrustDir != nil {
-		p.TrustDir = *prof.TrustDir
-		state.trustDirSet = true
-	}
-	return true
+	return false, false, note, nil
 }
 
 // applyDefaultProfile fills blank launch fields on p from the group's default
@@ -2500,58 +2551,25 @@ func overlayProfileLaunch(p *agent.SpawnRequest, prof *db.SpawnProfile, state *p
 // never — NOT an unsandboxed config.toml-driven agent). Returns a typed failure
 // if a filled value is invalid for the harness.
 //
-// The profile's launch fields are inherited ONLY when the spawn will run on the
-// profile's harness — the same gate handleGroupSpawn applies before its own
-// resolution. A spawn that pins a DIFFERENT harness brings its own
-// harness-specific fields (validated against ITS harness); copying the profile's
-// over them would either 400 at resolution or, worse, leak a foreign model onto
-// the pinned harness. So when the harnesses differ we skip the profile here too,
-// preserving handleGroupSpawn's deliberate skip instead of silently undoing it.
-// A blank-harness caller adopts the profile's harness and inherits the rest.
+// The harness resolves independently first. Each profile field is then checked
+// against it: compatible generic values still participate across vendors,
+// while foreign model/vendor-specific values are skipped and fall through.
 //
 // This is the SAFETY-NET fill for any caller that reaches executeSpawn WITHOUT
 // going through handleGroupSpawn (today only the group-template instantiator).
 // handleGroupSpawn itself overlays the profiles onto the request BEFORE
 // its own harness/model/sandbox resolution, leaving these fields already
 // resolved here — so on that path the fills are no-ops and secure-default
-// resolution is idempotent. Lower tiers participate only when harness-compatible.
+// resolution is idempotent.
 func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	profiles := []*db.SpawnProfile{groupDefaultProfile(g), globalDefaultProfile()}
-	applied := false
-	overlayState := profileLaunchOverlayState{
-		autoReviewSet: p.AutoReviewSet || p.AutoReview,
-		trustDirSet:   p.TrustDirSet || p.TrustDir,
-	}
+	tiers := make([]launchProfileTier, 0, len(profiles))
 	for _, prof := range profiles {
-		if prof == nil || (p.Harness != "" && harnessOrDefault(p.Harness) != harnessOrDefault(prof.Harness)) {
-			continue
-		}
-		applied = true
-		if p.Harness == "" {
-			p.Harness = harnessOrDefault(prof.Harness)
-		}
-		if p.Model == "" {
-			p.Model = prof.Model
-		}
-		if p.Effort == "" {
-			p.Effort = prof.Effort
-		}
-		if p.SandboxMode == "" {
-			p.SandboxMode = prof.Sandbox
-		}
-		if p.ApprovalPolicy == "" {
-			p.ApprovalPolicy = prof.Approval
-		}
-		if p.AskUserQuestionTimeout == "" {
-			p.AskUserQuestionTimeout = prof.AskUserQuestionTimeout
-		}
-		if !overlayState.autoReviewSet && prof.AutoReview != nil {
-			p.AutoReview = *prof.AutoReview
-			overlayState.autoReviewSet = true
-		}
-		if !overlayState.trustDirSet && prof.TrustDir != nil {
-			p.TrustDir = *prof.TrustDir
-			overlayState.trustDirSet = true
+		if prof != nil {
+			tiers = append(tiers, launchProfileTier{profile: prof})
+			if strings.TrimSpace(p.Harness) == "" && strings.TrimSpace(prof.Harness) != "" {
+				p.Harness = strings.TrimSpace(prof.Harness)
+			}
 		}
 	}
 
@@ -2561,12 +2579,53 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	// resolved); the load-bearing case is any other caller that reaches
 	// executeSpawn with a profile-carrying group/global default, where this is
 	// what keeps a Codex spawn sandboxed. Skipped when no profile participates.
-	if !applied {
+	if len(tiers) == 0 {
 		return nil
 	}
 	h, err := resolveSpawnHarness(p.Harness)
 	if err != nil {
 		return &spawnFailure{http.StatusBadRequest, "invalid_harness", err.Error()}
+	}
+	var fail *spawnFailure
+	p.Model, _, _, fail = resolveStringLaunchField("model", p.Model, h.Name, tiers,
+		func(prof *db.SpawnProfile) string { return prof.Model }, h.Models.ValidateModel)
+	if fail != nil {
+		return fail
+	}
+	p.Effort, _, _, fail = resolveStringLaunchField("effort", p.Effort, h.Name, tiers,
+		func(prof *db.SpawnProfile) string { return prof.Effort }, h.Models.ValidateEffort)
+	if fail != nil {
+		return fail
+	}
+	p.SandboxMode, _, _, fail = resolveStringLaunchField("sandbox", p.SandboxMode, h.Name, tiers,
+		func(prof *db.SpawnProfile) string { return prof.Sandbox },
+		func(raw string) (string, error) { return harness.ValidateSandboxMode(h, raw) })
+	if fail != nil {
+		return fail
+	}
+	p.ApprovalPolicy, _, _, fail = resolveStringLaunchField("approval", p.ApprovalPolicy, h.Name, tiers,
+		func(prof *db.SpawnProfile) string { return prof.Approval },
+		func(raw string) (string, error) { return harness.ValidateApprovalPolicy(h, raw) })
+	if fail != nil {
+		return fail
+	}
+	p.AskUserQuestionTimeout, _, _, fail = resolveStringLaunchField("ask_user_question_timeout", p.AskUserQuestionTimeout, h.Name, tiers,
+		func(prof *db.SpawnProfile) string { return prof.AskUserQuestionTimeout },
+		func(raw string) (string, error) { return harness.ResolveAskTimeoutMode(h, raw) })
+	if fail != nil {
+		return fail
+	}
+	p.AutoReview, p.AutoReviewSet, _, fail = resolveBoolLaunchField("auto_review", p.AutoReview,
+		p.AutoReviewSet || p.AutoReview, h.Name, tiers, func(prof *db.SpawnProfile) *bool { return prof.AutoReview },
+		func(v bool) (bool, error) { return harness.ResolveAutoReview(h, v) })
+	if fail != nil {
+		return fail
+	}
+	p.TrustDir, p.TrustDirSet, _, fail = resolveBoolLaunchField("trust_dir", p.TrustDir,
+		p.TrustDirSet || p.TrustDir, h.Name, tiers, func(prof *db.SpawnProfile) *bool { return prof.TrustDir },
+		func(v bool) (bool, error) { return harness.ResolveTrustDir(h, v) })
+	if fail != nil {
+		return fail
 	}
 	if p.SandboxMode, err = harness.ResolveSandboxMode(h, p.SandboxMode); err != nil {
 		return &spawnFailure{http.StatusBadRequest, "invalid_sandbox", err.Error()}
@@ -2947,7 +3006,8 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	if launchEnroll {
 		focusSpawn()
 		markBriefingConsumed(preConvID, preMsgID, briefingInlined)
-		return &spawnOutcome{ConvID: preConvID, Label: label, TmuxSession: label, FocusMode: focusMode}, nil
+		return &spawnOutcome{ConvID: preConvID, Label: label, TmuxSession: label, FocusMode: focusMode,
+			Harness: p.Harness, Model: p.Model, Effort: p.Effort}, nil
 	}
 
 	// Conv-id resolved within the poll: finish enrollment inline (Codex, or CC
@@ -2956,7 +3016,8 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		if fail := finishSpawnEnrollment(g, p, convID); fail != nil {
 			return nil, fail
 		}
-		return &spawnOutcome{ConvID: convID, Label: label, TmuxSession: tmuxSession, FocusMode: focusMode}, nil
+		return &spawnOutcome{ConvID: convID, Label: label, TmuxSession: tmuxSession, FocusMode: focusMode,
+			Harness: p.Harness, Model: p.Model, Effort: p.Effort}, nil
 	}
 
 	// Conv-id did not materialise within the poll. An Async (dashboard) spawn
@@ -2982,7 +3043,8 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 				backfillPendingSpawnInline(g, p, label, spawnHarness, launchedAt, backgroundBackfillBudget)
 			})
 		}
-		return &spawnOutcome{ConvID: "", Label: label, TmuxSession: tmuxSession, FocusMode: focusMode}, nil
+		return &spawnOutcome{ConvID: "", Label: label, TmuxSession: tmuxSession, FocusMode: focusMode,
+			Harness: p.Harness, Model: p.Model, Effort: p.Effort}, nil
 	}
 
 	// Synchronous (template or process-performer) path: the caller needs the

@@ -231,6 +231,12 @@ precedence, highest first:
 4. the **global (dashboard) default spawn profile**
 5. the **harness's own default**
 
+The harness is resolved through that full chain first; the remaining fields
+are then checked against it. An incompatible explicit flag is a loud error with
+guidance to pass a matching `--harness` or field value. An incompatible value
+from a lower profile tier is ignored and falls through, but the resolved-shape
+echo discloses the skip. Other launch flags never infer or pin the vendor.
+
 > ⚠️ **A default profile carries its own harness, so an unset `--harness` can
 > silently flip vendor.** `spawn` without `--harness`/`--model` does **not**
 > mean "Claude Code". If a default profile at tier 3 or 4 selects `codex`, a
@@ -263,8 +269,9 @@ Spawned agt_… in group "team"
 
 The provenance tag reads `explicit`, `profile "<name>"`,
 `group default profile "<name>"`, `global default profile "<name>"`, or
-`harness default`. If a field shows a profile tier you didn't intend, re-spawn
-with the explicit flag.
+`harness default`. An ignored ambient value is appended explicitly, for example
+`profile "codex-kit" model ignored (not valid for claude)`. If a field shows a
+profile tier you didn't intend, re-spawn with the explicit flag.
 
 ## Etiquette
 

@@ -49,7 +49,7 @@ func TestSpawnProfilePrecedence_ExplicitModelWins(t *testing.T) {
 	assert.Equal(t, "gpt-5.6-sol", got)
 }
 
-func TestSpawnProfilePrecedence_ExplicitClaudeModelPinsDefaultHarness(t *testing.T) {
+func TestSpawnProfilePrecedence_ExplicitClaudeModelRejectedByCodexDefault(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
 	require.Equal(t, http.StatusCreated, createProfile(t, f,
@@ -62,14 +62,12 @@ func TestSpawnProfilePrecedence_ExplicitClaudeModelPinsDefaultHarness(t *testing
 	resp, rc := agent.RunSpawn(&agent.SpawnParams{
 		Group: "alpha", Name: "worker", Model: "sonnet",
 	}, new(bytes.Buffer), stderr, new(bytes.Buffer))
-	require.Equal(t, 0, rc, "RunSpawn stderr=%s", stderr.String())
-	require.NotNil(t, resp)
-	model, ok := f.World.SpawnModel(resp.ConvID)
-	require.True(t, ok)
-	assert.Equal(t, "sonnet", model)
+	assert.NotEqual(t, 0, rc)
+	assert.Nil(t, resp)
+	assert.Contains(t, stderr.String(), "not valid for codex")
 }
 
-func TestSpawnProfilePrecedence_ExplicitAPIModelPinsDefaultHarness(t *testing.T) {
+func TestSpawnProfilePrecedence_ExplicitAPIModelRejectedByCodexDefault(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
 	require.Equal(t, http.StatusCreated, createProfile(t, f,
@@ -79,7 +77,8 @@ func TestSpawnProfilePrecedence_ExplicitAPIModelPinsDefaultHarness(t *testing.T)
 	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
 		"name": "worker", "model": "sonnet",
 	})
-	assert.Equal(t, "sonnet", spawnModel(t, f, spawn))
+	assert.Equal(t, http.StatusBadRequest, spawn.Code)
+	assert.Contains(t, string(spawn.Raw), "invalid_model")
 }
 
 // An explicitly passed CLI --profile fills fields before the daemon considers
@@ -268,7 +267,7 @@ func TestSpawnProfilePrecedence_ExplicitCLIProfileFalseBoolsBlockLowerTrue(t *te
 	assert.False(t, trustDir)
 }
 
-func TestSpawnProfilePrecedence_RemoteControlPinsDefaultHarness(t *testing.T) {
+func TestSpawnProfilePrecedence_RemoteControlRejectedByCodexDefault(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
 	require.Equal(t, http.StatusCreated, createProfile(t, f,
@@ -278,10 +277,7 @@ func TestSpawnProfilePrecedence_RemoteControlPinsDefaultHarness(t *testing.T) {
 	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
 		"name": "worker", "remote_control": true,
 	})
-	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
-	remote, ok := f.World.SpawnRemoteControl(spawn.ConvID)
-	require.True(t, ok)
-	assert.True(t, remote)
+	require.Equalf(t, http.StatusBadRequest, spawn.Code, "spawn body=%s", spawn.Raw)
 
 	bridgeAgentClientToMux(t, f.Mux)
 	chdirTo(t, resolveSym(t, t.TempDir()))
@@ -289,11 +285,9 @@ func TestSpawnProfilePrecedence_RemoteControlPinsDefaultHarness(t *testing.T) {
 	resp, rc := agent.RunSpawn(&agent.SpawnParams{
 		Group: "alpha", Name: "cli-worker", RemoteControl: true,
 	}, new(bytes.Buffer), stderr, new(bytes.Buffer))
-	require.Equal(t, 0, rc, "RunSpawn stderr=%s", stderr.String())
-	require.NotNil(t, resp)
-	remote, ok = f.World.SpawnRemoteControl(resp.ConvID)
-	require.True(t, ok)
-	assert.True(t, remote)
+	assert.NotEqual(t, 0, rc)
+	assert.Nil(t, resp)
+	assert.Contains(t, stderr.String(), "no built-in remote access")
 }
 
 // A global preference may become stale after profile deletion. Spawn degrades

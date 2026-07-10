@@ -50,6 +50,9 @@ type ResolvedLaunch struct {
 	Harness ResolvedField `json:"harness"`
 	Model   ResolvedField `json:"model"`
 	Effort  ResolvedField `json:"effort"`
+	// Notes disclose ignored profile fields outside the three echoed values
+	// above (for example a foreign sandbox or auto-review setting).
+	Notes []string `json:"notes,omitempty"`
 }
 
 // ResolvedField pairs a resolved launch value with its provenance. Value is the
@@ -61,12 +64,16 @@ type ResolvedLaunch struct {
 //	group default profile "<name>"      — the group's default spawn profile
 //	global default profile "<name>"     — the dashboard/global default profile
 //	harness default                     — nothing pinned it; the harness decides
+//	default profile (applied at launch) — a post-snapshot safety-net fill
 //
-// The daemon fills Source with everything except the profile "<name>" tier,
-// which is a CLI-side fold it cannot see; RunSpawn relabels those before print.
+// The daemon fills every Source tier after resolving the complete launch shape.
 type ResolvedField struct {
 	Value  string `json:"value"`
 	Source string `json:"source"`
+	// Note discloses an ambient profile value that was skipped because it was
+	// incompatible with the resolved harness. The value still falls through to
+	// the next profile tier / harness default; the skip is never silent.
+	Note string `json:"note,omitempty"`
 }
 
 // Provenance source labels for ResolvedField.Source. The profile-name tiers are
@@ -74,6 +81,7 @@ type ResolvedField struct {
 const (
 	ProvExplicit       = "explicit"
 	ProvHarnessDefault = "harness default"
+	ProvLaunchDefault  = "default profile (applied at launch)"
 )
 
 // ProvGroupProfileSource / ProvGlobalProfileSource / ProvCLIProfileSource format
@@ -95,6 +103,11 @@ func quoteName(name string) string { return `"` + name + `"` }
 // handleGroupSpawn decodes it. One type means the CLI and the
 // dashboard cannot drift in which fields the daemon understands.
 type SpawnRequest struct {
+	// Profile names the CLI's explicit --profile. Launch fields remain separate
+	// on the wire so the daemon can distinguish direct flags (loud on
+	// incompatibility) from ambient profile values (skip + disclose when a
+	// higher tier selected a foreign harness).
+	Profile string `json:"profile,omitempty"`
 	// Name, when set, becomes the new agent's conversation title:
 	// runSpawnPostInit injects `/rename <name>` into the fresh pane. An
 	// agent has exactly one name — its title — so there is no separate
@@ -410,7 +423,7 @@ type SpawnParams struct {
 	// Harness picks the coding harness the new agent runs. Declared last
 	// (no explicit short) for the same reason as Effort/Model — boa's
 	// short-flag enricher must not steal a letter from an existing field.
-	Harness string `long:"harness" optional:"true" help:"Coding harness for the new agent: claude | codex. Unset does NOT force claude — it is filled from the group default profile's harness, then the global default profile's harness, then claude. A default profile carries its own harness, so an unset --harness can land on codex. See 'Default resolution' in the command help"`
+	Harness string `long:"harness" optional:"true" help:"Coding harness for the new agent: claude | codex. Other launch flags never infer or pin it. Unset resolves from --profile, the group default profile, the global default profile, then claude. See 'Default resolution' in the command help"`
 
 	// Sandbox is the launch-time OS-sandbox mode for the new agent. Codex takes
 	// a native --sandbox enum; Claude Code has no launch flag, so its
@@ -474,6 +487,11 @@ func spawnCmd() *cobra.Command {
 			"  3. the group's default spawn profile\n" +
 			"  4. the global (dashboard) default spawn profile\n" +
 			"  5. the harness's own default\n" +
+			"The harness is resolved through that full chain FIRST; model and other " +
+			"launch fields are then validated against it. An incompatible explicit " +
+			"flag is a loud error with matching --harness/--model guidance. An " +
+			"incompatible field from a lower profile tier is ignored, falls through " +
+			"to the next tier/default, and is disclosed in the resolved-shape echo. " +
 			"A spawn profile carries its OWN harness, so an unset --harness is NOT the " +
 			"same as claude: if a default profile at tier 3 or 4 selects codex, a " +
 			"no-flag spawn lands on codex (and that profile's model). When a policy " +
@@ -532,18 +550,12 @@ type resolvedSpawnFields struct {
 	IncludeGroupContext *bool
 }
 
-// harnessEquivalent reports whether two (possibly blank) harness names refer to
-// the same harness, treating blank as the default (Claude Code) — so "" and
-// "claude" compare equal. The CLI-side mirror of agentd's harnessOrDefault
-// equality check.
+// harnessEquivalent reports whether two explicit harness names refer to the
+// same harness. Callers handle a blank profile harness separately: it is
+// harness-neutral and its fields are validated against the harness selected by
+// a lower resolution tier at spawn time.
 func harnessEquivalent(a, b string) bool {
-	norm := func(s string) string {
-		if s = strings.TrimSpace(s); s == "" {
-			return harness.DefaultName
-		}
-		return s
-	}
-	return norm(a) == norm(b)
+	return strings.TrimSpace(a) == strings.TrimSpace(b)
 }
 
 // mergeProfileIntoSpawn folds a spawn profile's fields under the CLI's explicit
@@ -612,7 +624,8 @@ func mergeProfileIntoSpawn(p *SpawnParams, explicitMessage string, prof *profile
 
 	// Launch fields — inherited only when the effective harness matches the
 	// profile's (or the caller pinned no --harness, adopting the profile's).
-	profLaunch := prof != nil && (strings.TrimSpace(p.Harness) == "" || harnessEquivalent(p.Harness, prof.Harness))
+	profLaunch := prof != nil && (strings.TrimSpace(p.Harness) == "" ||
+		strings.TrimSpace(prof.Harness) == "" || harnessEquivalent(p.Harness, prof.Harness))
 	if profLaunch {
 		out.Harness = pick(p.Harness, prof.Harness)
 		out.Model = pick(p.Model, prof.Model)
@@ -669,6 +682,22 @@ func profStr(prof *profileJSON, get func(*profileJSON) string) string {
 		return ""
 	}
 	return get(prof)
+}
+
+// validateSpawnModel adds the resolved harness and an actionable correction to
+// the catalog's detailed error. Spawn callers should never have to infer that
+// an unset harness resolved through a profile chain before rejecting a model.
+func validateSpawnModel(h *harness.Harness, model string) (string, error) {
+	validated, err := h.Models.ValidateModel(model)
+	if err == nil {
+		return validated, nil
+	}
+	other := "codex"
+	if h.Name == "codex" {
+		other = harness.DefaultName
+	}
+	return "", fmt.Errorf("model %q is not valid for %s; pass --harness %s or a matching --model: %w",
+		strings.TrimSpace(model), h.Name, other, err)
 }
 
 // RunSpawn drives `tclaude agent spawn`. Returns the daemon's response
@@ -776,89 +805,102 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return nil, rcInvalidArg
 	}
-	// Resolve --harness (default Claude Code) so --effort/--model are
-	// validated against the chosen harness's own rules — a Codex spawn
-	// accepts a Codex model and rejects a Claude Code slug, and vice
-	// versa. An unknown/not-spawnable harness fails fast here.
-	h, err := harness.ResolveSpawnable(strings.TrimSpace(merged.Harness))
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return nil, rcInvalidArg
+	// Harness-dependent validation is fail-fast only when the client knows the
+	// harness: an explicit --harness, or a named --profile that carries one.
+	// Otherwise group/global defaults can still select the vendor, so keep the
+	// raw launch fields on the wire and let the authoritative daemon resolve the
+	// full chain before validating them against the selected catalog.
+	effort := strings.TrimSpace(p.Effort)
+	model := strings.TrimSpace(p.Model)
+	sandboxMode := strings.TrimSpace(p.Sandbox)
+	approvalPolicy := strings.TrimSpace(p.Approval)
+	askTimeout := strings.TrimSpace(p.AskUserQuestionTimeout)
+	autoReview := p.AutoReview
+	trustDir := false
+	remoteControl := p.RemoteControl
+	clientHarness := strings.TrimSpace(p.Harness)
+	validationHarness := clientHarness
+	validateMergedProfile := false
+	if validationHarness == "" && prof != nil && strings.TrimSpace(prof.Harness) != "" {
+		validationHarness = strings.TrimSpace(prof.Harness)
+		validateMergedProfile = true
 	}
-	// Validate --effort client-side so a typo fails fast with a clear
-	// message instead of reaching the daemon (where an invalid level
-	// would otherwise surface only as a conv-id-poll timeout once the
-	// forked `tclaude session new --effort <bad>` exits non-zero).
-	effort, err := h.Models.ValidateEffort(merged.Effort)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return nil, rcInvalidArg
-	}
-	// Same fail-fast treatment for --model.
-	model, err := h.Models.ValidateModel(merged.Model)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return nil, rcInvalidArg
-	}
-	// Validate --sandbox (an explicit value / an inherited profile value) but do
-	// NOT apply the harness default here: a blank stays blank so the daemon's
-	// group-default-profile overlay can still fill it before the daemon applies
-	// the secure default (harness.ResolveSandboxMode) + the cwd-safety guard
-	// server-side. Applying the default client-side would resolve an omitted
-	// --sandbox to a concrete mode and pre-empt that overlay, so an agent spawned
-	// into a group whose default profile sets a sandbox would silently ignore it.
-	// An explicit `inherit` is carried through verbatim (a first-class sentinel)
-	// so the daemon won't let a profile override it. A mode for a harness with no
-	// launch sandbox flag is still rejected fast here.
-	sandboxMode, err := harness.ValidateSandboxMode(h, merged.Sandbox)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return nil, rcInvalidArg
-	}
-	// Validate --ask-for-approval the same way, and for the same reason: a blank
-	// defers to the daemon's group-default overlay + non-escalating default
-	// (Codex: never — what keeps the detached, unattended pane from deadlocking on
-	// an approval prompt, JOH-200), applied server-side by ResolveApprovalPolicy;
-	// an explicit `inherit` is preserved; a policy for a harness with no launch
-	// approval flag is rejected fast here.
-	approvalPolicy, err := harness.ValidateApprovalPolicy(h, merged.Approval)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return nil, rcInvalidArg
-	}
-	// Resolve --ask-user-question-timeout: a Claude-Code-only settings.json
-	// override (never|60s|5m|10m), so a value for a harness with no
-	// AskUserQuestion dialog (Codex) fails fast here. inherit/blank → "" (no
-	// override). The daemon re-validates server-side.
-	askTimeout, err := harness.ResolveAskTimeoutMode(h, merged.AskUserQuestionTimeout)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return nil, rcInvalidArg
-	}
-	// Gate the experimental --auto-review opt-in: allowed only for a harness
-	// with an approvals subsystem (Codex); requesting it for claude fails fast
-	// here with a clear message. The daemon re-gates server-side.
-	autoReview, err := harness.ResolveAutoReview(h, merged.AutoReview)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return nil, rcInvalidArg
-	}
-	// Resolve the effective trust-dir (Codex-only; taken from a --profile's
-	// trust_dir, since the CLI has no dedicated flag). false for any harness is
-	// always fine; a true for a non-Codex harness fails fast here. The daemon
-	// re-gates server-side.
-	trustDir, err := harness.ResolveTrustDir(h, merged.TrustDir)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return nil, rcInvalidArg
-	}
-	// Gate --remote-control: arming Remote Access at launch is a Claude Code
-	// feature, so requesting it for a harness without it (Codex) fails fast here
-	// with a clear message. The daemon re-gates server-side. See JOH-258.
-	remoteControl, err := harness.ResolveRemoteControl(h, p.RemoteControl)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return nil, rcInvalidArg
+	if validationHarness != "" {
+		h, resolveErr := harness.ResolveSpawnable(validationHarness)
+		if resolveErr != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", resolveErr)
+			return nil, rcInvalidArg
+		}
+		validationFields := resolvedSpawnFields{
+			Model: p.Model, Effort: p.Effort, Sandbox: p.Sandbox,
+			Approval: p.Approval, AskUserQuestionTimeout: p.AskUserQuestionTimeout,
+			AutoReview: p.AutoReview,
+		}
+		if validateMergedProfile {
+			validationFields = merged
+		}
+		if _, err = h.Models.ValidateEffort(validationFields.Effort); err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return nil, rcInvalidArg
+		}
+		if _, err = validateSpawnModel(h, validationFields.Model); err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return nil, rcInvalidArg
+		}
+		// Validate --sandbox (an explicit value / an inherited profile value) but do
+		// NOT apply the harness default here: a blank stays blank so the daemon's
+		// group-default-profile overlay can still fill it before the daemon applies
+		// the secure default (harness.ResolveSandboxMode) + the cwd-safety guard
+		// server-side. Applying the default client-side would resolve an omitted
+		// --sandbox to a concrete mode and pre-empt that overlay, so an agent spawned
+		// into a group whose default profile sets a sandbox would silently ignore it.
+		// An explicit `inherit` is carried through verbatim (a first-class sentinel)
+		// so the daemon won't let a profile override it. A mode for a harness with no
+		// launch sandbox flag is still rejected fast here.
+		if _, err = harness.ValidateSandboxMode(h, validationFields.Sandbox); err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return nil, rcInvalidArg
+		}
+		// Validate --ask-for-approval the same way, and for the same reason: a blank
+		// defers to the daemon's group-default overlay + non-escalating default
+		// (Codex: never — what keeps the detached, unattended pane from deadlocking on
+		// an approval prompt, JOH-200), applied server-side by ResolveApprovalPolicy;
+		// an explicit `inherit` is preserved; a policy for a harness with no launch
+		// approval flag is rejected fast here.
+		if _, err = harness.ValidateApprovalPolicy(h, validationFields.Approval); err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return nil, rcInvalidArg
+		}
+		// Resolve --ask-user-question-timeout: a Claude-Code-only settings.json
+		// override (never|60s|5m|10m), so a value for a harness with no
+		// AskUserQuestion dialog (Codex) fails fast here. inherit/blank → "" (no
+		// override). The daemon re-validates server-side.
+		if _, err = harness.ResolveAskTimeoutMode(h, validationFields.AskUserQuestionTimeout); err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return nil, rcInvalidArg
+		}
+		// Gate the experimental --auto-review opt-in: allowed only for a harness
+		// with an approvals subsystem (Codex); requesting it for claude fails fast
+		// here with a clear message. The daemon re-gates server-side.
+		if _, err = harness.ResolveAutoReview(h, validationFields.AutoReview); err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return nil, rcInvalidArg
+		}
+		// Resolve the effective trust-dir (Codex-only; taken from a --profile's
+		// trust_dir, since the CLI has no dedicated flag). false for any harness is
+		// always fine; a true for a non-Codex harness fails fast here. The daemon
+		// re-gates server-side.
+		if _, err = harness.ResolveTrustDir(h, validationFields.TrustDir); err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return nil, rcInvalidArg
+		}
+		// Gate --remote-control: arming Remote Access at launch is a Claude Code
+		// feature, so requesting it for a harness without it (Codex) fails fast here
+		// with a clear message. The daemon re-gates server-side. See JOH-258.
+		if remoteControl, err = harness.ResolveRemoteControl(h, p.RemoteControl); err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return nil, rcInvalidArg
+		}
 	}
 	cwd := p.Cwd
 	if cwd == "" {
@@ -867,23 +909,8 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		}
 	}
 
-	// Keep a completely unspecified harness/launch shape omitted on the wire so
-	// the daemon can apply group/global profiles before falling back to Claude.
-	// An explicit profile or harness-specific launch field pins the catalog used
-	// to validate it; otherwise a lower-tier foreign-harness profile could
-	// reinterpret or invalidate an explicit model/sandbox/etc.
-	requestHarness := strings.TrimSpace(merged.Harness)
-	launchFieldPinsHarness := strings.TrimSpace(merged.Model) != "" ||
-		strings.TrimSpace(merged.Effort) != "" ||
-		strings.TrimSpace(merged.Sandbox) != "" ||
-		strings.TrimSpace(merged.AskUserQuestionTimeout) != "" ||
-		strings.TrimSpace(merged.Approval) != "" || merged.AutoReview || merged.TrustDir
-	launchFieldPinsHarness = launchFieldPinsHarness || p.RemoteControl
-	if requestHarness == "" && (prof != nil || launchFieldPinsHarness) {
-		requestHarness = h.Name
-	}
-
 	req := SpawnRequest{
+		Profile:                strings.TrimSpace(p.Profile),
 		Name:                   name,
 		Role:                   merged.Role,
 		Descr:                  merged.Descr,
@@ -896,7 +923,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		AutoFocus:              merged.AutoFocus,
 		Effort:                 effort,
 		Model:                  model,
-		Harness:                requestHarness,
+		Harness:                clientHarness,
 		SandboxMode:            sandboxMode,
 		AskUserQuestionTimeout: askTimeout,
 		ApprovalPolicy:         approvalPolicy,
@@ -905,8 +932,8 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		IsOwner:                merged.IsOwner,
 		PermissionOverrides:    merged.PermissionOverrides,
 	}
-	req.autoReviewSpecified = p.AutoReview || (prof != nil && prof.AutoReview != nil)
-	req.trustDirSpecified = prof != nil && prof.TrustDir != nil
+	req.autoReviewSpecified = p.AutoReview
+	req.trustDirSpecified = false
 	// --remote-control is opt-in only on the CLI: send &true when the flag is set,
 	// and leave the pointer nil otherwise so the daemon's group/profile
 	// remote-control policy fills it (the dashboard form is the surface that sends
@@ -973,7 +1000,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		return req
 	}
 	if err := DaemonRequestWithWriteProof(http.MethodPost, path, spawnReq, &resp, DaemonOpts{AskHuman: ask}); err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
+		fmt.Fprintf(stderr, "Error: %s\n", spawnDaemonErrorMessage(err))
 		// The spawn failed after we created a worktree for it. Remove the
 		// now-orphaned worktree so a retry starts clean — except on a 504
 		// conv-id-poll timeout: there the spawn subprocess DID launch and
@@ -1010,10 +1037,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	// Echo the resolved launch shape + provenance so a spawn that inherited a
 	// default profile's harness/model (the TCL-304 incident) is visible at a
 	// glance instead of needing `profiles default show` to reverse-engineer.
-	// The daemon can't see the CLI-side --profile fold or harness pin, so
-	// reconcile those fields against the raw flags before printing.
 	if resp.Resolved != nil {
-		reconcileCLIProvenance(resp.Resolved, p, prof)
 		printResolvedLaunch(stdout, resp.Resolved)
 	}
 	// Surface the worktree so the user can see where the agent landed
@@ -1028,63 +1052,23 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	return &resp, rcOK
 }
 
-// reconcileCLIProvenance corrects the daemon-reported provenance for the two
-// CLI-side folds the daemon cannot see: the --profile pre-fill and the
-// harness-pin. The daemon reports both as "explicit" (they arrive in the request
-// body), but here the raw flags are visible, so the printed provenance can be
-// made faithful. Order matters: relabel profile-sourced fields first, then demote
-// a harness the CLI pinned from an explicit non-harness launch field.
-func reconcileCLIProvenance(rl *ResolvedLaunch, p *SpawnParams, prof *profileJSON) {
-	if rl == nil {
-		return
+// spawnDaemonErrorMessage preserves the daemon's structured validation text.
+// The real transport already populates DaemonError.Msg; flow-test bridges and
+// older compatible transports may provide only Raw, so decode that envelope as
+// a fallback for invalid_* launch-shape failures.
+func spawnDaemonErrorMessage(err error) string {
+	de, ok := err.(*DaemonError)
+	if !ok || de.Msg != "" || len(de.Raw) == 0 {
+		return err.Error()
 	}
-	relabelCLIProfileProvenance(rl, p, prof)
-	// The CLI pins the harness to the resolved default whenever an explicit
-	// non-harness launch field is set (mirroring the daemon's pin), so a bare
-	// `--model sonnet` sends harness="claude" and the daemon calls it "explicit".
-	// If the user never passed --harness and the profile didn't supply it (still
-	// "explicit" after the relabel above), the harness was defaulted, not chosen
-	// — report the harness-default tier.
-	if strings.TrimSpace(p.Harness) == "" && rl.Harness.Source == ProvExplicit {
-		rl.Harness.Source = ProvHarnessDefault
+	var envelope struct {
+		Error string `json:"error"`
+		Code  string `json:"code"`
 	}
-}
-
-// relabelCLIProfileProvenance rewrites the Source of any resolved field the
-// daemon reported as "explicit" that actually came from the CLI's --profile.
-// The CLI folds --profile into the request body before it reaches the daemon
-// (so precedence works), which makes a profile-supplied value indistinguishable
-// from a real flag on the wire — the daemon calls it "explicit". Here, where the
-// raw flags and the profile are both visible, a field the flag left blank that
-// the profile filled is relabelled to the `profile "<name>"` tier so the printed
-// provenance is faithful. A field a real flag set stays "explicit". Only the
-// three echoed fields (harness/model/effort) are considered.
-func relabelCLIProfileProvenance(rl *ResolvedLaunch, p *SpawnParams, prof *profileJSON) {
-	if rl == nil || prof == nil {
-		return
+	if json.Unmarshal(de.Raw, &envelope) == nil && strings.HasPrefix(envelope.Code, "invalid_") && envelope.Error != "" {
+		return envelope.Error
 	}
-	// The profile's launch fields participate only when the effective harness
-	// matches the profile's (or no --harness was pinned, adopting the profile's)
-	// — the same gate mergeProfileIntoSpawn applies.
-	profLaunch := strings.TrimSpace(p.Harness) == "" || harnessEquivalent(p.Harness, prof.Harness)
-	if !profLaunch {
-		return
-	}
-	label := ProvCLIProfileSource(prof.Name)
-	// fromProfile reports whether the flag was blank and the profile supplied a
-	// value — the exact condition under which mergeProfileIntoSpawn folded the
-	// profile's value into the request as if explicit.
-	fromProfile := func(flag, profileVal string) bool {
-		return strings.TrimSpace(flag) == "" && strings.TrimSpace(profileVal) != ""
-	}
-	relabel := func(field *ResolvedField, flag, profileVal string) {
-		if field.Source == ProvExplicit && fromProfile(flag, profileVal) {
-			field.Source = label
-		}
-	}
-	relabel(&rl.Harness, p.Harness, prof.Harness)
-	relabel(&rl.Model, p.Model, prof.Model)
-	relabel(&rl.Effort, p.Effort, prof.Effort)
+	return err.Error()
 }
 
 // printResolvedLaunch prints the resolved harness/model/effort with provenance,
@@ -1098,6 +1082,9 @@ func printResolvedLaunch(stdout io.Writer, rl *ResolvedLaunch) {
 	fmt.Fprintf(stdout, "  Harness: %s\n", formatResolvedField(rl.Harness))
 	fmt.Fprintf(stdout, "  Model:   %s\n", formatResolvedField(rl.Model))
 	fmt.Fprintf(stdout, "  Effort:  %s\n", formatResolvedField(rl.Effort))
+	for _, note := range rl.Notes {
+		fmt.Fprintf(stdout, "  Note:    %s\n", note)
+	}
 }
 
 // formatResolvedField renders one resolved field as "value (source)", or just
@@ -1105,8 +1092,14 @@ func printResolvedLaunch(stdout io.Writer, rl *ResolvedLaunch) {
 // pairs with the harness-default tier — a profile that set the field would have
 // produced a non-empty value).
 func formatResolvedField(f ResolvedField) string {
+	var rendered string
 	if strings.TrimSpace(f.Value) == "" {
-		return "(" + ProvHarnessDefault + ")"
+		rendered = "(" + ProvHarnessDefault + ")"
+	} else {
+		rendered = fmt.Sprintf("%s (%s)", f.Value, f.Source)
 	}
-	return fmt.Sprintf("%s (%s)", f.Value, f.Source)
+	if f.Note != "" {
+		rendered += " — " + f.Note
+	}
+	return rendered
 }

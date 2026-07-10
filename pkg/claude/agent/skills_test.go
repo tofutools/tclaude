@@ -62,6 +62,9 @@ func TestBundledSkillsDocumentSpawnResolution(t *testing.T) {
 	assert.Contains(t, body, "group's default spawn profile")
 	assert.Contains(t, body, "global (dashboard) default spawn profile")
 	assert.Contains(t, body, "silently flip vendor")
+	assert.Contains(t, body, "resolved through that full chain first")
+	assert.Contains(t, body, "incompatible explicit flag is a loud error")
+	assert.Contains(t, body, "echo discloses the skip")
 	assert.Contains(t, body, "tclaude agent profiles default show")
 	assert.Contains(t, body, "tclaude agent groups ls")
 
