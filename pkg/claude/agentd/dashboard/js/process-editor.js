@@ -29,11 +29,19 @@ import {
 } from './process-edit-model.js';
 import { openNodeDialog } from './process-node-dialog.js';
 import { LiveValidation } from './process-validation.js';
+import {
+  makeSelection, selectionContains, selectionItems, toggleSelection,
+} from './process-selection.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 // Custom drag payload MIME (dock-dnd idiom): withholding text/plain keeps
 // every other document-level DnD feature out of a palette drag.
 const PALETTE_MIME = 'application/x-tclaude-process-palette';
+
+export function isProcessEditorFormControl(target) {
+  const tag = String(target?.tagName || '').toUpperCase();
+  return tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA';
+}
 
 function h(tag, attrs = {}, ...children) {
   const el = document.createElement(tag);
@@ -81,11 +89,14 @@ export class ProcessTemplateEditor {
       onNodeClick: (e) => this.onNodeClick(e),
       onNodeDblClick: (e) => this.onNodeDblClick(e),
       onEdgeClick: (e) => this.onEdgeClick(e),
+      onCanvasClick: () => this.setSelection(null),
+      onMarqueeSelect: (e) => this.setSelection(e.selection),
       onNodeDrag: (e) => this.onNodeDrag(e),
       onPortDragStart: (e) => this.onPortDragStart(e),
       onPortDragMove: (e) => this.onPortDragMove(e),
       onPortDragEnd: (e) => this.onPortDragEnd(e),
       onCanvasDrop: (e) => this.onCanvasDrop(e),
+      marqueeSelect: true,
     });
     // Live validation (TCL-299): debounced POST /v1/process/validate on every
     // model mutation, inline badges + issues panel. Constructed after the
@@ -221,6 +232,9 @@ export class ProcessTemplateEditor {
     // next validation round for the mutated draft.
     const graph = this.validation ? this.validation.decorate(this.model.graph()) : this.model.graph();
     this.graph.setGraph(graph, { fit });
+    // setGraph re-renders the SVG; re-project the semantic editor selection so
+    // undo/redo and mutations cannot leave a stale highlight behind.
+    this.setSelection(this.selection);
     this.validation?.schedule();
     this.updateChrome();
   }
@@ -258,19 +272,34 @@ export class ProcessTemplateEditor {
   }
 
   setSelection(selection) {
-    this.selection = selection;
-    if (selection?.type === 'node') this.graph.select({ type: 'node', id: selection.id });
-    else if (selection?.type === 'edge') {
-      const laid = this.laidEdge(selection.from, selection.outcome);
-      this.graph.select(laid ? { type: 'edge', id: laid.id } : null);
-    } else this.graph.select(null);
+    this.selection = makeSelection(selectionItems(selection));
+    const graphical = selectionItems(this.selection).map((item) => {
+      if (item.type === 'node') return { type: 'node', id: item.id };
+      const laid = this.laidEdge(item.from, item.outcome);
+      return laid ? { type: 'edge', id: laid.id } : null;
+    }).filter(Boolean);
+    this.graph.select(makeSelection(graphical));
     this.renderInspector();
   }
 
   renderInspector() {
     const parts = [];
     const sel = this.selection;
-    if (sel?.type === 'node' && this.model.node(sel.id)) {
+    const selected = selectionItems(sel);
+    if (selected.length > 1) {
+      const nodeCount = selected.filter((item) => item.type === 'node').length;
+      const edgeCount = selected.length - nodeCount;
+      parts.push(h('span', { class: 'process-inspector-kind', text: 'multiple selection' }));
+      parts.push(h('span', { class: 'process-inspector-id', text: `${selected.length} items` }));
+      parts.push(h('span', { class: 'process-inspector-hint', text: [
+        nodeCount ? `${nodeCount} node${nodeCount === 1 ? '' : 's'}` : '',
+        edgeCount ? `${edgeCount} edge${edgeCount === 1 ? '' : 's'}` : '',
+      ].filter(Boolean).join(' · ') }));
+      parts.push(h('button', {
+        class: 'process-action process-action-danger', type: 'button', text: 'delete selection',
+        onclick: () => this.deleteSelection(),
+      }));
+    } else if (sel?.type === 'node' && this.model.node(sel.id)) {
       const node = this.model.node(sel.id);
       parts.push(h('span', { class: 'process-inspector-kind', text: `${node.type || 'task'} node` }));
       parts.push(h('span', { class: 'process-inspector-id', text: sel.id }));
@@ -335,9 +364,11 @@ export class ProcessTemplateEditor {
 
   // ---- graph hooks ---------------------------------------------------------
 
-  onNodeClick({ node }) {
+  onNodeClick({ node, event }) {
     if (!node) return;
-    this.setSelection({ type: 'node', id: node.id });
+    const item = { type: 'node', id: node.id };
+    this.setSelection(event?.shiftKey || event?.ctrlKey || event?.metaKey
+      ? toggleSelection(this.selection, item) : item);
   }
 
   // Double-click is the logical-zoom gesture (design §8a): zoom into the
@@ -368,20 +399,22 @@ export class ProcessTemplateEditor {
     this.modalDispose = dispose;
   }
 
-  onEdgeClick({ edge }) {
+  onEdgeClick({ edge, event }) {
     if (!edge) return;
-    const already = this.selection?.type === 'edge'
-      && this.selection.from === edge.from && this.selection.outcome === edge.outcome;
-    this.setSelection({ type: 'edge', from: edge.from, outcome: edge.outcome });
+    const item = { type: 'edge', from: edge.from, outcome: edge.outcome };
+    const already = selectionContains(this.selection, item);
+    const additive = event?.shiftKey || event?.ctrlKey || event?.metaKey;
+    this.setSelection(additive ? toggleSelection(this.selection, item) : item);
     // Second click on an already-selected edge edits the outcome label in place.
-    if (already) this.openInlineOutcomeEdit(edge.from, edge.outcome);
+    if (already && !additive) this.openInlineOutcomeEdit(edge.from, edge.outcome);
   }
 
-  onNodeDrag({ nodeId, delta }) {
+  onNodeDrag({ nodeId, nodeIds = [nodeId], delta }) {
     if (!this.pendingMove || this.pendingMove.id !== nodeId) {
-      const laid = this.graph.layout.nodes.find((candidate) => candidate.id === nodeId);
-      if (!laid) return;
-      this.pendingMove = { id: nodeId, startX: laid.x, startY: laid.y, delta };
+      const starts = nodeIds.map((id) => this.graph.layout.nodes.find((candidate) => candidate.id === id))
+        .filter(Boolean).map((node) => ({ id: node.id, x: node.x, y: node.y }));
+      if (!starts.length) return;
+      this.pendingMove = { id: nodeId, starts, delta };
     }
     this.pendingMove.delta = delta;
   }
@@ -394,7 +427,9 @@ export class ProcessTemplateEditor {
     // graph units, so scale by the zoom before comparing — at high zoom a
     // small visible drag is a tiny graph-unit delta and must still commit.
     if (Math.hypot(move.delta.x, move.delta.y) * this.graph.view.k <= 3) return;
-    this.mutate(() => this.model.moveNode(move.id, move.startX + move.delta.x, move.startY + move.delta.y));
+    this.mutate(() => this.model.moveNodes(move.starts.map((start) => ({
+      id: start.id, x: start.x + move.delta.x, y: start.y + move.delta.y,
+    }))));
   }
 
   // ---- edge drawing (rubber band) -------------------------------------------
@@ -510,8 +545,8 @@ export class ProcessTemplateEditor {
     const moved = direction === 'undo' ? this.model.undo() : this.model.redo();
     if (!moved) return;
     // A restored state may no longer contain the selected node/edge.
-    if (this.selection?.type === 'node' && !this.model.node(this.selection.id)) this.selection = null;
-    if (this.selection?.type === 'edge' && !this.model.findEdge(this.selection.from, this.selection.outcome)) this.selection = null;
+    this.selection = makeSelection(selectionItems(this.selection).filter((item) => item.type === 'node'
+      ? this.model.node(item.id) : this.model.findEdge(item.from, item.outcome)));
     this.refresh();
   }
 
@@ -522,39 +557,33 @@ export class ProcessTemplateEditor {
   }
 
   async deleteSelection() {
-    const sel = this.selection;
-    if (!sel) return;
-    if (sel.type === 'edge') {
-      this.mutate(() => this.model.deleteEdge(sel.from, sel.outcome));
-      this.setSelection(null);
-      return;
-    }
-    if (sel.type !== 'node' || !this.model.node(sel.id)) return;
-    const incoming = this.model.incomingEdges(sel.id);
-    const outgoing = this.model.outgoingEdges(sel.id);
-    let rewire = false;
-    if (incoming.length && outgoing.length) {
-      // Deleting a mid-graph node orphans its neighbours' edges; offer the
-      // rewire affordance instead of silently dropping the connections.
-      const choice = await this.choiceModal({
-        title: `Delete node ${sel.id}?`,
-        body: `${incoming.length} incoming and ${outgoing.length} outgoing edge${outgoing.length === 1 ? '' : 's'} connect through this node.`,
-        choices: [
-          { key: 'rewire', label: 'Delete + rewire through', primary: true },
-          { key: 'drop', label: 'Delete + drop edges', danger: true },
-        ],
-      });
-      if (!choice) return;
-      rewire = choice === 'rewire';
-    }
-    this.mutate(() => this.model.deleteNode(sel.id, { rewire }));
+    const items = selectionItems(this.selection).filter((item) => item.type === 'node'
+      ? this.model.node(item.id) : this.model.findEdge(item.from, item.outcome));
+    if (!items.length) return;
+    const nodes = items.filter((item) => item.type === 'node');
+    const midGraph = nodes.filter((item) => this.model.incomingEdges(item.id).length
+      && this.model.outgoingEdges(item.id).length);
+    const subject = items.length === 1
+      ? (items[0].type === 'node' ? `node ${items[0].id}` : 'selected edge')
+      : `${items.length} selected items`;
+    const choices = midGraph.length ? [
+      { key: 'rewire', label: 'Delete + rewire through', primary: true },
+      { key: 'drop', label: 'Delete + drop edges', danger: true },
+    ] : [{ key: 'drop', label: 'Delete selection', danger: true }];
+    const choice = await this.choiceModal({
+      title: `Delete ${subject}?`,
+      body: midGraph.length
+        ? `${midGraph.length} selected node${midGraph.length === 1 ? '' : 's'} connect incoming and outgoing edges.`
+        : 'This removes the current highlighted selection. You can undo this change afterward.',
+      choices,
+    });
+    if (!choice) return;
+    this.mutate(() => this.model.deleteItems(items, { rewire: choice === 'rewire' }));
     this.setSelection(null);
   }
 
   onEditorKeyDown(event) {
-    const inInput = event.target instanceof HTMLInputElement
-      || event.target instanceof HTMLSelectElement
-      || event.target instanceof HTMLTextAreaElement;
+    const inInput = isProcessEditorFormControl(event.target);
     if ((event.ctrlKey || event.metaKey) && !inInput) {
       const key = event.key.toLowerCase();
       if (key === 'z' && !event.shiftKey) {

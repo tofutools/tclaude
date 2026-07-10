@@ -69,6 +69,9 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		// Editor semantics attach through the core's hooks, not core edits.
 		"onPortDragStart:",
 		"onCanvasDrop:",
+		"onMarqueeSelect:",
+		"marqueeSelect: true",
+		"This removes the current highlighted selection.",
 	)
 	if strings.Contains(editor, "localStorage") || strings.Contains(read("js/process-edit-model.js"), "localStorage") {
 		t.Error("localStorage is banned; editor prefs belong in dashPrefs -> SQLite")
@@ -132,6 +135,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		".process-editor-inline-input",
 		".process-editor-band",
 		".process-editor-inspector",
+		".process-marquee",
 		// Inline controls are explicitly dark-themed (UA-white trap).
 		".process-inspector-select",
 		"body.wizard .process-palette-card",

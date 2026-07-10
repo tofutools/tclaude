@@ -41,6 +41,9 @@ func TestDashboardProcessGraphAssets(t *testing.T) {
 		"data-morph-owned",
 		"onPortDragStart",
 		"onCanvasDrop",
+		"onCanvasClick",
+		"onMarqueeSelect",
+		"this.root.focus({ preventScroll: true })",
 		// A browser-cancelled gesture must never commit: pointercancel routes
 		// to the dedicated cancel path (cancelled: true, no hit-testing), not
 		// the ordinary pointerup handler. TCL-296 review finding.

@@ -29,6 +29,7 @@ func TestProcessGraph_JSSyntax(t *testing.T) {
 	node := processGraphNode(t)
 	for _, file := range []string{
 		"dashboard/js/process-layout.js",
+		"dashboard/js/process-selection.js",
 		"dashboard/js/process-graph.js",
 	} {
 		source, err := os.ReadFile(file)
