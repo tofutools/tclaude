@@ -70,14 +70,23 @@ neither is refused. See [Identity](#identity).
   token**; the human exports it as `TCLAUDE_HUMAN_TOKEN` to run
   human-only commands (see [Identity](#identity)).
 
-The daemon binds two sockets:
+The daemon binds several sockets:
 
-- `~/.tclaude-agentd.sock` — canonical, state-free Unix socket for all
-  `tclaude agent` traffic. Keeping it outside `~/.tclaude` lets every
-  harness deny the private state tree wholesale.
-- `~/.tclaude/agentd.sock` — temporary compatibility listener for older
-  clients and previously installed Claude sandbox settings. New clients and
-  generated settings do not use it.
+- `/tmp/tclaude-<uid>/agentd.sock` — canonical, state-free Unix socket for all
+  `tclaude agent` traffic. It lives in a per-user `/tmp` subdirectory, outside
+  `~/.tclaude` and outside `$HOME`, so every harness can deny the private state
+  tree — and the home directory — wholesale. The path depends only on the uid
+  (literal `/tmp`), so the daemon and every client/launcher agree on it without
+  sharing an environment. The daemon creates the per-uid dir `0700` and refuses
+  to bind on a path owned by another user (anti-squat on the shared `/tmp`).
+  Failing closed has one residual on a shared host: another local user who
+  pre-creates `/tmp/tclaude-<uid>` (their own dir/file/symlink) can keep the
+  daemon from starting — it refuses the squatted path rather than trusting it.
+  Pass `agentd serve --socket <path>` to relocate the socket if that happens.
+- `~/.tclaude-agentd.sock` and `~/.tclaude/agentd.sock` — temporary
+  compatibility listeners for older clients, already-running agents, and
+  previously installed Claude sandbox settings. New clients and generated
+  settings prefer the `/tmp` runtime socket.
 - `127.0.0.1:<random>` — loopback HTTP for the human-approval popup
   and the [dashboard](dashboard.md).
 

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 )
 
 // TestClaudeSandbox_Catalog pins the catalog the spawn dialog / profile editor
@@ -135,11 +137,15 @@ func TestClaudeSpawner_Sandbox(t *testing.T) {
 		t.Fatalf("on must set sandbox.enabled=true, got %v", on["enabled"])
 	}
 	settings := claudeSandboxSettingsJSON("on")
-	if !strings.Contains(settings, ".tclaude-agentd.sock") {
-		t.Fatal("on must allowlist the agentd socket so the agent can run `tclaude agent`")
+	if !strings.Contains(settings, agentipc.CanonicalSocketPath()) {
+		t.Fatalf("on must allowlist the canonical runtime-dir socket %q so the agent can run `tclaude agent`; got %s",
+			agentipc.CanonicalSocketPath(), settings)
 	}
-	if strings.Contains(settings, ".tclaude/agentd.sock") {
-		t.Fatal("new Claude sandbox settings must use the state-free canonical socket")
+	if !strings.Contains(settings, "~/.tclaude-agentd.sock") {
+		t.Fatal("on must keep the legacy ~/.tclaude-agentd.sock allowance during the migration window")
+	}
+	if strings.Contains(settings, "~/.tclaude/agentd.sock") {
+		t.Fatal("new Claude sandbox settings must not use the oldest ~/.tclaude/agentd.sock socket")
 	}
 
 	// off disables the sandbox.

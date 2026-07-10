@@ -115,8 +115,8 @@ safe and non-blocking:
     It gives the same `workspace-write` containment (only the working directory
     plus `/tmp`/`$TMPDIR` writable; `$HOME` read-only) while explicitly
     denying all filesystem access to `~/.tclaude`. The daemon exposes a
-    state-free agent endpoint at `~/.tclaude-agentd.sock`, and the profile
-    allowlists exactly that Unix socket — which the raw `--sandbox` modes
+    state-free agent endpoint under `/tmp` (`/tmp/tclaude-<uid>/agentd.sock`),
+    and the profile allowlists exactly that Unix socket — which the raw `--sandbox` modes
     block, so only under this profile can a sandboxed agent run
     `tclaude agent …`. At spawn
     time, when the launch directory is inside a Git repo, the profile also grants
@@ -127,8 +127,8 @@ safe and non-blocking:
     read-only. A container at/above `$HOME` is never granted; in that layout the
     original worktree is the narrow fallback root. The
     operator, Codex, and Claude Code all use the same canonical state-free
-    endpoint; agentd temporarily also serves the legacy
-    `~/.tclaude/agentd.sock` path for
+    endpoint; agentd temporarily also serves the legacy home paths
+    (`~/.tclaude-agentd.sock`, `~/.tclaude/agentd.sock`) for
     older clients and installed settings. Daemon-spawned
     Codex agents (via `agent spawn`, resume, clone, reincarnate) default to it.
   - **`workspace-write` / `read-only` / `danger-full-access`** are passed through

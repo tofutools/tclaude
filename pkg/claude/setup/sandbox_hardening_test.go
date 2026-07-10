@@ -40,6 +40,9 @@ func TestSandboxHardeningRequiresRestartForLegacyOnlyDaemon(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(home) })
 	t.Setenv("HOME", home)
+	if agentipc.SocketReachable(agentipc.CanonicalSocketPath()) {
+		t.Skip("a daemon is already listening on the canonical socket; skipping to avoid collision")
+	}
 	require.NoError(t, os.MkdirAll(filepath.Dir(agentipc.LegacySocketPath()), 0o755))
 	legacy, err := net.Listen("unix", agentipc.LegacySocketPath())
 	require.NoError(t, err)
@@ -67,11 +70,18 @@ func runMerge(tree map[string]any) *hardeningReport {
 	return r
 }
 
-// The spec has 12 leaf values: 2 scalars (sandbox.enabled,
-// sandbox.network.allowAllUnixSockets) and 10 array elements
-// (allowUnixSockets 1, denyWrite 2, denyRead 2, allowRead 1,
-// permissions.deny 4).
-const specLeafCount = 12
+// The spec has 14 leaf values: 2 scalars (sandbox.enabled,
+// sandbox.network.allowAllUnixSockets) and 12 array elements
+// (allowUnixSockets 2, denyWrite 2, denyRead 2, allowRead 2,
+// permissions.deny 4). The socket allowances each carry two entries: the
+// canonical runtime-dir socket and the legacy ~/.tclaude-agentd.sock.
+const specLeafCount = 14
+
+// docSocketSentinel is the placeholder the sandbox-hardening doc's JSON block
+// uses for the canonical runtime-dir socket, whose concrete <uid> is resolved
+// per-machine (see agentipc.CanonicalSocketPath). The doc-drift test swaps it
+// for the live path before comparing.
+const docSocketSentinel = "/tmp/tclaude-<uid>/agentd.sock"
 
 // --- merge engine: the risky part, tested hard --------------------------------
 
@@ -273,8 +283,35 @@ func TestSandboxHardeningSpec_MatchesDoc(t *testing.T) {
 	require.NotEmpty(t, block, "no ```json block found in %s", sandboxHardeningDocPath)
 
 	docTree := decodeTree(t, strings.Join(block, "\n"))
+	// The doc shows the canonical runtime-dir socket as a placeholder (its real
+	// path is per-machine); fill it with this machine's resolved path so the
+	// structural comparison against the live spec is exact.
+	replaceStrings(docTree, docSocketSentinel, agentipc.CanonicalSocketPath())
 	assert.Equal(t, docTree, sandboxHardeningSpec(),
 		"sandboxHardeningSpec() has drifted from the config block in %s", sandboxHardeningDocPath)
+}
+
+// replaceStrings walks a decoded JSON tree in place, replacing every string
+// scalar (including array elements) equal to old with repl.
+func replaceStrings(v any, old, repl string) {
+	switch t := v.(type) {
+	case map[string]any:
+		for k, child := range t {
+			if s, ok := child.(string); ok && s == old {
+				t[k] = repl
+				continue
+			}
+			replaceStrings(child, old, repl)
+		}
+	case []any:
+		for i, child := range t {
+			if s, ok := child.(string); ok && s == old {
+				t[i] = repl
+				continue
+			}
+			replaceStrings(child, old, repl)
+		}
+	}
 }
 
 // --- file-level apply ---------------------------------------------------------

@@ -315,10 +315,10 @@ func sandboxHardeningSocketMigrationError() error {
 		return fmt.Errorf("sandbox hardening requires the canonical agentd socket %s; "+
 			"custom socket %s is unsupported", canonical, explicit)
 	}
-	legacy := agentipc.LegacySocketPath()
-	if !agentipc.SocketReachable(canonical) && agentipc.SocketReachable(legacy) {
-		return fmt.Errorf("agentd is still listening only on the legacy socket %s; "+
-			"restart agentd after upgrading tclaude before installing sandbox hardening", legacy)
+	if !agentipc.SocketReachable(canonical) && agentipc.AnyLegacySocketReachable() {
+		return fmt.Errorf("agentd is still listening only on a legacy home socket; "+
+			"restart agentd after upgrading tclaude before installing sandbox hardening "+
+			"(canonical socket: %s)", canonical)
 	}
 	return nil
 }

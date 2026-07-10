@@ -86,12 +86,16 @@ keep in sync. The only subtlety is the daemon socket; see
 
 ### This does not break agent ↔ daemon communication
 
-Agents talk to the daemon over the canonical state-free Unix socket
-`~/.tclaude-agentd.sock`. It deliberately lives outside `~/.tclaude`, so
-the private state directory can be denied wholesale without a child-path
-exception. Reaching the socket still needs two things: the `socket(AF_UNIX)`
-call must be permitted, and the socket file must be visible. The settings
-below cover both axes.
+Agents talk to the daemon over the canonical state-free Unix socket, a per-user
+socket under `/tmp`: `/tmp/tclaude-<uid>/agentd.sock`. It deliberately lives
+**outside** both `~/.tclaude` and the home directory, so the private state
+directory can be denied wholesale without a child-path exception. `tclaude setup
+--install-sandbox-hardening` writes the concrete path (with your uid) for this
+machine; the JSON below shows it as `/tmp/tclaude-<uid>/agentd.sock`, and the
+legacy `~/.tclaude-agentd.sock` is kept alongside it for the migration window.
+Reaching the socket still needs two things: the `socket(AF_UNIX)` call must be
+permitted, and the socket file must be visible. The settings below cover both
+axes.
 
 Likewise, write-denying `~/.claude/sessions/` does **not** stop Claude
 Code from maintaining its own session files or the daemon from reading
@@ -100,7 +104,8 @@ Bash/file tools are restricted.
 
 ## How to configure it
 
-After upgrading from a version that used `~/.tclaude/agentd.sock`, restart
+After upgrading from a version that used a home socket
+(`~/.tclaude-agentd.sock` or `~/.tclaude/agentd.sock`), restart
 `tclaude agentd serve` before installing the updated hardening. The installer
 refuses to rewrite the socket allowance while it detects a legacy-only daemon,
 so it cannot strand newly sandboxed agents on an unreachable endpoint.
@@ -145,13 +150,13 @@ rule there cannot be weakened by any project's `.claude/settings.json`:
   "sandbox": {
     "enabled": true,
     "network": {
-      "allowUnixSockets":    ["~/.tclaude-agentd.sock"],
+      "allowUnixSockets":    ["/tmp/tclaude-<uid>/agentd.sock", "~/.tclaude-agentd.sock"],
       "allowAllUnixSockets": true
     },
     "filesystem": {
       "denyWrite": ["~/.tclaude", "~/.claude/sessions"],
       "denyRead":  ["~/.tclaude", "~/.claude/sessions"],
-      "allowRead": ["~/.tclaude-agentd.sock"]
+      "allowRead": ["/tmp/tclaude-<uid>/agentd.sock", "~/.tclaude-agentd.sock"]
     }
   },
   "permissions": {
@@ -170,8 +175,9 @@ Notes:
 - **`sandbox.enabled` must be `true`.** With the sandbox off, layer 1
   does nothing and a Bash one-liner can write anywhere your user can.
 - **The daemon socket needs two settings, not one.**
-  `sandbox.filesystem.allowRead` keeps the state-free
-  `~/.tclaude-agentd.sock` visible. *Separately*, the `sandbox.network`
+  `sandbox.filesystem.allowRead` keeps the state-free agentd socket (the
+  runtime-dir path plus the legacy `~/.tclaude-agentd.sock`) visible.
+  *Separately*, the `sandbox.network`
   unix-socket allowance lets a sandboxed agent open it at all —
   `allowUnixSockets` (a path list, **macOS only**) or
   `allowAllUnixSockets` (**Linux / WSL2**, all-or-nothing). Both axes are
@@ -194,8 +200,9 @@ Notes:
 ### Keeping the daemon socket reachable
 
 Every `tclaude agent` command connects to the daemon over the canonical
-state-free Unix socket `~/.tclaude-agentd.sock`. Locking down
-`~/.tclaude/` does not contain that path. **Two independent things** still
+state-free Unix socket under `/tmp` (`/tmp/tclaude-<uid>/agentd.sock`).
+Locking down `~/.tclaude/` does not contain that path — it lives outside the
+home directory entirely. **Two independent things** still
 have to hold, enforced by
 **different** sandbox mechanisms — don't conflate them.
 
@@ -203,8 +210,9 @@ have to hold, enforced by
 sandbox on, Claude Code blocks Unix-domain-socket creation by default.
 Re-allowing it is a `sandbox.network` setting — *not* a filesystem one:
 
-- **macOS:** `sandbox.network.allowUnixSockets` takes a path list;
-  allow just `["~/.tclaude-agentd.sock"]`.
+- **macOS:** `sandbox.network.allowUnixSockets` takes a path list; allow
+  the runtime socket plus the legacy path, e.g.
+  `["/tmp/tclaude-<uid>/agentd.sock", "~/.tclaude-agentd.sock"]`.
 - **Linux / WSL2:** the block is a seccomp-bpf filter, which cannot
   inspect a socket's path, so per-path `allowUnixSockets` is **ignored**
   there (Claude Code's settings reference says so explicitly). The only
@@ -228,11 +236,11 @@ operator can drop `allowAllUnixSockets` and keep the tighter per-path
 entry; on Linux/WSL2 the per-path entry is inert but harmless.
 
 **2. The socket *file* must be visible.** This is the filesystem layer.
-The socket now lives outside the denied `~/.tclaude` tree. The generated
-settings still list
-`sandbox.filesystem.allowRead: ["~/.tclaude-agentd.sock"]` explicitly so
-the communication capability remains clear and survives a broader ambient
-read deny.
+The socket now lives outside the denied `~/.tclaude` tree — in the per-user
+runtime dir, outside `$HOME` entirely. The generated settings list the
+runtime-dir socket (plus the legacy `~/.tclaude-agentd.sock`) under
+`sandbox.filesystem.allowRead` explicitly so the communication capability
+remains clear and survives a broader ambient read deny.
 
 **Verified (Linux).** Both halves were checked empirically:
 
@@ -296,8 +304,8 @@ path — re-check `sandbox.enabled`, the `allowWrite` /
 `additionalDirectories` lists, and that the `permissions.deny` rules are
 in a scope that applies. If step 3 fails with "agentd is not running"
 even though the daemon is up, the socket is unreachable for one of two
-reasons — check both: the `sandbox.filesystem.allowRead` entry for
-`~/.tclaude-agentd.sock` is missing or mistyped, **or** the
+reasons — check both: the `sandbox.filesystem.allowRead` entry for the
+runtime-dir socket is missing or mistyped, **or** the
 `sandbox.network` unix-socket allowance is not set
 (`allowAllUnixSockets` on Linux/WSL2, `allowUnixSockets` on macOS).
 

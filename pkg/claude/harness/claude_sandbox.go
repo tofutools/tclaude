@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 )
 
 // Claude Code launch-containment modes. Unlike Codex — whose sandbox is a
@@ -32,11 +34,22 @@ const (
 	ClaudeSandboxOff     = "off"
 )
 
-// tclaudeAgentdSocketTilde is agentd's state-free canonical Unix socket as a
-// ~-relative path, the form Claude Code's settings.json sandbox rules expect
-// (it expands ~ itself). It deliberately sits outside ~/.tclaude so that tree
-// can remain denied without a child-path exception.
-const tclaudeAgentdSocketTilde = "~/.tclaude-agentd.sock"
+// legacyAgentdSocketTilde is the pre-runtime-dir agentd socket as a ~-relative
+// path (the form Claude Code's settings.json sandbox rules expand themselves).
+// It is kept in the allowlist alongside the current canonical socket so an agent
+// spawned during the migration window can still reach a not-yet-restarted older
+// daemon; it is inert once every daemon has moved to the runtime-dir socket.
+const legacyAgentdSocketTilde = "~/.tclaude-agentd.sock"
+
+// agentdSandboxSocketPaths returns the socket paths a sandboxed Claude agent
+// must be allowed to reach: the canonical state-free runtime socket (an absolute
+// /tmp/tclaude-<uid>/agentd.sock path, resolved live) plus the legacy home
+// tilde. Both live outside ~/.tclaude, so that tree stays fully denied without a
+// child-path exception. Fresh []any each call so the setup merge can mutate the
+// enclosing block in place without aliasing.
+func agentdSandboxSocketPaths() []any {
+	return []any{agentipc.CanonicalSocketPath(), legacyAgentdSocketTilde}
+}
 
 // claudeSandbox is Claude Code's SandboxCatalog. The default is `inherit`: a
 // tclaude-spawned Claude agent's containment is whatever the operator already
@@ -136,13 +149,13 @@ func ClaudeSandboxOnBlock() map[string]any {
 	return map[string]any{
 		"enabled": true,
 		"network": map[string]any{
-			"allowUnixSockets":    []any{tclaudeAgentdSocketTilde},
+			"allowUnixSockets":    agentdSandboxSocketPaths(),
 			"allowAllUnixSockets": true,
 		},
 		"filesystem": map[string]any{
 			"denyWrite": []any{"~/.tclaude", "~/.claude/sessions"},
 			"denyRead":  []any{"~/.tclaude", "~/.claude/sessions"},
-			"allowRead": []any{tclaudeAgentdSocketTilde},
+			"allowRead": agentdSandboxSocketPaths(),
 		},
 	}
 }

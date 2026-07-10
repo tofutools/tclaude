@@ -28,7 +28,7 @@ import (
 )
 
 type serveParams struct {
-	Socket               string `long:"socket" short:"s" optional:"true" help:"Unix socket path (default ~/.tclaude-agentd.sock)"`
+	Socket               string `long:"socket" short:"s" optional:"true" help:"Unix socket path (default /tmp/tclaude-<uid>/agentd.sock)"`
 	NoTray               bool   `long:"no-tray" help:"Don't show a system tray icon. Use on headless / CI hosts. Also settable via agent.disable_tray in config.json."`
 	AutoLaunchDashboard  bool   `long:"auto-launch-dashboard" help:"Open the agentd dashboard in your browser on startup (also settable via agent.auto_launch_dashboard in config.json)."`
 	Slop                 bool   `long:"slop" help:"Open the auto-launched dashboard in 🎰 slop machine theme — a purely cosmetic re-skin, same data."`
@@ -62,9 +62,17 @@ func serveCmd() *cobra.Command {
 var popupBaseURL string
 
 // prepareSocketPath creates the parent and removes a stale Unix socket without
-// ever clobbering a regular file or a live daemon endpoint.
-func prepareSocketPath(path string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+// ever clobbering a regular file or a live daemon endpoint. When secureDir is
+// set (the canonical runtime-dir socket), the parent is created 0700 and its
+// ownership verified — refusing to bind on a squatted path in the world-writable
+// /tmp; otherwise the parent (a home directory) is created with the usual 0755.
+func prepareSocketPath(path string, secureDir bool) error {
+	dir := filepath.Dir(path)
+	if secureDir {
+		if err := ensureOwnedRuntimeDir(dir); err != nil {
+			return err
+		}
+	} else if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("mkdir socket dir: %w", err)
 	}
 	fi, err := os.Lstat(path)
@@ -83,6 +91,33 @@ func prepareSocketPath(path string) error {
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove stale socket %s: %w", path, err)
+	}
+	return nil
+}
+
+// ensureOwnedRuntimeDir creates dir (and any missing parents) 0700 and verifies
+// that, if it already exists, it is a directory owned by the current user with
+// no group/other access. It defends the per-user socket directory on the shared,
+// world-writable /tmp against a pre-created (squatted) path: a hostile dir owned
+// by another user, or one left group/world-accessible, fails the bind loudly
+// rather than being silently trusted.
+func ensureOwnedRuntimeDir(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("mkdir runtime socket dir %s: %w", dir, err)
+	}
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return fmt.Errorf("inspect runtime socket dir %s: %w", dir, err)
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("runtime socket path %s is not a directory", dir)
+	}
+	if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() {
+		return fmt.Errorf("runtime socket dir %s is owned by uid %d, not %d — refusing to use a squatted path",
+			dir, st.Uid, os.Getuid())
+	}
+	if perm := fi.Mode().Perm(); perm&0o077 != 0 {
+		return fmt.Errorf("runtime socket dir %s has permissions %#o; want 0700 (no group/other access)", dir, perm)
 	}
 	return nil
 }
@@ -141,8 +176,14 @@ func serveSocketPaths(requested string) []string {
 	if requested != "" {
 		return []string{requested}
 	}
+	// Bind the new canonical runtime-dir socket plus both legacy home paths, so
+	// an already-running older agent (pinned to a home path) still reaches this
+	// daemon during the migration window. The home binds are transitional and a
+	// later release can drop them.
 	paths := []string{SocketPath()}
-	return appendSocketPath(paths, LegacySocketPath())
+	paths = appendSocketPath(paths, LegacyHomeSocketPath())
+	paths = appendSocketPath(paths, LegacySocketPath())
+	return paths
 }
 
 func configureServeSocketEnv(requested string) error {
@@ -172,8 +213,12 @@ func runServe(p *serveParams) error {
 	if len(socketPaths) > 1 {
 		legacySockPath = socketPaths[1]
 	}
-	for _, path := range socketPaths {
-		if err := prepareSocketPath(path); err != nil {
+	// The first default path is the canonical runtime socket, whose parent
+	// (/tmp/tclaude-<uid>) gets the 0700 + ownership guard. A custom --socket or
+	// the legacy home paths keep the ordinary 0755 parent.
+	for i, path := range socketPaths {
+		secureDir := p.Socket == "" && i == 0
+		if err := prepareSocketPath(path, secureDir); err != nil {
 			return err
 		}
 	}
