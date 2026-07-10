@@ -117,7 +117,7 @@ type trayConfig struct {
 // log a warning and the tray icon won't appear, but `Run` keeps
 // blocking until `Quit` is called — so the daemon still works fine,
 // it just doesn't have a visible tray entry.
-func runTrayBlocking(cfg trayConfig, onQuit func()) {
+func runTrayBlocking(cfg trayConfig, onQuit func()) error {
 	greenIcon := makeTrayIcon(color.RGBA{R: 30, G: 180, B: 30, A: 255})
 	// Yellow flips on while a `--ask-human` popup is awaiting decision.
 	// Returns to green once the human decides or the popup times out.
@@ -341,7 +341,24 @@ func runTrayBlocking(cfg trayConfig, onQuit func()) {
 		}()
 	}
 
-	systray.Run(onReady, func() {})
+	return runSystrayLoop(func() {
+		systray.Run(onReady, func() {})
+	})
+}
+
+// runSystrayLoop contains panics raised by the platform tray loop itself.
+// In particular, fyne.io/systray's Linux nativeEnd unconditionally closes a
+// DBus connection that remains nil when nativeStart fails. The prerequisite
+// check normally avoids that path; this guard covers a bus that disappears
+// between the check and systray startup, plus other native teardown failures.
+func runSystrayLoop(run func()) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("system tray panic: %v", recovered)
+		}
+	}()
+	run()
+	return nil
 }
 
 // runReinstallSkills shells out to `tclaude setup --install-agent-skills`.
