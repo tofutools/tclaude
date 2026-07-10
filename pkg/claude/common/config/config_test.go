@@ -344,6 +344,8 @@ func TestLoad_NormalizesFromFile(t *testing.T) {
 
 func TestLoad_InaccessibleConfigIsAbsentForSandboxedAgent(t *testing.T) {
 	isolateConfigHome(t)
+	t.Setenv(agentipc.SocketEnv, "")
+	t.Setenv(codexPermissionProfileEnv, "")
 	require.NoError(t, os.MkdirAll(ConfigDir(), 0o755))
 	require.NoError(t, os.WriteFile(ConfigPath(), []byte(`{"log_level":"debug"}`), 0o600))
 	require.NoError(t, os.Chmod(ConfigDir(), 0))
@@ -352,10 +354,19 @@ func TestLoad_InaccessibleConfigIsAbsentForSandboxedAgent(t *testing.T) {
 	_, err := Load()
 	require.Error(t, err, "an operator process should still surface an unreadable config")
 
-	t.Setenv(agentipc.SocketEnv, filepath.Join(t.TempDir(), "agentd.sock"))
-	cfg, err := Load()
-	require.NoError(t, err)
-	assert.Equal(t, "info", cfg.LogLevel, "sandboxed agents use defaults without reading operator config")
+	t.Run("explicit agent socket", func(t *testing.T) {
+		t.Setenv(agentipc.SocketEnv, filepath.Join(t.TempDir(), "agentd.sock"))
+		cfg, err := Load()
+		require.NoError(t, err)
+		assert.Equal(t, "info", cfg.LogLevel, "sandboxed agents use defaults without reading operator config")
+	})
+
+	t.Run("managed Codex profile", func(t *testing.T) {
+		t.Setenv(codexPermissionProfileEnv, managedCodexProfileName)
+		cfg, err := Load()
+		require.NoError(t, err)
+		assert.Equal(t, "info", cfg.LogLevel, "managed Codex agents use defaults without reading operator config")
+	})
 }
 
 // isolateConfigHome points the config directory at a fresh temp dir
