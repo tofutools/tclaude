@@ -42,3 +42,36 @@ func TestPrepareSocketPath(t *testing.T) {
 		assert.True(t, os.IsNotExist(err))
 	})
 }
+
+func TestServeSocketPaths(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	assert.Equal(t,
+		[]string{SocketPath(), LegacySocketPath()},
+		serveSocketPaths(""))
+
+	custom := filepath.Join(home, "isolated.sock")
+	assert.Equal(t, []string{custom}, serveSocketPaths(custom),
+		"an explicit --socket remains an isolated override")
+}
+
+func TestListenUnixSocketsDoesNotRemoveCompetingSocket(t *testing.T) {
+	dir := t.TempDir()
+	first := filepath.Join(dir, "first.sock")
+	competing := filepath.Join(dir, "competing.sock")
+	winner, err := net.Listen("unix", competing)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = winner.Close() })
+
+	listeners, created, err := listenUnixSockets([]string{first, competing})
+	require.Error(t, err)
+	assert.Empty(t, listeners)
+	assert.Empty(t, created)
+	_, statErr := os.Lstat(first)
+	assert.True(t, os.IsNotExist(statErr), "the loser's first socket is cleaned up")
+
+	conn, dialErr := net.Dial("unix", competing)
+	require.NoError(t, dialErr, "the winning daemon's socket must remain reachable")
+	require.NoError(t, conn.Close())
+}

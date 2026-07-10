@@ -30,9 +30,9 @@ var (
 	cachedHTTP *http.Client
 )
 
-// httpClient returns a singleton http.Client that dials the agentd Unix
-// socket. The hostname in URLs is ignored — we always go through the
-// fixed socket path.
+// httpClient returns a singleton http.Client that dials agentd over its Unix
+// socket. The hostname in URLs is ignored; current clients prefer the
+// canonical path and can fall back to the legacy path during migration.
 func httpClient() *http.Client {
 	clientOnce.Do(func() {
 		cachedHTTP = newUnixSocketClient(10 * time.Second)
@@ -48,13 +48,20 @@ func httpClientWithTimeout(timeout time.Duration) *http.Client {
 }
 
 func newUnixSocketClient(timeout time.Duration) *http.Client {
-	sock := SocketPath()
 	return &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 				var d net.Dialer
-				return d.DialContext(ctx, "unix", sock)
+				var lastErr error
+				for _, sock := range agentipc.ClientSocketPaths() {
+					conn, err := d.DialContext(ctx, "unix", sock)
+					if err == nil {
+						return conn, nil
+					}
+					lastErr = err
+				}
+				return nil, lastErr
 			},
 		},
 	}
@@ -74,19 +81,20 @@ var DaemonAvailableImpl = realDaemonAvailable
 func DaemonAvailable() bool { return DaemonAvailableImpl() }
 
 func realDaemonAvailable() bool {
-	sock := SocketPath()
-	if sock == "" {
-		return false
+	for _, sock := range agentipc.ClientSocketPaths() {
+		if sock == "" {
+			continue
+		}
+		if _, err := os.Stat(sock); err != nil {
+			continue
+		}
+		conn, err := net.DialTimeout("unix", sock, 250*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return true
+		}
 	}
-	if _, err := os.Stat(sock); err != nil {
-		return false
-	}
-	conn, err := net.DialTimeout("unix", sock, 250*time.Millisecond)
-	if err != nil {
-		return false
-	}
-	_ = conn.Close()
-	return true
+	return false
 }
 
 // daemonRequiredMsg is the user-facing error when the CLI is invoked but

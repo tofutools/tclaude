@@ -11,7 +11,7 @@ func ApplyCodexAgentSocketEnv(permissionProfile string, env map[string]string) {
 	if permissionProfile != harness.CodexAgentProfile {
 		return
 	}
-	if sock := agentipc.SandboxedAgentSocketPath(); sock != "" {
+	if sock := agentipc.CanonicalSocketPath(); sock != "" {
 		env[agentipc.SocketEnv] = sock
 	}
 }

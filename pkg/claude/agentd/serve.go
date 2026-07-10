@@ -27,7 +27,7 @@ import (
 )
 
 type serveParams struct {
-	Socket               string `long:"socket" short:"s" optional:"true" help:"Unix socket path (default ~/.tclaude/agentd.sock)"`
+	Socket               string `long:"socket" short:"s" optional:"true" help:"Unix socket path (default ~/.tclaude-agentd.sock)"`
 	NoTray               bool   `long:"no-tray" help:"Don't show a system tray icon. Use on headless / CI hosts. Also settable via agent.disable_tray in config.json."`
 	AutoLaunchDashboard  bool   `long:"auto-launch-dashboard" help:"Open the agentd dashboard in your browser on startup (also settable via agent.auto_launch_dashboard in config.json)."`
 	Slop                 bool   `long:"slop" help:"Open the auto-launched dashboard in 🎰 slop machine theme — a purely cosmetic re-skin, same data."`
@@ -92,6 +92,28 @@ func closeListeners(listeners []net.Listener) {
 	}
 }
 
+func listenUnixSockets(paths []string) ([]net.Listener, []string, error) {
+	listeners := make([]net.Listener, 0, len(paths))
+	createdPaths := make([]string, 0, len(paths))
+	for _, path := range paths {
+		ln, err := net.Listen("unix", path)
+		if err != nil {
+			closeListeners(listeners)
+			removeSocketPaths(createdPaths)
+			return nil, nil, fmt.Errorf("listen %s: %w", path, err)
+		}
+		createdPaths = append(createdPaths, path)
+		if err := os.Chmod(path, 0o600); err != nil {
+			_ = ln.Close()
+			closeListeners(listeners)
+			removeSocketPaths(createdPaths)
+			return nil, nil, fmt.Errorf("chmod socket %s: %w", path, err)
+		}
+		listeners = append(listeners, ln)
+	}
+	return listeners, createdPaths, nil
+}
+
 func removeSocketPaths(paths []string) {
 	for _, path := range paths {
 		fi, err := os.Lstat(path)
@@ -101,18 +123,36 @@ func removeSocketPaths(paths []string) {
 	}
 }
 
-func runServe(p *serveParams) error {
-	sockPath := p.Socket
-	if sockPath == "" {
-		sockPath = SocketPath()
-		if sockPath == "" {
-			return fmt.Errorf("could not determine socket path; pass --socket")
+func appendSocketPath(paths []string, path string) []string {
+	if path == "" {
+		return paths
+	}
+	want := filepath.Clean(path)
+	for _, existing := range paths {
+		if filepath.Clean(existing) == want {
+			return paths
 		}
 	}
-	agentSockPath := SandboxedAgentSocketPath()
-	socketPaths := []string{sockPath}
-	if agentSockPath != "" && filepath.Clean(agentSockPath) != filepath.Clean(sockPath) {
-		socketPaths = append(socketPaths, agentSockPath)
+	return append(paths, path)
+}
+
+func serveSocketPaths(requested string) []string {
+	if requested != "" {
+		return []string{requested}
+	}
+	paths := []string{SocketPath()}
+	return appendSocketPath(paths, LegacySocketPath())
+}
+
+func runServe(p *serveParams) error {
+	socketPaths := serveSocketPaths(p.Socket)
+	sockPath := socketPaths[0]
+	if sockPath == "" {
+		return fmt.Errorf("could not determine socket path; pass --socket")
+	}
+	legacySockPath := ""
+	if len(socketPaths) > 1 {
+		legacySockPath = socketPaths[1]
 	}
 	for _, path := range socketPaths {
 		if err := prepareSocketPath(path); err != nil {
@@ -134,23 +174,11 @@ func runServe(p *serveParams) error {
 		return fmt.Errorf("open database: %w", err)
 	}
 
-	listeners := make([]net.Listener, 0, len(socketPaths))
-	for _, path := range socketPaths {
-		ln, err := net.Listen("unix", path)
-		if err != nil {
-			closeListeners(listeners)
-			removeSocketPaths(socketPaths)
-			return fmt.Errorf("listen %s: %w", path, err)
-		}
-		if err := os.Chmod(path, 0o600); err != nil {
-			_ = ln.Close()
-			closeListeners(listeners)
-			removeSocketPaths(socketPaths)
-			return fmt.Errorf("chmod socket %s: %w", path, err)
-		}
-		listeners = append(listeners, ln)
+	listeners, createdSocketPaths, err := listenUnixSockets(socketPaths)
+	if err != nil {
+		return err
 	}
-	defer removeSocketPaths(socketPaths)
+	defer removeSocketPaths(createdSocketPaths)
 	defer closeListeners(listeners)
 
 	srv := &http.Server{
@@ -393,10 +421,10 @@ func runServe(p *serveParams) error {
 	// goroutines so the main goroutine is free for the tray loop
 	// (systray needs the main thread on every supported platform).
 	serveErrCh := make(chan error, len(listeners))
-	slog.Info("agentd listening", "socket", sockPath, "agent_socket", agentSockPath, "popup", popupBaseURL)
+	slog.Info("agentd listening", "socket", sockPath, "legacy_socket", legacySockPath, "popup", popupBaseURL)
 	fmt.Printf("tclaude agentd listening on %s\n", sockPath)
-	if agentSockPath != "" && filepath.Clean(agentSockPath) != filepath.Clean(sockPath) {
-		fmt.Printf("  sandboxed-agent socket: %s\n", agentSockPath)
+	if legacySockPath != "" && filepath.Clean(legacySockPath) != filepath.Clean(sockPath) {
+		fmt.Printf("  legacy compatibility socket: %s\n", legacySockPath)
 	}
 	if popupBaseURL != "" {
 		dashLoc := "loopback"

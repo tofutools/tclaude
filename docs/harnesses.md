@@ -118,9 +118,10 @@ safe and non-blocking:
     `tclaude agent …`. At spawn
     time, when the launch directory is inside a Git repo, the profile also grants
     write access to that repo's Git common dir so agents can commit from linked
-    worktrees while the rest of `$HOME` stays read-only. The operator and
-    Claude Code continue to use `~/.tclaude/agentd.sock`; agentd serves the
-    same authenticated API on both endpoints. Daemon-spawned
+    worktrees while the rest of `$HOME` stays read-only. The operator, Codex,
+    and Claude Code all use the same canonical state-free endpoint; agentd
+    temporarily also serves the legacy `~/.tclaude/agentd.sock` path for
+    older clients and installed settings. Daemon-spawned
     Codex agents (via `agent spawn`, resume, clone, reincarnate) default to it.
   - **`workspace-write` / `read-only` / `danger-full-access`** are passed through
     as the raw `--sandbox` flag. They do **not** get the agentd-socket allowlist

@@ -6,25 +6,14 @@ import (
 	"strings"
 )
 
-// SocketEnv selects the agentd Unix socket used by tclaude agent clients.
-// tclaude injects it only into sandboxed Codex sessions, whose filesystem
-// profile cannot reach the operator socket below ~/.tclaude.
+// SocketEnv explicitly selects the agentd Unix socket used by tclaude agent
+// clients. Managed Codex sessions pin it to the canonical state-free endpoint.
 const SocketEnv = "TCLAUDE_AGENTD_SOCKET"
 
-// OperatorSocketPath is the long-standing agentd socket used by the operator
-// and by harnesses that can carve the socket out of a denied ~/.tclaude tree.
-func OperatorSocketPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".tclaude", "agentd.sock")
-}
-
-// SandboxedAgentSocketPath is the state-free socket endpoint exposed to Codex
-// agents. It deliberately lives outside ~/.tclaude so Codex can hide that
-// entire private state tree while keeping daemon communication available.
-func SandboxedAgentSocketPath() string {
+// CanonicalSocketPath is the state-free endpoint used by every current
+// tclaude client and harness. It deliberately lives outside ~/.tclaude so that
+// private daemon state can be denied as one complete subtree.
+func CanonicalSocketPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
@@ -32,13 +21,37 @@ func SandboxedAgentSocketPath() string {
 	return filepath.Join(home, ".tclaude-agentd.sock")
 }
 
-// ClientSocketPath resolves the endpoint used by tclaude agent commands. Only
-// an absolute override is accepted; an invalid environment value falls back to
-// the operator socket rather than turning a relative path into an ambient-CWD
-// socket lookup.
-func ClientSocketPath() string {
-	if path := strings.TrimSpace(os.Getenv(SocketEnv)); filepath.IsAbs(path) {
-		return filepath.Clean(path)
+// LegacySocketPath is retained as a compatibility listener for older clients
+// and previously installed Claude sandbox settings. New code must use
+// CanonicalSocketPath.
+func LegacySocketPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
 	}
-	return OperatorSocketPath()
+	return filepath.Join(home, ".tclaude", "agentd.sock")
+}
+
+// ClientSocketPath resolves the preferred endpoint used by tclaude agent
+// commands. Only an absolute override is accepted; an invalid environment
+// value falls back to the canonical socket rather than turning a relative path
+// into an ambient-CWD socket lookup.
+func ClientSocketPath() string {
+	return ClientSocketPaths()[0]
+}
+
+// ClientSocketPaths returns dial candidates in priority order. An explicit
+// absolute override is authoritative. Without one, current clients prefer the
+// canonical path and fall back to the legacy path so an updated CLI still
+// works with a running older daemon or previously installed Claude sandbox
+// settings during the migration window.
+func ClientSocketPaths() []string {
+	if path := strings.TrimSpace(os.Getenv(SocketEnv)); filepath.IsAbs(path) {
+		return []string{filepath.Clean(path)}
+	}
+	paths := []string{CanonicalSocketPath()}
+	if legacy := LegacySocketPath(); legacy != "" && legacy != paths[0] {
+		paths = append(paths, legacy)
+	}
+	return paths
 }

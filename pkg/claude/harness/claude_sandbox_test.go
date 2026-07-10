@@ -134,8 +134,12 @@ func TestClaudeSpawner_Sandbox(t *testing.T) {
 	if on["enabled"] != true {
 		t.Fatalf("on must set sandbox.enabled=true, got %v", on["enabled"])
 	}
-	if !strings.Contains(claudeSandboxSettingsJSON("on"), "agentd.sock") {
+	settings := claudeSandboxSettingsJSON("on")
+	if !strings.Contains(settings, ".tclaude-agentd.sock") {
 		t.Fatal("on must allowlist the agentd socket so the agent can run `tclaude agent`")
+	}
+	if strings.Contains(settings, ".tclaude/agentd.sock") {
+		t.Fatal("new Claude sandbox settings must use the state-free canonical socket")
 	}
 
 	// off disables the sandbox.

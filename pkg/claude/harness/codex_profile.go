@@ -90,9 +90,8 @@ func CodexAgentProfilePath() (string, error) {
 //
 // The profile:
 //   - extends the built-in `:workspace` profile (cwd-subtree writable, $HOME
-//     read-only), then denies all access to ~/.tclaude. Codex cannot reopen a
-//     child socket below a denied parent, so agentd exposes a state-free second
-//     socket beside $HOME for this profile;
+//     read-only), then denies all access to ~/.tclaude. The canonical agentd
+//     socket lives outside that private-state tree;
 //   - optionally allows writes to the current repository's Git common dir
 //     (objects/refs/logs), preserving the rest of $HOME as read-only while
 //     letting a worker commit its own changes;
@@ -150,7 +149,8 @@ func validateCodexProfilePath(label, path string) error {
 }
 
 // EnsureCodexAgentProfile writes the managed tclaude-agent profile file (for
-// the state-free sandboxed-agent socket path) and returns its path. It is idempotent
+// the canonical state-free agentd socket path) and returns its path. It is
+// idempotent
 // and self-healing: the file is fully tclaude-owned, so it is (re)written to
 // the canonical content whenever the on-disk bytes differ — safe to call from
 // `tclaude setup` AND on every spawn. The codex config dir is created if
@@ -184,7 +184,7 @@ func EnsureCodexAgentProfileForCwd(cwd string) (string, error) {
 }
 
 func codexAgentSandboxPaths() (socketPath, privateStateDir string, err error) {
-	socketPath = agentipc.SandboxedAgentSocketPath()
+	socketPath = agentipc.CanonicalSocketPath()
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", "", err
