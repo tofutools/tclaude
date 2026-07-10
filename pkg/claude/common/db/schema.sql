@@ -76,10 +76,46 @@ CREATE TABLE agent_groups (
 			name        TEXT NOT NULL UNIQUE,
 			descr       TEXT NOT NULL DEFAULT '',
 			created_at  TEXT NOT NULL
-		, archived_at TEXT NOT NULL DEFAULT '', default_cwd TEXT NOT NULL DEFAULT '', default_context TEXT NOT NULL DEFAULT '', max_members INTEGER NOT NULL DEFAULT 0, notify_enabled INTEGER NOT NULL DEFAULT 1, default_profile TEXT NOT NULL DEFAULT '', remote_control INTEGER, mission TEXT NOT NULL DEFAULT '', source_template TEXT NOT NULL DEFAULT '', parent_id INTEGER REFERENCES agent_groups(id) ON DELETE SET NULL);
+		, archived_at TEXT NOT NULL DEFAULT '', default_cwd TEXT NOT NULL DEFAULT '', default_context TEXT NOT NULL DEFAULT '', max_members INTEGER NOT NULL DEFAULT 0, notify_enabled INTEGER NOT NULL DEFAULT 1, default_profile TEXT NOT NULL DEFAULT '', remote_control INTEGER, mission TEXT NOT NULL DEFAULT '', source_template TEXT NOT NULL DEFAULT '', parent_id INTEGER REFERENCES agent_groups(id) ON DELETE SET NULL, default_profile_id INTEGER, source_template_id INTEGER);
 
 CREATE INDEX idx_agent_groups_archived
 			ON agent_groups(archived_at);
+
+CREATE INDEX idx_agent_groups_default_profile_id ON agent_groups(default_profile_id);
+
+CREATE INDEX idx_agent_groups_source_template_id ON agent_groups(source_template_id);
+
+CREATE TRIGGER stable_ref_group_profile_insert
+			AFTER INSERT ON agent_groups BEGIN
+				UPDATE agent_groups SET default_profile_id = COALESCE(NEW.default_profile_id,
+					(SELECT id FROM spawn_profiles WHERE name = NEW.default_profile))
+				 WHERE id = NEW.id;
+			END;
+
+CREATE TRIGGER stable_ref_group_profile_update
+			AFTER UPDATE OF default_profile ON agent_groups
+			WHEN NEW.default_profile IS NOT OLD.default_profile BEGIN
+				UPDATE agent_groups SET default_profile_id = CASE
+					WHEN NEW.default_profile_id IS NOT OLD.default_profile_id THEN NEW.default_profile_id
+					ELSE (SELECT id FROM spawn_profiles WHERE name = NEW.default_profile) END
+				 WHERE id = NEW.id;
+			END;
+
+CREATE TRIGGER stable_ref_group_template_insert
+			AFTER INSERT ON agent_groups BEGIN
+				UPDATE agent_groups SET source_template_id = COALESCE(NEW.source_template_id,
+					(SELECT id FROM group_templates WHERE name = NEW.source_template))
+				 WHERE id = NEW.id;
+			END;
+
+CREATE TRIGGER stable_ref_group_template_update
+			AFTER UPDATE OF source_template ON agent_groups
+			WHEN NEW.source_template IS NOT OLD.source_template BEGIN
+				UPDATE agent_groups SET source_template_id = CASE
+					WHEN NEW.source_template_id IS NOT OLD.source_template_id THEN NEW.source_template_id
+					ELSE (SELECT id FROM group_templates WHERE name = NEW.source_template) END
+				 WHERE id = NEW.id;
+			END;
 
 CREATE TABLE agent_cron_jobs (
 			id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -246,10 +282,28 @@ CREATE TABLE group_template_agents (
 			initial_message TEXT NOT NULL DEFAULT '',
 			is_owner        INTEGER NOT NULL DEFAULT 0,
 			permissions     TEXT NOT NULL DEFAULT '[]'
-		, spawn_profile TEXT NOT NULL DEFAULT '', harness TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', sandbox TEXT NOT NULL DEFAULT '', approval TEXT NOT NULL DEFAULT '', role_ref TEXT NOT NULL DEFAULT '', wave INTEGER NOT NULL DEFAULT 0, profile_inline TEXT NOT NULL DEFAULT '');
+		, spawn_profile TEXT NOT NULL DEFAULT '', harness TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', sandbox TEXT NOT NULL DEFAULT '', approval TEXT NOT NULL DEFAULT '', role_ref TEXT NOT NULL DEFAULT '', wave INTEGER NOT NULL DEFAULT 0, profile_inline TEXT NOT NULL DEFAULT '', spawn_profile_id INTEGER);
 
 CREATE INDEX idx_group_template_agents_template
 			ON group_template_agents(template_id);
+
+CREATE INDEX idx_template_agents_spawn_profile_id ON group_template_agents(spawn_profile_id);
+
+CREATE TRIGGER stable_ref_template_agent_profile_insert
+			AFTER INSERT ON group_template_agents BEGIN
+				UPDATE group_template_agents SET spawn_profile_id = COALESCE(NEW.spawn_profile_id,
+					(SELECT id FROM spawn_profiles WHERE name = NEW.spawn_profile))
+				 WHERE id = NEW.id;
+			END;
+
+CREATE TRIGGER stable_ref_template_agent_profile_update
+			AFTER UPDATE OF spawn_profile ON group_template_agents
+			WHEN NEW.spawn_profile IS NOT OLD.spawn_profile BEGIN
+				UPDATE group_template_agents SET spawn_profile_id = CASE
+					WHEN NEW.spawn_profile_id IS NOT OLD.spawn_profile_id THEN NEW.spawn_profile_id
+					ELSE (SELECT id FROM spawn_profiles WHERE name = NEW.spawn_profile) END
+				 WHERE id = NEW.id;
+			END;
 
 CREATE TABLE human_messages (
 			id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -305,6 +359,27 @@ CREATE TABLE dashboard_prefs (
 			value      TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		);
+
+CREATE TRIGGER stable_ref_global_profile_insert
+			AFTER INSERT ON dashboard_prefs WHEN NEW.key = 'tclaude.dash.default_profile' BEGIN
+				DELETE FROM dashboard_prefs WHERE key = 'tclaude.dash.default_profile_id';
+				INSERT INTO dashboard_prefs (key, value, updated_at)
+					SELECT 'tclaude.dash.default_profile_id', CAST(id AS TEXT), NEW.updated_at
+					  FROM spawn_profiles WHERE name = NEW.value;
+			END;
+
+CREATE TRIGGER stable_ref_global_profile_update
+			AFTER UPDATE OF value ON dashboard_prefs WHEN NEW.key = 'tclaude.dash.default_profile' BEGIN
+				DELETE FROM dashboard_prefs WHERE key = 'tclaude.dash.default_profile_id';
+				INSERT INTO dashboard_prefs (key, value, updated_at)
+					SELECT 'tclaude.dash.default_profile_id', CAST(id AS TEXT), NEW.updated_at
+					  FROM spawn_profiles WHERE name = NEW.value;
+			END;
+
+CREATE TRIGGER stable_ref_global_profile_delete
+			AFTER DELETE ON dashboard_prefs WHEN OLD.key = 'tclaude.dash.default_profile' BEGIN
+				DELETE FROM dashboard_prefs WHERE key = 'tclaude.dash.default_profile_id';
+			END;
 
 CREATE TABLE pending_spawns (
 			label           TEXT PRIMARY KEY,
@@ -487,7 +562,25 @@ CREATE TABLE roles (
 			permissions   TEXT NOT NULL DEFAULT '[]',
 			created_at    TEXT NOT NULL,
 			updated_at    TEXT NOT NULL
-		);
+		, spawn_profile_id INTEGER);
+
+CREATE INDEX idx_roles_spawn_profile_id ON roles(spawn_profile_id);
+
+CREATE TRIGGER stable_ref_role_profile_insert
+			AFTER INSERT ON roles BEGIN
+				UPDATE roles SET spawn_profile_id = COALESCE(NEW.spawn_profile_id,
+					(SELECT id FROM spawn_profiles WHERE name = NEW.spawn_profile))
+				 WHERE id = NEW.id;
+			END;
+
+CREATE TRIGGER stable_ref_role_profile_update
+			AFTER UPDATE OF spawn_profile ON roles
+			WHEN NEW.spawn_profile IS NOT OLD.spawn_profile BEGIN
+				UPDATE roles SET spawn_profile_id = CASE
+					WHEN NEW.spawn_profile_id IS NOT OLD.spawn_profile_id THEN NEW.spawn_profile_id
+					ELSE (SELECT id FROM spawn_profiles WHERE name = NEW.spawn_profile) END
+				 WHERE id = NEW.id;
+			END;
 
 CREATE TABLE group_process_state (
 			group_id         INTEGER PRIMARY KEY,

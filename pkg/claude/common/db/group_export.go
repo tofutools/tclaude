@@ -708,15 +708,20 @@ func (c *importCtx) legacyDefaultModelProfile() error {
 	// harness 'claude': a legacy default_model passed the Claude-only model
 	// gate by construction. Only name/harness/model are set; every other
 	// field takes its column default.
-	if _, err := c.tx.Exec(
+	res, err := c.tx.Exec(
 		`INSERT INTO spawn_profiles (name, harness, model, created_at, updated_at)
 		 VALUES (?, 'claude', ?, ?, ?)`,
-		name, model, now, now); err != nil {
+		name, model, now, now)
+	if err != nil {
 		return fmt.Errorf("import: synthesize legacy default-model profile: %w", err)
 	}
+	profileID, err := res.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("import: synthesized profile id: %w", err)
+	}
 	if _, err := c.tx.Exec(
-		`UPDATE agent_groups SET default_profile = ? WHERE id = ?`,
-		name, c.newGroupID); err != nil {
+		`UPDATE agent_groups SET default_profile = ?, default_profile_id = ? WHERE id = ?`,
+		name, profileID, c.newGroupID); err != nil {
 		return fmt.Errorf("import: point group at legacy default-model profile: %w", err)
 	}
 	return nil

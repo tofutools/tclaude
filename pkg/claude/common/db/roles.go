@@ -34,14 +34,15 @@ type Role struct {
 	Brief string
 
 	// Default launch shape — the same six fields template agents carry
-	// (JOH-239). SpawnProfile is a by-name reference to a spawn_profiles row;
+	// (JOH-239). SpawnProfile exposes the current name of a stable profile ref;
 	// the five inline fields are inline defaults. "" = unset (inherit).
-	SpawnProfile string
-	Harness      string
-	Model        string
-	Effort       string
-	Sandbox      string
-	Approval     string
+	SpawnProfile   string
+	SpawnProfileID int64 `json:"-"`
+	Harness        string
+	Model          string
+	Effort         string
+	Sandbox        string
+	Approval       string
 
 	// Permissions is the role's default permission-slug set, merged beneath a
 	// referencing agent's own permission grants at instantiate (union, agent
@@ -59,13 +60,20 @@ func CreateRole(rl *Role) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	profileID := sql.NullInt64{Int64: rl.SpawnProfileID, Valid: rl.SpawnProfileID > 0}
+	if !profileID.Valid {
+		profileID, err = registryIDByNameDB(d, "spawn_profiles", rl.SpawnProfile)
+		if err != nil {
+			return 0, err
+		}
+	}
 	now := time.Now().Format(time.RFC3339Nano)
 	res, err := d.Exec(
 		`INSERT INTO roles
-		   (name, descr, brief, spawn_profile, harness, model, effort, sandbox, approval,
+		   (name, descr, brief, spawn_profile, spawn_profile_id, harness, model, effort, sandbox, approval,
 		    permissions, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		rl.Name, rl.Descr, rl.Brief, rl.SpawnProfile, rl.Harness, rl.Model, rl.Effort,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		rl.Name, rl.Descr, rl.Brief, rl.SpawnProfile, profileID, rl.Harness, rl.Model, rl.Effort,
 		rl.Sandbox, rl.Approval, permsToJSON(rl.Permissions), now, now)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -84,12 +92,24 @@ func UpdateRole(rl *Role) error {
 	if err != nil {
 		return err
 	}
-	res, err := d.Exec(
+	profileID := sql.NullInt64{Int64: rl.SpawnProfileID, Valid: rl.SpawnProfileID > 0}
+	if !profileID.Valid {
+		profileID, err = registryIDByNameDB(d, "spawn_profiles", rl.SpawnProfile)
+		if err != nil {
+			return err
+		}
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.Exec(
 		`UPDATE roles SET
-		   name = ?, descr = ?, brief = ?, spawn_profile = ?, harness = ?, model = ?,
+		   name = ?, descr = ?, brief = ?, spawn_profile = ?, spawn_profile_id = ?, harness = ?, model = ?,
 		   effort = ?, sandbox = ?, approval = ?, permissions = ?, updated_at = ?
 		 WHERE id = ?`,
-		rl.Name, rl.Descr, rl.Brief, rl.SpawnProfile, rl.Harness, rl.Model, rl.Effort,
+		rl.Name, rl.Descr, rl.Brief, rl.SpawnProfile, profileID, rl.Harness, rl.Model, rl.Effort,
 		rl.Sandbox, rl.Approval, permsToJSON(rl.Permissions),
 		time.Now().Format(time.RFC3339Nano), rl.ID)
 	if err != nil {
@@ -105,7 +125,19 @@ func UpdateRole(rl *Role) error {
 	if n == 0 {
 		return sql.ErrNoRows
 	}
-	return nil
+	// A v109 caller may hold an object loaded before a concurrent profile
+	// rename: its name snapshot is stale but SpawnProfileID is still correct.
+	// The name-write trigger must also serve old binaries and therefore cannot
+	// distinguish that object from a legacy name-only update. Restore the
+	// authoritative ID in a second statement atomically, and canonicalize the
+	// legacy name snapshot for an older binary. A dangling historical ID keeps
+	// the supplied snapshot because the subquery yields NULL.
+	if _, err := tx.Exec(`UPDATE roles SET
+		spawn_profile = COALESCE((SELECT name FROM spawn_profiles WHERE id = ?), spawn_profile),
+		spawn_profile_id = ? WHERE id = ?`, profileID, profileID, rl.ID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // GetRole returns the role with the given name, or (nil, nil) when no such
@@ -115,7 +147,7 @@ func GetRole(name string) (*Role, error) {
 	if err != nil {
 		return nil, err
 	}
-	rl, err := scanRole(d.QueryRow(roleSelect + ` WHERE name = ?`, name))
+	rl, err := scanRole(d.QueryRow(roleSelect+` WHERE name = ?`, name))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -199,14 +231,17 @@ func TemplatesReferencingRole(name string) ([]string, error) {
 	return out, rows.Err()
 }
 
-const roleSelect = `SELECT id, name, descr, brief, spawn_profile, harness, model, effort,
+const roleSelect = `SELECT id, name, descr, brief,
+	CASE WHEN spawn_profile_id IS NULL THEN spawn_profile
+	     ELSE COALESCE((SELECT name FROM spawn_profiles WHERE id = spawn_profile_id), '') END,
+	COALESCE(spawn_profile_id, 0), harness, model, effort,
 	sandbox, approval, permissions, created_at, updated_at
 	FROM roles`
 
 func scanRole(s rowScanner) (*Role, error) {
 	var rl Role
 	var perms, createdAt, updatedAt string
-	if err := s.Scan(&rl.ID, &rl.Name, &rl.Descr, &rl.Brief, &rl.SpawnProfile, &rl.Harness,
+	if err := s.Scan(&rl.ID, &rl.Name, &rl.Descr, &rl.Brief, &rl.SpawnProfile, &rl.SpawnProfileID, &rl.Harness,
 		&rl.Model, &rl.Effort, &rl.Sandbox, &rl.Approval, &perms, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}

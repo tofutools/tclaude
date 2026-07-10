@@ -61,6 +61,38 @@ func GetDashboardPref(key string) (string, bool, error) {
 	return value, true, nil
 }
 
+// SetDashboardProfileRef atomically stores the durable profile id used by the
+// spawn resolver and the current-name snapshot consumed by older dashboards.
+func SetDashboardProfileRef(nameKey, idKey, name string, id int64) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	now := time.Now().Format(time.RFC3339Nano)
+	if _, err := tx.Exec(`INSERT OR REPLACE INTO dashboard_prefs (key, value, updated_at) VALUES (?, ?, ?)`, nameKey, name, now); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT OR REPLACE INTO dashboard_prefs (key, value, updated_at) VALUES (?, CAST(? AS TEXT), ?)`, idKey, id, now); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// DeleteDashboardProfileRef atomically clears both halves of the reference.
+func DeleteDashboardProfileRef(nameKey, idKey string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`DELETE FROM dashboard_prefs WHERE key IN (?, ?)`, nameKey, idKey)
+	return err
+}
+
 // ListDashboardPrefs returns every stored preference as a key→value
 // map — the whole set the dashboard loads in one shot on page open.
 func ListDashboardPrefs() (map[string]string, error) {

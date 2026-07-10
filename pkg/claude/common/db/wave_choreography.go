@@ -31,6 +31,7 @@ type WaveChoreography struct {
 
 	// TemplateName is the source template, for logging + surfacing.
 	TemplateName string `json:"template_name"`
+	TemplateID   int64  `json:"template_id,omitempty"`
 	// GroupContext is the already-composed, already-normalized group context
 	// (mission/task folded in) every spawned agent's briefing carries.
 	GroupContext string `json:"group_context"`
@@ -161,8 +162,12 @@ func GetWaveChoreography(groupID int64) (*WaveChoreography, error) {
 	if err != nil {
 		return nil, err
 	}
-	return scanWaveChoreography(d.QueryRow(
+	c, err := scanWaveChoreography(d.QueryRow(
 		`SELECT group_id, group_name, state, updated_at FROM group_wave_choreography WHERE group_id = ?`, groupID))
+	if err == nil && c != nil {
+		resolveWaveTemplateName(d, c)
+	}
+	return c, err
 }
 
 // ListWaveChoreographies returns every pending choreography row — the wave
@@ -184,9 +189,20 @@ func ListWaveChoreographies() ([]*WaveChoreography, error) {
 		if err != nil {
 			return nil, err
 		}
+		resolveWaveTemplateName(d, c)
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+func resolveWaveTemplateName(d *sql.DB, c *WaveChoreography) {
+	if c.TemplateID <= 0 {
+		return
+	}
+	var name string
+	if err := d.QueryRow(`SELECT name FROM group_templates WHERE id = ?`, c.TemplateID).Scan(&name); err == nil {
+		c.TemplateName = name
+	}
 }
 
 // DeleteWaveChoreography removes a group's choreography row (the last wave

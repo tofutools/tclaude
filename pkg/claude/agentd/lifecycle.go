@@ -2361,11 +2361,34 @@ func groupDefaultProfile(g *db.AgentGroup) *db.SpawnProfile {
 // resolution promotes that same value to the global default tier so the UI,
 // CLI and raw API cannot disagree about which global profile is selected.
 const dashboardDefaultProfilePrefKey = "tclaude.dash.default_profile"
+const dashboardDefaultProfileIDPrefKey = "tclaude.dash.default_profile_id"
 
 // globalDefaultProfile loads the dashboard/global default spawn profile. A
 // stale preference (the profile was subsequently renamed or deleted) is a
 // graceful no-op: log it and let the spawn continue to the harness default.
 func globalDefaultProfile() *db.SpawnProfile {
+	idText, idOK, err := db.GetDashboardPref(dashboardDefaultProfileIDPrefKey)
+	if err != nil {
+		slog.Warn("spawn: failed to load global default profile id", "error", err)
+		return nil
+	}
+	if idOK {
+		id, parseErr := strconv.ParseInt(strings.TrimSpace(idText), 10, 64)
+		if parseErr != nil {
+			slog.Warn("spawn: invalid global default profile id", "value", idText, "error", parseErr)
+			return nil
+		}
+		prof, getErr := db.GetSpawnProfileByID(id)
+		if getErr != nil {
+			slog.Warn("spawn: failed to load global default profile", "profile_id", id, "error", getErr)
+			return nil
+		}
+		if prof == nil {
+			slog.Warn("spawn: global default profile no longer exists", "profile_id", id)
+		}
+		return prof
+	}
+
 	name, ok, err := db.GetDashboardPref(dashboardDefaultProfilePrefKey)
 	if err != nil {
 		slog.Warn("spawn: failed to load global default profile preference", "error", err)

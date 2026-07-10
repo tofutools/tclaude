@@ -1006,8 +1006,14 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd stri
 	}
 
 	// Tier 2: the agent's own referenced spawn profile.
-	if ref := strings.TrimSpace(a.SpawnProfile); ref != "" {
-		prof, err := db.GetSpawnProfile(ref)
+	if ref := strings.TrimSpace(a.SpawnProfile); ref != "" || a.SpawnProfileID > 0 {
+		var prof *db.SpawnProfile
+		var err error
+		if a.SpawnProfileID > 0 {
+			prof, err = db.GetSpawnProfileByID(a.SpawnProfileID)
+		} else {
+			prof, err = db.GetSpawnProfile(ref)
+		}
 		if err != nil {
 			return templateAgentLaunch{}, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
 		}
@@ -1027,8 +1033,14 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd stri
 			harness: role.Harness, model: role.Model, effort: role.Effort,
 			sandbox: role.Sandbox, approval: role.Approval,
 		})
-		if ref := strings.TrimSpace(role.SpawnProfile); ref != "" {
-			prof, err := db.GetSpawnProfile(ref)
+		if ref := strings.TrimSpace(role.SpawnProfile); ref != "" || role.SpawnProfileID > 0 {
+			var prof *db.SpawnProfile
+			var err error
+			if role.SpawnProfileID > 0 {
+				prof, err = db.GetSpawnProfileByID(role.SpawnProfileID)
+			} else {
+				prof, err = db.GetSpawnProfile(ref)
+			}
 			if err != nil {
 				return templateAgentLaunch{}, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
 			}
@@ -2563,6 +2575,7 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 			GroupID:           gid,
 			GroupName:         spec.groupName,
 			TemplateName:      tmpl.Name,
+			TemplateID:        tmpl.ID,
 			GroupContext:      groupContext,
 			Cwd:               spec.cwd,
 			WorktreePath:      spec.worktreePath,

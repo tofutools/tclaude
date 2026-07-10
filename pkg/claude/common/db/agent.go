@@ -16,18 +16,22 @@ type AgentGroup struct {
 	Descr          string
 	DefaultCwd     string // pre-filled cwd for agents spawned into this group; "" = none
 	DefaultContext string // shared startup context delivered to the inbox of agents spawned into this group; "" = none
-	DefaultProfile string // name of the spawn profile whose launch fields fill blank spawn fields server-side (JOH-210); "" = none
+	DefaultProfile string // current name of the stable spawn-profile reference whose launch fields fill blanks server-side; "" = none
 	MaxMembers     int    // hard cap on member count; a spawn that would exceed it is refused. 0 = unlimited
 	NotifyEnabled  bool   // OS notifications for member agents; false mutes the whole group (a per-agent 'on' pref still overrides)
 	RemoteControl  *bool  // remote-control policy for agents spawned into this group; tri-state: nil = inherit (defer to the spawn profile), false = actively deny (force off), true = actively opt-in (force on). Overrides the profile default (JOH-262)
 	// Mission and SourceTemplate are deployment provenance (JOH-245): what a
 	// task force was deployed against (a free-text topic or Linear link) and the
-	// template it was instantiated/deployed from. "" for a group not created from
-	// a template (the dashboard reads both-blank as "not a deployed force").
+	// template it was instantiated/deployed from (surfaced as its current name
+	// through a stable template id). "" for a group not created from a template
+	// (the dashboard reads both-blank as "not a deployed force").
 	Mission        string
 	SourceTemplate string
-	CreatedAt      time.Time
-	ArchivedAt     time.Time // zero = active; non-zero = archived (soft-deleted)
+	// SourceTemplateID is the durable provenance link. The name remains a
+	// historical display fallback if the source template is later deleted.
+	SourceTemplateID int64 `json:"-"`
+	CreatedAt        time.Time
+	ArchivedAt       time.Time // zero = active; non-zero = archived (soft-deleted)
 	// ParentGroupID nests this group under another (n-level groups-in-groups,
 	// JOH-392). nil = top-level. Referenced by ID (not name) so it survives a
 	// parent rename, and the column is declared ON DELETE SET NULL so deleting
@@ -495,14 +499,25 @@ func CreateAgentGroupFrom(name string, src AgentGroup) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	defaultProfileID, err := registryIDByNameDB(db, "spawn_profiles", src.DefaultProfile)
+	if err != nil {
+		return 0, err
+	}
+	sourceTemplateID := sql.NullInt64{Int64: src.SourceTemplateID, Valid: src.SourceTemplateID > 0}
+	if !sourceTemplateID.Valid {
+		sourceTemplateID, err = registryIDByNameDB(db, "group_templates", src.SourceTemplate)
+		if err != nil {
+			return 0, err
+		}
+	}
 	res, err := db.Exec(`
 		INSERT INTO agent_groups
-			(name, descr, default_cwd, default_context, default_profile,
-			 max_members, notify_enabled, remote_control, mission, source_template, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		name, src.Descr, src.DefaultCwd, src.DefaultContext, src.DefaultProfile,
+			(name, descr, default_cwd, default_context, default_profile, default_profile_id,
+			 max_members, notify_enabled, remote_control, mission, source_template, source_template_id, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		name, src.Descr, src.DefaultCwd, src.DefaultContext, src.DefaultProfile, defaultProfileID,
 		src.MaxMembers, src.NotifyEnabled, boolPtrToNull(src.RemoteControl),
-		src.Mission, src.SourceTemplate,
+		src.Mission, src.SourceTemplate, sourceTemplateID,
 		time.Now().Format(time.RFC3339Nano))
 	if err != nil {
 		return 0, err
@@ -538,8 +553,12 @@ func SetAgentGroupDeployMeta(name, mission, sourceTemplate string) (int64, error
 	if err != nil {
 		return 0, err
 	}
-	res, err := db.Exec(`UPDATE agent_groups SET mission = ?, source_template = ? WHERE name = ?`,
-		mission, sourceTemplate, name)
+	templateID, err := registryIDByNameDB(db, "group_templates", sourceTemplate)
+	if err != nil {
+		return 0, err
+	}
+	res, err := db.Exec(`UPDATE agent_groups SET mission = ?, source_template = ?, source_template_id = ? WHERE name = ?`,
+		mission, sourceTemplate, templateID, name)
 	if err != nil {
 		return 0, err
 	}
@@ -593,7 +612,11 @@ func SetAgentGroupDefaultProfile(name, profile string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	res, err := db.Exec(`UPDATE agent_groups SET default_profile = ? WHERE name = ?`, profile, name)
+	profileID, err := registryIDByNameDB(db, "spawn_profiles", profile)
+	if err != nil {
+		return 0, err
+	}
+	res, err := db.Exec(`UPDATE agent_groups SET default_profile = ?, default_profile_id = ? WHERE name = ?`, profile, profileID, name)
 	if err != nil {
 		return 0, err
 	}
@@ -722,6 +745,24 @@ func DeleteAgentGroup(name string) error {
 	return tx.Commit()
 }
 
+const agentGroupSelect = `SELECT id, name, descr, default_cwd, default_context,
+	CASE WHEN default_profile_id IS NULL THEN default_profile
+	     ELSE COALESCE((SELECT name FROM spawn_profiles WHERE id = default_profile_id), '') END,
+	max_members, notify_enabled, remote_control, mission,
+	CASE WHEN source_template_id IS NULL THEN source_template
+	     ELSE COALESCE((SELECT name FROM group_templates WHERE id = source_template_id), source_template) END,
+	COALESCE(source_template_id, 0),
+	created_at, archived_at, parent_id FROM agent_groups`
+
+const agentGroupAliasedSelect = `SELECT g.id, g.name, g.descr, g.default_cwd, g.default_context,
+	CASE WHEN g.default_profile_id IS NULL THEN g.default_profile
+	     ELSE COALESCE((SELECT name FROM spawn_profiles WHERE id = g.default_profile_id), '') END,
+	g.max_members, g.notify_enabled, g.remote_control, g.mission,
+	CASE WHEN g.source_template_id IS NULL THEN g.source_template
+	     ELSE COALESCE((SELECT name FROM group_templates WHERE id = g.source_template_id), g.source_template) END,
+	COALESCE(g.source_template_id, 0),
+	g.created_at, g.archived_at, g.parent_id`
+
 // GetAgentGroupByName returns the group with the given name, or nil if not
 // found.
 func GetAgentGroupByName(name string) (*AgentGroup, error) {
@@ -729,7 +770,7 @@ func GetAgentGroupByName(name string) (*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := db.QueryRow(`SELECT id, name, descr, default_cwd, default_context, default_profile, max_members, notify_enabled, remote_control, mission, source_template, created_at, archived_at, parent_id FROM agent_groups WHERE name = ?`, name)
+	row := db.QueryRow(agentGroupSelect+` WHERE name = ?`, name)
 	g, err := scanAgentGroup(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -744,7 +785,7 @@ func GetAgentGroupByID(id int64) (*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := db.QueryRow(`SELECT id, name, descr, default_cwd, default_context, default_profile, max_members, notify_enabled, remote_control, mission, source_template, created_at, archived_at, parent_id FROM agent_groups WHERE id = ?`, id)
+	row := db.QueryRow(agentGroupSelect+` WHERE id = ?`, id)
 	g, err := scanAgentGroup(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -758,7 +799,7 @@ func ListAgentGroups() ([]*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT id, name, descr, default_cwd, default_context, default_profile, max_members, notify_enabled, remote_control, mission, source_template, created_at, archived_at, parent_id FROM agent_groups ORDER BY name`)
+	rows, err := db.Query(agentGroupSelect + ` ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -807,7 +848,7 @@ func RenameAgentGroup(oldName, newName, byConv string) (*AgentGroup, error) {
 	defer func() { _ = tx.Rollback() }()
 
 	row := tx.QueryRow(
-		`SELECT id, name, descr, default_cwd, default_context, default_profile, max_members, notify_enabled, remote_control, mission, source_template, created_at, archived_at, parent_id FROM agent_groups WHERE name = ?`,
+		agentGroupSelect+` WHERE name = ?`,
 		oldName)
 	g, err := scanAgentGroup(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -1454,7 +1495,7 @@ func ListGroupsForAgent(agentID string) ([]*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT g.id, g.name, g.descr, g.default_cwd, g.default_context, g.default_profile, g.max_members, g.notify_enabled, g.remote_control, g.mission, g.source_template, g.created_at, g.archived_at, g.parent_id
+	rows, err := db.Query(agentGroupAliasedSelect+`
 		FROM agent_groups g
 		JOIN agent_group_members m ON m.group_id = g.id
 		WHERE m.agent_id = ?
@@ -1525,7 +1566,7 @@ func SharedGroupsForConvs(a, b string) ([]*AgentGroup, error) {
 	if agentA == "" || agentB == "" {
 		return nil, nil
 	}
-	rows, err := db.Query(`SELECT g.id, g.name, g.descr, g.default_cwd, g.default_context, g.default_profile, g.max_members, g.notify_enabled, g.remote_control, g.mission, g.source_template, g.created_at, g.archived_at, g.parent_id
+	rows, err := db.Query(agentGroupAliasedSelect+`
 		FROM agent_groups g
 		JOIN agent_group_members ma ON ma.group_id = g.id AND ma.agent_id = ?
 		JOIN agent_group_members mb ON mb.group_id = g.id AND mb.agent_id = ?
@@ -2312,7 +2353,7 @@ func ReleaseAllAgentMessageNudgeClaims() (int64, error) {
 // the reaper's orphan sweep calls it when the recipient is retired or deleted,
 // so no pane can ever receive the nudge. The row leaves every undelivered
 // predicate but stays readable in the inbox: this is NOT a delivered/read
-// stamp. The nudge_claimed_at = '' guard leaves an in-flight delivery alone
+// stamp. The nudge_claimed_at = ” guard leaves an in-flight delivery alone
 // (its worker owns the row until it completes or releases). Returns true iff
 // this call cancelled the row, so the caller can log exactly once.
 //
@@ -3210,7 +3251,7 @@ func scanAgentGroup(s rowScanner) (*AgentGroup, error) {
 	var g AgentGroup
 	var createdAt, archivedAt string
 	var remoteControl, parentID sql.NullInt64
-	if err := s.Scan(&g.ID, &g.Name, &g.Descr, &g.DefaultCwd, &g.DefaultContext, &g.DefaultProfile, &g.MaxMembers, &g.NotifyEnabled, &remoteControl, &g.Mission, &g.SourceTemplate, &createdAt, &archivedAt, &parentID); err != nil {
+	if err := s.Scan(&g.ID, &g.Name, &g.Descr, &g.DefaultCwd, &g.DefaultContext, &g.DefaultProfile, &g.MaxMembers, &g.NotifyEnabled, &remoteControl, &g.Mission, &g.SourceTemplate, &g.SourceTemplateID, &createdAt, &archivedAt, &parentID); err != nil {
 		return nil, err
 	}
 	g.RemoteControl = nullToBoolPtr(remoteControl)
