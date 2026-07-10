@@ -420,7 +420,7 @@ always uses the post-connect inbox pointer.
 human can grant it to a coordinator agent so it can grow its own team.
 To keep a spawn-capable agent from running away (a recursive spawn
 explosion) or minting a less-confined child, an **agent** caller is
-bound by four checks — a human
+bound by five checks — a human
 bypasses the agent-only ones, exactly as humans bypass every other
 permission gate:
 
@@ -429,6 +429,7 @@ permission gate:
 | **Group restriction** — an agent may only spawn into a group it is a member or owner of | on | `403 group_restricted` |
 | **Rate limit** — spawns per caller-agent per rolling hour | 10 | `429 rate_limited` |
 | **Sandbox lineage** — the child may not have a weaker launch sandbox than the spawning agent | on | `403 sandbox_restricted` |
+| **Dir write-proof** — the caller must prove its own sandbox can write in the child's launch dirs | on | `403 write_proof_required` / `403 write_proof_failed` |
 | **Max group size** — `agent_groups.max_members`; binds the human too | unlimited (0) | `409 group_full` |
 
 The first two are tuned in `~/.tclaude/config.json` under `agent`
@@ -450,6 +451,25 @@ default spawn profile has filled blank fields. In short:
 - Raw Codex `workspace-write` parents can spawn only raw Codex
   `workspace-write` or `read-only`; raw Codex `read-only` parents can spawn
   only raw Codex `read-only`.
+
+The **dir write-proof** closes the lineage guard's remaining gap: sandboxes
+grant write access rooted at the launch cwd, so an agent that picks the
+child's launch directory picks where that write access lands — without a
+check, a parent whose sandbox cannot touch a directory could spawn a child
+into it and use the child as its writable proxy. A sandboxed agent caller
+must therefore prove it can itself write in every directory the child would
+get write access to (the launch cwd, plus the worktree dir when one is
+passed): the daemon answers the first request with a
+`403 write_proof_required` challenge naming a single-use token, the caller
+creates an empty file named `.tclaude-write-proof-<token>` in each listed
+directory, and retries the same request with `write_proof_token` set; the
+daemon verifies and deletes the files. `tclaude agent spawn` runs the
+handshake automatically — inside the caller's own sandbox, which is exactly
+the capability being proven — so a permitted spawn just works, and a
+forbidden one fails with a clear "cannot prove write access" error. Humans,
+fully-open parents (Claude `off` / Codex `danger-full-access`), and Codex
+`read-only` children (no cwd write to prove) are exempt. The same handshake
+guards a clone's `cwd` override.
 
 ### clone / reincarnate / compact / context-info
 

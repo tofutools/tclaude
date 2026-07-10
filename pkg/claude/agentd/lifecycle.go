@@ -1269,11 +1269,13 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	}
 
 	// Spawn guardrails — runaway-prevention for an agent that the human
-	// granted `groups.spawn`. Three checks: the group's hard member cap
-	// (binds the human too), and — for agent callers only (spawnerConvID
-	// != "") — the group restriction and the per-caller rate limit. Run
-	// here, before any subprocess is launched, so a rejected spawn costs
-	// nothing. See spawn_guardrails.go.
+	// granted `groups.spawn`. The group's hard member cap (binds the human
+	// too) and — for agent callers only (spawnerConvID != "") — the group
+	// restriction run here, before any subprocess is launched, so a rejected
+	// spawn costs nothing. The third guardrail, the per-caller rate limit,
+	// is claimed after the validation gates below (claimSpawnRateSlot) so a
+	// refused request — including the dir write-proof challenge round-trip —
+	// never burns a slot. See spawn_guardrails.go.
 	if !checkSpawnGuardrails(w, g, spawnerConvID) {
 		return
 	}
@@ -1534,6 +1536,38 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 
+	// Dir write-proof — the launch-directory half of the spawn sandbox guard
+	// (spawn_dir_proof.go). The lineage guard in executeSpawn caps the child's
+	// sandbox MODE; this caps its anchor: an agent caller must prove its own
+	// sandbox can write in every directory the child would get write access to
+	// (the launch cwd, plus the designated worktree when one is passed),
+	// otherwise spawning a child there would be a write-permission escape. The
+	// gate challenges (403 write_proof_required) or verifies; on success it
+	// pins cwd/worktree to the symlink-resolved paths the proof was verified
+	// in, so a link swapped after verification cannot retarget the grant.
+	// Humans, fully-open callers, and no-cwd-write children (Codex read-only)
+	// pass untouched — requireDirWriteProof/childSandboxGrantsDirWrite decide.
+	if spawnerConvID != "" && childSandboxGrantsDirWrite(h.Name, sandboxMode) {
+		dirs := []string{cwd}
+		if worktreePath != "" {
+			dirs = append(dirs, worktreePath)
+		}
+		resolved, ok := requireDirWriteProof(w, spawnerConvID, body.WriteProofToken, dirs)
+		if !ok {
+			return
+		}
+		if resolved != nil {
+			if v := resolved[cwd]; v != "" {
+				cwd = v
+			}
+			if worktreePath != "" {
+				if v := resolved[worktreePath]; v != "" {
+					worktreePath = v
+				}
+			}
+		}
+	}
+
 	// Resolve the approval/permission posture for the chosen harness: a Codex
 	// agent gets its non-escalating default (never) when unset, a Claude agent
 	// gets its inherit default (normalized to "" — no `--permission-mode`), and
@@ -1636,6 +1670,15 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			writeError(w, http.StatusBadRequest, "invalid_task_label", err.Error())
 			return
 		}
+	}
+
+	// Rate limit (guardrail 3) — claimed only now, after every validation
+	// gate: a request refused above (bad arg, sandbox lineage, missing dir
+	// write-proof / its challenge round-trip) costs no slot, while anything
+	// past this point counts even if the spawn itself then fails — the
+	// intended runaway-prevention behaviour.
+	if !claimSpawnRateSlot(w, spawnerConvID) {
+		return
 	}
 
 	// Hand the validated request to the shared spawn core. executeSpawn

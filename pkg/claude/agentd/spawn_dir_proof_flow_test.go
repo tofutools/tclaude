@@ -1,0 +1,371 @@
+package agentd_test
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/testharness"
+)
+
+// These tests exercise the spawn-dir write-proof (spawn_dir_proof.go) at the
+// raw wire surface — agentReq/humanReq bypass the Flow.do harness that
+// answers challenges transparently, so the 403 challenge/verify handshake
+// itself is visible. The transparent path (what a CLI user experiences) is
+// covered by TestSpawnDirProof_HarnessAnswersTransparently and by every
+// pre-existing agent-caller spawn flow test, which now ride the same dance.
+
+// writeProofChallengeResp mirrors the daemon's 403 challenge body.
+type writeProofChallengeResp struct {
+	Code       string `json:"code"`
+	Error      string `json:"error"`
+	WriteProof struct {
+		Token    string   `json:"token"`
+		Filename string   `json:"filename"`
+		Dirs     []string `json:"dirs"`
+	} `json:"write_proof"`
+}
+
+// decodeWriteProofChallenge asserts rec is a write_proof_required 403 and
+// returns the parsed challenge.
+func decodeWriteProofChallenge(t *testing.T, rec *httptest.ResponseRecorder) writeProofChallengeResp {
+	t.Helper()
+	require.Equalf(t, http.StatusForbidden, rec.Code, "expected challenge; body=%s", rec.Body.String())
+	var ch writeProofChallengeResp
+	testharness.DecodeJSON(t, rec, &ch)
+	require.Equal(t, "write_proof_required", ch.Code, "body=%s", rec.Body.String())
+	require.NotEmpty(t, ch.WriteProof.Token)
+	require.Equal(t, ".tclaude-write-proof-"+ch.WriteProof.Token, ch.WriteProof.Filename)
+	require.NotEmpty(t, ch.WriteProof.Dirs)
+	return ch
+}
+
+// answerChallenge creates the proof file in every challenged dir — what the
+// CLI does from inside the calling agent's sandbox.
+func answerChallenge(t *testing.T, ch writeProofChallengeResp) {
+	t.Helper()
+	for _, dir := range ch.WriteProof.Dirs {
+		p := filepath.Join(dir, ch.WriteProof.Filename)
+		require.NoError(t, os.WriteFile(p, nil, 0o600))
+		t.Cleanup(func() { _ = os.Remove(p) })
+	}
+}
+
+// Scenario: a sandboxed agent spawns a worker into a directory of its
+// choosing. The daemon first refuses with a write-proof challenge; after the
+// agent creates the token-named file there, the identical request with the
+// token succeeds, the spawned session lands in the (symlink-resolved)
+// challenged dir, and the daemon has consumed the proof file.
+func TestSpawnDirProof_ChallengeThenVerifiedSpawn(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parent = "parent-wrp1-aaaa-bbbb-cccc-111111111111"
+	haveSpawnCapableSandboxParent(t, f, "alpha", parent, harness.DefaultName, harness.ClaudeSandboxInherit)
+
+	dir := t.TempDir()
+	body := map[string]any{"name": "worker", "cwd": dir}
+
+	rec := agentReq(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn", body)
+	ch := decodeWriteProofChallenge(t, rec)
+	resolvedDir, err := filepath.EvalSymlinks(dir)
+	require.NoError(t, err)
+	require.Equal(t, []string{resolvedDir}, ch.WriteProof.Dirs,
+		"challenge must name the symlink-resolved spawn dir")
+
+	answerChallenge(t, ch)
+	body["write_proof_token"] = ch.WriteProof.Token
+	rec = agentReq(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn", body)
+	require.Equalf(t, http.StatusOK, rec.Code, "proved retry must spawn; body=%s", rec.Body.String())
+
+	var resp struct {
+		ConvID string `json:"conv_id"`
+	}
+	testharness.DecodeJSON(t, rec, &resp)
+	require.NotEmpty(t, resp.ConvID)
+	sess, err := db.FindSessionByConvID(resp.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, sess)
+	assert.Equal(t, resolvedDir, sess.Cwd, "spawn must be pinned to the verified resolved dir")
+
+	_, statErr := os.Lstat(filepath.Join(resolvedDir, ch.WriteProof.Filename))
+	assert.True(t, os.IsNotExist(statErr), "daemon must consume the proof file")
+}
+
+// Scenario: the agent obtains a challenge but cannot (or does not) create
+// the proof file — the exact posture of a sandboxed agent aiming a child at
+// a directory outside its own write set. The retry is refused.
+func TestSpawnDirProof_MissingProofRefused(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parent = "parent-wrp2-aaaa-bbbb-cccc-111111111111"
+	haveSpawnCapableSandboxParent(t, f, "alpha", parent, harness.DefaultName, harness.ClaudeSandboxInherit)
+
+	dir := t.TempDir()
+	body := map[string]any{"name": "worker", "cwd": dir}
+	ch := decodeWriteProofChallenge(t,
+		agentReq(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn", body))
+
+	body["write_proof_token"] = ch.WriteProof.Token
+	rec := agentReq(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn", body)
+	require.Equalf(t, http.StatusForbidden, rec.Code, "body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "write_proof_failed")
+	assert.Equal(t, 1, memberCount(t, "alpha"),
+		"refused spawn must not enroll anyone beyond the pre-existing parent")
+}
+
+// Scenario: agent B tries to ride agent A's token (with the proof file in
+// place). The token is bound to the conv it was minted for, so B gets a
+// fresh challenge of its own instead of a spawn.
+func TestSpawnDirProof_TokenBoundToCaller(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parentA = "parent-wrpa-aaaa-bbbb-cccc-111111111111"
+	const parentB = "parent-wrpb-aaaa-bbbb-cccc-111111111111"
+	haveSpawnCapableSandboxParent(t, f, "alpha", parentA, harness.DefaultName, harness.ClaudeSandboxInherit)
+	haveSpawnCapableSandboxParent(t, f, "alpha", parentB, harness.DefaultName, harness.ClaudeSandboxInherit)
+
+	dir := t.TempDir()
+	body := map[string]any{"name": "worker", "cwd": dir}
+	ch := decodeWriteProofChallenge(t,
+		agentReq(t, f, parentA, http.MethodPost, "/v1/groups/alpha/spawn", body))
+	answerChallenge(t, ch)
+
+	body["write_proof_token"] = ch.WriteProof.Token
+	rec := agentReq(t, f, parentB, http.MethodPost, "/v1/groups/alpha/spawn", body)
+	fresh := decodeWriteProofChallenge(t, rec)
+	assert.NotEqual(t, ch.WriteProof.Token, fresh.WriteProof.Token,
+		"a foreign token must yield a fresh challenge, not a spawn")
+}
+
+// Scenario: a verified token is replayed for a second spawn. Tokens are
+// single-use — the replay gets a fresh challenge.
+func TestSpawnDirProof_TokenSingleUse(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parent = "parent-wrp3-aaaa-bbbb-cccc-111111111111"
+	haveSpawnCapableSandboxParent(t, f, "alpha", parent, harness.DefaultName, harness.ClaudeSandboxInherit)
+
+	dir := t.TempDir()
+	body := map[string]any{"name": "worker", "cwd": dir}
+	ch := decodeWriteProofChallenge(t,
+		agentReq(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn", body))
+	answerChallenge(t, ch)
+	body["write_proof_token"] = ch.WriteProof.Token
+	rec := agentReq(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn", body)
+	require.Equalf(t, http.StatusOK, rec.Code, "first proved spawn; body=%s", rec.Body.String())
+
+	answerChallenge(t, ch) // re-create the file; the token must still be dead
+	rec = agentReq(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn", body)
+	decodeWriteProofChallenge(t, rec)
+}
+
+// Scenario: the challenged path is swapped from one symlink target to
+// another between challenge and retry. Verification re-resolves the request
+// dirs and compares them to the challenged set, so the swap yields a fresh
+// challenge for the NEW target — never a spawn pinned by a stale proof.
+func TestSpawnDirProof_SymlinkSwapRefused(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parent = "parent-wrp4-aaaa-bbbb-cccc-111111111111"
+	haveSpawnCapableSandboxParent(t, f, "alpha", parent, harness.DefaultName, harness.ClaudeSandboxInherit)
+
+	base := t.TempDir()
+	dirA := filepath.Join(base, "a")
+	dirB := filepath.Join(base, "b")
+	link := filepath.Join(base, "dir")
+	require.NoError(t, os.Mkdir(dirA, 0o755))
+	require.NoError(t, os.Mkdir(dirB, 0o755))
+	require.NoError(t, os.Symlink(dirA, link))
+
+	body := map[string]any{"name": "worker", "cwd": link}
+	ch := decodeWriteProofChallenge(t,
+		agentReq(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn", body))
+	resolvedA, err := filepath.EvalSymlinks(dirA)
+	require.NoError(t, err)
+	require.Equal(t, []string{resolvedA}, ch.WriteProof.Dirs)
+
+	// Swap the link to B and place the proof where the attacker CAN write.
+	require.NoError(t, os.Remove(link))
+	require.NoError(t, os.Symlink(dirB, link))
+	require.NoError(t, os.WriteFile(filepath.Join(dirB, ch.WriteProof.Filename), nil, 0o600))
+
+	body["write_proof_token"] = ch.WriteProof.Token
+	rec := agentReq(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn", body)
+	fresh := decodeWriteProofChallenge(t, rec)
+	resolvedB, err := filepath.EvalSymlinks(dirB)
+	require.NoError(t, err)
+	assert.Equal(t, []string{resolvedB}, fresh.WriteProof.Dirs,
+		"the swap must surface as a fresh challenge for the new target")
+}
+
+// Scenario: a spawn that names a worktree dir alongside the cwd must prove
+// both — the worktree is where the welcome points the child's code work.
+func TestSpawnDirProof_WorktreeDirAlsoChallenged(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parent = "parent-wrp5-aaaa-bbbb-cccc-111111111111"
+	haveSpawnCapableSandboxParent(t, f, "alpha", parent, harness.DefaultName, harness.ClaudeSandboxInherit)
+
+	cwd, wt := t.TempDir(), t.TempDir()
+	body := map[string]any{"name": "worker", "cwd": cwd, "worktree_path": wt, "worktree_branch": "feat"}
+	ch := decodeWriteProofChallenge(t,
+		agentReq(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn", body))
+	rc, err := filepath.EvalSymlinks(cwd)
+	require.NoError(t, err)
+	rw, err := filepath.EvalSymlinks(wt)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{rc, rw}, ch.WriteProof.Dirs)
+
+	answerChallenge(t, ch)
+	body["write_proof_token"] = ch.WriteProof.Token
+	rec := agentReq(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn", body)
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+}
+
+// Scenario: the human spawns into an arbitrary dir — no challenge, exactly
+// as before. Humans are the trust root.
+func TestSpawnDirProof_HumanExempt(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	rec := humanReq(t, f, http.MethodPost, "/v1/groups/alpha/spawn",
+		map[string]any{"name": "worker", "cwd": t.TempDir()})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+}
+
+// Scenario: a parent whose own launch sandbox is fully open (Claude `off`)
+// can already write anywhere — no challenge.
+func TestSpawnDirProof_UnsandboxedParentExempt(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parent = "parent-wrp6-aaaa-bbbb-cccc-111111111111"
+	haveSpawnCapableSandboxParent(t, f, "alpha", parent, harness.DefaultName, harness.ClaudeSandboxOff)
+
+	rec := agentReq(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn",
+		map[string]any{"name": "worker", "cwd": t.TempDir()})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+}
+
+// Scenario: the child is Codex read-only — it gets no write access at its
+// cwd, so there is no write grant to prove. No challenge.
+func TestSpawnDirProof_ReadOnlyCodexChildExempt(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parent = "parent-wrp7-aaaa-bbbb-cccc-111111111111"
+	haveSpawnCapableSandboxParent(t, f, "alpha", parent, harness.CodexName, harness.SandboxManagedProfile)
+
+	rec := agentReq(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn",
+		map[string]any{"name": "worker", "cwd": t.TempDir(),
+			"harness": harness.CodexName, "sandbox": harness.SandboxReadOnly})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+}
+
+// Scenario: the challenge round-trip must not burn a spawn-rate slot — with
+// a budget of ONE spawn per window, challenge + proved retry still lands,
+// and only a SECOND spawn attempt is rate-limited (on its proved retry; the
+// pre-claim proof gate answers the unproved attempt with a challenge).
+func TestSpawnDirProof_ChallengeDoesNotBurnRateSlot(t *testing.T) {
+	prev := agentd.SpawnMaxPerWindow
+	agentd.SpawnMaxPerWindow = 1
+	t.Cleanup(func() { agentd.SpawnMaxPerWindow = prev })
+
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parent = "parent-wrp8-aaaa-bbbb-cccc-111111111111"
+	haveSpawnCapableSandboxParent(t, f, "alpha", parent, harness.DefaultName, harness.ClaudeSandboxInherit)
+
+	dir := t.TempDir()
+	body := map[string]any{"name": "worker", "cwd": dir}
+	ch := decodeWriteProofChallenge(t,
+		agentReq(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn", body))
+	answerChallenge(t, ch)
+	body["write_proof_token"] = ch.WriteProof.Token
+	rec := agentReq(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn", body)
+	require.Equalf(t, http.StatusOK, rec.Code,
+		"the challenge must not have consumed the single slot; body=%s", rec.Body.String())
+
+	// Second spawn: fresh challenge, then the proved retry hits the limit.
+	body2 := map[string]any{"name": "worker2", "cwd": dir}
+	ch2 := decodeWriteProofChallenge(t,
+		agentReq(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn", body2))
+	answerChallenge(t, ch2)
+	body2["write_proof_token"] = ch2.WriteProof.Token
+	rec = agentReq(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn", body2)
+	require.Equalf(t, http.StatusTooManyRequests, rec.Code, "body=%s", rec.Body.String())
+}
+
+// Scenario: the Flow harness (mirroring the CLI's transparent handling)
+// makes an agent-caller spawn into a writable dir Just Work — the user-
+// visible behaviour of `tclaude agent spawn` inside a sandbox that allows
+// the target dir.
+func TestSpawnDirProof_HarnessAnswersTransparently(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parent = "parent-wrp9-aaaa-bbbb-cccc-111111111111"
+	haveSpawnCapableSandboxParent(t, f, "alpha", parent, harness.DefaultName, harness.ClaudeSandboxInherit)
+
+	dir := t.TempDir()
+	resp := f.AsAgent(parent).SpawnWith("alpha", map[string]any{"name": "worker", "cwd": dir})
+	require.Equalf(t, http.StatusOK, resp.Code, "body=%s", resp.Raw)
+
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	for _, e := range entries {
+		assert.False(t, strings.HasPrefix(e.Name(), ".tclaude-write-proof-"),
+			"no proof litter may remain after the dance")
+	}
+}
+
+// Scenario: an agent self-clones with a cwd override — the same dir-granting
+// power as a spawn, so the same proof handshake applies; a clone that
+// inherits the source's cwd stays challenge-free.
+func TestSpawnDirProof_CloneCwdOverride(t *testing.T) {
+	// Two agent-initiated clones of the same source in one test — disable
+	// the cooldown so the second isn't refused for unrelated reasons.
+	prevCooldown := agentd.CloneCooldown
+	agentd.CloneCooldown = 0
+	t.Cleanup(func() { agentd.CloneCooldown = prevCooldown })
+
+	f := newFlow(t)
+	const caller = "self-wrpc-aaaa-bbbb-cccc-111111111111"
+	f.HaveConvWithTitle(caller, "worker")
+	f.HaveAliveSession(caller, "spwn-wrpc-1", "tclaude-spwn-wrpc-1", "/tmp/work")
+	f.HaveGroup("alpha")
+	f.HaveMember("alpha", caller)
+	require.NoError(t, db.GrantAgentPermission(caller, agentd.PermSelfClone, "test"))
+
+	// Inherit-cwd clone: no new dir authority, no challenge.
+	rec := agentReq(t, f, caller, http.MethodPost, "/v1/whoami/clone",
+		map[string]any{"no_copy_conv": true})
+	require.Equalf(t, http.StatusOK, rec.Code, "inherit-cwd clone; body=%s", rec.Body.String())
+
+	// Override clone: challenge, then the proved retry lands there.
+	dir := t.TempDir()
+	body := map[string]any{"no_copy_conv": true, "cwd": dir}
+	ch := decodeWriteProofChallenge(t,
+		agentReq(t, f, caller, http.MethodPost, "/v1/whoami/clone", body))
+	answerChallenge(t, ch)
+	body["write_proof_token"] = ch.WriteProof.Token
+	rec = agentReq(t, f, caller, http.MethodPost, "/v1/whoami/clone", body)
+	require.Equalf(t, http.StatusOK, rec.Code, "proved clone; body=%s", rec.Body.String())
+
+	var resp struct {
+		NewConv string `json:"new_conv"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.NotEmpty(t, resp.NewConv)
+	resolvedDir, err := filepath.EvalSymlinks(dir)
+	require.NoError(t, err)
+	sess, err := db.FindSessionByConvID(resp.NewConv)
+	require.NoError(t, err)
+	require.NotNil(t, sess)
+	assert.Equal(t, resolvedDir, sess.Cwd, "clone must land in the verified resolved dir")
+}
