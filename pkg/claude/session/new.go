@@ -608,7 +608,7 @@ func runNew(params *NewParams) error {
 	// repo's Git common dir, which linked worktrees need for `git commit`.
 	// Only the tclaude-owned profile is auto-created; any other name must
 	// already be defined by the user's own config.
-	if params.PermissionProfile == harness.CodexAgentProfile {
+	if params.PermissionProfile == harness.CodexAgentProfile && params.CwdWriteProof == "" {
 		if _, eerr := harness.EnsureCodexAgentProfileForCwd(cwd); eerr != nil {
 			return fmt.Errorf("ensure codex permission profile %q: %w", params.PermissionProfile, eerr)
 		}

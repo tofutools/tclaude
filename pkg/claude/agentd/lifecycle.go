@@ -3667,6 +3667,21 @@ func liveSpawnNew(a clcommon.SpawnArgs) error {
 		return err
 	}
 	pid := cmd.Process.Pid
+	// Agent-originated spawns carry a cwd proof. Their forked session wrapper
+	// performs the inode-bound marker check and privileged-setup readiness
+	// handshake before it saves session state. Wait for that short-lived wrapper
+	// here so a refused bootstrap reaches executeSpawn synchronously (and rolls
+	// back launch enrollment) instead of being reported as a successful/pending
+	// child. Human spawns keep the historical fire-and-reap path below.
+	if a.CwdWriteProof != "" {
+		if err := cmd.Wait(); err != nil {
+			slog.Error("spawn subprocess exited with error",
+				"label", label, "pid", pid, "err", err,
+				"stderr", stderr.String(), "stderr_truncated", stderr.Truncated())
+			return fmt.Errorf("spawn session wrapper failed: %w: %s", err, stderr.String())
+		}
+		return nil
+	}
 	go func() {
 		if err := cmd.Wait(); err != nil {
 			slog.Error("spawn subprocess exited with error",
