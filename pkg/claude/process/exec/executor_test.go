@@ -151,6 +151,27 @@ func TestMaterializedPerformerIsNotRecursivelyInterpolated(t *testing.T) {
 	}
 }
 
+func TestStalePoisonActivationForDifferentChildIsNoOp(t *testing.T) {
+	command := plan.Command{
+		ID: "cmd_activate", Kind: plan.CommandKindActivateNode, RunID: "run",
+		NodeID: "work", TargetNodeID: "escalate", SourceNodeStatus: state.NodeStatusBlocked,
+		NodeStatus: state.NodeStatusReady, Attempt: 2, PoisonedNodeID: "work.test.first",
+	}
+	snapshot := store.Snapshot{State: &state.State{Nodes: map[string]state.NodeState{
+		"work": {
+			Status: state.NodeStatusBlocked, BlockedAttempt: 2, BlockedNodeID: "work.test.second",
+		},
+		"escalate": {Type: model.NodeTypeDecision, Status: state.NodeStatusPending},
+	}}}
+	entries, err := observationEntries(command, Observation{Verdict: "pass"}, snapshot, executorTestTime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Event == nil || entries[0].Event.Type != state.EventCommandObserved {
+		t.Fatalf("stale activation emitted transitions: %#v", entries)
+	}
+}
+
 func TestClaimedCommandIsNeverReperformedAfterCrash(t *testing.T) {
 	fs, snapshot := executorFixture(t, true, model.Performer{Kind: model.PerformerProgram, Run: "/fake"})
 	adapter := &fakeAdapter{observation: Observation{Actor: "program:fake@exit0", Verdict: "pass"}}

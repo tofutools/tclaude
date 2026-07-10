@@ -269,6 +269,7 @@ func escalationResolutionCommand(st *state.State, tmpl *model.Template, decision
 	cmd.NodeID = decisionID
 	cmd.TargetNodeID = blockedID
 	cmd.BlockedAttempt = blocked.BlockedAttempt
+	cmd.PoisonedNodeID = blocked.BlockedNodeID
 	cmd.BlockDecision = resolution
 	cmd.Actor = record.Actor
 	cmd.Reason = fmt.Sprintf("decision by %s selected %q", record.Actor, record.Verdict)

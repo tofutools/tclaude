@@ -624,7 +624,7 @@ func (e *Executor) applyResolveBlockCommand(ctx context.Context, command plan.Co
 		return nil, err
 	}
 	request, err := BindBlockResolution(snapshot, BlockResolutionRequest{
-		RunID: command.RunID, NodeID: command.TargetNodeID, BlockedAttempt: command.BlockedAttempt,
+		RunID: command.RunID, NodeID: command.PoisonedNodeID, BlockedAttempt: command.BlockedAttempt,
 		Decision: command.BlockDecision, Actor: command.Actor, Reason: command.Reason, EvidenceRef: command.EvidenceRef,
 	})
 	if err != nil {
@@ -845,7 +845,9 @@ func validateCommand(snapshot store.Snapshot, command plan.Command, at time.Time
 		}
 	}
 	if command.Kind == plan.CommandKindResolveBlock {
-		if command.TargetNodeID == "" || command.BlockedAttempt <= 0 || !command.BlockDecision.IsValid() {
+		child, childOK := snapshot.State.Nodes[command.PoisonedNodeID]
+		if command.TargetNodeID == "" || command.BlockedAttempt <= 0 || !command.BlockDecision.IsValid() ||
+			strings.TrimSpace(command.PoisonedNodeID) == "" || !childOK || child.Parent != command.TargetNodeID {
 			return fmt.Errorf("process command %q has an invalid block resolution target", command.ID)
 		}
 		if !state.ValidateActorRef(command.Actor) || state.IsEngineActor(command.Actor) || strings.TrimSpace(command.Reason) == "" || strings.TrimSpace(command.EvidenceRef) == "" {
@@ -991,7 +993,9 @@ func observationEntries(command plan.Command, observation Observation, snapshot 
 		if command.SourceNodeStatus == state.NodeStatusBlocked {
 			source, sourceOK := snapshot.State.Nodes[command.NodeID]
 			target, targetOK := snapshot.State.Nodes[command.TargetNodeID]
-			if !sourceOK || !targetOK || source.Status != state.NodeStatusBlocked || target.Status != state.NodeStatusPending {
+			if !sourceOK || !targetOK || source.Status != state.NodeStatusBlocked ||
+				source.BlockedAttempt != command.Attempt || source.BlockedNodeID != command.PoisonedNodeID ||
+				target.Status != state.NodeStatusPending {
 				// A claimed poison-escalation activation may resume after a
 				// human used process unblock. Observe that stale command as a
 				// no-op; never create an obsolete decision obligation.

@@ -182,7 +182,7 @@ func TestStaleDecisionResolutionCommandCannotResolveLaterPoison(t *testing.T) {
 	command := plan.Command{
 		ID: "cmd_0123456789abcdef01234567", IdempotencyKey: snapshot.Run.ID + "/resolve_block/escalate/work/attempt-1/retry",
 		Kind: plan.CommandKindResolveBlock, RunID: snapshot.Run.ID, NodeID: "work", TargetNodeID: "work",
-		BlockedAttempt: 1, BlockDecision: state.BlockDecisionRetry, Actor: "human:operator",
+		PoisonedNodeID: "work.test.tests", BlockedAttempt: 1, BlockDecision: state.BlockDecisionRetry, Actor: "human:operator",
 		Reason: "escalation decision chose retry", EvidenceRef: "human-message:42:reply",
 	}
 	claimed, _, err := executor.claim(t.Context(), blocked, command)

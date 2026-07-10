@@ -530,7 +530,7 @@ func TestPlanEscalationDecisionEmitsGenerationBoundResolution(t *testing.T) {
 				t.Fatalf("commands = %#v", got)
 			}
 			command := got[0]
-			if command.NodeID != "escalate" || command.TargetNodeID != "implement" || command.BlockedAttempt != 2 || command.BlockDecision != test.want {
+			if command.NodeID != "escalate" || command.TargetNodeID != "implement" || command.PoisonedNodeID != "implement.test.tests" || command.BlockedAttempt != 2 || command.BlockDecision != test.want {
 				t.Fatalf("resolution command = %#v", command)
 			}
 			if command.Actor != "human:operator" || command.EvidenceRef != "human-message:42" {
