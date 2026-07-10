@@ -49,6 +49,26 @@ func TestSpawnProfilePrecedence_ExplicitModelWins(t *testing.T) {
 	assert.Equal(t, "gpt-5.6-sol", got)
 }
 
+func TestSpawnProfilePrecedence_ExplicitClaudeModelPinsDefaultHarness(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	require.Equal(t, http.StatusCreated, createProfile(t, f,
+		map[string]any{"name": "global", "harness": "codex", "model": "gpt-5.6-sol"}).Code)
+	require.Equal(t, http.StatusOK, setGlobalProfile(t, f, "global").Code)
+	bridgeAgentClientToMux(t, f.Mux)
+	chdirTo(t, resolveSym(t, t.TempDir()))
+
+	stderr := new(bytes.Buffer)
+	resp, rc := agent.RunSpawn(&agent.SpawnParams{
+		Group: "alpha", Name: "worker", Model: "sonnet",
+	}, new(bytes.Buffer), stderr, new(bytes.Buffer))
+	require.Equal(t, 0, rc, "RunSpawn stderr=%s", stderr.String())
+	require.NotNil(t, resp)
+	model, ok := f.World.SpawnModel(resp.ConvID)
+	require.True(t, ok)
+	assert.Equal(t, "sonnet", model)
+}
+
 // An explicitly passed CLI --profile fills fields before the daemon considers
 // the group and global profiles.
 func TestSpawnProfilePrecedence_ExplicitProfileWins(t *testing.T) {

@@ -721,13 +721,18 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		}
 	}
 
-	// Keep an omitted harness omitted on the wire so the daemon can apply the
-	// group and global default-profile tiers before falling back to Claude. An
-	// explicit --profile whose harness is blank still means "Claude", so pin
-	// the catalog-resolved name in that case; otherwise a lower-tier Codex
-	// profile could incorrectly displace the explicitly selected profile.
+	// Keep a completely unspecified harness/launch shape omitted on the wire so
+	// the daemon can apply group/global profiles before falling back to Claude.
+	// An explicit profile or harness-specific launch field pins the catalog used
+	// to validate it; otherwise a lower-tier foreign-harness profile could
+	// reinterpret or invalidate an explicit model/sandbox/etc.
 	requestHarness := strings.TrimSpace(merged.Harness)
-	if prof != nil && requestHarness == "" {
+	launchFieldPinsHarness := strings.TrimSpace(merged.Model) != "" ||
+		strings.TrimSpace(merged.Effort) != "" ||
+		strings.TrimSpace(merged.Sandbox) != "" ||
+		strings.TrimSpace(merged.AskUserQuestionTimeout) != "" ||
+		strings.TrimSpace(merged.Approval) != "" || merged.AutoReview || merged.TrustDir
+	if requestHarness == "" && (prof != nil || launchFieldPinsHarness) {
 		requestHarness = h.Name
 	}
 
