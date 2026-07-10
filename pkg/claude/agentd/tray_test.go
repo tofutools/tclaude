@@ -24,6 +24,11 @@ func TestPickTrayMode_GreenWhenNothingOnline(t *testing.T) {
 	assert.Equal(t, "tclaude agentd", tooltip, "nothing online: tooltip")
 }
 
+func TestRunSystrayLoopRecoversNativePanic(t *testing.T) {
+	err := runSystrayLoop(func() { panic("native teardown failed") })
+	require.EqualError(t, err, "system tray panic: native teardown failed")
+}
+
 // At least one agent working → green, even when others are idle.
 func TestPickTrayMode_GreenWhenAnyWorking(t *testing.T) {
 	mode, tooltip := pickTrayMode(agentTrayCounts{online: 3, busy: 1, idle: 2}, 0, 0, "")

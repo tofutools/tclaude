@@ -476,7 +476,21 @@ func runServe(p *serveParams) error {
 		quit.signal()
 	}()
 
-	if shouldDisableTray(p.NoTray, cfg) {
+	trayDisabled := shouldDisableTray(p.NoTray, cfg)
+	if !trayDisabled {
+		if err := checkTrayPrerequisites(); err != nil {
+			// fyne.io/systray's Linux backend leaves its DBus connection nil
+			// when startup fails, then unconditionally closes it from Quit.
+			// Skipping the tray here keeps headless/WSL shutdown on the normal
+			// graceful path instead of turning Ctrl+C into a nil-pointer panic.
+			slog.Warn("system tray unavailable; continuing without it", "error", err)
+			fmt.Fprintf(os.Stderr, "system tray unavailable; continuing without it: %v\n", err)
+			trayDisabled = true
+		}
+	}
+
+	var unexpectedTrayErr error
+	if trayDisabled {
 		// Legacy / headless path: just block on shutdown.
 		<-quit.ch
 	} else {
@@ -487,10 +501,23 @@ func runServe(p *serveParams) error {
 			<-quit.ch
 			systray.Quit()
 		}()
-		runTrayBlocking(trayConfig{
+		trayErr := runTrayBlocking(trayConfig{
 			SocketPath:   sockPath,
 			PopupBaseURL: popupBaseURL,
 		}, quit.signal)
+		if trayErr != nil {
+			select {
+			case <-quit.ch:
+				// A shutdown request was already in flight. This is the
+				// known systray Linux teardown defect; keep Ctrl+C clean.
+				slog.Warn("system tray teardown failed", "error", trayErr)
+			default:
+				// A tray panic outside shutdown should still stop the daemon
+				// cleanly, but remain visible to the caller as an error.
+				unexpectedTrayErr = trayErr
+				quit.signal()
+			}
+		}
 	}
 
 	// Graceful shutdown.
@@ -503,7 +530,7 @@ func runServe(p *serveParams) error {
 	if remoteSrv != nil {
 		_ = remoteSrv.Shutdown(ctx)
 	}
-	return nil
+	return unexpectedTrayErr
 }
 
 // openDatabaseReportingMigrations opens the singleton SQLite DB, printing
