@@ -41,7 +41,9 @@ func TestDashboardProcessGraphAssets(t *testing.T) {
 		"onPortDragStart",
 		"onCanvasDrop",
 		"this.nodeLayer.contains(node)",
+		"this.portLayer.contains(port)",
 		"captureFocus()",
+		"'data-edge-id': edge.id",
 		"'aria-pressed': 'false'",
 		"process-shape-decision",
 		"process-shape-compound")

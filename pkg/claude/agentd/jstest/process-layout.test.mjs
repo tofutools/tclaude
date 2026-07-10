@@ -25,6 +25,24 @@ function overlaps(a, b) {
     && Math.abs(a.y - b.y) < (a.height + b.height) / 2;
 }
 
+function segmentCrossesNode(a, b, node) {
+  const left = node.x - node.width / 2;
+  const right = node.x + node.width / 2;
+  const top = node.y - node.height / 2;
+  const bottom = node.y + node.height / 2;
+  if (a.x === b.x) return a.x > left && a.x < right && Math.max(a.y, b.y) > top && Math.min(a.y, b.y) < bottom;
+  return a.y > top && a.y < bottom && Math.max(a.x, b.x) > left && Math.min(a.x, b.x) < right;
+}
+
+function assertRouteAvoids(edge, nodes) {
+  for (let i = 1; i < edge.points.length; i += 1) {
+    for (const node of nodes) {
+      assert.equal(segmentCrossesNode(edge.points[i - 1], edge.points[i], node), false,
+        `${edge.from} -> ${edge.to} segment ${i - 1} crosses ${node.id}`);
+    }
+  }
+}
+
 test('forward edges advance to a downstream layer and route with arrow paths', () => {
   const result = layoutProcessGraph(linear);
   const nodes = byID(result);
@@ -116,9 +134,20 @@ test('long forward edges route outside intermediate ranks', () => {
   });
   const long = result.edges.find((edge) => edge.from === 'a' && edge.to === 'd');
   const intermediates = result.nodes.filter((node) => node.id === 'b' || node.id === 'c');
-  const outsideX = long.points[1].x;
-  assert.ok(outsideX < Math.min(...intermediates.map((node) => node.x - node.width / 2)), 'long lane stays left of intermediate nodes');
+  assertRouteAvoids(long, intermediates);
   assert.match(long.path, / L /, 'long edge uses explicit obstacle waypoints');
+});
+
+test('long edge escape avoids siblings on its source and target ranks', () => {
+  const result = layoutProcessGraph({
+    nodes: ['a', 'z', 'b', 'c', 'd'].map((id) => ({ id, type: 'task' })),
+    edges: [
+      { from: 'z', to: 'b' }, { from: 'b', to: 'c' },
+      { from: 'c', to: 'd' }, { from: 'z', to: 'd', outcome: 'skip' },
+    ],
+  });
+  const long = result.edges.find((edge) => edge.from === 'z' && edge.to === 'd');
+  assertRouteAvoids(long, result.nodes.filter((node) => node.id !== 'z' && node.id !== 'd'));
 });
 
 test('pinned visual inversion exits and enters the facing rectangle sides', () => {
@@ -151,6 +180,16 @@ test('same input produces byte-for-byte deterministic layout output', () => {
     ],
   };
   assert.equal(JSON.stringify(layoutProcessGraph(graph)), JSON.stringify(layoutProcessGraph(graph)));
+});
+
+test('semantic edge identity survives unrelated insertion and reorder', () => {
+  const nodes = ['a', 'b', 'c'].map((id) => ({ id, type: 'task' }));
+  const before = layoutProcessGraph({ nodes, edges: [{ from: 'a', to: 'b' }, { from: 'b', to: 'c' }] });
+  const identity = before.edges.find((edge) => edge.from === 'b').id;
+  const after = layoutProcessGraph({ nodes, edges: [
+    { from: 'a', to: 'c', outcome: 'new' }, { from: 'b', to: 'c' }, { from: 'a', to: 'b' },
+  ] });
+  assert.equal(after.edges.find((edge) => edge.from === 'b').id, identity);
 });
 
 test('cycle-breaking heuristic stays isolated at the feedback-arc seam', () => {

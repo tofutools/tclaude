@@ -46,18 +46,26 @@ function stableNodes(graph) {
 }
 
 function stableEdges(graph, byID) {
+  const occurrences = new Map();
   return (graph.edges || []).map((raw, inputIndex) => {
     const from = String(raw.from || '');
     const to = String(raw.to || '');
     if (!byID.has(from) || !byID.has(to)) {
       throw new Error(`process layout: edge ${from || '?'} -> ${to || '?'} references an unknown node`);
     }
+    const semantic = JSON.stringify([from, to, raw.outcome || '', raw.joinOnTarget || '', raw.back === true]);
+    const occurrence = occurrences.get(semantic) || 0;
+    occurrences.set(semantic, occurrence + 1);
+    const id = raw.id != null && String(raw.id) !== ''
+      ? `id:${String(raw.id)}`
+      : `semantic:${encodeURIComponent(semantic)}:${occurrence}`;
     return {
       ...raw,
       from,
       to,
+      id,
       inputIndex,
-      key: `${from}\u0000${to}\u0000${raw.outcome || ''}\u0000${inputIndex}`,
+      key: id,
       back: raw.back === true,
     };
   }).sort((a, b) => cmpText(a.key, b.key));
@@ -270,28 +278,137 @@ function boundaryPoint(node, toward, outgoing) {
   return { x: node.x + dx * scale, y: node.y + dy * scale };
 }
 
+function pointKey(point) {
+  return `${point.x}\u0000${point.y}`;
+}
+
+function segmentBlocked(a, b, obstacles) {
+  if (a.x === b.x) {
+    const low = Math.min(a.y, b.y);
+    const high = Math.max(a.y, b.y);
+    return obstacles.some((box) => a.x > box.left && a.x < box.right && high > box.top && low < box.bottom);
+  }
+  const low = Math.min(a.x, b.x);
+  const high = Math.max(a.x, b.x);
+  return obstacles.some((box) => a.y > box.top && a.y < box.bottom && high > box.left && low < box.right);
+}
+
+function orthogonalRoute(from, to, nodes, lane, edgeSep) {
+  const gap = 14 + (lane % 3) * Math.max(4, edgeSep / 3);
+  const obstacles = nodes.filter((node) => node.id !== from.id && node.id !== to.id).map((node) => ({
+    left: node.x - node.width / 2 - gap,
+    right: node.x + node.width / 2 + gap,
+    top: node.y - node.height / 2 - gap,
+    bottom: node.y + node.height / 2 + gap,
+  }));
+  const allLeft = Math.min(...nodes.map((node) => node.x - node.width / 2)) - gap - 30;
+  const allRight = Math.max(...nodes.map((node) => node.x + node.width / 2)) + gap + 30;
+  const allTop = Math.min(...nodes.map((node) => node.y - node.height / 2)) - gap - 30;
+  const allBottom = Math.max(...nodes.map((node) => node.y + node.height / 2)) + gap + 30;
+  const xs = [...new Set([from.x, to.x, allLeft, allRight,
+    ...obstacles.flatMap((box) => [box.left, box.right])])].sort((a, b) => a - b);
+  const ys = [...new Set([from.y, to.y, allTop, allBottom,
+    ...obstacles.flatMap((box) => [box.top, box.bottom])])].sort((a, b) => a - b);
+  const inside = (point) => obstacles.some((box) => point.x > box.left && point.x < box.right
+    && point.y > box.top && point.y < box.bottom);
+  const points = [];
+  const byKey = new Map();
+  for (const x of xs) {
+    for (const y of ys) {
+      const point = { x, y };
+      if (!inside(point)) {
+        points.push(point);
+        byKey.set(pointKey(point), point);
+      }
+    }
+  }
+  const adjacency = new Map(points.map((point) => [pointKey(point), []]));
+  const connectLine = (line) => {
+    line.sort((a, b) => a.x === b.x ? a.y - b.y : a.x - b.x);
+    for (let i = 1; i < line.length; i += 1) {
+      const a = line[i - 1];
+      const b = line[i];
+      if (segmentBlocked(a, b, obstacles)) continue;
+      const distance = Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+      adjacency.get(pointKey(a)).push({ point: b, distance });
+      adjacency.get(pointKey(b)).push({ point: a, distance });
+    }
+  };
+  for (const x of xs) connectLine(points.filter((point) => point.x === x));
+  for (const y of ys) connectLine(points.filter((point) => point.y === y));
+
+  const startKey = pointKey({ x: from.x, y: from.y });
+  const endKey = pointKey({ x: to.x, y: to.y });
+  const distance = new Map([[startKey, 0]]);
+  const previous = new Map();
+  const pending = new Set(byKey.keys());
+  while (pending.size) {
+    let current = null;
+    for (const key of pending) {
+      if (!distance.has(key)) continue;
+      if (current === null || distance.get(key) < distance.get(current)
+        || (distance.get(key) === distance.get(current) && cmpText(key, current) < 0)) current = key;
+    }
+    if (current === null || current === endKey) break;
+    pending.delete(current);
+    for (const next of adjacency.get(current)) {
+      const key = pointKey(next.point);
+      if (!pending.has(key)) continue;
+      const candidate = distance.get(current) + next.distance;
+      if (!distance.has(key) || candidate < distance.get(key)) {
+        distance.set(key, candidate);
+        previous.set(key, current);
+      }
+    }
+  }
+  if (!distance.has(endKey)) throw new Error(`process layout: no obstacle-free route from ${from.id} to ${to.id}`);
+  const route = [];
+  for (let key = endKey; key; key = previous.get(key)) route.push(byKey.get(key));
+  route.reverse();
+  const compressed = route.filter((point, index) => {
+    if (index === 0 || index === route.length - 1) return true;
+    const before = route[index - 1];
+    const after = route[index + 1];
+    return !((before.x === point.x && point.x === after.x) || (before.y === point.y && point.y === after.y));
+  });
+  compressed[0] = boundaryPoint(from, compressed[1], true);
+  compressed[compressed.length - 1] = boundaryPoint(to, compressed[compressed.length - 2], false);
+  return compressed;
+}
+
+function routeLabel(points) {
+  const segments = points.slice(1).map((point, index) => ({
+    from: points[index], to: point,
+    length: Math.abs(point.x - points[index].x) + Math.abs(point.y - points[index].y),
+  }));
+  const total = segments.reduce((sum, segment) => sum + segment.length, 0);
+  let remaining = total / 2;
+  for (const segment of segments) {
+    if (remaining <= segment.length) {
+      const ratio = segment.length ? remaining / segment.length : 0;
+      return {
+        x: segment.from.x + (segment.to.x - segment.from.x) * ratio + 7,
+        y: segment.from.y + (segment.to.y - segment.from.y) * ratio - 7,
+      };
+    }
+    remaining -= segment.length;
+  }
+  return { ...points[Math.floor(points.length / 2)] };
+}
+
 function routeForward(edge, from, to, lane, nodes, edgeSep) {
   let start = boundaryPoint(from, to, true);
   let end = boundaryPoint(to, from, false);
   if (to.layer - from.layer > 1) {
-    // Sugiyama normally inserts dummy nodes for every crossed rank. Small
-    // process graphs need only the equivalent obstacle guarantee: take a
-    // deterministic lane left of every intermediate-rank rectangle, keeping
-    // the long edge out of aligned nodes while back-edges own the right side.
-    const intermediate = nodes.filter((node) => node.layer > from.layer && node.layer < to.layer);
-    const left = Math.min(from.x - from.width / 2, to.x - to.width / 2,
-      ...intermediate.map((node) => node.x - node.width / 2));
-    const outsideX = left - 44 - lane * edgeSep;
-    // Enter the outside lane from each shape's leftmost boundary. Using a
-    // centre-to-centre circle/diamond intersection here could make the first
-    // horizontal segment cut back through its own endpoint shape.
-    start = { x: from.x - from.width / 2, y: from.y };
-    end = { x: to.x - to.width / 2, y: to.y };
-    const path = `M ${start.x} ${start.y} L ${outsideX} ${start.y} L ${outsideX} ${end.y} L ${end.x} ${end.y}`;
+    // This is the dummy-rank equivalent for small graphs: a deterministic
+    // Manhattan visibility graph routes around every node rectangle, including
+    // siblings on the source/target ranks and arbitrarily positioned pins.
+    const points = orthogonalRoute(from, to, nodes, lane, edgeSep);
+    const path = points.map((point, index) => `${index ? 'L' : 'M'} ${point.x} ${point.y}`).join(' ');
     return {
       path,
-      points: [start, { x: outsideX, y: start.y }, { x: outsideX, y: end.y }, end],
-      label: { x: outsideX + 7, y: (start.y + end.y) / 2 },
+      points,
+      label: routeLabel(points),
     };
   }
   const laneOffset = ((lane % 3) - 1) * edgeSep;

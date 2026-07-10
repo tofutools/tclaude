@@ -266,7 +266,8 @@ export class ProcessGraph {
     this.viewport = svgElement('g', { class: 'process-graph-viewport' });
     this.edgeLayer = svgElement('g', { class: 'process-edge-layer', 'data-key': 'edges' });
     this.nodeLayer = svgElement('g', { class: 'process-node-layer', 'data-key': 'nodes' });
-    this.viewport.append(this.edgeLayer, this.nodeLayer);
+    this.portLayer = svgElement('g', { class: 'process-port-layer', 'data-key': 'ports' });
+    this.viewport.append(this.edgeLayer, this.nodeLayer, this.portLayer);
     this.svg.append(this.defs, this.viewport);
     this.controls = htmlElement('div', { class: 'process-graph-controls', 'aria-label': 'Graph view controls' });
     this.fitButton = htmlElement('button', { class: 'process-fit-button', type: 'button', text: 'Fit', title: 'Fit graph to view' });
@@ -297,8 +298,12 @@ export class ProcessGraph {
     title.textContent = this.options.ariaLabel || `Process graph with ${this.layout.nodes.length} nodes`;
     this.edgeLayer.replaceChildren();
     this.nodeLayer.replaceChildren();
+    this.portLayer.replaceChildren();
     for (const edge of this.layout.edges) this.edgeLayer.append(this.renderEdge(edge));
-    for (const node of this.layout.nodes) this.nodeLayer.append(this.renderNode(node));
+    for (const node of this.layout.nodes) {
+      this.nodeLayer.append(this.renderNode(node));
+      this.portLayer.append(this.renderPortNode(node));
+    }
     this.applyView();
     this.applySelection();
     this.applyKeyboardPort();
@@ -306,10 +311,11 @@ export class ProcessGraph {
   }
 
   renderEdge(edge) {
-    const key = `edge:${edge.inputIndex}:${edge.from}:${edge.to}`;
+    const key = `edge:${edge.id}`;
     const group = svgElement('g', {
       class: `process-edge${edge.back ? ' process-edge-back' : ''}`,
       'data-key': key,
+      'data-edge-id': edge.id,
       'data-edge-index': edge.inputIndex,
       'data-from': edge.from,
       'data-to': edge.to,
@@ -351,6 +357,18 @@ export class ProcessGraph {
     if (node.type !== 'wait' && node.type !== 'start' && node.type !== 'end') renderText(group, node);
     else renderPeripheralLabel(group, node);
     renderOverlay(group, node);
+    return group;
+  }
+
+  renderPortNode(node) {
+    // Ports are siblings of the focusable node button, not descendants. Nested
+    // button roles are inconsistently exposed by accessibility trees.
+    const group = svgElement('g', {
+      class: 'process-node-ports',
+      transform: `translate(${node.x} ${node.y})`,
+      'data-key': `ports:${node.id}`,
+      'data-node-id': node.id,
+    });
     renderPorts(group, node);
     return group;
   }
@@ -379,9 +397,9 @@ export class ProcessGraph {
     let port = event.target?.closest?.('[data-port]');
     // Multiple editor/viewer graphs may share a page. A pointer captured by
     // this SVG must never accept a node or port belonging to another instance.
-    if (node && !this.nodeLayer.contains(node)) node = null;
+    if (node && !this.nodeLayer.contains(node) && !this.portLayer.contains(node)) node = null;
     if (edge && !this.edgeLayer.contains(edge)) edge = null;
-    if (port && !this.nodeLayer.contains(port)) port = null;
+    if (port && !this.portLayer.contains(port)) port = null;
     return { node, edge, port };
   }
 
@@ -416,8 +434,13 @@ export class ProcessGraph {
       this.applyView();
     } else if (this.pointer.mode === 'node') {
       const node = this.nodeLayer.querySelector(`[data-node-id="${CSS.escape(this.pointer.nodeID)}"]`);
+      const ports = this.portLayer.querySelector(`[data-node-id="${CSS.escape(this.pointer.nodeID)}"]`);
       const laid = this.layout.nodes.find((candidate) => candidate.id === this.pointer.nodeID);
-      if (node && laid) node.setAttribute('transform', `translate(${laid.x + (point.x - this.pointer.startPoint.x)} ${laid.y + (point.y - this.pointer.startPoint.y)})`);
+      if (node && laid) {
+        const transform = `translate(${laid.x + (point.x - this.pointer.startPoint.x)} ${laid.y + (point.y - this.pointer.startPoint.y)})`;
+        node.setAttribute('transform', transform);
+        ports?.setAttribute('transform', transform);
+      }
       hook(this.options, 'onNodeDrag')({
         nodeId: this.pointer.nodeID, point,
         delta: { x: point.x - this.pointer.startPoint.x, y: point.y - this.pointer.startPoint.y },
@@ -448,8 +471,13 @@ export class ProcessGraph {
       // Position ownership stays outside the core. Snap the transient drag back
       // unless the hook's caller supplied a new pinned graph through setGraph.
       const node = this.nodeLayer.querySelector(`[data-node-id="${CSS.escape(pointer.nodeID)}"]`);
+      const ports = this.portLayer.querySelector(`[data-node-id="${CSS.escape(pointer.nodeID)}"]`);
       const laid = this.layout.nodes.find((candidate) => candidate.id === pointer.nodeID);
-      if (node && laid) node.setAttribute('transform', `translate(${laid.x} ${laid.y})`);
+      if (node && laid) {
+        const transform = `translate(${laid.x} ${laid.y})`;
+        node.setAttribute('transform', transform);
+        ports?.setAttribute('transform', transform);
+      }
     }
     this.suppressClick = this.dragMoved;
     this.svg.releasePointerCapture?.(event.pointerId);
@@ -471,8 +499,8 @@ export class ProcessGraph {
       this.select({ type: 'node', id: node.id });
       hook(this.options, 'onNodeClick')({ node, event });
     } else if (target.edge) {
-      const edge = this.layout.edges.find((candidate) => candidate.inputIndex === Number(target.edge.dataset.edgeIndex));
-      this.select({ type: 'edge', id: edge.inputIndex });
+      const edge = this.layout.edges.find((candidate) => candidate.id === target.edge.dataset.edgeId);
+      this.select({ type: 'edge', id: edge.id });
       hook(this.options, 'onEdgeClick')({ edge, event });
     } else {
       this.select(null);
@@ -578,19 +606,19 @@ export class ProcessGraph {
       selected?.classList.add('is-selected');
       selected?.setAttribute('aria-pressed', 'true');
     } else if (this.selected.type === 'edge') {
-      const selected = this.edgeLayer.querySelector(`[data-edge-index="${Number(this.selected.id)}"]`);
+      const selected = this.edgeLayer.querySelector(`[data-edge-id="${CSS.escape(String(this.selected.id))}"]`);
       selected?.classList.add('is-selected');
       selected?.setAttribute('aria-pressed', 'true');
     }
   }
 
   applyKeyboardPort() {
-    this.nodeLayer.querySelectorAll('.process-port').forEach((port) => {
+    this.portLayer.querySelectorAll('.process-port').forEach((port) => {
       port.classList.remove('is-keyboard-source');
       port.setAttribute('aria-pressed', 'false');
     });
     if (!this.keyboardPort) return;
-    const source = this.nodeLayer.querySelector(
+    const source = this.portLayer.querySelector(
       `[data-node-id="${CSS.escape(this.keyboardPort.nodeId)}"] [data-port="${this.keyboardPort.port}"]`,
     );
     if (!source) {
@@ -614,7 +642,7 @@ export class ProcessGraph {
     const edge = active.closest?.('[data-edge-index]');
     if (port && node) return { type: 'port', nodeId: node.dataset.nodeId, port: port.dataset.port };
     if (node) return { type: 'node', nodeId: node.dataset.nodeId };
-    if (edge) return { type: 'edge', edgeIndex: edge.dataset.edgeIndex };
+    if (edge) return { type: 'edge', edgeId: edge.dataset.edgeId };
     return null;
   }
 
@@ -622,13 +650,13 @@ export class ProcessGraph {
     if (!focused) return;
     let target;
     if (focused.type === 'port') {
-      target = this.nodeLayer.querySelector(
+      target = this.portLayer.querySelector(
         `[data-node-id="${CSS.escape(focused.nodeId)}"] [data-port="${focused.port}"]`,
       );
     } else if (focused.type === 'node') {
       target = this.nodeLayer.querySelector(`[data-node-id="${CSS.escape(focused.nodeId)}"]`);
     } else {
-      target = this.edgeLayer.querySelector(`[data-edge-index="${Number(focused.edgeIndex)}"]`);
+      target = this.edgeLayer.querySelector(`[data-edge-id="${CSS.escape(focused.edgeId)}"]`);
     }
     target?.focus({ preventScroll: true });
   }

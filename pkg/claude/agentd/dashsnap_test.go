@@ -629,6 +629,14 @@ func processGraphStateJS(title, graph string) string {
       host.querySelector('.process-node').focus();
       instance.setGraph(graph);
       if (!document.activeElement || document.activeElement.dataset.nodeId !== focusedID) throw new Error('setGraph did not restore node focus');
+      var focusedEdge = host.querySelector('.process-edge');
+      var focusedEdgeID = focusedEdge.dataset.edgeId;
+      focusedEdge.focus();
+      focusedEdge.dispatchEvent(new MouseEvent('click', {bubbles:true}));
+      var reorderedGraph = Object.assign({}, graph, {edges:[].concat(graph.edges).reverse()});
+      instance.setGraph(reorderedGraph);
+      if (!document.activeElement || document.activeElement.dataset.edgeId !== focusedEdgeID) throw new Error('edge focus followed an unstable array index');
+      if (!host.querySelector('.process-edge.is-selected') || host.querySelector('.process-edge.is-selected').dataset.edgeId !== focusedEdgeID) throw new Error('edge selection followed an unstable array index');
       var foreignNode = document.createElement('div');
       foreignNode.dataset.nodeId = 'foreign';
       var foreignPort = document.createElement('span');
