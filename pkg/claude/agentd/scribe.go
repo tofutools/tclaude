@@ -303,11 +303,14 @@ func ensureScribeWorkdir() (string, *spawnFailure) {
 
 // scribeSpawnHarness reports the harness this scribe summon will actually
 // launch on. A scribe leaves --harness unset, so it follows the eponymous
-// group's default spawn profile (a bare scribe group has none → the default
-// harness). Mirrors the resolution executeSpawn → applyDefaultProfile performs,
-// so the dir we pre-trust matches the harness that will read the trust store.
+// group's default spawn profile, then the global default profile (neither →
+// the default harness). Mirrors executeSpawn → applyDefaultProfile so the dir
+// we pre-trust matches the harness that will read the trust store.
 func scribeSpawnHarness(g *db.AgentGroup) string {
 	if prof := groupDefaultProfile(g); prof != nil {
+		return harnessOrDefault(prof.Harness)
+	}
+	if prof := globalDefaultProfile(); prof != nil {
 		return harnessOrDefault(prof.Harness)
 	}
 	return harness.DefaultName

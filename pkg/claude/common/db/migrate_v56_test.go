@@ -98,6 +98,13 @@ func TestMigrateV55toV56_FreshSchemaRoundTrips(t *testing.T) {
 	require.NoError(t, SetDashboardPref("tclaude.dash.sort", `{"col":"name"}`))
 	require.NoError(t, SetDashboardPref("tclaude.dash.group.x", "1"))
 	require.NoError(t, SetDashboardPref("tclaude.dash.group.x", "0"), "upsert overwrites")
+	got, present, err := GetDashboardPref("tclaude.dash.group.x")
+	require.NoError(t, err, "GetDashboardPref")
+	assert.True(t, present)
+	assert.Equal(t, "0", got)
+	_, present, err = GetDashboardPref("tclaude.dash.missing")
+	require.NoError(t, err, "GetDashboardPref missing")
+	assert.False(t, present)
 
 	prefs, err := ListDashboardPrefs()
 	require.NoError(t, err, "ListDashboardPrefs")
@@ -107,7 +114,7 @@ func TestMigrateV55toV56_FreshSchemaRoundTrips(t *testing.T) {
 	require.NoError(t, DeleteDashboardPref("tclaude.dash.group.x"))
 	prefs, err = ListDashboardPrefs()
 	require.NoError(t, err, "ListDashboardPrefs after delete")
-	_, present := prefs["tclaude.dash.group.x"]
+	_, present = prefs["tclaude.dash.group.x"]
 	assert.False(t, present, "deleted key is gone")
 	assert.Equal(t, `{"col":"name"}`, prefs["tclaude.dash.sort"], "the other key is untouched")
 

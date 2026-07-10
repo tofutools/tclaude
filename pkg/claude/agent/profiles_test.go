@@ -13,6 +13,52 @@ import (
 
 func boolPtr(b bool) *bool { return &b }
 
+func TestRunProfilesDefault_ShowSetClear(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, func(method, path string) (int, string, string) {
+		switch method {
+		case "GET":
+			return 200, "", `{"name":"gpt5.6-sol-high"}`
+		case "PUT":
+			return 200, "", `{"name":"gpt5.6-sol-high"}`
+		case "DELETE":
+			return 200, "", ""
+		default:
+			return 405, "method", ""
+		}
+	})
+
+	var stdout, stderr bytes.Buffer
+	require.Equal(t, rcOK, runProfilesDefaultShow(&stdout, &stderr), "stderr=%s", stderr.String())
+	assert.Equal(t, "gpt5.6-sol-high\n", stdout.String())
+
+	stdout.Reset()
+	require.Equal(t, rcOK, runProfilesDefaultSet(
+		&profilesDefaultSetParams{Name: " gpt5.6-sol-high "}, &stdout, &stderr))
+	assert.Contains(t, stdout.String(), "Global default profile set to gpt5.6-sol-high")
+
+	stdout.Reset()
+	require.Equal(t, rcOK, runProfilesDefaultClear(&stdout, &stderr))
+	assert.Contains(t, stdout.String(), "Global default profile cleared")
+
+	require.Len(t, calls, 3)
+	for _, call := range calls {
+		assert.Equal(t, "/v1/spawn-profile-default", call.path)
+	}
+	assert.Equal(t, "GET", calls[0].method)
+	assert.Equal(t, "PUT", calls[1].method)
+	assert.Equal(t, map[string]string{"name": "gpt5.6-sol-high"}, calls[1].body)
+	assert.Equal(t, "DELETE", calls[2].method)
+}
+
+func TestRunProfilesDefaultShow_Unset(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, ok(`{"name":""}`))
+	var stdout, stderr bytes.Buffer
+	require.Equal(t, rcOK, runProfilesDefaultShow(&stdout, &stderr))
+	assert.Contains(t, stdout.String(), "no global default spawn profile")
+}
+
 // mergeProfileIntoSpawn is the CLI-side flatten of a spawn profile under the
 // explicit flags (JOH-210). These cover the precedence contract the operator
 // asked for — explicit flag > --profile > blank — and the harness-match gate

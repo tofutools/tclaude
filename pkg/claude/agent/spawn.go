@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -225,7 +226,68 @@ type SpawnRequest struct {
 	// or an owner of the target group. Empty for a spawn that takes the
 	// group's default permissions.
 	PermissionOverrides map[string]string `json:"permission_overrides,omitempty"`
+
+	// Presence bits preserve an explicit JSON false across profile overlays.
+	// They are populated by UnmarshalJSON and intentionally stay off the wire.
+	autoReviewSpecified bool
+	trustDirSpecified   bool
 }
+
+// UnmarshalJSON records whether the two plain-bool launch fields appeared on
+// the wire. Their values alone cannot distinguish omitted from explicit false,
+// but profile precedence must: an explicit false beats every profile, and a
+// higher-tier profile's false beats a lower-tier true.
+func (r *SpawnRequest) UnmarshalJSON(data []byte) error {
+	type alias SpawnRequest
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	*r = SpawnRequest(decoded)
+	_, r.autoReviewSpecified = fields["auto_review"]
+	_, r.trustDirSpecified = fields["trust_dir"]
+	return nil
+}
+
+// MarshalJSON keeps an explicitly selected false from an explicit profile on
+// the wire despite the public bool fields' historical omitempty tags.
+func (r SpawnRequest) MarshalJSON() ([]byte, error) {
+	type alias SpawnRequest
+	data, err := json.Marshal(alias(r))
+	if err != nil {
+		return nil, err
+	}
+	if !r.autoReviewSpecified && !r.trustDirSpecified {
+		return data, nil
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return nil, err
+	}
+	if r.autoReviewSpecified {
+		fields["auto_review"] = json.RawMessage("false")
+		if r.AutoReview {
+			fields["auto_review"] = json.RawMessage("true")
+		}
+	}
+	if r.trustDirSpecified {
+		fields["trust_dir"] = json.RawMessage("false")
+		if r.TrustDir {
+			fields["trust_dir"] = json.RawMessage("true")
+		}
+	}
+	return json.Marshal(fields)
+}
+
+// AutoReviewSpecified reports whether auto_review appeared in decoded JSON.
+func (r SpawnRequest) AutoReviewSpecified() bool { return r.autoReviewSpecified }
+
+// TrustDirSpecified reports whether trust_dir appeared in decoded JSON.
+func (r SpawnRequest) TrustDirSpecified() bool { return r.trustDirSpecified }
 
 // SpawnParams drives `tclaude agent spawn <group>`. The daemon does
 // the actual spawn + group-join; this struct just shapes the request.
@@ -244,8 +306,8 @@ type SpawnParams struct {
 	// the CLI twin of the dashboard's "Load from profile" picker. An explicit
 	// short is pinned so boa's short-flag enricher doesn't hand `-p` elsewhere.
 	// Precedence: explicit flags override the profile, which overrides the
-	// group / harness defaults (see mergeProfileIntoSpawn).
-	Profile string `long:"profile" short:"p" optional:"true" help:"Pre-fill spawn fields from a saved spawn profile (see 'tclaude agent profiles ls'). Explicit flags override the profile; the profile overrides the group/harness defaults. remote_control is NOT taken from the profile — use --remote-control"`
+	// group / global / harness defaults (see mergeProfileIntoSpawn).
+	Profile string `long:"profile" short:"p" optional:"true" help:"Pre-fill spawn fields from a saved spawn profile (see 'tclaude agent profiles ls'). Explicit flags override the profile; the profile overrides group/global/harness defaults. remote_control is NOT taken from the profile — use --remote-control"`
 
 	Worktree     string `long:"worktree" short:"w" optional:"true" help:"Create (or reuse) a git worktree on this branch and spawn the agent into it. The worktree is created in the repo containing --cwd, unless --worktree-repo points elsewhere. Mirrors the dashboard spawn modal's worktree picker"`
 	WorktreeBase string `long:"worktree-base" optional:"true" help:"Base branch for a newly-created --worktree (default: the repo's default branch). Ignored when the --worktree branch already exists"`
@@ -276,7 +338,7 @@ type SpawnParams struct {
 	// a short from any existing field. No explicit shorts — `--effort`
 	// and `--model` only.
 	Effort string `long:"effort" optional:"true" help:"Reasoning effort for the new agent: low|medium|high|xhigh|max. Unset = the harness's own default (no flag passed)"`
-	Model  string `long:"model" optional:"true" help:"Model for the new agent. Claude: fable|fable[1m]|opus|opus[1m]|sonnet|sonnet[1m]|haiku|opusplan or a full model ID. Codex: a codex model name. Unset = the group's default model, else the harness's own default"`
+	Model  string `long:"model" optional:"true" help:"Model for the new agent. Claude: fable|fable[1m]|opus|opus[1m]|sonnet|sonnet[1m]|haiku|opusplan or a full model ID. Codex: a codex model name. Unset = group default, then global default, then the harness's own default"`
 
 	// Harness picks the coding harness the new agent runs. Declared last
 	// (no explicit short) for the same reason as Effort/Model — boa's
@@ -356,7 +418,8 @@ func spawnCmd() *cobra.Command {
 // been folded under the CLI's explicit flags. It is the CLI-side twin of the
 // dashboard's applyProfileToSpawnForm: an explicit flag wins; a field the flag
 // left blank takes the profile's value; a field neither sets stays blank, for
-// the daemon to fill from the group default profile, then the harness default.
+// the daemon to fill from the group default profile, global default profile,
+// then the harness default.
 // Pure data — RunSpawn validates these against the resolved harness and builds
 // the SpawnRequest from them.
 type resolvedSpawnFields struct {
@@ -402,9 +465,9 @@ func harnessEquivalent(a, b string) bool {
 // mergeProfileIntoSpawn folds a spawn profile's fields under the CLI's explicit
 // flags, mirroring the dashboard's client-side pre-fill (JOH-210). Precedence,
 // per field: explicit flag > profile > blank. The daemon then fills a still-
-// blank field from the group's default profile, then the harness default — so
-// the intended order is flag > --profile > group-default profile > harness
-// default. This holds for sandbox/approval too: the CLI VALIDATES those without
+// blank field from the group's default profile, then the global profile, then
+// the harness default — so the intended order is flag > --profile > group >
+// global > harness. This holds for sandbox/approval too: the CLI VALIDATES those without
 // applying the harness default (see RunSpawn), so an omitted flag reaches the
 // daemon still blank and the group-default-profile layer applies uniformly
 // across all launch fields, not just harness/model/effort. An explicit
@@ -590,7 +653,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	}
 	// Fold the profile under the explicit flags (flag > profile > blank). The
 	// daemon then fills any still-blank launch field from the group's default
-	// profile, then the harness default.
+	// profile, global default profile, then the harness default.
 	merged := mergeProfileIntoSpawn(p, explicitMessage, prof)
 
 	// Effective brief: an explicit one was cap-checked above; a profile one was
@@ -720,6 +783,22 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		}
 	}
 
+	// Keep a completely unspecified harness/launch shape omitted on the wire so
+	// the daemon can apply group/global profiles before falling back to Claude.
+	// An explicit profile or harness-specific launch field pins the catalog used
+	// to validate it; otherwise a lower-tier foreign-harness profile could
+	// reinterpret or invalidate an explicit model/sandbox/etc.
+	requestHarness := strings.TrimSpace(merged.Harness)
+	launchFieldPinsHarness := strings.TrimSpace(merged.Model) != "" ||
+		strings.TrimSpace(merged.Effort) != "" ||
+		strings.TrimSpace(merged.Sandbox) != "" ||
+		strings.TrimSpace(merged.AskUserQuestionTimeout) != "" ||
+		strings.TrimSpace(merged.Approval) != "" || merged.AutoReview || merged.TrustDir
+	launchFieldPinsHarness = launchFieldPinsHarness || p.RemoteControl
+	if requestHarness == "" && (prof != nil || launchFieldPinsHarness) {
+		requestHarness = h.Name
+	}
+
 	req := SpawnRequest{
 		Name:                   name,
 		Role:                   merged.Role,
@@ -733,7 +812,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		AutoFocus:              merged.AutoFocus,
 		Effort:                 effort,
 		Model:                  model,
-		Harness:                h.Name,
+		Harness:                requestHarness,
 		SandboxMode:            sandboxMode,
 		AskUserQuestionTimeout: askTimeout,
 		ApprovalPolicy:         approvalPolicy,
@@ -742,6 +821,8 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		IsOwner:                merged.IsOwner,
 		PermissionOverrides:    merged.PermissionOverrides,
 	}
+	req.autoReviewSpecified = p.AutoReview || (prof != nil && prof.AutoReview != nil)
+	req.trustDirSpecified = prof != nil && prof.TrustDir != nil
 	// --remote-control is opt-in only on the CLI: send &true when the flag is set,
 	// and leave the pointer nil otherwise so the daemon's group/profile
 	// remote-control policy fills it (the dashboard form is the surface that sends

@@ -1394,14 +1394,12 @@ function bindRowActions() {
         // this case.
         case 'set-dash-profile': {
           // The dashboard-level 🧠 chip (groups filter bar): pick the
-          // dashboard default spawn profile, which pre-fills the spawn dialog
-          // when a group has no default of its own. Pure client state — stored
-          // in dashPrefs, not on the server — so onCommit persists locally and
-          // re-renders the (static-HTML) chip rather than refresh()ing. This
-          // replaced the retired user-default-model chip (JOH-210 inc3).
+          // global default spawn profile, which pre-fills the spawn dialog and
+          // is also agentd's fallback after a group's own profile. The setter
+          // awaits the shared validated API before updating the UI cache.
           const current = btn.getAttribute('data-profile') || '';
           await openProfilePicker(btn, current, async (name) => {
-            setDashDefaultProfile(name);
+            await setDashDefaultProfile(name);
             toast(name ? `dashboard default profile → ${name}` : 'dashboard default profile cleared');
             renderDashDefaultProfile();
             return true;

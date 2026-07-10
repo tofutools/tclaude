@@ -1,6 +1,8 @@
 package db
 
 import (
+	"database/sql"
+	"errors"
 	"time"
 )
 
@@ -11,8 +13,9 @@ import (
 // port each time (and localStorage is partitioned by origin, port
 // included). Keys are the dashboard's own namespaced strings
 // (e.g. "tclaude.dash.group.<name>", "tclaude.dash.sort"); values are
-// stored verbatim as the opaque strings the dashboard wrote — the
-// daemon never interprets them.
+// stored verbatim. Most are opaque UI state; the global spawn-profile key is
+// also read by agentd's spawn resolver so dashboard and CLI spawns share one
+// default.
 
 // SetDashboardPref upserts a single preference. value is stored as-is,
 // including the empty string (distinct from "absent" — use
@@ -37,6 +40,25 @@ func DeleteDashboardPref(key string) error {
 	}
 	_, err = db.Exec(`DELETE FROM dashboard_prefs WHERE key = ?`, key)
 	return err
+}
+
+// GetDashboardPref returns one stored preference and whether it exists. The
+// value may itself be empty, so callers must use the bool to distinguish an
+// explicitly stored empty string from a missing key.
+func GetDashboardPref(key string) (string, bool, error) {
+	db, err := Open()
+	if err != nil {
+		return "", false, err
+	}
+	var value string
+	err = db.QueryRow(`SELECT value FROM dashboard_prefs WHERE key = ?`, key).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return value, true, nil
 }
 
 // ListDashboardPrefs returns every stored preference as a key→value

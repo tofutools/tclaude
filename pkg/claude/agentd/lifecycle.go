@@ -1405,8 +1405,23 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		body.Cwd = g.DefaultCwd
 	}
 
-	// Overlay the group's default spawn profile (JOH-210) onto blank launch
-	// fields BEFORE the harness/model/sandbox resolution below — the same way
+	// A request that omits harness AND every harness-specific launch field is
+	// genuinely blank: group/global profiles may choose its harness. Once the
+	// caller supplies model/effort/sandbox/etc., preserve the historical default
+	// Claude catalog used for that explicit value; a lower-tier Codex profile
+	// must not reinterpret it or turn an otherwise-valid explicit model into a
+	// cross-harness validation error. The CLI mirrors this pin before marshaling.
+	if strings.TrimSpace(body.Harness) == "" && (strings.TrimSpace(body.Model) != "" ||
+		strings.TrimSpace(body.Effort) != "" ||
+		strings.TrimSpace(body.SandboxMode) != "" ||
+		strings.TrimSpace(body.AskUserQuestionTimeout) != "" ||
+		strings.TrimSpace(body.ApprovalPolicy) != "" ||
+		body.AutoReviewSpecified() || body.TrustDirSpecified() || body.RemoteControl != nil) {
+		body.Harness = harness.DefaultName
+	}
+
+	// Overlay the group's default spawn profile and then the global default
+	// profile onto blank launch fields BEFORE harness/model/sandbox resolution — the same way
 	// the default_cwd fill above reaches every spawn path. Doing it here (not
 	// only in executeSpawn) is what makes a group whose default profile selects
 	// a Codex harness+model resolve harness-correctly: the harness resolver
@@ -1424,38 +1439,16 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// validated against ITS harness), so copying the profile's onto a foreign
 	// harness would just produce a confusing 400 at resolution; we skip the
 	// profile entirely instead. A blank request adopts the profile's harness.
-	// Load the group's default spawn profile once; reused for the launch-field
-	// overlay here and the remote-control policy resolution below (JOH-262).
+	// Load each profile once; both are reused for launch-field overlay and the
+	// remote-control policy resolution below (JOH-262).
 	groupProfile := groupDefaultProfile(g)
-	if prof := groupProfile; prof != nil {
-		reqHarness := strings.TrimSpace(body.Harness)
-		if reqHarness == "" || harnessOrDefault(reqHarness) == harnessOrDefault(prof.Harness) {
-			if reqHarness == "" {
-				body.Harness = prof.Harness
-			}
-			if strings.TrimSpace(body.Model) == "" {
-				body.Model = prof.Model
-			}
-			if strings.TrimSpace(body.Effort) == "" {
-				body.Effort = prof.Effort
-			}
-			if strings.TrimSpace(body.SandboxMode) == "" {
-				body.SandboxMode = prof.Sandbox
-			}
-			if strings.TrimSpace(body.ApprovalPolicy) == "" {
-				body.ApprovalPolicy = prof.Approval
-			}
-			if strings.TrimSpace(body.AskUserQuestionTimeout) == "" {
-				body.AskUserQuestionTimeout = prof.AskUserQuestionTimeout
-			}
-			if !body.AutoReview && prof.AutoReview != nil {
-				body.AutoReview = *prof.AutoReview
-			}
-			if !body.TrustDir && prof.TrustDir != nil {
-				body.TrustDir = *prof.TrustDir
-			}
-		}
+	globalProfile := globalDefaultProfile()
+	overlayState := profileLaunchOverlayState{
+		autoReviewSet: body.AutoReviewSpecified(),
+		trustDirSet:   body.TrustDirSpecified(),
 	}
+	groupProfileApplied := overlayProfileLaunch(&body, groupProfile, &overlayState)
+	globalProfileApplied := overlayProfileLaunch(&body, globalProfile, &overlayState)
 
 	// Validate the requested cwd before doing any work. Expands "~",
 	// makes the path absolute, and confirms it exists as a directory.
@@ -1613,8 +1606,10 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// is belt-and-braces for that case; it becomes load-bearing the day a second
 	// remote-control-capable harness is registered.
 	var profileRemoteControl *bool
-	if groupProfile != nil && harnessOrDefault(groupProfile.Harness) == harnessOrDefault(h.Name) {
+	if groupProfileApplied && groupProfile.RemoteControl != nil {
 		profileRemoteControl = groupProfile.RemoteControl
+	} else if globalProfileApplied && globalProfile.RemoteControl != nil {
+		profileRemoteControl = globalProfile.RemoteControl
 	}
 	remoteControl := resolveRemoteControlIntent(g.RemoteControl, profileRemoteControl, body.RemoteControl)
 	if remoteControl && !h.CanRemoteControl() {
@@ -1662,7 +1657,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		AskUserQuestionTimeout: askTimeout,
 		ApprovalPolicy:         approvalPolicy,
 		AutoReview:             autoReview,
+		AutoReviewSet:          overlayState.autoReviewSet,
 		TrustDir:               trustDir,
+		TrustDirSet:            overlayState.trustDirSet,
 		RemoteControl:          remoteControl,
 		ReplyToConv:            replyToConv,
 		SpawnedByConv:          spawnerConvID,
@@ -1756,8 +1753,8 @@ type spawnParams struct {
 	Effort string
 	// Model is the validated Claude model alias to forward to the new
 	// session's `tclaude session new --model`. "" falls back to the
-	// group's default spawn profile inside executeSpawn (applyDefaultProfile);
-	// if that is unset too, the flag is omitted entirely.
+	// group/global default profiles inside executeSpawn (applyDefaultProfile);
+	// if those are unset too, the flag is omitted entirely.
 	Model string
 	// Harness is the resolved harness name to launch ("" or "claude" =
 	// Claude Code, the default; "codex" = Codex CLI). It forwards to
@@ -1786,6 +1783,9 @@ type spawnParams struct {
 	// the params; experimental/undocumented upstream, so only an explicit
 	// opt-in sets it true. See JOH-200 part 2.
 	AutoReview bool
+	// AutoReviewSet / TrustDirSet preserve a higher tier's explicit false
+	// through executeSpawn's safety-net overlay.
+	AutoReviewSet bool
 	// TrustDir opts the spawn into pre-trusting its launch cwd for Codex,
 	// forwarding `--trust-dir` to `tclaude session new` so the daemon writes
 	// the [projects."<cwd>"] trust entry into ~/.codex/config.toml before
@@ -1794,7 +1794,8 @@ type spawnParams struct {
 	// strictly opt-in (it edits the user's config) — gated at the spawn
 	// boundary (handleGroupSpawn → harness.ResolveTrustDir) and never set on a
 	// relaunch (reincarnate/clone), exactly like AutoReview.
-	TrustDir bool
+	TrustDir    bool
+	TrustDirSet bool
 	// RemoteControl arms the new agent's built-in Remote Access at launch
 	// (Claude Code's --remote-control), forwarding `--remote-control` to
 	// `tclaude session new` so the agent is reachable from the Claude app from
@@ -1948,6 +1949,38 @@ func groupDefaultProfile(g *db.AgentGroup) *db.SpawnProfile {
 	return prof
 }
 
+// dashboardDefaultProfilePrefKey is the one persisted value behind the
+// dashboard-wide profile picker. Despite its historical dash-pref name it is
+// server-side SQLite state, shared across browsers and daemon restarts. Spawn
+// resolution promotes that same value to the global default tier so the UI,
+// CLI and raw API cannot disagree about which global profile is selected.
+const dashboardDefaultProfilePrefKey = "tclaude.dash.default_profile"
+
+// globalDefaultProfile loads the dashboard/global default spawn profile. A
+// stale preference (the profile was subsequently renamed or deleted) is a
+// graceful no-op: log it and let the spawn continue to the harness default.
+func globalDefaultProfile() *db.SpawnProfile {
+	name, ok, err := db.GetDashboardPref(dashboardDefaultProfilePrefKey)
+	if err != nil {
+		slog.Warn("spawn: failed to load global default profile preference", "error", err)
+		return nil
+	}
+	name = strings.TrimSpace(name)
+	if !ok || name == "" {
+		return nil
+	}
+	prof, err := db.GetSpawnProfile(name)
+	if err != nil {
+		slog.Warn("spawn: failed to load global default profile", "profile", name, "error", err)
+		return nil
+	}
+	if prof == nil {
+		slog.Warn("spawn: global default profile no longer exists", "profile", name)
+		return nil
+	}
+	return prof
+}
+
 // resolveRemoteControlIntent computes the effective spawn-time remote-control
 // intent from the policy stack (JOH-262, revised). Precedence, highest first:
 //
@@ -1994,9 +2027,56 @@ func harnessOrDefault(name string) string {
 	return name
 }
 
+// overlayProfileLaunch fills only blank launch fields, preserving the
+// per-parameter precedence established by the caller. It returns whether the
+// profile is compatible with (and therefore participates in) the effective
+// harness. A blank harness adopts the profile's harness; a profile whose own
+// harness is blank explicitly means the default Claude harness.
+type profileLaunchOverlayState struct {
+	autoReviewSet bool
+	trustDirSet   bool
+}
+
+func overlayProfileLaunch(p *agent.SpawnRequest, prof *db.SpawnProfile, state *profileLaunchOverlayState) bool {
+	if prof == nil {
+		return false
+	}
+	requestedHarness := strings.TrimSpace(p.Harness)
+	if requestedHarness != "" && harnessOrDefault(requestedHarness) != harnessOrDefault(prof.Harness) {
+		return false
+	}
+	if requestedHarness == "" {
+		p.Harness = harnessOrDefault(prof.Harness)
+	}
+	if strings.TrimSpace(p.Model) == "" {
+		p.Model = prof.Model
+	}
+	if strings.TrimSpace(p.Effort) == "" {
+		p.Effort = prof.Effort
+	}
+	if strings.TrimSpace(p.SandboxMode) == "" {
+		p.SandboxMode = prof.Sandbox
+	}
+	if strings.TrimSpace(p.ApprovalPolicy) == "" {
+		p.ApprovalPolicy = prof.Approval
+	}
+	if strings.TrimSpace(p.AskUserQuestionTimeout) == "" {
+		p.AskUserQuestionTimeout = prof.AskUserQuestionTimeout
+	}
+	if !state.autoReviewSet && prof.AutoReview != nil {
+		p.AutoReview = *prof.AutoReview
+		state.autoReviewSet = true
+	}
+	if !state.trustDirSet && prof.TrustDir != nil {
+		p.TrustDir = *prof.TrustDir
+		state.trustDirSet = true
+	}
+	return true
+}
+
 // applyDefaultProfile fills blank launch fields on p from the group's default
-// spawn profile (JOH-210), the harness-correct replacement for the retired
-// per-group default_model, then APPLIES the chosen harness's secure launch
+// spawn profile and then the global default profile, then APPLIES the chosen
+// harness's secure launch
 // defaults to whatever is still blank and validates the result. A field the
 // request already set wins; for a field both the request and the profile leave
 // blank, the harness's secure default is applied (e.g. a Codex profile that
@@ -2014,20 +2094,25 @@ func harnessOrDefault(name string) string {
 // A blank-harness caller adopts the profile's harness and inherits the rest.
 //
 // This is the SAFETY-NET fill for any caller that reaches executeSpawn WITHOUT
-// going through handleGroupSpawn (today only the group-template instantiator,
-// whose freshly-created group carries no default profile, so this is a no-op
-// there). handleGroupSpawn itself overlays the profile onto the request BEFORE
+// going through handleGroupSpawn (today only the group-template instantiator).
+// handleGroupSpawn itself overlays the profiles onto the request BEFORE
 // its own harness/model/sandbox resolution, leaving these fields already
-// resolved here — so on that path the fills are no-ops and the secure-default
-// resolution is idempotent. The harness fields all come from the SAME profile,
-// so harness + sandbox/approval are internally consistent. The two launch
-// toggles are tri-state in the profile (*bool): filled only when the request
-// left them at the zero value (false) AND the profile sets them.
+// resolved here — so on that path the fills are no-ops and secure-default
+// resolution is idempotent. Lower tiers participate only when harness-compatible.
 func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
-	prof := groupDefaultProfile(g)
-	if prof != nil && (p.Harness == "" || harnessOrDefault(p.Harness) == harnessOrDefault(prof.Harness)) {
+	profiles := []*db.SpawnProfile{groupDefaultProfile(g), globalDefaultProfile()}
+	applied := false
+	overlayState := profileLaunchOverlayState{
+		autoReviewSet: p.AutoReviewSet || p.AutoReview,
+		trustDirSet:   p.TrustDirSet || p.TrustDir,
+	}
+	for _, prof := range profiles {
+		if prof == nil || (p.Harness != "" && harnessOrDefault(p.Harness) != harnessOrDefault(prof.Harness)) {
+			continue
+		}
+		applied = true
 		if p.Harness == "" {
-			p.Harness = prof.Harness
+			p.Harness = harnessOrDefault(prof.Harness)
 		}
 		if p.Model == "" {
 			p.Model = prof.Model
@@ -2044,11 +2129,13 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 		if p.AskUserQuestionTimeout == "" {
 			p.AskUserQuestionTimeout = prof.AskUserQuestionTimeout
 		}
-		if !p.AutoReview && prof.AutoReview != nil {
+		if !overlayState.autoReviewSet && prof.AutoReview != nil {
 			p.AutoReview = *prof.AutoReview
+			overlayState.autoReviewSet = true
 		}
-		if !p.TrustDir && prof.TrustDir != nil {
+		if !overlayState.trustDirSet && prof.TrustDir != nil {
 			p.TrustDir = *prof.TrustDir
+			overlayState.trustDirSet = true
 		}
 	}
 
@@ -2056,10 +2143,9 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	// blank, and validate — the same resolution handleGroupSpawn runs before
 	// building its params. Idempotent on the handleGroupSpawn path (already
 	// resolved); the load-bearing case is any other caller that reaches
-	// executeSpawn with a profile-carrying group, where this is what keeps a
-	// Codex spawn sandboxed. Skipped entirely when there is no profile to apply
-	// (the template path), to preserve that path's existing pass-through.
-	if prof == nil {
+	// executeSpawn with a profile-carrying group/global default, where this is
+	// what keeps a Codex spawn sandboxed. Skipped when no profile participates.
+	if !applied {
 		return nil
 	}
 	h, err := resolveSpawnHarness(p.Harness)
@@ -2113,7 +2199,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		timeout = 30 * time.Second
 	}
 
-	// Fill blank launch fields from the group's default spawn profile (JOH-210)
+	// Fill blank launch fields from group then global default spawn profiles
 	// and apply the harness's secure launch defaults. On the handleGroupSpawn
 	// path this is an idempotent no-op (the request overlay already resolved
 	// these); it is the safety net for any other caller that reaches
