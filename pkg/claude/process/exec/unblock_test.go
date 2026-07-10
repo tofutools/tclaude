@@ -171,17 +171,24 @@ func TestDelayedResolutionRequestCannotResolveLaterPoison(t *testing.T) {
 }
 
 func TestStaleDecisionResolutionCommandCannotResolveLaterPoison(t *testing.T) {
-	fs, snapshot := compoundExecutorFixture(t, "exit 1")
+	fs, snapshot := escalationExecutorFixture(t)
 	executor := New(fs, map[model.PerformerKind]Adapter{
 		model.PerformerProgram: ProgramAdapter{DefaultTimeout: 5 * time.Second},
+		model.PerformerHuman: &fakeAdapter{observation: Observation{
+			Actor: "human:operator", Verdict: "retry", EvidenceRef: "human-message:auto-retry",
+		}},
 	})
-	blocked, err := executor.Drive(t.Context(), snapshot.Run.ID)
+	block, _ := driveUntilBlockCommand(t, executor, fs, snapshot.Run.ID)
+	if _, err := executor.Execute(t.Context(), block); err != nil {
+		t.Fatal(err)
+	}
+	blocked, err := fs.LoadRun(t.Context(), snapshot.Run.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	command := plan.Command{
 		ID: "cmd_0123456789abcdef01234567", IdempotencyKey: snapshot.Run.ID + "/resolve_block/escalate/work/attempt-1/retry",
-		Kind: plan.CommandKindResolveBlock, RunID: snapshot.Run.ID, NodeID: "work", TargetNodeID: "work",
+		Kind: plan.CommandKindResolveBlock, RunID: snapshot.Run.ID, NodeID: "escalate", TargetNodeID: "work",
 		PoisonedNodeID: "work.test.tests", BlockedAttempt: 1, BlockDecision: state.BlockDecisionRetry, Actor: "human:operator",
 		Reason: "escalation decision chose retry", EvidenceRef: "human-message:42:reply",
 	}
