@@ -344,7 +344,7 @@ func TestSpawnDirProof_CodexManagedSpawnProvesAndPinsGitCommonDir(t *testing.T) 
 	body := map[string]any{"name": "codex-worker", "cwd": repo, "harness": harness.CodexName}
 	ch := decodeWriteProofChallenge(t,
 		agentReq(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn", body))
-	assert.ElementsMatch(t, []string{repoParent, repo}, ch.WriteProof.Dirs)
+	assert.ElementsMatch(t, []string{repoParent, repo, commonDir}, ch.WriteProof.Dirs)
 	answerChallenge(t, ch)
 	body["write_proof_token"] = ch.WriteProof.Token
 	rec := agentReq(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn", body)
@@ -381,7 +381,7 @@ func TestSpawnDirProof_ClaudeSpawnProvesAndPinsWorktreeWriteDirs(t *testing.T) {
 	}
 	ch := decodeWriteProofChallenge(t,
 		agentReq(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn", body))
-	assert.ElementsMatch(t, []string{repoParent, repo}, ch.WriteProof.Dirs)
+	assert.ElementsMatch(t, []string{repoParent, repo, commonDir}, ch.WriteProof.Dirs)
 	answerChallenge(t, ch)
 	body["write_proof_token"] = ch.WriteProof.Token
 	rec := agentReq(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn", body)
@@ -521,7 +521,7 @@ func TestSpawnDirProof_TemplateInstantiateChallenged(t *testing.T) {
 	assert.Equal(t, 1, memberCount(t, "team-cast"))
 }
 
-func TestSpawnDirProof_TemplatePerAgentWorktreeAsCwdProvesWorktreeParent(t *testing.T) {
+func TestSpawnDirProof_TemplatePerAgentWorktreeRejectsUnprovedGitAdminDirs(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
 	const parentConv = "parent-wtpa-aaaa-bbbb-cccc-111111111111"
@@ -554,7 +554,7 @@ func TestSpawnDirProof_TemplatePerAgentWorktreeAsCwdProvesWorktreeParent(t *test
 	}
 	ch := decodeWriteProofChallenge(t,
 		agentReq(t, f, parentConv, http.MethodPost, "/v1/templates/wt-team-proof/instantiate", body))
-	assert.ElementsMatch(t, []string{repo, parentDir}, ch.WriteProof.Dirs,
+	assert.ElementsMatch(t, []string{repo, parentDir, commonDir}, ch.WriteProof.Dirs,
 		"per-agent worktrees launch under sibling dirs, so the repo parent must be proofed too")
 	answerChallenge(t, ch)
 	body["write_proof_token"] = ch.WriteProof.Token
@@ -563,8 +563,8 @@ func TestSpawnDirProof_TemplatePerAgentWorktreeAsCwdProvesWorktreeParent(t *test
 
 	var res instantiateResult
 	testharness.DecodeJSON(t, rec, &res)
-	require.Equal(t, 2, res.Spawned)
-	require.Equal(t, 0, res.Failed)
+	require.Equal(t, 0, res.Spawned)
+	require.Equal(t, 2, res.Failed)
 	want := map[string]string{
 		"lead": filepath.Join(parentDir, "repo-wtproof-lead"),
 		"dev":  filepath.Join(parentDir, "repo-wtproof-dev"),
@@ -572,15 +572,9 @@ func TestSpawnDirProof_TemplatePerAgentWorktreeAsCwdProvesWorktreeParent(t *test
 	for _, a := range res.Agents {
 		wantPath := want[a.Name]
 		require.NotEmpty(t, wantPath, "unexpected agent %s", a.Name)
-		sess, err := db.FindSessionByConvID(a.ConvID)
-		require.NoError(t, err)
-		require.NotNil(t, sess)
-		assert.Equal(t, resolveSym(t, wantPath), resolveSym(t, sess.Cwd),
-			"agent %s launched in its own worktree", a.Name)
-		token, ok := f.World.SpawnCwdWriteProof(a.ConvID)
-		require.True(t, ok, "spawn token recorded for %s", a.Name)
-		assert.Equal(t, ch.WriteProof.Token, token,
-			"per-agent worktree cwd must arm the in-pane marker check")
+		assert.Empty(t, a.ConvID)
+		assert.Contains(t, a.Error, "unproved path",
+			"daemon-created Git admin dirs must not be relabelled as caller-proved")
 		assertNoDirWriteProofMarkers(t, wantPath)
 	}
 	assertNoDirWriteProofMarkers(t, repo)
@@ -617,7 +611,7 @@ func TestSpawnDirProof_CodexCloneCwdOverrideProvesAndPinsGitCommonDir(t *testing
 	body := map[string]any{"no_copy_conv": true, "cwd": repo}
 	ch := decodeWriteProofChallenge(t,
 		agentReq(t, f, caller, http.MethodPost, "/v1/whoami/clone", body))
-	assert.ElementsMatch(t, []string{repoParent, repo}, ch.WriteProof.Dirs)
+	assert.ElementsMatch(t, []string{repoParent, repo, commonDir}, ch.WriteProof.Dirs)
 	answerChallenge(t, ch)
 	body["write_proof_token"] = ch.WriteProof.Token
 	rec := agentReq(t, f, caller, http.MethodPost, "/v1/whoami/clone", body)
@@ -660,7 +654,7 @@ func TestSpawnDirProof_CodexCloneCopyForwardsPinnedGitCommonDirOnResume(t *testi
 	body := map[string]any{"cwd": repo}
 	ch := decodeWriteProofChallenge(t,
 		agentReq(t, f, caller, http.MethodPost, "/v1/whoami/clone", body))
-	assert.ElementsMatch(t, []string{repoParent, repo}, ch.WriteProof.Dirs)
+	assert.ElementsMatch(t, []string{repoParent, repo, commonDir}, ch.WriteProof.Dirs)
 	answerChallenge(t, ch)
 	body["write_proof_token"] = ch.WriteProof.Token
 	rec := agentReq(t, f, caller, http.MethodPost, "/v1/whoami/clone", body)
@@ -698,7 +692,8 @@ func TestSpawnDirProof_CodexCloneInheritedCwdProvesNewRepositoryRoot(t *testing.
 	body := map[string]any{"no_copy_conv": true}
 	ch := decodeWriteProofChallenge(t,
 		agentReq(t, f, caller, http.MethodPost, "/v1/whoami/clone", body))
-	assert.ElementsMatch(t, []string{repo, repoParent}, ch.WriteProof.Dirs)
+	gitDir := filepath.Join(repo, ".git")
+	assert.ElementsMatch(t, []string{repo, repoParent, gitDir}, ch.WriteProof.Dirs)
 	answerChallenge(t, ch)
 	body["write_proof_token"] = ch.WriteProof.Token
 	rec := agentReq(t, f, caller, http.MethodPost, "/v1/whoami/clone", body)
@@ -709,7 +704,7 @@ func TestSpawnDirProof_CodexCloneInheritedCwdProvesNewRepositoryRoot(t *testing.
 	testharness.DecodeJSON(t, rec, &resp)
 	dirs, ok := f.World.SpawnGitWorktreeWriteDirs(resp.NewConv)
 	require.True(t, ok)
-	assert.Equal(t, []string{repoParent}, dirs)
+	assert.Equal(t, []string{repoParent, gitDir}, dirs)
 	dirProof, ok := f.World.SpawnDirWriteProof(resp.NewConv)
 	require.True(t, ok)
 	assert.Empty(t, dirProof)
@@ -730,7 +725,8 @@ func TestSpawnDirProof_CodexReincarnateProvesNewRepositoryRoot(t *testing.T) {
 	body := map[string]any{"follow_up": "continue"}
 	ch := decodeWriteProofChallenge(t,
 		agentReq(t, f, caller, http.MethodPost, "/v1/whoami/reincarnate", body))
-	assert.ElementsMatch(t, []string{repo, repoParent}, ch.WriteProof.Dirs)
+	gitDir := filepath.Join(repo, ".git")
+	assert.ElementsMatch(t, []string{repo, repoParent, gitDir}, ch.WriteProof.Dirs)
 	answerChallenge(t, ch)
 	body["write_proof_token"] = ch.WriteProof.Token
 	rec := agentReq(t, f, caller, http.MethodPost, "/v1/whoami/reincarnate", body)
@@ -741,7 +737,7 @@ func TestSpawnDirProof_CodexReincarnateProvesNewRepositoryRoot(t *testing.T) {
 	testharness.DecodeJSON(t, rec, &resp)
 	dirs, ok := f.World.SpawnGitWorktreeWriteDirs(resp.NewConv)
 	require.True(t, ok)
-	assert.Equal(t, []string{repoParent}, dirs)
+	assert.Equal(t, []string{repoParent, gitDir}, dirs)
 	dirProof, ok := f.World.SpawnDirWriteProof(resp.NewConv)
 	require.True(t, ok)
 	assert.Empty(t, dirProof)
@@ -765,14 +761,15 @@ func TestSpawnDirProof_CodexResumeProvesNewRepositoryRoot(t *testing.T) {
 	body := map[string]any{}
 	ch := decodeWriteProofChallenge(t,
 		agentReq(t, f, caller, http.MethodPost, "/v1/agent/"+target+"/resume", body))
-	assert.ElementsMatch(t, []string{repo, repoParent}, ch.WriteProof.Dirs)
+	gitDir := filepath.Join(repo, ".git")
+	assert.ElementsMatch(t, []string{repo, repoParent, gitDir}, ch.WriteProof.Dirs)
 	answerChallenge(t, ch)
 	body["write_proof_token"] = ch.WriteProof.Token
 	rec := agentReq(t, f, caller, http.MethodPost, "/v1/agent/"+target+"/resume", body)
 	require.Equalf(t, http.StatusOK, rec.Code, "proved resume; body=%s", rec.Body.String())
 	dirs, ok := f.World.SpawnGitWorktreeWriteDirs(target)
 	require.True(t, ok)
-	assert.Equal(t, []string{repoParent}, dirs)
+	assert.Equal(t, []string{repoParent, gitDir}, dirs)
 	dirProof, ok := f.World.SpawnDirWriteProof(target)
 	require.True(t, ok)
 	assert.Empty(t, dirProof)
@@ -804,7 +801,7 @@ func TestSpawnDirProof_CodexTemplateProvesAndPinsGitCommonDir(t *testing.T) {
 	body := map[string]any{"group_name": "codex-cast", "cwd": repo}
 	ch := decodeWriteProofChallenge(t,
 		agentReq(t, f, parent, http.MethodPost, "/v1/templates/codex-template/instantiate", body))
-	assert.ElementsMatch(t, []string{repoParent, repo}, ch.WriteProof.Dirs)
+	assert.ElementsMatch(t, []string{repoParent, repo, commonDir}, ch.WriteProof.Dirs)
 	answerChallenge(t, ch)
 	body["write_proof_token"] = ch.WriteProof.Token
 	rec := agentReq(t, f, parent, http.MethodPost, "/v1/templates/codex-template/instantiate", body)

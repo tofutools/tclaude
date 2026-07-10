@@ -813,7 +813,7 @@ func gitWorktreeWriteDirs(params *NewParams, harnessName, sandboxMode, cwd strin
 			return nil
 		}
 	}
-	return harness.GitWorktreeWriteDirs(commonDir, home)
+	return harness.GitWorktreeWriteDirs(cwd, commonDir, home)
 }
 
 func spawnSandboxUsesGitWriteDirs(harnessName, sandboxMode string) bool {
@@ -872,7 +872,7 @@ func ensureCodexManagedProfile(params *NewParams, cwd, launchID string) (string,
 		if err != nil {
 			return "", "", err
 		}
-		writeDirs = harness.GitWorktreeWriteDirs(params.CodexGitCommonDir, home)
+		writeDirs = harness.GitWorktreeWriteDirs(cwd, params.CodexGitCommonDir, home)
 	} else if params.CodexGitCommonDirPinned {
 		writeDirs = nil
 	} else {
@@ -884,7 +884,7 @@ func ensureCodexManagedProfile(params *NewParams, cwd, launchID string) (string,
 		if err != nil {
 			return "", "", err
 		}
-		writeDirs = harness.GitWorktreeWriteDirs(commonDir, home)
+		writeDirs = harness.GitWorktreeWriteDirs(cwd, commonDir, home)
 	}
 	profileName, path, err := harness.EnsureCodexAgentLaunchProfile(writeDirs, launchID)
 	if err != nil {

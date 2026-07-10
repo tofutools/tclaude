@@ -443,7 +443,7 @@ func requireResumeWriteProofs(w http.ResponseWriter, caller, token string, convI
 				writeError(w, http.StatusInternalServerError, "io", err.Error())
 				return nil, "", nil, false
 			}
-			grant.WriteDirs = harness.GitWorktreeWriteDirs(commonDir, home)
+			grant.WriteDirs = harness.GitWorktreeWriteDirs(cwd, commonDir, home)
 		}
 		grants[convID] = grant
 		dirs = appendUniqueDirs(dirs, cwd)
@@ -554,7 +554,7 @@ func resumeOneConvWithGrant(convID string, recreateMissingDir bool, grant *resum
 		gitWriteDirs = grant.WriteDirs
 	} else if spawnUsesPinnedGitCommonDir(harnessName, relaunchSandbox) {
 		if home, err := os.UserHomeDir(); err == nil {
-			gitWriteDirs = harness.GitWorktreeWriteDirs(codexGitCommonDir, home)
+			gitWriteDirs = harness.GitWorktreeWriteDirs(cwd, codexGitCommonDir, home)
 		}
 	}
 	if fail := reassertDirWriteProof(proofDirs); fail != nil {
@@ -1765,7 +1765,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			return
 		}
 		if home, herr := os.UserHomeDir(); herr == nil {
-			gitWorktreeWriteDirs = harness.GitWorktreeWriteDirs(codexGitCommonDir, home)
+			gitWorktreeWriteDirs = harness.GitWorktreeWriteDirs(cwd, codexGitCommonDir, home)
 		}
 	}
 	autoTrustSiblingWorktree, trustLayoutErr := defaultSiblingWorktreeTrust(h.Name, cwd, codexGitCommonDir)
@@ -2640,7 +2640,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		if err != nil {
 			return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
 		}
-		p.GitWorktreeWriteDirs = harness.GitWorktreeWriteDirs(p.CodexGitCommonDir, home)
+		p.GitWorktreeWriteDirs = harness.GitWorktreeWriteDirs(p.Cwd, p.CodexGitCommonDir, home)
 		p.GitWorktreeWriteDirsPinned = true
 	}
 	if p.GitWorktreeWriteDirsPinned {

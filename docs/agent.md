@@ -462,7 +462,8 @@ into it and use the child as its writable proxy. A sandboxed agent caller
 must therefore prove it can itself write in every directory the child would
 get write access to (the launch cwd, an explicit worktree, and—when Git-backed
 sandbox support applies—the minimal repository root covering the sibling
-container, original/main worktree, and shared Git metadata): the daemon answers
+container, original/main worktree, and shared Git metadata, plus the checkout's
+exact Git admin directory): the daemon answers
 the first request with a `403 write_proof_required` challenge naming a single-use token, the caller
 creates an empty file named `.tclaude-write-proof-<token>` in each listed
 directory, and retries the same request with `write_proof_token` set; the
@@ -480,15 +481,18 @@ are exempt. The same handshake guards a clone's `cwd` override and the
 template spawn surfaces (`instantiate` / `deploy` / `reinforce` — the whole
 cast shares one proven launch cwd, plus any shared worktree and the
 per-agent-worktree repo); the matching `tclaude agent templates …` /
-`task-force` CLIs answer it transparently too. Agent-originated Codex spawns
-may pre-trust only a verified default sibling worktree; those worktrees are
+`task-force` CLIs answer it transparently too. Template requests from agents
+that create per-agent worktrees during the request fail closed when those new
+checkout admin dirs were not part of the caller's proof; a human can launch
+that topology without the agent-to-agent authority constraint. Separately,
+agent-originated Codex spawns may pre-trust only a verified default sibling worktree; those worktrees are
 always trusted automatically so a detached child cannot stop at Codex's
 trust-folder modal. Other agent-selected paths remain forbidden. All extra
 repository write grants are resolved, proved, and pinned before launch rather
 than recomputed from a mutable cwd; Codex consumes them through its managed
 profile and Claude Code through merged `sandbox.filesystem.allowWrite` paths.
 Agent-triggered clone, reincarnate, and resume operations prove the inherited
-child cwd plus any repository root added by the current sandbox profile. The
+child cwd plus every repository path added by the current sandbox profile. The
 forked session binds the cwd marker after tmux changes directory and checks the
 same marker in every pinned root immediately before starting the harness.
 Recreating a missing resume cwd remains human-only because the daemon cannot

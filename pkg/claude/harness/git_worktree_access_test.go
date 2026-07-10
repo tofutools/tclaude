@@ -2,6 +2,7 @@ package harness
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -11,7 +12,7 @@ func TestGitWorktreeWriteDirs(t *testing.T) {
 	home := filepath.FromSlash("/home/dev")
 	common := filepath.FromSlash("/home/dev/git/project/.git")
 	want := []string{filepath.FromSlash("/home/dev/git")}
-	if got := GitWorktreeWriteDirs(common, home); !reflect.DeepEqual(got, want) {
+	if got := GitWorktreeWriteDirs("", common, home); !reflect.DeepEqual(got, want) {
 		t.Fatalf("GitWorktreeWriteDirs() = %v, want %v", got, want)
 	}
 }
@@ -50,7 +51,7 @@ func TestGitWorktreeWriteDirsDoesNotGrantHomeContainer(t *testing.T) {
 	home := filepath.FromSlash("/home/dev")
 	common := filepath.FromSlash("/home/dev/project/.git")
 	want := []string{filepath.FromSlash("/home/dev/project")}
-	if got := GitWorktreeWriteDirs(common, home); !reflect.DeepEqual(got, want) {
+	if got := GitWorktreeWriteDirs("", common, home); !reflect.DeepEqual(got, want) {
 		t.Fatalf("GitWorktreeWriteDirs() = %v, want %v", got, want)
 	}
 }
@@ -72,7 +73,49 @@ func TestGitWorktreeWriteDirsCanonicalizesHomeAlias(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{filepath.Dir(resolvedCommon)}
-	if got := GitWorktreeWriteDirs(resolvedCommon, homeAlias); !reflect.DeepEqual(got, want) {
+	if got := GitWorktreeWriteDirs("", resolvedCommon, homeAlias); !reflect.DeepEqual(got, want) {
+		t.Fatalf("GitWorktreeWriteDirs() = %v, want %v", got, want)
+	}
+}
+
+func TestGitWorktreeWriteDirsIncludesExactLinkedAdminDir(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	root := t.TempDir()
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved
+	}
+	repo := filepath.Join(root, "repo")
+	wt := filepath.Join(root, "repo-feature")
+	if err := os.Mkdir(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGit := func(dir string, args ...string) {
+		t.Helper()
+		out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git -C %s %v: %v\n%s", dir, args, err, out)
+		}
+	}
+	runGit(repo, "init")
+	runGit(repo, "-c", "user.name=tclaude", "-c", "user.email=tclaude@example.invalid",
+		"commit", "--allow-empty", "-m", "initial")
+	runGit(repo, "worktree", "add", "-b", "feature", wt)
+
+	commonDir, err := GitCommonDir(wt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitDir, err := GitDir(wt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{root, filepath.Join(repo, ".git", "worktrees", filepath.Base(wt))}
+	if gitDir != want[1] {
+		t.Fatalf("GitDir() = %q, want %q", gitDir, want[1])
+	}
+	if got := GitWorktreeWriteDirs(wt, commonDir, filepath.FromSlash("/home/dev")); !reflect.DeepEqual(got, want) {
 		t.Fatalf("GitWorktreeWriteDirs() = %v, want %v", got, want)
 	}
 }
