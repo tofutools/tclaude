@@ -145,7 +145,7 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 		effort, model := inheritedLaunchFlags(oldSess.ID)
 		srcHarness := harnessForConv(m.ConvID).Name
 		cloneSandbox := sandboxForHarness(srcHarness)
-		codexGitCommonDir, gerr := codexManagedProfileGitCommonDir(srcHarness, cloneSandbox, oldSess.Cwd)
+		codexGitCommonDir, gerr := spawnGitCommonDir(srcHarness, cloneSandbox, oldSess.Cwd)
 		if gerr != nil {
 			results = append(results, memberResult{
 				SrcConv: m.ConvID,

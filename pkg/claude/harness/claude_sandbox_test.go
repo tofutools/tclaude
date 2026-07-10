@@ -178,6 +178,37 @@ func TestClaudeSandboxOnBlock_MatchesHardening(t *testing.T) {
 	}
 }
 
+func TestClaudeSettingsGitWorktreeWriteDirs(t *testing.T) {
+	dirs := []string{"/home/dev/git", "/home/dev/git/project", "/home/dev/git/project/.git"}
+	for _, mode := range []string{ClaudeSandboxInherit, ClaudeSandboxOn} {
+		payload := claudeSettingsJSON(SpawnSpec{SandboxMode: mode, SandboxWriteDirs: dirs})
+		var settings map[string]any
+		if err := json.Unmarshal([]byte(payload), &settings); err != nil {
+			t.Fatalf("mode %s payload is invalid JSON: %v", mode, err)
+		}
+		sandbox := settings["sandbox"].(map[string]any)
+		filesystem := sandbox["filesystem"].(map[string]any)
+		got := filesystem["allowWrite"].([]any)
+		if len(got) != len(dirs) {
+			t.Fatalf("mode %s allowWrite = %v, want %v", mode, got, dirs)
+		}
+		for i := range dirs {
+			if got[i] != dirs[i] {
+				t.Fatalf("mode %s allowWrite = %v, want %v", mode, got, dirs)
+			}
+		}
+		if mode == ClaudeSandboxInherit {
+			if _, forced := sandbox["enabled"]; forced {
+				t.Fatal("inherit write-dir overlay must not force the operator's sandbox on")
+			}
+		}
+	}
+
+	if got := claudeSettingsJSON(SpawnSpec{SandboxMode: ClaudeSandboxOff, SandboxWriteDirs: dirs}); got != `{"sandbox":{"enabled":false}}` {
+		t.Fatalf("off must not carry irrelevant write grants, got %s", got)
+	}
+}
+
 // sandboxBlock parses claudeSandboxSettingsJSON(mode) and returns its inner
 // `sandbox` block. Asserting against the builder's output directly — rather than
 // re-parsing the shell-quoted BuildCommand arg — keeps the test robust to the

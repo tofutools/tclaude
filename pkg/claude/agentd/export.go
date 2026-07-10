@@ -256,7 +256,7 @@ func runExportClone(jobID int64, originalConv, cwd, effort, model string, sameGr
 	// handling (poll for the new conv-id + tmux registration) is shared.
 	srcHarness := harnessForConv(originalConv).Name
 	cloneSandbox := sandboxForHarness(srcHarness)
-	codexGitCommonDir, gerr := codexManagedProfileGitCommonDir(srcHarness, cloneSandbox, cwd)
+	codexGitCommonDir, gerr := spawnGitCommonDir(srcHarness, cloneSandbox, cwd)
 	if gerr != nil {
 		slog.Warn("export clone: resolve codex git common dir failed", "job", jobID, "orig", originalConv, "error", gerr)
 		failExportJobAndReap(jobID, "", "could not clone the conversation to export it: "+gerr.Error())

@@ -334,7 +334,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 	// trustDir=false for the same reason: pre-trusting the cwd edits the user's
 	// ~/.codex/config.toml and is only ever an explicit fresh-spawn opt-in.
 	reincarnateSandbox := sandboxForHarness(oldSess.Harness)
-	codexGitCommonDir, gerr := codexManagedProfileGitCommonDir(oldSess.Harness, reincarnateSandbox, cwd)
+	codexGitCommonDir, gerr := spawnGitCommonDir(oldSess.Harness, reincarnateSandbox, cwd)
 	if gerr != nil {
 		writeError(w, http.StatusInternalServerError, "io", gerr.Error())
 		return
@@ -347,7 +347,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 		Harness:                 oldSess.Harness,
 		Sandbox:                 reincarnateSandbox,
 		CodexGitCommonDir:       codexGitCommonDir,
-		CodexGitCommonDirPinned: codexManagedProfileUsesPinnedGitCommonDir(oldSess.Harness, reincarnateSandbox),
+		CodexGitCommonDirPinned: spawnUsesPinnedGitCommonDir(oldSess.Harness, reincarnateSandbox),
 		Approval:                approvalForHarness(oldSess.Harness),
 		AskUserQuestionTimeout:  askTimeoutForRelaunch(target),
 		RemoteControl:           remoteControl,

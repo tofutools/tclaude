@@ -295,16 +295,55 @@ func cleanupDirWriteProofMarkers(token string, dirs []string) {
 	}
 }
 
-func codexManagedProfileGitCommonDir(harnessName, sandboxMode, cwd string) (string, error) {
-	if !codexManagedProfileUsesPinnedGitCommonDir(harnessName, sandboxMode) {
-		return "", nil
+func appendUniqueDirs(dirs []string, candidates ...string) []string {
+	seen := make(map[string]bool, len(dirs)+len(candidates))
+	for _, dir := range dirs {
+		seen[dir] = true
 	}
-	return harness.CodexGitCommonDir(cwd)
+	for _, dir := range candidates {
+		if dir == "" || seen[dir] {
+			continue
+		}
+		seen[dir] = true
+		dirs = append(dirs, dir)
+	}
+	return dirs
 }
 
-func codexManagedProfileUsesPinnedGitCommonDir(harnessName, sandboxMode string) bool {
-	return harnessOrDefault(harnessName) == harness.CodexName &&
-		strings.TrimSpace(sandboxMode) == harness.SandboxManagedProfile
+func spawnGitCommonDir(harnessName, sandboxMode, cwd string) (string, error) {
+	if !spawnUsesPinnedGitCommonDir(harnessName, sandboxMode) {
+		return "", nil
+	}
+	return harness.GitCommonDir(cwd)
+}
+
+// spawnUsesPinnedGitCommonDir reports whether the child launch receives extra
+// repository write paths derived from its Git common dir. Codex's managed
+// profile consumes them through its generated permission profile; Claude Code
+// consumes them through a per-session sandbox.filesystem.allowWrite overlay.
+func spawnUsesPinnedGitCommonDir(harnessName, sandboxMode string) bool {
+	switch harnessOrDefault(harnessName) {
+	case harness.CodexName:
+		return strings.TrimSpace(sandboxMode) == harness.SandboxManagedProfile
+	case harness.DefaultName:
+		return strings.TrimSpace(sandboxMode) != harness.ClaudeSandboxOff
+	default:
+		return false
+	}
+}
+
+func defaultSiblingWorktreeTrust(harnessName, cwd, gitCommonDir string) (bool, error) {
+	if harnessOrDefault(harnessName) != harness.CodexName {
+		return false, nil
+	}
+	if strings.TrimSpace(gitCommonDir) == "" {
+		var err error
+		gitCommonDir, err = harness.GitCommonDir(cwd)
+		if err != nil {
+			return false, err
+		}
+	}
+	return harness.IsDefaultSiblingWorktree(cwd, gitCommonDir), nil
 }
 
 // requireTemplateDirWriteProof gates the template spawn surfaces (instantiate
@@ -340,6 +379,9 @@ func requireTemplateDirWriteProof(w http.ResponseWriter, caller, token, cwd, wor
 	if codexGitCommonDir != "" && codexGitCommonDir != cwd && codexGitCommonDir != worktreePath &&
 		codexGitCommonDir != repo && codexGitCommonDir != perAgentWorktreeParent {
 		dirs = append(dirs, codexGitCommonDir)
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		dirs = appendUniqueDirs(dirs, harness.GitWorktreeWriteDirs(codexGitCommonDir, home)...)
 	}
 	resolved, proofOK := requireDirWriteProof(w, caller, token, dirs)
 	if !proofOK {

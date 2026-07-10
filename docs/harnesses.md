@@ -117,10 +117,13 @@ safe and non-blocking:
     block, so only under this profile can a sandboxed agent run
     `tclaude agent …`. At spawn
     time, when the launch directory is inside a Git repo, the profile also grants
-    write access to that repo's Git common dir so agents can commit from linked
-    worktrees while the rest of `$HOME` stays read-only. The operator, Codex,
-    and Claude Code all use the same canonical state-free endpoint; agentd
-    temporarily also serves the legacy `~/.tclaude/agentd.sock` path for
+    write access to the original/main worktree, its Git common dir, and the safe
+    repository container where tclaude creates default sibling worktrees. That
+    lets an agent create `../<repo>-<branch>` and commit there while the rest of
+    `$HOME` stays read-only. A container at/above `$HOME` is never granted. The
+    operator, Codex, and Claude Code all use the same canonical state-free
+    endpoint; agentd temporarily also serves the legacy
+    `~/.tclaude/agentd.sock` path for
     older clients and installed settings. Daemon-spawned
     Codex agents (via `agent spawn`, resume, clone, reincarnate) default to it.
   - **`workspace-write` / `read-only` / `danger-full-access`** are passed through
@@ -139,8 +142,11 @@ safe and non-blocking:
   (fail-closed). Off by default; the underlying Codex key is still experimental,
   so treat it as unstable.
 
-These are launch-time flags only — tclaude never edits your `~/.codex/config.toml`.
-The one file it manages is a standalone `~/.codex/tclaude-agent.config.toml`
+These are launch-time flags only. Directory trust is the one exception:
+an explicit `trust_dir` opt-in, and every verified default sibling worktree,
+adds an idempotent trusted-project entry to `~/.codex/config.toml` before Codex
+starts so a detached agent cannot freeze on the trust-folder modal. The managed
+sandbox itself lives in a standalone `~/.codex/tclaude-agent.config.toml`
 (the permission profile above), installed by `tclaude setup` and self-healed at
 spawn time; your own config and profiles are left untouched. The research behind
 the defaults lives in the `tclaude-harness-independence` Linear project
@@ -155,18 +161,23 @@ override** in the spawn dialog, profiles, and `tclaude session new`/`agent spawn
 string that merges over your user/project settings; only managed/policy settings
 outrank it). Three modes:
 
-- **`inherit`** *(default, recommended)* — adds **no** override. The agent runs
-  under whatever your `settings.json` already configures (global, project, and
-  any `tclaude setup --install-sandbox-hardening` you applied). This is why a
+- **`inherit`** *(default, recommended)* — does not override whether the sandbox
+  is enabled. The agent runs under whatever your `settings.json` already
+  configures (global, project, and any
+  `tclaude setup --install-sandbox-hardening` you applied). This is why a
   daemon-spawned Claude agent's containment never silently changes: unlike Codex
   (where no flag means *no* sandbox, so the daemon must impose one), Claude Code's
-  `settings.json` *is* the operator's chosen posture, so tclaude leaves it alone.
+  `settings.json` *is* the operator's chosen posture. For daemon-spawned agents
+  inside a Git repository, tclaude merges only proof-pinned `filesystem.allowWrite`
+  entries for the original worktree, shared Git metadata, and safe sibling-worktree
+  container; Claude Code merges these arrays with the operator's existing scopes.
 - **`on`** — forces the OS sandbox **on** for this session even if `settings.json`
   leaves it off. It injects the same `sandbox` block as the global hardening
   (single source of truth), so the **agentd Unix socket stays reachable** (the
   agent can still run `tclaude agent …`) and `~/.tclaude` / `~/.claude/sessions`
   are hidden (read + write), so the sandboxed agent can't snoop on or tamper with
-  shared daemon state.
+  shared daemon state. The same proof-pinned repository write paths described
+  above are included.
 - **`off`** — forces the sandbox **off** for this session even if `settings.json`
   enables it (the agent's Bash runs unconfined).
 

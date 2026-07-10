@@ -62,6 +62,14 @@ type SpawnSpec struct {
 	// settings.json-driven) ignore it. Validate via Harness.Sandbox /
 	// ResolveSandboxMode before building the spec. See JOH-192.
 	SandboxMode string
+	// SandboxWriteDirs are daemon-resolved, proof-pinned repository paths that
+	// Claude Code's per-session sandbox should add through
+	// sandbox.filesystem.allowWrite. They let a sandboxed agent create default
+	// sibling worktrees and update the original worktree/shared Git metadata.
+	// Empty leaves the operator's filesystem allow-list unchanged. Codex uses
+	// its managed permission-profile file for the same grants and ignores this
+	// field.
+	SandboxWriteDirs []string
 	// AskUserQuestionTimeout is the per-session Claude Code AskUserQuestion
 	// idle-timeout override (`never|60s|5m|10m`), delivered as part of the SAME
 	// `--settings` payload as SandboxMode (both are settings.json overrides, and

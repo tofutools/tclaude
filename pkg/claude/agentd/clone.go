@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // cloneSpawnError carries enough context to surface either an HTTP
@@ -81,7 +83,7 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 	// False (and so omitted) for an unarmed source or a Codex source.
 	remoteControl := remoteControlForRelaunch(sourceConv, srcHarness)
 	cloneSandbox := sandboxForHarness(srcHarness)
-	codexGitCommonDirPinned := codexManagedProfileUsesPinnedGitCommonDir(srcHarness, cloneSandbox)
+	codexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(srcHarness, cloneSandbox)
 	// Preserve the source's per-agent AskUserQuestion timeout onto the sibling
 	// (schema v97) — unlike sandbox/approval, which re-default. "" for a source
 	// that recorded none (a non-Claude or pre-column source).
@@ -471,7 +473,7 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm string, b
 	var proofToken string
 	srcHarness := harnessForConv(target).Name
 	cloneSandbox := sandboxForHarness(srcHarness)
-	codexGitCommonDir, gerr := codexManagedProfileGitCommonDir(srcHarness, cloneSandbox, cwd)
+	codexGitCommonDir, gerr := spawnGitCommonDir(srcHarness, cloneSandbox, cwd)
 	if gerr != nil {
 		writeError(w, http.StatusInternalServerError, "io", gerr.Error())
 		return
@@ -483,7 +485,7 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm string, b
 			return
 		}
 		cwd = resolved
-		codexGitCommonDir, gerr = codexManagedProfileGitCommonDir(srcHarness, cloneSandbox, cwd)
+		codexGitCommonDir, gerr = spawnGitCommonDir(srcHarness, cloneSandbox, cwd)
 		if gerr != nil {
 			writeError(w, http.StatusInternalServerError, "io", gerr.Error())
 			return
@@ -500,8 +502,8 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm string, b
 		// recorded posture is the child posture here).
 		if caller != "" && childSandboxGrantsDirWrite(srcHarness, cloneSandbox) {
 			dirs := []string{cwd}
-			if codexGitCommonDir != "" && codexGitCommonDir != cwd {
-				dirs = append(dirs, codexGitCommonDir)
+			if home, err := os.UserHomeDir(); err == nil {
+				dirs = appendUniqueDirs(dirs, harness.GitWorktreeWriteDirs(codexGitCommonDir, home)...)
 			}
 			proofed, ok := requireDirWriteProof(w, caller, body.WriteProofToken, dirs)
 			if !ok {
@@ -519,9 +521,13 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm string, b
 				}
 				// Re-asserted just before the clone fork (cloneSpawnOnce), closing
 				// the verify→launch window the same way executeSpawn does.
-				proofDirs = []string{cwd}
-				if codexGitCommonDir != "" && codexGitCommonDir != cwd {
-					proofDirs = append(proofDirs, codexGitCommonDir)
+				proofDirs = make([]string, 0, len(dirs))
+				for _, raw := range dirs {
+					resolvedDir := raw
+					if v := proofed[raw]; v != "" {
+						resolvedDir = v
+					}
+					proofDirs = appendUniqueDirs(proofDirs, resolvedDir)
 				}
 			}
 		}

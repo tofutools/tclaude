@@ -50,6 +50,8 @@ func TestCodexAgentProfileContent_WithGitCommonDir(t *testing.T) {
 	}
 	for _, want := range []string{
 		`[permissions.tclaude-agent.filesystem]`,
+		`"/home/dev/git" = "write"`,
+		`"/home/dev/git/project" = "write"`,
 		`"/home/dev/git/project/.git" = "write"`,
 		`[permissions.tclaude-agent.network]`,
 	} {
