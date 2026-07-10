@@ -9,24 +9,20 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-)
 
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
+)
 
 // SocketPath is the well-known location for the tclaude agentd Unix socket.
 // Mirrors agentd.SocketPath but lives here to avoid an import cycle —
 // agentd already depends on agent for shared helpers, so agent can't depend
 // on agentd in turn.
 func SocketPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".tclaude", "agentd.sock")
+	return agentipc.ClientSocketPath()
 }
 
 var (
@@ -111,7 +107,6 @@ func RequireDaemonOrExit(stderr io.Writer) int {
 	fmt.Fprintln(stderr, "Error: "+daemonRequiredMsg)
 	return rcIOFailure
 }
-
 
 // DaemonError represents a non-2xx response from the daemon. Callers can
 // inspect Code to map back to CLI exit codes.

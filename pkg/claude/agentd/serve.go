@@ -60,6 +60,47 @@ func serveCmd() *cobra.Command {
 // case ask-human flows return immediately denied.
 var popupBaseURL string
 
+// prepareSocketPath creates the parent and removes a stale Unix socket without
+// ever clobbering a regular file or a live daemon endpoint.
+func prepareSocketPath(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("mkdir socket dir: %w", err)
+	}
+	fi, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect socket path %s: %w", path, err)
+	}
+	if fi.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("refusing to remove non-socket path %s", path)
+	}
+	if c, derr := net.Dial("unix", path); derr == nil {
+		_ = c.Close()
+		return fmt.Errorf("agentd is already listening on %s", path)
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove stale socket %s: %w", path, err)
+	}
+	return nil
+}
+
+func closeListeners(listeners []net.Listener) {
+	for _, ln := range listeners {
+		_ = ln.Close()
+	}
+}
+
+func removeSocketPaths(paths []string) {
+	for _, path := range paths {
+		fi, err := os.Lstat(path)
+		if err == nil && fi.Mode()&os.ModeSocket != 0 {
+			_ = os.Remove(path)
+		}
+	}
+}
+
 func runServe(p *serveParams) error {
 	sockPath := p.Socket
 	if sockPath == "" {
@@ -68,23 +109,14 @@ func runServe(p *serveParams) error {
 			return fmt.Errorf("could not determine socket path; pass --socket")
 		}
 	}
-	if err := os.MkdirAll(filepath.Dir(sockPath), 0o755); err != nil {
-		return fmt.Errorf("mkdir socket dir: %w", err)
+	agentSockPath := SandboxedAgentSocketPath()
+	socketPaths := []string{sockPath}
+	if agentSockPath != "" && filepath.Clean(agentSockPath) != filepath.Clean(sockPath) {
+		socketPaths = append(socketPaths, agentSockPath)
 	}
-	// Clean up any stale socket file from a crashed previous run. We don't
-	// want to clobber a live one — error out if something is already
-	// listening — and we explicitly refuse to delete anything that isn't
-	// a Unix socket, in case a user pointed --socket at a regular file.
-	if fi, err := os.Lstat(sockPath); err == nil {
-		if fi.Mode()&os.ModeSocket == 0 {
-			return fmt.Errorf("refusing to remove non-socket path %s", sockPath)
-		}
-		if c, derr := net.Dial("unix", sockPath); derr == nil {
-			_ = c.Close()
-			return fmt.Errorf("agentd is already listening on %s", sockPath)
-		}
-		if err := os.Remove(sockPath); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("remove stale socket: %w", err)
+	for _, path := range socketPaths {
+		if err := prepareSocketPath(path); err != nil {
+			return err
 		}
 	}
 
@@ -102,15 +134,24 @@ func runServe(p *serveParams) error {
 		return fmt.Errorf("open database: %w", err)
 	}
 
-	ln, err := net.Listen("unix", sockPath)
-	if err != nil {
-		return fmt.Errorf("listen %s: %w", sockPath, err)
+	listeners := make([]net.Listener, 0, len(socketPaths))
+	for _, path := range socketPaths {
+		ln, err := net.Listen("unix", path)
+		if err != nil {
+			closeListeners(listeners)
+			removeSocketPaths(socketPaths)
+			return fmt.Errorf("listen %s: %w", path, err)
+		}
+		if err := os.Chmod(path, 0o600); err != nil {
+			_ = ln.Close()
+			closeListeners(listeners)
+			removeSocketPaths(socketPaths)
+			return fmt.Errorf("chmod socket %s: %w", path, err)
+		}
+		listeners = append(listeners, ln)
 	}
-	if err := os.Chmod(sockPath, 0o600); err != nil {
-		_ = ln.Close()
-		return fmt.Errorf("chmod socket: %w", err)
-	}
-	defer func() { _ = os.Remove(sockPath) }()
+	defer removeSocketPaths(socketPaths)
+	defer closeListeners(listeners)
 
 	srv := &http.Server{
 		Handler:           withIdentity(buildMux()),
@@ -351,21 +392,25 @@ func runServe(p *serveParams) error {
 	// Both the Unix-socket server and the popup server run in
 	// goroutines so the main goroutine is free for the tray loop
 	// (systray needs the main thread on every supported platform).
-	serveErrCh := make(chan error, 1)
-	go func() {
-		slog.Info("agentd listening", "socket", sockPath, "popup", popupBaseURL)
-		fmt.Printf("tclaude agentd listening on %s\n", sockPath)
-		if popupBaseURL != "" {
-			dashLoc := "loopback"
-			if !isLoopbackHost(dashboardBindHost) {
-				dashLoc = "bind " + dashboardBindHost
-			}
-			fmt.Printf("  agent dashboard:        run `tclaude agent dashboard` (%s %s)\n", dashLoc, popupBaseURL)
-			fmt.Printf("  human approvals + access requests appear in the dashboard's Messages tab\n")
+	serveErrCh := make(chan error, len(listeners))
+	slog.Info("agentd listening", "socket", sockPath, "agent_socket", agentSockPath, "popup", popupBaseURL)
+	fmt.Printf("tclaude agentd listening on %s\n", sockPath)
+	if agentSockPath != "" && filepath.Clean(agentSockPath) != filepath.Clean(sockPath) {
+		fmt.Printf("  sandboxed-agent socket: %s\n", agentSockPath)
+	}
+	if popupBaseURL != "" {
+		dashLoc := "loopback"
+		if !isLoopbackHost(dashboardBindHost) {
+			dashLoc = "bind " + dashboardBindHost
 		}
-		printOperatorTokenBanner(operatorTok, tokenSrc, p.NoPrintHumanToken)
-		serveErrCh <- srv.Serve(ln)
-	}()
+		fmt.Printf("  agent dashboard:        run `tclaude agent dashboard` (%s %s)\n", dashLoc, popupBaseURL)
+		fmt.Printf("  human approvals + access requests appear in the dashboard's Messages tab\n")
+	}
+	printOperatorTokenBanner(operatorTok, tokenSrc, p.NoPrintHumanToken)
+	for _, ln := range listeners {
+		ln := ln
+		go func() { serveErrCh <- srv.Serve(ln) }()
+	}
 
 	quit := newQuitter()
 

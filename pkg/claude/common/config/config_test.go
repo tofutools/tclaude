@@ -3,11 +3,13 @@ package config
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 )
 
 // A transition into the "error" status must be notify-worthy by
@@ -338,6 +340,22 @@ func TestLoad_NormalizesFromFile(t *testing.T) {
 			tc.verify(t, c)
 		})
 	}
+}
+
+func TestLoad_InaccessibleConfigIsAbsentForSandboxedAgent(t *testing.T) {
+	isolateConfigHome(t)
+	require.NoError(t, os.MkdirAll(ConfigDir(), 0o755))
+	require.NoError(t, os.WriteFile(ConfigPath(), []byte(`{"log_level":"debug"}`), 0o600))
+	require.NoError(t, os.Chmod(ConfigDir(), 0))
+	t.Cleanup(func() { _ = os.Chmod(ConfigDir(), 0o755) })
+
+	_, err := Load()
+	require.Error(t, err, "an operator process should still surface an unreadable config")
+
+	t.Setenv(agentipc.SocketEnv, filepath.Join(t.TempDir(), "agentd.sock"))
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, "info", cfg.LogLevel, "sandboxed agents use defaults without reading operator config")
 }
 
 // isolateConfigHome points the config directory at a fresh temp dir

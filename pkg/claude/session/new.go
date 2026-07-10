@@ -559,6 +559,10 @@ func runNew(params *NewParams) error {
 	additionalEnv := map[string]string{
 		"TCLAUDE_SESSION_ID": sessionID,
 	}
+	// Codex cannot carve a child socket back out of a denied ~/.tclaude
+	// directory. The managed profile therefore uses agentd's state-free second
+	// socket and this environment override points tclaude agent commands at it.
+	ApplyCodexAgentSocketEnv(params.PermissionProfile, additionalEnv)
 	// Keep Claude Code's interactive "Resume from summary" chooser from blocking
 	// this detached pane (the daemon forks `tclaude session new -r` here, and a
 	// tmux-driven flow can't answer a TUI it didn't expect). No-op for non-Claude
