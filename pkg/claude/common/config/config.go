@@ -18,6 +18,11 @@ import (
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
+const (
+	codexPermissionProfileEnv = "CODEX_PERMISSION_PROFILE"
+	managedCodexProfileName   = "tclaude-agent"
+)
+
 // Config represents the tclaude configuration file structure.
 type Config struct {
 	Notifications   *NotificationConfig    `json:"notifications,omitempty"`
@@ -1958,11 +1963,11 @@ func Load() (*Config, error) {
 		if os.IsNotExist(err) {
 			return DefaultConfig(), nil
 		}
-		// A managed Codex agent deliberately cannot read ~/.tclaude. Its
-		// agent-facing socket override is sufficient for permission-gated CLI
-		// calls, so treat the inaccessible operator config like an absent config
-		// instead of printing a warning before every `tclaude agent` command.
-		if os.IsPermission(err) && os.Getenv(agentipc.SocketEnv) != "" {
+		// A managed agent deliberately cannot read ~/.tclaude. Its agent-facing
+		// socket is sufficient for permission-gated CLI calls, so treat the
+		// inaccessible operator config like an absent config instead of printing
+		// a warning before every `tclaude agent` command.
+		if os.IsPermission(err) && privateConfigIntentionallyInaccessible() {
 			return DefaultConfig(), nil
 		}
 		slog.Warn("Unable to load config", "err", err)
@@ -1977,6 +1982,16 @@ func Load() (*Config, error) {
 
 	Normalize(&config)
 	return &config, nil
+}
+
+// privateConfigIntentionallyInaccessible reports whether this process is an
+// agent whose sandbox deliberately denies ~/.tclaude. New tclaude-spawned
+// sessions carry SocketEnv; CODEX_PERMISSION_PROFILE also covers already
+// running managed Codex sessions created before that environment variable was
+// added.
+func privateConfigIntentionallyInaccessible() bool {
+	return os.Getenv(agentipc.SocketEnv) != "" ||
+		os.Getenv(codexPermissionProfileEnv) == managedCodexProfileName
 }
 
 // NotificationsPresent reports whether the on-disk config file already
