@@ -199,7 +199,7 @@ export class ProcessTemplateEditor {
     this.abort.abort();
     this.closeInline(false);
     this.graph.destroy();
-    this.modalOverlay?.remove();
+    this.modalDispose?.(null);
     delete this.mount.__processEditor;
     this.mount.classList.remove('process-editor-mount');
     this.mount.replaceChildren();
@@ -271,6 +271,13 @@ export class ProcessTemplateEditor {
         });
         parts.push(joinSelect);
       }
+      if (this.model.template.start !== sel.id && node.type !== 'end') {
+        parts.push(h('button', {
+          class: 'process-action', type: 'button', text: 'set as start',
+          title: 'Make this node the process entry point',
+          onclick: () => this.mutate(() => this.model.setStart(sel.id)),
+        }));
+      }
       parts.push(h('button', {
         class: 'process-action', type: 'button', text: 'node settings…',
         title: 'Node edit dialogs land in a later ticket (TCL-298)', disabled: '',
@@ -337,9 +344,10 @@ export class ProcessTemplateEditor {
     const move = this.pendingMove;
     this.pendingMove = null;
     if (!move || !move.delta) return;
-    // The core's own click-vs-drag threshold is 3px; mirror it so a plain
-    // click never pins an auto-laid node.
-    if (Math.hypot(move.delta.x, move.delta.y) <= 3) return;
+    // The core's own click-vs-drag threshold is 3 CLIENT px; the delta is in
+    // graph units, so scale by the zoom before comparing — at high zoom a
+    // small visible drag is a tiny graph-unit delta and must still commit.
+    if (Math.hypot(move.delta.x, move.delta.y) * this.graph.view.k <= 3) return;
     this.mutate(() => this.model.moveNode(move.id, move.startX + move.delta.x, move.startY + move.delta.y));
   }
 
@@ -373,6 +381,12 @@ export class ProcessTemplateEditor {
     const source = this.band?.source || { nodeId, port };
     this.removeBand();
     if (cancelled || !targetNodeId) return;
+    // A plain CLICK on a port arrives here too (the core starts a port drag on
+    // pointerdown and hit-tests on pointerup): source and target are the same
+    // port. Never treat that as an edge gesture — without this, clicking an
+    // out port silently minted a pass self-loop. A deliberate out → own-in
+    // drop still creates a self-loop edge.
+    if (targetNodeId === source.nodeId && targetPort === source.port) return;
     // Direction: an out-port drag connects source → target; an in-port drag
     // dropped on an out port (or a node body) connects target → source.
     let from = source.nodeId;
@@ -582,6 +596,9 @@ export class ProcessTemplateEditor {
       return;
     }
     this.saveButton.disabled = true;
+    // The canvas stays interactive during the POST: capture the rev the
+    // payload was built at, so edits made in flight keep the model dirty.
+    const savedAtRev = this.model.rev;
     try {
       const response = await fetch(`/v1/process/templates/${encodeURIComponent(id)}`, {
         method: 'POST',
@@ -597,7 +614,7 @@ export class ProcessTemplateEditor {
         this.status(body.message || body.error || `${response.status} ${response.statusText}`, true);
         return;
       }
-      this.model.markSaved(body);
+      this.model.markSaved(body, savedAtRev);
       this.blank = false;
       const diagCount = (body.diagnostics || []).length;
       this.status(`Saved version ${shortHash(body.semanticHash)}${diagCount ? ` · ${diagCount} advisory finding${diagCount === 1 ? '' : 's'}` : ''}.`);
@@ -648,7 +665,11 @@ export class ProcessTemplateEditor {
   // fixed buttons). Escape / backdrop resolve null.
   choiceModal({ title, body, choices }) {
     return new Promise((resolve) => {
-      this.modalOverlay?.remove();
+      // Fully dispose any previous dialog (resolving its promise null) so its
+      // capture-phase document keydown listener never outlives its overlay —
+      // the confirm-modal singleton double-listener disease, avoided by
+      // construction.
+      this.modalDispose?.(null);
       const buttons = choices.map((choice) => h('button', {
         class: `${choice.primary ? 'primary ' : ''}${choice.danger ? 'confirm-danger ' : ''}process-editor-modal-btn`,
         type: 'button', text: choice.label,
@@ -662,7 +683,7 @@ export class ProcessTemplateEditor {
       const done = (result) => {
         overlay.remove();
         document.removeEventListener('keydown', onKey, true);
-        if (this.modalOverlay === overlay) this.modalOverlay = null;
+        if (this.modalDispose === done) this.modalDispose = null;
         resolve(result);
       };
       const onKey = (event) => {
@@ -675,7 +696,7 @@ export class ProcessTemplateEditor {
       cancel.addEventListener('click', () => done(null));
       overlay.addEventListener('click', (event) => { if (event.target === overlay) done(null); });
       document.addEventListener('keydown', onKey, true);
-      this.modalOverlay = overlay;
+      this.modalDispose = done;
       document.body.append(overlay);
       (buttons.find((_, index) => choices[index].primary) || cancel).focus();
     });
@@ -686,7 +707,10 @@ export class ProcessTemplateEditor {
 // blank scaffold). Returns the editor instance; throws on fetch errors so the
 // caller can render its own error state.
 export async function openTemplateEditor(mount, { id, blank = false, version, config = {} } = {}) {
-  const view = blank ? blankEditView(id) : await fetchEditView(id, version);
+  // Destroy the previous instance BEFORE fetching: on a fetch failure the
+  // caller renders an error into the mount, and a live ghost editor handle
+  // must not keep gating navigation with its stale dirty state.
   mount.__processEditor?.destroy?.();
+  const view = blank ? blankEditView(id) : await fetchEditView(id, version);
   return new ProcessTemplateEditor(mount, view, { ...config, blank });
 }

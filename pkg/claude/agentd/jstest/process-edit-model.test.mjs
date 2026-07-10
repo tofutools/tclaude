@@ -161,6 +161,43 @@ test('markSaved re-baselines dirty across undo/redo', () => {
   assert.equal(model.dirty, false);
 });
 
+test('regression: save -> undo -> divergent edit stays dirty (rev serials are never reused)', () => {
+  const model = new ProcessEditModel(view());
+  model.moveNode('build', 5, 5);
+  model.markSaved({ sourceHash: 'hash-source-2' });
+  assert.equal(model.dirty, false);
+  model.undo();
+  model.moveNode('begin', 7, 7); // different content than the saved state
+  assert.equal(model.dirty, true, 'a post-undo edit must never collide with savedRev');
+});
+
+test('regression: no-op rename and no-op join neither dirty nor burn an undo slot', () => {
+  const model = new ProcessEditModel(view());
+  model.renameNode('build', 'Build'); // same name as loaded
+  model.renameNode('begin', '');      // unnamed stays unnamed
+  assert.equal(model.dirty, false);
+  assert.equal(model.canUndo, false);
+  model.setJoin('ship', null); // join already unset
+  assert.equal(model.dirty, false);
+  assert.equal(model.canUndo, false);
+});
+
+test('regression: markSaved at the payload rev keeps in-flight edits dirty', () => {
+  const model = new ProcessEditModel(view());
+  model.moveNode('build', 5, 5);
+  const savedAtRev = model.rev;      // save button clicked: payload built here
+  model.moveNode('begin', 9, 9);     // user keeps editing while POST in flight
+  model.markSaved({ sourceHash: 'hash-source-2' }, savedAtRev);
+  assert.equal(model.dirty, true, 'the in-flight edit is not in the saved payload');
+  model.undo();
+  assert.equal(model.dirty, false, 'undoing the in-flight edit lands exactly on the saved state');
+});
+
+test('graphEdgeID cannot collide across the separator', () => {
+  assert.notEqual(graphEdgeID('a:b', 'c'), graphEdgeID('a', 'b:c'));
+  assert.notEqual(graphEdgeID('a--b', 'c'), graphEdgeID('a', 'b--c'));
+});
+
 test('graph projection hides the start pseudo edge and surfaces join on fan-in', () => {
   const model = new ProcessEditModel(view());
   model.addEdge('begin', 'skip', 'ship');
