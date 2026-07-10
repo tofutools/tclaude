@@ -1528,6 +1528,10 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .cost-bararea {
   flex: 1 1 auto; min-height: 0;
   display: flex; flex-direction: column; justify-content: flex-end;
+  /* Clip any residual overflow from a stacked column's per-segment
+     min-height floors (stackedColHTML) at the top, so a few sub-1%
+     harness slices can never poke above the top gridline. */
+  overflow: hidden;
 }
 .cost-bar {
   background: #6e9c7d; border-radius: 2px 2px 0 0;

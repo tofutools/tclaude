@@ -393,12 +393,20 @@ function stackedColHTML(day, segs, total, scaleMax, showLabel) {
   const bars = segs.map(s => {
     // Floor a nonzero segment at 1% so a tiny slice still shows a sliver;
     // segments sum to the day total (≤ scaleMax), so the ≤ few % of min
-    // bumps never visibly overflow the plot.
+    // bumps never visibly overflow the plot (and .cost-bararea clips any
+    // residual excess at the top anyway).
     const pct = scaleMax > 0 ? Math.max(s.usd > 0 ? 1 : 0, s.usd / scaleMax * 100) : 0;
     return `<div class="cost-seg ${s.cls}" style="height:${pct.toFixed(3)}%"></div>`;
   }).join('');
-  const tip = `${day} — ${fmtUSD(total)}`;
-  return `<div class="${cls.join(' ')}" data-tip="${esc(tip)}" data-day="${esc(day)}">`
+  // An idle day (no spend, or its only harness filtered out) renders as a
+  // bare empty column with no data-tip — so it doesn't react on hover,
+  // matching barColHTML's silent-empty-day contract (the CSS comment on
+  // .cost-col[data-tip] states the same invariant). data-tip/data-day are
+  // emitted only when there's actual spend to report.
+  const tipAttrs = total > 0
+    ? ` data-tip="${esc(`${day} — ${fmtUSD(total)}`)}" data-day="${esc(day)}"`
+    : '';
+  return `<div class="${cls.join(' ')}"${tipAttrs}>`
     + `<div class="cost-bararea">${bars}</div>`
     + `<div class="cost-day">${showLabel ? date.getDate() : ''}</div>`
     + `</div>`;
