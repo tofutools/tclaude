@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -45,6 +46,14 @@ func tempHome(t *testing.T) string {
 	t.Setenv("USERPROFILE", dir)
 	t.Setenv("CODEX_HOME", "")
 	return dir
+}
+
+func seedSupportedCodexOnPath(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "codex")
+	require.NoError(t, os.WriteFile(bin, []byte("#!/bin/sh\necho 'codex-cli 0.144.1'\n"), 0o755))
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 func assertSkillsInstalled(t *testing.T, home string) {
@@ -268,11 +277,38 @@ func TestHookInstallTargets(t *testing.T) {
 		harnessTargetNames(hookInstallTargets(codex, all)))
 }
 
-// installHooksForHarness writes the harness's own hook config — for Codex,
-// ~/.codex/hooks.json — proving the auto-install path actually lands the
-// callback file (the missing file was the spawn-freeze root cause).
+func TestConsentToDetectedHookTrust(t *testing.T) {
+	codex, ok := harness.Get("codex")
+	require.True(t, ok)
+
+	t.Run("yes flag", func(t *testing.T) {
+		withStdin(t, "", func() {
+			assert.True(t, consentToDetectedHookTrust(codex, true))
+		})
+	})
+	t.Run("affirmative response", func(t *testing.T) {
+		withStdin(t, "y\n", func() {
+			assert.True(t, consentToDetectedHookTrust(codex, false))
+		})
+	})
+	t.Run("decline", func(t *testing.T) {
+		withStdin(t, "n\n", func() {
+			assert.False(t, consentToDetectedHookTrust(codex, false))
+		})
+	})
+	t.Run("eof defaults no", func(t *testing.T) {
+		withStdin(t, "", func() {
+			assert.False(t, consentToDetectedHookTrust(codex, false))
+		})
+	})
+}
+
+// installHooksForHarness writes the harness's own hook config and trust state —
+// for Codex, ~/.codex/hooks.json plus [hooks.state] in config.toml — proving
+// the setup path clears both parts of the startup gate.
 func TestInstallHooksForHarness_Codex_WritesHooksFile(t *testing.T) {
 	home := tempHome(t)
+	seedSupportedCodexOnPath(t)
 	codex, ok := harness.Get("codex")
 	require.True(t, ok, "codex harness must be registered")
 
@@ -280,11 +316,32 @@ func TestInstallHooksForHarness_Codex_WritesHooksFile(t *testing.T) {
 	assert.NoFileExists(t, hooksPath, "precondition: no codex hooks yet")
 
 	out := captureStdout(t, func() {
-		require.NoError(t, installHooksForHarness(codex))
+		require.NoError(t, installHooksForHarness(codex, true))
 	})
 
 	assert.FileExists(t, hooksPath, "codex hooks.json must be written")
+	config, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))
+	require.NoError(t, err)
+	assert.Equal(t, 10, strings.Count(string(config), "trusted_hash = "),
+		"setup must trust each installed tclaude hook")
 	assert.Contains(t, out, "Hooks (", "the codex hooks section must be printed")
+	assert.Contains(t, out, "Hooks installed and trusted")
+}
+
+func TestInstallHooksForHarness_AutoAddedCodexDoesNotGrantTrust(t *testing.T) {
+	home := tempHome(t)
+	seedSupportedCodexOnPath(t)
+	codex, ok := harness.Get("codex")
+	require.True(t, ok)
+
+	out := captureStdout(t, func() {
+		require.NoError(t, installHooksForHarness(codex, false))
+	})
+
+	assert.FileExists(t, filepath.Join(home, ".codex", "hooks.json"))
+	assert.NoFileExists(t, filepath.Join(home, ".codex", "config.toml"),
+		"merely auto-detecting Codex must not grant execution trust")
+	assert.Contains(t, out, "installed but not trusted")
 }
 
 // findRepoRoot returns the repository root, derived from this test

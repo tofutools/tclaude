@@ -63,10 +63,16 @@ tclaude setup --harness codex
 ```
 
 The Codex hook install is surgical and idempotent — it adds only tclaude's
-callback and preserves any hooks you already have. Codex additionally requires
-the hook config to be **trusted** once (a supply-chain safeguard); tclaude
-writes the config so Codex's first-run trust prompt covers it. Re-running
-`tclaude setup --harness codex` is always safe.
+callback and preserves any hooks you already have. Codex requires command hooks
+to be trusted before they run; an explicit `tclaude setup --harness codex`
+atomically trusts only the absolute-path tclaude hooks it just installed,
+leaving unrelated user and repository hooks on Codex's normal review path. A
+plain `tclaude setup` detects Codex on PATH and asks before installing and
+trusting its hooks (`--yes` accepts that prompt). Declining leaves Codex
+untouched. Re-running setup is safe and repairs stale trust after a command or
+install-path change. Automatic trust fails closed on Codex versions whose
+private hash contract tclaude has not verified; setup then leaves Codex's normal
+manual hook review in place.
 
 ## Capability matrix
 
@@ -87,7 +93,7 @@ instead of slash-command injection).
 | **Graceful stop** | ✅ `/exit` | ✅ `/quit` |
 | **Remote control** ([guide](remote-control.md)) | ✅ Claude's built-in Remote Access (claude.ai/code + mobile app); arm per-agent, at spawn, or by profile/group default | ❌ no built-in remote access |
 | **Reincarnate / clone** | ✅ | ✅ (rename degrades to the title store) |
-| **Hooks / live status** | ✅ `~/.claude/settings.json` | ✅ `~/.codex/hooks.json` (+ one-time trust) |
+| **Hooks / live status** | ✅ `~/.claude/settings.json` | ✅ `~/.codex/hooks.json` (+ setup-managed trust) |
 | **OS sandbox at spawn** | ✅ per-session `inherit`/`on`/`off` (delivered as a `--settings` override); `inherit` (default) keeps your `settings.json` config | ✅ managed profile (default) or raw `--sandbox` flag |
 | **Approval posture at spawn** | ✅ per-session `--permission-mode` (inherit + Claude's modes); `inherit` (default) keeps `settings.json` + the agentd approval popup | ✅ `--ask-for-approval` flag, non-blocking default for agents |
 | **AskUserQuestion timeout at spawn** | ✅ per-session `inherit`/`never`/`60s`/`5m`/`10m` (delivered as a `--settings` override); `inherit` (default) keeps your `settings.json` value — set an interval per-agent / by profile so an unattended agent auto-continues instead of stalling on a question | ➖ no AskUserQuestion dialog |
