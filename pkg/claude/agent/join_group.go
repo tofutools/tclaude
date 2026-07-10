@@ -74,7 +74,14 @@ func RunJoinGroup(params *session.NewParams) error {
 	}
 	var resp SpawnResponse
 	path := "/v1/groups/" + params.JoinGroup + "/spawn"
-	if err := DaemonRequest(http.MethodPost, path, req, &resp, DaemonOpts{}); err != nil {
+	// Same transparent dir write-proof handling as `tclaude agent spawn` —
+	// --join-group is usually run by the human (exempt), but an agent
+	// driving it hits the same challenge. See writeproof.go.
+	spawnReq := func(writeProofToken string) any {
+		req.WriteProofToken = writeProofToken
+		return req
+	}
+	if err := DaemonRequestWithWriteProof(http.MethodPost, path, spawnReq, &resp, DaemonOpts{}); err != nil {
 		return fmt.Errorf("spawn into group %q: %w", params.JoinGroup, err)
 	}
 

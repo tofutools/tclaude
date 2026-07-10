@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -1286,9 +1288,66 @@ func (f *Flow) AssertDeleted(convID string) {
 
 func (f *Flow) do(method, path string, body any) *httptest.ResponseRecorder {
 	f.T.Helper()
+	rec := f.doOnce(method, path, body)
+	return f.answerWriteProofChallenge(rec, method, path, body)
+}
+
+func (f *Flow) doOnce(method, path string, body any) *httptest.ResponseRecorder {
+	f.T.Helper()
 	r := JSONRequest(f.T, method, path, body)
 	if f.currPeer != nil {
 		r = f.currPeer(r)
 	}
 	return Serve(f.Mux, r)
+}
+
+// answerWriteProofChallenge mirrors the production CLI's transparent dir
+// write-proof handling (pkg/claude/agent/writeproof.go): when the daemon
+// answers a spawn/clone with the 403 "write_proof_required" challenge, the
+// harness creates the token-named proof file in each challenged directory
+// and retries once with the token folded into the body — so agent-caller
+// flow tests see the same end result the CLI user sees. A challenge whose
+// proof file cannot be created (a deliberately unwritable dir) returns the
+// original 403 for the test to assert on. Tests that want the raw challenge
+// itself use agentReq / Serve directly, which bypass Flow.do.
+func (f *Flow) answerWriteProofChallenge(rec *httptest.ResponseRecorder, method, path string, body any) *httptest.ResponseRecorder {
+	f.T.Helper()
+	if rec.Code != http.StatusForbidden {
+		return rec
+	}
+	var challenge struct {
+		Code       string `json:"code"`
+		WriteProof struct {
+			Token    string   `json:"token"`
+			Filename string   `json:"filename"`
+			Dirs     []string `json:"dirs"`
+		} `json:"write_proof"`
+	}
+	if json.Unmarshal(rec.Body.Bytes(), &challenge) != nil ||
+		challenge.Code != "write_proof_required" || challenge.WriteProof.Token == "" {
+		return rec
+	}
+	bodyMap, isMap := body.(map[string]any)
+	if body != nil && !isMap {
+		return rec
+	}
+	var created []string
+	defer func() {
+		for _, p := range created {
+			_ = os.Remove(p)
+		}
+	}()
+	for _, dir := range challenge.WriteProof.Dirs {
+		p := filepath.Join(dir, challenge.WriteProof.Filename)
+		if err := os.WriteFile(p, nil, 0o600); err != nil {
+			return rec // unwritable dir — the test asserts the refusal
+		}
+		created = append(created, p)
+	}
+	retry := make(map[string]any, len(bodyMap)+1)
+	for k, v := range bodyMap {
+		retry[k] = v
+	}
+	retry["write_proof_token"] = challenge.WriteProof.Token
+	return f.doOnce(method, path, retry)
 }

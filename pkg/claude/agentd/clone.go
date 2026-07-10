@@ -337,11 +337,11 @@ func handleWhoamiClone(w http.ResponseWriter, r *http.Request) {
 			"this endpoint clones the calling agent's own conversation; humans should use `tclaude conv copy` directly, or use POST /v1/agent/{conv}/clone to clone another agent")
 		return
 	}
-	followUp, noCopyConv, cwd, ok := decodeCloneBody(w, r)
+	body, ok := decodeCloneBody(w, r)
 	if !ok {
 		return
 	}
-	runCloneOrchestration(w, caller, caller, PermSelfClone, followUp, noCopyConv, cwd)
+	runCloneOrchestration(w, caller, caller, PermSelfClone, body)
 }
 
 // handleAgentClone handles POST /v1/agent/{conv}/clone (cross-agent).
@@ -355,28 +355,41 @@ func handleAgentClone(w http.ResponseWriter, r *http.Request, targetConv string)
 	if !ok {
 		return
 	}
-	followUp, noCopyConv, cwd, ok := decodeCloneBody(w, r)
+	body, ok := decodeCloneBody(w, r)
 	if !ok {
 		return
 	}
-	runCloneOrchestration(w, targetConv, caller, PermAgentClone, followUp, noCopyConv, cwd)
+	runCloneOrchestration(w, targetConv, caller, PermAgentClone, body)
 }
 
-// decodeCloneBody parses + validates the optional follow_up,
-// no_copy_conv and cwd body fields. cwd is an optional override for
-// where the clone's CC session is spawned — empty means "inherit the
-// source's cwd" (the historical behaviour); a worktree path lets the
-// human fork a clone onto a parallel branch.
-func decodeCloneBody(w http.ResponseWriter, r *http.Request) (followUp string, noCopyConv bool, cwd string, ok bool) {
-	var body struct {
-		FollowUp   string `json:"follow_up"`
-		NoCopyConv bool   `json:"no_copy_conv"`
-		Cwd        string `json:"cwd"`
-	}
+// cloneBody is the decoded, validated POST body shared by the clone
+// endpoints (self / cross-agent / dashboard).
+type cloneBody struct {
+	// FollowUp is the optional first-turn prompt for the clone.
+	FollowUp string `json:"follow_up"`
+	// NoCopyConv spawns the clone with a fresh context instead of copying
+	// the source's conversation jsonl.
+	NoCopyConv bool `json:"no_copy_conv"`
+	// Cwd is an optional override for where the clone's session is spawned —
+	// empty means "inherit the source's cwd" (the historical behaviour); a
+	// worktree path lets the human fork a clone onto a parallel branch.
+	Cwd string `json:"cwd"`
+	// WriteProofToken answers the dir write-proof challenge an agent caller
+	// receives when it sets Cwd — same contract as SpawnRequest's field: the
+	// caller must prove its own sandbox can write in the override directory
+	// before it may aim a clone's write access there. Unused (and not
+	// required) for humans and for clones that inherit the source's cwd.
+	WriteProofToken string `json:"write_proof_token"`
+}
+
+// decodeCloneBody parses + validates the optional follow_up, no_copy_conv,
+// cwd and write_proof_token body fields.
+func decodeCloneBody(w http.ResponseWriter, r *http.Request) (cloneBody, bool) {
+	var body cloneBody
 	if r.ContentLength != 0 {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
-			return "", false, "", false
+			return cloneBody{}, false
 		}
 	}
 	body.FollowUp = strings.TrimSpace(body.FollowUp)
@@ -390,9 +403,10 @@ func decodeCloneBody(w http.ResponseWriter, r *http.Request) (followUp string, n
 				"and tabs are allowed (a grouped clone receives the handoff in its "+
 				"inbox, like a spawn brief), but NUL / escape / other control "+
 				"characters are not.", agent.MaxInitialMessageBytes))
-		return "", false, "", false
+		return cloneBody{}, false
 	}
-	return body.FollowUp, body.NoCopyConv, strings.TrimSpace(body.Cwd), true
+	body.Cwd = strings.TrimSpace(body.Cwd)
+	return body, true
 }
 
 // runCloneOrchestration is the target-agnostic body shared by self
@@ -407,12 +421,15 @@ func decodeCloneBody(w http.ResponseWriter, r *http.Request) (followUp string, n
 //     (PermSelfClone / PermAgentClone / "" for human dashboard). Used
 //     to annotate `granted_by` with `:via-sudo:grant-id=<n>` when the
 //     call only passed because of a sudo grant.
-//   - cwdOverride, when non-empty, is the directory the clone's CC
+//   - body.Cwd, when non-empty, is the directory the clone's CC
 //     session is spawned into instead of the source's cwd — typically
 //     a git worktree path so a clone can pick up work on a parallel
 //     branch. It's validated (exists, is a directory, "~" expanded)
-//     before use; a bad value fails the whole clone with a 400.
-func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp string, noCopyConv bool, cwdOverride string) {
+//     before use; a bad value fails the whole clone with a 400. An
+//     AGENT caller must additionally pass the dir write-proof for it
+//     (see below).
+func runCloneOrchestration(w http.ResponseWriter, target, caller, perm string, body cloneBody) {
+	followUp, noCopyConv, cwdOverride := body.FollowUp, body.NoCopyConv, body.Cwd
 	// 1. Snapshot target state. Same shape as reincarnate's snapshot
 	// pass.
 	oldSess := pickAliveSession(target)
@@ -429,6 +446,27 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp
 			return
 		}
 		cwd = resolved
+
+		// Dir write-proof (spawn_dir_proof.go) — a cwd override aims the
+		// clone's write access at a directory of the CALLER's choosing, so an
+		// agent caller must prove its own sandbox can write there, exactly as
+		// for a spawn. A clone that inherits the source's cwd mints no new
+		// directory authority (the target already lives there) and passes
+		// untouched, as do humans (the dashboard's clone modal / cwd picker)
+		// and clones of a no-cwd-write target (Codex read-only — the clone
+		// relaunches with the target's own harness+sandbox, so the target's
+		// recorded posture is the child posture here).
+		if caller != "" && childSandboxGrantsDirWrite(oldSess.Harness, oldSess.SandboxMode) {
+			proofed, ok := requireDirWriteProof(w, caller, body.WriteProofToken, []string{cwd})
+			if !ok {
+				return
+			}
+			if proofed != nil {
+				if v := proofed[cwd]; v != "" {
+					cwd = v
+				}
+			}
+		}
 	}
 
 	// Snapshot group membership up-front — before the rate-limit claim

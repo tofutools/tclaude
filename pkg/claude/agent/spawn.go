@@ -215,6 +215,17 @@ type SpawnRequest struct {
 	// rejects an escalation attempt by a non-owner agent).
 	IsOwner bool `json:"is_owner,omitempty"`
 
+	// WriteProofToken answers a dir write-proof challenge (the daemon's 403
+	// with code "write_proof_required"). A sandboxed agent caller must prove
+	// it can itself write in the directories the spawned agent would get
+	// write access to (Cwd, plus WorktreePath when set): the daemon hands out
+	// a single-use token, the caller creates an empty file named after it in
+	// each directory, and retries the same request with the token set here.
+	// DaemonRequestWithWriteProof runs that dance transparently for the CLI.
+	// Empty for the first attempt and for exempt callers (humans, fully-open
+	// sandboxes).
+	WriteProofToken string `json:"write_proof_token,omitempty"`
+
 	// PermissionOverrides sets the new agent's permanent per-slug permission
 	// overrides at birth — the same grant/deny rows the per-agent permission
 	// editor writes, applied during enrollment so the agent's first turn sees
@@ -878,7 +889,17 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
 	}
 	path := "/v1/groups/" + p.Group + "/spawn"
-	if err := DaemonRequest(http.MethodPost, path, req, &resp, DaemonOpts{AskHuman: ask}); err != nil {
+	// DaemonRequestWithWriteProof transparently answers the daemon's dir
+	// write-proof challenge (see writeproof.go): when the caller is a
+	// sandboxed agent, the daemon requires proof that this process can itself
+	// write in the spawn dirs before it launches an agent with write access
+	// there. The proof file creation runs inside the caller's own sandbox,
+	// which is exactly the capability being proven.
+	spawnReq := func(writeProofToken string) any {
+		req.WriteProofToken = writeProofToken
+		return req
+	}
+	if err := DaemonRequestWithWriteProof(http.MethodPost, path, spawnReq, &resp, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		// The spawn failed after we created a worktree for it. Remove the
 		// now-orphaned worktree so a retry starts clean — except on a 504
