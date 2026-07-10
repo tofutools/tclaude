@@ -214,7 +214,7 @@ func applyEvent(st *State, event Event) error {
 		default:
 			return fmt.Errorf("node_status_set cannot set status %q", event.NodeStatus)
 		}
-		if node.Parent != "" && event.NodeStatus != NodeStatusSkipped {
+		if node.Parent != "" {
 			if err := requirePriorStagesCompleted(st, event.NodeID, node); err != nil {
 				return err
 			}
@@ -1001,6 +1001,9 @@ func normalizedBlockResolution(input *BlockResolution, at time.Time) (BlockResol
 	resolution.EvidenceRef = strings.TrimSpace(resolution.EvidenceRef)
 	if resolution.Timestamp.IsZero() {
 		resolution.Timestamp = at
+	}
+	if resolution.Timestamp.IsZero() {
+		return BlockResolution{}, fmt.Errorf("block resolution requires timestamp")
 	}
 	if resolution.NodeID == "" || resolution.BlockedAttempt <= 0 {
 		return BlockResolution{}, fmt.Errorf("block resolution requires node id and blocked attempt")

@@ -211,6 +211,7 @@ func TestNormalizeBlockResolutionRejectsInvalidInputs(t *testing.T) {
 		{name: "actor", mutate: func(r *BlockResolutionRequest) { r.Actor = "engine:forged" }, want: "non-engine actor"},
 		{name: "reason", mutate: func(r *BlockResolutionRequest) { r.Reason = "" }, want: "reason is required"},
 		{name: "evidence", mutate: func(r *BlockResolutionRequest) { r.EvidenceRef = "" }, want: "evidence ref is required"},
+		{name: "negative attempt", mutate: func(r *BlockResolutionRequest) { r.BlockedAttempt = -1 }, want: "must not be negative"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

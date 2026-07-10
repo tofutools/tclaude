@@ -279,10 +279,12 @@ func TestResolvedBlockMirrorAndAuditInvariants(t *testing.T) {
 	child := valid.Nodes[resolution.NodeID]
 	child.Status = NodeStatusSkipped
 	child.BlockedAttempt = resolution.BlockedAttempt
+	child.BlockedNodeID = resolution.NodeID
 	child.BlockResolution = &resolution
 	valid.Nodes[resolution.NodeID] = child
 	parent := valid.Nodes["implement"]
 	parent.BlockedAttempt = resolution.BlockedAttempt
+	parent.BlockedNodeID = resolution.NodeID
 	parent.BlockResolution = &resolution
 	valid.Nodes["implement"] = parent
 	valid.AdminRecords = append(valid.AdminRecords, AdminRecord{
@@ -326,6 +328,38 @@ func TestResolvedBlockMirrorAndAuditInvariants(t *testing.T) {
 			name:   "resolution without audit",
 			mutate: func(st *State) { st.AdminRecords = nil },
 			code:   "block_resolution_without_audit",
+		},
+		{
+			name: "parent and child carry different audited resolutions",
+			mutate: func(st *State) {
+				other := resolution
+				other.Decision = BlockDecisionRetry
+				other.Reason = "retry instead"
+				parent := st.Nodes["implement"]
+				parent.BlockResolution = &other
+				st.Nodes["implement"] = parent
+				st.AdminRecords = append(st.AdminRecords, AdminRecord{
+					Type: EventBlockResolutionRecorded, Actor: other.Actor, Reason: other.Reason,
+					EvidenceRef: other.EvidenceRef, Timestamp: other.Timestamp, Resolution: &other,
+				})
+			},
+			code: "block_mirror_resolution_mismatch",
+		},
+		{
+			name: "parent and child carry different audited attempts",
+			mutate: func(st *State) {
+				other := resolution
+				other.BlockedAttempt = 2
+				parent := st.Nodes["implement"]
+				parent.BlockedAttempt = 2
+				parent.BlockResolution = &other
+				st.Nodes["implement"] = parent
+				st.AdminRecords = append(st.AdminRecords, AdminRecord{
+					Type: EventBlockResolutionRecorded, Actor: other.Actor, Reason: other.Reason,
+					EvidenceRef: other.EvidenceRef, Timestamp: other.Timestamp, Resolution: &other,
+				})
+			},
+			code: "block_mirror_tombstone_mismatch",
 		},
 	}
 	for _, tt := range tests {

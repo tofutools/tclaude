@@ -14,7 +14,7 @@ import (
 
 func TestPoisonUnblockRetryFlowCompletes(t *testing.T) {
 	cmd, root := poisonedCompoundFlow(t, "unblock_retry")
-	unblockFlowOK(t, cmd, root, "unblock_retry", state.BlockDecisionRetry)
+	unblockFlowOK(t, cmd, root, "unblock_retry", "implement.test.tests", state.BlockDecisionRetry)
 
 	fs, err := openStore(root, true)
 	if err != nil {
@@ -39,7 +39,7 @@ func TestPoisonUnblockRetryFlowCompletes(t *testing.T) {
 
 func TestPoisonUnblockSkipFlowCompletes(t *testing.T) {
 	cmd, root := poisonedCompoundFlow(t, "unblock_skip")
-	unblockFlowOK(t, cmd, root, "unblock_skip", state.BlockDecisionSkip)
+	unblockFlowOK(t, cmd, root, "unblock_skip", "implement", state.BlockDecisionSkip)
 	executeNextInternalCommand(t, cmd, root, "unblock_skip", plan.CommandKindActivateNode)
 	verifyFlowCheckpoint(t, cmd, root, "unblock_skip")
 	advanceOK(t, cmd, root, "unblock_skip", "implement.review", "pass", "artifacts/review.md")
@@ -48,7 +48,7 @@ func TestPoisonUnblockSkipFlowCompletes(t *testing.T) {
 
 func TestPoisonUnblockCancelFlowSettlesCanceled(t *testing.T) {
 	cmd, root := poisonedCompoundFlow(t, "unblock_cancel")
-	unblockFlowOK(t, cmd, root, "unblock_cancel", state.BlockDecisionCancel)
+	unblockFlowOK(t, cmd, root, "unblock_cancel", "implement.test.tests", state.BlockDecisionCancel)
 	assertEffectiveStatus(t, cmd, root, "unblock_cancel", "canceled")
 
 	fs, err := openStore(root, true)
@@ -79,16 +79,17 @@ func poisonedCompoundFlow(t *testing.T, runID string) (*cobra.Command, string) {
 	return cmd, root
 }
 
-func unblockFlowOK(t *testing.T, cmd *cobra.Command, root, runID string, decision state.BlockDecision) {
+func unblockFlowOK(t *testing.T, cmd *cobra.Command, root, runID, targetNodeID string, decision state.BlockDecision) {
 	t.Helper()
 	var out bytes.Buffer
 	params := &unblockParams{
-		RunID: runID, NodeID: "implement.test.tests", StoreRoot: root,
+		RunID: runID, NodeID: targetNodeID, StoreRoot: root,
 		Decision: string(decision), Actor: "human:johan", Reason: "operator reviewed exhausted gate", EvidenceRef: "decision:" + string(decision),
 	}
 	if err := runUnblock(cmd, params, &out); err != nil {
 		t.Fatalf("unblock %s: %v\n%s", decision, err, out.String())
 	}
+	assertOutputContains(t, out.String(), "Resolved blocked node implement.test.tests")
 	verifyFlowCheckpoint(t, cmd, root, runID)
 	fs, err := openStore(root, true)
 	if err != nil {

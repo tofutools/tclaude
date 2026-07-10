@@ -591,6 +591,7 @@ func TestReducerErrors(t *testing.T) {
 		{name: "decision chosen edge verdict mismatch", st: base, event: Event{Type: EventDecisionRecorded, Seq: 11, NodeID: "decide", ChosenEdge: "approve", Decision: &DecisionRecord{Actor: "human:johan", Verdict: "reject"}}, want: "must match verdict"},
 		{name: "block without reason", st: base, event: Event{Type: EventNodeBlocked, Seq: 11, NodeID: "implement", Owner: "human:johan"}, want: "requires reason and owner"},
 		{name: "block without owner", st: base, event: Event{Type: EventNodeBlocked, Seq: 11, NodeID: "implement", Reason: "blocked"}, want: "requires reason and owner"},
+		{name: "block resolution without timestamp", st: base, event: Event{Type: EventBlockResolutionRecorded, Seq: 11, Resolution: &BlockResolution{NodeID: "implement", BlockedAttempt: 1, Decision: BlockDecisionRetry, Actor: "human:johan", Reason: "retry", EvidenceRef: "decision:retry"}}, want: "requires timestamp"},
 		{name: "unknown wait", st: base, event: Event{Type: EventWaitSatisfied, Seq: 11, WaitID: "missing"}, want: "not declared"},
 		{name: "invalid wait kind", st: base, event: Event{Type: EventWaitCreated, Seq: 11, Wait: &WaitRecord{ID: "wait", NodeID: "wait-human", Kind: "bogus"}}, want: "invalid wait kind"},
 		{name: "invalid wait status", st: base, event: Event{Type: EventWaitCreated, Seq: 11, Wait: &WaitRecord{ID: "wait", NodeID: "wait-human", Kind: WaitKindHuman, Status: "bogus"}}, want: "invalid wait status"},

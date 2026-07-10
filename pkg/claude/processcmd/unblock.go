@@ -75,6 +75,6 @@ func runUnblock(cmd *cobra.Command, p *unblockParams, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "Resolved blocked node %s in run %s with decision %s at seq %d\n", p.NodeID, p.RunID, strings.ToLower(strings.TrimSpace(p.Decision)), resolved.LastLogSeq)
+	fmt.Fprintf(out, "Resolved blocked node %s in run %s with decision %s at seq %d\n", request.NodeID, p.RunID, strings.ToLower(strings.TrimSpace(p.Decision)), resolved.LastLogSeq)
 	return nil
 }

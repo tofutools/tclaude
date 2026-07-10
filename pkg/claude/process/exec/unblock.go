@@ -125,7 +125,7 @@ func normalizeBlockResolution(snapshot store.Snapshot, request BlockResolutionRe
 		return normalizedBlockResolution{}, fmt.Errorf("block resolution node id is required")
 	}
 	if request.BlockedAttempt < 0 {
-		return normalizedBlockResolution{}, fmt.Errorf("block resolution attempt must be positive")
+		return normalizedBlockResolution{}, fmt.Errorf("block resolution attempt must not be negative")
 	}
 	if requireBinding && request.BlockedAttempt == 0 {
 		return normalizedBlockResolution{}, fmt.Errorf("block resolution request is not generation-bound; call BindBlockResolution first")

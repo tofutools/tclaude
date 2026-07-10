@@ -23,6 +23,7 @@ func CheckInvariants(st *State) Diagnostics {
 	diagnostics = append(diagnostics, CompletedDecisionsHaveOneChosenEdge(st)...)
 	diagnostics = append(diagnostics, BlockedNodesHaveReasonAndOwner(st)...)
 	diagnostics = append(diagnostics, BlockResolutionsAreAudited(st)...)
+	diagnostics = append(diagnostics, BlockMirrorsAreConsistent(st)...)
 	diagnostics = append(diagnostics, SkippedNodesHaveBlockResolution(st)...)
 	diagnostics = append(diagnostics, DecisionActorsAreValid(st)...)
 	diagnostics = append(diagnostics, CompoundLinkageIsConsistent(st)...)
@@ -651,6 +652,55 @@ func BlockResolutionsAreAudited(st *State) Diagnostics {
 		}
 	}
 	return diagnostics
+}
+
+// BlockMirrorsAreConsistent cross-checks the expanded parent tombstone with
+// the child it names. Per-node audit checks alone cannot detect two different,
+// individually valid resolutions forged onto the two sides of the mirror.
+func BlockMirrorsAreConsistent(st *State) Diagnostics {
+	if st == nil {
+		return Diagnostics{diagError("nil_state", "", "process state is nil")}
+	}
+	var diagnostics Diagnostics
+	for _, parentID := range sortedKeys(st.Nodes) {
+		parent := st.Nodes[parentID]
+		childID := strings.TrimSpace(parent.BlockedNodeID)
+		if len(parent.Children) == 0 || childID == "" {
+			continue
+		}
+		path := "nodes." + parentID
+		child, ok := st.Nodes[childID]
+		if !ok || child.Parent != parentID || !slices.Contains(parent.Children, childID) {
+			diagnostics = append(diagnostics, diagError(
+				"block_mirror_unknown_child",
+				path+".blockedNodeId",
+				fmt.Sprintf("expanded parent %q block tombstone names non-child %q", parentID, childID),
+			))
+			continue
+		}
+		if child.BlockedNodeID != childID || child.BlockedAttempt != parent.BlockedAttempt {
+			diagnostics = append(diagnostics, diagError(
+				"block_mirror_tombstone_mismatch",
+				path+".blockedAttempt",
+				fmt.Sprintf("expanded parent %q tombstone (%q, attempt %d) does not match child %q tombstone (%q, attempt %d)", parentID, childID, parent.BlockedAttempt, childID, child.BlockedNodeID, child.BlockedAttempt),
+			))
+		}
+		if !blockResolutionPointersEqual(parent.BlockResolution, child.BlockResolution) {
+			diagnostics = append(diagnostics, diagError(
+				"block_mirror_resolution_mismatch",
+				path+".blockResolution",
+				fmt.Sprintf("expanded parent %q and child %q carry different block resolutions", parentID, childID),
+			))
+		}
+	}
+	return diagnostics
+}
+
+func blockResolutionPointersEqual(left, right *BlockResolution) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 // SkippedNodesHaveBlockResolution reserves skipped for the audited poison
