@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"slices"
 	"strings"
 
 	processexec "github.com/tofutools/tclaude/pkg/claude/process/exec"
@@ -23,7 +22,7 @@ func handleProcessWorklist(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "process_store", err.Error())
 		return
 	}
-	items, err := loadProcessWorklist(r.Context(), fs)
+	result, err := loadProcessWorklist(r.Context(), fs)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "process_worklist", err.Error())
 		return
@@ -34,7 +33,9 @@ func handleProcessWorklist(w http.ResponseWriter, r *http.Request) {
 		Run:      strings.TrimSpace(r.URL.Query().Get("run")),
 		Status:   state.WaitStatus(strings.TrimSpace(r.URL.Query().Get("status"))),
 	}
-	writeProcessJSON(w, http.StatusOK, map[string]any{"items": worklist.ApplyFilter(items, filter)})
+	writeProcessJSON(w, http.StatusOK, map[string]any{
+		"items": worklist.ApplyFilter(result.Items, filter), "degradedRuns": result.DegradedRuns,
+	})
 }
 
 type processWorklistActionRequest struct {
@@ -65,7 +66,7 @@ func handleProcessWorklistAction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "json", err.Error())
 		return
 	}
-	body.Action = strings.ToLower(strings.TrimSpace(body.Action))
+	body.Action = strings.TrimSpace(body.Action)
 	body.Comment = strings.TrimSpace(body.Comment)
 	body.IdempotencyKey = strings.TrimSpace(body.IdempotencyKey)
 	if body.Action == "" || len(body.Action) > 64 || body.Comment == "" || len(body.Comment) > 10_000 ||
@@ -79,12 +80,12 @@ func handleProcessWorklistAction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "process_store", err.Error())
 		return
 	}
-	items, err := loadProcessWorklist(r.Context(), fs)
+	result, err := loadProcessWorklist(r.Context(), fs)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "process_worklist", err.Error())
 		return
 	}
-	item, found := worklist.Find(items, r.PathValue("itemId"))
+	item, found := worklist.Find(result.Items, r.PathValue("itemId"))
 	if !found {
 		http.NotFound(w, r)
 		return
@@ -93,10 +94,16 @@ func handleProcessWorklistAction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "forbidden", "agent caller is not the assignee for this work item")
 		return
 	}
-	if !slices.Contains(item.AvailableActions, body.Action) {
+	if item.Kind == worklist.KindAgentObligation {
+		writeError(w, http.StatusConflict, "process_action", "agent obligations must be reported through the process run/node report route with a durable evidence ref")
+		return
+	}
+	canonicalAction, available := processexec.CanonicalObligationAction(item.AvailableActions, body.Action)
+	if !available {
 		writeError(w, http.StatusConflict, "process_action", fmt.Sprintf("action %q is not available for item %q", body.Action, item.ID))
 		return
 	}
+	body.Action = canonicalAction
 
 	evidenceRef := worklistActionEvidence(item.ID, body)
 	executor := processexec.New(fs, nil)
@@ -106,10 +113,7 @@ func handleProcessWorklistAction(w http.ResponseWriter, r *http.Request) {
 			writeProcessActionError(w, loadErr)
 			return
 		}
-		request, bindErr := processexec.BindBlockResolution(snapshot, processexec.BlockResolutionRequest{
-			RunID: item.Run, NodeID: item.Node, Decision: state.BlockDecision(body.Action),
-			Actor: actor, Reason: body.Comment, EvidenceRef: evidenceRef,
-		})
+		request, bindErr := bindWorklistBlockResolution(snapshot, item, body, actor, evidenceRef)
 		if bindErr != nil {
 			writeProcessActionError(w, bindErr)
 			return
@@ -135,23 +139,42 @@ func handleProcessWorklistAction(w http.ResponseWriter, r *http.Request) {
 	writeProcessJSON(w, http.StatusOK, map[string]any{"recorded": true, "itemId": item.ID, "actor": actor})
 }
 
-func loadProcessWorklist(ctx context.Context, fs *store.FS) ([]worklist.Item, error) {
+func bindWorklistBlockResolution(snapshot store.Snapshot, item worklist.Item, body processWorklistActionRequest, actor state.ActorRef, evidenceRef string) (processexec.BlockResolutionRequest, error) {
+	return processexec.BindBlockResolution(snapshot, processexec.BlockResolutionRequest{
+		RunID: item.Run, NodeID: item.Node, BlockedAttempt: item.Attempt, Decision: state.BlockDecision(body.Action),
+		Actor: actor, Reason: body.Comment, EvidenceRef: evidenceRef,
+	})
+}
+
+type processWorklistLoadResult struct {
+	Items        []worklist.Item `json:"items"`
+	DegradedRuns []degradedRun   `json:"degradedRuns"`
+}
+
+type degradedRun struct {
+	Run   string `json:"run"`
+	Error string `json:"error"`
+}
+
+func loadProcessWorklist(ctx context.Context, fs *store.FS) (processWorklistLoadResult, error) {
 	runs, err := fs.ListRuns(ctx)
 	if err != nil {
-		return nil, err
+		return processWorklistLoadResult{}, err
 	}
 	snapshots := make([]store.Snapshot, 0, len(runs))
+	degraded := make([]degradedRun, 0)
 	for _, run := range runs {
 		if run.ID == "" {
 			continue
 		}
 		snapshot, loadErr := fs.LoadRun(ctx, run.ID)
 		if loadErr != nil {
-			return nil, fmt.Errorf("load run %q: %w", run.ID, loadErr)
+			degraded = append(degraded, degradedRun{Run: run.ID, Error: loadErr.Error()})
+			continue
 		}
 		snapshots = append(snapshots, snapshot)
 	}
-	return worklist.Derive(snapshots), nil
+	return processWorklistLoadResult{Items: worklist.Derive(snapshots), DegradedRuns: degraded}, nil
 }
 
 func worklistObservationVerdict(ctx context.Context, fs *store.FS, item worklist.Item, action string) (string, error) {
@@ -163,17 +186,7 @@ func worklistObservationVerdict(ctx context.Context, fs *store.FS, item worklist
 	if !ok {
 		return "", fmt.Errorf("process command %q is not present", item.Target.CommandID)
 	}
-	if command.Kind == state.CommandKindRecordDecision {
-		return action, nil
-	}
-	switch action {
-	case "approve":
-		return "pass", nil
-	case "reject", "ask-changes":
-		return "fail", nil
-	default:
-		return action, nil
-	}
+	return processexec.NormalizeObligationAction(command.Kind, action)
 }
 
 func worklistActionEvidence(itemID string, body processWorklistActionRequest) string {

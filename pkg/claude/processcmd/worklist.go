@@ -58,7 +58,8 @@ func runWorklist(cmd *cobra.Command, p *worklistParams, out io.Writer) error {
 		}
 		snapshot, loadErr := fs.LoadRun(cmd.Context(), run.ID)
 		if loadErr != nil {
-			return fmt.Errorf("load run %q: %w", run.ID, loadErr)
+			fmt.Fprintf(out, "Warning: skipped unreadable process run %s: %v\n", run.ID, loadErr)
+			continue
 		}
 		snapshots = append(snapshots, snapshot)
 	}

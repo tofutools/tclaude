@@ -41,6 +41,26 @@ func (a *fakeAdapter) Perform(_ context.Context, request Request) (Observation, 
 	return a.observation, nil
 }
 
+func TestObligationActionNormalizationIsSharedAndCaseInsensitive(t *testing.T) {
+	canonical, ok := CanonicalObligationAction([]string{"Approve", "Reject", "ask-changes"}, "approve")
+	if !ok || canonical != "Approve" {
+		t.Fatalf("canonical action = %q, %v", canonical, ok)
+	}
+	tests := map[string]string{
+		"approve": "pass", "pass": "pass", "reject": "fail", "fail": "fail", "ask-changes": "fail",
+	}
+	for action, want := range tests {
+		got, err := NormalizeObligationAction(state.CommandKindStartAttempt, action)
+		if err != nil || got != want {
+			t.Fatalf("NormalizeObligationAction(%q) = %q, %v; want %q", action, got, err, want)
+		}
+	}
+	decision, err := NormalizeObligationAction(state.CommandKindRecordDecision, canonical)
+	if err != nil || decision != "Approve" {
+		t.Fatalf("decision action = %q, %v", decision, err)
+	}
+}
+
 func TestExecutePerformerCommandRecordsObservationAndSettlement(t *testing.T) {
 	fs, snapshot := executorFixture(t, true, model.Performer{Kind: model.PerformerProgram, Run: "/fake"})
 	adapter := &fakeAdapter{observation: Observation{

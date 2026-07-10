@@ -2,6 +2,7 @@ package processcmd
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -59,13 +60,20 @@ nodes:
 	if _, err := executor.Execute(t.Context(), commands[0]); err != nil {
 		t.Fatal(err)
 	}
+	corruptDir := filepath.Join(root, "runs", "corrupt-run")
+	if err := os.MkdirAll(corruptDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(corruptDir, "run.json"), []byte("{not-json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	var out bytes.Buffer
 	if err := runWorklist(cmd, &worklistParams{StoreRoot: root, Assignee: "human:johan", Kind: "human-wait", Status: "pending"}, &out); err != nil {
 		t.Fatal(err)
 	}
 	text := out.String()
-	for _, want := range []string{"worklist-cli", "approve", "human-wait", "human:johan", "pending", "0/5", "Approve merge?", "approve,reject"} {
+	for _, want := range []string{"Warning: skipped unreadable process run corrupt-run", "worklist-cli", "approve", "human-wait", "human:johan", "pending", "0/5", "Approve merge?", "approve,reject"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("worklist output missing %q:\n%s", want, text)
 		}
