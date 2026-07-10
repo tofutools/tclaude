@@ -248,6 +248,9 @@ Rules that make compound runs trustworthy:
   unblock`. A restart between the human verdict and the resolution append
   rediscovers that command. Non-decision fail targets stay inactive, so poison
   cannot silently turn into failure or continuation.
+  Decision nodes are single-use in v1: if a decision-driven retry later
+  poisons again, the completed escalation node is not reset; use the explicit
+  `process unblock` path for that later generation.
 - **Poison resolution is explicit and audited.** Resolve the blocked stage
   child (or its blocked parent mirror) with `process unblock`. The engine
   clears both mirrors in one append batch and records the actor, decision,
