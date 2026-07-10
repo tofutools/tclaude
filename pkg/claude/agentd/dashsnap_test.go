@@ -527,6 +527,19 @@ func processGraphStates() []dashsnap.State {
 }`),
 		},
 		{
+			Key:     "process-light",
+			Title:   "Process graph — explicit light palette",
+			Caption: "Standalone light color-scheme palette: shapes, edges, overlays, labels, ports, focus and Fit control remain legible on a light host.",
+			JS: processGraphStateJS("Light process graph", `{
+  nodes: [
+    {id:'start',type:'start',label:'Start'},
+    {id:'choose',type:'decision',label:'Ready?',overlay:{glyph:'?',status:'review'}},
+    {id:'finish',type:'end',label:'Finish'}
+  ],
+  edges: [{from:'start',to:'choose'},{from:'choose',to:'finish',outcome:'yes'}]
+}`, "light"),
+		},
+		{
 			Key:     "process-decision-join",
 			Title:   "Process graph — decision fan-out + join",
 			Caption: "Diamond decision with labelled yes/no branches converging on an all-join; edge and node shapes remain legible without relying on colour.",
@@ -595,7 +608,11 @@ func processGraphStates() []dashsnap.State {
 	}
 }
 
-func processGraphStateJS(title, graph string) string {
+func processGraphStateJS(title, graph string, colorSchemes ...string) string {
+	colorScheme := "dark"
+	if len(colorSchemes) > 0 && colorSchemes[0] != "" {
+		colorScheme = colorSchemes[0]
+	}
 	return fmt.Sprintf(`return import('/static/js/process-graph.js').then(function(mod) {
   var shell = document.createElement('section');
   shell.setAttribute('data-dashsnap-process-graph', '');
@@ -611,12 +628,14 @@ func processGraphStateJS(title, graph string) string {
   var portEvents = [];
   var instance = mod.createProcessGraph(host, graph, {
     fitOnRender:false,
+    colorScheme:%q,
     ariaLabel:%q,
     onPortDragStart:function(e){ portEvents.push(['start', e]); },
     onPortDragEnd:function(e){ portEvents.push(['end', e]); }
   });
-  return new Promise(function(resolve) {
+  return new Promise(function(resolve, reject) {
     requestAnimationFrame(function() { requestAnimationFrame(function() {
+      try {
       instance.fitToView();
       if (!host.querySelector('.process-graph-svg')) throw new Error('process graph SVG did not render');
       if (!host.hasAttribute('data-morph-owned')) throw new Error('process graph host lacks morph ownership boundary');
@@ -652,11 +671,28 @@ func processGraphStateJS(title, graph string) string {
       var foreignHit = instance.eventTarget({target:foreignPort});
       foreignNode.remove();
       if (foreignHit.node || foreignHit.port || foreignHit.edge) throw new Error('graph accepted a foreign interaction target');
+      var errorHost = document.createElement('div');
+      var sentinel = document.createElement('span');
+      sentinel.textContent = 'keep me';
+      errorHost.append(sentinel);
+      shell.append(errorHost);
+      var constructorThrew = false;
+      try {
+        mod.createProcessGraph(errorHost, {nodes:[{id:'duplicate'},{id:'duplicate'}],edges:[]});
+      } catch (error) {
+        constructorThrew = true;
+      }
+      if (!constructorThrew) throw new Error('invalid graph constructor did not reject');
+      if (errorHost.hasAttribute('data-morph-owned') || errorHost.firstChild !== sentinel) throw new Error('invalid constructor bricked its host');
+      errorHost.remove();
       instance.fitToView();
       resolve();
+      } catch (error) {
+        reject(error);
+      }
     }); });
   });
-});`, title, graph, title)
+});`, title, graph, colorScheme, title)
 }
 
 // scrollClearJS builds a self-checking JOH-388 req-3 state: on the groups tab

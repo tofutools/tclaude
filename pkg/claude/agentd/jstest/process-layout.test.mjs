@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { layoutProcessGraph } from '../dashboard/js/process-layout.js';
+import { defaultFeedbackArc, layoutProcessGraph } from '../dashboard/js/process-layout.js';
 
 const linear = {
   nodes: [
@@ -216,4 +216,104 @@ test('cycle-breaking heuristic stays isolated at the feedback-arc seam', () => {
   });
   assert.equal(called, 1);
   assert.equal(result.edges.filter((edge) => edge.back).length, 1);
+});
+
+test('overlapping pin obstacle that culls a route endpoint never throws', () => {
+  const graph = {
+    nodes: [
+      { id: 'start', type: 'task', pinned: { x: 100, y: 100 } },
+      { id: 'overlap', type: 'task', pinned: { x: 110, y: 105 } },
+      { id: 'mid', type: 'task', pinned: { x: 260, y: 260 } },
+      { id: 'end', type: 'end', pinned: { x: 420, y: 420 } },
+    ],
+    edges: [
+      { from: 'start', to: 'mid' }, { from: 'mid', to: 'end' },
+      { from: 'start', to: 'end', outcome: 'skip' },
+    ],
+  };
+  let result;
+  assert.doesNotThrow(() => { result = layoutProcessGraph(graph); });
+  assert.equal(result.edges.length, 3);
+  result.edges.forEach((edge) => assert.match(edge.path, /^M /));
+});
+
+test('coincident multi-rank endpoints produce a visible fallback route', () => {
+  const result = layoutProcessGraph({
+    nodes: [
+      { id: 'start', type: 'task', pinned: { x: 100, y: 100 } },
+      { id: 'mid', type: 'task', pinned: { x: 240, y: 240 } },
+      { id: 'end', type: 'end', pinned: { x: 100, y: 100 } },
+    ],
+    edges: [
+      { from: 'start', to: 'mid' }, { from: 'mid', to: 'end' },
+      { from: 'start', to: 'end', outcome: 'skip' },
+    ],
+  });
+  const skip = result.edges.find((edge) => edge.outcome === 'skip');
+  assert.ok(skip.points.length >= 4);
+  assert.ok(new Set(skip.points.map((point) => `${point.x},${point.y}`)).size > 1);
+});
+
+test('deterministic overlap fuzz keeps layout total', () => {
+  let seed = 0x293;
+  const next = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed;
+  };
+  for (let iteration = 0; iteration < 80; iteration += 1) {
+    const nodes = Array.from({ length: 7 }, (_, index) => ({
+      id: `n${index}`, type: index === 6 ? 'end' : 'task',
+      pinned: { x: 100 + next() % 45, y: 100 + next() % 45 },
+    }));
+    const edges = Array.from({ length: 6 }, (_, index) => ({ from: `n${index}`, to: `n${index + 1}` }));
+    edges.push({ from: 'n0', to: 'n6', outcome: 'skip' });
+    assert.doesNotThrow(() => layoutProcessGraph({ nodes, edges }), `overlap fuzz iteration ${iteration}`);
+  }
+});
+
+test('self-loop is classified and rendered as a visible return arc', () => {
+  const result = layoutProcessGraph({
+    nodes: [{ id: 'again', type: 'task' }],
+    edges: [{ from: 'again', to: 'again', outcome: 'retry' }],
+  });
+  assert.equal(result.edges[0].kind, 'back');
+  assert.match(result.edges[0].path, / C /);
+  assert.ok(new Set(result.edges[0].points.map((point) => `${point.x},${point.y}`)).size > 1);
+});
+
+test('initial layer order is total for mixed pinned and automatic nodes', () => {
+  const nodes = [
+    { id: 'a', type: 'task', pinned: { x: 300, y: 100 } },
+    { id: 'm', type: 'task' },
+    { id: 'z', type: 'task', pinned: { x: 100, y: 100 } },
+  ];
+  const forward = layoutProcessGraph({ nodes, edges: [] });
+  const reverse = layoutProcessGraph({ nodes: [...nodes].reverse(), edges: [] });
+  assert.deepEqual(forward.layers, [['z', 'a', 'm']]);
+  assert.deepEqual(reverse.layers, forward.layers);
+  assert.deepEqual(reverse.nodes.map(({ id, x, y }) => ({ id, x, y })),
+    forward.nodes.map(({ id, x, y }) => ({ id, x, y })));
+});
+
+test('crossing reduction improves a provably crossed identity ordering', () => {
+  const result = layoutProcessGraph({
+    nodes: ['a', 'b', 'x', 'y'].map((id) => ({ id, type: 'task' })),
+    edges: [{ from: 'a', to: 'y' }, { from: 'b', to: 'x' }],
+  });
+  const sourceOrder = new Map(result.layers[0].map((id, index) => [id, index]));
+  const targetOrder = new Map(result.layers[1].map((id, index) => [id, index]));
+  const [first, second] = result.edges;
+  const crossed = (sourceOrder.get(first.from) - sourceOrder.get(second.from))
+    * (targetOrder.get(first.to) - targetOrder.get(second.to)) < 0;
+  assert.equal(crossed, false);
+  assert.notDeepEqual(result.layers, [['a', 'b'], ['x', 'y']], 'identity ordering has one crossing');
+});
+
+test('feedback-arc DFS handles a deep chain without recursion overflow', () => {
+  const count = 20000;
+  const nodes = Array.from({ length: count }, (_, index) => ({ id: `n${index}` }));
+  const edges = Array.from({ length: count - 1 }, (_, index) => ({
+    from: `n${index}`, to: `n${index + 1}`, inputIndex: index, key: String(index), back: false,
+  }));
+  assert.equal(defaultFeedbackArc(nodes, edges).size, 0);
 });

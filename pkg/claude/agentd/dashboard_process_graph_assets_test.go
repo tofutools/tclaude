@@ -37,6 +37,7 @@ func TestDashboardProcessGraphAssets(t *testing.T) {
 	mustContain("process-graph.js", graph,
 		"export class ProcessGraph",
 		"export function createProcessGraph(",
+		"export function normalizeWheelDelta(",
 		"data-morph-owned",
 		"onPortDragStart",
 		"onCanvasDrop",
@@ -47,6 +48,11 @@ func TestDashboardProcessGraphAssets(t *testing.T) {
 		"'aria-pressed': 'false'",
 		"process-shape-decision",
 		"process-shape-compound")
+	layoutBeforeOwnership := strings.Index(graph, "this.layout = layoutProcessGraph(this.graph")
+	ownershipAfterRender := strings.Index(graph, "container.setAttribute('data-morph-owned', 'process-graph')")
+	if layoutBeforeOwnership < 0 || ownershipAfterRender < 0 || layoutBeforeOwnership > ownershipAfterRender {
+		t.Error("ProcessGraph must validate/layout before marking or emptying the live morph host")
+	}
 
 	morph := read("js/morph.js")
 	mustContain("morph.js", morph,

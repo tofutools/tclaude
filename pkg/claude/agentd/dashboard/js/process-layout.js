@@ -41,7 +41,7 @@ function stableNodes(graph) {
     if (!id) throw new Error(`process layout: node at index ${inputIndex} has no id`);
     if (seen.has(id)) throw new Error(`process layout: duplicate node id ${id}`);
     seen.add(id);
-    return { ...raw, ...nodeSize(raw), id, inputIndex };
+    return { ...raw, ...nodeSize(raw), id };
   }).sort((a, b) => cmpText(a.id, b.id));
 }
 
@@ -90,16 +90,29 @@ export function defaultFeedbackArc(nodes, edges) {
 
   const state = new Map();
   const feedback = new Set();
-  const visit = (id) => {
-    state.set(id, 1);
-    for (const edge of outgoing.get(id)) {
+  // Iterative DFS keeps a very large imported chain from overflowing the
+  // JavaScript call stack while preserving the recursive traversal's order.
+  for (const node of nodes) {
+    if (state.has(node.id)) continue;
+    state.set(node.id, 1);
+    const stack = [{ id: node.id, index: 0 }];
+    while (stack.length) {
+      const frame = stack[stack.length - 1];
+      const list = outgoing.get(frame.id);
+      if (frame.index >= list.length) {
+        state.set(frame.id, 2);
+        stack.pop();
+        continue;
+      }
+      const edge = list[frame.index++];
       const next = state.get(edge.to) || 0;
       if (next === 1) feedback.add(edge.inputIndex);
-      else if (next === 0) visit(edge.to);
+      else if (next === 0) {
+        state.set(edge.to, 1);
+        stack.push({ id: edge.to, index: 0 });
+      }
     }
-    state.set(id, 2);
-  };
-  for (const node of nodes) if (!state.has(node.id)) visit(node.id);
+  }
   return feedback;
 }
 
@@ -158,7 +171,11 @@ function reduceCrossings(nodes, layerOf, edges, sweeps) {
     layer.sort((a, b) => {
       const pa = nodeByID.get(a).pinned;
       const pb = nodeByID.get(b).pinned;
-      if (pa && pb && finite(pa.x, 0) !== finite(pb.x, 0)) return finite(pa.x, 0) - finite(pb.x, 0);
+      // A total key tuple: pinned partition, pin x, then id. Mixing x-order for
+      // pinned pairs with id-order for mixed pairs creates comparator cycles
+      // whose output differs across JS engines.
+      if (Boolean(pa) !== Boolean(pb)) return pa ? -1 : 1;
+      if (pa && finite(pa.x, 0) !== finite(pb.x, 0)) return finite(pa.x, 0) - finite(pb.x, 0);
       return cmpText(a, b);
     });
   }
@@ -297,7 +314,22 @@ function segmentBlocked(a, b, obstacles) {
   return obstacles.some((box) => a.y > box.top && a.y < box.bottom && high > box.left && low < box.right);
 }
 
+function visibleFallbackRoute(from, to, lane, edgeSep) {
+  if (from.x === to.x && from.y === to.y) {
+    const radius = Math.max(from.width, from.height, to.width, to.height) / 2
+      + 36 + lane * Math.max(4, edgeSep / 3);
+    return [
+      { x: from.x + from.width / 2, y: from.y - 9 },
+      { x: from.x + radius, y: from.y - radius },
+      { x: from.x + radius, y: from.y + radius },
+      { x: to.x + to.width / 2, y: to.y + 9 },
+    ];
+  }
+  return [boundaryPoint(from, to, true), boundaryPoint(to, from, false)];
+}
+
 function orthogonalRoute(from, to, nodes, lane, edgeSep) {
+  if (from.x === to.x && from.y === to.y) return visibleFallbackRoute(from, to, lane, edgeSep);
   const gap = 14 + (lane % 3) * Math.max(4, edgeSep / 3);
   const obstacles = nodes.filter((node) => node.id !== from.id && node.id !== to.id).map((node) => ({
     left: node.x - node.width / 2 - gap,
@@ -381,6 +413,13 @@ function orthogonalRoute(from, to, nodes, lane, edgeSep) {
     }
     return first;
   };
+  // Overlapping pins may place an endpoint centre inside another node's
+  // inflated obstacle, so it is intentionally absent from this free grid. In
+  // that transient editor state an obstacle-free route is impossible; return a
+  // visible direct fallback instead of throwing or leaving a half-mounted UI.
+  if (!adjacency.has(startKey) || !adjacency.has(endKey)) {
+    return visibleFallbackRoute(from, to, lane, edgeSep);
+  }
   heapPush({ key: startKey, cost: 0 });
   while (heap.length) {
     const entry = heapPop();
@@ -399,7 +438,7 @@ function orthogonalRoute(from, to, nodes, lane, edgeSep) {
       }
     }
   }
-  if (!distance.has(endKey)) throw new Error(`process layout: no obstacle-free route from ${from.id} to ${to.id}`);
+  if (!distance.has(endKey)) return visibleFallbackRoute(from, to, lane, edgeSep);
   const route = [];
   for (let key = endKey; key; key = previous.get(key)) route.push(byKey.get(key));
   route.reverse();
@@ -409,6 +448,9 @@ function orthogonalRoute(from, to, nodes, lane, edgeSep) {
     const after = route[index + 1];
     return !((before.x === point.x && point.x === after.x) || (before.y === point.y && point.y === after.y));
   });
+  if (compressed.length < 2 || !compressed[0] || !compressed[1]) {
+    return visibleFallbackRoute(from, to, lane, edgeSep);
+  }
   compressed[0] = boundaryPoint(from, compressed[1], true);
   compressed[compressed.length - 1] = boundaryPoint(to, compressed[compressed.length - 2], false);
   return compressed;
@@ -437,6 +479,14 @@ function routeLabel(points) {
 function routeForward(edge, from, to, lane, nodes, edgeSep) {
   let start = boundaryPoint(from, to, true);
   let end = boundaryPoint(to, from, false);
+  if (from.x === to.x && from.y === to.y) {
+    const points = visibleFallbackRoute(from, to, lane, edgeSep);
+    return {
+      path: points.map((point, index) => `${index ? 'L' : 'M'} ${point.x} ${point.y}`).join(' '),
+      points,
+      label: routeLabel(points),
+    };
+  }
   if (to.layer - from.layer > 1) {
     // This is the dummy-rank equivalent for small graphs: a deterministic
     // Manhattan visibility graph routes around every node rectangle, including
@@ -456,6 +506,18 @@ function routeForward(edge, from, to, lane, nodes, edgeSep) {
 }
 
 function routeBack(edge, from, to, lane, bounds) {
+  if (from.id === to.id || (from.x === to.x && from.y === to.y)) {
+    const radius = Math.max(from.width, from.height) / 2 + 42 + lane;
+    const start = { x: from.x + from.width / 2, y: from.y - 10 };
+    const end = { x: from.x + from.width / 2, y: from.y + 10 };
+    const outsideX = from.x + radius;
+    const path = `M ${start.x} ${start.y} C ${outsideX} ${from.y - radius}, ${outsideX} ${from.y + radius}, ${end.x} ${end.y}`;
+    return {
+      path,
+      points: [start, { x: outsideX, y: from.y - radius }, { x: outsideX, y: from.y + radius }, end],
+      label: { x: outsideX - 7, y: from.y },
+    };
+  }
   const start = { x: from.x + from.width / 2, y: from.y };
   const end = { x: to.x + to.width / 2, y: to.y };
   const outsideX = bounds.maxX + 44 + lane;

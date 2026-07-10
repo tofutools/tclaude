@@ -32,6 +32,13 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+export function normalizeWheelDelta(deltaY, deltaMode = 0, pagePixels = 800) {
+  if (!Number.isFinite(deltaY)) return 0;
+  if (deltaMode === 1) return deltaY * 24; // DOM_DELTA_LINE (Firefox wheels)
+  if (deltaMode === 2) return deltaY * Math.max(1, pagePixels); // DOM_DELTA_PAGE
+  return deltaY; // DOM_DELTA_PIXEL
+}
+
 function hook(options, name) {
   return typeof options[name] === 'function' ? options[name] : () => {};
 }
@@ -234,7 +241,10 @@ export class ProcessGraph {
     if (!(container instanceof Element)) throw new TypeError('ProcessGraph container must be a DOM Element');
     this.container = container;
     this.options = { ...options };
-    this.graph = graph;
+    this.graph = graph || { nodes: [], edges: [] };
+    // Validate/layout before touching the host. A bad draft must leave the
+    // existing morphed container repairable, not empty and live-owned.
+    this.layout = layoutProcessGraph(this.graph, this.options.layout || {});
     this.instanceID = nextGraphID++;
     this.markerID = `process-arrow-${this.instanceID}`;
     this.backMarkerID = `process-back-arrow-${this.instanceID}`;
@@ -247,11 +257,6 @@ export class ProcessGraph {
     this.destroyed = false;
     this.abort = new AbortController();
 
-    // morph.js treats this element as live-owned. The graph's stable imperative
-    // subtree is therefore exempt from polling reconciliation, preserving view
-    // transform/selection and preventing a fresh empty host from deleting SVG.
-    container.setAttribute('data-morph-owned', 'process-graph');
-    container.replaceChildren();
     this.root = htmlElement('div', {
       class: 'process-graph',
       tabindex: '0',
@@ -273,23 +278,33 @@ export class ProcessGraph {
     this.fitButton = htmlElement('button', { class: 'process-fit-button', type: 'button', text: 'Fit', title: 'Fit graph to view' });
     this.controls.append(this.fitButton);
     this.root.append(this.svg, this.controls);
-    container.append(this.root);
     this.bindEvents();
-    this.setGraph(graph, { fit: options.fitOnRender !== false });
+    this.render();
+    container.replaceChildren(this.root);
+    // Mark ownership only after first layout/render succeeds. morph.js now
+    // preserves the interaction subtree across polling reconciliations.
+    container.setAttribute('data-morph-owned', 'process-graph');
+    if (options.fitOnRender !== false) requestAnimationFrame(() => this.fitToView());
   }
 
   setGraph(graph, { fit = false } = {}) {
-    this.graph = graph || { nodes: [], edges: [] };
-    this.layout = layoutProcessGraph(this.graph, this.options.layout || {});
+    const nextGraph = graph || { nodes: [], edges: [] };
+    const nextLayout = layoutProcessGraph(nextGraph, this.options.layout || {});
+    this.graph = nextGraph;
+    this.layout = nextLayout;
     this.render();
     if (fit) requestAnimationFrame(() => this.fitToView());
     return this.layout;
   }
 
   setOptions(options = {}) {
-    this.options = { ...this.options, ...options };
+    const nextOptions = { ...this.options, ...options };
+    const nextLayout = layoutProcessGraph(this.graph, nextOptions.layout || {});
+    this.options = nextOptions;
+    this.layout = nextLayout;
     this.root.dataset.colorScheme = this.options.colorScheme || 'dark';
-    return this.setGraph(this.graph);
+    this.render();
+    return this.layout;
   }
 
   render() {
@@ -568,7 +583,8 @@ export class ProcessGraph {
     const cursorX = event.clientX - rect.left;
     const cursorY = event.clientY - rect.top;
     const oldZoom = this.view.k;
-    const nextZoom = clamp(oldZoom * Math.exp(-event.deltaY * 0.0015), MIN_ZOOM, MAX_ZOOM);
+    const delta = normalizeWheelDelta(event.deltaY, event.deltaMode, rect.height);
+    const nextZoom = clamp(oldZoom * Math.exp(-delta * 0.0015), MIN_ZOOM, MAX_ZOOM);
     const graphX = (cursorX - this.view.x) / oldZoom;
     const graphY = (cursorY - this.view.y) / oldZoom;
     this.view.k = nextZoom;
