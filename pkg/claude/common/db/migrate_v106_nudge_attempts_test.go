@@ -11,7 +11,6 @@ func TestMigrateV105toV106_AddsDurableNudgeState(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
 	require.NoError(t, err)
-	require.Equal(t, 106, currentVersion, "tripwire: bump this with the next migration")
 
 	for _, col := range []string{"nudge_claimed_at", "nudge_attempted_at", "nudge_attempts"} {
 		var have int

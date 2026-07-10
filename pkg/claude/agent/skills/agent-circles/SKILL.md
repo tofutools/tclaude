@@ -95,6 +95,7 @@ Top level (`templateJSON`):
 | `name` | string, **required** | Group-name rules: non-empty, no slashes, no control chars, no leading/trailing space. It's the route key and the prefix of every spawned agent's name (`<name>-<agent>`). |
 | `descr` | string | One-line description. |
 | `default_context` | string | Shared context folded into every spawned agent's briefing. CRLF-normalised, capped at 16 KiB. |
+| `per_agent_worktrees` | bool | Default for the deploy dialog's “Give each agent its own worktree” checkbox. The human can override it for each spawn. |
 | `agents` | array | The roster — see below. Order is the spawn order (within a wave). |
 | `work_pattern` | array | Ordered routed briefings, delivered once after the roster spawns. |
 | `process` | array | Advisory phase plan (tracked, never enforced). |

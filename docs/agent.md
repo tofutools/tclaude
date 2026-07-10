@@ -668,6 +668,12 @@ $EDITOR ft.json
 tclaude agent templates edit feature-team --file ft.json
 ```
 
+Set top-level `"per_agent_worktrees": true` to default the dashboard's
+**Give each agent its own worktree** deploy option on for that template.
+It remains a per-spawn choice: the deploy dialog is merely pre-filled, and the
+human can turn it off (or enable it on a template whose default is false)
+without changing the stored template.
+
 **Agentic template editing (a "scribe" agent).** These are ordinary
 permission-gated endpoints, so an agent can drive the whole edit loop by chat —
 no dashboard required. Grant bundle:

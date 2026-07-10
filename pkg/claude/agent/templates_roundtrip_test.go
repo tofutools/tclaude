@@ -18,6 +18,7 @@ import (
 func TestTemplateJSON_ProfileInlineRoundTripsLosslessly(t *testing.T) {
 	daemonWire := `{
 		"name": "crew",
+		"per_agent_worktrees": true,
 		"agents": [
 			{
 				"name": "lead",
@@ -47,6 +48,8 @@ func TestTemplateJSON_ProfileInlineRoundTripsLosslessly(t *testing.T) {
 
 	var back map[string]any
 	require.NoError(t, json.Unmarshal(out, &back))
+	assert.Equal(t, true, back["per_agent_worktrees"],
+		"the template-level worktree default survives the CLI full-replace loop")
 	agents := back["agents"].([]any)
 	pi, ok := agents[0].(map[string]any)["profile_inline"].(map[string]any)
 	require.True(t, ok, "profile_inline survives the re-marshal")

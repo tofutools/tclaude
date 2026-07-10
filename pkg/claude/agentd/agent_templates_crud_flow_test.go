@@ -49,9 +49,10 @@ func TestGroupTemplate_AgentCallerGatedCRUD(t *testing.T) {
 
 	// --- create (scribe) → 201 ---
 	createBody := map[string]any{
-		"name":            "scribe-circle",
-		"descr":           "first draft",
-		"default_context": "Use worktrees and open PRs.",
+		"name":                "scribe-circle",
+		"descr":               "first draft",
+		"default_context":     "Use worktrees and open PRs.",
+		"per_agent_worktrees": true,
 		"agents": []map[string]any{
 			{"name": "lead", "role": "lead", "is_owner": true, "initial_message": "Lead the party."},
 		},
@@ -65,11 +66,13 @@ func TestGroupTemplate_AgentCallerGatedCRUD(t *testing.T) {
 	var current map[string]any
 	testharness.DecodeJSON(t, rec, &current)
 	assert.Equal(t, "first draft", current["descr"], "show reflects the created descr")
+	assert.Equal(t, true, current["per_agent_worktrees"], "show reflects the worktree default")
 	agents, _ := current["agents"].([]any)
 	require.Len(t, agents, 1, "one agent so far")
 
 	// --- mutate the JSON as an LLM would: change descr, add a second agent ---
 	current["descr"] = "second draft"
+	current["per_agent_worktrees"] = false
 	current["agents"] = append(agents, map[string]any{
 		"name": "hand", "role": "hand", "initial_message": "Assist the lead.",
 	})
@@ -84,6 +87,8 @@ func TestGroupTemplate_AgentCallerGatedCRUD(t *testing.T) {
 	var after map[string]any
 	testharness.DecodeJSON(t, rec, &after)
 	assert.Equal(t, "second draft", after["descr"], "edited descr round-trips through the wire")
+	assert.NotContains(t, after, "per_agent_worktrees",
+		"the cleared false default is omitted from the compact wire response")
 	afterAgents, _ := after["agents"].([]any)
 	require.Len(t, afterAgents, 2, "the full-replace edit added the second agent")
 

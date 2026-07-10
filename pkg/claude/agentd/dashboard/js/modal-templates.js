@@ -417,6 +417,7 @@ function openTemplateEditor(tmpl, { asNew = false } = {}) {
   $('#template-editor-name').value = tmpl ? tmpl.name : '';
   $('#template-editor-descr').value = tmpl ? (tmpl.descr || '') : '';
   $('#template-editor-context').value = tmpl ? (tmpl.default_context || '') : '';
+  $('#template-editor-per-agent-worktrees').checked = !!(tmpl && tmpl.per_agent_worktrees);
   $('#template-editor-error').textContent = '';
   templateEditorAgents = tmpl
     ? (tmpl.agents || []).map(a => ({
@@ -993,6 +994,7 @@ async function submitTemplateEditor() {
     name,
     descr: $('#template-editor-descr').value.trim(),
     default_context: $('#template-editor-context').value,
+    per_agent_worktrees: $('#template-editor-per-agent-worktrees').checked,
     agents: templateEditorAgents,
     work_pattern: templateEditorPattern,
     process: templateEditorProcess,
@@ -1107,6 +1109,20 @@ function deployMirrorSource() {
 
 function selectedDeployTemplate() {
   return templatesByName()[$('#template-deploy-template').value] || null;
+}
+
+// applyDeployTemplateWorktreeDefault seeds the existing per-run checkbox from
+// the selected template. It never locks the control: after this prefill the
+// human can still toggle it freely for the current spawn.
+function applyDeployTemplateWorktreeDefault() {
+  const tmpl = selectedDeployTemplate();
+  const perAgent = !!(tmpl && tmpl.per_agent_worktrees);
+  $('#template-deploy-wt-per-agent').checked = perAgent;
+  if (perAgent) {
+    $('#template-deploy-wt-sync').checked = true;
+    applyDeployWtSync();
+  }
+  applyDeployWtPerAgent();
 }
 
 function combineGroupAndTemplateContext(groupContext, templateContext) {
@@ -1386,7 +1402,7 @@ function openDeployModal(presetName) {
   $('#template-deploy-worktree').disabled = true;
   $('#template-deploy-wt-branch').value = '';
   $('#template-deploy-wt-sync').checked = true;
-  $('#template-deploy-wt-per-agent').checked = false;
+  applyDeployTemplateWorktreeDefault();
   deployWtRepoEdited = false;
   $('#template-deploy-descr').value = '';
   $('#template-deploy-context').value = '';
@@ -1450,6 +1466,10 @@ function syncDeployGroupPrefill() {
   let base = deployIsBareURL(mission) ? '' : deploySlug(mission);
   if (!base) base = deploySlug(tmplName);
   $('#template-deploy-group').value = base;
+  // Programmatic value changes do not fire the group input listener. Keep the
+  // synced worktree branch/prefix in lockstep too, especially when a template
+  // defaulted per-agent worktrees on before the mission had a group slug.
+  applyDeployWtSync();
   renderDeployPreview();
 }
 
@@ -2420,6 +2440,7 @@ function bindTemplatesUI() {
   $('#template-deploy-mission').addEventListener('input', syncDeployGroupPrefill);
   $('#template-deploy-template').addEventListener('change', () => {
     syncDeployGroupPrefill();
+    applyDeployTemplateWorktreeDefault();
     if (deployDropGroup && deployCopyDefaults) {
       const gs = groupSnapshot(deployDropGroup);
       deployCopyDefaults.context = combineGroupAndTemplateContext(
