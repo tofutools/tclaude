@@ -8,7 +8,8 @@ import (
 )
 
 func ResolvePassEdge(next model.Next, verdict string) string {
-	for _, key := range []string{verdict, strings.ToLower(strings.TrimSpace(verdict)), "pass", "done", "success", model.DefaultOutcome} {
+	keys := append([]string{verdict, strings.ToLower(strings.TrimSpace(verdict))}, model.PassOutcomeLabels()...)
+	for _, key := range keys {
 		if target := next[key]; target != "" {
 			return target
 		}

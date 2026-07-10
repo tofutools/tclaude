@@ -11,6 +11,23 @@ const DefaultOutcome = "next"
 
 var failOutcomeLabels = [...]string{"fail", "failed", "failure", "error"}
 
+// passOutcomeLabels is the plain-pass edge vocabulary in resolution precedence
+// order. plan.ResolvePassEdge consults it after the attempt's own verdict, so
+// static validation and runtime routing cannot silently diverge.
+var passOutcomeLabels = [...]string{"pass", "done", "success", DefaultOutcome}
+
+// PassOutcomeLabels returns the plain-pass edge vocabulary in the precedence
+// order runtime pass routing uses.
+func PassOutcomeLabels() []string {
+	return passOutcomeLabels[:]
+}
+
+// FailOutcomeLabels returns the fail-edge vocabulary in the precedence order
+// FailTarget uses.
+func FailOutcomeLabels() []string {
+	return failOutcomeLabels[:]
+}
+
 type Next map[string]string
 
 // FailTarget resolves the shared fail-edge vocabulary used by template
