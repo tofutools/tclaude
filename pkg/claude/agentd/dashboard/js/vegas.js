@@ -164,12 +164,21 @@ async function loadChannel() {
 // applyChannel points the player at a channel WITHOUT persisting (used by
 // loadChannel for the saved value). Rebuilds a live player so the switch is
 // audible; a no-op when the channel is unchanged or no player exists.
+//
+// A channel switch changes the station, not whether the operator wants sound,
+// so the rebuild PRESERVES the current transport state. Re-tuning a paused
+// player (a saved playIntent=pause, or a manual pause) must stay paused —
+// otherwise the theme-default re-tune (syncVegas, on a slop→wizard flip) or a
+// late loadChannel would call startMusic() with its default autoplay=true and
+// start the very stream the operator explicitly stopped.
 function applyChannel(id) {
   if (id === activeChannelId) return;
   activeChannelId = id;
-  if (document.getElementById('vegas-player') && document.querySelector('#vegas-player audio')) {
+  const audio = document.querySelector('#vegas-player audio');
+  if (audio) {
+    const wasPlaying = !audio.paused;
     stopMusic();
-    startMusic();
+    startMusic({ autoplay: wasPlaying });
   }
 }
 
