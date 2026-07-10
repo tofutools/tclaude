@@ -126,7 +126,7 @@ func codexAgentProfileContent(socketPath, privateStateDir, gitCommonDir string) 
 			return "", err
 		}
 	}
-	writeDirs := GitWorktreeWriteDirs(gitCommonDir, filepath.Dir(privateStateDir))
+	writeDirs := GitWorktreeWriteDirs("", gitCommonDir, filepath.Dir(privateStateDir))
 	return codexAgentProfileContentForWriteDirs(socketPath, privateStateDir, writeDirs)
 }
 
@@ -222,7 +222,8 @@ func EnsureCodexAgentProfileForCwd(cwd string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return ensureCodexAgentProfile(sock, privateStateDir, gitCommonDir)
+	writeDirs := GitWorktreeWriteDirs(cwd, gitCommonDir, filepath.Dir(privateStateDir))
+	return ensureCodexAgentProfileForWriteDirs(sock, privateStateDir, writeDirs)
 }
 
 // EnsureCodexAgentProfileForGitCommonDir is the daemon-spawn variant used
@@ -342,7 +343,7 @@ func codexAgentSandboxPaths() (socketPath, privateStateDir string, err error) {
 // EnsureCodexAgentProfile, split out so tests can drive it without depending
 // on the caller's $HOME layout.
 func ensureCodexAgentProfile(socketPath, privateStateDir, gitCommonDir string) (string, error) {
-	writeDirs := GitWorktreeWriteDirs(gitCommonDir, filepath.Dir(privateStateDir))
+	writeDirs := GitWorktreeWriteDirs("", gitCommonDir, filepath.Dir(privateStateDir))
 	return ensureCodexAgentProfileForWriteDirs(socketPath, privateStateDir, writeDirs)
 }
 

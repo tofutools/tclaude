@@ -354,7 +354,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
 		}
-		gitWriteDirs = harness.GitWorktreeWriteDirs(codexGitCommonDir, home)
+		gitWriteDirs = harness.GitWorktreeWriteDirs(cwd, codexGitCommonDir, home)
 	}
 	if !isHumanCloneCaller(caller) && childSandboxGrantsDirWrite(oldSess.Harness, reincarnateSandbox) {
 		dirs := appendUniqueDirs([]string{cwd}, gitWriteDirs...)

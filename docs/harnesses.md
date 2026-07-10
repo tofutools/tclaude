@@ -126,12 +126,15 @@ safe and non-blocking:
     block, so only under this profile can a sandboxed agent run
     `tclaude agent …`. At spawn
     time, when the launch directory is inside a Git repo, the profile also grants
-    write access to one minimal repository root: normally the safe container
+    write access to a minimal repository root: normally the safe container
     where tclaude creates default sibling worktrees, which also covers the
-    original/main worktree and Git common dir. That lets an agent create
-    `../<repo>-<branch>` and commit there while the rest of `$HOME` stays
-    read-only. A container at/above `$HOME` is never granted; in that layout the
-    original worktree is the narrow fallback root. The
+    original/main worktree and Git common dir. Codex protects `.git` pointer
+    targets with a more-specific read-only mount, so tclaude separately grants
+    the checkout's exact Git admin directory (the path reported by `git
+    rev-parse --git-dir`). That lets an agent create `../<repo>-<branch>` and
+    commit there while the rest of `$HOME` stays read-only. A container at/above
+    `$HOME` is never granted; in that layout the original worktree is the narrow
+    fallback root. The
     operator, Codex, and Claude Code all use the same canonical state-free
     endpoint; agentd temporarily also serves the legacy
     `~/.tclaude/agentd.sock` path for
@@ -181,7 +184,7 @@ outrank it). Three modes:
   (where no flag means *no* sandbox, so the daemon must impose one), Claude Code's
   `settings.json` *is* the operator's chosen posture. For daemon-spawned agents
   inside a Git repository, tclaude merges only proof-pinned `filesystem.allowWrite`
-  entries using the same minimal repository root; Claude Code merges these
+  entries using the same proof-pinned repository paths; Claude Code merges these
   arrays with the operator's existing scopes.
 - **`on`** — forces the OS sandbox **on** for this session even if `settings.json`
   leaves it off. It injects the same `sandbox` block as the global hardening

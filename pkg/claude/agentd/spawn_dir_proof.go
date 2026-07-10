@@ -398,7 +398,7 @@ func requireTemplateDirWriteProof(w http.ResponseWriter, caller, token, cwd, wor
 		dirs = append(dirs, perAgentWorktreeParent)
 	}
 	if home, err := os.UserHomeDir(); err == nil {
-		dirs = appendUniqueDirs(dirs, harness.GitWorktreeWriteDirs(codexGitCommonDir, home)...)
+		dirs = appendUniqueDirs(dirs, harness.GitWorktreeWriteDirs(cwd, codexGitCommonDir, home)...)
 	}
 	resolved, proofOK := requireDirWriteProof(w, caller, token, dirs)
 	if !proofOK {
