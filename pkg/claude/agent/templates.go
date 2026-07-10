@@ -727,8 +727,14 @@ func runTemplatesInstantiate(p *templatesInstantiateParams, stdin io.Reader, std
 	var resp instantiateResponse
 	// Instantiation spawns the whole team sequentially — each spawn polls
 	// for a conv-id — so it can run well past the default 10s budget.
-	if err := DaemonRequest(http.MethodPost, "/v1/templates/"+url.PathEscape(name)+"/instantiate",
-		body, &resp, DaemonOpts{Timeout: 5 * time.Minute}); err != nil {
+	// DaemonRequestWithWriteProof answers the daemon's dir write-proof
+	// challenge transparently (see writeproof.go): a sandboxed agent caller
+	// proving it can write the cast's launch cwd/worktree. A human is exempt.
+	instBody := func(writeProofToken string) any {
+		return withWriteProofToken(body, writeProofToken)
+	}
+	if err := DaemonRequestWithWriteProof(http.MethodPost, "/v1/templates/"+url.PathEscape(name)+"/instantiate",
+		instBody, &resp, DaemonOpts{Timeout: 5 * time.Minute}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
@@ -827,8 +833,12 @@ func runTemplatesReinforce(p *templatesReinforceParams, stdin io.Reader, stdout,
 	var resp instantiateResponse
 	// Reinforcement spawns a whole roster sequentially — each spawn polls for a
 	// conv-id — so, like instantiate, it can run well past the default budget.
-	if err := DaemonRequest(http.MethodPost, "/v1/templates/"+url.PathEscape(name)+"/reinforce",
-		body, &resp, DaemonOpts{Timeout: 5 * time.Minute}); err != nil {
+	// Transparent dir write-proof handling (see writeproof.go).
+	reinforceBody := func(writeProofToken string) any {
+		return withWriteProofToken(body, writeProofToken)
+	}
+	if err := DaemonRequestWithWriteProof(http.MethodPost, "/v1/templates/"+url.PathEscape(name)+"/reinforce",
+		reinforceBody, &resp, DaemonOpts{Timeout: 5 * time.Minute}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}

@@ -1536,17 +1536,29 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 
+	// Sandbox lineage — the child may not launch with a looser sandbox MODE
+	// than the caller currently has (spawn_sandbox_guard.go). Checked HERE,
+	// before claimSpawnRateSlot below, so a refused escalation costs the
+	// caller no rate slot. executeSpawn re-runs the same (idempotent) check
+	// for the other spawn callers (templates/waves/process adapters) that
+	// don't pass through this HTTP boundary.
+	if fail := spawnSandboxLineageFailure(spawnerConvID, h.Name, sandboxMode); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	}
+
 	// Dir write-proof — the launch-directory half of the spawn sandbox guard
-	// (spawn_dir_proof.go). The lineage guard in executeSpawn caps the child's
-	// sandbox MODE; this caps its anchor: an agent caller must prove its own
-	// sandbox can write in every directory the child would get write access to
-	// (the launch cwd, plus the designated worktree when one is passed),
-	// otherwise spawning a child there would be a write-permission escape. The
-	// gate challenges (403 write_proof_required) or verifies; on success it
-	// pins cwd/worktree to the symlink-resolved paths the proof was verified
-	// in, so a link swapped after verification cannot retarget the grant.
-	// Humans, fully-open callers, and no-cwd-write children (Codex read-only)
-	// pass untouched — requireDirWriteProof/childSandboxGrantsDirWrite decide.
+	// (spawn_dir_proof.go). The lineage guard above caps the child's sandbox
+	// MODE; this caps its anchor: an agent caller must prove its own sandbox
+	// can write in every directory the child would get write access to (the
+	// launch cwd, plus the designated worktree when one is passed), otherwise
+	// spawning a child there would be a write-permission escape. The gate
+	// challenges (403 write_proof_required) or verifies; on success it pins
+	// cwd/worktree to the symlink-resolved paths the proof was verified in, so
+	// a link swapped after verification cannot retarget the grant. Humans,
+	// fully-open callers, and no-cwd-write children (Codex read-only) pass
+	// untouched — requireDirWriteProof/childSandboxGrantsDirWrite decide.
+	var proofDirs []string
 	if spawnerConvID != "" && childSandboxGrantsDirWrite(h.Name, sandboxMode) {
 		dirs := []string{cwd}
 		if worktreePath != "" {
@@ -1564,6 +1576,14 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 				if v := resolved[worktreePath]; v != "" {
 					worktreePath = v
 				}
+			}
+			// Carry the verified, symlink-resolved dirs to executeSpawn, which
+			// re-asserts they are still canonical immediately before the fork —
+			// closing the window between verification here and the child's
+			// launch (a swap after verification is caught, not launched into).
+			proofDirs = []string{cwd}
+			if worktreePath != "" {
+				proofDirs = append(proofDirs, worktreePath)
 			}
 		}
 	}
@@ -1697,6 +1717,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		Cwd:                    cwd,
 		WorktreePath:           worktreePath,
 		WorktreeBranch:         worktreeBranch,
+		DirWriteProofDirs:      proofDirs,
 		AutoFocus:              body.AutoFocus,
 		Effort:                 effort,
 		Model:                  model,
@@ -1793,7 +1814,15 @@ type spawnParams struct {
 	Cwd            string // resolved absolute directory
 	WorktreePath   string // resolved absolute directory, or ""
 	WorktreeBranch string
-	AutoFocus      bool
+	// DirWriteProofDirs are the symlink-resolved directories a dir write-proof
+	// (spawn_dir_proof.go) verified for this spawn — the launch cwd and, when
+	// present, the worktree. executeSpawn re-asserts each is still canonical
+	// (unchanged, no symlink swapped in) immediately before the fork, closing
+	// the window between HTTP-boundary verification and the child's launch.
+	// Empty for exempt callers (humans, fully-open parents) — nothing to
+	// re-assert.
+	DirWriteProofDirs []string
+	AutoFocus         bool
 	// Effort is the validated Claude reasoning effort to forward to the
 	// new session's `tclaude session new --effort`, or "" to omit it.
 	Effort string
@@ -2269,6 +2298,20 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		spawnArgs.InitialPrompt = buildSpawnSeedPrompt(p.Name, p.Role, p.Descr, groupName,
 			p.InitialMessage != "", spawnContextBody, p.WorktreePath, p.WorktreeBranch,
 			resolveSpawnerTitle(p.SpawnedByConv, p.SpawnedByAgent), spawnInlineMaxChars())
+	}
+
+	// Final dir write-proof re-assertion, as late as possible before the fork:
+	// confirm every proof-verified dir is still exactly the canonical path it
+	// was verified as (unchanged and not turned into a symlink). This shrinks
+	// the verify→launch TOCTOU window to the microscopic gap between this check
+	// and the child inheriting the cwd — a swap performed after verification is
+	// caught here rather than launched into. Only proof-verified spawns carry
+	// DirWriteProofDirs, so human / exempt / no-override spawns are untouched.
+	if fail := reassertDirWriteProof(p.DirWriteProofDirs); fail != nil {
+		if launchEnroll {
+			rollbackSpawnEnrollment(g, preConvID, preMsgID)
+		}
+		return nil, fail
 	}
 
 	if err := SpawnDetachedTclaudeNew(spawnArgs); err != nil {

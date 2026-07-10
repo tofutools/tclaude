@@ -254,6 +254,80 @@ func requireDirWriteProof(w http.ResponseWriter, callerConvID, token string, raw
 	return mapping, true
 }
 
+// reassertDirWriteProof re-verifies that each proof-verified dir is still the
+// exact canonical path it was verified as: it must resolve to itself under
+// EvalSymlinks (no symlink swapped into any component) and still be a
+// directory. Called immediately before the spawn fork to close the window
+// between HTTP-boundary verification and the child inheriting the cwd — a
+// path swap performed after verification is refused here rather than launched
+// into. Empty input (an exempt / unverified spawn) is a no-op.
+func reassertDirWriteProof(dirs []string) *spawnFailure {
+	for _, dir := range dirs {
+		real, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			return &spawnFailure{http.StatusForbidden, "write_proof_failed", fmt.Sprintf(
+				"launch directory %s changed after its write-proof was verified: %v", dir, err)}
+		}
+		if real != dir {
+			return &spawnFailure{http.StatusForbidden, "write_proof_failed", fmt.Sprintf(
+				"launch directory %s was replaced by a symlink to %s after its write-proof "+
+					"was verified; refusing to launch there", dir, real)}
+		}
+		fi, err := os.Lstat(dir)
+		if err != nil || !fi.IsDir() {
+			return &spawnFailure{http.StatusForbidden, "write_proof_failed", fmt.Sprintf(
+				"launch directory %s is no longer a directory after its write-proof was verified", dir)}
+		}
+	}
+	return nil
+}
+
+// requireTemplateDirWriteProof gates the template spawn surfaces (instantiate
+// / deploy / reinforce) behind the dir write-proof for an AGENT caller. The
+// whole cast shares one launch cwd, so proving it once covers every child; a
+// shared worktree path and the per-agent-worktree repo (the write anchor the
+// daemon cuts each child's worktree under) are proven too when present. On a
+// verified proof it returns the symlink-resolved cwd / worktree the caller
+// must pin the cast to. Humans and casts with no dir authority pass through
+// unchanged (nil resolution). ok=false means it already wrote the HTTP
+// response (a challenge, a refusal, or an error).
+//
+// Unlike handleGroupSpawn this does not skip read-only-child harnesses: a
+// template roster mixes harnesses, and proving the shared launch dirs once is
+// simpler and strictly safe. A caller that can write the dirs (the common
+// "deploy into my project" case) clears it transparently via the CLI.
+func requireTemplateDirWriteProof(w http.ResponseWriter, caller, token, cwd, worktreePath, repo string) (resolvedCwd, resolvedWorktree string, ok bool) {
+	if caller == "" {
+		return cwd, worktreePath, true
+	}
+	// Order fixed so the raw→resolved mapping keys are unambiguous.
+	dirs := []string{cwd}
+	if worktreePath != "" {
+		dirs = append(dirs, worktreePath)
+	}
+	if repo != "" && repo != cwd && repo != worktreePath {
+		dirs = append(dirs, repo)
+	}
+	resolved, proofOK := requireDirWriteProof(w, caller, token, dirs)
+	if !proofOK {
+		return "", "", false
+	}
+	if resolved == nil { // exempt caller (fully-open sandbox)
+		return cwd, worktreePath, true
+	}
+	resolvedCwd = cwd
+	if v := resolved[cwd]; v != "" {
+		resolvedCwd = v
+	}
+	resolvedWorktree = worktreePath
+	if worktreePath != "" {
+		if v := resolved[worktreePath]; v != "" {
+			resolvedWorktree = v
+		}
+	}
+	return resolvedCwd, resolvedWorktree, true
+}
+
 // writeDirWriteProofChallenge mints a challenge and writes the 403 response
 // that carries it. The body is self-describing on purpose: a raw caller (an
 // LLM agent driving the HTTP API without the CLI) can read the instructions

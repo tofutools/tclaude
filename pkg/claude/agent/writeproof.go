@@ -86,6 +86,21 @@ func answerWriteProofChallenge(ch *writeProofChallenge) (cleanup func(), err err
 	return remove, nil
 }
 
+// withWriteProofToken returns a shallow copy of body with write_proof_token
+// set (only when non-empty, so the first attempt sends no token). Used by the
+// template CLIs, whose request body is a map[string]any, to feed
+// DaemonRequestWithWriteProof's mkBody without mutating the caller's map.
+func withWriteProofToken(body map[string]any, token string) map[string]any {
+	out := make(map[string]any, len(body)+1)
+	for k, v := range body {
+		out[k] = v
+	}
+	if token != "" {
+		out["write_proof_token"] = token
+	}
+	return out
+}
+
 // DaemonRequestWithWriteProof is DaemonRequest plus transparent handling of
 // the daemon's dir write-proof challenge. mkBody builds the request body for
 // a given write_proof_token — it is called with "" for the first attempt
