@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"errors"
 	"os/exec"
 	"sync"
 	"testing"
@@ -98,6 +99,26 @@ func TestPaneInjectLock_PerTargetIdentity(t *testing.T) {
 	}
 	if a1 == b {
 		t.Fatal("different targets must return different mutexes (per-pane, not a single global lock)")
+	}
+}
+
+func TestInjectTextAndSubmit_TimesOutWaitingForPaneLock(t *testing.T) {
+	const target = "pane-held:0.0"
+	mu := paneInjectLock(target)
+	mu.Lock()
+	t.Cleanup(mu.Unlock)
+
+	previous := paneInjectLockTimeout
+	paneInjectLockTimeout = 10 * time.Millisecond
+	t.Cleanup(func() { paneInjectLockTimeout = previous })
+
+	started := time.Now()
+	err := injectTextAndSubmit(target, "must-not-send")
+	if !errors.Is(err, errPaneInjectLockTimeout) {
+		t.Fatalf("expected pane lock timeout, got %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("pane lock wait was not bounded: %s", elapsed)
 	}
 }
 

@@ -461,8 +461,18 @@ func openDatabaseReportingMigrations() error {
 			slog.Info("db: schema migrations complete", "version", to)
 		},
 	})
-	_, err := db.Open()
-	return err
+	if _, err := db.Open(); err != nil {
+		return err
+	}
+	// A previous daemon may have died after claiming a nudge but before it
+	// could complete/release it. No worker from that process survives this
+	// startup, so every residual lease is orphaned and safe to release.
+	if n, err := db.ReleaseAllAgentMessageNudgeClaims(); err != nil {
+		return fmt.Errorf("release orphaned nudge claims: %w", err)
+	} else if n > 0 {
+		slog.Warn("released orphaned nudge claims at startup", "count", n)
+	}
+	return nil
 }
 
 // shouldDisableTray reports whether `tclaude agentd serve` should skip

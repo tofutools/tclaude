@@ -100,6 +100,15 @@ func SetBranchHistoryPREnrichmentForTest(enabled bool) func() {
 // milliseconds, not minutes.
 func WaitForBackgroundForTest() { bgWG.Wait() }
 
+// ResetDeliveryDebounceForTest clears the process-local delivery throttle.
+// Flow scenarios reuse stable fixture conv IDs across -count iterations, while
+// production naturally retains this state for the daemon lifetime.
+func ResetDeliveryDebounceForTest() {
+	flushDebounceMu.Lock()
+	flushDebounce = map[string]time.Time{}
+	flushDebounceMu.Unlock()
+}
+
 // SweepWaveChoreographiesForTest runs one pass of the staged-spawn wave runner
 // (JOH-244) synchronously — the flow-test entry point that drives a
 // choreography forward one gate check without waiting on the production ticker.
@@ -133,6 +142,39 @@ func SetInjectSettleDelayForTest(d time.Duration) func() {
 	prev := injectSettleDelay
 	injectSettleDelay = d
 	return func() { injectSettleDelay = prev }
+}
+
+// SetTmuxCommandTimeoutForTest shrinks the nudge-path subprocess deadline so
+// a flow can model a hung tmux client without paying the production five
+// seconds. Returns a restore closure intended for t.Cleanup.
+func SetTmuxCommandTimeoutForTest(d time.Duration) func() {
+	prev := tmuxCommandTimeout
+	tmuxCommandTimeout = d
+	return func() { tmuxCommandTimeout = prev }
+}
+
+// SetNudgeRetryTimingForTest overrides durable retry backoff timings for a
+// flow that drives failure → reaper retry without real 30-second sleeps.
+func SetNudgeRetryTimingForTest(base, max time.Duration) func() {
+	prevBase, prevMax := nudgeRetryBase, nudgeRetryMax
+	nudgeRetryBase, nudgeRetryMax = base, max
+	return func() { nudgeRetryBase, nudgeRetryMax = prevBase, prevMax }
+}
+
+// SetStaleNudgeTimingForTest shrinks the queue-health threshold/throttle and
+// resets its process-local cadence map for deterministic log assertions.
+func SetStaleNudgeTimingForTest(threshold, every time.Duration) func() {
+	prevThreshold, prevEvery := staleNudgeThreshold, staleNudgeLogEvery
+	staleNudgeThreshold, staleNudgeLogEvery = threshold, every
+	staleNudgeLogMu.Lock()
+	staleNudgeLoggedAt = map[string]time.Time{}
+	staleNudgeLogMu.Unlock()
+	return func() {
+		staleNudgeThreshold, staleNudgeLogEvery = prevThreshold, prevEvery
+		staleNudgeLogMu.Lock()
+		staleNudgeLoggedAt = map[string]time.Time{}
+		staleNudgeLogMu.Unlock()
+	}
 }
 
 // SetSoftExitRetryDelayForTest shrinks the background soft-exit retry's

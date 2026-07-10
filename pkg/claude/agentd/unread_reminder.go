@@ -160,15 +160,6 @@ func runUnreadReminderTickWith(now time.Time, st *unreadReminderState) {
 	st.mu.Unlock()
 
 	for _, conv := range due {
-		// Gate on the recipient actually being a live, idle, non-retired agent
-		// before we touch its pane.
-		sess := pickAliveSession(conv)
-		if sess == nil {
-			continue // offline — nothing to nudge; reconsider next tick
-		}
-		if isTmuxInputBlocked(sess.Status) {
-			continue // permission/elicitation dialog up — noop, retry next tick
-		}
 		if live, err := db.IsLiveAgentConv(conv); err != nil || !live {
 			// Retired, a superseded predecessor generation, or not an agent at
 			// all. Per the brief, reminders apply only to live agents. A real
@@ -177,6 +168,16 @@ func runUnreadReminderTickWith(now time.Time, st *unreadReminderState) {
 				slog.Debug("unread-reminder: liveness check failed", "error", err, "conv", conv)
 			}
 			continue
+		}
+		// Select and status-check the actual pane only after the other DB gate,
+		// keeping the check as close to injection as practical. As with first
+		// delivery, status can still change while the pane lock is awaited.
+		sess := pickNudgeSession(conv)
+		if sess == nil {
+			continue // offline — nothing to nudge; reconsider next tick
+		}
+		if isTmuxInputBlocked(sess.Status) {
+			continue // permission/elicitation dialog up — noop, retry next tick
 		}
 		if err := injectTextAndSubmit(sess.TmuxSession+":0.0", unreadReminderText(byConv[conv])); err != nil {
 			slog.Warn("unread-reminder: inject failed",

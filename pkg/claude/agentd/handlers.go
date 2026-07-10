@@ -1327,7 +1327,13 @@ func injectSlashCommand(convID, line, followUp, reason string) bool {
 var (
 	paneInjectMu    sync.Mutex
 	paneInjectLocks = map[string]*sync.Mutex{}
+	// A nudge claim lives for two minutes. Keep lock acquisition well inside
+	// that lease so a live worker cannot wait past claim expiry and later
+	// duplicate an injection performed by the worker that reclaimed it.
+	paneInjectLockTimeout = time.Minute
 )
+
+var errPaneInjectLockTimeout = errors.New("pane injection lock timeout")
 
 // paneInjectLock returns the mutex serializing send-keys injection into
 // tmuxTarget, creating it on first use. Hold it for the WHOLE injection
@@ -1343,6 +1349,26 @@ func paneInjectLock(tmuxTarget string) *sync.Mutex {
 		paneInjectLocks[tmuxTarget] = mu
 	}
 	return mu
+}
+
+func acquirePaneInjectLock(mu *sync.Mutex) error {
+	if mu.TryLock() {
+		return nil
+	}
+	timer := time.NewTimer(paneInjectLockTimeout)
+	defer timer.Stop()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			if mu.TryLock() {
+				return nil
+			}
+		case <-timer.C:
+			return fmt.Errorf("%w after %s", errPaneInjectLockTimeout, paneInjectLockTimeout)
+		}
+	}
 }
 
 // injectTextAndSubmit types `text` into a CC pane and submits it as a
@@ -1366,7 +1392,9 @@ func paneInjectLock(tmuxTarget string) *sync.Mutex {
 // their send-keys (JOH-310 — see paneInjectLock).
 func injectTextAndSubmit(tmuxTarget, text string) error {
 	mu := paneInjectLock(tmuxTarget)
-	mu.Lock()
+	if err := acquirePaneInjectLock(mu); err != nil {
+		return err
+	}
 	defer mu.Unlock()
 	// Exact-match the session part of the target (clcommon.ExactTarget):
 	// callers pass raw "name" / "name:0.0" targets, and a bare -t would
@@ -1374,15 +1402,15 @@ func injectTextAndSubmit(tmuxTarget, text string) error {
 	// caller's liveness check and this send — landing the keystrokes in the
 	// wrong agent's prompt. Lock keys stay on the raw target.
 	target := clcommon.ExactTarget(tmuxTarget)
-	if err := clcommon.TmuxCommand("send-keys", "-t", target, text).Run(); err != nil {
+	if err := runTmuxCommand("send-keys", "-t", target, text); err != nil {
 		return fmt.Errorf("send-keys text: %w", err)
 	}
 	time.Sleep(injectSettleDelay)
-	if err := clcommon.TmuxCommand("send-keys", "-t", target, "Enter").Run(); err != nil {
+	if err := runTmuxCommand("send-keys", "-t", target, "Enter"); err != nil {
 		return fmt.Errorf("send-keys submit: %w", err)
 	}
 	time.Sleep(injectSettleDelay)
-	_ = clcommon.TmuxCommand("send-keys", "-t", target, "Enter").Run()
+	_ = runTmuxCommand("send-keys", "-t", target, "Enter")
 	return nil
 }
 
@@ -1412,15 +1440,17 @@ func injectTextAndSubmit(tmuxTarget, text string) error {
 // It does NOT call injectTextAndSubmit, so there is no re-entrant lock.
 func injectMenuToggle(tmuxTarget, toggle string, menuKeys []string, confirmDelay, stepDelay time.Duration) error {
 	mu := paneInjectLock(tmuxTarget)
-	mu.Lock()
+	if err := acquirePaneInjectLock(mu); err != nil {
+		return err
+	}
 	defer mu.Unlock()
 	// Exact-match the session part — same reasoning as injectTextAndSubmit.
 	target := clcommon.ExactTarget(tmuxTarget)
-	if err := clcommon.TmuxCommand("send-keys", "-t", target, toggle).Run(); err != nil {
+	if err := runTmuxCommand("send-keys", "-t", target, toggle); err != nil {
 		return fmt.Errorf("send-keys toggle: %w", err)
 	}
 	time.Sleep(injectSettleDelay)
-	if err := clcommon.TmuxCommand("send-keys", "-t", target, "Enter").Run(); err != nil {
+	if err := runTmuxCommand("send-keys", "-t", target, "Enter"); err != nil {
 		return fmt.Errorf("send-keys submit: %w", err)
 	}
 	// Let the confirm menu render before moving its highlight.
@@ -1429,7 +1459,7 @@ func injectMenuToggle(tmuxTarget, toggle string, menuKeys []string, confirmDelay
 		if i > 0 {
 			time.Sleep(stepDelay)
 		}
-		if err := clcommon.TmuxCommand("send-keys", "-t", target, key).Run(); err != nil {
+		if err := runTmuxCommand("send-keys", "-t", target, key); err != nil {
 			return fmt.Errorf("send-keys menu key %q: %w", key, err)
 		}
 	}

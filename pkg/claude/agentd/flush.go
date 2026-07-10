@@ -1,12 +1,13 @@
 package agentd
 
 import (
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
 
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
-	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // flushSender delivers a single undelivered nudge. The production
@@ -22,10 +23,41 @@ type flushSender func(m *db.AgentMessage) (delivered bool)
 // the agent comes back."
 const flushMinInterval = 5 * time.Second
 
+// Failed first-delivery nudges retry exponentially per message, capped so a
+// broken pane remains observable/recoverable without being spammed. Attempt
+// metadata is durable on agent_messages; these are policy timings only.
+var (
+	nudgeRetryBase = 30 * time.Second
+	nudgeRetryMax  = 5 * time.Minute
+)
+
 var (
 	flushDebounceMu sync.Mutex
 	flushDebounce   = map[string]time.Time{}
+	activeNudgeMu   sync.Mutex
+	activeNudges    = map[int64]db.AgentMessageNudgeClaim{}
 )
+
+func registerActiveNudge(id int64, token db.AgentMessageNudgeClaim) {
+	activeNudgeMu.Lock()
+	activeNudges[id] = token
+	activeNudgeMu.Unlock()
+}
+
+func unregisterActiveNudge(id int64, token db.AgentMessageNudgeClaim) {
+	activeNudgeMu.Lock()
+	if activeNudges[id] == token {
+		delete(activeNudges, id)
+	}
+	activeNudgeMu.Unlock()
+}
+
+func isActiveNudge(id int64, token db.AgentMessageNudgeClaim) bool {
+	activeNudgeMu.Lock()
+	defer activeNudgeMu.Unlock()
+	active, ok := activeNudges[id]
+	return ok && active == token
+}
 
 // maybeFlushUndelivered is the entry point called from the identity
 // middleware on every request whose peer resolves to a conv-id. It
@@ -108,14 +140,13 @@ func flush(convID string, send flushSender) int {
 // flushQueue is the shared drain core: list the queue, hold the WHOLE batch
 // unless the delivery pane is reachable RIGHT NOW (alive + not blocked on a
 // human), else claim each message atomically (so concurrent drains don't
-// double-nudge) and deliver. Returns the number successfully claimed.
+// double-nudge) and deliver. Returns the number successfully completed.
 //
-// The canDeliver gate runs BEFORE ClaimAgentMessageDelivery: a claim stamps
-// delivered_at, so claiming a message we then can't deliver — the recipient is
-// offline (the async send path routinely hits this) or mid human-input dialog
-// (JOH-308) — would consume it without ever nudging. Returning early leaves
-// every row undelivered for the next drain (the recipient's next request, or
-// the reaper backstop) once it is reachable again.
+// The canDeliver gate runs before the durable nudge claim. Claims no longer
+// stamp delivered_at, but taking an attempt while the recipient is offline or
+// mid human-input dialog would still create useless retry history and risk the
+// dialog swallowing injected text. Returning early leaves every row untouched
+// for the next drain once it is reachable again.
 func flushQueue(label string, list func() ([]*db.AgentMessage, error), canDeliver func() bool, send flushSender) int {
 	msgs, err := list()
 	if err != nil {
@@ -130,8 +161,12 @@ func flushQueue(label string, list func() ([]*db.AgentMessage, error), canDelive
 			"target", label, "queued", len(msgs))
 		return 0
 	}
-	claimed := 0
+	delivered := 0
 	for _, m := range msgs {
+		now := time.Now()
+		if !nudgeRetryDue(m, now) {
+			continue
+		}
 		// Re-check the gate each iteration: a settle gap (~1s/message) is long
 		// enough for the recipient to enter a human-input dialog or for its
 		// pane to die mid-batch. Stopping BEFORE the claim leaves the rest of
@@ -139,10 +174,10 @@ func flushQueue(label string, list func() ([]*db.AgentMessage, error), canDelive
 		// message we can no longer safely deliver.
 		if !canDeliver() {
 			slog.Debug("flush: pausing batch; recipient no longer deliverable",
-				"target", label, "remaining", len(msgs)-claimed)
+				"target", label, "remaining", len(msgs)-delivered)
 			break
 		}
-		ok, err := db.ClaimAgentMessageDelivery(m.ID)
+		token, ok, err := db.ClaimAgentMessageNudge(m.ID, now)
 		if err != nil {
 			slog.Warn("flush: claim failed", "error", err, "msg_id", m.ID)
 			continue
@@ -151,16 +186,70 @@ func flushQueue(label string, list func() ([]*db.AgentMessage, error), canDelive
 			// Another drain got there first. Skip.
 			continue
 		}
-		claimed++
-		if !send(m) {
-			slog.Debug("flush: nudge failed; recipient must use inbox ls",
-				"msg_id", m.ID, "to", m.ToConv)
+		// The periodic orphan reaper must not recycle a claim still owned by
+		// this daemon. Session selection is a bounded sequence of probes but
+		// may span many historical rows; process-local ownership closes the
+		// lease-expiry window without weakening restart recovery.
+		registerActiveNudge(m.ID, token)
+		completed := func() bool {
+			defer unregisterActiveNudge(m.ID, token)
+			if !send(m) {
+				if released, rerr := db.ReleaseAgentMessageNudge(m.ID, token); rerr != nil || !released {
+					slog.Warn("flush: failed to release nudge claim",
+						"error", rerr, "released", released, "msg_id", m.ID)
+				}
+				slog.Warn("flush: nudge failed; queued for retry",
+					"msg_id", m.ID, "to", m.ToConv,
+					"attempt", m.NudgeAttempts+1,
+					"retry_in", nudgeRetryDelay(m.NudgeAttempts+1))
+				return false
+			}
+			stamped, err := db.CompleteAgentMessageNudge(m.ID, token, time.Now())
+			if err != nil || !stamped {
+				// The pane may have received the nudge, but without the durable
+				// completion stamp we must preserve at-least-once semantics. Release
+				// our token if it is still ours; a later retry may duplicate the
+				// bracket, which is safe because it names the stable message id.
+				_, _ = db.ReleaseAgentMessageNudge(m.ID, token)
+				slog.Warn("flush: nudge landed but completion stamp failed; queued for retry",
+					"error", err, "completed", stamped, "msg_id", m.ID)
+				return false
+			}
+			return true
+		}()
+		if !completed {
+			continue
 		}
+		delivered++
 	}
-	if claimed > 0 {
-		slog.Info("flush: delivered queued nudges", "target", label, "count", claimed)
+	if delivered > 0 {
+		slog.Info("flush: delivered queued nudges", "target", label, "count", delivered)
 	}
-	return claimed
+	return delivered
+}
+
+func nudgeRetryDue(m *db.AgentMessage, now time.Time) bool {
+	if m.NudgeAttempts <= 0 || m.NudgeAttemptedAt.IsZero() {
+		return true
+	}
+	return !now.Before(m.NudgeAttemptedAt.Add(nudgeRetryDelay(m.NudgeAttempts)))
+}
+
+func nudgeRetryDelay(attempts int) time.Duration {
+	if attempts <= 0 || nudgeRetryBase <= 0 {
+		return 0
+	}
+	d := nudgeRetryBase
+	for i := 1; i < attempts && d < nudgeRetryMax; i++ {
+		if d > nudgeRetryMax/2 {
+			return nudgeRetryMax
+		}
+		d *= 2
+	}
+	if d > nudgeRetryMax {
+		return nudgeRetryMax
+	}
+	return d
 }
 
 // realFlushSender is the production sender for the exact-conv drain. Looks
@@ -180,27 +269,47 @@ func realFlushSender(m *db.AgentMessage) bool {
 // Caller is responsible for marking delivered_at; this function
 // only does the tmux work.
 func sendNudgeBracket(toConv string, msgID int64) bool {
-	candidates, err := db.FindSessionsByConvID(toConv)
-	if err != nil {
+	sess := pickNudgeSession(toConv)
+	if sess == nil || isAwaitingHumanInput(sess.Status) {
 		return false
 	}
-	var sess *db.SessionRow
-	for _, c := range candidates {
-		if c.TmuxSession == "" {
-			continue
-		}
-		if session.IsTmuxSessionAlive(c.TmuxSession) {
-			sess = c
-			break
-		}
-	}
-	if sess == nil {
-		return false
-	}
+	// This recheck belongs to the exact row selected for injection: the
+	// pre-claim gate may have observed a different live session, or this pane
+	// may have entered a human-input dialog meanwhile. A narrow TOCTOU window
+	// remains while we wait for the pane lock; closing that would require the
+	// injection primitive itself to understand persisted session status.
 	nudge := messageNudgeText(msgID)
 	if err := injectTextAndSubmit(sess.TmuxSession+":0.0", nudge); err != nil {
 		slog.Warn("nudge bracket failed", "error", err, "tmux", sess.TmuxSession)
 		return false
 	}
 	return true
+}
+
+// pickNudgeSession returns the most-recent row whose tmux pane answers the
+// timeout-bounded delivery liveness probe. Keeping the gate and sender on one
+// selector ensures the status checked before a claim belongs to the pane the
+// nudge will target afterward.
+func pickNudgeSession(convID string) *db.SessionRow {
+	candidates, err := db.FindSessionsByConvID(convID)
+	if err != nil {
+		return nil
+	}
+	for _, c := range candidates {
+		if c.TmuxSession != "" && nudgeTmuxSessionAlive(c.TmuxSession) {
+			return c
+		}
+	}
+	return nil
+}
+
+// nudgeTmuxSessionAlive is the delivery-specific liveness probe. It mirrors
+// session.IsTmuxSessionAlive's exact target, but runs under the same deadline
+// as send-keys so a stuck has-session cannot hold nudgeState.running forever.
+func nudgeTmuxSessionAlive(sessionName string) bool {
+	err := runTmuxCommand("has-session", "-t", clcommon.ExactTarget(sessionName))
+	if errors.Is(err, errTmuxCommandTimeout) {
+		slog.Warn("nudge liveness probe timed out", "tmux", sessionName, "error", err)
+	}
+	return err == nil
 }

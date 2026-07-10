@@ -1,13 +1,16 @@
 package agentd
 
 import (
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // setupTestDB mirrors the helper in pkg/claude/common/db. We can't
@@ -39,6 +42,34 @@ func resetFlushState(_ *testing.T) {
 	flushDebounceMu.Lock()
 	flushDebounce = map[string]time.Time{}
 	flushDebounceMu.Unlock()
+}
+
+func TestReleaseExpiredNudgeClaims_SkipsActiveDaemonOwner(t *testing.T) {
+	setupTestDB(t)
+	g, err := db.CreateAgentGroup("alpha", "")
+	require.NoError(t, err)
+	id, err := db.InsertAgentMessage(&db.AgentMessage{
+		GroupID: g, FromConv: "peer", ToConv: "me", Body: "queued",
+	})
+	require.NoError(t, err)
+
+	now := time.Now()
+	token, claimed, err := db.ClaimAgentMessageNudge(id, now.Add(-nudgeClaimLease-time.Minute))
+	require.NoError(t, err)
+	require.True(t, claimed)
+	registerActiveNudge(id, token)
+	t.Cleanup(func() { unregisterActiveNudge(id, token) })
+
+	releaseExpiredNudgeClaims(now)
+	m, err := db.GetAgentMessage(id)
+	require.NoError(t, err)
+	assert.False(t, m.NudgeClaimedAt.IsZero(), "live daemon ownership prevents duplicate injection")
+
+	unregisterActiveNudge(id, token)
+	releaseExpiredNudgeClaims(now)
+	m, err = db.GetAgentMessage(id)
+	require.NoError(t, err)
+	assert.True(t, m.NudgeClaimedAt.IsZero(), "orphaned expired claim is recovered")
 }
 
 // drainExactConv exercises the flushQueue claim/iteration/dedup core directly
@@ -115,10 +146,10 @@ func TestFlush_NoMessagesNoCalls(t *testing.T) {
 	assert.Equal(t, 0, calls, "send call count")
 }
 
-func TestFlush_FailedSendStillClaims(t *testing.T) {
-	// "send returns false" simulates tmux not actually being alive
-	// when we try to deliver. We still claim the message (so a
-	// subsequent flush won't double-attempt) but log + move on.
+func TestFlush_FailedSendReleasesClaimAndBacksOff(t *testing.T) {
+	// "send returns false" simulates tmux failing after the durable claim.
+	// The row must stay undelivered, release its lease, and retain attempt
+	// metadata so an immediate second flush cannot spam the pane.
 	setupTestDB(t)
 	g, _ := db.CreateAgentGroup("alpha", "")
 	id, _ := db.InsertAgentMessage(&db.AgentMessage{
@@ -126,14 +157,68 @@ func TestFlush_FailedSendStillClaims(t *testing.T) {
 	})
 
 	send := func(*db.AgentMessage) bool { return false }
-	assert.Equal(t, 1, drainExactConv("me", send), "flush return (claim still counted)")
+	assert.Equal(t, 0, drainExactConv("me", send), "failed delivery is not counted")
 	m, _ := db.GetAgentMessage(id)
 	if assert.NotNil(t, m) {
-		assert.False(t, m.DeliveredAt.IsZero(), "message should be marked delivered to prevent re-attempt")
+		assert.True(t, m.DeliveredAt.IsZero(), "failed send stays undelivered")
+		assert.True(t, m.NudgeClaimedAt.IsZero(), "failed send releases its claim")
+		assert.Equal(t, 1, m.NudgeAttempts)
 	}
 
-	// A second flush sees the row as delivered and skips it.
-	assert.Equal(t, 0, drainExactConv("me", send), "second flush")
+	assert.Equal(t, 0, drainExactConv("me", send), "immediate second flush is backed off")
+}
+
+func TestFlush_RechecksSelectedPaneStatusAfterClaimGate(t *testing.T) {
+	setupTestDB(t)
+	defer SetInjectSettleDelayForTest(0)()
+
+	g, err := db.CreateAgentGroup("alpha", "")
+	require.NoError(t, err)
+	id, err := db.InsertAgentMessage(&db.AgentMessage{
+		GroupID: g, FromConv: "peer", ToConv: "me", Body: "queued",
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "status-race", TmuxSession: "tmux-status-race", ConvID: "me",
+		Status: session.StatusWorking, CreatedAt: time.Now(),
+	}))
+
+	rt := &recordingTmux{}
+	previousTmux := clcommon.Default
+	clcommon.Default = rt
+	t.Cleanup(func() { clcommon.Default = previousTmux })
+
+	gateCalls := 0
+	canDeliver := func() bool {
+		gateCalls++
+		allowed := deliverablePane("me")
+		if gateCalls == 2 {
+			// Model the pane entering a permission dialog immediately after the
+			// final pre-claim gate approved it. sendNudgeBracket must observe
+			// this newer status on the row it selects for injection.
+			rows, findErr := db.FindSessionsByConvID("me")
+			require.NoError(t, findErr)
+			require.NotEmpty(t, rows)
+			rows[0].Status = session.StatusAwaitingPermission
+			require.NoError(t, db.SaveSession(rows[0]))
+		}
+		return allowed
+	}
+
+	delivered := flushQueue("test:conv:me",
+		func() ([]*db.AgentMessage, error) { return db.ListUndeliveredForExactConv("me") },
+		canDeliver,
+		realFlushSender)
+	assert.Zero(t, delivered)
+
+	m, err := db.GetAgentMessage(id)
+	require.NoError(t, err)
+	assert.True(t, m.DeliveredAt.IsZero(), "blocked pane is not marked delivered")
+	assert.True(t, m.NudgeClaimedAt.IsZero(), "blocked send releases its claim")
+	assert.Equal(t, 1, m.NudgeAttempts, "the post-claim hold remains durable retry history")
+	for _, key := range rt.snapshot() {
+		assert.False(t, strings.Contains(key, "new agent message"), "no nudge may reach the blocked pane: %q", key)
+	}
 }
 
 func TestFlush_ConcurrentClaimsAreRaceFree(t *testing.T) {

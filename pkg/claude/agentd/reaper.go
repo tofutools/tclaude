@@ -139,6 +139,11 @@ func enrollOnlineSession(st *session.SessionState) {
 // disagree with the terminal view — and CAS-writes "exited" on the ones
 // that died. Returns the number of sessions reaped this sweep.
 func (r *sessionReaper) tick(now time.Time) (reaped int) {
+	// Health reporting is deliberately first: it is DB-only and must still
+	// emit the target/msg/elapsed WARN if the subsequent tmux sweep itself
+	// blocks or fails.
+	warnStaleNudgeQueues(now)
+	releaseExpiredNudgeClaims(now)
 	states, err := session.ListSessionStates()
 	if err != nil {
 		slog.Warn("reaper: list sessions failed", "error", err)

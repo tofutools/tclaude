@@ -26,6 +26,7 @@ import (
 // original LiveSpawner / LiveTmux at end of test.
 func newFlow(t *testing.T) *testharness.Flow {
 	t.Helper()
+	agentd.ResetDeliveryDebounceForTest()
 
 	// The pending approval registry is a package global; reset it so a prior
 	// test's pending approvals don't leak into this one's access-requests

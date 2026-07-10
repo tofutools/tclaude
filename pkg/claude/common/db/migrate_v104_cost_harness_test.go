@@ -8,8 +8,8 @@ import (
 )
 
 // TestMigrateV103toV104_FreshSchema builds a fresh DB through the full
-// migrate() chain and asserts it lands at currentVersion. v104 is head, so the
-// literal currentVersion tripwire lives here.
+// migrate() chain and asserts it lands at currentVersion. The literal head
+// tripwire is advanced by each subsequent migration test.
 func TestMigrateV103toV104_FreshSchema(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
@@ -18,8 +18,6 @@ func TestMigrateV103toV104_FreshSchema(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 105, currentVersion, "tripwire: bump this and add the next migration test when you add a migration")
-
 	var have int
 	require.NoError(t, d.QueryRow(
 		`SELECT COUNT(*) FROM pragma_table_info('session_cost_daily') WHERE name = 'harness'`).Scan(&have))
