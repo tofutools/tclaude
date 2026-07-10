@@ -193,6 +193,57 @@ test('regression: markSaved at the payload rev keeps in-flight edits dirty', () 
   assert.equal(model.dirty, false, 'undoing the in-flight edit lands exactly on the saved state');
 });
 
+test('regression: self-loop edges are refused and mutate nothing', () => {
+  const model = new ProcessEditModel(view());
+  const before = model.edges.length;
+  assert.throws(() => model.addEdge('build', 'loop', 'build'), /self-loop/);
+  assert.equal(model.edges.length, before);
+  assert.equal(model.dirty, false);
+  assert.equal(model.canUndo, false);
+});
+
+test('regression: run-mode seam — canInsert:false refuses adds/snippets, locked edges refuse setStart', () => {
+  const locked = new ProcessEditModel(view(), {
+    mode: 'run',
+    canInsert: false,
+    edgeEditable: () => false,
+  });
+  assert.throws(() => locked.addNode('task', { x: 1, y: 1 }), /not allowed/);
+  assert.throws(() => locked.insertSnippet(PALETTE_SNIPPETS[0], { x: 0, y: 0 }), /not allowed/);
+  assert.throws(() => locked.setStart('build'), /read-only/, 'the start pseudo edge is an edge mutation');
+  assert.equal(locked.dirty, false);
+  assert.equal(locked.canUndo, false);
+});
+
+test('regression: a locked existing node does not block snippet insertion when inserting is allowed', () => {
+  const seeded = view();
+  seeded.template.nodes.implement = { type: 'task' }; // collides with the snippet seed id
+  const model = new ProcessEditModel(seeded, {
+    mode: 'run',
+    nodeEditable: id => id !== 'implement', // the EXISTING implement is locked
+  });
+  const snippet = PALETTE_SNIPPETS.find(s => s.key === 'code-change-with-review');
+  const idMap = model.insertSnippet(snippet, { x: 10, y: 10 });
+  assert.equal(idMap.get('implement'), 'implement-2', 'new material never collides with the locked node');
+  assert.ok(model.template.nodes['implement-2']);
+});
+
+test('snippet retry loops keep the engine-sanctioned shape (compound target, fail re-entry, human decision)', () => {
+  for (const snippet of PALETTE_SNIPPETS) {
+    for (const edge of snippet.edges) {
+      if (edge.outcome !== 'retry') continue;
+      const decision = snippet.nodes[edge.from];
+      const target = snippet.nodes[edge.to];
+      assert.equal(decision.type, 'decision', `${snippet.key}: retry source must be a decision`);
+      assert.equal(decision.performer?.kind, 'human', `${snippet.key}: retry decision must be human`);
+      const compound = target.type === 'task' && !!(target.plan || (target.checks || []).length || target.review);
+      assert.ok(compound, `${snippet.key}: retry target ${edge.to} must be a compound task`);
+      const failEdge = snippet.edges.find(e => e.from === edge.to && e.outcome === 'fail');
+      assert.equal(failEdge?.to, edge.from, `${snippet.key}: ${edge.to} must fail into ${edge.from}`);
+    }
+  }
+});
+
 test('graphEdgeID cannot collide across the separator', () => {
   assert.notEqual(graphEdgeID('a:b', 'c'), graphEdgeID('a', 'b:c'));
   assert.notEqual(graphEdgeID('a--b', 'c'), graphEdgeID('a', 'b--c'));

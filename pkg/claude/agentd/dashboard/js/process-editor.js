@@ -398,10 +398,16 @@ export class ProcessTemplateEditor {
       }
       from = targetNodeId;
       to = source.nodeId;
-    } else if (targetPort === 'out' && targetNodeId !== source.nodeId) {
-      // out → out is ambiguous; treat the drop node as the target anyway.
     }
-    if (from === to && source.nodeId === targetNodeId && !targetPort) return; // released on own body
+    if (from === to) {
+      // Released back on the source's own body: a fumbled click, stay silent.
+      if (!targetPort) return;
+      // v1 processes are acyclic — a hand-drawn self-loop is always a
+      // graph_cycle ERROR, and advisory saves would ship it silently. Block
+      // the gesture outright (the model refuses too, belt and braces).
+      this.status('Self-loop edges are not supported (v1 processes are acyclic).', true);
+      return;
+    }
     const outcome = this.model.freeOutcome(from, 'pass');
     const created = this.mutate(() => this.model.addEdge(from, outcome, to));
     if (!created) return;

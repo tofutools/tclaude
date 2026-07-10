@@ -78,6 +78,11 @@ export class ProcessEditModel {
       mode: config.mode || 'template',
       nodeEditable: typeof config.nodeEditable === 'function' ? config.nodeEditable : () => true,
       edgeEditable: typeof config.edgeEditable === 'function' ? config.edgeEditable : () => true,
+      // canInsert is the mode-level permission for growing the topology (new
+      // nodes, snippet compounds). Per-node/edge predicates lock EXISTING
+      // items; whether the view may add material at all is a mode property —
+      // a future run view sets canInsert: false wholesale.
+      canInsert: config.canInsert !== false,
       maxUndo: Number.isInteger(config.maxUndo) && config.maxUndo > 0 ? config.maxUndo : MAX_UNDO,
     };
     this.undoStack = [];
@@ -154,6 +159,10 @@ export class ProcessEditModel {
     if (!this.config.edgeEditable(edge)) throw new Error(`edge ${edge.from} -> ${edge.to} is read-only in this view`);
   }
 
+  assertCanInsert() {
+    if (!this.config.canInsert) throw new Error('adding nodes is not allowed in this view');
+  }
+
   node(id) {
     return this.template.nodes[id];
   }
@@ -187,9 +196,9 @@ export class ProcessEditModel {
   }
 
   addNode(type, { x, y, id, name } = {}) {
+    this.assertCanInsert();
     const nodeType = NODE_TYPES.has(type) ? type : 'task';
     const nodeID = this.uniqueNodeID(id || nodeType);
-    this.assertNodeEditable(nodeID);
     this.begin();
     const node = { type: nodeType };
     if (name) node.name = name;
@@ -268,6 +277,11 @@ export class ProcessEditModel {
     if (!this.template.nodes[from]) throw new Error(`unknown node ${from}`);
     if (!this.template.nodes[to]) throw new Error(`unknown node ${to}`);
     if (!outcome) throw new Error('edge outcome is required');
+    // v1 templates are acyclic: validateAcyclic makes every self-loop a
+    // graph_cycle ERROR (the sanctioned retry loop is engine-recognized,
+    // never hand-drawn), and advisory-save semantics would let the doomed
+    // version through silently — refuse at the source.
+    if (from === to) throw new Error('self-loop edges are not supported (v1 processes are acyclic)');
     if (this.findEdge(from, outcome)) throw new Error(`duplicate edge: ${from} already has outcome ${outcome}`);
     const edge = { from, outcome, to };
     this.assertEdgeEditable(edge);
@@ -306,6 +320,11 @@ export class ProcessEditModel {
 
   setStart(to) {
     if (!this.template.nodes[to]) throw new Error(`unknown node ${to}`);
+    // Repointing the start is an edge mutation on the start pseudo edge —
+    // guard both the edge being replaced and its replacement.
+    const current = this.edges.find((edge) => edge.from === '' && edge.outcome === START_OUTCOME);
+    if (current) this.assertEdgeEditable(current);
+    this.assertEdgeEditable({ from: '', outcome: START_OUTCOME, to });
     this.begin();
     this.edges = this.edges.filter((edge) => !(edge.from === '' && edge.outcome === START_OUTCOME));
     this.edges.push({ from: '', outcome: START_OUTCOME, to });
@@ -328,10 +347,12 @@ export class ProcessEditModel {
   // insertSnippet clones a preconfigured compound (nodes + internal edges) at a
   // drop point. Node ids are uniquified against the current template and every
   // internal edge is remapped through the same id map; relative layout offsets
-  // pin each clone near the drop point.
+  // pin each clone near the drop point. Gated as a whole on the mode-level
+  // canInsert permission: every inserted node and edge is NEW material, so the
+  // per-item predicates (which lock existing items by id) do not apply.
   insertSnippet(snippet, { x = 0, y = 0 } = {}) {
+    this.assertCanInsert();
     const idMap = new Map();
-    for (const nodeID of Object.keys(snippet.nodes)) this.assertNodeEditable(nodeID);
     this.begin();
     for (const [nodeID, node] of Object.entries(snippet.nodes)) {
       // uniqueNodeID sees nodes inserted earlier in this loop, so intra-snippet
@@ -426,10 +447,29 @@ export const PALETTE_SNIPPETS = [
     label: 'Code change with review',
     hint: 'Implement, escalate on repeated failure, terminal success/cancel',
     nodes: {
+      // implement must stay a COMPOUND task (plan/checks/review) whose fail
+      // edge enters the escalate decision: that is the exact shape
+      // validateAcyclic sanctions for the escalate -> implement retry loop.
+      // A plain task here would make the snippet's own retry edge a
+      // graph_cycle ERROR the moment it is dropped.
       implement: {
         type: 'task',
         name: 'Implement',
         performer: { kind: 'agent', profile: 'dev', prompt: 'Implement the change' },
+        plan: {
+          id: 'plan',
+          performer: { kind: 'agent', profile: 'dev', prompt: 'Plan the implementation' },
+        },
+        checks: [
+          {
+            id: 'tests',
+            performer: { kind: 'program', run: 'go', args: ['test', './...'] },
+          },
+        ],
+        review: {
+          id: 'merge-approval',
+          performer: { kind: 'human', profile: 'operator', ask: 'Approve merge?' },
+        },
         retry: { maxAttempts: 3, onFail: 'feedback-same-session' },
       },
       escalate: {

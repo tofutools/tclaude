@@ -36,9 +36,14 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"export const PALETTE_PRIMITIVES",
 		"export const PALETTE_SNIPPETS",
 		// The unique-(from,outcome) invariant and the start pseudo edge are the
-		// two server contracts the pure model enforces client-side.
+		// two server contracts the pure model enforces client-side; self-loops
+		// are refused because v1 processes are acyclic and saves are advisory.
 		"duplicate edge",
 		"outcome: START_OUTCOME",
+		"self-loop edges are not supported",
+		// The phase-4 run-view seam: mode-level insertion permission plus
+		// per-node/edge predicates for existing items.
+		"canInsert: config.canInsert !== false",
 	)
 	if strings.Contains(editModel, "document.") || strings.Contains(editModel, "fetch(") {
 		t.Error("process-edit-model.js must stay pure (no DOM, no fetch) so Node tests cover the shipped file")
@@ -59,6 +64,8 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"'Save as new version anyway'",
 		// Rewire affordance on mid-graph node deletion.
 		"'Delete + rewire through'",
+		// Hand-drawn self-loops are blocked at the gesture with a message.
+		"Self-loop edges are not supported",
 		// Editor semantics attach through the core's hooks, not core edits.
 		"onPortDragStart:",
 		"onCanvasDrop:",

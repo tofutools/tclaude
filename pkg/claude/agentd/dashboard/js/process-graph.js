@@ -395,7 +395,7 @@ export class ProcessGraph {
     this.svg.addEventListener('pointerdown', (event) => this.onPointerDown(event), { signal });
     this.svg.addEventListener('pointermove', (event) => this.onPointerMove(event), { signal });
     this.svg.addEventListener('pointerup', (event) => this.onPointerUp(event), { signal });
-    this.svg.addEventListener('pointercancel', (event) => this.onPointerUp(event), { signal });
+    this.svg.addEventListener('pointercancel', (event) => this.onPointerCancel(event), { signal });
     this.svg.addEventListener('pointerleave', () => this.updatePortHover(null), { signal });
     this.svg.addEventListener('click', (event) => this.onClick(event), { signal });
     this.svg.addEventListener('dblclick', (event) => this.onDoubleClick(event), { signal });
@@ -495,14 +495,7 @@ export class ProcessGraph {
     } else if (pointer.mode === 'node') {
       // Position ownership stays outside the core. Snap the transient drag back
       // unless the hook's caller supplied a new pinned graph through setGraph.
-      const node = this.nodeLayer.querySelector(`[data-node-id="${CSS.escape(pointer.nodeID)}"]`);
-      const ports = this.portLayer.querySelector(`[data-node-id="${CSS.escape(pointer.nodeID)}"]`);
-      const laid = this.layout.nodes.find((candidate) => candidate.id === pointer.nodeID);
-      if (node && laid) {
-        const transform = `translate(${laid.x} ${laid.y})`;
-        node.setAttribute('transform', transform);
-        ports?.setAttribute('transform', transform);
-      }
+      this.snapNodeHome(pointer.nodeID);
     }
     this.suppressClick = this.dragMoved;
     this.svg.releasePointerCapture?.(event.pointerId);
@@ -513,6 +506,43 @@ export class ProcessGraph {
       this.dragMoved = false;
       this.suppressClick = false;
     }, 0);
+  }
+
+  // onPointerCancel: the browser aborted the gesture (touch scroll takeover,
+  // pen leaving range, pointer grabbed away). Nothing may commit: a port drag
+  // ends with cancelled: true and NO hit-testing — a cancelled drag whose last
+  // position happens to sit over another node must never read as a deliberate
+  // drop — a node drag snaps home, and a pan simply stops where it is.
+  onPointerCancel(event) {
+    if (!this.pointer || this.pointer.id !== event.pointerId) return;
+    const pointer = this.pointer;
+    this.pointer = null;
+    this.svg.releasePointerCapture?.(event.pointerId);
+    if (pointer.mode === 'port') {
+      hook(this.options, 'onPortDragEnd')({
+        nodeId: pointer.nodeID, port: pointer.port,
+        point: this.clientToGraph(event.clientX, event.clientY),
+        targetNodeId: null, targetPort: null, cancelled: true, event,
+      });
+    } else if (pointer.mode === 'node') {
+      this.snapNodeHome(pointer.nodeID);
+    }
+    this.suppressClick = this.dragMoved;
+    setTimeout(() => {
+      this.dragMoved = false;
+      this.suppressClick = false;
+    }, 0);
+  }
+
+  snapNodeHome(nodeID) {
+    const node = this.nodeLayer.querySelector(`[data-node-id="${CSS.escape(nodeID)}"]`);
+    const ports = this.portLayer.querySelector(`[data-node-id="${CSS.escape(nodeID)}"]`);
+    const laid = this.layout.nodes.find((candidate) => candidate.id === nodeID);
+    if (node && laid) {
+      const transform = `translate(${laid.x} ${laid.y})`;
+      node.setAttribute('transform', transform);
+      ports?.setAttribute('transform', transform);
+    }
   }
 
   onClick(event) {
