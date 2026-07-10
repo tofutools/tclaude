@@ -61,7 +61,7 @@ func (e *cloneSpawnError) write(w http.ResponseWriter) {
 // canonical immediately before each fork, closing the verify→launch window
 // the same way executeSpawn does for spawns. nil for callers that take no
 // request-controlled cwd (export, groups-clone) and for exempt callers.
-func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proofToken string, proofDirs []string) (newConv, newTmux, label, warn string, spawnErr *cloneSpawnError) {
+func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proofToken string, proofDirs []string, codexGitCommonDir string) (newConv, newTmux, label, warn string, spawnErr *cloneSpawnError) {
 	if proofToken != "" {
 		defer cleanupDirWriteProofMarkers(proofToken, proofDirs)
 	}
@@ -102,6 +102,7 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 			Model:                  model,
 			Harness:                srcHarness,
 			Sandbox:                sandboxForHarness(srcHarness),
+			CodexGitCommonDir:      codexGitCommonDir,
 			Approval:               approvalForHarness(srcHarness),
 			AskUserQuestionTimeout: askTimeout,
 			RemoteControl:          remoteControl,
@@ -156,6 +157,7 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 		Model:                  model,
 		Harness:                srcHarness,
 		Sandbox:                sandboxForHarness(srcHarness),
+		CodexGitCommonDir:      codexGitCommonDir,
 		Approval:               approvalForHarness(srcHarness),
 		AskUserQuestionTimeout: askTimeout,
 		RemoteControl:          remoteControl,
@@ -463,6 +465,13 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm string, b
 	cwd := oldSess.Cwd
 	var proofDirs []string
 	var proofToken string
+	srcHarness := harnessForConv(target).Name
+	cloneSandbox := sandboxForHarness(srcHarness)
+	codexGitCommonDir, gerr := codexManagedProfileGitCommonDir(srcHarness, cloneSandbox, cwd)
+	if gerr != nil {
+		writeError(w, http.StatusInternalServerError, "io", gerr.Error())
+		return
+	}
 	if cwdOverride != "" {
 		resolved, err := resolveSpawnCwd(cwdOverride)
 		if err != nil {
@@ -470,6 +479,11 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm string, b
 			return
 		}
 		cwd = resolved
+		codexGitCommonDir, gerr = codexManagedProfileGitCommonDir(srcHarness, cloneSandbox, cwd)
+		if gerr != nil {
+			writeError(w, http.StatusInternalServerError, "io", gerr.Error())
+			return
+		}
 
 		// Dir write-proof (spawn_dir_proof.go) — a cwd override aims the
 		// clone's write access at a directory of the CALLER's choosing, so an
@@ -480,8 +494,12 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm string, b
 		// and clones of a no-cwd-write target (Codex read-only — the clone
 		// relaunches with the target's own harness+sandbox, so the target's
 		// recorded posture is the child posture here).
-		if caller != "" && childSandboxGrantsDirWrite(oldSess.Harness, oldSess.SandboxMode) {
-			proofed, ok := requireDirWriteProof(w, caller, body.WriteProofToken, []string{cwd})
+		if caller != "" && childSandboxGrantsDirWrite(srcHarness, cloneSandbox) {
+			dirs := []string{cwd}
+			if codexGitCommonDir != "" && codexGitCommonDir != cwd {
+				dirs = append(dirs, codexGitCommonDir)
+			}
+			proofed, ok := requireDirWriteProof(w, caller, body.WriteProofToken, dirs)
 			if !ok {
 				return
 			}
@@ -490,9 +508,17 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm string, b
 				if v := proofed[cwd]; v != "" {
 					cwd = v
 				}
+				if codexGitCommonDir != "" {
+					if v := proofed[codexGitCommonDir]; v != "" {
+						codexGitCommonDir = v
+					}
+				}
 				// Re-asserted just before the clone fork (cloneSpawnOnce), closing
 				// the verify→launch window the same way executeSpawn does.
 				proofDirs = []string{cwd}
+				if codexGitCommonDir != "" && codexGitCommonDir != cwd {
+					proofDirs = append(proofDirs, codexGitCommonDir)
+				}
 			}
 		}
 	}
@@ -571,7 +597,7 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm string, b
 	// model + effort (inheritedLaunchFlags; "" falls back to claude's
 	// default) — a fork should run what the original runs.
 	effort, model := inheritedLaunchFlags(oldSess.ID)
-	newConv, newTmux, label, warn, spawnErr := cloneSpawnOnce(target, cwd, noCopyConv, effort, model, proofToken, proofDirs)
+	newConv, newTmux, label, warn, spawnErr := cloneSpawnOnce(target, cwd, noCopyConv, effort, model, proofToken, proofDirs, codexGitCommonDir)
 	if spawnErr != nil {
 		spawnErr.write(w)
 		return

@@ -295,23 +295,31 @@ func cleanupDirWriteProofMarkers(token string, dirs []string) {
 	}
 }
 
+func codexManagedProfileGitCommonDir(harnessName, sandboxMode, cwd string) (string, error) {
+	if harnessOrDefault(harnessName) != harness.CodexName ||
+		strings.TrimSpace(sandboxMode) != harness.SandboxManagedProfile {
+		return "", nil
+	}
+	return harness.CodexGitCommonDir(cwd)
+}
+
 // requireTemplateDirWriteProof gates the template spawn surfaces (instantiate
 // / deploy / reinforce) behind the dir write-proof for an AGENT caller. The
 // whole cast shares one launch cwd, so proving it once covers every child; a
-// shared worktree path and the per-agent-worktree repo (the write anchor the
-// daemon cuts each child's worktree under) are proven too when present. On a
-// verified proof it returns the symlink-resolved cwd / worktree the caller
-// must pin the cast to. Humans and casts with no dir authority pass through
-// unchanged (nil resolution). ok=false means it already wrote the HTTP
-// response (a challenge, a refusal, or an error).
+// shared worktree path, the per-agent-worktree repo, and that repo's worktree
+// parent (the directory default sibling worktrees are created under) are proven
+// too when present. On a verified proof it returns the symlink-resolved cwd /
+// worktree the caller must pin the cast to. Humans and casts with no dir
+// authority pass through unchanged (nil resolution). ok=false means it already
+// wrote the HTTP response (a challenge, a refusal, or an error).
 //
 // Unlike handleGroupSpawn this does not skip read-only-child harnesses: a
 // template roster mixes harnesses, and proving the shared launch dirs once is
 // simpler and strictly safe. A caller that can write the dirs (the common
 // "deploy into my project" case) clears it transparently via the CLI.
-func requireTemplateDirWriteProof(w http.ResponseWriter, caller, token, cwd, worktreePath, repo string) (resolvedCwd, resolvedWorktree, resolvedRepo string, proofDirs []string, ok bool) {
+func requireTemplateDirWriteProof(w http.ResponseWriter, caller, token, cwd, worktreePath, repo, perAgentWorktreeParent, codexGitCommonDir string) (resolvedCwd, resolvedWorktree, resolvedRepo, resolvedCodexGitCommonDir string, proofDirs []string, ok bool) {
 	if caller == "" {
-		return cwd, worktreePath, repo, nil, true
+		return cwd, worktreePath, repo, codexGitCommonDir, nil, true
 	}
 	// Order fixed so the raw→resolved mapping keys are unambiguous.
 	dirs := []string{cwd}
@@ -321,12 +329,20 @@ func requireTemplateDirWriteProof(w http.ResponseWriter, caller, token, cwd, wor
 	if repo != "" && repo != cwd && repo != worktreePath {
 		dirs = append(dirs, repo)
 	}
+	if perAgentWorktreeParent != "" && perAgentWorktreeParent != cwd &&
+		perAgentWorktreeParent != worktreePath && perAgentWorktreeParent != repo {
+		dirs = append(dirs, perAgentWorktreeParent)
+	}
+	if codexGitCommonDir != "" && codexGitCommonDir != cwd && codexGitCommonDir != worktreePath &&
+		codexGitCommonDir != repo && codexGitCommonDir != perAgentWorktreeParent {
+		dirs = append(dirs, codexGitCommonDir)
+	}
 	resolved, proofOK := requireDirWriteProof(w, caller, token, dirs)
 	if !proofOK {
-		return "", "", "", nil, false
+		return "", "", "", "", nil, false
 	}
 	if resolved == nil { // exempt caller (fully-open sandbox)
-		return cwd, worktreePath, repo, nil, true
+		return cwd, worktreePath, repo, codexGitCommonDir, nil, true
 	}
 	resolvedCwd = cwd
 	if v := resolved[cwd]; v != "" {
@@ -344,14 +360,25 @@ func requireTemplateDirWriteProof(w http.ResponseWriter, caller, token, cwd, wor
 			resolvedRepo = v
 		}
 	}
-	proofDirs = []string{resolvedCwd}
-	if resolvedWorktree != "" && resolvedWorktree != resolvedCwd {
-		proofDirs = append(proofDirs, resolvedWorktree)
+	resolvedCodexGitCommonDir = codexGitCommonDir
+	if codexGitCommonDir != "" {
+		if v := resolved[codexGitCommonDir]; v != "" {
+			resolvedCodexGitCommonDir = v
+		}
 	}
-	if resolvedRepo != "" && resolvedRepo != resolvedCwd && resolvedRepo != resolvedWorktree {
-		proofDirs = append(proofDirs, resolvedRepo)
+	seen := map[string]bool{}
+	for _, raw := range dirs {
+		v := raw
+		if resolved[raw] != "" {
+			v = resolved[raw]
+		}
+		if v == "" || seen[v] {
+			continue
+		}
+		seen[v] = true
+		proofDirs = append(proofDirs, v)
 	}
-	return resolvedCwd, resolvedWorktree, resolvedRepo, proofDirs, true
+	return resolvedCwd, resolvedWorktree, resolvedRepo, resolvedCodexGitCommonDir, proofDirs, true
 }
 
 // writeDirWriteProofChallenge mints a challenge and writes the 403 response

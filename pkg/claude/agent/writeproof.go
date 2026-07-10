@@ -57,11 +57,12 @@ func writeProofChallengeFromError(err error) *writeProofChallenge {
 
 // answerWriteProofChallenge creates the proof file in every challenged
 // directory. On success it returns a cleanup func that best-effort removes
-// them again (the daemon deletes them during verification; the cleanup
-// covers a retry that never reaches verification). On failure it removes
-// whatever it managed to create and returns an error naming the directory
-// the caller cannot write — the actionable "your sandbox does not allow
-// this" message.
+// them again only when the retry fails before ownership transfers to the
+// daemon. A verified retry leaves markers in place for the child session's
+// cwd guard; daemon-owned lifecycle cleanup removes them afterwards. On
+// failure it removes whatever it managed to create and returns an error naming
+// the directory the caller cannot write — the actionable "your sandbox does
+// not allow this" message.
 func answerWriteProofChallenge(ch *writeProofChallenge) (cleanup func(), err error) {
 	created := make([]string, 0, len(ch.Dirs))
 	remove := func() {

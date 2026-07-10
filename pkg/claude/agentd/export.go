@@ -254,7 +254,15 @@ func runExportClone(jobID int64, originalConv, cwd, effort, model string, sameGr
 	// 1. Clone the original (copy path → the clone carries the full history) and
 	// spawn it as its own session. Reuses the internal clone spawn so the race
 	// handling (poll for the new conv-id + tmux registration) is shared.
-	newConv, _, _, warn, spawnErr := cloneSpawnOnce(originalConv, cwd, false /* copy conv */, effort, model, "", nil)
+	srcHarness := harnessForConv(originalConv).Name
+	cloneSandbox := sandboxForHarness(srcHarness)
+	codexGitCommonDir, gerr := codexManagedProfileGitCommonDir(srcHarness, cloneSandbox, cwd)
+	if gerr != nil {
+		slog.Warn("export clone: resolve codex git common dir failed", "job", jobID, "orig", originalConv, "error", gerr)
+		failExportJobAndReap(jobID, "", "could not clone the conversation to export it: "+gerr.Error())
+		return
+	}
+	newConv, _, _, warn, spawnErr := cloneSpawnOnce(originalConv, cwd, false /* copy conv */, effort, model, "", nil, codexGitCommonDir)
 	if spawnErr != nil {
 		slog.Warn("export clone: spawn failed", "job", jobID, "orig", originalConv, "error", spawnErr.Msg)
 		failExportJobAndReap(jobID, "", "could not clone the conversation to export it: "+spawnErr.Msg)

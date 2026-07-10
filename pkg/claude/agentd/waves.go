@@ -5,12 +5,15 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/claude/worktree"
 )
@@ -105,7 +108,7 @@ func partitionWaves(agents []db.GroupTemplateAgent) []db.WaveGroup {
 func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process []db.ProcessPhase,
 	groupContext, cwd, sharedWorktreePath, sharedWorktreeBranch string, perAgentWorktrees *db.WavePerAgentWorktrees,
 	caller, granter, templateName string, existing map[string]string, suppressOwner bool,
-	proofToken string, proofDirs []string) waveSpawnResult {
+	proofToken string, proofDirs []string, codexGitCommonDir string) waveSpawnResult {
 	wr := waveSpawnResult{
 		Results:      []instantiateAgentResult{},
 		SpawnedConvs: map[string]string{},
@@ -178,8 +181,28 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 		}
 		agentContext = appendProcessBlock(agentContext, process, a.Role)
 		cwdProofToken := ""
+		spawnProofDirs := proofDirs
+		cleanupCwdProof := func() {}
 		if proofToken != "" && agentCwd == cwd {
 			cwdProofToken = proofToken
+		} else if proofToken != "" && perAgentWorktrees != nil && perAgentWorktrees.WorktreeAsCwd && agentCwd == agentWorktreePath {
+			resolvedAgentCwd, proofDirsWithAgentCwd, cleanup, err := preparePerAgentCwdWriteProof(proofToken, proofDirs, agentCwd)
+			if err != nil {
+				res.Error = "prepare cwd write-proof: " + err.Error()
+				wr.Failed++
+				wr.Results = append(wr.Results, res)
+				continue
+			}
+			agentCwd = resolvedAgentCwd
+			agentWorktreePath = resolvedAgentCwd
+			res.WorktreePath = resolvedAgentCwd
+			spawnProofDirs = proofDirsWithAgentCwd
+			cleanupCwdProof = cleanup
+			cwdProofToken = proofToken
+		}
+		spawnCodexGitCommonDir := ""
+		if launch.Harness == harness.CodexName && launch.Sandbox == harness.SandboxManagedProfile {
+			spawnCodexGitCommonDir = codexGitCommonDir
 		}
 		outcome, fail := executeSpawn(g, spawnParams{
 			Name:                   finalName,
@@ -189,9 +212,10 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			Cwd:                    agentCwd,
 			WorktreePath:           agentWorktreePath,
 			WorktreeBranch:         agentWorktreeBranch,
-			DirWriteProofDirs:      proofDirs,
+			DirWriteProofDirs:      spawnProofDirs,
 			DirWriteProofToken:     proofToken,
 			CwdWriteProofToken:     cwdProofToken,
+			CodexGitCommonDir:      spawnCodexGitCommonDir,
 			Harness:                launch.Harness,
 			Model:                  launch.Model,
 			Effort:                 launch.Effort,
@@ -207,6 +231,7 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			ReplyToConv:            caller,
 			SpawnedByConv:          caller,
 		})
+		cleanupCwdProof()
 		if fail != nil {
 			res.Error = fail.Msg
 			wr.Failed++
@@ -262,6 +287,35 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 		wr.Results = append(wr.Results, res)
 	}
 	return wr
+}
+
+func preparePerAgentCwdWriteProof(token string, proofDirs []string, cwd string) (string, []string, func(), error) {
+	resolvedCwd, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	parent := filepath.Dir(resolvedCwd)
+	if !dirListContains(proofDirs, parent) {
+		return "", nil, nil, fmt.Errorf("worktree parent %s was not write-proofed", parent)
+	}
+	marker := filepath.Join(resolvedCwd, dirWriteProofFilePrefix+token)
+	if err := os.WriteFile(marker, nil, 0o600); err != nil {
+		return "", nil, nil, err
+	}
+	dirs := append([]string{}, proofDirs...)
+	if !dirListContains(dirs, resolvedCwd) {
+		dirs = append(dirs, resolvedCwd)
+	}
+	return resolvedCwd, dirs, func() { _ = os.Remove(marker) }, nil
+}
+
+func dirListContains(dirs []string, want string) bool {
+	for _, dir := range dirs {
+		if dir == want {
+			return true
+		}
+	}
+	return false
 }
 
 func perAgentBranchName(prefix, agentName, finalName string) string {
@@ -593,7 +647,7 @@ func advanceChoreographyIfReady(c *db.WaveChoreography) {
 	wr := spawnWaveAgents(g, wave.Agents, c.Process, c.GroupContext, c.Cwd,
 		c.WorktreePath, c.WorktreeBranch, c.PerAgentWorktrees,
 		c.Caller, c.Granter, c.TemplateName, groupMemberNames(g), c.SuppressOwner,
-		c.ProofToken, c.ProofDirs)
+		c.ProofToken, c.ProofDirs, c.CodexGitCommonDir)
 
 	// Accumulate the spawns for the final work-pattern routing.
 	maps.Copy(c.SpawnedConvs, wr.SpawnedConvs)

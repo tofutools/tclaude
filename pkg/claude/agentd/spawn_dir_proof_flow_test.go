@@ -294,6 +294,37 @@ func TestSpawnDirProof_ReadOnlyCodexChildExempt(t *testing.T) {
 	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 }
 
+func TestSpawnDirProof_CodexManagedSpawnProvesAndPinsGitCommonDir(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parent = "parent-wrgc-aaaa-bbbb-cccc-111111111111"
+	haveSpawnCapableSandboxParent(t, f, "alpha", parent, harness.DefaultName, harness.ClaudeSandboxInherit)
+	repo, _ := initRepoOnMain(t)
+	commonDir, err := harness.CodexGitCommonDir(repo)
+	require.NoError(t, err)
+	require.NotEmpty(t, commonDir)
+
+	body := map[string]any{"name": "codex-worker", "cwd": repo, "harness": harness.CodexName}
+	ch := decodeWriteProofChallenge(t,
+		agentReq(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn", body))
+	assert.ElementsMatch(t, []string{repo, commonDir}, ch.WriteProof.Dirs)
+	answerChallenge(t, ch)
+	body["write_proof_token"] = ch.WriteProof.Token
+	rec := agentReq(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn", body)
+	require.Equalf(t, http.StatusOK, rec.Code, "proved codex spawn; body=%s", rec.Body.String())
+
+	var resp struct {
+		ConvID string `json:"conv_id"`
+	}
+	testharness.DecodeJSON(t, rec, &resp)
+	require.NotEmpty(t, resp.ConvID)
+	got, ok := f.World.SpawnCodexGitCommonDir(resp.ConvID)
+	require.True(t, ok)
+	assert.Equal(t, commonDir, got, "child launch must use the daemon-pinned common dir")
+	assertNoDirWriteProofMarkers(t, repo)
+	assertNoDirWriteProofMarkers(t, commonDir)
+}
+
 // Scenario: the challenge round-trip must not burn a spawn-rate slot — with
 // a budget of ONE spawn per window, challenge + proved retry still lands,
 // and only a SECOND spawn attempt is rate-limited (on its proved retry; the
@@ -384,6 +415,160 @@ func TestSpawnDirProof_TemplateInstantiateChallenged(t *testing.T) {
 	rec := agentReqProof(t, f, parent, http.MethodPost, "/v1/templates/team/instantiate", body)
 	require.Equalf(t, http.StatusCreated, rec.Code, "proved instantiate; body=%s", rec.Body.String())
 	assert.Equal(t, 1, memberCount(t, "team-cast"))
+}
+
+func TestSpawnDirProof_TemplatePerAgentWorktreeAsCwdProvesWorktreeParent(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parentConv = "parent-wtpa-aaaa-bbbb-cccc-111111111111"
+	haveSpawnCapableSandboxParent(t, f, "alpha", parentConv, harness.DefaultName, harness.ClaudeSandboxInherit)
+	require.NoError(t, db.GrantAgentPermission(parentConv, agentd.PermTemplatesUse, "test"))
+	repo, parentDir := initRepoOnMain(t)
+	commonDir, err := harness.CodexGitCommonDir(repo)
+	require.NoError(t, err)
+	require.NotEmpty(t, commonDir)
+
+	createBody := map[string]any{
+		"name": "wt-team-proof",
+		"agents": []map[string]any{
+			{"name": "lead"},
+			{"name": "dev"},
+		},
+	}
+	require.Equalf(t, http.StatusCreated,
+		humanReq(t, f, http.MethodPost, "/v1/templates", createBody).Code, "create template")
+
+	body := map[string]any{
+		"group_name": "wt-proof-cast",
+		"cwd":        repo,
+		"per_agent_worktrees": map[string]any{
+			"repo":            repo,
+			"branch_prefix":   "wtproof",
+			"from_branch":     "main",
+			"worktree_as_cwd": true,
+		},
+	}
+	ch := decodeWriteProofChallenge(t,
+		agentReq(t, f, parentConv, http.MethodPost, "/v1/templates/wt-team-proof/instantiate", body))
+	assert.ElementsMatch(t, []string{repo, parentDir, commonDir}, ch.WriteProof.Dirs,
+		"per-agent worktrees launch under sibling dirs, so the repo parent must be proofed too")
+	answerChallenge(t, ch)
+	body["write_proof_token"] = ch.WriteProof.Token
+	rec := agentReq(t, f, parentConv, http.MethodPost, "/v1/templates/wt-team-proof/instantiate", body)
+	require.Equalf(t, http.StatusCreated, rec.Code, "proved instantiate; body=%s", rec.Body.String())
+
+	var res instantiateResult
+	testharness.DecodeJSON(t, rec, &res)
+	require.Equal(t, 2, res.Spawned)
+	require.Equal(t, 0, res.Failed)
+	want := map[string]string{
+		"lead": filepath.Join(parentDir, "repo-wtproof-lead"),
+		"dev":  filepath.Join(parentDir, "repo-wtproof-dev"),
+	}
+	for _, a := range res.Agents {
+		wantPath := want[a.Name]
+		require.NotEmpty(t, wantPath, "unexpected agent %s", a.Name)
+		sess, err := db.FindSessionByConvID(a.ConvID)
+		require.NoError(t, err)
+		require.NotNil(t, sess)
+		assert.Equal(t, resolveSym(t, wantPath), resolveSym(t, sess.Cwd),
+			"agent %s launched in its own worktree", a.Name)
+		token, ok := f.World.SpawnCwdWriteProof(a.ConvID)
+		require.True(t, ok, "spawn token recorded for %s", a.Name)
+		assert.Equal(t, ch.WriteProof.Token, token,
+			"per-agent worktree cwd must arm the in-pane marker check")
+		assertNoDirWriteProofMarkers(t, wantPath)
+	}
+	assertNoDirWriteProofMarkers(t, repo)
+	assertNoDirWriteProofMarkers(t, parentDir)
+	assertNoDirWriteProofMarkers(t, commonDir)
+}
+
+func assertNoDirWriteProofMarkers(t *testing.T, dir string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	for _, e := range entries {
+		assert.False(t, strings.HasPrefix(e.Name(), ".tclaude-write-proof-"),
+			"proof marker leaked in %s: %s", dir, e.Name())
+	}
+}
+
+func TestSpawnDirProof_CodexCloneCwdOverrideProvesAndPinsGitCommonDir(t *testing.T) {
+	prevCooldown := agentd.CloneCooldown
+	agentd.CloneCooldown = 0
+	t.Cleanup(func() { agentd.CloneCooldown = prevCooldown })
+
+	f := newFlow(t)
+	const caller = "self-wrgc-aaaa-bbbb-cccc-111111111111"
+	f.HaveGroup("alpha")
+	f.HaveMember("alpha", caller)
+	f.HaveAliveCodexSession(caller, "spwn-codex-clone", "tclaude-spwn-codex-clone", t.TempDir())
+	require.NoError(t, db.GrantAgentPermission(caller, agentd.PermSelfClone, "test"))
+	repo, _ := initRepoOnMain(t)
+	commonDir, err := harness.CodexGitCommonDir(repo)
+	require.NoError(t, err)
+	require.NotEmpty(t, commonDir)
+
+	body := map[string]any{"no_copy_conv": true, "cwd": repo}
+	ch := decodeWriteProofChallenge(t,
+		agentReq(t, f, caller, http.MethodPost, "/v1/whoami/clone", body))
+	assert.ElementsMatch(t, []string{repo, commonDir}, ch.WriteProof.Dirs)
+	answerChallenge(t, ch)
+	body["write_proof_token"] = ch.WriteProof.Token
+	rec := agentReq(t, f, caller, http.MethodPost, "/v1/whoami/clone", body)
+	require.Equalf(t, http.StatusOK, rec.Code, "proved clone; body=%s", rec.Body.String())
+
+	var resp struct {
+		NewConv string `json:"new_conv"`
+	}
+	testharness.DecodeJSON(t, rec, &resp)
+	require.NotEmpty(t, resp.NewConv)
+	got, ok := f.World.SpawnCodexGitCommonDir(resp.NewConv)
+	require.True(t, ok)
+	assert.Equal(t, commonDir, got, "clone launch must use the daemon-pinned common dir")
+	assertNoDirWriteProofMarkers(t, repo)
+	assertNoDirWriteProofMarkers(t, commonDir)
+}
+
+func TestSpawnDirProof_CodexTemplateProvesAndPinsGitCommonDir(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parent = "parent-tpgc-aaaa-bbbb-cccc-111111111111"
+	haveSpawnCapableSandboxParent(t, f, "alpha", parent, harness.DefaultName, harness.ClaudeSandboxInherit)
+	require.NoError(t, db.GrantAgentPermission(parent, agentd.PermTemplatesUse, "test"))
+	repo, _ := initRepoOnMain(t)
+	commonDir, err := harness.CodexGitCommonDir(repo)
+	require.NoError(t, err)
+	require.NotEmpty(t, commonDir)
+
+	createBody := map[string]any{
+		"name": "codex-template",
+		"agents": []map[string]any{
+			{"name": "worker", "harness": harness.CodexName},
+		},
+	}
+	require.Equalf(t, http.StatusCreated,
+		humanReq(t, f, http.MethodPost, "/v1/templates", createBody).Code, "create template")
+
+	body := map[string]any{"group_name": "codex-cast", "cwd": repo}
+	ch := decodeWriteProofChallenge(t,
+		agentReq(t, f, parent, http.MethodPost, "/v1/templates/codex-template/instantiate", body))
+	assert.ElementsMatch(t, []string{repo, commonDir}, ch.WriteProof.Dirs)
+	answerChallenge(t, ch)
+	body["write_proof_token"] = ch.WriteProof.Token
+	rec := agentReq(t, f, parent, http.MethodPost, "/v1/templates/codex-template/instantiate", body)
+	require.Equalf(t, http.StatusCreated, rec.Code, "proved template; body=%s", rec.Body.String())
+
+	var res instantiateResult
+	testharness.DecodeJSON(t, rec, &res)
+	require.Equal(t, 1, res.Spawned)
+	require.Len(t, res.Agents, 1)
+	got, ok := f.World.SpawnCodexGitCommonDir(res.Agents[0].ConvID)
+	require.True(t, ok)
+	assert.Equal(t, commonDir, got, "template child launch must use the daemon-pinned common dir")
+	assertNoDirWriteProofMarkers(t, repo)
+	assertNoDirWriteProofMarkers(t, commonDir)
 }
 
 // Scenario: an agent self-clones with a cwd override — the same dir-granting

@@ -165,6 +165,8 @@ func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 	s.w.RecordSpawnAutoReview(cc.ConvID, args.AutoReview)
 	s.w.RecordSpawnTrustDir(cc.ConvID, args.TrustDir)
 	s.w.RecordSpawnRemoteControl(cc.ConvID, args.RemoteControl)
+	s.w.RecordSpawnCwdWriteProof(cc.ConvID, args.CwdWriteProof)
+	s.w.RecordSpawnCodexGitCommonDir(cc.ConvID, args.CodexGitCommonDir)
 	s.w.RecordSpawnName(cc.ConvID, args.Name)
 	s.w.RecordSpawnInitialPrompt(cc.ConvID, args.InitialPrompt)
 	// Use cc.Cwd (post-default-substitution) so the SessionRow agrees
@@ -228,6 +230,8 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	s.w.RecordSpawnApproval(convID, args.Approval)
 	s.w.RecordSpawnAutoReview(convID, args.AutoReview)
 	s.w.RecordSpawnRemoteControl(convID, args.RemoteControl)
+	s.w.RecordSpawnCwdWriteProof(convID, args.CwdWriteProof)
+	s.w.RecordSpawnCodexGitCommonDir(convID, args.CodexGitCommonDir)
 	label := generateResumeLabel()
 	// Resume mints a fresh session row / TCLAUDE_SESSION_ID; track it.
 	cc.SessionID = label
@@ -305,6 +309,8 @@ func (s *simSpawner) spawnNewCodex(args clcommon.SpawnArgs) error {
 	s.w.RecordSpawnAutoReview(cx.ConvID, args.AutoReview)
 	s.w.RecordSpawnTrustDir(cx.ConvID, args.TrustDir)
 	s.w.RecordSpawnRemoteControl(cx.ConvID, args.RemoteControl)
+	s.w.RecordSpawnCwdWriteProof(cx.ConvID, args.CwdWriteProof)
+	s.w.RecordSpawnCodexGitCommonDir(cx.ConvID, args.CodexGitCommonDir)
 	// A daemon-spawned Codex pane carries a positional first-turn seed (its
 	// conv-id seed, which now also delivers the [system: ...] welcome). Capture
 	// it keyed by conv-id so a flow test can assert what the launch prompt
@@ -353,6 +359,8 @@ func (s *simSpawner) spawnResumeCodex(args clcommon.SpawnArgs) error {
 	// Always false for Codex (no built-in Remote Access), but recorded so a
 	// flow test can positively assert a Codex relaunch never carries it (JOH-261).
 	s.w.RecordSpawnRemoteControl(convID, args.RemoteControl)
+	s.w.RecordSpawnCwdWriteProof(convID, args.CwdWriteProof)
+	s.w.RecordSpawnCodexGitCommonDir(convID, args.CodexGitCommonDir)
 	label := generateResumeLabel()
 	if err := db.SaveSession(&db.SessionRow{
 		ID:                     label,

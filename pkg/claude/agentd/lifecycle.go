@@ -421,13 +421,21 @@ func resumeOneConvRecreate(convID string, recreateMissingDir bool) memberOpResul
 	remoteControl := remoteControlForRelaunch(convID, harnessName)
 	// Relaunch never re-engages the experimental guardian (auto-review is an
 	// explicit fresh-spawn opt-in, not persisted per-conv), so AutoReview stays false.
+	relaunchSandbox := sandboxForHarness(harnessName)
+	codexGitCommonDir, gerr := codexManagedProfileGitCommonDir(harnessName, relaunchSandbox, cwd)
+	if gerr != nil {
+		res.Action = "error"
+		res.Detail = gerr.Error()
+		return res
+	}
 	if err := SpawnDetachedTclaudeResume(clcommon.SpawnArgs{
 		ConvID:                 convID,
 		Cwd:                    cwd,
 		Effort:                 effort,
 		Model:                  model,
 		Harness:                harnessName,
-		Sandbox:                sandboxForHarness(harnessName),
+		Sandbox:                relaunchSandbox,
+		CodexGitCommonDir:      codexGitCommonDir,
 		Approval:               approvalForHarness(harnessName),
 		AskUserQuestionTimeout: askTimeoutForRelaunch(convID),
 		RemoteControl:          remoteControl,
@@ -1561,7 +1569,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		}
 		if h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile {
 			var gerr error
-			codexGitCommonDir, gerr = harness.CodexGitCommonDir(cwd)
+			codexGitCommonDir, gerr = codexManagedProfileGitCommonDir(h.Name, sandboxMode, cwd)
 			if gerr != nil {
 				writeError(w, http.StatusInternalServerError, "io", gerr.Error())
 				return
