@@ -209,6 +209,10 @@ func seedProcessDashSnap(t *testing.T, f *testharness.Flow) {
 	t.Cleanup(agentd.SetProcessStoreRootForTest(root))
 	fs, err := store.NewFS(root)
 	requireNoError("create process store", err)
+	// Worklist fixtures FIRST: they run an engine tick to mint the human
+	// obligations, and the tick must not see (and advance to completion) the
+	// hand-crafted release-42 run created below.
+	seedProcessWorklistDashSnap(t, root)
 	tmpl := &model.Template{
 		APIVersion:  model.APIVersion,
 		Kind:        model.Kind,
@@ -236,6 +240,35 @@ func seedProcessDashSnap(t *testing.T, f *testharness.Flow) {
 		CreatedAt: time.Now().Add(-12 * time.Minute),
 	}, initial)
 	requireNoError("seed process run", err)
+}
+
+// seedProcessWorklistDashSnap populates the Worklist sub-view (TCL-297): two
+// pending human decisions (operator + oncall assignees, one with a visible
+// contact/nudge schedule) minted by a real engine tick, and a corrupt run so
+// the amber degraded-runs strip renders in every worklist state.
+func seedProcessWorklistDashSnap(t *testing.T, root string) {
+	t.Helper()
+	createEngineRun(t, root, "dashsnap-approve-7", decisionTemplate("dashsnap-approve", model.Performer{
+		Kind: model.PerformerHuman, Profile: "operator", Ask: "Approve the release-train cut?",
+		Contact: &model.ContactSchedule{Cadence: "30m", Budget: 5, EscalationTarget: "human:oncall"},
+	}), false)
+	createEngineRun(t, root, "dashsnap-signoff-8", decisionTemplate("dashsnap-signoff", model.Performer{
+		Kind: model.PerformerHuman, Profile: "oncall", Ask: "Sign off the incident follow-up?",
+	}), false)
+	host, err := agentd.NewProcessEngineHostForTest(root)
+	if err != nil {
+		t.Fatalf("worklist engine host: %v", err)
+	}
+	if _, err := agentd.RunProcessEngineTickForTest(t.Context(), host); err != nil {
+		t.Fatalf("worklist engine tick: %v", err)
+	}
+	corrupt := filepath.Join(root, "runs", "dashsnap-corrupt-run")
+	if err := os.MkdirAll(corrupt, 0o755); err != nil {
+		t.Fatalf("worklist corrupt run dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(corrupt, "run.json"), []byte("{broken"), 0o644); err != nil {
+		t.Fatalf("worklist corrupt run.json: %v", err)
+	}
 }
 
 func seedMember(t *testing.T, f *testharness.Flow, groupID int64, group string, m dashMemberSpec) {
@@ -385,6 +418,27 @@ func baseStates() []dashsnap.State {
 			Title:    "Processes — runs",
 			Caption:  "Processes Runs sub-view with a populated live run row, status, current activity, and viewer action.",
 			JS:       processTabJS("runs", `[data-process-run="dashsnap-release-42"]`),
+			SettleMS: 900,
+		},
+		{
+			Key:      "processes-worklist",
+			Title:    "Processes — worklist (My work)",
+			Caption:  "Worklist My-work view: a decision row with the nudge schedule line, advertised approve/reject actions with the required comment input, the actionable-count sub-nav badge, and the amber degraded-runs strip.",
+			JS:       worklistTabJS("my-work", `#process-panel-worklist .wl-row`),
+			SettleMS: 900,
+		},
+		{
+			Key:      "processes-worklist-waiting",
+			Title:    "Processes — worklist (Waiting on)",
+			Caption:  "Worklist Waiting-on view grouped by whom the work waits on: 👤 operator and 👤 oncall group heads over their pending items.",
+			JS:       worklistTabJS("waiting-on", `#process-panel-worklist .wl-group-head`),
+			SettleMS: 900,
+		},
+		{
+			Key:      "processes-worklist-empty-view",
+			Title:    "Processes — worklist (empty view)",
+			Caption:  "Worklist Needs-review view with no matching items: the per-view empty state counts pending items in other views, and the degraded strip stays visible (unreadable runs are never silently dropped).",
+			JS:       worklistTabJS("review", `#process-panel-worklist .process-placeholder`),
 			SettleMS: 900,
 		},
 		{
@@ -758,7 +812,10 @@ func processGraphStateJS(title, graph string, colorSchemes ...string) string {
 }
 
 func processTabJS(subtab, readySelector string) string {
-	return fmt.Sprintf(`(async function(){
+	// `return` matters: dashsnap's MustEval wraps the JS in a function and
+	// awaits its RESULT, so only a returned promise makes the readiness
+	// checks (and their throws) actually gate the state.
+	return fmt.Sprintf(`return (async function(){
   var nav = document.querySelector('nav button[data-tab="processes"]');
   if (!nav || nav.offsetParent === null) throw new Error('Processes nav is not visible');
   nav.click();
@@ -771,6 +828,37 @@ func processTabJS(subtab, readySelector string) string {
   }
   if (!document.querySelector('%s')) throw new Error('Processes populated row did not render');
 })();`, subtab, subtab, readySelector, readySelector)
+}
+
+// worklistTabJS drives the Worklist sub-view into one of its filter-chip
+// views and self-checks the load-bearing chrome: the ready selector for the
+// view's body, the degraded-runs strip (must be visible — the seed plants a
+// corrupt run), and the actionable-count badge (the seed mints exactly two
+// pending human decisions).
+func worklistTabJS(view, readySelector string) string {
+	// `return` so MustEval awaits the promise — see processTabJS.
+	return fmt.Sprintf(`return (async function(){
+  var nav = document.querySelector('nav button[data-tab="processes"]');
+  if (!nav || nav.offsetParent === null) throw new Error('Processes nav is not visible');
+  nav.click();
+  var sub = document.querySelector('[data-process-subtab="worklist"]');
+  if (!sub) throw new Error('Worklist subtab missing');
+  sub.click();
+  var chip = document.querySelector('button[data-worklist-view="%s"]');
+  if (!chip) throw new Error('Worklist view chip %s missing');
+  chip.click();
+  var deadline = Date.now() + 3000;
+  while (!document.querySelector('%s') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  if (!document.querySelector('%s')) throw new Error('Worklist state did not render');
+  var strip = document.querySelector('#process-worklist-degraded');
+  if (!strip || strip.hidden) throw new Error('degraded-runs strip is not visible');
+  var badge = document.querySelector('#process-worklist-badge');
+  if (!badge || badge.hidden || badge.textContent !== '2') {
+    throw new Error('worklist badge expected 2, got ' + (badge ? badge.textContent : 'missing'));
+  }
+})();`, view, view, readySelector, readySelector)
 }
 
 // scrollClearJS builds a self-checking JOH-388 req-3 state: on the groups tab

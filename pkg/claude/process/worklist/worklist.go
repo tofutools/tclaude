@@ -46,15 +46,20 @@ type ActionTarget struct {
 }
 
 type Item struct {
-	ID               string           `json:"id"`
-	Run              string           `json:"run"`
-	Node             string           `json:"node"`
-	Attempt          int              `json:"attempt"`
-	Kind             Kind             `json:"kind"`
-	Assignee         string           `json:"assignee"`
-	Status           state.WaitStatus `json:"status"`
-	CreatedAt        time.Time        `json:"createdAt,omitzero"`
-	DueAt            time.Time        `json:"dueAt,omitzero"`
+	ID       string           `json:"id"`
+	Run      string           `json:"run"`
+	Node     string           `json:"node"`
+	Attempt  int              `json:"attempt"`
+	Kind     Kind             `json:"kind"`
+	Assignee string           `json:"assignee"`
+	Status   state.WaitStatus `json:"status"`
+	// CreatedAt/DueAt come straight off the durable records; ChangedAt is the
+	// item's last state change (resolution when resolved, else creation) and
+	// drives the dashboard's bounded "Recently changed" view. All omitzero:
+	// blocked items carry no timestamps until TCL-303 persists them.
+	CreatedAt time.Time `json:"createdAt,omitzero"`
+	DueAt     time.Time `json:"dueAt,omitzero"`
+	ChangedAt time.Time `json:"changedAt,omitzero"`
 	Nudge            *Nudge           `json:"nudge,omitempty"`
 	Summary          string           `json:"summary"`
 	AvailableActions []string         `json:"availableActions,omitempty"`
@@ -123,11 +128,15 @@ func obligationItems(snapshot store.Snapshot) []Item {
 		if kind == "" {
 			continue
 		}
+		changedAt := obligation.CreatedAt
+		if !obligation.ResolvedAt.IsZero() {
+			changedAt = obligation.ResolvedAt
+		}
 		item := Item{
 			ID:  stableID(snapshot.Run.ID, obligation.NodeID, id, obligation.Attempt),
 			Run: snapshot.Run.ID, Node: obligation.NodeID, Attempt: obligation.Attempt,
 			Kind: kind, Assignee: obligation.Assignee, Status: obligation.Status,
-			CreatedAt: obligation.CreatedAt, DueAt: obligation.DueAt,
+			CreatedAt: obligation.CreatedAt, DueAt: obligation.DueAt, ChangedAt: changedAt,
 			Summary: obligation.Summary, AvailableActions: append([]string(nil), obligation.AvailableActions...),
 			Links:  Links{RunID: snapshot.Run.ID, NodeID: obligation.NodeID, EvidenceRefs: evidenceRefs(obligation.EvidenceRef)},
 			Target: ActionTarget{CommandID: obligation.CommandID},
@@ -185,16 +194,18 @@ func blockedItems(snapshot store.Snapshot) []Item {
 		status := state.WaitStatusPending
 		assignee, summary := node.BlockedOwner, node.BlockedReason
 		refs := nodeEvidenceRefs(node)
+		var changedAt time.Time // pending blocked: no blocked-at persisted yet (TCL-303)
 		if node.BlockResolution != nil && node.Status != state.NodeStatusBlocked {
 			status = state.WaitStatusSatisfied
 			assignee = string(node.BlockResolution.Actor)
 			summary = node.BlockResolution.Reason
 			refs = appendEvidenceRef(refs, node.BlockResolution.EvidenceRef)
+			changedAt = node.BlockResolution.Timestamp
 		}
 		items = append(items, Item{
 			ID:  stableID(snapshot.Run.ID, nodeID, "blocked", attempt),
 			Run: snapshot.Run.ID, Node: nodeID, Attempt: attempt,
-			Kind: KindBlocked, Assignee: assignee, Status: status, Summary: summary,
+			Kind: KindBlocked, Assignee: assignee, Status: status, Summary: summary, ChangedAt: changedAt,
 			AvailableActions: []string{string(state.BlockDecisionRetry), string(state.BlockDecisionSkip), string(state.BlockDecisionCancel)},
 			Links:            Links{RunID: snapshot.Run.ID, NodeID: nodeID, EvidenceRefs: refs},
 			Target:           ActionTarget{Blocked: true},
