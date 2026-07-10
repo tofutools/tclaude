@@ -107,6 +107,13 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"new LiveValidation(",
 		"this.validation.decorate(this.model.graph())",
 		"this.validation?.schedule()",
+		// Save/reload must sync the validation controller (cold-review
+		// finding): a failed debounce round keeps prior diagnostics, so
+		// markSaved and the 409-reload model swap each push their fresh
+		// diagnostics into LiveValidation — otherwise badges/panel stay
+		// stale until the next mutation.
+		"this.validation?.applyDiagnostics(body.diagnostics || [])",
+		"this.validation?.applyDiagnostics(view.diagnostics || [])",
 	)
 
 	processes := read("js/processes.js")

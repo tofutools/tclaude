@@ -658,6 +658,13 @@ export class ProcessTemplateEditor {
         return;
       }
       this.model.markSaved(body, savedAtRev);
+      // Sync the validation controller with the save verdict: a failed
+      // debounced round deliberately keeps prior diagnostics, so without this
+      // the badges/panel stay stale until the next mutation. The follow-up
+      // schedule() re-validates the live draft in case edits landed while the
+      // POST was in flight (its seq guard drops any out-of-order result).
+      this.validation?.applyDiagnostics(body.diagnostics || []);
+      this.validation?.schedule();
       this.blank = false;
       const diagCount = (body.diagnostics || []).length;
       this.status(`Saved version ${shortHash(body.semanticHash)}${diagCount ? ` · ${diagCount} advisory finding${diagCount === 1 ? '' : 's'}` : ''}.`);
@@ -696,6 +703,10 @@ export class ProcessTemplateEditor {
         this.blank = false;
         this.selection = null;
         this.refresh({ fit: true });
+        // The model swap replaced this.model.diagnostics; without an explicit
+        // sync the validation controller keeps the OLD model's set until a
+        // network round happens to succeed.
+        this.validation?.applyDiagnostics(view.diagnostics || []);
         this.status(`Reloaded their version ${shortHash(view.semanticHash)}.`);
       } catch (error) {
         this.status(`Reload failed: ${error.message}`, true);

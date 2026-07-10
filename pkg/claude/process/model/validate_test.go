@@ -76,6 +76,13 @@ func TestValidateAmbiguousPassEdge(t *testing.T) {
 	assertDiagnostic(t, diagnostics, SeverityWarning, "ambiguous_pass_edge", "nodes.work.next.done")
 	assertDiagnostic(t, diagnostics, SeverityWarning, "ambiguous_pass_edge", "nodes.work.next.success")
 	assertNoDiagnostic(t, diagnostics, "missing_pass_edge")
+	// Shadowed ≠ dead: pass routing checks the exact attempt verdict before
+	// the alias fallback, and the message must say so (cold-review directive).
+	for _, diagnostic := range findDiagnostics(diagnostics, "ambiguous_pass_edge") {
+		if !strings.Contains(diagnostic.Message, "still routes here") {
+			t.Errorf("ambiguous_pass_edge message must state exact-verdict reachability; got %q", diagnostic.Message)
+		}
+	}
 }
 
 func TestValidateAmbiguousFailEdge(t *testing.T) {

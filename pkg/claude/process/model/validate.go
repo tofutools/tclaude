@@ -448,8 +448,11 @@ func validateOutcomeRouting(tmpl *Template) Diagnostics {
 			} else {
 				for _, outcome := range passOutcomeLabels {
 					if outcome != passWinner && node.Next[outcome] != "" {
+						// Not a dead edge: pass routing checks the exact attempt
+						// verdict before the alias fallback, so an exact-match
+						// verdict still takes this edge.
 						diagnostics = append(diagnostics, diagWarning("ambiguous_pass_edge", path+"."+outcome,
-							fmt.Sprintf("outcome edge %q is shadowed by %q for plain pass outcomes (resolution order: %s)", outcome, passWinner, strings.Join(passOutcomeLabels[:], ", "))))
+							fmt.Sprintf("outcome edge %q is shadowed by %q for plain pass outcomes (resolution order: %s); an exact %q attempt verdict still routes here", outcome, passWinner, strings.Join(passOutcomeLabels[:], ", "), outcome)))
 					}
 				}
 			}
