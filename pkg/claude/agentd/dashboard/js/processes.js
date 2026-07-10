@@ -13,9 +13,10 @@ export function initProcessesTab() {
   const tab = $('#tab-processes');
   if (!tab) return;
   document.querySelector('nav button[data-tab="processes"]')?.addEventListener('click', () => loadProcessSubtab(activeProcessSubtab));
-  tab.querySelector('.process-subnav')?.addEventListener('click', e => {
+  tab.querySelector('.process-subnav')?.addEventListener('click', async e => {
     const button = e.target.closest('button[data-process-subtab]');
     if (!button) return;
+    if (!(await confirmLeaveDirtyEditor())) return;
     activateProcessSubtab(button.dataset.processSubtab);
   });
   $('#process-runs-refresh')?.addEventListener('click', () => loadProcessRuns());
@@ -23,7 +24,7 @@ export function initProcessesTab() {
   tab.addEventListener('click', e => {
     const close = e.target.closest('[data-process-close-view]');
     if (close) {
-      closeProcessCanvasViews();
+      maybeCloseProcessCanvasViews();
       return;
     }
     const action = e.target.closest('button[data-process-action]');
@@ -136,12 +137,21 @@ function shortProcessRef(ref) {
   return `${ref.slice(0, at)}${marker}${ref.slice(at + marker.length, at + marker.length + 10)}`;
 }
 
-function openProcessEditor(id, blank) {
+async function openProcessEditor(id, blank) {
   $$('.process-panel').forEach(panel => panel.classList.remove('active'));
   $('#process-viewer-view').hidden = true;
   $('#process-editor-view').hidden = false;
-  $('#process-editor-canvas').innerHTML = `<h3>${blank ? 'New process template' : `Template: ${esc(id)}`}</h3><p>Graph editor mount point. The editor ticket takes over this canvas.</p>`;
+  const mount = $('#process-editor-canvas');
   processNotice(blank ? 'Blank template scaffold ready.' : `Opening ${id}.`);
+  try {
+    // Dynamic import keeps the graph/editor modules out of the flag-off page
+    // load; this only runs after the feature-gated tab is open.
+    const { openTemplateEditor } = await import('./process-editor.js');
+    await openTemplateEditor(mount, { id, blank });
+  } catch (error) {
+    mount.replaceChildren();
+    mount.insertAdjacentHTML('beforeend', `<p class="error">Could not open editor: ${esc(error.message)}</p>`);
+  }
 }
 
 function openProcessViewer(id) {
@@ -153,9 +163,26 @@ function openProcessViewer(id) {
 }
 
 function closeProcessCanvasViews() {
+  const editor = $('#process-editor-canvas').__processEditor;
+  editor?.destroy?.();
   $('#process-editor-view').hidden = true;
   $('#process-viewer-view').hidden = true;
   $$('.process-panel').forEach(panel => panel.classList.toggle('active', panel.id === `process-panel-${activeProcessSubtab}`));
+  if (activeProcessSubtab === 'templates') loadProcessTemplates();
+}
+
+// Leaving the editor with unsaved edits needs an explicit confirmation —
+// closing/switching views is a navigation gesture, never a silent discard.
+async function confirmLeaveDirtyEditor() {
+  const editor = $('#process-editor-canvas').__processEditor;
+  if (!editor?.model?.dirty) return true;
+  const { confirmDiscard } = await import('./refresh.js');
+  return confirmDiscard();
+}
+
+async function maybeCloseProcessCanvasViews() {
+  if (!(await confirmLeaveDirtyEditor())) return;
+  closeProcessCanvasViews();
 }
 
 export function processNotice(message) {

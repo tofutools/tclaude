@@ -10462,3 +10462,124 @@ body.wizard .process-fit-button { box-shadow: 0 2px 12px rgba(75, 48, 119, 0.5);
 @media (prefers-reduced-motion: reduce) {
   .process-graph *, .process-graph *::before, .process-graph *::after { transition: none !important; animation: none !important; }
 }
+
+/* === Process template editor (process-editor.js, TCL-296) ==================
+   Editor chrome around the shared graph core: header, palette dock, inspector
+   strip, inline label editor, rubber-band edge preview. Every control is
+   explicitly dark-themed (never UA-white). */
+#process-editor-canvas.process-editor-mount {
+  padding: 0;
+  border-style: solid;
+  color: #c9d1d9;
+  overflow: hidden;
+}
+.process-editor { display: flex; flex-direction: column; min-height: 62vh; }
+.process-editor-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #21262d;
+  background: #161b22;
+  border-radius: 8px 8px 0 0;
+}
+.process-editor-title { color: #e6edf3; }
+.process-editor-version { font-size: 12px; }
+.process-editor-dirty { color: #e3a341; font-size: 12px; white-space: nowrap; }
+.process-editor-status { color: #8b949e; font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+.process-editor-status.is-error { color: #f85149; }
+.process-editor-id-input,
+.process-inspector-input,
+.process-inspector-select {
+  background: #0d1117;
+  color: #c9d1d9;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 13px;
+}
+.process-editor-id-input:focus,
+.process-inspector-input:focus,
+.process-inspector-select:focus { border-color: #58a6ff; outline: none; }
+.process-editor-id-input:disabled { color: #8b949e; }
+.process-editor-body { display: flex; flex: 1; min-height: 0; align-items: stretch; }
+.process-editor-palette {
+  width: 200px;
+  flex: none;
+  padding: 10px;
+  border-right: 1px solid #21262d;
+  background: #10151c;
+  overflow-y: auto;
+  max-height: 68vh;
+}
+.process-palette-section {
+  color: #8b949e;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  margin: 10px 0 6px;
+}
+.process-palette-section:first-child { margin-top: 0; }
+.process-palette-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 9px;
+  margin-bottom: 6px;
+  background: #1d2631;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  cursor: grab;
+}
+.process-palette-card:hover { border-color: #58a6ff; }
+.process-palette-card.is-dragging { opacity: .45; }
+.process-palette-card-label { color: #e6edf3; font-size: 13px; font-weight: 600; }
+.process-palette-card-hint { color: #8b949e; font-size: 11px; }
+.process-palette-help { color: #8b949e; font-size: 11px; margin: 10px 0 0; }
+.process-editor-stage { position: relative; flex: 1; min-width: 0; min-height: 55vh; display: flex; }
+.process-editor-canvas-host { flex: 1; min-width: 0; display: flex; }
+.process-editor-canvas-host .process-graph { flex: 1; border-radius: 0; border: none; }
+.process-editor-inline-input {
+  position: absolute;
+  z-index: 30;
+  transform: translate(-50%, -50%);
+  min-width: 110px;
+  background: #0d1117;
+  color: #e6edf3;
+  border: 1px solid #58a6ff;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 13px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, .5);
+}
+.process-editor-band {
+  stroke: #58a6ff;
+  stroke-width: 2.5;
+  stroke-dasharray: 7 5;
+  pointer-events: none;
+}
+.process-editor-inspector {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 6px 12px;
+  border-top: 1px solid #21262d;
+  background: #161b22;
+  border-radius: 0 0 8px 8px;
+  flex-wrap: wrap;
+}
+.process-inspector-kind { color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.process-inspector-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #79c0ff; font-size: 12px; }
+.process-inspector-hint { color: #8b949e; font-size: 12px; }
+.process-action-danger { color: #f85149; }
+.process-action-danger:hover { border-color: #f85149; }
+.process-editor-modal .modal-buttons button { min-width: 0; }
+/* Wizard skin: keep the editor chrome legible on the parchment/violet theme;
+   the graph core repaints itself via its own body.wizard variable block. */
+body.wizard .process-editor-header,
+body.wizard .process-editor-inspector { background: #211832; border-color: #4a3d6b; }
+body.wizard .process-editor-palette { background: #181226; border-color: #4a3d6b; }
+body.wizard .process-palette-card { background: #2c2042; border-color: #4a3d6b; }
+body.wizard .process-palette-card:hover { border-color: #d4af37; }
+body.wizard .process-editor-band { stroke: #d4af37; }
