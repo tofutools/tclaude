@@ -504,6 +504,15 @@ func SetCodexAsyncSpawnResponseGraceForTest(d time.Duration) func() {
 	return func() { codexAsyncSpawnResponseGrace = prev }
 }
 
+// SetBeforeExecuteSpawnForTest installs a one-shot mutation seam after the
+// HTTP handler snapshots/resolves profiles but before executeSpawn re-reads
+// them. It exists solely for the TCL-308 launched-value echo regression.
+func SetBeforeExecuteSpawnForTest(fn func()) func() {
+	prev := beforeExecuteSpawnForTest
+	beforeExecuteSpawnForTest = fn
+	return func() { beforeExecuteSpawnForTest = prev }
+}
+
 // RunPendingSpawnSweepForTest runs one pending-spawn sweep synchronously,
 // so a flow test can deterministically trigger the back-fill that enrolls a
 // pending spawn once its conv-id has materialised — without starting the

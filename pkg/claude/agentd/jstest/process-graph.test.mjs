@@ -1,10 +1,59 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeWheelDelta } from '../dashboard/js/process-graph.js';
+import { ProcessGraph, normalizeWheelDelta } from '../dashboard/js/process-graph.js';
 
 test('wheel delta modes normalize to useful pixel-scale zoom input', () => {
   assert.equal(normalizeWheelDelta(120, 0, 900), 120);
   assert.equal(normalizeWheelDelta(3, 1, 900), 72);
   assert.equal(normalizeWheelDelta(1, 2, 900), 900);
   assert.equal(normalizeWheelDelta(Number.NaN, 0, 900), 0);
+});
+
+// onPointerCancel is exercised on a hand-rolled `this` (no DOM needed): a
+// browser-cancelled gesture must end an in-flight port drag with
+// cancelled: true and NO hit-testing — a cancelled touch/pen drag whose last
+// position sits over another node must never read as a deliberate drop.
+test('pointercancel ends a port drag cancelled, with no hit-testing', () => {
+  const ends = [];
+  const fake = {
+    pointer: { id: 7, mode: 'port', nodeID: 'a', port: 'out' },
+    options: { onPortDragEnd: (payload) => ends.push(payload) },
+    svg: { releasePointerCapture() {} },
+    dragMoved: true,
+    clientToGraph() { return { x: 4, y: 5 }; },
+  };
+  ProcessGraph.prototype.onPointerCancel.call(fake, { pointerId: 7, clientX: 0, clientY: 0 });
+  assert.equal(ends.length, 1);
+  assert.equal(ends[0].cancelled, true);
+  assert.equal(ends[0].targetNodeId, null);
+  assert.equal(ends[0].targetPort, null);
+  assert.equal(fake.pointer, null, 'the drag is over');
+  ProcessGraph.prototype.onPointerCancel.call(fake, { pointerId: 7 });
+  assert.equal(ends.length, 1, 'a second cancel for the cleared pointer is a no-op');
+});
+
+test('pointercancel snaps a node drag home instead of committing it', () => {
+  const snapped = [];
+  const fake = {
+    pointer: { id: 3, mode: 'node', nodeID: 'n1' },
+    options: {},
+    svg: { releasePointerCapture() {} },
+    dragMoved: true,
+    snapNodeHome(id) { snapped.push(id); },
+  };
+  ProcessGraph.prototype.onPointerCancel.call(fake, { pointerId: 3 });
+  assert.deepEqual(snapped, ['n1']);
+  assert.equal(fake.pointer, null);
+});
+
+test('pointercancel for a foreign pointer id leaves the drag alone', () => {
+  const fake = {
+    pointer: { id: 3, mode: 'port', nodeID: 'n1', port: 'out' },
+    options: { onPortDragEnd: () => { throw new Error('must not fire'); } },
+    svg: { releasePointerCapture() {} },
+    dragMoved: false,
+    clientToGraph() { return { x: 0, y: 0 }; },
+  };
+  ProcessGraph.prototype.onPointerCancel.call(fake, { pointerId: 99 });
+  assert.ok(fake.pointer, 'the in-flight drag survives');
 });

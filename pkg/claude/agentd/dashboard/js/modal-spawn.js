@@ -1390,12 +1390,9 @@ async function submitAgentSpawn() {
     // daemon scheme-validates it (http(s)) and 400s a bad URL.
     const taskURL = $('#agent-spawn-task').value.trim();
     if (taskURL) body.task_ref_url = taskURL;
-    // Send the harness only when it's not the default (Claude Code), so a
-    // plain CC spawn body is unchanged; the daemon treats an omitted
-    // harness as the default. Send the sandbox only for a harness that
-    // takes one (Codex) — the select carries its secure default until the
-    // human picks otherwise.
-    if (harness && harness !== 'claude') body.harness = harness;
+    // The dropdown is explicit user intent, including Claude Code. Always send
+    // it so a lower group/global default profile cannot select another vendor.
+    if (harness) body.harness = harness;
     if (sandbox) body.sandbox = sandbox;
     // Permission mode (Claude Code) — the daemon resolves a blank/inherit to no
     // override, so send it only when a concrete mode was chosen.

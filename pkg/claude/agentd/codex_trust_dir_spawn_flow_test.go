@@ -99,14 +99,16 @@ func TestCodexSpawn_DefaultSiblingWorktreeAutoTrustedForAgentCaller(t *testing.T
 	const parent = "parent-trst-sibling-cccc-111111111111"
 	haveSpawnCapableSandboxParent(t, f, "squad", parent, harness.CodexName, harness.SandboxManagedProfile)
 
-	repo, _ := initRepoOnMain(t)
+	repo, repoParent := initRepoOnMain(t)
 	worktreeDir, err := worktree.AddWorktreeIn(repo, "agent-child", "main", "")
+	require.NoError(t, err)
+	gitDir, err := harness.GitDir(worktreeDir)
 	require.NoError(t, err)
 
 	// No trust_dir field: a verified default ../<repo>-<branch> worktree is
 	// trusted automatically so the detached Codex child cannot freeze on its
 	// onboarding modal. The agent caller proves every repository path the child
-	// receives (container, main worktree, and shared Git metadata).
+	// receives (container, shared Git metadata, and its exact admin dir).
 	rec := agentReqProof(t, f, parent, http.MethodPost, "/v1/groups/squad/spawn", map[string]any{
 		"name":    "cdx-sibling",
 		"cwd":     worktreeDir,
@@ -120,4 +122,8 @@ func TestCodexSpawn_DefaultSiblingWorktreeAutoTrustedForAgentCaller(t *testing.T
 	got, ok := f.World.SpawnTrustDir(resp.ConvID)
 	require.True(t, ok)
 	assert.True(t, got, "default sibling worktree must always be pre-trusted")
+	writeDirs, ok := f.World.SpawnGitWorktreeWriteDirs(resp.ConvID)
+	require.True(t, ok)
+	assert.Equal(t, []string{repoParent, gitDir}, writeDirs,
+		"linked-worktree launch must grant the exact checkout admin dir")
 }

@@ -127,7 +127,7 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 					writeError(w, http.StatusInternalServerError, "io", err.Error())
 					return
 				}
-				grant.writeDirs = harness.GitWorktreeWriteDirs(commonDir, home)
+				grant.writeDirs = harness.GitWorktreeWriteDirs(sess.Cwd, commonDir, home)
 			}
 			memberGrants[member.ConvID] = grant
 			rawDirs = appendUniqueDirs(rawDirs, sess.Cwd)

@@ -12,38 +12,52 @@ import (
 // rather than the per-worktree metadata directory named by the worktree's
 // .git file.
 func GitCommonDir(cwd string) (string, error) {
+	return gitRevParseDir(cwd, "--git-common-dir")
+}
+
+// GitDir resolves the checkout-specific Git metadata directory for cwd. For a
+// linked worktree this is <common-dir>/worktrees/<name>. Codex protects that
+// exact path with a read-only bind even when a writable parent was explicitly
+// granted, so sandbox profiles must name it separately for git add/commit.
+func GitDir(cwd string) (string, error) {
+	return gitRevParseDir(cwd, "--git-dir")
+}
+
+func gitRevParseDir(cwd, field string) (string, error) {
 	cwd = strings.TrimSpace(cwd)
 	if cwd == "" {
 		return "", nil
 	}
-	cmd := exec.Command("git", "-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	cmd := exec.Command("git", "-C", cwd, "rev-parse", "--path-format=absolute", field)
 	out, err := cmd.Output()
 	if err != nil {
 		if _, ok := err.(*exec.ExitError); ok {
 			return "", nil
 		}
-		return "", fmt.Errorf("resolve git common dir for %q: %w", cwd, err)
+		return "", fmt.Errorf("resolve git metadata dir for %q: %w", cwd, err)
 	}
 	dir := strings.TrimSpace(string(out))
 	if dir == "" {
 		return "", nil
 	}
 	if !filepath.IsAbs(dir) {
-		return "", fmt.Errorf("git common dir for %q resolved to non-absolute path %q", cwd, dir)
+		return "", fmt.Errorf("git metadata dir for %q resolved to non-absolute path %q", cwd, dir)
 	}
 	return filepath.Clean(dir), nil
 }
 
-// GitWorktreeWriteDirs returns the minimal repository root a sandboxed agent
-// needs in order to create and use tclaude's default sibling worktrees. When
-// safe, that is the repository container where ../<repo>-<branch> is created;
+// GitWorktreeWriteDirs returns the repository paths a sandboxed agent needs in
+// order to create and use tclaude's default sibling worktrees. When safe, the
+// broad root is the repository container where ../<repo>-<branch> is created;
 // the grant also covers the original/main worktree and shared Git metadata.
+// When cwd resolves to a checkout, its exact Git admin dir is added separately
+// because Codex's protected-.git mount overrides a writable ancestor.
 //
 // The container grant is deliberately omitted when it would cover home (or an
 // ancestor of home). Granting that path would make ~/.tclaude, ~/.codex, and
 // ~/.claude writable and undo the sandbox's protected-state posture. The main
 // worktree grant remains a narrow descendant and is retained.
-func GitWorktreeWriteDirs(gitCommonDir, home string) []string {
+func GitWorktreeWriteDirs(cwd, gitCommonDir, home string) []string {
 	gitCommonDir = filepath.Clean(strings.TrimSpace(gitCommonDir))
 	if gitCommonDir == "." || !filepath.IsAbs(gitCommonDir) {
 		return nil
@@ -53,17 +67,35 @@ func GitWorktreeWriteDirs(gitCommonDir, home string) []string {
 	if resolvedHome, err := filepath.EvalSymlinks(home); err == nil {
 		home = resolvedHome
 	}
+	var dirs []string
 	if filepath.Base(gitCommonDir) != ".git" {
-		return []string{gitCommonDir}
+		dirs = []string{gitCommonDir}
+	} else {
+		mainWorktree := filepath.Dir(gitCommonDir)
+		container := filepath.Dir(mainWorktree)
+		if home != "." && filepath.IsAbs(home) && pathContains(container, home) {
+			// Granting home (or an ancestor) would expose private agent state. The
+			// main worktree is the narrowest root that still covers its .git data.
+			dirs = []string{mainWorktree}
+		} else {
+			dirs = []string{container}
+		}
 	}
-	mainWorktree := filepath.Dir(gitCommonDir)
-	container := filepath.Dir(mainWorktree)
-	if home != "." && filepath.IsAbs(home) && pathContains(container, home) {
-		// Granting home (or an ancestor) would expose private agent state. The
-		// main worktree is the narrowest root that still covers its .git data.
-		return []string{mainWorktree}
+
+	// Codex recursively protects the checkout's exact Git dir even beneath an
+	// explicitly writable parent. An exact write rule has higher specificity
+	// and restores only the metadata this checkout needs. Failure to resolve it
+	// safely retains the existing parent grant; callers already treat a missing
+	// Git answer as a non-repository launch.
+	if gitDir, err := GitDir(cwd); err == nil && gitDir != "" {
+		for _, dir := range dirs {
+			if dir == gitDir {
+				return dirs
+			}
+		}
+		dirs = append(dirs, gitDir)
 	}
-	return []string{container}
+	return dirs
 }
 
 // SandboxWorktreeContainer returns the worktree-container directory that
@@ -90,7 +122,7 @@ func SandboxWorktreeContainer(gitCommonDir, home string) string {
 	// [container] only when the container is safe to expose; a home-guarded run
 	// grants [mainWorktree] instead, in which case there is no bare container to
 	// protect and we return "".
-	dirs := GitWorktreeWriteDirs(gitCommonDir, home)
+	dirs := GitWorktreeWriteDirs("", gitCommonDir, home)
 	if len(dirs) == 1 && dirs[0] == container {
 		return container
 	}

@@ -81,7 +81,7 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 	codexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(srcHarness, cloneSandbox)
 	if codexGitCommonDirPinned && gitWriteDirs == nil {
 		if home, err := os.UserHomeDir(); err == nil {
-			gitWriteDirs = harness.GitWorktreeWriteDirs(codexGitCommonDir, home)
+			gitWriteDirs = harness.GitWorktreeWriteDirs(cwd, codexGitCommonDir, home)
 		}
 	}
 	var grantFail *spawnFailure
@@ -515,7 +515,7 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm string, b
 	var gitWriteDirs []string
 	if spawnUsesPinnedGitCommonDir(srcHarness, cloneSandbox) {
 		if home, err := os.UserHomeDir(); err == nil {
-			gitWriteDirs = harness.GitWorktreeWriteDirs(codexGitCommonDir, home)
+			gitWriteDirs = harness.GitWorktreeWriteDirs(cwd, codexGitCommonDir, home)
 		}
 	}
 	// Every agent-triggered clone proves all authority the child receives,

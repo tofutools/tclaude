@@ -127,7 +127,10 @@ func codexAgentProfileContent(socketPath, privateStateDir, homeDir, gitCommonDir
 			return "", err
 		}
 	}
-	writeDirs := GitWorktreeWriteDirs(gitCommonDir, homeDir)
+	// No cwd at this content-render site, so no exact-git-dir grant; homeDir is
+	// the real $HOME (privateStateDir is ~/.tclaude/data now, so its parent is
+	// no longer home — see codexAgentSandboxPaths).
+	writeDirs := GitWorktreeWriteDirs("", gitCommonDir, homeDir)
 	return codexAgentProfileContentForWriteDirs(socketPath, privateStateDir, writeDirs)
 }
 
@@ -223,7 +226,11 @@ func EnsureCodexAgentProfileForCwd(cwd string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return ensureCodexAgentProfile(sock, privateStateDir, home, gitCommonDir)
+	// Pass the real cwd (for the exact-git-dir grant, #963) and the real $HOME
+	// (the home guard; privateStateDir's parent is no longer home after the
+	// data/ split).
+	writeDirs := GitWorktreeWriteDirs(cwd, gitCommonDir, home)
+	return ensureCodexAgentProfileForWriteDirs(sock, privateStateDir, writeDirs)
 }
 
 // EnsureCodexAgentProfileForGitCommonDir is the daemon-spawn variant used
@@ -349,7 +356,8 @@ func codexAgentSandboxPaths() (socketPath, privateStateDir, homeDir string, err 
 // EnsureCodexAgentProfile, split out so tests can drive it without depending
 // on the caller's $HOME layout.
 func ensureCodexAgentProfile(socketPath, privateStateDir, homeDir, gitCommonDir string) (string, error) {
-	writeDirs := GitWorktreeWriteDirs(gitCommonDir, homeDir)
+	// Base (no-cwd) path: no exact-git-dir grant; homeDir is the real $HOME.
+	writeDirs := GitWorktreeWriteDirs("", gitCommonDir, homeDir)
 	return ensureCodexAgentProfileForWriteDirs(socketPath, privateStateDir, writeDirs)
 }
 
