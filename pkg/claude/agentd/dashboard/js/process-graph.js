@@ -90,6 +90,16 @@ function renderText(parent, node) {
   parent.append(text);
 }
 
+function renderPeripheralLabel(parent, node) {
+  if (!node.label) return;
+  const text = svgElement('text', {
+    class: 'process-node-label process-node-label-peripheral',
+    x: 0, y: node.height / 2 + 20, 'text-anchor': 'middle', 'aria-hidden': 'true',
+  });
+  text.textContent = String(node.label);
+  parent.append(text);
+}
+
 function renderClock(parent) {
   parent.append(
     svgElement('circle', { class: 'process-clock-face', cx: 0, cy: 0, r: 12 }),
@@ -224,6 +234,7 @@ export class ProcessGraph {
     this.selected = null;
     this.pointer = null;
     this.dragMoved = false;
+    this.suppressClick = false;
     this.destroyed = false;
     this.abort = new AbortController();
 
@@ -324,6 +335,7 @@ export class ProcessGraph {
     });
     renderShape(group, node);
     if (node.type !== 'wait' && node.type !== 'start' && node.type !== 'end') renderText(group, node);
+    else renderPeripheralLabel(group, node);
     renderOverlay(group, node);
     renderPorts(group, node);
     return group;
@@ -415,13 +427,19 @@ export class ProcessGraph {
       const laid = this.layout.nodes.find((candidate) => candidate.id === pointer.nodeID);
       if (node && laid) node.setAttribute('transform', `translate(${laid.x} ${laid.y})`);
     }
+    this.suppressClick = this.dragMoved;
     this.svg.releasePointerCapture?.(event.pointerId);
     this.pointer = null;
-    queueMicrotask(() => { this.dragMoved = false; });
+    // The synthetic click follows pointerup in the same task. Clear on the next
+    // task so a completed drag never also selects/activates the dragged node.
+    setTimeout(() => {
+      this.dragMoved = false;
+      this.suppressClick = false;
+    }, 0);
   }
 
   onClick(event) {
-    if (this.dragMoved) return;
+    if (this.dragMoved || this.suppressClick) return;
     const target = this.eventTarget(event);
     if (target.port) return;
     if (target.node) {

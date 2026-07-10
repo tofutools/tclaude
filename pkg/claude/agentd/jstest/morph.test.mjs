@@ -180,6 +180,15 @@ test('changed text is rewritten in place on the SAME text node (relTime churn)',
   assert.equal(keptTextNode.nodeValue, '32s ago', 'value updated in place');
 });
 
+test('data-morph-owned forms a live imperative subtree boundary', () => {
+  const liveChild = el('svg', {}, [el('g', { transform: 'translate(12 8) scale(2)' })]);
+  const from = el('div', { id: 'graph-host', 'data-morph-owned': 'process-graph' }, [liveChild]);
+  const to = el('div', { id: 'graph-host' }, []);
+  morphNode(from, to);
+  assert.equal(from.childNodes[0], liveChild, 'fresh empty host must not delete the live SVG');
+  assert.equal(from.getAttribute('data-morph-owned'), 'process-graph', 'ownership marker stays live-owned');
+});
+
 // ---- keyed reordering ----------------------------------------------------
 
 test('keyed rows reorder by moving nodes (identity preserved), not rebuilding', () => {
