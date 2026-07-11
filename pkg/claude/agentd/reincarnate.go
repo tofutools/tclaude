@@ -16,6 +16,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
@@ -319,6 +320,25 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		return
 	}
 	cwd := oldSess.Cwd
+	effectiveSandbox, snapshotErr := db.AgentEffectiveSandboxConfigForConv(target)
+	if snapshotErr != nil {
+		writeError(w, http.StatusInternalServerError, "io", "load effective sandbox snapshot: "+snapshotErr.Error())
+		return
+	}
+	var profileWriteDirs []string
+	if effectiveSandbox != nil {
+		validated, err := sandboxpolicy.RevalidateSnapshot(*effectiveSandbox)
+		if err != nil {
+			writeError(w, http.StatusConflict, "sandbox_profile_changed", err.Error())
+			return
+		}
+		effectiveSandbox = &validated
+		for _, grant := range validated.Effective.Filesystem {
+			if grant.Access == sandboxpolicy.AccessWrite {
+				profileWriteDirs = append(profileWriteDirs, grant.Path)
+			}
+		}
+	}
 
 	// 2. Spawn a fresh tclaude session in the same cwd, carrying the
 	// predecessor's live model + reasoning effort (the JOH-36 follow-up:
@@ -356,8 +376,9 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		}
 		gitWriteDirs = harness.GitWorktreeWriteDirs(cwd, codexGitCommonDir, home)
 	}
-	if !isHumanCloneCaller(caller) && childSandboxGrantsDirWrite(oldSess.Harness, reincarnateSandbox) {
+	if !isHumanCloneCaller(caller) && (childSandboxGrantsDirWrite(oldSess.Harness, reincarnateSandbox) || len(profileWriteDirs) > 0) {
 		dirs := appendUniqueDirs([]string{cwd}, gitWriteDirs...)
+		dirs = appendUniqueDirs(dirs, profileWriteDirs...)
 		resolved, ok := requireDirWriteProof(w, caller, body.WriteProofToken, dirs)
 		if !ok {
 			return
@@ -395,6 +416,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		codexGitCommonDir = ""
 	}
 	if err := SpawnDetachedTclaudeNew(clcommon.SpawnArgs{
+		EffectiveSandbox:           effectiveSandbox,
 		Label:                      label,
 		Cwd:                        cwd,
 		CwdWriteProof:              proofToken,

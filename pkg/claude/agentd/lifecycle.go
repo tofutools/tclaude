@@ -387,9 +387,10 @@ func resumeOneConvRecreate(convID string, recreateMissingDir bool) memberOpResul
 }
 
 type resumeGrant struct {
-	Cwd          string
-	GitCommonDir string
-	WriteDirs    []string
+	Cwd              string
+	GitCommonDir     string
+	WriteDirs        []string
+	ProfileWriteDirs []string
 	// SkipOnline binds the proof-time online snapshot. An agent caller may not
 	// turn a member that needed no proof while online into an unproved launch if
 	// that pane exits later in the same bulk-resume request.
@@ -430,7 +431,20 @@ func requireResumeWriteProofs(w http.ResponseWriter, caller, token string, convI
 			continue
 		}
 		sandboxMode := sandboxForHarness(harnessName)
-		if !childSandboxGrantsDirWrite(harnessName, sandboxMode) {
+		snapshot, err := db.AgentEffectiveSandboxConfigForConv(convID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", "load effective sandbox snapshot: "+err.Error())
+			return nil, "", nil, false
+		}
+		var profileWriteDirs []string
+		if snapshot != nil {
+			for _, profileGrant := range snapshot.Effective.Filesystem {
+				if profileGrant.Access == sandboxpolicy.AccessWrite {
+					profileWriteDirs = append(profileWriteDirs, profileGrant.Path)
+				}
+			}
+		}
+		if !childSandboxGrantsDirWrite(harnessName, sandboxMode) && len(profileWriteDirs) == 0 {
 			continue
 		}
 		commonDir, err := spawnGitCommonDir(harnessName, sandboxMode, cwd)
@@ -438,7 +452,7 @@ func requireResumeWriteProofs(w http.ResponseWriter, caller, token string, convI
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return nil, "", nil, false
 		}
-		grant := &resumeGrant{Cwd: cwd, GitCommonDir: commonDir}
+		grant := &resumeGrant{Cwd: cwd, GitCommonDir: commonDir, ProfileWriteDirs: profileWriteDirs}
 		if spawnUsesPinnedGitCommonDir(harnessName, sandboxMode) {
 			home, err := os.UserHomeDir()
 			if err != nil {
@@ -450,6 +464,7 @@ func requireResumeWriteProofs(w http.ResponseWriter, caller, token string, convI
 		grants[convID] = grant
 		dirs = appendUniqueDirs(dirs, cwd)
 		dirs = appendUniqueDirs(dirs, grant.WriteDirs...)
+		dirs = appendUniqueDirs(dirs, grant.ProfileWriteDirs...)
 	}
 	if len(dirs) == 0 {
 		return grants, "", nil, true
@@ -468,6 +483,11 @@ func requireResumeWriteProofs(w http.ResponseWriter, caller, token string, convI
 		for i, dir := range grant.WriteDirs {
 			if v := resolved[dir]; v != "" {
 				grant.WriteDirs[i] = v
+			}
+		}
+		for i, dir := range grant.ProfileWriteDirs {
+			if v := resolved[dir]; v != "" {
+				grant.ProfileWriteDirs[i] = v
 			}
 		}
 	}
@@ -541,6 +561,21 @@ func resumeOneConvWithGrant(convID string, recreateMissingDir bool, grant *resum
 	// moment the new pane reports in — the armed flag lives on the old/dead row,
 	// which is still the most-recent until then.
 	remoteControl := remoteControlForRelaunch(convID, harnessName)
+	effectiveSandbox, snapshotErr := db.AgentEffectiveSandboxConfigForConv(convID)
+	if snapshotErr != nil {
+		res.Action = "error"
+		res.Detail = "load effective sandbox snapshot: " + snapshotErr.Error()
+		return res
+	}
+	if effectiveSandbox != nil {
+		validated, err := sandboxpolicy.RevalidateSnapshot(*effectiveSandbox)
+		if err != nil {
+			res.Action = "error"
+			res.Detail = "sandbox_profile_changed: " + err.Error()
+			return res
+		}
+		effectiveSandbox = &validated
+	}
 	// Relaunch never re-engages the experimental guardian (auto-review is an
 	// explicit fresh-spawn opt-in, not persisted per-conv), so AutoReview stays false.
 	relaunchSandbox := sandboxForHarness(harnessName)
@@ -580,6 +615,7 @@ func resumeOneConvWithGrant(convID string, recreateMissingDir bool, grant *resum
 		cwdProof = proofToken
 	}
 	if err := SpawnDetachedTclaudeResume(clcommon.SpawnArgs{
+		EffectiveSandbox:           effectiveSandbox,
 		ConvID:                     convID,
 		Cwd:                        cwd,
 		CwdWriteProof:              cwdProof,
