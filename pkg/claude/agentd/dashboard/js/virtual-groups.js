@@ -183,7 +183,7 @@ function replacedVisible() {
 
 // scribeVisible reports the "show offline scribes" checkbox state. Unlike the
 // helpers above, circle-scribe is a REAL server-side system group (a
-// daemon-created scribe's eponymous group, flagged `scribe` in the snapshot),
+// daemon-created shared scribe-kind group, flagged `scribe` in the snapshot),
 // not a client-side virtual group — but its show/hide toggle lives in the same
 // view popover, so its reader sits alongside them. Defaults to false: live
 // scribes are always visible, while dormant scribe machinery remains hidden.

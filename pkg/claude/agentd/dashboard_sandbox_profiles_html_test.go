@@ -70,6 +70,9 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		`Never create, edit, delete, assign, or apply a sandbox profile`:                    "scribe safety brief",
 		`Agent draft loaded. Review every field`:                                            "explicit human preview",
 		"fetch(`/api/sandbox-profile-drafts/":                                               "draft handoff polling",
+		`createSandboxDraftQueue`:                                                           "parallel scribe drafts use the review queue",
+		`sandboxDraftQueue.enqueue({ draft, targetName, onCreate })`:                        "each completed scribe draft is retained",
+		`sandbox scribe draft ready — queued for review`:                                    "queued parallel drafts are visible to the human",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard missing %q (%s)", needle, why)
@@ -84,6 +87,7 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		`const QUICK_NEW = '/new-sandbox-profile'`:       "retired select create sentinel",
 		`data-sandbox-profile-quick-pending="true"`:      "retired select refresh guard",
 		`id="dashboard-default-sandbox-profile-control"`: "retired select wrapper",
+		`scribePollGeneration`:                           "a later scribe must not cancel an earlier draft poll",
 	} {
 		if strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard still contains %q (%s)", needle, why)

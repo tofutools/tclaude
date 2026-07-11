@@ -2,6 +2,7 @@ import { $, $$, esc, bindModalSubmitHotkey, makeModalResizable, pickDirectory } 
 import { confirmModal, toast, bindBackdropDiscard, bindManageOverlayDismiss } from './refresh.js';
 import { openTermModal } from './modal-term.js';
 import { wizWord } from './slop.js';
+import { createSandboxDraftQueue } from './sandbox-draft-queue.js';
 
 const API = '/api/sandbox-profiles';
 let profiles = [];
@@ -9,7 +10,6 @@ let editingName = '';
 let editorOnCreate = null;
 let editorSaving = false;
 let spawnPreviewGeneration = 0;
-let scribePollGeneration = 0;
 
 const SANDBOX_SCRIBE_NAME = 'sandbox-scribe';
 const SANDBOX_SCRIBE_SLUGS = ['sandbox-profiles.draft'];
@@ -279,6 +279,9 @@ function closeEditor() {
   if (editorSaving) return;
   $('#sandbox-profile-editor-modal').classList.remove('show');
   editorOnCreate = null;
+  // A sandbox scribe may have completed while this editor was open. Release
+  // the current review (if any) and reveal the next queued result.
+  sandboxDraftQueue.release();
 }
 
 function setEditorSaving(saving) {
@@ -310,22 +313,29 @@ function sandboxScribeBrief(token, targetName, seed) {
   ].join('\n\n');
 }
 
-async function pollSandboxScribeDraft(token, generation, targetName, onCreate) {
+const sandboxDraftQueue = createSandboxDraftQueue({
+  canDeliver: () => !$('#sandbox-profile-editor-modal').classList.contains('show'),
+  deliver: ({ draft, targetName, onCreate }) => {
+    openEditor(draft.profile, { targetName, onCreate });
+    $('#sandbox-profile-editor-error').textContent = 'Agent draft loaded. Review every field, then explicitly Save sandbox profile to apply it to the library. No assignments will be changed.';
+    toast('sandbox scribe draft ready — review and explicitly save');
+  },
+});
+
+async function pollSandboxScribeDraft(token, targetName, onCreate) {
   const deadline = Date.now() + 30 * 60 * 1000;
-  while (generation === scribePollGeneration && Date.now() < deadline) {
+  while (Date.now() < deadline) {
     try {
       const r = await fetch(`/api/sandbox-profile-drafts/${encodeURIComponent(token)}`, { credentials: 'same-origin' });
       if (r.ok) {
         const draft = await r.json();
-        if (generation !== scribePollGeneration) return;
-        openEditor(draft.profile, { targetName, onCreate });
-        $('#sandbox-profile-editor-error').textContent = 'Agent draft loaded. Review every field, then explicitly Save sandbox profile to apply it to the library. No assignments will be changed.';
-        toast('sandbox scribe draft ready — review and explicitly save');
+        const opened = sandboxDraftQueue.enqueue({ draft, targetName, onCreate });
+        if (!opened) toast(`sandbox scribe draft ready — queued for review (${sandboxDraftQueue.pendingCount()} waiting)`);
         return;
       }
       if (r.status !== 404) throw new Error((await r.text()) || `HTTP ${r.status}`);
     } catch (err) {
-      if (generation === scribePollGeneration) toast(`sandbox draft handoff failed: ${err.message || String(err)}`, true);
+      toast(`sandbox draft handoff failed: ${err.message || String(err)}`, true);
       return;
     }
     await new Promise(resolve => setTimeout(resolve, 1500));
@@ -334,7 +344,6 @@ async function pollSandboxScribeDraft(token, generation, targetName, onCreate) {
 
 async function summonSandboxScribe(seed, targetName = '', onCreate = null) {
   const token = sandboxScribeToken();
-  const generation = ++scribePollGeneration;
   closeEditor();
   try {
     const r = await fetch('/api/scribe', {
@@ -348,14 +357,14 @@ async function summonSandboxScribe(seed, targetName = '', onCreate = null) {
     });
     if (!r.ok) throw new Error((await r.text()) || `HTTP ${r.status}`);
     const resp = await r.json().catch(() => ({}));
-    const verb = resp.reused ? 'resumed' : 'summoned';
+    const scribeName = resp.name || SANDBOX_SCRIBE_NAME;
     if (resp.focus_mode === 'browser' && resp.focus_ws) {
-      openTermModal({ wsPath: resp.focus_ws, label: SANDBOX_SCRIBE_NAME, hideConv: resp.conv_id || null });
-      toast(`${verb} ${SANDBOX_SCRIBE_NAME} — opened in-browser terminal`);
+      openTermModal({ wsPath: resp.focus_ws, label: scribeName, hideConv: resp.conv_id || null });
+      toast(`summoned ${scribeName} — opened in-browser terminal`);
     } else {
-      toast(`${verb} ${SANDBOX_SCRIBE_NAME} — opening its terminal`);
+      toast(`summoned ${scribeName} — opening its terminal`);
     }
-    void pollSandboxScribeDraft(token, generation, targetName, onCreate);
+    void pollSandboxScribeDraft(token, targetName, onCreate);
   } catch (err) {
     const message = err.message || String(err);
     openEditor(seed, { targetName, onCreate });

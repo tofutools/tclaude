@@ -815,11 +815,12 @@ harness default (Claude Code at its default model/effort). To run scribes on a
 different harness/model — e.g. Codex, or a cheaper model for their light
 editing — set `scribe.profile` in `~/.tclaude/config.json` (or pick it from the
 dashboard **Config tab → Scribe defaults**) to the name of a saved [spawn
-profile](#roles); the next fresh summon adopts that profile's whole launch
+profile](#roles); each fresh summon adopts that profile's whole launch
 shape, and the harness-matched dir-trust pre-seed follows it automatically.
 Resolved live at summon time — a deleted or renamed profile self-heals to the
-default rather than wedging the summon — and it applies to the **next fresh**
-summon: a live scribe you re-summon keeps the launch shape it was born with.
+default rather than wedging the summon. Every click creates an independently
+named scribe, so live scribes keep working while the next one uses the current
+profile.
 Blank/absent = today's default. This mirrors the `ask.profile` knob `tclaude
 ask` uses.
 

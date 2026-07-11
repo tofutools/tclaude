@@ -664,11 +664,11 @@ func (c *Config) ResolvedAskProfile() (model, effort string) {
 // separate model/effort fields here. "" / absent = today's behaviour.
 //
 // Resolved LIVE at summon time (the summon re-stamps the scribe group's
-// default spawn profile from this name on every fresh summon), so a deleted
+// default spawn profile from this name on every summon), so a deleted
 // or renamed profile self-heals to the no-profile default rather than wedging
-// the summon — the same live self-heal AskConfig has. It applies to the NEXT
-// fresh summon only: a live scribe that gets reused keeps the launch shape it
-// was born with. The dashboard's Config tab edits this same block through the
+// the summon — the same live self-heal AskConfig has. Every summon is fresh,
+// so a config change applies to the next scribe without disturbing live
+// scribes. The dashboard's Config tab edits this same block through the
 // usual /api/config save flow, so config.json stays the single source of
 // truth the summon reads.
 //
