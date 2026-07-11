@@ -76,6 +76,13 @@ func TestResumeLaunchCmd_AppliesActorSnapshotAndStripsOperatorToken(t *testing.T
 	assert.Contains(t, cmd, "denyWrite")
 	assert.NotContains(t, cmd, "TCLAUDE_HUMAN_TOKEN")
 	assert.NotContains(t, cmd, "must-not-reach-pane")
+
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "source-session", ConvID: resumeConvClaude, Harness: harness.DefaultName,
+		SandboxMode: harness.ClaudeSandboxInherit,
+	}))
+	_, _, err = resumeLaunchCmd(harness.DefaultName, resumeConvClaude[:8], resumeConvClaude, nil)
+	require.ErrorContains(t, err, "deny rules require sandbox on")
 }
 
 func TestResumeLaunchCmd_CodexFilesystemRequiresManagedProfile(t *testing.T) {

@@ -40,9 +40,9 @@ func sandboxProfileCapabilityFailure(harnessName, sandboxMode string, snapshot *
 	}
 	switch harnessOrDefault(harnessName) {
 	case harness.DefaultName:
-		if strings.TrimSpace(sandboxMode) == harness.ClaudeSandboxOff && snapshotHasDeny(snapshot) {
+		if strings.TrimSpace(sandboxMode) != harness.ClaudeSandboxOn && snapshotHasDeny(snapshot) {
 			return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_filesystem",
-				"Claude filesystem deny rules require the OS sandbox; sandbox \"off\" cannot enforce them"}
+				fmt.Sprintf("Claude filesystem deny rules require sandbox %q; sandbox %q cannot guarantee enforcement", harness.ClaudeSandboxOn, sandboxMode)}
 		}
 		return nil
 	case harness.CodexName:

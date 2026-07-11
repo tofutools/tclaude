@@ -2248,6 +2248,9 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	// session.ApplyClaudeResumeEnv.
 	session.ApplyClaudeResumeEnv(h, resumeEnv)
 	sandboxMode, resumeCwd := resumeSandboxState(convID)
+	if h.Name == harness.DefaultName && len(denyDirs) > 0 && sandboxMode != harness.ClaudeSandboxOn {
+		return "", nil, fmt.Errorf("unsupported_sandbox_profile_filesystem: Claude filesystem deny rules require sandbox %s", harness.ClaudeSandboxOn)
+	}
 	if (h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile) ||
 		(h.Name == harness.DefaultName && sandboxMode != harness.ClaudeSandboxOff) {
 		gitWriteDirs, err := resumeGitWorktreeWriteDirs(resumeCwd)

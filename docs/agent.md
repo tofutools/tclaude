@@ -337,9 +337,9 @@ credentials in them. Profile payload reads and all mutations require the
 `sandbox-profiles.manage` permission.
 
 Deny rules are enforced by the harness OS sandbox (Claude `denyRead` plus
-`denyWrite`, Codex permission-profile `none`). A Claude launch that explicitly
-selects sandbox `off` is rejected when its effective profile contains a deny;
-`inherit` still relies on the operator's Claude sandbox setting.
+`denyWrite`, Codex permission-profile `none`). An effective deny requires
+Claude sandbox `on` or the Codex managed `tclaude-agent` sandbox; other launch
+postures are rejected rather than silently ignoring the restriction.
 
 ```bash
 tclaude agent sandbox-profiles ls [--json]

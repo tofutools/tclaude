@@ -391,6 +391,10 @@ func runNew(params *NewParams) error {
 		h.Name == harness.CodexName && params.PermissionProfile != harness.CodexAgentProfile {
 		return fmt.Errorf("unsupported_sandbox_profile_filesystem: codex filesystem rules require sandbox %s", harness.SandboxManagedProfile)
 	}
+	if len(sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessDeny)) > 0 &&
+		h.Name == harness.DefaultName && sandboxMode != harness.ClaudeSandboxOn {
+		return fmt.Errorf("unsupported_sandbox_profile_filesystem: Claude filesystem deny rules require sandbox %s", harness.ClaudeSandboxOn)
+	}
 
 	// Validate --permission-profile: a Codex-only knob (codex -p <name>) that
 	// is mutually exclusive with --sandbox. The daemon spawn path passes the
