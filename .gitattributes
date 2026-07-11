@@ -1,0 +1,6 @@
+# Preserve byte-exact upstream vendored assets even when their formatting does
+# not follow first-party whitespace conventions.
+pkg/claude/agentd/jstest/vendor/linkedom.mjs -text -whitespace
+pkg/claude/agentd/jstest/vendor/preact-test-utils.mjs -text
+pkg/claude/agentd/jstest/vendor/testUtils.module.js.map -text
+pkg/claude/agentd/jstest/vendor/LICENSE-linkedom.txt -text
