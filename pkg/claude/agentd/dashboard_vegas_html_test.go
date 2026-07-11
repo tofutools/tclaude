@@ -86,11 +86,11 @@ func TestDashboardHTML_VegasTab(t *testing.T) {
 	// CSS: the nav button is hidden by default — the tab must not leak into
 	// a plain dashboard — and revealed in slop mode OR the regular-mode
 	// opt-in (body.vegas), so both reveal selectors must ship.
-	must("nav button[data-tab=\"vegas\"] { display: none; }",
+	must("nav [data-tab=\"vegas\"] { display: none; }",
 		"the Vegas nav button is hidden in the plain dashboard")
-	must("body.slop nav button[data-tab=\"vegas\"]",
+	must("body.slop nav [data-tab=\"vegas\"]",
 		"the Vegas nav button is revealed in slop mode")
-	must("body.vegas nav button[data-tab=\"vegas\"]",
+	must("body.vegas nav [data-tab=\"vegas\"]",
 		"the Vegas nav button is revealed by the regular-mode opt-in (body.vegas)")
 }
 

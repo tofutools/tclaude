@@ -41,7 +41,7 @@ func TestDashboardHTML_TopBarTotalCostWired(t *testing.T) {
 	// The token links to the Costs tab: render.js tags it, costs.js
 	// delegates the click to the nav button.
 	must(`data-goto-tab="costs"`, "cost token tagged as a Costs-tab link")
-	must(`nav button[data-tab="costs"]').click()`,
+	must(`nav [data-tab="costs"]').click()`,
 		"costs.js opens the tab via the nav button on a token click")
 
 	// The no-data state is unchanged: neither windows nor cost → n/a.

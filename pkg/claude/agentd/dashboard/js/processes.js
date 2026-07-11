@@ -3,7 +3,7 @@
 // stable full-canvas mount points for them and keeps actions as stubs. The
 // Worklist sub-view lives in process-worklist.js (TCL-297).
 
-import { $, $$, esc, relTime } from './helpers.js';
+import { $, $$, isModifiedClick, esc, relTime } from './helpers.js';
 import { morphInto } from './morph.js';
 import { initProcessWorklist, loadProcessWorklist } from './process-worklist.js';
 
@@ -12,12 +12,28 @@ let activeProcessSubtab = 'templates';
 export function initProcessesTab() {
   const tab = $('#tab-processes');
   if (!tab) return;
-  document.querySelector('nav button[data-tab="processes"]')?.addEventListener('click', () => loadProcessSubtab(activeProcessSubtab));
+  document.querySelector('nav [data-tab="processes"]')?.addEventListener('click', () => loadProcessSubtab(activeProcessSubtab));
   tab.querySelector('.process-subnav')?.addEventListener('click', async e => {
-    const button = e.target.closest('button[data-process-subtab]');
+    const button = e.target.closest('[data-process-subtab]');
     if (!button) return;
+    // Real <a href> subtab links: a modified/middle click opens the location in
+    // a new tab (leaving this view — and any dirty editor — untouched). A plain
+    // click switches in place. preventDefault runs synchronously, BEFORE the
+    // async dirty-editor confirm, so the anchor's own navigation is cancelled
+    // regardless of the confirm's outcome. See isModifiedClick / bindTabs.
+    if (isModifiedClick(e)) return;
+    e.preventDefault();
     if (!(await confirmLeaveDirtyEditor())) return;
     activateProcessSubtab(button.dataset.processSubtab);
+  });
+  // Space-activation parity for the anchor subtabs (see bindTabs): <a> switches
+  // on Enter only, so shim Space to keep the former <button> keyboard behaviour.
+  tab.querySelector('.process-subnav')?.addEventListener('keydown', e => {
+    if (e.key !== ' ' && e.key !== 'Spacebar') return;
+    const a = e.target.closest('a[data-process-subtab]');
+    if (!a) return;
+    e.preventDefault();
+    a.click();
   });
   $('#process-runs-refresh')?.addEventListener('click', () => loadProcessRuns());
   $('#process-template-new')?.addEventListener('click', () => openProcessEditor('new-process', true));
@@ -48,7 +64,7 @@ export function applyProcessesTabVisibility(data) {
   if (!visible) {
     const section = $('#tab-processes');
     if (section?.classList.contains('active')) {
-      $$('nav button').forEach(button => button.classList.toggle('active', button.dataset.tab === 'groups'));
+      $$('nav [data-tab]').forEach(button => button.classList.toggle('active', button.dataset.tab === 'groups'));
       $$('main section').forEach(panel => panel.classList.toggle('active', panel.id === 'tab-groups'));
     }
   }

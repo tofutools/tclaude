@@ -34,7 +34,7 @@ func TestDashboardHTML_LogsTabWired(t *testing.T) {
 	// logs.js fetches the read endpoint and binds the tab.
 	must("/api/logs", "logs.js fetches the logs read endpoint")
 	must("function bindLogsTab", "logs.js exposes the tab binder")
-	must(`nav button[data-tab="logs"]`, "logs.js loads on tab activation")
+	must(`nav [data-tab="logs"]`, "logs.js loads on tab activation")
 
 	// Server-side search / filter / pagination wiring.
 	must("page_size", "logs.js sends the page size to the server")

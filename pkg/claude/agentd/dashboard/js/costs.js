@@ -1188,7 +1188,7 @@ function goMonth(delta) {
 // bindCostsTab wires the tab: load on activation, reload on span
 // change, slow re-poll off the snapshot tick while visible.
 function bindCostsTab() {
-  $('nav button[data-tab="costs"]').addEventListener('click', () => { loadCosts(); loadCostFactor(); });
+  $('nav [data-tab="costs"]').addEventListener('click', () => { loadCosts(); loadCostFactor(); });
   bindCostsChainHover();
   bindCostsChartTip();
   bindCostsSort();
@@ -1274,7 +1274,7 @@ function bindCostsTab() {
   // Delegated so it survives the token's re-render on every snapshot.
   document.addEventListener('click', e => {
     if (e.target.closest('[data-goto-tab="costs"]')) {
-      $('nav button[data-tab="costs"]').click();
+      $('nav [data-tab="costs"]').click();
     }
   });
 }

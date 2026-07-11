@@ -184,7 +184,7 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   // (refresh.js gates on jobsTabActive), so activating the tab kicks an
   // immediate refresh instead of waiting up to 2s for the next poll — the
   // same lazy-load-on-click idiom as the Costs / Audit / Logs tabs.
-  document.querySelector('nav button[data-tab="jobs"]')?.addEventListener('click', () => refresh());
+  document.querySelector('nav [data-tab="jobs"]')?.addEventListener('click', () => refresh());
   bindSudoModal();
   bindPermEditModal();
   bindCronModal();
@@ -284,6 +284,6 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   if (dlParams.get('tab') === 'messages') {
     const reqId = dlParams.get('access_request');
     if (reqId !== null) focusAccessRequest(reqId || undefined);
-    else document.querySelector('nav button[data-tab="messages"]')?.click();
+    else document.querySelector('nav [data-tab="messages"]')?.click();
   }
 })();

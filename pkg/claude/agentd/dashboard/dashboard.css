@@ -101,12 +101,18 @@ nav { background: #161b22; border-bottom: 1px solid #2a3340; }
 body.hscroll-overflow.hscroll-follow .bar-inner { position: sticky; left: 0; }
 body.hscroll-overflow.hscroll-follow header .bar-inner { z-index: 2; }
 body.hscroll-overflow.hscroll-follow nav .bar-inner { z-index: 1; }
-nav button {
+/* The tab controls are real <a href> anchors (so hover previews the URL and
+   Cmd/Ctrl/middle-click open the location in a new tab), except Vegas which
+   stays a <button> (not URL-routed). The [data-tab] selector styles both, and
+   the anchor resets (text-decoration/color/font) keep them rendering exactly
+   like the former buttons. */
+nav [data-tab] {
   background: none; border: none; color: #7d8590; padding: 10px 16px;
-  cursor: pointer; font-size: 14px; border-bottom: 2px solid transparent;
+  cursor: pointer; font-size: 14px; font-family: inherit; border-bottom: 2px solid transparent;
+  text-decoration: none;
 }
-nav button.active { color: #d4d4d4; border-bottom-color: #58a6ff; }
-nav button:hover { color: #d4d4d4; }
+nav [data-tab].active { color: #d4d4d4; border-bottom-color: #58a6ff; }
+nav [data-tab]:hover { color: #d4d4d4; }
 /* Messages tab — unread badge on the nav button + message cards. */
 .tab-badge {
   display: inline-block; margin-left: 6px; min-width: 16px; padding: 0 5px;
@@ -681,6 +687,7 @@ section.active { display: block; }
 .access-subtab {
   background: none; border: none; color: #7d8590; cursor: pointer;
   font-family: inherit; font-size: 13px; padding: 6px 16px; border-radius: 4px;
+  text-decoration: none;
 }
 .access-subtab:hover { color: #d4d4d4; }
 .access-subtab.active { background: #21262d; color: #d4d4d4; font-weight: 500; }
@@ -4603,9 +4610,9 @@ body.slop nav {
   background: #2a0808;
   border-bottom: 1px solid #ffd700;
 }
-body.slop nav button { color: #c9a86b; }
-body.slop nav button:hover { color: #ffe88c; }
-body.slop nav button.active {
+body.slop nav [data-tab] { color: #c9a86b; }
+body.slop nav [data-tab]:hover { color: #ffe88c; }
+body.slop nav [data-tab].active {
   color: #ffe88c;
   border-bottom-color: #ffd700;
 }
@@ -4825,9 +4832,9 @@ body.slop .slop-machine[data-status="exited"] {
    slop.vegas_in_regular_mode, applied from the snapshot by refresh.js).
    The section follows the normal tab show/hide rules (section.active);
    vegas.js owns the lounge-radio <audio> player inside #vegas-player. */
-nav button[data-tab="vegas"] { display: none; }
-body.slop nav button[data-tab="vegas"],
-body.vegas nav button[data-tab="vegas"] { display: block; }
+nav [data-tab="vegas"] { display: none; }
+body.slop nav [data-tab="vegas"],
+body.vegas nav [data-tab="vegas"] { display: block; }
 
 /* Costs-tab auto-hide. body.hide-costs is set by refresh.js when the server's
    cost_tab_visible is false — a subscription account with no real spend that
@@ -4835,7 +4842,7 @@ body.vegas nav button[data-tab="vegas"] { display: block; }
    hidden so the tab vanishes entirely (refresh.js also falls the active tab
    back to Groups if Costs was showing). The 💲 cost toggle hides too — there's
    nothing to toggle when no cost data exists. */
-body.hide-costs nav button[data-tab="costs"],
+body.hide-costs nav [data-tab="costs"],
 body.hide-costs #tab-costs { display: none; }
 body.hide-costs #groups-cost-toggle { display: none; }
 
@@ -4845,13 +4852,13 @@ body.hide-costs #groups-cost-toggle { display: none; }
    the Costs tab, both the nav button AND the section are hidden so the tab
    vanishes entirely (refresh.js also falls the active tab back to Groups if
    Plugins was showing). */
-body.hide-plugins nav button[data-tab="plugins"],
+body.hide-plugins nav [data-tab="plugins"],
 body.hide-plugins #tab-plugins { display: none; }
 
 /* Processes is a dark-launched feature. The page starts with hide-processes
    on <body>; refresh.js removes it only when the server snapshot confirms the
    feature flag, preventing a flash of experimental chrome while config loads. */
-body.hide-processes nav button[data-tab="processes"],
+body.hide-processes nav [data-tab="processes"],
 body.hide-processes #tab-processes { display: none; }
 
 /* Processes tab shell — deliberately neutral and compact so the graph editor
@@ -4863,6 +4870,7 @@ body.hide-processes #tab-processes { display: none; }
 .process-subtab, .process-action {
   border: 1px solid #30363d; border-radius: 6px; background: #161b22;
   color: #c9d1d9; padding: 6px 12px; cursor: pointer; font: inherit;
+  text-decoration: none;
 }
 .process-subtab:hover, .process-action:hover { background: #21262d; border-color: #484f58; }
 .process-subtab.active { color: #fff; background: #1f6feb; border-color: #388bfd; }
@@ -4947,7 +4955,7 @@ body.hide-processes #tab-processes { display: none; }
    client-side off the live pane count, but the shape is identical: hide the nav
    button AND the section, and terminals-tab.js falls the active tab back to
    Groups if Terminals was showing when it emptied. */
-body.hide-terminals nav button[data-tab="terminals"],
+body.hide-terminals nav [data-tab="terminals"],
 body.hide-terminals #tab-terminals { display: none; }
 
 /* The Terminals tab is a full-height app-shell like Messages: flex the
@@ -5820,9 +5828,9 @@ body.wizard nav {
   background: #1c1436;
   border-bottom: 1px solid #d9b45a;
 }
-body.wizard nav button { color: #b39ddb; }
-body.wizard nav button:hover { color: #f3e6c0; }
-body.wizard nav button.active {
+body.wizard nav [data-tab] { color: #b39ddb; }
+body.wizard nav [data-tab]:hover { color: #f3e6c0; }
+body.wizard nav [data-tab].active {
   color: #f3e6c0;
   border-bottom-color: #d9b45a;
 }
@@ -6135,7 +6143,7 @@ body.wizard .tab-label-regular { display: none; }
 body.wizard .tab-label-wizard { display: inline; }
 
 /* The music tab shows in wizard mode too (like slop / the regular opt-in). */
-body.wizard nav button[data-tab="vegas"] { display: block; }
+body.wizard nav [data-tab="vegas"] { display: block; }
 
 /* Intro + hint copy per theme. Both intros carry .vegas-intro; the wizard
    one is hidden by default and swapped in under body.wizard. */

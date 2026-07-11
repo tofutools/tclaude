@@ -36,7 +36,7 @@ func TestDashboardHTML_NoStandaloneAgentsTab(t *testing.T) {
 
 	// The Groups tab keeps its plain label (now inside a plain/wizard span pair
 	// — see TestDashboardHTML_WizardTabNames) and its internal wiring.
-	present(`data-tab="groups"><span class="tab-label-regular">Groups</span>`, "the Groups tab keeps its label")
+	present(`data-tab="groups" href="/"><span class="tab-label-regular">Groups</span>`, "the Groups tab keeps its label")
 	present(`id="tab-groups"`, "the Groups tab section keeps its id")
 	present("function renderGroupsTab(", "the tab still renders via renderGroupsTab")
 

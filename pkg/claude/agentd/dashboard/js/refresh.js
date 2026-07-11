@@ -4,7 +4,7 @@
 // Extracted from dashboard.js in the Stage 2 module split. refresh() is
 // the 2-second snapshot poll that re-renders every tab.
 
-import { $, $$, esc, shortId, relTime, captureFocus, restoreFocus } from './helpers.js';
+import { $, $$, isModifiedClick, esc, shortId, relTime, captureFocus, restoreFocus } from './helpers.js';
 import { cycleSort } from './sort.js';
 import { hideableMemberCols, memberColHidden, setMemberColHidden, memberColDeviationCount } from './member-columns.js';
 import { dashPrefs } from './prefs.js';
@@ -655,13 +655,34 @@ export function bindListPagers() {
 }
 
 function bindTabs() {
-  $$('nav button').forEach(b => {
-    b.addEventListener('click', () => {
-      $$('nav button').forEach(x => x.classList.toggle('active', x === b));
+  $$('nav [data-tab]').forEach(b => {
+    b.addEventListener('click', e => {
+      // The tabs are real <a href> anchors: a modified/middle click is left to
+      // the browser, which opens the location in a new tab (this view untouched).
+      // A plain left-click (including a synthetic element.click() from the
+      // command palette or [/] cycling) switches in place, so preventDefault
+      // stops the anchor's own navigation. Vegas stays a <button> — no href, so
+      // preventDefault is a harmless no-op there.
+      if (isModifiedClick(e)) return;
+      e.preventDefault();
+      $$('nav [data-tab]').forEach(x => x.classList.toggle('active', x === b));
       $$('main section').forEach(s => {
         s.classList.toggle('active', s.id === 'tab-' + b.dataset.tab);
       });
     });
+    // <a> activates on Enter only, whereas the former <button> also switched on
+    // Space; restore that parity so a keyboard user's Space still selects the
+    // focused tab (preventDefault stops the page from scrolling instead). The
+    // synthetic click routes through the handler above. Vegas is a real
+    // <button> — Space fires its click natively — so skip it to avoid a
+    // double toggle.
+    if (b.tagName === 'A') {
+      b.addEventListener('keydown', e => {
+        if (e.key !== ' ' && e.key !== 'Spacebar') return;
+        e.preventDefault();
+        b.click();
+      });
+    }
   });
 }
 
@@ -672,7 +693,7 @@ function bindTabs() {
 // body.hide-costs) drop out. Checking visibility instead of naming those
 // two keeps the cycler correct if more conditional tabs appear later.
 function visibleTabButtons() {
-  return $$('nav button[data-tab]').filter(b => b.offsetParent !== null);
+  return $$('nav [data-tab]').filter(b => b.offsetParent !== null);
 }
 
 // cyclingTabs is true only while cycleTab() is dispatching its synthetic
@@ -780,7 +801,7 @@ function applyCostTabVisibility(data) {
   if (!visible) {
     const sec = document.getElementById('tab-costs');
     if (sec && sec.classList.contains('active')) {
-      $$('nav button').forEach(b => b.classList.toggle('active', b.dataset.tab === 'groups'));
+      $$('nav [data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === 'groups'));
       $$('main section').forEach(s => s.classList.toggle('active', s.id === 'tab-groups'));
     }
   }
@@ -802,7 +823,7 @@ function applyPluginsTabVisibility(data) {
   if (!visible) {
     const sec = document.getElementById('tab-plugins');
     if (sec && sec.classList.contains('active')) {
-      $$('nav button').forEach(b => b.classList.toggle('active', b.dataset.tab === 'groups'));
+      $$('nav [data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === 'groups'));
       $$('main section').forEach(s => s.classList.toggle('active', s.id === 'tab-groups'));
     }
   }
@@ -819,9 +840,23 @@ function bindAccessSubtabs() {
   const subnav = $('#tab-access .access-subnav');
   if (!subnav) return;
   subnav.addEventListener('click', e => {
-    const btn = e.target.closest('button[data-subtab]');
+    const btn = e.target.closest('[data-subtab]');
     if (!btn) return;
+    // Real <a href> subtab links: a modified/middle click opens /access/<sub>
+    // in a new tab; a plain click switches in place (preventDefault stops the
+    // anchor's navigation). See isModifiedClick / bindTabs.
+    if (isModifiedClick(e)) return;
+    e.preventDefault();
     activateAccessSubtab(btn.dataset.subtab);
+  });
+  // Space-activation parity for the anchor subtabs (see bindTabs): <a> switches
+  // on Enter only, so shim Space to keep the former <button> keyboard behaviour.
+  subnav.addEventListener('keydown', e => {
+    if (e.key !== ' ' && e.key !== 'Spacebar') return;
+    const a = e.target.closest('a[data-subtab]');
+    if (!a) return;
+    e.preventDefault();
+    a.click();
   });
 }
 
@@ -849,7 +884,7 @@ export function activateAccessSubtab(name) {
 // selects a sub-view. Used by the sudo-manage deep link so a click on an
 // agent's 🔓 badge lands on the Sudo sub-view pre-filtered to that agent.
 export function showAccessTab(subtab) {
-  $$('nav button').forEach(x => x.classList.toggle('active', x.dataset.tab === 'access'));
+  $$('nav [data-tab]').forEach(x => x.classList.toggle('active', x.dataset.tab === 'access'));
   $$('main section').forEach(s => s.classList.toggle('active', s.id === 'tab-access'));
   if (subtab) activateAccessSubtab(subtab);
 }

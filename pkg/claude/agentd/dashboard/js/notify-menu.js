@@ -152,7 +152,7 @@ export function bindNotifyMenu() {
   const cfgLink = $('#notify-pop-config');
   if (cfgLink) cfgLink.addEventListener('click', () => {
     setOpen(false);
-    const nav = $('nav button[data-tab="config"]');
+    const nav = $('nav [data-tab="config"]');
     if (nav) nav.click();
   });
 }

@@ -46,3 +46,43 @@ func TestDashboardNavHistory_Wired(t *testing.T) {
 		}
 	}
 }
+
+// TestDashboardNavLinks_Wired pins the "nav controls are real web links"
+// contract (TCL-364): the location-changing tabs/subtabs are <a href> anchors
+// (so hover previews the URL and Cmd/Ctrl/middle-click open a new tab), and
+// their click handlers bail on a modified/middle click so the browser's native
+// new-tab wins while a plain click stays in-SPA. String-searched over the
+// embedded source, like the other dashboard content tests, so a refactor that
+// reverts an anchor to a <button> or drops the guard fails here instead of only
+// in a browser.
+func TestDashboardNavLinks_Wired(t *testing.T) {
+	for _, needle := range []string{
+		// Top-level tabs are anchors whose href is the location's real path
+		// (toPath): Groups → "/", the rest → "/<tab>".
+		`<a class="active" data-tab="groups" href="/">`,
+		`<a data-tab="jobs" href="/jobs"`,
+		`<a data-tab="access" href="/access"`,
+		`<a data-tab="config" href="/config"`,
+		// Vegas is NOT URL-routed, so it stays a <button> (no href to hover).
+		`<button data-tab="vegas">`,
+		// Subtabs are anchors too, carrying their nested path (/access/sudo,
+		// /processes/runs) while keeping tablist ARIA.
+		`<a class="access-subtab" data-subtab="sudo" href="/access/sudo" role="tab"`,
+		`<a class="process-subtab" data-process-subtab="runs" href="/processes/runs" role="tab"`,
+		// The shared SPA-link guard: a modified/middle click is left to the
+		// browser (native new tab); a plain left-click / synthetic element.click()
+		// returns false and the handler preventDefaults + switches in place.
+		`function isModifiedClick(e)`,
+		`e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0`,
+		// The tab + subtab handlers actually apply the guard and cancel the
+		// anchor's own navigation on a plain click.
+		`if (isModifiedClick(e)) return;`,
+		// <a> tabs activate on Enter only; a Space shim restores the former
+		// <button> keyboard parity (Space selects the focused tab).
+		`e.key !== ' ' && e.key !== 'Spacebar'`,
+	} {
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard nav-links contract missing %q", needle)
+		}
+	}
+}

@@ -1310,7 +1310,7 @@ function focusConfigSearch() {
 
 function bindConfigTab() {
   // Lazy-load on the first activation of the Config tab.
-  const navBtn = $('nav button[data-tab="config"]');
+  const navBtn = $('nav [data-tab="config"]');
   if (navBtn) navBtn.addEventListener('click', () => {
     if (!configLoaded) loadConfigTab();
     // Focus the search on a deliberate switch — a mouse click, the command

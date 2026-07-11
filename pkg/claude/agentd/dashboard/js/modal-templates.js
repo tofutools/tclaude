@@ -1608,7 +1608,7 @@ async function submitReinforce() {
     }
     recordGroupInteraction(group);
     try { dashPrefs.setItem('tclaude.dash.group.' + group, '1'); } catch (_) {}
-    const gbtn = $$('nav button').find(b => b.dataset.tab === 'groups');
+    const gbtn = $$('nav [data-tab]').find(b => b.dataset.tab === 'groups');
     if (gbtn) gbtn.click();
     refresh();
   } catch (err) {
@@ -1684,7 +1684,7 @@ async function submitCopyGroup() {
     surfaceDeployPatternOutcome(resp);
     try { dashPrefs.setItem('tclaude.dash.group.' + finalGroup, '1'); } catch (_) {}
     recordGroupInteraction(finalGroup);
-    const gbtn = $$('nav button').find(b => b.dataset.tab === 'groups');
+    const gbtn = $$('nav [data-tab]').find(b => b.dataset.tab === 'groups');
     if (gbtn) gbtn.click();
     refresh();
   } catch (err) {
@@ -1774,7 +1774,7 @@ async function submitDeployCreate() {
     }
     try { dashPrefs.setItem('tclaude.dash.group.' + finalGroup, '1'); } catch (_) {}
     recordGroupInteraction(finalGroup);
-    const gbtn = $$('nav button').find(b => b.dataset.tab === 'groups');
+    const gbtn = $$('nav [data-tab]').find(b => b.dataset.tab === 'groups');
     if (gbtn) gbtn.click();
     refresh();
   } catch (err) {
