@@ -19,6 +19,12 @@ func TestResolveComposesScopesWithProvenance(t *testing.T) {
 	for _, path := range []string{a, b, c} {
 		require.NoError(t, os.Mkdir(path, 0o755))
 	}
+	canonicalA, err := filepath.EvalSymlinks(a)
+	require.NoError(t, err)
+	canonicalB, err := filepath.EvalSymlinks(b)
+	require.NoError(t, err)
+	canonicalC, err := filepath.EvalSymlinks(c)
+	require.NoError(t, err)
 
 	global := &Profile{
 		Name: " global ",
@@ -45,9 +51,9 @@ func TestResolveComposesScopesWithProvenance(t *testing.T) {
 	got, err := Resolve(Scopes{Global: global, Group: group, Explicit: explicit})
 	require.NoError(t, err)
 	assert.Equal(t, []FilesystemGrant{
-		{Path: a, Access: AccessWrite},
-		{Path: b, Access: AccessWrite},
-		{Path: c, Access: AccessRead},
+		{Path: canonicalA, Access: AccessWrite},
+		{Path: canonicalB, Access: AccessWrite},
+		{Path: canonicalC, Access: AccessRead},
 	}, got.Filesystem)
 	assert.Equal(t, []EnvironmentEntry{
 		{Name: "GLOBAL_ONLY", Value: "yes"},
@@ -62,11 +68,11 @@ func TestResolveComposesScopesWithProvenance(t *testing.T) {
 	assert.Equal(t, []ProfileSource{
 		{Scope: ScopeGlobal, Profile: "global"},
 		{Scope: ScopeGroup, Profile: "group"},
-	}, got.Provenance.Filesystem[a])
+	}, got.Provenance.Filesystem[canonicalA])
 	assert.Equal(t, []ProfileSource{
 		{Scope: ScopeGlobal, Profile: "global"},
 		{Scope: ScopeExplicit, Profile: "explicit"},
-	}, got.Provenance.Filesystem[b], "later read does not weaken an earlier write")
+	}, got.Provenance.Filesystem[canonicalB], "later read does not weaken an earlier write")
 	assert.Equal(t, ProfileSource{Scope: ScopeExplicit, Profile: "explicit"}, got.Provenance.Environment["SHARED"])
 	assert.Equal(t, ProfileSource{Scope: ScopeGlobal, Profile: "global"}, got.Provenance.Environment["GLOBAL_ONLY"])
 	assert.Equal(t, " global ", global.Name, "resolution does not mutate inputs")

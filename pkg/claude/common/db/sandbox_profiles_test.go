@@ -215,6 +215,10 @@ func TestResolveEffectiveSandboxSnapshotComposesAtomicValuesAndStableProvenance(
 	writeDir := filepath.Join(root, "write")
 	require.NoError(t, os.Mkdir(readDir, 0o755))
 	require.NoError(t, os.Mkdir(writeDir, 0o755))
+	canonicalReadDir, err := filepath.EvalSymlinks(readDir)
+	require.NoError(t, err)
+	canonicalWriteDir, err := filepath.EvalSymlinks(writeDir)
+	require.NoError(t, err)
 
 	globalID, err := CreateSandboxProfile(&SandboxProfile{Name: "global", Filesystem: []SandboxFilesystemGrant{
 		{Path: writeDir, Access: sandboxpolicy.AccessRead},
@@ -245,8 +249,8 @@ func TestResolveEffectiveSandboxSnapshotComposesAtomicValuesAndStableProvenance(
 	}, snapshot.Applied)
 	assert.Equal(t, []SandboxEnvironmentEntry{{Name: "TIER", Value: "explicit"}}, snapshot.Effective.Environment)
 	assert.Equal(t, []SandboxFilesystemGrant{
-		{Path: readDir, Access: sandboxpolicy.AccessRead},
-		{Path: writeDir, Access: sandboxpolicy.AccessWrite},
+		{Path: canonicalReadDir, Access: sandboxpolicy.AccessRead},
+		{Path: canonicalWriteDir, Access: sandboxpolicy.AccessWrite},
 	}, snapshot.Effective.Filesystem)
 
 	// The returned values remain authoritative after a registry edit.
