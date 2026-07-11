@@ -548,6 +548,64 @@ function graphBounds(nodes, marginX, marginY) {
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY, minX, minY, maxX, maxY };
 }
 
+// rerouteProcessLayout recomputes edge geometry against transient node
+// positions without repeating layering/crossing work. The editor uses this on
+// every drag frame; the model and the stable layout remain untouched until the
+// pointerup commit.
+export function rerouteProcessLayout(layout, positions, overrides = {}) {
+  const options = { ...PROCESS_LAYOUT_DEFAULTS, ...overrides };
+  const transient = positions != null;
+  const moved = positions instanceof Map ? positions : new Map(Object.entries(positions || {}));
+  const nodes = (layout?.nodes || []).map((node) => {
+    const position = moved.get(node.id);
+    return position ? { ...node, x: position.x, y: position.y } : { ...node };
+  });
+  const byID = new Map(nodes.map((node) => [node.id, node]));
+  const bounds = graphBounds(nodes, options.marginX, options.marginY);
+  const stableBounds = transient
+    ? graphBounds(layout?.nodes || [], options.marginX, options.marginY)
+    : bounds;
+  const movedNodes = nodes.filter((node) => moved.has(node.id));
+  const backBoundsChanged = transient && bounds.maxX !== stableBounds.maxX;
+  let forwardLane = 0;
+  let backLane = 0;
+  const edges = (layout?.edges || []).map((edge) => {
+    const lane = edge.back ? backLane++ : forwardLane++;
+    const from = byID.get(edge.from);
+    const to = byID.get(edge.to);
+    if (!from || !to) return { ...edge };
+    const incident = moved.has(edge.from) || moved.has(edge.to);
+    let obstacleInvalidated = false;
+    if (!incident && !edge.back && to.layer - from.layer > 1 && movedNodes.length) {
+      const gap = 14 + (lane % 3) * Math.max(4, options.edgeSep / 3);
+      const movedObstacles = movedNodes.map((node) => ({
+        left: node.x - node.width / 2 - gap,
+        right: node.x + node.width / 2 + gap,
+        top: node.y - node.height / 2 - gap,
+        bottom: node.y + node.height / 2 + gap,
+      }));
+      obstacleInvalidated = (edge.points || []).slice(1).some((point, index) => (
+        segmentBlocked(edge.points[index], point, movedObstacles)
+      ));
+    }
+    // Preserve stable routes unless their endpoint moved, a moved node now
+    // obstructs a long route, or the right-hand bound that owns return lanes
+    // changed. This keeps ordinary frames cheap without leaving stale paths.
+    if (transient && !incident && !obstacleInvalidated && !(edge.back && backBoundsChanged)) {
+      return { ...edge };
+    }
+    const route = edge.back
+      ? routeBack(edge, from, to, lane * options.edgeSep, bounds)
+      : routeForward(edge, from, to, lane, nodes, options.edgeSep);
+    return { ...edge, ...route, kind: edge.back ? 'back' : 'forward' };
+  });
+  const routedBounds = graphBounds([
+    ...nodes,
+    ...edges.flatMap((edge) => (edge.points || []).map((point) => ({ ...point, width: 0, height: 0 }))),
+  ], options.marginX, options.marginY);
+  return { ...layout, nodes, edges, bounds: routedBounds };
+}
+
 // layoutProcessGraph is the entire swappable layout boundary: plain graph in,
 // serialisable positions/routes out. The renderer depends on no intermediate
 // Sugiyama data structure, so a vendored dagre-class implementation can replace
@@ -562,21 +620,9 @@ export function layoutProcessGraph(graph, overrides = {}) {
   const layers = reduceCrossings(nodes, layered.layer, layered.edges, Math.max(0, finite(options.sweeps, 6)));
   const positions = assignCoordinates(nodes, layers, options);
   const laidNodes = nodes.map((node) => ({ ...node, ...positions.get(node.id) }));
-  const laidByID = new Map(laidNodes.map((n) => [n.id, n]));
-  const bounds = graphBounds(laidNodes, options.marginX, options.marginY);
-  let forwardLane = 0;
-  let backLane = 0;
-  const laidEdges = layered.edges.map((edge) => {
-    const from = laidByID.get(edge.from);
-    const to = laidByID.get(edge.to);
-    const route = edge.back
-      ? routeBack(edge, from, to, backLane++ * options.edgeSep, bounds)
-      : routeForward(edge, from, to, forwardLane++, laidNodes, options.edgeSep);
-    return { ...edge, ...route, kind: edge.back ? 'back' : 'forward' };
-  });
-  const routedBounds = graphBounds([
-    ...laidNodes,
-    ...laidEdges.flatMap((edge) => edge.points.map((point) => ({ ...point, width: 0, height: 0 }))),
-  ], options.marginX, options.marginY);
-  return { nodes: laidNodes, edges: laidEdges, layers: layers.map((ids) => [...ids]), bounds: routedBounds };
+  return rerouteProcessLayout({
+    nodes: laidNodes,
+    edges: layered.edges,
+    layers: layers.map((ids) => [...ids]),
+  }, null, options);
 }

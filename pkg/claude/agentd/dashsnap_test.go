@@ -60,10 +60,23 @@ func TestDashSnap(t *testing.T) {
 
 	// Millisecond granularity so two runs in the same second don't overwrite.
 	outDir := filepath.Join(dashSnapOutRoot(t), time.Now().Format("20060102-150405.000"))
+	states := dashSnapStates()
+	if filter := os.Getenv("TCLAUDE_DASHSNAP_FILTER"); filter != "" {
+		filtered := states[:0]
+		for _, state := range states {
+			if strings.Contains(state.Key, filter) {
+				filtered = append(filtered, state)
+			}
+		}
+		if len(filtered) == 0 {
+			t.Fatalf("TCLAUDE_DASHSNAP_FILTER %q matched no states", filter)
+		}
+		states = filtered
+	}
 	shots, err := dashsnap.Capture(dashsnap.Config{
 		BaseURL: srv.URL,
 		OutDir:  outDir,
-		States:  dashSnapStates(),
+		States:  states,
 	})
 	if err != nil {
 		t.Fatalf("dashsnap.Capture: %v", err)
@@ -454,6 +467,115 @@ func baseStates() []dashsnap.State {
 			Caption:  "A selected node: accent outline on the canvas and the inspector strip showing type, id, label input, and dark-themed action buttons.",
 			JS:       processEditorStateJS(`ed.setSelection({type: 'node', id: 'begin'});`),
 			SettleMS: 1100,
+		},
+		{
+			Key:     "process-editor-browser-node-click",
+			Title:   "Process editor — trusted node click + Delete",
+			Caption: "Real Chrome input: an inspector edit blurs on the first node click, the clicked node remains selected after pointer capture retargeting, and Delete confirms/removes that node.",
+			JS: processEditorStateJS(`ed.setSelection({type:'node',id:'begin'}); window.__browserEd=ed;
+  var input=ed.inspector.querySelector('.process-inspector-input'); input.value='';`),
+			Actions: []dashsnap.BrowserAction{
+				{Kind: "click", Selector: ".process-inspector-input"},
+				{Kind: "input", Selector: ".process-inspector-input", Text: "Renamed begin"},
+				{Kind: "click", Selector: `.process-node[data-node-id="ship"] .process-node-shape`},
+				{Kind: "eval", JS: `var ed=window.__browserEd;
+          if(ed.selection?.type!=='node'||ed.selection.id!=='ship') throw new Error('trusted node click did not select ship');
+          if(!ed.graph.nodeLayer.querySelector('[data-node-id="ship"]').classList.contains('is-selected')) throw new Error('ship highlight missing');
+          if(ed.model.node('begin').name!=='Renamed begin') throw new Error('inspector blur change did not commit');`},
+				{Kind: "key", Key: "Delete"},
+				{Kind: "eval", JS: `if(!document.querySelector('.process-editor-modal')) throw new Error('Delete did not open node confirmation');`},
+				{Kind: "click", Selector: ".process-editor-modal .confirm-danger"},
+				{Kind: "eval", JS: `if(window.__browserEd.model.node('ship')) throw new Error('confirmed node Delete did not remove ship');`},
+			},
+			SettleMS: 300,
+		},
+		{
+			Key:     "process-editor-browser-edge-click",
+			Title:   "Process editor — trusted edge click + Delete",
+			Caption: "Real Chrome input: pointer capture still resolves the clicked connector, opens its edge inspector, and confirmed Delete removes exactly that edge.",
+			JS:      processEditorStateJS(`window.__browserEd=ed; ed.setSelection(null);`),
+			Actions: []dashsnap.BrowserAction{
+				{Kind: "click", Selector: ".process-edge .process-edge-hit"},
+				{Kind: "eval", JS: `var ed=window.__browserEd;
+          if(ed.selection?.type!=='edge') throw new Error('trusted edge click did not select an edge');
+          if(!ed.inspector.querySelector('.process-inspector-kind')?.textContent.includes('edge')) throw new Error('edge inspector missing');
+          window.__edgeKey=[ed.selection.from,ed.selection.outcome];`},
+				{Kind: "key", Key: "Delete"},
+				{Kind: "eval", JS: `if(!document.querySelector('.process-editor-modal')) throw new Error('Delete did not open edge confirmation');`},
+				{Kind: "click", Selector: ".process-editor-modal .confirm-danger"},
+				{Kind: "eval", JS: `var ed=window.__browserEd,k=window.__edgeKey;
+          if(ed.model.findEdge(k[0],k[1])) throw new Error('confirmed edge Delete did not remove clicked edge');`},
+			},
+			SettleMS: 300,
+		},
+		{
+			Key:     "process-editor-browser-modifier-click",
+			Title:   "Process editor — trusted modifier multi-select",
+			Caption: "Real Chrome input: Ctrl-click toggles a node and connector into the same selection while marquee remains node-only.",
+			JS:      processEditorStateJS(`window.__browserEd=ed; ed.setSelection(null);`),
+			Actions: []dashsnap.BrowserAction{
+				{Kind: "click", Selector: `.process-node[data-node-id="begin"] .process-node-shape`},
+				{Kind: "key-down", Key: "Control"},
+				{Kind: "click", Selector: ".process-edge .process-edge-hit"},
+				{Kind: "key-up", Key: "Control"},
+				{Kind: "eval", JS: `var ed=window.__browserEd,items=ed.selection?.items||[];
+          if(ed.selection?.type!=='multi'||items.length!==2) throw new Error('trusted modifier click did not create two-item selection');
+          if(ed.graph.root.querySelectorAll('.is-selected').length!==2) throw new Error('multi-selection highlights out of sync');`},
+			},
+			SettleMS: 300,
+		},
+		{
+			Key:     "process-editor-browser-drag-live",
+			Title:   "Process editor — live multi-drag connectors",
+			Caption: "Real Chrome drag held mid-frame: both selected nodes move, their internal connector/label/arrow geometry follows, and the model remains unmodified until release.",
+			JS: processEditorStateJS(`window.__browserEd=ed; var items=ed.graph.layout.nodes.map(function(n){return {type:'node',id:n.id};}); ed.setSelection({type:'multi',items:items});
+  window.__dragBefore={path:ed.graph.edgeLayer.querySelector('.process-edge-path').getAttribute('d'),rev:ed.model.rev,undo:ed.model.undoStack.length};`),
+			Actions: []dashsnap.BrowserAction{
+				{Kind: "mouse-down", Selector: `.process-node[data-node-id="begin"] .process-node-shape`},
+				{Kind: "move-by", DX: 120, DY: 65, Steps: 6},
+				{Kind: "eval", JS: `var ed=window.__browserEd,b=window.__dragBefore;
+          if(!ed.graph.transientLayout) throw new Error('drag did not create transient edge layout');
+          if(ed.graph.edgeLayer.querySelector('.process-edge-path').getAttribute('d')===b.path) throw new Error('connector stayed frozen mid-drag');
+          if(ed.model.rev!==b.rev||ed.model.undoStack.length!==b.undo) throw new Error('drag frame mutated model/undo');`},
+			},
+			SettleMS: 100,
+		},
+		{
+			Key:     "process-editor-browser-drag-commit",
+			Title:   "Process editor — atomic drag commit",
+			Caption: "Real Chrome drag release commits the selected nodes once, clears transient routing, and consumes exactly one undo slot.",
+			JS: processEditorStateJS(`window.__browserEd=ed; var items=ed.graph.layout.nodes.map(function(n){return {type:'node',id:n.id};}); ed.setSelection({type:'multi',items:items});
+  window.__dragBefore={rev:ed.model.rev,undo:ed.model.undoStack.length};`),
+			Actions: []dashsnap.BrowserAction{
+				{Kind: "mouse-down", Selector: `.process-node[data-node-id="begin"] .process-node-shape`},
+				{Kind: "move-by", DX: 100, DY: 55, Steps: 5},
+				{Kind: "eval", JS: `var ed=window.__browserEd,b=window.__dragBefore;if(ed.model.rev!==b.rev||ed.model.undoStack.length!==b.undo) throw new Error('pre-release model mutation');`},
+				{Kind: "mouse-up"},
+				{Kind: "eval", JS: `var ed=window.__browserEd,b=window.__dragBefore;
+          if(ed.model.undoStack.length!==b.undo+1) throw new Error('drag release was not one atomic undo step');
+          if(ed.graph.transientLayout) throw new Error('transient routing survived release');`},
+			},
+			SettleMS: 300,
+		},
+		{
+			Key:     "process-editor-browser-drag-cancel",
+			Title:   "Process editor — cancelled drag restore",
+			Caption: "A browser drag followed by pointercancel restores node and connector geometry completely and leaves model revision/undo untouched.",
+			JS: processEditorStateJS(`window.__browserEd=ed; window.__dragBefore={
+    path:ed.graph.edgeLayer.querySelector('.process-edge-path').getAttribute('d'),
+    transform:ed.graph.nodeLayer.querySelector('[data-node-id="begin"]').getAttribute('transform'),
+    rev:ed.model.rev,undo:ed.model.undoStack.length};`),
+			Actions: []dashsnap.BrowserAction{
+				{Kind: "mouse-down", Selector: `.process-node[data-node-id="begin"] .process-node-shape`},
+				{Kind: "move-by", DX: 90, DY: 50, Steps: 5},
+				{Kind: "eval", JS: `var ed=window.__browserEd,id=ed.graph.pointer?.id;if(id==null) throw new Error('drag pointer missing before cancel');
+          ed.graph.svg.dispatchEvent(new PointerEvent('pointercancel',{pointerId:id,bubbles:true}));`},
+				{Kind: "eval", JS: `var ed=window.__browserEd,b=window.__dragBefore;
+          if(ed.graph.edgeLayer.querySelector('.process-edge-path').getAttribute('d')!==b.path) throw new Error('cancel did not restore connector');
+          if(ed.graph.nodeLayer.querySelector('[data-node-id="begin"]').getAttribute('transform')!==b.transform) throw new Error('cancel did not restore node');
+          if(ed.model.rev!==b.rev||ed.model.undoStack.length!==b.undo) throw new Error('cancel mutated model/undo');`},
+			},
+			SettleMS: 300,
 		},
 		{
 			Key:     "process-editor-marquee-multi",
@@ -969,7 +1091,7 @@ func nodeDialogStateJS(extraJS string) string {
   ed.model.addEdge('escalate', 'cancel', 'ship');
   ed.refresh({fit: true});
   `
-	return "return " + processEditorStateJS(seed+extraJS)
+	return processEditorStateJS(seed + extraJS)
 }
 
 // nodeDialogSelfCheck asserts the dialog is open with the work performer's
@@ -994,7 +1116,7 @@ const nodeDialogScrollToWork = `
 // editor to mount its canvas, then runs extraJS with `ed` bound to the editor
 // instance (its dashsnap/test handle) to drive selection/dirty states.
 func processEditorStateJS(extraJS string) string {
-	return fmt.Sprintf(`(async function(){
+	return fmt.Sprintf(`return (async function(){
   var nav = document.querySelector('nav button[data-tab="processes"]');
   if (!nav || nav.offsetParent === null) throw new Error('Processes nav is not visible');
   nav.click();

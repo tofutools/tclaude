@@ -3,7 +3,7 @@
 // behind hooks; this module never fetches, validates, mutates templates, or
 // computes run state.
 
-import { layoutProcessGraph } from './process-layout.js';
+import { layoutProcessGraph, rerouteProcessLayout } from './process-layout.js';
 import {
   makeSelection, nodesInMarquee, normalizeMarquee, selectionContains, selectionItems,
 } from './process-selection.js';
@@ -255,6 +255,9 @@ export class ProcessGraph {
     this.view = { x: 0, y: 0, k: 1 };
     this.selected = null;
     this.pointer = null;
+    this.pendingClickTarget = null;
+    this.lastClickTarget = null;
+    this.transientLayout = null;
     this.dragMoved = false;
     this.suppressClick = false;
     this.keyboardPort = null;
@@ -315,10 +318,9 @@ export class ProcessGraph {
     const focused = this.captureFocus();
     const title = this.svg.querySelector('title');
     title.textContent = this.options.ariaLabel || `Process graph with ${this.layout.nodes.length} nodes`;
-    this.edgeLayer.replaceChildren();
+    this.renderEdges(this.layout.edges);
     this.nodeLayer.replaceChildren();
     this.portLayer.replaceChildren();
-    for (const edge of this.layout.edges) this.edgeLayer.append(this.renderEdge(edge));
     for (const node of this.layout.nodes) {
       this.nodeLayer.append(this.renderNode(node));
       this.portLayer.append(this.renderPortNode(node));
@@ -327,6 +329,10 @@ export class ProcessGraph {
     this.applySelection();
     this.applyKeyboardPort();
     this.restoreFocus(focused);
+  }
+
+  renderEdges(edges) {
+    this.edgeLayer.replaceChildren(...(edges || []).map((edge) => this.renderEdge(edge)));
   }
 
   renderEdge(edge) {
@@ -463,6 +469,7 @@ export class ProcessGraph {
     const mode = directPan ? 'pan'
       : target.port ? 'port'
         : target.node ? 'node'
+          : target.edge ? 'edge'
           : this.options.marqueeSelect ? 'marquee' : 'pan';
     const nodeID = target.node?.dataset.nodeId;
     const selectedNodes = selectionItems(this.selected)
@@ -473,7 +480,7 @@ export class ProcessGraph {
     this.pointer = {
       id: event.pointerId, mode, startClientX: event.clientX, startClientY: event.clientY,
       startPoint: point, startView: { ...this.view }, nodeID, nodeIDs,
-      port: target.port?.dataset.port,
+      edgeID: target.edge?.dataset.edgeId, port: target.port?.dataset.port,
     };
     this.dragMoved = false;
     this.svg.setPointerCapture?.(event.pointerId);
@@ -514,6 +521,10 @@ export class ProcessGraph {
         delta: { x: point.x - this.pointer.startPoint.x, y: point.y - this.pointer.startPoint.y },
         event,
       });
+      this.renderTransientEdges(this.pointer.nodeIDs, {
+        x: point.x - this.pointer.startPoint.x,
+        y: point.y - this.pointer.startPoint.y,
+      });
     } else if (this.pointer.mode === 'port') {
       hook(this.options, 'onPortDragMove')({ nodeId: this.pointer.nodeID, port: this.pointer.port, point, event });
     } else if (this.pointer.mode === 'marquee') {
@@ -545,6 +556,7 @@ export class ProcessGraph {
       // Position ownership stays outside the core. Snap the transient drag back
       // unless the hook's caller supplied a new pinned graph through setGraph.
       this.snapNodesHome(pointer.nodeIDs || [pointer.nodeID]);
+      this.restoreTransientEdges();
     } else if (pointer.mode === 'marquee') {
       this.marquee?.remove();
       this.marquee = null;
@@ -557,6 +569,10 @@ export class ProcessGraph {
       }
     }
     this.suppressClick = this.dragMoved;
+    this.pendingClickTarget = this.dragMoved ? null : {
+      mode: pointer.mode, nodeID: pointer.nodeID || null,
+      edgeID: pointer.edgeID || null, port: pointer.port || null,
+    };
     this.svg.releasePointerCapture?.(event.pointerId);
     this.pointer = null;
     // The synthetic click follows pointerup in the same task. Clear on the next
@@ -564,6 +580,7 @@ export class ProcessGraph {
     setTimeout(() => {
       this.dragMoved = false;
       this.suppressClick = false;
+      this.pendingClickTarget = null;
     }, 0);
   }
 
@@ -585,11 +602,13 @@ export class ProcessGraph {
       });
     } else if (pointer.mode === 'node') {
       this.snapNodesHome(pointer.nodeIDs || [pointer.nodeID]);
+      this.restoreTransientEdges();
     } else if (pointer.mode === 'marquee') {
       this.marquee?.remove();
       this.marquee = null;
     }
     this.suppressClick = this.dragMoved;
+    this.pendingClickTarget = null;
     setTimeout(() => {
       this.dragMoved = false;
       this.suppressClick = false;
@@ -611,16 +630,48 @@ export class ProcessGraph {
     for (const nodeID of nodeIDs || []) this.snapNodeHome(nodeID);
   }
 
+  renderTransientEdges(nodeIDs, delta) {
+    const positions = new Map();
+    for (const nodeID of nodeIDs || []) {
+      const laid = this.layout.nodes.find((node) => node.id === nodeID);
+      if (laid) positions.set(nodeID, { x: laid.x + delta.x, y: laid.y + delta.y });
+    }
+    this.transientLayout = rerouteProcessLayout(this.layout, positions, this.options.layout || {});
+    this.renderEdges(this.transientLayout.edges);
+    this.applySelection();
+  }
+
+  restoreTransientEdges() {
+    if (!this.transientLayout) return;
+    this.transientLayout = null;
+    this.renderEdges(this.layout.edges);
+    this.applySelection();
+  }
+
   onClick(event) {
     if (this.dragMoved || this.suppressClick) return;
-    const target = this.eventTarget(event);
+    const pending = this.pendingClickTarget;
+    this.pendingClickTarget = null;
+    const target = pending ? {
+      nodeID: pending.nodeID, edgeID: pending.edgeID, port: pending.port,
+    } : (() => {
+      const hit = this.eventTarget(event);
+      return {
+        nodeID: hit.node?.dataset.nodeId || null,
+        edgeID: hit.edge?.dataset.edgeId || null,
+        port: hit.port?.dataset.port || null,
+      };
+    })();
+    this.lastClickTarget = target;
     if (target.port) return;
-    if (target.node) {
-      const node = this.layout.nodes.find((candidate) => candidate.id === target.node.dataset.nodeId);
+    if (target.nodeID) {
+      const node = this.layout.nodes.find((candidate) => candidate.id === target.nodeID);
+      if (!node) return;
       this.select({ type: 'node', id: node.id });
       hook(this.options, 'onNodeClick')({ node, event });
-    } else if (target.edge) {
-      const edge = this.layout.edges.find((candidate) => candidate.id === target.edge.dataset.edgeId);
+    } else if (target.edgeID) {
+      const edge = this.layout.edges.find((candidate) => candidate.id === target.edgeID);
+      if (!edge) return;
       this.select({ type: 'edge', id: edge.id });
       hook(this.options, 'onEdgeClick')({ edge, event });
     } else {
@@ -630,9 +681,11 @@ export class ProcessGraph {
   }
 
   onDoubleClick(event) {
-    const target = this.eventTarget(event);
-    if (!target.node) return;
-    const node = this.layout.nodes.find((candidate) => candidate.id === target.node.dataset.nodeId);
+    const hit = this.eventTarget(event);
+    const nodeID = hit.node?.dataset.nodeId || this.lastClickTarget?.nodeID;
+    if (!nodeID) return;
+    const node = this.layout.nodes.find((candidate) => candidate.id === nodeID);
+    if (!node) return;
     hook(this.options, 'onNodeDblClick')({ node, event });
   }
 
