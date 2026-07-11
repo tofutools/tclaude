@@ -84,7 +84,8 @@ func TestDashboardHTML_SpawnProfilesUI(t *testing.T) {
 	// restoring a clone strands the cached original, which the next dock toggle
 	// inserts beside the clone and visibly duplicates the selector.
 	present(`select.replaceWith(chipEl)`, "picker teardown preserves the chip identity used by the dock")
-	present(`refreshDashDefaultProfile()`, "open dashboards reconcile CLI changes during refresh")
+	present(`syncDashDefaultProfile(data.spawn_profile_default)`, "snapshot reconciles CLI changes without a separate poll request")
+	absent(`function refreshDashDefaultProfile(`, "global default no longer has a separate poll fetch")
 	present(`body.trust_dir = $('#agent-spawn-trust-dir').checked`, "profile false trust intent stays explicit on spawn")
 	present(`if (p.trust_dir != null)`, "sparse profiles preserve trust-dir fallthrough")
 	present(`harness === 'codex' && spawnTrustDirSpecified`, "untouched trust-dir stays omitted")

@@ -168,17 +168,12 @@ async function setDashDefaultProfile(name) {
   dashPrefs.syncItem(DASH_DEFAULT_PROFILE_KEY, name);
 }
 
-// refreshDashDefaultProfile reconciles an already-open dashboard after the CLI
-// changes the global value. The 2s dashboard refresh loop calls this alongside
-// its snapshot fetch; failures are best-effort and leave the last known cache.
-async function refreshDashDefaultProfile() {
-  try {
-    const r = await fetch('/api/spawn-profile-default', { credentials: 'same-origin' });
-    if (!r.ok) return;
-    const body = await r.json();
-    const name = (body && body.name) || '';
-    dashPrefs.syncItem(DASH_DEFAULT_PROFILE_KEY, name);
-  } catch (_) {}
+// syncDashDefaultProfile reconciles dashPrefs' synchronous UI cache from the
+// regular dashboard snapshot. The server includes this operational default in
+// every poll, so CLI changes appear in an already-open dashboard without a
+// separate GET /api/spawn-profile-default request.
+function syncDashDefaultProfile(name) {
+  dashPrefs.syncItem(DASH_DEFAULT_PROFILE_KEY, name || '');
 }
 
 // profileSummary builds a compact one-line summary of a profile's set fields
@@ -220,6 +215,6 @@ export {
   loadProfiles, cachedProfiles, invalidateProfiles, getProfile,
   createProfile, updateProfile, deleteProfile,
   exportProfiles, inspectProfileImport, importProfiles,
-  getDashDefaultProfile, setDashDefaultProfile, refreshDashDefaultProfile,
+  getDashDefaultProfile, setDashDefaultProfile, syncDashDefaultProfile,
   DASH_DEFAULT_PROFILE_KEY, profileSummary,
 };

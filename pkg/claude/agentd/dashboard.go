@@ -695,7 +695,12 @@ type snapshotPayload struct {
 	// tick. Both are the same wire shapes their /api/{spawn-profiles,roles}
 	// endpoints serve. Empty slices (not nil) so JS .map() is safe.
 	Profiles []spawnProfileJSON `json:"profiles"`
-	Roles    []roleJSON         `json:"roles"`
+	// SpawnProfileDefault is the global spawn-profile assignment used after a
+	// group's own default. It rides the snapshot with the profile registry and
+	// sandbox-profile assignments so open dashboards observe CLI changes without
+	// a separate request on every two-second poll.
+	SpawnProfileDefault string     `json:"spawn_profile_default"`
+	Roles               []roleJSON `json:"roles"`
 	// Messages are the human-facing notifications agents have sent via
 	// `tclaude agent notify-human`, newest first — the Messages tab.
 	// MessagesUnread is the count of unread ones, driving the tab badge.
@@ -1989,6 +1994,9 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.CostTabWhatIf = !hasRealCost && showOnSub
 	out.Templates = collectTemplatesSnapshot()
 	out.Profiles = collectProfilesSnapshot()
+	if profile := globalDefaultProfile(); profile != nil {
+		out.SpawnProfileDefault = profile.Name
+	}
 	out.Roles = collectRolesSnapshot()
 	out.Messages, out.MessagesUnread = buildHumanMessagesSnapshot()
 	out.AccessRequests = approvals.dashboardSnapshot()
