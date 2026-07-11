@@ -7,6 +7,8 @@ const IMAGE_TYPES = new Map([
   ['image/webp', 'webp'],
 ]);
 const PASTE_REPEAT_MS = 1000;
+const TMUX_COPY_TIMEOUT_MS = 2000;
+const TMUX_DRAG_MIN_DISTANCE_SQ = 9;
 const SELECT_HINT = 'Option-drag to select on macOS; Shift-drag on Linux/Windows';
 // Keep terminal-originated clipboard writes useful for large selections without
 // allowing an unbounded OSC 52 payload to turn into a second large allocation
@@ -55,6 +57,58 @@ export function decodeOSC52(payload) {
   } catch (_) {
     return null;
   }
+}
+
+// Start a ClipboardItem write while the browser is still handling the mouseup
+// gesture, but defer the actual text until tmux's OSC 52 response arrives over
+// the PTY/WebSocket round trip. WebKit in particular requires the write call to
+// happen inside the user gesture; a later writeText call may be denied even
+// though the terminal output was caused by that gesture.
+//
+// Dependencies are injectable so the gesture/async split is covered by the
+// Node suite without pretending Node has a system clipboard.
+export function beginGestureClipboardWrite({
+  clipboard = globalThis.navigator && globalThis.navigator.clipboard,
+  ClipboardItemCtor = globalThis.ClipboardItem,
+  BlobCtor = globalThis.Blob,
+} = {}) {
+  if (!clipboard || typeof clipboard.write !== 'function' ||
+      typeof ClipboardItemCtor !== 'function' || typeof BlobCtor !== 'function') return null;
+
+  let resolveContent;
+  let rejectContent;
+  let contentSettled = false;
+  const content = new Promise((resolve, reject) => {
+    resolveContent = resolve;
+    rejectContent = reject;
+  });
+  let writeResult;
+  try {
+    const item = new ClipboardItemCtor({ 'text/plain': content });
+    // This invocation, not eventual resolution of content, is the permission-
+    // sensitive operation and therefore must remain synchronous with mouseup.
+    writeResult = clipboard.write([item]);
+  } catch (_) {
+    // Do not strand a representation promise if construction/write is absent
+    // or throws synchronously. The OSC handler will use writeText/legacy copy.
+    contentSettled = true;
+    resolveContent(new BlobCtor([], { type: 'text/plain' }));
+    return null;
+  }
+
+  return {
+    result: Promise.resolve(writeResult).then(() => true, () => false),
+    resolve(text) {
+      if (contentSettled) return;
+      contentSettled = true;
+      resolveContent(new BlobCtor([text], { type: 'text/plain' }));
+    },
+    cancel() {
+      if (contentSettled) return;
+      contentSettled = true;
+      rejectContent(new Error('tmux clipboard response canceled'));
+    },
+  };
 }
 
 function safeHTTPURL(raw) {
@@ -139,8 +193,11 @@ export function attachTerminalInteractions({ term, host, copyButton, setStatus, 
   let generation = 0;
   let lastPasteAt = 0;
   let lastPasteKey = '';
+  let tmuxDrag = null;
+  let pendingTmuxCopy = null;
   const disposables = [];
   const oldTitle = host.title;
+  const ownerDocument = host.ownerDocument || document;
   host.title = `${SELECT_HINT}. Ctrl/Cmd+Shift+C copies.`;
 
   function flash(message, delay = 2200) {
@@ -161,6 +218,64 @@ export function attachTerminalInteractions({ term, host, copyButton, setStatus, 
       ? 'Copy selected terminal text (Ctrl/Cmd+Shift+C)'
       : SELECT_HINT;
   }
+
+  function cancelPendingTmuxCopy() {
+    if (!pendingTmuxCopy) return;
+    if (pendingTmuxCopy.timer) clearTimeout(pendingTmuxCopy.timer);
+    pendingTmuxCopy.deferred.cancel();
+    pendingTmuxCopy = null;
+  }
+
+  function armTmuxClipboardFromGesture() {
+    cancelPendingTmuxCopy();
+    const deferred = beginGestureClipboardWrite();
+    if (!deferred) return;
+    const token = { deferred, timer: null };
+    token.timer = setTimeout(() => {
+      if (pendingTmuxCopy !== token) return;
+      pendingTmuxCopy = null;
+      deferred.cancel();
+      // A drag can belong to the running TUI rather than tmux copy-mode. A
+      // missing OSC 52 is therefore a quiet no-op, not an error to flash.
+    }, TMUX_COPY_TIMEOUT_MS);
+    pendingTmuxCopy = token;
+    void deferred.result.then((ok) => {
+      if (pendingTmuxCopy !== token) return;
+      if (token.timer) clearTimeout(token.timer);
+      pendingTmuxCopy = null;
+      flash(ok ? 'copied' : 'tmux copied; browser clipboard permission denied');
+    });
+  }
+
+  const onTmuxMouseDown = (event) => {
+    if (event.button !== 0 || event.altKey || event.shiftKey || event.ctrlKey || event.metaKey) {
+      tmuxDrag = null;
+      return;
+    }
+    tmuxDrag = { x: event.clientX, y: event.clientY, moved: false };
+  };
+  const onTmuxMouseMove = (event) => {
+    if (!tmuxDrag || tmuxDrag.moved) return;
+    const dx = event.clientX - tmuxDrag.x;
+    const dy = event.clientY - tmuxDrag.y;
+    if (dx * dx + dy * dy >= TMUX_DRAG_MIN_DISTANCE_SQ) tmuxDrag.moved = true;
+  };
+  const onTmuxMouseUp = (event) => {
+    const drag = tmuxDrag;
+    tmuxDrag = null;
+    // tmux's default mouse table also copies on double/triple click, even
+    // though those gestures do not cross the drag-distance threshold.
+    const multiClickCopy = Number(event.detail) >= 2;
+    if (!drag || (!drag.moved && !multiClickCopy) || event.button !== 0 ||
+        event.altKey || event.shiftKey || event.ctrlKey || event.metaKey) return;
+    // This document-capture listener runs before xterm forwards mouseup to
+    // tmux. Arm the permission-sensitive write now; OSC 52 resolves it later.
+    armTmuxClipboardFromGesture();
+  };
+
+  host.addEventListener('mousedown', onTmuxMouseDown, true);
+  ownerDocument.addEventListener('mousemove', onTmuxMouseMove, true);
+  ownerDocument.addEventListener('mouseup', onTmuxMouseUp, true);
 
   async function copySelection() {
     const selected = term.getSelection();
@@ -204,9 +319,19 @@ export function attachTerminalInteractions({ term, host, copyButton, setStatus, 
   disposables.push(term.parser.registerOscHandler(52, (payload) => {
     const text = decodeOSC52(payload);
     if (text !== null) {
-      void writeClipboard(text).then((ok) => {
-        flash(ok ? 'copied' : 'tmux copied; browser clipboard permission denied');
-      });
+      if (pendingTmuxCopy) {
+        if (pendingTmuxCopy.timer) {
+          clearTimeout(pendingTmuxCopy.timer);
+          pendingTmuxCopy.timer = null;
+        }
+        pendingTmuxCopy.deferred.resolve(text);
+      } else {
+        // Keyboard-driven tmux copies and browsers without promise-backed
+        // ClipboardItem support cannot be pre-armed by a mouse gesture.
+        void writeClipboard(text).then((ok) => {
+          flash(ok ? 'copied' : 'tmux copied; browser clipboard permission denied');
+        });
+      }
     }
     return true;
   }));
@@ -276,6 +401,8 @@ export function attachTerminalInteractions({ term, host, copyButton, setStatus, 
 
   function invalidate() {
     generation++;
+    tmuxDrag = null;
+    cancelPendingTmuxCopy();
     if (uploadController) uploadController.abort();
     uploadController = null;
     uploadPending = false;
@@ -288,6 +415,9 @@ export function attachTerminalInteractions({ term, host, copyButton, setStatus, 
     dispose() {
       invalidate();
       if (statusTimer) clearTimeout(statusTimer);
+      host.removeEventListener('mousedown', onTmuxMouseDown, true);
+      ownerDocument.removeEventListener('mousemove', onTmuxMouseMove, true);
+      ownerDocument.removeEventListener('mouseup', onTmuxMouseUp, true);
       host.removeEventListener('paste', onPaste, true);
       if (copyButton) copyButton.removeEventListener('click', copySelection);
       for (const d of disposables) { try { d.dispose(); } catch (_) { /* already disposed */ } }

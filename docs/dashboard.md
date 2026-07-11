@@ -560,7 +560,9 @@ windows. An unmodified drag handled by tmux copies the selected text into its
 paste buffer and, when the browser grants clipboard access, into the browser
 clipboard using tmux's standard OSC 52 sequence. This follows tmux's
 `set-clipboard` setting (`external` by default), so explicitly setting it to
-`off` disables browser propagation too.
+`off` disables browser propagation too. The clipboard request begins inside
+the drag's mouse event and waits for tmux's response, preserving the user
+gesture required by browsers such as Safari.
 To make a browser-owned selection instead, use **Option-drag on macOS** or
 **Shift-drag on Linux/Windows**, then press **Ctrl/⌘-Shift-C** or click
 **Copy**. Clicking Copy without a browser selection shows this modifier hint.
