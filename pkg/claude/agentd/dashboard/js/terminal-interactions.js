@@ -66,7 +66,7 @@ function clipboardImages(e) {
   return { files, unsupported };
 }
 
-async function uploadImages(files) {
+async function uploadImages(files, signal) {
   const fd = new FormData();
   const stamp = Date.now();
   files.forEach((file, i) => {
@@ -74,7 +74,7 @@ async function uploadImages(files) {
     fd.append('file', file, `pasted-image-${stamp}-${i + 1}.${ext}`);
   });
   const res = await fetch('/api/terminal-attachments', {
-    method: 'POST', credentials: 'same-origin', body: fd,
+    method: 'POST', credentials: 'same-origin', body: fd, signal,
   });
   if (!res.ok) throw new Error((await res.text().catch(() => '')) || `HTTP ${res.status}`);
   const payload = await res.json();
@@ -86,6 +86,8 @@ async function uploadImages(files) {
 export function attachTerminalInteractions({ term, host, copyButton, setStatus, baseStatus = () => '' }) {
   let statusTimer = null;
   let uploadPending = false;
+  let uploadController = null;
+  let generation = 0;
   let lastPasteAt = 0;
   let lastPasteKey = '';
   const disposables = [];
@@ -166,26 +168,48 @@ export function attachTerminalInteractions({ term, host, copyButton, setStatus, 
     lastPasteKey = key;
     lastPasteAt = now;
     uploadPending = true;
+    const myGeneration = generation;
+    const controller = new AbortController();
+    uploadController = controller;
     flash(files.length === 1 ? 'uploading image…' : `uploading ${files.length} images…`, 30000);
     try {
-      const paths = await uploadImages(files);
+      const paths = await uploadImages(files, controller.signal);
+      // The fallback modal reuses one xterm across sessions. close/reopen calls
+      // invalidate(), so a slow upload from the old session can never paste its
+      // path through the replacement session's WebSocket.
+      if (controller.signal.aborted || generation !== myGeneration) return;
       if (!paths.length) throw new Error('upload returned no file path');
       term.paste(paths.join(' ') + ' ');
       flash(paths.length === 1 ? 'image pasted' : `${paths.length} images pasted`);
     } catch (error) {
+      if (controller.signal.aborted || error && error.name === 'AbortError') return;
       const detail = String(error && error.message || error).replace(/\s+/g, ' ').slice(0, 120);
       flash(`image paste failed: ${detail}`, 5000);
     } finally {
-      uploadPending = false;
-      term.focus();
+      if (uploadController === controller) {
+        uploadController = null;
+        uploadPending = false;
+        if (generation === myGeneration) term.focus();
+      }
     }
   };
   // Capture on the host so image data is claimed before xterm's textarea paste
   // listener; text-only events are untouched and continue into xterm normally.
   host.addEventListener('paste', onPaste, true);
 
+  function invalidate() {
+    generation++;
+    if (uploadController) uploadController.abort();
+    uploadController = null;
+    uploadPending = false;
+    lastPasteAt = 0;
+    lastPasteKey = '';
+  }
+
   return {
+    invalidate,
     dispose() {
+      invalidate();
       if (statusTimer) clearTimeout(statusTimer);
       host.removeEventListener('paste', onPaste, true);
       if (copyButton) copyButton.removeEventListener('click', copySelection);

@@ -36,6 +36,8 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 		"host.addEventListener('paste', onPaste, true)",
 		"fetch('/api/terminal-attachments'",
 		"term.paste(paths.join(' ') + ' ')",
+		"if (controller.signal.aborted || generation !== myGeneration) return",
+		"uploadController.abort()",
 	} {
 		if !strings.Contains(interactions, needle) {
 			t.Errorf("terminal-interactions.js missing %q", needle)
@@ -56,6 +58,14 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 	}
 	if !strings.Contains(dashboardAssets, `id="term-session-copy"`) {
 		t.Error("fallback terminal modal has no visible Copy action")
+	}
+	for _, needle := range []string{
+		"if (interactions) interactions.invalidate();",
+		"interactions = attachTerminalInteractions({",
+	} {
+		if !strings.Contains(modal, needle) {
+			t.Errorf("modal-term.js missing upload-session race guard %q", needle)
+		}
 	}
 }
 
