@@ -1471,9 +1471,8 @@ func TestDashboardHTML_WizardTemplatesManage(t *testing.T) {
 	must(`<span class="tpl-word-regular">+ new template</span><span class="tpl-word-wizard">+ chalk a new circle</span>`, "the create button ships both voices")
 	must(`<span class="tpl-word-regular">⤓ from a group</span><span class="tpl-word-wizard">⤓ trace a party</span>`, "the from-a-group button ships both voices")
 
-	// The Groups-cog menu entries swap too (like ⧉ profiles… → ⧉ patterns…).
+	// The Groups-cog management entry swaps too (like ⧉ profiles… → ⧉ patterns…).
 	must(`<span class="tpl-word-regular">⧉ templates…</span><span class="tpl-word-wizard">⧉ circles…</span>`, "the templates… menu item ships both voices")
-	must(`<span class="tpl-word-regular">⎘ from template</span><span class="tpl-word-wizard">🕯 cast a circle</span>`, "the from-template menu item ships both voices")
 }
 
 // TestDashboardCSS_WizardTemplatesManageScoped guards that the wizard

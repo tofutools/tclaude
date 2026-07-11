@@ -9,10 +9,10 @@ import (
 // profile picker in the embedded dashboard source: the create-group dialog can
 // start from a template / summoning circle. The wiring lands across HTML (the
 // dropdown, the manage affordance, the Task row + roster preview), CSS (the
-// wizard skin for the new <select> + preview) and JS (prefill, preview,
-// instantiate routing with context_override, and the redirected cog shortcut),
-// in BOTH vocab modes. All client-side, so — like the other dashboard render
-// guards — this string-searches the embedded source rather than running the JS.
+// wizard skin for the new <select> + preview) and JS (prefill, preview and
+// instantiate routing with context_override), in BOTH vocab modes. All
+// client-side, so — like the other dashboard render guards — this
+// string-searches the embedded source rather than running the JS.
 func TestDashboardHTML_PartyProfilePicker(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
@@ -57,7 +57,9 @@ func TestDashboardHTML_PartyProfilePicker(t *testing.T) {
 	must("(blank party)", "the regular blank-party default option")
 	must("(no circle — a blank party)", "the wizard blank-party default option")
 
-	// (d) The Groups cog's "⎘ from template" shortcut now opens THIS dialog with a
-	// circle preselected instead of the separate instantiate modal.
-	must("openGroupCreateModal(templates[0].name)", "the cog shortcut opens Form-a-party preselected")
+	// Group creation has one primary entry point. Templates are selected inside
+	// that dialog rather than duplicated as a shortcut in the Groups cog menu.
+	if strings.Contains(dashboardAssets, `id="group-from-template-open"`) {
+		t.Error("Groups cog still contains the redundant from-template shortcut")
+	}
 }
