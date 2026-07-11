@@ -194,7 +194,8 @@ exported `.zip`), **🧹 clean up** (the all-categories cleanup tool — see
 [Cleanup](#cleanup)), **🗑 delete retired…**, **⎘ from template** (spawn a whole
 team from a [template](#templates)), **⧉ templates…** and **⧉ roles…** (the
 [template](#templates) and [role-library](#roles-library) overlays), **⧉
-profiles…** (spawn profiles), and **🔗 links…**. Toggles surface three
+profiles…** (spawn profiles), **🛡 sandbox profiles…**, and **🔗 links…**.
+Toggles surface three
 **virtual groups** below the real ones: **Ungrouped** (online agents in no
 group),
 **Retired** (agents demoted to plain conversations, each with a
@@ -241,6 +242,21 @@ profile bundles. Export opens a checklist of saved profiles so you can uncheck
 anything that should not travel. Import reads a bundle, previews every profile,
 lets you uncheck rows, and handles existing-name conflicts per profile by
 renaming or overwriting.
+
+### Sandbox Profiles
+
+Sandbox profiles are separate, harness-neutral launch policy: absolute
+filesystem grants (`read` or `write`) plus environment entries. Open the
+manager from **Groups → ⚙ → 🛡 sandbox profiles…** to create/edit/delete named
+profiles and assign one global default or one default to each group. The spawn
+dialog also offers a human-controlled explicit profile selector.
+
+The spawn dialog's preview shows the composed global → group → explicit
+sources, effective filesystem access, and environment **names**. It never shows
+environment values. Values are ordinary non-secret configuration — do not put
+credentials in a sandbox profile — and changes take effect only when an agent
+is spawned or relaunched. The daemon remains authoritative for canonical path,
+protected-root, reserved-variable, containment, and harness capability checks.
 
 ### Templates
 
