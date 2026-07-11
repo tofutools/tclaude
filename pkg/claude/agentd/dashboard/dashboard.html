@@ -1882,10 +1882,30 @@
 <div class="modal-overlay" id="sandbox-profile-editor-modal">
   <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="sandbox-profile-editor-title">
     <h3 id="sandbox-profile-editor-title">New sandbox profile</h3>
-    <p class="modal-meta">Filesystem and environment are JSON arrays. Paths are canonicalized and protected roots/reserved variables are rejected by the daemon. Environment values are non-secret configuration.</p>
+    <p class="modal-meta">Directory grants widen the sandbox; environment values are injected at launch. Paths are canonicalized (<code>~</code> is the daemon's home) and protected roots / reserved variables are rejected by the daemon. Environment values are non-secret configuration.</p>
     <label class="cron-create-row"><span class="cron-create-label">Name</span><input id="sandbox-profile-editor-name" type="text" autocomplete="off" spellcheck="false" placeholder="e.g. shared-build-caches" /></label>
-    <label class="cron-create-row"><span class="cron-create-label">Filesystem</span><textarea id="sandbox-profile-editor-filesystem" rows="7" spellcheck="false" placeholder='[{"path":"/absolute/path","access":"write"}]'></textarea></label>
-    <label class="cron-create-row"><span class="cron-create-label">Environment</span><textarea id="sandbox-profile-editor-environment" rows="7" spellcheck="false" placeholder='[{"name":"GOCACHE","value":"/absolute/path"}]'></textarea></label>
+    <div class="cron-create-row sbx-editor-section">
+      <span class="cron-create-label">Filesystem</span>
+      <div class="sbx-editor-field">
+        <div class="sbx-rows" id="sandbox-profile-editor-fs-rows"></div>
+        <button type="button" class="sbx-add-row" id="sandbox-profile-editor-fs-add">＋ add directory</button>
+      </div>
+    </div>
+    <div class="cron-create-row sbx-editor-section">
+      <span class="cron-create-label">Environment</span>
+      <div class="sbx-editor-field">
+        <div class="sbx-rows" id="sandbox-profile-editor-env-rows"></div>
+        <button type="button" class="sbx-add-row" id="sandbox-profile-editor-env-add">＋ add variable</button>
+      </div>
+    </div>
+    <div class="sbx-advanced">
+      <button type="button" class="sbx-advanced-toggle" id="sandbox-profile-editor-advanced-toggle" aria-expanded="false" aria-controls="sandbox-profile-editor-advanced">▸ Advanced — edit raw JSON</button>
+      <div class="sbx-advanced-body" id="sandbox-profile-editor-advanced" hidden>
+        <p class="modal-meta">The structured editors above are views over these two JSON arrays; they stay in sync. Edit here for anything the tables can't express (they update on blur).</p>
+        <label class="cron-create-row"><span class="cron-create-label">Filesystem JSON</span><textarea id="sandbox-profile-editor-filesystem" rows="6" spellcheck="false" placeholder='[{"path":"~/absolute/path","access":"write"}]'></textarea></label>
+        <label class="cron-create-row"><span class="cron-create-label">Environment JSON</span><textarea id="sandbox-profile-editor-environment" rows="6" spellcheck="false" placeholder='[{"name":"GOCACHE","value":"/absolute/path"}]'></textarea></label>
+      </div>
+    </div>
     <div class="cron-create-error" id="sandbox-profile-editor-error"></div>
     <div class="modal-buttons"><button id="sandbox-profile-editor-cancel" type="button">Cancel</button><button id="sandbox-profile-editor-scribe" type="button" title="Hand the current draft to a chat agent for interactive configuration. Its result returns here for review and is never saved automatically.">🤖 configure with agent</button><span class="spacer"></span><button id="sandbox-profile-editor-submit" class="primary" type="button">Save sandbox profile</button></div>
   </div>

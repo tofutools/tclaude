@@ -3453,6 +3453,52 @@ body.wizard .group-pending-title-wizard { display: inline; }
   padding: 6px 10px; font-size: 13px; color: #c9d1d9; font-family: inherit;
 }
 .cron-create-row select { text-overflow: ellipsis; }
+
+/* ---- Sandbox-profile structured editors (filesystem / environment tables) --
+   Each lives in a .cron-create-row whose field is a vertical stack of rows plus
+   an "add" button. The row inputs/selects reuse the base .cron-create-row
+   input/select chrome (dark bg, border, focus ring) via descendant match; only
+   layout + the non-full-width controls (access select, Browse/✕ buttons) need
+   overrides here. */
+.sbx-editor-section { align-items: flex-start; }
+.sbx-editor-field { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.sbx-rows { display: flex; flex-direction: column; gap: 6px; }
+.sbx-rows:empty { display: none; }
+.sbx-row { display: flex; gap: 6px; align-items: stretch; }
+/* The access dropdown is a fixed narrow control, not a flex:1 field. */
+.sbx-row .sbx-access { flex: 0 0 5.5em; }
+/* Env name column is narrower than the value column. */
+.sbx-row-env .sbx-env-name { flex: 0 0 32%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.sbx-row .sbx-path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* Browse… and the ✕ delete button share the dark inline-button skin. */
+.sbx-row .sbx-browse, .sbx-row .sbx-del {
+  flex: 0 0 auto; align-self: stretch;
+  background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
+  color: #c9d1d9; font-family: inherit; font-size: 12px;
+  padding: 0 10px; cursor: pointer; white-space: nowrap;
+}
+.sbx-row .sbx-del { padding: 0 9px; color: #8b949e; }
+.sbx-row .sbx-browse:hover, .sbx-row .sbx-del:hover { background: #2d333b; }
+.sbx-row .sbx-del:hover { color: #f0b0b0; border-color: #6e3a3a; }
+.sbx-row .sbx-browse:disabled { opacity: 0.5; cursor: default; }
+/* "＋ add …" — a quiet full-row affordance under the table. */
+.sbx-add-row {
+  align-self: flex-start;
+  background: transparent; border: 1px dashed #2a3340; border-radius: 4px;
+  color: #7d8590; font-family: inherit; font-size: 12px;
+  padding: 4px 10px; cursor: pointer;
+}
+.sbx-add-row:hover { background: #1c2330; border-color: #3a4553; color: #c9d1d9; }
+/* Advanced raw-JSON disclosure. */
+.sbx-advanced { display: flex; flex-direction: column; gap: 8px; }
+.sbx-advanced-toggle {
+  align-self: flex-start; background: transparent; border: none;
+  color: #58a6ff; font-family: inherit; font-size: 12px; padding: 0; cursor: pointer;
+}
+.sbx-advanced-toggle:hover { text-decoration: underline; }
+.sbx-advanced-body { display: flex; flex-direction: column; gap: 10px; }
+.sbx-advanced-body[hidden] { display: none; }
+
 /* Spawn dialog Role row: the owner toggle + Permissions… button + indicator sit
    to the right of the role input, vertically aligned to its text baseline
    (padding-top:6px matches the input). The input keeps flex:1 so it fills the

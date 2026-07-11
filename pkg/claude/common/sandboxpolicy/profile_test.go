@@ -97,6 +97,27 @@ func TestNormalizeFilesystemRejectsInvalidAndProtectedPaths(t *testing.T) {
 	require.NoError(t, err, "shared string prefixes are not path ancestry")
 }
 
+func TestNormalizeFilesystemExpandsTilde(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cache := filepath.Join(home, "cache")
+	require.NoError(t, os.MkdirAll(cache, 0o755))
+	canonicalCache, err := filepath.EvalSymlinks(cache)
+	require.NoError(t, err)
+
+	// "~/cache" resolves to the daemon home's cache directory, identically to
+	// passing the absolute path.
+	got, err := Normalize(Profile{Name: "p", Filesystem: []FilesystemGrant{{Path: "~/cache", Access: AccessWrite}}})
+	require.NoError(t, err)
+	assert.Equal(t, []FilesystemGrant{{Path: canonicalCache, Access: AccessWrite}}, got.Filesystem)
+
+	// A "~otheruser/..." form is not a home alias — the literal "~" survives and
+	// the path is rejected as not absolute rather than guessing another account.
+	_, err = Normalize(Profile{Name: "p", Filesystem: []FilesystemGrant{{Path: "~someone/cache", Access: AccessRead}}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not absolute")
+}
+
 func TestNormalizeFilesystemRejectsSymlinkIntoProtectedTree(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

@@ -147,6 +147,21 @@ func canonicalDirectory(path string) (string, error) {
 	if !utf8.ValidString(path) || strings.ContainsFunc(path, isControl) {
 		return "", fmt.Errorf("path must be valid UTF-8 without control characters")
 	}
+	// A leading "~" or "~/" is a convenience alias for the daemon's own home
+	// directory (the box these grants apply to). Only the bare-user form is
+	// supported — "~otheruser/..." keeps its literal "~" and falls through to
+	// the not-absolute error below, rather than guessing another account's home.
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("expand %q: resolve home directory: %w", path, err)
+		}
+		if path == "~" {
+			path = home
+		} else {
+			path = filepath.Join(home, path[len("~/"):])
+		}
+	}
 	if !filepath.IsAbs(path) {
 		return "", fmt.Errorf("path %q is not absolute", path)
 	}
