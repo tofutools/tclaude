@@ -11,15 +11,17 @@ import (
 
 // AgentGroup is a row in agent_groups.
 type AgentGroup struct {
-	ID             int64
-	Name           string
-	Descr          string
-	DefaultCwd     string // pre-filled cwd for agents spawned into this group; "" = none
-	DefaultContext string // shared startup context delivered to the inbox of agents spawned into this group; "" = none
-	DefaultProfile string // current name of the stable spawn-profile reference whose launch fields fill blanks server-side; "" = none
-	MaxMembers     int    // hard cap on member count; a spawn that would exceed it is refused. 0 = unlimited
-	NotifyEnabled  bool   // OS notifications for member agents; false mutes the whole group (a per-agent 'on' pref still overrides)
-	RemoteControl  *bool  // remote-control policy for agents spawned into this group; tri-state: nil = inherit (defer to the spawn profile), false = actively deny (force off), true = actively opt-in (force on). Overrides the profile default (JOH-262)
+	ID               int64
+	Name             string
+	Descr            string
+	DefaultCwd       string // pre-filled cwd for agents spawned into this group; "" = none
+	DefaultContext   string // shared startup context delivered to the inbox of agents spawned into this group; "" = none
+	DefaultProfile   string // current name of the stable spawn-profile reference whose launch fields fill blanks server-side; "" = none
+	SandboxProfile   string // current name of the stable sandbox-profile assignment; "" = none
+	SandboxProfileID int64  `json:"-"`
+	MaxMembers       int    // hard cap on member count; a spawn that would exceed it is refused. 0 = unlimited
+	NotifyEnabled    bool   // OS notifications for member agents; false mutes the whole group (a per-agent 'on' pref still overrides)
+	RemoteControl    *bool  // remote-control policy for agents spawned into this group; tri-state: nil = inherit (defer to the spawn profile), false = actively deny (force off), true = actively opt-in (force on). Overrides the profile default (JOH-262)
 	// Mission and SourceTemplate are deployment provenance (JOH-245): what a
 	// task force was deployed against (a free-text topic or Linear link) and the
 	// template it was instantiated/deployed from (surfaced as its current name
@@ -495,34 +497,67 @@ func CreateAgentGroupWithParent(name, descr, parentName string) (int64, error) {
 // name + descr): group-clone needs every column copied, not just descr,
 // so a cloned group is configured identically to its source.
 func CreateAgentGroupFrom(name string, src AgentGroup) (int64, error) {
-	db, err := Open()
+	d, err := Open()
 	if err != nil {
 		return 0, err
 	}
-	defaultProfileID, err := registryIDByNameDB(db, "spawn_profiles", src.DefaultProfile)
+	tx, err := d.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	defaultProfileID, err := registryIDByName(tx, "spawn_profiles", src.DefaultProfile)
 	if err != nil {
 		return 0, err
 	}
 	sourceTemplateID := sql.NullInt64{Int64: src.SourceTemplateID, Valid: src.SourceTemplateID > 0}
 	if !sourceTemplateID.Valid {
-		sourceTemplateID, err = registryIDByNameDB(db, "group_templates", src.SourceTemplate)
+		sourceTemplateID, err = registryIDByName(tx, "group_templates", src.SourceTemplate)
 		if err != nil {
 			return 0, err
 		}
 	}
-	res, err := db.Exec(`
+	// The source row may have been loaded before a concurrent profile delete.
+	// Re-resolve inside the clone transaction rather than resurrecting a stale
+	// numeric ID/name snapshot on the new group.
+	var sandboxProfileID sql.NullInt64
+	sandboxProfileName := src.SandboxProfile
+	if src.SandboxProfileID > 0 {
+		var id int64
+		if scanErr := tx.QueryRow(`SELECT id FROM sandbox_profiles WHERE id = ?`, src.SandboxProfileID).Scan(&id); scanErr == nil {
+			sandboxProfileID = sql.NullInt64{Int64: id, Valid: true}
+		} else if !errors.Is(scanErr, sql.ErrNoRows) {
+			return 0, scanErr
+		} else {
+			sandboxProfileName = ""
+		}
+	} else {
+		sandboxProfileID, err = registryIDByName(tx, "sandbox_profiles", src.SandboxProfile)
+		if err != nil {
+			return 0, err
+		}
+	}
+	res, err := tx.Exec(`
 		INSERT INTO agent_groups
 			(name, descr, default_cwd, default_context, default_profile, default_profile_id,
-			 max_members, notify_enabled, remote_control, mission, source_template, source_template_id, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 sandbox_profile, sandbox_profile_id, max_members, notify_enabled, remote_control,
+			 mission, source_template, source_template_id, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		name, src.Descr, src.DefaultCwd, src.DefaultContext, src.DefaultProfile, defaultProfileID,
-		src.MaxMembers, src.NotifyEnabled, boolPtrToNull(src.RemoteControl),
+		sandboxProfileName, sandboxProfileID, src.MaxMembers, src.NotifyEnabled, boolPtrToNull(src.RemoteControl),
 		src.Mission, src.SourceTemplate, sourceTemplateID,
 		time.Now().Format(time.RFC3339Nano))
 	if err != nil {
 		return 0, err
 	}
-	return res.LastInsertId()
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 // SetAgentGroupDescr sets (or, with descr == "", clears) the group's
@@ -748,6 +783,9 @@ func DeleteAgentGroup(name string) error {
 const agentGroupSelect = `SELECT id, name, descr, default_cwd, default_context,
 	CASE WHEN default_profile_id IS NULL THEN default_profile
 	     ELSE COALESCE((SELECT name FROM spawn_profiles WHERE id = default_profile_id), '') END,
+	CASE WHEN sandbox_profile_id IS NULL THEN sandbox_profile
+	     ELSE COALESCE((SELECT name FROM sandbox_profiles WHERE id = sandbox_profile_id), '') END,
+	COALESCE(sandbox_profile_id, 0),
 	max_members, notify_enabled, remote_control, mission,
 	CASE WHEN source_template_id IS NULL THEN source_template
 	     ELSE COALESCE((SELECT name FROM group_templates WHERE id = source_template_id), source_template) END,
@@ -757,6 +795,9 @@ const agentGroupSelect = `SELECT id, name, descr, default_cwd, default_context,
 const agentGroupAliasedSelect = `SELECT g.id, g.name, g.descr, g.default_cwd, g.default_context,
 	CASE WHEN g.default_profile_id IS NULL THEN g.default_profile
 	     ELSE COALESCE((SELECT name FROM spawn_profiles WHERE id = g.default_profile_id), '') END,
+	CASE WHEN g.sandbox_profile_id IS NULL THEN g.sandbox_profile
+	     ELSE COALESCE((SELECT name FROM sandbox_profiles WHERE id = g.sandbox_profile_id), '') END,
+	COALESCE(g.sandbox_profile_id, 0),
 	g.max_members, g.notify_enabled, g.remote_control, g.mission,
 	CASE WHEN g.source_template_id IS NULL THEN g.source_template
 	     ELSE COALESCE((SELECT name FROM group_templates WHERE id = g.source_template_id), g.source_template) END,
@@ -3251,7 +3292,10 @@ func scanAgentGroup(s rowScanner) (*AgentGroup, error) {
 	var g AgentGroup
 	var createdAt, archivedAt string
 	var remoteControl, parentID sql.NullInt64
-	if err := s.Scan(&g.ID, &g.Name, &g.Descr, &g.DefaultCwd, &g.DefaultContext, &g.DefaultProfile, &g.MaxMembers, &g.NotifyEnabled, &remoteControl, &g.Mission, &g.SourceTemplate, &g.SourceTemplateID, &createdAt, &archivedAt, &parentID); err != nil {
+	if err := s.Scan(&g.ID, &g.Name, &g.Descr, &g.DefaultCwd, &g.DefaultContext,
+		&g.DefaultProfile, &g.SandboxProfile, &g.SandboxProfileID,
+		&g.MaxMembers, &g.NotifyEnabled, &remoteControl, &g.Mission,
+		&g.SourceTemplate, &g.SourceTemplateID, &createdAt, &archivedAt, &parentID); err != nil {
 		return nil, err
 	}
 	g.RemoteControl = nullToBoolPtr(remoteControl)

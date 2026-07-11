@@ -76,7 +76,7 @@ CREATE TABLE agent_groups (
 			name        TEXT NOT NULL UNIQUE,
 			descr       TEXT NOT NULL DEFAULT '',
 			created_at  TEXT NOT NULL
-		, archived_at TEXT NOT NULL DEFAULT '', default_cwd TEXT NOT NULL DEFAULT '', default_context TEXT NOT NULL DEFAULT '', max_members INTEGER NOT NULL DEFAULT 0, notify_enabled INTEGER NOT NULL DEFAULT 1, default_profile TEXT NOT NULL DEFAULT '', remote_control INTEGER, mission TEXT NOT NULL DEFAULT '', source_template TEXT NOT NULL DEFAULT '', parent_id INTEGER REFERENCES agent_groups(id) ON DELETE SET NULL, default_profile_id INTEGER, source_template_id INTEGER);
+		, archived_at TEXT NOT NULL DEFAULT '', default_cwd TEXT NOT NULL DEFAULT '', default_context TEXT NOT NULL DEFAULT '', max_members INTEGER NOT NULL DEFAULT 0, notify_enabled INTEGER NOT NULL DEFAULT 1, default_profile TEXT NOT NULL DEFAULT '', remote_control INTEGER, mission TEXT NOT NULL DEFAULT '', source_template TEXT NOT NULL DEFAULT '', parent_id INTEGER REFERENCES agent_groups(id) ON DELETE SET NULL, default_profile_id INTEGER, source_template_id INTEGER, sandbox_profile TEXT NOT NULL DEFAULT '', sandbox_profile_id INTEGER);
 
 CREATE INDEX idx_agent_groups_archived
 			ON agent_groups(archived_at);
@@ -116,6 +116,20 @@ CREATE TRIGGER stable_ref_group_template_update
 					ELSE (SELECT id FROM group_templates WHERE name = NEW.source_template) END
 				 WHERE id = NEW.id;
 			END;
+
+CREATE INDEX idx_agent_groups_sandbox_profile_id ON agent_groups(sandbox_profile_id);
+
+CREATE TRIGGER sandbox_profile_group_ref_insert
+			BEFORE INSERT ON agent_groups
+			WHEN NEW.sandbox_profile_id IS NOT NULL
+			 AND NOT EXISTS (SELECT 1 FROM sandbox_profiles WHERE id = NEW.sandbox_profile_id)
+			BEGIN SELECT RAISE(ABORT, 'sandbox profile reference does not exist'); END;
+
+CREATE TRIGGER sandbox_profile_group_ref_update
+			BEFORE UPDATE OF sandbox_profile_id ON agent_groups
+			WHEN NEW.sandbox_profile_id IS NOT NULL
+			 AND NOT EXISTS (SELECT 1 FROM sandbox_profiles WHERE id = NEW.sandbox_profile_id)
+			BEGIN SELECT RAISE(ABORT, 'sandbox profile reference does not exist'); END;
 
 CREATE TABLE agent_cron_jobs (
 			id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -662,4 +676,19 @@ CREATE TABLE agent_prs (
 CREATE INDEX idx_agent_prs_agent ON agent_prs(agent_id);
 
 CREATE INDEX idx_agent_prs_state_updated ON agent_prs(state, updated_at);
+
+CREATE TABLE sandbox_profiles (
+			id               INTEGER PRIMARY KEY AUTOINCREMENT,
+			name             TEXT NOT NULL UNIQUE,
+			filesystem_json  TEXT NOT NULL DEFAULT '[]',
+			environment_json TEXT NOT NULL DEFAULT '[]',
+			created_at       TEXT NOT NULL,
+			updated_at       TEXT NOT NULL
+		);
+
+CREATE TABLE sandbox_profile_global_assignment (
+			id           INTEGER PRIMARY KEY CHECK (id = 1),
+			profile_name TEXT NOT NULL,
+			profile_id   INTEGER NOT NULL REFERENCES sandbox_profiles(id) ON DELETE CASCADE
+		);
 
