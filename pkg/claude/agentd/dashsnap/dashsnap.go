@@ -75,8 +75,23 @@ import (
 	"time"
 
 	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/input"
 	"github.com/go-rod/rod/lib/launcher"
+	"github.com/go-rod/rod/lib/proto"
 )
+
+// BrowserAction is one trusted DevTools input step (or an assertion evaluated
+// between steps). Unlike dispatchEvent-based fixture JS, click/drag/key actions
+// exercise Chrome's real pointer capture, focus, blur and click sequencing.
+type BrowserAction struct {
+	Kind     string
+	Selector string
+	Key      string
+	Text     string
+	JS       string
+	DX, DY   float64
+	Steps    int
+}
 
 // State is one screenshot the harness captures: a named dashboard state reached
 // by loading the dashboard (optionally in the wizard skin) and then running a
@@ -95,6 +110,9 @@ type State struct {
 	// captures the freshly-loaded page. A thrown error marks the shot failed but
 	// does not abort the run — the sheet records the error under the tile.
 	JS string
+	// Actions run after JS using Chrome's input domain. Supported kinds: click,
+	// key-down, key-up, key, mouse-down, move-by, mouse-up, eval.
+	Actions []BrowserAction
 	// SettleMS optionally overrides the post-JS settle wait (ms) for states with
 	// animations/transitions that need longer to paint. 0 uses cfg.SettleMS.
 	SettleMS int
@@ -282,6 +300,74 @@ func captureState(page *rod.Page, cfg Config, st State) (png []byte, err error) 
 			sp.MustEval(`() => { ` + st.JS + ` }`)
 		}
 
+		mouseDown := false
+		pressed := map[input.Key]bool{}
+		defer func() {
+			if mouseDown {
+				_ = sp.Mouse.Up(proto.InputMouseButtonLeft, 1)
+			}
+			for key := range pressed {
+				_ = sp.Keyboard.Release(key)
+			}
+		}()
+		for _, action := range st.Actions {
+			switch action.Kind {
+			case "click":
+				position := sp.MustElement(action.Selector).MustEval(`() => {
+                  if (this instanceof SVGPathElement) {
+                    const point = this.getPointAtLength(this.getTotalLength() / 2);
+                    const screen = new DOMPoint(point.x, point.y).matrixTransform(this.getScreenCTM());
+                    return {x: screen.x, y: screen.y};
+                  }
+                  const rect = this.getBoundingClientRect();
+                  return {x: rect.left + rect.width / 2, y: rect.top + rect.height / 2};
+                }`)
+				point := proto.NewPoint(position.Get("x").Num(), position.Get("y").Num())
+				if err := sp.Mouse.MoveTo(point); err != nil {
+					panic(err)
+				}
+				if err := sp.Mouse.Click(proto.InputMouseButtonLeft, 1); err != nil {
+					panic(err)
+				}
+			case "input":
+				sp.MustElement(action.Selector).MustInput(action.Text)
+			case "key-down":
+				key := browserKey(action.Key)
+				if err := sp.Keyboard.Press(key); err != nil {
+					panic(err)
+				}
+				pressed[key] = true
+			case "key-up":
+				key := browserKey(action.Key)
+				if err := sp.Keyboard.Release(key); err != nil {
+					panic(err)
+				}
+				delete(pressed, key)
+			case "key":
+				sp.Keyboard.MustType(browserKey(action.Key))
+			case "mouse-down":
+				sp.MustElement(action.Selector).MustHover()
+				sp.Mouse.MustDown(proto.InputMouseButtonLeft)
+				mouseDown = true
+			case "move-by":
+				position := sp.Mouse.Position()
+				steps := action.Steps
+				if steps < 1 {
+					steps = 1
+				}
+				if err := sp.Mouse.MoveLinear(proto.NewPoint(position.X+action.DX, position.Y+action.DY), steps); err != nil {
+					panic(err)
+				}
+			case "mouse-up":
+				sp.Mouse.MustUp(proto.InputMouseButtonLeft)
+				mouseDown = false
+			case "eval":
+				sp.MustEval(`() => { ` + action.JS + ` }`)
+			default:
+				panic(fmt.Sprintf("unknown browser action %q", action.Kind))
+			}
+		}
+
 		settle := cfg.SettleMS
 		if st.SettleMS > 0 {
 			settle = st.SettleMS
@@ -291,6 +377,21 @@ func captureState(page *rod.Page, cfg Config, st State) (png []byte, err error) 
 		png = sp.MustScreenshot()
 	})
 	return png, err
+}
+
+func browserKey(name string) input.Key {
+	switch strings.ToLower(name) {
+	case "control", "ctrl":
+		return input.ControlLeft
+	case "delete":
+		return input.Delete
+	case "backspace":
+		return input.Backspace
+	case "escape":
+		return input.Escape
+	default:
+		panic(fmt.Sprintf("unknown browser key %q", name))
+	}
 }
 
 // sleep pauses for ms by awaiting a setTimeout promise IN the page (Page.Eval

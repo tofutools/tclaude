@@ -41,6 +41,7 @@ test('pointercancel snaps a node drag home instead of committing it', () => {
     dragMoved: true,
     snapNodeHome(id) { snapped.push(id); },
     snapNodesHome(ids) { ids.forEach((id) => this.snapNodeHome(id)); },
+    restoreTransientEdges() {},
   };
   ProcessGraph.prototype.onPointerCancel.call(fake, { pointerId: 3 });
   assert.deepEqual(snapped, ['n1']);
@@ -152,4 +153,28 @@ test('empty canvas click clears both graph and consumer selection', () => {
   ProcessGraph.prototype.onClick.call(fake, {});
   assert.deepEqual(selected, [null]);
   assert.equal(notified, 1);
+});
+
+test('captured pointer identity selects nodes and edges after click retargets to SVG', () => {
+  const selected = [];
+  const clicked = [];
+  const fake = {
+    dragMoved: false, suppressClick: false,
+    layout: {
+      nodes: [{ id: 'node-a' }],
+      edges: [{ id: 'edge-a', from: 'node-a', to: 'node-b' }],
+    },
+    options: {
+      onNodeClick({ node }) { clicked.push(`node:${node.id}`); },
+      onEdgeClick({ edge }) { clicked.push(`edge:${edge.id}`); },
+    },
+    eventTarget() { return { node: null, edge: null, port: null }; },
+    select(value) { selected.push(value); },
+  };
+  fake.pendingClickTarget = { nodeID: 'node-a', edgeID: null, port: null };
+  ProcessGraph.prototype.onClick.call(fake, {});
+  fake.pendingClickTarget = { nodeID: null, edgeID: 'edge-a', port: null };
+  ProcessGraph.prototype.onClick.call(fake, {});
+  assert.deepEqual(selected, [{ type: 'node', id: 'node-a' }, { type: 'edge', id: 'edge-a' }]);
+  assert.deepEqual(clicked, ['node:node-a', 'edge:edge-a']);
 });

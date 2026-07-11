@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { defaultFeedbackArc, edgeEndpoint, layoutProcessGraph } from '../dashboard/js/process-layout.js';
+import {
+  defaultFeedbackArc, edgeEndpoint, layoutProcessGraph, rerouteProcessLayout,
+} from '../dashboard/js/process-layout.js';
 
 const linear = {
   nodes: [
@@ -162,6 +164,86 @@ test('pinned visual inversion exits and enters the facing rectangle sides', () =
   const edge = result.edges[0];
   assert.equal(edge.points[0].y, nodes.get('lower-source').y - nodes.get('lower-source').height / 2, 'source exits its top face');
   assert.equal(edge.points.at(-1).y, nodes.get('upper-target').y + nodes.get('upper-target').height / 2, 'target enters its bottom face');
+});
+
+test('transient reroute tracks single and multi-node positions without mutating the stable layout', () => {
+  const stable = layoutProcessGraph({
+    nodes: ['a', 'b', 'c'].map((id) => ({ id, type: 'task' })),
+    edges: [{ from: 'a', to: 'b' }, { from: 'b', to: 'c' }],
+  });
+  const before = JSON.stringify(stable);
+  const byNode = byID(stable);
+  const transient = rerouteProcessLayout(stable, new Map([
+    ['a', { x: byNode.get('a').x + 80, y: byNode.get('a').y + 30 }],
+    ['b', { x: byNode.get('b').x + 80, y: byNode.get('b').y + 30 }],
+  ]));
+  const moved = byID(transient);
+  assert.equal(moved.get('a').x, byNode.get('a').x + 80);
+  assert.equal(moved.get('b').x, byNode.get('b').x + 80);
+  assert.equal(moved.get('c').x, byNode.get('c').x);
+  assert.notEqual(transient.edges[0].path, stable.edges[0].path, 'internal dragged edge follows both endpoints');
+  assert.notEqual(transient.edges[1].path, stable.edges[1].path, 'external edge follows its dragged endpoint');
+  assert.equal(JSON.stringify(stable), before, 'stable layout remains untouched until commit');
+});
+
+test('transient reroute invalidates a non-incident long edge when a moved node obstructs it', () => {
+  const stable = layoutProcessGraph({
+    nodes: ['a', 'b', 'c', 'x'].map((id) => ({ id, type: 'task' })),
+    edges: [{ from: 'a', to: 'b' }, { from: 'b', to: 'c' }, { from: 'a', to: 'c' }],
+  });
+  const long = stable.edges.find((edge) => edge.from === 'a' && edge.to === 'c');
+  const waypoint = long.points[Math.floor(long.points.length / 2)];
+  const transient = rerouteProcessLayout(stable, new Map([['x', waypoint]]));
+  const rerouted = transient.edges.find((edge) => edge.from === 'a' && edge.to === 'c');
+  assert.notEqual(rerouted.path, long.path, 'the newly obstructed non-incident edge is rerouted');
+  assertRouteAvoids(rerouted, [transient.nodes.find((node) => node.id === 'x')]);
+});
+
+test('transient reroute invalidates return lanes when moved nodes change the right bound', () => {
+  const stable = layoutProcessGraph({
+    nodes: ['a', 'b', 'c', 'x'].map((id) => ({ id, type: 'task' })),
+    edges: [{ from: 'a', to: 'b' }, { from: 'b', to: 'c' }, { from: 'c', to: 'a' }],
+  });
+  const back = stable.edges.find((edge) => edge.back);
+  const x = stable.nodes.find((node) => node.id === 'x');
+  const transient = rerouteProcessLayout(stable, new Map([[
+    'x', { x: stable.bounds.maxX + 500, y: x.y },
+  ]]));
+  const rerouted = transient.edges.find((edge) => edge.id === back.id);
+  const movedX = transient.nodes.find((node) => node.id === 'x');
+  assert.notEqual(rerouted.path, back.path, 'return edge follows the expanded graph bound');
+  assert.ok(rerouted.points[1].x > movedX.x + movedX.width / 2, 'return lane stays outside moved node');
+});
+
+test('transient reroute stays responsive on a representative larger graph', () => {
+  const count = 120;
+  const layout = layoutProcessGraph({
+    nodes: Array.from({ length: count }, (_, index) => ({ id: `n${index}`, type: 'task' })),
+    edges: [
+      ...Array.from({ length: count - 1 }, (_, index) => ({ from: `n${index}`, to: `n${index + 1}` })),
+      ...Array.from({ length: count - 2 }, (_, index) => ({ from: 'n0', to: `n${index + 2}` })),
+    ],
+  });
+  const start = performance.now();
+  let frame = layout;
+  for (let index = 0; index < 30; index += 1) {
+    // Moving the far leaf exercises a long obstacle-routed incident edge while
+    // the many unrelated long edges must retain their already-computed routes.
+    const node = layout.nodes.find((candidate) => candidate.id === `n${count - 1}`);
+    frame = rerouteProcessLayout(layout, new Map([[node.id, { x: node.x + index, y: node.y + index }]]));
+  }
+  assert.equal(frame.edges.length, (count - 1) + (count - 2));
+  assert.equal(
+    frame.edges.find((edge) => edge.from === 'n0' && edge.to === 'n60').path,
+    layout.edges.find((edge) => edge.from === 'n0' && edge.to === 'n60').path,
+    'unrelated long edges retain their stable route',
+  );
+  assert.notEqual(
+    frame.edges.find((edge) => edge.from === 'n0' && edge.to === 'n119').path,
+    layout.edges.find((edge) => edge.from === 'n0' && edge.to === 'n119').path,
+    'the moved leaf long edge is rerouted',
+  );
+  assert.ok(performance.now() - start < 2000, '30 transient frames should stay comfortably interactive');
 });
 
 test('natural top-down geometry snaps every node shape to its fixed port anchors', () => {

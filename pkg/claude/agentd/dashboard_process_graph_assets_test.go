@@ -27,6 +27,7 @@ func TestDashboardProcessGraphAssets(t *testing.T) {
 	layout := read("js/process-layout.js")
 	mustContain("process-layout.js", layout,
 		"export function layoutProcessGraph(",
+		"export function rerouteProcessLayout(",
 		"export function defaultFeedbackArc(",
 		"edge.back || ignored.has(edge.inputIndex)")
 	if strings.Contains(layout, "Math.random(") {
@@ -43,6 +44,8 @@ func TestDashboardProcessGraphAssets(t *testing.T) {
 		"onCanvasDrop",
 		"onCanvasClick",
 		"onMarqueeSelect",
+		"this.pendingClickTarget",
+		"this.renderTransientEdges(",
 		"this.root.focus({ preventScroll: true })",
 		// A browser-cancelled gesture must never commit: pointercancel routes
 		// to the dedicated cancel path (cancelled: true, no hit-testing), not
