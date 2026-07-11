@@ -2510,12 +2510,6 @@ details[data-group-key][open] > summary .group-sandbox-profile {
   font-size: 12px;
   white-space: pre;
 }
-.sandbox-profile-assignments {
-  margin: 10px 0 14px;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-}
 .profile-transfer-list {
   display: flex;
   flex-direction: column;
@@ -7586,23 +7580,23 @@ body.wizard #export-agent-modal #export-agent-submit:disabled::before { content:
    TestDashboardCSS_WizardGroupCreateModalScoped), collapsed with :is() so the
    five ids don't have to be spelled out on every pseudo-element rule. All five
    share the #140f28 arcane field palette. Treatment mirrors the mail panes. */
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-modal,
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-row textarea {
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-modal,
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-row textarea {
   scrollbar-color: #7a5db0 #140f28;
 }
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-modal::-webkit-scrollbar,
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-row textarea::-webkit-scrollbar { width: 10px; height: 10px; }
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-modal::-webkit-scrollbar-track,
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-row textarea::-webkit-scrollbar-track,
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-modal::-webkit-scrollbar-corner,
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-row textarea::-webkit-scrollbar-corner { background: #140f28; }
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-modal::-webkit-scrollbar-thumb,
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-row textarea::-webkit-scrollbar-thumb {
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-modal::-webkit-scrollbar,
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-row textarea::-webkit-scrollbar { width: 10px; height: 10px; }
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-modal::-webkit-scrollbar-track,
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-row textarea::-webkit-scrollbar-track,
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-modal::-webkit-scrollbar-corner,
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-row textarea::-webkit-scrollbar-corner { background: #140f28; }
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-modal::-webkit-scrollbar-thumb,
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-row textarea::-webkit-scrollbar-thumb {
   background: linear-gradient(180deg, #7a5db0, #3a2a63);
   border: 1px solid #d9b45a; border-radius: 6px;
 }
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-modal::-webkit-scrollbar-thumb:hover,
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-row textarea::-webkit-scrollbar-thumb:hover {
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-modal::-webkit-scrollbar-thumb:hover,
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-row textarea::-webkit-scrollbar-thumb:hover {
   background: linear-gradient(180deg, #8f6fca, #4a367d);
 }
 
@@ -7729,6 +7723,18 @@ body.wizard #edit-member-modal #edit-member-save:disabled::before { content: non
 .profiles-word-wizard { display: none; }
 body.wizard .profiles-word-regular { display: none; }
 body.wizard .profiles-word-wizard { display: inline; }
+
+/* Wizard sandbox-profile vocabulary — "Wards". A sandbox profile is a
+   protective ward that widens a familiar's reach, so in 🧙 mode every static
+   spot naming it (the Groups-cog 🛡 entry, the manage overlay title + intro +
+   "+ new" action, and the export/import dialog titles + copy) carries a
+   .sandbox-word-regular / .sandbox-word-wizard span pair swapped by these
+   three rules — the same pure-CSS idiom as the .profiles-word pair above. The
+   editor dialog's title is JS-set (it carries the edited ward's name), so that
+   string is swapped via wizWord() in sandbox-profiles.js, not here. */
+.sandbox-word-wizard { display: none; }
+body.wizard .sandbox-word-regular { display: none; }
+body.wizard .sandbox-word-wizard { display: inline; }
 
 /* Role library (JOH-240): the same pure-CSS vocabulary swap as the profiles
    words above. In wizard mode roles are the party's "classes" — the Groups-cog
@@ -8583,6 +8589,167 @@ body.wizard :is(#profile-export-modal, #profile-import-modal) input:focus,
 body.wizard :is(#profile-export-modal, #profile-import-modal) textarea:focus,
 body.wizard :is(#profile-export-modal, #profile-import-modal) select:focus { border-color: #a97bd6; }
 body.wizard :is(#profile-export-modal, #profile-import-modal) input[type=checkbox] { accent-color: #a97bd6; }
+
+/* ─── Wizard sandbox-profile dialogs — "Wards" ─────────────────────────
+   The sandbox-profile manage overlay + its editor and export/import modals get
+   the same arcane chrome as the spawn-profile ("familiar pattern") dialogs —
+   the sandbox dialog is now their sibling (wizard vocabulary, export/import).
+   Each block is scoped to its own id so the shared .manage-modal / .cron-create-
+   modal surfaces on sibling dialogs keep the default chrome; the scrollbar theme
+   is folded into the shared :is() list above. */
+
+/* Manage overlay (the ward picker), mirror of #profiles-manage-modal. */
+body.wizard #sandbox-profiles-manage-modal .manage-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35), 0 8px 24px rgba(0, 0, 0, 0.5);
+  color: #e7d9f5;
+}
+body.wizard #sandbox-profiles-manage-modal .manage-modal h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #sandbox-profiles-manage-modal .manage-intro { color: #b39ddb; }
+body.wizard #sandbox-profiles-manage-modal .filter-bar input {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
+}
+body.wizard #sandbox-profiles-manage-modal .filter-bar input:focus { border-color: #a97bd6; }
+body.wizard #sandbox-profiles-manage-modal .filter-bar .filter-count { color: #b39ddb; }
+/* "+ new ward" — the gilded-arcane primary action. The .tool buttons
+   (export / import / 🤖 configure) keep their base skin, matching the
+   spawn-profile manage overlay. */
+body.wizard #sandbox-profiles-manage-modal #sandbox-profile-create-open.primary {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  border: 1px solid #d9b45a;
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 0.5px;
+  text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
+  box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
+}
+body.wizard #sandbox-profiles-manage-modal #sandbox-profile-create-open.primary:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  border-color: #f3e6c0;
+  box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
+}
+body.wizard #sandbox-profiles-manage-modal .template-card {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.4);
+}
+body.wizard #sandbox-profiles-manage-modal .template-card .tc-name { color: #f3e6c0; }
+body.wizard #sandbox-profiles-manage-modal .template-card .tc-descr { color: #b39ddb; }
+body.wizard #sandbox-profiles-manage-modal .template-card .modal-meta { color: #b39ddb; }
+body.wizard #sandbox-profiles-manage-modal .template-card .tc-actions button {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #sandbox-profiles-manage-modal .template-card .tc-actions button:hover { background: #3a2a63; }
+body.wizard #sandbox-profiles-manage-modal .template-empty { color: #b39ddb; }
+body.wizard #sandbox-profiles-manage-modal .modal-buttons button {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #sandbox-profiles-manage-modal .modal-buttons button:hover { background: #3a2a63; }
+
+/* Editor (inscribe a ward), mirror of #profile-editor-modal. */
+body.wizard #sandbox-profile-editor-modal .cron-create-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #sandbox-profile-editor-modal .cron-create-modal h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #sandbox-profile-editor-modal .modal-meta,
+body.wizard #sandbox-profile-editor-modal .cron-create-label { color: #b39ddb; }
+body.wizard #sandbox-profile-editor-modal .cron-create-row input[type=text],
+body.wizard #sandbox-profile-editor-modal .cron-create-row textarea {
+  background: #140f28;
+  border-color: rgba(122, 93, 176, 0.5);
+  color: #f3e6c0;
+}
+body.wizard #sandbox-profile-editor-modal .cron-create-row input[type=text]:focus,
+body.wizard #sandbox-profile-editor-modal .cron-create-row textarea:focus { border-color: #a97bd6; }
+/* Secondary + inline buttons (Cancel / 🤖 configure). :not(#…-submit) excludes
+   the Inscribe lever below so the two rules match disjoint elements. */
+body.wizard #sandbox-profile-editor-modal button:not(#sandbox-profile-editor-submit) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #sandbox-profile-editor-modal button:not(#sandbox-profile-editor-submit):hover { background: #3a2a63; }
+/* Save = 🛡 Inscribe ward! — the gilded conjuring lever, twin of the profile
+   editor's 📜 Inscribe!. The button's own text is hidden (font-size: 0) and
+   replaced by a ::before glyph; the disabled state (setEditorSaving locks it
+   during the save) restores a font-size so the honest label shows through. */
+body.wizard #sandbox-profile-editor-modal #sandbox-profile-editor-submit {
+  font-size: 0;
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  color: #f3e6c0;
+  border: 2px solid #d9b45a;
+  border-radius: 6px;
+  padding: 6px 16px;
+  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
+  letter-spacing: 1px;
+  font-weight: 700;
+  position: relative;
+  transition: transform 0.08s ease;
+}
+body.wizard #sandbox-profile-editor-modal #sandbox-profile-editor-submit::before {
+  content: "🛡 Inscribe ward!";
+  font-size: 14px;
+  letter-spacing: 1px;
+}
+body.wizard #sandbox-profile-editor-modal #sandbox-profile-editor-submit:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
+}
+body.wizard #sandbox-profile-editor-modal #sandbox-profile-editor-submit:disabled { font-size: 14px; opacity: 0.55; }
+
+/* Export / import (inscribe / read wards), mirror of the profile transfer
+   dialogs. */
+body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-modal h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) .modal-meta,
+body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-label,
+body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) .profile-transfer-summary,
+body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) .profile-transfer-note {
+  color: #b39ddb;
+}
+body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) .profile-transfer-row {
+  background: rgba(20, 15, 40, 0.78);
+  border-color: rgba(122, 93, 176, 0.5);
+}
+body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) .profile-transfer-name { color: #f3e6c0; }
+body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) input,
+body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) textarea,
+body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) select {
+  background: #140f28;
+  border-color: rgba(122, 93, 176, 0.5);
+  color: #f3e6c0;
+}
+body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) input:focus,
+body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) textarea:focus,
+body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) select:focus { border-color: #a97bd6; }
+body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) input[type=checkbox] { accent-color: #a97bd6; }
+body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) .modal-buttons button {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) .modal-buttons button.primary {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+}
+body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) .modal-buttons button:hover { background: #3a2a63; }
 
 /* ─── Wizard role library overlay — "Class library" ────────────────────
    The roles-manage overlay (JOH-349 sweep): a .manage-overlay / .manage-modal

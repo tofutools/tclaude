@@ -15,8 +15,16 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		`id="sandbox-profile-editor-environment"`:                      "environment editor",
 		`id="sandbox-profile-scribe-open"`:                             "new-profile agent configuration",
 		`id="sandbox-profile-editor-scribe"`:                           "current-draft agent configuration",
-		`id="sandbox-profile-global"`:                                  "global assignment control",
-		`id="sandbox-profile-group-value"`:                             "group assignment control",
+		`id="sandbox-profile-export-open"`:                             "export trigger",
+		`id="sandbox-profile-import-open"`:                             "import trigger",
+		`id="sandbox-profile-export-modal"`:                            "export modal",
+		`id="sandbox-profile-import-modal"`:                            "import modal",
+		`id="sandbox-profile-import-conflict"`:                         "import conflict-policy selector",
+		`function submitExport(`:                                       "export submit handler",
+		`function submitImport(`:                                       "import submit handler",
+		`${API}/export?`:                                               "export hits the shared daemon endpoint",
+		"`${API}/import`":                                              "import hits the shared daemon endpoint",
+		`apply_assignments: false`:                                     "import never re-applies exported assignments",
 		`id="dashboard-default-sandbox-profile"`:                       "global quick assignment chip",
 		`<button type="button" id="dashboard-default-sandbox-profile"`: "global chip keeps native keyboard semantics",
 		`data-act="set-dash-sandbox-profile"`:                          "global quick assignment picker wiring",
@@ -65,6 +73,9 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 			t.Errorf("dashboard missing %q (%s)", needle, why)
 		}
 	}
+
+	// The retired select-based global control was folded into a chip (#982); its
+	// plumbing must stay gone.
 	for needle, why := range map[string]string{
 		`function setQuickAssignment(`:                   "retired select assignment handler",
 		`const QUICK_NEW = '/new-sandbox-profile'`:       "retired select create sentinel",
@@ -73,6 +84,20 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 	} {
 		if strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard still contains %q (%s)", needle, why)
+		}
+	}
+
+	// The in-dialog global/group default selectors moved out to the Groups tab
+	// (the 🛡 header + group chips), so the profiles dialog must no longer carry
+	// them. Guard the removal so they don't quietly creep back.
+	for _, gone := range []string{
+		`id="sandbox-profile-global"`,
+		`id="sandbox-profile-group"`,
+		`id="sandbox-profile-group-value"`,
+		`class="sandbox-profile-assignments"`,
+	} {
+		if strings.Contains(dashboardAssets, gone) {
+			t.Errorf("dashboard still carries removed in-dialog assignment control %q", gone)
 		}
 	}
 }
