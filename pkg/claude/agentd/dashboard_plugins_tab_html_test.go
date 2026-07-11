@@ -67,7 +67,7 @@ func TestDashboardHTML_PluginsTabAutoHide(t *testing.T) {
 
 	// CSS: both the nav button and the section hide on body.hide-plugins so
 	// the tab vanishes entirely.
-	present(`body.hide-plugins nav button[data-tab="plugins"]`, "the Plugins nav button hides on body.hide-plugins")
+	present(`body.hide-plugins nav [data-tab="plugins"]`, "the Plugins nav button hides on body.hide-plugins")
 	present("body.hide-plugins #tab-plugins", "the Plugins section hides alongside its nav button")
 
 	// JS: refresh.js reads the server's flag and toggles the body class.

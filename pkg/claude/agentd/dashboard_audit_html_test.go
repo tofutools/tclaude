@@ -30,7 +30,7 @@ func TestDashboardHTML_AuditTabWired(t *testing.T) {
 	// audit.js fetches the read endpoint and binds the tab.
 	must("/api/audit", "audit.js fetches the audit read endpoint")
 	must("function bindAuditTab", "audit.js exposes the tab binder")
-	must(`nav button[data-tab="audit"]`, "audit.js loads on tab activation")
+	must(`nav [data-tab="audit"]`, "audit.js loads on tab activation")
 
 	// Server-side search / sort / pagination wiring.
 	must("page_size", "audit.js sends the page size to the server")

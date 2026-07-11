@@ -79,7 +79,7 @@ func TestDashboardHTML_NotifyBellsWired(t *testing.T) {
 	must(`id="notify-pop-access"`, "the access-request knob exists in the popover")
 	must("access_requests: access.checked", "the access-request knob posts its state")
 	must("'/api/notifications'", "the popover reads/writes /api/notifications")
-	must(`nav button[data-tab="config"]`, "the 'Config tab ↗' link jumps to the Config tab")
+	must(`nav [data-tab="config"]`, "the 'Config tab ↗' link jumps to the Config tab")
 
 	// dashboard.css: the master bell, its popover, and the action-menu
 	// items are styled.

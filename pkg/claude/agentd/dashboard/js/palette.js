@@ -190,7 +190,7 @@ async function stopAgentInteractive(conv, label) {
 //    tab first so the change is actually visible.
 
 function gotoGroupsTab() {
-  const btn = $('nav button[data-tab="groups"]');
+  const btn = $('nav [data-tab="groups"]');
   if (btn) btn.click();
 }
 
@@ -498,7 +498,7 @@ function buildCommands() {
   //    click handler (which also triggers each tab's data load). A
   //    CSS-hidden tab (Costs auto-hidden, Vegas off-slop) has no
   //    offsetParent, so it isn't a place the human can currently go.
-  for (const btn of $$('nav button')) {
+  for (const btn of $$('nav [data-tab]')) {
     if (btn.offsetParent === null) continue;
     // Each tab carries a plain/wizard label-span pair (dashboard.html). Read
     // whichever the active theme SHOWS so the command reads "Go to Costs"

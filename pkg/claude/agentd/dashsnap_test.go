@@ -411,7 +411,7 @@ func baseStates() []dashsnap.State {
 	// showGroups activates the Groups tab. expandGroups opens every real group's
 	// <details> so the member rows (tags, task links, online/offline, owner) show;
 	// collapseGroups closes them for a header-only view.
-	const showGroups = `document.querySelector('nav button[data-tab="groups"]').click();`
+	const showGroups = `document.querySelector('nav [data-tab="groups"]').click();`
 	const expandGroups = `document.querySelectorAll('details[data-dnd-target-group]').forEach(function(d){d.open=true;});`
 	const collapseGroups = `document.querySelectorAll('details[data-dnd-target-group]').forEach(function(d){d.open=false;});`
 	// The 🎯 force-fold state is stored in dashPrefs, which persists SERVER-side
@@ -1182,7 +1182,7 @@ const nodeDialogScrollToWork = `
 // instance (its dashsnap/test handle) to drive selection/dirty states.
 func processEditorStateJS(extraJS string) string {
 	return fmt.Sprintf(`return (async function(){
-  var nav = document.querySelector('nav button[data-tab="processes"]');
+  var nav = document.querySelector('nav [data-tab="processes"]');
   if (!nav || nav.offsetParent === null) throw new Error('Processes nav is not visible');
   nav.click();
   var sub = document.querySelector('[data-process-subtab="templates"]');
@@ -1210,7 +1210,7 @@ func processTabJS(subtab, readySelector string) string {
 	// awaits its RESULT, so only a returned promise makes the readiness
 	// checks (and their throws) actually gate the state.
 	return fmt.Sprintf(`return (async function(){
-  var nav = document.querySelector('nav button[data-tab="processes"]');
+  var nav = document.querySelector('nav [data-tab="processes"]');
   if (!nav || nav.offsetParent === null) throw new Error('Processes nav is not visible');
   nav.click();
   var sub = document.querySelector('[data-process-subtab="%s"]');
@@ -1232,7 +1232,7 @@ func processTabJS(subtab, readySelector string) string {
 func worklistTabJS(view, readySelector string) string {
 	// `return` so MustEval awaits the promise — see processTabJS.
 	return fmt.Sprintf(`return (async function(){
-  var nav = document.querySelector('nav button[data-tab="processes"]');
+  var nav = document.querySelector('nav [data-tab="processes"]');
   if (!nav || nav.offsetParent === null) throw new Error('Processes nav is not visible');
   nav.click();
   var sub = document.querySelector('[data-process-subtab="worklist"]');
@@ -1264,7 +1264,7 @@ func worklistTabJS(view, readySelector string) string {
 // through as a captured "ok". `label` distinguishes the two cases (wide/band) in
 // the readout + error. Note the doubled %% for the literal `height:100%` CSS.
 func scrollClearJS(blockWidth int, label string) string {
-	return `document.querySelector('nav button[data-tab="groups"]').click();
+	return `document.querySelector('nav [data-tab="groups"]').click();
 document.body.classList.add('dock-open');` + fmt.Sprintf(`
 var __wide = document.createElement('div');
 __wide.style.cssText = 'position:relative;width:%dpx;height:120px;margin-top:12px;box-sizing:border-box;padding:8px;color:#fff;font:14px monospace;background:linear-gradient(90deg,#1b3a5b,#2d6da8);';
@@ -1309,7 +1309,7 @@ return new Promise(function(resolve, reject){
 // required off-tab state), NON-empty when it's laid out — so it also rejects a
 // regression that merely SLID the panel off (translateX) instead of removing it.
 func jobsNoDockJS() string {
-	return `document.querySelector('nav button[data-tab="jobs"]').click();
+	return `document.querySelector('nav [data-tab="jobs"]').click();
 document.body.classList.add('dock-open');
 return new Promise(function(resolve, reject){
   // The gate re-evaluates via a MutationObserver on the Groups pane's class
@@ -1340,7 +1340,7 @@ return new Promise(function(resolve, reject){
 // spills past any dock edge, so dashsnap's awaited Eval fails the state — a
 // re-home/positioning regression can't slip through as a captured "ok".
 func cogMenuClearJS() string {
-	return `document.querySelector('nav button[data-tab="groups"]').click();
+	return `document.querySelector('nav [data-tab="groups"]').click();
 document.body.classList.add('dock-open');
 return new Promise(function(resolve, reject){
   // Let the class observer re-home the controls + the head lay out, THEN open the
@@ -1380,7 +1380,7 @@ return new Promise(function(resolve, reject){
 //	    FIRST profile card's menu, assert it stays within #agent-dock's width (a
 //	    narrow, right-anchored menu must fit), and leave it open for the capture.
 func cardMenuJS() string {
-	return `document.querySelector('nav button[data-tab="groups"]').click();
+	return `document.querySelector('nav [data-tab="groups"]').click();
 document.body.classList.add('dock-open');
 return new Promise(function(resolve, reject){
   setTimeout(function(){
@@ -1432,7 +1432,7 @@ return new Promise(function(resolve, reject){
 // clone wiring fails the run. The captured PNG also lets a human eyeball the
 // per-#id wizard chrome (which string pins can't see).
 func cardCloneJS() string {
-	return `document.querySelector('nav button[data-tab="groups"]').click();
+	return `document.querySelector('nav [data-tab="groups"]').click();
 document.body.classList.add('dock-open');
 return new Promise(function(resolve, reject){
   setTimeout(function(){
@@ -1462,7 +1462,7 @@ return new Promise(function(resolve, reject){
 // copyMode, the copy radio is then clicked.
 func summonJS(dropSel string, copyMode bool) string {
 	js := fmt.Sprintf(`
-document.querySelector('nav button[data-tab="groups"]').click();
+document.querySelector('nav [data-tab="groups"]').click();
 document.body.classList.add('dock-open');
 var __card = document.querySelector('.dock-card[draggable="true"][data-dock-kind="templates"][data-dock-name=%q]');
 if (!__card) throw new Error('template card not found: %s');

@@ -1430,7 +1430,7 @@ function markOpenedHumanRead(id) {
 // folder directly (the server resolves it regardless of the roster).
 async function openMailbox(id) {
   if (!id) return;
-  const navBtn = $('nav button[data-tab="messages"]');
+  const navBtn = $('nav [data-tab="messages"]');
   if (navBtn) navBtn.click();
   await loadMailboxes();
   selectMailbox(id);
@@ -1676,7 +1676,7 @@ function renderAccessRequests(list, pending) {
 // banner's Review button.
 function focusAccessRequest(id) {
   accessHighlightId = id || null;
-  const navBtn = $('nav button[data-tab="messages"]');
+  const navBtn = $('nav [data-tab="messages"]');
   if (navBtn) navBtn.click();
   selectMailbox(ACCESS_ID);
   if (id) {
@@ -2062,7 +2062,7 @@ function initMail() {
   // refresh.js) toggles the .active class on the same click; this
   // listener fires after, so mailTabActive() inside renderMailTab sees
   // the freshly-set class.
-  $$('nav button[data-tab="messages"]').forEach(b =>
+  $$('nav [data-tab="messages"]').forEach(b =>
     b.addEventListener('click', renderMailTab));
 
   // The pending-approval attention banner's "Review" button jumps to the

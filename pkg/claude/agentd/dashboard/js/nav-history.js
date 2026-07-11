@@ -17,7 +17,7 @@
 // disabled states (AC #3) and keeps browser + button traversal identical
 // (AC #2).
 
-import { $, $$ } from './helpers.js';
+import { $, $$, isModifiedClick } from './helpers.js';
 import {
   DEFAULT_TAB, normalizeLocation, initialState, current, locEquals,
   push, replaceCurrent, canBack, canForward, toPath, fromPath, resolvePopstate,
@@ -60,7 +60,7 @@ let ready = false;
 // an unavailable tab is a stale target (AC #5): the caller falls back to the
 // default rather than stranding on a blank hidden section.
 function tabAvailable(tab) {
-  const btn = $$('nav button[data-tab]').find(b => b.dataset.tab === tab);
+  const btn = $$('nav [data-tab]').find(b => b.dataset.tab === tab);
   return !!(btn && btn.offsetParent !== null);
 }
 
@@ -69,7 +69,7 @@ function tabAvailable(tab) {
 // that have one. Everything is normalized through the core so an unexpected DOM
 // state degrades to a valid location rather than a bogus one.
 function activeLocationFromDOM() {
-  const navBtn = $$('nav button[data-tab]').find(b => b.classList.contains('active'));
+  const navBtn = $$('nav [data-tab]').find(b => b.classList.contains('active'));
   const tab = navBtn ? navBtn.dataset.tab : DEFAULT_TAB;
   const loc = { tab };
   if (tab === 'access') {
@@ -92,7 +92,7 @@ function activate(loc) {
   if (!ROUTABLE_TABS.has(loc.tab)) return;
   applying = true;
   try {
-    const navBtn = $$('nav button[data-tab]').find(b => b.dataset.tab === loc.tab);
+    const navBtn = $$('nav [data-tab]').find(b => b.dataset.tab === loc.tab);
     if (navBtn && !navBtn.classList.contains('active')) navBtn.click();
     if (loc.tab === 'access' && loc.subtab) {
       $(`#tab-access .access-subtab[data-subtab="${loc.subtab}"]`)?.click();
@@ -267,7 +267,13 @@ export function initNavHistory() {
   // DOM here sees the post-switch location. recordCurrentLocation self-guards on
   // `applying` so our own programmatic activations don't re-enter.
   document.querySelector('nav')?.addEventListener('click', (e) => {
-    if (!e.target.closest('button[data-tab]')) return;
+    if (!e.target.closest('[data-tab]')) return;
+    // A modified/middle click opens the tab in a new browser tab and does NOT
+    // switch this view (bindTabs bails on it too), so there is nothing to
+    // record — skip it. A plain click has already flipped the active tab by the
+    // time this delegated listener runs, so the DOM read below sees the new
+    // location.
+    if (isModifiedClick(e)) return;
     recordCurrentLocation();
   });
 

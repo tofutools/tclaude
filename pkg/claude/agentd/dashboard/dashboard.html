@@ -155,20 +155,20 @@
        body.wizard (CSS swap in dashboard.css). Badge spans stay OUTSIDE the
        label pair so they render in both themes; the palette reads the visible
        label span (js/palette.js) so "Scry the {name}" gets the arcane name. -->
-  <button class="active" data-tab="groups"><span class="tab-label-regular">Groups</span><span class="tab-label-wizard">⚔ Parties</span></button>
+  <a class="active" data-tab="groups" href="/"><span class="tab-label-regular">Groups</span><span class="tab-label-wizard">⚔ Parties</span></a>
   <!-- Terminals — the in-SPA multiplexer (js/terminals-tab.js). CSS-hidden via
        body.hide-terminals until "web term" / "web window" opens the first pane;
        the badge counts the live terminals. -->
-  <button data-tab="terminals" title="Live in-browser terminals — appears while ≥1 web terminal / window is open. Each can be popped out into its own browser window."><span class="tab-label-regular">Terminals</span><span class="tab-label-wizard">🔮 Scrying</span><span id="terminals-badge" class="tab-badge count" hidden></span></button>
-  <button data-tab="jobs" title="Jobs — agent export jobs (live progress; finished ones stay until dismissed) and recurring cron schedules"><span class="tab-label-regular">Jobs</span><span class="tab-label-wizard">⚒ Labours</span><span id="jobs-badge" class="tab-badge count" hidden></span></button>
-  <button data-tab="processes" title="Processes — reusable graph templates, instantiated runs, and human work"><span class="tab-label-regular">Processes</span><span class="tab-label-wizard">🕸 Rites</span></button>
-  <button data-tab="plugins"><span class="tab-label-regular">Plugins</span><span class="tab-label-wizard">🔧 Contraptions</span><span id="plugins-badge" class="tab-badge warn" hidden></span></button>
-  <button data-tab="access" title="Agent access control — permanent permissions, the slug registry, and time-bounded sudo grants"><span class="tab-label-regular">Access</span><span class="tab-label-wizard">🛡 Wards</span></button>
-  <button data-tab="messages"><span class="tab-label-regular">Messages</span><span class="tab-label-wizard">🕊 Missives</span><span id="messages-badge" class="tab-badge" hidden></span></button>
-  <button data-tab="costs"><span class="tab-label-regular">Costs</span><span class="tab-label-wizard">💰 Coffers</span></button>
-  <button data-tab="audit" title="Audit log — who ran which tclaude command (spawn, message, lifecycle, permissions…), including denied attempts"><span class="tab-label-regular">Audit</span><span class="tab-label-wizard">📖 Chronicle</span></button>
-  <button data-tab="logs" title="Logs — tclaude's own daemon/CLI log (~/.tclaude/output.log), with level/time filters, search and optional live tail"><span class="tab-label-regular">Logs</span><span class="tab-label-wizard">🕯 Runes</span></button>
-  <button data-tab="config"><span class="tab-label-regular">Config</span><span class="tab-label-wizard">📜 Almanac</span></button>
+  <a data-tab="terminals" href="/terminals" title="Live in-browser terminals — appears while ≥1 web terminal / window is open. Each can be popped out into its own browser window."><span class="tab-label-regular">Terminals</span><span class="tab-label-wizard">🔮 Scrying</span><span id="terminals-badge" class="tab-badge count" hidden></span></a>
+  <a data-tab="jobs" href="/jobs" title="Jobs — agent export jobs (live progress; finished ones stay until dismissed) and recurring cron schedules"><span class="tab-label-regular">Jobs</span><span class="tab-label-wizard">⚒ Labours</span><span id="jobs-badge" class="tab-badge count" hidden></span></a>
+  <a data-tab="processes" href="/processes" title="Processes — reusable graph templates, instantiated runs, and human work"><span class="tab-label-regular">Processes</span><span class="tab-label-wizard">🕸 Rites</span></a>
+  <a data-tab="plugins" href="/plugins"><span class="tab-label-regular">Plugins</span><span class="tab-label-wizard">🔧 Contraptions</span><span id="plugins-badge" class="tab-badge warn" hidden></span></a>
+  <a data-tab="access" href="/access" title="Agent access control — permanent permissions, the slug registry, and time-bounded sudo grants"><span class="tab-label-regular">Access</span><span class="tab-label-wizard">🛡 Wards</span></a>
+  <a data-tab="messages" href="/messages"><span class="tab-label-regular">Messages</span><span class="tab-label-wizard">🕊 Missives</span><span id="messages-badge" class="tab-badge" hidden></span></a>
+  <a data-tab="costs" href="/costs"><span class="tab-label-regular">Costs</span><span class="tab-label-wizard">💰 Coffers</span></a>
+  <a data-tab="audit" href="/audit" title="Audit log — who ran which tclaude command (spawn, message, lifecycle, permissions…), including denied attempts"><span class="tab-label-regular">Audit</span><span class="tab-label-wizard">📖 Chronicle</span></a>
+  <a data-tab="logs" href="/logs" title="Logs — tclaude's own daemon/CLI log (~/.tclaude/output.log), with level/time filters, search and optional live tail"><span class="tab-label-regular">Logs</span><span class="tab-label-wizard">🕯 Runes</span></a>
+  <a data-tab="config" href="/config"><span class="tab-label-regular">Config</span><span class="tab-label-wizard">📜 Almanac</span></a>
   <!-- Vegas — the shared soundtrack tab. CSS-hidden unless body.slop,
        body.wizard, or the regular-mode opt-in (body.vegas) is set (see
        dashboard.css); vegas.js owns the player inside it. The label swaps to
@@ -266,9 +266,9 @@
        this ticket owns only the tab shell, lists, and REST-backed navigation. -->
   <section id="tab-processes">
     <div class="process-subnav" role="tablist" aria-label="Process views">
-      <button class="process-subtab active" data-process-subtab="templates" role="tab" aria-selected="true" aria-controls="process-panel-templates">Templates</button>
-      <button class="process-subtab" data-process-subtab="runs" role="tab" aria-selected="false" aria-controls="process-panel-runs">Runs</button>
-      <button class="process-subtab" data-process-subtab="worklist" role="tab" aria-selected="false" aria-controls="process-panel-worklist">Worklist<span id="process-worklist-badge" class="tab-badge warn" hidden></span></button>
+      <a class="process-subtab active" data-process-subtab="templates" href="/processes/templates" role="tab" aria-selected="true" aria-controls="process-panel-templates">Templates</a>
+      <a class="process-subtab" data-process-subtab="runs" href="/processes/runs" role="tab" aria-selected="false" aria-controls="process-panel-runs">Runs</a>
+      <a class="process-subtab" data-process-subtab="worklist" href="/processes/worklist" role="tab" aria-selected="false" aria-controls="process-panel-worklist">Worklist<span id="process-worklist-badge" class="tab-badge warn" hidden></span></a>
       <span class="spacer"></span>
       <span id="process-notice" class="process-notice" role="status"></span>
     </div>
@@ -335,9 +335,9 @@
       every grantable capability, and time-bounded <strong>Sudo</strong> elevations.
     </p>
     <div class="access-subnav" role="tablist" aria-label="Access control views">
-      <button class="access-subtab active" data-subtab="permissions" role="tab" aria-selected="true" aria-controls="access-permissions">Permissions</button>
-      <button class="access-subtab" data-subtab="slugs" role="tab" aria-selected="false" aria-controls="access-slugs">Slug registry</button>
-      <button class="access-subtab" data-subtab="sudo" role="tab" aria-selected="false" aria-controls="access-sudo">Sudo</button>
+      <a class="access-subtab active" data-subtab="permissions" href="/access/permissions" role="tab" aria-selected="true" aria-controls="access-permissions">Permissions</a>
+      <a class="access-subtab" data-subtab="slugs" href="/access/slugs" role="tab" aria-selected="false" aria-controls="access-slugs">Slug registry</a>
+      <a class="access-subtab" data-subtab="sudo" href="/access/sudo" role="tab" aria-selected="false" aria-controls="access-sudo">Sudo</a>
     </div>
     <div class="access-panel active" id="access-permissions" role="tabpanel" aria-label="Permissions">
       <div id="permissions-body"></div>

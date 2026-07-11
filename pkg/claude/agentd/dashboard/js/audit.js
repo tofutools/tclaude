@@ -266,7 +266,7 @@ function auditTabActive() {
 // bindAuditTab wires the tab: load on activation; server-side search /
 // outcome / source filters; sortable headers; pager; slow re-poll.
 function bindAuditTab() {
-  $('nav button[data-tab="audit"]').addEventListener('click', loadAudit);
+  $('nav [data-tab="audit"]').addEventListener('click', loadAudit);
 
   const filter = $('#filter-audit');
   if (filter) {

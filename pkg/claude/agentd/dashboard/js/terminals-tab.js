@@ -53,7 +53,7 @@ function applyTerminalsTabVisibility(n) {
 // click does (refresh.js bindTabs). Used to jump to Terminals on open and back
 // to Groups when the tab vanishes.
 function selectTab(name) {
-  $$('nav button').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  $$('nav [data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
   $$('main section').forEach(s => s.classList.toggle('active', s.id === 'tab-' + name));
   // Revealing the Terminals tab (opening a web terminal) is a real user
   // navigation — signal the history router to push /terminals (one-way event,

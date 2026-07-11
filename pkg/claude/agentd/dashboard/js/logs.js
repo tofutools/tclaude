@@ -295,7 +295,7 @@ function stopStreaming() {
 // level / time / rotated filters; a manual refresh; the pager; and the
 // opt-in stream (tail-follow) poll.
 function bindLogsTab() {
-  $('nav button[data-tab="logs"]').addEventListener('click', loadLogs);
+  $('nav [data-tab="logs"]').addEventListener('click', loadLogs);
 
   const filter = $('#filter-logs');
   if (filter) {

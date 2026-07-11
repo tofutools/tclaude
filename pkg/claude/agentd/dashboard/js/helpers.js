@@ -10,6 +10,19 @@ import { dashPrefs } from './prefs.js';
 
 const $ = (sel, root) => (root || document).querySelector(sel);
 const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
+
+// isModifiedClick reports whether a click event should be left to the browser
+// rather than handled in-SPA. The dashboard's nav tabs/subtabs are real
+// <a href> anchors (so hovering previews the URL and Cmd/Ctrl/middle-click open
+// a new tab); their click handlers call this to bail out of the in-page switch
+// on a modified or non-primary click, letting the anchor's native navigation
+// open the location in a new tab / window. A plain left-click returns false, so
+// the handler preventDefaults and switches in place. A synthetic
+// element.click() (command palette, [/] tab-cycle, deep links) reports button 0
+// with no modifiers, so it too stays in-SPA — no reload.
+function isModifiedClick(e) {
+  return e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0;
+}
 function esc(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -1831,7 +1844,7 @@ function syncWizardOrbit() {
 export {
   syncBotAnimations,
   syncWizardOrbit,
-  $, $$, esc, linkify, shortId, shortAgentId, idTooltip, syncSelectTitle, populateModelSelect, setModelSelectValue, MODEL_CUSTOM_VALUE, syncCustomModelRow, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, onlineDot, agentStatusDot, harnessLine, sandboxBadge, remoteControlBadge, statePill, slopMachine, wizardPill, contextMeter, activityBadges,
+  $, $$, isModifiedClick, esc, linkify, shortId, shortAgentId, idTooltip, syncSelectTitle, populateModelSelect, setModelSelectValue, MODEL_CUSTOM_VALUE, syncCustomModelRow, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, onlineDot, agentStatusDot, harnessLine, sandboxBadge, remoteControlBadge, statePill, slopMachine, wizardPill, contextMeter, activityBadges,
   harnessCanRename, harnessCanRemoteControl,
   roleCell, descrCell, tagChips, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, taskCell, offlineDefault, groupOfflineOverride, groupShowOffline,

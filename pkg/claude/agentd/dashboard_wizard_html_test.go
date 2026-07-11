@@ -91,7 +91,7 @@ func TestDashboardHTML_WizardTheme(t *testing.T) {
 
 	// CSS re-skin hooks.
 	must("body.wizard {", "dashboard.css carries the wizard re-skin")
-	must("body.wizard nav button[data-tab=\"vegas\"]", "the music tab shows in wizard mode")
+	must("body.wizard nav [data-tab=\"vegas\"]", "the music tab shows in wizard mode")
 	must(".tab-label-wizard", "the music tab has a wizard label variant")
 	must("body.wizard #slop-marquee", "the marquee shows in wizard mode")
 	must(".wizard-spark", "the wizard cast/trail spark FX are styled")

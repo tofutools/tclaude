@@ -612,7 +612,7 @@ function showStreamError(host) {
 function leaveVegasTabIfActive() {
   const sec = document.getElementById('tab-vegas');
   if (!sec || !sec.classList.contains('active')) return;
-  document.querySelectorAll('nav button').forEach(b =>
+  document.querySelectorAll('nav [data-tab]').forEach(b =>
     b.classList.toggle('active', b.dataset.tab === 'groups'));
   document.querySelectorAll('main section').forEach(s =>
     s.classList.toggle('active', s.id === 'tab-groups'));

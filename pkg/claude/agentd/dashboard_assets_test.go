@@ -748,7 +748,7 @@ func TestDashboardAssets_FeatureFlagsWired(t *testing.T) {
 // DOM id or route before it becomes a browser-only failure.
 func TestDashboardAssets_ProcessesTabWired(t *testing.T) {
 	for _, needle := range []string{
-		`<button data-tab="processes"`,
+		`<a data-tab="processes"`,
 		`data-process-subtab="templates"`,
 		`data-process-subtab="runs"`,
 		`data-process-subtab="worklist"`,
@@ -759,7 +759,7 @@ func TestDashboardAssets_ProcessesTabWired(t *testing.T) {
 		"processJSON('/v1/process/templates')",
 		"processJSON('/v1/process/runs')",
 		"applyProcessesTabVisibility(data)",
-		`body.hide-processes nav button[data-tab="processes"]`,
+		`body.hide-processes nav [data-tab="processes"]`,
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard assets missing %q — Processes tab contract broken", needle)
