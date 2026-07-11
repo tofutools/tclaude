@@ -596,9 +596,13 @@ export class ProcessTemplateEditor {
   applyHistory(direction) {
     const moved = direction === 'undo' ? this.model.undo() : this.model.redo();
     if (!moved) return;
-    // A restored state may no longer contain the selected node/edge.
-    this.selection = makeSelection(selectionItems(this.selection).filter((item) => item.type === 'node'
-      ? this.model.node(item.id) : this.model.findEdge(item.from, item.outcome)));
+    // Template settings remain valid across metadata history. Graph selections
+    // still need liveness filtering because a restored topology may no longer
+    // contain their node/edge.
+    if (this.selection?.type !== 'template') {
+      this.selection = makeSelection(selectionItems(this.selection).filter((item) => item.type === 'node'
+        ? this.model.node(item.id) : this.model.findEdge(item.from, item.outcome)));
+    }
     this.refresh();
   }
 

@@ -91,3 +91,38 @@ test('graph multi-selection remains normalized and replaces template settings', 
   assert.deepEqual(graphSelection, multi);
   assert.equal(renders, 1);
 });
+
+test('undo and redo preserve template settings selection', () => {
+  for (const direction of ['undo', 'redo']) {
+    let refreshed = 0;
+    const fake = {
+      selection: { type: 'template' },
+      model: {
+        undo() { return true; },
+        redo() { return true; },
+        node() { throw new Error('template selection must not enter graph liveness filtering'); },
+        findEdge() { throw new Error('template selection must not enter graph liveness filtering'); },
+      },
+      refresh() { refreshed += 1; },
+    };
+    ProcessTemplateEditor.prototype.applyHistory.call(fake, direction);
+    assert.deepEqual(fake.selection, { type: 'template' }, `${direction} keeps the metadata editor active`);
+    assert.equal(refreshed, 1);
+  }
+});
+
+test('history still drops graph selections removed by restored topology', () => {
+  let refreshed = 0;
+  const fake = {
+    selection: { type: 'multi', items: [{ type: 'node', id: 'gone' }, { type: 'node', id: 'kept' }] },
+    model: {
+      undo() { return true; }, redo() { return true; },
+      node(id) { return id === 'kept' ? { type: 'task' } : undefined; },
+      findEdge() { return undefined; },
+    },
+    refresh() { refreshed += 1; },
+  };
+  ProcessTemplateEditor.prototype.applyHistory.call(fake, 'undo');
+  assert.deepEqual(fake.selection, { type: 'node', id: 'kept' });
+  assert.equal(refreshed, 1);
+});

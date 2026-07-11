@@ -77,6 +77,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"this.settingsButton.addEventListener('click', () => this.setSelection({ type: 'template' })",
 		"if (selection?.type === 'template')",
 		"this.graph.select(null)",
+		"if (this.selection?.type !== 'template')",
 		"this.model.setTemplateMeta({ name:",
 		// Rewire affordance on mid-graph node deletion.
 		"'Delete + rewire through'",
