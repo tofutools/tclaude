@@ -74,6 +74,12 @@ func TestDashboardHTML_OptionsMenu(t *testing.T) {
 	must(`class="spawn-ico"`, "the group spawn button carries the user-plus icon")
 	must(`class="subgroup-ico"`, "the subgroup button carries a portable two-person-plus icon")
 	must(`openGroupCreateModal(undefined, group)`, "the subgroup shortcut opens group create pinned to its parent")
+	must(`if (groupCreateParent) prefillGroupCreateFromSource(groupCreateParent);`,
+		"switching a subgroup form back to blank restores the parent's editable defaults")
+	must("if (groupCreateParent) {\n    // The pinned parent stays authoritative for descr/cwd.",
+		"selecting a template keeps the pinned parent authoritative and combines its startup context")
+	must(`sourceRow.style.display = groupCreateParent ? 'none' : '';`,
+		"a pinned subgroup hides the template mirror-source selector that cannot affect its inherited defaults")
 	must(".spawn-btn {", "the .spawn-btn CSS rule ships with the dashboard — without it the chip falls back to bare browser styling")
 	must("details[open] > summary .spawn-btn { opacity: 1; }",
 		"spawn-btn fades with the rest of the group-action chips when the group is collapsed, brightens on hover / when open")

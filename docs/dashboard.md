@@ -180,7 +180,8 @@ cleanup** (bulk-remove confirmed-offline members — see [Cleanup](#cleanup)),
 **🪟 windows…** (bulk focus/unfocus the members' terminal windows —
 optionally auto-tiled into a grid, see [Config](#config)), and **delete group**.
 The subgroup shortcut opens the standard create-group form with the current
-group fixed as its parent. The
+group fixed as its parent and prefills the editable description, default
+directory, and startup context from that parent. The
 header also carries three click-to-edit chips: **📁 start-dir** (the default
 working directory for agents spawned into the group), **📋 startup-context**
 (shared guidance delivered to each spawned agent's inbox), and a **👥
