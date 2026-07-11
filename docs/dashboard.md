@@ -492,6 +492,13 @@ last cached reading for `usage.idle_timeout` (default `72h`). Enable
 `usage.poll_anthropic_api` there only if you want background API refreshes while
 no statusline callback is active.
 
+The **Default terminal** toggle (`dashboard.default_terminal`) chooses where
+dashboard focus/open actions appear. Its default, `native`, opens or raises OS
+terminal windows. Selecting web terminals routes per-agent focus, open-window,
+open-terminal, and bulk focus from the **🪟 windows…** modal into panes in the
+dashboard's **Terminals** tab. Bulk unfocus still detaches the selected terminal
+clients and closes matching web panes; it never stops the agents.
+
 The **Window focus** field also holds a **set the `tclaude:<id>` window/tab
 title** toggle (`focus.window_title`, on by default). tclaude normally stamps
 a `tclaude:<id>` title on each agent's terminal so it can find that window
@@ -504,7 +511,7 @@ action is unaffected). **Leave it on for WSL**, where window focus depends on
 the title.
 
 The **Window focus** field also holds an opt-in **auto-tile** toggle: when
-on, focusing/​showing more than one agent's window (the 🪟 windows… modal or
+on, focusing/​showing more than one native agent window (the 🪟 windows… modal or
 the command palette) rearranges that set into a tidy layout — `grid`
 (default), `columns`, `rows`, or `cascade` — instead of leaving each window
 where the OS dropped it, with configurable inter-tile **gap** and screen-edge

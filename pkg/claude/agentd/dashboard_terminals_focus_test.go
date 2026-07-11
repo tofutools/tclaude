@@ -46,6 +46,22 @@ func TestFocusJumpsToOpenPane(t *testing.T) {
 	}
 }
 
+// TestBulkFocusUsesWebPanesByDefault guards the top-bar/group "windows…"
+// modal against bypassing dashboard.default_terminal. Its native endpoint is
+// best-effort OS-window focus and cannot create an in-browser pane, so the web
+// branch must precede the payload + fetch and open every checked candidate via
+// the same helper as the dedicated "web window" action.
+func TestBulkFocusUsesWebPanesByDefault(t *testing.T) {
+	refresh := readDashboardJS(t, "refresh.js")
+	branch := strings.Index(refresh, "if (dir === 'focus' && webTerminalDefault()) {")
+	open := strings.Index(refresh, "openWebWindowPane(c.agent_id || c.conv_id")
+	fetch := strings.Index(refresh, "fetch('/api/agent-windows'")
+	if branch < 0 || open < branch || fetch < open {
+		t.Fatal("refresh.js bulk focus must open each selected web pane before the native-only " +
+			"/api/agent-windows path when web terminals are the default")
+	}
+}
+
 // TestPaneSeedsCarryAgent pins that BOTH pane kinds tag their seed with a
 // standalone `agent` field — findPaneKey matches on seed.agent, so a missing
 // tag would silently make focus never jump to that pane. Guards against the

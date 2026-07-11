@@ -82,9 +82,10 @@ export function openTerminalPane(seedOrPromise) {
 // openWebWindowPane opens (or focuses) an in-browser terminal attached to an
 // agent's LIVE session in the Terminals tab — the web-terminal equivalent of
 // raising / attaching a native OS window. Used by the "web window" row action,
-// and by the plain "focus" / "open window" actions (the row button, the ⌘
-// palette, and a message's focus button) when config dashboard.default_terminal
-// = "web". `agent` is the stable action selector (agent_id ?? conv-id) — it
+// and by the plain "focus" / "open window" actions (the row button, bulk
+// windows modal, the ⌘ palette, and a message's focus button) when config
+// dashboard.default_terminal = "web". `agent` is the stable action selector
+// (agent_id ?? conv-id) — it
 // drives the WS path, the detach (hideConv), the focus-match (seed.agent) AND
 // the pane key, so ONE agent maps to ONE pane no matter which entry point opens
 // it (a caller that keyed on a different identity, e.g. conv-id, would slip past
