@@ -3952,7 +3952,7 @@ func spawnWelcomePrefix(name, role, descr, groupName, worktreePath, worktreeBran
 		}
 		body += " — make code edits there, not elsewhere under your start directory."
 	}
-	body += " Use `tclaude agent` commands (whoami / help / inbox ls) to introspect and coordinate."
+	body += " Use `tclaude agent` commands (whoami / --help / inbox ls) to introspect and coordinate."
 	return body
 }
 
