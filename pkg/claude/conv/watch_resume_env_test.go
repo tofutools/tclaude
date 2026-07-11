@@ -43,11 +43,13 @@ func TestResumeLaunchCmd_AppliesActorSnapshotAndStripsOperatorToken(t *testing.T
 	t.Setenv("TCLAUDE_HUMAN_TOKEN", "must-not-reach-pane")
 	readDir := t.TempDir()
 	writeDir := t.TempDir()
+	denyDir := t.TempDir()
 	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Global: &sandboxpolicy.Profile{
 		Name: "resume-policy",
 		Filesystem: []sandboxpolicy.FilesystemGrant{
 			{Path: readDir, Access: sandboxpolicy.AccessRead},
 			{Path: writeDir, Access: sandboxpolicy.AccessWrite},
+			{Path: denyDir, Access: sandboxpolicy.AccessDeny},
 		},
 		Environment: []sandboxpolicy.EnvironmentEntry{{Name: "LITERAL", Value: "spaces $(touch nope); `echo nope`"}},
 	}})
@@ -67,8 +69,11 @@ func TestResumeLaunchCmd_AppliesActorSnapshotAndStripsOperatorToken(t *testing.T
 	assert.Contains(t, cmd, "$(touch nope)")
 	assert.Contains(t, cmd, readDir)
 	assert.Contains(t, cmd, writeDir)
+	assert.Contains(t, cmd, denyDir)
 	assert.Contains(t, cmd, "allowRead")
 	assert.Contains(t, cmd, "allowWrite")
+	assert.Contains(t, cmd, "denyRead")
+	assert.Contains(t, cmd, "denyWrite")
 	assert.NotContains(t, cmd, "TCLAUDE_HUMAN_TOKEN")
 	assert.NotContains(t, cmd, "must-not-reach-pane")
 }
