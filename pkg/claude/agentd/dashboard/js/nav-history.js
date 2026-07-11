@@ -174,6 +174,16 @@ function reconcileLocation() {
   const loc = activeLocationFromDOM();
   if (!ROUTABLE_TABS.has(loc.tab)) return;
   if (locEquals(loc, current(stack))) return; // no drift
+  // Reconcile ONLY an involuntary re-location: the entry we're on points at a
+  // tab that is no longer available, so the dashboard auto-left it (e.g. the
+  // Terminals tab after the last terminal closed). A drift while the current
+  // entry's tab is STILL available is a voluntary navigation that pushes its own
+  // entry (it emits tclaude:navigated) — replacing it here would clobber a real
+  // back-entry, and would also strip a /processes/runs/<id> selection that
+  // activeLocationFromDOM can't yet reproduce (a trap for the selection
+  // follow-up: teach activeLocationFromDOM/activate about selection before
+  // loosening this guard).
+  if (tabAvailable(current(stack).tab)) return;
   stack = replaceCurrent(stack, loc);
   history.replaceState(serializeStack(stack), '', urlFor(loc));
   updateButtons();
@@ -191,6 +201,13 @@ function onPopstate(e) {
   const loc = fromPath(window.location.pathname);
   const navIndex = e.state && Number.isInteger(e.state.navIndex) ? e.state.navIndex : -1;
   stack = resolvePopstate(stack, loc, navIndex);
+  // Stale target: a popped tab may have been hidden while it sat in the
+  // back-stack (e.g. terminals closed while you were on another tab), so
+  // activating it would strand the user on a blank hidden section. Fall back to
+  // the default in place, mirroring the init-time guard.
+  if (current(stack).tab !== DEFAULT_TAB && !tabAvailable(current(stack).tab)) {
+    stack = replaceCurrent(stack, normalizeLocation({ tab: DEFAULT_TAB }));
+  }
   activate(current(stack));
   // Re-stamp the current entry with the fresh full stack (heals stale/partial
   // state after a reload) AND — because theme is global, not per-location —

@@ -117,6 +117,42 @@ func TestDashboardTerminals_RemotePreAuthed(t *testing.T) {
 	}
 }
 
+// TestDashboardTerminals_SoloRequiresAuth: the ?solo popout is behind the same
+// gate as the plain route — an unauthenticated GET is bounced to /, so ?solo
+// can't bypass auth to reach the popout body.
+func TestDashboardTerminals_SoloRequiresAuth(t *testing.T) {
+	withDashboardAuthForTest(t) // pins a session token, but we send no cookie
+
+	rec := httptest.NewRecorder()
+	handleDashboardTerminals(rec, httptest.NewRequest(http.MethodGet, "/terminals?solo=1", nil))
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("unauthenticated /terminals?solo=1 GET: status %d, want 303; body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "mux-tabs") {
+		t.Error("unauthenticated /terminals?solo=1 must not leak the popout body")
+	}
+}
+
+// TestDashboardTerminals_RemotePreAuthedPlainServesSPA: a remote-preauthed
+// client hitting the PLAIN /terminals gets the dashboard SPA (the new default
+// branch for remote clients), not the popout.
+func TestDashboardTerminals_RemotePreAuthedPlainServesSPA(t *testing.T) {
+	withDashboardAuthForTest(t) // pins a token we deliberately don't send
+
+	r := httptest.NewRequest(http.MethodGet, "/terminals", nil)
+	r = r.WithContext(context.WithValue(r.Context(), remoteAuthedCtxKey{}, true))
+	rec := httptest.NewRecorder()
+	handleDashboardTerminals(rec, r)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("remote pre-authed plain /terminals GET: status %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `/static/js/dashboard.js`) {
+		t.Error("remote pre-authed plain /terminals must serve the dashboard SPA")
+	}
+}
+
 // TestDashboardTerminals_GETOnly: the page route is read-only; a non-GET is
 // refused before any auth/serving work.
 func TestDashboardTerminals_GETOnly(t *testing.T) {
