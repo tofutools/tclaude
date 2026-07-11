@@ -14,55 +14,79 @@ const codexContextRefreshMinInterval = time.Second
 
 var codexContextRefreshMu struct {
 	sync.Mutex
-	last map[string]time.Time
+	last map[string]codexReadThroughSnapshot
+}
+
+type codexReadThroughSnapshot struct {
+	at                   time.Time
+	interruptedSubagents map[string]struct{}
 }
 
 // refreshCodexContextSnapshotOnRead gives Codex the same dashboard freshness
-// Claude Code gets from its command-statusline: before a live Codex row's
-// snapshot is rendered, lift the latest token_count off its rollout and write
-// the existing sessions.context_* columns. The write remains best-effort and
-// read-through; every surface still consumes db.GetContextSnapshot.
-func refreshCodexContextSnapshotOnRead(sess *db.SessionRow, alive bool) {
+// Claude Code gets from its command-statusline/hooks: before a live Codex row's
+// snapshot is rendered, scan its rollout once to lift the latest token_count
+// into sessions.context_* and harvest interrupted collaboration children from
+// sub_agent_activity. Context persistence remains best-effort; the returned
+// interrupted-child set is a read-through value because Codex's rollout is
+// authoritative for that terminal fact when its SubagentStop hook was lost.
+func refreshCodexContextSnapshotOnRead(sess *db.SessionRow, alive bool) map[string]struct{} {
 	if sess == nil || !alive || sess.Harness != harness.CodexName || sess.ID == "" || sess.ConvID == "" {
-		return
+		return nil
 	}
-	if !claimCodexContextRefresh(sess.ID, time.Now()) {
-		return
+	cached, refresh := claimCodexContextRefresh(sess.ID, time.Now())
+	if !refresh {
+		return cached.interruptedSubagents
 	}
 
 	home, err := os.UserHomeDir()
 	if err != nil {
 		slog.Warn("codex-telemetry: cannot resolve home for read-through refresh",
 			"session_id", sess.ID, "error", err, "module", "agentd")
-		return
+		return cached.interruptedSubagents
 	}
-	snap, ok, err := harness.CodexContextTelemetry(home, sess.ConvID)
+	snap, err := harness.CodexRuntimeTelemetry(home, sess.ConvID)
 	if err != nil {
 		slog.Warn("codex-telemetry: failed read-through refresh",
 			"session_id", sess.ID, "conv_id", sess.ConvID, "error", err, "module", "agentd")
-		return
+		return cached.interruptedSubagents
 	}
-	if !ok {
-		return
+	cacheCodexRuntimeRefresh(sess.ID, time.Now(), snap.InterruptedSubagents)
+	if !snap.HasContext {
+		return snap.InterruptedSubagents
 	}
-	if err := db.UpdateContextSnapshot(sess.ID, snap.Pct, snap.TokensInput, snap.TokensOutput, snap.WindowSize); err != nil {
+	ctx := snap.Context
+	if err := db.UpdateContextSnapshot(sess.ID, ctx.Pct, ctx.TokensInput, ctx.TokensOutput, ctx.WindowSize); err != nil {
 		slog.Warn("codex-telemetry: failed to persist read-through snapshot",
 			"session_id", sess.ID, "error", err, "module", "agentd")
-		return
 	}
+	return snap.InterruptedSubagents
 }
 
-func claimCodexContextRefresh(sessionID string, now time.Time) bool {
+func claimCodexContextRefresh(sessionID string, now time.Time) (codexReadThroughSnapshot, bool) {
 	codexContextRefreshMu.Lock()
 	defer codexContextRefreshMu.Unlock()
 	if codexContextRefreshMu.last == nil {
-		codexContextRefreshMu.last = map[string]time.Time{}
+		codexContextRefreshMu.last = map[string]codexReadThroughSnapshot{}
 	}
-	if prev, ok := codexContextRefreshMu.last[sessionID]; ok && now.Sub(prev) < codexContextRefreshMinInterval {
-		return false
+	prev := codexContextRefreshMu.last[sessionID]
+	if !prev.at.IsZero() && now.Sub(prev.at) < codexContextRefreshMinInterval {
+		return prev, false
 	}
-	codexContextRefreshMu.last[sessionID] = now
-	return true
+	prev.at = now
+	codexContextRefreshMu.last[sessionID] = prev
+	return prev, true
+}
+
+func cacheCodexRuntimeRefresh(sessionID string, now time.Time, interrupted map[string]struct{}) {
+	codexContextRefreshMu.Lock()
+	defer codexContextRefreshMu.Unlock()
+	if codexContextRefreshMu.last == nil {
+		codexContextRefreshMu.last = map[string]codexReadThroughSnapshot{}
+	}
+	codexContextRefreshMu.last[sessionID] = codexReadThroughSnapshot{
+		at:                   now,
+		interruptedSubagents: interrupted,
+	}
 }
 
 func sessionRowAliveIn(sess *db.SessionRow, aliveSet map[string]struct{}) bool {

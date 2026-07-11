@@ -67,6 +67,43 @@ func TestCodexContextTelemetry_NoTokenCountYet(t *testing.T) {
 	assert.Zero(t, snap.Pct)
 }
 
+// Codex persists collaboration-child lifecycle independently of its hook
+// callbacks. Replaying that stream must harvest terminal interrupted IDs while
+// leaving normal started/interacted lifecycle to the hook ledger.
+func TestCodexRuntimeTelemetry_ReconcilesSubagentActivity(t *testing.T) {
+	home := codexTestHome(t)
+	const id = "019ec004-4250-79b1-9ade-ebaea41354bb"
+	cx := testharness.NewCodexSimWithID(t, home, id, "/home/u/proj")
+	require.NoError(t, cx.Start())
+
+	require.NoError(t, cx.WriteSubagentActivity("child-a", "/root/a", "started"))
+	require.NoError(t, cx.WriteSubagentActivity("child-b", "/root/b", "interacted"))
+	require.NoError(t, cx.WriteSubagentActivity("child-a", "/root/a", "interrupted"))
+
+	snap, err := harness.CodexRuntimeTelemetry(home, id)
+	require.NoError(t, err)
+	assert.Contains(t, snap.InterruptedSubagents, "child-a")
+	assert.NotContains(t, snap.InterruptedSubagents, "child-b",
+		"started/interacted are not terminal facts and must not replace the hook ledger")
+	assert.False(t, snap.HasContext, "subagent telemetry works before any token_count exists")
+
+	// A queue-only send_message is interaction but NOT live evidence: it must
+	// not resurrect the interrupted child from a stale hook ledger.
+	require.NoError(t, cx.WriteSubagentInteraction("child-a", "/root/a", "send_message"))
+	snap, err = harness.CodexRuntimeTelemetry(home, id)
+	require.NoError(t, err)
+	assert.Contains(t, snap.InterruptedSubagents, "child-a", "queue-only message does not resume child")
+
+	// followup_task DOES trigger a turn under the same thread id. The replay is
+	// a state machine: this later live evidence clears the earlier terminal fact.
+	require.NoError(t, cx.WriteSubagentInteraction("child-a", "/root/a", "followup_task"))
+	require.NoError(t, cx.WriteSubagentActivity("child-b", "/root/b", "interrupted"))
+	snap, err = harness.CodexRuntimeTelemetry(home, id)
+	require.NoError(t, err)
+	assert.NotContains(t, snap.InterruptedSubagents, "child-a", "later activity resumes the same child")
+	assert.Contains(t, snap.InterruptedSubagents, "child-b")
+}
+
 // Codex writes the effective reasoning effort into turn_context before any
 // token_count exists. The dashboard should still be able to show it for a
 // just-started session.

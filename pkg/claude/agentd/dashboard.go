@@ -1396,6 +1396,13 @@ func stateForConvIn(convID string, aliveSet map[string]struct{}) agentState {
 		// and reconciles on the next refresh (the harness has no readback).
 		RemoteControl: pick.RemoteControl,
 	}
+	// Codex records collaboration-child lifecycle in its rollout even when an
+	// explicit interrupt does not invoke the configured SubagentStop hook. The
+	// same read-through scan that refreshes context telemetry reconstructs the
+	// authoritative interrupted IDs and removes them from the shared hook ledger
+	// below. Other lifecycle still comes from hooks: Codex rollouts do not carry a
+	// terminal normal-completion activity event.
+	codexInterruptedSubagents := refreshCodexContextSnapshotOnRead(pick, alive)
 	// Sub-agents run INSIDE the harness process, so a dead session has
 	// none by definition — a stale count on an exited row must not render
 	// a "🤖+N" badge. For a live row, prefer the TTL-filtered ledger over
@@ -1406,6 +1413,9 @@ func stateForConvIn(convID string, aliveSet map[string]struct{}) agentState {
 	// hook binary — surface its raw count rather than hiding real work.
 	if alive {
 		if set := db.ParseSubagentSet(pick.SubagentsJSON); set != nil {
+			for id := range codexInterruptedSubagents {
+				delete(set, id)
+			}
 			out.SubagentCount = set.LiveCount(time.Now())
 		} else {
 			out.SubagentCount = pick.SubagentCount
@@ -1430,7 +1440,6 @@ func stateForConvIn(convID string, aliveSet map[string]struct{}) agentState {
 	// surface it regardless of liveness: a frozen context_pct for an
 	// exited agent is genuinely informative ("it died at 80%"), unlike
 	// a frozen "idle" status that would mislabel a dead agent.
-	refreshCodexContextSnapshotOnRead(pick, alive)
 	if snap, err := db.GetContextSnapshot(pick.ID); err == nil {
 		out.ContextPct = snap.ContextPct
 		out.TokensInput = snap.TokensInput
