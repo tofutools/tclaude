@@ -281,6 +281,17 @@ export class ProcessTemplateEditor {
   }
 
   setSelection(selection) {
+    // Template metadata is editor chrome, not a graph entity. Keep it outside
+    // process-selection's node/edge-only normalization while explicitly
+    // clearing the canvas highlight. A refresh replays this same branch;
+    // every node/edge/canvas gesture calls setSelection with another value and
+    // therefore leaves template settings cleanly.
+    if (selection?.type === 'template') {
+      this.selection = { type: 'template' };
+      this.graph.select(null);
+      this.renderInspector();
+      return;
+    }
     this.selection = makeSelection(selectionItems(selection));
     const graphical = selectionItems(this.selection).map((item) => {
       if (item.type === 'node') return { type: 'node', id: item.id };

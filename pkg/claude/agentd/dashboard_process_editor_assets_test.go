@@ -74,6 +74,9 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		// Template-level metadata has an explicit editor affordance and travels
 		// through setTemplateMeta, the same dirty/undo gate as graph edits.
 		"text: 'template settings…'",
+		"this.settingsButton.addEventListener('click', () => this.setSelection({ type: 'template' })",
+		"if (selection?.type === 'template')",
+		"this.graph.select(null)",
 		"this.model.setTemplateMeta({ name:",
 		// Rewire affordance on mid-graph node deletion.
 		"'Delete + rewire through'",

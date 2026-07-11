@@ -981,7 +981,7 @@ func nodeDialogStateJS(extraJS string) string {
   ed.model.addEdge('escalate', 'cancel', 'ship');
   ed.refresh({fit: true});
   `
-	return "return " + processEditorStateJS(seed+extraJS)
+	return processEditorStateJS(seed + extraJS)
 }
 
 // nodeDialogSelfCheck asserts the dialog is open with the work performer's
@@ -1006,7 +1006,7 @@ const nodeDialogScrollToWork = `
 // editor to mount its canvas, then runs extraJS with `ed` bound to the editor
 // instance (its dashsnap/test handle) to drive selection/dirty states.
 func processEditorStateJS(extraJS string) string {
-	return fmt.Sprintf(`(async function(){
+	return fmt.Sprintf(`return (async function(){
   var nav = document.querySelector('nav button[data-tab="processes"]');
   if (!nav || nav.offsetParent === null) throw new Error('Processes nav is not visible');
   nav.click();
