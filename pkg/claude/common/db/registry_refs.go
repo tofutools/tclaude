@@ -15,7 +15,7 @@ func registryIDByName(tx *sql.Tx, table, name string) (sql.NullInt64, error) {
 	if name == "" {
 		return sql.NullInt64{}, nil
 	}
-	if table != "spawn_profiles" && table != "group_templates" {
+	if table != "spawn_profiles" && table != "group_templates" && table != "sandbox_profiles" {
 		return sql.NullInt64{}, fmt.Errorf("unsupported registry %q", table)
 	}
 	var id int64
