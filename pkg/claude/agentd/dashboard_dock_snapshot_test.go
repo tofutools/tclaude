@@ -2,8 +2,12 @@ package agentd
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 // TestDockSnapshot_CarriesProfilesAndRoles guards the server side of the
@@ -28,5 +32,34 @@ func TestDockSnapshot_CarriesProfilesAndRoles(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("snapshot JSON missing %q (empty registries must serialize as [], not null) — got %s", want, got)
 		}
+	}
+}
+
+func TestDashboardSnapshotCarriesGlobalDefaultSpawnProfile(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	profileID, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "global-default"})
+	if err != nil {
+		t.Fatalf("create spawn profile: %v", err)
+	}
+	if err := db.SetDashboardProfileRef(
+		dashboardDefaultProfilePrefKey, dashboardDefaultProfileIDPrefKey,
+		"global-default", profileID,
+	); err != nil {
+		t.Fatalf("set global default spawn profile: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	handleDashboardSnapshot(rec, dashboardRequest(http.MethodGet, "/api/snapshot", ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("snapshot status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var snapshot snapshotPayload
+	if err := json.Unmarshal(rec.Body.Bytes(), &snapshot); err != nil {
+		t.Fatalf("decode snapshot: %v", err)
+	}
+	if snapshot.SpawnProfileDefault != "global-default" {
+		t.Errorf("spawn_profile_default = %q, want global-default", snapshot.SpawnProfileDefault)
 	}
 }

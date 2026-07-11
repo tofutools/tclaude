@@ -40,7 +40,7 @@ import { lastSnapshot, setLastSnapshot, webTerminalDefault } from './dashboard.j
 import { setVegasRegularMode, isWizardActive } from './slop.js';
 import { setHScrollFollow } from './hscroll.js';
 import { noteConnected, noteDisconnected } from './connection.js';
-import { refreshDashDefaultProfile } from './profiles.js';
+import { syncDashDefaultProfile } from './profiles.js';
 import { dashboardState } from './snapshot-store.js';
 
 // refreshSuspended() is the single source of truth for whether the
@@ -436,7 +436,6 @@ export async function refresh(opts = {}) {
       (onGroups && conversationsVisible()) ? get('/api/conversations?' + listParams('conversations', groupsQ)) : Promise.resolve(undefined),
       (onGroups && replacedVisible()) ? get('/api/replaced?' + listParams('replaced', groupsQ)) : Promise.resolve(undefined),
       jobsTabActive() ? get('/api/jobs?' + listParams('jobs', jobsQ)) : Promise.resolve(undefined),
-      refreshDashDefaultProfile(),
     ]);
     // agentd answered this poll (any HTTP status) — we're connected. Clear the
     // disconnect banner + resume music if it had been raised. Done before the
@@ -496,6 +495,7 @@ export async function refresh(opts = {}) {
     // fresh DOM is in place.
     const focusToken = captureFocus();
     setLastSnapshot(data);
+    syncDashDefaultProfile(data.spawn_profile_default);
     // Split into a stable URL span (written once / only when the base changes)
     // and a per-tick timestamp span, morphed in place. A single textContent
     // write recreated the whole text node every 2s, so selecting the URL to
