@@ -119,7 +119,7 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 	sort.Strings(paths)
 	for _, path := range paths {
 		grant := filesystem[path]
-		normalized, err := normalizeFilesystem([]FilesystemGrant{{Path: path, Access: grant.access}})
+		normalized, _, err := normalizeFilesystem([]FilesystemGrant{{Path: path, Access: grant.access}}, false)
 		if err != nil {
 			return EffectiveProfile{}, fmt.Errorf("revalidate effective filesystem path %q: %w", path, err)
 		}

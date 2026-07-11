@@ -12,6 +12,7 @@ func registerDashboardSandboxProfileRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/sandbox-profiles", dashboardSandboxProfilesRoute(handleSandboxProfiles))
 	mux.HandleFunc("/api/sandbox-profile-default", dashboardSandboxProfilesRoute(handleGlobalSandboxProfile))
 	mux.HandleFunc("GET /api/sandbox-profiles/export", dashboardSandboxProfilesRoute(handleSandboxProfilesExport))
+	mux.HandleFunc("POST /api/sandbox-profiles/import/inspect", dashboardSandboxProfilesRoute(handleSandboxProfilesImportInspect))
 	mux.HandleFunc("POST /api/sandbox-profiles/import", dashboardSandboxProfilesRoute(handleSandboxProfilesImport))
 	mux.HandleFunc("/api/sandbox-profiles/{name}", dashboardSandboxProfilesRoute(handleSandboxProfileByName))
 	mux.HandleFunc("/api/sandbox-profile-drafts/{token}", handleDashboardSandboxProfileDraft)

@@ -2554,6 +2554,11 @@ details[data-group-key][open] > summary .group-sandbox-profile {
   font-size: 12px;
   overflow-wrap: anywhere;
 }
+.profile-transfer-warning {
+  color: #d29922;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
 .profile-import-conflict {
   display: flex;
   gap: 6px;

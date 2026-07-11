@@ -130,6 +130,43 @@ func TestNormalizeFilesystemRejectsSymlinkIntoProtectedTree(t *testing.T) {
 	assert.Contains(t, err.Error(), "intersects protected")
 }
 
+func TestNormalizeForImportRetainsMissingPathsWithWarnings(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	realParent := filepath.Join(home, "shared")
+	require.NoError(t, os.MkdirAll(realParent, 0o755))
+	alias := filepath.Join(home, "alias")
+	require.NoError(t, os.Symlink(realParent, alias))
+	missing := filepath.Join(alias, "recipient", "cache")
+
+	_, err := Normalize(Profile{Name: "portable", Filesystem: []FilesystemGrant{{Path: missing, Access: AccessWrite}}})
+	require.Error(t, err, "ordinary validation still requires a usable local directory")
+
+	got, warnings, err := NormalizeForImport(Profile{Name: "portable", Filesystem: []FilesystemGrant{
+		{Path: missing, Access: AccessRead},
+		{Path: missing + string(filepath.Separator), Access: AccessWrite},
+	}})
+	require.NoError(t, err)
+	canonicalParent, err := filepath.EvalSymlinks(realParent)
+	require.NoError(t, err)
+	want := filepath.Join(canonicalParent, "recipient", "cache")
+	assert.Equal(t, []FilesystemGrant{{Path: want, Access: AccessWrite}}, got.Filesystem)
+	assert.Equal(t, []string{want}, warnings)
+}
+
+func TestNormalizeForImportStillRejectsUnsafeOrMalformedMissingPaths(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	for _, path := range []string{
+		"relative/missing",
+		filepath.Join(home, ".codex", "missing"),
+		filepath.Join(home, ".tclaude", "data", "missing"),
+	} {
+		_, _, err := NormalizeForImport(Profile{Name: "portable", Filesystem: []FilesystemGrant{{Path: path, Access: AccessRead}}})
+		require.Error(t, err, "path %q", path)
+	}
+}
+
 func TestNormalizeEnvironmentCanonicalAndConflicts(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	in := Profile{Name: "p", Environment: []EnvironmentEntry{

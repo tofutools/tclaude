@@ -264,6 +264,11 @@ credentials in a sandbox profile — and changes take effect only when an agent
 is spawned or relaunched. The daemon remains authoritative for canonical path,
 protected-root, reserved-variable, containment, and harness capability checks.
 
+Portable sandbox-profile imports preview paths that do not exist on the local
+machine as warnings instead of rejecting the bundle. The profiles can still be
+imported and edited for the receiving machine, but cannot be applied until all
+missing paths have been corrected or created.
+
 For routine assignment, the Groups toolbar has a global 🛡 chip beside the
 dashboard spawn-profile default, and every group header has its own 🛡 chip
 beside the group's 🧠 spawn-profile chip. Like the 🧠 chips, each 🛡 chip is
