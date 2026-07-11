@@ -670,6 +670,19 @@ function bindTabs() {
         s.classList.toggle('active', s.id === 'tab-' + b.dataset.tab);
       });
     });
+    // <a> activates on Enter only, whereas the former <button> also switched on
+    // Space; restore that parity so a keyboard user's Space still selects the
+    // focused tab (preventDefault stops the page from scrolling instead). The
+    // synthetic click routes through the handler above. Vegas is a real
+    // <button> — Space fires its click natively — so skip it to avoid a
+    // double toggle.
+    if (b.tagName === 'A') {
+      b.addEventListener('keydown', e => {
+        if (e.key !== ' ' && e.key !== 'Spacebar') return;
+        e.preventDefault();
+        b.click();
+      });
+    }
   });
 }
 
@@ -835,6 +848,15 @@ function bindAccessSubtabs() {
     if (isModifiedClick(e)) return;
     e.preventDefault();
     activateAccessSubtab(btn.dataset.subtab);
+  });
+  // Space-activation parity for the anchor subtabs (see bindTabs): <a> switches
+  // on Enter only, so shim Space to keep the former <button> keyboard behaviour.
+  subnav.addEventListener('keydown', e => {
+    if (e.key !== ' ' && e.key !== 'Spacebar') return;
+    const a = e.target.closest('a[data-subtab]');
+    if (!a) return;
+    e.preventDefault();
+    a.click();
   });
 }
 

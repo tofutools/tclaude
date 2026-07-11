@@ -26,6 +26,15 @@ export function initProcessesTab() {
     if (!(await confirmLeaveDirtyEditor())) return;
     activateProcessSubtab(button.dataset.processSubtab);
   });
+  // Space-activation parity for the anchor subtabs (see bindTabs): <a> switches
+  // on Enter only, so shim Space to keep the former <button> keyboard behaviour.
+  tab.querySelector('.process-subnav')?.addEventListener('keydown', e => {
+    if (e.key !== ' ' && e.key !== 'Spacebar') return;
+    const a = e.target.closest('a[data-process-subtab]');
+    if (!a) return;
+    e.preventDefault();
+    a.click();
+  });
   $('#process-runs-refresh')?.addEventListener('click', () => loadProcessRuns());
   $('#process-template-new')?.addEventListener('click', () => openProcessEditor('new-process', true));
   tab.addEventListener('click', async e => {

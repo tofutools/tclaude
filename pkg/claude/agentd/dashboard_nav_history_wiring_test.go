@@ -77,6 +77,9 @@ func TestDashboardNavLinks_Wired(t *testing.T) {
 		// The tab + subtab handlers actually apply the guard and cancel the
 		// anchor's own navigation on a plain click.
 		`if (isModifiedClick(e)) return;`,
+		// <a> tabs activate on Enter only; a Space shim restores the former
+		// <button> keyboard parity (Space selects the focused tab).
+		`e.key !== ' ' && e.key !== 'Spacebar'`,
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard nav-links contract missing %q", needle)
