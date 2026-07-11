@@ -1,7 +1,7 @@
 import { $, esc, bindModalSubmitHotkey } from './helpers.js';
-import { lastSnapshot } from './dashboard.js';
 import { confirmModal, toast, bindBackdropDiscard, bindManageOverlayDismiss } from './refresh.js';
 import { openTermModal } from './modal-term.js';
+import { wizWord } from './slop.js';
 
 const API = '/api/sandbox-profiles';
 let profiles = [];
@@ -67,32 +67,7 @@ function paintSandboxProfiles() {
         </span>
       </div>
       <div class="modal-meta">filesystem: ${esc((p.filesystem || []).map(g => `${g.access} ${g.path}`).join(' · ') || 'none')}<br>environment keys: ${esc((p.environment || []).map(e => e.name).join(', ') || 'none')}</div>
-    </div>`).join('') : '<div class="template-empty">No sandbox profiles match.</div>';
-}
-
-async function loadAssignments() {
-  const global = await api('/api/sandbox-profile-default');
-  const globalSel = $('#sandbox-profile-global');
-  globalSel.innerHTML = profileOptions();
-  globalSel.value = (global && global.name) || '';
-
-  const groupSel = $('#sandbox-profile-group');
-  const prev = groupSel.value;
-  const groups = (lastSnapshot && lastSnapshot.groups) || [];
-  groupSel.innerHTML = '<option value="">— choose group —</option>'
-    + groups.map(g => `<option value="${esc(g.name)}">${esc(g.name)}</option>`).join('');
-  if (groups.some(g => g.name === prev)) groupSel.value = prev;
-  await loadGroupAssignment();
-}
-
-async function loadGroupAssignment() {
-  const group = $('#sandbox-profile-group').value;
-  const sel = $('#sandbox-profile-group-value');
-  sel.innerHTML = profileOptions();
-  sel.disabled = !group;
-  if (!group) return;
-  const current = await api(`/api/groups/${encodeURIComponent(group)}/sandbox-profile`);
-  sel.value = (current && current.name) || '';
+    </div>`).join('') : `<div class="template-empty">${esc(wizWord('No sandbox profiles match.', 'No wards match.'))}</div>`;
 }
 
 async function openManager() {
@@ -101,7 +76,6 @@ async function openManager() {
   try {
     await loadSandboxProfiles();
     paintSandboxProfiles();
-    await loadAssignments();
   } catch (err) {
     $('#sandbox-profiles-manage-error').textContent = err.message || String(err);
   }
@@ -112,7 +86,9 @@ function closeManager() { $('#sandbox-profiles-manage-modal').classList.remove('
 function openEditor(p = null, { onCreate = null, targetName = '' } = {}) {
   editingName = targetName || (p ? p.name : '');
   editorOnCreate = editingName ? null : onCreate;
-  $('#sandbox-profile-editor-title').textContent = editingName ? `Edit sandbox profile: ${editingName}` : 'New sandbox profile';
+  $('#sandbox-profile-editor-title').textContent = editingName
+    ? wizWord(`Edit sandbox profile: ${editingName}`, `Edit ward: ${editingName}`)
+    : wizWord('New sandbox profile', 'New ward');
   $('#sandbox-profile-editor-name').value = p ? p.name : '';
   $('#sandbox-profile-editor-filesystem').value = JSON.stringify((p && p.filesystem) || [], null, 2);
   $('#sandbox-profile-editor-environment').value = JSON.stringify((p && p.environment) || [], null, 2);
@@ -335,6 +311,200 @@ async function refreshSpawnSandboxProfileUI(groupName = '') {
   }
 }
 
+// ---- Export / import -----------------------------------------------------
+//
+// Export/import reuse the daemon's /api/sandbox-profiles/export|import surface
+// (the loopback twins of the CLI path). Only the profiles themselves travel:
+// global/group assignments live in the Groups tab, so this dialog neither
+// exports (no include_assignments) nor applies (apply_assignments:false) them.
+// The daemon has no import/inspect endpoint, so the preview is client-side —
+// it parses the bundle and flags name clashes against the loaded list, then a
+// single on-conflict policy (error/skip/overwrite) governs the whole import.
+
+const EXPORT_FORMAT = 'tclaude-sandbox-profiles';
+const EXPORT_VERSION = 1;
+
+let importEnvelope = null;
+
+function downloadJSON(name, value) {
+  const blob = new Blob([JSON.stringify(value, null, 2) + '\n'], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function openExportModal() {
+  $('#sandbox-profile-export-error').textContent = '';
+  const list = $('#sandbox-profile-export-list');
+  if (!profiles.length) {
+    list.innerHTML = `<div class="template-empty">${esc(wizWord('No sandbox profiles to export.', 'No wards to inscribe.'))}</div>`;
+  } else {
+    list.innerHTML = profiles.map(p => `<label class="profile-transfer-row">
+      <input type="checkbox" data-sandbox-export-name="${esc(p.name)}" checked />
+      <span class="profile-transfer-main">
+        <span class="profile-transfer-name">${esc(p.name)}</span>
+        <span class="profile-transfer-summary">${esc(profileSummary(p))}</span>
+      </span>
+    </label>`).join('');
+  }
+  $('#sandbox-profile-export-submit').disabled = !profiles.length;
+  $('#sandbox-profile-export-modal').classList.add('show');
+}
+
+function closeExportModal() { $('#sandbox-profile-export-modal').classList.remove('show'); }
+
+function selectedExportNames() {
+  return [...$('#sandbox-profile-export-list').querySelectorAll('[data-sandbox-export-name]')]
+    .filter(el => el.checked)
+    .map(el => el.dataset.sandboxExportName);
+}
+
+async function submitExport() {
+  const errEl = $('#sandbox-profile-export-error');
+  errEl.textContent = '';
+  const names = selectedExportNames();
+  if (!names.length) { errEl.textContent = 'select at least one sandbox profile'; return; }
+  const btn = $('#sandbox-profile-export-submit');
+  btn.disabled = true;
+  try {
+    const q = new URLSearchParams();
+    names.forEach(n => q.append('name', n));
+    const bundle = await api(`${API}/export?${q.toString()}`);
+    downloadJSON('sandbox-profiles.json', bundle);
+    closeExportModal();
+    toast(`${names.length} sandbox profile${names.length === 1 ? '' : 's'} exported`);
+  } catch (err) {
+    errEl.textContent = err.message || String(err);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function resetImportPreview() {
+  importEnvelope = null;
+  const host = $('#sandbox-profile-import-preview');
+  host.innerHTML = '';
+  host.hidden = true;
+  $('#sandbox-profile-import-conflict-row').style.display = 'none';
+  $('#sandbox-profile-import-submit').disabled = true;
+}
+
+function openImportModal() {
+  $('#sandbox-profile-import-file').value = '';
+  $('#sandbox-profile-import-paste').value = '';
+  $('#sandbox-profile-import-error').textContent = '';
+  resetImportPreview();
+  $('#sandbox-profile-import-modal').classList.add('show');
+  setTimeout(() => $('#sandbox-profile-import-paste').focus(), 0);
+}
+
+function closeImportModal() { $('#sandbox-profile-import-modal').classList.remove('show'); }
+
+async function readImportSource() {
+  const fileInput = $('#sandbox-profile-import-file');
+  const file = fileInput.files && fileInput.files[0];
+  if (file) return (await file.text()).trim();
+  return $('#sandbox-profile-import-paste').value.trim();
+}
+
+function renderImportPreview(incoming) {
+  const existing = new Set(profiles.map(p => p.name));
+  let conflicts = 0;
+  const host = $('#sandbox-profile-import-preview');
+  host.innerHTML = incoming.map(p => {
+    const clash = existing.has(p.name);
+    if (clash) conflicts++;
+    return `<div class="profile-transfer-row${clash ? ' conflict' : ''}">
+      <span class="profile-transfer-main">
+        <span class="profile-transfer-name">${esc(p.name || '(unnamed)')}</span>
+        <span class="profile-transfer-summary">${esc(profileSummary(p))}</span>
+        ${clash ? '<span class="profile-transfer-note">already exists locally</span>' : ''}
+      </span>
+    </div>`;
+  }).join('');
+  host.hidden = false;
+  const conflictRow = $('#sandbox-profile-import-conflict-row');
+  if (conflicts) {
+    conflictRow.style.display = '';
+    // Default to a non-destructive policy so a bundle with clashes doesn't
+    // hard-fail the whole import.
+    $('#sandbox-profile-import-conflict').value = 'skip';
+  } else {
+    conflictRow.style.display = 'none';
+  }
+  $('#sandbox-profile-import-submit').disabled = false;
+}
+
+async function inspectImport() {
+  const errEl = $('#sandbox-profile-import-error');
+  errEl.textContent = '';
+  resetImportPreview();
+  const btn = $('#sandbox-profile-import-inspect');
+  btn.disabled = true;
+  try {
+    const raw = await readImportSource();
+    if (!raw) { errEl.textContent = 'pick a file or paste the sandbox-profile JSON'; return; }
+    let env;
+    try {
+      env = JSON.parse(raw);
+    } catch (e) {
+      errEl.textContent = 'not valid JSON: ' + (e.message || String(e));
+      return;
+    }
+    if (!env || env.format !== EXPORT_FORMAT || env.format_version !== EXPORT_VERSION) {
+      errEl.textContent = `not a tclaude sandbox-profile export (format=${JSON.stringify(env && env.format)}, version=${env && env.format_version})`;
+      return;
+    }
+    const incoming = Array.isArray(env.profiles) ? env.profiles : [];
+    if (!incoming.length) {
+      const host = $('#sandbox-profile-import-preview');
+      host.innerHTML = `<div class="template-empty">${esc(wizWord('The bundle contains no sandbox profiles.', 'The scroll bears no wards.'))}</div>`;
+      host.hidden = false;
+      return;
+    }
+    importEnvelope = env;
+    renderImportPreview(incoming);
+  } catch (err) {
+    errEl.textContent = err.message || String(err);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function submitImport() {
+  const errEl = $('#sandbox-profile-import-error');
+  errEl.textContent = '';
+  if (!importEnvelope) { errEl.textContent = 'preview the import first'; return; }
+  const conflictRow = $('#sandbox-profile-import-conflict-row');
+  const onConflict = conflictRow.style.display === 'none' ? 'error' : $('#sandbox-profile-import-conflict').value;
+  const btn = $('#sandbox-profile-import-submit');
+  btn.disabled = true;
+  try {
+    const res = await api(`${API}/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...importEnvelope, on_conflict: onConflict, apply_assignments: false }),
+    });
+    closeImportModal();
+    const imported = (res && res.imported) || [];
+    const skipped = (res && res.skipped) || [];
+    let msg = `${imported.length} sandbox profile${imported.length === 1 ? '' : 's'} imported`;
+    if (skipped.length) msg += `, ${skipped.length} skipped`;
+    toast(msg);
+    await openManager();
+    await refreshSpawnSandboxProfileUI($('#agent-spawn-group').value);
+  } catch (err) {
+    errEl.textContent = err.message || String(err);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 function bindSandboxProfilesUI() {
   $('#sandbox-profiles-manage-open').addEventListener('click', openManager);
   $('#sandbox-profiles-manage-close').addEventListener('click', closeManager);
@@ -342,6 +512,15 @@ function bindSandboxProfilesUI() {
   $('#filter-sandbox-profiles').addEventListener('input', paintSandboxProfiles);
   $('#sandbox-profile-create-open').addEventListener('click', () => openEditor());
   $('#sandbox-profile-scribe-open').addEventListener('click', () => summonSandboxScribe({ name: '', filesystem: [], environment: [] }));
+  $('#sandbox-profile-export-open').addEventListener('click', openExportModal);
+  $('#sandbox-profile-export-cancel').addEventListener('click', closeExportModal);
+  $('#sandbox-profile-export-submit').addEventListener('click', submitExport);
+  bindBackdropDiscard('sandbox-profile-export-modal', closeExportModal);
+  $('#sandbox-profile-import-open').addEventListener('click', openImportModal);
+  $('#sandbox-profile-import-cancel').addEventListener('click', closeImportModal);
+  $('#sandbox-profile-import-inspect').addEventListener('click', inspectImport);
+  $('#sandbox-profile-import-submit').addEventListener('click', submitImport);
+  bindBackdropDiscard('sandbox-profile-import-modal', closeImportModal);
   $('#sandbox-profiles-list').addEventListener('click', e => {
     const btn = e.target.closest('[data-sandbox-profile-action]');
     if (!btn) return;
@@ -354,31 +533,6 @@ function bindSandboxProfilesUI() {
   $('#sandbox-profile-editor-submit').addEventListener('click', saveEditor);
   bindModalSubmitHotkey($('#sandbox-profile-editor-modal'), $('#sandbox-profile-editor-submit'));
   bindBackdropDiscard('sandbox-profile-editor-modal', closeEditor, () => !editorSaving);
-  $('#sandbox-profile-global').addEventListener('change', async e => {
-    try {
-      await api('/api/sandbox-profile-default', {
-        method: e.target.value ? 'PUT' : 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: e.target.value ? JSON.stringify({ name: e.target.value }) : undefined,
-      });
-      toast(e.target.value ? `global sandbox profile: ${e.target.value}` : 'global sandbox profile cleared');
-      await refreshSpawnSandboxProfileUI($('#agent-spawn-group').value);
-    } catch (err) { toast(err.message || String(err), true); }
-  });
-  $('#sandbox-profile-group').addEventListener('change', loadGroupAssignment);
-  $('#sandbox-profile-group-value').addEventListener('change', async e => {
-    const group = $('#sandbox-profile-group').value;
-    if (!group) return;
-    try {
-      await api(`/api/groups/${encodeURIComponent(group)}/sandbox-profile`, {
-        method: e.target.value ? 'PUT' : 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: e.target.value ? JSON.stringify({ name: e.target.value }) : undefined,
-      });
-      toast(e.target.value ? `${group} sandbox profile: ${e.target.value}` : `${group} sandbox profile cleared`);
-      await refreshSpawnSandboxProfileUI($('#agent-spawn-group').value);
-    } catch (err) { toast(err.message || String(err), true); }
-  });
   $('#agent-spawn-sandbox-profile').addEventListener('change', () => refreshSpawnSandboxProfileUI($('#agent-spawn-group').value));
 
 }

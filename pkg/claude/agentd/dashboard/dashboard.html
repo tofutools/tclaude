@@ -204,7 +204,7 @@
           <button role="menuitem" id="delete-retired-open" title="Permanently delete retired agents — a filterable preview of every retired agent, all ticked, with per-row opt-out before the purge">🗑 delete retired…</button>
           <button role="menuitem" id="group-from-template-open" title="Create a new group from a template — spawns the template's whole agent team in one shot"><span class="tpl-word-regular">⎘ from template</span><span class="tpl-word-wizard">🕯 cast a circle</span></button>
           <button role="menuitem" id="profiles-manage-open" title="Manage spawn profiles — reusable bundles of the spawn dialog's fields (harness, model, effort, name, role, …) that pre-fill the spawn dialog and can be a group or dashboard default"><span class="profiles-word-regular">⧉ profiles…</span><span class="profiles-word-wizard">⧉ patterns…</span></button>
-          <button role="menuitem" id="sandbox-profiles-manage-open" title="Manage sandbox profiles — additive filesystem and environment policy applied at agent launch">🛡 sandbox profiles…</button>
+          <button role="menuitem" id="sandbox-profiles-manage-open" title="Manage sandbox profiles — additive filesystem and environment policy applied at agent launch"><span class="sandbox-word-regular">🛡 sandbox profiles…</span><span class="sandbox-word-wizard">🛡 wards…</span></button>
           <button role="menuitem" id="templates-manage-open" title="Manage group templates — reusable team blueprints (create, edit, delete, snapshot from a group, instantiate)"><span class="tpl-word-regular">⧉ templates…</span><span class="tpl-word-wizard">⧉ circles…</span></button>
           <button role="menuitem" id="roles-manage-open" title="Manage the role library — named, reusable agent-role defaults (a canonical brief, a default launch shape and a default permission set) that a template roster agent references and inherits from"><span class="roles-word-regular">⧉ roles…</span><span class="roles-word-wizard">⧉ classes…</span></button>
           <button role="menuitem" id="links-manage-open" title="Manage inter-group communication links — the full cross-group listing (add, edit, delete)">🔗 links…</button>
@@ -1863,25 +1863,16 @@
 </div>
 <div class="manage-overlay" id="sandbox-profiles-manage-modal">
   <div class="manage-modal" role="dialog" aria-modal="true" aria-labelledby="sandbox-profiles-manage-title">
-    <h3 id="sandbox-profiles-manage-title">Sandbox profiles</h3>
-    <p class="manage-intro">Named additive launch policy for filesystem access and environment values. Values are ordinary configuration, <strong>not a secrets facility</strong>. Changes apply on spawn or relaunch, never retroactively to a running process.</p>
+    <h3 id="sandbox-profiles-manage-title"><span class="sandbox-word-regular">Sandbox profiles</span><span class="sandbox-word-wizard">Wards</span></h3>
+    <p class="manage-intro"><span class="sandbox-word-regular">Named additive launch policy for filesystem access and environment values. Values are ordinary configuration, <strong>not a secrets facility</strong>. Changes apply on spawn or relaunch, never retroactively to a running process. Assign a global or per-group default from the Groups tab (the 🛡 chips).</span><span class="sandbox-word-wizard">Named protective wards that widen a familiar's filesystem reach and bind extra environment runes at summoning. Runes are ordinary configuration, <strong>not a secrets vault</strong>. A ward takes hold on summon or re-summon, never on a familiar already abroad. Bind a default ward from the party tab (the 🛡 chips).</span></p>
     <div class="filter-bar">
       <input id="filter-sandbox-profiles" type="text" placeholder="Filter sandbox profiles" autocomplete="off" spellcheck="false" />
       <span class="filter-count" id="filter-sandbox-profiles-count"></span>
       <span class="spacer"></span>
+      <button id="sandbox-profile-export-open" class="tool" type="button" title="Export selected sandbox profiles as a portable JSON bundle"><span class="sandbox-word-regular">⇪ export</span><span class="sandbox-word-wizard">📜 inscribe</span></button>
+      <button id="sandbox-profile-import-open" class="tool" type="button" title="Import sandbox profiles from a portable JSON bundle"><span class="sandbox-word-regular">⤒ import</span><span class="sandbox-word-wizard">📜 read</span></button>
       <button id="sandbox-profile-scribe-open" class="tool" type="button" title="Talk with a preconfigured agent to prepare a validated draft. The agent cannot save or assign sandbox policy; you preview and explicitly save the result.">🤖 configure with agent</button>
-      <button id="sandbox-profile-create-open" class="primary" type="button">+ new sandbox profile</button>
-    </div>
-    <div class="sandbox-profile-assignments">
-      <label class="cron-create-row">
-        <span class="cron-create-label">Global default</span>
-        <select id="sandbox-profile-global"><option value="">— none —</option></select>
-      </label>
-      <div class="cron-create-row">
-        <span class="cron-create-label">Group default</span>
-        <select id="sandbox-profile-group"><option value="">— choose group —</option></select>
-        <select id="sandbox-profile-group-value"><option value="">— none —</option></select>
-      </div>
+      <button id="sandbox-profile-create-open" class="primary" type="button"><span class="sandbox-word-regular">+ new sandbox profile</span><span class="sandbox-word-wizard">+ new ward</span></button>
     </div>
     <div id="sandbox-profiles-list"></div>
     <div class="cron-create-error" id="sandbox-profiles-manage-error"></div>
@@ -1897,6 +1888,52 @@
     <label class="cron-create-row"><span class="cron-create-label">Environment</span><textarea id="sandbox-profile-editor-environment" rows="7" spellcheck="false" placeholder='[{"name":"GOCACHE","value":"/absolute/path"}]'></textarea></label>
     <div class="cron-create-error" id="sandbox-profile-editor-error"></div>
     <div class="modal-buttons"><button id="sandbox-profile-editor-cancel" type="button">Cancel</button><button id="sandbox-profile-editor-scribe" type="button" title="Hand the current draft to a chat agent for interactive configuration. Its result returns here for review and is never saved automatically.">🤖 configure with agent</button><span class="spacer"></span><button id="sandbox-profile-editor-submit" class="primary" type="button">Save sandbox profile</button></div>
+  </div>
+</div>
+<div class="modal-overlay" id="sandbox-profile-export-modal">
+  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="sandbox-profile-export-title">
+    <h3 id="sandbox-profile-export-title"><span class="sandbox-word-regular">Export sandbox profiles</span><span class="sandbox-word-wizard">📜 Inscribe wards</span></h3>
+    <div class="modal-meta"><span class="sandbox-word-regular">Choose which saved sandbox profiles to include in the portable JSON bundle. Global/group assignments are not exported.</span><span class="sandbox-word-wizard">Choose which wards to bind into the scroll. Their party bindings stay behind.</span></div>
+    <div id="sandbox-profile-export-list" class="profile-transfer-list"></div>
+    <div class="cron-create-error" id="sandbox-profile-export-error"></div>
+    <div class="modal-buttons">
+      <button id="sandbox-profile-export-cancel" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button id="sandbox-profile-export-submit" class="primary" type="button">Export</button>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay" id="sandbox-profile-import-modal">
+  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="sandbox-profile-import-title">
+    <h3 id="sandbox-profile-import-title"><span class="sandbox-word-regular">Import sandbox profiles</span><span class="sandbox-word-wizard">📜 Read wards</span></h3>
+    <div class="modal-meta"><span class="sandbox-word-regular">Pick a sandbox-profile bundle or paste its JSON, preview the profiles, then choose how to handle names that already exist locally.</span><span class="sandbox-word-wizard">Pick a scroll or transcribe its runes, inspect each ward, then choose what happens when a ward's name already hangs in the library.</span></div>
+    <label class="cron-create-row">
+      <span class="cron-create-label">File</span>
+      <input id="sandbox-profile-import-file" type="file" accept=".json,application/json" />
+    </label>
+    <label class="cron-create-row" style="align-items:flex-start">
+      <span class="cron-create-label">or paste</span>
+      <textarea id="sandbox-profile-import-paste" rows="6" placeholder="… or paste the sandbox-profile JSON here" autocomplete="off" spellcheck="false" style="flex:1;font-family:monospace;font-size:12px"></textarea>
+    </label>
+    <div class="modal-buttons compact">
+      <span class="spacer"></span>
+      <button id="sandbox-profile-import-inspect" type="button">Preview</button>
+    </div>
+    <div id="sandbox-profile-import-preview" class="profile-transfer-list" hidden></div>
+    <label class="cron-create-row" id="sandbox-profile-import-conflict-row" style="display:none">
+      <span class="cron-create-label">On name clash</span>
+      <select id="sandbox-profile-import-conflict">
+        <option value="error">Stop (abort the whole import)</option>
+        <option value="skip">Skip the clashing ones</option>
+        <option value="overwrite">Overwrite the local ones</option>
+      </select>
+    </label>
+    <div class="cron-create-error" id="sandbox-profile-import-error"></div>
+    <div class="modal-buttons">
+      <button id="sandbox-profile-import-cancel" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button id="sandbox-profile-import-submit" class="primary" type="button" disabled>Import</button>
+    </div>
   </div>
 </div>
 <div class="manage-overlay" id="profiles-manage-modal">

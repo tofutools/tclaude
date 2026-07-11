@@ -562,6 +562,59 @@ func TestDashboardHTML_WizardProfileVocabulary(t *testing.T) {
 	must("＋ new pattern…", "the global/group default picker's new-entry reads '＋ new pattern…' in wizard mode")
 }
 
+// TestDashboardHTML_WizardSandboxProfiles pins the wizard re-skin + vocabulary
+// of the sandbox-profile ("ward") dialogs — the manage overlay, its editor, and
+// the export/import modals — the sibling treatment the spawn-profile dialogs
+// get. Front-end only, so we string-search the embedded source.
+func TestDashboardHTML_WizardSandboxProfiles(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// The shared CSS reveal for the .sandbox-word span pair.
+	must(".sandbox-word-wizard { display: none; }", "the wizard sandbox-word span is hidden by default")
+	must("body.wizard .sandbox-word-regular { display: none; }", "wizard hides the default sandbox wording")
+	must("body.wizard .sandbox-word-wizard { display: inline; }", "wizard shows the ward wording")
+
+	// The static span-swap spots: the Groups-cog entry, the manage overlay title,
+	// its "+ new" action, and the export/import dialog titles.
+	must(`<span class="sandbox-word-wizard">🛡 wards…</span>`, "the Groups-cog entry reads '🛡 wards…' in wizard mode")
+	must(`<span class="sandbox-word-wizard">Wards</span>`, "the manage overlay title reads 'Wards' in wizard mode")
+	must(`<span class="sandbox-word-wizard">+ new ward</span>`, "the + new action reads '+ new ward' in wizard mode")
+	must(`<span class="sandbox-word-wizard">📜 Inscribe wards</span>`, "the export dialog title reads 'Inscribe wards' in wizard mode")
+	must(`<span class="sandbox-word-wizard">📜 Read wards</span>`, "the import dialog title reads 'Read wards' in wizard mode")
+	// The regular twins still ship (so non-wizard mode is unchanged).
+	must(`<span class="sandbox-word-regular">Sandbox profiles</span>`, "the default manage overlay title still reads 'Sandbox profiles'")
+
+	// The JS-rendered editor title swaps via wizWord().
+	must("New ward", "the editor title reads 'New ward' when creating in wizard mode")
+	must("Edit ward: ${editingName}", "the editor title reads 'Edit ward: <name>' when editing in wizard mode")
+
+	// The dialog surfaces are re-skinned arcane, each scoped to its own id.
+	must("body.wizard #sandbox-profiles-manage-modal .manage-modal", "the ward overlay surface is re-skinned")
+	must("body.wizard #sandbox-profiles-manage-modal #sandbox-profile-create-open.primary", "the + new ward button gets the gilded-arcane treatment")
+	must("body.wizard #sandbox-profile-editor-modal .cron-create-modal", "the ward editor surface is re-skinned")
+	must(`content: "🛡 Inscribe ward!"`, "the ward editor submit reads 'Inscribe ward!' in wizard mode")
+	must("body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-modal", "the ward export/import surfaces are re-skinned")
+}
+
+// TestDashboardCSS_WizardSandboxProfilesScoped guards that the wizard sandbox
+// re-skins stay scoped to their own ids — the overlay is a .manage-modal and the
+// editor/export/import are .cron-create-modal, both shared with sibling dialogs,
+// so an unscoped rule would repaint those too. (Duplicates the spawn/profile
+// scoping guards, but documents that the sandbox re-skins share the invariant.)
+func TestDashboardCSS_WizardSandboxProfilesScoped(t *testing.T) {
+	if strings.Contains(dashboardAssets, "body.wizard .manage-modal {") {
+		t.Error("wizard ward-overlay re-skin is unscoped — will repaint the Templates/Links/profiles overlays too")
+	}
+	if strings.Contains(dashboardAssets, "body.wizard .cron-create-modal {") {
+		t.Error("wizard ward-editor re-skin is unscoped — will repaint spawn/clone/reincarnate/cron modals too")
+	}
+}
+
 // TestDashboardHTML_WizardPermEditor pins the wizard re-skin of the permanent-
 // permissions tri-state editor (#perm-edit-modal), shared by the live-agent path
 // and the spawn / profile buffer editors. Front-end only, so we string-search
