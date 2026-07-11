@@ -247,13 +247,24 @@ test('template metadata edits are undoable and preserve the immutable id', () =>
   assert.equal(model.template.doc, undefined);
 });
 
-test('template id is creation-only and never restored by undo history', () => {
+test('new-template id edits are dirty and undoable until save pins the identity', () => {
   const model = new ProcessEditModel(blankEditView('new-process'));
-  model.addNode('task', { id: 'draft' }); // history snapshot contains the old id
-  model.setTemplateID('release');
+  assert.equal(model.setTemplateID('release'), true);
+  assert.equal(model.dirty, true, 'navigation sees the id edit and prompts before discard');
+  assert.equal(model.canUndo, true);
+
   assert.equal(model.undo(), true);
-  assert.equal(model.template.id, 'release', 'undo preserves the chosen store key');
+  assert.equal(model.template.id, 'new-process');
+  assert.equal(model.dirty, false);
+  assert.equal(model.redo(), true);
+  assert.equal(model.template.id, 'release');
+  assert.equal(model.dirty, true);
+
   model.markSaved({ sourceHash: 'saved-source' });
+  model.addNode('task', { id: 'draft' }); // history snapshot carries the saved id
+  assert.equal(model.undo(), true);
+  assert.equal(model.template.id, 'release', 'post-save graph history preserves the pinned store key');
+  assert.equal(model.dirty, false);
   assert.equal(model.setTemplateID('copy'), false);
   assert.equal(model.template.id, 'release');
 });

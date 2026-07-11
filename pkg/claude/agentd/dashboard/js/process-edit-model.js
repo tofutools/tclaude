@@ -125,12 +125,12 @@ export class ProcessEditModel {
   }
 
   restoreState(snapshot) {
-    // The template id is a creation-time store key, never undoable content.
-    // A blank template may choose it before first save, but graph/metadata
-    // history must not resurrect an earlier key after that save succeeds.
+    // A blank template's id is undoable authoring state. Once a save or force
+    // retry pins a sourceHash, however, history must never resurrect an older
+    // store key from a graph/metadata snapshot.
     const id = this.template.id;
     this.template = snapshot.template;
-    this.template.id = id;
+    if (this.sourceHash) this.template.id = id;
     this.edges = snapshot.edges;
     this.layout = snapshot.layout;
     this.rev = snapshot.rev;
@@ -429,6 +429,8 @@ export class ProcessEditModel {
 
   setTemplateID(id) {
     if (this.sourceHash) return false;
+    if (id === this.template.id) return true;
+    this.begin();
     this.template.id = id;
     return true;
   }
