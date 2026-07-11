@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 // SessionRow represents a session row in the database.
@@ -42,6 +44,10 @@ type SessionRow struct {
 	// Harness, "" is a genuine value (no sandbox), so it is stored verbatim
 	// — never coalesced.
 	SandboxMode string
+	// EffectiveSandbox is the exact versioned additive policy used for this
+	// session generation. Nil is the legacy/direct-session sentinel. Hook
+	// upserts preserve an existing snapshot when they do not carry one.
+	EffectiveSandbox *sandboxpolicy.Snapshot
 	// AskUserQuestionTimeout is the resolved Claude Code AskUserQuestion
 	// idle-timeout (inherit|never|60s|5m|10m) the session was spawned under,
 	// recorded once at spawn by `session new` so a relaunch (resume / clone /
@@ -96,6 +102,10 @@ func SaveSession(s *SessionRow) error {
 	if harness == "" {
 		harness = DefaultHarness
 	}
+	effectiveSandbox, err := marshalEffectiveSandboxSnapshot(s.EffectiveSandbox)
+	if err != nil {
+		return err
+	}
 
 	// agent_id is dual-written from conv_id. A session row is often created
 	// before its conv enrolls (the hook registers the agent slightly later), so
@@ -104,8 +114,8 @@ func SaveSession(s *SessionRow) error {
 	// value is non-empty, so a later status-update upsert (whose conv may not
 	// resolve) never wipes an agent already known for this session.
 	_, err = db.Exec(`INSERT INTO sessions
-		(id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, agent_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`)
+		(id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, agent_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`)
 		ON CONFLICT(id) DO UPDATE SET
 			tmux_session = excluded.tmux_session,
 			pid = excluded.pid,
@@ -122,10 +132,11 @@ func SaveSession(s *SessionRow) error {
 			harness = excluded.harness,
 			sandbox_mode = excluded.sandbox_mode,
 			ask_user_question_timeout = excluded.ask_user_question_timeout,
+			effective_sandbox_config = CASE WHEN excluded.effective_sandbox_config <> '' THEN excluded.effective_sandbox_config ELSE sessions.effective_sandbox_config END,
 			agent_id = CASE WHEN excluded.agent_id <> '' THEN excluded.agent_id ELSE sessions.agent_id END`,
 		s.ID, s.TmuxSession, s.PID, s.Cwd, s.ConvID,
 		s.Status, s.StatusDetail, s.SubagentCount, s.SubagentsJSON, boolToInt(s.AutoRegistered),
-		s.CreatedAt.Format(time.RFC3339Nano), s.UpdatedAt.Format(time.RFC3339Nano), s.LastHook.Format(time.RFC3339Nano), harness, s.SandboxMode, s.AskUserQuestionTimeout, s.ConvID)
+		s.CreatedAt.Format(time.RFC3339Nano), s.UpdatedAt.Format(time.RFC3339Nano), s.LastHook.Format(time.RFC3339Nano), harness, s.SandboxMode, s.AskUserQuestionTimeout, effectiveSandbox, s.ConvID)
 	return err
 }
 
@@ -136,7 +147,7 @@ func LoadSession(id string) (*SessionRow, error) {
 		return nil, err
 	}
 	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, remote_control FROM sessions WHERE id = ?`, id)
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control FROM sessions WHERE id = ?`, id)
 	return scanSession(row)
 }
 
@@ -157,7 +168,7 @@ func ListSessions() ([]*SessionRow, error) {
 		return nil, err
 	}
 	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, remote_control FROM sessions`)
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control FROM sessions`)
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +186,7 @@ func FindSessionByConvID(convID string) (*SessionRow, error) {
 		return nil, err
 	}
 	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, remote_control FROM sessions WHERE conv_id = ?
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control FROM sessions WHERE conv_id = ?
 		ORDER BY updated_at DESC LIMIT 1`, convID)
 	s, err := scanSession(row)
 	if err == sql.ErrNoRows {
@@ -200,7 +211,7 @@ func FindSessionByPID(pid int) (*SessionRow, error) {
 		return nil, err
 	}
 	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, remote_control FROM sessions WHERE pid = ?
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control FROM sessions WHERE pid = ?
 		ORDER BY updated_at DESC LIMIT 1`, pid)
 	s, err := scanSession(row)
 	if err == sql.ErrNoRows {
@@ -258,7 +269,7 @@ func FindSessionsByConvID(convID string) ([]*SessionRow, error) {
 		return nil, err
 	}
 	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, remote_control FROM sessions WHERE conv_id = ?
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control FROM sessions WHERE conv_id = ?
 		ORDER BY updated_at DESC`, convID)
 	if err != nil {
 		return nil, err
@@ -311,14 +322,18 @@ func MaxUpdatedAt() (time.Time, error) {
 func scanSession(row *sql.Row) (*SessionRow, error) {
 	var s SessionRow
 	var autoReg, remoteCtl int
-	var createdStr, updatedStr, lastHookStr string
+	var createdStr, updatedStr, lastHookStr, effectiveSandbox string
 	err := row.Scan(&s.ID, &s.TmuxSession, &s.PID, &s.Cwd, &s.ConvID,
-		&s.Status, &s.StatusDetail, &s.SubagentCount, &s.SubagentsJSON, &autoReg, &createdStr, &updatedStr, &lastHookStr, &s.Harness, &s.SandboxMode, &s.AskUserQuestionTimeout, &remoteCtl)
+		&s.Status, &s.StatusDetail, &s.SubagentCount, &s.SubagentsJSON, &autoReg, &createdStr, &updatedStr, &lastHookStr, &s.Harness, &s.SandboxMode, &s.AskUserQuestionTimeout, &effectiveSandbox, &remoteCtl)
 	if err != nil {
 		return nil, err
 	}
 	s.AutoRegistered = autoReg != 0
 	s.RemoteControl = remoteCtl != 0
+	s.EffectiveSandbox, err = unmarshalEffectiveSandboxSnapshot(effectiveSandbox)
+	if err != nil {
+		return nil, fmt.Errorf("decode session %q effective sandbox: %w", s.ID, err)
+	}
 	s.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdStr)
 	s.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedStr)
 	if lastHookStr != "" {
@@ -333,14 +348,18 @@ func scanSessions(rows *sql.Rows) ([]*SessionRow, error) {
 	for rows.Next() {
 		var s SessionRow
 		var autoReg, remoteCtl int
-		var createdStr, updatedStr, lastHookStr string
+		var createdStr, updatedStr, lastHookStr, effectiveSandbox string
 		err := rows.Scan(&s.ID, &s.TmuxSession, &s.PID, &s.Cwd, &s.ConvID,
-			&s.Status, &s.StatusDetail, &s.SubagentCount, &s.SubagentsJSON, &autoReg, &createdStr, &updatedStr, &lastHookStr, &s.Harness, &s.SandboxMode, &s.AskUserQuestionTimeout, &remoteCtl)
+			&s.Status, &s.StatusDetail, &s.SubagentCount, &s.SubagentsJSON, &autoReg, &createdStr, &updatedStr, &lastHookStr, &s.Harness, &s.SandboxMode, &s.AskUserQuestionTimeout, &effectiveSandbox, &remoteCtl)
 		if err != nil {
 			return nil, fmt.Errorf("scanning session row: %w", err)
 		}
 		s.AutoRegistered = autoReg != 0
 		s.RemoteControl = remoteCtl != 0
+		s.EffectiveSandbox, err = unmarshalEffectiveSandboxSnapshot(effectiveSandbox)
+		if err != nil {
+			return nil, fmt.Errorf("decode session %q effective sandbox: %w", s.ID, err)
+		}
 		s.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdStr)
 		s.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedStr)
 		if lastHookStr != "" {

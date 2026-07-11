@@ -22,6 +22,7 @@ const (
 // A Codex conv must resume with Codex's `resume <id>` SUBCOMMAND form, never
 // the Claude `--resume` flag — the exact regression JOH-217 fixes.
 func TestResumeLaunchCmd_Codex(t *testing.T) {
+	setupTestDB(t)
 	cmd, h, err := resumeLaunchCmd("codex", resumeConvCodex[:8], resumeConvCodex, nil)
 	require.NoError(t, err)
 	require.NotNil(t, h)
@@ -34,6 +35,7 @@ func TestResumeLaunchCmd_Codex(t *testing.T) {
 
 // A Claude conv keeps its existing `claude --resume <id>` launch unchanged.
 func TestResumeLaunchCmd_Claude(t *testing.T) {
+	setupTestDB(t)
 	cmd, h, err := resumeLaunchCmd("claude", resumeConvClaude[:8], resumeConvClaude, nil)
 	require.NoError(t, err)
 	require.NotNil(t, h)
@@ -48,6 +50,7 @@ func TestResumeLaunchCmd_Claude(t *testing.T) {
 // "claude") resolves to the default harness, so legacy untagged convs keep
 // working exactly as before.
 func TestResumeLaunchCmd_EmptyHarnessDefaultsToClaude(t *testing.T) {
+	setupTestDB(t)
 	cmd, h, err := resumeLaunchCmd("", resumeConvClaude[:8], resumeConvClaude, nil)
 	require.NoError(t, err)
 	require.NotNil(t, h)
@@ -59,6 +62,7 @@ func TestResumeLaunchCmd_EmptyHarnessDefaultsToClaude(t *testing.T) {
 // An unknown / unspawnable harness tag fails with a clear error instead of
 // silently spawning a broken `claude --resume` against a foreign conv id.
 func TestResumeLaunchCmd_UnknownHarnessErrors(t *testing.T) {
+	setupTestDB(t)
 	cmd, h, err := resumeLaunchCmd("nope", resumeConvCodex[:8], resumeConvCodex, nil)
 	require.Error(t, err)
 	assert.Nil(t, h)
@@ -70,6 +74,7 @@ func TestResumeLaunchCmd_UnknownHarnessErrors(t *testing.T) {
 // harness Spawner shell-quotes them — including for Codex, where they land
 // after the `resume <id>` subcommand.
 func TestResumeLaunchCmd_ExtraArgsPassthrough(t *testing.T) {
+	setupTestDB(t)
 	cmd, _, err := resumeLaunchCmd("codex", resumeConvCodex[:8], resumeConvCodex, []string{"--foo", "a b"})
 	require.NoError(t, err)
 

@@ -796,7 +796,8 @@ func runNew(params *NewParams) error {
 		// path) — the profile name. "" for a harness with no launch sandbox
 		// flag (Claude Code). Stored verbatim, never coalesced; this is the
 		// only write of the column, so it can't be re-derived later.
-		SandboxMode: sandboxDescr(sandboxMode, params.PermissionProfile),
+		SandboxMode:      sandboxDescr(sandboxMode, params.PermissionProfile),
+		EffectiveSandbox: effectiveSandbox,
 		// Record the resolved AskUserQuestion idle-timeout so a relaunch (resume /
 		// clone / reincarnate) can PRESERVE it — inherit/5m/never carried across
 		// the handoff instead of reverting to global settings.json (schema v97).
