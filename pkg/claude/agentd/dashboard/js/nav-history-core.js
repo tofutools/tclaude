@@ -26,10 +26,17 @@
 // dashboard's default active tab (#tab-groups is `.active` at rest).
 export const DEFAULT_TAB = 'groups';
 
-// KNOWN_TABS is the set of top-level nav tabs that own a path segment. Kept in
-// sync with the nav buttons in dashboard.html (data-tab=...). An unknown first
-// segment parses back to the default location rather than an invalid tab, which
-// is what keeps a stale/typo'd URL from breaking navigation (AC #5).
+// KNOWN_TABS is the set of top-level nav tabs this router will PARSE from a
+// path. It is intentionally the widest of three related sets:
+//   KNOWN_TABS (parse-tolerant, here)
+//     ⊇ ROUTABLE_TABS (js/nav-history.js — tabs we actually push a URL for)
+//     ⊇ dashboardAppTabs (dashboard.go — paths the server serves)
+// Terminals/Vegas live in KNOWN_TABS (so a hand-typed URL degrades gracefully)
+// but are not routed or server-served. Keep the three in step when adding or
+// removing a tab. Kept in sync with the nav buttons in dashboard.html
+// (data-tab=...). An unknown first segment parses back to the default location
+// rather than an invalid tab, which keeps a stale/typo'd URL from breaking
+// navigation (AC #5).
 export const KNOWN_TABS = new Set([
   'groups', 'terminals', 'jobs', 'processes', 'plugins',
   'access', 'messages', 'costs', 'audit', 'logs', 'config', 'vegas',
@@ -136,6 +143,21 @@ export function go(state, index) {
   if (!Number.isInteger(index) || index < 0 || index >= state.entries.length) return state;
   if (index === state.index) return state;
   return { entries: state.entries, index };
+}
+
+// indexOf returns the index of the LAST stack entry equal to `loc`, or -1 if
+// none. The adapter uses it as a popstate fallback: if a history entry's
+// `state` was clobbered by other code (so the stamped index is gone), we can
+// still relocate WITHIN the existing stack by URL — preserving back/forward
+// depth — instead of blowing the stack away. Last-match is the right pick for a
+// browser Back, which moves toward the most recent occurrence. Defense-in-depth
+// alongside every writer preserving history.state.
+export function indexOf(state, loc) {
+  const target = normalizeLocation(loc);
+  for (let i = state.entries.length - 1; i >= 0; i--) {
+    if (locEquals(state.entries[i], target)) return i;
+  }
+  return -1;
 }
 
 // ---- Path <-> location ---------------------------------------------------

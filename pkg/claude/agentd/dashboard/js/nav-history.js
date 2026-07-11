@@ -20,18 +20,20 @@
 import { $, $$ } from './helpers.js';
 import {
   DEFAULT_TAB, normalizeLocation, initialState, current,
-  push, go, canBack, canForward, toPath, fromPath,
+  push, go, indexOf, canBack, canForward, toPath, fromPath,
 } from './nav-history-core.js';
 
-// ROUTABLE_TABS is the set of top-level tabs that own a URL path. Kept in sync
-// with dashboardAppTabs in dashboard.go (the server SPA-fallback allow-list).
-// Terminals (its own /terminals popout route) and Vegas (a conditional,
-// non-content tab) are deliberately NOT routed: navigating to them leaves the
-// URL and history untouched, so they never appear as a bookmarkable location or
-// a back/forward target.
+// ROUTABLE_TABS is the set of top-level tabs that own a URL path — the middle
+// of three related sets that must stay in step (see KNOWN_TABS in
+// nav-history-core.js for the full ordering): it mirrors dashboardAppTabs in
+// dashboard.go (the server SPA-fallback allow-list) exactly. Terminals (its own
+// /terminals popout route) and Vegas (a conditional soundtrack tab) are
+// deliberately NOT routed: navigating to them leaves the URL and history
+// untouched, so they never appear as a bookmarkable location or a back/forward
+// target.
 const ROUTABLE_TABS = new Set([
-  'groups', 'jobs', 'processes', 'plugins',
-  'access', 'messages', 'costs', 'audit', 'logs',
+  'groups', 'jobs', 'processes', 'plugins', 'access',
+  'messages', 'costs', 'audit', 'logs', 'config',
 ]);
 
 // The virtual stack (see nav-history-core.js). Replaced wholesale on every
@@ -140,7 +142,13 @@ function onPopstate(e) {
   if (st && Number.isInteger(st.navIndex) && st.navIndex >= 0 && st.navIndex < stack.entries.length) {
     stack = go(stack, st.navIndex);
   } else {
-    stack = initialState(fromPath(window.location.pathname));
+    // Foreign/clobbered state (an entry whose navIndex was stripped by another
+    // history writer, or a pre-init entry). Relocate within the existing stack
+    // by URL when we can — preserving back/forward depth — and only reseed as a
+    // last resort so a lost index never silently truncates history.
+    const loc = fromPath(window.location.pathname);
+    const idx = indexOf(stack, loc);
+    stack = idx >= 0 ? go(stack, idx) : initialState(loc);
   }
   activate(current(stack));
   updateButtons();

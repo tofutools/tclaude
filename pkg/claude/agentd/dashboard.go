@@ -180,11 +180,11 @@ func handleDashboardStatic() http.Handler {
 //
 // Kept in sync with ROUTABLE_TABS in js/nav-history.js. Terminals is
 // deliberately absent — /terminals is its own standalone popout route
-// (handleDashboardTerminals) — and Vegas is a conditional, non-content tab that
+// (handleDashboardTerminals) — and Vegas is a conditional soundtrack tab that
 // is not URL-routed; neither is a bookmarkable location.
 var dashboardAppTabs = map[string]bool{
-	"groups": true, "jobs": true, "processes": true, "plugins": true,
-	"access": true, "messages": true, "costs": true, "audit": true, "logs": true,
+	"groups": true, "jobs": true, "processes": true, "plugins": true, "access": true,
+	"messages": true, "costs": true, "audit": true, "logs": true, "config": true,
 }
 
 // isDashboardAppPath reports whether a path should serve the dashboard SPA

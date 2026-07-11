@@ -18,7 +18,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   DEFAULT_TAB, defaultLocation, normalizeLocation, locEquals,
-  initialState, current, push, back, forward, go,
+  initialState, current, push, back, forward, go, indexOf,
   canBack, canForward, toPath, fromPath, resolveStale,
 } from '../dashboard/js/nav-history-core.js';
 
@@ -110,6 +110,19 @@ test('go() jumps to an absolute index and clamps-ignores out-of-range', () => {
   assert.equal(go(s, 9), s, 'out-of-range index is ignored');
   assert.equal(go(s, -1), s, 'negative index is ignored');
   assert.equal(go(s, 1.5), s, 'non-integer index is ignored');
+});
+
+test('indexOf finds the last matching entry, or -1 (popstate-recovery helper)', () => {
+  let s = initialState(groups);   // A(groups)
+  s = push(s, jobs);              // B(jobs)
+  s = push(s, config);           // C(config)
+  s = push(s, groups);           // D(groups) — groups appears twice now
+  assert.equal(indexOf(s, jobs), 1);
+  assert.equal(indexOf(s, config), 2);
+  assert.equal(indexOf(s, groups), 3, 'returns the LAST occurrence (browser Back moves toward the most recent)');
+  assert.equal(indexOf(s, accessSudo), -1, 'absent location -> -1');
+  // Normalizes the query location, so a raw/looser input still matches.
+  assert.equal(indexOf(s, { tab: 'jobs', subtab: 'ignored' }), 1);
 });
 
 test('back at the first entry / forward at the tip are inert', () => {

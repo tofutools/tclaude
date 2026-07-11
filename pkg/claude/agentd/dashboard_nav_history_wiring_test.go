@@ -24,6 +24,11 @@ func TestDashboardNavHistory_Wired(t *testing.T) {
 		`history.replaceState(`,
 		`addEventListener('popstate'`,
 		`initNavHistory()`,
+		// The theme toggle must PRESERVE the current history.state (slop.js), not
+		// replace it with {} — otherwise it strips the navIndex nav-history.js
+		// stamped and desyncs back/forward after a theme change. Regression guard
+		// for the cold-review blocker.
+		`window.history.replaceState(window.history.state,`,
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard nav-history wiring missing %q", needle)
