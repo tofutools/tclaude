@@ -81,6 +81,30 @@ test('canvas pointerdown focuses the graph so editor Delete receives keyboard ev
   assert.equal(fake.pointer.mode, 'pan');
 });
 
+test('pointer target survives focus-triggered graph refresh', () => {
+  for (const kind of ['node', 'port']) {
+    let targetIsLive = true;
+    const node = { dataset: { nodeId: 'a' } };
+    const port = kind === 'port' ? { dataset: { port: 'out' } } : null;
+    const fake = {
+      root: { focus() { targetIsLive = false; } },
+      options: {}, selected: null, view: { x: 0, y: 0, k: 1 },
+      svg: { setPointerCapture() {} },
+      eventTarget() {
+        return targetIsLive ? { node, edge: null, port } : { node: null, edge: null, port: null };
+      },
+      clientToGraph() { return { x: 0, y: 0 }; },
+      clearKeyboardPort() {},
+    };
+    ProcessGraph.prototype.onPointerDown.call(fake, {
+      button: 0, pointerId: 6, clientX: 0, clientY: 0,
+      preventDefault() {}, stopPropagation() {},
+    });
+    assert.equal(fake.pointer.mode, kind, `${kind} classification survives blur refresh`);
+    assert.equal(fake.pointer.nodeID, 'a');
+  }
+});
+
 test('middle pointerdown pans even when it starts over a node', () => {
   const fake = {
     root: { focus() {} }, options: { marqueeSelect: true }, selected: null,

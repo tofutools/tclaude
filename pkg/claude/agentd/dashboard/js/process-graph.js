@@ -445,12 +445,16 @@ export class ProcessGraph {
   onPointerDown(event) {
     const middle = event.button === 1;
     if (event.button !== 0 && !middle) return;
+    // Resolve the target before focus: focusing the graph blurs an inspector
+    // input, whose synchronous change handler may refresh and replace every
+    // SVG layer child. The detached original still carries the stable ids we
+    // need to classify this gesture.
+    const target = this.eventTarget(event);
     // Empty SVG space is not natively focusable. Explicitly focus the graph so
     // editor shortcuts bubble through its root after a canvas click instead of
     // acting on whichever palette/control happened to be focused previously.
     this.root.focus({ preventScroll: true });
     event.preventDefault();
-    const target = this.eventTarget(event);
     const point = this.clientToGraph(event.clientX, event.clientY);
     // Touch/pen have no middle button. Preserve their empty-canvas navigation
     // while still letting a primary pointer drag nodes and ports normally.
