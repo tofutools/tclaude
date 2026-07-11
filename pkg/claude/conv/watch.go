@@ -2245,6 +2245,14 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	// session.ApplyClaudeResumeEnv.
 	session.ApplyClaudeResumeEnv(h, resumeEnv)
 	sandboxMode, resumeCwd := resumeSandboxState(convID)
+	if (h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile) ||
+		(h.Name == harness.DefaultName && sandboxMode != harness.ClaudeSandboxOff) {
+		gitWriteDirs, err := resumeGitWorktreeWriteDirs(resumeCwd)
+		if err != nil {
+			return "", nil, fmt.Errorf("resolve sandboxed resume Git grants: %w", err)
+		}
+		writeDirs = append(gitWriteDirs, writeDirs...)
+	}
 	spec := harness.SpawnSpec{
 		EnvExports:       clcommon.BuildEnvExports(resumeEnv),
 		ResumeID:         convID,
@@ -2255,11 +2263,6 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	}
 	cleanupPath := ""
 	if h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile {
-		gitWriteDirs, err := resumeGitWorktreeWriteDirs(resumeCwd)
-		if err != nil {
-			return "", nil, fmt.Errorf("resolve managed Codex resume Git grants: %w", err)
-		}
-		writeDirs = append(gitWriteDirs, writeDirs...)
 		profileName, profilePath, err := harness.EnsureCodexAgentLaunchProfileWithGrants(readDirs, writeDirs, session.GenerateSessionID())
 		if err != nil {
 			return "", nil, fmt.Errorf("prepare managed Codex resume profile: %w", err)

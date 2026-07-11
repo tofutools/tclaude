@@ -137,6 +137,32 @@ func TestResumeLaunchCmd_CodexManagedProfileIncludesGitWorktreeGrants(t *testing
 	}
 }
 
+func TestResumeLaunchCmd_ClaudeSandboxIncludesGitWorktreeGrants(t *testing.T) {
+	setupTestDB(t)
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("git unavailable: %v", err)
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	repo := filepath.Join(t.TempDir(), "repo")
+	cmd := exec.Command("git", "init", "-q", repo)
+	require.NoError(t, cmd.Run())
+
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "source-session", ConvID: resumeConvClaude, Harness: harness.DefaultName,
+		Cwd: repo, SandboxMode: harness.ClaudeSandboxOn,
+	}))
+	launch, _, err := resumeLaunchCmd(harness.DefaultName, resumeConvClaude[:8], resumeConvClaude, nil)
+	require.NoError(t, err)
+	commonDir, err := harness.GitCommonDir(repo)
+	require.NoError(t, err)
+	for _, dir := range harness.GitWorktreeWriteDirs(repo, commonDir, home) {
+		assert.Contains(t, launch, dir)
+	}
+	assert.Contains(t, launch, "allowWrite")
+}
+
 // A Claude resume carries the configured threshold as an exported env var, so
 // the spawned `claude --resume` never shows the chooser.
 func TestResumeLaunchCmd_InjectsResumeOverrideForClaude(t *testing.T) {
