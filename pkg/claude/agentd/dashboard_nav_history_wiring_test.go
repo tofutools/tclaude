@@ -24,6 +24,9 @@ func TestDashboardNavHistory_Wired(t *testing.T) {
 		`history.replaceState(`,
 		`addEventListener('popstate'`,
 		`initNavHistory()`,
+		// The popstate path validates the stamped index against the popped URL
+		// (a reload leaves stale cross-instance indices) rather than trusting it.
+		`resolvePopstate(`,
 		// The theme toggle must PRESERVE the current history.state (slop.js), not
 		// replace it with {} — otherwise it strips the navIndex nav-history.js
 		// stamped and desyncs back/forward after a theme change. Regression guard

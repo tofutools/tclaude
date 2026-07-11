@@ -160,6 +160,29 @@ export function indexOf(state, loc) {
   return -1;
 }
 
+// resolvePopstate decides where a browser Back/Forward lands, from the popped
+// URL's location `loc` and the `navIndex` stamped in that entry's history.state
+// (pass -1 / non-integer when absent). It is the trust decision at the heart of
+// popstate handling, extracted here so it is unit-testable without a DOM.
+//
+// A stamped navIndex is meaningful ONLY for the stack instance that created it.
+// A reload builds a fresh (usually smaller) stack while older same-document
+// history entries keep their pre-reload indices — so an old index can be
+// coincidentally in range yet point at a different location. We therefore trust
+// navIndex only when it is in range AND its entry actually equals the popped
+// location; otherwise we relocate within the stack by URL (preserving depth),
+// or reseed from the URL as a last resort. This keeps the active tab, the URL,
+// and the button state consistent after any reload + traversal.
+export function resolvePopstate(state, loc, navIndex) {
+  const target = normalizeLocation(loc);
+  if (Number.isInteger(navIndex) && navIndex >= 0 && navIndex < state.entries.length &&
+      locEquals(state.entries[navIndex], target)) {
+    return go(state, navIndex);
+  }
+  const idx = indexOf(state, target);
+  return idx >= 0 ? go(state, idx) : initialState(target);
+}
+
 // ---- Path <-> location ---------------------------------------------------
 
 // toPath serializes a location to an absolute dashboard pathname. The default

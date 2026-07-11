@@ -19,7 +19,7 @@ import assert from 'node:assert/strict';
 import {
   DEFAULT_TAB, defaultLocation, normalizeLocation, locEquals,
   initialState, current, push, back, forward, go, indexOf,
-  canBack, canForward, toPath, fromPath, resolveStale,
+  canBack, canForward, toPath, fromPath, resolveStale, resolvePopstate,
 } from '../dashboard/js/nav-history-core.js';
 
 // A location is only ever compared through the module's own helpers, so tests
@@ -214,4 +214,48 @@ test('resolveStale keeps a still-valid selection, and is a no-op without one', (
 test('resolveStale never throws on a malformed location', () => {
   assert.doesNotThrow(() => resolveStale(undefined, () => false));
   assert.deepEqual(resolveStale({ tab: 'bad', selection: 'x' }, () => false), { tab: 'groups' });
+});
+
+test('resolvePopstate trusts a stamped index only when it matches the popped URL', () => {
+  // Normal in-instance traversal: A,B,C at index 2, Back to B carries navIndex 1.
+  let s = initialState(groups);
+  s = push(s, jobs);
+  s = push(s, config);          // [groups, jobs, config] @2
+  const toB = resolvePopstate(s, jobs, 1);
+  assert.equal(toB.index, 1, 'a matching in-range index is trusted');
+  assert.equal(current(toB).tab, 'jobs');
+});
+
+test('resolvePopstate ignores a stale cross-instance index (reload + double Back)', () => {
+  // The reviewer scenario: Groups -> Jobs -> Costs, RELOAD at Costs (fresh stack
+  // of just [costs]), then Back, Back. The older browser entries still carry
+  // their pre-reload navIndex (jobs=1, groups=0), which must NOT be trusted
+  // against the smaller fresh stack.
+  let s = initialState({ tab: 'costs' });        // fresh post-reload stack: [costs] @0
+
+  // Back → URL /jobs, stale navIndex 1 (out of range for size-1 stack).
+  s = resolvePopstate(s, jobs, 1);
+  assert.equal(current(s).tab, 'jobs', 'lands on the popped URL, not a stale index');
+  assert.ok(locEquals(current(s), fromPath('/jobs')), 'tab matches URL');
+
+  // Back → URL /, stale navIndex 0. It is now IN RANGE for the [jobs] stack, but
+  // entries[0] is jobs, not groups — so it must be rejected (this is the bug the
+  // pre-fix code hit: it trusted index 0 and stayed on jobs while the URL was /).
+  s = resolvePopstate(s, groups, 0);
+  assert.equal(current(s).tab, 'groups', 'rejects the in-range-but-mismatched index');
+  assert.ok(locEquals(current(s), fromPath('/')), 'tab matches URL after the second Back');
+});
+
+test('resolvePopstate relocates within the stack by URL when the index is absent', () => {
+  let s = initialState(groups);
+  s = push(s, jobs);
+  s = push(s, config);          // [groups, jobs, config] @2
+  // No usable index (e.g. a clobbered entry) → relocate by URL, preserving depth.
+  const r = resolvePopstate(s, jobs, -1);
+  assert.equal(r.index, 1, 'found jobs in the existing stack');
+  assert.equal(r.entries.length, 3, 'stack depth preserved (not reseeded)');
+  // URL not in the stack at all → reseed to a single entry.
+  const reseed = resolvePopstate(s, accessSudo, -1);
+  assert.equal(reseed.entries.length, 1);
+  assert.ok(locEquals(current(reseed), accessSudo));
 });

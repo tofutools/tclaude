@@ -20,7 +20,7 @@
 import { $, $$ } from './helpers.js';
 import {
   DEFAULT_TAB, normalizeLocation, initialState, current,
-  push, go, indexOf, canBack, canForward, toPath, fromPath,
+  push, canBack, canForward, toPath, fromPath, resolvePopstate,
 } from './nav-history-core.js';
 
 // ROUTABLE_TABS is the set of top-level tabs that own a URL path — the middle
@@ -91,16 +91,18 @@ function activate(loc) {
   }
 }
 
-// preservedQuery keeps view-state query params across a path push. Only the
-// cosmetic theme flags are carried (slop.js owns them via replaceState);
-// everything else — including consumed-on-load legacy deep-link params like
-// ?tab=/?access_request= — is intentionally dropped so the address bar settles
-// to a clean canonical location. Returns "" or "?slop=1"/"?wizard=1".
+// preservedQuery is the view-state query carried across a path push. Theme is
+// GLOBAL body state (body.slop / body.wizard, owned by slop.js), not per
+// location — so we read it LIVE from the DOM rather than from the previous URL.
+// Reading the URL would snapshot a stale theme onto each entry and let a Back
+// across a theme toggle desync the URL from the live theme. Everything else —
+// including consumed-on-load legacy deep-link params (?tab=/?access_request=) —
+// is intentionally dropped so the address bar settles to a clean canonical
+// location. Returns "" or "?slop=1"/"?wizard=1".
 function preservedQuery() {
-  const src = new URLSearchParams(window.location.search);
   const out = new URLSearchParams();
-  if (src.get('slop') === '1') out.set('slop', '1');
-  else if (src.get('wizard') === '1') out.set('wizard', '1');
+  if (document.body.classList.contains('slop')) out.set('slop', '1');
+  else if (document.body.classList.contains('wizard')) out.set('wizard', '1');
   const s = out.toString();
   return s ? '?' + s : '';
 }
@@ -138,19 +140,18 @@ function record(loc) {
 // cross-document nav) falls back to parsing the URL and reseeding the stack, so
 // traversal never throws or desyncs.
 function onPopstate(e) {
-  const st = e.state;
-  if (st && Number.isInteger(st.navIndex) && st.navIndex >= 0 && st.navIndex < stack.entries.length) {
-    stack = go(stack, st.navIndex);
-  } else {
-    // Foreign/clobbered state (an entry whose navIndex was stripped by another
-    // history writer, or a pre-init entry). Relocate within the existing stack
-    // by URL when we can — preserving back/forward depth — and only reseed as a
-    // last resort so a lost index never silently truncates history.
-    const loc = fromPath(window.location.pathname);
-    const idx = indexOf(stack, loc);
-    stack = idx >= 0 ? go(stack, idx) : initialState(loc);
-  }
+  // Decide the target from the popped URL + its stamped index. The core
+  // validates the index against the URL (a reload leaves older entries carrying
+  // stale, cross-instance indices) and falls back to URL relocation/reseed.
+  const loc = fromPath(window.location.pathname);
+  const navIndex = e.state && Number.isInteger(e.state.navIndex) ? e.state.navIndex : -1;
+  stack = resolvePopstate(stack, loc, navIndex);
   activate(current(stack));
+  // Re-stamp the current entry: a fresh, correct navIndex (heals stale indices
+  // after a reload) AND — because theme is global, not per-location — rewrite
+  // the URL to carry the LIVE theme so navigating history never leaves the URL
+  // and the DOM theme divergent. replaceState (not push) never fires popstate.
+  history.replaceState({ navIndex: stack.index }, '', urlFor(current(stack)));
   updateButtons();
 }
 
