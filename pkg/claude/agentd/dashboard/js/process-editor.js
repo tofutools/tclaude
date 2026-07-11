@@ -273,7 +273,10 @@ export class ProcessTemplateEditor {
     this.dirtyBadge.hidden = !model.dirty;
     this.undoButton.disabled = !model.canUndo;
     this.redoButton.disabled = !model.canRedo;
-    this.saveButton.disabled = this.savePending || (!model.dirty && !!model.sourceHash);
+    // A blank editor has not completed a save, even if a force retry adopted
+    // an existing CAS head. Keep its retry path armed after a failed or
+    // cancelled retry; only a successfully loaded/saved clean editor is done.
+    this.saveButton.disabled = this.savePending || (!model.dirty && !this.blank);
     this.renderInspector();
   }
 

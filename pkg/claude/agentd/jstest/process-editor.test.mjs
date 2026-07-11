@@ -283,6 +283,28 @@ test('destroy while conflict choice is pending prevents force retry', async () =
   }
 });
 
+test('failed force retry keeps an untouched blank editor retryable', async () => {
+  const previousFetch = globalThis.fetch;
+  let fetches = 0;
+  globalThis.fetch = async () => { fetches += 1; return conflictResponse(); };
+  try {
+    const choices = ['force', null];
+    const editor = saveEditor('alpha');
+    editor.model.dirty = false;
+    editor.choiceModal = async () => choices.shift();
+
+    assert.equal(await ProcessTemplateEditor.prototype.save.call(editor), true);
+    assert.equal(fetches, 2, 'force retries once against the adopted CAS head');
+    assert.equal(editor.blank, true, 'a failed retry does not pretend the draft was saved');
+    assert.equal(editor.model.sourceHash, 'existing-source', 'the adopted CAS head stays pinned');
+    assert.equal(editor.idInput.disabled, true, 'adopting a CAS head keeps identity locked');
+    assert.equal(editor.saveButton.disabled, false, 'cancelled re-conflict leaves Save available');
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+  }
+});
+
 test('destroy while conflict reload is pending prevents model swap and refresh', async () => {
   const previousFetch = globalThis.fetch;
   const reload = deferred();
