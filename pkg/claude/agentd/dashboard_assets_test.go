@@ -289,8 +289,10 @@ func TestDashboardJS_ModalResizePersisted(t *testing.T) {
 		// list opt-out (a refactor dropping fitContent would make a long list
 		// un-shrinkable and fight the 2s live refresh).
 		"makeModalResizable($('#templates-manage-modal .manage-modal'), 'tclaude.dash.modalSize.templates-manage', { fitContent: false })",
-		"tclaude.dash.modalSize.agent-spawn",     // per-modal pref key
-		"tclaude.dash.modalSize.template-editor", // template editor pref key (JOH-357)
+		"makeModalResizable($('#sandbox-profile-editor-modal .cron-create-modal')", // sandbox-profile editor wires it
+		"tclaude.dash.modalSize.agent-spawn",            // per-modal pref key
+		"tclaude.dash.modalSize.template-editor",        // template editor pref key (JOH-357)
+		"tclaude.dash.modalSize.sandbox-profile-editor", // sandbox-profile editor pref key
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard JS missing %q — modal resize persistence broken", needle)
@@ -321,6 +323,28 @@ func TestDashboardCSS_TemplateEditorResizable(t *testing.T) {
 		"}"
 	if !strings.Contains(css, needle) {
 		t.Errorf("dashboard.css missing %q — template editor resize regressed", needle)
+	}
+}
+
+// TestDashboardCSS_SandboxProfileEditorResizable guards the paired CSS half of
+// the resizable sandbox-profile editor: without the id in the shared
+// `resize: both` rule the JS wires makeModalResizable to an inert (non-resizable)
+// card and the grip never appears, yet TestDashboardJS_ModalResizePersisted
+// still passes. Pin the whole comma-joined selector group verbatim so a refactor
+// that drops the sandbox editor from it fails here.
+func TestDashboardCSS_SandboxProfileEditorResizable(t *testing.T) {
+	cssBytes, err := fs.ReadFile(dashboardAssetsFS, "dashboard.css")
+	if err != nil {
+		t.Fatalf("reading embedded dashboard.css: %v", err)
+	}
+	css := string(cssBytes)
+	needle := "#agent-spawn-modal .cron-create-modal,\n" +
+		"#clone-agent-modal .cron-create-modal,\n" +
+		"#sandbox-profile-editor-modal .cron-create-modal {\n" +
+		"  resize: both; overflow: auto;\n" +
+		"}"
+	if !strings.Contains(css, needle) {
+		t.Errorf("dashboard.css missing %q — sandbox-profile editor resize regressed", needle)
 	}
 }
 
