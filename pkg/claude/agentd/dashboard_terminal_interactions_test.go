@@ -39,7 +39,7 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 		"beginGestureClipboardWrite()",
 		"new ClipboardItemCtor({ 'text/plain': content })",
 		"ownerDocument.addEventListener('mouseup', onTmuxMouseUp, true)",
-		"pendingTmuxCopy.deferred.resolve(text)",
+		"token.deferred.resolve(text)",
 		"navigator.clipboard.writeText(",
 		"new globalThis.WebLinksAddon.WebLinksAddon(",
 		"term.options.linkHandler = linkHandler",
