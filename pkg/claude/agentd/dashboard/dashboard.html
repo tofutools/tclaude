@@ -24,6 +24,17 @@
        so the controls stay usable while the page is scrolled sideways. -->
   <div class="bar-inner header-inner">
   <h1>🤝 tclaude agent dashboard</h1>
+  <!-- Dashboard Back / Forward navigation (TCL-317). Traverses the tab/location
+       history and stays in lock-step with the browser's own Back/Forward and
+       trackpad swipe via the History API (js/nav-history.js); each is disabled
+       when there is nowhere to go. These are chrome controls, deliberately
+       OUTSIDE <nav> so the tab-switching logic ($$('nav button')) never treats
+       them as tabs. The glyphs re-flavour to spellbook arrows in 🧙 mode via
+       the label span pair, matching the other themed chrome. -->
+  <div class="nav-history" role="group" aria-label="Dashboard navigation history">
+    <button id="nav-back" type="button" class="nav-hist-btn" disabled aria-label="Back — go to the previous dashboard location" title="Back — previous location"><span class="nav-hist-label-regular">‹</span><span class="nav-hist-label-wizard">⟲</span></button>
+    <button id="nav-forward" type="button" class="nav-hist-btn" disabled aria-label="Forward — go to the next dashboard location" title="Forward — next location"><span class="nav-hist-label-regular">›</span><span class="nav-hist-label-wizard">⟳</span></button>
+  </div>
   <!-- Global activity pulse — a deduped row of status "bots" aggregated
        across every group + the ungrouped bucket (render.js
        renderGlobalActivity, painted each 2s poll). One glance answers

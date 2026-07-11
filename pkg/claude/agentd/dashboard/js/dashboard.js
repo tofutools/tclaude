@@ -73,6 +73,7 @@ import { loadSortState } from './sort.js';
 import { bindCommandPalette } from './palette.js';
 import { bindDock } from './dock.js';
 import { bindHScroll } from './hscroll.js';
+import { initNavHistory } from './nav-history.js';
 
 // Last successful snapshot, kept so the filter inputs can re-render
 // without a server roundtrip when the user types.
@@ -259,11 +260,22 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   refresh();
   setInterval(refresh, 2000);
 
+  // Capture the legacy deep-link params (?tab=…&access_request=…) BEFORE
+  // initNavHistory rewrites the address bar to the canonical path — the rewrite
+  // drops these query params, so the Messages block below must read them first.
+  const dlParams = new URLSearchParams(window.location.search);
+
+  // Back/forward navigation (TCL-317). Initialised LAST, after every tab binder
+  // above is installed: restoring a deep-link URL (e.g. /costs) activates that
+  // tab by clicking it, and the click must find its lazy-loader already wired.
+  // It reads the initial location from the path (honouring the legacy ?tab=
+  // alias), mirrors the browser History API, and drives the Back/Forward chrome.
+  initNavHistory();
+
   // Deep link: ?tab=messages&access_request=<id> — the target the approval
   // auto-raise / tray "review" builds. Bring the Messages tab forward on the
   // access-requests folder; the card highlight applies once the first snapshot
   // paints the pending request in.
-  const dlParams = new URLSearchParams(window.location.search);
   if (dlParams.get('tab') === 'messages') {
     const reqId = dlParams.get('access_request');
     if (reqId !== null) focusAccessRequest(reqId || undefined);

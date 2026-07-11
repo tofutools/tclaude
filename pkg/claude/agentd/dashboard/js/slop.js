@@ -129,7 +129,11 @@ function syncThemeParams() {
   const theme = currentTheme();
   if (theme === 'slop') u.searchParams.set('slop', '1');
   else if (theme === 'wizard') u.searchParams.set('wizard', '1');
-  window.history.replaceState({}, '', u.toString());
+  // Preserve the current entry's history.state: nav-history.js stamps its
+  // stack index there (navIndex), and replacing it with {} would strip that,
+  // desyncing back/forward after a theme toggle (TCL-317). Only the URL query
+  // is meant to change here.
+  window.history.replaceState(window.history.state, '', u.toString());
 }
 
 // toggleSlop flips slop mode on or off — the global hotkey does this too.

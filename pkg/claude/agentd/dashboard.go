@@ -171,10 +171,42 @@ func handleDashboardStatic() http.Handler {
 //     scraping it. An init token can only be minted via the human-only
 //     `/v1/dashboard/open` endpoint on the daemon's Unix socket (or
 //     the in-process tray handler).
+// dashboardAppTabs are the top-level dashboard "location" path segments the
+// SPA owns (TCL-317 back/forward navigation). A deep browser path like /access
+// or /jobs must serve the same index HTML so the client router
+// (js/nav-history.js) can restore the view on reload or a bookmarked deep link.
+// Only the FIRST path segment is validated here; the client normalizes any
+// deeper subtab/selection segments (/access/sudo, /processes/runs/<id>).
+//
+// Kept in sync with ROUTABLE_TABS in js/nav-history.js. Terminals is
+// deliberately absent — /terminals is its own standalone popout route
+// (handleDashboardTerminals) — and Vegas is a conditional soundtrack tab that
+// is not URL-routed; neither is a bookmarkable location.
+var dashboardAppTabs = map[string]bool{
+	"groups": true, "jobs": true, "processes": true, "plugins": true, "access": true,
+	"messages": true, "costs": true, "audit": true, "logs": true, "config": true,
+}
+
+// isDashboardAppPath reports whether a path should serve the dashboard SPA
+// index HTML. It is the SPA fallback allow-list: the bare root, /dashboard, and
+// any path whose first segment is a known app tab. Everything else (typos,
+// /favicon.ico) still 404s, preserving the "don't render HTML for junk"
+// property the strict pre-TCL-317 check gave. /api, /static, /v1, /terminals
+// and /dashboard/login are registered as more specific mux patterns and never
+// reach this handler, so they are unaffected.
+func isDashboardAppPath(p string) bool {
+	if p == "/" || p == "/dashboard" {
+		return true
+	}
+	seg, _, _ := strings.Cut(strings.TrimPrefix(p, "/"), "/")
+	return dashboardAppTabs[seg]
+}
+
 func handleDashboardRoot(w http.ResponseWriter, r *http.Request) {
-	// `/` is a catch-all in net/http; reject anything we don't know
-	// so /favicon.ico etc. don't silently render the dashboard HTML.
-	if r.URL.Path != "/" && r.URL.Path != "/dashboard" {
+	// `/` is a catch-all in net/http; serve the SPA only for known app paths
+	// (the router restores the view from the URL) and reject anything else so
+	// /favicon.ico etc. don't silently render the dashboard HTML.
+	if !isDashboardAppPath(r.URL.Path) {
 		http.NotFound(w, r)
 		return
 	}
