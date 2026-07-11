@@ -2492,6 +2492,19 @@ details[data-group-key][open] > summary .group-default-model {
    would paint behind it; pin it to 150 so it's always the topmost editor.
    Below the toast (200) and the shared confirm (1000). */
 #profile-editor-modal { z-index: 150; }
+#sandbox-profile-editor-modal { z-index: 150; }
+#sandbox-profile-editor-filesystem,
+#sandbox-profile-editor-environment {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  white-space: pre;
+}
+.sandbox-profile-assignments {
+  margin: 10px 0 14px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
 .profile-transfer-list {
   display: flex;
   flex-direction: column;
