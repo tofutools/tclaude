@@ -243,6 +243,55 @@ function bindSandboxProfilesUI() {
     } catch (err) { toast(err.message || String(err), true); }
   });
   $('#agent-spawn-sandbox-profile').addEventListener('change', () => refreshSpawnSandboxProfileUI($('#agent-spawn-group').value));
+
+  // Assignment belongs next to the scope it affects. The global selector is
+  // static; group selectors are rebuilt by the snapshot renderer, so one
+  // delegated listener covers every current and future group row.
+  $('#dashboard-default-sandbox-profile').addEventListener('change', e => {
+    void setQuickAssignment(e.target, '', e.target.value);
+  });
+  $('#groups-list').addEventListener('change', e => {
+    const select = e.target.closest('[data-sandbox-profile-quick-group]');
+    if (!select) return;
+    void setQuickAssignment(select, select.dataset.sandboxProfileQuickGroup, select.value);
+  });
+}
+
+async function setQuickAssignment(select, group, name) {
+  if (select.dataset.sandboxProfileQuickPending === 'true') return;
+  const previous = select.dataset.current || '';
+  select.dataset.sandboxProfileQuickPending = 'true';
+  select.disabled = true;
+  try {
+    const path = group
+      ? `/api/groups/${encodeURIComponent(group)}/sandbox-profile`
+      : '/api/sandbox-profile-default';
+    await api(path, {
+      method: name ? 'PUT' : 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: name ? JSON.stringify({ name }) : undefined,
+    });
+    select.dataset.current = name;
+    toast(group
+      ? (name ? `${group} sandbox profile: ${name}` : `${group} sandbox profile cleared`)
+      : (name ? `global sandbox profile: ${name}` : 'global sandbox profile cleared'));
+    // Release the refresh guard before asking refresh() to repaint the accepted
+    // assignment. While the request was in flight the guard prevented the 2s
+    // poll from replacing this disabled control with a writable stale copy.
+    delete select.dataset.sandboxProfileQuickPending;
+    select.disabled = false;
+    await refresh();
+    await refreshSpawnSandboxProfileUI($('#agent-spawn-group').value);
+  } catch (err) {
+    select.value = previous;
+    toast(err.message || String(err), true);
+  } finally {
+    // The global control is a static DOM node (unlike group controls, which a
+    // successful refresh replaces), so it must be re-enabled explicitly.
+    // Re-enabling a detached group node is harmless.
+    delete select.dataset.sandboxProfileQuickPending;
+    select.disabled = false;
+  }
 }
 
 export { bindSandboxProfilesUI, refreshSpawnSandboxProfileUI };

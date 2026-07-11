@@ -258,6 +258,11 @@ credentials in a sandbox profile — and changes take effect only when an agent
 is spawned or relaunched. The daemon remains authoritative for canonical path,
 protected-root, reserved-variable, containment, and harness capability checks.
 
+For routine assignment, the Groups toolbar has a global 🛡 selector beside the
+dashboard spawn-profile default, and every group header has its own 🛡 selector
+beside the group's spawn-profile control. Use the full manager to author or
+inspect profiles; use these quick selectors to assign or clear them in context.
+
 ### Templates
 
 Reusable **group blueprints**. A template describes a whole team that does not

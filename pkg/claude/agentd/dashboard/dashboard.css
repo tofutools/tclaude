@@ -2308,6 +2308,33 @@ details[data-group-key][open] > summary .group-default-model {
   color: #d4d4d4; padding: 1px 6px; font: inherit;
   font-family: ui-monospace, monospace; font-size: 11px; margin-left: 8px;
 }
+.sandbox-profile-quick {
+  display: inline-flex; align-items: center; gap: 3px; margin-left: 8px;
+  color: #7d8590; font: 11px ui-monospace, monospace; white-space: nowrap;
+}
+.sandbox-profile-quick select {
+  max-width: 150px; padding: 1px 4px; border: 1px solid transparent;
+  border-radius: 4px; background: #0d1117; color: #7d8590;
+  font: inherit; cursor: pointer;
+}
+.sandbox-profile-quick select:hover,
+.sandbox-profile-quick select:focus { color: #d4d4d4; border-color: #58a6ff; }
+.sandbox-profile-quick select:disabled { cursor: wait; opacity: .65; }
+@media (hover: hover) {
+  /* Match the existing group quick-option accordion: a collapsed group keeps
+     the 🛡 scope visible, then reveals its selector on hover (or the JS-stamped
+     quick-hover state that survives the two-second snapshot repaint). */
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-sandbox-profile-quick select {
+    max-width: 0; padding-left: 0; padding-right: 0; border-width: 0;
+    opacity: 0; overflow: hidden;
+  }
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .group-sandbox-profile-quick select,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:focus-within .group-sandbox-profile-quick select,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-sandbox-profile-quick select {
+    max-width: 150px; padding-left: 4px; padding-right: 4px; border-width: 1px;
+    opacity: 1;
+  }
+}
 .modal-context-textarea {
   width: 100%; box-sizing: border-box; resize: vertical;
   background: #0d1117; border: 1px solid #30363d; border-radius: 3px;

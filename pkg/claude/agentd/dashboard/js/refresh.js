@@ -13,7 +13,7 @@ import { conversationsVisible, replacedVisible } from './virtual-groups.js';
 import { recordGroupInteraction } from './last-group.js';
 import {
   renderPermissions, renderSlugs, showStatus,
-  renderMessagesBadge, renderUsage, renderDashDefaultProfile,
+  renderMessagesBadge, renderUsage, renderDashDefaultProfile, renderDashSandboxProfile,
   renderNotifyGlobal, renderGlobalActivity,
 } from './render.js';
 import { renderMailTab, onMailSearchChanged, renderAccessRequests } from './mail.js';
@@ -73,6 +73,10 @@ function refreshSuspended({ ignoreModals = false } = {}) {
   // An inline rename <input> is open — re-rendering would destroy it
   // mid-keystroke.
   if (renameEditing) return true;
+  // A global/group sandbox-profile assignment is in flight. Repainting a
+  // group header now would replace its disabled selector with a writable stale
+  // copy and allow out-of-order PUT/DELETE completion to pick the winner.
+  if (document.querySelector('[data-sandbox-profile-quick-pending="true"]')) return true;
   // A drag-and-drop gesture is in flight — re-rendering would detach
   // the dragged row, and a dragend dispatched on a now-detached node
   // never bubbles up to the document-level handler, so the drag's
@@ -543,6 +547,7 @@ export async function refresh(opts = {}) {
     renderAccessRequests(data.access_requests || [], data.access_requests_pending || 0);
     renderUsage(data.usage);
     renderDashDefaultProfile();
+    renderDashSandboxProfile();
     renderNotifyGlobal(!!data.notifications_enabled);
     applyCostTabVisibility(data);
     setVegasRegularMode(!!data.vegas_in_regular_mode);

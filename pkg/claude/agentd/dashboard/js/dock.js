@@ -341,8 +341,9 @@ function applyDockOpen(open) {
 
 // The groups-toolbar globals re-homed into the open dock's head (JOH-390 item 4):
 // the "+ new group" primary, the ⚙ more-actions cog (+ its .action-menu) and the
-// 🧠 dashboard-default-profile chip. While the dock is OPEN they live in the dock
-// head (row 1 = new-group + cog; row 2 = the profile chip); collapsed, they go
+// 🧠 dashboard-default-profile chip and its 🛡 sandbox-profile peer. While the
+// dock is OPEN they live in the dock head (row 1 = new-group + cog; row 2 = the
+// two profile controls); collapsed, they go
 // back to their exact toolbar slots so the filter bar renders as before.
 //
 // We MOVE the live DOM nodes (not clones), so every listener rides along:
@@ -359,6 +360,7 @@ const DOCK_ACTION_SPECS = [
   { sel: '#group-create-open', dock: '#dock-actions-primary' },
   { sel: '.filter-bar-cog', dock: '#dock-actions-primary' },
   { sel: '#dashboard-default-profile', dock: '#dock-actions-profile' },
+  { sel: '#dashboard-default-sandbox-profile-control', dock: '#dock-actions-profile' },
 ];
 let dockActionHomes = null;
 let lastDockActionsOpen = null;
