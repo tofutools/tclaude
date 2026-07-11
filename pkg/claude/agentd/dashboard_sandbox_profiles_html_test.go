@@ -127,3 +127,23 @@ func TestDashboardSandboxQuickCreateLocksAndCapturesAssignmentTarget(t *testing.
 		t.Error("quick-create must not insert a fallible list reload between successful create and assignment")
 	}
 }
+
+func TestDashboardNamedNewSandboxScribeDraftRemainsCreate(t *testing.T) {
+	raw, err := fs.ReadFile(dashboardAssetsFS, "js/sandbox-profiles.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(raw)
+	for needle, why := range map[string]string{
+		"targetName = null": "an omitted target remains distinguishable from the empty target of a new draft",
+		"targetName === null ? (p ? p.name : '') : targetName": "a name entered into a new draft must not turn the create into an edit",
+		"openEditor(draft.profile, { targetName, onCreate })":  "the named scribe draft preserves its original create target",
+	} {
+		if !strings.Contains(js, needle) {
+			t.Errorf("missing %q (%s)", needle, why)
+		}
+	}
+	if strings.Contains(js, "targetName || (p ? p.name : '')") {
+		t.Error("scribe create drafts must not infer an update target from their proposed name")
+	}
+}

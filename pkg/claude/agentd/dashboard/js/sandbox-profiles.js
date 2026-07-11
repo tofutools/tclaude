@@ -221,8 +221,14 @@ function setEditorAdvanced(open, { force = false } = {}) {
   btn.textContent = open ? '▾ Advanced — edit raw JSON' : '▸ Advanced — edit raw JSON';
 }
 
-function openEditor(p = null, { onCreate = null, targetName = '' } = {}) {
-  editingName = targetName || (p ? p.name : '');
+function openEditor(p = null, { onCreate = null, targetName = null } = {}) {
+  // An omitted target means the caller opened a saved profile directly, so
+  // infer the update target from its name. Scribe handoffs always pass a
+  // target explicitly: an existing name for edits, or '' for new drafts. Do
+  // not replace that explicit empty target with the draft's proposed name —
+  // doing so turns the subsequent create into a PATCH for a row that does not
+  // exist yet.
+  editingName = targetName === null ? (p ? p.name : '') : targetName;
   editorOnCreate = editingName ? null : onCreate;
   $('#sandbox-profile-editor-title').textContent = editingName
     ? wizWord(`Edit sandbox profile: ${editingName}`, `Edit ward: ${editingName}`)
