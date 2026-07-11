@@ -16,25 +16,31 @@ func migrateV110toV111(db *sql.DB) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	for _, table := range []string{"agents", "pending_spawns"} {
+	for _, target := range []struct {
+		table    string
+		alterSQL string
+	}{
+		{"agents", `ALTER TABLE agents ADD COLUMN effective_sandbox_config TEXT NOT NULL DEFAULT ''`},
+		{"pending_spawns", `ALTER TABLE pending_spawns ADD COLUMN effective_sandbox_config TEXT NOT NULL DEFAULT ''`},
+	} {
 		var haveTable int
 		if err := tx.QueryRow(
-			`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table,
+			`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, target.table,
 		).Scan(&haveTable); err != nil {
-			return fmt.Errorf("migrate v110→v111 (probe %s): %w", table, err)
+			return fmt.Errorf("migrate v110→v111 (probe %s): %w", target.table, err)
 		}
 		if haveTable == 0 {
 			continue
 		}
 		var haveColumn int
 		if err := tx.QueryRow(
-			`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = 'effective_sandbox_config'`, table,
+			`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = 'effective_sandbox_config'`, target.table,
 		).Scan(&haveColumn); err != nil {
-			return fmt.Errorf("migrate v110→v111 (probe %s.effective_sandbox_config): %w", table, err)
+			return fmt.Errorf("migrate v110→v111 (probe %s.effective_sandbox_config): %w", target.table, err)
 		}
 		if haveColumn == 0 {
-			if _, err := tx.Exec(`ALTER TABLE ` + table + ` ADD COLUMN effective_sandbox_config TEXT NOT NULL DEFAULT ''`); err != nil {
-				return fmt.Errorf("migrate v110→v111 (add %s.effective_sandbox_config): %w", table, err)
+			if _, err := tx.Exec(target.alterSQL); err != nil {
+				return fmt.Errorf("migrate v110→v111 (add %s.effective_sandbox_config): %w", target.table, err)
 			}
 		}
 	}
