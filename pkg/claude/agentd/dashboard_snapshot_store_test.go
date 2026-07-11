@@ -1,0 +1,113 @@
+package agentd
+
+import (
+	"io/fs"
+	"regexp"
+	"strings"
+	"testing"
+)
+
+func TestDashboardSnapshotStoreBoundary(t *testing.T) {
+	store, err := fs.ReadFile(dashboardAssetsFS, "js/snapshot-store.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"document", "querySelector", "innerHTML", "morphInto", "/api/", "fetch("} {
+		if strings.Contains(string(store), forbidden) {
+			t.Errorf("snapshot store contains forbidden rendering/API knowledge %q", forbidden)
+		}
+	}
+
+	refresh, err := fs.ReadFile(dashboardAssetsFS, "js/refresh.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, needle := range []string{
+		"dashboardState.beginRequest()",
+		"dashboardState.isCurrentRequest(requestId)",
+		"dashboardState.commitRequest(requestId, data)",
+		"dashboardState.failRequest(requestId, e, { responded })",
+		"dashboardState.discardRequest(requestId, { responded })",
+	} {
+		if !strings.Contains(string(refresh), needle) {
+			t.Errorf("authoritative poll is missing Signals bridge %q", needle)
+		}
+	}
+}
+
+func TestDashboardHasOneAuthoritativeSnapshotPoll(t *testing.T) {
+	var authoritativeSnapshotFetches, modalReplacementFetches, schedulerCalls, manualDebounces int
+	scheduledRefresh := regexp.MustCompile(`(?s)set(?:Interval|Timeout)\s*\([^;]{0,300}\brefresh\b`)
+	snapshotFetch := regexp.MustCompile(`fetch\s*\(\s*['"\x60]/api/snapshot(?:\?[^'"\x60]*)?['"\x60]`)
+	for _, syntax := range []string{
+		"fetch('/api/snapshot')", `fetch("/api/snapshot")`, "fetch(`/api/snapshot`)",
+		"fetch('/api/snapshot?poll=1')", `fetch("/api/snapshot?poll=1")`, "fetch(`/api/snapshot?poll=1`)",
+	} {
+		if !snapshotFetch.MatchString(syntax) {
+			t.Fatalf("direct snapshot fetch detector misses %q", syntax)
+		}
+	}
+	err := fs.WalkDir(dashboardAssetsFS, "js", func(name string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || !strings.HasSuffix(name, ".js") {
+			return nil
+		}
+		data, err := fs.ReadFile(dashboardAssetsFS, name)
+		if err != nil {
+			return err
+		}
+		source := string(data)
+		directSnapshotFetches := len(snapshotFetch.FindAllStringIndex(source, -1))
+		schedulerCalls += strings.Count(source, "startSnapshotPoll(refresh)")
+		switch name {
+		case "js/refresh.js":
+			authoritativeSnapshotFetches += directSnapshotFetches
+			// Filter input changes deliberately debounce a one-shot manual
+			// refresh. Remove those two known calls before looking for an
+			// accidental second periodic/recursive scheduler.
+			manualDebounces += strings.Count(source, "setTimeout(refresh, 250)")
+			source = strings.ReplaceAll(source, "setTimeout(refresh, 250)", "")
+		case "js/modal-human-reply.js":
+			// This legacy data-only timer runs only while its modal suspends the
+			// authoritative renderer. Keep the exception explicit until that
+			// modal becomes an island and can subscribe to the shared store.
+			modalReplacementFetches += directSnapshotFetches
+			if strings.Count(source, "setInterval(pollReplyOnline, 2000)") != 1 {
+				t.Errorf("%s no longer has exactly one known modal replacement timer", name)
+			}
+		default:
+			if directSnapshotFetches != 0 {
+				t.Errorf("%s owns %d direct /api/snapshot fetches; use the shared store/actions", name, directSnapshotFetches)
+			}
+		}
+		if name != "js/snapshot-poll.js" && scheduledRefresh.MatchString(source) {
+			t.Errorf("%s schedules refresh outside the authoritative snapshot-poll module", name)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if authoritativeSnapshotFetches != 1 {
+		t.Errorf("authoritative refresh /api/snapshot fetch count = %d, want exactly one", authoritativeSnapshotFetches)
+	}
+	if modalReplacementFetches != 1 {
+		t.Errorf("legacy modal replacement /api/snapshot fetch count = %d, want exactly one", modalReplacementFetches)
+	}
+	if schedulerCalls != 1 {
+		t.Errorf("snapshot scheduler installation count = %d, want exactly one", schedulerCalls)
+	}
+	if manualDebounces != 2 {
+		t.Errorf("known one-shot refresh debounce count = %d, want 2", manualDebounces)
+	}
+
+	dashboard, err := fs.ReadFile(dashboardAssetsFS, "js/dashboard.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(dashboard), "configureDashboardActions({ refresh })") {
+		t.Error("dashboard does not connect future island actions to the authoritative refresh")
+	}
+}

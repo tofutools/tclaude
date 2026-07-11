@@ -17,6 +17,7 @@
 
 import { $, $$ } from './helpers.js';
 import { mountMux, normalizeSeed } from './terminals-core.js';
+import { dashboardState } from './snapshot-store.js';
 
 let mux = null;
 
@@ -55,6 +56,7 @@ function applyTerminalsTabVisibility(n) {
 function selectTab(name) {
   $$('nav [data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
   $$('main section').forEach(s => s.classList.toggle('active', s.id === 'tab-' + name));
+  dashboardState.setActiveTab(name);
   // Revealing the Terminals tab (opening a web terminal) is a real user
   // navigation — signal the history router to push /terminals (one-way event,
   // no import; see nav-history.js). The count-0 auto-leave to Groups is

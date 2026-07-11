@@ -48,6 +48,22 @@ The ordinary `go test ./...` command also runs every `*.test.mjs` file. CI has
 Node installed and fails loudly if Node or a committed test-runtime dependency
 is missing. No npm install, browser, CDN, or network access is needed.
 
+### Dashboard state ownership
+
+During the incremental Preact migration, `refresh.js` remains the only
+2-second snapshot poll and the owner of legacy rendering. It publishes accepted
+snapshots into `snapshot-store.js`; Preact islands subscribe there and call
+`dashboard-actions.js` for refresh, retry, and server mutations. Islands must
+not import `refresh.js`, start competing poll timers, or infer state from legacy
+DOM nodes.
+
+The global Signals boundary is for server-backed snapshot data, connection and
+poll metadata, the active tab, and computed feature views. Ephemeral UI state
+such as focus, hover, an open disclosure, draft form text, or a local selection
+belongs in the owning component. Persisted preferences remain server-backed:
+write them through an explicit action and let the authoritative snapshot
+confirm the resulting state.
+
 Flow tests in `pkg/claude/agentd/*_flow_test.go` are regular Go tests
 — they run under bare `go test ./...`. Boundaries (`tmux`, the
 `tclaude session new` subprocess) are mocked by assigning fake

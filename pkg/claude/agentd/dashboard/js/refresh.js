@@ -41,6 +41,7 @@ import { setVegasRegularMode, isWizardActive } from './slop.js';
 import { setHScrollFollow } from './hscroll.js';
 import { noteConnected, noteDisconnected } from './connection.js';
 import { refreshDashDefaultProfile } from './profiles.js';
+import { dashboardState } from './snapshot-store.js';
 
 // refreshSuspended() is the single source of truth for whether the
 // auto-refresh is allowed to re-render the DOM right now. refresh()
@@ -352,12 +353,6 @@ function bindFilter(tab) {
   }
 }
 
-// refreshSeq tokens each refresh() run. A run that finds itself no longer the
-// latest (a pager click / filter change / next tick started while its fetches
-// were in flight) bails before mutating shared state — the guard refresh()
-// lacked, which let a slow older run clobber a newer page's offset.
-let refreshSeq = 0;
-
 // jobsFilterTimer debounces the server-side refetch the Jobs filter box
 // triggers (the /api/jobs q param), mirroring groupsFilterTimer below.
 let jobsFilterTimer = null;
@@ -411,6 +406,7 @@ export async function refresh(opts = {}) {
   // error thrown after agentd already answered (json parse, a renderer) never
   // masquerades as a connection drop. See connection.js.
   let responded = false;
+  const requestId = dashboardState.beginRequest();
   try {
     // The three heavy, ever-growing lists — retired / conversations / replaced
     // — no longer ride inside the snapshot. Each has its own paginated endpoint
@@ -428,7 +424,6 @@ export async function refresh(opts = {}) {
     // degrades to "keep the previous rows" (stitchListPage) rather than failing
     // the tick. The snapshot fetch keeps its original behaviour — its network
     // error rejects to the outer catch.
-    const seq = ++refreshSeq;
     const groupsQ = ($('#filter-groups')?.value || '').trim();
     const onGroups = groupsTabActive();
     // The Jobs tab's unified table (exports + cron) is windowed the same way —
@@ -446,25 +441,29 @@ export async function refresh(opts = {}) {
     ]);
     // agentd answered this poll (any HTTP status) — we're connected. Clear the
     // disconnect banner + resume music if it had been raised. Done before the
-    // stale-seq bail below so even a superseded run still registers the reconnect.
+    // stale-request bail below so even a superseded run registers the reconnect.
     responded = true;
     noteConnected();
     // A newer refresh() (a pager click, a filter change, or the next interval
     // tick) started while this one's fetches were in flight — drop this stale
     // run before it touches any shared state. Without this, a slow older refresh
     // resuming LAST clobbers the newer page and resets the stored offset
-    // (refresh() has no reqSeq otherwise, unlike mail.js, which learned this).
-    if (seq !== refreshSeq) return;
+    // (the shared store owns the request generation used for this guard).
+    if (!dashboardState.isCurrentRequest(requestId)) return;
     if (!snapR.ok) {
+      dashboardState.failRequest(requestId, `HTTP ${snapR.status}`, { responded: true });
       showStatus('snapshot failed: HTTP ' + snapR.status, true);
       return;
     }
     const data = await snapR.json();
-    if (seq !== refreshSeq) return;
+    if (!dashboardState.isCurrentRequest(requestId)) return;
     // The suspend guard was sampled BEFORE the fetch; a drag/modal may have
     // opened since. Re-check before touching the DOM (this preserves any
     // optimistic drag mutation on the old snapshot; its teardown re-runs us).
-    if (refreshSuspended({ ignoreModals: force })) return;
+    if (refreshSuspended({ ignoreModals: force })) {
+      dashboardState.discardRequest(requestId, { responded });
+      return;
+    }
     // Stitch each windowed list onto the snapshot so the downstream renderers
     // keep reading data.retired / .conversations / .replaced unchanged.
     // data.paging carries each list's {offset,limit,total,total_unfiltered} for
@@ -477,13 +476,16 @@ export async function refresh(opts = {}) {
     await stitchListPage(data, 'conversations', convR, prevSnap);
     await stitchListPage(data, 'replaced', replacedR, prevSnap);
     await stitchListPage(data, 'jobs', jobsR, prevSnap);
-    // stitchListPage awaited resp.json() (async boundaries) — re-check the seq
+    // stitchListPage awaited resp.json() (async boundaries) — re-check the request
     // (a newer refresh may have started) AND the suspend guard (a drag/modal may
     // have opened) before mutating shared offset state and the DOM.
-    if (seq !== refreshSeq) return;
-    if (refreshSuspended({ ignoreModals: force })) return;
+    if (!dashboardState.isCurrentRequest(requestId)) return;
+    if (refreshSuspended({ ignoreModals: force })) {
+      dashboardState.discardRequest(requestId, { responded });
+      return;
+    }
     // Reconcile each list's stored offset with the server's CLAMPED served
-    // offset — done HERE, after the seq guard, so a stale refresh can never
+    // offset — done HERE, after the request guard, so a stale refresh can never
     // write it (the pager-clobber bug). No-op when the offset didn't move.
     syncServedOffset('retired', data.paging.retired.offset);
     syncServedOffset('conversations', data.paging.conversations.offset);
@@ -587,7 +589,12 @@ export async function refresh(opts = {}) {
     // Re-focus whatever the keyboard user had selected before the
     // re-render detached it. No-op when focus was never stolen.
     restoreFocus(focusToken);
+    // Publish only after the full legacy render succeeds. Signal subscribers
+    // can now react without observing a snapshot the current UI failed to
+    // finish applying.
+    dashboardState.commitRequest(requestId, data);
   } catch (e) {
+    if (!dashboardState.failRequest(requestId, e, { responded })) return;
     // Only a REJECTED /api/snapshot fetch (agentd unreachable — connection
     // refused / network down, so `responded` never flipped) counts toward the
     // disconnect banner; a fault thrown after agentd already answered is a
@@ -615,7 +622,7 @@ async function stitchListPage(data, kind, resp, prevSnap) {
       };
       // Offset reconciliation (syncServedOffset) is deliberately NOT done here —
       // it mutates shared module state, so refresh() applies it only after its
-      // seq guard, so a stale run can't write a clobbering offset.
+      // request guard, so a stale run can't write a clobbering offset.
       return;
     }
   } catch { /* fall through to keep-previous */ }
@@ -669,6 +676,7 @@ function bindTabs() {
       $$('main section').forEach(s => {
         s.classList.toggle('active', s.id === 'tab-' + b.dataset.tab);
       });
+      dashboardState.setActiveTab(b.dataset.tab);
     });
     // <a> activates on Enter only, whereas the former <button> also switched on
     // Space; restore that parity so a keyboard user's Space still selects the
@@ -803,6 +811,7 @@ function applyCostTabVisibility(data) {
     if (sec && sec.classList.contains('active')) {
       $$('nav [data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === 'groups'));
       $$('main section').forEach(s => s.classList.toggle('active', s.id === 'tab-groups'));
+      dashboardState.setActiveTab('groups');
     }
   }
 }
@@ -825,6 +834,7 @@ function applyPluginsTabVisibility(data) {
     if (sec && sec.classList.contains('active')) {
       $$('nav [data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === 'groups'));
       $$('main section').forEach(s => s.classList.toggle('active', s.id === 'tab-groups'));
+      dashboardState.setActiveTab('groups');
     }
   }
 }
@@ -886,6 +896,7 @@ export function activateAccessSubtab(name) {
 export function showAccessTab(subtab) {
   $$('nav [data-tab]').forEach(x => x.classList.toggle('active', x.dataset.tab === 'access'));
   $$('main section').forEach(s => s.classList.toggle('active', s.id === 'tab-access'));
+  dashboardState.setActiveTab('access');
   if (subtab) activateAccessSubtab(subtab);
 }
 
