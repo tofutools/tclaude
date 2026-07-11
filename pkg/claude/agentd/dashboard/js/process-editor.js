@@ -81,6 +81,8 @@ export class ProcessTemplateEditor {
     this.selection = null;
     this.pendingMove = null;
     this.band = null;
+    this.savePending = false;
+    this.saveSeq = 0;
     this.abort = new AbortController();
     this.buildDOM();
     this.graph = new ProcessGraph(this.stageHost, this.model.graph(), {
@@ -184,6 +186,10 @@ export class ProcessTemplateEditor {
     }, { signal });
     if (this.blank) {
       this.idInput.addEventListener('change', () => {
+        if (this.savePending) {
+          this.idInput.value = this.model.template.id || '';
+          return;
+        }
         if (!this.model.setTemplateID(this.idInput.value.trim())) {
           this.idInput.value = this.model.template.id || '';
           this.status('Template id is fixed once an existing version is selected.', true);
@@ -219,6 +225,11 @@ export class ProcessTemplateEditor {
   }
 
   destroy() {
+    // Invalidate any delayed save completion before tearing down its DOM and
+    // callbacks. Fetch is not tied to the event-listener AbortController, so
+    // the request generation is the authoritative stale-response guard.
+    this.saveSeq += 1;
+    this.savePending = false;
     this.abort.abort();
     this.closeInline(false);
     this.validation?.destroy();
@@ -253,15 +264,16 @@ export class ProcessTemplateEditor {
     // A force retry pins the identity as soon as it adopts an existing CAS
     // head. It stays locked even if the retry fails or re-conflicts: `blank`
     // alone is not enough to decide that the id is still editable.
-    const idEditable = templateIDEditable(this.blank, model.sourceHash);
+    const showIDInput = templateIDEditable(this.blank, model.sourceHash);
+    const idEditable = showIDInput && !this.savePending;
     this.idInput.disabled = !idEditable;
-    this.identity.replaceChildren(idEditable ? this.idInput : this.titleLabel);
+    this.identity.replaceChildren(showIDInput ? this.idInput : this.titleLabel);
     this.versionBadge.textContent = model.semanticHash ? `v ${shortHash(model.semanticHash)}` : 'unsaved';
     this.versionBadge.title = model.semanticHash || 'This template has never been saved';
     this.dirtyBadge.hidden = !model.dirty;
     this.undoButton.disabled = !model.canUndo;
     this.redoButton.disabled = !model.canRedo;
-    this.saveButton.disabled = !model.dirty && !!model.sourceHash;
+    this.saveButton.disabled = this.savePending || (!model.dirty && !!model.sourceHash);
     this.renderInspector();
   }
 
@@ -721,59 +733,74 @@ export class ProcessTemplateEditor {
     const id = (this.model.template.id || '').trim();
     if (!id) {
       this.status('Template id is required before saving.', true);
-      return;
+      return false;
     }
+    if (this.savePending) return false;
+    const requestSeq = ++this.saveSeq;
+    this.savePending = true;
+    this.updateChrome();
+    try {
+      await this.saveRequest(requestSeq);
+      return true;
+    } catch (error) {
+      if (requestSeq === this.saveSeq) this.status(`Save failed: ${error.message}`, true);
+      return false;
+    } finally {
+      if (requestSeq === this.saveSeq) {
+        this.savePending = false;
+        this.updateChrome();
+      }
+    }
+  }
+
+  async saveRequest(requestSeq) {
+    if (requestSeq !== this.saveSeq) return;
+    const id = (this.model.template.id || '').trim();
     const savedID = id;
-    this.saveButton.disabled = true;
-    this.idInput.disabled = true;
     // The canvas stays interactive during the POST: capture the rev the
     // payload was built at, so edits made in flight keep the model dirty.
     const savedAtRev = this.model.rev;
-    try {
-      const response = await fetch(`/v1/process/templates/${encodeURIComponent(id)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(this.model.saveBody()),
-      });
-      const body = await response.json().catch(() => ({}));
-      if (response.status === 409 && body.code === 'process_template_conflict') {
-        await this.resolveConflict(body);
-        return;
-      }
-      if (!response.ok) {
-        this.status(body.message || body.error || `${response.status} ${response.statusText}`, true);
-        return;
-      }
-      // The POST path is the creation-time identity. Discard any draft id
-      // change made while the request was in flight before locking the model;
-      // history restoration also preserves this pinned id.
-      this.model.template.id = savedID;
-      this.idInput.value = savedID;
-      this.model.markSaved(body, savedAtRev);
-      // Sync the validation controller with the save verdict: a failed
-      // debounced round deliberately keeps prior diagnostics, so without this
-      // the badges/panel stay stale until the next mutation. The follow-up
-      // schedule() re-validates the live draft in case edits landed while the
-      // POST was in flight (its seq guard drops any out-of-order result).
-      this.validation?.applyDiagnostics(body.diagnostics || []);
-      this.validation?.schedule();
-      this.blank = false;
-      const diagCount = (body.diagnostics || []).length;
-      this.status(`Saved version ${shortHash(body.semanticHash)}${diagCount ? ` · ${diagCount} advisory finding${diagCount === 1 ? '' : 's'}` : ''}.`);
-      this.updateChrome();
-      this.options.onSaved?.(body);
-    } catch (error) {
-      this.status(`Save failed: ${error.message}`, true);
-    } finally {
-      this.saveButton.disabled = false;
-      this.updateChrome();
+    const response = await fetch(`/v1/process/templates/${encodeURIComponent(id)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(this.model.saveBody()),
+    });
+    const body = await response.json().catch(() => ({}));
+    // A newer editor request/lifecycle generation owns the model now. Never
+    // let this completion overwrite its identity, CAS base, or status.
+    if (requestSeq !== this.saveSeq) return;
+    if (response.status === 409 && body.code === 'process_template_conflict') {
+      await this.resolveConflict(body, requestSeq);
+      return;
     }
+    if (!response.ok) {
+      this.status(body.message || body.error || `${response.status} ${response.statusText}`, true);
+      return;
+    }
+    // The POST path is the creation-time identity. Discard any draft id
+    // change made while the request was in flight before locking the model;
+    // history restoration also preserves this pinned id.
+    this.model.template.id = savedID;
+    this.idInput.value = savedID;
+    this.model.markSaved(body, savedAtRev);
+    // Sync the validation controller with the save verdict: a failed
+    // debounced round deliberately keeps prior diagnostics, so without this
+    // the badges/panel stay stale until the next mutation. The follow-up
+    // schedule() re-validates the live draft in case edits landed while the
+    // POST was in flight (its seq guard drops any out-of-order result).
+    this.validation?.applyDiagnostics(body.diagnostics || []);
+    this.validation?.schedule();
+    this.blank = false;
+    const diagCount = (body.diagnostics || []).length;
+    this.status(`Saved version ${shortHash(body.semanticHash)}${diagCount ? ` · ${diagCount} advisory finding${diagCount === 1 ? '' : 's'}` : ''}.`);
+    this.updateChrome();
+    this.options.onSaved?.(body);
   }
 
   // resolveConflict is the explicit 409 dialog (never a silent overwrite):
   // reload their head version (discarding local edits), or save as a new
   // version on top of theirs (rebasing this draft's CAS base).
-  async resolveConflict(conflict) {
+  async resolveConflict(conflict, requestSeq = this.saveSeq) {
     const firstSave = !this.model.sourceHash;
     const choice = await this.choiceModal({
       title: firstSave ? 'Template id already exists' : 'Template changed while you were editing',
@@ -785,12 +812,14 @@ export class ProcessTemplateEditor {
         { key: 'force', label: 'Save as new version anyway', primary: true },
       ],
     });
+    if (requestSeq !== this.saveSeq) return;
     if (choice === 'force') {
       this.model.sourceHash = conflict.currentSourceHash || '';
-      await this.save();
+      await this.saveRequest(requestSeq);
     } else if (choice === 'reload') {
       try {
         const view = await fetchEditView(this.model.template.id);
+        if (requestSeq !== this.saveSeq) return;
         this.model = new ProcessEditModel(view, this.model.config);
         this.blank = false;
         this.selection = null;
@@ -801,6 +830,7 @@ export class ProcessTemplateEditor {
         this.validation?.applyDiagnostics(view.diagnostics || []);
         this.status(`Reloaded their version ${shortHash(view.semanticHash)}.`);
       } catch (error) {
+        if (requestSeq !== this.saveSeq) return;
         this.status(`Reload failed: ${error.message}`, true);
       }
     }

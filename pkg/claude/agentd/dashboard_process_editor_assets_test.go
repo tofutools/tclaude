@@ -68,9 +68,10 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"'Save as new version anyway'",
 		// IDs are creation-time store keys. Existing templates render only the
 		// title, and a blank template swaps its id input out after first save.
-		"const idEditable = templateIDEditable(this.blank, model.sourceHash)",
+		"const showIDInput = templateIDEditable(this.blank, model.sourceHash)",
+		"const idEditable = showIDInput && !this.savePending",
 		"this.idInput.disabled = !idEditable",
-		"this.identity.replaceChildren(idEditable ? this.idInput : this.titleLabel)",
+		"this.identity.replaceChildren(showIDInput ? this.idInput : this.titleLabel)",
 		"this.model.setTemplateID(this.idInput.value.trim())",
 		"Template id is fixed once an existing version is selected.",
 		"const savedID = id",
@@ -82,6 +83,10 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"if (selection?.type === 'template')",
 		"this.graph.select(null)",
 		"if (this.selection?.type !== 'template')",
+		"this.saveButton.disabled = this.savePending ||",
+		"if (this.savePending) return false",
+		"if (requestSeq !== this.saveSeq) return",
+		"this.saveSeq += 1",
 		"this.model.setTemplateMeta({ name:",
 		// Rewire affordance on mid-graph node deletion.
 		"'Delete + rewire through'",
