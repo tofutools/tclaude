@@ -348,6 +348,22 @@ func TestDashboardCSS_SandboxProfileEditorResizable(t *testing.T) {
 	}
 }
 
+// TestDashboardCSS_SandboxProfileAccessSelectorFitsLabels guards the access
+// selector width. The control also contains native arrow chrome and horizontal
+// padding, so the old 5.5em basis clipped the ordinary "write" label in
+// Chromium. Seven em fits both the regular labels and wizard mode's longer
+// "inscribe" label without making the selector flexible.
+func TestDashboardCSS_SandboxProfileAccessSelectorFitsLabels(t *testing.T) {
+	cssBytes, err := fs.ReadFile(dashboardAssetsFS, "dashboard.css")
+	if err != nil {
+		t.Fatalf("reading embedded dashboard.css: %v", err)
+	}
+	css := string(cssBytes)
+	if !strings.Contains(css, ".sbx-row .sbx-access { flex: 0 0 7em; }") {
+		t.Error("dashboard.css access selector must reserve enough width for its labels and native arrow")
+	}
+}
+
 // TestDashboardCSS_TemplatesManageResizable guards the paired CSS half of the
 // resizable summoning-circles management PANEL (the group-templates list). It
 // is a LIST panel, not a form, so unlike the editor it carries a fixed
