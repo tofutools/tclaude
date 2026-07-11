@@ -113,16 +113,15 @@ function closeTemplatesManageModal() { $('#templates-manage-modal').classList.re
 //
 // A "scribe" is an ordinary chat agent summoned to edit templates for the
 // human — it comes up already briefed on the task and already holding the
-// templates.manage permission (see the bundled agent-circles skill). Two entry
-// points share one reusable summon: the Templates overlay header (library
-// scope — edit any circle) and the template editor (template scope — anchored
-// on the open circle). Both reuse ONE stable scribe (reuse-if-alive on the
-// daemon), so a repeat click re-briefs + re-focuses the live scribe rather than
-// littering a new one per click. The daemon endpoint is generic {name, slugs,
-// brief}; the brief is the only thing that differs between the two entry points.
+// templates.manage permission (see the bundled agent-circles skill). The
+// Templates overlay header requests library scope, while the template editor
+// anchors the brief on one circle. Every click creates an independently named
+// scribe so multiple editing tasks can remain active in parallel. The daemon
+// endpoint is generic {name, slugs, brief}; the brief is the only thing that
+// differs between the two entry points.
 
-// SCRIBE_NAME is the stable name the daemon reuses-if-alive; both entry points
-// summon the same scribe, differing only in the brief. SCRIBE_SLUGS is the
+// SCRIBE_NAME is the base name; the daemon appends a unique suffix on every
+// summon so multiple editing tasks can proceed in parallel. SCRIBE_SLUGS is the
 // minimal grant bundle a template scribe needs (the agent-circles skill's
 // recommendation) — templates.manage only; instantiate/roles/profiles stay with
 // the human.
@@ -162,7 +161,7 @@ function scribeNewTemplateBrief() {
   ].join('\n\n');
 }
 
-// summonScribe POSTs the brief to the daemon's reusable scribe endpoint and
+// summonScribe POSTs the brief to the daemon's scribe endpoint and
 // surfaces the result. On a headless daemon (no native window) it opens the
 // in-browser terminal the daemon hands back, mirroring the spawn dialog's focus
 // fallback (openTermModal + hideConv so closing it detaches cleanly).
@@ -176,12 +175,12 @@ async function summonScribe(brief) {
     if (!r.ok) { toast((await r.text()) || `HTTP ${r.status}`, true); return; }
     let resp = {};
     try { resp = await r.json(); } catch (_) {}
-    const verb = resp.reused ? 'resumed' : 'summoned';
+    const scribeName = resp.name || SCRIBE_NAME;
     if (resp.focus_mode === 'browser' && resp.focus_ws) {
-      openTermModal({ wsPath: resp.focus_ws, label: SCRIBE_NAME, hideConv: resp.conv_id || null });
-      toast(`${verb} scribe ${SCRIBE_NAME} — opened in-browser terminal`);
+      openTermModal({ wsPath: resp.focus_ws, label: scribeName, hideConv: resp.conv_id || null });
+      toast(`summoned scribe ${scribeName} — opened in-browser terminal`);
     } else {
-      toast(`${verb} scribe ${SCRIBE_NAME} — opening its terminal`);
+      toast(`summoned scribe ${scribeName} — opening its terminal`);
     }
   } catch (err) {
     toast((err && err.message) || String(err), true);

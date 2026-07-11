@@ -36,10 +36,10 @@ func TestDashboardHTML_ScribeButtons(t *testing.T) {
 	// as a plain (non-submit) button.
 	must(`<button id="scribe-editor-open" type="button"`, "editor scribe button is a plain (non-submit) button")
 
-	// JS wiring: the reusable summon POSTs to the generic daemon endpoint with
-	// the stable reuse-if-alive name and the minimal grant bundle.
-	must(`fetch('/api/scribe'`, "the summon POSTs to the reusable /api/scribe endpoint")
-	must(`const SCRIBE_NAME = 'circle-scribe';`, "the stable reuse-if-alive scribe name")
+	// JS wiring: the summon POSTs to the generic daemon endpoint with the base
+	// name (the daemon adds a unique suffix) and the minimal grant bundle.
+	must(`fetch('/api/scribe'`, "the summon POSTs to the generic /api/scribe endpoint")
+	must(`const SCRIBE_NAME = 'circle-scribe';`, "the stable scribe-kind base name")
 	must(`const SCRIBE_SLUGS = ['templates.manage'];`, "the minimal template-scribe grant bundle")
 
 	// The editor entry point consults the dirty flag before handing off — an

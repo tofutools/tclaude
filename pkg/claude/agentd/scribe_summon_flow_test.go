@@ -6,11 +6,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -20,8 +22,8 @@ import (
 
 // Flow coverage for the scribe-summon endpoint behind the dashboard's "Edit
 // with agent" buttons (JOH-361): a human summon spawns a pre-briefed,
-// pre-granted scribe; a repeat click reuses the live one rather than
-// double-spawning; and an agent caller is gated exactly like the spawn path
+// pre-granted scribe; a repeat click starts another fresh agent; and
+// an agent caller is gated exactly like the spawn path
 // (groups.spawn + — because a summon carries birth-time grants —
 // permissions.grant). Asserted at the real surfaces the dashboard reads:
 // db.ListAgentGroupMembers (the agent listing) and
@@ -55,9 +57,9 @@ func decodeScribeResp(t *testing.T, rec *httptest.ResponseRecorder) scribeSummon
 	return resp
 }
 
-// Scenario: a human summons a scribe. It comes up in its own eponymous
-// one-member group, holding exactly the requested slug, and its window is
-// opened.
+// Scenario: a human summons a uniquely named scribe. It comes up in the
+// shared scribe-kind group, holding exactly the requested slug, and its window
+// is opened.
 func TestScribeSummon_HumanCreatesGrantedScribe(t *testing.T) {
 	// The scribe=true wire assertion below fetches /api/snapshot, whose
 	// auth pins the Origin to popupBaseURL — set it so the test handler
@@ -76,9 +78,11 @@ func TestScribeSummon_HumanCreatesGrantedScribe(t *testing.T) {
 
 	resp := decodeScribeResp(t, rec)
 	require.NotEmpty(t, resp.ConvID, "summon returned a conv-id")
+	assert.Regexp(t, `^circle-scribe-[0-9a-f]{8}$`, resp.Name, "summon returns the unique agent name")
+	assert.Equal(t, resp.Name, agent.FreshTitle(resp.ConvID), "the generated name is persisted on the agent")
 	assert.False(t, resp.Reused, "a first summon is a fresh spawn, not a reuse")
 
-	// The scribe's eponymous group exists and holds exactly one member — the
+	// The shared scribe-kind group exists and initially holds one member — the
 	// agent-listing surface the dashboard renders.
 	g, err := db.GetAgentGroupByName("circle-scribe")
 	require.NoError(t, err)
@@ -93,7 +97,7 @@ func TestScribeSummon_HumanCreatesGrantedScribe(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "grant", overrides[agentd.PermTemplatesManage], "templates.manage granted at birth")
 
-	// The snapshot flags the scribe's eponymous group as `scribe` — the wire
+	// The snapshot flags the shared scribe-kind group as `scribe` — the wire
 	// bit the Groups tab keys off to always show it while live (and to hide the
 	// dormant group unless the human enables "show offline scribes").
 	assert.True(t, dashGroupByName(t, "circle-scribe").Scribe, "snapshot marks the scribe group scribe=true")
@@ -102,9 +106,43 @@ func TestScribeSummon_HumanCreatesGrantedScribe(t *testing.T) {
 	assert.Equal(t, 1, *opens, "summon opened the scribe's terminal window")
 }
 
-// Scenario: a repeat click reuses the live scribe rather than spawning a
-// second — the group still holds exactly one member — and re-opens its window.
-func TestScribeSummon_ReuseIfAliveNoDoubleSpawn(t *testing.T) {
+// The group-name vocabulary is intentionally broader than the safe agent-name
+// vocabulary. A summon normalizes and truncates only the generated agent name,
+// preserving the caller's base as the group key while guaranteeing the suffix
+// fits the launch/rename gate.
+func TestScribeSummon_UniqueNameClearsAgentNameGate(t *testing.T) {
+	tests := []struct {
+		name       string
+		base       string
+		wantPrefix string
+	}{
+		{name: "max length base", base: strings.Repeat("a", agent.MaxSpawnNameLen), wantPrefix: strings.Repeat("a", 55) + "-"},
+		{name: "unicode and spaces", base: "scribe café", wantPrefix: "scribe-caf-"},
+		{name: "no safe characters", base: "🎉", wantPrefix: "scribe-"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFlow(t)
+			stubScribeTerminal(t)
+			rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe",
+				map[string]any{
+					"name":  tc.base,
+					"slugs": []string{agentd.PermTemplatesManage},
+					"brief": "Edit templates.",
+				})))
+			require.Equalf(t, http.StatusOK, rec.Code, "summon body=%s", rec.Body.String())
+			resp := decodeScribeResp(t, rec)
+			assert.Len(t, resp.Name, len(tc.wantPrefix)+8)
+			assert.True(t, strings.HasPrefix(resp.Name, tc.wantPrefix), resp.Name)
+			assert.LessOrEqual(t, len(resp.Name), agent.MaxSpawnNameLen)
+			assert.Equal(t, resp.Name, agent.FreshTitle(resp.ConvID), "generated name persisted")
+		})
+	}
+}
+
+// Scenario: a repeat click spawns an independently named scribe while the
+// first remains alive for parallel editing.
+func TestScribeSummon_RepeatSummonKeepsPriorScribeAlive(t *testing.T) {
 	f := newFlow(t)
 	opens := stubScribeTerminal(t)
 
@@ -123,30 +161,39 @@ func TestScribeSummon_ReuseIfAliveNoDoubleSpawn(t *testing.T) {
 	assert.False(t, first.Reused, "first summon spawns")
 
 	second := summon()
-	assert.True(t, second.Reused, "second summon reuses the live scribe")
-	assert.Equal(t, first.ConvID, second.ConvID, "reuse returns the same scribe conv")
+	assert.False(t, second.Reused, "every summon is a fresh spawn")
+	assert.NotEqual(t, first.ConvID, second.ConvID, "repeat summon creates a new conversation")
+	assert.NotEqual(t, first.Name, second.Name, "each scribe has a unique display name")
+	assert.Equal(t, first.Name, agent.FreshTitle(first.ConvID))
+	assert.Equal(t, second.Name, agent.FreshTitle(second.ConvID))
 
-	// Still exactly one scribe — reuse did not litter a second.
+	// Both scribes remain in their shared kind-group and can work concurrently.
 	g, err := db.GetAgentGroupByName("circle-scribe")
 	require.NoError(t, err)
 	require.NotNil(t, g)
 	members, err := db.ListAgentGroupMembers(g.ID)
 	require.NoError(t, err)
-	assert.Len(t, members, 1, "reuse-if-alive spawned no second scribe")
+	require.Len(t, members, 2, "parallel scribes remain enrolled")
 
-	// The grant is (still) present after reuse's idempotent re-grant.
+	// Each independent scribe retains its own birth-time grant.
 	overrides, err := db.ListAgentPermissionOverridesForConv(first.ConvID)
 	require.NoError(t, err)
-	assert.Equal(t, "grant", overrides[agentd.PermTemplatesManage], "grant intact after reuse")
+	assert.Equal(t, "grant", overrides[agentd.PermTemplatesManage])
+	state, err := db.AgentState(first.ConvID)
+	require.NoError(t, err)
+	assert.Equal(t, db.AgentStateActive, state, "prior scribe remains active")
+	overrides, err = db.ListAgentPermissionOverridesForConv(second.ConvID)
+	require.NoError(t, err)
+	assert.Equal(t, "grant", overrides[agentd.PermTemplatesManage], "second scribe is granted at birth")
 
-	// Both summons opened a window (fresh spawn's auto-focus + reuse's re-focus).
+	// Both fresh summons opened a window.
 	assert.Equal(t, 2, *opens, "each summon opened the scribe's window")
 }
 
 // A capability-reducing scribe can pin explicit denies as well as its narrow
-// grant. Reuse must reapply those denies so stale/manual/default grants cannot
-// silently widen the live scribe past the safety boundary promised by its UI.
-func TestScribeSummon_ReuseReappliesExplicitDenies(t *testing.T) {
+// grant. A concurrent scribe receives the complete deny set independently at
+// birth without disturbing the first scribe.
+func TestScribeSummon_ConcurrentScribeGetsExplicitDenies(t *testing.T) {
 	f := newFlow(t)
 	stubScribeTerminal(t)
 	summon := func() scribeSummonResp {
@@ -169,10 +216,10 @@ func TestScribeSummon_ReuseReappliesExplicitDenies(t *testing.T) {
 	})
 	require.NoError(t, err)
 	second := summon()
-	require.True(t, second.Reused)
-	require.Equal(t, first.ConvID, second.ConvID)
+	require.False(t, second.Reused)
+	require.NotEqual(t, first.ConvID, second.ConvID)
 
-	overrides, err := db.ListAgentPermissionOverridesForConv(first.ConvID)
+	overrides, err := db.ListAgentPermissionOverridesForConv(second.ConvID)
 	require.NoError(t, err)
 	assert.Equal(t, db.PermEffectGrant, overrides[agentd.PermSandboxProfilesDraft])
 	assert.Equal(t, db.PermEffectDeny, overrides[agentd.PermSandboxProfilesManage])
@@ -182,16 +229,18 @@ func TestScribeSummon_ReuseReappliesExplicitDenies(t *testing.T) {
 	assert.Equal(t, db.PermEffectDeny, overrides[agentd.PermSelfReincarnate])
 	assert.Equal(t, db.PermEffectDeny, overrides[agentd.PermPermissionsGrant])
 	assert.Equal(t, db.PermEffectDeny, overrides[agentd.PermPermissionsRevoke])
+	oldOverrides, err := db.ListAgentPermissionOverridesForConv(first.ConvID)
+	require.NoError(t, err)
+	assert.Equal(t, db.PermEffectGrant, oldOverrides[agentd.PermSandboxProfilesManage],
+		"existing scribe is not mutated while it works")
 	activeSudo, err := db.ListActiveSudoGrants(first.ConvID)
 	require.NoError(t, err)
-	assert.Empty(t, activeSudo, "exclusive summon revokes elevations that override permanent denies")
+	assert.NotEmpty(t, activeSudo, "existing scribe's active task is left untouched")
 }
 
-// Moving a live scribe from exclusive to ordinary mode unwinds only the deny
-// overrides previously generated by the summon machinery. This is the upgrade
-// path for sandbox scribes created before they began inheriting normal agent
-// defaults; an operator-authored deny must remain intact.
-func TestScribeSummon_OrdinaryReuseClearsOnlyGeneratedExclusiveDenies(t *testing.T) {
+// Moving from exclusive to ordinary mode starts a fresh agent, so no deny from
+// the previous task can leak into the new scribe's permission set.
+func TestScribeSummon_FreshOrdinaryDoesNotInheritExclusiveDenies(t *testing.T) {
 	f := newFlow(t)
 	stubScribeTerminal(t)
 	summon := func(exclusive bool) scribeSummonResp {
@@ -207,22 +256,20 @@ func TestScribeSummon_OrdinaryReuseClearsOnlyGeneratedExclusiveDenies(t *testing
 	}
 
 	first := summon(true)
-	// Reapply a human deny, then run exclusive mode once more. The same-effect
-	// exclusive write must preserve the human provenance so ordinary cleanup
-	// cannot mistake it for generated policy.
+	// Add a human-authored deny to the prior generation; the next agent must not
+	// inherit either it or the summon-authored exclusive denies.
 	require.NoError(t, db.SetAgentPermissionOverride(first.ConvID, agentd.PermSelfRename,
 		db.PermEffectDeny, "<human>"))
-	require.True(t, summon(true).Reused)
 	second := summon(false)
-	require.True(t, second.Reused)
-	require.Equal(t, first.ConvID, second.ConvID)
+	require.False(t, second.Reused)
+	require.NotEqual(t, first.ConvID, second.ConvID)
 
-	overrides, err := db.ListAgentPermissionOverridesForConv(first.ConvID)
+	overrides, err := db.ListAgentPermissionOverridesForConv(second.ConvID)
 	require.NoError(t, err)
 	assert.Equal(t, db.PermEffectGrant, overrides[agentd.PermSandboxProfilesDraft])
-	assert.NotContains(t, overrides, agentd.PermGroupsSpawn, "generated exclusive deny removed")
-	assert.NotContains(t, overrides, agentd.PermTemplatesUse, "all generated exclusive denies removed")
-	assert.Equal(t, db.PermEffectDeny, overrides[agentd.PermSelfRename], "human-authored deny preserved")
+	assert.NotContains(t, overrides, agentd.PermGroupsSpawn, "exclusive deny is not inherited")
+	assert.NotContains(t, overrides, agentd.PermTemplatesUse, "generated denies are not inherited")
+	assert.NotContains(t, overrides, agentd.PermSelfRename, "human-authored deny is not inherited")
 }
 
 // Scenario: after the scribe's session dies (e.g. a daemon restart leaves the
@@ -313,8 +360,7 @@ func TestScribeSummon_AgentGatedLikeSpawn(t *testing.T) {
 // Scenario: the JOH-369 fix. A summon spawns the scribe into the stable,
 // shared, pre-trusted workdir (~/.tclaude/scribe) — NOT $HOME — so its
 // detached pane can start unprompted; the CC folder-trust store is pre-seeded
-// for that dir; and a reuse-if-alive click keeps the SAME cwd (the dir must
-// never move under a cwd-bound CC conversation).
+// for that dir; and every fresh scribe uses that same trusted cwd.
 func TestScribeSummon_SpawnsInSharedTrustedWorkdir(t *testing.T) {
 	f := newFlow(t)
 	stubScribeTerminal(t)
@@ -356,15 +402,14 @@ func TestScribeSummon_SpawnsInSharedTrustedWorkdir(t *testing.T) {
 	assert.True(t, claudeDirTrusted(t, claudeJSON, wantCwd),
 		"~/.claude.json marks the scribe workdir hasTrustDialogAccepted=true")
 
-	// (4) Reuse-if-alive keeps the SAME cwd — the dir is stable under the
-	// cwd-bound CC conversation.
+	// (4) The second scribe is fresh but uses the SAME stable trusted cwd.
 	second := summon()
-	require.True(t, second.Reused, "second summon reuses the live scribe")
-	require.Equal(t, first.ConvID, second.ConvID)
+	require.False(t, second.Reused, "second summon is also fresh")
+	require.NotEqual(t, first.ConvID, second.ConvID)
 	sessions2, err := db.FindSessionsByConvID(second.ConvID)
 	require.NoError(t, err)
 	require.NotEmpty(t, sessions2)
-	assert.Equal(t, wantCwd, sessions2[0].Cwd, "reuse keeps the same stable workdir")
+	assert.Equal(t, wantCwd, sessions2[0].Cwd, "second scribe uses the same stable workdir")
 }
 
 // Scenario: trust-seeding is best-effort. A malformed ~/.claude.json (which
@@ -420,7 +465,7 @@ func mustOverrides(t *testing.T, conv string) map[string]string {
 
 // Scenario: confused-deputy guard. A summon whose name collides with a real,
 // non-scribe group must NOT resolve that group — it fails closed rather than
-// re-granting/re-briefing a foreign agent or spawning a stray scribe into it.
+// spawning a privileged stray scribe into it.
 func TestScribeSummon_RefusesForeignGroupCollision(t *testing.T) {
 	f := newFlow(t)
 	stubScribeTerminal(t)
@@ -617,11 +662,9 @@ func TestScribeSummon_DeletedProfileSelfHeals(t *testing.T) {
 		"the default-harness path still pre-seeds the CC trust store")
 }
 
-// Scenario (JOH-371): the config change applies to the NEXT fresh summon only.
-// A live scribe that gets reused keeps the launch shape it was born with —
-// changing config.scribe.profile between summons does not re-stamp or relaunch
-// the reused scribe.
-func TestScribeSummon_ReuseIgnoresConfigChange(t *testing.T) {
+// Scenario (JOH-371): every summon is fresh, so a config change between
+// summons applies immediately to the next independent scribe.
+func TestScribeSummon_NextScribeAdoptsConfigChange(t *testing.T) {
 	f := newFlow(t)
 	stubScribeTerminal(t)
 
@@ -645,20 +688,18 @@ func TestScribeSummon_ReuseIgnoresConfigChange(t *testing.T) {
 	// Operator changes the config to profile B between summons.
 	require.NoError(t, config.Save(&config.Config{Scribe: &config.ScribeConfig{Profile: "prof-b"}}))
 
-	// Second summon reuses the live scribe — no relaunch.
+	// Second summon leaves the old scribe running and launches under profile B.
 	second := summonCircleScribe(t, f)
-	require.True(t, second.Reused, "second summon reuses the live scribe")
-	require.Equal(t, first.ConvID, second.ConvID, "reuse returns the same scribe conv")
+	require.False(t, second.Reused, "second summon is fresh")
+	require.NotEqual(t, first.ConvID, second.ConvID)
 
-	// The reused scribe kept its born launch shape (the sim never re-recorded a
-	// new model — reuse does not respawn).
+	// The next independent scribe picks up the changed launch shape.
 	if model, ok := f.World.SpawnModel(second.ConvID); ok {
-		assert.Equal(t, "sonnet", model, "reuse keeps the born launch shape, not the changed config's profile B")
+		assert.Equal(t, "opus", model, "second scribe launches with profile B")
 	}
-	// And the group default was NOT re-stamped to B — the reuse path never
-	// touches the profile stamp (config applies to the next FRESH summon).
+	// The group default is re-stamped on every summon.
 	g, err := db.GetAgentGroupByName("circle-scribe")
 	require.NoError(t, err)
 	require.NotNil(t, g)
-	assert.Equal(t, "prof-a", g.DefaultProfile, "reuse did not re-stamp the group default to the changed config's profile")
+	assert.Equal(t, "prof-b", g.DefaultProfile, "second summon re-stamped the changed profile")
 }

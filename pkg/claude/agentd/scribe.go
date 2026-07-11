@@ -18,7 +18,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
-// Scribe summon (JOH-361) — the reusable "summon a pre-briefed, pre-granted
+// Scribe summon (JOH-361) — the "summon a pre-briefed, pre-granted
 // scribe agent by chat" primitive behind the dashboard's "Edit with agent"
 // buttons. A scribe is an ordinary agent the human talks to; its whole value
 // is that it comes up already briefed on the task and already holding the
@@ -26,46 +26,46 @@ import (
 //
 // Deliberately generic: the request is {name, slugs, brief} and the endpoint
 // knows nothing about templates. The Templates tab is the first caller; the
-// settings-editing follow-up (JOH-362) reuses the same endpoint for spawn
+// settings-editing follow-up (JOH-362) uses the same endpoint for spawn
 // profiles / the role library by passing different slugs + a different brief.
 //
 // Shape decisions:
-//   - Reuse-if-alive on a STABLE name: repeat clicks re-brief and re-focus the
-//     one live scribe rather than littering a new agent per click.
-//   - The scribe lives in its own eponymous one-member group. executeSpawn is
-//     group-bound (no group-less spawn primitive), and an eponymous group makes
-//     reuse-if-alive an unambiguous name lookup rather than a global
-//     title-selector guess.
+//   - Fresh agent on every summon: repeat clicks spawn another independently
+//     named scribe, so concurrent editing tasks do not share conversational
+//     context, permissions, or launch settings.
+//   - Scribes of one kind share the base-name group. executeSpawn is group-bound
+//     (no group-less spawn primitive), while a random suffix on each agent name
+//     keeps simultaneous scribes individually addressable.
 //   - Stable, shared, pre-trusted cwd (~/.tclaude/scribe, NOT $HOME): a scribe
 //     edits daemon-side state through the `tclaude agent` CLI, so it needs no
 //     repo checkout — but it does need a directory it can START in unprompted.
 //     $HOME made the harness ask the human to approve the folder on every
 //     launch (JOH-369). See scribeWorkdir for why the dir is stable + shared.
 
-// scribeGroupDescr is the descr stamped on a scribe's eponymous group so the
-// Groups tab explains what the stray one-member group is.
+// scribeGroupDescr is stamped on the shared scribe-kind group so the Groups tab
+// explains why the ad-hoc agents are grouped together.
 const scribeGroupDescr = "Ad-hoc scribe agent — summoned from the dashboard to edit tclaude state by chat (JOH-361)."
 
-// scribeGranter is the audit label for the birth-time / reuse-time permission
+// scribeGranter is the audit label for the birth-time permission
 // grants a summon applies, distinct from <human-dashboard> so a forensic query
 // can tell a scribe's auto-grant apart from a hand-typed dashboard grant.
 const scribeGranter = "<scribe-summon>"
 
 // scribeSummonRequest is the wire body of POST /api/scribe and its /v1 twin.
 type scribeSummonRequest struct {
-	// Name is the scribe's stable display name AND the name of its dedicated
-	// one-member group. Reuse-if-alive keys on it.
+	// Name is the base display name and the name of the scribe-kind group. Each
+	// spawned agent receives a random suffix.
 	Name string `json:"name"`
-	// Slugs are the permission slugs to grant the scribe at birth (and re-grant
-	// on reuse), e.g. ["templates.manage"]. Each is validated against the slug
+	// Slugs are the permission slugs to grant the scribe at birth, e.g.
+	// ["templates.manage"]. Each is validated against the slug
 	// registry; an unknown slug is a 400 listing the known slugs.
 	Slugs []string `json:"slugs"`
-	// DenySlugs are explicit permission denies applied at birth and on reuse.
+	// DenySlugs are explicit permission denies applied at birth.
 	// This lets a capability-reducing scribe defend its safety boundary even
-	// when an older live incarnation or a global default granted more power.
+	// when a global default grants more power.
 	DenySlugs []string `json:"deny_slugs,omitempty"`
 	// Exclusive turns Slugs into the exact positive capability set: every
-	// other registered permission is denied at birth and again on reuse.
+	// other registered permission is denied at birth.
 	Exclusive bool `json:"exclusive,omitempty"`
 	// Brief is the pre-briefing delivered to the scribe's inbox — the concept
 	// pointer + scope anchor the human's chat starts from. Same charset/length
@@ -73,12 +73,12 @@ type scribeSummonRequest struct {
 	Brief string `json:"brief"`
 }
 
-// scribeOutcome is summonScribe's result: the live scribe's conv-id, whether an
-// existing one was reused, and the open-window handshake (native vs the
-// in-browser terminal fallback), mirroring the spawn/open-window responses.
+// scribeOutcome is summonScribe's result: the fresh scribe's conv-id and the
+// open-window handshake (native vs the in-browser terminal fallback),
+// mirroring the spawn/open-window responses.
 type scribeOutcome struct {
+	Name      string
 	ConvID    string
-	Reused    bool
 	FocusMode string // "native" | "browser" | ""
 	FocusWS   string // set when FocusMode == "browser"
 }
@@ -186,9 +186,11 @@ func handleScribeSummon(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := map[string]any{
-		"name":    name,
+		"name":    out.Name,
 		"conv_id": out.ConvID,
-		"reused":  out.Reused,
+		// Kept for wire compatibility with existing dashboard/API clients. A
+		// summon now always creates a fresh agent.
+		"reused": false,
 	}
 	if aid := peerAgentID(out.ConvID); aid != "" {
 		resp["agent_id"] = aid
@@ -215,15 +217,14 @@ func handleDashboardScribeAPI(w http.ResponseWriter, r *http.Request) {
 	handleScribeSummon(w, asDashboardHumanPeer(r))
 }
 
-// scribeSummonMu serializes summons so the reuse-if-alive check-then-spawn is
-// atomic: two near-simultaneous clicks would otherwise both see "no live
-// scribe" and double-spawn — or race on the UNIQUE group-name insert and 500.
+// scribeSummonMu serializes summons so two near-simultaneous clicks cannot
+// race on the UNIQUE group-name insert.
 // Summons are rare human actions, so a global lock costs nothing.
 var scribeSummonMu sync.Mutex
 
-// summonScribe is the reusable core: ensure the scribe's eponymous group,
-// reuse-if-alive (re-grant + re-brief + re-focus), otherwise spawn one in the
-// shared, pre-trusted scribe workdir with the birth-time grants and auto-focus.
+// summonScribe is the reusable core: ensure the scribe-kind group, then
+// spawn a fresh, uniquely named agent in the shared, pre-trusted scribe workdir
+// with the birth-time grants and auto-focus. Existing live scribes keep running.
 func summonScribe(name string, overrides map[string]string, brief string, exclusive bool) (*scribeOutcome, *spawnFailure) {
 	scribeSummonMu.Lock()
 	defer scribeSummonMu.Unlock()
@@ -233,30 +234,9 @@ func summonScribe(name string, overrides map[string]string, brief string, exclus
 		return nil, fail
 	}
 
-	// Reuse-if-alive: a repeat click on a live scribe re-grants the slugs
-	// (idempotent — covers a widened slug set), re-briefs it (a repeat click may
-	// carry a fresh scope: library-wide vs one specific template), and just
-	// re-opens its window. The live scribe already spawned into the trusted
-	// workdir, so no dir/trust work is needed on this path.
-	if convID := aliveScribeConv(g); convID != "" {
-		if err := applyScribeOverrides(convID, overrides, exclusive, true); err != nil {
-			if exclusive {
-				killScribeSession(convID)
-			}
-			return nil, &spawnFailure{http.StatusInternalServerError, "permission",
-				"refusing to reopen capability-reducing scribe after permission override failure: " + err.Error()}
-		}
-		rebriefScribe(convID, brief)
-		out := &scribeOutcome{ConvID: convID, Reused: true}
-		openScribeWindow(convID, out)
-		return out, nil
-	}
-
-	// No live scribe — spawn a fresh one. First prune any dead scribe left in
-	// the group by a prior generation (a daemon restart kills the tmux session
-	// but leaves the membership row; group membership is not auto-reaped on
-	// death). Otherwise the "one-member" group would slowly accumulate stale
-	// rows across restarts — exactly the litter reuse-if-alive exists to avoid.
+	// Dead sessions are no longer doing useful parallel work. Preserve the old
+	// cleanup behavior by unlinking them, while every live scribe stays in the
+	// group and continues its independent editing task.
 	pruneDeadScribes(g)
 
 	// Adopt the operator's configured scribe launch profile (JOH-371) BEFORE we
@@ -264,8 +244,8 @@ func summonScribe(name string, overrides map[string]string, brief string, exclus
 	// (scribeSpawnHarness) and the launch shape (executeSpawn →
 	// applyDefaultProfile) read the group's default profile, so stamping it here
 	// makes them agree by construction — a codex-profile scribe gets codex trust
-	// seeding, never CC's. Fresh-spawn path only: a reused live scribe (handled
-	// above) keeps the launch shape it was born with.
+	// seeding, never CC's. Every summon is fresh, so every new scribe observes
+	// the profile currently configured by the operator.
 	stampScribeProfileFromConfig(g)
 
 	// Resolve + create the shared scribe workdir and pre-trust it for the
@@ -282,7 +262,7 @@ func summonScribe(name string, overrides map[string]string, brief string, exclus
 	// AutoFocus — opens its terminal window. Synchronous (Async left false) so
 	// the conv-id materialises for the grants + the response.
 	p := spawnParams{
-		Name:                name,
+		Name:                uniqueScribeName(name),
 		Cwd:                 cwd,
 		InitialMessage:      brief,
 		AutoFocus:           !exclusive,
@@ -293,13 +273,13 @@ func summonScribe(name string, overrides map[string]string, brief string, exclus
 		return nil, spawnFail
 	}
 	if exclusive {
-		if err := applyScribeOverrides(outcome.ConvID, overrides, true, false); err != nil {
+		if err := enforceExclusiveScribeOverrides(outcome.ConvID, overrides); err != nil {
 			killScribeSession(outcome.ConvID)
 			return nil, &spawnFailure{http.StatusInternalServerError, "permission",
 				"capability-reducing scribe stopped after permission override failure: " + err.Error()}
 		}
 	}
-	out := &scribeOutcome{ConvID: outcome.ConvID, FocusMode: outcome.FocusMode}
+	out := &scribeOutcome{Name: p.Name, ConvID: outcome.ConvID, FocusMode: outcome.FocusMode}
 	if outcome.FocusMode == "browser" {
 		out.FocusWS = spawnFocusWSPath(outcome.Label)
 	}
@@ -315,8 +295,8 @@ func summonScribe(name string, overrides map[string]string, brief string, exclus
 // harness's folder-trust prompt once PER scribe kind (every future JOH-362
 // scribe — profiles, roles, … — re-prompting), whereas one shared path is
 // trusted ONCE, ever. Still stable (not a per-summon temp dir), so a scribe's
-// CC conversation — which is cwd-bound — resumes/reuses from the same place and
-// the path-attached trust holds. Accepted trade-off: all scribes share this
+// CC conversation — which is cwd-bound — starts from the same place and the
+// path-attached trust holds. Accepted trade-off: all scribes share this
 // dir's CC per-project memory (a shared "scribe house" know-how; revisit
 // per-kind isolation only if cross-contamination ever bites).
 func scribeWorkdir() (string, bool) {
@@ -342,7 +322,7 @@ func ensureScribeWorkdir() (string, *spawnFailure) {
 }
 
 // scribeSpawnHarness reports the harness this scribe summon will actually
-// launch on. A scribe leaves --harness unset, so it follows the eponymous
+// launch on. A scribe leaves --harness unset, so it follows the scribe-kind
 // group's default spawn profile, then the global default profile (neither →
 // the default harness). Mirrors executeSpawn → applyDefaultProfile so the dir
 // we pre-trust matches the harness that will read the trust store.
@@ -369,8 +349,7 @@ func scribeSpawnHarness(g *db.AgentGroup) string {
 // "" clears the stamp (harness default). A name whose profile was
 // deleted/renamed is stamped as-is and self-heals to the default at resolution
 // time (groupDefaultProfile → nil), mirroring `tclaude ask`'s live self-heal.
-// Only the fresh-spawn path calls this — a reused live scribe keeps the launch
-// shape it was born with (config applies to the NEXT fresh summon).
+// Called on every summon, because every summon creates a fresh scribe.
 //
 // Best-effort: a config-load or DB-write failure logs and leaves the group's
 // existing default profile in place (worst case the scribe launches on the
@@ -423,14 +402,13 @@ func seedScribeDirTrust(harnessName, dir string) {
 	}
 }
 
-// ensureScribeGroup returns the scribe's eponymous group, creating it on first
-// summon. The group is a plain container for the one scribe member.
+// ensureScribeGroup returns the shared scribe-kind group, creating it on first
+// summon. The group may contain multiple concurrently active scribes.
 //
 // It fails closed on a NON-scribe group of the same name: the caller supplies
 // the name, so without this a summon whose name collided with a real working
-// group would resolve that group and treat its first live member as "the
-// scribe" — re-granting + re-briefing + nudging a foreign agent, or (empty
-// group) spawning a stray scribe into it. Verifying the scribe-group marker
+// group would resolve that group and spawn a privileged stray scribe into it.
+// Verifying the scribe-group marker
 // before touching an existing group keeps the summon operating only on groups
 // this machinery created.
 func ensureScribeGroup(name string) (*db.AgentGroup, *spawnFailure) {
@@ -460,34 +438,35 @@ func ensureScribeGroup(name string) (*db.AgentGroup, *spawnFailure) {
 }
 
 // isScribeGroup reports whether g is a group this machinery created (marked by
-// its descr), so a summon never reuses / spawns into a same-named foreign group.
+// its descr), so a summon never spawns into a same-named foreign group.
 // The descr is stamped at creation and nothing in the scribe path rewrites it; a
 // human who edits it just makes future summons fail closed (safe), not misfire.
 func isScribeGroup(g *db.AgentGroup) bool {
 	return g != nil && g.Descr == scribeGroupDescr
 }
 
-// aliveScribeConv returns the conv-id of a live member of the scribe group, or
-// "" if none is up. The group holds a single scribe, so the first alive member
-// is the scribe.
-func aliveScribeConv(g *db.AgentGroup) string {
-	members, err := db.ListAgentGroupMembers(g.ID)
-	if err != nil {
-		slog.Warn("scribe: list group members failed", "group", g.Name, "error", err)
-		return ""
+// uniqueScribeName makes each summon individually addressable while retaining
+// a normalized form of the caller-supplied base as a recognizable prefix. The
+// suffix budget is reserved before truncation so the result always clears the
+// same 64-byte safe-name gate used by spawn and rename. newApprovalID is a
+// cryptographically random 32-hex token; eight characters are ample here
+// because this name is cosmetic and the conversation ID remains authoritative.
+func uniqueScribeName(base string) string {
+	const suffixLen = 9 // '-' + eight hex characters
+	prefix := agent.NormalizeSpawnName(base)
+	if len(prefix) > agent.MaxSpawnNameLen-suffixLen {
+		prefix = strings.TrimRight(prefix[:agent.MaxSpawnNameLen-suffixLen], "-")
 	}
-	for _, m := range members {
-		if pickAliveSession(m.ConvID) != nil {
-			return m.ConvID
-		}
+	if prefix == "" {
+		prefix = "scribe"
 	}
-	return ""
+	return prefix + "-" + newApprovalID()[:suffixLen-1]
 }
 
-// pruneDeadScribes unlinks any non-alive member from the scribe group so it
-// stays a clean single-member container. Best-effort — a failed removal just
-// leaves a harmless stale row (reuse-if-alive still skips it, since it isn't
-// alive). Removing membership does not delete the conv, only the group link.
+// pruneDeadScribes unlinks non-alive members from the shared scribe-kind group.
+// Live members are deliberately retained: they may be editing different
+// profiles or templates in parallel. Removing membership does not delete the
+// old conversation.
 func pruneDeadScribes(g *db.AgentGroup) {
 	members, err := db.ListAgentGroupMembers(g.ID)
 	if err != nil {
@@ -503,24 +482,15 @@ func pruneDeadScribes(g *db.AgentGroup) {
 	}
 }
 
-// applyScribeOverrides (re)applies the requested permission effects. An
-// exclusive capability-reducing summon fails closed on any write error; an
-// ordinary scribe preserves the established best-effort behavior.
-func applyScribeOverrides(convID string, overrides map[string]string, required, preserveSameEffectProvenance bool) error {
-	if required {
-		if _, err := db.RevokeSudoGrantsByConv(convID); err != nil {
-			return fmt.Errorf("revoke active sudo grants: %w", err)
-		}
+// enforceExclusiveScribeOverrides pins the complete capability set after
+// enrollment. Exclusive sandbox scribes fail closed on any write error.
+func enforceExclusiveScribeOverrides(convID string, overrides map[string]string) error {
+	if _, err := db.RevokeSudoGrantsByConv(convID); err != nil {
+		return fmt.Errorf("revoke active sudo grants: %w", err)
 	}
-	// Ordinary mode clears stale summon-authored denies and applies the current
-	// request in one transaction. Exclusive mode already supplies an effect for
-	// every registered slug, so it needs no stale-row cleanup. Same-effect rows
-	// preserve their original audit provenance in the DB layer.
-	if err := db.ApplyAgentPermissionOverrides(convID, overrides, scribeGranter, !required, preserveSameEffectProvenance); err != nil {
+	if err := db.ApplyAgentPermissionOverrides(convID, overrides, scribeGranter, false, false); err != nil {
 		slog.Warn("scribe: apply permission overrides failed", "conv", short8(convID), "error", err)
-		if required {
-			return fmt.Errorf("apply permission overrides: %w", err)
-		}
+		return fmt.Errorf("apply permission overrides: %w", err)
 	}
 	return nil
 }
@@ -531,25 +501,6 @@ func killScribeSession(convID string) {
 			slog.Error("scribe: failed to kill unsafe capability-reducing scribe", "conv", short8(convID), "error", err)
 		}
 	}
-}
-
-// rebriefScribe delivers a fresh brief to a reused scribe's inbox and nudges it
-// if it's live — the same universal-inbox transport a self-reincarnate request
-// rides. A daemon-originated system message (FromConv empty, group_id 0).
-func rebriefScribe(convID, brief string) {
-	id, err := db.InsertAgentMessage(&db.AgentMessage{
-		GroupID:      0,
-		FromConv:     "",
-		ToConv:       convID,
-		Subject:      "New editing task",
-		Body:         brief,
-		ToRecipients: []string{convID},
-	})
-	if err != nil {
-		slog.Warn("scribe: re-brief insert failed", "conv", short8(convID), "error", err)
-		return
-	}
-	nudgeIfAlive(id, convID)
 }
 
 // openScribeWindow opens a terminal attached to the scribe's live session,

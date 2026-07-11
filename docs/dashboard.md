@@ -255,8 +255,9 @@ manager from **Groups → ⚙ → 🛡 sandbox profiles…** to create/edit/dele
 profiles and assign one global default or one default to each group. The spawn
 dialog also offers a human-controlled explicit profile selector.
 
-**🤖 configure with agent** summons a reusable sandbox scribe for either a new
-profile or the draft currently open in the editor. The scribe can discuss paths
+**🤖 configure with agent** summons a fresh, independently named sandbox scribe
+for either a new profile or the draft currently open in the editor. Existing
+scribes keep working in parallel. The scribe can discuss paths
 and environment entries and submit a server-validated structured draft, but it
 cannot save profiles, change assignments, or launch agents. Its result is
 loaded back into the normal editor; review every field and explicitly press
@@ -354,7 +355,7 @@ and **⭐ starters** (see [Starter task forces](#starter-task-forces)).
 > bundle and the bundled `agent-circles` skill. The **Config tab → Scribe
 > defaults** selector picks which saved spawn profile a freshly summoned scribe
 > launches with (harness / model / effort) — e.g. to run scribes on Codex; it
-> applies to the next fresh summon and is stored as `scribe.profile` in
+> applies to each fresh summon and is stored as `scribe.profile` in
 > config.json.
 
 #### Sharing task forces as a file
