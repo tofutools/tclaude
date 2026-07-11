@@ -203,6 +203,7 @@
           <button role="menuitem" id="delete-retired-open" title="Permanently delete retired agents — a filterable preview of every retired agent, all ticked, with per-row opt-out before the purge">🗑 delete retired…</button>
           <button role="menuitem" id="group-from-template-open" title="Create a new group from a template — spawns the template's whole agent team in one shot"><span class="tpl-word-regular">⎘ from template</span><span class="tpl-word-wizard">🕯 cast a circle</span></button>
           <button role="menuitem" id="profiles-manage-open" title="Manage spawn profiles — reusable bundles of the spawn dialog's fields (harness, model, effort, name, role, …) that pre-fill the spawn dialog and can be a group or dashboard default"><span class="profiles-word-regular">⧉ profiles…</span><span class="profiles-word-wizard">⧉ patterns…</span></button>
+          <button role="menuitem" id="sandbox-profiles-manage-open" title="Manage sandbox profiles — additive filesystem and environment policy applied at agent launch">🛡 sandbox profiles…</button>
           <button role="menuitem" id="templates-manage-open" title="Manage group templates — reusable team blueprints (create, edit, delete, snapshot from a group, instantiate)"><span class="tpl-word-regular">⧉ templates…</span><span class="tpl-word-wizard">⧉ circles…</span></button>
           <button role="menuitem" id="roles-manage-open" title="Manage the role library — named, reusable agent-role defaults (a canonical brief, a default launch shape and a default permission set) that a template roster agent references and inherits from"><span class="roles-word-regular">⧉ roles…</span><span class="roles-word-wizard">⧉ classes…</span></button>
           <button role="menuitem" id="links-manage-open" title="Manage inter-group communication links — the full cross-group listing (add, edit, delete)">🔗 links…</button>
@@ -1859,6 +1860,43 @@
     </div>
   </div>
 </div>
+<div class="manage-overlay" id="sandbox-profiles-manage-modal">
+  <div class="manage-modal" role="dialog" aria-modal="true" aria-labelledby="sandbox-profiles-manage-title">
+    <h3 id="sandbox-profiles-manage-title">Sandbox profiles</h3>
+    <p class="manage-intro">Named additive launch policy for filesystem access and environment values. Values are ordinary configuration, <strong>not a secrets facility</strong>. Changes apply on spawn or relaunch, never retroactively to a running process.</p>
+    <div class="filter-bar">
+      <input id="filter-sandbox-profiles" type="text" placeholder="Filter sandbox profiles" autocomplete="off" spellcheck="false" />
+      <span class="filter-count" id="filter-sandbox-profiles-count"></span>
+      <span class="spacer"></span>
+      <button id="sandbox-profile-create-open" class="primary" type="button">+ new sandbox profile</button>
+    </div>
+    <div class="sandbox-profile-assignments">
+      <label class="cron-create-row">
+        <span class="cron-create-label">Global default</span>
+        <select id="sandbox-profile-global"><option value="">— none —</option></select>
+      </label>
+      <div class="cron-create-row">
+        <span class="cron-create-label">Group default</span>
+        <select id="sandbox-profile-group"><option value="">— choose group —</option></select>
+        <select id="sandbox-profile-group-value"><option value="">— none —</option></select>
+      </div>
+    </div>
+    <div id="sandbox-profiles-list"></div>
+    <div class="cron-create-error" id="sandbox-profiles-manage-error"></div>
+    <div class="modal-buttons"><span class="spacer"></span><button id="sandbox-profiles-manage-close" type="button">Close</button></div>
+  </div>
+</div>
+<div class="modal-overlay" id="sandbox-profile-editor-modal">
+  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="sandbox-profile-editor-title">
+    <h3 id="sandbox-profile-editor-title">New sandbox profile</h3>
+    <p class="modal-meta">Filesystem and environment are JSON arrays. Paths are canonicalized and protected roots/reserved variables are rejected by the daemon. Environment values are non-secret configuration.</p>
+    <label class="cron-create-row"><span class="cron-create-label">Name</span><input id="sandbox-profile-editor-name" type="text" autocomplete="off" spellcheck="false" placeholder="e.g. shared-build-caches" /></label>
+    <label class="cron-create-row"><span class="cron-create-label">Filesystem</span><textarea id="sandbox-profile-editor-filesystem" rows="7" spellcheck="false" placeholder='[{"path":"/absolute/path","access":"write"}]'></textarea></label>
+    <label class="cron-create-row"><span class="cron-create-label">Environment</span><textarea id="sandbox-profile-editor-environment" rows="7" spellcheck="false" placeholder='[{"name":"GOCACHE","value":"/absolute/path"}]'></textarea></label>
+    <div class="cron-create-error" id="sandbox-profile-editor-error"></div>
+    <div class="modal-buttons"><button id="sandbox-profile-editor-cancel" type="button">Cancel</button><span class="spacer"></span><button id="sandbox-profile-editor-submit" class="primary" type="button">Save sandbox profile</button></div>
+  </div>
+</div>
 <div class="manage-overlay" id="profiles-manage-modal">
   <div class="manage-modal" role="dialog" aria-modal="true" aria-labelledby="profiles-manage-title">
     <h3 id="profiles-manage-title"><span class="profiles-word-regular">Spawn profiles</span><span class="profiles-word-wizard">Familiar patterns</span></h3>
@@ -2830,6 +2868,13 @@
              applySpawnSandboxHint(). aria-live so a screen reader announces the
              ⚠ caveat when the selection changes. -->
         <div id="agent-spawn-sandbox-hint" class="spawn-field-hint" aria-live="polite"></div>
+      </div>
+    </label>
+    <label class="cron-create-row" id="agent-spawn-sandbox-profile-row" title="Optional explicit sandbox profile. Composes after the global and group sandbox profiles. Only the human dashboard may select this escalation-bearing policy.">
+      <span class="cron-create-label">Sandbox profile</span>
+      <div class="cron-create-target">
+        <select id="agent-spawn-sandbox-profile"><option value="">— global + group defaults only —</option></select>
+        <div id="agent-spawn-sandbox-profile-preview" class="spawn-field-hint" aria-live="polite"></div>
       </div>
     </label>
     <label class="cron-create-row" id="agent-spawn-approval-row" style="display:none" title="Permission mode for the new agent (Claude Code). inherit (recommended) leaves your settings.json permission rules + the agentd approval popup as-is. The explicit modes map to `claude --permission-mode`: plan (read-only), acceptEdits, default (prompt for everything), auto (classifier auto-decides), dontAsk (auto-deny anything not pre-allowed), bypassPermissions (skip all checks). Because the agent runs detached, several modes can block on a prompt no one answers — the live hint below flags those.">

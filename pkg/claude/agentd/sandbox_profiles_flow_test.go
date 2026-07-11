@@ -77,6 +77,8 @@ func TestSandboxProfilesCRUDValidationAndAssignments(t *testing.T) {
 	assert.Equal(t, "GOCACHE", got.Environment[0].Name)
 
 	for _, body := range []map[string]any{
+		{"name": "export"},
+		{"name": "IMPORT"},
 		{"name": "protected", "filesystem": []map[string]any{{"path": filepath.Join(home, ".tclaude", "data"), "access": "write"}}},
 		{"name": "reserved", "environment": []map[string]any{{"name": "TCLAUDE_SESSION_ID", "value": "spoof"}}},
 		{"name": "conflict", "environment": []map[string]any{{"name": "A", "value": "1"}, {"name": "A", "value": "2"}}},

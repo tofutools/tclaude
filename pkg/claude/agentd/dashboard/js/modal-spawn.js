@@ -20,6 +20,7 @@ import { wizardSummon } from './wizard-fx.js';
 import { openTermModal } from './modal-term.js';
 import { recordGroupInteraction } from './last-group.js';
 import { openSpawnPermEditor } from './modal-message.js';
+import { refreshSpawnSandboxProfileUI } from './sandbox-profiles.js';
 
 // Birth-time permission overrides the human set in the stacked Permissions…
 // editor, buffered here until the spawn POSTs them. slug → 'grant' |
@@ -1240,6 +1241,8 @@ function openAgentSpawnModal(opts) {
     profileName: (opts && opts.profileName) || '',
     role: (opts && opts.role) || '',
   });
+  $('#agent-spawn-sandbox-profile').value = '';
+  void refreshSpawnSandboxProfileUI(select.value);
   // Always land on Name — the first thing you type when spawning. Even when no
   // group was pre-selected (the Group picker is the first field), the picker
   // already carries a sensible default, so jumping straight to Name matches the
@@ -1394,6 +1397,8 @@ async function submitAgentSpawn() {
     // it so a lower group/global default profile cannot select another vendor.
     if (harness) body.harness = harness;
     if (sandbox) body.sandbox = sandbox;
+    const sandboxProfile = $('#agent-spawn-sandbox-profile').value;
+    if (sandboxProfile) body.sandbox_profile = sandboxProfile;
     // Permission mode (Claude Code) — the daemon resolves a blank/inherit to no
     // override, so send it only when a concrete mode was chosen.
     if (approval) body.approval = approval;
@@ -1503,6 +1508,7 @@ function bindAgentSpawnModal() {
     // submit the new group's spawn with the wrong state. Pass null: the group's
     // default profile is not re-applied here, so seed from the group policy alone.
     applyRemoteControlPrefill(e.target.value, null);
+    void refreshSpawnSandboxProfileUI(e.target.value);
     // Deliberately NOT re-running the profile pre-fill here: it's a one-shot
     // on open. Re-applying the new group's default profile mid-dialog would
     // clobber any name / role / model / init-msg the human already typed (the
