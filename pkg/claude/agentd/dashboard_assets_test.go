@@ -326,6 +326,28 @@ func TestDashboardCSS_TemplateEditorResizable(t *testing.T) {
 	}
 }
 
+// TestDashboardCSS_SandboxProfileEditorResizable guards the paired CSS half of
+// the resizable sandbox-profile editor: without the id in the shared
+// `resize: both` rule the JS wires makeModalResizable to an inert (non-resizable)
+// card and the grip never appears, yet TestDashboardJS_ModalResizePersisted
+// still passes. Pin the whole comma-joined selector group verbatim so a refactor
+// that drops the sandbox editor from it fails here.
+func TestDashboardCSS_SandboxProfileEditorResizable(t *testing.T) {
+	cssBytes, err := fs.ReadFile(dashboardAssetsFS, "dashboard.css")
+	if err != nil {
+		t.Fatalf("reading embedded dashboard.css: %v", err)
+	}
+	css := string(cssBytes)
+	needle := "#agent-spawn-modal .cron-create-modal,\n" +
+		"#clone-agent-modal .cron-create-modal,\n" +
+		"#sandbox-profile-editor-modal .cron-create-modal {\n" +
+		"  resize: both; overflow: auto;\n" +
+		"}"
+	if !strings.Contains(css, needle) {
+		t.Errorf("dashboard.css missing %q — sandbox-profile editor resize regressed", needle)
+	}
+}
+
 // TestDashboardCSS_TemplatesManageResizable guards the paired CSS half of the
 // resizable summoning-circles management PANEL (the group-templates list). It
 // is a LIST panel, not a form, so unlike the editor it carries a fixed
