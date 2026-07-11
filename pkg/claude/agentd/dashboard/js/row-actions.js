@@ -234,7 +234,7 @@ async function openProfilePicker(chipEl, current, onCommit, opts = {}) {
   chipEl.replaceWith(select);
   select.focus();
   let done = false;
-  const cancel = () => {
+  const cancel = (restoreFocus = false) => {
     if (done) return;
     done = true;
     // Restore the SAME chip node, not a clone. dock.js caches the three
@@ -245,6 +245,7 @@ async function openProfilePicker(chipEl, current, onCommit, opts = {}) {
     if (select.parentNode) select.replaceWith(chipEl);
     renameEditing = false;
     setLastSnapshot(prevSnapshot);
+    if (restoreFocus) chipEl.focus();
   };
   const commit = async () => {
     if (done) return;
@@ -258,7 +259,7 @@ async function openProfilePicker(chipEl, current, onCommit, opts = {}) {
       openNewEditor((newName) => onCommit(newName));
       return;
     }
-    if (name === current) { cancel(); return; }
+    if (name === current) { cancel(true); return; }
     done = true;
     // Put the chip element back before persisting so onCommit's refresh /
     // re-render has a stable mount point and no stray <select> survives.
@@ -274,9 +275,9 @@ async function openProfilePicker(chipEl, current, onCommit, opts = {}) {
   };
   select.addEventListener('change', commit);
   select.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Escape') { ev.preventDefault(); cancel(); }
+    if (ev.key === 'Escape') { ev.preventDefault(); cancel(true); }
   });
-  select.addEventListener('blur', cancel);
+  select.addEventListener('blur', () => cancel());
 }
 
 // closeAllActionMenus collapses every open ⚙ options menu. Called on

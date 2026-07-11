@@ -26,6 +26,7 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		`btn.dataset.sandboxProfilePending = 'true'`:                   "global assignment locks against concurrent writes",
 		`btn.disabled = true`:                                          "global chip is disabled during persistence",
 		`btn.disabled = false`:                                         "global chip is re-enabled after persistence",
+		`if (restoreFocus) chipEl.focus();`:                            "Escape returns keyboard focus to the chip",
 		`＋ new sandbox profile…`:                                       "quick selector create shortcut",
 		`openSandboxProfileEditor(null, { onCreate:`:                   "shortcut opens existing editor with assignment handoff",
 		`await onCreate(body.name)`:                                    "successful create assigns back to launching scope",
