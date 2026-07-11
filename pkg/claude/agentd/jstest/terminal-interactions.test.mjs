@@ -25,3 +25,8 @@ test('additional modifiers on Shift+Enter remain xterm-owned', () => {
     assert.equal(terminalKeyInput(key({ shiftKey: true, [modifier]: true })), null, modifier);
   }
 });
+
+test('Shift+Enter remains xterm-owned while an IME composition is active', () => {
+  assert.equal(terminalKeyInput(key({ shiftKey: true, isComposing: true })), null);
+  assert.equal(terminalKeyInput(key({ shiftKey: true, keyCode: 229 })), null);
+});

@@ -16,7 +16,8 @@ const SELECT_HINT = 'Option-drag to select on macOS; Shift-drag on Linux/Windows
 // other key (including modified Enter chords) to xterm.
 export function terminalKeyInput(event) {
   if (event && event.type === 'keydown' && event.key === 'Enter' && event.shiftKey &&
-      !event.altKey && !event.ctrlKey && !event.metaKey) {
+      !event.altKey && !event.ctrlKey && !event.metaKey &&
+      !event.isComposing && event.keyCode !== 229) {
     return '\n';
   }
   return null;
