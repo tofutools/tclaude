@@ -37,7 +37,7 @@ func TestCrossAgentAskHuman_NoHeaderStillRefuses(t *testing.T) {
 	const targetLabel = "spwn-tt001"
 	const targetTmux = "tclaude-spwn-tt001"
 	f.HaveConvWithTitle(targetConv, "worker")
-	f.HaveAliveSession(targetConv, targetLabel, targetTmux, "/tmp/work")
+	f.HaveAliveSession(targetConv, targetLabel, targetTmux, f.World.HomeDir)
 	f.HaveGroup("alpha")
 	f.HaveMember("alpha", targetConv)
 
@@ -81,7 +81,7 @@ func TestCrossAgentAskHuman_HeaderAndApprovalAllowsCall(t *testing.T) {
 	const targetLabel = "spwn-tt001"
 	const targetTmux = "tclaude-spwn-tt001"
 	f.HaveConvWithTitle(targetConv, "worker")
-	f.HaveAliveSession(targetConv, targetLabel, targetTmux, "/tmp/work")
+	f.HaveAliveSession(targetConv, targetLabel, targetTmux, f.World.HomeDir)
 	f.HaveGroup("alpha")
 	f.HaveMember("alpha", targetConv)
 
@@ -138,7 +138,7 @@ func TestCrossAgentAskHuman_HeaderAndDenialStillRefuses(t *testing.T) {
 	const targetLabel = "spwn-tt001"
 	const targetTmux = "tclaude-spwn-tt001"
 	f.HaveConvWithTitle(targetConv, "worker")
-	f.HaveAliveSession(targetConv, targetLabel, targetTmux, "/tmp/work")
+	f.HaveAliveSession(targetConv, targetLabel, targetTmux, f.World.HomeDir)
 	f.HaveGroup("alpha")
 	f.HaveMember("alpha", targetConv)
 

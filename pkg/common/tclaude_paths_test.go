@@ -8,14 +8,14 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 )
 
 func TestPreSplitAgentdReachableDistinguishesNewDaemon(t *testing.T) {
-	// Keep the socket path below macOS's short sockaddr_un limit. t.TempDir's
-	// /var/folders/... path is already too long before the socket suffix.
-	home, err := os.MkdirTemp("/tmp", "tc-paths-")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	// Keep the socket path below macOS's short sockaddr_un limit while staying
+	// writable under a restricted sandbox — t.TempDir's /var/folders/... path
+	// is already too long before the socket suffix, and hardcoded /tmp is denied.
+	home := agentipctest.ShortSocketDir(t)
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	legacyPath := filepath.Join(home, ".tclaude-agentd.sock")

@@ -45,7 +45,7 @@ func TestClone_RateLimitBlocksRapidSecondClone(t *testing.T) {
 	const oldTmux = "tclaude-spwn-old-001"
 
 	f.HaveConvWithTitle(oldConv, "worker")
-	f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
+	f.HaveAliveSession(oldConv, oldLabel, oldTmux, f.World.HomeDir)
 	grp := f.HaveGroup("alpha")
 	f.HaveMember("alpha", oldConv)
 	// oldConv owns its group, so it can clone members of that group
@@ -89,7 +89,7 @@ func TestClone_RateLimitClearsAfterCooldown(t *testing.T) {
 	const oldTmux = "tclaude-spwn-old-001"
 
 	f.HaveConvWithTitle(oldConv, "worker")
-	f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
+	f.HaveAliveSession(oldConv, oldLabel, oldTmux, f.World.HomeDir)
 	grp := f.HaveGroup("alpha")
 	f.HaveMember("alpha", oldConv)
 	require.NoError(t, db.AddAgentGroupOwner(grp.ID, oldConv, "test"), "AddAgentGroupOwner")
@@ -120,9 +120,9 @@ func TestClone_RateLimitIsPerSource(t *testing.T) {
 	const bConv = "bbbb-1111-2222-3333-4444"
 
 	f.HaveConvWithTitle(aConv, "alpha-worker")
-	f.HaveAliveSession(aConv, "spwn-a-001", "tclaude-spwn-a-001", "/tmp/work-a")
+	f.HaveAliveSession(aConv, "spwn-a-001", "tclaude-spwn-a-001", f.World.HomeDir)
 	f.HaveConvWithTitle(bConv, "beta-worker")
-	f.HaveAliveSession(bConv, "spwn-b-001", "tclaude-spwn-b-001", "/tmp/work-b")
+	f.HaveAliveSession(bConv, "spwn-b-001", "tclaude-spwn-b-001", f.World.HomeDir)
 	grp := f.HaveGroup("team")
 	f.HaveMember("team", aConv)
 	f.HaveMember("team", bConv)
@@ -155,7 +155,7 @@ func TestClone_RateLimitExemptsHuman(t *testing.T) {
 	const oldConv = "old-aaaa-bbbb-cccc-dddd"
 
 	f.HaveConvWithTitle(oldConv, "worker")
-	f.HaveAliveSession(oldConv, "spwn-old-001", "tclaude-spwn-old-001", "/tmp/work")
+	f.HaveAliveSession(oldConv, "spwn-old-001", "tclaude-spwn-old-001", f.World.HomeDir)
 	f.HaveGroup("alpha")
 	f.HaveMember("alpha", oldConv)
 
@@ -202,7 +202,7 @@ func TestDashboardClone_RateLimitExemptsHuman(t *testing.T) {
 
 	const oldConv = "dash-aaaa-bbbb-cccc-dddd"
 	f.HaveConvWithTitle(oldConv, "worker")
-	f.HaveAliveSession(oldConv, "spwn-dash-001", "tclaude-spwn-dash-001", "/tmp/work")
+	f.HaveAliveSession(oldConv, "spwn-dash-001", "tclaude-spwn-dash-001", f.World.HomeDir)
 	f.HaveGroup("alpha")
 	f.HaveMember("alpha", oldConv)
 

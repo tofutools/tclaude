@@ -8,12 +8,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 )
 
 func TestRealDaemonAvailableFallsBackToLegacySocket(t *testing.T) {
-	home, err := os.MkdirTemp("/tmp", "tc-agent-sock-")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	home := agentipctest.ShortSocketDir(t)
 	t.Setenv("HOME", home)
 	t.Setenv(agentipc.SocketEnv, "")
 
