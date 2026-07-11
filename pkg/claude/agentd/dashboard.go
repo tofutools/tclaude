@@ -593,7 +593,12 @@ type snapshotPayload struct {
 	GeneratedAt string           `json:"generated_at"`
 	Version     string           `json:"version"`
 	Groups      []dashboardGroup `json:"groups"`
-	Agents      []dashboardAgent `json:"agents"`
+	// Names and assignments only: environment values remain behind the
+	// sandbox-profile management API. Keeping these in the regular snapshot
+	// lets global/group quick selectors repaint without extra polling requests.
+	SandboxProfiles       []string         `json:"sandbox_profiles"`
+	SandboxProfileDefault string           `json:"sandbox_profile_default"`
+	Agents                []dashboardAgent `json:"agents"`
 	// Ungrouped: every active agent that is NOT a member of any group,
 	// online or offline alike. Surfaces fresh-spawned agents, loose
 	// convs and freshly-promoted offline conversations so the
@@ -1031,6 +1036,7 @@ type dashboardGroup struct {
 	DefaultCwd     string `json:"default_cwd"`     // pre-fills the spawn form's cwd; "" = none
 	DefaultContext string `json:"default_context"` // shared startup context injected into spawned agents; "" = none
 	DefaultProfile string `json:"default_profile"` // spawn profile whose launch fields fill blank spawn fields for this group's agents; "" = none (the spawn default's single source — the vestigial default_model was dropped, JOH-220)
+	SandboxProfile string `json:"sandbox_profile"` // additive filesystem/environment profile assigned to this group; "" = inherit global
 	MaxMembers     int    `json:"max_members"`     // hard member cap; 0 = unlimited. A spawn that would exceed it is refused.
 	NotifyEnabled  bool   `json:"notify_enabled"`  // group OS-notification switch; false mutes every member (per-agent 'on' still overrides)
 	// RemoteControlPolicy is the group's remote-control policy that overrides a
@@ -1495,6 +1501,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	aliveSessions, _ := session.LiveTmuxSessions()
 
 	groups, _ := db.ListAgentGroups()
+	sandboxProfiles, _ := db.ListSandboxProfiles()
+	globalSandboxProfile, _ := db.GetGlobalSandboxProfile()
 	allGrants, _ := db.ListAllAgentPermissions()
 	allOverrides, _ := db.ListAllAgentPermissionOverrides()
 	cfg, _ := config.Load()
@@ -1626,6 +1634,13 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// of null — the dashboard's JS does .length on members directly,
 	// which would crash on null.
 	out.Groups = []dashboardGroup{}
+	out.SandboxProfiles = []string{}
+	for _, profile := range sandboxProfiles {
+		out.SandboxProfiles = append(out.SandboxProfiles, profile.Name)
+	}
+	if globalSandboxProfile != nil {
+		out.SandboxProfileDefault = globalSandboxProfile.Name
+	}
 	out.Agents = []dashboardAgent{}
 	// id→name for resolving each group's parent_id to a parent NAME the
 	// client tree keys off. Built from the same group set we're serializing,
@@ -1636,7 +1651,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		groupNameByID[g.ID] = g.Name
 	}
 	for _, g := range groups {
-		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, DefaultCwd: g.DefaultCwd, DefaultContext: g.DefaultContext, DefaultProfile: g.DefaultProfile, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl), Mission: g.Mission, SourceTemplate: g.SourceTemplate, Scribe: isScribeGroup(g), Members: []dashboardMember{}}
+		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, DefaultCwd: g.DefaultCwd, DefaultContext: g.DefaultContext, DefaultProfile: g.DefaultProfile, SandboxProfile: g.SandboxProfile, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl), Mission: g.Mission, SourceTemplate: g.SourceTemplate, Scribe: isScribeGroup(g), Members: []dashboardMember{}}
 		if g.ParentGroupID != nil {
 			dg.Parent = groupNameByID[*g.ParentGroupID]
 		}

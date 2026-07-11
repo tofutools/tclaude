@@ -917,6 +917,7 @@ function renderRealGroup(g, childrenHTML) {
         <span class="group-default-cwd${g.default_cwd ? '' : ' unset'}" data-act="set-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="${g.default_cwd ? 'Default spawn directory: ' + esc(g.default_cwd) + ' — click the text to edit, the 📁 to browse' : 'No default spawn directory — click the text to type one, the 📁 to browse'}"><span class="gdc-pick" data-act="pick-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="Browse for a directory with a native picker">📁</span><span class="qo-text"> ${g.default_cwd ? esc(shortCwd(g.default_cwd)) : 'no default dir'}</span></span>
         <span class="${capChipClass}" data-act="set-group-max-members" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-max="${g.max_members || 0}" title="${esc(capChipTitle)}">👥 ${capChipText}</span>
         <span class="group-default-model${g.default_profile ? '' : ' unset'}" data-act="set-group-profile" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-profile="${esc(g.default_profile || '')}" title="${g.default_profile ? 'Default spawn profile for agents spawned into this group: ' + esc(g.default_profile) + ' — fills blank launch fields at spawn. Click to change.' : 'No default spawn profile — click to set one. (Spawns use their own fields until set.)'}">🧠<span class="qo-text">${g.default_profile ? ' ' + esc(g.default_profile) : ''}</span></span>
+        ${g.virtual ? '' : `<label class="sandbox-profile-quick group-sandbox-profile-quick" title="Sandbox profile for ${esc(g.name)} — composes after the global sandbox profile for newly launched agents."><span aria-hidden="true">🛡</span><select data-sandbox-profile-quick-group="${esc(g.name)}" data-current="${esc(g.sandbox_profile || '')}" aria-label="Sandbox profile for ${esc(g.name)}">${sandboxProfileOptionsHTML(g.sandbox_profile || '', 'inherit')}</select></label>`}
         ${g.virtual ? '' : renderGroupLinkChips(g.name)}
       </summary>
       <div class="subtable">
@@ -1326,6 +1327,29 @@ function renderDashDefaultProfile() {
     : 'No dashboard default spawn profile — click to set one. (Pre-fills the spawn dialog as a fallback after a group’s own default.)';
 }
 
+// The snapshot carries sandbox-profile names and assignments, but never
+// environment values. That is enough to render assignment controls without
+// adding profile-payload requests to the two-second dashboard poll.
+function sandboxProfileOptionsHTML(selected, blankLabel) {
+  const names = (lastSnapshot && lastSnapshot.sandbox_profiles) || [];
+  let html = `<option value=""${selected ? '' : ' selected'}>${esc(blankLabel)}</option>`;
+  for (const name of names) {
+    html += `<option value="${esc(name)}"${name === selected ? ' selected' : ''}>${esc(name)}</option>`;
+  }
+  if (selected && !names.includes(selected)) {
+    html += `<option value="${esc(selected)}" selected>${esc(selected)} (missing)</option>`;
+  }
+  return html;
+}
+
+function renderDashSandboxProfile() {
+  const select = $('#dashboard-default-sandbox-profile');
+  if (!select || !lastSnapshot) return;
+  const selected = lastSnapshot.sandbox_profile_default || '';
+  select.innerHTML = sandboxProfileOptionsHTML(selected, 'none');
+  select.dataset.current = selected;
+}
+
 // renderGlobalActivity paints the top-bar #global-activity slot: the
 // same deduped bot row as the group headers, but aggregated across every
 // real group PLUS the ungrouped bucket — one glance tells you if anything
@@ -1379,6 +1403,6 @@ function renderGlobalActivity() {
 
 export {
   renderGroups, renderGlobalActivity, renderPermissions, renderSlugs, showStatus,
-  renderMessagesBadge, renderUsage, renderDashDefaultProfile,
+  renderMessagesBadge, renderUsage, renderDashDefaultProfile, renderDashSandboxProfile,
   renderNotifyGlobal,
 };

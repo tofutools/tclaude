@@ -64,6 +64,19 @@ func TestDashboardSandboxProfilesCRUDAndAssignments(t *testing.T) {
 	require.NotNil(t, exported.Assignments)
 	assert.Equal(t, "dev-cache", exported.Assignments.Global)
 	assert.Equal(t, "dev-cache", exported.Assignments.Groups["crew"])
+
+	// The two-second dashboard snapshot carries names and assignments for the
+	// quick selectors, but not profile payloads/environment values.
+	rec = httptest.NewRecorder()
+	handleDashboardSnapshot(rec, dashboardRequest(http.MethodGet, "/api/snapshot", ""))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var snapshot snapshotPayload
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &snapshot))
+	assert.Equal(t, []string{"dev-cache"}, snapshot.SandboxProfiles)
+	assert.Equal(t, "dev-cache", snapshot.SandboxProfileDefault)
+	require.Len(t, snapshot.Groups, 1)
+	assert.Equal(t, "dev-cache", snapshot.Groups[0].SandboxProfile)
+	assert.NotContains(t, rec.Body.String(), canonicalCache, "snapshot must not expose sandbox-profile payload values")
 }
 
 func TestDashboardSandboxProfilesRequireDashboardAuth(t *testing.T) {
