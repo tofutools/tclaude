@@ -80,6 +80,7 @@ export class ProcessEditModel {
     if (!this.layout.nodes) this.layout.nodes = {};
     this.sourceHash = v.sourceHash || '';
     this.semanticHash = v.semanticHash || '';
+    this.savedTemplateID = this.template.id || '';
     this.diagnostics = clone(v.diagnostics) || [];
     this.config = {
       mode: config.mode || 'template',
@@ -104,7 +105,7 @@ export class ProcessEditModel {
   }
 
   get dirty() {
-    return this.rev !== this.savedRev;
+    return this.rev !== this.savedRev || (this.template.id || '') !== this.savedTemplateID;
   }
 
   get canUndo() {
@@ -125,12 +126,12 @@ export class ProcessEditModel {
   }
 
   restoreState(snapshot) {
-    // A blank template's id is undoable authoring state. Once a save or force
-    // retry pins a sourceHash, however, history must never resurrect an older
-    // store key from a graph/metadata snapshot.
+    // Identity lives outside graph/content undo. This keeps a draft id stable
+    // while topology history moves, and prevents pre-save snapshots from
+    // resurrecting another store key after the identity becomes pinned.
     const id = this.template.id;
     this.template = snapshot.template;
-    if (this.sourceHash) this.template.id = id;
+    this.template.id = id;
     this.edges = snapshot.edges;
     this.layout = snapshot.layout;
     this.rev = snapshot.rev;
@@ -430,7 +431,6 @@ export class ProcessEditModel {
   setTemplateID(id) {
     if (this.sourceHash) return false;
     if (id === this.template.id) return true;
-    this.begin();
     this.template.id = id;
     return true;
   }
@@ -535,7 +535,10 @@ export class ProcessEditModel {
   // payload was built. Edits made while the POST was in flight keep the model
   // dirty because their revs are minted after savedAtRev.
   markSaved({ sourceHash, semanticHash, diagnostics } = {}, savedAtRev = this.rev) {
-    if (sourceHash) this.sourceHash = sourceHash;
+    if (sourceHash) {
+      this.sourceHash = sourceHash;
+      this.savedTemplateID = this.template.id || '';
+    }
     if (semanticHash) this.semanticHash = semanticHash;
     if (diagnostics) this.diagnostics = diagnostics;
     this.savedRev = savedAtRev;

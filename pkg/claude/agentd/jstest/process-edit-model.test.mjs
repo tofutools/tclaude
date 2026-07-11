@@ -247,26 +247,37 @@ test('template metadata edits are undoable and preserve the immutable id', () =>
   assert.equal(model.template.doc, undefined);
 });
 
-test('new-template id edits are dirty and undoable until save pins the identity', () => {
+test('new-template id edits are dirty outside graph history until save pins the identity', () => {
   const model = new ProcessEditModel(blankEditView('new-process'));
   assert.equal(model.setTemplateID('release'), true);
   assert.equal(model.dirty, true, 'navigation sees the id edit and prompts before discard');
-  assert.equal(model.canUndo, true);
-
-  assert.equal(model.undo(), true);
-  assert.equal(model.template.id, 'new-process');
-  assert.equal(model.dirty, false);
-  assert.equal(model.redo(), true);
-  assert.equal(model.template.id, 'release');
-  assert.equal(model.dirty, true);
+  assert.equal(model.canUndo, false, 'identity is not graph/content undo history');
 
   model.markSaved({ sourceHash: 'saved-source' });
+  assert.equal(model.dirty, false);
+  assert.equal(model.undo(), false, 'no identity-only snapshot can produce false dirty after save');
+  assert.equal(model.dirty, false);
+
   model.addNode('task', { id: 'draft' }); // history snapshot carries the saved id
   assert.equal(model.undo(), true);
   assert.equal(model.template.id, 'release', 'post-save graph history preserves the pinned store key');
   assert.equal(model.dirty, false);
+  assert.equal(model.undo(), false, 'a second undo cannot reach unchanged-but-dirty identity history');
+  assert.equal(model.dirty, false);
   assert.equal(model.setTemplateID('copy'), false);
   assert.equal(model.template.id, 'release');
+});
+
+test('saving a draft id at the payload revision preserves in-flight edit dirtiness', () => {
+  const model = new ProcessEditModel(blankEditView('new-process'));
+  model.setTemplateID('release');
+  const savedAtRev = model.rev;
+  model.addNode('task', { id: 'in-flight' });
+  model.markSaved({ sourceHash: 'saved-source' }, savedAtRev);
+  assert.equal(model.template.id, 'release');
+  assert.equal(model.dirty, true, 'the topology edit is newer than the saved payload');
+  assert.equal(model.undo(), true);
+  assert.equal(model.dirty, false);
 });
 
 test('failed first-save force retry keeps the adopted identity locked and consistent', () => {

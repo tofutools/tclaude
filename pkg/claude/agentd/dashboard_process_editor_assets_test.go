@@ -44,9 +44,10 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		// The phase-4 run-view seam: mode-level insertion permission plus
 		// per-node/edge predicates for existing items.
 		"canInsert: config.canInsert !== false",
-		// Blank ids participate in history until a source hash pins the store
-		// identity; after that restore must retain the current id.
-		"if (this.sourceHash) this.template.id = id",
+		// Draft ids participate in dirty/discard state outside graph history;
+		// restore always retains the current identity.
+		"this.savedTemplateID = this.template.id || ''",
+		"this.template.id = id",
 	)
 	if strings.Contains(editModel, "document.") || strings.Contains(editModel, "fetch(") {
 		t.Error("process-edit-model.js must stay pure (no DOM, no fetch) so Node tests cover the shipped file")
