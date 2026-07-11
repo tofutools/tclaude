@@ -341,6 +341,41 @@ func (c *CodexSim) WriteAgentMessage(text string) error {
 	return c.appendLine("response_item", msg)
 }
 
+// WriteSubagentActivity writes Codex's authoritative collaboration-child
+// lifecycle event. kind is one of started, interacted, or interrupted.
+func (c *CodexSim) WriteSubagentActivity(agentThreadID, agentPath, kind string) error {
+	return c.appendLine("event_msg", map[string]any{
+		"type":            "sub_agent_activity",
+		"agent_thread_id": agentThreadID,
+		"agent_path":      agentPath,
+		"kind":            kind,
+		"occurred_at_ms":  time.Now().UnixMilli(),
+	})
+}
+
+// WriteSubagentInteraction writes the collaboration function call plus its
+// linked interacted event. toolName distinguishes followup_task (triggers a
+// turn) from send_message (queue-only), matching Codex's real rollout shape.
+func (c *CodexSim) WriteSubagentInteraction(agentThreadID, agentPath, toolName string) error {
+	eventID := fmt.Sprintf("call-subagent-%d", time.Now().UnixNano())
+	if err := c.appendLine("response_item", map[string]any{
+		"type":      "function_call",
+		"name":      toolName,
+		"arguments": "{}",
+		"call_id":   eventID,
+	}); err != nil {
+		return err
+	}
+	return c.appendLine("event_msg", map[string]any{
+		"type":            "sub_agent_activity",
+		"event_id":        eventID,
+		"agent_thread_id": agentThreadID,
+		"agent_path":      agentPath,
+		"kind":            "interacted",
+		"occurred_at_ms":  time.Now().UnixMilli(),
+	})
+}
+
 // CodexTokenUsage mirrors the token-usage block inside a token_count
 // event (both total_token_usage and last_token_usage use this shape).
 // This is the telemetry that later feeds context% into SQLite (JOH-170).

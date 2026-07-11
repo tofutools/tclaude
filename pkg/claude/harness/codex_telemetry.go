@@ -36,6 +36,21 @@ type ContextTelemetry struct {
 	WindowSize int64
 }
 
+// CodexRuntimeSnapshot is the live, rollout-derived state that has no direct
+// Codex statusline equivalent. Context is populated from token_count events.
+// InterruptedSubagents is the authoritative set of collaboration-child IDs
+// whose latest recorded lifecycle state is terminal interrupt, even when the
+// SubagentStop hook was lost. A later started/interacted event clears that ID
+// because Codex can resume the same child thread. Normal completion still
+// belongs to the hook ledger: the rollout has no equivalent terminal
+// "completed" activity kind, so rollout activity must never be treated as a
+// complete active-set reconstruction.
+type CodexRuntimeSnapshot struct {
+	Context              ContextTelemetry
+	HasContext           bool
+	InterruptedSubagents map[string]struct{}
+}
+
 // codexTokenUsage mirrors a token-usage block inside a token_count event.
 // Both total_token_usage (cumulative) and last_token_usage (this turn) use
 // this shape. cached_input_tokens is a subset of input_tokens (a cache hit),
@@ -65,20 +80,52 @@ type codexTokenCountEvent struct {
 	RateLimits *codexRateLimits    `json:"rate_limits"`
 }
 
+// codexSubagentActivityEvent mirrors Codex's sub_agent_activity event_msg.
+// Codex 0.144 exposes exactly three kinds: started, interacted, and interrupted.
+// Only interrupted is a terminal fact; agent_thread_id is the stable key shared
+// with the corresponding Subagent* hook payloads.
+type codexSubagentActivityEvent struct {
+	Type          string `json:"type"`
+	EventID       string `json:"event_id"`
+	AgentThreadID string `json:"agent_thread_id"`
+	Kind          string `json:"kind"`
+}
+
+// codexFunctionCall identifies the collaboration tool call that produced a
+// sub_agent_activity event. event_id on the activity equals call_id here. This
+// matters for "interacted": followup_task resumes/triggers the child, whereas
+// send_message only queues text and is not live evidence.
+type codexFunctionCall struct {
+	Type   string `json:"type"`
+	Name   string `json:"name"`
+	CallID string `json:"call_id"`
+}
+
+// CodexRuntimeTelemetry locates convID's rollout and derives all runtime state
+// that tclaude reads from it in one scan. A missing rollout is a normal zero
+// snapshot, not an error.
+func CodexRuntimeTelemetry(home, convID string) (CodexRuntimeSnapshot, error) {
+	path, err := findCodexRollout(home, convID)
+	if err != nil {
+		return CodexRuntimeSnapshot{}, err
+	}
+	if path == "" {
+		return CodexRuntimeSnapshot{}, nil
+	}
+	return CodexRuntimeTelemetryFromRollout(path)
+}
+
 // CodexContextTelemetry locates convID's rollout under home and returns the
 // latest token_count snapshot. ok is false (with a nil error) when there is
 // no rollout for convID or it carries no token_count event yet — both are
 // the normal "nothing to persist" state of a just-started session, not
 // failures. A non-nil error is an I/O / scan fault the caller should log.
 func CodexContextTelemetry(home, convID string) (ContextTelemetry, bool, error) {
-	path, err := findCodexRollout(home, convID)
+	snap, err := CodexRuntimeTelemetry(home, convID)
 	if err != nil {
 		return ContextTelemetry{}, false, err
 	}
-	if path == "" {
-		return ContextTelemetry{}, false, nil
-	}
-	return CodexTelemetryFromRollout(path)
+	return snap.Context, snap.HasContext, nil
 }
 
 // CodexTelemetryFromRollout reads rolloutPath (transparently decompressing
@@ -89,9 +136,21 @@ func CodexContextTelemetry(home, convID string) (ContextTelemetry, bool, error) 
 // malformed line is skipped; only an I/O / scanner error is returned. ok is
 // false when no token_count event is present.
 func CodexTelemetryFromRollout(rolloutPath string) (ContextTelemetry, bool, error) {
-	rc, err := openCodexRollout(rolloutPath)
+	snap, err := CodexRuntimeTelemetryFromRollout(rolloutPath)
 	if err != nil {
 		return ContextTelemetry{}, false, err
+	}
+	return snap.Context, snap.HasContext, nil
+}
+
+// CodexRuntimeTelemetryFromRollout scans one rollout once for both context and
+// sub-agent lifecycle state. Harvesting terminal interrupted facts from the
+// sub_agent_activity stream makes the dashboard self-heal immediately when
+// Codex did not invoke the configured SubagentStop hook.
+func CodexRuntimeTelemetryFromRollout(rolloutPath string) (CodexRuntimeSnapshot, error) {
+	rc, err := openCodexRollout(rolloutPath)
+	if err != nil {
+		return CodexRuntimeSnapshot{}, err
 	}
 	defer func() { _ = rc.Close() }()
 
@@ -99,6 +158,8 @@ func CodexTelemetryFromRollout(rolloutPath string) (ContextTelemetry, bool, erro
 	scanner.Buffer(make([]byte, 0, 64*1024), maxCodexRolloutLineBytes)
 
 	var latest *codexTokenCountInfo
+	interruptedSubagents := map[string]struct{}{}
+	followupCallIDs := map[string]struct{}{}
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		if len(bytes.TrimSpace(line)) == 0 {
@@ -108,21 +169,61 @@ func CodexTelemetryFromRollout(rolloutPath string) (ContextTelemetry, bool, erro
 		if json.Unmarshal(line, &env) != nil {
 			continue
 		}
+		if env.Type == "response_item" {
+			var call codexFunctionCall
+			if json.Unmarshal(env.Payload, &call) == nil && call.Type == "function_call" &&
+				call.Name == "followup_task" && call.CallID != "" {
+				followupCallIDs[call.CallID] = struct{}{}
+			}
+			continue
+		}
 		if env.Type != "event_msg" {
 			continue
 		}
-		var ev codexTokenCountEvent
-		if json.Unmarshal(env.Payload, &ev) != nil || ev.Type != "token_count" {
+		var kind struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(env.Payload, &kind) != nil {
 			continue
 		}
-		info := ev.Info
-		latest = &info
+		switch kind.Type {
+		case "token_count":
+			var ev codexTokenCountEvent
+			if json.Unmarshal(env.Payload, &ev) != nil {
+				continue
+			}
+			info := ev.Info
+			latest = &info
+		case "sub_agent_activity":
+			var ev codexSubagentActivityEvent
+			if json.Unmarshal(env.Payload, &ev) != nil || ev.AgentThreadID == "" {
+				continue
+			}
+			switch ev.Kind {
+			case "started":
+				// A previously interrupted child can be resumed under the same
+				// thread id. A fresh start is live evidence, so its old terminal
+				// fact no longer suppresses the hook-ledger entry.
+				delete(interruptedSubagents, ev.AgentThreadID)
+			case "interacted":
+				// Both followup_task and queue-only send_message emit
+				// "interacted". Only followup_task triggers a child turn; recover
+				// that distinction through event_id → function-call call_id.
+				if _, resumes := followupCallIDs[ev.EventID]; resumes {
+					delete(interruptedSubagents, ev.AgentThreadID)
+				}
+				delete(followupCallIDs, ev.EventID)
+			case "interrupted":
+				interruptedSubagents[ev.AgentThreadID] = struct{}{}
+			}
+		}
 	}
 	if err := scanner.Err(); err != nil {
-		return ContextTelemetry{}, false, fmt.Errorf("scan codex rollout %s: %w", rolloutPath, err)
+		return CodexRuntimeSnapshot{}, fmt.Errorf("scan codex rollout %s: %w", rolloutPath, err)
 	}
+	result := CodexRuntimeSnapshot{InterruptedSubagents: interruptedSubagents}
 	if latest == nil {
-		return ContextTelemetry{}, false, nil
+		return result, nil
 	}
 	snap := contextTelemetryFromTokenCount(*latest)
 	// A token_count carrying no actual usage (all-zero last_token_usage —
@@ -131,9 +232,11 @@ func CodexTelemetryFromRollout(rolloutPath string) (ContextTelemetry, bool, erro
 	// snapshot with a window-only row: db.UpdateContextSnapshot's all-zero
 	// guard would NOT catch that, because WindowSize is non-zero.
 	if snap.TokensInput == 0 && snap.TokensOutput == 0 {
-		return ContextTelemetry{}, false, nil
+		return result, nil
 	}
-	return snap, true, nil
+	result.Context = snap
+	result.HasContext = true
+	return result, nil
 }
 
 // contextTelemetryFromTokenCount turns a token_count info block into a

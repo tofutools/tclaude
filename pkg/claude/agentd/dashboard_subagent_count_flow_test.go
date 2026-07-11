@@ -195,3 +195,43 @@ func TestDashboardSnapshot_ExpiredLedgerSettlesStatusToIdle(t *testing.T) {
 		"status display settles to idle when the TTL-filtered count is zero")
 	assert.Empty(t, member.State.StatusDetail, "no 'N subagents running' next to a zero badge")
 }
+
+// Scenario: Codex records a collaboration child as interrupted in its rollout
+// but does not deliver the configured SubagentStop hook. The shared hook ledger
+// is therefore still fresh and says one child is running; waiting for its
+// 15-minute TTL made the dashboard visibly wrong. The rollout is authoritative
+// for Codex and must settle the dashboard immediately.
+func TestDashboardSnapshot_CodexInterruptedSubagentOverridesFreshHookLedger(t *testing.T) {
+	const conv = "019ec004-4250-79b1-9ade-ebaea4170191"
+	const label = "spwn-codex-subagent"
+
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	agentd.ResetCodexContextRefreshForTest()
+
+	f := newFlow(t)
+	f.HaveGroup("codex-squad")
+	cx := f.HaveAliveCodexSession(conv, label, "tmux-codex-subagent", "/tmp/codex-subagent")
+	f.HaveMember("codex-squad", conv)
+	require.NoError(t, cx.WriteSubagentActivity("child-review", "/root/reviewer", "started"))
+	require.NoError(t, cx.WriteSubagentActivity("child-review", "/root/reviewer", "interrupted"))
+
+	// Model the missing hook: SQLite still carries a fresh, non-expired child
+	// and the parent status produced by its main-thread Stop event.
+	row, err := db.LoadSession(label)
+	require.NoError(t, err)
+	row.Status = session.StatusMainAgentIdle
+	row.StatusDetail = "1 subagents running"
+	row.SubagentCount = 1
+	row.SubagentsJSON = db.SubagentSet{
+		"child-review": {Type: "reviewer", Seen: time.Now()},
+	}.Encode()
+	require.NoError(t, db.SaveSession(row))
+
+	member := findDashMember(fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest()), "codex-squad", conv)
+	require.NotNil(t, member)
+	assert.Zero(t, member.State.SubagentCount,
+		"Codex rollout interrupted event overrides the stale-but-fresh hook ledger")
+	assert.Equal(t, session.StatusIdle, member.State.Status,
+		"known-zero Codex activity settles main_agent_idle immediately")
+	assert.Empty(t, member.State.StatusDetail)
+}

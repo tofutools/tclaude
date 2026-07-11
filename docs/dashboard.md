@@ -134,6 +134,10 @@ and that is exactly the point: a sub-agent launched in the background
 outlives the parent's turn, so the badge flags that an idle-looking agent
 is not actually finished. Hover it for the exact count. The badge is shown
 only for a live agent — an offline agent's sub-agents died with its process.
+The hook-fed ledger has a conservative staleness timeout for lost stop events;
+for Codex sessions, the dashboard additionally replays the rollout's
+`sub_agent_activity` events, so an explicitly interrupted child disappears on
+the next refresh instead of waiting for that timeout.
 
 > **No background-shell count.** tclaude deliberately does *not* show an
 > equivalent badge for background shell commands (`Bash` with

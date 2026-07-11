@@ -991,9 +991,11 @@ function contextMeter(state) {
 // not the raw event tally: the backend keeps a self-healing per-agent_id
 // ledger with a staleness TTL and known-zero resets, and subagent_count
 // is its TTL-filtered live view (see db.SubagentSet in
-// pkg/claude/common/db/subagents.go). (A process-tree liveness reconcile
-// in agentd could revive a trustworthy +M later — see the Groups section
-// of docs/dashboard.md.)
+// pkg/claude/common/db/subagents.go). Codex additionally reconciles its
+// authoritative rollout sub_agent_activity stream on dashboard reads, which
+// repairs a lost SubagentStop immediately. (A process-tree liveness reconcile
+// in agentd could revive a trustworthy +M later — see the Groups section of
+// docs/dashboard.md.)
 function activityBadges(state) {
   const subagents = Number((state && state.subagent_count) || 0);
   if (subagents <= 0) return '';
