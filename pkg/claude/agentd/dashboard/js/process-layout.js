@@ -299,6 +299,20 @@ function boundaryPoint(node, toward, outgoing) {
   return { x: node.x + dx * scale, y: node.y + dy * scale };
 }
 
+// edgeEndpoint reconciles the graph's fixed top/bottom interaction ports with
+// routing. A route approaching within this vertical cone terminates exactly at
+// the matching port; inverted and strongly sideways geometry keeps the shape-
+// boundary intersection so pinned back/side links do not wrap awkwardly.
+export function edgeEndpoint(node, toward, outgoing) {
+  const dx = toward.x - node.x;
+  const dy = toward.y - node.y;
+  const naturalDistance = outgoing ? dy : -dy;
+  if (naturalDistance > 0 && Math.abs(dx) <= naturalDistance * 2) {
+    return { x: node.x, y: node.y + (outgoing ? node.height / 2 : -node.height / 2) };
+  }
+  return boundaryPoint(node, toward, outgoing);
+}
+
 function pointKey(point) {
   return `${point.x}\u0000${point.y}`;
 }
@@ -325,7 +339,7 @@ function visibleFallbackRoute(from, to, lane, edgeSep) {
       { x: to.x + to.width / 2, y: to.y + 9 },
     ];
   }
-  return [boundaryPoint(from, to, true), boundaryPoint(to, from, false)];
+  return [edgeEndpoint(from, to, true), edgeEndpoint(to, from, false)];
 }
 
 function orthogonalRoute(from, to, nodes, lane, edgeSep) {
@@ -451,8 +465,8 @@ function orthogonalRoute(from, to, nodes, lane, edgeSep) {
   if (compressed.length < 2 || !compressed[0] || !compressed[1]) {
     return visibleFallbackRoute(from, to, lane, edgeSep);
   }
-  compressed[0] = boundaryPoint(from, compressed[1], true);
-  compressed[compressed.length - 1] = boundaryPoint(to, compressed[compressed.length - 2], false);
+  compressed[0] = edgeEndpoint(from, compressed[1], true);
+  compressed[compressed.length - 1] = edgeEndpoint(to, compressed[compressed.length - 2], false);
   return compressed;
 }
 
@@ -477,8 +491,8 @@ function routeLabel(points) {
 }
 
 function routeForward(edge, from, to, lane, nodes, edgeSep) {
-  let start = boundaryPoint(from, to, true);
-  let end = boundaryPoint(to, from, false);
+  let start = edgeEndpoint(from, to, true);
+  let end = edgeEndpoint(to, from, false);
   if (from.x === to.x && from.y === to.y) {
     const points = visibleFallbackRoute(from, to, lane, edgeSep);
     return {

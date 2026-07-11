@@ -456,6 +456,14 @@ func baseStates() []dashsnap.State {
 			SettleMS: 1100,
 		},
 		{
+			Key:     "process-editor-marquee-multi",
+			Title:   "Process editor — marquee multi-selection",
+			Caption: "A left-drag marquee selects several nodes at once; every selected node has an accent outline and the inspector summarizes the current set.",
+			JS: processEditorStateJS(`var items = ed.graph.layout.nodes.map(function(node){ return {type:'node',id:node.id}; }); ed.setSelection({type:'multi',items:items});
+  var box = document.createElementNS('http://www.w3.org/2000/svg','rect'); box.setAttribute('class','process-marquee'); box.setAttribute('x','40'); box.setAttribute('y','20'); box.setAttribute('width','430'); box.setAttribute('height','360'); ed.graph.viewport.append(box);`),
+			SettleMS: 1100,
+		},
+		{
 			Key:      "process-editor-dirty",
 			Title:    "Process editor — dirty",
 			Caption:  "After adding a task node and pinning a move: the ● modified badge lights, Save arms, and undo becomes available.",
@@ -479,9 +487,9 @@ func baseStates() []dashsnap.State {
 			SettleMS: 1200,
 		},
 		{
-			Key:      "process-node-dialog-task-human",
-			Title:    "Process node dialog — task, human work performer",
-			Caption:  "The same shared performer editor keyed to human: ask text, choices, assignee — scrolled to the work section. No per-kind component forks (uniform performer contract).",
+			Key:     "process-node-dialog-task-human",
+			Title:   "Process node dialog — task, human work performer",
+			Caption: "The same shared performer editor keyed to human: ask text, choices, assignee — scrolled to the work section. No per-kind component forks (uniform performer contract).",
 			JS: nodeDialogStateJS(`ed.model.updateNode('implement', function(n){
     n.performer = {kind: 'human', profile: 'operator', ask: 'Apply the manual registry update', choices: ['done', 'blocked'], assignee: 'johan'};
   });
@@ -489,9 +497,9 @@ func baseStates() []dashsnap.State {
 			SettleMS: 1200,
 		},
 		{
-			Key:      "process-node-dialog-task-program",
-			Title:    "Process node dialog — task, program work performer",
-			Caption:  "The shared performer editor keyed to program: command + per-line arguments and the explicit ⚠ command-execution security note (§10) — scrolled to the work section.",
+			Key:     "process-node-dialog-task-program",
+			Title:   "Process node dialog — task, program work performer",
+			Caption: "The shared performer editor keyed to program: command + per-line arguments and the explicit ⚠ command-execution security note (§10) — scrolled to the work section.",
 			JS: nodeDialogStateJS(`ed.model.updateNode('implement', function(n){
     n.performer = {kind: 'program', profile: 'ci', run: 'go', args: ['test', './...']};
   });
@@ -500,18 +508,18 @@ func baseStates() []dashsnap.State {
 			SettleMS: 1200,
 		},
 		{
-			Key:      "process-node-dialog-decision",
-			Title:    "Process node dialog — decision node",
-			Caption:  "Decision node dialog: the decider performer (human, with choices) and the read-only choices → edges mapping pointing at the canvas for topology edits.",
+			Key:     "process-node-dialog-decision",
+			Title:   "Process node dialog — decision node",
+			Caption: "Decision node dialog: the decider performer (human, with choices) and the read-only choices → edges mapping pointing at the canvas for topology edits.",
 			JS: nodeDialogStateJS(`ed.openNodeSettings('escalate');` + `
   var choiceHead = Array.from(document.querySelectorAll('.process-node-section-title')).find(function(el){ return el.textContent === 'choices → edges'; });
   if (!choiceHead) throw new Error('decision dialog missing the choices → edges section');`),
 			SettleMS: 1200,
 		},
 		{
-			Key:      "process-node-card-readonly",
-			Title:    "Process node detail card — read-only mode",
-			Caption:  "The exact same component in view mode (the viewer's node detail card): read-only badge, every control disabled, zero duplicated markup — the §9 unlock later flips this flag back to edit.",
+			Key:     "process-node-card-readonly",
+			Title:   "Process node detail card — read-only mode",
+			Caption: "The exact same component in view mode (the viewer's node detail card): read-only badge, every control disabled, zero duplicated markup — the §9 unlock later flips this flag back to edit.",
 			JS: nodeDialogStateJS(`ed.model.config.nodeEditable = function(){ return false; };
   ed.openNodeSettings('implement');
   if (!document.querySelector('.process-node-readonly-badge')) throw new Error('read-only badge missing');
@@ -821,6 +829,24 @@ func processGraphStates() []dashsnap.State {
     {from:'review',to:'revise',outcome:'changes'}, {from:'review',to:'end',outcome:'approve'},
     {from:'revise',to:'review',outcome:'resubmit',back:true},
     {from:'start',to:'end',outcome:'fast path'}
+  ]
+}`),
+		},
+		{
+			Key:     "process-port-endpoints",
+			Title:   "Process graph — snapped and fallback endpoints",
+			Caption: "Endpoint routing: the vertical edge lands on bottom/top port rings, while the strongly sideways edge and dashed back-edge retain silhouette-boundary routing.",
+			JS: processGraphStateJS("Port snapping and geometry fallbacks", `{
+  nodes: [
+    {id:'top',type:'task',label:'Natural output',pinned:{x:180,y:100}},
+    {id:'below',type:'decision',label:'Natural input',pinned:{x:180,y:330}},
+    {id:'side-a',type:'task',label:'Side source',pinned:{x:470,y:120}},
+    {id:'side-b',type:'end',label:'Side target',pinned:{x:760,y:155}}
+  ],
+  edges: [
+    {from:'top',to:'below',outcome:'snapped'},
+    {from:'side-a',to:'side-b',outcome:'side fallback'},
+    {from:'side-b',to:'side-a',outcome:'back fallback',back:true}
   ]
 }`),
 		},

@@ -40,6 +40,7 @@ test('pointercancel snaps a node drag home instead of committing it', () => {
     svg: { releasePointerCapture() {} },
     dragMoved: true,
     snapNodeHome(id) { snapped.push(id); },
+    snapNodesHome(ids) { ids.forEach((id) => this.snapNodeHome(id)); },
   };
   ProcessGraph.prototype.onPointerCancel.call(fake, { pointerId: 3 });
   assert.deepEqual(snapped, ['n1']);
@@ -56,4 +57,99 @@ test('pointercancel for a foreign pointer id leaves the drag alone', () => {
   };
   ProcessGraph.prototype.onPointerCancel.call(fake, { pointerId: 99 });
   assert.ok(fake.pointer, 'the in-flight drag survives');
+});
+
+test('canvas pointerdown focuses the graph so editor Delete receives keyboard events', () => {
+  let focused = 0;
+  const fake = {
+    root: { focus(options) { focused += 1; assert.equal(options.preventScroll, true); } },
+    options: {},
+    selected: null,
+    view: { x: 0, y: 0, k: 1 },
+    svg: { setPointerCapture() {} },
+    viewport: { append() {} },
+    eventTarget() { return { node: null, edge: null, port: null }; },
+    clientToGraph() { return { x: 12, y: 34 }; },
+  };
+  let prevented = false;
+  ProcessGraph.prototype.onPointerDown.call(fake, {
+    button: 0, pointerId: 4, clientX: 12, clientY: 34,
+    preventDefault() { prevented = true; },
+  });
+  assert.equal(focused, 1);
+  assert.equal(prevented, true);
+  assert.equal(fake.pointer.mode, 'pan');
+});
+
+test('pointer target survives focus-triggered graph refresh', () => {
+  for (const kind of ['node', 'port']) {
+    let targetIsLive = true;
+    const node = { dataset: { nodeId: 'a' } };
+    const port = kind === 'port' ? { dataset: { port: 'out' } } : null;
+    const fake = {
+      root: { focus() { targetIsLive = false; } },
+      options: {}, selected: null, view: { x: 0, y: 0, k: 1 },
+      svg: { setPointerCapture() {} },
+      eventTarget() {
+        return targetIsLive ? { node, edge: null, port } : { node: null, edge: null, port: null };
+      },
+      clientToGraph() { return { x: 0, y: 0 }; },
+      clearKeyboardPort() {},
+    };
+    ProcessGraph.prototype.onPointerDown.call(fake, {
+      button: 0, pointerId: 6, clientX: 0, clientY: 0,
+      preventDefault() {}, stopPropagation() {},
+    });
+    assert.equal(fake.pointer.mode, kind, `${kind} classification survives blur refresh`);
+    assert.equal(fake.pointer.nodeID, 'a');
+  }
+});
+
+test('middle pointerdown pans even when it starts over a node', () => {
+  const fake = {
+    root: { focus() {} }, options: { marqueeSelect: true }, selected: null,
+    view: { x: 5, y: 6, k: 1 }, svg: { setPointerCapture() {} },
+    eventTarget() { return { node: { dataset: { nodeId: 'a' } }, edge: null, port: null }; },
+    clientToGraph() { return { x: 0, y: 0 }; },
+  };
+  ProcessGraph.prototype.onPointerDown.call(fake, {
+    button: 1, pointerId: 9, clientX: 10, clientY: 20, preventDefault() {},
+  });
+  assert.equal(fake.pointer.mode, 'pan');
+});
+
+test('touch and pen pan empty canvas but still drag nodes', () => {
+  for (const pointerType of ['touch', 'pen']) {
+    const fake = {
+      root: { focus() {} }, options: { marqueeSelect: true }, selected: null,
+      view: { x: 0, y: 0, k: 1 }, svg: { setPointerCapture() {} },
+      eventTarget(event) { return event.overNode
+        ? { node: { dataset: { nodeId: 'a' } }, edge: null, port: null }
+        : { node: null, edge: null, port: null }; },
+      clientToGraph() { return { x: 0, y: 0 }; },
+    };
+    const event = {
+      button: 0, pointerType, pointerId: 12, clientX: 0, clientY: 0,
+      preventDefault() {}, overNode: false,
+    };
+    ProcessGraph.prototype.onPointerDown.call(fake, event);
+    assert.equal(fake.pointer.mode, 'pan', `${pointerType} pans empty canvas`);
+    event.overNode = true;
+    ProcessGraph.prototype.onPointerDown.call(fake, event);
+    assert.equal(fake.pointer.mode, 'node', `${pointerType} still drags nodes`);
+  }
+});
+
+test('empty canvas click clears both graph and consumer selection', () => {
+  const selected = [];
+  let notified = 0;
+  const fake = {
+    dragMoved: false, suppressClick: false,
+    options: { onCanvasClick() { notified += 1; } },
+    eventTarget() { return { node: null, edge: null, port: null }; },
+    select(value) { selected.push(value); },
+  };
+  ProcessGraph.prototype.onClick.call(fake, {});
+  assert.deepEqual(selected, [null]);
+  assert.equal(notified, 1);
 });

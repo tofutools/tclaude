@@ -4,6 +4,9 @@
 // computes run state.
 
 import { layoutProcessGraph } from './process-layout.js';
+import {
+  makeSelection, nodesInMarquee, normalizeMarquee, selectionContains, selectionItems,
+} from './process-selection.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const MIN_ZOOM = 0.18;
@@ -440,13 +443,36 @@ export class ProcessGraph {
   }
 
   onPointerDown(event) {
-    if (event.button !== 0) return;
+    const middle = event.button === 1;
+    if (event.button !== 0 && !middle) return;
+    // Resolve the target before focus: focusing the graph blurs an inspector
+    // input, whose synchronous change handler may refresh and replace every
+    // SVG layer child. The detached original still carries the stable ids we
+    // need to classify this gesture.
     const target = this.eventTarget(event);
+    // Empty SVG space is not natively focusable. Explicitly focus the graph so
+    // editor shortcuts bubble through its root after a canvas click instead of
+    // acting on whichever palette/control happened to be focused previously.
+    this.root.focus({ preventScroll: true });
+    event.preventDefault();
     const point = this.clientToGraph(event.clientX, event.clientY);
-    const mode = target.port ? 'port' : target.node ? 'node' : 'pan';
+    // Touch/pen have no middle button. Preserve their empty-canvas navigation
+    // while still letting a primary pointer drag nodes and ports normally.
+    const directPan = middle || (!target.node && !target.port
+      && (event.pointerType === 'touch' || event.pointerType === 'pen'));
+    const mode = directPan ? 'pan'
+      : target.port ? 'port'
+        : target.node ? 'node'
+          : this.options.marqueeSelect ? 'marquee' : 'pan';
+    const nodeID = target.node?.dataset.nodeId;
+    const selectedNodes = selectionItems(this.selected)
+      .filter((item) => item.type === 'node')
+      .map((item) => item.id);
+    const nodeIDs = mode === 'node' && selectionContains(this.selected, { type: 'node', id: nodeID })
+      ? selectedNodes : nodeID ? [nodeID] : [];
     this.pointer = {
       id: event.pointerId, mode, startClientX: event.clientX, startClientY: event.clientY,
-      startPoint: point, startView: { ...this.view }, nodeID: target.node?.dataset.nodeId,
+      startPoint: point, startView: { ...this.view }, nodeID, nodeIDs,
       port: target.port?.dataset.port,
     };
     this.dragMoved = false;
@@ -455,6 +481,9 @@ export class ProcessGraph {
       event.stopPropagation();
       this.clearKeyboardPort();
       hook(this.options, 'onPortDragStart')({ nodeId: this.pointer.nodeID, port: this.pointer.port, point, event });
+    } else if (mode === 'marquee') {
+      this.marquee = svgElement('rect', { class: 'process-marquee', x: point.x, y: point.y, width: 0, height: 0 });
+      this.viewport.append(this.marquee);
     }
   }
 
@@ -470,21 +499,29 @@ export class ProcessGraph {
       this.view.y = this.pointer.startView.y + dy;
       this.applyView();
     } else if (this.pointer.mode === 'node') {
-      const node = this.nodeLayer.querySelector(`[data-node-id="${CSS.escape(this.pointer.nodeID)}"]`);
-      const ports = this.portLayer.querySelector(`[data-node-id="${CSS.escape(this.pointer.nodeID)}"]`);
-      const laid = this.layout.nodes.find((candidate) => candidate.id === this.pointer.nodeID);
-      if (node && laid) {
-        const transform = `translate(${laid.x + (point.x - this.pointer.startPoint.x)} ${laid.y + (point.y - this.pointer.startPoint.y)})`;
-        node.setAttribute('transform', transform);
-        ports?.setAttribute('transform', transform);
+      for (const nodeID of this.pointer.nodeIDs) {
+        const node = this.nodeLayer.querySelector(`[data-node-id="${CSS.escape(nodeID)}"]`);
+        const ports = this.portLayer.querySelector(`[data-node-id="${CSS.escape(nodeID)}"]`);
+        const laid = this.layout.nodes.find((candidate) => candidate.id === nodeID);
+        if (node && laid) {
+          const transform = `translate(${laid.x + (point.x - this.pointer.startPoint.x)} ${laid.y + (point.y - this.pointer.startPoint.y)})`;
+          node.setAttribute('transform', transform);
+          ports?.setAttribute('transform', transform);
+        }
       }
       hook(this.options, 'onNodeDrag')({
-        nodeId: this.pointer.nodeID, point,
+        nodeId: this.pointer.nodeID, nodeIds: [...this.pointer.nodeIDs], point,
         delta: { x: point.x - this.pointer.startPoint.x, y: point.y - this.pointer.startPoint.y },
         event,
       });
     } else if (this.pointer.mode === 'port') {
       hook(this.options, 'onPortDragMove')({ nodeId: this.pointer.nodeID, port: this.pointer.port, point, event });
+    } else if (this.pointer.mode === 'marquee') {
+      const box = normalizeMarquee(this.pointer.startPoint, point);
+      this.marquee?.setAttribute('x', box.left);
+      this.marquee?.setAttribute('y', box.top);
+      this.marquee?.setAttribute('width', box.right - box.left);
+      this.marquee?.setAttribute('height', box.bottom - box.top);
     }
   }
 
@@ -507,7 +544,17 @@ export class ProcessGraph {
     } else if (pointer.mode === 'node') {
       // Position ownership stays outside the core. Snap the transient drag back
       // unless the hook's caller supplied a new pinned graph through setGraph.
-      this.snapNodeHome(pointer.nodeID);
+      this.snapNodesHome(pointer.nodeIDs || [pointer.nodeID]);
+    } else if (pointer.mode === 'marquee') {
+      this.marquee?.remove();
+      this.marquee = null;
+      if (this.dragMoved) {
+        const items = nodesInMarquee(this.layout.nodes, pointer.startPoint, point)
+          .map((node) => ({ type: 'node', id: node.id }));
+        const selection = makeSelection(items);
+        this.select(selection);
+        hook(this.options, 'onMarqueeSelect')({ selection, items, event });
+      }
     }
     this.suppressClick = this.dragMoved;
     this.svg.releasePointerCapture?.(event.pointerId);
@@ -537,7 +584,10 @@ export class ProcessGraph {
         targetNodeId: null, targetPort: null, cancelled: true, event,
       });
     } else if (pointer.mode === 'node') {
-      this.snapNodeHome(pointer.nodeID);
+      this.snapNodesHome(pointer.nodeIDs || [pointer.nodeID]);
+    } else if (pointer.mode === 'marquee') {
+      this.marquee?.remove();
+      this.marquee = null;
     }
     this.suppressClick = this.dragMoved;
     setTimeout(() => {
@@ -557,6 +607,10 @@ export class ProcessGraph {
     }
   }
 
+  snapNodesHome(nodeIDs) {
+    for (const nodeID of nodeIDs || []) this.snapNodeHome(nodeID);
+  }
+
   onClick(event) {
     if (this.dragMoved || this.suppressClick) return;
     const target = this.eventTarget(event);
@@ -571,6 +625,7 @@ export class ProcessGraph {
       hook(this.options, 'onEdgeClick')({ edge, event });
     } else {
       this.select(null);
+      hook(this.options, 'onCanvasClick')({ event });
     }
   }
 
@@ -670,7 +725,7 @@ export class ProcessGraph {
   }
 
   select(selection) {
-    this.selected = selection;
+    this.selected = makeSelection(selectionItems(selection));
     this.applySelection();
   }
 
@@ -679,13 +734,13 @@ export class ProcessGraph {
       element.classList.remove('is-selected');
       element.setAttribute('aria-pressed', 'false');
     });
-    if (!this.selected) return;
-    if (this.selected.type === 'node') {
-      const selected = this.nodeLayer.querySelector(`[data-node-id="${CSS.escape(String(this.selected.id))}"]`);
-      selected?.classList.add('is-selected');
-      selected?.setAttribute('aria-pressed', 'true');
-    } else if (this.selected.type === 'edge') {
-      const selected = this.edgeLayer.querySelector(`[data-edge-id="${CSS.escape(String(this.selected.id))}"]`);
+    for (const item of selectionItems(this.selected)) {
+      let selected = null;
+      if (item.type === 'node') {
+        selected = this.nodeLayer.querySelector(`[data-node-id="${CSS.escape(String(item.id))}"]`);
+      } else if (item.type === 'edge') {
+        selected = this.edgeLayer.querySelector(`[data-edge-id="${CSS.escape(String(item.id))}"]`);
+      }
       selected?.classList.add('is-selected');
       selected?.setAttribute('aria-pressed', 'true');
     }

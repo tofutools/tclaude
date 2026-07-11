@@ -236,11 +236,74 @@ export class ProcessEditModel {
   }
 
   moveNode(id, x, y) {
-    if (!this.template.nodes[id]) throw new Error(`unknown node ${id}`);
-    this.assertNodeEditable(id);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error('moveNode needs finite coordinates');
+    return this.moveNodes([{ id, x, y }]);
+  }
+
+  // moveNodes keeps a multi-selection drag atomic: every coordinate and
+  // editability gate is checked before one undo snapshot is consumed.
+  moveNodes(moves) {
+    const unique = new Map((moves || []).map((move) => [move.id, move]));
+    if (!unique.size) return false;
+    for (const { id, x, y } of unique.values()) {
+      if (!this.template.nodes[id]) throw new Error(`unknown node ${id}`);
+      this.assertNodeEditable(id);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error('moveNodes needs finite coordinates');
+    }
     this.begin();
-    this.layout.nodes[id] = { x, y };
+    for (const { id, x, y } of unique.values()) this.layout.nodes[id] = { x, y };
+    return true;
+  }
+
+  // deleteItems is the atomic multi-selection counterpart to deleteNode /
+  // deleteEdge. With rewire=true, incoming edges from outside the selected
+  // node set cross the selected subgraph to its first stable surviving exit.
+  deleteItems(items, { rewire = false } = {}) {
+    const nodes = new Set((items || []).filter((item) => item.type === 'node').map((item) => item.id));
+    const edgeKeys = new Set((items || []).filter((item) => item.type === 'edge')
+      .map((item) => graphEdgeID(item.from, item.outcome)));
+    for (const id of nodes) {
+      if (!this.template.nodes[id]) throw new Error(`unknown node ${id}`);
+      this.assertNodeEditable(id);
+    }
+    const selectedEdge = (edge) => edgeKeys.has(graphEdgeID(edge.from, edge.outcome));
+    const affected = this.edges.filter((edge) => selectedEdge(edge) || nodes.has(edge.from) || nodes.has(edge.to));
+    for (const edge of affected) this.assertEdgeEditable(edge);
+    if (!nodes.size && !affected.length) return false;
+
+    const successor = (start) => {
+      const seen = new Set();
+      const queue = [start];
+      while (queue.length) {
+        const id = queue.shift();
+        if (seen.has(id)) continue;
+        seen.add(id);
+        const outgoing = this.outgoingEdges(id)
+          .filter((edge) => !selectedEdge(edge))
+          .sort((a, b) => String(a.outcome).localeCompare(String(b.outcome), 'en'));
+        for (const edge of outgoing) {
+          if (!nodes.has(edge.to)) return edge.to;
+          queue.push(edge.to);
+        }
+      }
+      return null;
+    };
+    const bridges = rewire ? this.edges
+      .filter((edge) => !nodes.has(edge.from) && nodes.has(edge.to) && !selectedEdge(edge))
+      .map((edge) => ({ ...edge, to: successor(edge.to) }))
+      .filter((edge) => edge.to && !nodes.has(edge.to)) : [];
+
+    this.begin();
+    for (const id of nodes) {
+      delete this.template.nodes[id];
+      delete this.layout.nodes[id];
+    }
+    this.edges = this.edges.filter((edge) => !selectedEdge(edge) && !nodes.has(edge.from) && !nodes.has(edge.to));
+    this.edges.push(...bridges);
+    if (nodes.has(this.template.start)) {
+      const start = this.edges.find((edge) => edge.from === '' && edge.outcome === START_OUTCOME);
+      this.template.start = start?.to || '';
+    }
+    return true;
   }
 
   // updateNode is the node dialogs' single mutation gate (TCL-298): the

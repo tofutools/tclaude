@@ -111,6 +111,42 @@ test('moveNode pins layout and undo restores the previous pin state', () => {
   assert.throws(() => model.moveNode('build', NaN, 1), /finite/);
 });
 
+test('multi-node move is one atomic undo step', () => {
+  const model = new ProcessEditModel(view());
+  model.moveNodes([
+    { id: 'begin', x: 20, y: 30 },
+    { id: 'build', x: 120, y: 130 },
+  ]);
+  assert.deepEqual(model.layout.nodes.begin, { x: 20, y: 30 });
+  assert.deepEqual(model.layout.nodes.build, { x: 120, y: 130 });
+  assert.equal(model.undoStack.length, 1);
+  assert.ok(model.undo());
+  assert.deepEqual(model.layout.nodes.begin, { x: 100, y: 40 });
+  assert.equal(model.layout.nodes.build, undefined);
+});
+
+test('multi-selection delete rewires across selected nodes atomically', () => {
+  const seeded = view();
+  seeded.template.nodes.review = { type: 'task' };
+  seeded.edges = [
+    { from: '', outcome: 'start', to: 'begin' },
+    { from: 'begin', outcome: 'pass', to: 'build' },
+    { from: 'build', outcome: 'pass', to: 'review' },
+    { from: 'review', outcome: 'pass', to: 'ship' },
+  ];
+  const model = new ProcessEditModel(seeded);
+  model.deleteItems([
+    { type: 'node', id: 'build' },
+    { type: 'node', id: 'review' },
+  ], { rewire: true });
+  assert.equal(model.node('build'), undefined);
+  assert.equal(model.node('review'), undefined);
+  assert.equal(model.findEdge('begin', 'pass').to, 'ship');
+  assert.equal(model.undoStack.length, 1);
+  assert.ok(model.undo());
+  assert.equal(model.findEdge('begin', 'pass').to, 'build');
+});
+
 test('setJoin stores fan-in semantics as node metadata and clears cleanly', () => {
   const model = new ProcessEditModel(view());
   model.setJoin('ship', 'all');
