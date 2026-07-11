@@ -203,7 +203,6 @@ async function openProfilePicker(chipEl, current, onCommit) {
   // way, mounting a <select> here would strand it.
   if (renameEditing || !chipEl.isConnected) return;
   renameEditing = true;
-  const origEl = chipEl.cloneNode(true);
   const select = document.createElement('select');
   select.className = 'group-default-profile-select';
   // "＋ new profile…" sits at the top — picking it jumps to the editor to
@@ -223,7 +222,12 @@ async function openProfilePicker(chipEl, current, onCommit) {
   const cancel = () => {
     if (done) return;
     done = true;
-    if (select.parentNode) select.replaceWith(origEl);
+    // Restore the SAME chip node, not a clone. dock.js caches the three
+    // toolbar controls by identity so it can re-home them when the right
+    // panel opens. Replacing this chip with a clone leaves that cache pointing
+    // at the detached original; the next dock toggle would then insert the
+    // original alongside the clone and display the global picker twice.
+    if (select.parentNode) select.replaceWith(chipEl);
     renameEditing = false;
     setLastSnapshot(prevSnapshot);
   };
@@ -234,7 +238,7 @@ async function openProfilePicker(chipEl, current, onCommit) {
       // Jump to the editor (create mode): close the picker, then on a
       // successful save set the new profile as this default via onCommit.
       done = true;
-      if (select.parentNode) select.replaceWith(origEl);
+      if (select.parentNode) select.replaceWith(chipEl);
       renameEditing = false;
       openProfileEditor(null, { onSaved: (newName) => onCommit(newName) });
       return;
@@ -243,7 +247,7 @@ async function openProfilePicker(chipEl, current, onCommit) {
     done = true;
     // Put the chip element back before persisting so onCommit's refresh /
     // re-render has a stable mount point and no stray <select> survives.
-    if (select.parentNode) select.replaceWith(origEl);
+    if (select.parentNode) select.replaceWith(chipEl);
     renameEditing = false;
     try {
       const ok = await onCommit(name);
