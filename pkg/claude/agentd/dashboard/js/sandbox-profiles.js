@@ -285,7 +285,7 @@ function sandboxScribeBrief(token, targetName, seed) {
     : 'This is a proposed new sandbox profile.';
   return [
     'You are a sandbox-profile scribe. Talk with the human to interactively design one additive filesystem/environment sandbox profile.',
-    'Critical safety boundary: create a structured DRAFT only. Never create, edit, delete, assign, or apply a sandbox profile; never launch or relaunch an agent; never request sandbox-profiles.manage. You only hold sandbox-profiles.draft.',
+    'Critical safety boundary: create a structured DRAFT only. Never create, edit, delete, assign, or apply a sandbox profile; never launch or relaunch an agent; never request sandbox-profiles.manage. Your purpose-specific permission is sandbox-profiles.draft.',
     'Environment values are ordinary non-secret configuration. Filesystem entries are absolute-path grants with access "read" or "write". The daemon remains authoritative for canonicalization, protected paths, reserved environment variables, duplicate handling, and all other validation.',
     target,
     `Starting draft:\n${JSON.stringify(seed, null, 2)}`,
@@ -328,7 +328,6 @@ async function summonSandboxScribe(seed, targetName = '', onCreate = null) {
       body: JSON.stringify({
         name: SANDBOX_SCRIBE_NAME,
         slugs: SANDBOX_SCRIBE_SLUGS,
-        exclusive: true,
         brief: sandboxScribeBrief(token, targetName, seed),
       }),
     });

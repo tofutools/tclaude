@@ -67,7 +67,6 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		`<span class="sbx-cap-val" title="${esc(e.name)}">${esc(e.name)}</span>`:            "environment card display shows the key name only, never its value",
 		`not a secrets facility`:                                                            "non-secret warning",
 		`const SANDBOX_SCRIBE_SLUGS = ['sandbox-profiles.draft']`:                           "draft-only scribe grant",
-		`exclusive: true`:                                                                   "exact capability-reducing scribe mode",
 		`Never create, edit, delete, assign, or apply a sandbox profile`:                    "scribe safety brief",
 		`Agent draft loaded. Review every field`:                                            "explicit human preview",
 		"fetch(`/api/sandbox-profile-drafts/":                                               "draft handoff polling",
@@ -80,6 +79,7 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 	// The retired select-based global control was folded into a chip (#982); its
 	// plumbing must stay gone.
 	for needle, why := range map[string]string{
+		`exclusive: true`:                                "sandbox scribe should inherit ordinary agent defaults",
 		`function setQuickAssignment(`:                   "retired select assignment handler",
 		`const QUICK_NEW = '/new-sandbox-profile'`:       "retired select create sentinel",
 		`data-sandbox-profile-quick-pending="true"`:      "retired select refresh guard",

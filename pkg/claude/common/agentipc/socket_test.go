@@ -5,10 +5,12 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 )
 
 func TestSocketPaths(t *testing.T) {
 	home := t.TempDir()
+	agentipctest.IsolateSocketEnv(t)
 	t.Setenv("HOME", home)
 
 	assert.Equal(t, filepath.Join(home, ".tclaude", "api", "agentd.sock"), CanonicalSocketPath())

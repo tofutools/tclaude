@@ -8,6 +8,20 @@ import (
 	"testing"
 )
 
+// socketEnv is duplicated here rather than importing the parent agentipc
+// package: agentipc's own tests use this helper, so importing the parent would
+// create a test-time package cycle.
+const socketEnv = "TCLAUDE_AGENTD_SOCKET"
+
+// IsolateSocketEnv removes an inherited daemon-socket override for the life of
+// a test. Managed agent sessions export the real daemon address; tests that
+// replace HOME or create test sockets must not accidentally dial or validate
+// against that live endpoint.
+func IsolateSocketEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv(socketEnv, "")
+}
+
 // maxSocketPathLen is a conservative bound for the length of a Unix socket path
 // (the sun_path field). Linux allows 108 bytes and darwin 104; we use the
 // smaller so a path that fits here fits on both.
@@ -36,7 +50,8 @@ func candidateBases() []string {
 	}
 }
 
-// ShortSocketDir returns a fresh temp directory whose path is short enough that
+// ShortSocketDir first clears any inherited live-daemon socket override, then
+// returns a fresh temp directory whose path is short enough that
 // a Unix socket created a few levels below it stays within the sun_path limit,
 // and which is writable under a restricted filesystem sandbox.
 //
@@ -49,6 +64,7 @@ func candidateBases() []string {
 // writable dir, but that is an environment limitation, not a failure.
 func ShortSocketDir(t *testing.T) string {
 	t.Helper()
+	IsolateSocketEnv(t)
 	for _, base := range candidateBases() {
 		if dir, ok := tryBase(t, base); ok {
 			return dir

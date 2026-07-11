@@ -87,9 +87,11 @@ func TestRequestHumanApproval_OptInOpensBrowserAndNotifies(t *testing.T) {
 	})
 
 	var opened, notified atomic.Int32
+	openedCh := make(chan struct{}, 1)
 	prevOpen := approvalBrowserOpener
 	approvalBrowserOpener = func(string) error {
 		opened.Add(1)
+		openedCh <- struct{}{}
 		return nil
 	}
 	t.Cleanup(func() { approvalBrowserOpener = prevOpen })
@@ -102,6 +104,11 @@ func TestRequestHumanApproval_OptInOpensBrowserAndNotifies(t *testing.T) {
 	req := testApprovalRequest()
 	done := make(chan bool, 1)
 	go func() { done <- realRequestHumanApproval(req, "http://127.0.0.1:1234") }()
+	select {
+	case <-openedCh:
+	case <-time.After(time.Second):
+		t.Fatal("approval waiter did not invoke the stubbed browser opener")
+	}
 	req.decision <- outcomeDeny
 
 	select {

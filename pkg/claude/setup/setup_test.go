@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/wsl"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -42,6 +43,7 @@ func captureStdout(t *testing.T, fn func()) string {
 func tempHome(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
+	agentipctest.IsolateSocketEnv(t)
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
 	t.Setenv("CODEX_HOME", "")
