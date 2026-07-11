@@ -25,6 +25,9 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 				t.Errorf("%s missing %q", name, needle)
 			}
 		}
+		if !strings.Contains(src, "macOptionClickForcesSelection: true") {
+			t.Errorf("%s must enable Option-drag selection on macOS", name)
+		}
 	}
 	for _, needle := range []string{
 		"term.attachCustomKeyEventHandler(",
@@ -38,6 +41,8 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 		"term.paste(paths.join(' ') + ' ')",
 		"if (controller.signal.aborted || generation !== myGeneration) return",
 		"uploadController.abort()",
+		"Option-drag to select on macOS; Shift-drag on Linux/Windows",
+		"copyButton.dataset.hasSelection = selected ? 'true' : 'false'",
 	} {
 		if !strings.Contains(interactions, needle) {
 			t.Errorf("terminal-interactions.js missing %q", needle)

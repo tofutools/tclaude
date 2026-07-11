@@ -91,6 +91,9 @@ export function openTermModal({ wsPath, label, hideConv: hc }) {
         selectionBackground: 'rgba(255,255,255,0.2)',
       },
       allowProposedApi: true,
+      // xterm uses Option (not Shift) to force browser selection on macOS,
+      // and ignores Option unless this is explicitly enabled.
+      macOptionClickForcesSelection: true,
     });
     fitAddon = new FitAddon.FitAddon();
     term.loadAddon(fitAddon);

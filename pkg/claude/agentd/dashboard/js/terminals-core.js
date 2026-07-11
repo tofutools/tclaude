@@ -233,6 +233,9 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
       cursorBlink: true, fontSize: 13,
       fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
       theme: THEME, allowProposedApi: true,
+      // xterm uses Option (not Shift) to force browser selection on macOS,
+      // and ignores Option unless this is explicitly enabled.
+      macOptionClickForcesSelection: true,
     });
     const fitAddon = new FitAddon.FitAddon();
     term.loadAddon(fitAddon);

@@ -556,9 +556,11 @@ generically to unsaved changes rather than naming the open terminal. Closing
 the last pane removes the guard; an idle dashboard never prompts.
 
 Web terminals support the same everyday interactions as native terminal
-windows. Drag across output to select it (use **Shift-drag** when tmux or the
-running TUI has captured the mouse), then press **Ctrl/⌘-Shift-C** or click
-**Copy**. HTTP(S) links open with **Ctrl/⌘-click**; requiring the modifier keeps
+windows. Drag across output to select it. When tmux or the running TUI has
+captured the mouse, use **Option-drag on macOS** or **Shift-drag on
+Linux/Windows**, then press **Ctrl/⌘-Shift-C** or click **Copy**. Clicking Copy
+without a browser selection shows this modifier hint. HTTP(S) links open with
+**Ctrl/⌘-click**; requiring the modifier keeps
 ordinary terminal clicks available to the running program. Pasting a PNG, JPEG,
 or WebP clipboard image uploads it to a bounded temporary directory on the
 agentd host and pastes that host-side path into Claude Code or Codex as an image
