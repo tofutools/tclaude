@@ -183,6 +183,43 @@ export function resolvePopstate(state, loc, navIndex) {
   return idx >= 0 ? go(state, idx) : initialState(target);
 }
 
+// ---- history.state persistence -------------------------------------------
+//
+// The whole virtual stack is stored in each entry's history.state, not just the
+// current index. history.state survives a reload for the current entry, so on
+// reload we can reconstruct the full stack (depth and all) instead of reseeding
+// to a single entry — which is what keeps the chrome Back/Forward buttons
+// accurate and able to traverse after a reload (AC #2 / #3), matching the native
+// browser buttons. Entries are tiny ({tab, subtab?, selection?}), so even a long
+// history is well within the structured-clone size the History API allows.
+
+// NAV_STATE_VERSION tags the persisted shape. A future schema change bumps it so
+// a stale payload (from an older deploy still in the tab's history) is ignored
+// rather than misread — reviveState returns null and we seed fresh from the URL.
+export const NAV_STATE_VERSION = 1;
+
+// serializeStack produces the object to hand to pushState/replaceState.
+export function serializeStack(state) {
+  return { v: NAV_STATE_VERSION, navIndex: state.index, navStack: state.entries };
+}
+
+// reviveState reconstructs a stack from a persisted history.state payload `raw`
+// after a reload, given the current URL's location `loc`. It returns the
+// rebuilt stack ONLY when the payload is well-formed, current-version, its index
+// addresses the stack, AND the addressed entry matches `loc` (so a stale or
+// cross-URL payload can never place us on the wrong entry). Otherwise null — the
+// caller seeds a fresh single-entry stack from the URL. Every entry is
+// normalized, so a payload with an unknown tab degrades gracefully.
+export function reviveState(raw, loc) {
+  const target = normalizeLocation(loc);
+  if (raw && raw.v === NAV_STATE_VERSION && Array.isArray(raw.navStack) && raw.navStack.length &&
+      Number.isInteger(raw.navIndex) && raw.navIndex >= 0 && raw.navIndex < raw.navStack.length) {
+    const entries = raw.navStack.map(normalizeLocation);
+    if (locEquals(entries[raw.navIndex], target)) return { entries, index: raw.navIndex };
+  }
+  return null;
+}
+
 // ---- Path <-> location ---------------------------------------------------
 
 // toPath serializes a location to an absolute dashboard pathname. The default

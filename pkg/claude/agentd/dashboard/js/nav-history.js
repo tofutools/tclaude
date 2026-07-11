@@ -21,6 +21,7 @@ import { $, $$ } from './helpers.js';
 import {
   DEFAULT_TAB, normalizeLocation, initialState, current,
   push, canBack, canForward, toPath, fromPath, resolvePopstate,
+  serializeStack, reviveState,
 } from './nav-history-core.js';
 
 // ROUTABLE_TABS is the set of top-level tabs that own a URL path — the middle
@@ -130,7 +131,9 @@ function record(loc) {
   const before = stack;
   stack = push(stack, loc);
   if (stack === before) return; // duplicate — no new entry
-  history.pushState({ navIndex: stack.index }, '', urlFor(loc));
+  // Persist the WHOLE stack (not just the index) so a reload can reconstruct
+  // depth — see serializeStack. urlFor carries the live theme.
+  history.pushState(serializeStack(stack), '', urlFor(loc));
   updateButtons();
 }
 
@@ -147,11 +150,11 @@ function onPopstate(e) {
   const navIndex = e.state && Number.isInteger(e.state.navIndex) ? e.state.navIndex : -1;
   stack = resolvePopstate(stack, loc, navIndex);
   activate(current(stack));
-  // Re-stamp the current entry: a fresh, correct navIndex (heals stale indices
-  // after a reload) AND — because theme is global, not per-location — rewrite
-  // the URL to carry the LIVE theme so navigating history never leaves the URL
-  // and the DOM theme divergent. replaceState (not push) never fires popstate.
-  history.replaceState({ navIndex: stack.index }, '', urlFor(current(stack)));
+  // Re-stamp the current entry with the fresh full stack (heals stale/partial
+  // state after a reload) AND — because theme is global, not per-location —
+  // rewrite the URL to carry the LIVE theme so navigating history never leaves
+  // the URL and the DOM theme divergent. replaceState never fires popstate.
+  history.replaceState(serializeStack(stack), '', urlFor(current(stack)));
   updateButtons();
 }
 
@@ -160,22 +163,34 @@ function onPopstate(e) {
 // because restoring a deep-link URL clicks that tab, and the click must find
 // its lazy-loader already wired.
 export function initNavHistory() {
-  let loc = fromPath(window.location.pathname);
-  // Legacy deep-link alias: the approval auto-raise / tray links open
-  // /?tab=<tab>. When the path itself is the bare default, fold that query tab
-  // onto the path router so the location restores from it (and the URL settles
-  // to the canonical /<tab>).
-  if (loc.tab === DEFAULT_TAB) {
-    const legacyTab = new URLSearchParams(window.location.search).get('tab');
-    if (legacyTab && ROUTABLE_TABS.has(legacyTab)) loc = normalizeLocation({ tab: legacyTab });
+  const urlLoc = fromPath(window.location.pathname);
+  // On a RELOAD, history.state still holds the stack we persisted for this
+  // entry — reconstruct it (full depth) so the chrome buttons stay accurate and
+  // traversable, matching the native browser buttons (AC #2 / #3). reviveState
+  // validates the payload against the current URL and returns null otherwise.
+  const revived = reviveState(window.history.state, urlLoc);
+  let loc;
+  if (revived) {
+    stack = revived;
+    loc = current(stack);
+  } else {
+    // Fresh load. Legacy deep-link alias: the approval auto-raise / tray links
+    // open /?tab=<tab>. When the path is the bare default, fold that query tab
+    // onto the path router so the location restores from it (URL settles to the
+    // canonical /<tab>).
+    loc = urlLoc;
+    if (loc.tab === DEFAULT_TAB) {
+      const legacyTab = new URLSearchParams(window.location.search).get('tab');
+      if (legacyTab && ROUTABLE_TABS.has(legacyTab)) loc = normalizeLocation({ tab: legacyTab });
+    }
+    stack = initialState(loc);
   }
-  stack = initialState(loc);
 
-  // Restore the URL's tab (no-op when it's the already-active default), and
-  // rewrite the current history entry so it carries our index + a canonical
-  // path (a bare "/" stays "/"; "/costs" stays "/costs").
+  // Restore the tab (no-op when it's the already-active default), and rewrite
+  // the current history entry so it carries the full stack + a canonical path
+  // (a bare "/" stays "/"; "/costs" stays "/costs").
   activate(loc);
-  history.replaceState({ navIndex: 0 }, '', urlFor(loc));
+  history.replaceState(serializeStack(stack), '', urlFor(loc));
 
   // Observe user navigation. A delegated listener on <nav> bubbles AFTER each
   // button's own bindTabs handler (which set the .active class), so reading the

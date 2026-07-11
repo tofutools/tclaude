@@ -20,6 +20,7 @@ import {
   DEFAULT_TAB, defaultLocation, normalizeLocation, locEquals,
   initialState, current, push, back, forward, go, indexOf,
   canBack, canForward, toPath, fromPath, resolveStale, resolvePopstate,
+  serializeStack, reviveState, NAV_STATE_VERSION,
 } from '../dashboard/js/nav-history-core.js';
 
 // A location is only ever compared through the module's own helpers, so tests
@@ -244,6 +245,41 @@ test('resolvePopstate ignores a stale cross-instance index (reload + double Back
   s = resolvePopstate(s, groups, 0);
   assert.equal(current(s).tab, 'groups', 'rejects the in-range-but-mismatched index');
   assert.ok(locEquals(current(s), fromPath('/')), 'tab matches URL after the second Back');
+});
+
+test('serializeStack + reviveState round-trip reconstructs the full stack (reload)', () => {
+  // Groups -> Jobs -> Costs, then a reload lands on Costs with the persisted
+  // history.state. reviveState must rebuild [groups, jobs, costs] @2 so the
+  // chrome buttons keep their depth (canBack true) instead of reseeding to one.
+  let s = initialState(groups);
+  s = push(s, jobs);
+  s = push(s, config);                 // config stands in for "Costs" here
+  const persisted = serializeStack(s);
+  assert.equal(persisted.v, NAV_STATE_VERSION);
+
+  const revived = reviveState(persisted, config); // URL on reload = the current entry
+  assert.ok(revived, 'a matching payload revives');
+  assert.equal(revived.index, 2);
+  assert.equal(revived.entries.length, 3, 'full depth restored');
+  assert.ok(canBack(revived) && !canForward(revived), 'buttons reflect real depth after reload');
+  assert.ok(locEquals(current(revived), config));
+});
+
+test('reviveState rejects a stale, cross-URL, out-of-range, or wrong-version payload', () => {
+  const good = serializeStack(push(push(initialState(groups), jobs), config)); // @2 = config
+  // URL doesn't match the addressed entry → reject (don't restore onto the wrong entry).
+  assert.equal(reviveState(good, jobs), null, 'payload index points at config, URL is jobs → reject');
+  // Index out of range for the payload's own array.
+  assert.equal(reviveState({ v: NAV_STATE_VERSION, navIndex: 9, navStack: [groups] }, groups), null);
+  // Wrong / missing version.
+  assert.equal(reviveState({ v: 999, navIndex: 0, navStack: [groups] }, groups), null);
+  assert.equal(reviveState({ navIndex: 0, navStack: [groups] }, groups), null, 'no version → reject');
+  // Malformed / empty.
+  assert.equal(reviveState(null, groups), null);
+  assert.equal(reviveState({ v: NAV_STATE_VERSION, navIndex: 0, navStack: [] }, groups), null);
+  // A revived entry with an unknown tab is normalized, not trusted verbatim.
+  const revived = reviveState({ v: NAV_STATE_VERSION, navIndex: 0, navStack: [{ tab: 'bogus' }] }, defaultLocation());
+  assert.ok(revived && locEquals(current(revived), defaultLocation()), 'unknown tab normalized to default');
 });
 
 test('resolvePopstate relocates within the stack by URL when the index is absent', () => {

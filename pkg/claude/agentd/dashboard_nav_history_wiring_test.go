@@ -27,6 +27,10 @@ func TestDashboardNavHistory_Wired(t *testing.T) {
 		// The popstate path validates the stamped index against the popped URL
 		// (a reload leaves stale cross-instance indices) rather than trusting it.
 		`resolvePopstate(`,
+		// The whole stack is persisted in history.state and reconstructed on
+		// reload, so the chrome buttons keep depth/parity across a refresh.
+		`reviveState(`,
+		`serializeStack(`,
 		// The theme toggle must PRESERVE the current history.state (slop.js), not
 		// replace it with {} — otherwise it strips the navIndex nav-history.js
 		// stamped and desyncs back/forward after a theme change. Regression guard
