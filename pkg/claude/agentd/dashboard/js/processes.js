@@ -64,6 +64,10 @@ export function activateProcessSubtab(name) {
   });
   $$('.process-panel').forEach(panel => panel.classList.toggle('active', panel.id === `process-panel-${name}`));
   loadProcessSubtab(name);
+  // Tell the history router the location changed (→ /processes/<sub>). One-way
+  // event so processes.js doesn't import nav-history.js; recorded as user
+  // navigation (no-op during the router's own programmatic restore).
+  document.dispatchEvent(new CustomEvent('tclaude:navigated'));
 }
 
 function loadProcessSubtab(name) {

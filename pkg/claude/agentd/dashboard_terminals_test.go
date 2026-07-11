@@ -29,20 +29,21 @@ func TestDashboardTerminals_RequiresAuth(t *testing.T) {
 	}
 }
 
-// TestDashboardTerminals_ServesPage: with the session cookie the /terminals
-// route serves the multiplexer page — no-store, and referencing the assets it
-// needs (the page JS, its stylesheet, and the vendored xterm scripts) so the
-// browser can actually render terminals.
-func TestDashboardTerminals_ServesPage(t *testing.T) {
+// TestDashboardTerminals_SoloServesPopout: with the session cookie,
+// /terminals?solo=1 serves the standalone multiplexer popout page — no-store,
+// and referencing the assets it needs (the page JS, its stylesheet, and the
+// vendored xterm scripts) so the browser can render a popped-out terminal. The
+// ?solo=1 query is what the "⧉ tab" pop-out opens (js/terminals.js).
+func TestDashboardTerminals_SoloServesPopout(t *testing.T) {
 	cookie, _ := withDashboardAuthForTest(t)
 
-	r := httptest.NewRequest(http.MethodGet, "/terminals", nil)
+	r := httptest.NewRequest(http.MethodGet, "/terminals?solo=1", nil)
 	r.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	handleDashboardTerminals(rec, r)
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("authenticated /terminals GET: status %d, want 200; body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("authenticated /terminals?solo=1 GET: status %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
 		t.Errorf("Cache-Control = %q, want no-store", cc)
@@ -57,8 +58,38 @@ func TestDashboardTerminals_ServesPage(t *testing.T) {
 		`/static/vendor/xterm/addon-web-links.min.js`,
 	} {
 		if !strings.Contains(body, needle) {
-			t.Errorf("terminals page missing %q", needle)
+			t.Errorf("terminals popout page missing %q", needle)
 		}
+	}
+	// It's the popout, NOT the dashboard SPA.
+	if strings.Contains(body, `/static/js/dashboard.js`) {
+		t.Error("solo popout must not serve the dashboard SPA entry")
+	}
+}
+
+// TestDashboardTerminals_PlainServesSPA: a plain /terminals (no ?solo) is the
+// dashboard's own Terminals TAB under path routing (TCL-317) — it serves the
+// SPA index so the URL and the visible tab agree, NOT the standalone popout.
+func TestDashboardTerminals_PlainServesSPA(t *testing.T) {
+	cookie, _ := withDashboardAuthForTest(t)
+
+	r := httptest.NewRequest(http.MethodGet, "/terminals", nil)
+	r.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	handleDashboardTerminals(rec, r)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("authenticated /terminals GET: status %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", cc)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `/static/js/dashboard.js`) || !strings.Contains(body, `id="nav-back"`) {
+		t.Error("plain /terminals must serve the dashboard SPA (so the Terminals tab restores)")
+	}
+	if strings.Contains(body, `/static/js/terminals.js`) {
+		t.Error("plain /terminals must not serve the standalone popout page")
 	}
 }
 
@@ -70,19 +101,19 @@ func TestDashboardTerminals_ServesPage(t *testing.T) {
 func TestDashboardTerminals_RemotePreAuthed(t *testing.T) {
 	withDashboardAuthForTest(t) // pins a session token we deliberately don't send
 
-	r := httptest.NewRequest(http.MethodGet, "/terminals", nil)
+	r := httptest.NewRequest(http.MethodGet, "/terminals?solo=1", nil)
 	r = r.WithContext(context.WithValue(r.Context(), remoteAuthedCtxKey{}, true))
 	rec := httptest.NewRecorder()
 	handleDashboardTerminals(rec, r)
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("remote pre-authed /terminals GET: status %d, want 200; body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("remote pre-authed /terminals?solo=1 GET: status %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
 		t.Errorf("Cache-Control = %q, want no-store", cc)
 	}
-	if !strings.Contains(rec.Body.String(), `id="mux-tabs"`) {
-		t.Error("remote pre-authed /terminals must serve the page body")
+	if !strings.Contains(rec.Body.String(), `/static/js/terminals.js`) {
+		t.Error("remote pre-authed /terminals?solo=1 must serve the popout page")
 	}
 }
 

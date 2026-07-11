@@ -20,7 +20,7 @@ import {
   DEFAULT_TAB, defaultLocation, normalizeLocation, locEquals,
   initialState, current, push, back, forward, go, indexOf,
   canBack, canForward, toPath, fromPath, resolveStale, resolvePopstate,
-  serializeStack, reviveState, NAV_STATE_VERSION,
+  serializeStack, reviveState, NAV_STATE_VERSION, replaceCurrent,
 } from '../dashboard/js/nav-history-core.js';
 
 // A location is only ever compared through the module's own helpers, so tests
@@ -99,6 +99,26 @@ test('push after Back truncates the forward tail (browser semantics)', () => {
   assert.equal(s.entries.length, 3, 'A,B,new — C truncated');
   // Confirm C is really gone, not just hidden.
   assert.ok(!s.entries.some(e => e.tab === 'config'));
+});
+
+test('replaceCurrent swaps the current entry in place without changing depth', () => {
+  let s = initialState(groups);
+  s = push(s, jobs);
+  s = push(s, config);            // [groups, jobs, config] @2
+  const r = replaceCurrent(s, accessSudo);
+  assert.equal(r.index, 2, 'index unchanged');
+  assert.equal(r.entries.length, 3, 'no entry added or removed');
+  assert.ok(locEquals(current(r), accessSudo), 'current entry swapped');
+  assert.ok(locEquals(r.entries[1], jobs), 'other entries untouched');
+  // Replacing with the same location is a no-op (same ref) — a reconcile with no
+  // drift must not churn history.
+  assert.equal(replaceCurrent(r, { tab: 'access', subtab: 'sudo' }), r);
+});
+
+test('toPath / fromPath round-trip includes the terminals tab', () => {
+  const terminals = { tab: 'terminals' };
+  assert.equal(toPath(terminals), '/terminals');
+  assert.deepEqual(fromPath('/terminals'), { tab: 'terminals' });
 });
 
 test('go() jumps to an absolute index and clamps-ignores out-of-range', () => {

@@ -31,6 +31,10 @@ func TestDashboardNavHistory_Wired(t *testing.T) {
 		// reload, so the chrome buttons keep depth/parity across a refresh.
 		`reviveState(`,
 		`serializeStack(`,
+		// Subtab switches signal the router (→ /access/sudo, /processes/runs) and
+		// the poll reconciles the URL after an involuntary tab switch.
+		`tclaude:navigated`,
+		`reconcileLocation`,
 		// The theme toggle must PRESERVE the current history.state (slop.js), not
 		// replace it with {} — otherwise it strips the navIndex nav-history.js
 		// stamped and desyncs back/forward after a theme change. Regression guard
