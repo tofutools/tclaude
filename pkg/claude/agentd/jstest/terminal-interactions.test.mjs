@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  beginGestureClipboardWrite, decodeOSC52, terminalKeyInput,
+  beginGestureClipboardWrite, decodeOSC52, shouldArmTmuxClipboard, terminalKeyInput,
 } from '../dashboard/js/terminal-interactions.js';
 
 function key(overrides = {}) {
@@ -99,4 +99,19 @@ test('gesture clipboard write degrades when ClipboardItem is unavailable', () =>
   });
   assert.equal(deferred, null);
   assert.equal(called, false);
+});
+
+test('tmux clipboard arming requires a tracked unmodified copy gesture', () => {
+  const event = {
+    button: 0, detail: 1, altKey: false, shiftKey: false, ctrlKey: false, metaKey: false,
+  };
+  assert.equal(shouldArmTmuxClipboard({ moved: true }, event, 'drag'), true);
+  assert.equal(shouldArmTmuxClipboard({ moved: false }, { ...event, detail: 2 }, 'drag'), true,
+    'tmux double-click copy does not move');
+  assert.equal(shouldArmTmuxClipboard({ moved: false }, event, 'drag'), false,
+    'plain clicks do not arm');
+  assert.equal(shouldArmTmuxClipboard({ moved: true }, event, 'none'), false,
+    'browser-owned selection does not request clipboard permission');
+  assert.equal(shouldArmTmuxClipboard({ moved: true }, { ...event, shiftKey: true }, 'drag'), false,
+    'modifier-forced browser selection does not arm');
 });
