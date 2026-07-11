@@ -3481,6 +3481,26 @@ body.wizard .group-pending-title-wizard { display: inline; }
 .sbx-row .sbx-browse:hover, .sbx-row .sbx-del:hover { background: #2d333b; }
 .sbx-row .sbx-del:hover { color: #f0b0b0; border-color: #6e3a3a; }
 .sbx-row .sbx-browse:disabled { opacity: 0.5; cursor: default; }
+/* Sandbox-profile card body: one compact line per grant / env key, replacing
+   the old ` · `-joined .modal-meta paragraph. Each line is a small tag plus a
+   monospace value that ellipsis-truncates rather than wrapping. */
+.sbx-caps { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
+.sbx-caps-empty { color: #6e7681; font-size: 11px; font-style: italic; }
+.sbx-cap { display: flex; align-items: baseline; gap: 8px; min-width: 0; line-height: 1.5; }
+.sbx-cap-tag {
+  flex: 0 0 auto; box-sizing: border-box; min-width: 3.4em; text-align: center;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 0 5px; border-radius: 3px; border: 1px solid transparent;
+}
+.sbx-cap-write { color: #e3b341; background: rgba(210, 153, 34, 0.12); border-color: rgba(210, 153, 34, 0.35); }
+.sbx-cap-read  { color: #6cb6ff; background: rgba(56, 139, 253, 0.12); border-color: rgba(56, 139, 253, 0.30); }
+.sbx-cap-env   { color: #7ee787; background: rgba(63, 185, 80, 0.12); border-color: rgba(63, 185, 80, 0.30); }
+.sbx-cap-val {
+  flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px; color: #c9d1d9;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 /* "＋ add …" — a quiet full-row affordance under the table. */
 .sbx-add-row {
   align-self: flex-start;
@@ -8685,7 +8705,8 @@ body.wizard #sandbox-profiles-manage-modal .template-card {
 }
 body.wizard #sandbox-profiles-manage-modal .template-card .tc-name { color: #f3e6c0; }
 body.wizard #sandbox-profiles-manage-modal .template-card .tc-descr { color: #b39ddb; }
-body.wizard #sandbox-profiles-manage-modal .template-card .modal-meta { color: #b39ddb; }
+body.wizard #sandbox-profiles-manage-modal .template-card .sbx-cap-val { color: #d8c9f0; }
+body.wizard #sandbox-profiles-manage-modal .template-card .sbx-caps-empty { color: #b39ddb; }
 body.wizard #sandbox-profiles-manage-modal .template-card .tc-actions button {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }

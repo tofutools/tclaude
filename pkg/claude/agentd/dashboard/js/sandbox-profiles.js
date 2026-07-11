@@ -53,6 +53,24 @@ function profileSummary(p) {
   return parts.join(' · ') || 'no additive capabilities';
 }
 
+// profileCapabilitiesHTML renders the profile's grants as a compact, scannable
+// list — one line per filesystem grant and per environment key, each tagged
+// (read / write / env) and monospaced. Long paths ellipsis-truncate with the
+// full value in a title tooltip, so a card never sprawls into a wrapped wall of
+// text the way the old single ` · `-joined paragraph did.
+function profileCapabilitiesHTML(p) {
+  const rows = [];
+  for (const g of (p.filesystem || [])) {
+    const acc = g.access === 'write' ? 'write' : 'read';
+    rows.push(`<div class="sbx-cap"><span class="sbx-cap-tag sbx-cap-${acc}">${acc}</span><span class="sbx-cap-val" title="${esc(g.path)}">${esc(g.path)}</span></div>`);
+  }
+  for (const e of (p.environment || [])) {
+    rows.push(`<div class="sbx-cap"><span class="sbx-cap-tag sbx-cap-env">env</span><span class="sbx-cap-val" title="${esc(e.name)}">${esc(e.name)}</span></div>`);
+  }
+  if (!rows.length) return `<div class="sbx-caps sbx-caps-empty">no additive capabilities</div>`;
+  return `<div class="sbx-caps">${rows.join('')}</div>`;
+}
+
 function paintSandboxProfiles() {
   const q = ($('#filter-sandbox-profiles').value || '').trim().toLowerCase();
   const shown = profiles.filter(p => !q || p.name.toLowerCase().includes(q));
@@ -66,7 +84,7 @@ function paintSandboxProfiles() {
           <button class="tool" data-sandbox-profile-action="delete" data-name="${esc(p.name)}">delete</button>
         </span>
       </div>
-      <div class="modal-meta">filesystem: ${esc((p.filesystem || []).map(g => `${g.access} ${g.path}`).join(' · ') || 'none')}<br>environment keys: ${esc((p.environment || []).map(e => e.name).join(', ') || 'none')}</div>
+      ${profileCapabilitiesHTML(p)}
     </div>`).join('') : `<div class="template-empty">${esc(wizWord('No sandbox profiles match.', 'No wards match.'))}</div>`;
 }
 
