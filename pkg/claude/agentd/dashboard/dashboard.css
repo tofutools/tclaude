@@ -3490,12 +3490,11 @@ body.wizard .group-pending-title-wizard { display: inline; }
 .sbx-rows { display: flex; flex-direction: column; gap: 6px; }
 .sbx-rows:empty { display: none; }
 .sbx-row { display: flex; gap: 6px; align-items: stretch; }
-/* The access dropdown is a fixed narrow control, not a flex:1 field. */
-.sbx-row .sbx-access { flex: 0 0 5.5em; }
-/* Wizard mode re-letters read/write to scry/inscribe (filesystemRowHTML); the
-   longer "inscribe" would clip in the 5.5em box, so widen it in wizard mode
-   only — regular mode stays pixel-identical. */
-body.wizard .sbx-row .sbx-access { flex-basis: 7em; }
+/* The access dropdown is a fixed narrow control, not a flex:1 field. Leave
+   enough room for the label plus the native select arrow and inline padding;
+   5.5em clipped even the regular "write" label in Chromium. The same width
+   also fits wizard mode's longer "inscribe" label. */
+.sbx-row .sbx-access { flex: 0 0 7em; }
 /* Env name column is narrower than the value column. */
 .sbx-row-env .sbx-env-name { flex: 0 0 32%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .sbx-row .sbx-path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
