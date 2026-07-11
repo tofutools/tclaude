@@ -1224,7 +1224,10 @@ function bindRowActions() {
           };
           input.addEventListener('keydown', (ev) => {
             if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
-            else if (ev.key === 'Escape') { ev.preventDefault(); restore(); }
+            // Escape refocuses the restored chip (keyboard parity with the
+            // profile picker's Escape); the blur path below must NOT — it
+            // fires because focus went somewhere else on purpose.
+            else if (ev.key === 'Escape') { ev.preventDefault(); restore(); origEl.focus(); }
           });
           input.addEventListener('blur', () => {
             // Blur cancels (like rename) — explicit Enter to save.
@@ -1287,7 +1290,9 @@ function bindRowActions() {
           };
           input.addEventListener('keydown', (ev) => {
             if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
-            else if (ev.key === 'Escape') { ev.preventDefault(); restore(); }
+            // Escape refocuses the restored chip; blur-cancel must not (see
+            // the set-group-dir editor above).
+            else if (ev.key === 'Escape') { ev.preventDefault(); restore(); origEl.focus(); }
           });
           input.addEventListener('blur', () => {
             // Blur cancels (like rename) — explicit Enter to save.
@@ -1354,7 +1359,9 @@ function bindRowActions() {
           };
           input.addEventListener('keydown', (ev) => {
             if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
-            else if (ev.key === 'Escape') { ev.preventDefault(); restore(); }
+            // Escape refocuses the restored chip; blur-cancel must not (see
+            // the set-group-dir editor above).
+            else if (ev.key === 'Escape') { ev.preventDefault(); restore(); origEl.focus(); }
           });
           input.addEventListener('blur', () => {
             if (renameEditing) restore();
@@ -1973,6 +1980,22 @@ function bindRowActions() {
     if (!document.querySelector('.action-menu.open')) return;
     e.preventDefault();
     closeAllActionMenus();
+  });
+
+  // Enter/Space activation for the chip-style controls (TCL-330): the
+  // quick-option chips are focusable spans with role="button" (native
+  // <button>s would fight the tuned <summary> fold/skin CSS), so key
+  // activation has to be wired by hand. Scoped to spans — real buttons
+  // already synthesize their own click. preventDefault stops Space from
+  // scrolling the page and Enter from toggling the enclosing <details>;
+  // the synthesized click funnels through the delegated click dispatcher
+  // above, so pointer and keyboard share one path.
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const chip = e.target.closest('span[data-act][role="button"]');
+    if (!chip) return;
+    e.preventDefault();
+    chip.click();
   });
 }
 

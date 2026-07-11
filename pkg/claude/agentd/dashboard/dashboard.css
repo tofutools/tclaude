@@ -2157,11 +2157,14 @@ body.wizard .force-fold-label-wizard { display: inline; }
     opacity: 0;
     transition: max-width 0.48s ease, opacity 0.48s ease;
   }
-  /* Reveal on native :hover (instant + smooth during live movement) OR on the
+  /* Reveal on native :hover (instant + smooth during live movement), on
+     :focus-within (so a keyboard user tabbing onto a collapsed group's chips
+     sees the labels they are about to activate — TCL-330), OR on the
      JS-stamped .quick-hover (which renderGroups re-applies each poll, so the
      reveal survives the 2s wholesale re-render that a freshly-inserted node's
      :hover would not — see bindGroupQuickHover in refresh.js). */
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .qo-text,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:focus-within .qo-text,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .qo-text {
     /* Generous reveal cap — typical descr/dir/profile show in full; a
        pathological label clips to an ellipsis (the chip's title tooltip still
@@ -2309,8 +2312,20 @@ details[data-group-key][open] > summary .group-sandbox-profile {
 .group-default-model:hover, .user-default-model:hover, .group-sandbox-profile:hover, .global-sandbox-profile:hover { color: #d4d4d4; border-color: #58a6ff; }
 .group-default-model.unset, .user-default-model.unset, .group-sandbox-profile.unset, .global-sandbox-profile.unset { color: #484f58; font-style: italic; }
 .group-default-model.unset:hover, .user-default-model.unset:hover, .group-sandbox-profile.unset:hover, .global-sandbox-profile.unset:hover { color: #d4d4d4; }
-.global-sandbox-profile { background: transparent; }
+.global-sandbox-profile, .user-default-model { background: transparent; }
 .global-sandbox-profile:disabled { cursor: wait; opacity: .65; }
+/* Keyboard focus ring for the quick-option chip family (TCL-330) — the
+   group-header spans carry tabindex="0" role="button" (activation is
+   delegated in row-actions.js) and the two toolbar chips are native
+   buttons; all share the ring the other focusable icons use
+   (.status-dot / .notify-bell). :focus-visible keeps pointer clicks
+   ring-free. */
+.group-descr:focus-visible, .group-default-cwd:focus-visible, .gdc-pick:focus-visible,
+.group-max-members:focus-visible, .group-default-model:focus-visible,
+.group-sandbox-profile:focus-visible, .group-link-chips:focus-visible,
+.user-default-model:focus-visible, .global-sandbox-profile:focus-visible {
+  outline: 2px solid #58a6ff; outline-offset: 1px;
+}
 /* The inline 🧠 profile picker — a <select> swapped in for the group / user
    chip while choosing a default spawn profile (row-actions openProfilePicker).
    Same compact monospace look as the chip inputs above. */

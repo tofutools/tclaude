@@ -387,6 +387,8 @@ func browserKey(name string) input.Key {
 		return input.Delete
 	case "backspace":
 		return input.Backspace
+	case "enter":
+		return input.Enter
 	case "escape":
 		return input.Escape
 	default:

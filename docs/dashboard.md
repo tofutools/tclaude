@@ -186,7 +186,10 @@ header also carries three click-to-edit chips: **📁 start-dir** (the default
 working directory for agents spawned into the group), **📋 startup-context**
 (shared guidance delivered to each spawned agent's inbox), and a **👥
 member-cap** chip (`agent_groups.max_members` — a spawn that would exceed it
-is refused; the chip turns orange when the group is full).
+is refused; the chip turns orange when the group is full). All the header and
+toolbar chips are keyboard-operable: Tab reaches them, Enter/Space activates,
+and focusing a collapsed group's chips reveals their folded labels just like
+hovering does.
 
 The tab's filter bar carries **+ new group** and a **⚙ cog** menu holding the
 less-frequent group-wide actions: **⤒ import** (recreate a group from an
