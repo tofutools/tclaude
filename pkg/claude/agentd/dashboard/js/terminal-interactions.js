@@ -7,6 +7,7 @@ const IMAGE_TYPES = new Map([
   ['image/webp', 'webp'],
 ]);
 const PASTE_REPEAT_MS = 1000;
+const SELECT_HINT = 'Option-drag to select on macOS; Shift-drag on Linux/Windows';
 
 function safeHTTPURL(raw) {
   try {
@@ -92,7 +93,7 @@ export function attachTerminalInteractions({ term, host, copyButton, setStatus, 
   let lastPasteKey = '';
   const disposables = [];
   const oldTitle = host.title;
-  host.title = 'Drag to select (Shift+drag when the app captures the mouse). Ctrl/Cmd+Shift+C copies.';
+  host.title = `${SELECT_HINT}. Ctrl/Cmd+Shift+C copies.`;
 
   function flash(message, delay = 2200) {
     if (!setStatus) return;
@@ -104,15 +105,22 @@ export function attachTerminalInteractions({ term, host, copyButton, setStatus, 
   function updateCopyButton() {
     if (!copyButton) return;
     const selected = term.hasSelection();
-    copyButton.disabled = !selected;
+    // Keep the control clickable even before a selection exists: clicking it
+    // is the discoverable path to the platform-specific force-selection hint.
+    copyButton.disabled = false;
+    copyButton.dataset.hasSelection = selected ? 'true' : 'false';
     copyButton.title = selected
       ? 'Copy selected terminal text (Ctrl/Cmd+Shift+C)'
-      : 'Select terminal text first; use Shift+drag when the app captures the mouse';
+      : SELECT_HINT;
   }
 
   async function copySelection() {
     const selected = term.getSelection();
-    if (!selected) { flash('select text first'); return; }
+    if (!selected) {
+      flash(SELECT_HINT);
+      term.focus();
+      return;
+    }
     if (await writeClipboard(selected)) flash('copied');
     else flash('copy failed — clipboard permission denied');
     term.focus();
@@ -130,7 +138,7 @@ export function attachTerminalInteractions({ term, host, copyButton, setStatus, 
   const linkHandler = {
     activate: (event, text) => activateLink(event, text),
     hover: () => { host.title = 'Ctrl/Cmd-click to open link'; },
-    leave: () => { host.title = oldTitle || 'Drag to select (Shift+drag when the app captures the mouse). Ctrl/Cmd+Shift+C copies.'; },
+    leave: () => { host.title = oldTitle || `${SELECT_HINT}. Ctrl/Cmd+Shift+C copies.`; },
     allowNonHttpProtocols: false,
   };
   term.options.linkHandler = linkHandler; // explicit OSC 8 hyperlinks

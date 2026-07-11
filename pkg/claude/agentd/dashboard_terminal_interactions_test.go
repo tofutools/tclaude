@@ -25,6 +25,9 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 				t.Errorf("%s missing %q", name, needle)
 			}
 		}
+		if !strings.Contains(src, "macOptionClickForcesSelection: true") {
+			t.Errorf("%s must enable Option-drag selection on macOS", name)
+		}
 	}
 	for _, needle := range []string{
 		"term.attachCustomKeyEventHandler(",
@@ -38,6 +41,9 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 		"term.paste(paths.join(' ') + ' ')",
 		"if (controller.signal.aborted || generation !== myGeneration) return",
 		"uploadController.abort()",
+		"Option-drag to select on macOS; Shift-drag on Linux/Windows",
+		"copyButton.dataset.hasSelection = selected ? 'true' : 'false'",
+		"flash(SELECT_HINT);\n      term.focus();",
 	} {
 		if !strings.Contains(interactions, needle) {
 			t.Errorf("terminal-interactions.js missing %q", needle)
@@ -58,6 +64,20 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 	}
 	if !strings.Contains(dashboardAssets, `id="term-session-copy"`) {
 		t.Error("fallback terminal modal has no visible Copy action")
+	}
+	modalLiveStatus := `<span class="term-session-status" id="term-session-status" role="status"
+        aria-live="polite" aria-atomic="true"></span>`
+	if !strings.Contains(dashboardAssets, modalLiveStatus) {
+		t.Error("fallback terminal status must be a polite atomic live region")
+	}
+	for _, jsAttr := range []string{
+		`statusEl.setAttribute('role', 'status')`,
+		`statusEl.setAttribute('aria-live', 'polite')`,
+		`statusEl.setAttribute('aria-atomic', 'true')`,
+	} {
+		if !strings.Contains(core, jsAttr) {
+			t.Errorf("mux terminal status missing live-region attribute wiring %q", jsAttr)
+		}
 	}
 	for _, needle := range []string{
 		"if (interactions) interactions.invalidate();",

@@ -2699,7 +2699,7 @@ details[data-group-key][open] > summary .group-sandbox-profile {
 }
 .term-session-pop:hover,
 .term-session-action:hover { background: #2d333b; border-color: #3d4451; }
-.term-session-action:disabled { opacity: 0.45; cursor: default; }
+.term-session-action[data-has-selection="false"] { opacity: 0.65; }
 .term-session-close {
   background: none; border: none; color: #7d8590; cursor: pointer;
   font-size: 20px; line-height: 1; padding: 0 4px;
