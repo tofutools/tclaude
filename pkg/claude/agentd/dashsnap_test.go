@@ -741,6 +741,48 @@ func baseStates() []dashsnap.State {
 })();`,
 		},
 		{
+			// TCL-330 — keyboard operability of the quick-option chips.
+			// Self-checking (throws) so a regression back to click-only fails
+			// the run instead of passing as a silent "ok". The state JS focuses
+			// a collapsed group's 🧠 chip and awaits the :focus-within qo-text
+			// reveal (the keyboard mirror of the hover fold); the Actions then
+			// drive REAL Chrome key input: Enter must open the same profile
+			// picker a click does, and Escape must close it and hand focus back
+			// to the chip.
+			Key:     "groups-chip-keyboard",
+			Title:   "Groups tab — quick-chip keyboard operability",
+			Caption: "TCL-330 (self-checked): a collapsed group's 🧠 chip holding keyboard focus — the folded label revealed via :focus-within; Enter opens the profile picker, Escape hands focus back.",
+			JS: showGroups + collapseGroups + `return (async function(){
+  var chip = document.querySelector('details[data-group-key="frontend-squad"] .group-default-model');
+  if (!chip) throw new Error('chip-keyboard: no 🧠 chip on frontend-squad');
+  if (chip.getAttribute('tabindex') !== '0' || chip.getAttribute('role') !== 'button') throw new Error('chip-keyboard: chip lost its keyboard affordance');
+  chip.focus();
+  if (document.activeElement !== chip) throw new Error('chip-keyboard: chip did not take focus');
+  var qo = chip.querySelector('.qo-text');
+  if (matchMedia('(hover: hover)').matches && document.body.classList.contains('group-quick-fold')) {
+    var deadline = Date.now() + 3000;
+    while (getComputedStyle(qo).opacity !== '1' && Date.now() < deadline) {
+      await new Promise(function(resolve){ setTimeout(resolve, 60); });
+    }
+    if (getComputedStyle(qo).opacity !== '1') throw new Error('chip-keyboard: focus-within did not reveal the folded chip label');
+  }
+})();`,
+			Actions: []dashsnap.BrowserAction{
+				{Kind: "key", Key: "Enter"},
+				{Kind: "eval", JS: `return (async function(){
+  var deadline = Date.now() + 3000;
+  while (!document.querySelector('.group-default-profile-select') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 60); });
+  }
+  if (!document.querySelector('.group-default-profile-select')) throw new Error('chip-keyboard: Enter did not open the profile picker');
+})();`},
+				{Kind: "key", Key: "Escape"},
+				{Kind: "eval", JS: `var ae = document.activeElement;
+  if (!ae || !ae.classList.contains('group-default-model')) throw new Error('chip-keyboard: Escape did not hand focus back to the chip');`},
+			},
+			SettleMS: 400,
+		},
+		{
 			Key:   "dock-open",
 			Title: "Palette dock open",
 			// JOH-390 items 4/5/7: the dock head hosts the re-homed groups-toolbar

@@ -473,6 +473,55 @@ func TestDashboardAssets_GroupQuickFoldWired(t *testing.T) {
 	}
 }
 
+// TestDashboardAssets_QuickChipKeyboardOperability guards the keyboard
+// operability of the quick-option chips (TCL-330), whose pieces span three
+// files that must stay in lockstep — there's no JS render test, so we assert
+// on the embedded concatenation at `go test ./...`. A rename in any one file
+// silently regresses the chips back to click-only in the browser:
+//   - render.js stamps tabindex="0" role="button" on every actionable
+//     group-header chip (the picker 📁 sub-affordance included);
+//   - row-actions.js delegates Enter/Space on those spans into the shared
+//     click dispatcher, and the inline chip editors return focus to the
+//     restored chip on Escape;
+//   - dashboard.html serves the toolbar 🧠 chip as a native <button>
+//     (its 🛡 sibling already is one — see the sandbox-profiles test);
+//   - dashboard.css reveals the folded .qo-text labels for a focused
+//     collapsed group and draws the shared focus ring.
+func TestDashboardAssets_QuickChipKeyboardOperability(t *testing.T) {
+	for _, needle := range []string{
+		// render.js — every actionable group-header chip is focusable and
+		// announces as a button.
+		`tabindex="0" role="button" data-act="set-group-descr"`,
+		`tabindex="0" role="button" data-act="set-group-dir"`,
+		`class="gdc-pick" tabindex="0" role="button" data-act="pick-group-dir"`,
+		`tabindex="0" role="button" data-act="set-group-max-members"`,
+		`tabindex="0" role="button" data-act="set-group-profile"`,
+		`tabindex="0" role="button" data-act="set-group-sandbox-profile"`,
+		`class="group-link-chips" tabindex="0" role="button"`,
+		// row-actions.js — delegated Enter/Space activation for the chip
+		// spans, funneled through the click dispatcher.
+		`e.target.closest('span[data-act][role="button"]')`,
+		"chip.click();",
+		// row-actions.js — the inline chip editors hand focus back to the
+		// restored chip on Escape (parity with the picker's restoreFocus).
+		"restore(); origEl.focus();",
+		// dashboard.html — the toolbar 🧠 chip keeps native keyboard
+		// semantics, like its 🛡 sibling.
+		`<button type="button" id="dashboard-default-profile"`,
+		// render.js — its accessible name tracks the picked profile.
+		"'Set dashboard default spawn profile'",
+		// dashboard.css — tabbing onto a collapsed group's chips reveals the
+		// folded labels (keyboard mirror of the hover reveal)…
+		"body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:focus-within .qo-text",
+		// …and the chips share the focus ring of the other focusable icons.
+		".group-descr:focus-visible, .group-default-cwd:focus-visible, .gdc-pick:focus-visible,",
+	} {
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard assets missing %q — quick-chip keyboard operability regressed", needle)
+		}
+	}
+}
+
 // TestDashboardAssets_DefaultTerminalWired guards the "web terminal as the
 // default" routing (config dashboard.default_terminal="web"), whose pieces span
 // several files that must stay in lockstep — there's no JS render test, so we

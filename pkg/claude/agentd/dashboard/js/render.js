@@ -904,6 +904,13 @@ function renderRealGroup(g, childrenHTML) {
     if (atCap) capChipTitleParts.push('group is full, spawns refused');
     if (hiddenOffline > 0) capChipTitleParts.push(`${hiddenOffline} offline hidden in this view`);
     const capChipTitle = capChipTitleParts.join(' · ') + (g.max_members ? ' — click to edit cap' : ' — click to set a cap');
+    // Every actionable chip carries tabindex="0" role="button" so it is
+    // keyboard-reachable; spans (not <button>s) because the <summary>
+    // fold/skin CSS is tuned to inline spans. Enter/Space activation is
+    // delegated in row-actions.js (bindRowActions' keydown listener),
+    // which routes through the same click dispatcher as the pointer path.
+    // Focus survives the 2s poll because #groups-list is reconciled via
+    // morphInto (tabs.js), not swapped wholesale.
     return `
     <details data-group-key="${esc(g.name)}" data-dnd-target-group="${esc(g.name)}"${detailsClassAttr}${isOpen ? ' open' : ''}>
       <summary draggable="true" data-group-reorder="${esc(g.name)}" title="Drag this header to reorder the group">
@@ -913,11 +920,11 @@ function renderRealGroup(g, childrenHTML) {
         ${groupWavesChip(g)}
         ${groupPendingChip(g)}
         ${g.virtual ? '' : groupHeaderCogHTML(g, members)}
-        <span class="group-descr${g.descr ? '' : ' unset'}" data-act="set-group-descr" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-descr="${esc(g.descr || '')}" title="${g.descr ? 'Group description — click to edit' : 'No description — click to set one'}">📝<span class="qo-text"> ${g.descr ? esc(g.descr) : 'no description'}</span></span>
-        <span class="group-default-cwd${g.default_cwd ? '' : ' unset'}" data-act="set-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="${g.default_cwd ? 'Default spawn directory: ' + esc(g.default_cwd) + ' — click the text to edit, the 📁 to browse' : 'No default spawn directory — click the text to type one, the 📁 to browse'}"><span class="gdc-pick" data-act="pick-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="Browse for a directory with a native picker">📁</span><span class="qo-text"> ${g.default_cwd ? esc(shortCwd(g.default_cwd)) : 'no default dir'}</span></span>
-        <span class="${capChipClass}" data-act="set-group-max-members" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-max="${g.max_members || 0}" title="${esc(capChipTitle)}">👥 ${capChipText}</span>
-        <span class="group-default-model${g.default_profile ? '' : ' unset'}" data-act="set-group-profile" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-profile="${esc(g.default_profile || '')}" title="${g.default_profile ? 'Default spawn profile for agents spawned into this group: ' + esc(g.default_profile) + ' — fills blank launch fields at spawn. Click to change.' : 'No default spawn profile — click to set one. (Spawns use their own fields until set.)'}">🧠<span class="qo-text">${g.default_profile ? ' ' + esc(g.default_profile) : ''}</span></span>
-        ${g.virtual ? '' : `<span class="group-sandbox-profile${g.sandbox_profile ? '' : ' unset'}" data-act="set-group-sandbox-profile" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-sandbox-profile="${esc(g.sandbox_profile || '')}" title="${g.sandbox_profile ? 'Sandbox profile for ' + esc(g.name) + ': ' + esc(g.sandbox_profile) + ' — composes after the global sandbox profile for newly launched agents. Click to change.' : 'No group sandbox profile — newly launched agents get the global one only. Click to set one.'}">🛡<span class="qo-text">${g.sandbox_profile ? ' ' + esc(g.sandbox_profile) : ''}</span></span>`}
+        <span class="group-descr${g.descr ? '' : ' unset'}" tabindex="0" role="button" data-act="set-group-descr" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-descr="${esc(g.descr || '')}" title="${g.descr ? 'Group description — click to edit' : 'No description — click to set one'}">📝<span class="qo-text"> ${g.descr ? esc(g.descr) : 'no description'}</span></span>
+        <span class="group-default-cwd${g.default_cwd ? '' : ' unset'}" tabindex="0" role="button" data-act="set-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="${g.default_cwd ? 'Default spawn directory: ' + esc(g.default_cwd) + ' — click the text to edit, the 📁 to browse' : 'No default spawn directory — click the text to type one, the 📁 to browse'}"><span class="gdc-pick" tabindex="0" role="button" data-act="pick-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="Browse for a directory with a native picker">📁</span><span class="qo-text"> ${g.default_cwd ? esc(shortCwd(g.default_cwd)) : 'no default dir'}</span></span>
+        <span class="${capChipClass}" tabindex="0" role="button" data-act="set-group-max-members" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-max="${g.max_members || 0}" title="${esc(capChipTitle)}">👥 ${capChipText}</span>
+        <span class="group-default-model${g.default_profile ? '' : ' unset'}" tabindex="0" role="button" data-act="set-group-profile" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-profile="${esc(g.default_profile || '')}" title="${g.default_profile ? 'Default spawn profile for agents spawned into this group: ' + esc(g.default_profile) + ' — fills blank launch fields at spawn. Click to change.' : 'No default spawn profile — click to set one. (Spawns use their own fields until set.)'}">🧠<span class="qo-text">${g.default_profile ? ' ' + esc(g.default_profile) : ''}</span></span>
+        ${g.virtual ? '' : `<span class="group-sandbox-profile${g.sandbox_profile ? '' : ' unset'}" tabindex="0" role="button" data-act="set-group-sandbox-profile" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-sandbox-profile="${esc(g.sandbox_profile || '')}" title="${g.sandbox_profile ? 'Sandbox profile for ' + esc(g.name) + ': ' + esc(g.sandbox_profile) + ' — composes after the global sandbox profile for newly launched agents. Click to change.' : 'No group sandbox profile — newly launched agents get the global one only. Click to set one.'}">🛡<span class="qo-text">${g.sandbox_profile ? ' ' + esc(g.sandbox_profile) : ''}</span></span>`}
         ${g.virtual ? '' : renderGroupLinkChips(g.name)}
       </summary>
       <div class="subtable">
@@ -966,7 +973,7 @@ function renderGroupLinkChips(groupName) {
     ...out.map(l => chip(l.to, 'out', l.mode)),
     ...inc.map(l => chip(l.from, 'in', l.mode)),
   ].join('');
-  return `<span class="group-link-chips" data-act="links-manage" title="Inter-group links — click to manage">🔗<span class="qo-text">${chips}</span></span>`;
+  return `<span class="group-link-chips" tabindex="0" role="button" data-act="links-manage" title="Inter-group links — click to manage">🔗<span class="qo-text">${chips}</span></span>`;
 }
 
 // renderGroupLinksSection: per-group outbound/inbound link rows. Reads
@@ -1321,6 +1328,7 @@ function renderDashDefaultProfile() {
   const name = getDashDefaultProfile();
   el.classList.toggle('unset', !name);
   el.setAttribute('data-profile', name);
+  el.setAttribute('aria-label', name ? `Dashboard default spawn profile: ${name}. Click to change.` : 'Set dashboard default spawn profile');
   el.textContent = '🧠' + (name ? ' ' + name : '');
   el.title = name
     ? `Dashboard default spawn profile: ${name} — pre-fills the spawn dialog when the chosen group has no default profile of its own. Click to change.`
