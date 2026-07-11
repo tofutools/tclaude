@@ -54,6 +54,7 @@ func TestDashboardTerminals_ServesPage(t *testing.T) {
 		`/static/terminals.css`,
 		`/static/mux.css`,
 		`/static/vendor/xterm/xterm.min.js`,
+		`/static/vendor/xterm/addon-web-links.min.js`,
 	} {
 		if !strings.Contains(body, needle) {
 			t.Errorf("terminals page missing %q", needle)

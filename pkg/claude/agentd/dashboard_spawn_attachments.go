@@ -73,6 +73,10 @@ type spawnAttachmentsResponse struct {
 
 func registerDashboardSpawnAttachmentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/spawn-attachments", handleDashboardSpawnAttachments)
+	// Web terminals use the same authenticated, bounded temporary-file path.
+	// Keep a purpose-specific route so neither client depends on another UI's
+	// endpoint name; the storage and hygiene contract intentionally stays shared.
+	mux.HandleFunc("/api/terminal-attachments", handleDashboardSpawnAttachments)
 }
 
 // handleDashboardSpawnAttachments receives a multipart/form-data POST whose
