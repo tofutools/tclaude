@@ -16,6 +16,7 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
@@ -62,6 +63,28 @@ func (e *cloneSpawnError) write(w http.ResponseWriter) {
 // roots. cloneSpawnOnce re-asserts they are still canonical immediately before
 // each fork, closing the verify→launch window the same way executeSpawn does.
 func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proofToken string, proofCwd bool, proofDirs []string, codexGitCommonDir string, gitWriteDirs []string) (newConv, newTmux, label, warn string, spawnErr *cloneSpawnError) {
+	effectiveSandbox, err := db.AgentEffectiveSandboxConfigForConv(sourceConv)
+	if err != nil {
+		return "", "", "", "", &cloneSpawnError{Status: http.StatusInternalServerError, Code: "io", Msg: "load source sandbox snapshot: " + err.Error()}
+	}
+	if effectiveSandbox != nil {
+		validated, err := sandboxpolicy.RevalidateSnapshot(*effectiveSandbox)
+		if err != nil {
+			return "", "", "", "", &cloneSpawnError{Status: http.StatusConflict, Code: "sandbox_profile_changed", Msg: err.Error()}
+		}
+		effectiveSandbox = &validated
+		if proofToken != "" {
+			proved := make(map[string]bool, len(proofDirs))
+			for _, dir := range proofDirs {
+				proved[dir] = true
+			}
+			for _, grant := range validated.Effective.Filesystem {
+				if grant.Access == sandboxpolicy.AccessWrite && !proved[grant.Path] {
+					return "", "", "", "", &cloneSpawnError{Status: http.StatusForbidden, Code: "write_proof_failed", Msg: "sandbox profile write root was not included in the clone write proof: " + grant.Path}
+				}
+			}
+		}
+	}
 	reassertFail := func() *cloneSpawnError {
 		if fail := reassertDirWriteProof(proofDirs); fail != nil {
 			return &cloneSpawnError{Status: fail.Status, Code: fail.Kind, Msg: fail.Msg}
@@ -109,7 +132,7 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 		if fail := reassertFail(); fail != nil {
 			return "", "", "", "", fail
 		}
-		proofArgs := clcommon.SpawnArgs{DirWriteProof: proofToken}
+		proofArgs := clcommon.SpawnArgs{DirWriteProof: proofToken, EffectiveSandbox: effectiveSandbox}
 		if proofCwd {
 			proofArgs.CwdWriteProof = proofToken
 			proofArgs.DirWriteProof = ""
@@ -170,7 +193,7 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 	if fail := reassertFail(); fail != nil {
 		return "", "", "", "", fail
 	}
-	proofArgs := clcommon.SpawnArgs{DirWriteProof: proofToken}
+	proofArgs := clcommon.SpawnArgs{DirWriteProof: proofToken, EffectiveSandbox: effectiveSandbox}
 	if proofCwd {
 		proofArgs.CwdWriteProof = proofToken
 		proofArgs.DirWriteProof = ""
@@ -642,6 +665,10 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm string, b
 	if _, _, err := db.EnsureAgentForConv(newConv, "clone"); err != nil {
 		slog.Warn("clone: ensure new actor failed", "conv", newConv, "error", err)
 	}
+	if err := inheritEffectiveSandboxSnapshot(target, newConv); err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "persist clone sandbox snapshot: "+err.Error())
+		return
+	}
 
 	// 3. Copy identity to the new conv. Crucially, this is ADD-only —
 	// the original keeps every membership / permission / ownership it
@@ -759,6 +786,18 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm string, b
 		resp["warning"] = warn
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func inheritEffectiveSandboxSnapshot(sourceConv, targetConv string) error {
+	snapshot, err := db.AgentEffectiveSandboxConfigForConv(sourceConv)
+	if err != nil || snapshot == nil {
+		return err
+	}
+	agentID, _, err := db.EnsureAgentForConv(targetConv, "clone")
+	if err != nil {
+		return err
+	}
+	return db.SetAgentEffectiveSandboxConfig(agentID, snapshot)
 }
 
 // applyClonedIdentity copies a source agent's identity onto newConv: its group

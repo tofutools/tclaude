@@ -45,4 +45,16 @@ func TestSandboxProfileSpawnFreezesValuesAndExplicitSelectionIsHumanOnly(t *test
 	})
 	require.Equal(t, http.StatusForbidden, denied.Code)
 	assert.Contains(t, string(denied.Raw), "sandbox_profile_restricted")
+
+	profile, err := db.GetSandboxProfile("literal-env")
+	require.NoError(t, err)
+	profile.Environment = []db.SandboxEnvironmentEntry{{Name: "LITERAL", Value: "mutated-after-launch"}}
+	require.NoError(t, db.UpdateSandboxProfile(profile))
+	f.MarkOffline(spawn.TmuxSession)
+	resume := f.AsHuman().Resume(spawn.ConvID)
+	f.AssertResumeSpawned(resume)
+	resumedSnapshot, ok := f.World.SpawnSandboxPolicy(spawn.ConvID)
+	require.True(t, ok)
+	require.NotNil(t, resumedSnapshot)
+	assert.Contains(t, resumedSnapshot.Effective.Environment[0].Value, "$(touch nope)")
 }
