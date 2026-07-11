@@ -274,7 +274,7 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   // above is installed: restoring a deep-link URL (e.g. /costs) activates that
   // tab by clicking it, and the click must find its lazy-loader already wired.
   // It reads the initial location from the path (honouring the legacy ?tab=
-  // alias), mirrors the browser History API, and drives the Back/Forward chrome.
+  // alias) and mirrors navigation through the browser History API.
   initNavHistory();
 
   // Deep link: ?tab=messages&access_request=<id> — the target the approval

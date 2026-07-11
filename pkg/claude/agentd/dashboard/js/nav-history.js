@@ -1,26 +1,22 @@
 // nav-history.js — the DOM/History adapter that wires the pure location-stack
-// core (nav-history-core.js) to the live dashboard: browser Back/Forward, the
-// header chrome buttons, and a path-based URL that survives reload (TCL-317).
+// core (nav-history-core.js) to the live dashboard: browser Back/Forward and a
+// path-based URL that survives reload (TCL-317).
 //
 // Split of concerns:
 //   - nav-history-core.js owns the DATA — the virtual stack, traversal,
 //     duplicate suppression, and path<->location mapping. Pure, unit-tested.
 //   - this module owns the SIDE EFFECTS — reading the active tab out of the
-//     DOM, activating a tab on traversal, calling history.pushState/back/
-//     forward, and toggling the buttons' disabled state.
+//     DOM, activating a tab on traversal, and calling history.pushState.
 //
-// Why mirror an index into history.state: the History API can't tell you
-// whether a forward entry exists, and a popstate event doesn't say which
-// direction it moved. We stamp our stack index into each entry's state so a
-// native browser Back/Forward (or trackpad swipe) maps deterministically back
-// onto our stack — which is what lets the chrome buttons show accurate
-// disabled states (AC #3) and keeps browser + button traversal identical
-// (AC #2).
+// Why mirror an index into history.state: a popstate event doesn't identify the
+// dashboard location it represents. We stamp our stack index into each entry's
+// state so native browser Back/Forward (or a trackpad swipe) maps
+// deterministically back onto our stack.
 
 import { $, $$, isModifiedClick } from './helpers.js';
 import {
   DEFAULT_TAB, normalizeLocation, initialState, current, locEquals,
-  push, replaceCurrent, canBack, canForward, toPath, fromPath, resolvePopstate,
+  push, replaceCurrent, toPath, fromPath, resolvePopstate,
   serializeStack, reviveState,
 } from './nav-history-core.js';
 
@@ -125,16 +121,6 @@ function urlFor(loc) {
   return toPath(loc) + preservedQuery();
 }
 
-// updateButtons syncs the header Back/Forward controls to the stack: disabled
-// when there is nowhere to go (AC #3). Missing buttons are tolerated so the
-// module stays inert if the chrome markup is ever absent.
-function updateButtons() {
-  const back = $('#nav-back');
-  const fwd = $('#nav-forward');
-  if (back) back.disabled = !canBack(stack);
-  if (fwd) fwd.disabled = !canForward(stack);
-}
-
 // record pushes a user-initiated location onto the stack + browser history.
 // A duplicate (re-selecting the current location) is suppressed by the core, so
 // repeated clicks and passive re-renders never grow history (AC #4).
@@ -146,7 +132,6 @@ function record(loc) {
   // Persist the WHOLE stack (not just the index) so a reload can reconstruct
   // depth — see serializeStack. urlFor carries the live theme.
   history.pushState(serializeStack(stack), '', urlFor(loc));
-  updateButtons();
 }
 
 // recordCurrentLocation reads the live location from the DOM and pushes it. It
@@ -186,7 +171,6 @@ function reconcileLocation() {
   if (tabAvailable(current(stack).tab)) return;
   stack = replaceCurrent(stack, loc);
   history.replaceState(serializeStack(stack), '', urlFor(loc));
-  updateButtons();
 }
 
 // onPopstate handles a browser Back/Forward (button or gesture). It trusts the
@@ -214,7 +198,6 @@ function onPopstate(e) {
   // rewrite the URL to carry the LIVE theme so navigating history never leaves
   // the URL and the DOM theme divergent. replaceState never fires popstate.
   history.replaceState(serializeStack(stack), '', urlFor(current(stack)));
-  updateButtons();
 }
 
 // initNavHistory boots the router. Call it LATE in dashboard.js boot — after
@@ -224,9 +207,9 @@ function onPopstate(e) {
 export function initNavHistory() {
   const urlLoc = fromPath(window.location.pathname);
   // On a RELOAD, history.state still holds the stack we persisted for this
-  // entry — reconstruct it (full depth) so the chrome buttons stay accurate and
-  // traversable, matching the native browser buttons (AC #2 / #3). reviveState
-  // validates the payload against the current URL and returns null otherwise.
+  // entry — reconstruct it (full depth) so native browser navigation retains
+  // the same location mapping. reviveState validates the payload against the
+  // current URL and returns null otherwise.
   const revived = reviveState(window.history.state, urlLoc);
   let loc;
   if (revived) {
@@ -288,12 +271,4 @@ export function initNavHistory() {
   // involuntary tab switch (a tab auto-hiding) corrects the address bar without
   // forging history. One-way via the event so refresh.js needn't import us.
   document.addEventListener('tclaude:snapshot', reconcileLocation);
-
-  // The chrome buttons defer entirely to the browser history so a click and a
-  // native Back/Forward share one code path (onPopstate). The disabled guard is
-  // belt-and-suspenders — a disabled <button> won't fire a click anyway.
-  $('#nav-back')?.addEventListener('click', () => { if (canBack(stack)) history.back(); });
-  $('#nav-forward')?.addEventListener('click', () => { if (canForward(stack)) history.forward(); });
-
-  updateButtons();
 }

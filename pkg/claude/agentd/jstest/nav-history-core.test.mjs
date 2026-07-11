@@ -11,15 +11,15 @@
 // `//go:embed dashboard` doesn't ship the test inside the agentd binary.
 //
 // Covers TCL-317 acceptance criteria at the logic layer: history creation and
-// traversal order (#1), disabled-state derivation (#3), duplicate suppression
-// (#4), stale-target fallback (#5/#7), plus path <-> location round-tripping.
+// traversal order (#1), duplicate suppression (#4), stale-target fallback
+// (#5/#7), plus path <-> location round-tripping.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   DEFAULT_TAB, defaultLocation, normalizeLocation, locEquals,
-  initialState, current, push, back, forward, go, indexOf,
-  canBack, canForward, toPath, fromPath, resolveStale, resolvePopstate,
+  initialState, current, push, go, indexOf,
+  toPath, fromPath, resolveStale, resolvePopstate,
   serializeStack, reviveState, NAV_STATE_VERSION, replaceCurrent,
 } from '../dashboard/js/nav-history-core.js';
 
@@ -32,40 +32,21 @@ const config = { tab: 'config' };
 const accessSudo = { tab: 'access', subtab: 'sudo' };
 const run = { tab: 'processes', subtab: 'runs', selection: 'run-42' };
 
-test('A -> B -> C then Back visits B then A; Forward visits B then C (AC #1)', () => {
+test('A -> B -> C browser traversal visits B, A, B, C (AC #1)', () => {
   let s = initialState(groups);      // A
   s = push(s, jobs);                 // B
   s = push(s, config);               // C
   assert.equal(current(s).tab, 'config');
 
-  s = back(s);
+  s = resolvePopstate(s, jobs, 1);
   assert.equal(current(s).tab, 'jobs', 'Back from C lands on B');
-  s = back(s);
+  s = resolvePopstate(s, groups, 0);
   assert.equal(current(s).tab, 'groups', 'Back from B lands on A');
 
-  s = forward(s);
+  s = resolvePopstate(s, jobs, 1);
   assert.equal(current(s).tab, 'jobs', 'Forward from A lands on B');
-  s = forward(s);
+  s = resolvePopstate(s, config, 2);
   assert.equal(current(s).tab, 'config', 'Forward from B lands on C');
-});
-
-test('canBack / canForward correct at both ends and mid-stack (AC #3)', () => {
-  let s = initialState(groups);
-  assert.equal(canBack(s), false, 'no back at the first entry');
-  assert.equal(canForward(s), false, 'no forward with a single entry');
-
-  s = push(s, jobs);
-  s = push(s, config);              // at tip
-  assert.equal(canBack(s), true);
-  assert.equal(canForward(s), false, 'no forward at the tip');
-
-  s = back(s);                      // mid-stack
-  assert.equal(canBack(s), true, 'can still go further back');
-  assert.equal(canForward(s), true, 'can go forward from mid-stack');
-
-  s = back(s);                      // first entry
-  assert.equal(canBack(s), false);
-  assert.equal(canForward(s), true);
 });
 
 test('duplicate selection of the current location is suppressed (AC #4)', () => {
@@ -91,10 +72,8 @@ test('push after Back truncates the forward tail (browser semantics)', () => {
   let s = initialState(groups);
   s = push(s, jobs);
   s = push(s, config);              // A,B,C  index 2
-  s = back(s);                      // index 1 (B), forward tail = [C]
-  assert.equal(canForward(s), true);
+  s = go(s, 1);                     // index 1 (B), forward tail = [C]
   s = push(s, accessSudo);          // new nav erases C
-  assert.equal(canForward(s), false, 'forward tail gone after a fresh push');
   assert.equal(current(s).tab, 'access');
   assert.equal(s.entries.length, 3, 'A,B,new — C truncated');
   // Confirm C is really gone, not just hidden.
@@ -144,12 +123,6 @@ test('indexOf finds the last matching entry, or -1 (popstate-recovery helper)', 
   assert.equal(indexOf(s, accessSudo), -1, 'absent location -> -1');
   // Normalizes the query location, so a raw/looser input still matches.
   assert.equal(indexOf(s, { tab: 'jobs', subtab: 'ignored' }), 1);
-});
-
-test('back at the first entry / forward at the tip are inert', () => {
-  let s = initialState(groups);
-  assert.equal(back(s), s, 'Back at the first entry returns same ref');
-  assert.equal(forward(s), s, 'Forward at the tip returns same ref');
 });
 
 test('normalizeLocation drops unknown tab / subtab / misplaced selection', () => {
@@ -269,8 +242,8 @@ test('resolvePopstate ignores a stale cross-instance index (reload + double Back
 
 test('serializeStack + reviveState round-trip reconstructs the full stack (reload)', () => {
   // Groups -> Jobs -> Costs, then a reload lands on Costs with the persisted
-  // history.state. reviveState must rebuild [groups, jobs, costs] @2 so the
-  // chrome buttons keep their depth (canBack true) instead of reseeding to one.
+  // history.state. reviveState must rebuild [groups, jobs, costs] @2 instead of
+  // reseeding to one.
   let s = initialState(groups);
   s = push(s, jobs);
   s = push(s, config);                 // config stands in for "Costs" here
@@ -281,7 +254,6 @@ test('serializeStack + reviveState round-trip reconstructs the full stack (reloa
   assert.ok(revived, 'a matching payload revives');
   assert.equal(revived.index, 2);
   assert.equal(revived.entries.length, 3, 'full depth restored');
-  assert.ok(canBack(revived) && !canForward(revived), 'buttons reflect real depth after reload');
   assert.ok(locEquals(current(revived), config));
 });
 

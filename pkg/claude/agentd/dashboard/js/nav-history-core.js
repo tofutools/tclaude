@@ -5,16 +5,15 @@
 // stack": an ordered list of visited locations plus a current index. It is
 // deliberately importable under plain Node (no `window`, no `document`, no
 // `history`) so its behaviour — traversal order, duplicate suppression,
-// forward-tail truncation, disabled-state derivation, stale-target fallback,
-// and the path <-> location mapping — can be unit-tested with `node --test`
+// forward-tail truncation, stale-target fallback, and the path <-> location
+// mapping — can be unit-tested with `node --test`
 // without a browser or a bundler.
 //
-// Why a virtual stack at all? The browser History API cannot tell you whether
-// a *forward* entry exists (there is no `history.forwardLength`). To render the
-// Back/Forward chrome buttons' disabled states accurately (TCL-317 AC #3) and
-// to know which direction a `popstate` moved, we keep our own stack and mirror
-// its index into `history.state`. The DOM/History adapter (js/nav-history.js,
-// TCL-334) owns all of that; this file owns only the data.
+// Why a virtual stack at all? A `popstate` event does not report which location
+// index it represents. We keep our own stack and mirror its index into
+// `history.state` so browser Back/Forward navigation maps deterministically to
+// dashboard locations. The DOM/History adapter (js/nav-history.js, TCL-334)
+// owns those side effects; this file owns only the data.
 //
 // URL scheme decision (TCL-317): the PATH encodes the location ("where you
 // are") and query params encode view-state ("how it's filtered" — slop/wizard,
@@ -137,19 +136,6 @@ export function replaceCurrent(state, loc) {
   return { entries, index: state.index };
 }
 
-// canBack / canForward drive the chrome buttons' disabled states (AC #3).
-export function canBack(state) { return state.index > 0; }
-export function canForward(state) { return state.index < state.entries.length - 1; }
-
-// back / forward move the current index by one when possible, else return the
-// state unchanged (so a click on a disabled-but-somehow-fired control is inert).
-export function back(state) {
-  return canBack(state) ? { entries: state.entries, index: state.index - 1 } : state;
-}
-export function forward(state) {
-  return canForward(state) ? { entries: state.entries, index: state.index + 1 } : state;
-}
-
 // go moves to an absolute index (used by the popstate adapter, which learns the
 // target index from history.state). Out-of-range indices are clamped-ignored:
 // an unknown index returns the state unchanged rather than corrupting it.
@@ -185,8 +171,8 @@ export function indexOf(state, loc) {
 // coincidentally in range yet point at a different location. We therefore trust
 // navIndex only when it is in range AND its entry actually equals the popped
 // location; otherwise we relocate within the stack by URL (preserving depth),
-// or reseed from the URL as a last resort. This keeps the active tab, the URL,
-// and the button state consistent after any reload + traversal.
+// or reseed from the URL as a last resort. This keeps the active tab and URL
+// consistent after any reload + traversal.
 export function resolvePopstate(state, loc, navIndex) {
   const target = normalizeLocation(loc);
   if (Number.isInteger(navIndex) && navIndex >= 0 && navIndex < state.entries.length &&
@@ -202,10 +188,8 @@ export function resolvePopstate(state, loc, navIndex) {
 // The whole virtual stack is stored in each entry's history.state, not just the
 // current index. history.state survives a reload for the current entry, so on
 // reload we can reconstruct the full stack (depth and all) instead of reseeding
-// to a single entry — which is what keeps the chrome Back/Forward buttons
-// accurate and able to traverse after a reload (AC #2 / #3), matching the native
-// browser buttons. Entries are tiny ({tab, subtab?, selection?}), so even a long
-// history is well within the structured-clone size the History API allows.
+// to a single entry. Entries are tiny ({tab, subtab?, selection?}), so even a
+// long history is well within the structured-clone size the History API allows.
 
 // NAV_STATE_VERSION tags the persisted shape. A future schema change bumps it so
 // a stale payload (from an older deploy still in the tab's history) is ignored

@@ -85,7 +85,7 @@ func TestDashboardTerminals_PlainServesSPA(t *testing.T) {
 		t.Errorf("Cache-Control = %q, want no-store", cc)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `/static/js/dashboard.js`) || !strings.Contains(body, `id="nav-back"`) {
+	if !strings.Contains(body, `/static/js/dashboard.js`) || !strings.Contains(body, `id="tab-terminals"`) {
 		t.Error("plain /terminals must serve the dashboard SPA (so the Terminals tab restores)")
 	}
 	if strings.Contains(body, `/static/js/terminals.js`) {
