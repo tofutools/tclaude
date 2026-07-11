@@ -36,6 +36,7 @@
 import { isVegasActive } from './slop.js';
 import { isSlopSoundEnabled } from './slop-audio.js';
 import { dashPrefs } from './prefs.js';
+import { dashboardState } from './snapshot-store.js';
 
 // The station catalog. SomaFM is listener-supported and genuinely
 // commercial-free; each entry is one of its channels. The first
@@ -616,6 +617,7 @@ function leaveVegasTabIfActive() {
     b.classList.toggle('active', b.dataset.tab === 'groups'));
   document.querySelectorAll('main section').forEach(s =>
     s.classList.toggle('active', s.id === 'tab-groups'));
+  dashboardState.setActiveTab('groups');
 }
 
 // syncVegas brings the radio in line with the live state. It plays when

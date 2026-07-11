@@ -18,6 +18,7 @@
 // otherwise we'd never see the reconnect that clears the banner.
 
 import { setConnectionLost } from './vegas.js';
+import { dashboardState } from './snapshot-store.js';
 
 // One transient blip (a single slow/refused tick) shouldn't nuke the screen,
 // so we require a couple of consecutive failures — ~2 poll cycles — before
@@ -33,6 +34,7 @@ let disconnected = false;
 // music resume.
 export function noteConnected() {
   consecutiveFails = 0;
+  dashboardState.setConnection('connected');
   if (disconnected) setDisconnected(false);
 }
 
@@ -42,7 +44,12 @@ export function noteConnected() {
 // keeps consecutiveFails from climbing unbounded through a long outage.
 export function noteDisconnected() {
   if (disconnected) return;
-  if (++consecutiveFails >= FAIL_THRESHOLD) setDisconnected(true);
+  consecutiveFails++;
+  dashboardState.setConnection(
+    consecutiveFails >= FAIL_THRESHOLD ? 'disconnected' : 'retrying',
+    { consecutiveFailures: consecutiveFails },
+  );
+  if (consecutiveFails >= FAIL_THRESHOLD) setDisconnected(true);
 }
 
 function setDisconnected(on) {

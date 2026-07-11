@@ -6,6 +6,7 @@
 import { $, $$, isModifiedClick, esc, relTime } from './helpers.js';
 import { morphInto } from './morph.js';
 import { initProcessWorklist, loadProcessWorklist } from './process-worklist.js';
+import { dashboardState } from './snapshot-store.js';
 
 let activeProcessSubtab = 'templates';
 
@@ -66,6 +67,7 @@ export function applyProcessesTabVisibility(data) {
     if (section?.classList.contains('active')) {
       $$('nav [data-tab]').forEach(button => button.classList.toggle('active', button.dataset.tab === 'groups'));
       $$('main section').forEach(panel => panel.classList.toggle('active', panel.id === 'tab-groups'));
+      dashboardState.setActiveTab('groups');
     }
   }
 }

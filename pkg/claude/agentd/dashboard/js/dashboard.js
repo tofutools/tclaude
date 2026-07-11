@@ -75,6 +75,8 @@ import { bindDock } from './dock.js';
 import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
 import { mountPreactRuntimeProbe } from './preact-loader.js';
+import { configureDashboardActions } from './dashboard-actions.js';
+import { startSnapshotPoll } from './snapshot-poll.js';
 
 // Last successful snapshot, kept so the filter inputs can re-render
 // without a server roundtrip when the user types.
@@ -122,6 +124,9 @@ export function sudoBadge(activeSudo, fallbackConvID) {
 // synchronous for the benign import cycles documented above.)
 (async () => {
   await initDashPrefs();
+  // Future Preact islands call this stable action boundary rather than
+  // importing refresh.js. The interval below remains the sole poll owner.
+  configureDashboardActions({ refresh });
   // Load the native Preact/HTM module behind an error-isolated dynamic import.
   // This inert probe proves the production asset path without giving Preact
   // ownership of an existing feature subtree yet (TCL-340).
@@ -262,8 +267,7 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   // dispatches). Must bind after applySlopThemeIfRequested() above so an
   // already-slop page is handled by its initial-state check.
   bindVegasMusic();
-  refresh();
-  setInterval(refresh, 2000);
+  startSnapshotPoll(refresh);
 
   // Capture the legacy deep-link params (?tab=…&access_request=…) BEFORE
   // initNavHistory rewrites the address bar to the canonical path — the rewrite

@@ -34,12 +34,17 @@ func TestDashboardHTML_RefreshGuardCannotWedge(t *testing.T) {
 	// A single predicate is the source of truth for refresh suspension.
 	must("function refreshSuspended(", "the single refresh-suspension predicate")
 
-	// refresh() must consult it TWICE: once up front, and again AFTER
-	// the /api/snapshot await — otherwise a refresh that began before a
-	// drag opened resumes mid-gesture and re-renders underneath it. Both
-	// checks thread the force flag (see the force-refresh guard below).
-	must("if (refreshSuspended({ ignoreModals: force })) {", "refresh() guards at the top")
-	must("if (refreshSuspended({ ignoreModals: force })) return;", "refresh() re-checks after the snapshot fetch, before touching the DOM")
+	// refresh() must consult it once up front and after each fetch/parse
+	// phase — otherwise a refresh that began before a drag opened resumes
+	// mid-gesture and re-renders underneath it. Every check threads the force
+	// flag (see the force-refresh guard below). Post-request exits also settle
+	// the shared store token instead of leaving its poll state pending.
+	if got := strings.Count(dashboardAssets, "if (refreshSuspended({ ignoreModals: force })) {"); got != 3 {
+		t.Errorf("refresh() suspension guard count = %d, want 3", got)
+	}
+	if got := strings.Count(dashboardAssets, "dashboardState.discardRequest(requestId, { responded });"); got != 2 {
+		t.Errorf("post-request discard count = %d, want 2", got)
+	}
 
 	// Modal suspension is derived from the DOM, not a hand-maintained
 	// boolean: a flag has to be reset on every modal close path or it
