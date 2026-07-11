@@ -128,16 +128,22 @@ function parseJSONArrayField(id) {
   }
 }
 
+// renderFilesystemRows / renderEnvironmentRows repaint a table from its textarea
+// and return whether the raw JSON was a parseable array. On invalid JSON they
+// leave the current table untouched and return false, so callers can refuse to
+// hide the raw editor behind stale tables.
 function renderFilesystemRows() {
   const rows = parseJSONArrayField('#sandbox-profile-editor-filesystem');
-  if (rows == null) return; // invalid raw JSON — keep the current table
+  if (rows == null) return false; // invalid raw JSON — keep the current table
   $('#sandbox-profile-editor-fs-rows').innerHTML = rows.map(filesystemRowHTML).join('');
+  return true;
 }
 
 function renderEnvironmentRows() {
   const rows = parseJSONArrayField('#sandbox-profile-editor-environment');
-  if (rows == null) return;
+  if (rows == null) return false;
   $('#sandbox-profile-editor-env-rows').innerHTML = rows.map(environmentRowHTML).join('');
+  return true;
 }
 
 // rowsToFilesystemJSON collects the table into the textarea. A path is trimmed
@@ -188,10 +194,27 @@ async function browseFilesystemRow(pathInput, btn) {
 
 // setEditorAdvanced expands/collapses the raw-JSON panel. Expanding first pushes
 // the current tables into the textareas (so the raw view is fresh); collapsing
-// re-derives the tables from the textareas (so any hand-edit sticks).
-function setEditorAdvanced(open) {
-  if (open) { rowsToFilesystemJSON(); rowsToEnvironmentJSON(); }
-  else { renderFilesystemRows(); renderEnvironmentRows(); }
+// re-derives the tables from the textareas (so any hand-edit sticks). If a hand
+// edit left either textarea unparseable, collapsing would hide the broken JSON
+// behind stale tables that look fine — and Save (which reads the textareas) then
+// fails with an error the user can't see. So a failed re-derive keeps the panel
+// open and surfaces the reason instead. force skips the guard (used to reveal
+// the panel on a save error, where the parse message is shown separately).
+function setEditorAdvanced(open, { force = false } = {}) {
+  if (open) {
+    rowsToFilesystemJSON();
+    rowsToEnvironmentJSON();
+  } else {
+    // Render both (side effects wanted) before deciding, so a table with valid
+    // JSON still refreshes even when the other one blocks the collapse.
+    const fsOK = renderFilesystemRows();
+    const envOK = renderEnvironmentRows();
+    if (!force && !(fsOK && envOK)) {
+      $('#sandbox-profile-editor-error').textContent =
+        `Fix the raw ${fsOK ? 'Environment' : 'Filesystem'} JSON before collapsing the advanced editor.`;
+      open = true; // veto the collapse; leave the panel open on the bad JSON
+    }
+  }
   $('#sandbox-profile-editor-advanced').hidden = !open;
   const btn = $('#sandbox-profile-editor-advanced-toggle');
   btn.setAttribute('aria-expanded', open ? 'true' : 'false');
@@ -314,6 +337,7 @@ function summonSandboxScribeFromEditor() {
     };
     void summonSandboxScribe(seed, editingName, editorOnCreate);
   } catch (err) {
+    setEditorAdvanced(true, { force: true }); // reveal the raw JSON that failed to parse
     errEl.textContent = `Fix the JSON before handing it to the agent: ${err.message || String(err)}`;
   }
 }
@@ -331,6 +355,11 @@ async function saveEditor() {
     };
     if (!body.name) throw new Error('name is required');
   } catch (err) {
+    // A JSON.parse failure means a hand-edit broke a raw textarea — reveal the
+    // advanced panel so the user can see and fix the JSON (it may be collapsed
+    // and hidden behind stale-looking tables). Other errors (e.g. missing name)
+    // are about visible fields, so leave the panel state alone.
+    if (err instanceof SyntaxError) setEditorAdvanced(true, { force: true });
     errEl.textContent = err.message || String(err);
     return;
   }
