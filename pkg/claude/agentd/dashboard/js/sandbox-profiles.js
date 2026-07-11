@@ -1,4 +1,4 @@
-import { $, $$, esc, bindModalSubmitHotkey, pickDirectory } from './helpers.js';
+import { $, $$, esc, bindModalSubmitHotkey, makeModalResizable, pickDirectory } from './helpers.js';
 import { confirmModal, toast, bindBackdropDiscard, bindManageOverlayDismiss } from './refresh.js';
 import { openTermModal } from './modal-term.js';
 import { wizWord } from './slop.js';
@@ -112,15 +112,25 @@ function closeManager() { $('#sandbox-profiles-manage-modal').classList.remove('
 // tables exist. Blank rows are dropped on serialize, so an empty trailing row a
 // human is about to fill never lands in the profile.
 
+// The access <select>'s option VALUES stay "read"/"write" (the wire format the
+// daemon reads and rowsToFilesystemJSON serializes); only the visible labels +
+// tooltip swap to the ward vocabulary in wizard mode — scry (perceive the tree)
+// / inscribe (perceive and inscribe). Like every wizWord spot this is evaluated
+// at render time, so a mid-session theme flip re-letters on the next row render.
 function filesystemRowHTML(grant = {}) {
   const path = esc(grant.path || '');
   const write = grant.access === 'write';
+  const readLabel = wizWord('read', 'scry');
+  const writeLabel = wizWord('write', 'inscribe');
+  const accessTitle = wizWord(
+    'read = the agent may read this tree; write = read and write',
+    'scry = the familiar may perceive this tree; inscribe = perceive and inscribe');
   return `<div class="sbx-row" data-sbx-fs-row>
     <input class="sbx-path" type="text" autocomplete="off" spellcheck="false" placeholder="~/path/to/dir or /absolute/path" value="${path}" aria-label="Directory path" />
     <button type="button" class="sbx-browse" data-sbx-browse title="Open a native directory picker on the daemon's desktop">Browse…</button>
-    <select class="sbx-access" aria-label="Access level" title="read = the agent may read this tree; write = read and write">
-      <option value="read"${write ? '' : ' selected'}>read</option>
-      <option value="write"${write ? ' selected' : ''}>write</option>
+    <select class="sbx-access" aria-label="Access level" title="${esc(accessTitle)}">
+      <option value="read"${write ? '' : ' selected'}>${esc(readLabel)}</option>
+      <option value="write"${write ? ' selected' : ''}>${esc(writeLabel)}</option>
     </select>
     <button type="button" class="sbx-del" data-sbx-del title="Remove this directory" aria-label="Remove directory">✕</button>
   </div>`;
@@ -754,6 +764,13 @@ function bindSandboxProfilesUI() {
   $('#sandbox-profile-editor-scribe').addEventListener('click', summonSandboxScribeFromEditor);
   $('#sandbox-profile-editor-submit').addEventListener('click', saveEditor);
   bindModalSubmitHotkey($('#sandbox-profile-editor-modal'), $('#sandbox-profile-editor-submit'));
+  // The editor is user-resizable (a stack of filesystem/env rows can make the
+  // fixed dialog feel cramped): the dragged size persists per modal via
+  // dashPrefs, same as the spawn/clone/template editors. The paired
+  // #sandbox-profile-editor-modal .cron-create-modal { resize } rule in
+  // dashboard.css supplies the grip; JS pins the min to the natural at-rest
+  // size each open and auto-grows a pinned height when the tables reveal rows.
+  makeModalResizable($('#sandbox-profile-editor-modal .cron-create-modal'), 'tclaude.dash.modalSize.sandbox-profile-editor');
   bindBackdropDiscard('sandbox-profile-editor-modal', closeEditor, () => !editorSaving);
   $('#agent-spawn-sandbox-profile').addEventListener('change', () => refreshSpawnSandboxProfileUI($('#agent-spawn-group').value));
 

@@ -289,8 +289,10 @@ func TestDashboardJS_ModalResizePersisted(t *testing.T) {
 		// list opt-out (a refactor dropping fitContent would make a long list
 		// un-shrinkable and fight the 2s live refresh).
 		"makeModalResizable($('#templates-manage-modal .manage-modal'), 'tclaude.dash.modalSize.templates-manage', { fitContent: false })",
-		"tclaude.dash.modalSize.agent-spawn",     // per-modal pref key
-		"tclaude.dash.modalSize.template-editor", // template editor pref key (JOH-357)
+		"makeModalResizable($('#sandbox-profile-editor-modal .cron-create-modal')", // sandbox-profile editor wires it
+		"tclaude.dash.modalSize.agent-spawn",            // per-modal pref key
+		"tclaude.dash.modalSize.template-editor",        // template editor pref key (JOH-357)
+		"tclaude.dash.modalSize.sandbox-profile-editor", // sandbox-profile editor pref key
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard JS missing %q — modal resize persistence broken", needle)

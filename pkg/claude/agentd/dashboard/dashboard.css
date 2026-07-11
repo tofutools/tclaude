@@ -3319,9 +3319,10 @@ body.wizard .group-pending-title-wizard { display: inline; }
      exact input column without the magic number drifting out of sync. */
   --cron-label-w: 72px;
 }
-/* The spawn + clone dialogs are user-resizable (a long worktree label can
-   make every field feel cramped): drag the bottom-right grip to size the
-   whole dialog on both axes. resize needs overflow not visible on both
+/* The spawn + clone + sandbox-profile-editor dialogs are user-resizable (a
+   long worktree label, or a stack of filesystem/env rows, can make every
+   field feel cramped): drag the bottom-right grip to size the whole dialog
+   on both axes. resize needs overflow not visible on both
    axes, so these override the base overflow-y:auto with overflow:auto. The
    dragged size is persisted per modal (makeModalResizable → dashPrefs);
    max-width + max-height:86vh cap it, and JS pins the *minimum* to the
@@ -3330,7 +3331,8 @@ body.wizard .group-pending-title-wizard { display: inline; }
    per-field min-width:0 clamp and the worktree tooltip keep labels readable
    without resizing — this is an escape hatch, not the primary fix. */
 #agent-spawn-modal .cron-create-modal,
-#clone-agent-modal .cron-create-modal {
+#clone-agent-modal .cron-create-modal,
+#sandbox-profile-editor-modal .cron-create-modal {
   resize: both; overflow: auto;
 }
 /* The summoning-circle template editor is user-resizable too (JOH-357), the
@@ -3472,6 +3474,10 @@ body.wizard .group-pending-title-wizard { display: inline; }
 .sbx-row { display: flex; gap: 6px; align-items: stretch; }
 /* The access dropdown is a fixed narrow control, not a flex:1 field. */
 .sbx-row .sbx-access { flex: 0 0 5.5em; }
+/* Wizard mode re-letters read/write to scry/inscribe (filesystemRowHTML); the
+   longer "inscribe" would clip in the 5.5em box, so widen it in wizard mode
+   only — regular mode stays pixel-identical. */
+body.wizard .sbx-row .sbx-access { flex-basis: 7em; }
 /* Env name column is narrower than the value column. */
 .sbx-row-env .sbx-env-name { flex: 0 0 32%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .sbx-row .sbx-path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
