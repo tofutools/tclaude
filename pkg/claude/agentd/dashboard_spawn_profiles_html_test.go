@@ -45,7 +45,7 @@ func TestDashboardHTML_SpawnProfilesUI(t *testing.T) {
 	// The default-profile pickers offer a "new profile" entry that jumps to
 	// the editor (so an empty profile list isn't a dead end).
 	present(`const PROFILE_PICKER_NEW`, "the picker's new-profile sentinel")
-	present(`openProfileEditor(null, { onSaved:`, "new-profile entry opens the editor + sets the default")
+	present(`openProfileEditor(null, { onSaved })`, "new-profile entry opens the editor + sets the default")
 
 	// 2. Manage-profiles overlay + editor, reached from the Groups cog.
 	present(`id="profiles-manage-open"`, "the Groups cog's manage-profiles button")

@@ -9,6 +9,13 @@ import { renderGroupsTab, renderSudoTab } from './tabs.js';
 import { dashPrefs } from './prefs.js';
 import { loadProfiles, setDashDefaultProfile } from './profiles.js';
 import { openProfileEditor } from './modal-profiles.js';
+// The 🛡 group chip's picker feeds off the sandbox-profile registry.
+// sandbox-profiles.js doesn't import row-actions.js, so this edge only
+// closes the already-tolerated refresh.js↔row-actions.js style of cycle
+// (function/let bindings resolved at call time — TDZ-safe).
+import {
+  loadSandboxProfiles, openSandboxProfileEditor, refreshSpawnSandboxProfileUI,
+} from './sandbox-profiles.js';
 import { renderDashDefaultProfile } from './render.js';
 import {
   openSudoGrantModal, openCronCreateModal, openCronEditModal,
@@ -182,12 +189,20 @@ function inlineEdit({ el, value, type = 'text', inputClass, placeholder, listId,
 // (loadProfiles) so a freshly-created profile shows up; a current value no
 // longer in the list is kept as a "(missing)" option so it's still visible
 // and changeable.
+// opts retargets the picker at another profile registry (the 🛡 sandbox
+// chips): loadList swaps the list fetch, noneLabel/newLabel reword the two
+// fixed options, and openNewEditor opens that registry's create editor —
+// it receives the onSaved callback that assigns the created name.
 // Sentinel <option> value for the picker's "＋ new profile…" entry. A leading
 // slash can never appear in a real profile name (server-side validateGroupName
 // rejects "/" and "\"), so this value can't collide with a profile.
 const PROFILE_PICKER_NEW = '/new-profile';
 
-async function openProfilePicker(chipEl, current, onCommit) {
+async function openProfilePicker(chipEl, current, onCommit, opts = {}) {
+  const loadList = opts.loadList || loadProfiles;
+  const noneLabel = opts.noneLabel || '(none)';
+  const newLabel = opts.newLabel || wizWord('＋ new profile…', '＋ new pattern…');
+  const openNewEditor = opts.openNewEditor || ((onSaved) => openProfileEditor(null, { onSaved }));
   const prevSnapshot = lastSnapshot;
   // Fetch the list BEFORE suspending the refresh or touching the DOM, so a
   // slow (cold-cache) fetch can't leave the picker half-open. Critically,
@@ -197,7 +212,7 @@ async function openProfilePicker(chipEl, current, onCommit) {
   // never fire, and the only code that resets renameEditing never runs,
   // wedging the auto-refresh permanently.
   let profiles = [];
-  try { profiles = await loadProfiles(); } catch (_) { profiles = []; }
+  try { profiles = await loadList(); } catch (_) { profiles = []; }
   // Bail if another picker already opened (renameEditing) or this chip was
   // repainted away (a poll re-rendered it) while we were fetching — either
   // way, mounting a <select> here would strand it.
@@ -209,8 +224,8 @@ async function openProfilePicker(chipEl, current, onCommit) {
   // create one (and sets it as this default on save), so an empty profile
   // list isn't a dead end. Re-lettered "＋ new pattern…" in 🧙 wizard mode,
   // matching the editor it opens (New familiar pattern).
-  select.add(new Option(wizWord('＋ new profile…', '＋ new pattern…'), PROFILE_PICKER_NEW));
-  select.add(new Option('(none)', ''));
+  select.add(new Option(newLabel, PROFILE_PICKER_NEW));
+  select.add(new Option(noneLabel, ''));
   for (const p of profiles) select.add(new Option(p.name, p.name));
   if (current && !profiles.some(p => p.name === current)) {
     select.add(new Option(`${current} (missing)`, current));
@@ -240,7 +255,7 @@ async function openProfilePicker(chipEl, current, onCommit) {
       done = true;
       if (select.parentNode) select.replaceWith(chipEl);
       renameEditing = false;
-      openProfileEditor(null, { onSaved: (newName) => onCommit(newName) });
+      openNewEditor((newName) => onCommit(newName));
       return;
     }
     if (name === current) { cancel(); return; }
@@ -1372,6 +1387,43 @@ function bindRowActions() {
             toast(name ? `${group}: default profile → ${name}` : `${group}: default profile cleared`);
             refresh();
             return true;
+          });
+          return; // openProfilePicker owns the refresh.
+        }
+        case 'set-group-sandbox-profile': {
+          // The group 🛡 chip: pick the group's sandbox profile from a
+          // <select> of saved sandbox profiles (+ "(inherit)" to clear back
+          // to the global default alone). Same chip→one-shot-picker lifecycle
+          // as the 🧠 chip above, retargeted at the sandbox-profile registry;
+          // PUT/DELETE /api/groups/{name}/sandbox-profile, then refresh() so
+          // the chip repaints and the spawn-modal preview recomposes.
+          const chipEl = btn.classList.contains('group-sandbox-profile')
+            ? btn
+            : (btn.closest('summary') && btn.closest('summary').querySelector('.group-sandbox-profile'));
+          if (!chipEl) {
+            toast('sandbox profile: could not locate the chip', true);
+            return;
+          }
+          const current = chipEl.getAttribute('data-sandbox-profile') || '';
+          await openProfilePicker(chipEl, current, async (name) => {
+            const r = await fetch(`/api/groups/${encodeURIComponent(group)}/sandbox-profile`, {
+              method: name ? 'PUT' : 'DELETE', credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: name ? JSON.stringify({ name }) : undefined,
+            });
+            if (!r.ok) {
+              toast(`set sandbox profile failed: ${await r.text()}`, true);
+              return false;
+            }
+            toast(name ? `${group} sandbox profile: ${name}` : `${group} sandbox profile cleared`);
+            refresh();
+            void refreshSpawnSandboxProfileUI($('#agent-spawn-group').value);
+            return true;
+          }, {
+            loadList: loadSandboxProfiles,
+            noneLabel: '(inherit)',
+            newLabel: '＋ new sandbox profile…',
+            openNewEditor: (onSaved) => openSandboxProfileEditor(null, { onCreate: onSaved }),
           });
           return; // openProfilePicker owns the refresh.
         }

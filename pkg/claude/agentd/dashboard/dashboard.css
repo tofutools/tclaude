@@ -1824,6 +1824,7 @@ details[open] > summary .group-actions { opacity: 1; }
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-default-cwd,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-max-members,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-default-model,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-sandbox-profile,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-link-chips,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-header-cog {
     opacity: 0.4;
@@ -1832,12 +1833,14 @@ details[open] > summary .group-actions { opacity: 1; }
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .group-default-cwd,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .group-max-members,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .group-default-model,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .group-sandbox-profile,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .group-link-chips,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .group-header-cog,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-descr,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-default-cwd,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-max-members,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-default-model,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-sandbox-profile,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-link-chips,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-header-cog,
   /* Cog-menu-open brighten: must out-specify the 0.4 dim rule above, so it
@@ -2178,17 +2181,19 @@ body.wizard .force-fold-label-wizard { display: inline; }
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-default-cwd,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-max-members,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-default-model,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-sandbox-profile,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-link-chips {
     margin-left: 1px;
   }
   /* Halve the icon chips' own inner horizontal padding too — the base 6px
      dominates the inter-chip space once the labels are folded away. Scoped
-     to the four bordered-transparent icon chips; the .group-link-chips flex
+     to the bordered-transparent icon chips; the .group-link-chips flex
      container has no padding of its own (its inner pills keep their look). */
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-descr,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-default-cwd,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-max-members,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-default-model {
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-default-model,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-sandbox-profile {
     padding-left: 3px;
     padding-right: 3px;
   }
@@ -2209,13 +2214,15 @@ details[data-group-key][open] > summary .group-descr,
 details[data-group-key][open] > summary .group-default-cwd,
 details[data-group-key][open] > summary .group-max-members,
 details[data-group-key][open] > summary .group-default-model,
+details[data-group-key][open] > summary .group-sandbox-profile,
 details[data-group-key][open] > summary .group-link-chips {
   margin-left: 1px;
 }
 details[data-group-key][open] > summary .group-descr,
 details[data-group-key][open] > summary .group-default-cwd,
 details[data-group-key][open] > summary .group-max-members,
-details[data-group-key][open] > summary .group-default-model {
+details[data-group-key][open] > summary .group-default-model,
+details[data-group-key][open] > summary .group-sandbox-profile {
   padding-left: 3px;
   padding-right: 3px;
 }
@@ -2291,15 +2298,17 @@ details[data-group-key][open] > summary .group-default-model {
 }
 /* 🧠 default-model chips — the per-group one in each <summary> and the
    user-level one in the groups filter bar. Same look + inline-edit
-   affordance as the other group-header chips (.group-default-cwd). */
-.group-default-model, .user-default-model {
+   affordance as the other group-header chips (.group-default-cwd).
+   The per-group 🛡 sandbox-profile chip shares the skin (and the picker
+   lifecycle in row-actions.js), so it rides every rule here too. */
+.group-default-model, .user-default-model, .group-sandbox-profile {
   font-family: ui-monospace, monospace; font-size: 11px; color: #7d8590;
   margin-left: 8px; cursor: pointer; padding: 1px 6px; border-radius: 4px;
   border: 1px solid transparent; white-space: nowrap;
 }
-.group-default-model:hover, .user-default-model:hover { color: #d4d4d4; border-color: #58a6ff; }
-.group-default-model.unset, .user-default-model.unset { color: #484f58; font-style: italic; }
-.group-default-model.unset:hover, .user-default-model.unset:hover { color: #d4d4d4; }
+.group-default-model:hover, .user-default-model:hover, .group-sandbox-profile:hover { color: #d4d4d4; border-color: #58a6ff; }
+.group-default-model.unset, .user-default-model.unset, .group-sandbox-profile.unset { color: #484f58; font-style: italic; }
+.group-default-model.unset:hover, .user-default-model.unset:hover, .group-sandbox-profile.unset:hover { color: #d4d4d4; }
 /* The inline 🧠 profile picker — a <select> swapped in for the group / user
    chip while choosing a default spawn profile (row-actions openProfilePicker).
    Same compact monospace look as the chip inputs above. */
@@ -2308,6 +2317,9 @@ details[data-group-key][open] > summary .group-default-model {
   color: #d4d4d4; padding: 1px 6px; font: inherit;
   font-family: ui-monospace, monospace; font-size: 11px; margin-left: 8px;
 }
+/* 🛡 GLOBAL sandbox-profile quick selector (top bar / dock) — a static
+   labeled <select>. The per-group assignment control is NOT this: it's the
+   .group-sandbox-profile chip above, sharing the 🧠 chip skin + fold. */
 .sandbox-profile-quick {
   display: inline-flex; align-items: center; gap: 3px; margin-left: 8px;
   color: #7d8590; font: 11px ui-monospace, monospace; white-space: nowrap;
@@ -2320,19 +2332,6 @@ details[data-group-key][open] > summary .group-default-model {
 .sandbox-profile-quick select:hover,
 .sandbox-profile-quick select:focus { color: #d4d4d4; border-color: #58a6ff; }
 .sandbox-profile-quick select:disabled { cursor: wait; opacity: .65; }
-@media (hover: hover) {
-  /* Match the existing group quick-option accordion: a collapsed group keeps
-     the 🛡 scope visible, then reveals its selector on hover (or the JS-stamped
-     quick-hover state that survives the two-second snapshot repaint). */
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-sandbox-profile-quick select {
-    display: none;
-  }
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .group-sandbox-profile-quick select,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:focus-within .group-sandbox-profile-quick select,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-sandbox-profile-quick select {
-    display: inline-block;
-  }
-}
 .modal-context-textarea {
   width: 100%; box-sizing: border-box; resize: vertical;
   background: #0d1117; border: 1px solid #30363d; border-radius: 3px;
