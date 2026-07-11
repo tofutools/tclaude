@@ -19,21 +19,22 @@
 
 import { $, $$ } from './helpers.js';
 import {
-  DEFAULT_TAB, normalizeLocation, initialState, current,
-  push, canBack, canForward, toPath, fromPath, resolvePopstate,
+  DEFAULT_TAB, normalizeLocation, initialState, current, locEquals,
+  push, replaceCurrent, canBack, canForward, toPath, fromPath, resolvePopstate,
   serializeStack, reviveState,
 } from './nav-history-core.js';
 
-// ROUTABLE_TABS is the set of top-level tabs that own a URL path — the middle
-// of three related sets that must stay in step (see KNOWN_TABS in
-// nav-history-core.js for the full ordering): it mirrors dashboardAppTabs in
-// dashboard.go (the server SPA-fallback allow-list) exactly. Terminals (its own
-// /terminals popout route) and Vegas (a conditional soundtrack tab) are
-// deliberately NOT routed: navigating to them leaves the URL and history
-// untouched, so they never appear as a bookmarkable location or a back/forward
-// target.
+// ROUTABLE_TABS is the set of top-level tabs that own a URL path. Every content
+// tab is routable; only Vegas (a conditional soundtrack tab, no content to
+// bookmark) is deliberately left out — navigating to it leaves the URL and
+// history untouched. Terminals IS routable: /terminals serves the dashboard SPA
+// for the tab (its ?solo=1 popout keeps the same route — see
+// handleDashboardTerminals). Kept in step with dashboardAppTabs in dashboard.go
+// (the generic SPA-fallback allow-list, which omits terminals only because that
+// path has its own handler) — see KNOWN_TABS in nav-history-core.js for the full
+// set ordering.
 const ROUTABLE_TABS = new Set([
-  'groups', 'jobs', 'processes', 'plugins', 'access',
+  'groups', 'terminals', 'jobs', 'processes', 'plugins', 'access',
   'messages', 'costs', 'audit', 'logs', 'config',
 ]);
 
@@ -47,15 +48,26 @@ let stack = initialState();
 // entry — the mirror of refresh.js's `cyclingTabs` guard.
 let applying = false;
 
+// `ready` gates the exported hooks until initNavHistory has run. Subtab
+// activators and the poll reconcile fire during boot before the router is set
+// up; without this they would push/replace against the uninitialised stack.
+let ready = false;
+
+// tabAvailable reports whether a routable tab is actually reachable right now —
+// its nav button exists and isn't CSS-hidden (offsetParent === null means a
+// display:none up the chain, exactly how the Terminals tab drops out with no
+// live terminals, or a disabled Costs/Plugins tab). A restored URL pointing at
+// an unavailable tab is a stale target (AC #5): the caller falls back to the
+// default rather than stranding on a blank hidden section.
+function tabAvailable(tab) {
+  const btn = $$('nav button[data-tab]').find(b => b.dataset.tab === tab);
+  return !!(btn && btn.offsetParent !== null);
+}
+
 // activeLocationFromDOM reads the current dashboard location out of the live
 // DOM: the active top-level nav button, plus the active subtab for the two tabs
 // that have one. Everything is normalized through the core so an unexpected DOM
 // state degrades to a valid location rather than a bogus one.
-//
-// Subtab reading is intentionally read-only here (top-level routing is this
-// PR's scope); the /access/<sub> and /processes/<sub> deep paths and their
-// stale-target handling are finished under TCL-335. Reading them now means a
-// URL that already carries a subtab restores it, at no extra cost.
 function activeLocationFromDOM() {
   const navBtn = $$('nav button[data-tab]').find(b => b.classList.contains('active'));
   const tab = navBtn ? navBtn.dataset.tab : DEFAULT_TAB;
@@ -137,6 +149,46 @@ function record(loc) {
   updateButtons();
 }
 
+// recordCurrentLocation reads the live location from the DOM and pushes it. It
+// is the single entry point for "the user just navigated" — the delegated <nav>
+// click observer (top-level tabs) and the `tclaude:navigated` event the subtab
+// activators emit (refresh.js / processes.js, after their own async confirms)
+// both reach it, so a subtab switch updates the URL the same way a tab switch
+// does (/access/sudo). No-ops until the router is initialised and while WE are
+// programmatically restoring a location, so neither boot nor a popstate
+// activation forges an entry.
+function recordCurrentLocation() {
+  if (!ready || applying) return;
+  record(activeLocationFromDOM());
+}
+
+// reconcileLocation corrects the URL after an INVOLUNTARY re-location — a tab
+// the dashboard auto-left because it became hidden (the Terminals tab when the
+// last terminal closes; a Costs/Plugins tab disabled in config), which switches
+// tabs by toggling classes directly rather than through a user click. Driven by
+// the `tclaude:snapshot` poll event, it replaces the current entry (never
+// pushes) so the URL tracks the visible tab without forging a back/forward step.
+// A non-routable active tab (Vegas) is left alone.
+function reconcileLocation() {
+  if (!ready || applying) return;
+  const loc = activeLocationFromDOM();
+  if (!ROUTABLE_TABS.has(loc.tab)) return;
+  if (locEquals(loc, current(stack))) return; // no drift
+  // Reconcile ONLY an involuntary re-location: the entry we're on points at a
+  // tab that is no longer available, so the dashboard auto-left it (e.g. the
+  // Terminals tab after the last terminal closed). A drift while the current
+  // entry's tab is STILL available is a voluntary navigation that pushes its own
+  // entry (it emits tclaude:navigated) — replacing it here would clobber a real
+  // back-entry, and would also strip a /processes/runs/<id> selection that
+  // activeLocationFromDOM can't yet reproduce (a trap for the selection
+  // follow-up: teach activeLocationFromDOM/activate about selection before
+  // loosening this guard).
+  if (tabAvailable(current(stack).tab)) return;
+  stack = replaceCurrent(stack, loc);
+  history.replaceState(serializeStack(stack), '', urlFor(loc));
+  updateButtons();
+}
+
 // onPopstate handles a browser Back/Forward (button or gesture). It trusts the
 // index we stamped into history.state to reposition our stack, then activates
 // the target location. A foreign/absent state (an entry from before init, or a
@@ -149,6 +201,13 @@ function onPopstate(e) {
   const loc = fromPath(window.location.pathname);
   const navIndex = e.state && Number.isInteger(e.state.navIndex) ? e.state.navIndex : -1;
   stack = resolvePopstate(stack, loc, navIndex);
+  // Stale target: a popped tab may have been hidden while it sat in the
+  // back-stack (e.g. terminals closed while you were on another tab), so
+  // activating it would strand the user on a blank hidden section. Fall back to
+  // the default in place, mirroring the init-time guard.
+  if (current(stack).tab !== DEFAULT_TAB && !tabAvailable(current(stack).tab)) {
+    stack = replaceCurrent(stack, normalizeLocation({ tab: DEFAULT_TAB }));
+  }
   activate(current(stack));
   // Re-stamp the current entry with the fresh full stack (heals stale/partial
   // state after a reload) AND — because theme is global, not per-location —
@@ -186,23 +245,43 @@ export function initNavHistory() {
     stack = initialState(loc);
   }
 
+  // Stale-target fallback: a restored URL pointing at a tab that is currently
+  // hidden (e.g. /terminals reloaded with no live terminals, so the Terminals
+  // tab is CSS-hidden) has nothing to show — fall back to the default rather
+  // than stranding on a blank section. Runs here, after the tab binders and
+  // initTerminalsTab set the visibility classes.
+  if (loc.tab !== DEFAULT_TAB && !tabAvailable(loc.tab)) {
+    loc = normalizeLocation({ tab: DEFAULT_TAB });
+    stack = initialState(loc);
+  }
+
   // Restore the tab (no-op when it's the already-active default), and rewrite
   // the current history entry so it carries the full stack + a canonical path
   // (a bare "/" stays "/"; "/costs" stays "/costs").
   activate(loc);
   history.replaceState(serializeStack(stack), '', urlFor(loc));
+  ready = true;
 
   // Observe user navigation. A delegated listener on <nav> bubbles AFTER each
   // button's own bindTabs handler (which set the .active class), so reading the
-  // DOM here sees the post-switch location. Guarded by `applying` so our own
-  // programmatic activations don't re-enter.
+  // DOM here sees the post-switch location. recordCurrentLocation self-guards on
+  // `applying` so our own programmatic activations don't re-enter.
   document.querySelector('nav')?.addEventListener('click', (e) => {
-    if (applying) return;
     if (!e.target.closest('button[data-tab]')) return;
-    record(activeLocationFromDOM());
+    recordCurrentLocation();
   });
 
   window.addEventListener('popstate', onPopstate);
+
+  // Subtab switches (Access / Processes) emit `tclaude:navigated` after they set
+  // their active class — record them as user navigation, so /access/sudo and
+  // /processes/runs update the URL just like a top-level tab switch.
+  document.addEventListener('tclaude:navigated', recordCurrentLocation);
+
+  // Each snapshot poll fires `tclaude:snapshot`; reconcile the URL then, so an
+  // involuntary tab switch (a tab auto-hiding) corrects the address bar without
+  // forging history. One-way via the event so refresh.js needn't import us.
+  document.addEventListener('tclaude:snapshot', reconcileLocation);
 
   // The chrome buttons defer entirely to the browser history so a click and a
   // native Back/Forward share one code path (onPopstate). The disabled guard is

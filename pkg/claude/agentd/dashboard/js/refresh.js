@@ -838,6 +838,11 @@ export function activateAccessSubtab(name) {
   $$('#tab-access .access-panel').forEach(p => {
     p.classList.toggle('active', p.id === 'access-' + name);
   });
+  // Tell the history router the location changed (→ /access/<sub>). One-way
+  // event so refresh.js doesn't import nav-history.js; nav-history records it as
+  // user navigation (no-op during its own programmatic restore). See
+  // nav-history.js recordCurrentLocation.
+  document.dispatchEvent(new CustomEvent('tclaude:navigated'));
 }
 
 // showAccessTab brings the top-level Access tab forward and (optionally)

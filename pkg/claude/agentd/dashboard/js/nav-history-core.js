@@ -123,6 +123,20 @@ export function push(state, loc) {
   return { entries: kept, index: kept.length - 1 };
 }
 
+// replaceCurrent swaps the current entry's location in place (no new entry,
+// index unchanged), returning the same reference when it already equals `loc`.
+// The adapter uses it to reconcile an INVOLUNTARY re-location — a tab the
+// dashboard auto-left because it became hidden (e.g. the Terminals tab when the
+// last terminal closes), or a stale-target fallback — which must correct the
+// URL without forging a back/forward step the user never took.
+export function replaceCurrent(state, loc) {
+  const next = normalizeLocation(loc);
+  if (locEquals(current(state), next)) return state;
+  const entries = state.entries.slice();
+  entries[state.index] = next;
+  return { entries, index: state.index };
+}
+
 // canBack / canForward drive the chrome buttons' disabled states (AC #3).
 export function canBack(state) { return state.index > 0; }
 export function canForward(state) { return state.index < state.entries.length - 1; }

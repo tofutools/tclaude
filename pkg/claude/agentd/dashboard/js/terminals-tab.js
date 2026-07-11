@@ -55,6 +55,12 @@ function applyTerminalsTabVisibility(n) {
 function selectTab(name) {
   $$('nav button').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
   $$('main section').forEach(s => s.classList.toggle('active', s.id === 'tab-' + name));
+  // Revealing the Terminals tab (opening a web terminal) is a real user
+  // navigation — signal the history router to push /terminals (one-way event,
+  // no import; see nav-history.js). The count-0 auto-leave to Groups is
+  // INVOLUNTARY and deliberately left unsignalled: nav-history reconciles it as
+  // a URL replace, not a pushed back-entry.
+  if (name === 'terminals') document.dispatchEvent(new CustomEvent('tclaude:navigated'));
 }
 
 // openTerminalPane adds (or focuses) a pane in the Terminals tab and switches
