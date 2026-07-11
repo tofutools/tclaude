@@ -615,9 +615,9 @@ function prefillGroupCreateFromSource(groupName) {
 }
 
 // populateGroupCreateTemplates fills the party-profile dropdown with a blank
-// default + every template. preset preselects a named circle (the redirected
-// "from template" cog shortcut); a preset that no longer exists falls back to
-// blank. Preserves nothing else — callers re-apply the selection's effects.
+// default + every template. An optional preset preselects a named circle; a
+// preset that no longer exists falls back to blank. Preserves nothing else —
+// callers re-apply the selection's effects.
 function populateGroupCreateTemplates(preset) {
   const sel = $('#group-create-template');
   const templates = groupCreateTemplates();
@@ -922,21 +922,6 @@ function bindGroupCreateModal() {
   $('#templates-manage-close').addEventListener('click', repopulateGroupCreateTemplatesIfOpen);
   $('#templates-manage-modal').addEventListener('click', (e) => {
     if (e.target === $('#templates-manage-modal')) repopulateGroupCreateTemplatesIfOpen();
-  });
-  // The Groups cog's standalone "⎘ from template" shortcut now opens THIS dialog
-  // with the first circle preselected (JOH-356 — one obvious create-a-group
-  // surface) instead of the separate instantiate modal.
-  $('#group-from-template-open').addEventListener('click', () => {
-    // Read the live snapshot (not gcTemplateCache) — openGroupCreateModal resets
-    // the cache, so the preselected circle must exist in the current snapshot.
-    const templates = (lastSnapshot && lastSnapshot.templates) || [];
-    if (!templates.length) {
-      toast(wizWord(
-        'no templates yet — define one via the Groups cog ⚙ → ⧉ templates… first',
-        'no summoning circles yet — chalk one via the Groups cog ⚙ → ⧉ circles… first'), true);
-      return;
-    }
-    openGroupCreateModal(templates[0].name);
   });
   // 🧹 cleanup: the Groups tab's "clean up" button opens the rich
   // multi-category cleanup modal — bulk unjoin / retire / delete /

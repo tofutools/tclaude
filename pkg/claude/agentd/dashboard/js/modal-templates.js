@@ -2208,9 +2208,8 @@ function wireTemplateCwdBrowse(btnId, inputId, errId, title) {
 }
 
 function bindTemplatesUI() {
-  // Entry points: the Groups cog's "⧉ templates…" management overlay, its
-  // "+ new template" / "⤓ from a group" buttons, and the cog's standalone
-  // "⎘ from template" shortcut (which opens the Form-a-party dialog, see below).
+  // Entry points: the Groups cog's "⧉ templates…" management overlay and its
+  // "+ new template" / "⤓ from a group" buttons.
   $('#templates-manage-open').addEventListener('click', openTemplatesManageModal);
   $('#templates-manage-close').addEventListener('click', closeTemplatesManageModal);
   bindManageOverlayDismiss('templates-manage-modal', closeTemplatesManageModal);
@@ -2219,11 +2218,8 @@ function bindTemplatesUI() {
   // "Edit with agent" (JOH-361): the header button summons a library-scope
   // scribe; the editor's button (bound below) summons a template-scope one.
   $('#scribe-templates-open').addEventListener('click', () => summonScribe(scribeLibraryBrief()));
-  // The cog's standalone "⎘ from template" shortcut now opens the "Form a party"
-  // dialog with the circle preselected (JOH-356 — one obvious create-a-group
-  // surface), so it is bound in bindGroupCreateModal (modal-message.js), not
-  // here. The template card's single "🚀 deploy / 🧙 summon" action below opens
-  // the unified summon/deploy dialog (JOH-373 folded the old instantiate/cast
+  // The template card's single "🚀 deploy / 🧙 summon" action below opens the
+  // unified summon/deploy dialog (JOH-373 folded the old instantiate/cast
   // button into it).
 
   // Template-card actions (delegated — the list re-renders every poll).

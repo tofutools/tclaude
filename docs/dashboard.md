@@ -191,9 +191,8 @@ is refused; the chip turns orange when the group is full).
 The tab's filter bar carries **+ new group** and a **⚙ cog** menu holding the
 less-frequent group-wide actions: **⤒ import** (recreate a group from an
 exported `.zip`), **🧹 clean up** (the all-categories cleanup tool — see
-[Cleanup](#cleanup)), **🗑 delete retired…**, **⎘ from template** (spawn a whole
-team from a [template](#templates)), **⧉ templates…** and **⧉ roles…** (the
-[template](#templates) and [role-library](#roles-library) overlays), **⧉
+[Cleanup](#cleanup)), **🗑 delete retired…**, **⧉ templates…** and **⧉ roles…**
+(the [template](#templates) and [role-library](#roles-library) overlays), **⧉
 profiles…** (spawn profiles), **🛡 sandbox profiles…**, and **🔗 links…**.
 Toggles surface three
 **virtual groups** below the real ones: **Ungrouped** (online agents in no
