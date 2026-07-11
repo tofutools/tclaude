@@ -325,12 +325,21 @@ All mutating subcommands take `--ask-human <duration>` (see
 
 ### sandbox profiles
 
-Sandbox profiles are operator-authored, harness-neutral bundles of additive
-filesystem access and environment configuration. They do not select a harness,
-model, or sandbox posture; those belong to spawn profiles. Environment values
+Sandbox profiles are operator-authored, harness-neutral bundles of filesystem
+access rules and environment configuration. Filesystem access accepts `read`,
+`write`, or `deny`; deny blocks both reads and writes and dominates an
+exact-path grant from any other applied profile. This lets an explicit
+per-spawn profile subtract access inherited from a global or group profile.
+They do not select a harness, model, or sandbox posture; those belong to spawn
+profiles. Environment values
 are stored and displayed as ordinary **non-secret configuration** — do not put
 credentials in them. Profile payload reads and all mutations require the
 `sandbox-profiles.manage` permission.
+
+Deny rules are enforced by the harness OS sandbox (Claude `denyRead` plus
+`denyWrite`, Codex permission-profile `none`). An effective deny requires
+Claude sandbox `on` or the Codex managed `tclaude-agent` sandbox; other launch
+postures are rejected rather than silently ignoring the restriction.
 
 ```bash
 tclaude agent sandbox-profiles ls [--json]

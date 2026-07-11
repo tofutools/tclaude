@@ -144,6 +144,10 @@ func codexAgentProfileContentForNameAndWriteDirs(profileName, socketPath, privat
 }
 
 func codexAgentProfileContentForNameAndGrants(profileName, socketPath, privateStateDir string, readDirs, writeDirs []string) (string, error) {
+	return codexAgentProfileContentForNameAndRules(profileName, socketPath, privateStateDir, readDirs, writeDirs, nil)
+}
+
+func codexAgentProfileContentForNameAndRules(profileName, socketPath, privateStateDir string, readDirs, writeDirs, denyDirs []string) (string, error) {
 	profileName, err := ValidateCodexProfileName(profileName)
 	if err != nil {
 		return "", err
@@ -157,18 +161,25 @@ func codexAgentProfileContentForNameAndGrants(profileName, socketPath, privateSt
 	if err := validateCodexProfilePath("tclaude private state dir", privateStateDir); err != nil {
 		return "", err
 	}
-	for _, dir := range append(append([]string{}, readDirs...), writeDirs...) {
+	allDirs := append(append(append([]string{}, readDirs...), writeDirs...), denyDirs...)
+	for _, dir := range allDirs {
 		if err := validateCodexProfilePath("sandbox profile directory", dir); err != nil {
 			return "", err
 		}
 	}
-	grants := make(map[string]string, len(readDirs)+len(writeDirs))
+	grants := make(map[string]string, len(readDirs)+len(writeDirs)+len(denyDirs))
 	for _, dir := range readDirs {
 		grants[dir] = "read"
 	}
 	for _, dir := range writeDirs {
 		grants[dir] = "write"
 	}
+	for _, dir := range denyDirs {
+		grants[dir] = "none"
+	}
+	// The baseline always emits this exact deny before custom rules. Avoid a
+	// duplicate TOML key when an operator profile repeats it explicitly.
+	delete(grants, privateStateDir)
 	grantPaths := make([]string, 0, len(grants))
 	for dir := range grants {
 		grantPaths = append(grantPaths, dir)
@@ -290,6 +301,13 @@ func EnsureCodexAgentLaunchProfile(writeDirs []string, launchID string) (profile
 // write roots into a launch-unique managed profile. A write entry dominates a
 // duplicate read entry.
 func EnsureCodexAgentLaunchProfileWithGrants(readDirs, writeDirs []string, launchID string) (profileName, path string, err error) {
+	return EnsureCodexAgentLaunchProfileWithRules(readDirs, writeDirs, nil, launchID)
+}
+
+// EnsureCodexAgentLaunchProfileWithRules renders additive read/write roots and
+// restrictive deny roots into a launch-unique managed profile. Deny dominates
+// an exact duplicate grant.
+func EnsureCodexAgentLaunchProfileWithRules(readDirs, writeDirs, denyDirs []string, launchID string) (profileName, path string, err error) {
 	launchID = strings.TrimSpace(launchID)
 	if launchID == "" {
 		return "", "", fmt.Errorf("managed Codex launch profile requires a launch ID")
@@ -308,7 +326,7 @@ func EnsureCodexAgentLaunchProfileWithGrants(readDirs, writeDirs []string, launc
 	if err != nil {
 		return "", "", err
 	}
-	path, err = ensureCodexAgentProfileForGrantsNamed(profileName, sock, privateStateDir, readDirs, writeDirs)
+	path, err = ensureCodexAgentProfileForRulesNamed(profileName, sock, privateStateDir, readDirs, writeDirs, denyDirs)
 	return profileName, path, err
 }
 
@@ -394,7 +412,11 @@ func ensureCodexAgentProfileForWriteDirsNamed(profileName, socketPath, privateSt
 }
 
 func ensureCodexAgentProfileForGrantsNamed(profileName, socketPath, privateStateDir string, readDirs, writeDirs []string) (string, error) {
-	content, err := codexAgentProfileContentForNameAndGrants(profileName, socketPath, privateStateDir, readDirs, writeDirs)
+	return ensureCodexAgentProfileForRulesNamed(profileName, socketPath, privateStateDir, readDirs, writeDirs, nil)
+}
+
+func ensureCodexAgentProfileForRulesNamed(profileName, socketPath, privateStateDir string, readDirs, writeDirs, denyDirs []string) (string, error) {
+	content, err := codexAgentProfileContentForNameAndRules(profileName, socketPath, privateStateDir, readDirs, writeDirs, denyDirs)
 	if err != nil {
 		return "", err
 	}

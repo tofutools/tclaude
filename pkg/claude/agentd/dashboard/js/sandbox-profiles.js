@@ -46,11 +46,13 @@ function profileSummary(p) {
   const env = p.environment || [];
   const reads = fs.filter(g => g.access === 'read').length;
   const writes = fs.filter(g => g.access === 'write').length;
+  const denies = fs.filter(g => g.access === 'deny').length;
   const parts = [];
   if (reads) parts.push(`${reads} read`);
   if (writes) parts.push(`${writes} write`);
+  if (denies) parts.push(`${denies} deny`);
   if (env.length) parts.push(`${env.length} env key${env.length === 1 ? '' : 's'}`);
-  return parts.join(' · ') || 'no additive capabilities';
+  return parts.join(' · ') || 'no filesystem or environment rules';
 }
 
 // profileCapabilitiesHTML renders the profile's grants as a compact, scannable
@@ -61,13 +63,13 @@ function profileSummary(p) {
 function profileCapabilitiesHTML(p) {
   const rows = [];
   for (const g of (p.filesystem || [])) {
-    const acc = g.access === 'write' ? 'write' : 'read';
+    const acc = ['read', 'write', 'deny'].includes(g.access) ? g.access : 'read';
     rows.push(`<div class="sbx-cap"><span class="sbx-cap-tag sbx-cap-${acc}">${acc}</span><span class="sbx-cap-val" title="${esc(g.path)}">${esc(g.path)}</span></div>`);
   }
   for (const e of (p.environment || [])) {
     rows.push(`<div class="sbx-cap"><span class="sbx-cap-tag sbx-cap-env">env</span><span class="sbx-cap-val" title="${esc(e.name)}">${esc(e.name)}</span></div>`);
   }
-  if (!rows.length) return `<div class="sbx-caps sbx-caps-empty">no additive capabilities</div>`;
+  if (!rows.length) return `<div class="sbx-caps sbx-caps-empty">no filesystem or environment rules</div>`;
   return `<div class="sbx-caps">${rows.join('')}</div>`;
 }
 
@@ -112,25 +114,28 @@ function closeManager() { $('#sandbox-profiles-manage-modal').classList.remove('
 // tables exist. Blank rows are dropped on serialize, so an empty trailing row a
 // human is about to fill never lands in the profile.
 
-// The access <select>'s option VALUES stay "read"/"write" (the wire format the
-// daemon reads and rowsToFilesystemJSON serializes); only the visible labels +
+// The access <select>'s option VALUES stay "read"/"write"/"deny" (the wire
+// format the daemon reads and rowsToFilesystemJSON serializes); only the visible labels +
 // tooltip swap to the ward vocabulary in wizard mode — scry (perceive the tree)
 // / inscribe (perceive and inscribe). Like every wizWord spot this is evaluated
 // at render time, so a mid-session theme flip re-letters on the next row render.
 function filesystemRowHTML(grant = {}) {
   const path = esc(grant.path || '');
   const write = grant.access === 'write';
+  const deny = grant.access === 'deny';
   const readLabel = wizWord('read', 'scry');
   const writeLabel = wizWord('write', 'inscribe');
+  const denyLabel = wizWord('deny', 'forbid');
   const accessTitle = wizWord(
-    'read = the agent may read this tree; write = read and write',
-    'scry = the familiar may perceive this tree; inscribe = perceive and inscribe');
+    'read = read-only; write = read and write; deny = no access',
+    'scry = perceive this tree; inscribe = perceive and inscribe; forbid = no access');
   return `<div class="sbx-row" data-sbx-fs-row>
     <input class="sbx-path" type="text" autocomplete="off" spellcheck="false" placeholder="~/path/to/dir or /absolute/path" value="${path}" aria-label="Directory path" />
     <button type="button" class="sbx-browse" data-sbx-browse title="Open a native directory picker on the daemon's desktop">Browse…</button>
     <select class="sbx-access" aria-label="Access level" title="${esc(accessTitle)}">
-      <option value="read"${write ? '' : ' selected'}>${esc(readLabel)}</option>
+      <option value="read"${write || deny ? '' : ' selected'}>${esc(readLabel)}</option>
       <option value="write"${write ? ' selected' : ''}>${esc(writeLabel)}</option>
+      <option value="deny"${deny ? ' selected' : ''}>${esc(denyLabel)}</option>
     </select>
     <button type="button" class="sbx-del" data-sbx-del title="Remove this directory" aria-label="Remove directory">✕</button>
   </div>`;
@@ -294,9 +299,9 @@ function sandboxScribeBrief(token, targetName, seed) {
     ? `This is a proposed replacement for the existing profile named "${targetName}".`
     : 'This is a proposed new sandbox profile.';
   return [
-    'You are a sandbox-profile scribe. Talk with the human to interactively design one additive filesystem/environment sandbox profile.',
+    'You are a sandbox-profile scribe. Talk with the human to interactively design one filesystem/environment sandbox profile.',
     'Critical safety boundary: create a structured DRAFT only. Never create, edit, delete, assign, or apply a sandbox profile; never launch or relaunch an agent; never request sandbox-profiles.manage. Your purpose-specific permission is sandbox-profiles.draft.',
-    'Environment values are ordinary non-secret configuration. Filesystem entries are absolute-path grants with access "read" or "write". The daemon remains authoritative for canonicalization, protected paths, reserved environment variables, duplicate handling, and all other validation.',
+    'Environment values are ordinary non-secret configuration. Filesystem entries are absolute-path rules with access "read", "write", or "deny"; deny means no read or write access. The daemon remains authoritative for canonicalization, protected paths, reserved environment variables, duplicate handling, and all other validation.',
     target,
     `Starting draft:\n${JSON.stringify(seed, null, 2)}`,
     'Discuss the desired paths, access levels, environment names/values, and profile name. Wait until the human agrees that the proposal is ready.',
@@ -448,7 +453,10 @@ function composePreview(applied) {
   for (const { scope, profile } of applied) {
     for (const grant of (profile.filesystem || [])) {
       const prev = fs.get(grant.path);
-      fs.set(grant.path, { access: prev && prev.access === 'write' ? 'write' : grant.access, scope });
+      const rank = { read: 0, write: 1, deny: 2 };
+      if (!prev || rank[grant.access] >= rank[prev.access]) {
+        fs.set(grant.path, { access: grant.access, scope });
+      }
     }
     for (const entry of (profile.environment || [])) env.set(entry.name, scope);
   }

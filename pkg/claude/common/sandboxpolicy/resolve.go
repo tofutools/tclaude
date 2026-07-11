@@ -33,7 +33,8 @@ type Scopes struct {
 
 // ResolutionProvenance explains the effective capability bundle. Filesystem
 // lists every scope that supplied a canonical path because the union uses
-// write-dominates-read, while Environment names the single last-scope winner.
+// deny-dominates-write-dominates-read, while Environment names the single
+// last-scope winner.
 type ResolutionProvenance struct {
 	Applied     []ProfileSource            `json:"applied"`
 	Filesystem  map[string][]ProfileSource `json:"filesystem"`
@@ -55,8 +56,9 @@ type resolvedFilesystemGrant struct {
 }
 
 // Resolve composes global, group, then explicit profiles. Filesystem grants
-// form a canonical directory union where write dominates read independent of
-// tier. Environment entries use last-scope-wins. Every input is normalized at
+// form a canonical directory union where deny dominates write, which dominates
+// read, independent of tier. This makes a restrictive profile safe to layer
+// over a broader global/group grant. Environment entries use last-scope-wins. Every input is normalized at
 // resolution time, and each effective path is resolved once more after merge,
 // so a symlink/ancestor swap since persistence fails closed or follows the new
 // canonical target rather than trusting stale path text.
@@ -96,8 +98,8 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 				filesystem[grant.Path] = resolvedFilesystemGrant{access: grant.Access, sources: []ProfileSource{source}}
 				continue
 			}
-			if grant.Access == AccessWrite {
-				current.access = AccessWrite
+			if accessRank(grant.Access) > accessRank(current.access) {
+				current.access = grant.Access
 			}
 			current.sources = append(current.sources, source)
 			filesystem[grant.Path] = current
@@ -129,8 +131,8 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 			revalidated[canonical.Path] = resolvedFilesystemGrant{access: canonical.Access, sources: append([]ProfileSource(nil), grant.sources...)}
 			continue
 		}
-		if canonical.Access == AccessWrite {
-			current.access = AccessWrite
+		if accessRank(canonical.Access) > accessRank(current.access) {
+			current.access = canonical.Access
 		}
 		current.sources = append(current.sources, grant.sources...)
 		revalidated[canonical.Path] = current

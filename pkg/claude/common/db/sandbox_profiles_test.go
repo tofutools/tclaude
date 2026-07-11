@@ -115,7 +115,13 @@ func TestSandboxProfileNameAndPayloadIntegrity(t *testing.T) {
 	assert.Equal(t, []SandboxFilesystemGrant{{Path: canonicalSame, Access: "write"}}, got.Filesystem)
 	assert.Equal(t, []SandboxEnvironmentEntry{{Name: "A", Value: "1"}}, got.Environment)
 
-	_, err = CreateSandboxProfile(&SandboxProfile{Name: "bad-access", Filesystem: []SandboxFilesystemGrant{{Path: "/x", Access: "deny"}}})
+	denyID, err := CreateSandboxProfile(&SandboxProfile{Name: "deny", Filesystem: []SandboxFilesystemGrant{{Path: same, Access: "deny"}}})
+	require.NoError(t, err)
+	denied, err := GetSandboxProfileByID(denyID)
+	require.NoError(t, err)
+	assert.Equal(t, []SandboxFilesystemGrant{{Path: canonicalSame, Access: "deny"}}, denied.Filesystem)
+
+	_, err = CreateSandboxProfile(&SandboxProfile{Name: "bad-access", Filesystem: []SandboxFilesystemGrant{{Path: "/x", Access: "execute"}}})
 	require.ErrorContains(t, err, "is invalid")
 	_, err = CreateSandboxProfile(&SandboxProfile{Name: "bad-env", Environment: []SandboxEnvironmentEntry{{Name: "A", Value: "1"}, {Name: "A", Value: "2"}}})
 	require.ErrorContains(t, err, "conflicting values")

@@ -61,6 +61,25 @@ func TestCodexAgentProfileContentIncludesAdditiveReadAndWriteGrants(t *testing.T
 	}
 }
 
+func TestCodexAgentProfileContentIncludesDenyRules(t *testing.T) {
+	got, err := codexAgentProfileContentForNameAndRules(
+		"tclaude-agent-test", "/tmp/agentd.sock", "/tmp/private",
+		[]string{"/opt/read", "/opt/secret"}, []string{"/opt/write", "/opt/secret"}, []string{"/opt/secret", "/tmp/private"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `"/opt/secret" = "none"`) {
+		t.Fatalf("profile missing deny rule:\n%s", got)
+	}
+	if strings.Contains(got, `"/opt/secret" = "read"`) || strings.Contains(got, `"/opt/secret" = "write"`) {
+		t.Fatalf("deny must dominate duplicate grants:\n%s", got)
+	}
+	if strings.Count(got, `"/tmp/private" = "none"`) != 1 {
+		t.Fatalf("baseline private-state deny must not produce a duplicate TOML key:\n%s", got)
+	}
+}
+
 // TestCodexAgentProfileContent_WithGitCommonDir pins the repo-scoped grant
 // that lets a sandboxed Codex worker commit from a linked worktree without
 // making the rest of $HOME writable.

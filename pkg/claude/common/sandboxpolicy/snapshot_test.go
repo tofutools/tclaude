@@ -62,6 +62,17 @@ func TestRequireContainedUsesPathCoverageAccessAndExactEnvironment(t *testing.T)
 		changedEnv := makeSnapshot(nil, []EnvironmentEntry{{Name: "SAME", Value: "changed"}})
 		require.ErrorContains(t, RequireContained(parentWrite, changedEnv), "new or changed")
 	})
+	t.Run("parent deny must be preserved", func(t *testing.T) {
+		parent := makeSnapshot([]FilesystemGrant{{Path: root, Access: AccessWrite}, {Path: childDir, Access: AccessDeny}}, nil)
+		withoutDeny := makeSnapshot([]FilesystemGrant{{Path: root, Access: AccessWrite}}, nil)
+		require.ErrorContains(t, RequireContained(parent, withoutDeny), "not preserved")
+		withDeny := makeSnapshot([]FilesystemGrant{{Path: root, Access: AccessWrite}, {Path: childDir, Access: AccessDeny}}, nil)
+		require.NoError(t, RequireContained(parent, withDeny))
+	})
+	t.Run("deny-only policy adds no capability", func(t *testing.T) {
+		denyOnly := makeSnapshot([]FilesystemGrant{{Path: childDir, Access: AccessDeny}}, nil)
+		assert.False(t, HasCapabilities(denyOnly))
+	})
 }
 
 func TestRevalidateSnapshotRejectsFilesystemRetarget(t *testing.T) {

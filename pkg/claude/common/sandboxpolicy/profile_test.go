@@ -56,6 +56,28 @@ func TestNormalizeFilesystemWriteWinsInEitherOrder(t *testing.T) {
 	}
 }
 
+func TestNormalizeFilesystemDenyWinsAndMayCoverProtectedPaths(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, "cache")
+	protected := filepath.Join(home, ".codex")
+	require.NoError(t, os.Mkdir(dir, 0o755))
+	require.NoError(t, os.Mkdir(protected, 0o755))
+	canonicalDir, err := filepath.EvalSymlinks(dir)
+	require.NoError(t, err)
+	canonicalProtected, err := filepath.EvalSymlinks(protected)
+	require.NoError(t, err)
+
+	got, err := Normalize(Profile{Name: "p", Filesystem: []FilesystemGrant{
+		{Path: dir, Access: AccessDeny},
+		{Path: dir, Access: AccessWrite},
+		{Path: protected, Access: AccessDeny},
+	}})
+	require.NoError(t, err)
+	assert.Contains(t, got.Filesystem, FilesystemGrant{Path: canonicalDir, Access: AccessDeny})
+	assert.Contains(t, got.Filesystem, FilesystemGrant{Path: canonicalProtected, Access: AccessDeny})
+}
+
 func TestNormalizeFilesystemRejectsInvalidAndProtectedPaths(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

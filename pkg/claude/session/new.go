@@ -389,7 +389,11 @@ func runNew(params *NewParams) error {
 	}
 	if effectiveSandbox != nil && len(effectiveSandbox.Effective.Filesystem) > 0 &&
 		h.Name == harness.CodexName && params.PermissionProfile != harness.CodexAgentProfile {
-		return fmt.Errorf("unsupported_sandbox_profile_filesystem: codex additive filesystem grants require sandbox %s", harness.SandboxManagedProfile)
+		return fmt.Errorf("unsupported_sandbox_profile_filesystem: codex filesystem rules require sandbox %s", harness.SandboxManagedProfile)
+	}
+	if len(sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessDeny)) > 0 &&
+		h.Name == harness.DefaultName && sandboxMode != harness.ClaudeSandboxOn {
+		return fmt.Errorf("unsupported_sandbox_profile_filesystem: Claude filesystem deny rules require sandbox %s", harness.ClaudeSandboxOn)
 	}
 
 	// Validate --permission-profile: a Codex-only knob (codex -p <name>) that
@@ -718,6 +722,7 @@ func runNew(params *NewParams) error {
 		SandboxMode:            sandboxMode,
 		SandboxWriteDirs:       append(gitWorktreeWriteDirs(params, h.Name, sandboxMode, cwd), sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessWrite)...),
 		SandboxReadDirs:        sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessRead),
+		SandboxDenyDirs:        sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessDeny),
 		AskUserQuestionTimeout: askTimeout,
 		PermissionProfile:      launchPermissionProfile,
 		ApprovalPolicy:         approvalPolicy,
@@ -922,7 +927,8 @@ func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID stri
 	}
 	writeDirs = append(writeDirs, sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessWrite)...)
 	readDirs := sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessRead)
-	profileName, path, err := harness.EnsureCodexAgentLaunchProfileWithGrants(readDirs, writeDirs, launchID)
+	denyDirs := sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessDeny)
+	profileName, path, err := harness.EnsureCodexAgentLaunchProfileWithRules(readDirs, writeDirs, denyDirs, launchID)
 	if err != nil {
 		return "", "", fmt.Errorf("ensure codex permission profile %q: %w", params.PermissionProfile, err)
 	}

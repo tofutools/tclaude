@@ -40,17 +40,30 @@ func sandboxProfileCapabilityFailure(harnessName, sandboxMode string, snapshot *
 	}
 	switch harnessOrDefault(harnessName) {
 	case harness.DefaultName:
+		if strings.TrimSpace(sandboxMode) != harness.ClaudeSandboxOn && snapshotHasDeny(snapshot) {
+			return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_filesystem",
+				fmt.Sprintf("Claude filesystem deny rules require sandbox %q; sandbox %q cannot guarantee enforcement", harness.ClaudeSandboxOn, sandboxMode)}
+		}
 		return nil
 	case harness.CodexName:
 		if strings.TrimSpace(sandboxMode) == harness.SandboxManagedProfile {
 			return nil
 		}
 		return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_filesystem",
-			fmt.Sprintf("Codex additive filesystem grants require sandbox %q; sandbox %q cannot represent them", harness.SandboxManagedProfile, sandboxMode)}
+			fmt.Sprintf("Codex filesystem rules require sandbox %q; sandbox %q cannot represent them", harness.SandboxManagedProfile, sandboxMode)}
 	default:
 		return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_filesystem",
-			fmt.Sprintf("harness %q cannot represent additive sandbox filesystem grants", harnessName)}
+			fmt.Sprintf("harness %q cannot represent sandbox filesystem rules", harnessName)}
 	}
+}
+
+func snapshotHasDeny(snapshot *sandboxpolicy.Snapshot) bool {
+	for _, grant := range snapshot.Effective.Filesystem {
+		if grant.Access == sandboxpolicy.AccessDeny {
+			return true
+		}
+	}
+	return false
 }
 
 type spawnLineageSandbox struct {

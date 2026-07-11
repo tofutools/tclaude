@@ -89,6 +89,26 @@ func TestResolveEmptyScopesReturnsNonNilCollections(t *testing.T) {
 	assert.NotNil(t, got.Provenance.Environment)
 }
 
+func TestResolveExplicitDenyDominatesAmbientGrant(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, "shared")
+	require.NoError(t, os.Mkdir(dir, 0o755))
+	canonical, err := filepath.EvalSymlinks(dir)
+	require.NoError(t, err)
+
+	got, err := Resolve(Scopes{
+		Global:   &Profile{Name: "global", Filesystem: []FilesystemGrant{{Path: dir, Access: AccessWrite}}},
+		Explicit: &Profile{Name: "restricted-agent", Filesystem: []FilesystemGrant{{Path: dir, Access: AccessDeny}}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []FilesystemGrant{{Path: canonical, Access: AccessDeny}}, got.Filesystem)
+	assert.Equal(t, []ProfileSource{
+		{Scope: ScopeGlobal, Profile: "global"},
+		{Scope: ScopeExplicit, Profile: "restricted-agent"},
+	}, got.Provenance.Filesystem[canonical])
+}
+
 func TestResolveRevalidatesPersistedCanonicalPath(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
