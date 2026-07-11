@@ -170,15 +170,17 @@ group. (Turning the agent on/off is the status dot's job — see above.
 Permanently *deleting* an agent is offered on the virtual Ungrouped
 group's rows, not on grouped rows — see below.)
 
-Per-group actions live in the group header: **+ spawn agent**, **+ add
+Per-group quick actions live above the roster as icon-only buttons (hover for
+their labels): **spawn agent**, **create subgroup**, **power on**, and
+**shutdown**. The remaining actions live in the group header menu: **+ add
 member** (a searchable keyboard-navigable overlay), **⏰ multicast** cron,
 **✉ message** (a one-shot message to the group or a ticked subset),
 **rename**, **⤓ export** (the whole group to a portable `.zip`), **🧹
 cleanup** (bulk-remove confirmed-offline members — see [Cleanup](#cleanup)),
 **🪟 windows…** (bulk focus/unfocus the members' terminal windows —
-optionally auto-tiled into a grid, see [Config](#config)), **🟢
-power on** (resume every offline member), **🛑 shutdown** (stop every
-running member), and **delete group**. The
+optionally auto-tiled into a grid, see [Config](#config)), and **delete group**.
+The subgroup shortcut opens the standard create-group form with the current
+group fixed as its parent. The
 header also carries three click-to-edit chips: **📁 start-dir** (the default
 working directory for agents spawned into the group), **📋 startup-context**
 (shared guidance delivered to each spawned agent's inbox), and a **👥

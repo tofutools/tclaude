@@ -53,6 +53,39 @@ func serveDashboardGroups(w http.ResponseWriter, r *http.Request) {
 	mux.ServeHTTP(w, r)
 }
 
+func TestDashboardEdit_CreateSubgroup(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	parentID, err := db.CreateAgentGroup("parent", "")
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	r := dashboardRequest(http.MethodPost, "/api/groups", `{"name":"child","parent":"parent"}`)
+	serveDashboardGroups(w, r)
+	require.Equal(t, http.StatusCreated, w.Code, "body=%s", w.Body.String())
+
+	child, err := db.GetAgentGroupByName("child")
+	require.NoError(t, err)
+	require.NotNil(t, child)
+	require.NotNil(t, child.ParentGroupID)
+	assert.Equal(t, parentID, *child.ParentGroupID)
+}
+
+func TestDashboardEdit_CreateSubgroupMissingParent(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	w := httptest.NewRecorder()
+	r := dashboardRequest(http.MethodPost, "/api/groups", `{"name":"child","parent":"missing"}`)
+	serveDashboardGroups(w, r)
+	assert.Equal(t, http.StatusNotFound, w.Code, "body=%s", w.Body.String())
+
+	child, err := db.GetAgentGroupByName("child")
+	require.NoError(t, err)
+	assert.Nil(t, child, "a failed nested create must not leave a top-level group behind")
+}
+
 func TestDashboardEdit_RemoveMember(t *testing.T) {
 	setupTestDB(t)
 	withDashboardAuth(t)

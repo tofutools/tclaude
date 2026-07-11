@@ -13,7 +13,7 @@ import { renderDashDefaultProfile } from './render.js';
 import {
   openSudoGrantModal, openCronCreateModal, openCronEditModal,
 } from './modal-cron.js';
-import { openMessageCreateModal, openPermEditModal } from './modal-message.js';
+import { openMessageCreateModal, openPermEditModal, openGroupCreateModal } from './modal-message.js';
 import { openHumanReplyModal } from './modal-human-reply.js';
 import { openGroupContextModal, openGroupCloneModal, openFromGroupModal } from './modal-templates.js';
 import { openLinkModal, openLinksManageModal } from './modal-link-wt.js';
@@ -988,6 +988,11 @@ function bindRowActions() {
           // Open the spawn modal pre-pinned to this group. The
           // modal manages its own POST + refresh on success.
           openAgentSpawnModal({groupName: group});
+          return;
+        }
+        case 'create-subgroup': {
+          // Reuse the standard group form, pinned to this group as parent.
+          openGroupCreateModal(undefined, group);
           return;
         }
         case 'clone': {

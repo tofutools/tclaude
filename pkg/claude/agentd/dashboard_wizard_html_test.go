@@ -355,12 +355,12 @@ func TestDashboardHTML_WizardPowerButtons(t *testing.T) {
 	// (shutdown). Global carries the "…all" variant, per-group the bare verb.
 	must(`<span class="pwr-label-wizard">✨ Awaken all</span>`, "the global Power On chip reads Awaken in wizard mode")
 	must(`<span class="pwr-label-wizard">🌙 Slumber all</span>`, "the global Shutdown chip reads Slumber in wizard mode")
-	must(`<span class="pwr-label-wizard">✨ Awaken</span>`, "the per-group Power On chip reads Awaken in wizard mode")
-	must(`<span class="pwr-label-wizard">🌙 Slumber</span>`, "the per-group Shutdown chip reads Slumber in wizard mode")
+	must(`<span class="pwr-label-wizard" aria-hidden="true">✨</span>`, "the per-group Power On chip uses an icon in wizard mode")
+	must(`<span class="pwr-label-wizard" aria-hidden="true">🌙</span>`, "the per-group Shutdown chip uses an icon in wizard mode")
 
 	// The regular-theme labels stay honest (both spans always emitted).
 	must(`<span class="pwr-label-regular">🟢 power on all</span>`, "the global Power On chip keeps its plain label")
-	must(`<span class="pwr-label-regular">🛑 shutdown</span>`, "the per-group Shutdown chip keeps its plain label")
+	must(`<span class="pwr-label-regular" aria-hidden="true">🛑</span>`, "the per-group Shutdown chip is icon-only")
 
 	// WCAG 2.5.3 Label-in-Name: since the visible label swaps per theme, the
 	// aria-label must contain BOTH the wizard word AND the *exact* regular
@@ -772,13 +772,10 @@ func TestDashboardHTML_WizardSummonButton(t *testing.T) {
 		}
 	}
 
-	// Label copy: a pure-CSS span swap emitted by render.js, mirroring the
-	// dialog title's .spawn-title-regular/.spawn-title-wizard pair. Both spans
-	// must exist in the rendered button and the swap rules in CSS.
-	must(`<span class="spawn-btn-label-regular">spawn</span>`, "the default spawn-button label span")
-	must(`<span class="spawn-btn-label-wizard">🔮 Summon</span>`, "the wizard spawn-button label span")
-	must("body.wizard .spawn-btn .spawn-btn-label-regular", "wizard hides the default button label")
-	must("body.wizard .spawn-btn .spawn-btn-label-wizard", "wizard shows the Summon button label")
+	// The quick action is icon-only in both themes; wizard mode swaps the
+	// regular user-plus SVG for a compact crystal-ball glyph.
+	must(`<span class="spawn-btn-label-wizard" aria-hidden="true">🔮</span>`, "the wizard spawn-button icon")
+	must("body.wizard .spawn-btn .spawn-btn-label-wizard", "wizard shows the Summon button icon")
 
 	// The SVG glyph gives way to the 🔮 in the wizard label.
 	must("body.wizard .spawn-btn .spawn-ico", "wizard hides the button's SVG glyph")
