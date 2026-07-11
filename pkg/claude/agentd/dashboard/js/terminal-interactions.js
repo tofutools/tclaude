@@ -37,8 +37,13 @@ export function decodeOSC52(payload) {
   if (typeof payload !== 'string') return null;
   const separator = payload.indexOf(';');
   if (separator < 0) return null;
+  // Check the unsliced string first. xterm has already accumulated the OSC
+  // payload by this point, but an oversized sequence should not cause another
+  // large string allocation here before we reject it.
+  const encodedLength = payload.length - separator - 1;
+  if (encodedLength > Math.ceil(MAX_OSC52_BYTES / 3) * 4) return null;
   const encoded = payload.slice(separator + 1);
-  if (encoded === '?' || encoded.length > Math.ceil(MAX_OSC52_BYTES / 3) * 4) return null;
+  if (encoded === '?') return null;
   // OSC 52 uses ordinary RFC 4648 base64. Reject whitespace and URL-safe
   // variants rather than letting browser-specific atob leniency diverge.
   if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) return null;
