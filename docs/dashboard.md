@@ -266,9 +266,13 @@ is spawned or relaunched. The daemon remains authoritative for canonical path,
 protected-root, reserved-variable, containment, and harness capability checks.
 
 For routine assignment, the Groups toolbar has a global 🛡 selector beside the
-dashboard spawn-profile default, and every group header has its own 🛡 selector
-beside the group's spawn-profile control. Use the full manager to author or
-inspect profiles; use these quick selectors to assign or clear them in context.
+dashboard spawn-profile default, and every group header has its own 🛡 chip
+beside the group's 🧠 spawn-profile chip. The group chip behaves like the 🧠
+chip: icon-only while the group just inherits the global default, the assigned
+profile name when one is set, and a click opens a one-shot picker (including a
+"＋ new sandbox profile…" shortcut into the editor). Use the full manager to
+author or inspect profiles; use these quick controls to assign or clear them
+in context.
 
 ### Templates
 

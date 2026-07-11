@@ -384,42 +384,32 @@ function bindSandboxProfilesUI() {
   });
   $('#agent-spawn-sandbox-profile').addEventListener('change', () => refreshSpawnSandboxProfileUI($('#agent-spawn-group').value));
 
-  // Assignment belongs next to the scope it affects. The global selector is
-  // static; group selectors are rebuilt by the snapshot renderer, so one
-  // delegated listener covers every current and future group row.
+  // The static global quick selector is the only <select>-backed assignment
+  // control left; the per-group assignment moved into the 🛡 header chip,
+  // whose picker lives with the other chip pickers in row-actions.js.
   $('#dashboard-default-sandbox-profile').addEventListener('change', e => {
-    void setQuickAssignment(e.target, '', e.target.value);
-  });
-  $('#groups-list').addEventListener('change', e => {
-    const select = e.target.closest('[data-sandbox-profile-quick-group]');
-    if (!select) return;
-    void setQuickAssignment(select, select.dataset.sandboxProfileQuickGroup, select.value);
+    void setQuickAssignment(e.target, e.target.value);
   });
 }
 
-async function setQuickAssignment(select, group, name) {
+async function setQuickAssignment(select, name) {
   if (select.dataset.sandboxProfileQuickPending === 'true') return;
   const previous = select.dataset.current || '';
   if (name === QUICK_NEW) {
     select.value = previous;
-    openEditor(null, { onCreate: created => setQuickAssignment(select, group, created) });
+    openEditor(null, { onCreate: created => setQuickAssignment(select, created) });
     return;
   }
   select.dataset.sandboxProfileQuickPending = 'true';
   select.disabled = true;
   try {
-    const path = group
-      ? `/api/groups/${encodeURIComponent(group)}/sandbox-profile`
-      : '/api/sandbox-profile-default';
-    await api(path, {
+    await api('/api/sandbox-profile-default', {
       method: name ? 'PUT' : 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: name ? JSON.stringify({ name }) : undefined,
     });
     select.dataset.current = name;
-    toast(group
-      ? (name ? `${group} sandbox profile: ${name}` : `${group} sandbox profile cleared`)
-      : (name ? `global sandbox profile: ${name}` : 'global sandbox profile cleared'));
+    toast(name ? `global sandbox profile: ${name}` : 'global sandbox profile cleared');
     // Release the refresh guard before asking refresh() to repaint the accepted
     // assignment. While the request was in flight the guard prevented the 2s
     // poll from replacing this disabled control with a writable stale copy.
@@ -431,12 +421,15 @@ async function setQuickAssignment(select, group, name) {
     select.value = previous;
     toast(err.message || String(err), true);
   } finally {
-    // The global control is a static DOM node (unlike group controls, which a
-    // successful refresh replaces), so it must be re-enabled explicitly.
-    // Re-enabling a detached group node is harmless.
+    // The control is a static DOM node the refresh never replaces, so it must
+    // be re-enabled explicitly (the try arm already did on success; the extra
+    // delete/enable here is a harmless idempotent repeat).
     delete select.dataset.sandboxProfileQuickPending;
     select.disabled = false;
   }
 }
 
-export { bindSandboxProfilesUI, refreshSpawnSandboxProfileUI };
+export {
+  bindSandboxProfilesUI, refreshSpawnSandboxProfileUI,
+  loadSandboxProfiles, openEditor as openSandboxProfileEditor,
+};
