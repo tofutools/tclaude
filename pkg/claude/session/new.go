@@ -979,6 +979,22 @@ func resolveSessionDir(dir string) (string, error) {
 // BuildCommand output) or the plain shell's exec line. Shared by runNew and
 // runNewShell.
 func launchDetachedTmuxSession(tmuxSession, cwd, cmd string) error {
+	// Never launch tmux from a dead working directory. If this process's cwd
+	// has been deleted (e.g. the daemon that forked us was started from a
+	// since-removed dir — Ansible's task tmpdir being the observed case), a
+	// FRESH tmux server inherits it, and tmux (observed on 3.7b) then silently
+	// fails to honor `new-session -c`: the pane starts in the deleted dir and
+	// the harness dies on getcwd() at startup (claude/Bun exits with a bare
+	// ENOENT, codex likewise). The pane's exit takes the whole per-spawn server
+	// with it, so nothing is left to inspect and the spawn just never enrolls.
+	// Re-home to the session's own cwd, which callers have already resolved.
+	if _, err := os.Getwd(); err != nil {
+		slog.Warn("tmux launch: process cwd is gone; re-homing before starting tmux",
+			"session", tmuxSession, "new_cwd", cwd, "getwd_error", err)
+		if cerr := os.Chdir(cwd); cerr != nil {
+			return fmt.Errorf("process cwd is gone and re-homing to %q failed: %w", cwd, cerr)
+		}
+	}
 	// Use tmux new-session -d to create detached; sh -c carries the env exports.
 	tmuxCmd := clcommon.TmuxCommand("new-session", "-d", "-s", tmuxSession, "-c", cwd, "sh", "-c", cmd)
 	tmuxCmd.Stdout = os.Stdout

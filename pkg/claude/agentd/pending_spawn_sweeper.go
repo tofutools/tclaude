@@ -1,6 +1,8 @@
 package agentd
 
 import (
+	"database/sql"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -64,16 +66,21 @@ func sweepPendingSpawns() {
 func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 	// The spawn label is the session-row id; the first-turn hook writes the
 	// conv-id onto that row (keyed by the spawned process's
-	// TCLAUDE_SESSION_ID=label).
+	// TCLAUDE_SESSION_ID=label). LoadSession surfaces a missing row as
+	// sql.ErrNoRows (it never returns nil, nil), so that terminal case must be
+	// separated from genuinely transient DB errors here — treating it as
+	// transient made an orphaned pending row (wrapper died before
+	// SaveSessionState, so the session row never existed) warn-loop forever.
 	sess, err := db.LoadSession(ps.Label)
-	if err != nil {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		slog.Warn("pending-spawn sweeper: load session failed",
 			"label", ps.Label, "error", err)
 		return // transient — retry next tick
 	}
 	if sess == nil {
-		// The session row is gone — the spawn can never enroll. Drop the
-		// orphaned pending row so the table doesn't leak.
+		// The session row is gone (deleted, or never created because the
+		// launch wrapper died before writing it) — the spawn can never
+		// enroll. Drop the orphaned pending row so the table doesn't leak.
 		slog.Info("pending-spawn sweeper: session row gone; dropping pending spawn",
 			"label", ps.Label)
 		deletePendingSpawnRow(ps.Label)

@@ -321,3 +321,26 @@ func (s *gatedCodexSpawner) firstTurn(t *testing.T, label string) string {
 	require.NoError(t, db.SetSessionConvID(label, cx.ConvID), "codex first turn: hook writes conv-id onto the session row")
 	return cx.ConvID
 }
+
+// Scenario: a pending_spawns row whose session row NEVER existed — the forked
+// `tclaude session new` wrapper died before SaveSessionState (observed live
+// when a daemon with a deleted cwd launched panes that crashed at startup) —
+// is a terminal orphan, not a transient error. LoadSession surfaces the
+// missing row as sql.ErrNoRows; the sweeper must treat that like "session row
+// gone" and drop the pending row, not warn-loop on it every tick forever.
+func TestPendingSpawn_OrphanWithoutSessionRowIsDropped(t *testing.T) {
+	f := newFlow(t)
+	g := f.HaveGroup("orphan-crew")
+
+	require.NoError(t, db.InsertPendingSpawn(&db.PendingSpawn{
+		Label:   "spwn-orphan-test",
+		GroupID: g.ID,
+		Name:    "never-born",
+	}), "seed an orphaned pending row (no matching session row)")
+
+	agentd.RunPendingSpawnSweepForTest()
+
+	gone, err := db.GetPendingSpawn("spwn-orphan-test")
+	require.NoError(t, err, "GetPendingSpawn after sweep")
+	assert.Nil(t, gone, "sweeper drops a pending row whose session row never existed")
+}
