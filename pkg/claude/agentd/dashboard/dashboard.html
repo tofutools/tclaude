@@ -537,7 +537,7 @@
       <div class="cfg-field">
         <span class="cfg-label">Default terminal</span>
         <label class="cfg-inline"><input type="checkbox" id="cfg-dashboard-default-web-terminal" /> open focus / windows / terminals as web terminals in the dashboard</label>
-        <span class="cfg-hint">The per-agent <strong>focus</strong> (👁), <strong>open window</strong> and <strong>open terminal</strong> actions — plus the same commands in the ⌘ palette, a click on a CWD path cell, and a message's <em>focus</em> button — normally pop a <em>native</em> OS terminal window. <strong>Checked</strong> routes them all to an <em>in-browser</em> terminal pane in the dashboard's <strong>Terminals</strong> tab instead — the same surface the dedicated "web term" / "web window" buttons always use — so you never leave the browser. The dedicated web buttons (already always web) and the native-window bulk 🪟 <em>windows…</em> modal are unaffected. Off by default. Stored as <code>dashboard.default_terminal</code> (the default <code>native</code> is omitted; checked writes <code>web</code>).</span>
+        <span class="cfg-hint">The per-agent <strong>focus</strong> (👁), <strong>open window</strong> and <strong>open terminal</strong> actions — plus bulk focus from the 🪟 <em>windows…</em> modal, the same commands in the ⌘ palette, a click on a CWD path cell, and a message's <em>focus</em> button — normally pop a <em>native</em> OS terminal window. <strong>Checked</strong> routes them all to <em>in-browser</em> terminal panes in the dashboard's <strong>Terminals</strong> tab instead — the same surface the dedicated "web term" / "web window" buttons always use — so you never leave the browser. Bulk unfocus still detaches the selected terminal clients. The dedicated web buttons are already always web. Off by default. Stored as <code>dashboard.default_terminal</code> (the default <code>native</code> is omitted; checked writes <code>web</code>).</span>
       </div>
       <div class="cfg-field">
         <span class="cfg-label">Agent hide button</span>
@@ -2440,10 +2440,10 @@
            action" so a11y stays legible in both themes. -->
       <label><input type="radio" name="window-direction" value="focus" checked />
         <span class="window-dir-label-regular">Focus</span><span class="window-dir-label-wizard">👁 Reveal</span>
-        <span class="opt-note"><span class="window-dir-note-regular">— open or raise a terminal window for each selected agent</span><span class="window-dir-note-wizard">— conjure a scrying portal for each chosen familiar</span></span></label>
+        <span class="opt-note"><span class="window-dir-note-regular">— open or focus a terminal for each selected agent</span><span class="window-dir-note-wizard">— conjure a scrying portal for each chosen familiar</span></span></label>
       <label><input type="radio" name="window-direction" value="unfocus" />
         <span class="window-dir-label-regular">Unfocus</span><span class="window-dir-label-wizard">🌫 Veil</span>
-        <span class="opt-note"><span class="window-dir-note-regular">— detach the terminal windows so the desktop is decluttered. Detach-only: a window or tab tclaude opened closes itself, other tabs are untouched. The agents keep running — never the agent process.</span><span class="window-dir-note-wizard">— draw the veil over the chosen familiars' scrying portals so the desktop is decluttered. Veil-only: a window or tab tclaude opened closes itself, other tabs are untouched. The familiars keep channeling — never the familiar itself.</span></span></label>
+        <span class="opt-note"><span class="window-dir-note-regular">— detach the terminal views so the dashboard or desktop is decluttered. Detach-only: a window or tab tclaude opened closes itself, other tabs are untouched. The agents keep running — never the agent process.</span><span class="window-dir-note-wizard">— draw the veil over the chosen familiars' scrying portals so the desktop is decluttered. Veil-only: a window or tab tclaude opened closes itself, other tabs are untouched. The familiars keep channeling — never the familiar itself.</span></span></label>
     </div>
     <div class="cleanup-toolbar">
       <button type="button" id="window-select-all">select all</button>

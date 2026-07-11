@@ -459,6 +459,7 @@ func TestDashboardAssets_GroupQuickFoldWired(t *testing.T) {
 //   - terminals-tab.js owns the shared openWebWindowPane / openWebTermPane
 //     pane-openers the web buttons AND the routed actions both call;
 //   - row-actions.js routes jump / open-window / term / term-dir / msg-focus;
+//   - refresh.js routes the bulk windows-modal focus;
 //   - palette.js routes the command-palette "focus window";
 //   - config.js + dashboard.html expose the Config-tab checkbox.
 func TestDashboardAssets_DefaultTerminalWired(t *testing.T) {
@@ -476,6 +477,10 @@ func TestDashboardAssets_DefaultTerminalWired(t *testing.T) {
 		"if (webTerminalDefault()) { openWebTermPane(agent, label, which); return; }",
 		// palette.js — the command-palette "focus window" branch.
 		"if (webTerminalDefault()) { openWebWindowPane(conv, label); toast(",
+		// refresh.js — bulk focus opens every selected agent as a web pane and
+		// skips the native-only /api/agent-windows focus endpoint.
+		"if (dir === 'focus' && webTerminalDefault()) {",
+		"openWebWindowPane(c.agent_id || c.conv_id, c.title || c.conv_id.slice(0, 8));",
 		// config.js — load + gather the Config-tab checkbox.
 		"#cfg-dashboard-default-web-terminal",
 		"dashboard.default_terminal = 'web'",

@@ -749,12 +749,12 @@ type snapshotPayload struct {
 	// body.group-quick-fold off this each poll. See Config.GroupQuickOptions.
 	GroupQuickOptions string `json:"group_quick_options"`
 	// DefaultTerminal mirrors config dashboard.default_terminal — how the
-	// dashboard's per-agent focus / open-window / open-terminal actions open a
-	// console: "native" (pop a native OS window, the default) or "web" (open an
-	// in-browser terminal pane in the Terminals tab). row-actions.js /
-	// palette.js read this off each poll to route those actions; the dedicated
-	// "web term" / "web window" buttons ignore it (always web). See
-	// Config.DefaultTerminal.
+	// dashboard's per-agent focus / open-window / open-terminal actions and bulk
+	// windows-modal focus open a console: "native" (pop a native OS window, the
+	// default) or "web" (open an in-browser terminal pane in the Terminals tab).
+	// row-actions.js / palette.js / refresh.js read this off each poll to route
+	// those actions; the dedicated "web term" / "web window" buttons ignore it
+	// (always web). See Config.DefaultTerminal.
 	DefaultTerminal string `json:"default_terminal"`
 	// ShowAgentHideButton mirrors config dashboard.show_agent_hide_button —
 	// whether each agent row's "hide window" button (the slashed-eye beside

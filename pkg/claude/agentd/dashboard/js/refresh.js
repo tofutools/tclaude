@@ -32,11 +32,11 @@ import { renderDock } from './dock.js';
 // row-actions rename-rollback). All deliberate, benign cycles (see
 // render.js): TDZ-safe — no top-level code reads a cyclic import.
 import { renameEditing } from './row-actions.js';
-import { closeTerminalsForWindowOp } from './terminals-tab.js';
+import { closeTerminalsForWindowOp, openWebWindowPane } from './terminals-tab.js';
 import { dndDragActive } from './dnd.js';
 import { groupReorderActive } from './group-reorder.js';
 import { dockDragActive } from './dock-dnd.js';
-import { lastSnapshot, setLastSnapshot } from './dashboard.js';
+import { lastSnapshot, setLastSnapshot, webTerminalDefault } from './dashboard.js';
 import { setVegasRegularMode, isWizardActive } from './slop.js';
 import { setHScrollFollow } from './hscroll.js';
 import { noteConnected, noteDisconnected } from './connection.js';
@@ -2486,9 +2486,10 @@ async function openWorktreeCleanup(group) {
 // earns its chip, so the common one-group dashboard can bulk-toggle by
 // group.
 //
-// It is window-only: focus opens/raises terminal windows, unfocus
-// detaches them. Neither touches an agent process — the agents keep
-// running. scope is "group" (groupName set) or "all".
+// It is terminal-view-only: focus opens/raises native terminal windows, or web
+// terminal panes when dashboard.default_terminal="web"; unfocus detaches the
+// selected live-session clients. Neither touches an agent process — the agents
+// keep running. scope is "group" (groupName set) or "all".
 function openWindowModal(scope, groupName) {
   const snap = lastSnapshot || {};
   const where = scope === 'group' ? `group "${groupName}"` : 'the dashboard';
@@ -2602,13 +2603,18 @@ function openWindowModal(scope, groupName) {
     if (direction() === 'focus') {
       hintEl.textContent = wiz
         ? `Conjure a scrying portal for each chosen channeling familiar in ${where}.`
-        : `Open or raise a terminal window for each selected running agent in ${where}.`;
+        : webTerminalDefault()
+          ? `Open or focus a web terminal pane for each selected running agent in ${where}.`
+          : `Open or raise a terminal window for each selected running agent in ${where}.`;
     } else {
       hintEl.textContent = wiz
         ? `Draw the veil over the chosen familiars' scrying portals in ${where} so the `
           + `desktop is decluttered. The familiars keep channeling — only the portals are dismissed.`
-        : `Detach the terminal windows of the selected running agents in ${where} so the `
-          + `desktop is decluttered. The agents keep running — only the windows are dismissed.`;
+        : webTerminalDefault()
+          ? `Detach the web terminal panes of the selected running agents in ${where}. `
+            + `The agents keep running — only the terminal views are dismissed.`
+          : `Detach the terminal windows of the selected running agents in ${where} so the `
+            + `desktop is decluttered. The agents keep running — only the windows are dismissed.`;
     }
   }
   function renderGroups() {
@@ -2731,9 +2737,25 @@ function openWindowModal(scope, groupName) {
     // Lead with the stable agent_id (the BE resolves it back to the conv-id
     // the universe is keyed on), falling back to conv_id for a candidate
     // with no actor id.
-    const convs = candidates.filter(c => c.checked).map(c => c.agent_id || c.conv_id);
+    const selected = candidates.filter(c => c.checked);
+    const convs = selected.map(c => c.agent_id || c.conv_id);
     if (convs.length === 0) return;
     const dir = direction();
+    // The default-terminal setting applies to this bulk focus just like it does
+    // to the per-agent focus action. Each helper call opens (or deduplicates and
+    // focuses) one live-session pane in the dashboard's Terminals tab. Skip the
+    // native-only /api/agent-windows focus path entirely: it cannot open browser
+    // panes and reports only that a best-effort desktop focus was dispatched.
+    // Bulk unfocus still uses the endpoint below so it reliably detaches the
+    // selected tmux clients and closes their matching web panes.
+    if (dir === 'focus' && webTerminalDefault()) {
+      cleanup();
+      for (const c of selected) {
+        openWebWindowPane(c.agent_id || c.conv_id, c.title || c.conv_id.slice(0, 8));
+      }
+      toast(`focus web terminals: ${selected.length} focused`);
+      return;
+    }
     const payload = { direction: dir, scope, convs };
     if (scope === 'group') payload.group = groupName;
     submitBtn.disabled = true;

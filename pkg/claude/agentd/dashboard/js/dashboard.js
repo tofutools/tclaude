@@ -85,10 +85,12 @@ export function setLastSnapshot(v) { lastSnapshot = v; }
 
 // webTerminalDefault reports whether the operator has opted into in-browser
 // web terminals as the default for the dashboard's per-agent focus /
-// open-window / open-terminal actions (config dashboard.default_terminal="web").
+// open-window / open-terminal actions and bulk windows-modal focus (config
+// dashboard.default_terminal="web").
 // Read off the latest snapshot so it tracks a live config change on the next
-// 2s poll. row-actions.js and palette.js gate their native-vs-web routing on
-// this; the dedicated "web term" / "web window" buttons ignore it (always web).
+// 2s poll. row-actions.js, palette.js and refresh.js gate their native-vs-web
+// routing on this; the dedicated "web term" / "web window" buttons ignore it
+// (always web).
 export function webTerminalDefault() {
   return !!(lastSnapshot && lastSnapshot.default_terminal === 'web');
 }
