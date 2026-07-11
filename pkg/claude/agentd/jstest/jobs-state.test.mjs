@@ -72,3 +72,28 @@ test('Jobs state explicitly owns query, paging, sort, requests, and derived rows
   assert.equal(state.request.value.hasLoaded, true);
   assert.equal(state.view.value.rows.length, 2, 'failed refresh retains the last successful page');
 });
+
+test('Jobs parameter changes immediately invalidate requests but retain requested paging', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createJobsState } = await harness.importDashboardModule('js/jobs-state.js');
+  const snapshot = harness.signals.signal({
+    jobs: [],
+    paging: { jobs: { offset: 0, limit: 25, total: 80, total_unfiltered: 80 } },
+  });
+  const state = createJobsState({ snapshot, prefs: fakePrefs() });
+  state.initialize();
+  state.setPageSize(25);
+
+  state.beginRequest(10);
+  assert.equal(state.acceptsRequest(10), true);
+  state.setQuery('new query');
+  assert.equal(state.acceptsRequest(10), false, 'old-query response is invalid immediately');
+  assert.equal(state.commitRequest(10), false);
+
+  state.beginRequest(11);
+  assert.equal(state.page('next', 80), true);
+  assert.equal(state.offset.value, 25);
+  assert.equal(state.acceptsRequest(11), false, 'old-page response is invalid immediately');
+  state.failRequest(11, new Error('network down'));
+  assert.equal(state.offset.value, 25, 'failed request does not restore the previous offset');
+});

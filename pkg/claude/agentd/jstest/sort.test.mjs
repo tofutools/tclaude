@@ -20,15 +20,30 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   cycleSort, sortHead, applySort, loadSortState,
+  persistTableSort,
   RETIRED_COLS, RETIRED_ACCESSORS,
   CONVERSATIONS_COLS, CONVERSATIONS_ACCESSORS,
   PENDING_COLS, PENDING_ACCESSORS,
 } from '../dashboard/js/sort.js';
+import { dashPrefs } from '../dashboard/js/prefs.js';
 
 // colKeys lists every sortable column key in a spec (entries with a `col`),
 // in order. The leading online-dot and trailing action columns carry no
 // `col`, so they're correctly excluded — proving they stay non-sortable.
 const colKeys = cols => cols.filter(c => c.col).map(c => c.col);
+
+test('legacy sort writes preserve feature-island entries added after boot', () => {
+  dashPrefs.setItem('tclaude.dash.sort', JSON.stringify({ sudo: { col: 'slug', dir: 'asc' } }));
+  loadSortState();
+  persistTableSort('jobs', { col: 'name', dir: 'desc' });
+  cycleSort('sudo', 'slug');
+  assert.deepEqual(JSON.parse(dashPrefs.getItem('tclaude.dash.sort')), {
+    sudo: { col: 'slug', dir: 'desc' },
+    jobs: { col: 'name', dir: 'desc' },
+  });
+  dashPrefs.removeItem('tclaude.dash.sort');
+  loadSortState();
+});
 
 // --- Retired -----------------------------------------------------------
 

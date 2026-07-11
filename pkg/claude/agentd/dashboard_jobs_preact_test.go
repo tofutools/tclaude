@@ -40,6 +40,8 @@ func TestDashboardJobsPreactBoundary(t *testing.T) {
 		"await mountJobsFeature({",
 		"jobsActive ? get('/api/jobs?' + jobs.params.value)",
 		"jobs.beginRequest(requestId)",
+		"!jobs.acceptsRequest(requestId)",
+		"jobsResult.ok) jobs.syncServedOffset",
 		"jobs.commitRequest(requestId)",
 		"jobs.failRequest(requestId, jobsResult.error)",
 	} {
