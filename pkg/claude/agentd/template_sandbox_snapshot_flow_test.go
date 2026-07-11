@@ -84,10 +84,8 @@ func TestTemplateWavesFreezeEffectiveSandboxAcrossProfileEdit(t *testing.T) {
 func TestTemplateReinforceResolvesExistingGroupSandboxOnce(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("crew")
-	g, err := db.GetAgentGroupByName("crew")
-	require.NoError(t, err)
 
-	_, err = db.CreateSandboxProfile(&db.SandboxProfile{
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{
 		Name: "global-policy",
 		Environment: []db.SandboxEnvironmentEntry{
 			{Name: "TCL_SHARED_POLICY", Value: "global"},
@@ -106,7 +104,7 @@ func TestTemplateReinforceResolvesExistingGroupSandboxOnce(t *testing.T) {
 	require.NoError(t, db.SetGlobalSandboxProfile("global-policy"))
 	_, err = db.SetAgentGroupSandboxProfile("crew", "crew-policy")
 	require.NoError(t, err)
-	g, err = db.GetAgentGroupByName("crew")
+	g, err := db.GetAgentGroupByName("crew")
 	require.NoError(t, err)
 
 	require.Equal(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates",
