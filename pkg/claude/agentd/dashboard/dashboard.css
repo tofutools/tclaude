@@ -1868,26 +1868,23 @@ details[open] > summary .group-actions { opacity: 1; }
   vertical-align: middle;
   margin-left: 8px;
   background: #1f6feb; border: 1px solid #1f6feb; color: #fff;
-  border-radius: 4px; padding: 2px 8px; font-size: 11px;
+  border-radius: 4px; padding: 3px 6px; font-size: 11px;
   cursor: pointer; font-family: inherit;
   opacity: 0.4; transition: opacity 0.15s ease;
 }
 .spawn-btn:hover { background: #388bfd; border-color: #388bfd; }
-.spawn-btn .spawn-ico { display: block; }
+.spawn-btn .spawn-ico, .subgroup-btn .subgroup-ico { display: block; }
 details > summary:hover .spawn-btn,
 details[open] > summary .spawn-btn { opacity: 1; }
-/* Per-theme label swap: "spawn" normally, "🔮 Summon" in 🧙 wizard mode. Both
-   spans are always emitted by render.js; CSS picks which shows — the same
-   pure-CSS trick as the spawn dialog's .spawn-title-regular/.spawn-title-wizard
-   pair. The opacity fade (0.4 at rest → 1 on summary hover/open, above) is
-   theme-agnostic and applies to the wizard skin unchanged. The wizard chrome
-   re-skin itself lives next to the rest of the 🧙 spawn theme, further down. */
-.spawn-btn-label-wizard { display: none; }
-body.wizard .spawn-btn .spawn-btn-label-regular { display: none; }
-body.wizard .spawn-btn .spawn-btn-label-wizard { display: inline; }
-/* The SVG "users+" glyph gives way to the 🔮 in the wizard label (out-specifies
+/* Icon swaps for the wizard theme. The opacity fade (0.4 at rest → 1 on
+   summary hover/open, above) is theme-agnostic. */
+.spawn-btn-label-wizard, .subgroup-icon-wizard { display: none; }
+body.wizard .spawn-btn .spawn-btn-label-wizard,
+body.wizard .subgroup-btn .subgroup-icon-wizard { display: inline; }
+/* The SVG "user+" glyph gives way to 🔮 in wizard mode (out-specifies
    the .spawn-btn .spawn-ico { display: block } rule above via body.wizard). */
 body.wizard .spawn-btn .spawn-ico { display: none; }
+body.wizard .subgroup-btn .subgroup-ico { display: none; }
 /* ⚙ options menu — collects a row's / group's less-used actions
    behind a cog. The cog and its .action-menu are siblings inside the
    .row-actions / .group-actions cluster (both position:relative

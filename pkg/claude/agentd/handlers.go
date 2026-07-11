@@ -2663,6 +2663,7 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 		}
 		var body struct {
 			Name           string `json:"name"`
+			Parent         string `json:"parent,omitempty"`
 			Descr          string `json:"descr,omitempty"`
 			DefaultCwd     string `json:"default_cwd,omitempty"`
 			DefaultContext string `json:"default_context,omitempty"`
@@ -2732,7 +2733,15 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "exists", "group already exists")
 			return
 		}
-		id, err := db.CreateAgentGroup(body.Name, groupDescr)
+		id, err := db.CreateAgentGroupWithParent(body.Name, groupDescr, body.Parent)
+		if errors.Is(err, db.ErrGroupParentNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", err.Error())
+			return
+		}
+		if errors.Is(err, db.ErrGroupParentCycle) {
+			writeError(w, http.StatusConflict, "cycle", err.Error())
+			return
+		}
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
@@ -2786,7 +2795,9 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 					"group", body.Name, "creator", creator, "error", err)
 			}
 		}
-		writeJSON(w, http.StatusCreated, map[string]any{"id": id, "name": body.Name})
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"id": id, "name": body.Name, "parent": strings.TrimSpace(body.Parent),
+		})
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET or POST")
 	}

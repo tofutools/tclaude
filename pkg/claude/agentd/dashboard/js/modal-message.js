@@ -666,7 +666,9 @@ function applyGroupCreateTemplate() {
     $('#group-create-context').value = t.default_context || '';
   }
   sourceRow.style.display = '';
-  parentRow.style.display = source ? '' : 'none';
+  // A per-group quick-create already pins the parent. Keep the mirror-source
+  // checkbox out of that path so it cannot imply a different nesting target.
+  parentRow.style.display = source && !groupCreateParent ? '' : 'none';
   taskRow.style.display = '';
   previewRow.style.display = '';
   maxRow.style.display = 'none';
@@ -686,10 +688,23 @@ function renderGroupCreateTemplatePreview() {
     + templateRosterRowsHTML(t, $('#group-create-name').value);
 }
 
-function openGroupCreateModal(presetTemplate) {
+// Set only by the per-group "create subgroup" shortcut. Keeping the parent as
+// modal state lets blank and template-backed creation share this dialog.
+let groupCreateParent = '';
+
+function openGroupCreateModal(presetTemplate, parentGroup) {
   // Start from the live snapshot each open; a stale manage-fetch cache from a
   // prior session must not shadow it.
   gcTemplateCache = null;
+  groupCreateParent = parentGroup || '';
+  const regularTitle = $('#group-create-title .group-create-title-regular');
+  const wizardTitle = $('#group-create-title .group-create-title-wizard');
+  regularTitle.textContent = groupCreateParent
+    ? `Create a subgroup under ${groupCreateParent}`
+    : 'Create a new agent group';
+  wizardTitle.textContent = groupCreateParent
+    ? `⚔ Form a sub-party under ${groupCreateParent}`
+    : '⚔ Form a party';
   $('#group-create-name').value = '';
   $('#group-create-descr').value = '';
   $('#group-create-cwd').value = '';
@@ -745,14 +760,19 @@ async function submitGroupCreate() {
     const r = await fetch('/api/groups', {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, descr, default_cwd: cwd, default_context: context, max_members: maxMembers }),
+      body: JSON.stringify({
+        name, parent: groupCreateParent, descr, default_cwd: cwd,
+        default_context: context, max_members: maxMembers,
+      }),
     });
     if (!r.ok) {
       errEl.textContent = (await r.text()) || `HTTP ${r.status}`;
       return;
     }
     closeGroupCreateModal();
-    toast(`group created: ${name}`);
+    toast(groupCreateParent
+      ? `subgroup created: ${name} under ${groupCreateParent}`
+      : `group created: ${name}`);
     // Persist the expanded state so the new group shows expanded on next render.
     try { dashPrefs.setItem('tclaude.dash.group.' + name, '1'); } catch (_) {}
     recordGroupInteraction(name);
@@ -787,7 +807,8 @@ async function submitGroupCreateFromTemplate(tmpl) {
   submitBtn.disabled = true;
   try {
     const payload = { group_name: name, task, cwd, descr_override: descr, context_override: context };
-    if (mirrorSource && $('#group-create-parent').checked) payload.parent = mirrorSource;
+    if (groupCreateParent) payload.parent = groupCreateParent;
+    else if (mirrorSource && $('#group-create-parent').checked) payload.parent = mirrorSource;
     const r = await fetch(`/api/templates/${encodeURIComponent(tmpl.name)}/instantiate`, {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },

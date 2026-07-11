@@ -66,13 +66,14 @@ func TestDashboardHTML_OptionsMenu(t *testing.T) {
 	// menu. The group keeps spawn / power-on / shutdown; the agent row
 	// keeps focus (jump) + hide.
 	for _, act := range []string{
-		"spawn-agent", "power-on-group", "shutdown-group",
+		"spawn-agent", "create-subgroup", "power-on-group", "shutdown-group",
 	} {
 		must(`data-act="`+act+`"`, "group header keeps "+act+" top-level")
 	}
 	must(`class="spawn-btn"`, "the group spawn button carries the .spawn-btn primary-CTA skin")
-	must(`<span class="spawn-btn-label-regular">spawn</span>`, "the group spawn button renders the word 'spawn' (default-theme label span)")
 	must(`class="spawn-ico"`, "the group spawn button carries the user-plus icon")
+	must(`class="subgroup-ico"`, "the subgroup button carries a portable two-person-plus icon")
+	must(`openGroupCreateModal(undefined, group)`, "the subgroup shortcut opens group create pinned to its parent")
 	must(".spawn-btn {", "the .spawn-btn CSS rule ships with the dashboard — without it the chip falls back to bare browser styling")
 	must("details[open] > summary .spawn-btn { opacity: 1; }",
 		"spawn-btn fades with the rest of the group-action chips when the group is collapsed, brightens on hover / when open")

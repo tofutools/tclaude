@@ -444,6 +444,7 @@ function groupWebTermMenuItem(g) {
 // Feather "user-plus": a person silhouette with a + alongside. Same
 // monochrome-via-currentColor convention as the helpers.js eye icons.
 const SPAWN_ICO_SVG = '<svg class="spawn-ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>';
+const SUBGROUP_ICO_SVG = '<svg class="subgroup-ico" viewBox="0 0 28 24" width="17" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7" cy="7" r="3"/><circle cx="15" cy="7" r="3"/><path d="M1 21v-2a5 5 0 0 1 5-5h2a5 5 0 0 1 5 5v2"/><path d="M12 14h3a5 5 0 0 1 5 5v2"/><line x1="24" y1="7" x2="24" y2="13"/><line x1="27" y1="10" x2="21" y2="10"/></svg>';
 
 // groupMenuItems builds the ⚙ menu's inner HTML (the flat run of <button>
 // rows) for a group. Split out of groupActionsHTML (JOH-392 follow-up) so the
@@ -512,23 +513,16 @@ function groupActionsHTML(g, members) {
   // rest, which made spawn (the primary CTA) hard to find. As a
   // sibling chip it keeps full opacity all the time and the
   // blue-accent .spawn-btn skin in dashboard.css makes it pop.
-  // The label is a pure-CSS per-theme span swap — "spawn" normally, an arcane
-  // "🔮 Summon" in 🧙 wizard mode (the same "always emit, theme picks" trick as
-  // the spawn dialog's title and the activity-bot rows). body.wizard also hides
-  // the SVG glyph and re-skins the chrome; see the .spawn-btn wizard rules in
-  // dashboard.css. The aria-label carries BOTH visible names ("Summon" and
-  // "spawn") so speech-input matches in either theme (WCAG Label-in-Name) — the
-  // accessible name can't span-swap, so it names both up front.
-  return `<button class="spawn-btn" data-act="spawn-agent" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Spawn a new tclaude session and join this group" aria-label="Summon — spawn a new agent into this group">${SPAWN_ICO_SVG}<span class="spawn-btn-label-regular">spawn</span><span class="spawn-btn-label-wizard">🔮 Summon</span></button>`
+  // Quick controls are icon-only: their title attributes carry the hover copy
+  // and aria-labels preserve explicit accessible names. Spawn swaps its user+
+  // SVG for 🔮 in wizard mode; create-subgroup uses a two-person-plus SVG
+  // (⚔＋ in wizard mode) so the regular icon does not depend on emoji fonts.
+  return `<button class="spawn-btn" data-act="spawn-agent" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Spawn agent — start a new tclaude session and join this group" aria-label="Spawn agent into this group">${SPAWN_ICO_SVG}<span class="spawn-btn-label-wizard" aria-hidden="true">🔮</span></button>`
+    + `<button class="spawn-btn subgroup-btn" data-act="create-subgroup" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Create subgroup — make a new group nested under this group" aria-label="Create a subgroup under this group">${SUBGROUP_ICO_SVG}<span class="subgroup-icon-wizard" aria-hidden="true">⚔＋</span></button>`
     + `<span class="group-actions">`
-    // Power on / shutdown re-flavour to "✨ Awaken" / "🌙 Slumber" in 🧙 mode
-    // via the .pwr-label-regular/.pwr-label-wizard span pair (CSS picks which
-    // shows — see the wizard power-controls rules in dashboard.css). The
-    // aria-label names both voices ("Awaken — power on…") so speech input
-    // matches either theme's visible label (WCAG Label-in-Name), the same way
-    // the Summon button above does.
-    + `<button data-act="power-on-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" aria-label="Awaken — power on every offline agent in this group" title="Power on — resume every offline agent in this group. Each offline conversation is restarted in a fresh tmux session; agents already running are left alone. Resume only: nothing new is created."><span class="pwr-label-regular">🟢 power on</span><span class="pwr-label-wizard">✨ Awaken</span></button>`
-    + `<button class="warn" data-act="shutdown-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" aria-label="Slumber — shutdown every running agent in this group" title="Shutdown — stop every running agent in this group. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed."><span class="pwr-label-regular">🛑 shutdown</span><span class="pwr-label-wizard">🌙 Slumber</span></button>`
+    // Power on / shutdown re-flavour their icons to ✨ / 🌙 in wizard mode.
+    + `<button data-act="power-on-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" aria-label="Awaken — power on every offline agent in this group" title="Power on — resume every offline agent in this group. Each offline conversation is restarted in a fresh tmux session; agents already running are left alone. Resume only: nothing new is created."><span class="pwr-label-regular" aria-hidden="true">🟢</span><span class="pwr-label-wizard" aria-hidden="true">✨</span></button>`
+    + `<button class="warn" data-act="shutdown-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" aria-label="Slumber — shutdown every running agent in this group" title="Shutdown — stop every running agent in this group. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed."><span class="pwr-label-regular" aria-hidden="true">🛑</span><span class="pwr-label-wizard" aria-hidden="true">🌙</span></button>`
     // Task-force info toggle — only for a deployed force, which is the only
     // group that HAS an info card (renderForceBlock). Sits alongside
     // awaken/slumber and flips the fold dashPref the card reads.
