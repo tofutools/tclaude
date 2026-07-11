@@ -31,11 +31,15 @@ func TestDashboardHTML_SortableColumnsWired(t *testing.T) {
 	// generations) are included: they're the "non-real" groups that gained
 	// the same clickable, agent-id-leading headers as real groups.
 	for _, table := range []string{
-		"members", "jobs", "sudo", "links",
+		"members", "sudo", "links",
 		"retired", "conversations", "pending", "replaced",
 	} {
 		must("sortHead('"+table+"'", table+" table renders a sortable header")
 	}
+	// Jobs is the Preact pilot: its component maps the same JOBS_COLS spec to
+	// interactive keyed headers instead of emitting legacy sortHead HTML.
+	must("function SortHead(", "Jobs island renders its sortable header component")
+	must("JOBS_COLS.map(", "Jobs island uses the shared Jobs column specification")
 
 	// The headers must carry the attributes the click handler reads.
 	must("data-sort-table=", "headers tag their table key")

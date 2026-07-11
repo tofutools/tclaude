@@ -3079,6 +3079,14 @@ body.wizard .group-pending-title-wizard { display: inline; }
 }
 .filter-bar input:focus { outline: none; border-color: #58a6ff; }
 .filter-bar .filter-count { font-size: 11px; color: #7d8590; }
+.jobs-error {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-left: 3px solid #f85149;
+  background: rgba(248, 81, 73, 0.08);
+  color: #f0a3a0;
+}
+.jobs-error button { margin-left: 8px; }
 .filter-bar button.clear-filter {
   background: transparent; border: none; color: #7d8590;
   cursor: pointer; padding: 4px 8px; font-size: 12px;

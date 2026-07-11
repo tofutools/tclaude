@@ -64,11 +64,16 @@ func TestDashboardHasOneAuthoritativeSnapshotPoll(t *testing.T) {
 		switch name {
 		case "js/refresh.js":
 			authoritativeSnapshotFetches += directSnapshotFetches
-			// Filter input changes deliberately debounce a one-shot manual
-			// refresh. Remove those two known calls before looking for an
-			// accidental second periodic/recursive scheduler.
+			// The legacy Groups filter deliberately debounces a one-shot manual
+			// refresh. Remove it before looking for a periodic/recursive scheduler.
 			manualDebounces += strings.Count(source, "setTimeout(refresh, 250)")
 			source = strings.ReplaceAll(source, "setTimeout(refresh, 250)", "")
+		case "js/jobs-island.js":
+			// The Preact Jobs query has the same one-shot debounce, routed through
+			// the action boundary. It does not repeat or fetch snapshot directly.
+			const jobsDebounce = "setTimeout(() => void actions.refresh(), 250)"
+			manualDebounces += strings.Count(source, jobsDebounce)
+			source = strings.ReplaceAll(source, jobsDebounce, "")
 		case "js/modal-human-reply.js":
 			// This legacy data-only timer runs only while its modal suspends the
 			// authoritative renderer. Keep the exception explicit until that
@@ -100,7 +105,7 @@ func TestDashboardHasOneAuthoritativeSnapshotPoll(t *testing.T) {
 		t.Errorf("snapshot scheduler installation count = %d, want exactly one", schedulerCalls)
 	}
 	if manualDebounces != 2 {
-		t.Errorf("known one-shot refresh debounce count = %d, want 2", manualDebounces)
+		t.Errorf("known one-shot filter refresh debounce count = %d, want 2", manualDebounces)
 	}
 
 	dashboard, err := fs.ReadFile(dashboardAssetsFS, "js/dashboard.js")

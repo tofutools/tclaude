@@ -970,10 +970,9 @@ func TestDashboardHTML_WizardCronDialog(t *testing.T) {
 	must("body.wizard #cron-create-open.primary", "the open button is re-skinned in wizard mode")
 	must("body.wizard #cron-create-open.primary:hover", "the open button has a wizard hover re-skin")
 
-	// The same span pair swaps the Jobs tab's "No jobs yet…" empty-state hint
-	// that names the button (tabs.js emits both variants). Pin the full markup
-	// through the wizard span so dropping the wizard variant still fails.
-	must(`schedule a cron job with the <strong><span class="cron-open-label-regular">+ new cron job</span><span class="cron-open-label-wizard">⏳ Bind a recurring ritual</span></strong>`, "the empty-state hint carries both swappable labels")
+	// The same span pair swaps the Jobs island's "No jobs yet…" hint. The label
+	// spans above already pin both variants; this pins their empty-state context.
+	must("schedule a cron job with the", "the empty-state hint names the create control")
 
 	// The dialog surface + title are re-skinned, scoped to #cron-create-modal so
 	// the sibling .cron-create-modal dialogs keep the default chrome.

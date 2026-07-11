@@ -17,7 +17,7 @@ import { bindVegasMusic } from './vegas.js';
 import {
   bindFilter, bindTabs, bindTabHotkeys, bindAccessSubtabs, bindDetailsPersistence, bindGroupTitleToggle, bindGroupQuickHover, bindSortHeaders,
   bindListPagers,
-  refresh,
+  confirmModal, refresh, toast,
 } from './refresh.js';
 
 // Cosmetic re-skins — slop (?slop=1) and wizard (?wizard=1), mutually
@@ -38,7 +38,7 @@ import { bindDnd } from './dnd.js';
 import { bindGroupReorder } from './group-reorder.js';
 import { bindDockDnd } from './dock-dnd.js';
 import { bindDockSaveDnd } from './dock-save-dnd.js';
-import { bindCronModal } from './modal-cron.js';
+import { bindCronModal, openCronCreateModal, openCronEditModal } from './modal-cron.js';
 import { bindTermModal } from './modal-term.js';
 import { initTerminalsTab } from './terminals-tab.js';
 import {
@@ -74,8 +74,9 @@ import { bindCommandPalette } from './palette.js';
 import { bindDock } from './dock.js';
 import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
-import { mountPreactRuntimeProbe } from './preact-loader.js';
-import { configureDashboardActions } from './dashboard-actions.js';
+import { mountJobsFeature, mountPreactRuntimeProbe } from './preact-loader.js';
+import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
+import { triggerExportDownload } from './export-progress.js';
 import { startSnapshotPoll } from './snapshot-poll.js';
 
 // Last successful snapshot, kept so the filter inputs can re-render
@@ -135,6 +136,18 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   // that the cache is populated (its import-time read saw an empty one).
   loadSortState();
 
+  // The Jobs pilot owns its filter, table, sort, paging, and badge subtrees.
+  // Await the mount before legacy modal binders look up the create button.
+  await mountJobsFeature({
+    requestMutation: dashboardActions.requestMutation,
+    refresh: dashboardActions.refresh,
+    confirm: confirmModal,
+    notify: toast,
+    download: triggerExportDownload,
+    createCron: () => openCronCreateModal({}),
+    editCron: openCronEditModal,
+  });
+
   bindTabs();
   bindTabHotkeys();
   // Delegated pager footers for the Retired / Conversations / Replaced virtual
@@ -180,16 +193,10 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   bindDockSaveDnd();
   bindFilter('groups');
   bindFilter('templates');
-  bindFilter('jobs');
   bindFilter('sudo');
   bindFilter('links');
   bindFilter('plugins');
   bindFilter('messages');
-  // The Jobs table's /api/jobs window is fetched only while its tab shows
-  // (refresh.js gates on jobsTabActive), so activating the tab kicks an
-  // immediate refresh instead of waiting up to 2s for the next poll — the
-  // same lazy-load-on-click idiom as the Costs / Audit / Logs tabs.
-  document.querySelector('nav [data-tab="jobs"]')?.addEventListener('click', () => refresh());
   bindSudoModal();
   bindPermEditModal();
   bindCronModal();

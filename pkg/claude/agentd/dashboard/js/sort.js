@@ -83,7 +83,13 @@ function cmpSortValues(a, b) {
 // Blank/nullish cells always sort last, whichever the direction, so
 // empty values never crowd the top.
 function applySort(tableKey, rows, accessors) {
-  const st = sortState[tableKey];
+  return applySortState(rows, accessors, sortState[tableKey]);
+}
+
+// applySortState is the renderer-agnostic form used by Preact feature models.
+// Legacy tables still call applySort(tableKey, ...), while an island keeps its
+// active sort in a Signal and supplies that explicit value here.
+function applySortState(rows, accessors, st) {
   if (!st || !accessors || !accessors[st.col]) return rows;
   const get = accessors[st.col];
   const sign = st.dir === 'desc' ? -1 : 1;
@@ -311,7 +317,7 @@ const PENDING_ACCESSORS = {
 };
 
 export {
-  cycleSort, sortHead, applySort, loadSortState,
+  cycleSort, sortHead, applySort, applySortState, loadSortState,
   MEMBER_COLS, MEMBER_ACCESSORS, JOBS_COLS, JOBS_ACCESSORS,
   SUDO_COLS, SUDO_ACCESSORS, LINK_COLS, LINK_ACCESSORS,
   REPLACED_COLS, REPLACED_ACCESSORS,

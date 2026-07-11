@@ -1,16 +1,14 @@
-// tabs.js — the Groups / Jobs (exports + cron) / Sudo / Links tab renderers.
+// tabs.js — the legacy Groups / Sudo / Links tab renderers.
 //
-// Builds the listing tables for the Groups, Jobs, Sudo and Links
+// Builds the listing tables for the Groups, Sudo and Links
 // tabs from snapshot data, each with its text-filter helper.
 // Extracted from dashboard.js as part of the Stage 2 module split.
 
 import { $, esc, shortAgentId, idTooltip, relTime, syncBotAnimations, syncWizardOrbit } from './helpers.js';
-import { renderExportStepper, fmtBytes } from './export-progress.js';
 import {
-  sortHead, applySort, JOBS_COLS, JOBS_ACCESSORS,
+  sortHead, applySort,
   SUDO_COLS, SUDO_ACCESSORS, LINK_COLS, LINK_ACCESSORS,
 } from './sort.js';
-import { listPagerHTML } from './list-paging.js';
 import {
   virtualUngroupedGroup, ungroupedVisible,
   virtualConversationsGroup, conversationsVisible,
@@ -182,185 +180,6 @@ function renderGroupsTab() {
     ? `${shownReal} / ${total}` : `${total} group${total === 1 ? '' : 's'}`;
 }
 
-// formatInterval renders an integer second count as a coarse human
-// string ("30s", "5m", "2h", "1d"). Mirrors the cron CLI output so
-// dashboard + terminal read the same.
-function formatInterval(sec) {
-  if (!sec) return '';
-  if (sec < 60) return sec + 's';
-  if (sec < 3600) return Math.floor(sec / 60) + 'm';
-  if (sec < 86400) return Math.floor(sec / 3600) + 'h';
-  return Math.floor(sec / 86400) + 'd';
-}
-
-// cronTargetCell describes where a cron job fires. Two shapes:
-//  - group:<name>  → group-target job; the scheduler fans the body
-//                    out to every current member of the group.
-//  - <conv-label>  → conv target; one recipient (the conv-routing
-//                    group_id, if any, is not shown here).
-// The discriminator is target_kind, NOT group_id>0 — a conv-target
-// job routed through a shared group also carries a non-zero group_id.
-function cronTargetCell(j) {
-  if (j.target_kind === 'group') {
-    return `<span class="tag">group:${esc(j.group_name || ('#' + j.group_id))}</span>`;
-  }
-  if (j.target_conv) {
-    // Lead with the stable agent_id (the cutover); keep the conv title as a
-    // muted second line so the human-readable name isn't lost (the cron tab
-    // has no separate name column like the roster does). The full "agent_id /
-    // conv-id" pair stays the hover title for inspectability, matching the
-    // other roster cells.
-    return `<span class="rowname" title="${esc(idTooltip(j.target_agent, j.target_conv))}">${esc(shortAgentId(j.target_agent, j.target_conv))}</span>`
-      + (j.target_label ? `<div class="muted">${esc(j.target_label)}</div>` : '');
-  }
-  return '<span class="muted">(no target)</span>';
-}
-
-// cronScheduleCell renders a cron job's schedule for the info column:
-// the cron expression verbatim ("cron: */5 * * * *", with the English
-// description as the hover title when the server could render one) for
-// an expression job, else the familiar "every 5m" interval.
-function cronScheduleCell(j) {
-  if (j.cron_expr) {
-    return `<span class="id" title="${esc(j.cron_desc || '')}">cron: ${esc(j.cron_expr)}</span>`;
-  }
-  return `<span class="id">every ${esc(formatInterval(j.interval_seconds))}</span>`;
-}
-
-// cronStatusPill colorises the last_run_status. Empty / "ok" /
-// anything else map to neutral / green / red respectively.
-function cronStatusPill(s) {
-  if (!s) return '<span class="state-pill state-offline" title="never run">never run</span>';
-  if (s === 'ok') return `<span class="state-pill state-working" title="${esc(s)}">${esc(s)}</span>`;
-  return `<span class="state-pill state-awaiting" title="${esc(s)}">${esc(s)}</span>`;
-}
-
-// -- Jobs tab: the unified job table --------------------------------------
-// ONE listing for every job kind — per-agent "📋 summary…" export jobs
-// (agentd/export.go) and recurring cron schedules — discriminated by a kind
-// column. Rows are {kind, export?, cron?} served by GET /api/jobs, fetched
-// alongside the 2s poll while the tab is active (refresh.js) and stitched
-// onto the snapshot as lastSnapshot.jobs + paging.jobs. Pagination + the
-// text filter are SERVER-side (the filter searches the whole set); column
-// sorting orders the served window only (sort.js JOBS_ACCESSORS), like the
-// retired/conversations/replaced sub-tables.
-//
-// Export rows: in-flight ones show the compact phase stepper
-// (export-progress.js); settled ones keep a ready/failed pill and STAY
-// LISTED until dismissed — the dismiss deletes the job + its artifact
-// server-side — so a finished export never vanishes before its file is
-// fetched.
-
-// cronJobRowCells renders the shared row shape for a cron job:
-// [dot, kind, id, name, agent, status, when, info, actions].
-function cronJobRowCells(j) {
-  const enabledDot = j.enabled
-    ? '<span class="online" title="enabled">●</span>'
-    : '<span class="offline" title="disabled">○</span>';
-  const enableBtn = j.enabled
-    ? `<button class="warn" data-act="cron-disable" data-id="${j.id}" data-label="${esc(j.name)}" title="Pause this cron job">disable</button>`
-    : `<button data-act="cron-enable" data-id="${j.id}" data-label="${esc(j.name)}" title="Re-enable this cron job">enable</button>`;
-  const runBtn = `<button data-act="cron-run-now" data-id="${j.id}" data-label="${esc(j.name)}" title="Fire this job immediately (also stamps last_run_at)">run now</button>`;
-  const editBtn = `<button data-act="cron-edit" data-id="${j.id}" data-label="${esc(j.name)}" title="Edit this cron job">edit</button>`;
-  const delBtn = `<button class="danger" data-act="cron-delete" data-id="${j.id}" data-label="${esc(j.name)}" title="Delete this cron job">delete</button>`;
-  // The old dedicated Body column folded into the name cell: the subject
-  // stays the muted subline, the full body rides the hover title (it is
-  // still one click away in the edit modal).
-  const bodySummary = (j.body || '').replace(/\s+/g, ' ').trim();
-  return `
-    <td>${enabledDot}</td>
-    <td><span class="tag">⏰ cron</span></td>
-    <td class="id">${j.id}</td>
-    <td title="${esc(bodySummary)}"><div class="rowname">${esc(j.name)}</div>${j.subject ? `<div class="muted">${esc(j.subject)}</div>` : ''}</td>
-    <td>${cronTargetCell(j)}<div class="muted" title="${esc(idTooltip(j.owner_agent, j.owner_conv))}">by ${esc(j.owner_label || shortAgentId(j.owner_agent, j.owner_conv))}</div></td>
-    <td>${cronStatusPill(j.last_run_status)}</td>
-    <td><span class="last-hook">${esc(relTime(j.last_run_at) || '—')}</span></td>
-    <td>${cronScheduleCell(j)}</td>
-    <td><div class="row-actions">${runBtn}${editBtn}${enableBtn}${delBtn}</div></td>`;
-}
-
-// exportJobNameCell renders an export row's name: the optional dialog Title,
-// falling back to the delivered artifact's filename (promoted from the muted
-// subline it occupies when a title exists), and for an in-flight, title-less
-// job the preset — "(summary)" reads better than a bare "(untitled)".
-function exportJobNameCell(j) {
-  const name = j.title || j.artifact_name;
-  if (!name) return `<span class="muted">(${esc(j.preset || 'untitled')})</span>`;
-  const sub = j.title && j.artifact_name ? `<div class="muted">${esc(j.artifact_name)}</div>` : '';
-  return `<div class="rowname">${esc(name)}</div>${sub}`;
-}
-
-// exportJobRowCells renders the same row shape for an export job.
-function exportJobRowCells(j) {
-  const settled = j.status === 'ready' || j.status === 'failed';
-  let dot;
-  let progress;
-  if (!settled) {
-    dot = '<span class="online" title="in flight">◐</span>';
-    progress = renderExportStepper(j.status);
-  } else if (j.status === 'ready') {
-    dot = '<span class="online" title="ready">●</span>';
-    progress = '<span class="ej-status ready">✓ ready</span>';
-  } else {
-    dot = '<span class="offline" title="failed">○</span>';
-    progress = '<span class="ej-status failed">✗ failed</span>'
-      + (j.error ? `<div class="ej-error" title="${esc(j.error)}">${esc(j.error)}</div>` : '');
-  }
-  const dlBtn = j.ready
-    ? `<button data-act="export-job-download" data-id="${j.id}" data-label="${esc(j.artifact_name || j.title || ('#' + j.id))}" title="Download this export">⤓ download</button>`
-    : '';
-  const dismissBtn = `<button class="danger" data-act="export-job-dismiss" data-id="${j.id}" data-label="${esc(j.title || j.conv_label || ('#' + j.id))}" title="Dismiss — removes this export job from the list and deletes its file (if one was delivered)">dismiss</button>`;
-  return `
-    <td>${dot}</td>
-    <td><span class="tag">📋 export</span></td>
-    <td class="id">${j.id}</td>
-    <td>${exportJobNameCell(j)}</td>
-    <td><span class="rowname" title="${esc(j.conv_id || '')}">${esc(j.conv_label || '(unknown)')}</span></td>
-    <td>${progress}</td>
-    <td><span class="last-hook">${esc(relTime(j.created_at) || '—')}</span></td>
-    <td>${j.artifact_size ? esc(fmtBytes(j.artifact_size)) : '<span class="muted">—</span>'}</td>
-    <td><div class="row-actions">${dlBtn}${dismissBtn}</div></td>`;
-}
-
-function renderJobs(rows, paging) {
-  if (!rows || !rows.length) {
-    // The cron-button hint swaps per theme (the same .cron-open-label-* span
-    // pair as the filter-bar button), so the empty state reads "⏳ Bind a
-    // recurring ritual" in 🧙 wizard mode — CSS reveals the active variant.
-    return '<div class="empty">No jobs yet. Agent exports appear here when started (an agent row\'s ⚙ menu → <strong>📋 summary…</strong>); schedule a cron job with the <strong><span class="cron-open-label-regular">+ new cron job</span><span class="cron-open-label-wizard">⏳ Bind a recurring ritual</span></strong> button above.</div>';
-  }
-  return `
-    <table>
-      ${sortHead('jobs', JOBS_COLS)}
-      <tbody>
-        ${applySort('jobs', rows, JOBS_ACCESSORS).map(r =>
-          `<tr data-key="${esc(r.kind + '-' + ((r.cron || r.export || {}).id ?? ''))}">${r.kind === 'cron' ? cronJobRowCells(r.cron || {}) : exportJobRowCells(r.export || {})}</tr>`
-        ).join('')}
-      </tbody>
-    </table>
-    ${listPagerHTML('jobs', paging)}
-  `;
-}
-
-// renderJobsTab paints the unified table, the filter count and the Jobs nav
-// badge. The badge counts IN-FLIGHT exports only (snapshot export_jobs_active
-// — server-counted, so it's live even while the /api/jobs fetch is gated off
-// on another tab); settled jobs stay in the list but stop demanding attention.
-function renderJobsTab() {
-  if (!lastSnapshot) return;
-  const rows = lastSnapshot.jobs || [];
-  const paging = (lastSnapshot.paging || {}).jobs;
-  morphInto($('#jobs-list'), renderJobs(rows, paging));
-  const q = $('#filter-jobs').value;
-  const total = paging ? (paging.total || 0) : rows.length;
-  const totalAll = paging ? (paging.total_unfiltered || 0) : rows.length;
-  $('#filter-jobs-count').textContent = q
-    ? `${total} / ${totalAll}` : `${totalAll} job${totalAll === 1 ? '' : 's'}`;
-  const active = lastSnapshot.export_jobs_active || 0;
-  const badge = $('#jobs-badge');
-  if (badge) { badge.textContent = String(active); badge.hidden = active === 0; }
-}
-
 // -- Sudo tab ---------------------------------------------------------
 
 function fmtRemaining(secs) {
@@ -476,6 +295,5 @@ function renderLinksTab() {
 }
 
 export {
-  renderGroupsTab, renderJobsTab, renderSudoTab, renderLinksTab,
-  formatInterval, fmtRemaining,
+  renderGroupsTab, renderSudoTab, renderLinksTab, fmtRemaining,
 };
