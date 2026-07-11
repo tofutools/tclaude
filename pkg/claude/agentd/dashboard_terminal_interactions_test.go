@@ -65,13 +65,18 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 	if !strings.Contains(dashboardAssets, `id="term-session-copy"`) {
 		t.Error("fallback terminal modal has no visible Copy action")
 	}
-	for htmlAttr, jsAttr := range map[string]string{
-		`role="status"`:      `statusEl.setAttribute('role', 'status')`,
-		`aria-live="polite"`: `statusEl.setAttribute('aria-live', 'polite')`,
-		`aria-atomic="true"`: `statusEl.setAttribute('aria-atomic', 'true')`,
+	modalLiveStatus := `<span class="term-session-status" id="term-session-status" role="status"
+        aria-live="polite" aria-atomic="true"></span>`
+	if !strings.Contains(dashboardAssets, modalLiveStatus) {
+		t.Error("fallback terminal status must be a polite atomic live region")
+	}
+	for _, jsAttr := range []string{
+		`statusEl.setAttribute('role', 'status')`,
+		`statusEl.setAttribute('aria-live', 'polite')`,
+		`statusEl.setAttribute('aria-atomic', 'true')`,
 	} {
-		if !strings.Contains(dashboardAssets, htmlAttr) || !strings.Contains(core, jsAttr) {
-			t.Errorf("both terminal status surfaces must expose live-region attribute %q", htmlAttr)
+		if !strings.Contains(core, jsAttr) {
+			t.Errorf("mux terminal status missing live-region attribute wiring %q", jsAttr)
 		}
 	}
 	for _, needle := range []string{
