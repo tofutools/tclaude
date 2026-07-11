@@ -542,6 +542,14 @@ open-terminal, and bulk focus from the **🪟 windows…** modal into panes in t
 dashboard's **Terminals** tab. Bulk unfocus still detaches the selected terminal
 clients and closes matching web panes; it never stops the agents.
 
+While any web-terminal pane is open, the dashboard requests browser
+confirmation before closing, reloading, or navigating away (including
+**Ctrl+W** / **Cmd+W**). Supported desktop browsers generally show this prompt
+after the user has interacted with the page, but browser and mobile lifecycle
+rules may suppress it. Browsers supply the confirmation text, so it may refer
+generically to unsaved changes rather than naming the open terminal. Closing
+the last pane removes the guard; an idle dashboard never prompts.
+
 The **Window focus** field also holds a **set the `tclaude:<id>` window/tab
 title** toggle (`focus.window_title`, on by default). tclaude normally stamps
 a `tclaude:<id>` title on each agent's terminal so it can find that window

@@ -54,6 +54,28 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
   const panes = new Map();
   let activeKey = null;
   let seq = 0;
+  let unloadGuardArmed = false;
+
+  // Browsers reserve Ctrl/Cmd+W, so a page cannot reliably turn that shortcut
+  // into "close this pane". beforeunload is the supported protection against
+  // accidentally losing an open terminal view: supported browsers can ask
+  // whether to leave for tab close, reload, and navigation alike. Keep the
+  // listener strictly scoped to a non-empty mux so an idle dashboard never
+  // nags or forfeits Firefox's back/forward cache merely because terminal
+  // support was initialized.
+  function confirmTerminalUnload(e) {
+    e.preventDefault();
+    // Legacy fallback for browsers that do not trigger the prompt from
+    // preventDefault alone. The browser owns the prompt text either way.
+    e.returnValue = true;
+  }
+
+  function updateUnloadGuard(n) {
+    const shouldArm = n > 0;
+    if (shouldArm === unloadGuardArmed) return;
+    unloadGuardArmed = shouldArm;
+    window[shouldArm ? 'addEventListener' : 'removeEventListener']('beforeunload', confirmTerminalUnload);
+  }
 
   function setStatus(p, text) { if (p.statusEl) p.statusEl.textContent = text; }
 
@@ -61,6 +83,7 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
     const n = panes.size;
     if (emptyEl) emptyEl.style.display = n === 0 ? '' : 'none';
     if (tabsEl) tabsEl.style.display = (solo || n === 0) ? 'none' : '';
+    updateUnloadGuard(n);
     onCount(n);
   }
 
