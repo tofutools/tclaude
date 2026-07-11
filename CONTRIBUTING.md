@@ -27,6 +27,27 @@ Dependency upgrades are deliberately rare and reviewed as vendored-code
 changes. Update the exact versions, hashes, source maps, and license metadata
 in that directory's `README.md` together, then run the ordinary Go test suite.
 
+### Writing Preact component tests
+
+Component tests live in `pkg/claude/agentd/jstest/*.test.mjs` and use Node's
+built-in `node:test` runner plus `createPreactHarness` from
+`jstest/preact-harness.mjs`. The harness loads the real dashboard import map,
+exact vendored Preact modules, HTM, Signals, Preact test utilities, and a
+committed LinkeDOM runtime. It provides `mount`, `act`, `input`, `fireEvent`,
+`getByRole`, `getByLabelText`, and `importDashboardModule` helpers.
+
+Prefer behavioural assertions through accessible roles and labels. Dispatch
+real DOM events, use stable keys, and unmount every tested component so effect
+cleanup is observable. Run a focused file directly with:
+
+```bash
+node --test pkg/claude/agentd/jstest/your-component.test.mjs
+```
+
+The ordinary `go test ./...` command also runs every `*.test.mjs` file. CI has
+Node installed and fails loudly if Node or a committed test-runtime dependency
+is missing. No npm install, browser, CDN, or network access is needed.
+
 Flow tests in `pkg/claude/agentd/*_flow_test.go` are regular Go tests
 — they run under bare `go test ./...`. Boundaries (`tmux`, the
 `tclaude session new` subprocess) are mocked by assigning fake

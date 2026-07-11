@@ -10,10 +10,10 @@ import (
 
 // The command palette's ranking logic lives in pure JS
 // (dashboard/js/palette-score.js) and is unit-tested with Node's built-in
-// test runner — no DOM framework and no node_modules required at test time.
-// These pure-module tests stay deliberately separate from the Preact/HTM
-// runtime modules. This wrapper runs that suite as part of `go test ./...`
-// (the repo's single documented test entry point).
+// test runner. Pure-module suites need no DOM; Preact component suites use the
+// committed test-only LinkeDOM runtime and exact dashboard modules, still with
+// no node_modules or install step. This wrapper runs every suite as part of
+// `go test ./...` (the repo's single documented test entry point).
 //
 // node availability:
 //   - In CI the Test job runs actions/setup-node, so node is guaranteed.
