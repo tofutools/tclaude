@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 // WaveChoreography is the persisted, self-healing runtime state of one group's
@@ -32,6 +34,10 @@ type WaveChoreography struct {
 	// TemplateName is the source template, for logging + surfacing.
 	TemplateName string `json:"template_name"`
 	TemplateID   int64  `json:"template_id,omitempty"`
+	// EffectiveSandbox is the immutable policy value resolved once when the
+	// template run starts. Later waves consume this snapshot after daemon
+	// restart without consulting mutable global/group profile assignments.
+	EffectiveSandbox *sandboxpolicy.Snapshot `json:"effective_sandbox,omitempty"`
 	// GroupContext is the already-composed, already-normalized group context
 	// (mission/task folded in) every spawned agent's briefing carries.
 	GroupContext string `json:"group_context"`
