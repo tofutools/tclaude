@@ -122,7 +122,7 @@ func TestAgentPermissions_GrantRevokeIdempotent(t *testing.T) {
 	assert.Equal(t, "member.add", got[0])
 }
 
-func TestAgentPermissions_RevokeByGranterAndEffect(t *testing.T) {
+func TestAgentPermissions_ApplyOverridesPreservesProvenanceAndClearsAtomically(t *testing.T) {
 	setupTestDB(t)
 
 	const conv = "abcd1234-0000-0000-0000-000000000002"
@@ -130,21 +130,32 @@ func TestAgentPermissions_RevokeByGranterAndEffect(t *testing.T) {
 	require.NoError(t, SetAgentPermissionOverride(conv, "self.rename", PermEffectDeny, "<human>"))
 	require.NoError(t, SetAgentPermissionOverride(conv, "templates.manage", PermEffectGrant, "<scribe-summon>"))
 
-	n, err := RevokeAgentPermissionsByGranterAndEffect(conv, "<scribe-summon>", PermEffectDeny)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), n)
+	require.NoError(t, ApplyAgentPermissionOverrides(conv, map[string]string{
+		"sandbox-profiles.draft": PermEffectGrant,
+		"human.notify":           PermEffectDeny,
+	}, "<scribe-summon>", true, true))
 
 	overrides, err := ListAgentPermissionOverridesForConv(conv)
 	require.NoError(t, err)
 	assert.NotContains(t, overrides, "groups.spawn", "matching generated deny removed")
 	assert.Equal(t, PermEffectDeny, overrides["self.rename"], "human-authored deny preserved")
 	assert.Equal(t, PermEffectGrant, overrides["templates.manage"], "same-granter grant preserved")
+	assert.Equal(t, PermEffectGrant, overrides["sandbox-profiles.draft"], "requested grant applied")
+	assert.Equal(t, PermEffectDeny, overrides["human.notify"], "requested deny reapplied in transaction")
 
-	n, err = RevokeAgentPermissionsByGranterAndEffect(conv, "<scribe-summon>", PermEffectDeny)
+	d, err := Open()
 	require.NoError(t, err)
-	assert.Zero(t, n, "repeat cleanup is idempotent")
-	_, err = RevokeAgentPermissionsByGranterAndEffect(conv, "<scribe-summon>", "invalid")
+	var grantedBy string
+	require.NoError(t, d.QueryRow(`SELECT p.granted_by
+		FROM agent_permissions p JOIN agents a ON a.agent_id = p.agent_id
+		WHERE a.current_conv_id = ? AND p.slug = ?`, conv, "self.rename").Scan(&grantedBy))
+	assert.Equal(t, "<human>", grantedBy, "same-effect apply must not relabel human provenance")
+
+	err = ApplyAgentPermissionOverrides(conv, map[string]string{"bad": "invalid"}, "<scribe-summon>", true, true)
 	assert.Error(t, err)
+	overrides, err = ListAgentPermissionOverridesForConv(conv)
+	require.NoError(t, err)
+	assert.Equal(t, PermEffectDeny, overrides["human.notify"], "validation failure leaves prior state intact")
 }
 
 func TestAgentMessageInsertAndList(t *testing.T) {

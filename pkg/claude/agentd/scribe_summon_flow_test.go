@@ -207,8 +207,12 @@ func TestScribeSummon_OrdinaryReuseClearsOnlyGeneratedExclusiveDenies(t *testing
 	}
 
 	first := summon(true)
+	// Reapply a human deny, then run exclusive mode once more. The same-effect
+	// exclusive write must preserve the human provenance so ordinary cleanup
+	// cannot mistake it for generated policy.
 	require.NoError(t, db.SetAgentPermissionOverride(first.ConvID, agentd.PermSelfRename,
 		db.PermEffectDeny, "<human>"))
+	require.True(t, summon(true).Reused)
 	second := summon(false)
 	require.True(t, second.Reused)
 	require.Equal(t, first.ConvID, second.ConvID)

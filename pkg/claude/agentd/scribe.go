@@ -239,7 +239,7 @@ func summonScribe(name string, overrides map[string]string, brief string, exclus
 	// re-opens its window. The live scribe already spawned into the trusted
 	// workdir, so no dir/trust work is needed on this path.
 	if convID := aliveScribeConv(g); convID != "" {
-		if err := applyScribeOverrides(convID, overrides, exclusive); err != nil {
+		if err := applyScribeOverrides(convID, overrides, exclusive, true); err != nil {
 			if exclusive {
 				killScribeSession(convID)
 			}
@@ -293,7 +293,7 @@ func summonScribe(name string, overrides map[string]string, brief string, exclus
 		return nil, spawnFail
 	}
 	if exclusive {
-		if err := applyScribeOverrides(outcome.ConvID, overrides, true); err != nil {
+		if err := applyScribeOverrides(outcome.ConvID, overrides, true, false); err != nil {
 			killScribeSession(outcome.ConvID)
 			return nil, &spawnFailure{http.StatusInternalServerError, "permission",
 				"capability-reducing scribe stopped after permission override failure: " + err.Error()}
@@ -506,26 +506,20 @@ func pruneDeadScribes(g *db.AgentGroup) {
 // applyScribeOverrides (re)applies the requested permission effects. An
 // exclusive capability-reducing summon fails closed on any write error; an
 // ordinary scribe preserves the established best-effort behavior.
-func applyScribeOverrides(convID string, overrides map[string]string, required bool) error {
+func applyScribeOverrides(convID string, overrides map[string]string, required, preserveSameEffectProvenance bool) error {
 	if required {
 		if _, err := db.RevokeSudoGrantsByConv(convID); err != nil {
 			return fmt.Errorf("revoke active sudo grants: %w", err)
 		}
-	} else {
-		// A scribe can move from exclusive to ordinary mode across daemon
-		// versions or caller changes. Remove only denies this summon machinery
-		// generated; a human-authored deny has a different granted_by value and
-		// remains authoritative. Fresh ordinary scribes have nothing to clean.
-		if _, err := db.RevokeAgentPermissionsByGranterAndEffect(convID, scribeGranter, db.PermEffectDeny); err != nil {
-			slog.Warn("scribe: clear generated exclusive denies failed", "conv", short8(convID), "error", err)
-		}
 	}
-	for slug, effect := range overrides {
-		if err := db.SetAgentPermissionOverride(convID, slug, effect, scribeGranter); err != nil {
-			slog.Warn("scribe: re-grant slug failed", "conv", short8(convID), "slug", slug, "error", err)
-			if required {
-				return fmt.Errorf("set %s=%s: %w", slug, effect, err)
-			}
+	// Ordinary mode clears stale summon-authored denies and applies the current
+	// request in one transaction. Exclusive mode already supplies an effect for
+	// every registered slug, so it needs no stale-row cleanup. Same-effect rows
+	// preserve their original audit provenance in the DB layer.
+	if err := db.ApplyAgentPermissionOverrides(convID, overrides, scribeGranter, !required, preserveSameEffectProvenance); err != nil {
+		slog.Warn("scribe: apply permission overrides failed", "conv", short8(convID), "error", err)
+		if required {
+			return fmt.Errorf("apply permission overrides: %w", err)
 		}
 	}
 	return nil

@@ -336,33 +336,80 @@ func RevokeAgentPermission(convID, slug string) (int64, error) {
 	return n, nil
 }
 
-// RevokeAgentPermissionsByGranterAndEffect removes the permission overrides
-// for convID that were written by one specific granter with one specific
-// effect. It is intentionally provenance-scoped: callers can unwind their own
-// generated policy without disturbing a human-authored override on the same
-// agent. Idempotent — returns the number of rows removed.
-func RevokeAgentPermissionsByGranterAndEffect(convID, grantedBy, effect string) (int64, error) {
-	if effect != PermEffectGrant && effect != PermEffectDeny {
-		return 0, fmt.Errorf("invalid permission effect %q (want %q or %q)", effect, PermEffectGrant, PermEffectDeny)
+// ApplyAgentPermissionOverrides atomically applies a set of permission effects
+// for convID. When clearGranterDenies is true, deny rows previously authored by
+// grantedBy are removed in the same transaction before the requested effects
+// are applied. That lets a policy generator unwind stale denies without a
+// temporary capability gap or a half-cleared state on write failure.
+//
+// When preserveSameEffectProvenance is true, reapplying the same effect keeps
+// the existing row's audit provenance. A generator must not relabel a
+// human-authored deny as its own merely because it independently wants the
+// same deny; preserving the original granted_by also ensures a later
+// generator-scoped cleanup cannot erase operator policy. Fresh-agent callers
+// can pass false to replace birth-time provenance with their own audit label.
+func ApplyAgentPermissionOverrides(convID string, overrides map[string]string, grantedBy string, clearGranterDenies, preserveSameEffectProvenance bool) error {
+	for slug, effect := range overrides {
+		if effect != PermEffectGrant && effect != PermEffectDeny {
+			return fmt.Errorf("invalid permission effect %q for %s (want %q or %q)", effect, slug, PermEffectGrant, PermEffectDeny)
+		}
 	}
 	d, err := Open()
 	if err != nil {
-		return 0, err
+		return err
+	}
+	if _, _, err := EnsureAgentForConv(convID, "grant"); err != nil {
+		return err
 	}
 	agentID, err := AgentIDForConv(convID)
 	if err != nil {
-		return 0, err
+		return err
 	}
 	if agentID == "" {
-		return 0, nil
+		return fmt.Errorf("ApplyAgentPermissionOverrides: no actor for conv %s", convID)
 	}
-	res, err := d.Exec(`DELETE FROM agent_permissions
-		WHERE agent_id = ? AND granted_by = ? AND effect = ?`, agentID, grantedBy, effect)
+	tx, err := d.Begin()
 	if err != nil {
-		return 0, err
+		return err
 	}
-	n, _ := res.RowsAffected()
-	return n, nil
+	defer func() { _ = tx.Rollback() }()
+	if clearGranterDenies {
+		if _, err := tx.Exec(`DELETE FROM agent_permissions
+			WHERE agent_id = ? AND granted_by = ? AND effect = ?`, agentID, grantedBy, PermEffectDeny); err != nil {
+			return err
+		}
+	}
+	now := time.Now().Format(time.RFC3339Nano)
+	for slug, effect := range overrides {
+		if preserveSameEffectProvenance {
+			if _, err := tx.Exec(`INSERT INTO agent_permissions
+			(agent_id, slug, effect, granted_at, granted_by)
+			VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT(agent_id, slug) DO UPDATE SET
+				effect = excluded.effect,
+				granted_at = CASE
+					WHEN agent_permissions.effect = excluded.effect THEN agent_permissions.granted_at
+					ELSE excluded.granted_at
+				END,
+				granted_by = CASE
+					WHEN agent_permissions.effect = excluded.effect THEN agent_permissions.granted_by
+					ELSE excluded.granted_by
+				END`, agentID, slug, effect, now, grantedBy); err != nil {
+				return err
+			}
+			continue
+		}
+		if _, err := tx.Exec(`INSERT INTO agent_permissions
+			(agent_id, slug, effect, granted_at, granted_by)
+			VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT(agent_id, slug) DO UPDATE SET
+				effect = excluded.effect,
+				granted_at = excluded.granted_at,
+				granted_by = excluded.granted_by`, agentID, slug, effect, now, grantedBy); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // RevokeAllAgentPermissionsForConv drops every per-conv permission
