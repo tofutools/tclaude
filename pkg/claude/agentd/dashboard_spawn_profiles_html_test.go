@@ -79,6 +79,11 @@ func TestDashboardHTML_SpawnProfilesUI(t *testing.T) {
 	present(`function renderDashDefaultProfile(`, "the dashboard default-profile chip renderer")
 	present(`/api/spawn-profile-default`, "global default uses the validated operational endpoint")
 	present(`await setDashDefaultProfile(name)`, "picker waits for persistence before reporting success")
+	// The dock caches the global chip's node identity when it first moves the
+	// groups-toolbar controls. Picker dismissal must restore that same node;
+	// restoring a clone strands the cached original, which the next dock toggle
+	// inserts beside the clone and visibly duplicates the selector.
+	present(`select.replaceWith(chipEl)`, "picker teardown preserves the chip identity used by the dock")
 	present(`refreshDashDefaultProfile()`, "open dashboards reconcile CLI changes during refresh")
 	present(`body.trust_dir = $('#agent-spawn-trust-dir').checked`, "profile false trust intent stays explicit on spawn")
 	present(`if (p.trust_dir != null)`, "sparse profiles preserve trust-dir fallthrough")
