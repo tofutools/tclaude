@@ -2680,7 +2680,15 @@ details[data-group-key][open] > summary .group-sandbox-profile {
    opened when /api/term or /api/open-window reports mode:"browser"
    (no native window available). A plain .modal is sized for a form;
    this needs real screen real estate for a usable terminal, hence its
-   own class rather than reusing .modal. */
+   own class rather than reusing .modal.
+
+   The terminal can be opened by a control inside another modal (notably the
+   sandbox-profile editor's "configure with agent" action). Keep its overlay
+   above every normal editor (currently capped by #perm-edit-modal at 160),
+   while leaving toasts (200) and the shared confirmation dialog (1000) above
+   it. Without this explicit layer it inherits .modal-overlay's 100 and paints
+   behind the editor that launched it. */
+#term-session-modal { z-index: 190; }
 .term-session-modal {
   background: #0d1117; border: 1px solid #2a3340; border-radius: 6px;
   box-shadow: 0 8px 24px rgba(0,0,0,0.5);

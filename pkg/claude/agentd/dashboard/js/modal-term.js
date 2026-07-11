@@ -315,7 +315,7 @@ async function confirmAndClose() {
 //
 // Detach binds straight to detachAndClose with no termConfirmOpen guard: it
 // doesn't need one because a confirm, when open, covers it. #confirm-modal is
-// a full-viewport overlay at z-index 1000, above this modal's z-index 100, so
+// a full-viewport overlay at z-index 1000, above this modal's z-index 190, so
 // the Detach button isn't clickable while any confirm (×, backdrop, or the
 // disconnect prompt) is up. That layering is the guard — keep #confirm-modal
 // above #term-session-modal if either z-index ever changes.
