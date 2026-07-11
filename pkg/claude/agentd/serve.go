@@ -854,6 +854,14 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/spawn-profiles/import/inspect", handleSpawnProfilesImportInspect)
 	mux.HandleFunc("POST /v1/spawn-profiles/import", handleSpawnProfilesImport)
 	mux.HandleFunc("/v1/spawn-profiles/{name}", handleSpawnProfileByName)
+	// Sandbox profiles are additive host capability policy, separate from spawn
+	// profiles. Reads are open; every mutation uses sandbox-profiles.manage.
+	mux.HandleFunc("/v1/sandbox-profiles", handleSandboxProfiles)
+	mux.HandleFunc("/v1/sandbox-profile-default", handleGlobalSandboxProfile)
+	mux.HandleFunc("GET /v1/sandbox-profiles/export", handleSandboxProfilesExport)
+	mux.HandleFunc("POST /v1/sandbox-profiles/import", handleSandboxProfilesImport)
+	mux.HandleFunc("/v1/sandbox-profiles/{name}", handleSandboxProfileByName)
+	mux.HandleFunc("/v1/groups/{group}/sandbox-profile", handleGroupSandboxProfile)
 	// Role library (JOH-240). Reads open, writes gated on roles.manage.
 	mux.HandleFunc("/v1/roles", handleRoles)
 	mux.HandleFunc("/v1/roles/{name}", handleRoleByName)

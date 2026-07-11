@@ -5,31 +5,25 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"time"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 var (
 	ErrSandboxProfileNameTaken = errors.New("a sandbox profile with that name already exists")
 	ErrSandboxProfileNotFound  = errors.New("sandbox profile not found")
-	ErrSandboxProfileConflict  = errors.New("sandbox profile contains conflicting duplicate entries")
 )
 
 // SandboxFilesystemGrant is one canonical filesystem capability in a sandbox
 // profile. Validation and canonicalization live at the trusted domain/API
 // boundary; this store round-trips that normalized payload without widening it.
-type SandboxFilesystemGrant struct {
-	Path   string `json:"path"`
-	Access string `json:"access"`
-}
+type SandboxFilesystemGrant = sandboxpolicy.FilesystemGrant
 
 // SandboxEnvironmentEntry remains a slice element (rather than a map value)
 // so duplicate keys survive decoding long enough for the normalization seam to
 // distinguish identical duplicates from conflicting values.
-type SandboxEnvironmentEntry struct {
-	Name  string `json:"name"`
-	Value string `json:"value"`
-}
+type SandboxEnvironmentEntry = sandboxpolicy.EnvironmentEntry
 
 // SandboxProfile is a stable-ID registry row. Environment values are
 // deliberately non-secret plaintext configuration, not a credential store.
@@ -136,55 +130,23 @@ func marshalSandboxProfilePayload(p *SandboxProfile) (string, string, error) {
 }
 
 // normalizeSandboxProfileForStore is the single defensive persistence seam
-// shared by create/update (and reusable by import). The policy layer may do
-// filesystem-dependent canonicalization first; this final invariant never
-// mutates caller-owned slices, validates the closed access enum, folds exact
-// duplicates deterministically, applies write-dominates-read for an already
-// canonical path, and rejects conflicting environment values.
+// shared by create/update (and reusable by import). The common policy package
+// owns the complete invariant so internal callers cannot bypass the same path,
+// protected-state and environment rules enforced by the HTTP boundary.
 func normalizeSandboxProfileForStore(p *SandboxProfile) (*SandboxProfile, error) {
 	if p == nil {
 		return nil, errors.New("sandbox profile is nil")
 	}
+	normalized, err := sandboxpolicy.Normalize(sandboxpolicy.Profile{
+		Name: p.Name, Filesystem: p.Filesystem, Environment: p.Environment,
+	})
+	if err != nil {
+		return nil, err
+	}
 	out := *p
-	out.Filesystem = append([]SandboxFilesystemGrant(nil), p.Filesystem...)
-	out.Environment = append([]SandboxEnvironmentEntry(nil), p.Environment...)
-	sort.Slice(out.Filesystem, func(i, j int) bool {
-		if out.Filesystem[i].Path == out.Filesystem[j].Path {
-			return out.Filesystem[i].Access < out.Filesystem[j].Access
-		}
-		return out.Filesystem[i].Path < out.Filesystem[j].Path
-	})
-	filesystem := make([]SandboxFilesystemGrant, 0, len(out.Filesystem))
-	for _, grant := range out.Filesystem {
-		if grant.Access != "read" && grant.Access != "write" {
-			return nil, fmt.Errorf("filesystem grant %q has invalid access %q (want read or write)", grant.Path, grant.Access)
-		}
-		if len(filesystem) > 0 && filesystem[len(filesystem)-1].Path == grant.Path {
-			if grant.Access == "write" {
-				filesystem[len(filesystem)-1] = grant
-			}
-			continue
-		}
-		filesystem = append(filesystem, grant)
-	}
-	sort.Slice(out.Environment, func(i, j int) bool {
-		if out.Environment[i].Name == out.Environment[j].Name {
-			return out.Environment[i].Value < out.Environment[j].Value
-		}
-		return out.Environment[i].Name < out.Environment[j].Name
-	})
-	environment := make([]SandboxEnvironmentEntry, 0, len(out.Environment))
-	for _, entry := range out.Environment {
-		if len(environment) > 0 && environment[len(environment)-1].Name == entry.Name {
-			if environment[len(environment)-1].Value != entry.Value {
-				return nil, fmt.Errorf("%w: environment key %q has multiple values", ErrSandboxProfileConflict, entry.Name)
-			}
-			continue
-		}
-		environment = append(environment, entry)
-	}
-	out.Filesystem = filesystem
-	out.Environment = environment
+	out.Name = normalized.Name
+	out.Filesystem = normalized.Filesystem
+	out.Environment = normalized.Environment
 	return &out, nil
 }
 

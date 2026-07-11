@@ -2,6 +2,8 @@ package db
 
 import (
 	"database/sql"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,14 +12,18 @@ import (
 
 func TestSandboxProfileCRUDRoundTrip(t *testing.T) {
 	setupTestDB(t)
+	work := filepath.Join(os.Getenv("HOME"), "work")
+	for _, name := range []string{"a", "z", "new"} {
+		require.NoError(t, os.MkdirAll(filepath.Join(work, name), 0o755))
+	}
 
 	sparseID, err := CreateSandboxProfile(&SandboxProfile{Name: "empty"})
 	require.NoError(t, err)
 	populatedID, err := CreateSandboxProfile(&SandboxProfile{
 		Name: "populated",
 		Filesystem: []SandboxFilesystemGrant{
-			{Path: "/work/z", Access: "read"},
-			{Path: "/work/a", Access: "write"},
+			{Path: filepath.Join(work, "z"), Access: "read"},
+			{Path: filepath.Join(work, "a"), Access: "write"},
 		},
 		Environment: []SandboxEnvironmentEntry{
 			{Name: "ZED", Value: "last"},
@@ -39,8 +45,8 @@ func TestSandboxProfileCRUDRoundTrip(t *testing.T) {
 	require.NotNil(t, got)
 	assert.Equal(t, populatedID, got.ID)
 	assert.Equal(t, []SandboxFilesystemGrant{
-		{Path: "/work/a", Access: "write"},
-		{Path: "/work/z", Access: "read"},
+		{Path: filepath.Join(work, "a"), Access: "write"},
+		{Path: filepath.Join(work, "z"), Access: "read"},
 	}, got.Filesystem, "payload is stored in deterministic canonical order")
 	assert.Equal(t, []SandboxEnvironmentEntry{
 		{Name: "ALPHA", Value: "first"},
@@ -50,13 +56,13 @@ func TestSandboxProfileCRUDRoundTrip(t *testing.T) {
 	assert.False(t, got.UpdatedAt.IsZero())
 
 	got.Name = "renamed"
-	got.Filesystem = []SandboxFilesystemGrant{{Path: "/new", Access: "read"}}
+	got.Filesystem = []SandboxFilesystemGrant{{Path: filepath.Join(work, "new"), Access: "read"}}
 	got.Environment = []SandboxEnvironmentEntry{}
 	require.NoError(t, UpdateSandboxProfile(got))
 	updated, err := GetSandboxProfileByID(populatedID)
 	require.NoError(t, err)
 	assert.Equal(t, "renamed", updated.Name)
-	assert.Equal(t, []SandboxFilesystemGrant{{Path: "/new", Access: "read"}}, updated.Filesystem)
+	assert.Equal(t, []SandboxFilesystemGrant{{Path: filepath.Join(work, "new"), Access: "read"}}, updated.Filesystem)
 	assert.Empty(t, updated.Environment)
 
 	list, err := ListSandboxProfiles()
@@ -75,6 +81,8 @@ func TestSandboxProfileCRUDRoundTrip(t *testing.T) {
 
 func TestSandboxProfileNameAndPayloadIntegrity(t *testing.T) {
 	setupTestDB(t)
+	same := filepath.Join(os.Getenv("HOME"), "same")
+	require.NoError(t, os.MkdirAll(same, 0o755))
 
 	firstID, err := CreateSandboxProfile(&SandboxProfile{Name: "first"})
 	require.NoError(t, err)
@@ -90,8 +98,8 @@ func TestSandboxProfileNameAndPayloadIntegrity(t *testing.T) {
 	require.NoError(t, UpdateSandboxProfile(&SandboxProfile{
 		ID: firstID, Name: "first",
 		Filesystem: []SandboxFilesystemGrant{
-			{Path: "/same", Access: "read"},
-			{Path: "/same", Access: "write"},
+			{Path: same, Access: "read"},
+			{Path: same, Access: "write"},
 		},
 		Environment: []SandboxEnvironmentEntry{
 			{Name: "A", Value: "1"}, {Name: "A", Value: "1"},
@@ -99,13 +107,13 @@ func TestSandboxProfileNameAndPayloadIntegrity(t *testing.T) {
 	}))
 	got, err := GetSandboxProfile("first")
 	require.NoError(t, err)
-	assert.Equal(t, []SandboxFilesystemGrant{{Path: "/same", Access: "write"}}, got.Filesystem)
+	assert.Equal(t, []SandboxFilesystemGrant{{Path: same, Access: "write"}}, got.Filesystem)
 	assert.Equal(t, []SandboxEnvironmentEntry{{Name: "A", Value: "1"}}, got.Environment)
 
 	_, err = CreateSandboxProfile(&SandboxProfile{Name: "bad-access", Filesystem: []SandboxFilesystemGrant{{Path: "/x", Access: "deny"}}})
-	require.ErrorContains(t, err, "invalid access")
+	require.ErrorContains(t, err, "is invalid")
 	_, err = CreateSandboxProfile(&SandboxProfile{Name: "bad-env", Environment: []SandboxEnvironmentEntry{{Name: "A", Value: "1"}, {Name: "A", Value: "2"}}})
-	require.ErrorIs(t, err, ErrSandboxProfileConflict)
+	require.ErrorContains(t, err, "conflicting values")
 }
 
 func TestSandboxProfileCorruptJSONFailsLoudly(t *testing.T) {
@@ -152,6 +160,14 @@ func TestSandboxProfileAssignmentsSurviveRenameAndClearOnDelete(t *testing.T) {
 	assert.Equal(t, profileID, globalID)
 	assert.Equal(t, "renamed", groupName)
 	assert.Equal(t, profileID, groupID)
+	sourceGroup, err := GetAgentGroupByName("crew")
+	require.NoError(t, err)
+	_, err = CreateAgentGroupFrom("crew-clone", *sourceGroup)
+	require.NoError(t, err)
+	cloneProfile, err := GetAgentGroupSandboxProfile("crew-clone")
+	require.NoError(t, err)
+	require.NotNil(t, cloneProfile)
+	assert.Equal(t, profileID, cloneProfile.ID, "group clone preserves the stable sandbox-profile assignment")
 
 	_, err = DeleteSandboxProfile("renamed")
 	require.NoError(t, err)
