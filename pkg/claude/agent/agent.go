@@ -51,6 +51,7 @@ func Cmd() *cobra.Command {
 			templatesCmd(),
 			rolesCmd(),
 			profilesCmd(),
+			sandboxProfilesCmd(),
 			taskForceCmd(),
 			processCmd(),
 			dashboardCmd(),

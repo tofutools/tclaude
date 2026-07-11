@@ -323,6 +323,42 @@ tclaude agent groups links                                 # every link, all gro
 All mutating subcommands take `--ask-human <duration>` (see
 [below](#ad-hoc-human-approval---ask-human)).
 
+### sandbox profiles
+
+Sandbox profiles are operator-authored, harness-neutral bundles of additive
+filesystem access and environment configuration. They do not select a harness,
+model, or sandbox posture; those belong to spawn profiles. Environment values
+are stored and displayed as ordinary **non-secret configuration** — do not put
+credentials in them. Profile payload reads and all mutations require the
+`sandbox-profiles.manage` permission.
+
+```bash
+tclaude agent sandbox-profiles ls [--json]
+tclaude agent sandbox-profiles show <name> [--json]
+tclaude agent sandbox-profiles create --file profile.json
+tclaude agent sandbox-profiles edit <name> --file profile.json
+tclaude agent sandbox-profiles rm <name>
+
+tclaude agent sandbox-profiles default show [--json]
+tclaude agent sandbox-profiles default set <name>
+tclaude agent sandbox-profiles default clear
+
+tclaude agent sandbox-profiles group show <group> [--json]
+tclaude agent sandbox-profiles group set <group> <name>
+tclaude agent sandbox-profiles group clear <group>
+
+tclaude agent sandbox-profiles export [name...] [--include-assignments] [--file bundle.json]
+tclaude agent sandbox-profiles import --file bundle.json [--on-conflict error|skip|overwrite]
+                                        [--apply-assignments] [--json]
+```
+
+`show --json` emits the same profile shape accepted by `create` and `edit`.
+Export bundles are portable and versioned. Assignment export is opt-in, and an
+import only applies included global/group assignments when
+`--apply-assignments` is explicitly passed; missing groups are reported as
+warnings. Without an explicit profile, resolution falls back from a group
+assignment to the global default.
+
 ### spawn
 
 ```bash
