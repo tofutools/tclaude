@@ -57,6 +57,7 @@ import { rankCommands } from './palette-score.js';
 import { recordGroupInteraction, lastInteractedGroup } from './last-group.js';
 import { setDockOpen } from './dock.js';
 import { scribeVisible } from './virtual-groups.js';
+import { scribeGroupVisible } from './scribe-groups.js';
 import { closeTerminalsForConvs, closeTerminalsForWindowOp, focusTerminalForConv, openWebWindowPane } from './terminals-tab.js';
 
 const MODAL_ID = 'command-palette-modal';
@@ -226,15 +227,14 @@ function setAllGroupsOpen(open) {
 // empty-query view.
 function buildCommands() {
   const snap = lastSnapshot || {};
-  // Mirror the Groups tab's default-hidden treatment of the daemon-created
-  // scribe's system group (snapshot `scribe` flag): its per-group commands
-  // (spawn / collapse / expand / hide / focus / shut down / retire in
-  // circle-scribe) are kept out of the palette until the human ticks "show
-  // circle-scribe" in the view popover — so hiding it there hides it here too.
+  // Mirror the Groups tab's scribe treatment: live scribe groups and their
+  // commands are always visible; dormant/offline ones follow the view toggle.
   // Per-AGENT commands (§7/§7b, sourced from snap.agents) are unaffected: the
   // scribe agent still shows in the Agents tab, so it stays focusable/stoppable
   // by name.
-  const groups = (snap.groups || []).filter(g => scribeVisible() || !g.scribe);
+  const showOfflineScribes = scribeVisible();
+  const groups = (snap.groups || [])
+    .filter(g => scribeGroupVisible(g, showOfflineScribes));
   const cmds = [];
 
   // 1) Global window ops — "hide all windows" (and its inverse), plus

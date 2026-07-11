@@ -236,10 +236,9 @@ function bindFilter(tab) {
       rerender();
     });
   }
-  // Optional "show circle-scribe" checkbox (groups tab only) — reveals the
-  // daemon-created scribe's system group (snapshot `scribe` flag). Defaults
-  // OFF (it's machinery, not a managed team) when the user has never touched
-  // it, so a summoned scribe stays out of the way until deliberately shown.
+  // Optional "show offline scribes" checkbox (groups tab only). Live scribe
+  // groups are always visible; this preference reveals dormant system groups.
+  // Defaults OFF because those are machinery rather than managed teams.
   const scribe = $(`#filter-${tab}-scribe`);
   if (scribe) {
     const sckey = `tclaude.dash.scribe.${tab}`;

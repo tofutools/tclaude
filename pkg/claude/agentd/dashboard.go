@@ -1106,9 +1106,9 @@ type dashboardGroup struct {
 	Waves *waveStatusJSON `json:"waves,omitempty"`
 	// Scribe marks the group as a daemon-created scribe's eponymous system
 	// group (descr == scribeGroupDescr — the circle-scribe machinery, JOH-361).
-	// The Groups tab hides these by default, surfacing them only when the
-	// human ticks "show circle-scribe" in the view popover; the flag is the
-	// discriminator that gate keys off, so it need not string-match a name.
+	// The Groups tab always surfaces these while at least one member is online;
+	// dormant scribe groups remain behind the "show offline scribes" toggle.
+	// The flag is the discriminator, so the client need not match a name.
 	Scribe  bool              `json:"scribe,omitempty"`
 	Members []dashboardMember `json:"members"`
 	Online  int               `json:"online"`

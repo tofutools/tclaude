@@ -94,8 +94,8 @@ func TestScribeSummon_HumanCreatesGrantedScribe(t *testing.T) {
 	assert.Equal(t, "grant", overrides[agentd.PermTemplatesManage], "templates.manage granted at birth")
 
 	// The snapshot flags the scribe's eponymous group as `scribe` — the wire
-	// bit the Groups tab keys off to hide it by default (only shown when the
-	// human ticks "show circle-scribe" in the view popover).
+	// bit the Groups tab keys off to always show it while live (and to hide the
+	// dormant group unless the human enables "show offline scribes").
 	assert.True(t, dashGroupByName(t, "circle-scribe").Scribe, "snapshot marks the scribe group scribe=true")
 
 	// The scribe's window was opened.

@@ -22,6 +22,7 @@ import {
 import { renderGroups } from './render.js';
 import { sortGroupsByPref } from './group-reorder.js';
 import { morphInto } from './morph.js';
+import { scribeGroupVisible } from './scribe-groups.js';
 
 // lastSnapshot still lives in dashboard.js — the snapshot-refresh
 // cluster is not extracted yet. Importing it back forms a deliberate,
@@ -109,11 +110,12 @@ function distributePendingToGroups(groups, pending) {
 function renderGroupsTab() {
   if (!lastSnapshot) return;
   const q = $('#filter-groups').value;
-  // The daemon-created scribe's system group (snapshot `scribe` flag) is
-  // hidden by default — it's machinery, not a team the operator manages —
-  // and surfaces only when the human ticks "show circle-scribe" in the view
-  // popover. Everything else renders as normal.
-  const realGroups = (lastSnapshot.groups || []).filter(g => scribeVisible() || !g.scribe);
+  // A live daemon-created scribe is active work and must remain visible. The
+  // view preference only controls dormant/offline scribe groups, which stay
+  // hidden by default because they are machinery rather than managed teams.
+  const showOfflineScribes = scribeVisible();
+  const realGroups = (lastSnapshot.groups || [])
+    .filter(g => scribeGroupVisible(g, showOfflineScribes));
   const pending = lastSnapshot.pending || [];
   const distributed = distributePendingToGroups(realGroups, pending);
   // Append the virtual "Ungrouped" group LAST so it always sorts to
