@@ -43,6 +43,37 @@ func TestSandboxProfilesPayloadReadsAndMutationsRequireDedicatedPermission(t *te
 	}
 }
 
+func TestSandboxProfileDraftPermissionCanOnlySubmitValidatedDraft(t *testing.T) {
+	f := newFlow(t)
+	const peer = "sandbox-drafter-aaaa-bbbb"
+	f.HaveConvWithTitle(peer, "sandbox-scribe")
+	require.NoError(t, db.GrantAgentPermission(peer, agentd.PermSandboxProfilesDraft, "test"))
+	token := "abcdefghijklmnop"
+
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost,
+		"/v1/sandbox-profile-drafts/"+token, map[string]any{
+			"profile": map[string]any{
+				"name": "proposed", "filesystem": []any{},
+				"environment": []map[string]any{{"name": "CACHE_DIR", "value": "/tmp/cache"}},
+			},
+		}), peer))
+	require.Equalf(t, http.StatusAccepted, rec.Code, "body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "has not been saved")
+
+	// Draft permission is not policy-management permission: registry reads and
+	// all CRUD/assignment surfaces remain forbidden, and no profile was saved.
+	for _, req := range []*http.Request{
+		testharness.JSONRequest(t, http.MethodGet, "/v1/sandbox-profiles", nil),
+		testharness.JSONRequest(t, http.MethodPost, "/v1/sandbox-profiles", map[string]any{"name": "proposed"}),
+		testharness.JSONRequest(t, http.MethodPut, "/v1/sandbox-profile-default", map[string]any{"name": "proposed"}),
+	} {
+		denied := testharness.Serve(f.Mux, agentd.AsAgentPeer(req, peer))
+		assert.Equalf(t, http.StatusForbidden, denied.Code, "%s %s body=%s", req.Method, req.URL.Path, denied.Body.String())
+	}
+	missing := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/sandbox-profiles/proposed", nil)))
+	assert.Equal(t, http.StatusNotFound, missing.Code, "draft submission must not persist a profile")
+}
+
 func TestSandboxProfilesCRUDValidationAndAssignments(t *testing.T) {
 	f := newFlow(t)
 	home := os.Getenv("HOME")

@@ -350,6 +350,9 @@ tclaude agent sandbox-profiles group clear <group>
 tclaude agent sandbox-profiles export [name...] [--include-assignments] [--file bundle.json]
 tclaude agent sandbox-profiles import --file bundle.json [--on-conflict error|skip|overwrite]
                                         [--apply-assignments] [--json]
+
+# Draft-only dashboard handoff (normally invoked by the summoned sandbox scribe)
+tclaude agent sandbox-profiles draft --token <dashboard-token> --file profile.json
 ```
 
 `show --json` emits the same profile shape accepted by `create` and `edit`.
@@ -360,6 +363,12 @@ import only applies included global/group assignments when
 `--apply-assignments` is explicitly passed; missing groups are reported as
 warnings. Without an explicit profile, resolution falls back from a group
 assignment to the global default.
+
+The `draft` command is deliberately not a mutation. It requires only
+`sandbox-profiles.draft`, runs the normal server validation, and hands the
+structured proposal to the human dashboard. It cannot create or edit a saved
+profile, change global/group assignments, or launch an agent; the human must
+preview the result and explicitly save it through the ordinary editor.
 
 ### spawn
 

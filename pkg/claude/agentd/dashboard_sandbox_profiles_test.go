@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -85,4 +86,32 @@ func TestDashboardSandboxProfilesRequireDashboardAuth(t *testing.T) {
 	rec := httptest.NewRecorder()
 	serveDashboardSandboxProfiles(rec, httptest.NewRequest(http.MethodGet, "/api/sandbox-profiles", nil))
 	assert.Equal(t, http.StatusForbidden, rec.Code)
+}
+
+func TestDashboardSandboxProfileDraftPreviewAndAcknowledge(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+	token := "dashboarddrafttoken"
+	sandboxProfileDraftMu.Lock()
+	sandboxProfileDrafts[token] = sandboxProfileDraftEntry{
+		Draft: sandboxProfileDraftJSON{
+			Profile: sandboxProfileJSON{Name: "new-name"},
+		},
+		CreatedAt: time.Now(),
+	}
+	sandboxProfileDraftMu.Unlock()
+	t.Cleanup(func() {
+		sandboxProfileDraftMu.Lock()
+		delete(sandboxProfileDrafts, token)
+		sandboxProfileDraftMu.Unlock()
+	})
+
+	rec := httptest.NewRecorder()
+	serveDashboardSandboxProfiles(rec, dashboardRequest(http.MethodGet, "/api/sandbox-profile-drafts/"+token, ""))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	assert.JSONEq(t, `{"profile":{"name":"new-name","filesystem":null,"environment":null}}`, rec.Body.String())
+
+	rec = httptest.NewRecorder()
+	serveDashboardSandboxProfiles(rec, dashboardRequest(http.MethodGet, "/api/sandbox-profile-drafts/"+token, ""))
+	assert.Equal(t, http.StatusNotFound, rec.Code, "the first GET atomically consumes the draft")
 }

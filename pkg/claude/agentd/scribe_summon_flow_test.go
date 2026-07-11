@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -140,6 +141,50 @@ func TestScribeSummon_ReuseIfAliveNoDoubleSpawn(t *testing.T) {
 
 	// Both summons opened a window (fresh spawn's auto-focus + reuse's re-focus).
 	assert.Equal(t, 2, *opens, "each summon opened the scribe's window")
+}
+
+// A capability-reducing scribe can pin explicit denies as well as its narrow
+// grant. Reuse must reapply those denies so stale/manual/default grants cannot
+// silently widen the live scribe past the safety boundary promised by its UI.
+func TestScribeSummon_ReuseReappliesExplicitDenies(t *testing.T) {
+	f := newFlow(t)
+	stubScribeTerminal(t)
+	summon := func() scribeSummonResp {
+		rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe",
+			map[string]any{
+				"name":      "sandbox-scribe",
+				"slugs":     []string{agentd.PermSandboxProfilesDraft},
+				"exclusive": true,
+				"brief":     "Prepare a draft only; never save or launch anything.",
+			})))
+		require.Equalf(t, http.StatusOK, rec.Code, "summon body=%s", rec.Body.String())
+		return decodeScribeResp(t, rec)
+	}
+
+	first := summon()
+	require.NoError(t, db.GrantAgentPermission(first.ConvID, agentd.PermSandboxProfilesManage, "simulated-stale-grant"))
+	_, err := db.InsertSudoGrant(&db.SudoGrant{
+		ConvID: first.ConvID, Slug: agentd.PermSandboxProfilesManage,
+		ExpiresAt: time.Now().Add(time.Hour), GrantedBy: "test", Reason: "simulated stale elevation",
+	})
+	require.NoError(t, err)
+	second := summon()
+	require.True(t, second.Reused)
+	require.Equal(t, first.ConvID, second.ConvID)
+
+	overrides, err := db.ListAgentPermissionOverridesForConv(first.ConvID)
+	require.NoError(t, err)
+	assert.Equal(t, db.PermEffectGrant, overrides[agentd.PermSandboxProfilesDraft])
+	assert.Equal(t, db.PermEffectDeny, overrides[agentd.PermSandboxProfilesManage])
+	assert.Equal(t, db.PermEffectDeny, overrides[agentd.PermGroupsSpawn])
+	assert.Equal(t, db.PermEffectDeny, overrides[agentd.PermTemplatesUse])
+	assert.Equal(t, db.PermEffectDeny, overrides[agentd.PermSelfClone])
+	assert.Equal(t, db.PermEffectDeny, overrides[agentd.PermSelfReincarnate])
+	assert.Equal(t, db.PermEffectDeny, overrides[agentd.PermPermissionsGrant])
+	assert.Equal(t, db.PermEffectDeny, overrides[agentd.PermPermissionsRevoke])
+	activeSudo, err := db.ListActiveSudoGrants(first.ConvID)
+	require.NoError(t, err)
+	assert.Empty(t, activeSudo, "exclusive summon revokes elevations that override permanent denies")
 }
 
 // Scenario: after the scribe's session dies (e.g. a daemon restart leaves the

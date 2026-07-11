@@ -305,10 +305,14 @@ const (
 	// environment. Keep it separate from profiles.manage: permission to edit a
 	// spawn-dialog preset must not imply permission to widen a sandbox.
 	PermSandboxProfilesManage = "sandbox-profiles.manage"
-	PermRolesManage           = "roles.manage"
-	PermProcessAdvance        = "process.advance"
-	PermHumanNotify           = "human.notify"
-	PermHumanClipboard        = "human.clipboard"
+	// Draft is intentionally separate from Manage: a dashboard-summoned scribe
+	// may propose a validated profile for human review, but cannot persist it,
+	// assign it, or use it to launch an agent.
+	PermSandboxProfilesDraft = "sandbox-profiles.draft"
+	PermRolesManage          = "roles.manage"
+	PermProcessAdvance       = "process.advance"
+	PermHumanNotify          = "human.notify"
+	PermHumanClipboard       = "human.clipboard"
 	// PermSettingsDefaultModel gates writing the user-level default
 	// model into ~/.claude/settings.json — a file in the human's home
 	// that also carries hooks and permission config, so not

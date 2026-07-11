@@ -1869,6 +1869,7 @@
       <input id="filter-sandbox-profiles" type="text" placeholder="Filter sandbox profiles" autocomplete="off" spellcheck="false" />
       <span class="filter-count" id="filter-sandbox-profiles-count"></span>
       <span class="spacer"></span>
+      <button id="sandbox-profile-scribe-open" class="tool" type="button" title="Talk with a preconfigured agent to prepare a validated draft. The agent cannot save or assign sandbox policy; you preview and explicitly save the result.">🤖 configure with agent</button>
       <button id="sandbox-profile-create-open" class="primary" type="button">+ new sandbox profile</button>
     </div>
     <div class="sandbox-profile-assignments">
@@ -1895,7 +1896,7 @@
     <label class="cron-create-row"><span class="cron-create-label">Filesystem</span><textarea id="sandbox-profile-editor-filesystem" rows="7" spellcheck="false" placeholder='[{"path":"/absolute/path","access":"write"}]'></textarea></label>
     <label class="cron-create-row"><span class="cron-create-label">Environment</span><textarea id="sandbox-profile-editor-environment" rows="7" spellcheck="false" placeholder='[{"name":"GOCACHE","value":"/absolute/path"}]'></textarea></label>
     <div class="cron-create-error" id="sandbox-profile-editor-error"></div>
-    <div class="modal-buttons"><button id="sandbox-profile-editor-cancel" type="button">Cancel</button><span class="spacer"></span><button id="sandbox-profile-editor-submit" class="primary" type="button">Save sandbox profile</button></div>
+    <div class="modal-buttons"><button id="sandbox-profile-editor-cancel" type="button">Cancel</button><button id="sandbox-profile-editor-scribe" type="button" title="Hand the current draft to a chat agent for interactive configuration. Its result returns here for review and is never saved automatically.">🤖 configure with agent</button><span class="spacer"></span><button id="sandbox-profile-editor-submit" class="primary" type="button">Save sandbox profile</button></div>
   </div>
 </div>
 <div class="manage-overlay" id="profiles-manage-modal">

@@ -15,11 +15,33 @@ func TestSandboxProfilesCommandHelpDocumentsNonSecretEnvironment(t *testing.T) {
 	cmd := sandboxProfilesCmd()
 	assert.Equal(t, "sandbox-profiles", cmd.Name())
 	assert.Contains(t, cmd.Long, "non-secret environment values")
-	for _, name := range []string{"ls", "show", "create", "edit", "rm", "default", "group", "export", "import"} {
+	for _, name := range []string{"ls", "show", "create", "edit", "rm", "default", "group", "export", "import", "draft"} {
 		child, _, err := cmd.Find([]string{name})
 		require.NoError(t, err)
 		assert.Equal(t, name, child.Name())
 	}
+}
+
+func TestRunSandboxProfilesDraftUsesDraftOnlyHandoff(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, func(method, path string) (int, string, string) {
+		assert.Equal(t, http.MethodPost, method)
+		assert.Equal(t, "/v1/sandbox-profile-drafts/abcdefghijklmnop", path)
+		return http.StatusAccepted, "", `{"accepted":true,"message":"draft validated"}`
+	})
+	input := `{"name":"dev","filesystem":[{"path":"/work","access":"read"}],"environment":[]}`
+	var stdout, stderr bytes.Buffer
+	rc := runSandboxProfilesDraft(&sandboxProfilesDraftParams{
+		Token: "abcdefghijklmnop", File: "-",
+	}, strings.NewReader(input), &stdout, &stderr)
+	require.Equal(t, rcOK, rc, "stderr=%s", stderr.String())
+	require.Len(t, calls, 1)
+	body, ok := calls[0].body.(struct {
+		Profile sandboxProfileJSON `json:"profile"`
+	})
+	require.True(t, ok)
+	assert.Equal(t, "dev", body.Profile.Name)
+	assert.Contains(t, stdout.String(), "has not been saved")
 }
 
 func TestRunSandboxProfilesListAndShowStableOutputs(t *testing.T) {

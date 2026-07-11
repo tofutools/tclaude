@@ -14,6 +14,7 @@ func registerDashboardSandboxProfileRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/sandbox-profiles/export", dashboardSandboxProfilesRoute(handleSandboxProfilesExport))
 	mux.HandleFunc("POST /api/sandbox-profiles/import", dashboardSandboxProfilesRoute(handleSandboxProfilesImport))
 	mux.HandleFunc("/api/sandbox-profiles/{name}", dashboardSandboxProfilesRoute(handleSandboxProfileByName))
+	mux.HandleFunc("/api/sandbox-profile-drafts/{token}", handleDashboardSandboxProfileDraft)
 	mux.HandleFunc("/api/groups/{group}/sandbox-profile", dashboardSandboxProfilesRoute(handleGroupSandboxProfile))
 }
 
