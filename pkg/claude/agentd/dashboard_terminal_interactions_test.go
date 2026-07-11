@@ -31,6 +31,8 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 	}
 	for _, needle := range []string{
 		"term.attachCustomKeyEventHandler(",
+		"const input = terminalKeyInput(event)",
+		"term.input(input)",
 		"term.onSelectionChange(",
 		"navigator.clipboard.writeText(",
 		"new globalThis.WebLinksAddon.WebLinksAddon(",

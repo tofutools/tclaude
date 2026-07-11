@@ -9,6 +9,20 @@ const IMAGE_TYPES = new Map([
 const PASTE_REPEAT_MS = 1000;
 const SELECT_HINT = 'Option-drag to select on macOS; Shift-drag on Linux/Windows';
 
+// Browsers expose Shift+Enter distinctly, but xterm's default legacy keyboard
+// encoding sends the same carriage return as plain Enter. Translate the
+// browser gesture to Ctrl+J's line-feed byte, which both Claude Code and Codex
+// CLI treat as "insert newline" in every terminal. Returning null leaves every
+// other key (including modified Enter chords) to xterm.
+export function terminalKeyInput(event) {
+  if (event && event.type === 'keydown' && event.key === 'Enter' && event.shiftKey &&
+      !event.altKey && !event.ctrlKey && !event.metaKey &&
+      !event.isComposing && event.keyCode !== 229) {
+    return '\n';
+  }
+  return null;
+}
+
 function safeHTTPURL(raw) {
   try {
     const url = new URL(raw);
@@ -154,6 +168,14 @@ export function attachTerminalInteractions({ term, host, copyButton, setStatus, 
 
   term.attachCustomKeyEventHandler((event) => {
     if (event.type !== 'keydown') return true;
+    const input = terminalKeyInput(event);
+    if (input !== null) {
+      event.preventDefault();
+      // Terminal.input follows the normal user-input path and fires onData, so
+      // the existing binary WebSocket forwarding remains the single PTY sink.
+      term.input(input);
+      return false;
+    }
     const copyChord = (event.ctrlKey || event.metaKey) && event.shiftKey && event.code === 'KeyC';
     if (!copyChord) return true;
     event.preventDefault();
