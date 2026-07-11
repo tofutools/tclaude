@@ -119,6 +119,18 @@ CREATE TRIGGER stable_ref_group_template_update
 
 CREATE INDEX idx_agent_groups_sandbox_profile_id ON agent_groups(sandbox_profile_id);
 
+CREATE TRIGGER sandbox_profile_group_ref_insert
+			BEFORE INSERT ON agent_groups
+			WHEN NEW.sandbox_profile_id IS NOT NULL
+			 AND NOT EXISTS (SELECT 1 FROM sandbox_profiles WHERE id = NEW.sandbox_profile_id)
+			BEGIN SELECT RAISE(ABORT, 'sandbox profile reference does not exist'); END;
+
+CREATE TRIGGER sandbox_profile_group_ref_update
+			BEFORE UPDATE OF sandbox_profile_id ON agent_groups
+			WHEN NEW.sandbox_profile_id IS NOT NULL
+			 AND NOT EXISTS (SELECT 1 FROM sandbox_profiles WHERE id = NEW.sandbox_profile_id)
+			BEGIN SELECT RAISE(ABORT, 'sandbox profile reference does not exist'); END;
+
 CREATE TABLE agent_cron_jobs (
 			id               INTEGER PRIMARY KEY AUTOINCREMENT,
 			name             TEXT NOT NULL DEFAULT '',

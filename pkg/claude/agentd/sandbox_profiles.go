@@ -67,11 +67,13 @@ func buildSandboxProfile(body sandboxProfileJSON) (*db.SandboxProfile, error) {
 	}, nil
 }
 
-// handleSandboxProfiles exposes the profile registry. Reads are open because
-// profile environment is explicitly ordinary non-secret configuration. Writes
-// require sandbox-profiles.manage, a stronger and separate authority from
-// editing spawn-dialog presets.
+// handleSandboxProfiles exposes the profile registry. Every method requires
+// sandbox-profiles.manage: values are explicitly documented as non-secret, but
+// a mistaken credential must not become readable by every local agent.
 func handleSandboxProfiles(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requirePermission(w, r, PermSandboxProfilesManage); !ok {
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		profiles, err := db.ListSandboxProfiles()
@@ -85,9 +87,6 @@ func handleSandboxProfiles(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, out)
 	case http.MethodPost:
-		if _, ok := requirePermission(w, r, PermSandboxProfilesManage); !ok {
-			return
-		}
 		var body sandboxProfileJSON
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -114,6 +113,9 @@ func handleSandboxProfiles(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleSandboxProfileByName(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requirePermission(w, r, PermSandboxProfilesManage); !ok {
+		return
+	}
 	name := r.PathValue("name")
 	if name == "" {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "missing sandbox profile name")
@@ -132,9 +134,6 @@ func handleSandboxProfileByName(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, sandboxProfileToJSON(p, true))
 	case http.MethodPatch:
-		if _, ok := requirePermission(w, r, PermSandboxProfilesManage); !ok {
-			return
-		}
 		existing, err := db.GetSandboxProfile(name)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
@@ -164,9 +163,6 @@ func handleSandboxProfileByName(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"id": p.ID, "name": p.Name})
 	case http.MethodDelete:
-		if _, ok := requirePermission(w, r, PermSandboxProfilesManage); !ok {
-			return
-		}
 		n, err := db.DeleteSandboxProfile(name)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
@@ -234,6 +230,11 @@ func handleGlobalSandboxProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleGroupSandboxProfile(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPut || r.Method == http.MethodDelete {
+		if _, ok := requirePermission(w, r, PermSandboxProfilesManage); !ok {
+			return
+		}
+	}
 	group := r.PathValue("group")
 	g, err := db.GetAgentGroupByName(group)
 	if err != nil {
@@ -257,9 +258,6 @@ func handleGroupSandboxProfile(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"group": g.Name, "name": name})
 	case http.MethodPut:
-		if _, ok := requirePermission(w, r, PermSandboxProfilesManage); !ok {
-			return
-		}
 		var body struct {
 			Name string `json:"name"`
 		}
@@ -281,9 +279,6 @@ func handleGroupSandboxProfile(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"group": g.Name, "name": body.Name})
 	case http.MethodDelete:
-		if _, ok := requirePermission(w, r, PermSandboxProfilesManage); !ok {
-			return
-		}
 		if _, err := db.SetAgentGroupSandboxProfile(g.Name, ""); err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
@@ -295,6 +290,9 @@ func handleGroupSandboxProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleSandboxProfilesExport(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requirePermission(w, r, PermSandboxProfilesManage); !ok {
+		return
+	}
 	names := requestedProfileExportNames(r)
 	out := []sandboxProfileJSON{}
 	exportedNames := map[string]bool{}
@@ -385,76 +383,31 @@ func handleSandboxProfilesImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "on_conflict must be error, skip, or overwrite")
 		return
 	}
-	type plan struct {
-		profile  *db.SandboxProfile
-		existing *db.SandboxProfile
-	}
-	plans := make([]plan, 0, len(env.Profiles))
-	seen := map[string]bool{}
+	profiles := make([]*db.SandboxProfile, 0, len(env.Profiles))
 	for i, body := range env.Profiles {
 		p, err := buildSandboxProfile(body)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", fmt.Sprintf("profile #%d: %v", i+1, err))
 			return
 		}
-		if seen[p.Name] {
-			writeError(w, http.StatusBadRequest, "invalid_arg", fmt.Sprintf("sandbox profile %q appears more than once", p.Name))
-			return
-		}
-		seen[p.Name] = true
-		existing, err := db.GetSandboxProfile(p.Name)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", err.Error())
-			return
-		}
-		if existing != nil && conflict == "error" {
-			writeError(w, http.StatusConflict, "exists", fmt.Sprintf("sandbox profile %q already exists", p.Name))
-			return
-		}
-		plans = append(plans, plan{profile: p, existing: existing})
+		profiles = append(profiles, p)
 	}
-	imported, skipped, warnings := []string{}, []string{}, []string{}
-	for _, item := range plans {
-		if item.existing != nil && conflict == "skip" {
-			skipped = append(skipped, item.profile.Name)
-			continue
-		}
-		if item.existing != nil {
-			item.profile.ID = item.existing.ID
-			if err := db.UpdateSandboxProfile(item.profile); err != nil {
-				writeError(w, http.StatusInternalServerError, "io", err.Error())
-				return
-			}
-		} else if _, err := db.CreateSandboxProfile(item.profile); err != nil {
-			writeError(w, http.StatusInternalServerError, "io", err.Error())
-			return
-		}
-		imported = append(imported, item.profile.Name)
-	}
+	var assignments *db.SandboxProfileAssignments
 	if env.ApplyAssignments && env.Assignments != nil {
-		if env.Assignments.Global != "" {
-			if err := db.SetGlobalSandboxProfile(env.Assignments.Global); errors.Is(err, db.ErrSandboxProfileNotFound) {
-				warnings = append(warnings, fmt.Sprintf("global assignment references missing sandbox profile %q", env.Assignments.Global))
-			} else if err != nil {
-				writeError(w, http.StatusInternalServerError, "io", err.Error())
-				return
-			}
-		}
-		for group, profile := range env.Assignments.Groups {
-			if existingGroup, err := db.GetAgentGroupByName(group); err != nil {
-				writeError(w, http.StatusInternalServerError, "io", err.Error())
-				return
-			} else if existingGroup == nil {
-				warnings = append(warnings, fmt.Sprintf("group assignment skipped: no group %q", group))
-				continue
-			}
-			if _, err := db.SetAgentGroupSandboxProfile(group, profile); errors.Is(err, db.ErrSandboxProfileNotFound) {
-				warnings = append(warnings, fmt.Sprintf("group %q assignment references missing sandbox profile %q", group, profile))
-			} else if err != nil {
-				writeError(w, http.StatusInternalServerError, "io", err.Error())
-				return
-			}
-		}
+		assignments = &db.SandboxProfileAssignments{Global: env.Assignments.Global, Groups: env.Assignments.Groups}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"imported": imported, "skipped": skipped, "warnings": warnings})
+	result, err := db.ImportSandboxProfiles(profiles, conflict, assignments)
+	if errors.Is(err, db.ErrSandboxProfileNameTaken) {
+		writeError(w, http.StatusConflict, "exists", err.Error())
+		return
+	}
+	if errors.Is(err, db.ErrSandboxProfileInvalidImport) {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"imported": result.Imported, "skipped": result.Skipped, "warnings": result.Warnings})
 }

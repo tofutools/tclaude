@@ -254,7 +254,7 @@ var permissionRegistry = []PermSlug{
 	},
 	{
 		Slug:        PermSandboxProfilesManage,
-		Description: "Create, edit, delete and assign sandbox profiles — operator policy that can add host filesystem access and non-secret launch environment to agents. This is intentionally separate from profiles.manage and is not default-granted (effectively human-only).",
+		Description: "Read, create, edit, delete and assign sandbox profiles — operator policy that can add host filesystem access and launch environment to agents. This is intentionally separate from profiles.manage and is not default-granted (effectively human-only).",
 	},
 	{
 		Slug:        PermRolesManage,

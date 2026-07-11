@@ -160,6 +160,9 @@ func TestSandboxProfileAssignmentsSurviveRenameAndClearOnDelete(t *testing.T) {
 	assert.Equal(t, profileID, globalID)
 	assert.Equal(t, "renamed", groupName)
 	assert.Equal(t, profileID, groupID)
+	_, err = d.Exec(`UPDATE agent_groups SET sandbox_profile_id = 999999 WHERE name = 'crew'`)
+	require.ErrorContains(t, err, "sandbox profile reference does not exist",
+		"the trigger-backed FK equivalent rejects dangling references")
 	sourceGroup, err := GetAgentGroupByName("crew")
 	require.NoError(t, err)
 	_, err = CreateAgentGroupFrom("crew-clone", *sourceGroup)
@@ -181,6 +184,11 @@ func TestSandboxProfileAssignmentsSurviveRenameAndClearOnDelete(t *testing.T) {
 	// Reusing the display name cannot capture either cleared stable reference.
 	_, err = CreateSandboxProfile(&SandboxProfile{Name: "renamed"})
 	require.NoError(t, err)
+	_, err = CreateAgentGroupFrom("stale-clone", *sourceGroup)
+	require.NoError(t, err)
+	staleCloneProfile, err := GetAgentGroupSandboxProfile("stale-clone")
+	require.NoError(t, err)
+	assert.Nil(t, staleCloneProfile, "a stale source ID cannot capture a new profile that reused the old name")
 	global, err = GetGlobalSandboxProfile()
 	require.NoError(t, err)
 	assert.Nil(t, global)

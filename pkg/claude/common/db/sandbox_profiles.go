@@ -5,14 +5,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 var (
-	ErrSandboxProfileNameTaken = errors.New("a sandbox profile with that name already exists")
-	ErrSandboxProfileNotFound  = errors.New("sandbox profile not found")
+	ErrSandboxProfileNameTaken     = errors.New("a sandbox profile with that name already exists")
+	ErrSandboxProfileNotFound      = errors.New("sandbox profile not found")
+	ErrSandboxProfileInvalidImport = errors.New("invalid sandbox profile import")
 )
 
 // SandboxFilesystemGrant is one canonical filesystem capability in a sandbox
@@ -34,6 +37,17 @@ type SandboxProfile struct {
 	Environment []SandboxEnvironmentEntry `json:"environment"`
 	CreatedAt   time.Time                 `json:"created_at"`
 	UpdatedAt   time.Time                 `json:"updated_at"`
+}
+
+type SandboxProfileAssignments struct {
+	Global string
+	Groups map[string]string
+}
+
+type SandboxProfileImportResult struct {
+	Imported []string
+	Skipped  []string
+	Warnings []string
 }
 
 func CreateSandboxProfile(p *SandboxProfile) (int64, error) {
@@ -190,6 +204,10 @@ func scanSandboxProfile(row rowScanner) (*SandboxProfile, error) {
 	}
 	p.CreatedAt = parseTimeOrZero(createdAt)
 	p.UpdatedAt = parseTimeOrZero(updatedAt)
+	// These paths were canonical at persistence time, but that is not a durable
+	// authorization proof: directories can be replaced by symlinks later. The
+	// TCL-320 launch/application boundary must call sandboxpolicy.Normalize
+	// again immediately before rendering any harness grant.
 	return &p, nil
 }
 
@@ -212,6 +230,127 @@ func ListSandboxProfiles() ([]*SandboxProfile, error) {
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+// ImportSandboxProfiles validates and applies a portable profile bundle in one
+// transaction. Expected conflicts are resolved before the first write, and
+// optional assignment restoration rides the same commit, so an error never
+// leaves a partially imported registry.
+func ImportSandboxProfiles(profiles []*SandboxProfile, onConflict string, assignments *SandboxProfileAssignments) (SandboxProfileImportResult, error) {
+	result := SandboxProfileImportResult{Imported: []string{}, Skipped: []string{}, Warnings: []string{}}
+	onConflict = strings.ToLower(strings.TrimSpace(onConflict))
+	if onConflict == "" {
+		onConflict = "error"
+	}
+	if onConflict != "error" && onConflict != "skip" && onConflict != "overwrite" {
+		return result, fmt.Errorf("%w: on_conflict must be error, skip, or overwrite", ErrSandboxProfileInvalidImport)
+	}
+	normalized := make([]*SandboxProfile, 0, len(profiles))
+	seen := map[string]bool{}
+	for i, profile := range profiles {
+		p, err := normalizeSandboxProfileForStore(profile)
+		if err != nil {
+			return result, fmt.Errorf("%w: profile #%d: %v", ErrSandboxProfileInvalidImport, i+1, err)
+		}
+		if seen[p.Name] {
+			return result, fmt.Errorf("%w: sandbox profile %q appears more than once", ErrSandboxProfileInvalidImport, p.Name)
+		}
+		seen[p.Name] = true
+		normalized = append(normalized, p)
+	}
+
+	d, err := Open()
+	if err != nil {
+		return result, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return result, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	type planned struct {
+		profile    *SandboxProfile
+		existingID int64
+	}
+	plans := make([]planned, 0, len(normalized))
+	for _, profile := range normalized {
+		var id int64
+		err := tx.QueryRow(`SELECT id FROM sandbox_profiles WHERE name = ?`, profile.Name).Scan(&id)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return result, err
+		}
+		if err == nil && onConflict == "error" {
+			return result, fmt.Errorf("%w: %q", ErrSandboxProfileNameTaken, profile.Name)
+		}
+		plans = append(plans, planned{profile: profile, existingID: id})
+	}
+
+	now := time.Now().Format(time.RFC3339Nano)
+	for _, item := range plans {
+		if item.existingID != 0 && onConflict == "skip" {
+			result.Skipped = append(result.Skipped, item.profile.Name)
+			continue
+		}
+		filesystemJSON, environmentJSON, err := marshalSandboxProfilePayload(item.profile)
+		if err != nil {
+			return result, err
+		}
+		if item.existingID != 0 {
+			if _, err := tx.Exec(`UPDATE sandbox_profiles SET filesystem_json = ?, environment_json = ?, updated_at = ? WHERE id = ?`,
+				filesystemJSON, environmentJSON, now, item.existingID); err != nil {
+				return result, err
+			}
+		} else if _, err := tx.Exec(`INSERT INTO sandbox_profiles
+			(name, filesystem_json, environment_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
+			item.profile.Name, filesystemJSON, environmentJSON, now, now); err != nil {
+			if isUniqueViolation(err) {
+				return result, ErrSandboxProfileNameTaken
+			}
+			return result, err
+		}
+		result.Imported = append(result.Imported, item.profile.Name)
+	}
+
+	if assignments != nil {
+		if assignments.Global != "" {
+			var id int64
+			if err := tx.QueryRow(`SELECT id FROM sandbox_profiles WHERE name = ?`, assignments.Global).Scan(&id); errors.Is(err, sql.ErrNoRows) {
+				result.Warnings = append(result.Warnings, fmt.Sprintf("global assignment references missing sandbox profile %q", assignments.Global))
+			} else if err != nil {
+				return result, err
+			} else if _, err := tx.Exec(`INSERT OR REPLACE INTO sandbox_profile_global_assignment (id, profile_name, profile_id) VALUES (1, ?, ?)`, assignments.Global, id); err != nil {
+				return result, err
+			}
+		}
+		groups := make([]string, 0, len(assignments.Groups))
+		for group := range assignments.Groups {
+			groups = append(groups, group)
+		}
+		sort.Strings(groups)
+		for _, group := range groups {
+			profile := assignments.Groups[group]
+			var groupID, profileID int64
+			if err := tx.QueryRow(`SELECT id FROM agent_groups WHERE name = ?`, group).Scan(&groupID); errors.Is(err, sql.ErrNoRows) {
+				result.Warnings = append(result.Warnings, fmt.Sprintf("group assignment skipped: no group %q", group))
+				continue
+			} else if err != nil {
+				return result, err
+			}
+			if err := tx.QueryRow(`SELECT id FROM sandbox_profiles WHERE name = ?`, profile).Scan(&profileID); errors.Is(err, sql.ErrNoRows) {
+				result.Warnings = append(result.Warnings, fmt.Sprintf("group %q assignment references missing sandbox profile %q", group, profile))
+				continue
+			} else if err != nil {
+				return result, err
+			}
+			if _, err := tx.Exec(`UPDATE agent_groups SET sandbox_profile = ?, sandbox_profile_id = ? WHERE id = ?`, profile, profileID, groupID); err != nil {
+				return result, err
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return result, err
+	}
+	return result, nil
 }
 
 func DeleteSandboxProfile(name string) (int64, error) {
@@ -257,19 +396,27 @@ func SetGlobalSandboxProfile(name string) error {
 	if err != nil {
 		return err
 	}
-	if name == "" {
-		_, err := d.Exec(`DELETE FROM sandbox_profile_global_assignment WHERE id = 1`)
-		return err
-	}
-	p, err := GetSandboxProfile(name)
+	tx, err := d.Begin()
 	if err != nil {
 		return err
 	}
-	if p == nil {
-		return ErrSandboxProfileNotFound
+	defer func() { _ = tx.Rollback() }()
+	if name == "" {
+		if _, err := tx.Exec(`DELETE FROM sandbox_profile_global_assignment WHERE id = 1`); err != nil {
+			return err
+		}
+		return tx.Commit()
 	}
-	_, err = d.Exec(`INSERT OR REPLACE INTO sandbox_profile_global_assignment (id, profile_name, profile_id) VALUES (1, ?, ?)`, p.Name, p.ID)
-	return err
+	var id int64
+	if err := tx.QueryRow(`SELECT id FROM sandbox_profiles WHERE name = ?`, name).Scan(&id); errors.Is(err, sql.ErrNoRows) {
+		return ErrSandboxProfileNotFound
+	} else if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT OR REPLACE INTO sandbox_profile_global_assignment (id, profile_name, profile_id) VALUES (1, ?, ?)`, name, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func GetGlobalSandboxProfile() (*SandboxProfile, error) {
@@ -291,9 +438,14 @@ func SetAgentGroupSandboxProfile(group, name string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	tx, err := d.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
 	var profileID sql.NullInt64
 	if name != "" {
-		profileID, err = registryIDByNameDB(d, "sandbox_profiles", name)
+		profileID, err = registryIDByName(tx, "sandbox_profiles", name)
 		if err != nil {
 			return 0, err
 		}
@@ -301,11 +453,18 @@ func SetAgentGroupSandboxProfile(group, name string) (int64, error) {
 			return 0, ErrSandboxProfileNotFound
 		}
 	}
-	res, err := d.Exec(`UPDATE agent_groups SET sandbox_profile = ?, sandbox_profile_id = ? WHERE name = ?`, name, profileID, group)
+	res, err := tx.Exec(`UPDATE agent_groups SET sandbox_profile = ?, sandbox_profile_id = ? WHERE name = ?`, name, profileID, group)
 	if err != nil {
 		return 0, err
 	}
-	return res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 func GetAgentGroupSandboxProfile(group string) (*SandboxProfile, error) {

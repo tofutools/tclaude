@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -22,6 +23,24 @@ type wireSandboxProfile struct {
 		Name  string `json:"name"`
 		Value string `json:"value"`
 	} `json:"environment"`
+}
+
+func TestSandboxProfilesPayloadReadsAndMutationsRequireDedicatedPermission(t *testing.T) {
+	f := newFlow(t)
+	const peer = "sandbox-profile-gate-aaaa-bbbb"
+	f.HaveConvWithTitle(peer, "peer")
+	_, err := db.CreateAgentGroup("exists", "")
+	require.NoError(t, err)
+	for _, req := range []*http.Request{
+		testharness.JSONRequest(t, http.MethodGet, "/v1/sandbox-profiles", nil),
+		testharness.JSONRequest(t, http.MethodGet, "/v1/sandbox-profiles/anything", nil),
+		testharness.JSONRequest(t, http.MethodGet, "/v1/sandbox-profiles/export", nil),
+		testharness.JSONRequest(t, http.MethodPut, "/v1/groups/exists/sandbox-profile", map[string]any{"name": "x"}),
+		testharness.JSONRequest(t, http.MethodPut, "/v1/groups/missing/sandbox-profile", map[string]any{"name": "x"}),
+	} {
+		rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(req, peer))
+		assert.Equalf(t, http.StatusForbidden, rec.Code, "%s %s body=%s", req.Method, req.URL.Path, rec.Body.String())
+	}
 }
 
 func TestSandboxProfilesCRUDValidationAndAssignments(t *testing.T) {
@@ -136,4 +155,17 @@ func TestSandboxProfilesExportImportRoundTrip(t *testing.T) {
 		testharness.DecodeJSON(t, rec, &ref)
 		assert.Equal(t, "portable", ref.Name)
 	}
+}
+
+func TestSandboxProfilesImportConflictRollsBackWholeBundle(t *testing.T) {
+	f := newFlow(t)
+	require.Equal(t, http.StatusCreated,
+		profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{"name": "already-there"}).Code)
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles/import", map[string]any{
+		"format": "tclaude-sandbox-profiles", "format_version": 1,
+		"profiles": []map[string]any{{"name": "would-be-partial"}, {"name": "already-there"}},
+	})
+	require.Equalf(t, http.StatusConflict, rec.Code, "import body=%s", rec.Body.String())
+	rec = profileReq(t, f, http.MethodGet, "/v1/sandbox-profiles/would-be-partial", nil)
+	assert.Equal(t, http.StatusNotFound, rec.Code, "conflict planning must happen before the first insert")
 }

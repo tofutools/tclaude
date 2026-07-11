@@ -497,42 +497,67 @@ func CreateAgentGroupWithParent(name, descr, parentName string) (int64, error) {
 // name + descr): group-clone needs every column copied, not just descr,
 // so a cloned group is configured identically to its source.
 func CreateAgentGroupFrom(name string, src AgentGroup) (int64, error) {
-	db, err := Open()
+	d, err := Open()
 	if err != nil {
 		return 0, err
 	}
-	defaultProfileID, err := registryIDByNameDB(db, "spawn_profiles", src.DefaultProfile)
+	tx, err := d.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	defaultProfileID, err := registryIDByName(tx, "spawn_profiles", src.DefaultProfile)
 	if err != nil {
 		return 0, err
 	}
 	sourceTemplateID := sql.NullInt64{Int64: src.SourceTemplateID, Valid: src.SourceTemplateID > 0}
 	if !sourceTemplateID.Valid {
-		sourceTemplateID, err = registryIDByNameDB(db, "group_templates", src.SourceTemplate)
+		sourceTemplateID, err = registryIDByName(tx, "group_templates", src.SourceTemplate)
 		if err != nil {
 			return 0, err
 		}
 	}
-	sandboxProfileID := sql.NullInt64{Int64: src.SandboxProfileID, Valid: src.SandboxProfileID > 0}
-	if !sandboxProfileID.Valid {
-		sandboxProfileID, err = registryIDByNameDB(db, "sandbox_profiles", src.SandboxProfile)
+	// The source row may have been loaded before a concurrent profile delete.
+	// Re-resolve inside the clone transaction rather than resurrecting a stale
+	// numeric ID/name snapshot on the new group.
+	var sandboxProfileID sql.NullInt64
+	sandboxProfileName := src.SandboxProfile
+	if src.SandboxProfileID > 0 {
+		var id int64
+		if scanErr := tx.QueryRow(`SELECT id FROM sandbox_profiles WHERE id = ?`, src.SandboxProfileID).Scan(&id); scanErr == nil {
+			sandboxProfileID = sql.NullInt64{Int64: id, Valid: true}
+		} else if !errors.Is(scanErr, sql.ErrNoRows) {
+			return 0, scanErr
+		} else {
+			sandboxProfileName = ""
+		}
+	} else {
+		sandboxProfileID, err = registryIDByName(tx, "sandbox_profiles", src.SandboxProfile)
 		if err != nil {
 			return 0, err
 		}
 	}
-	res, err := db.Exec(`
+	res, err := tx.Exec(`
 		INSERT INTO agent_groups
 			(name, descr, default_cwd, default_context, default_profile, default_profile_id,
 			 sandbox_profile, sandbox_profile_id, max_members, notify_enabled, remote_control,
 			 mission, source_template, source_template_id, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		name, src.Descr, src.DefaultCwd, src.DefaultContext, src.DefaultProfile, defaultProfileID,
-		src.SandboxProfile, sandboxProfileID, src.MaxMembers, src.NotifyEnabled, boolPtrToNull(src.RemoteControl),
+		sandboxProfileName, sandboxProfileID, src.MaxMembers, src.NotifyEnabled, boolPtrToNull(src.RemoteControl),
 		src.Mission, src.SourceTemplate, sourceTemplateID,
 		time.Now().Format(time.RFC3339Nano))
 	if err != nil {
 		return 0, err
 	}
-	return res.LastInsertId()
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 // SetAgentGroupDescr sets (or, with descr == "", clears) the group's

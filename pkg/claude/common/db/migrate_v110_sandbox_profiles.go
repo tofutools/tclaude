@@ -55,6 +55,23 @@ func migrateV109toV110(db *sql.DB) error {
 		if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_agent_groups_sandbox_profile_id ON agent_groups(sandbox_profile_id)`); err != nil {
 			return fmt.Errorf("migrate v109→v110 (sandbox profiles): group index: %w", err)
 		}
+		// ALTER TABLE cannot add a foreign key on SQLite. Equivalent BEFORE
+		// triggers keep the stable-ID companion from ever accepting a missing
+		// profile, including assign/delete and clone/delete races.
+		if _, err := tx.Exec(`
+			CREATE TRIGGER IF NOT EXISTS sandbox_profile_group_ref_insert
+			BEFORE INSERT ON agent_groups
+			WHEN NEW.sandbox_profile_id IS NOT NULL
+			 AND NOT EXISTS (SELECT 1 FROM sandbox_profiles WHERE id = NEW.sandbox_profile_id)
+			BEGIN SELECT RAISE(ABORT, 'sandbox profile reference does not exist'); END;
+			CREATE TRIGGER IF NOT EXISTS sandbox_profile_group_ref_update
+			BEFORE UPDATE OF sandbox_profile_id ON agent_groups
+			WHEN NEW.sandbox_profile_id IS NOT NULL
+			 AND NOT EXISTS (SELECT 1 FROM sandbox_profiles WHERE id = NEW.sandbox_profile_id)
+			BEGIN SELECT RAISE(ABORT, 'sandbox profile reference does not exist'); END;
+		`); err != nil {
+			return fmt.Errorf("migrate v109→v110 (sandbox profiles): group reference triggers: %w", err)
+		}
 	}
 
 	if _, err := tx.Exec(`UPDATE schema_version SET version = 110`); err != nil {
