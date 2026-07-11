@@ -15,8 +15,9 @@ import (
 // `sh -c` command string exactly as production does, round-trips byte-for-byte
 // as a SINGLE argument — no temp file needed, no character left unescaped.
 // Single-quote wrapping makes every byte literal (newlines, $, backticks, ;,
-// globs, …); the only special case is an embedded ' which the '\” trick
-// closes/reopens around. So we feed the genuinely nasty cases through a real
+// globs, …); the only special case is an embedded single quote, escaped by
+// closing and reopening the single-quoted segment. So we feed the genuinely
+// nasty cases through a real
 // shell and confirm what comes back equals what went in.
 func TestShellQuoteArg_RoundTripThroughShell(t *testing.T) {
 	if runtime.GOOS == "windows" {

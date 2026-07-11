@@ -247,11 +247,10 @@ func marshalEffectiveSandboxSnapshot(snapshot *sandboxpolicy.Snapshot) (string, 
 	if snapshot == nil {
 		return "", nil
 	}
-	validated, err := sandboxpolicy.RevalidateSnapshot(*snapshot)
-	if err != nil {
-		return "", err
+	if snapshot.Version != sandboxpolicy.SnapshotVersion {
+		return "", fmt.Errorf("unsupported sandbox snapshot version %d", snapshot.Version)
 	}
-	b, err := json.Marshal(validated)
+	b, err := json.Marshal(snapshot)
 	if err != nil {
 		return "", fmt.Errorf("marshal effective sandbox snapshot: %w", err)
 	}
@@ -266,9 +265,13 @@ func unmarshalEffectiveSandboxSnapshot(raw string) (*sandboxpolicy.Snapshot, err
 	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
 		return nil, err
 	}
-	validated, err := sandboxpolicy.RevalidateSnapshot(snapshot)
-	if err != nil {
-		return nil, err
+	if snapshot.Version != sandboxpolicy.SnapshotVersion {
+		return nil, fmt.Errorf("unsupported sandbox snapshot version %d", snapshot.Version)
 	}
-	return &validated, nil
+	// Frozen snapshots are bookkeeping data until a launch or lifecycle
+	// boundary consumes them. Do not touch the filesystem while scanning rows:
+	// a deleted worktree or temporary grant must not wedge unrelated session or
+	// pending-spawn listings. Every authority-use boundary revalidates the
+	// snapshot immediately before applying it.
+	return &snapshot, nil
 }

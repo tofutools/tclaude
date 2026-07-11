@@ -2244,7 +2244,7 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	// from interrupting this resume. No-op for non-Claude harnesses. See
 	// session.ApplyClaudeResumeEnv.
 	session.ApplyClaudeResumeEnv(h, resumeEnv)
-	sandboxMode := resumeSandboxMode(convID)
+	sandboxMode, resumeCwd := resumeSandboxState(convID)
 	spec := harness.SpawnSpec{
 		EnvExports:       clcommon.BuildEnvExports(resumeEnv),
 		ResumeID:         convID,
@@ -2255,6 +2255,11 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	}
 	cleanupPath := ""
 	if h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile {
+		gitWriteDirs, err := resumeGitWorktreeWriteDirs(resumeCwd)
+		if err != nil {
+			return "", nil, fmt.Errorf("resolve managed Codex resume Git grants: %w", err)
+		}
+		writeDirs = append(gitWriteDirs, writeDirs...)
 		profileName, profilePath, err := harness.EnsureCodexAgentLaunchProfileWithGrants(readDirs, writeDirs, session.GenerateSessionID())
 		if err != nil {
 			return "", nil, fmt.Errorf("prepare managed Codex resume profile: %w", err)
@@ -2272,12 +2277,32 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	return cmd, h, nil
 }
 
-func resumeSandboxMode(convID string) string {
+func resumeSandboxState(convID string) (mode, cwd string) {
 	row, err := db.FindSessionByConvID(convID)
 	if err != nil || row == nil {
-		return ""
+		return "", ""
 	}
-	return strings.TrimSpace(row.SandboxMode)
+	return strings.TrimSpace(row.SandboxMode), strings.TrimSpace(row.Cwd)
+}
+
+func resumeSandboxMode(convID string) string {
+	mode, _ := resumeSandboxState(convID)
+	return mode
+}
+
+func resumeGitWorktreeWriteDirs(cwd string) ([]string, error) {
+	commonDir, err := harness.GitCommonDir(cwd)
+	if err != nil {
+		return nil, err
+	}
+	if commonDir == "" {
+		return nil, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	return harness.GitWorktreeWriteDirs(cwd, commonDir, home), nil
 }
 
 func resumeEffectiveSandboxForState(convID string) *sandboxpolicy.Snapshot {

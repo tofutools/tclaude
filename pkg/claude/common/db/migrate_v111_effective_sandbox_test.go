@@ -1,6 +1,7 @@
 package db
 
 import (
+	"os"
 	"reflect"
 	"testing"
 	"time"
@@ -30,6 +31,50 @@ func TestMigrateV110toV111AddsEffectiveSandboxSnapshots(t *testing.T) {
 	var version int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&version))
 	assert.Equal(t, 111, version)
+}
+
+func TestEffectiveSandboxBookkeepingSurvivesDeletedGrantDirectory(t *testing.T) {
+	setupTestDB(t)
+	grantDir := t.TempDir()
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Global: &sandboxpolicy.Profile{
+		Name:       "ephemeral",
+		Filesystem: []sandboxpolicy.FilesystemGrant{{Path: grantDir, Access: sandboxpolicy.AccessWrite}},
+	}})
+	require.NoError(t, err)
+	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
+
+	require.NoError(t, SaveSession(&SessionRow{ID: "stale", ConvID: "conv-stale", EffectiveSandbox: &snapshot}))
+	require.NoError(t, SaveSession(&SessionRow{ID: "healthy", ConvID: "conv-healthy"}))
+	require.NoError(t, InsertPendingSpawn(&PendingSpawn{Label: "stale", GroupID: 1, EffectiveSandbox: &snapshot}))
+	require.NoError(t, InsertPendingSpawn(&PendingSpawn{Label: "healthy", GroupID: 1}))
+	require.NoError(t, os.RemoveAll(grantDir))
+
+	sessions, err := ListSessions()
+	require.NoError(t, err)
+	require.Len(t, sessions, 2)
+	var staleSession *SessionRow
+	for _, row := range sessions {
+		if row.ID == "stale" {
+			staleSession = row
+		}
+	}
+	require.NotNil(t, staleSession)
+	require.NotNil(t, staleSession.EffectiveSandbox)
+	assert.True(t, reflect.DeepEqual(snapshot, *staleSession.EffectiveSandbox))
+	require.NoError(t, SaveSession(staleSession), "hook-style bookkeeping updates must not require live grant paths")
+
+	pending, err := ListPendingSpawns()
+	require.NoError(t, err)
+	require.Len(t, pending, 2)
+	var stalePending *PendingSpawn
+	for _, row := range pending {
+		if row.Label == "stale" {
+			stalePending = row
+		}
+	}
+	require.NotNil(t, stalePending)
+	require.NotNil(t, stalePending.EffectiveSandbox)
+	assert.True(t, reflect.DeepEqual(snapshot, *stalePending.EffectiveSandbox))
 }
 
 func TestEffectiveSandboxSnapshotRoundTripsAgentAndPendingSpawn(t *testing.T) {

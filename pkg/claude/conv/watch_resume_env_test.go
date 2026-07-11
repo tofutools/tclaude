@@ -1,6 +1,10 @@
 package conv
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -97,6 +101,40 @@ func TestResumeLaunchCmd_CodexFilesystemRequiresManagedProfile(t *testing.T) {
 	assert.Contains(t, cmd, " -p tclaude-agent-")
 	assert.Contains(t, cmd, "; rm -f -- ")
 	assert.True(t, strings.Contains(cmd, "codex resume"), cmd)
+}
+
+func TestResumeLaunchCmd_CodexManagedProfileIncludesGitWorktreeGrants(t *testing.T) {
+	setupTestDB(t)
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("git unavailable: %v", err)
+	}
+	home := t.TempDir()
+	codexHome := filepath.Join(home, ".codex")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("CODEX_HOME", codexHome)
+	repo := filepath.Join(t.TempDir(), "repo")
+	cmd := exec.Command("git", "init", "-q", repo)
+	require.NoError(t, cmd.Run())
+
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "source-session", ConvID: resumeConvCodex, Harness: harness.CodexName,
+		Cwd: repo, SandboxMode: harness.SandboxManagedProfile,
+	}))
+	launch, _, err := resumeLaunchCmd(harness.CodexName, resumeConvCodex[:8], resumeConvCodex, nil)
+	require.NoError(t, err)
+	assert.Contains(t, launch, " -p tclaude-agent-")
+
+	profiles, err := filepath.Glob(filepath.Join(codexHome, "tclaude-agent-*.config.toml"))
+	require.NoError(t, err)
+	require.Len(t, profiles, 1)
+	content, err := os.ReadFile(profiles[0])
+	require.NoError(t, err)
+	commonDir, err := harness.GitCommonDir(repo)
+	require.NoError(t, err)
+	for _, dir := range harness.GitWorktreeWriteDirs(repo, commonDir, home) {
+		assert.Contains(t, string(content), strconv.Quote(dir)+" = \"write\"")
+	}
 }
 
 // A Claude resume carries the configured threshold as an exported env var, so
