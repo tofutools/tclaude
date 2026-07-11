@@ -41,11 +41,7 @@ func claudeSettingsJSON(spec SpawnSpec) string {
 			filesystem = map[string]any{}
 			block["filesystem"] = filesystem
 		}
-		allowWrite := make([]any, len(dirs))
-		for i, dir := range dirs {
-			allowWrite[i] = dir
-		}
-		filesystem["allowWrite"] = allowWrite
+		appendSandboxFilesystemDirs(filesystem, "allowWrite", dirs)
 	}
 	if dirs := normalizedSandboxWriteDirs(spec.SandboxReadDirs); len(dirs) > 0 &&
 		strings.TrimSpace(spec.SandboxMode) != ClaudeSandboxOff {
@@ -59,11 +55,22 @@ func claudeSettingsJSON(spec SpawnSpec) string {
 			filesystem = map[string]any{}
 			block["filesystem"] = filesystem
 		}
-		allowRead := make([]any, len(dirs))
-		for i, dir := range dirs {
-			allowRead[i] = dir
+		appendSandboxFilesystemDirs(filesystem, "allowRead", dirs)
+	}
+	if dirs := normalizedSandboxWriteDirs(spec.SandboxDenyDirs); len(dirs) > 0 &&
+		strings.TrimSpace(spec.SandboxMode) != ClaudeSandboxOff {
+		block, _ := settings["sandbox"].(map[string]any)
+		if block == nil {
+			block = map[string]any{}
+			settings["sandbox"] = block
 		}
-		filesystem["allowRead"] = allowRead
+		filesystem, _ := block["filesystem"].(map[string]any)
+		if filesystem == nil {
+			filesystem = map[string]any{}
+			block["filesystem"] = filesystem
+		}
+		appendSandboxFilesystemDirs(filesystem, "denyRead", dirs)
+		appendSandboxFilesystemDirs(filesystem, "denyWrite", dirs)
 	}
 	if v := claudeAskTimeoutValue(spec.AskUserQuestionTimeout); v != "" {
 		settings["askUserQuestionTimeout"] = v
@@ -77,6 +84,27 @@ func claudeSettingsJSON(spec SpawnSpec) string {
 		return ""
 	}
 	return string(b)
+}
+
+func appendSandboxFilesystemDirs(filesystem map[string]any, key string, dirs []string) {
+	existing, _ := filesystem[key].([]any)
+	seen := make(map[string]bool, len(existing)+len(dirs))
+	out := make([]any, 0, len(existing)+len(dirs))
+	for _, value := range existing {
+		path, ok := value.(string)
+		if !ok || seen[path] {
+			continue
+		}
+		seen[path] = true
+		out = append(out, path)
+	}
+	for _, path := range dirs {
+		if !seen[path] {
+			seen[path] = true
+			out = append(out, path)
+		}
+	}
+	filesystem[key] = out
 }
 
 func normalizedSandboxWriteDirs(dirs []string) []string {

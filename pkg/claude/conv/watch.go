@@ -2223,7 +2223,7 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	if err != nil {
 		return "", nil, fmt.Errorf("load effective sandbox snapshot for conversation %s: %w", convID, err)
 	}
-	var readDirs, writeDirs []string
+	var readDirs, writeDirs, denyDirs []string
 	if effectiveSandbox != nil {
 		validated, err := sandboxpolicy.RevalidateSnapshot(*effectiveSandbox)
 		if err != nil {
@@ -2233,10 +2233,13 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 			resumeEnv[entry.Name] = entry.Value
 		}
 		for _, grant := range validated.Effective.Filesystem {
-			if grant.Access == sandboxpolicy.AccessWrite {
+			switch grant.Access {
+			case sandboxpolicy.AccessWrite:
 				writeDirs = append(writeDirs, grant.Path)
-			} else {
+			case sandboxpolicy.AccessRead:
 				readDirs = append(readDirs, grant.Path)
+			case sandboxpolicy.AccessDeny:
+				denyDirs = append(denyDirs, grant.Path)
 			}
 		}
 	}
@@ -2260,18 +2263,19 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		SandboxMode:      sandboxMode,
 		SandboxReadDirs:  readDirs,
 		SandboxWriteDirs: writeDirs,
+		SandboxDenyDirs:  denyDirs,
 	}
 	cleanupPath := ""
 	if h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile {
-		profileName, profilePath, err := harness.EnsureCodexAgentLaunchProfileWithGrants(readDirs, writeDirs, session.GenerateSessionID())
+		profileName, profilePath, err := harness.EnsureCodexAgentLaunchProfileWithRules(readDirs, writeDirs, denyDirs, session.GenerateSessionID())
 		if err != nil {
 			return "", nil, fmt.Errorf("prepare managed Codex resume profile: %w", err)
 		}
 		spec.SandboxMode = ""
 		spec.PermissionProfile = profileName
 		cleanupPath = profilePath
-	} else if h.Name == harness.CodexName && len(readDirs)+len(writeDirs) > 0 {
-		return "", nil, fmt.Errorf("unsupported_sandbox_profile_filesystem: Codex additive filesystem grants require sandbox %s", harness.SandboxManagedProfile)
+	} else if h.Name == harness.CodexName && len(readDirs)+len(writeDirs)+len(denyDirs) > 0 {
+		return "", nil, fmt.Errorf("unsupported_sandbox_profile_filesystem: Codex filesystem rules require sandbox %s", harness.SandboxManagedProfile)
 	}
 	cmd := h.Spawn.BuildCommand(spec)
 	if cleanupPath != "" {

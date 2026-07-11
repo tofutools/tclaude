@@ -1036,7 +1036,7 @@ type dashboardGroup struct {
 	DefaultCwd     string `json:"default_cwd"`     // pre-fills the spawn form's cwd; "" = none
 	DefaultContext string `json:"default_context"` // shared startup context injected into spawned agents; "" = none
 	DefaultProfile string `json:"default_profile"` // spawn profile whose launch fields fill blank spawn fields for this group's agents; "" = none (the spawn default's single source — the vestigial default_model was dropped, JOH-220)
-	SandboxProfile string `json:"sandbox_profile"` // additive filesystem/environment profile assigned to this group; "" = inherit global
+	SandboxProfile string `json:"sandbox_profile"` // filesystem/environment profile assigned to this group; "" = inherit global
 	MaxMembers     int    `json:"max_members"`     // hard member cap; 0 = unlimited. A spawn that would exceed it is refused.
 	NotifyEnabled  bool   `json:"notify_enabled"`  // group OS-notification switch; false mutes every member (per-agent 'on' still overrides)
 	// RemoteControlPolicy is the group's remote-control policy that overrides a

@@ -2,6 +2,7 @@ package harness
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -215,22 +216,29 @@ func TestClaudeSettingsGitWorktreeWriteDirs(t *testing.T) {
 	}
 }
 
-func TestClaudeSettingsSandboxProfileReadAndWriteDirs(t *testing.T) {
+func TestClaudeSettingsSandboxProfileFilesystemRules(t *testing.T) {
 	payload := claudeSettingsJSON(SpawnSpec{
 		SandboxMode:      ClaudeSandboxOn,
 		SandboxReadDirs:  []string{"/opt/read"},
 		SandboxWriteDirs: []string{"/opt/write"},
+		SandboxDenyDirs:  []string{"/opt/secret"},
 	})
 	var settings map[string]any
 	if err := json.Unmarshal([]byte(payload), &settings); err != nil {
 		t.Fatal(err)
 	}
 	filesystem := settings["sandbox"].(map[string]any)["filesystem"].(map[string]any)
-	if got := filesystem["allowRead"].([]any); len(got) != 1 || got[0] != "/opt/read" {
-		t.Fatalf("allowRead = %v", got)
+	if got := filesystem["allowRead"].([]any); !slices.Contains(got, any("/opt/read")) || !slices.Contains(got, any(tclaudeAgentdSocketTilde)) {
+		t.Fatalf("allowRead must preserve the agentd socket and add the profile read: %v", got)
 	}
 	if got := filesystem["allowWrite"].([]any); len(got) != 1 || got[0] != "/opt/write" {
 		t.Fatalf("allowWrite = %v", got)
+	}
+	for _, key := range []string{"denyRead", "denyWrite"} {
+		got := filesystem[key].([]any)
+		if !slices.Contains(got, any("/opt/secret")) || !slices.Contains(got, any(tclaudePrivateStateDirTilde)) {
+			t.Fatalf("%s must preserve baseline denies and add the profile deny: %v", key, got)
+		}
 	}
 }
 

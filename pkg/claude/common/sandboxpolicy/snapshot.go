@@ -19,10 +19,11 @@ type AppliedProfile struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// RequireContained rejects additive authority that the parent snapshot did
-// not already possess. Filesystem coverage is segment-aware: an ancestor
-// grant covers descendants, and write covers read. Environment entries must
-// match the parent's exact value; omission is a safe weakening.
+// RequireContained rejects authority that the parent snapshot did not already
+// possess. Filesystem coverage is segment-aware: an ancestor grant covers
+// descendants, write covers read, and every parent deny must be preserved by
+// an equal or broader child deny. Environment entries must match the parent's
+// exact value; omission is a safe weakening.
 func RequireContained(parent, child Snapshot) error {
 	parent, err := RevalidateSnapshot(parent)
 	if err != nil {
@@ -33,8 +34,14 @@ func RequireContained(parent, child Snapshot) error {
 		return fmt.Errorf("child sandbox snapshot: %w", err)
 	}
 	for _, childGrant := range child.Effective.Filesystem {
+		if childGrant.Access == AccessDeny {
+			continue
+		}
 		covered := false
 		for _, parentGrant := range parent.Effective.Filesystem {
+			if parentGrant.Access == AccessDeny {
+				continue
+			}
 			if !pathContainsOrEqual(parentGrant.Path, childGrant.Path) {
 				continue
 			}
@@ -46,6 +53,21 @@ func RequireContained(parent, child Snapshot) error {
 		}
 		if !covered {
 			return fmt.Errorf("filesystem %s grant %q is not contained by the parent snapshot", childGrant.Access, childGrant.Path)
+		}
+	}
+	for _, parentGrant := range parent.Effective.Filesystem {
+		if parentGrant.Access != AccessDeny {
+			continue
+		}
+		preserved := false
+		for _, childGrant := range child.Effective.Filesystem {
+			if childGrant.Access == AccessDeny && pathContainsOrEqual(childGrant.Path, parentGrant.Path) {
+				preserved = true
+				break
+			}
+		}
+		if !preserved {
+			return fmt.Errorf("filesystem deny %q from the parent snapshot is not preserved", parentGrant.Path)
 		}
 	}
 	parentEnv := make(map[string]string, len(parent.Effective.Environment))
@@ -61,9 +83,14 @@ func RequireContained(parent, child Snapshot) error {
 }
 
 // HasCapabilities reports whether a resolved snapshot adds any filesystem or
-// environment authority. It intentionally ignores provenance-only metadata.
+// environment authority. Deny entries are restrictions, not capabilities.
 func HasCapabilities(snapshot Snapshot) bool {
-	return len(snapshot.Effective.Filesystem) > 0 || len(snapshot.Effective.Environment) > 0
+	for _, grant := range snapshot.Effective.Filesystem {
+		if grant.Access != AccessDeny {
+			return true
+		}
+	}
+	return len(snapshot.Effective.Environment) > 0
 }
 
 // Snapshot is the immutable, versioned value passed across launch and
@@ -86,7 +113,7 @@ func NewSnapshot(effective EffectiveProfile, applied []AppliedProfile) Snapshot 
 	}
 }
 
-// EmptySnapshot is an explicit resolved policy with no additive profiles. It
+// EmptySnapshot is an explicit resolved policy with no sandbox profiles. It
 // differs from Snapshot{}: the latter is the fail-closed legacy/missing state.
 func EmptySnapshot() Snapshot {
 	effective, _ := Resolve(Scopes{})

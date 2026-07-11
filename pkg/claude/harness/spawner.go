@@ -74,6 +74,10 @@ type SpawnSpec struct {
 	// sandbox profile. Harness adapters must either render them or reject the
 	// launch before BuildCommand; silently dropping them is not allowed.
 	SandboxReadDirs []string
+	// SandboxDenyDirs are canonical roots an effective sandbox profile denies
+	// all filesystem access to. Claude renders both denyRead and denyWrite;
+	// Codex renders permission-profile "none" entries.
+	SandboxDenyDirs []string
 	// AskUserQuestionTimeout is the per-session Claude Code AskUserQuestion
 	// idle-timeout override (`never|60s|5m|10m`), delivered as part of the SAME
 	// `--settings` payload as SandboxMode (both are settings.json overrides, and

@@ -26,6 +26,7 @@ type Access string
 const (
 	AccessRead  Access = "read"
 	AccessWrite Access = "write"
+	AccessDeny  Access = "deny"
 )
 
 type FilesystemGrant struct {
@@ -39,7 +40,7 @@ type EnvironmentEntry struct {
 }
 
 // Profile is the harness-neutral, operator-authored capability bundle. It is
-// deliberately limited to additive filesystem and environment configuration;
+// deliberately limited to filesystem and environment configuration;
 // harness launch posture belongs to spawn profiles instead.
 type Profile struct {
 	Name        string             `json:"name"`
@@ -66,7 +67,8 @@ var reservedProfileNames = map[string]struct{}{
 
 // Normalize validates a profile and returns a canonical copy. It never mutates
 // the caller's slices. Filesystem paths are fully symlink-resolved existing
-// directories, duplicate paths fold with write dominating read, and output is
+// directories, duplicate paths fold with deny dominating write dominating
+// read, and output is
 // sorted for deterministic persistence and export. Environment duplicates
 // with the same value fold; conflicting values fail rather than depending on
 // input order.
@@ -129,22 +131,24 @@ func normalizeFilesystem(in []FilesystemGrant, allowMissing bool) ([]FilesystemG
 	byPath := make(map[string]Access, len(in))
 	missingPaths := map[string]bool{}
 	for i, grant := range in {
-		if grant.Access != AccessRead && grant.Access != AccessWrite {
-			return nil, nil, fmt.Errorf("filesystem[%d].access %q is invalid (want read or write)", i, grant.Access)
+		if grant.Access != AccessRead && grant.Access != AccessWrite && grant.Access != AccessDeny {
+			return nil, nil, fmt.Errorf("filesystem[%d].access %q is invalid (want read, write, or deny)", i, grant.Access)
 		}
 		path, missing, err := canonicalDirectory(grant.Path, allowMissing)
 		if err != nil {
 			return nil, nil, fmt.Errorf("filesystem[%d].path: %w", i, err)
 		}
-		for _, denied := range protected {
-			if pathsIntersect(path, denied) {
-				return nil, nil, fmt.Errorf("filesystem[%d].path %q intersects protected directory %q", i, path, denied)
+		if grant.Access != AccessDeny {
+			for _, denied := range protected {
+				if pathsIntersect(path, denied) {
+					return nil, nil, fmt.Errorf("filesystem[%d].path %q intersects protected directory %q", i, path, denied)
+				}
 			}
 		}
 		if missing {
 			missingPaths[path] = true
 		}
-		if previous, exists := byPath[path]; !exists || grant.Access == AccessWrite || previous != AccessWrite {
+		if previous, exists := byPath[path]; !exists || accessRank(grant.Access) > accessRank(previous) {
 			byPath[path] = grant.Access
 		}
 	}
@@ -159,6 +163,17 @@ func normalizeFilesystem(in []FilesystemGrant, allowMissing bool) ([]FilesystemG
 	}
 	sort.Strings(missing)
 	return out, missing, nil
+}
+
+func accessRank(access Access) int {
+	switch access {
+	case AccessDeny:
+		return 2
+	case AccessWrite:
+		return 1
+	default:
+		return 0
+	}
 }
 
 func canonicalDirectory(path string, allowMissing bool) (string, bool, error) {

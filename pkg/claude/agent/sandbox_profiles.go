@@ -38,8 +38,8 @@ func sandboxProfilesCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
 		Use:         "sandbox-profiles",
 		Aliases:     []string{"sandbox-profile"},
-		Short:       "Manage additive filesystem and environment sandbox profiles",
-		Long:        "Manage the operator-authored sandbox-profile library. Sandbox profiles add filesystem access and non-secret environment values without changing a harness's launch posture. Payload reads and all writes require sandbox-profiles.manage.",
+		Short:       "Manage filesystem and environment sandbox profiles",
+		Long:        "Manage the operator-authored sandbox-profile library. Sandbox profiles grant or deny filesystem access and add non-secret environment values without changing a harness's launch posture. Payload reads and all writes require sandbox-profiles.manage.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			sandboxProfilesLsCmd(), sandboxProfilesShowCmd(), sandboxProfilesCreateCmd(),
