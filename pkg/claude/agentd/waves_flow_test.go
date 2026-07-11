@@ -272,6 +272,53 @@ func TestWaves_DeadMember_DoesNotWedgeGate(t *testing.T) {
 	assert.NotEmpty(t, memberByRole(t, "wreck", "dev"), "wave 1 spawned; a dead member didn't wedge the gate")
 }
 
+// A queued wave persists both the profile's display name and durable ID. If
+// the profile is renamed while wave 0 is settling, wave 1 must resolve launch
+// fields AND post-spawn owner/permission access through the ID; the stale name
+// snapshot must not produce a partially configured agent.
+func TestWaves_QueuedProfileAccessSurvivesRename(t *testing.T) {
+	f := newFlow(t)
+	owner := true
+	profileID, err := db.CreateSpawnProfile(&db.SpawnProfile{
+		Name: "before", Model: "haiku", IsOwner: &owner,
+		PermissionOverrides: map[string]string{agentd.PermGroupsSpawn: db.PermEffectGrant},
+	})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
+		"name": "rename-between-waves",
+		"agents": []map[string]any{
+			{"name": "lead", "role": "lead", "wave": 0},
+			{"name": "dev", "role": "dev", "wave": 1, "spawn_profile": "before"},
+		},
+	}).Code)
+
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/rename-between-waves/deploy",
+		map[string]any{"group_name": "renamed-wave", "mission": "m"})
+	require.Equalf(t, http.StatusCreated, rec.Code, "deploy: %s", rec.Body.String())
+	agentd.WaitForBackgroundForTest()
+	leadConv := memberByRole(t, "renamed-wave", "lead")
+	require.NotEmpty(t, leadConv)
+
+	require.NoError(t, db.UpdateSpawnProfile(&db.SpawnProfile{
+		ID: profileID, Name: "after", Model: "haiku", IsOwner: &owner,
+		PermissionOverrides: map[string]string{agentd.PermGroupsSpawn: db.PermEffectGrant},
+	}))
+	settleWaveMember(t, f, leadConv)
+
+	devConv := memberByRole(t, "renamed-wave", "dev")
+	require.NotEmpty(t, devConv)
+	spawnModel, ok := f.World.SpawnModel(devConv)
+	require.True(t, ok)
+	assert.Equal(t, "haiku", spawnModel, "queued launch resolved the renamed profile by ID")
+	g, err := db.GetAgentGroupByName("renamed-wave")
+	require.NoError(t, err)
+	assert.True(t, ownsGroup(t, g.ID, devConv), "profile owner default survived the rename")
+	overrides, err := db.ListAgentPermissionOverridesForConv(devConv)
+	require.NoError(t, err)
+	assert.Equal(t, db.PermEffectGrant, overrides[agentd.PermGroupsSpawn],
+		"profile permission override survived the rename")
+}
+
 // Scenario F: restart idempotency — if the daemon crashed after spawning a wave
 // but before persisting the advanced cursor, the persisted row still points at
 // the just-spawned wave. The next sweep must NOT double-spawn it: an agent

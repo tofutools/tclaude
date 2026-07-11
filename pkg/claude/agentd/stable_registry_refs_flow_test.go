@@ -89,3 +89,54 @@ func TestStableRegistryRefs_RoleProfileLaunchSurvivesRename(t *testing.T) {
 	assert.Equal(t, 1, result.Spawned)
 	assert.Zero(t, result.Failed)
 }
+
+// TCL-311 + persistent-registry-reference integration: an ID-backed template
+// profile reference must still feed the per-field launch resolver after the
+// profile is renamed. The
+// compatible foreign-tier effort participates, while the incompatible model
+// is skipped and disclosed under the profile's current name.
+func TestStableRegistryRefs_TemplateLaunchResolutionAndNotesSurviveProfileRename(t *testing.T) {
+	f := newFlow(t)
+
+	profileID, err := db.CreateSpawnProfile(&db.SpawnProfile{
+		Name: "before", Harness: "codex", Model: "gpt-5", Effort: "high",
+	})
+	require.NoError(t, err)
+	_, err = db.CreateGroupTemplate(&db.GroupTemplate{
+		Name: "stable-launch", Agents: []db.GroupTemplateAgent{{
+			Name: "worker", Harness: "claude", SpawnProfile: "before",
+		}},
+	})
+	require.NoError(t, err)
+	tmpl, err := db.GetGroupTemplate("stable-launch")
+	require.NoError(t, err)
+	require.Equal(t, profileID, tmpl.Agents[0].SpawnProfileID)
+	require.NoError(t, db.UpdateSpawnProfile(&db.SpawnProfile{
+		ID: profileID, Name: "after", Harness: "codex", Model: "gpt-5", Effort: "high",
+	}))
+
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/stable-launch/instantiate",
+		map[string]any{"group_name": "stable-crew"})
+	require.Equalf(t, http.StatusCreated, rec.Code, "instantiate: %s", rec.Body.String())
+	var result struct {
+		Spawned int `json:"spawned"`
+		Failed  int `json:"failed"`
+		Agents  []struct {
+			ConvID string   `json:"conv_id"`
+			Notes  []string `json:"notes"`
+		} `json:"agents"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &result))
+	require.Equal(t, 1, result.Spawned)
+	require.Zero(t, result.Failed)
+	require.Len(t, result.Agents, 1)
+
+	spawnModel, ok := f.World.SpawnModel(result.Agents[0].ConvID)
+	require.True(t, ok)
+	assert.Empty(t, spawnModel)
+	spawnEffort, ok := f.World.SpawnEffort(result.Agents[0].ConvID)
+	require.True(t, ok)
+	assert.Equal(t, "high", spawnEffort)
+	assert.Contains(t, result.Agents[0].Notes,
+		`profile "after" model ignored (not valid for claude)`)
+}

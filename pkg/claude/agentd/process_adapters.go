@@ -8,10 +8,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	processexec "github.com/tofutools/tclaude/pkg/claude/process/exec"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
+	"github.com/tofutools/tclaude/pkg/claude/process/state"
 )
 
 var processCommandIDPattern = regexp.MustCompile(`^cmd_[a-f0-9]{24}$`)
@@ -19,6 +21,14 @@ var processCommandIDPattern = regexp.MustCompile(`^cmd_[a-f0-9]{24}$`)
 type processAgentAdapter struct{}
 
 func (processAgentAdapter) Validate(request processexec.Request) error {
+	if err := validateProcessAgentRequest(request); err != nil {
+		return err
+	}
+	_, err := processAgentSpawnParams(request)
+	return err
+}
+
+func validateProcessAgentRequest(request processexec.Request) error {
 	if request.Performer.Kind != model.PerformerAgent {
 		return fmt.Errorf("agent adapter received performer kind %q", request.Performer.Kind)
 	}
@@ -47,14 +57,7 @@ func (a processAgentAdapter) Dispatch(_ context.Context, request processexec.Req
 	} else if existing != nil {
 		return agentDispatchResult(existing.AgentID, request), nil
 	}
-	profile, err := db.GetSpawnProfile(strings.TrimSpace(request.Performer.Profile))
-	if err != nil {
-		return processexec.DispatchResult{}, err
-	}
-	if profile == nil {
-		return processexec.DispatchResult{}, fmt.Errorf("spawn profile %q not found", request.Performer.Profile)
-	}
-	p, err := processSpawnParams(profile, request)
+	p, err := processAgentSpawnParams(request)
 	if err != nil {
 		return processexec.DispatchResult{}, err
 	}
@@ -72,6 +75,20 @@ func (a processAgentAdapter) Dispatch(_ context.Context, request processexec.Req
 	return agentDispatchResult(agentID, request), nil
 }
 
+// processAgentSpawnParams is the side-effect-free launch-shape boundary used
+// before command claim and again immediately before spawn. The second lookup
+// intentionally revalidates profile edits/deletion that race the claim.
+func processAgentSpawnParams(request processexec.Request) (spawnParams, error) {
+	profile, err := db.GetSpawnProfile(strings.TrimSpace(request.Performer.Profile))
+	if err != nil {
+		return spawnParams{}, err
+	}
+	if profile == nil {
+		return spawnParams{}, fmt.Errorf("spawn profile %q not found", request.Performer.Profile)
+	}
+	return processSpawnParams(profile, request)
+}
+
 func agentDispatchResult(agentID string, request processexec.Request) processexec.DispatchResult {
 	return processexec.DispatchResult{
 		ExternalRef:      agentID,
@@ -87,13 +104,16 @@ func processSpawnParams(profile *db.SpawnProfile, request processexec.Request) (
 	if err != nil {
 		return spawnParams{}, err
 	}
-	modelName, err := h.Models.ValidateModel(profile.Model)
-	if err != nil {
-		return spawnParams{}, err
+	tiers := []launchProfileTier{{profile: profile, source: profileSource(profile, agent.ProvCLIProfileSource)}}
+	modelName, _, _, fail := resolveStringLaunchField("model", request.Performer.Model, h.Name, tiers,
+		func(p *db.SpawnProfile) string { return p.Model }, h.Models.ValidateModel)
+	if fail != nil {
+		return spawnParams{}, fmt.Errorf("%s", fail.Msg)
 	}
-	effort, err := h.Models.ValidateEffort(profile.Effort)
-	if err != nil {
-		return spawnParams{}, err
+	effort, _, _, fail := resolveStringLaunchField("effort", request.Performer.Effort, h.Name, tiers,
+		func(p *db.SpawnProfile) string { return p.Effort }, h.Models.ValidateEffort)
+	if fail != nil {
+		return spawnParams{}, fmt.Errorf("%s", fail.Msg)
 	}
 	sandbox, err := harness.ResolveSandboxMode(h, profile.Sandbox)
 	if err != nil {
@@ -274,6 +294,9 @@ func (processHumanAdapter) Validate(request processexec.Request) error {
 	if strings.TrimSpace(request.Performer.Ask) == "" && strings.TrimSpace(request.Performer.Prompt) == "" {
 		return fmt.Errorf("human performer requires instructions")
 	}
+	if err := model.ValidateChoiceRouting(request.Performer, request.Command.Kind == state.CommandKindRecordDecision); err != nil {
+		return fmt.Errorf("human performer choice routing: %w", err)
+	}
 	return nil
 }
 
@@ -285,7 +308,10 @@ func (a processHumanAdapter) Dispatch(_ context.Context, request processexec.Req
 	if err := a.Validate(request); err != nil {
 		return processexec.DispatchResult{}, err
 	}
-	assignee := strings.TrimSpace(request.Performer.Profile)
+	assignee := strings.TrimSpace(request.Performer.Assignee)
+	if assignee == "" {
+		assignee = strings.TrimSpace(request.Performer.Profile)
+	}
 	if assignee == "" {
 		assignee = "human:operator"
 	} else if !strings.HasPrefix(assignee, "human:") && !strings.HasPrefix(assignee, "role:") {
@@ -307,16 +333,26 @@ func (a processHumanAdapter) Dispatch(_ context.Context, request processexec.Req
 			return processexec.DispatchResult{}, err
 		}
 	}
+	actions := []string{"approve", "reject", "ask-changes"}
+	if request.Command.Kind != state.CommandKindRecordDecision && len(request.Performer.Choices) > 0 {
+		actions = make([]string, 0, len(request.Performer.Choices))
+		for _, choice := range request.Performer.Choices {
+			actions = append(actions, strings.TrimSpace(choice))
+		}
+	}
 	return processexec.DispatchResult{
 		ExternalRef:      "obligation:" + request.Command.ID,
 		Assignee:         assignee,
 		Summary:          summary,
-		AvailableActions: []string{"approve", "reject", "ask-changes"},
+		AvailableActions: actions,
 		CreateObligation: true,
 	}, nil
 }
 
-func (processHumanAdapter) ReconcileDeferred(_ context.Context, _ processexec.Request) (processexec.Observation, processexec.DeferredStatus, error) {
+func (a processHumanAdapter) ReconcileDeferred(_ context.Context, request processexec.Request) (processexec.Observation, processexec.DeferredStatus, error) {
+	if err := a.Validate(request); err != nil {
+		return processexec.Observation{}, processexec.DeferredMissing, err
+	}
 	return processexec.Observation{}, processexec.DeferredInFlight, nil
 }
 

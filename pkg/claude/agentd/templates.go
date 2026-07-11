@@ -726,6 +726,11 @@ type templateAgentLaunch struct {
 	// template deploy honours them. Both default off/"".
 	RemoteControl          bool
 	AskUserQuestionTimeout string
+	// Notes disclose profile-tier fields that were skipped because they are not
+	// valid for the independently resolved harness. They ride the per-agent
+	// instantiate result so template launches have the same least-surprise
+	// disclosure as direct spawns.
+	Notes []string
 }
 
 // validateTemplateAgentLaunch validates one template agent's per-role launch
@@ -887,87 +892,6 @@ func validateInlineProfileForHarness(agentName string, h *harness.Harness, p *db
 	return nil
 }
 
-// launchAccum accumulates the effective launch fields as tiers overlay onto
-// it, highest priority first. A blank field is still open to a lower tier.
-type launchAccum struct {
-	harness    string
-	model      string
-	effort     string
-	sandbox    string
-	approval   string
-	askTimeout string
-	// trustDir / autoReview / remoteControl are tri-state (*bool): nil = no
-	// tier has spoken yet (still open to a lower-priority source), non-nil = a
-	// higher-priority profile already decided. Mirrors the string fields'
-	// "first non-blank wins", but nil-vs-set is the "still open" test since
-	// false is a real decision here (an explicit trust_dir=false in a profile).
-	trustDir      *bool
-	autoReview    *bool
-	remoteControl *bool
-}
-
-// launchSource is one tier's contribution to the launch resolution — a spawn
-// profile's fields (see profileLaunchSource) or a role's inline defaults
-// (strings only; the *bool toggles and the ask-timeout ride profiles).
-type launchSource struct {
-	harness, model, effort, sandbox, approval, askTimeout string
-	trustDir, autoReview, remoteControl                   *bool
-}
-
-// profileLaunchSource projects a spawn profile (registry-referenced or
-// template-local) onto a launch source.
-func profileLaunchSource(p *db.SpawnProfile) launchSource {
-	return launchSource{
-		harness: p.Harness, model: p.Model, effort: p.Effort,
-		sandbox: p.Sandbox, approval: p.Approval, askTimeout: p.AskUserQuestionTimeout,
-		trustDir: p.TrustDir, autoReview: p.AutoReview, remoteControl: p.RemoteControl,
-	}
-}
-
-// overlay fills this accumulator's still-blank fields from a lower-priority
-// launch source, gated on harness compatibility (the same rule the
-// group-default-profile overlay uses): a source is only inherited when the
-// resolving harness is still unset (then it adopts the source's harness) or
-// already matches the source's harness — so a source tuned for one harness
-// never bleeds its model/effort into a spawn on another.
-// The source's *bool launch toggles (only a spawn profile carries them; a
-// role's inline defaults pass nil) are filled on the same harness-compatible
-// gate as the string fields, and only while still unset (nil) so the
-// highest-priority profile that sets one wins.
-func (l *launchAccum) overlay(src launchSource) {
-	srcHarness := strings.TrimSpace(src.harness)
-	if l.harness != "" && harnessOrDefault(l.harness) != harnessOrDefault(srcHarness) {
-		return
-	}
-	if l.harness == "" {
-		l.harness = srcHarness
-	}
-	if l.model == "" {
-		l.model = strings.TrimSpace(src.model)
-	}
-	if l.effort == "" {
-		l.effort = strings.TrimSpace(src.effort)
-	}
-	if l.sandbox == "" {
-		l.sandbox = strings.TrimSpace(src.sandbox)
-	}
-	if l.approval == "" {
-		l.approval = strings.TrimSpace(src.approval)
-	}
-	if l.askTimeout == "" {
-		l.askTimeout = strings.TrimSpace(src.askTimeout)
-	}
-	if l.trustDir == nil {
-		l.trustDir = src.trustDir
-	}
-	if l.autoReview == nil {
-		l.autoReview = src.autoReview
-	}
-	if l.remoteControl == nil {
-		l.remoteControl = src.remoteControl
-	}
-}
-
 // resolveTemplateAgentLaunch computes the effective launch fields for one
 // instantiated template agent (JOH-239 + JOH-240). Resolution order, highest
 // priority first:
@@ -976,11 +900,12 @@ func (l *launchAccum) overlay(src launchSource) {
 //	  role inline defaults → role's spawn profile → harness secure default
 //
 // (The group-default-profile tier of the general model is empty here — a
-// freshly-instantiated group carries no default profile.) Each profile-like
-// tier is inherited only when the spawn will run on that tier's harness (a
-// mismatched harness skips it), then the chosen harness's secure launch
-// defaults fill whatever is still blank and the whole shape is validated. role
-// is the resolved role the agent references (nil = none).
+// freshly-instantiated group carries no default profile.) As with direct spawn,
+// the harness resolves through the complete chain first. Each remaining field
+// then resolves independently: inline agent values are explicit and fail
+// loudly, while profile-like tiers validate against the chosen harness and a
+// foreign invalid value is skipped with a disclosure note. role is the
+// resolved role the agent references (nil = none).
 //
 // cwd is the resolved instantiation cwd; it drives the Codex sandbox cwd-safety
 // guard so a template can't spawn a workspace-write Codex agent at/above $HOME.
@@ -990,22 +915,7 @@ func (l *launchAccum) overlay(src launchSource) {
 // value is invalid for the harness. The returned Harness is the resolved
 // canonical name (e.g. "claude"); SpawnProfile is left empty (already consumed).
 func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd string) (templateAgentLaunch, *spawnFailure) {
-	acc := launchAccum{
-		harness:  strings.TrimSpace(a.Harness),
-		model:    strings.TrimSpace(a.Model),
-		effort:   strings.TrimSpace(a.Effort),
-		sandbox:  strings.TrimSpace(a.Sandbox),
-		approval: strings.TrimSpace(a.Approval),
-	}
-
-	// Tier 1.5: the agent's template-local spawn profile — more specific than
-	// any registry reference (it exists for exactly this roster slot), beneath
-	// only the legacy inline fields above.
-	if a.ProfileInline != nil {
-		acc.overlay(profileLaunchSource(a.ProfileInline))
-	}
-
-	// Tier 2: the agent's own referenced spawn profile.
+	var refProfile *db.SpawnProfile
 	if ref := strings.TrimSpace(a.SpawnProfile); ref != "" || a.SpawnProfileID > 0 {
 		var prof *db.SpawnProfile
 		var err error
@@ -1021,18 +931,10 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd stri
 			return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_profile",
 				fmt.Sprintf("references spawn profile %q which no longer exists", ref)}
 		}
-		acc.overlay(profileLaunchSource(prof))
+		refProfile = prof
 	}
-
-	// Tier 3 + 4: the referenced role's inline defaults, then the role's own
-	// spawn profile. A role tunes the launch shape only where the agent left it
-	// blank (agent overrides win); the role's spawn profile fills what the
-	// role's inline fields left open.
+	var roleProfile *db.SpawnProfile
 	if role != nil {
-		acc.overlay(launchSource{
-			harness: role.Harness, model: role.Model, effort: role.Effort,
-			sandbox: role.Sandbox, approval: role.Approval,
-		})
 		if ref := strings.TrimSpace(role.SpawnProfile); ref != "" || role.SpawnProfileID > 0 {
 			var prof *db.SpawnProfile
 			var err error
@@ -1048,26 +950,97 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd stri
 				return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_profile",
 					fmt.Sprintf("role %q references spawn profile %q which no longer exists", role.Name, ref)}
 			}
-			acc.overlay(profileLaunchSource(prof))
+			roleProfile = prof
 		}
 	}
 
-	harnessName := acc.harness
-	model := acc.model
-	effort := acc.effort
-	sandbox := acc.sandbox
-	approval := acc.approval
+	// Role inline defaults are a profile-like tier for per-field resolution.
+	// Give the synthetic profile a stable name so a self-inconsistent value can
+	// still produce the helper's useful tier-qualified error.
+	var roleInline *db.SpawnProfile
+	if role != nil {
+		roleInline = &db.SpawnProfile{
+			Name: "role " + role.Name + " inline", Harness: role.Harness,
+			Model: role.Model, Effort: role.Effort, Sandbox: role.Sandbox, Approval: role.Approval,
+		}
+	}
+	inlineProfile := a.ProfileInline
+	if inlineProfile != nil && strings.TrimSpace(inlineProfile.Name) == "" {
+		copy := *inlineProfile
+		copy.Name = "profile_inline"
+		inlineProfile = &copy
+	}
+	tiers := []launchProfileTier{
+		{profile: inlineProfile, source: `template profile_inline`},
+		{profile: refProfile, source: profileSource(refProfile, agent.ProvCLIProfileSource)},
+		{profile: roleInline, source: fmt.Sprintf(`role %q inline defaults`, roleName(role))},
+		{profile: roleProfile, source: roleProfileSource(role, roleProfile)},
+	}
+
+	// Resolve harness independently. Partial inline-profile/role tiers only pin
+	// a harness when they name one; registry profiles pin their default harness
+	// even when the stored value is blank, matching direct spawn.
+	harnessName := strings.TrimSpace(a.Harness)
+	if harnessName == "" && inlineProfile != nil {
+		harnessName = strings.TrimSpace(inlineProfile.Harness)
+	}
+	if harnessName == "" && refProfile != nil {
+		harnessName = harnessOrDefault(refProfile.Harness)
+	}
+	if harnessName == "" && role != nil {
+		harnessName = strings.TrimSpace(role.Harness)
+	}
+	if harnessName == "" && roleProfile != nil {
+		harnessName = harnessOrDefault(roleProfile.Harness)
+	}
 
 	h, err := resolveSpawnHarness(harnessName)
 	if err != nil {
 		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_harness", err.Error()}
 	}
-	if model, err = h.Models.ValidateModel(model); err != nil {
-		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_model", err.Error()}
+	var fail *spawnFailure
+	var notes []string
+	model, _, note, fail := resolveStringLaunchField("model", a.Model, h.Name, tiers,
+		func(p *db.SpawnProfile) string { return p.Model }, h.Models.ValidateModel)
+	if fail != nil {
+		return templateAgentLaunch{}, fail
 	}
-	if effort, err = h.Models.ValidateEffort(effort); err != nil {
-		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_effort", err.Error()}
+	if note != "" {
+		notes = append(notes, note)
 	}
+	effort, _, note, fail := resolveStringLaunchField("effort", a.Effort, h.Name, tiers,
+		func(p *db.SpawnProfile) string { return p.Effort }, h.Models.ValidateEffort)
+	if fail != nil {
+		return templateAgentLaunch{}, fail
+	}
+	if note != "" {
+		notes = append(notes, note)
+	}
+	sandbox, _, note, fail := resolveStringLaunchField("sandbox", a.Sandbox, h.Name, tiers,
+		func(p *db.SpawnProfile) string { return p.Sandbox }, func(raw string) (string, error) { return harness.ValidateSandboxMode(h, raw) })
+	if fail != nil {
+		return templateAgentLaunch{}, fail
+	}
+	if note != "" {
+		notes = append(notes, note)
+	}
+	approval, _, note, fail := resolveStringLaunchField("approval", a.Approval, h.Name, tiers,
+		func(p *db.SpawnProfile) string { return p.Approval }, func(raw string) (string, error) { return harness.ValidateApprovalPolicy(h, raw) })
+	if fail != nil {
+		return templateAgentLaunch{}, fail
+	}
+	if note != "" {
+		notes = append(notes, note)
+	}
+	askTimeout, _, note, fail := resolveStringLaunchField("ask_user_question_timeout", "", h.Name, tiers,
+		func(p *db.SpawnProfile) string { return p.AskUserQuestionTimeout }, func(raw string) (string, error) { return harness.ResolveAskTimeoutMode(h, raw) })
+	if fail != nil {
+		return templateAgentLaunch{}, fail
+	}
+	if note != "" {
+		notes = append(notes, note)
+	}
+
 	if sandbox, err = harness.ResolveSandboxMode(h, sandbox); err != nil {
 		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_sandbox", err.Error()}
 	}
@@ -1081,25 +1054,33 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd stri
 	// practice a profile carrying trust_dir=true is a Codex profile (validated
 	// at save) and is only adopted above when the harness matched, so this
 	// won't fire — but a mismatch is a clean per-agent 400, not a silent drop.
-	trustDir, err := harness.ResolveTrustDir(h, acc.trustDir != nil && *acc.trustDir)
-	if err != nil {
-		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_trust_dir", err.Error()}
+	trustDir, trustDirSet, note, fail := resolveBoolLaunchField("trust_dir", false, false, h.Name, tiers,
+		func(p *db.SpawnProfile) *bool { return p.TrustDir }, func(v bool) (bool, error) { return harness.ResolveTrustDir(h, v) })
+	if fail != nil {
+		return templateAgentLaunch{}, fail
 	}
-	autoReview, err := harness.ResolveAutoReview(h, acc.autoReview != nil && *acc.autoReview)
-	if err != nil {
-		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_auto_review", err.Error()}
+	if note != "" {
+		notes = append(notes, note)
+	}
+	autoReview, autoReviewSet, note, fail := resolveBoolLaunchField("auto_review", false, false, h.Name, tiers,
+		func(p *db.SpawnProfile) *bool { return p.AutoReview }, func(v bool) (bool, error) { return harness.ResolveAutoReview(h, v) })
+	if fail != nil {
+		return templateAgentLaunch{}, fail
+	}
+	if note != "" {
+		notes = append(notes, note)
 	}
 	// Remote control + AskUserQuestion timeout resolve on the same pattern —
 	// harness-gated, off/"" unless a profile tier explicitly set them — so a
 	// template-local or referenced profile's value actually reaches the spawn
 	// (pre-profile_inline these two never made it past the profile row).
-	remoteControl, err := harness.ResolveRemoteControl(h, acc.remoteControl != nil && *acc.remoteControl)
-	if err != nil {
-		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_remote_control", err.Error()}
+	remoteControl, _, note, fail := resolveBoolLaunchField("remote_control", false, false, h.Name, tiers,
+		func(p *db.SpawnProfile) *bool { return p.RemoteControl }, func(v bool) (bool, error) { return harness.ResolveRemoteControl(h, v) })
+	if fail != nil {
+		return templateAgentLaunch{}, fail
 	}
-	askTimeout, err := harness.ResolveAskTimeoutMode(h, acc.askTimeout)
-	if err != nil {
-		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_ask_user_question_timeout", err.Error()}
+	if note != "" {
+		notes = append(notes, note)
 	}
 	// Codex sandbox cwd-safety: a writable Codex sandbox confines writes to the
 	// cwd subtree, so a cwd at/above $HOME would expose ~/.tclaude / ~/.codex /
@@ -1117,12 +1098,27 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd stri
 		Sandbox:                sandbox,
 		Approval:               approval,
 		TrustDir:               trustDir,
-		TrustDirSet:            acc.trustDir != nil,
+		TrustDirSet:            trustDirSet,
 		AutoReview:             autoReview,
-		AutoReviewSet:          acc.autoReview != nil,
+		AutoReviewSet:          autoReviewSet,
 		RemoteControl:          remoteControl,
 		AskUserQuestionTimeout: askTimeout,
+		Notes:                  notes,
 	}, nil
+}
+
+func roleName(role *db.Role) string {
+	if role == nil {
+		return ""
+	}
+	return role.Name
+}
+
+func roleProfileSource(role *db.Role, profile *db.SpawnProfile) string {
+	if role == nil || profile == nil {
+		return ""
+	}
+	return fmt.Sprintf(`role %q profile %q`, role.Name, profile.Name)
 }
 
 // traceMemberLaunch re-traces a live group member's OBSERVABLE launch fields
@@ -1954,8 +1950,14 @@ func resolveTemplateAgentAccess(a db.GroupTemplateAgent, role *db.Role) (bool, [
 	// Tier 2: the agent's referenced spawn profile — its owner default + its
 	// grant/deny overrides. Profile slugs are applied in sorted order so a
 	// deploy's per-agent grant report is deterministic (the map itself is not).
-	if ref := strings.TrimSpace(a.SpawnProfile); ref != "" {
-		prof, err := db.GetSpawnProfile(ref)
+	if ref := strings.TrimSpace(a.SpawnProfile); ref != "" || a.SpawnProfileID > 0 {
+		var prof *db.SpawnProfile
+		var err error
+		if a.SpawnProfileID > 0 {
+			prof, err = db.GetSpawnProfileByID(a.SpawnProfileID)
+		} else {
+			prof, err = db.GetSpawnProfile(ref)
+		}
 		if err != nil {
 			return false, nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
 		}
@@ -2020,6 +2022,7 @@ type instantiateAgentResult struct {
 	// Owner. Surfaced so the dashboard can tell the operator what was adjusted.
 	OwnerDropped bool     `json:"owner_dropped,omitempty"`
 	Granted      []string `json:"granted,omitempty"`
+	Notes        []string `json:"notes,omitempty"`
 	Error        string   `json:"error,omitempty"`
 }
 

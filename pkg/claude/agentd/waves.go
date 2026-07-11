@@ -172,6 +172,7 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			wr.Results = append(wr.Results, res)
 			continue
 		}
+		res.Notes = append(res.Notes, launch.Notes...)
 		// Fold the role brief ("## Role") + the template process ("## Process")
 		// into THIS agent's startup context — no-ops when absent.
 		agentContext := groupContext

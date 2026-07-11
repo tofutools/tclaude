@@ -17,6 +17,7 @@ var (
 		"prompt",
 		"ask",
 		"choices",
+		"choiceOutcomes",
 		"assignee",
 		"model",
 		"effort",
@@ -138,8 +139,11 @@ func stepChildSchema(key string) schemaFunc {
 }
 
 func performerChildSchema(key string) schemaFunc {
-	if key == "contact" {
+	switch key {
+	case "contact":
 		return namedSchema(contactFields, nil)
+	case "choiceOutcomes":
+		return freeformSchema
 	}
 	return nil
 }

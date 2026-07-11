@@ -57,6 +57,9 @@ func TestDashboardProcessNodeDialogAssets(t *testing.T) {
 		"Edges are edited on the canvas, not in this dialog.",
 		// Every slot's editor goes through the shared sub-component.
 		"performerEditor",
+		"process-choice-outcomes",
+		"setChoiceOutcome",
+		"choiceRouting: false",
 		// Dialogs mutate the client edit model only, through the undo gate.
 		"model.updateNode(nodeId, mutate)",
 	)

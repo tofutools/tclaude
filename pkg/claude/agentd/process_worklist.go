@@ -123,13 +123,8 @@ func handleProcessWorklistAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		verdict, verdictErr := worklistObservationVerdict(r.Context(), fs, item, body.Action)
-		if verdictErr != nil {
-			writeProcessActionError(w, verdictErr)
-			return
-		}
 		_, err = executor.RecordOutstandingObservation(r.Context(), item.Run, item.Target.CommandID, processexec.Observation{
-			Actor: actor, Verdict: verdict, Feedback: body.Comment, EvidenceRef: evidenceRef,
+			Actor: actor, Verdict: body.Action, Feedback: body.Comment, EvidenceRef: evidenceRef,
 		})
 		if err != nil {
 			writeProcessActionError(w, err)
@@ -175,18 +170,6 @@ func loadProcessWorklist(ctx context.Context, fs *store.FS) (processWorklistLoad
 		snapshots = append(snapshots, snapshot)
 	}
 	return processWorklistLoadResult{Items: worklist.Derive(snapshots), DegradedRuns: degraded}, nil
-}
-
-func worklistObservationVerdict(ctx context.Context, fs *store.FS, item worklist.Item, action string) (string, error) {
-	snapshot, err := fs.LoadRun(ctx, item.Run)
-	if err != nil {
-		return "", err
-	}
-	command, ok := snapshot.State.OutstandingCommands[item.Target.CommandID]
-	if !ok {
-		return "", fmt.Errorf("process command %q is not present", item.Target.CommandID)
-	}
-	return processexec.NormalizeObligationAction(command.Kind, action)
 }
 
 func worklistActionEvidence(itemID string, body processWorklistActionRequest) string {

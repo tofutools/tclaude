@@ -28,6 +28,7 @@ export const PERFORMER_FIELDS = [
   { key: 'profile', label: 'profile', kinds: PERFORMER_KINDS, hint: 'Named profile: which human role / agent spawn profile / program context performs this slot' },
   { key: 'ask', label: 'ask', kinds: ['human'], multiline: true, hint: 'The question put to the human' },
   { key: 'choices', label: 'choices', kinds: ['human'], list: true, hint: 'Optional closed answer set, one per line' },
+  { key: 'choiceOutcomes', label: 'choice outcomes', kinds: ['human'], outcomeMap: true, hint: 'Route each task-stage choice to pass or fail' },
   { key: 'assignee', label: 'assignee', kinds: ['human'], hint: 'Optional specific person; defaults to whoever holds the profile' },
   { key: 'prompt', label: 'prompt', kinds: ['agent', 'human'], multiline: true, hint: 'Instruction text (agents) or long-form context (humans)' },
   { key: 'model', label: 'model', kinds: ['agent'], hint: 'Optional model override on top of the profile' },
@@ -65,18 +66,46 @@ export function setPerformerKind(performer, kind) {
 
 // setPerformerField assigns one descriptor-declared field; blank values (and
 // empty lists) delete the key so omitempty keeps the YAML minimal.
-export function setPerformerField(performer, key, value) {
+export function setPerformerField(performer, key, value, { choiceRouting = true } = {}) {
   const field = PERFORMER_FIELDS.find((candidate) => candidate.key === key);
   if (!field) throw new Error(`unknown performer field ${key}`);
+  if (field.outcomeMap) throw new Error('choice outcomes must be edited per choice');
   if (field.list) {
     const list = Array.isArray(value) ? value : parseLines(value);
     if (list.length) performer[key] = list;
     else delete performer[key];
+    if (key === 'choices') syncChoiceOutcomes(performer, choiceRouting);
     return;
   }
   const text = (value || '').trim();
   if (text) performer[key] = text;
   else delete performer[key];
+}
+
+// Task-stage human choices are an ordered display vocabulary with an explicit
+// local pass/fail route. Keep the map exact when labels change: preserve routes
+// for unchanged labels, default new visible rows to pass, and prune removed
+// labels. Decision choices remain edge-driven and never carry this map.
+export function syncChoiceOutcomes(performer, choiceRouting = true) {
+  if (!choiceRouting || !Array.isArray(performer.choices) || performer.choices.length === 0) {
+    delete performer.choiceOutcomes;
+    return;
+  }
+  const prior = performer.choiceOutcomes || {};
+  const next = {};
+  for (const label of performer.choices) {
+    next[label] = prior[label] === 'fail' ? 'fail' : 'pass';
+  }
+  performer.choiceOutcomes = next;
+}
+
+export function setChoiceOutcome(performer, label, outcome) {
+  if (!Array.isArray(performer.choices) || !performer.choices.includes(label)) {
+    throw new Error(`unknown performer choice ${label}`);
+  }
+  if (outcome !== 'pass' && outcome !== 'fail') throw new Error(`invalid choice outcome ${outcome}`);
+  syncChoiceOutcomes(performer, true);
+  performer.choiceOutcomes[label] = outcome;
 }
 
 // setContactField edits the per-slot contact schedule (cadence, budget,

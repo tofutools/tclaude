@@ -108,6 +108,42 @@ func TestGroupTemplate_PerRoleLaunchProfiles_InlineOverridesProfile(t *testing.T
 	assert.Equal(t, "opus", got, "the inline override wins over the referenced profile")
 }
 
+// Scenario (TCL-311): template instantiation follows direct spawn's
+// least-surprise doctrine. The explicit harness resolves first, then each
+// foreign-profile field participates independently: a compatible effort is
+// inherited while an incompatible model is skipped and disclosed.
+func TestGroupTemplate_LaunchResolution_ForeignProfileValidateOrSkip(t *testing.T) {
+	f := newFlow(t)
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "codex-kit", "harness": "codex", "model": "gpt-5", "effort": "high",
+	}).Code)
+	require.Equal(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
+		"name": "mixed-team",
+		"agents": []map[string]any{{
+			"name": "worker", "harness": "claude", "spawn_profile": "codex-kit",
+		}},
+	}).Code)
+
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/mixed-team/instantiate",
+		map[string]any{"group_name": "mixed"})
+	require.Equalf(t, http.StatusCreated, rec.Code, "instantiate: %s", rec.Body.String())
+	var res instantiateResult
+	testharness.DecodeJSON(t, rec, &res)
+	require.Equal(t, 1, res.Spawned)
+	require.Len(t, res.Agents, 1)
+
+	conv := res.Agents[0].ConvID
+	modelName, ok := f.World.SpawnModel(conv)
+	require.True(t, ok)
+	assert.Empty(t, modelName, "foreign Codex model is invalid for Claude and must be skipped")
+	effort, ok := f.World.SpawnEffort(conv)
+	require.True(t, ok)
+	assert.Equal(t, "high", effort, "foreign-tier effort is valid for Claude and must participate")
+	assert.Contains(t, res.Agents[0].Notes,
+		`profile "codex-kit" model ignored (not valid for claude)`,
+		"the instantiate response discloses the skipped foreign-tier field")
+}
+
 // Scenario: a template agent referencing a non-existent profile is a 400 at
 // save — the existence check lives at the wire boundary (no DB-level FK), and
 // nothing is stored.

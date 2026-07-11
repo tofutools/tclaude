@@ -48,6 +48,7 @@ type instantiateResult struct {
 		WorktreePath   string   `json:"worktree_path"`
 		WorktreeBranch string   `json:"worktree_branch"`
 		Granted        []string `json:"granted"`
+		Notes          []string `json:"notes"`
 		Error          string   `json:"error"`
 	} `json:"agents"`
 }

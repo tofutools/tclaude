@@ -61,6 +61,47 @@ func TestObligationActionNormalizationIsSharedAndCaseInsensitive(t *testing.T) {
 	}
 }
 
+func TestCustomChoiceOutcomesAreClosedAndRouteToBinaryVerdicts(t *testing.T) {
+	performer := model.Performer{
+		Kind: model.PerformerHuman, Choices: []string{"Ship", "Hold"},
+		ChoiceOutcomes: map[string]string{"Ship": "pass", "Hold": "fail"},
+	}
+	command := plan.Command{ID: "cmd_choice", Kind: plan.CommandKindStartAttempt, Performer: &performer}
+	snapshot := store.Snapshot{State: &state.State{Obligations: map[string]state.ObligationRecord{
+		"obl_choice": {ID: "obl_choice", CommandID: command.ID, Status: state.WaitStatusPending, AvailableActions: []string{"Ship", "Hold"}},
+	}}}
+
+	if _, err := normalizeObligationObservation(snapshot, command, Observation{Verdict: "pass"}); err == nil || !strings.Contains(err.Error(), "not allowed") {
+		t.Fatalf("hidden pass alias must be rejected, got %v", err)
+	}
+	got, err := normalizeObligationObservation(snapshot, command, Observation{Verdict: "ship"})
+	if err != nil || got.Verdict != "pass" {
+		t.Fatalf("custom Ship choice = %#v, %v; want pass", got, err)
+	}
+	got, err = normalizeObligationObservation(snapshot, command, Observation{Verdict: "HOLD"})
+	if err != nil || got.Verdict != "fail" {
+		t.Fatalf("custom Hold choice = %#v, %v; want fail", got, err)
+	}
+}
+
+func TestCustomChoiceOutcomesRejectUnicodeFoldAmbiguity(t *testing.T) {
+	performer := model.Performer{
+		Kind: model.PerformerHuman, Choices: []string{"Σ", "ς"},
+		ChoiceOutcomes: map[string]string{"Σ": "pass", "ς": "fail"},
+	}
+	command := plan.Command{ID: "cmd_unicode_choice", Kind: plan.CommandKindStartAttempt, Performer: &performer}
+	snapshot := store.Snapshot{State: &state.State{Obligations: map[string]state.ObligationRecord{
+		"obl_unicode": {
+			ID: "obl_unicode", CommandID: command.ID, Status: state.WaitStatusPending,
+			AvailableActions: []string{"Σ", "ς"},
+		},
+	}}}
+	_, err := normalizeObligationObservation(snapshot, command, Observation{Verdict: "ς"})
+	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("Unicode-fold-equivalent actions must be unroutable, got %v", err)
+	}
+}
+
 func TestExecutePerformerCommandRecordsObservationAndSettlement(t *testing.T) {
 	fs, snapshot := executorFixture(t, true, model.Performer{Kind: model.PerformerProgram, Run: "/fake"})
 	adapter := &fakeAdapter{observation: Observation{

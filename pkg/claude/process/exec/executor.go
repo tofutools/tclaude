@@ -385,14 +385,29 @@ func normalizeObligationObservation(snapshot store.Snapshot, command plan.Comman
 			continue
 		}
 		allowed := append([]string(nil), obligation.AvailableActions...)
-		if command.Kind != plan.CommandKindRecordDecision {
+		customChoices := command.Kind != plan.CommandKindRecordDecision && command.Performer != nil && len(command.Performer.Choices) > 0
+		if command.Kind != plan.CommandKindRecordDecision && !customChoices {
 			allowed = append(allowed, "pass", "fail")
+		}
+		if customChoices {
+			if err := validateUniqueObligationActions(allowed); err != nil {
+				return Observation{}, fmt.Errorf("obligation %q: %w", obligation.ID, err)
+			}
 		}
 		canonical, ok := CanonicalObligationAction(allowed, observation.Verdict)
 		if !ok {
 			return Observation{}, fmt.Errorf("verdict %q is not allowed for obligation %q; allowed: %s", observation.Verdict, obligation.ID, strings.Join(allowed, ", "))
 		}
-		normalized, err := NormalizeObligationAction(command.Kind, canonical)
+		var normalized string
+		var err error
+		if customChoices {
+			normalized = strings.TrimSpace(command.Performer.ChoiceOutcomes[canonical])
+			if normalized != "pass" && normalized != "fail" {
+				return Observation{}, fmt.Errorf("choice %q has no pass/fail outcome for obligation %q", canonical, obligation.ID)
+			}
+		} else {
+			normalized, err = NormalizeObligationAction(command.Kind, canonical)
+		}
 		if err != nil {
 			return Observation{}, fmt.Errorf("%w for obligation %q; allowed: %s", err, obligation.ID, strings.Join(allowed, ", "))
 		}
@@ -400,6 +415,18 @@ func normalizeObligationObservation(snapshot store.Snapshot, command plan.Comman
 		return observation, nil
 	}
 	return observation, nil
+}
+
+func validateUniqueObligationActions(actions []string) error {
+	for i, raw := range actions {
+		label := strings.TrimSpace(raw)
+		for j := 0; j < i; j++ {
+			if strings.EqualFold(strings.TrimSpace(actions[j]), label) {
+				return fmt.Errorf("actions %q and %q are ambiguous under case-insensitive matching", actions[j], raw)
+			}
+		}
+	}
+	return nil
 }
 
 // CanonicalObligationAction matches an action using the executor's

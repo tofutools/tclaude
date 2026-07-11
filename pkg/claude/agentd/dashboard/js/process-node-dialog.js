@@ -19,6 +19,7 @@
 import {
   PERFORMER_KINDS, RETRY_ON_FAIL_MODES, PLAN_APPROVAL_MODES,
   performerFieldsFor, defaultPerformer, setPerformerKind, setPerformerField,
+  setChoiceOutcome,
   setContactField, setRetryField, setStageEnabled, setPlanApproval,
   addCheck, removeCheck, moveCheck, setCheckID,
   setCaptures, setWaitField, setNodeText, formatLines,
@@ -99,7 +100,7 @@ export function buildNodeDetail(model, nodeId, { mode = 'edit', commit = null, o
   // The ONE shared performer editor. `locate(draft)` addresses this slot's
   // performer inside the draft node (work / plan / check[i] / review /
   // decider) so the same component edits every slot uniformly.
-  const performerEditor = (performer, locate) => {
+  const performerEditor = (performer, locate, { choiceRouting = true } = {}) => {
     const wrap = h('div', { class: 'process-performer-editor' });
     const kind = typeof performer?.kind === 'string' && performer.kind ? performer.kind : 'agent';
     const known = PERFORMER_KINDS.includes(kind);
@@ -112,9 +113,20 @@ export function buildNodeDetail(model, nodeId, { mode = 'edit', commit = null, o
       wrap.append(h('p', { class: 'process-node-empty', text: `Unknown performer kind ${kind}: validation rejects it — pick a supported kind.` }));
     }
     for (const field of known ? performerFieldsFor(kind) : []) {
+      if (field.outcomeMap) {
+        if (!choiceRouting || !(performer?.choices || []).length) continue;
+        const routes = h('div', { class: 'process-choice-outcomes', title: field.hint },
+          h('span', { class: 'process-node-field-label', text: field.label }));
+        for (const label of performer.choices) {
+          routes.append(selectField(label, ['pass', 'fail'], performer.choiceOutcomes?.[label] || 'pass',
+            (value) => commit((draft) => setChoiceOutcome(locate(draft), label, value))));
+        }
+        wrap.append(routes);
+        continue;
+      }
       const value = field.list ? formatLines(performer?.[field.key]) : performer?.[field.key];
       wrap.append(textField(field.label, value,
-        (text) => commit((draft) => setPerformerField(locate(draft), field.key, text)),
+        (text) => commit((draft) => setPerformerField(locate(draft), field.key, text, { choiceRouting })),
         { multiline: !!(field.multiline || field.list), hint: field.hint }));
       if (field.key === 'run') {
         wrap.append(h('p', {
@@ -222,7 +234,7 @@ export function buildNodeDetail(model, nodeId, { mode = 'edit', commit = null, o
     root.append(section('decider', performerEditor(node.performer || defaultPerformer('human'), (draft) => {
       if (!draft.performer) draft.performer = defaultPerformer('human');
       return draft.performer;
-    })));
+    }, { choiceRouting: false })));
   }
 
   if (type === 'wait') {
