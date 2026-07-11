@@ -84,6 +84,24 @@ func TestCustomChoiceOutcomesAreClosedAndRouteToBinaryVerdicts(t *testing.T) {
 	}
 }
 
+func TestCustomChoiceOutcomesRejectUnicodeFoldAmbiguity(t *testing.T) {
+	performer := model.Performer{
+		Kind: model.PerformerHuman, Choices: []string{"Σ", "ς"},
+		ChoiceOutcomes: map[string]string{"Σ": "pass", "ς": "fail"},
+	}
+	command := plan.Command{ID: "cmd_unicode_choice", Kind: plan.CommandKindStartAttempt, Performer: &performer}
+	snapshot := store.Snapshot{State: &state.State{Obligations: map[string]state.ObligationRecord{
+		"obl_unicode": {
+			ID: "obl_unicode", CommandID: command.ID, Status: state.WaitStatusPending,
+			AvailableActions: []string{"Σ", "ς"},
+		},
+	}}}
+	_, err := normalizeObligationObservation(snapshot, command, Observation{Verdict: "ς"})
+	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("Unicode-fold-equivalent actions must be unroutable, got %v", err)
+	}
+}
+
 func TestExecutePerformerCommandRecordsObservationAndSettlement(t *testing.T) {
 	fs, snapshot := executorFixture(t, true, model.Performer{Kind: model.PerformerProgram, Run: "/fake"})
 	adapter := &fakeAdapter{observation: Observation{

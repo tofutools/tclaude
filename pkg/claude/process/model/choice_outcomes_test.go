@@ -34,6 +34,16 @@ func TestChoiceOutcomeValidation(t *testing.T) {
 		}
 	})
 
+	t.Run("unicode simple-fold labels are ambiguous", func(t *testing.T) {
+		performer := Performer{Kind: PerformerHuman, Ask: "Route?", Choices: []string{"Σ", "ς"},
+			ChoiceOutcomes: map[string]string{"Σ": "pass", "ς": "fail"}}
+		tmpl := workTemplate(performer)
+		diagnostics := Validate(tmpl, NormalizeEdges(tmpl))
+		if !find(diagnostics, "duplicate_choice", "choices[1]") {
+			t.Fatalf("missing EqualFold-equivalent duplicate diagnostic: %#v", diagnostics)
+		}
+	})
+
 	t.Run("missing and extra map keys fail at exact paths", func(t *testing.T) {
 		performer := Performer{Kind: PerformerHuman, Ask: "Ship?", Choices: []string{"ship", "hold"},
 			ChoiceOutcomes: map[string]string{"ship": "pass", "later": "fail"}}

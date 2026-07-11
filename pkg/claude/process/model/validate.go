@@ -355,7 +355,7 @@ func validateChoiceOutcomes(performer Performer, path string, decision bool) Dia
 		return nil
 	}
 	var diagnostics Diagnostics
-	labels := make(map[string]int, len(performer.Choices))
+	labels := make([]string, 0, len(performer.Choices))
 	canonical := make(map[string]struct{}, len(performer.Choices))
 	for i, raw := range performer.Choices {
 		label := strings.TrimSpace(raw)
@@ -367,13 +367,14 @@ func validateChoiceOutcomes(performer Performer, path string, decision bool) Dia
 			diagnostics = append(diagnostics, diagError("noncanonical_choice", choicePath,
 				"choice labels must not have leading or trailing whitespace"))
 		}
-		folded := strings.ToLower(label)
-		if first, ok := labels[folded]; ok {
-			diagnostics = append(diagnostics, diagError("duplicate_choice", choicePath,
-				fmt.Sprintf("choice %q conflicts with choices[%d] under case-insensitive matching", label, first)))
-		} else {
-			labels[folded] = i
+		for first, existing := range labels {
+			if strings.EqualFold(existing, label) {
+				diagnostics = append(diagnostics, diagError("duplicate_choice", choicePath,
+					fmt.Sprintf("choice %q conflicts with choices[%d] under case-insensitive matching", label, first)))
+				break
+			}
 		}
+		labels = append(labels, label)
 		canonical[label] = struct{}{}
 		outcome, ok := performer.ChoiceOutcomes[label]
 		if !ok {
