@@ -301,10 +301,14 @@ const (
 	PermTemplatesManage    = "templates.manage"
 	PermTemplatesUse       = "templates.instantiate"
 	PermProfilesManage     = "profiles.manage"
-	PermRolesManage        = "roles.manage"
-	PermProcessAdvance     = "process.advance"
-	PermHumanNotify        = "human.notify"
-	PermHumanClipboard     = "human.clipboard"
+	// Sandbox-profile policy can grant host filesystem access and inject launch
+	// environment. Keep it separate from profiles.manage: permission to edit a
+	// spawn-dialog preset must not imply permission to widen a sandbox.
+	PermSandboxProfilesManage = "sandbox-profiles.manage"
+	PermRolesManage           = "roles.manage"
+	PermProcessAdvance        = "process.advance"
+	PermHumanNotify           = "human.notify"
+	PermHumanClipboard        = "human.clipboard"
 	// PermSettingsDefaultModel gates writing the user-level default
 	// model into ~/.claude/settings.json — a file in the human's home
 	// that also carries hooks and permission config, so not
