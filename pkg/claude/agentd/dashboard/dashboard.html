@@ -1343,7 +1343,8 @@
   <div class="term-session-modal" role="dialog" aria-modal="true" aria-labelledby="term-session-title">
     <div class="term-session-header">
       <h3 id="term-session-title">Terminal</h3>
-      <span class="term-session-status" id="term-session-status"></span>
+      <span class="term-session-status" id="term-session-status" role="status"
+        aria-live="polite" aria-atomic="true"></span>
       <button type="button" class="term-session-action" id="term-session-copy"
         title="Option-drag to select on macOS; Shift-drag on Linux/Windows">Copy</button>
       <button type="button" class="term-session-detach" id="term-session-detach"

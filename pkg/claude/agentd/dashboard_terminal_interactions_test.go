@@ -43,6 +43,7 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 		"uploadController.abort()",
 		"Option-drag to select on macOS; Shift-drag on Linux/Windows",
 		"copyButton.dataset.hasSelection = selected ? 'true' : 'false'",
+		"flash(SELECT_HINT);\n      term.focus();",
 	} {
 		if !strings.Contains(interactions, needle) {
 			t.Errorf("terminal-interactions.js missing %q", needle)
@@ -63,6 +64,15 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 	}
 	if !strings.Contains(dashboardAssets, `id="term-session-copy"`) {
 		t.Error("fallback terminal modal has no visible Copy action")
+	}
+	for htmlAttr, jsAttr := range map[string]string{
+		`role="status"`:      `statusEl.setAttribute('role', 'status')`,
+		`aria-live="polite"`: `statusEl.setAttribute('aria-live', 'polite')`,
+		`aria-atomic="true"`: `statusEl.setAttribute('aria-atomic', 'true')`,
+	} {
+		if !strings.Contains(dashboardAssets, htmlAttr) || !strings.Contains(core, jsAttr) {
+			t.Errorf("both terminal status surfaces must expose live-region attribute %q", htmlAttr)
+		}
 	}
 	for _, needle := range []string{
 		"if (interactions) interactions.invalidate();",

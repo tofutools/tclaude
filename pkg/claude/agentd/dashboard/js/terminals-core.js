@@ -200,6 +200,9 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
 
     const statusEl = document.createElement('span');
     statusEl.className = 'mux-pane-status';
+    statusEl.setAttribute('role', 'status');
+    statusEl.setAttribute('aria-live', 'polite');
+    statusEl.setAttribute('aria-atomic', 'true');
 
     const reconnectBtn = document.createElement('button');
     reconnectBtn.className = 'mux-btn';

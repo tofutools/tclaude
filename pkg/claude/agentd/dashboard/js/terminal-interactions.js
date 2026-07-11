@@ -116,7 +116,11 @@ export function attachTerminalInteractions({ term, host, copyButton, setStatus, 
 
   async function copySelection() {
     const selected = term.getSelection();
-    if (!selected) { flash(SELECT_HINT); return; }
+    if (!selected) {
+      flash(SELECT_HINT);
+      term.focus();
+      return;
+    }
     if (await writeClipboard(selected)) flash('copied');
     else flash('copy failed — clipboard permission denied');
     term.focus();
