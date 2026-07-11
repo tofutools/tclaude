@@ -2325,14 +2325,12 @@ details[data-group-key][open] > summary .group-default-model {
      the 🛡 scope visible, then reveals its selector on hover (or the JS-stamped
      quick-hover state that survives the two-second snapshot repaint). */
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-sandbox-profile-quick select {
-    max-width: 0; padding-left: 0; padding-right: 0; border-width: 0;
-    opacity: 0; overflow: hidden;
+    display: none;
   }
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .group-sandbox-profile-quick select,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:focus-within .group-sandbox-profile-quick select,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-sandbox-profile-quick select {
-    max-width: 150px; padding-left: 4px; padding-right: 4px; border-width: 1px;
-    opacity: 1;
+    display: inline-block;
   }
 }
 .modal-context-textarea {

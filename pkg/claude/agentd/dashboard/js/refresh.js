@@ -1087,7 +1087,9 @@ export function confirmDiscard() {
 //
 // The explicit Cancel button remains an instant unconditional dismiss
 // path. Pass the modal's id (without leading #) and the close function
-// to invoke once the user confirms (or the modal is clean).
+// to invoke once the user confirms (or the modal is clean). An optional
+// canDismiss predicate suppresses both the confirmation and close gesture
+// while a caller-owned operation such as an async save is in flight.
 
 // isTopmostOverlay reports whether `el` is the front-most shown overlay, so a
 // document-level Escape dismisses only the modal on top — not every shown
@@ -1111,7 +1113,7 @@ function isTopmostOverlay(el) {
   });
 }
 
-export function bindBackdropDiscard(modalId, closeFn) {
+export function bindBackdropDiscard(modalId, closeFn, canDismiss = () => true) {
   const el = $('#' + modalId);
   if (!el) return;
 
@@ -1133,6 +1135,7 @@ export function bindBackdropDiscard(modalId, closeFn) {
   // pop the confirm overlay first; otherwise (or once the user accepts
   // the discard) call closeFn.
   const tryDismiss = async () => {
+    if (!canDismiss()) return;
     if (dirty && !(await confirmDiscard())) return;
     closeFn();
   };

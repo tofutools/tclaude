@@ -1,10 +1,15 @@
 import { $, esc, bindModalSubmitHotkey } from './helpers.js';
 import { lastSnapshot } from './dashboard.js';
-import { confirmModal, toast, bindBackdropDiscard, bindManageOverlayDismiss } from './refresh.js';
+import { confirmModal, toast, bindBackdropDiscard, bindManageOverlayDismiss, refresh } from './refresh.js';
 
 const API = '/api/sandbox-profiles';
+// Profile names cannot contain slashes, so this dropdown action cannot collide
+// with a saved profile returned by the daemon.
+const QUICK_NEW = '/new-sandbox-profile';
 let profiles = [];
 let editingName = '';
+let editorOnCreate = null;
+let editorSaving = false;
 let spawnPreviewGeneration = 0;
 
 async function api(path, opts = {}) {
@@ -102,8 +107,9 @@ async function openManager() {
 
 function closeManager() { $('#sandbox-profiles-manage-modal').classList.remove('show'); }
 
-function openEditor(p = null) {
+function openEditor(p = null, { onCreate = null } = {}) {
   editingName = p ? p.name : '';
+  editorOnCreate = p ? null : onCreate;
   $('#sandbox-profile-editor-title').textContent = p ? `Edit sandbox profile: ${p.name}` : 'New sandbox profile';
   $('#sandbox-profile-editor-name').value = p ? p.name : '';
   $('#sandbox-profile-editor-filesystem').value = JSON.stringify((p && p.filesystem) || [], null, 2);
@@ -113,29 +119,63 @@ function openEditor(p = null) {
   setTimeout(() => $('#sandbox-profile-editor-name').focus(), 0);
 }
 
-function closeEditor() { $('#sandbox-profile-editor-modal').classList.remove('show'); }
+function closeEditor() {
+  if (editorSaving) return;
+  $('#sandbox-profile-editor-modal').classList.remove('show');
+  editorOnCreate = null;
+}
+
+function setEditorSaving(saving) {
+  editorSaving = saving;
+  $('#sandbox-profile-editor-submit').disabled = saving;
+  $('#sandbox-profile-editor-cancel').disabled = saving;
+}
 
 async function saveEditor() {
+  if (editorSaving) return;
   const errEl = $('#sandbox-profile-editor-error');
   errEl.textContent = '';
+  let body;
   try {
-    const body = {
+    body = {
       name: $('#sandbox-profile-editor-name').value.trim(),
       filesystem: JSON.parse($('#sandbox-profile-editor-filesystem').value || '[]'),
       environment: JSON.parse($('#sandbox-profile-editor-environment').value || '[]'),
     };
     if (!body.name) throw new Error('name is required');
+  } catch (err) {
+    errEl.textContent = err.message || String(err);
+    return;
+  }
+
+  // Capture the launching selector's target before the request begins. Cancel,
+  // backdrop dismissal and duplicate submit stay locked until this POST/PATCH
+  // settles, so another editor invocation cannot steal the callback.
+  const onCreate = editorOnCreate;
+  setEditorSaving(true);
+  try {
     await api(editingName ? `${API}/${encodeURIComponent(editingName)}` : API, {
       method: editingName ? 'PATCH' : 'POST',
       headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
-    closeEditor();
-    toast(`sandbox profile saved: ${body.name}`);
-    await openManager();
-    await refreshSpawnSandboxProfileUI($('#agent-spawn-group').value);
   } catch (err) {
     errEl.textContent = err.message || String(err);
+    return;
+  } finally {
+    setEditorSaving(false);
   }
+
+  closeEditor();
+  toast(`sandbox profile saved: ${body.name}`);
+  if (onCreate) {
+    // Only a successful create reaches this handoff; cancel or validation
+    // failure leaves the assignment untouched. setQuickAssignment refreshes
+    // both the snapshot and profile list after the assignment attempt.
+    await onCreate(body.name);
+    return;
+  }
+  await openManager();
+  await refreshSpawnSandboxProfileUI($('#agent-spawn-group').value);
 }
 
 async function removeProfile(name) {
@@ -216,7 +256,7 @@ function bindSandboxProfilesUI() {
   $('#sandbox-profile-editor-cancel').addEventListener('click', closeEditor);
   $('#sandbox-profile-editor-submit').addEventListener('click', saveEditor);
   bindModalSubmitHotkey($('#sandbox-profile-editor-modal'), $('#sandbox-profile-editor-submit'));
-  bindBackdropDiscard('sandbox-profile-editor-modal', closeEditor);
+  bindBackdropDiscard('sandbox-profile-editor-modal', closeEditor, () => !editorSaving);
   $('#sandbox-profile-global').addEventListener('change', async e => {
     try {
       await api('/api/sandbox-profile-default', {
@@ -260,6 +300,11 @@ function bindSandboxProfilesUI() {
 async function setQuickAssignment(select, group, name) {
   if (select.dataset.sandboxProfileQuickPending === 'true') return;
   const previous = select.dataset.current || '';
+  if (name === QUICK_NEW) {
+    select.value = previous;
+    openEditor(null, { onCreate: created => setQuickAssignment(select, group, created) });
+    return;
+  }
   select.dataset.sandboxProfileQuickPending = 'true';
   select.disabled = true;
   try {
