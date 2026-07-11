@@ -34,6 +34,8 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 		"const input = terminalKeyInput(event)",
 		"term.input(input)",
 		"term.onSelectionChange(",
+		"term.parser.registerOscHandler(52,",
+		"const text = decodeOSC52(payload)",
 		"navigator.clipboard.writeText(",
 		"new globalThis.WebLinksAddon.WebLinksAddon(",
 		"term.options.linkHandler = linkHandler",

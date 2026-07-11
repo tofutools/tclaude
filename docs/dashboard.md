@@ -556,10 +556,15 @@ generically to unsaved changes rather than naming the open terminal. Closing
 the last pane removes the guard; an idle dashboard never prompts.
 
 Web terminals support the same everyday interactions as native terminal
-windows. Drag across output to select it. When tmux or the running TUI has
-captured the mouse, use **Option-drag on macOS** or **Shift-drag on
-Linux/Windows**, then press **Ctrl/⌘-Shift-C** or click **Copy**. Clicking Copy
-without a browser selection shows this modifier hint. HTTP(S) links open with
+windows. An unmodified drag handled by tmux copies the selected text into its
+paste buffer and, when the browser grants clipboard access, into the browser
+clipboard using tmux's standard OSC 52 sequence. This follows tmux's
+`set-clipboard` setting (`external` by default), so explicitly setting it to
+`off` disables browser propagation too.
+To make a browser-owned selection instead, use **Option-drag on macOS** or
+**Shift-drag on Linux/Windows**, then press **Ctrl/⌘-Shift-C** or click
+**Copy**. Clicking Copy without a browser selection shows this modifier hint.
+HTTP(S) links open with
 **Ctrl/⌘-click**; requiring the modifier keeps
 ordinary terminal clicks available to the running program. Pasting a PNG, JPEG,
 or WebP clipboard image uploads it to a bounded temporary directory on the

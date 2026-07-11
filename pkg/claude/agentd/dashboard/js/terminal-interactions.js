@@ -8,6 +8,10 @@ const IMAGE_TYPES = new Map([
 ]);
 const PASTE_REPEAT_MS = 1000;
 const SELECT_HINT = 'Option-drag to select on macOS; Shift-drag on Linux/Windows';
+// Keep terminal-originated clipboard writes useful for large selections without
+// allowing an unbounded OSC 52 payload to turn into a second large allocation
+// during base64 decode. This is deliberately separate from attachment limits.
+const MAX_OSC52_BYTES = 1024 * 1024;
 
 // Browsers expose Shift+Enter distinctly, but xterm's default legacy keyboard
 // encoding sends the same carriage return as plain Enter. Translate the
@@ -21,6 +25,31 @@ export function terminalKeyInput(event) {
     return '\n';
   }
   return null;
+}
+
+// OSC 52 payloads have the form "selection;base64-data". tmux emits one when
+// copy-mode creates a paste buffer while set-clipboard is external/on (external
+// is the default). xterm exposes the payload without the OSC identifier.
+//
+// Return null for queries, malformed data, or oversized clipboard writes. The
+// caller still consumes those terminal control sequences so they never render.
+export function decodeOSC52(payload) {
+  if (typeof payload !== 'string') return null;
+  const separator = payload.indexOf(';');
+  if (separator < 0) return null;
+  const encoded = payload.slice(separator + 1);
+  if (encoded === '?' || encoded.length > Math.ceil(MAX_OSC52_BYTES / 3) * 4) return null;
+  // OSC 52 uses ordinary RFC 4648 base64. Reject whitespace and URL-safe
+  // variants rather than letting browser-specific atob leniency diverge.
+  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) return null;
+  try {
+    const binary = atob(encoded);
+    if (binary.length > MAX_OSC52_BYTES) return null;
+    const bytes = Uint8Array.from(binary, c => c.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  } catch (_) {
+    return null;
+  }
 }
 
 function safeHTTPURL(raw) {
@@ -163,6 +192,19 @@ export function attachTerminalInteractions({ term, host, copyButton, setStatus, 
   }
 
   disposables.push(term.onSelectionChange(updateCopyButton));
+  // tmux's normal mouse/copy-mode path stores the text in a tmux buffer and
+  // emits OSC 52 to the attached terminal. Turning that standard sequence into
+  // a browser clipboard write gives unmodified drag the same end result as a
+  // native terminal, without polling tmux or adding a second server protocol.
+  disposables.push(term.parser.registerOscHandler(52, (payload) => {
+    const text = decodeOSC52(payload);
+    if (text !== null) {
+      void writeClipboard(text).then((ok) => {
+        flash(ok ? 'copied' : 'tmux copied; browser clipboard permission denied');
+      });
+    }
+    return true;
+  }));
   updateCopyButton();
   if (copyButton) copyButton.addEventListener('click', copySelection);
 
