@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
@@ -39,9 +40,7 @@ func TestApplyAgentSocketEnv(t *testing.T) {
 }
 
 func TestApplyAgentSocketEnvRequiresRestartForLegacyOnlyDaemon(t *testing.T) {
-	home, err := os.MkdirTemp("/tmp", "tc-session-sock-")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	home := agentipctest.ShortSocketDir(t)
 	t.Setenv("HOME", home)
 	t.Setenv(agentipc.SocketEnv, "")
 	require.NoError(t, os.MkdirAll(filepath.Dir(agentipc.LegacySocketPath()), 0o755))
@@ -68,9 +67,7 @@ func TestApplyAgentSocketEnvRequiresRestartForLegacyOnlyDaemon(t *testing.T) {
 }
 
 func TestApplyAgentSocketEnvAcceptsCanonicalDaemon(t *testing.T) {
-	home, err := os.MkdirTemp("/tmp", "tc-session-sock-")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	home := agentipctest.ShortSocketDir(t)
 	t.Setenv("HOME", home)
 	t.Setenv(agentipc.SocketEnv, "")
 	require.NoError(t, os.MkdirAll(filepath.Dir(agentipc.CanonicalSocketPath()), 0o700))

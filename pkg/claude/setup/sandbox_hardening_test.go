@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 )
 
 // decodeTree decodes a JSON object string into the generic tree shape
@@ -36,9 +37,7 @@ func freshSpecTree(t *testing.T) map[string]any {
 }
 
 func TestSandboxHardeningRequiresRestartForLegacyOnlyDaemon(t *testing.T) {
-	home, err := os.MkdirTemp("/tmp", "tc-setup-sock-")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	home := agentipctest.ShortSocketDir(t)
 	t.Setenv("HOME", home)
 	require.NoError(t, os.MkdirAll(filepath.Dir(agentipc.LegacySocketPath()), 0o755))
 	legacy, err := net.Listen("unix", agentipc.LegacySocketPath())
