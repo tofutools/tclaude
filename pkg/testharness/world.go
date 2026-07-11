@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 // World is the per-test scaffolding bundle. Construction is via New(t)
@@ -47,6 +48,7 @@ type World struct {
 	spawnEfforts       map[string]string
 	spawnModels        map[string]string
 	spawnSandboxes     map[string]string
+	spawnSandboxPolicy map[string]*sandboxpolicy.Snapshot
 	spawnApprovals     map[string]string
 	spawnAskTimeouts   map[string]string
 	spawnAutoReview    map[string]bool
@@ -87,6 +89,7 @@ func New(t *testing.T) *World {
 		spawnEfforts:        map[string]string{},
 		spawnModels:         map[string]string{},
 		spawnSandboxes:      map[string]string{},
+		spawnSandboxPolicy:  map[string]*sandboxpolicy.Snapshot{},
 		spawnApprovals:      map[string]string{},
 		spawnAskTimeouts:    map[string]string{},
 		spawnAutoReview:     map[string]bool{},
@@ -191,6 +194,28 @@ func (w *World) SpawnSandbox(convID string) (string, bool) {
 	defer w.spawnMu.Unlock()
 	s, ok := w.spawnSandboxes[convID]
 	return s, ok
+}
+
+func (w *World) RecordSpawnSandboxPolicy(convID string, snapshot *sandboxpolicy.Snapshot) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	if snapshot == nil {
+		w.spawnSandboxPolicy[convID] = nil
+		return
+	}
+	copy := sandboxpolicy.NewSnapshot(snapshot.Effective, snapshot.Applied)
+	w.spawnSandboxPolicy[convID] = &copy
+}
+
+func (w *World) SpawnSandboxPolicy(convID string) (*sandboxpolicy.Snapshot, bool) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	snapshot, ok := w.spawnSandboxPolicy[convID]
+	if snapshot == nil {
+		return nil, ok
+	}
+	copy := sandboxpolicy.NewSnapshot(snapshot.Effective, snapshot.Applied)
+	return &copy, ok
 }
 
 // RecordSpawnApproval captures the approval policy a simSpawner.SpawnNew /

@@ -1,5 +1,7 @@
 package common
 
+import "github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+
 // SpawnDirWriteProofPrefix is the fixed basename prefix for the short-lived
 // marker an agent caller creates in a child spawn directory. It lives in this
 // shared package so the CLI, daemon, session launcher, and flow simulator agree
@@ -28,6 +30,13 @@ const SpawnDirWriteProofPrefix = ".tclaude-write-proof-"
 //     (handleGroupSpawn / the `agent spawn` CLI); the forked `tclaude session
 //     new` re-validates.
 type SpawnArgs struct {
+	// EffectiveSandbox is the frozen additive capability payload. Production
+	// serializes it to a private one-shot file before forking session new.
+	EffectiveSandbox *sandboxpolicy.Snapshot
+	// SandboxSnapshotPath/Digest are internal wrapper handoff fields populated
+	// only by the production spawner; callers normally set EffectiveSandbox.
+	SandboxSnapshotPath   string
+	SandboxSnapshotDigest string
 	// Label is the tclaude-side session ID for a fresh spawn (SpawnNew): the
 	// stable key the hook callback tracks conv-id rotations against, and the
 	// row key in SQLite. It must be unique in the sessions table. Unused by

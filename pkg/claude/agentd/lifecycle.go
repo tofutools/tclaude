@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/conv"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -1452,6 +1454,12 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			return
 		}
 	}
+	body.SandboxProfile = strings.TrimSpace(body.SandboxProfile)
+	if body.SandboxProfile != "" && classify(peerFromContext(r.Context())) != classHuman {
+		writeError(w, http.StatusForbidden, "sandbox_profile_restricted",
+			"only the human operator may select an explicit sandbox profile; agents may inherit existing policy")
+		return
+	}
 
 	// Spawn guardrails — runaway-prevention for an agent that the human
 	// granted `groups.spawn`. The group's hard member cap (binds the human
@@ -1776,6 +1784,34 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 
+	effectiveSandbox, policyErr := db.ResolveEffectiveSandboxSnapshot(g.ID, body.SandboxProfile)
+	if errors.Is(policyErr, db.ErrSandboxProfileNotFound) {
+		writeError(w, http.StatusBadRequest, "invalid_sandbox_profile",
+			fmt.Sprintf("sandbox profile %q does not exist", body.SandboxProfile))
+		return
+	}
+	if policyErr != nil {
+		writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", policyErr.Error())
+		return
+	}
+	if spawnerConvID != "" {
+		parentSnapshot, err := db.AgentEffectiveSandboxConfigForConv(spawnerConvID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", "load parent sandbox snapshot: "+err.Error())
+			return
+		}
+		if parentSnapshot == nil {
+			if sandboxpolicy.HasCapabilities(effectiveSandbox) {
+				writeError(w, http.StatusForbidden, "sandbox_profile_restricted",
+					"this parent predates effective sandbox snapshots and may not inherit custom capabilities; relaunch it under current policy or ask the human to spawn the child")
+				return
+			}
+		} else if err := sandboxpolicy.RequireContained(*parentSnapshot, effectiveSandbox); err != nil {
+			writeError(w, http.StatusForbidden, "sandbox_profile_restricted", err.Error())
+			return
+		}
+	}
+
 	// Dir write-proof — the launch-directory half of the spawn sandbox guard
 	// (spawn_dir_proof.go). The lineage guard above caps the child's sandbox
 	// MODE; this caps its anchor: an agent caller must prove its own sandbox
@@ -1812,6 +1848,11 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		dirs := []string{cwd}
 		dirs = appendUniqueDirs(dirs, worktreePath)
 		dirs = appendUniqueDirs(dirs, gitWorktreeWriteDirs...)
+		for _, grant := range effectiveSandbox.Effective.Filesystem {
+			if grant.Access == sandboxpolicy.AccessWrite {
+				dirs = appendUniqueDirs(dirs, grant.Path)
+			}
+		}
 		resolved, ok := requireDirWriteProof(w, spawnerConvID, body.WriteProofToken, dirs)
 		if !ok {
 			return
@@ -1989,6 +2030,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// same function in a loop. handleGroupSpawn keeps only the HTTP
 	// shape — decode + validate above, error/JSON mapping below.
 	p := spawnParams{
+		EffectiveSandbox:           &effectiveSandbox,
 		Name:                       body.Name,
 		Role:                       body.Role,
 		Descr:                      body.Descr,
@@ -2108,9 +2150,13 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 // length/charset-checked, reply-to resolved to a conv-id — so the
 // shared core does no HTTP-shaped validation of its own.
 type spawnParams struct {
-	Name  string
-	Role  string
-	Descr string
+	// EffectiveSandbox is the immutable additive capability snapshot resolved
+	// at the trusted caller boundary. Daemon-managed launch paths pass a
+	// versioned snapshot even when it is explicitly empty.
+	EffectiveSandbox *sandboxpolicy.Snapshot
+	Name             string
+	Role             string
+	Descr            string
 	// TaskURL / TaskLabel are the optional per-agent task-reference link
 	// (the dashboard Task column). Validated at the spawn boundary
 	// (handleGroupSpawn) and persisted onto the new actor in
@@ -2718,6 +2764,13 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 			return nil, fail
 		}
 	}
+	if p.EffectiveSandbox != nil {
+		validated, err := sandboxpolicy.RevalidateSnapshot(*p.EffectiveSandbox)
+		if err != nil {
+			return nil, &spawnFailure{http.StatusConflict, "sandbox_profile_changed", err.Error()}
+		}
+		p.EffectiveSandbox = &validated
+	}
 	if strings.TrimSpace(p.DirWriteProofToken) == "" {
 		p.GitWorktreeWriteDirs = nil
 		p.GitWorktreeWriteDirsPinned = false
@@ -2748,6 +2801,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	label := generateSpawnLabel()
 
 	spawnArgs := clcommon.SpawnArgs{
+		EffectiveSandbox:           p.EffectiveSandbox,
 		Label:                      label,
 		Cwd:                        p.Cwd,
 		CwdWriteProof:              p.CwdWriteProofToken,
@@ -3092,6 +3146,7 @@ func pendingSpawnFromParams(g *db.AgentGroup, p spawnParams, label string) *db.P
 		IsOwner:             p.IsOwner,
 		PermissionOverrides: p.PermissionOverrides,
 		ProcessCommandID:    p.ProcessCommandID,
+		EffectiveSandbox:    p.EffectiveSandbox,
 	}
 }
 
@@ -3332,6 +3387,12 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string) (int64, *
 		if err := db.SetAgentInitialSpawnConfig(agentID, p.SpawnConfigJSON); err != nil {
 			slog.Warn("spawn: failed to record initial spawn config",
 				"agent", agentID, "error", err)
+		}
+	}
+	if agentID != "" && p.EffectiveSandbox != nil {
+		if err := db.SetAgentEffectiveSandboxConfig(agentID, p.EffectiveSandbox); err != nil {
+			return 0, &spawnFailure{http.StatusInternalServerError, "io",
+				"failed to record effective sandbox snapshot: " + err.Error()}
 		}
 	}
 	if agentID != "" && p.ProcessCommandID != "" {
@@ -4013,6 +4074,10 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	if a.Cwd != "" {
 		args = append(args, "-C", a.Cwd)
 	}
+	if a.SandboxSnapshotPath != "" {
+		args = append(args, "--sandbox-snapshot-path", a.SandboxSnapshotPath,
+			"--sandbox-snapshot-digest", a.SandboxSnapshotDigest)
+	}
 	if a.CwdWriteProof != "" {
 		args = append(args, "--cwd-write-proof", a.CwdWriteProof)
 	}
@@ -4093,6 +4158,10 @@ func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 	args := []string{"session", "new", "-r", a.ConvID, "-d", "--global"}
 	if a.Cwd != "" {
 		args = append(args, "-C", a.Cwd)
+	}
+	if a.SandboxSnapshotPath != "" {
+		args = append(args, "--sandbox-snapshot-path", a.SandboxSnapshotPath,
+			"--sandbox-snapshot-digest", a.SandboxSnapshotDigest)
 	}
 	if a.CwdWriteProof != "" {
 		args = append(args, "--cwd-write-proof", a.CwdWriteProof)
@@ -4283,6 +4352,12 @@ func appendTrustDirFlag(args []string, trustDir bool) []string {
 // in SQLite once the conv-id materialises). It must be unique in the
 // sessions table.
 func liveSpawnNew(a clcommon.SpawnArgs) error {
+	var cleanup func()
+	var err error
+	a, cleanup, err = spawnArgsWithSandboxHandoff(a)
+	if err != nil {
+		return err
+	}
 	label := a.Label
 	// effort, model, sandbox, approval, autoReview and trustDir are validated at
 	// the spawn boundary (handleGroupSpawn / the `agent spawn` CLI) before they
@@ -4302,10 +4377,12 @@ func liveSpawnNew(a clcommon.SpawnArgs) error {
 	cmd.Env = spawnEnvWithoutOperatorToken()
 	detachSpawn(cmd)
 	if err := cmd.Start(); err != nil {
+		cleanup()
 		return err
 	}
 	pid := cmd.Process.Pid
 	if a.CwdWriteProof != "" || a.DirWriteProof != "" {
+		defer cleanup()
 		if err := cmd.Wait(); err != nil {
 			slog.Error("spawn subprocess exited with error",
 				"label", label, "pid", pid, "err", err,
@@ -4315,6 +4392,7 @@ func liveSpawnNew(a clcommon.SpawnArgs) error {
 		return nil
 	}
 	go func() {
+		defer cleanup()
 		if err := cmd.Wait(); err != nil {
 			slog.Error("spawn subprocess exited with error",
 				"label", label, "pid", pid, "err", err,
@@ -4347,6 +4425,12 @@ func liveSpawnNew(a clcommon.SpawnArgs) error {
 // Errors only surface if exec.Start() itself fails (binary missing
 // from PATH, etc.).
 func liveSpawnResume(a clcommon.SpawnArgs) error {
+	var cleanup func()
+	var err error
+	a, cleanup, err = spawnArgsWithSandboxHandoff(a)
+	if err != nil {
+		return err
+	}
 	convID := a.ConvID
 	args := sessionResumeArgs(a)
 	cmd := exec.Command("tclaude", args...)
@@ -4358,10 +4442,12 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 	cmd.Env = spawnEnvWithoutOperatorToken()
 	detachSpawn(cmd)
 	if err := cmd.Start(); err != nil {
+		cleanup()
 		return err
 	}
 	pid := cmd.Process.Pid
 	if a.CwdWriteProof != "" || a.DirWriteProof != "" {
+		defer cleanup()
 		if err := cmd.Wait(); err != nil {
 			slog.Error("resume subprocess exited with error",
 				"conv", convID, "pid", pid, "err", err,
@@ -4374,6 +4460,7 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 	// wrapper exits quickly (after `tmux new-session -d` returns); the
 	// real CC process keeps running under the tmux server.
 	go func() {
+		defer cleanup()
 		if err := cmd.Wait(); err != nil {
 			slog.Error("resume subprocess exited with error",
 				"conv", convID, "pid", pid, "err", err,
@@ -4381,6 +4468,21 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 		}
 	}()
 	return nil
+}
+
+func spawnArgsWithSandboxHandoff(a clcommon.SpawnArgs) (clcommon.SpawnArgs, func(), error) {
+	cleanup := func() {}
+	if a.EffectiveSandbox == nil {
+		return a, cleanup, nil
+	}
+	path, digest, err := sandboxpolicy.WriteSnapshotFile(config.DataDir(), *a.EffectiveSandbox)
+	if err != nil {
+		return clcommon.SpawnArgs{}, cleanup, err
+	}
+	a.SandboxSnapshotPath = path
+	a.SandboxSnapshotDigest = digest
+	cleanup = func() { _ = os.Remove(path) }
+	return a, cleanup, nil
 }
 
 // spawnStderrCapture is a bounded io.Writer used for capturing
