@@ -10,10 +10,10 @@ import (
 
 // The command palette's ranking logic lives in pure JS
 // (dashboard/js/palette-score.js) and is unit-tested with Node's built-in
-// test runner — no bundler, no framework, no node_modules, matching the
-// dashboard's deliberate no-build-system convention. This wrapper runs
-// that suite as part of `go test ./...` (the repo's single documented test
-// entry point).
+// test runner — no DOM framework and no node_modules required at test time.
+// These pure-module tests stay deliberately separate from the Preact/HTM
+// runtime modules. This wrapper runs that suite as part of `go test ./...`
+// (the repo's single documented test entry point).
 //
 // node availability:
 //   - In CI the Test job runs actions/setup-node, so node is guaranteed.
@@ -53,7 +53,7 @@ func TestPaletteScore_JS(t *testing.T) {
 				"(the Test job is expected to run actions/setup-node)", err)
 		}
 		if _, ok := errors.AsType[*exec.ExitError](err); ok {
-			t.Fatalf("palette-score JS unit tests failed: %v\n%s", err, out)
+			t.Fatalf("dashboard JS unit tests failed: %v\n%s", err, out)
 		}
 		t.Skip("unable to run node — skipping JS unit tests (install node to run them)", err)
 	}

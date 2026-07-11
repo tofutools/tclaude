@@ -16,6 +16,17 @@ go test ./...
 golangci-lint run ./...
 ```
 
+The dashboard uses browser-native ES modules. Preact islands use HTM for
+component templates, so editing or running the dashboard requires no Node
+install, compiler, or frontend build step: the normal `go install .` workflow
+embeds everything it needs. Runtime modules are pinned and committed under
+`pkg/claude/agentd/dashboard/vendor/preact/`; the dashboard never loads them
+from a CDN.
+
+Dependency upgrades are deliberately rare and reviewed as vendored-code
+changes. Update the exact versions, hashes, source maps, and license metadata
+in that directory's `README.md` together, then run the ordinary Go test suite.
+
 Flow tests in `pkg/claude/agentd/*_flow_test.go` are regular Go tests
 — they run under bare `go test ./...`. Boundaries (`tmux`, the
 `tclaude session new` subprocess) are mocked by assigning fake

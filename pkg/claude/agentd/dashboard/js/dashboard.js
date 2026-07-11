@@ -74,6 +74,7 @@ import { bindCommandPalette } from './palette.js';
 import { bindDock } from './dock.js';
 import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
+import { mountPreactRuntimeProbe } from './preact-loader.js';
 
 // Last successful snapshot, kept so the filter inputs can re-render
 // without a server roundtrip when the user types.
@@ -121,6 +122,10 @@ export function sudoBadge(activeSudo, fallbackConvID) {
 // synchronous for the benign import cycles documented above.)
 (async () => {
   await initDashPrefs();
+  // Load the native Preact/HTM module behind an error-isolated dynamic import.
+  // This inert probe proves the production asset path without giving Preact
+  // ownership of an existing feature subtree yet (TCL-340).
+  void mountPreactRuntimeProbe();
   // sort.js seeds its in-memory sortState from a pref; re-seed it now
   // that the cache is populated (its import-time read saw an empty one).
   loadSortState();

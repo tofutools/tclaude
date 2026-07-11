@@ -11,9 +11,11 @@ import (
 	"testing"
 )
 
-// The dashboard's browser UI is a graph of native ES modules
-// (dashboard/js/*.js) embedded into the agentd binary and served as-is —
-// there is no bundler. The browser links the graph at load time, and ONE
+// The dashboard UI is a graph of native ES modules (dashboard/js/*.js)
+// embedded into the agentd binary and served as-is. Preact island modules can
+// also use bare package specifiers resolved by the import map; those mappings
+// and vendored targets are checked by dashboard_preact_assets_test.go. The
+// browser links the legacy graph at load time, and ONE
 // bad named import aborts the WHOLE graph: `import { nope } from './x.js'`
 // where x.js doesn't export `nope` blanks the entire dashboard, not just
 // the importing feature. Neither `node --input-type=module --check` (which
@@ -410,8 +412,9 @@ func TestDashboardModuleGraph(t *testing.T) {
 
 	for name, p := range parsed {
 		for _, imp := range p.imports {
-			// Only the local relative graph is our concern; a bare
-			// specifier would be an external dependency (there are none).
+			// Relative imports are resolved here. Bare package imports are
+			// resolved by the import map and checked with their vendored
+			// targets in dashboard_preact_assets_test.go.
 			if !strings.HasPrefix(imp.path, ".") {
 				continue
 			}
