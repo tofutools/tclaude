@@ -38,6 +38,7 @@ func TestBuildSpawnWelcome_IncludesIdentityFields(t *testing.T) {
 				"product-owner",
 				"receives feature requests",
 				"tclaude-devs",
+				"whoami / --help / inbox ls",
 				"[system:",
 				"]",
 			},
