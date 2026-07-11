@@ -18,9 +18,9 @@ var (
 	ErrSandboxProfileInvalidImport = errors.New("invalid sandbox profile import")
 )
 
-// SandboxFilesystemGrant is one canonical filesystem capability in a sandbox
-// profile. Validation and canonicalization live at the trusted domain/API
-// boundary; this store round-trips that normalized payload without widening it.
+// SandboxFilesystemGrant is one normalized filesystem capability in a sandbox
+// profile. Portable imports may retain canonical lexical paths that do not yet
+// exist locally; resolution validates them strictly before use.
 type SandboxFilesystemGrant = sandboxpolicy.FilesystemGrant
 
 // SandboxEnvironmentEntry remains a slice element (rather than a map value)
@@ -246,17 +246,28 @@ func ImportSandboxProfiles(profiles []*SandboxProfile, onConflict string, assign
 		return result, fmt.Errorf("%w: on_conflict must be error, skip, or overwrite", ErrSandboxProfileInvalidImport)
 	}
 	normalized := make([]*SandboxProfile, 0, len(profiles))
+	missingByName := make(map[string][]string, len(profiles))
 	seen := map[string]bool{}
 	for i, profile := range profiles {
-		p, err := normalizeSandboxProfileForStore(profile)
+		if profile == nil {
+			return result, fmt.Errorf("%w: profile #%d: sandbox profile is nil", ErrSandboxProfileInvalidImport, i+1)
+		}
+		p, missing, err := sandboxpolicy.NormalizeForImport(sandboxpolicy.Profile{
+			Name: profile.Name, Filesystem: profile.Filesystem, Environment: profile.Environment,
+		})
 		if err != nil {
 			return result, fmt.Errorf("%w: profile #%d: %v", ErrSandboxProfileInvalidImport, i+1, err)
 		}
-		if seen[p.Name] {
-			return result, fmt.Errorf("%w: sandbox profile %q appears more than once", ErrSandboxProfileInvalidImport, p.Name)
+		normalizedProfile := *profile
+		normalizedProfile.Name = p.Name
+		normalizedProfile.Filesystem = p.Filesystem
+		normalizedProfile.Environment = p.Environment
+		if seen[normalizedProfile.Name] {
+			return result, fmt.Errorf("%w: sandbox profile %q appears more than once", ErrSandboxProfileInvalidImport, normalizedProfile.Name)
 		}
-		seen[p.Name] = true
-		normalized = append(normalized, p)
+		seen[normalizedProfile.Name] = true
+		missingByName[normalizedProfile.Name] = missing
+		normalized = append(normalized, &normalizedProfile)
 	}
 
 	d, err := Open()
@@ -290,6 +301,10 @@ func ImportSandboxProfiles(profiles []*SandboxProfile, onConflict string, assign
 		if item.existingID != 0 && onConflict == "skip" {
 			result.Skipped = append(result.Skipped, item.profile.Name)
 			continue
+		}
+		for _, path := range missingByName[item.profile.Name] {
+			result.Warnings = append(result.Warnings, fmt.Sprintf(
+				"sandbox profile %q path %q does not exist locally; edit the profile before use", item.profile.Name, path))
 		}
 		filesystemJSON, environmentJSON, err := marshalSandboxProfilePayload(item.profile)
 		if err != nil {

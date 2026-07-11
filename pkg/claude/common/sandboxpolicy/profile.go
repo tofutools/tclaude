@@ -71,19 +71,34 @@ var reservedProfileNames = map[string]struct{}{
 // with the same value fold; conflicting values fail rather than depending on
 // input order.
 func Normalize(in Profile) (Profile, error) {
+	profile, _, err := normalize(in, false)
+	return profile, err
+}
+
+// NormalizeForImport validates a portable profile without requiring every
+// filesystem path to exist on this machine. Missing paths are retained in
+// canonical lexical form and returned separately so import surfaces can warn
+// the operator. Existing paths receive the same symlink, directory and
+// protected-root checks as Normalize. Normalize remains the authorization
+// boundary used by create/edit and immediately before a profile is applied.
+func NormalizeForImport(in Profile) (Profile, []string, error) {
+	return normalize(in, true)
+}
+
+func normalize(in Profile, allowMissing bool) (Profile, []string, error) {
 	name, err := normalizeName(in.Name)
 	if err != nil {
-		return Profile{}, err
+		return Profile{}, nil, err
 	}
-	filesystem, err := normalizeFilesystem(in.Filesystem)
+	filesystem, missing, err := normalizeFilesystem(in.Filesystem, allowMissing)
 	if err != nil {
-		return Profile{}, err
+		return Profile{}, nil, err
 	}
 	environment, err := normalizeEnvironment(in.Environment)
 	if err != nil {
-		return Profile{}, err
+		return Profile{}, nil, err
 	}
-	return Profile{Name: name, Filesystem: filesystem, Environment: environment}, nil
+	return Profile{Name: name, Filesystem: filesystem, Environment: environment}, missing, nil
 }
 
 func normalizeName(name string) (string, error) {
@@ -106,24 +121,28 @@ func normalizeName(name string) (string, error) {
 	return name, nil
 }
 
-func normalizeFilesystem(in []FilesystemGrant) ([]FilesystemGrant, error) {
+func normalizeFilesystem(in []FilesystemGrant, allowMissing bool) ([]FilesystemGrant, []string, error) {
 	protected, err := protectedPaths()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	byPath := make(map[string]Access, len(in))
+	missingPaths := map[string]bool{}
 	for i, grant := range in {
 		if grant.Access != AccessRead && grant.Access != AccessWrite {
-			return nil, fmt.Errorf("filesystem[%d].access %q is invalid (want read or write)", i, grant.Access)
+			return nil, nil, fmt.Errorf("filesystem[%d].access %q is invalid (want read or write)", i, grant.Access)
 		}
-		path, err := canonicalDirectory(grant.Path)
+		path, missing, err := canonicalDirectory(grant.Path, allowMissing)
 		if err != nil {
-			return nil, fmt.Errorf("filesystem[%d].path: %w", i, err)
+			return nil, nil, fmt.Errorf("filesystem[%d].path: %w", i, err)
 		}
 		for _, denied := range protected {
 			if pathsIntersect(path, denied) {
-				return nil, fmt.Errorf("filesystem[%d].path %q intersects protected directory %q", i, path, denied)
+				return nil, nil, fmt.Errorf("filesystem[%d].path %q intersects protected directory %q", i, path, denied)
 			}
+		}
+		if missing {
+			missingPaths[path] = true
 		}
 		if previous, exists := byPath[path]; !exists || grant.Access == AccessWrite || previous != AccessWrite {
 			byPath[path] = grant.Access
@@ -134,18 +153,23 @@ func normalizeFilesystem(in []FilesystemGrant) ([]FilesystemGrant, error) {
 		out = append(out, FilesystemGrant{Path: path, Access: access})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
-	return out, nil
+	missing := make([]string, 0, len(missingPaths))
+	for path := range missingPaths {
+		missing = append(missing, path)
+	}
+	sort.Strings(missing)
+	return out, missing, nil
 }
 
-func canonicalDirectory(path string) (string, error) {
+func canonicalDirectory(path string, allowMissing bool) (string, bool, error) {
 	if path == "" {
-		return "", fmt.Errorf("path is required")
+		return "", false, fmt.Errorf("path is required")
 	}
 	if len(path) > MaxPathBytes {
-		return "", fmt.Errorf("path is too long (maximum %d bytes)", MaxPathBytes)
+		return "", false, fmt.Errorf("path is too long (maximum %d bytes)", MaxPathBytes)
 	}
 	if !utf8.ValidString(path) || strings.ContainsFunc(path, isControl) {
-		return "", fmt.Errorf("path must be valid UTF-8 without control characters")
+		return "", false, fmt.Errorf("path must be valid UTF-8 without control characters")
 	}
 	// A leading "~" or "~/" is a convenience alias for the daemon's own home
 	// directory (the box these grants apply to). Only the bare-user form is
@@ -154,7 +178,7 @@ func canonicalDirectory(path string) (string, error) {
 	if path == "~" || strings.HasPrefix(path, "~/") {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return "", fmt.Errorf("expand %q: resolve home directory: %w", path, err)
+			return "", false, fmt.Errorf("expand %q: resolve home directory: %w", path, err)
 		}
 		if path == "~" {
 			path = home
@@ -163,21 +187,61 @@ func canonicalDirectory(path string) (string, error) {
 		}
 	}
 	if !filepath.IsAbs(path) {
-		return "", fmt.Errorf("path %q is not absolute", path)
+		return "", false, fmt.Errorf("path %q is not absolute", path)
 	}
-	resolved, err := filepath.EvalSymlinks(filepath.Clean(path))
+	clean := filepath.Clean(path)
+	resolved, err := filepath.EvalSymlinks(clean)
 	if err != nil {
-		return "", fmt.Errorf("resolve symlinks for %q: %w", path, err)
+		if allowMissing && os.IsNotExist(err) {
+			resolved, err = canonicalMissingDirectory(clean)
+			if err == nil {
+				return resolved, true, nil
+			}
+		}
+		return "", false, fmt.Errorf("resolve symlinks for %q: %w", path, err)
 	}
 	resolved = filepath.Clean(resolved)
 	info, err := os.Stat(resolved)
 	if err != nil {
-		return "", fmt.Errorf("stat %q: %w", resolved, err)
+		return "", false, fmt.Errorf("stat %q: %w", resolved, err)
 	}
 	if !info.IsDir() {
-		return "", fmt.Errorf("path %q is not a directory", resolved)
+		return "", false, fmt.Errorf("path %q is not a directory", resolved)
 	}
-	return resolved, nil
+	return resolved, false, nil
+}
+
+// canonicalMissingDirectory resolves the longest existing ancestor so an
+// imported missing path cannot disguise an existing symlink into a protected
+// tree. The unresolved suffix is then appended lexically.
+func canonicalMissingDirectory(path string) (string, error) {
+	ancestor := path
+	suffix := []string{}
+	for {
+		info, err := os.Stat(ancestor)
+		if err == nil {
+			if !info.IsDir() {
+				return "", fmt.Errorf("existing ancestor %q is not a directory", ancestor)
+			}
+			resolved, err := filepath.EvalSymlinks(ancestor)
+			if err != nil {
+				return "", err
+			}
+			for i := len(suffix) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, suffix[i])
+			}
+			return filepath.Clean(resolved), nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			return "", err
+		}
+		suffix = append(suffix, filepath.Base(ancestor))
+		ancestor = parent
+	}
 }
 
 func protectedPaths() ([]string, error) {
@@ -194,6 +258,10 @@ func protectedPaths() ([]string, error) {
 		path = filepath.Clean(path)
 		if resolved, err := filepath.EvalSymlinks(path); err == nil {
 			path = filepath.Clean(resolved)
+		} else if os.IsNotExist(err) {
+			if resolved, missingErr := canonicalMissingDirectory(path); missingErr == nil {
+				path = resolved
+			}
 		}
 		paths[i] = path
 	}

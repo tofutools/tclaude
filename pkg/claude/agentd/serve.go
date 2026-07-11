@@ -861,6 +861,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/sandbox-profile-default", handleGlobalSandboxProfile)
 	mux.HandleFunc("GET /v1/sandbox-profiles/export", handleSandboxProfilesExport)
 	mux.HandleFunc("POST /v1/sandbox-profiles/import", handleSandboxProfilesImport)
+	mux.HandleFunc("POST /v1/sandbox-profiles/import/inspect", handleSandboxProfilesImportInspect)
 	mux.HandleFunc("/v1/sandbox-profiles/{name}", handleSandboxProfileByName)
 	mux.HandleFunc("POST /v1/sandbox-profile-drafts/{token}", handleSandboxProfileDraftSubmit)
 	mux.HandleFunc("/v1/groups/{group}/sandbox-profile", handleGroupSandboxProfile)

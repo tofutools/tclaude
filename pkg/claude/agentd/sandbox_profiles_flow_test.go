@@ -35,6 +35,7 @@ func TestSandboxProfilesPayloadReadsAndMutationsRequireDedicatedPermission(t *te
 		testharness.JSONRequest(t, http.MethodGet, "/v1/sandbox-profiles", nil),
 		testharness.JSONRequest(t, http.MethodGet, "/v1/sandbox-profiles/anything", nil),
 		testharness.JSONRequest(t, http.MethodGet, "/v1/sandbox-profiles/export", nil),
+		testharness.JSONRequest(t, http.MethodPost, "/v1/sandbox-profiles/import/inspect", nil),
 		testharness.JSONRequest(t, http.MethodPut, "/v1/groups/exists/sandbox-profile", map[string]any{"name": "x"}),
 		testharness.JSONRequest(t, http.MethodPut, "/v1/groups/missing/sandbox-profile", map[string]any{"name": "x"}),
 	} {
@@ -205,4 +206,54 @@ func TestSandboxProfilesImportConflictRollsBackWholeBundle(t *testing.T) {
 	require.Equalf(t, http.StatusConflict, rec.Code, "import body=%s", rec.Body.String())
 	rec = profileReq(t, f, http.MethodGet, "/v1/sandbox-profiles/would-be-partial", nil)
 	assert.Equal(t, http.StatusNotFound, rec.Code, "conflict planning must happen before the first insert")
+}
+
+func TestSandboxProfilesImportPreviewWarnsAndImportRetainsMissingPaths(t *testing.T) {
+	f := newFlow(t)
+	canonicalHome, err := filepath.EvalSymlinks(os.Getenv("HOME"))
+	require.NoError(t, err)
+	missing := filepath.Join(canonicalHome, "portable-recipient-missing", "cache")
+	require.NoError(t, os.RemoveAll(filepath.Dir(missing)))
+	bundle := map[string]any{
+		"format": "tclaude-sandbox-profiles", "format_version": 1,
+		"profiles": []map[string]any{{
+			"name":       "portable-missing",
+			"filesystem": []map[string]any{{"path": missing, "access": "write"}},
+		}},
+	}
+
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles/import/inspect", bundle)
+	require.Equalf(t, http.StatusOK, rec.Code, "inspect body=%s", rec.Body.String())
+	var preview struct {
+		Profiles []wireSandboxProfile `json:"profiles"`
+		Warnings []struct {
+			Profile string `json:"profile"`
+			Path    string `json:"path"`
+			Message string `json:"message"`
+		} `json:"warnings"`
+	}
+	testharness.DecodeJSON(t, rec, &preview)
+	require.Len(t, preview.Profiles, 1)
+	require.Len(t, preview.Warnings, 1)
+	assert.Equal(t, "portable-missing", preview.Warnings[0].Profile)
+	assert.Equal(t, missing, preview.Warnings[0].Path)
+	assert.Contains(t, preview.Warnings[0].Message, "does not exist locally")
+
+	rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles/import", bundle)
+	require.Equalf(t, http.StatusOK, rec.Code, "import body=%s", rec.Body.String())
+	var result struct {
+		Imported []string `json:"imported"`
+		Warnings []string `json:"warnings"`
+	}
+	testharness.DecodeJSON(t, rec, &result)
+	assert.Equal(t, []string{"portable-missing"}, result.Imported)
+	require.Len(t, result.Warnings, 1)
+	assert.Contains(t, result.Warnings[0], missing)
+
+	rec = profileReq(t, f, http.MethodGet, "/v1/sandbox-profiles/portable-missing", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var stored wireSandboxProfile
+	testharness.DecodeJSON(t, rec, &stored)
+	require.Len(t, stored.Filesystem, 1)
+	assert.Equal(t, missing, stored.Filesystem[0].Path)
 }

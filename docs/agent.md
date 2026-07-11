@@ -361,8 +361,12 @@ and are rejected case-insensitively at create, rename, and import boundaries.
 Export bundles are portable and versioned. Assignment export is opt-in, and an
 import only applies included global/group assignments when
 `--apply-assignments` is explicitly passed; missing groups are reported as
-warnings. Without an explicit profile, resolution falls back from a group
-assignment to the global default.
+warnings. Filesystem paths that do not exist on the receiving machine are also
+imported with warnings so the profile can be shared and edited locally. Such a
+profile remains unusable until its missing paths are corrected or created;
+spawn-time sandbox resolution still validates every path strictly. Without an
+explicit profile, resolution falls back from a group assignment to the global
+default.
 
 The `draft` command is deliberately not a mutation. It requires only
 `sandbox-profiles.draft`, runs the normal server validation, and hands the

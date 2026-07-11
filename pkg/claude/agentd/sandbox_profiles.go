@@ -67,6 +67,18 @@ func buildSandboxProfile(body sandboxProfileJSON) (*db.SandboxProfile, error) {
 	}, nil
 }
 
+func buildSandboxProfileForImport(body sandboxProfileJSON) (*db.SandboxProfile, []string, error) {
+	normalized, missing, err := sandboxpolicy.NormalizeForImport(sandboxpolicy.Profile{
+		Name: body.Name, Filesystem: body.Filesystem, Environment: body.Environment,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return &db.SandboxProfile{
+		Name: normalized.Name, Filesystem: normalized.Filesystem, Environment: normalized.Environment,
+	}, missing, nil
+}
+
 // handleSandboxProfiles exposes the profile registry. Every method requires
 // sandbox-profiles.manage: values are explicitly documented as non-secret, but
 // a mistaken credential must not become readable by every local agent.
@@ -385,7 +397,7 @@ func handleSandboxProfilesImport(w http.ResponseWriter, r *http.Request) {
 	}
 	profiles := make([]*db.SandboxProfile, 0, len(env.Profiles))
 	for i, body := range env.Profiles {
-		p, err := buildSandboxProfile(body)
+		p, _, err := buildSandboxProfileForImport(body)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", fmt.Sprintf("profile #%d: %v", i+1, err))
 			return
@@ -410,4 +422,48 @@ func handleSandboxProfilesImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"imported": result.Imported, "skipped": result.Skipped, "warnings": result.Warnings})
+}
+
+type sandboxProfileImportPathWarning struct {
+	Profile string `json:"profile"`
+	Path    string `json:"path"`
+	Message string `json:"message"`
+}
+
+// handleSandboxProfilesImportInspect validates and normalizes a portable
+// bundle without writing it. Unlike ordinary profile creation, portability
+// validation retains missing local paths and reports them as warnings so the
+// dashboard can show an actionable preview.
+func handleSandboxProfilesImportInspect(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requirePermission(w, r, PermSandboxProfilesManage); !ok {
+		return
+	}
+	var env sandboxProfileExportEnvelope
+	if err := json.NewDecoder(r.Body).Decode(&env); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "not valid sandbox-profile JSON: "+err.Error())
+		return
+	}
+	if env.Format != sandboxProfileExportFormat || env.FormatVersion != sandboxProfileExportVersion {
+		writeError(w, http.StatusBadRequest, "invalid_format", fmt.Sprintf(
+			"unsupported sandbox-profile export %q version %d", env.Format, env.FormatVersion))
+		return
+	}
+	profiles := make([]sandboxProfileJSON, 0, len(env.Profiles))
+	warnings := []sandboxProfileImportPathWarning{}
+	for i, body := range env.Profiles {
+		profile, missing, err := buildSandboxProfileForImport(body)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", fmt.Sprintf("profile #%d: %v", i+1, err))
+			return
+		}
+		profiles = append(profiles, sandboxProfileToJSON(profile, false))
+		for _, path := range missing {
+			warnings = append(warnings, sandboxProfileImportPathWarning{
+				Profile: profile.Name,
+				Path:    path,
+				Message: "path does not exist locally; edit the profile before use",
+			})
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"profiles": profiles, "warnings": warnings})
 }

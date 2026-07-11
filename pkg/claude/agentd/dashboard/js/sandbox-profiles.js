@@ -468,9 +468,10 @@ async function refreshSpawnSandboxProfileUI(groupName = '') {
 // (the loopback twins of the CLI path). Only the profiles themselves travel:
 // global/group assignments live in the Groups tab, so this dialog neither
 // exports (no include_assignments) nor applies (apply_assignments:false) them.
-// The daemon has no import/inspect endpoint, so the preview is client-side —
-// it parses the bundle and flags name clashes against the loaded list, then a
-// single on-conflict policy (error/skip/overwrite) governs the whole import.
+// The daemon inspect endpoint validates portable payloads and reports paths
+// that do not exist on this machine without rejecting the preview. The client
+// adds local name clashes, then a single on-conflict policy
+// (error/skip/overwrite) governs the whole import.
 
 const EXPORT_FORMAT = 'tclaude-sandbox-profiles';
 const EXPORT_VERSION = 1;
@@ -563,18 +564,26 @@ async function readImportSource() {
   return $('#sandbox-profile-import-paste').value.trim();
 }
 
-function renderImportPreview(incoming) {
+function renderImportPreview(incoming, warnings = []) {
   const existing = new Set(profiles.map(p => p.name));
+  const warningsByProfile = new Map();
+  warnings.forEach(warning => {
+    const list = warningsByProfile.get(warning.profile) || [];
+    list.push(warning);
+    warningsByProfile.set(warning.profile, list);
+  });
   let conflicts = 0;
   const host = $('#sandbox-profile-import-preview');
   host.innerHTML = incoming.map(p => {
     const clash = existing.has(p.name);
+    const pathWarnings = warningsByProfile.get(p.name) || [];
     if (clash) conflicts++;
     return `<div class="profile-transfer-row${clash ? ' conflict' : ''}">
       <span class="profile-transfer-main">
         <span class="profile-transfer-name">${esc(p.name || '(unnamed)')}</span>
         <span class="profile-transfer-summary">${esc(profileSummary(p))}</span>
         ${clash ? '<span class="profile-transfer-note">already exists locally</span>' : ''}
+        ${pathWarnings.map(warning => `<span class="profile-transfer-warning">⚠ ${esc(warning.path)} — ${esc(warning.message)}</span>`).join('')}
       </span>
     </div>`;
   }).join('');
@@ -618,8 +627,13 @@ async function inspectImport() {
       host.hidden = false;
       return;
     }
+    const inspected = await api(`${API}/import/inspect`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(env),
+    });
     importEnvelope = env;
-    renderImportPreview(incoming);
+    renderImportPreview(inspected.profiles || incoming, inspected.warnings || []);
   } catch (err) {
     errEl.textContent = err.message || String(err);
   } finally {
@@ -644,8 +658,10 @@ async function submitImport() {
     closeImportModal();
     const imported = (res && res.imported) || [];
     const skipped = (res && res.skipped) || [];
+    const warnings = (res && res.warnings) || [];
     let msg = `${imported.length} sandbox profile${imported.length === 1 ? '' : 's'} imported`;
     if (skipped.length) msg += `, ${skipped.length} skipped`;
+    if (warnings.length) msg += `, ${warnings.length} warning${warnings.length === 1 ? '' : 's'}`;
     toast(msg);
     await openManager();
     await refreshSpawnSandboxProfileUI($('#agent-spawn-group').value);
