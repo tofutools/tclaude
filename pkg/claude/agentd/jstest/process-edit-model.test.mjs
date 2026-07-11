@@ -10,7 +10,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ProcessEditModel, blankEditView, graphEdgeID, MAX_UNDO,
-  PALETTE_PRIMITIVES, PALETTE_SNIPPETS,
+  PALETTE_PRIMITIVES, PALETTE_SNIPPETS, templateIDEditable,
 } from '../dashboard/js/process-edit-model.js';
 
 function view() {
@@ -254,8 +254,21 @@ test('template id is creation-only and never restored by undo history', () => {
   assert.equal(model.undo(), true);
   assert.equal(model.template.id, 'release', 'undo preserves the chosen store key');
   model.markSaved({ sourceHash: 'saved-source' });
-  assert.throws(() => model.setTemplateID('copy'), /immutable/);
+  assert.equal(model.setTemplateID('copy'), false);
   assert.equal(model.template.id, 'release');
+});
+
+test('failed first-save force retry keeps the adopted identity locked and consistent', () => {
+  const model = new ProcessEditModel(blankEditView('collision'));
+  assert.equal(templateIDEditable(true, model.sourceHash), true);
+
+  // resolveConflict(force) adopts the existing head before recursively saving.
+  // If that retry fails or re-conflicts, blank remains true but the CAS base
+  // now fixes which store identity the editor owns.
+  model.sourceHash = 'existing-head-source';
+  assert.equal(templateIDEditable(true, model.sourceHash), false);
+  assert.equal(model.setTemplateID('misleading-copy'), false, 'rejected without throwing from the change event');
+  assert.equal(model.template.id, 'collision', 'visible title and model identity stay on the adopted head');
 });
 
 test('regression: markSaved at the payload rev keeps in-flight edits dirty', () => {

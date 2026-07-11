@@ -64,9 +64,11 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"'Save as new version anyway'",
 		// IDs are creation-time store keys. Existing templates render only the
 		// title, and a blank template swaps its id input out after first save.
-		"this.idInput.disabled = !this.blank",
-		"this.identity.replaceChildren(this.blank ? this.idInput : this.titleLabel)",
+		"const idEditable = templateIDEditable(this.blank, model.sourceHash)",
+		"this.idInput.disabled = !idEditable",
+		"this.identity.replaceChildren(idEditable ? this.idInput : this.titleLabel)",
 		"this.model.setTemplateID(this.idInput.value.trim())",
+		"Template id is fixed once an existing version is selected.",
 		"const savedID = id",
 		"this.model.template.id = savedID",
 		// Template-level metadata has an explicit editor affordance and travels

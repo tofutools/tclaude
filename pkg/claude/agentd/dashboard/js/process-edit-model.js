@@ -63,6 +63,13 @@ export function blankEditView(id) {
   };
 }
 
+// A blank shell stops owning its id as soon as conflict resolution adopts an
+// existing head as the CAS base, even if the retry has not saved successfully.
+// Keeping this predicate pure lets the model and rendered control agree.
+export function templateIDEditable(blank, sourceHash) {
+  return !!blank && !sourceHash;
+}
+
 export class ProcessEditModel {
   constructor(view, config = {}) {
     const v = view || blankEditView();
@@ -421,8 +428,9 @@ export class ProcessEditModel {
   }
 
   setTemplateID(id) {
-    if (this.sourceHash) throw new Error('template id is immutable after first save');
+    if (this.sourceHash) return false;
     this.template.id = id;
+    return true;
   }
 
   setTemplateMeta({ name, description, doc } = {}) {

@@ -25,7 +25,7 @@
 import { ProcessGraph } from './process-graph.js';
 import {
   ProcessEditModel, blankEditView,
-  PALETTE_PRIMITIVES, PALETTE_SNIPPETS,
+  PALETTE_PRIMITIVES, PALETTE_SNIPPETS, templateIDEditable,
 } from './process-edit-model.js';
 import { openNodeDialog } from './process-node-dialog.js';
 import { LiveValidation } from './process-validation.js';
@@ -184,7 +184,10 @@ export class ProcessTemplateEditor {
     }, { signal });
     if (this.blank) {
       this.idInput.addEventListener('change', () => {
-        this.model.setTemplateID(this.idInput.value.trim());
+        if (!this.model.setTemplateID(this.idInput.value.trim())) {
+          this.idInput.value = this.model.template.id || '';
+          this.status('Template id is fixed once an existing version is selected.', true);
+        }
         this.updateChrome();
       }, { signal });
     }
@@ -247,11 +250,12 @@ export class ProcessTemplateEditor {
     this.titleLabel.textContent = model.template.name
       ? `${model.template.name} (${model.template.id})`
       : model.template.id || 'untitled';
-    // Template ids are store keys, not editable metadata. Only a never-saved
-    // blank template gets the id field; the first successful save replaces it
-    // with the immutable title instead of leaving a copy-producing rename trap.
-    this.idInput.disabled = !this.blank;
-    this.identity.replaceChildren(this.blank ? this.idInput : this.titleLabel);
+    // A force retry pins the identity as soon as it adopts an existing CAS
+    // head. It stays locked even if the retry fails or re-conflicts: `blank`
+    // alone is not enough to decide that the id is still editable.
+    const idEditable = templateIDEditable(this.blank, model.sourceHash);
+    this.idInput.disabled = !idEditable;
+    this.identity.replaceChildren(idEditable ? this.idInput : this.titleLabel);
     this.versionBadge.textContent = model.semanticHash ? `v ${shortHash(model.semanticHash)}` : 'unsaved';
     this.versionBadge.title = model.semanticHash || 'This template has never been saved';
     this.dirtyBadge.hidden = !model.dirty;
