@@ -16,7 +16,7 @@ import { openProfileEditor } from './modal-profiles.js';
 import {
   loadSandboxProfiles, openSandboxProfileEditor, refreshSpawnSandboxProfileUI,
 } from './sandbox-profiles.js';
-import { renderDashDefaultProfile } from './render.js';
+import { renderDashDefaultProfile, renderDashSandboxProfile } from './render.js';
 import {
   openSudoGrantModal, openCronCreateModal, openCronEditModal,
 } from './modal-cron.js';
@@ -1464,6 +1464,34 @@ function bindRowActions() {
             toast(name ? `dashboard default profile → ${name}` : 'dashboard default profile cleared');
             renderDashDefaultProfile();
             return true;
+          });
+          return; // openProfilePicker owns the chip lifecycle + re-render.
+        }
+        case 'set-dash-sandbox-profile': {
+          // The dashboard-level 🛡 chip: pick the global sandbox profile from
+          // the sandbox registry, then repaint the snapshot-backed chip and
+          // recompute the spawn dialog's composed policy preview.
+          const current = btn.getAttribute('data-sandbox-profile') || '';
+          await openProfilePicker(btn, current, async (name) => {
+            const r = await fetch('/api/sandbox-profile-default', {
+              method: name ? 'PUT' : 'DELETE', credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: name ? JSON.stringify({ name }) : undefined,
+            });
+            if (!r.ok) {
+              toast(`set global sandbox profile failed: ${await r.text()}`, true);
+              return false;
+            }
+            toast(name ? `global sandbox profile: ${name}` : 'global sandbox profile cleared');
+            await refresh();
+            renderDashSandboxProfile();
+            await refreshSpawnSandboxProfileUI($('#agent-spawn-group').value);
+            return true;
+          }, {
+            loadList: loadSandboxProfiles,
+            noneLabel: '(none)',
+            newLabel: '＋ new sandbox profile…',
+            openNewEditor: (onSaved) => openSandboxProfileEditor(null, { onCreate: onSaved }),
           });
           return; // openProfilePicker owns the chip lifecycle + re-render.
         }

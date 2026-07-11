@@ -265,14 +265,14 @@ credentials in a sandbox profile — and changes take effect only when an agent
 is spawned or relaunched. The daemon remains authoritative for canonical path,
 protected-root, reserved-variable, containment, and harness capability checks.
 
-For routine assignment, the Groups toolbar has a global 🛡 selector beside the
+For routine assignment, the Groups toolbar has a global 🛡 chip beside the
 dashboard spawn-profile default, and every group header has its own 🛡 chip
-beside the group's 🧠 spawn-profile chip. The group chip behaves like the 🧠
-chip: icon-only while the group just inherits the global default, the assigned
-profile name when one is set, and a click opens a one-shot picker (including a
-"＋ new sandbox profile…" shortcut into the editor). Use the full manager to
-author or inspect profiles; use these quick controls to assign or clear them
-in context.
+beside the group's 🧠 spawn-profile chip. Like the 🧠 chips, each 🛡 chip is
+icon-only while unset, shows the assigned profile name when one is set, and
+opens a one-shot picker when clicked (including a "＋ new sandbox profile…"
+shortcut into the editor). An unset group chip inherits the global default.
+Use the full manager to author or inspect profiles; use these quick controls to
+assign or clear them in context.
 
 ### Templates
 

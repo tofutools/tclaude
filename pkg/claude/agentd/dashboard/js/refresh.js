@@ -73,10 +73,6 @@ function refreshSuspended({ ignoreModals = false } = {}) {
   // An inline rename <input> is open — re-rendering would destroy it
   // mid-keystroke.
   if (renameEditing) return true;
-  // A global/group sandbox-profile assignment is in flight. Repainting a
-  // group header now would replace its disabled selector with a writable stale
-  // copy and allow out-of-order PUT/DELETE completion to pick the winner.
-  if (document.querySelector('[data-sandbox-profile-quick-pending="true"]')) return true;
   // A drag-and-drop gesture is in flight — re-rendering would detach
   // the dragged row, and a dragend dispatched on a now-detached node
   // never bubbles up to the document-level handler, so the drag's

@@ -2299,16 +2299,16 @@ details[data-group-key][open] > summary .group-sandbox-profile {
 /* 🧠 default-model chips — the per-group one in each <summary> and the
    user-level one in the groups filter bar. Same look + inline-edit
    affordance as the other group-header chips (.group-default-cwd).
-   The per-group 🛡 sandbox-profile chip shares the skin (and the picker
-   lifecycle in row-actions.js), so it rides every rule here too. */
-.group-default-model, .user-default-model, .group-sandbox-profile {
+   The per-group and global 🛡 sandbox-profile chips share the skin (and the
+   picker lifecycle in row-actions.js), so they ride every rule here too. */
+.group-default-model, .user-default-model, .group-sandbox-profile, .global-sandbox-profile {
   font-family: ui-monospace, monospace; font-size: 11px; color: #7d8590;
   margin-left: 8px; cursor: pointer; padding: 1px 6px; border-radius: 4px;
   border: 1px solid transparent; white-space: nowrap;
 }
-.group-default-model:hover, .user-default-model:hover, .group-sandbox-profile:hover { color: #d4d4d4; border-color: #58a6ff; }
-.group-default-model.unset, .user-default-model.unset, .group-sandbox-profile.unset { color: #484f58; font-style: italic; }
-.group-default-model.unset:hover, .user-default-model.unset:hover, .group-sandbox-profile.unset:hover { color: #d4d4d4; }
+.group-default-model:hover, .user-default-model:hover, .group-sandbox-profile:hover, .global-sandbox-profile:hover { color: #d4d4d4; border-color: #58a6ff; }
+.group-default-model.unset, .user-default-model.unset, .group-sandbox-profile.unset, .global-sandbox-profile.unset { color: #484f58; font-style: italic; }
+.group-default-model.unset:hover, .user-default-model.unset:hover, .group-sandbox-profile.unset:hover, .global-sandbox-profile.unset:hover { color: #d4d4d4; }
 /* The inline 🧠 profile picker — a <select> swapped in for the group / user
    chip while choosing a default spawn profile (row-actions openProfilePicker).
    Same compact monospace look as the chip inputs above. */
@@ -2317,21 +2317,6 @@ details[data-group-key][open] > summary .group-sandbox-profile {
   color: #d4d4d4; padding: 1px 6px; font: inherit;
   font-family: ui-monospace, monospace; font-size: 11px; margin-left: 8px;
 }
-/* 🛡 GLOBAL sandbox-profile quick selector (top bar / dock) — a static
-   labeled <select>. The per-group assignment control is NOT this: it's the
-   .group-sandbox-profile chip above, sharing the 🧠 chip skin + fold. */
-.sandbox-profile-quick {
-  display: inline-flex; align-items: center; gap: 3px; margin-left: 8px;
-  color: #7d8590; font: 11px ui-monospace, monospace; white-space: nowrap;
-}
-.sandbox-profile-quick select {
-  max-width: 150px; padding: 1px 4px; border: 1px solid transparent;
-  border-radius: 4px; background: #0d1117; color: #7d8590;
-  font: inherit; cursor: pointer;
-}
-.sandbox-profile-quick select:hover,
-.sandbox-profile-quick select:focus { color: #d4d4d4; border-color: #58a6ff; }
-.sandbox-profile-quick select:disabled { cursor: wait; opacity: .65; }
 .modal-context-textarea {
   width: 100%; box-sizing: border-box; resize: vertical;
   background: #0d1117; border: 1px solid #30363d; border-radius: 3px;
