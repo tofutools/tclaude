@@ -1,12 +1,9 @@
 import { $, esc, bindModalSubmitHotkey } from './helpers.js';
 import { lastSnapshot } from './dashboard.js';
-import { confirmModal, toast, bindBackdropDiscard, bindManageOverlayDismiss, refresh } from './refresh.js';
+import { confirmModal, toast, bindBackdropDiscard, bindManageOverlayDismiss } from './refresh.js';
 import { openTermModal } from './modal-term.js';
 
 const API = '/api/sandbox-profiles';
-// Profile names cannot contain slashes, so this dropdown action cannot collide
-// with a saved profile returned by the daemon.
-const QUICK_NEW = '/new-sandbox-profile';
 let profiles = [];
 let editingName = '';
 let editorOnCreate = null;
@@ -267,8 +264,8 @@ async function saveEditor() {
   toast(`sandbox profile saved: ${body.name}`);
   if (onCreate) {
     // Only a successful create reaches this handoff; cancel or validation
-    // failure leaves the assignment untouched. setQuickAssignment refreshes
-    // both the snapshot and profile list after the assignment attempt.
+    // failure leaves the assignment untouched. The launching chip picker owns
+    // assignment and repaint after the handoff.
     await onCreate(body.name);
     return;
   }
@@ -384,49 +381,6 @@ function bindSandboxProfilesUI() {
   });
   $('#agent-spawn-sandbox-profile').addEventListener('change', () => refreshSpawnSandboxProfileUI($('#agent-spawn-group').value));
 
-  // The static global quick selector is the only <select>-backed assignment
-  // control left; the per-group assignment moved into the 🛡 header chip,
-  // whose picker lives with the other chip pickers in row-actions.js.
-  $('#dashboard-default-sandbox-profile').addEventListener('change', e => {
-    void setQuickAssignment(e.target, e.target.value);
-  });
-}
-
-async function setQuickAssignment(select, name) {
-  if (select.dataset.sandboxProfileQuickPending === 'true') return;
-  const previous = select.dataset.current || '';
-  if (name === QUICK_NEW) {
-    select.value = previous;
-    openEditor(null, { onCreate: created => setQuickAssignment(select, created) });
-    return;
-  }
-  select.dataset.sandboxProfileQuickPending = 'true';
-  select.disabled = true;
-  try {
-    await api('/api/sandbox-profile-default', {
-      method: name ? 'PUT' : 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: name ? JSON.stringify({ name }) : undefined,
-    });
-    select.dataset.current = name;
-    toast(name ? `global sandbox profile: ${name}` : 'global sandbox profile cleared');
-    // Release the refresh guard before asking refresh() to repaint the accepted
-    // assignment. While the request was in flight the guard prevented the 2s
-    // poll from replacing this disabled control with a writable stale copy.
-    delete select.dataset.sandboxProfileQuickPending;
-    select.disabled = false;
-    await refresh();
-    await refreshSpawnSandboxProfileUI($('#agent-spawn-group').value);
-  } catch (err) {
-    select.value = previous;
-    toast(err.message || String(err), true);
-  } finally {
-    // The control is a static DOM node the refresh never replaces, so it must
-    // be re-enabled explicitly (the try arm already did on success; the extra
-    // delete/enable here is a harmless idempotent repeat).
-    delete select.dataset.sandboxProfileQuickPending;
-    select.disabled = false;
-  }
 }
 
 export {

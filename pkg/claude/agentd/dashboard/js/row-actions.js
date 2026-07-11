@@ -16,7 +16,7 @@ import { openProfileEditor } from './modal-profiles.js';
 import {
   loadSandboxProfiles, openSandboxProfileEditor, refreshSpawnSandboxProfileUI,
 } from './sandbox-profiles.js';
-import { renderDashDefaultProfile } from './render.js';
+import { renderDashDefaultProfile, renderDashSandboxProfile } from './render.js';
 import {
   openSudoGrantModal, openCronCreateModal, openCronEditModal,
 } from './modal-cron.js';
@@ -234,7 +234,7 @@ async function openProfilePicker(chipEl, current, onCommit, opts = {}) {
   chipEl.replaceWith(select);
   select.focus();
   let done = false;
-  const cancel = () => {
+  const cancel = (restoreFocus = false) => {
     if (done) return;
     done = true;
     // Restore the SAME chip node, not a clone. dock.js caches the three
@@ -245,6 +245,7 @@ async function openProfilePicker(chipEl, current, onCommit, opts = {}) {
     if (select.parentNode) select.replaceWith(chipEl);
     renameEditing = false;
     setLastSnapshot(prevSnapshot);
+    if (restoreFocus) chipEl.focus();
   };
   const commit = async () => {
     if (done) return;
@@ -258,7 +259,7 @@ async function openProfilePicker(chipEl, current, onCommit, opts = {}) {
       openNewEditor((newName) => onCommit(newName));
       return;
     }
-    if (name === current) { cancel(); return; }
+    if (name === current) { cancel(true); return; }
     done = true;
     // Put the chip element back before persisting so onCommit's refresh /
     // re-render has a stable mount point and no stray <select> survives.
@@ -274,9 +275,9 @@ async function openProfilePicker(chipEl, current, onCommit, opts = {}) {
   };
   select.addEventListener('change', commit);
   select.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Escape') { ev.preventDefault(); cancel(); }
+    if (ev.key === 'Escape') { ev.preventDefault(); cancel(true); }
   });
-  select.addEventListener('blur', cancel);
+  select.addEventListener('blur', () => cancel());
 }
 
 // closeAllActionMenus collapses every open ⚙ options menu. Called on
@@ -1464,6 +1465,45 @@ function bindRowActions() {
             toast(name ? `dashboard default profile → ${name}` : 'dashboard default profile cleared');
             renderDashDefaultProfile();
             return true;
+          });
+          return; // openProfilePicker owns the chip lifecycle + re-render.
+        }
+        case 'set-dash-sandbox-profile': {
+          // The dashboard-level 🛡 chip: pick the global sandbox profile from
+          // the sandbox registry, then repaint the snapshot-backed chip and
+          // recompute the spawn dialog's composed policy preview.
+          const current = btn.getAttribute('data-sandbox-profile') || '';
+          await openProfilePicker(btn, current, async (name) => {
+            // openProfilePicker restores the stable chip before persistence.
+            // Keep the native button disabled until the mutation and repaint
+            // settle so rapid picks cannot race and finish out of order.
+            if (btn.dataset.sandboxProfilePending === 'true') return false;
+            btn.dataset.sandboxProfilePending = 'true';
+            btn.disabled = true;
+            try {
+              const r = await fetch('/api/sandbox-profile-default', {
+                method: name ? 'PUT' : 'DELETE', credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: name ? JSON.stringify({ name }) : undefined,
+              });
+              if (!r.ok) {
+                toast(`set global sandbox profile failed: ${await r.text()}`, true);
+                return false;
+              }
+              toast(name ? `global sandbox profile: ${name}` : 'global sandbox profile cleared');
+              await refresh();
+              renderDashSandboxProfile();
+              await refreshSpawnSandboxProfileUI($('#agent-spawn-group').value);
+              return true;
+            } finally {
+              delete btn.dataset.sandboxProfilePending;
+              btn.disabled = false;
+            }
+          }, {
+            loadList: loadSandboxProfiles,
+            noneLabel: '(none)',
+            newLabel: '＋ new sandbox profile…',
+            openNewEditor: (onSaved) => openSandboxProfileEditor(null, { onCreate: onSaved }),
           });
           return; // openProfilePicker owns the chip lifecycle + re-render.
         }

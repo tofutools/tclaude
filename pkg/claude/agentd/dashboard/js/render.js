@@ -1327,32 +1327,21 @@ function renderDashDefaultProfile() {
     : 'No dashboard default spawn profile — click to set one. (Pre-fills the spawn dialog as a fallback after a group’s own default.)';
 }
 
-// The snapshot carries sandbox-profile names and assignments, but never
-// environment values. That is enough to render assignment controls without
-// adding profile-payload requests to the two-second dashboard poll.
-// A slash cannot occur in a valid profile name, so this action value cannot
-// collide with a saved profile.
-const SANDBOX_PROFILE_QUICK_NEW = '/new-sandbox-profile';
-
-function sandboxProfileOptionsHTML(selected, blankLabel) {
-  const names = (lastSnapshot && lastSnapshot.sandbox_profiles) || [];
-  let html = `<option value="${SANDBOX_PROFILE_QUICK_NEW}">＋ new sandbox profile…</option>`;
-  html += `<option value=""${selected ? '' : ' selected'}>${esc(blankLabel)}</option>`;
-  for (const name of names) {
-    html += `<option value="${esc(name)}"${name === selected ? ' selected' : ''}>${esc(name)}</option>`;
-  }
-  if (selected && !names.includes(selected)) {
-    html += `<option value="${esc(selected)}" selected>${esc(selected)} (missing)</option>`;
-  }
-  return html;
-}
-
+// Paint the global 🛡 chip from the snapshot without fetching profile payloads.
+// While its one-shot picker is open, renameEditing suspends snapshot refresh;
+// openProfilePicker also restores this same node before persistence so dock.js's
+// identity cache remains valid.
 function renderDashSandboxProfile() {
-  const select = $('#dashboard-default-sandbox-profile');
-  if (!select || !lastSnapshot) return;
-  const selected = lastSnapshot.sandbox_profile_default || '';
-  select.innerHTML = sandboxProfileOptionsHTML(selected, 'none');
-  select.dataset.current = selected;
+  const el = $('#dashboard-default-sandbox-profile');
+  if (!el || !lastSnapshot) return;
+  const name = lastSnapshot.sandbox_profile_default || '';
+  el.classList.toggle('unset', !name);
+  el.setAttribute('data-sandbox-profile', name);
+  el.setAttribute('aria-label', name ? `Global sandbox profile: ${name}. Click to change.` : 'Set global sandbox profile');
+  el.textContent = '🛡' + (name ? ' ' + name : '');
+  el.title = name
+    ? `Global sandbox profile: ${name} — newly launched agents inherit it before any group or explicit assignment. Click to change.`
+    : 'No global sandbox profile — click to set one. Newly launched agents inherit it unless their group adds another assignment.';
 }
 
 // renderGlobalActivity paints the top-bar #global-activity slot: the
