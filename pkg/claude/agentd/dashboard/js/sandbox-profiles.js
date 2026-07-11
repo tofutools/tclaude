@@ -1,4 +1,4 @@
-import { $, esc, bindModalSubmitHotkey } from './helpers.js';
+import { $, $$, esc, bindModalSubmitHotkey, pickDirectory } from './helpers.js';
 import { confirmModal, toast, bindBackdropDiscard, bindManageOverlayDismiss } from './refresh.js';
 import { openTermModal } from './modal-term.js';
 import { wizWord } from './slop.js';
@@ -83,6 +83,121 @@ async function openManager() {
 
 function closeManager() { $('#sandbox-profiles-manage-modal').classList.remove('show'); }
 
+// ---- Structured filesystem / environment editors ------------------------
+//
+// The two <textarea>s (#…-filesystem / #…-environment) remain the single source
+// of truth the save/scribe paths read — see saveEditor. The tables below are a
+// live *view* over that JSON: a row edit re-serializes its table straight back
+// into the textarea (rowsToFilesystemJSON / rowsToEnvironmentJSON), and opening
+// the profile or blurring the raw JSON re-renders the rows from it. So the two
+// representations stay in lock-step without the save code having to know the
+// tables exist. Blank rows are dropped on serialize, so an empty trailing row a
+// human is about to fill never lands in the profile.
+
+function filesystemRowHTML(grant = {}) {
+  const path = esc(grant.path || '');
+  const write = grant.access === 'write';
+  return `<div class="sbx-row" data-sbx-fs-row>
+    <input class="sbx-path" type="text" autocomplete="off" spellcheck="false" placeholder="~/path/to/dir or /absolute/path" value="${path}" aria-label="Directory path" />
+    <button type="button" class="sbx-browse" data-sbx-browse title="Open a native directory picker on the daemon's desktop">Browse…</button>
+    <select class="sbx-access" aria-label="Access level" title="read = the agent may read this tree; write = read and write">
+      <option value="read"${write ? '' : ' selected'}>read</option>
+      <option value="write"${write ? ' selected' : ''}>write</option>
+    </select>
+    <button type="button" class="sbx-del" data-sbx-del title="Remove this directory" aria-label="Remove directory">✕</button>
+  </div>`;
+}
+
+function environmentRowHTML(entry = {}) {
+  return `<div class="sbx-row sbx-row-env" data-sbx-env-row>
+    <input class="sbx-env-name" type="text" autocomplete="off" spellcheck="false" placeholder="NAME" value="${esc(entry.name || '')}" aria-label="Variable name" />
+    <input class="sbx-env-value" type="text" autocomplete="off" spellcheck="false" placeholder="value" value="${esc(entry.value || '')}" aria-label="Variable value" />
+    <button type="button" class="sbx-del" data-sbx-del title="Remove this variable" aria-label="Remove variable">✕</button>
+  </div>`;
+}
+
+// parseJSONArrayField returns the parsed array from a textarea, or null when the
+// contents aren't a JSON array (so callers can leave the tables untouched rather
+// than wiping them on a transient hand-edit typo).
+function parseJSONArrayField(id) {
+  try {
+    const v = JSON.parse($(id).value || '[]');
+    return Array.isArray(v) ? v : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function renderFilesystemRows() {
+  const rows = parseJSONArrayField('#sandbox-profile-editor-filesystem');
+  if (rows == null) return; // invalid raw JSON — keep the current table
+  $('#sandbox-profile-editor-fs-rows').innerHTML = rows.map(filesystemRowHTML).join('');
+}
+
+function renderEnvironmentRows() {
+  const rows = parseJSONArrayField('#sandbox-profile-editor-environment');
+  if (rows == null) return;
+  $('#sandbox-profile-editor-env-rows').innerHTML = rows.map(environmentRowHTML).join('');
+}
+
+// rowsToFilesystemJSON collects the table into the textarea. A path is trimmed
+// and blank paths are dropped; the daemon still owns canonicalization, ~ and
+// protected-root checks (so we deliberately don't pre-validate here).
+function rowsToFilesystemJSON() {
+  const out = [];
+  for (const row of $$('#sandbox-profile-editor-fs-rows [data-sbx-fs-row]')) {
+    const path = row.querySelector('.sbx-path').value.trim();
+    if (!path) continue;
+    out.push({ path, access: row.querySelector('.sbx-access').value });
+  }
+  $('#sandbox-profile-editor-filesystem').value = JSON.stringify(out, null, 2);
+}
+
+// rowsToEnvironmentJSON collects the env table. The name is trimmed; the value
+// is kept verbatim (leading/trailing spaces can be meaningful). A row with an
+// empty name is dropped even if it carries a value, matching the daemon's
+// name-required rule.
+function rowsToEnvironmentJSON() {
+  const out = [];
+  for (const row of $$('#sandbox-profile-editor-env-rows [data-sbx-env-row]')) {
+    const name = row.querySelector('.sbx-env-name').value.trim();
+    if (!name) continue;
+    out.push({ name, value: row.querySelector('.sbx-env-value').value });
+  }
+  $('#sandbox-profile-editor-environment').value = JSON.stringify(out, null, 2);
+}
+
+async function browseFilesystemRow(pathInput, btn) {
+  const errEl = $('#sandbox-profile-editor-error');
+  errEl.textContent = '';
+  const prevLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Opening…';
+  try {
+    const res = await pickDirectory({ startDir: pathInput.value.trim(), title: 'Select a directory to grant the sandbox' });
+    if (res.error) { errEl.textContent = res.error; return; }
+    if (res.canceled) return; // dialog dismissed — leave the row as-is
+    pathInput.value = res.path;
+    pathInput.focus();
+    rowsToFilesystemJSON();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = prevLabel;
+  }
+}
+
+// setEditorAdvanced expands/collapses the raw-JSON panel. Expanding first pushes
+// the current tables into the textareas (so the raw view is fresh); collapsing
+// re-derives the tables from the textareas (so any hand-edit sticks).
+function setEditorAdvanced(open) {
+  if (open) { rowsToFilesystemJSON(); rowsToEnvironmentJSON(); }
+  else { renderFilesystemRows(); renderEnvironmentRows(); }
+  $('#sandbox-profile-editor-advanced').hidden = !open;
+  const btn = $('#sandbox-profile-editor-advanced-toggle');
+  btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  btn.textContent = open ? '▾ Advanced — edit raw JSON' : '▸ Advanced — edit raw JSON';
+}
+
 function openEditor(p = null, { onCreate = null, targetName = '' } = {}) {
   editingName = targetName || (p ? p.name : '');
   editorOnCreate = editingName ? null : onCreate;
@@ -92,6 +207,7 @@ function openEditor(p = null, { onCreate = null, targetName = '' } = {}) {
   $('#sandbox-profile-editor-name').value = p ? p.name : '';
   $('#sandbox-profile-editor-filesystem').value = JSON.stringify((p && p.filesystem) || [], null, 2);
   $('#sandbox-profile-editor-environment').value = JSON.stringify((p && p.environment) || [], null, 2);
+  setEditorAdvanced(false); // collapse the raw panel and render the tables from the JSON
   $('#sandbox-profile-editor-error').textContent = '';
   $('#sandbox-profile-editor-modal').classList.add('show');
   setTimeout(() => $('#sandbox-profile-editor-name').focus(), 0);
@@ -528,6 +644,43 @@ function bindSandboxProfilesUI() {
     if (btn.dataset.sandboxProfileAction === 'edit' && p) openEditor(p);
     if (btn.dataset.sandboxProfileAction === 'delete') void removeProfile(btn.dataset.name);
   });
+  // Structured filesystem table: row edits re-serialize into the textarea; the
+  // ✕ removes a row; Browse… opens the native picker for that row.
+  const fsRows = $('#sandbox-profile-editor-fs-rows');
+  fsRows.addEventListener('input', rowsToFilesystemJSON);
+  fsRows.addEventListener('change', rowsToFilesystemJSON);
+  fsRows.addEventListener('click', e => {
+    const del = e.target.closest('[data-sbx-del]');
+    if (del) { del.closest('.sbx-row').remove(); rowsToFilesystemJSON(); return; }
+    const browse = e.target.closest('[data-sbx-browse]');
+    if (browse) { void browseFilesystemRow(browse.closest('.sbx-row').querySelector('.sbx-path'), browse); }
+  });
+  $('#sandbox-profile-editor-fs-add').addEventListener('click', () => {
+    fsRows.insertAdjacentHTML('beforeend', filesystemRowHTML());
+    fsRows.lastElementChild.querySelector('.sbx-path').focus();
+  });
+
+  // Structured environment table: same wiring, minus the picker.
+  const envRows = $('#sandbox-profile-editor-env-rows');
+  envRows.addEventListener('input', rowsToEnvironmentJSON);
+  envRows.addEventListener('change', rowsToEnvironmentJSON);
+  envRows.addEventListener('click', e => {
+    const del = e.target.closest('[data-sbx-del]');
+    if (del) { del.closest('.sbx-row').remove(); rowsToEnvironmentJSON(); }
+  });
+  $('#sandbox-profile-editor-env-add').addEventListener('click', () => {
+    envRows.insertAdjacentHTML('beforeend', environmentRowHTML());
+    envRows.lastElementChild.querySelector('.sbx-env-name').focus();
+  });
+
+  // Advanced raw-JSON panel: the toggle folds the tables into JSON / back; a
+  // hand-edit re-flows into the tables on blur.
+  $('#sandbox-profile-editor-advanced-toggle').addEventListener('click', () => {
+    setEditorAdvanced($('#sandbox-profile-editor-advanced').hidden);
+  });
+  $('#sandbox-profile-editor-filesystem').addEventListener('change', renderFilesystemRows);
+  $('#sandbox-profile-editor-environment').addEventListener('change', renderEnvironmentRows);
+
   $('#sandbox-profile-editor-cancel').addEventListener('click', closeEditor);
   $('#sandbox-profile-editor-scribe').addEventListener('click', summonSandboxScribeFromEditor);
   $('#sandbox-profile-editor-submit').addEventListener('click', saveEditor);
