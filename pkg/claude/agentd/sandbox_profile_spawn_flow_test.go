@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"os"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
@@ -36,6 +38,15 @@ func TestSandboxProfileSpawnFreezesValuesAndExplicitSelectionIsHumanOnly(t *test
 	require.Len(t, snapshot.Effective.Environment, 1)
 	assert.Equal(t, "LITERAL", snapshot.Effective.Environment[0].Name)
 	assert.Contains(t, snapshot.Effective.Environment[0].Value, "$(touch nope)")
+	var wire struct {
+		Resolved *agent.ResolvedLaunch `json:"resolved"`
+	}
+	require.NoError(t, json.Unmarshal(spawn.Raw, &wire))
+	require.NotNil(t, wire.Resolved)
+	require.NotNil(t, wire.Resolved.SandboxPolicy)
+	assert.Equal(t, []string{"LITERAL"}, wire.Resolved.SandboxPolicy.Environment)
+	assert.Equal(t, profileID, wire.Resolved.SandboxPolicy.Applied[0].ID)
+	assert.NotContains(t, string(spawn.Raw), "$(touch nope)", "resolved response must not expose environment values")
 
 	persisted, err := db.AgentEffectiveSandboxConfigForConv(spawn.ConvID)
 	require.NoError(t, err)
@@ -130,4 +141,21 @@ func TestSandboxProfileWriteRootParticipatesInAgentSpawnProof(t *testing.T) {
 	// accidentally materialised by the daemon itself.
 	_, statErr := os.Lstat(filepath.Join(writeRoot, challenge.WriteProof.Filename))
 	assert.ErrorIs(t, statErr, os.ErrNotExist)
+}
+
+func TestSandboxProfileUnsupportedFilesystemFailsTypedBeforeSpawn(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	root := t.TempDir()
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{
+		Name: "filesystem", Filesystem: []db.SandboxFilesystemGrant{{Path: root, Access: "read"}},
+	})
+	require.NoError(t, err)
+
+	resp := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name": "worker", "harness": "codex", "sandbox": "read-only", "sandbox_profile": "filesystem",
+	})
+	require.Equal(t, http.StatusUnprocessableEntity, resp.Code)
+	assert.Contains(t, string(resp.Raw), "unsupported_sandbox_profile_filesystem")
+	assert.NotContains(t, string(resp.Raw), "timeout")
 }

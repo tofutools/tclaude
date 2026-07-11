@@ -12,6 +12,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -50,9 +51,32 @@ type ResolvedLaunch struct {
 	Harness ResolvedField `json:"harness"`
 	Model   ResolvedField `json:"model"`
 	Effort  ResolvedField `json:"effort"`
+	// SandboxPolicy exposes the frozen profile chain, canonical grants, and
+	// environment names. Environment values remain private in the snapshot.
+	SandboxPolicy *ResolvedSandboxPolicy `json:"sandbox_policy,omitempty"`
 	// Notes disclose ignored profile fields outside the three echoed values
 	// above (for example a foreign sandbox or auto-review setting).
 	Notes []string `json:"notes,omitempty"`
+}
+
+type ResolvedSandboxPolicy struct {
+	Version     int                             `json:"version"`
+	Applied     []sandboxpolicy.AppliedProfile  `json:"applied"`
+	Filesystem  []sandboxpolicy.FilesystemGrant `json:"filesystem"`
+	Environment []string                        `json:"environment"`
+}
+
+func SummarizeSandboxPolicy(snapshot sandboxpolicy.Snapshot) *ResolvedSandboxPolicy {
+	environment := make([]string, 0, len(snapshot.Effective.Environment))
+	for _, entry := range snapshot.Effective.Environment {
+		environment = append(environment, entry.Name)
+	}
+	return &ResolvedSandboxPolicy{
+		Version:     snapshot.Version,
+		Applied:     append([]sandboxpolicy.AppliedProfile(nil), snapshot.Applied...),
+		Filesystem:  append([]sandboxpolicy.FilesystemGrant(nil), snapshot.Effective.Filesystem...),
+		Environment: environment,
+	}
 }
 
 // ResolvedField pairs a resolved launch value with its provenance. Value is the
@@ -1069,6 +1093,22 @@ func printResolvedLaunch(stdout io.Writer, rl *ResolvedLaunch) {
 	fmt.Fprintf(stdout, "  Harness: %s\n", formatResolvedField(rl.Harness))
 	fmt.Fprintf(stdout, "  Model:   %s\n", formatResolvedField(rl.Model))
 	fmt.Fprintf(stdout, "  Effort:  %s\n", formatResolvedField(rl.Effort))
+	if policy := rl.SandboxPolicy; policy != nil {
+		profiles := make([]string, 0, len(policy.Applied))
+		for _, applied := range policy.Applied {
+			profiles = append(profiles, fmt.Sprintf("%s %q", applied.Scope, applied.Name))
+		}
+		chain := "no additive profiles"
+		if len(profiles) > 0 {
+			chain = strings.Join(profiles, " → ")
+		}
+		environment := "none"
+		if len(policy.Environment) > 0 {
+			environment = strings.Join(policy.Environment, ",")
+		}
+		fmt.Fprintf(stdout, "  Policy:  v%d %s (%d filesystem grants; env: %s)\n",
+			policy.Version, chain, len(policy.Filesystem), environment)
+	}
 	for _, note := range rl.Notes {
 		fmt.Fprintf(stdout, "  Note:    %s\n", note)
 	}

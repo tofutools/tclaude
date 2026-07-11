@@ -1876,6 +1876,11 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			return
 		}
 	}
+	if fail := sandboxProfileCapabilityFailure(h.Name, sandboxMode, &effectiveSandbox); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	}
+	resolvedLaunch.SandboxPolicy = agent.SummarizeSandboxPolicy(effectiveSandbox)
 
 	// Dir write-proof — the launch-directory half of the spawn sandbox guard
 	// (spawn_dir_proof.go). The lineage guard above caps the child's sandbox
@@ -2835,6 +2840,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 			return nil, &spawnFailure{http.StatusConflict, "sandbox_profile_changed", err.Error()}
 		}
 		p.EffectiveSandbox = &validated
+	}
+	if fail := sandboxProfileCapabilityFailure(p.Harness, p.SandboxMode, p.EffectiveSandbox); fail != nil {
+		return nil, fail
 	}
 	if strings.TrimSpace(p.DirWriteProofToken) == "" {
 		p.GitWorktreeWriteDirs = nil

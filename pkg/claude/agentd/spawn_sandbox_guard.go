@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
@@ -31,6 +32,25 @@ func spawnSandboxLineageFailure(parentConvID, childHarness, childSandbox string)
 				short8(parentConvID), parent.Harness, parent.Mode, child.Harness, child.Mode)}
 	}
 	return nil
+}
+
+func sandboxProfileCapabilityFailure(harnessName, sandboxMode string, snapshot *sandboxpolicy.Snapshot) *spawnFailure {
+	if snapshot == nil || len(snapshot.Effective.Filesystem) == 0 {
+		return nil
+	}
+	switch harnessOrDefault(harnessName) {
+	case harness.DefaultName:
+		return nil
+	case harness.CodexName:
+		if strings.TrimSpace(sandboxMode) == harness.SandboxManagedProfile {
+			return nil
+		}
+		return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_filesystem",
+			fmt.Sprintf("Codex additive filesystem grants require sandbox %q; sandbox %q cannot represent them", harness.SandboxManagedProfile, sandboxMode)}
+	default:
+		return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_filesystem",
+			fmt.Sprintf("harness %q cannot represent additive sandbox filesystem grants", harnessName)}
+	}
 }
 
 type spawnLineageSandbox struct {
