@@ -48,7 +48,9 @@ func TestSandboxProfilesCRUDValidationAndAssignments(t *testing.T) {
 	home := os.Getenv("HOME")
 	cache := filepath.Join(home, "shared-cache")
 	require.NoError(t, os.MkdirAll(cache, 0o755))
-	_, err := db.CreateAgentGroup("crew", "")
+	canonicalCache, err := filepath.EvalSymlinks(cache)
+	require.NoError(t, err)
+	_, err = db.CreateAgentGroup("crew", "")
 	require.NoError(t, err)
 
 	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
@@ -69,7 +71,7 @@ func TestSandboxProfilesCRUDValidationAndAssignments(t *testing.T) {
 	var got wireSandboxProfile
 	testharness.DecodeJSON(t, rec, &got)
 	require.Len(t, got.Filesystem, 1)
-	assert.Equal(t, cache, got.Filesystem[0].Path)
+	assert.Equal(t, canonicalCache, got.Filesystem[0].Path)
 	assert.Equal(t, "write", got.Filesystem[0].Access)
 	require.Len(t, got.Environment, 1)
 	assert.Equal(t, "GOCACHE", got.Environment[0].Name)
@@ -118,7 +120,9 @@ func TestSandboxProfilesExportImportRoundTrip(t *testing.T) {
 	f := newFlow(t)
 	cache := filepath.Join(os.Getenv("HOME"), "cache")
 	require.NoError(t, os.MkdirAll(cache, 0o755))
-	_, err := db.CreateAgentGroup("portable-group", "")
+	canonicalCache, err := filepath.EvalSymlinks(cache)
+	require.NoError(t, err)
+	_, err = db.CreateAgentGroup("portable-group", "")
 	require.NoError(t, err)
 	require.Equal(t, http.StatusCreated, profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
 		"name":        "portable",
@@ -146,7 +150,7 @@ func TestSandboxProfilesExportImportRoundTrip(t *testing.T) {
 	var got wireSandboxProfile
 	testharness.DecodeJSON(t, rec, &got)
 	require.Len(t, got.Filesystem, 1)
-	assert.Equal(t, cache, got.Filesystem[0].Path)
+	assert.Equal(t, canonicalCache, got.Filesystem[0].Path)
 	for _, path := range []string{"/v1/sandbox-profile-default", "/v1/groups/portable-group/sandbox-profile"} {
 		rec = profileReq(t, f, http.MethodGet, path, nil)
 		var ref struct {

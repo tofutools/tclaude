@@ -17,6 +17,10 @@ func TestNormalizeFilesystemCanonicalizesFoldsAndSorts(t *testing.T) {
 	b := filepath.Join(home, "b")
 	require.NoError(t, os.MkdirAll(a, 0o755))
 	require.NoError(t, os.MkdirAll(b, 0o755))
+	canonicalA, err := filepath.EvalSymlinks(a)
+	require.NoError(t, err)
+	canonicalB, err := filepath.EvalSymlinks(b)
+	require.NoError(t, err)
 	alias := filepath.Join(home, "alias")
 	require.NoError(t, os.Symlink(a, alias))
 
@@ -29,8 +33,8 @@ func TestNormalizeFilesystemCanonicalizesFoldsAndSorts(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "caches", got.Name)
 	assert.Equal(t, []FilesystemGrant{
-		{Path: a, Access: AccessWrite},
-		{Path: b, Access: AccessRead},
+		{Path: canonicalA, Access: AccessWrite},
+		{Path: canonicalB, Access: AccessRead},
 	}, got.Filesystem)
 	assert.Equal(t, alias, in.Filesystem[1].Path, "caller input must not be mutated")
 }
@@ -40,13 +44,15 @@ func TestNormalizeFilesystemWriteWinsInEitherOrder(t *testing.T) {
 	t.Setenv("HOME", home)
 	dir := filepath.Join(home, "cache")
 	require.NoError(t, os.Mkdir(dir, 0o755))
+	canonicalDir, err := filepath.EvalSymlinks(dir)
+	require.NoError(t, err)
 	for _, grants := range [][]FilesystemGrant{
 		{{Path: dir, Access: AccessRead}, {Path: dir, Access: AccessWrite}},
 		{{Path: dir, Access: AccessWrite}, {Path: dir, Access: AccessRead}},
 	} {
 		got, err := Normalize(Profile{Name: "p", Filesystem: grants})
 		require.NoError(t, err)
-		assert.Equal(t, []FilesystemGrant{{Path: dir, Access: AccessWrite}}, got.Filesystem)
+		assert.Equal(t, []FilesystemGrant{{Path: canonicalDir, Access: AccessWrite}}, got.Filesystem)
 	}
 }
 

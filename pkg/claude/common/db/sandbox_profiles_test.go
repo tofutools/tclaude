@@ -16,6 +16,8 @@ func TestSandboxProfileCRUDRoundTrip(t *testing.T) {
 	for _, name := range []string{"a", "z", "new"} {
 		require.NoError(t, os.MkdirAll(filepath.Join(work, name), 0o755))
 	}
+	canonicalWork, err := filepath.EvalSymlinks(work)
+	require.NoError(t, err)
 
 	sparseID, err := CreateSandboxProfile(&SandboxProfile{Name: "empty"})
 	require.NoError(t, err)
@@ -45,8 +47,8 @@ func TestSandboxProfileCRUDRoundTrip(t *testing.T) {
 	require.NotNil(t, got)
 	assert.Equal(t, populatedID, got.ID)
 	assert.Equal(t, []SandboxFilesystemGrant{
-		{Path: filepath.Join(work, "a"), Access: "write"},
-		{Path: filepath.Join(work, "z"), Access: "read"},
+		{Path: filepath.Join(canonicalWork, "a"), Access: "write"},
+		{Path: filepath.Join(canonicalWork, "z"), Access: "read"},
 	}, got.Filesystem, "payload is stored in deterministic canonical order")
 	assert.Equal(t, []SandboxEnvironmentEntry{
 		{Name: "ALPHA", Value: "first"},
@@ -62,7 +64,7 @@ func TestSandboxProfileCRUDRoundTrip(t *testing.T) {
 	updated, err := GetSandboxProfileByID(populatedID)
 	require.NoError(t, err)
 	assert.Equal(t, "renamed", updated.Name)
-	assert.Equal(t, []SandboxFilesystemGrant{{Path: filepath.Join(work, "new"), Access: "read"}}, updated.Filesystem)
+	assert.Equal(t, []SandboxFilesystemGrant{{Path: filepath.Join(canonicalWork, "new"), Access: "read"}}, updated.Filesystem)
 	assert.Empty(t, updated.Environment)
 
 	list, err := ListSandboxProfiles()
@@ -83,6 +85,8 @@ func TestSandboxProfileNameAndPayloadIntegrity(t *testing.T) {
 	setupTestDB(t)
 	same := filepath.Join(os.Getenv("HOME"), "same")
 	require.NoError(t, os.MkdirAll(same, 0o755))
+	canonicalSame, err := filepath.EvalSymlinks(same)
+	require.NoError(t, err)
 
 	firstID, err := CreateSandboxProfile(&SandboxProfile{Name: "first"})
 	require.NoError(t, err)
@@ -107,7 +111,7 @@ func TestSandboxProfileNameAndPayloadIntegrity(t *testing.T) {
 	}))
 	got, err := GetSandboxProfile("first")
 	require.NoError(t, err)
-	assert.Equal(t, []SandboxFilesystemGrant{{Path: same, Access: "write"}}, got.Filesystem)
+	assert.Equal(t, []SandboxFilesystemGrant{{Path: canonicalSame, Access: "write"}}, got.Filesystem)
 	assert.Equal(t, []SandboxEnvironmentEntry{{Name: "A", Value: "1"}}, got.Environment)
 
 	_, err = CreateSandboxProfile(&SandboxProfile{Name: "bad-access", Filesystem: []SandboxFilesystemGrant{{Path: "/x", Access: "deny"}}})
