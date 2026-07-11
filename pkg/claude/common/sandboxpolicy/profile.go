@@ -59,6 +59,11 @@ var reservedEnvironmentPrefixes = []string{
 	"TCLAUDE_", "CLAUDE_CODE_", "CODEX_", "LD_", "DYLD_",
 }
 
+var reservedProfileNames = map[string]struct{}{
+	"export": {},
+	"import": {},
+}
+
 // Normalize validates a profile and returns a canonical copy. It never mutates
 // the caller's slices. Filesystem paths are fully symlink-resolved existing
 // directories, duplicate paths fold with write dominating read, and output is
@@ -91,6 +96,9 @@ func normalizeName(name string) (string, error) {
 	}
 	if strings.ContainsAny(name, `/\\`) {
 		return "", fmt.Errorf("sandbox profile name must not contain slashes")
+	}
+	if _, reserved := reservedProfileNames[strings.ToLower(name)]; reserved {
+		return "", fmt.Errorf("sandbox profile name %q is reserved for profile transfer routes", name)
 	}
 	if !utf8.ValidString(name) || strings.ContainsFunc(name, isControl) {
 		return "", fmt.Errorf("sandbox profile name must be valid UTF-8 without control characters")

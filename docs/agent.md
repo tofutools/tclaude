@@ -353,6 +353,8 @@ tclaude agent sandbox-profiles import --file bundle.json [--on-conflict error|sk
 ```
 
 `show --json` emits the same profile shape accepted by `create` and `edit`.
+The names `export` and `import` are reserved for the portable-transfer routes
+and are rejected case-insensitively at create, rename, and import boundaries.
 Export bundles are portable and versioned. Assignment export is opt-in, and an
 import only applies included global/group assignments when
 `--apply-assignments` is explicitly passed; missing groups are reported as

@@ -20,6 +20,8 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		`function bindSandboxProfilesUI()`:                             "UI binder",
 		`bindSandboxProfilesUI();`:                                     "boot wiring",
 		`function refreshSpawnSandboxProfileUI(`:                       "spawn preview refresh",
+		`const generation = ++spawnPreviewGeneration`:                  "out-of-order preview guard",
+		`if (generation !== spawnPreviewGeneration) return`:            "stale preview responses are discarded",
 		`/api/groups/${encodeURIComponent(groupName)}/sandbox-profile`: "group provenance lookup",
 		`environment keys:`:                                            "redacted environment display",
 		`not a secrets facility`:                                       "non-secret warning",

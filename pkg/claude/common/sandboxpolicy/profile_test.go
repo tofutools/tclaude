@@ -165,3 +165,10 @@ func TestNormalizeProfileName(t *testing.T) {
 		require.Error(t, err, "name %q", name)
 	}
 }
+
+func TestNormalizeProfileNameRejectsTransferRouteNames(t *testing.T) {
+	for _, name := range []string{"export", "IMPORT", " Export "} {
+		_, err := Normalize(Profile{Name: name})
+		require.ErrorContains(t, err, "reserved for profile transfer routes")
+	}
+}

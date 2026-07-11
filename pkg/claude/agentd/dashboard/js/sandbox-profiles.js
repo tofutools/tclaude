@@ -5,6 +5,7 @@ import { confirmModal, toast, bindBackdropDiscard, bindManageOverlayDismiss } fr
 const API = '/api/sandbox-profiles';
 let profiles = [];
 let editingName = '';
+let spawnPreviewGeneration = 0;
 
 async function api(path, opts = {}) {
   const r = await fetch(path, { credentials: 'same-origin', ...opts });
@@ -175,15 +176,18 @@ async function refreshSpawnSandboxProfileUI(groupName = '') {
   const sel = $('#agent-spawn-sandbox-profile');
   const preview = $('#agent-spawn-sandbox-profile-preview');
   if (!sel || !preview) return;
+  const generation = ++spawnPreviewGeneration;
   const selected = sel.value;
   try {
     await loadSandboxProfiles();
+    if (generation !== spawnPreviewGeneration) return;
     sel.innerHTML = profileOptions('— global + group defaults only —');
     if (profiles.some(p => p.name === selected)) sel.value = selected;
     const [global, group] = await Promise.all([
       api('/api/sandbox-profile-default'),
       groupName ? api(`/api/groups/${encodeURIComponent(groupName)}/sandbox-profile`) : Promise.resolve({ name: '' }),
     ]);
+    if (generation !== spawnPreviewGeneration) return;
     const byName = Object.fromEntries(profiles.map(p => [p.name, p]));
     const applied = [];
     if (global.name && byName[global.name]) applied.push({ scope: 'global', profile: byName[global.name] });
@@ -191,6 +195,7 @@ async function refreshSpawnSandboxProfileUI(groupName = '') {
     if (sel.value && byName[sel.value]) applied.push({ scope: 'explicit', profile: byName[sel.value] });
     preview.textContent = composePreview(applied);
   } catch (err) {
+    if (generation !== spawnPreviewGeneration) return;
     preview.textContent = `Could not preview sandbox policy: ${err.message || String(err)}`;
   }
 }
