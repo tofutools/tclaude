@@ -1,6 +1,5 @@
 // list-paging.js — client pagination for the windowed server-paged lists:
-// the Groups tab's Retired / Conversations / Replaced virtual groups, and
-// the Jobs tab's unified job table (/api/jobs).
+// the Groups tab's Retired / Conversations / Replaced virtual groups.
 //
 // These three lists used to ship IN FULL inside every 2s /api/snapshot poll,
 // so a few hundred retired agents meant an ever-growing payload on every tick.
@@ -26,9 +25,8 @@ const PAGE_SIZES = [25, 50, 100, 200];
 const DEFAULT_PAGE_SIZE = 50;
 
 // limit is persisted per list (sticky across reloads); offset is session state
-// — a fresh load starts on the newest page. 'jobs' is the Jobs tab's unified
-// job table — same offset/limit/q contract, its own pager root (#jobs-list).
-const offsets = { retired: 0, conversations: 0, replaced: 0, jobs: 0 };
+// — a fresh load starts on the newest page.
+const offsets = { retired: 0, conversations: 0, replaced: 0 };
 
 function sizeKey(kind) { return `tclaude.dash.list.${kind}.pagesize`; }
 

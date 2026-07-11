@@ -37,5 +37,5 @@ func TestDashboardHTML_CronExpressionMode(t *testing.T) {
 
 	// The Jobs tab's info cell renders the expression (with the English
 	// description as hover title) instead of "every …" for expression jobs.
-	must("cron: ${esc(j.cron_expr)}", "the Jobs tab expression info cell")
+	must("cron: ${job.cron_expr}", "the Jobs tab expression info cell")
 }

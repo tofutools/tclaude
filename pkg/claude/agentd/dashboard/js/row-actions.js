@@ -18,7 +18,7 @@ import {
 } from './sandbox-profiles.js';
 import { renderDashDefaultProfile, renderDashSandboxProfile } from './render.js';
 import {
-  openSudoGrantModal, openCronCreateModal, openCronEditModal,
+  openSudoGrantModal, openCronCreateModal,
 } from './modal-cron.js';
 import { openMessageCreateModal, openPermEditModal, openGroupCreateModal } from './modal-message.js';
 import { openHumanReplyModal } from './modal-human-reply.js';
@@ -26,7 +26,6 @@ import { openGroupContextModal, openGroupCloneModal, openFromGroupModal } from '
 import { openLinkModal, openLinksManageModal } from './modal-link-wt.js';
 import { openNestModal } from './modal-nest.js';
 import { openExportModal } from './modal-export.js';
-import { triggerExportDownload } from './export-progress.js';
 import { openTermModal } from './modal-term.js';
 import {
   openTerminalPane, closeTerminalsForConvs, focusTerminalForConv,
@@ -1644,84 +1643,6 @@ function bindRowActions() {
           ok = r.ok;
           if (!ok) toast(`Revoke failed: ${await r.text()}`, true);
           break;
-        }
-        case 'export-job-download': {
-          // Browser download of a ready export's artifact — no state change,
-          // nothing to refresh.
-          triggerExportDownload(btn.getAttribute('data-id'));
-          return;
-        }
-        case 'export-job-dismiss': {
-          const id = btn.getAttribute('data-id');
-          const confirmed = await confirmModal({
-            title: 'Dismiss this export?',
-            body: 'Removes the export job from the Jobs list and deletes its file from the server (if one was delivered). A still-running job is discarded when it lands.',
-            meta: label,
-            okLabel: 'Dismiss',
-          });
-          if (!confirmed) return;
-          const r = await fetch(`/api/export-jobs/${encodeURIComponent(id)}`, {
-            method: 'DELETE', credentials: 'same-origin',
-          });
-          ok = r.ok;
-          if (!ok) toast(`dismiss failed: ${await r.text()}`, true);
-          break;
-        }
-        case 'cron-enable':
-        case 'cron-disable': {
-          const id = btn.getAttribute('data-id');
-          const verb = act === 'cron-enable' ? 'enable' : 'disable';
-          const r = await fetch(`/api/cron/${encodeURIComponent(id)}/${verb}`, {
-            method: 'POST', credentials: 'same-origin',
-          });
-          ok = r.ok;
-          if (!ok) toast(`${verb} failed: ${await r.text()}`, true);
-          break;
-        }
-        case 'cron-run-now': {
-          const id = btn.getAttribute('data-id');
-          // Run-now is non-destructive (it just fires the job once)
-          // but it does send a real message to the target — confirm
-          // so a stray click doesn't paste into someone's pane.
-          const confirmed = await confirmModal({
-            title: 'Fire this cron job now?',
-            body: 'Sends the job\'s message to its target immediately. Stamps last_run_at so the regular cadence resumes from now.',
-            meta: label,
-            okLabel: 'Fire now',
-          });
-          if (!confirmed) return;
-          const r = await fetch(`/api/cron/${encodeURIComponent(id)}/run-now`, {
-            method: 'POST', credentials: 'same-origin',
-          });
-          ok = r.ok;
-          if (!ok) toast(`run-now failed: ${await r.text()}`, true);
-          break;
-        }
-        case 'cron-delete': {
-          const id = btn.getAttribute('data-id');
-          const confirmed = await confirmModal({
-            title: 'Delete cron job?',
-            body: 'Removes the job and its run history. The target itself is unaffected; you can re-create the job with `tclaude agent cron add`.',
-            meta: label,
-            okLabel: 'Delete job',
-          });
-          if (!confirmed) return;
-          const r = await fetch(`/api/cron/${encodeURIComponent(id)}`, {
-            method: 'DELETE', credentials: 'same-origin',
-          });
-          ok = r.ok;
-          if (!ok) toast(`delete failed: ${await r.text()}`, true);
-          break;
-        }
-        case 'cron-edit': {
-          const id = parseInt(btn.getAttribute('data-id'), 10);
-          const job = (lastSnapshot?.cron || []).find(j => j.id === id);
-          if (!job) {
-            toast(`edit: job #${id} not in current snapshot`, true);
-            return;
-          }
-          openCronEditModal(job);
-          return;
         }
         case 'cron-new': {
           // Context-aware "+ new cron job" buttons from the Agents

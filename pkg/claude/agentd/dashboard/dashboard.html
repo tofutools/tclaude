@@ -149,7 +149,7 @@
        body.hide-terminals until "web term" / "web window" opens the first pane;
        the badge counts the live terminals. -->
   <a data-tab="terminals" href="/terminals" title="Live in-browser terminals — appears while ≥1 web terminal / window is open. Each can be popped out into its own browser window."><span class="tab-label-regular">Terminals</span><span class="tab-label-wizard">🔮 Scrying</span><span id="terminals-badge" class="tab-badge count" hidden></span></a>
-  <a data-tab="jobs" href="/jobs" title="Jobs — agent export jobs (live progress; finished ones stay until dismissed) and recurring cron schedules"><span class="tab-label-regular">Jobs</span><span class="tab-label-wizard">⚒ Labours</span><span id="jobs-badge" class="tab-badge count" hidden></span></a>
+  <a data-tab="jobs" href="/jobs" title="Jobs — agent export jobs (live progress; finished ones stay until dismissed) and recurring cron schedules"><span class="tab-label-regular">Jobs</span><span class="tab-label-wizard">⚒ Labours</span><span id="jobs-badge-root"></span></a>
   <a data-tab="processes" href="/processes" title="Processes — reusable graph templates, instantiated runs, and human work"><span class="tab-label-regular">Processes</span><span class="tab-label-wizard">🕸 Rites</span></a>
   <a data-tab="plugins" href="/plugins"><span class="tab-label-regular">Plugins</span><span class="tab-label-wizard">🔧 Contraptions</span><span id="plugins-badge" class="tab-badge warn" hidden></span></a>
   <a data-tab="access" href="/access" title="Agent access control — permanent permissions, the slug registry, and time-bounded sudo grants"><span class="tab-label-regular">Access</span><span class="tab-label-wizard">🛡 Wards</span></a>
@@ -238,17 +238,9 @@
        fetched alongside the 2s poll while this tab is active); column sorting
        is client-side over the served window like every other table. -->
   <section id="tab-jobs">
-    <div class="filter-bar">
-      <input id="filter-jobs" type="text" placeholder="Filter (kind + name + agent/owner/target + subject + body + status)" autocomplete="off" spellcheck="false" />
-      <span class="filter-count" id="filter-jobs-count"></span>
-      <button class="clear-filter" id="filter-jobs-clear" title="Clear filter">×</button>
-      <span class="spacer"></span>
-      <!-- Label copy swaps per theme (pure-CSS span swap, like the "+ new
-           group" → "⚔ Form a party" pair): a plain "+ new cron job" normally,
-           an arcane "⏳ Bind a recurring ritual" in 🧙 wizard mode. -->
-      <button id="cron-create-open" class="primary" title="Schedule a new recurring cron job"><span class="cron-open-label-regular">+ new cron job</span><span class="cron-open-label-wizard">⏳ Bind a recurring ritual</span></button>
-    </div>
-    <div id="jobs-list"></div>
+    <!-- Preact exclusively owns this subtree. The filter, table, sort, paging,
+         loading/error states and action buttons are rendered by jobs-island.js. -->
+    <div id="jobs-root"></div>
   </section>
   <!-- Experimental Processes home. The editor and live viewer tickets mount
        their full-canvas surfaces into the stable editor/viewer nodes below;

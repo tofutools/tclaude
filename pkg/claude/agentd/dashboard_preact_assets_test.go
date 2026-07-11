@@ -104,8 +104,9 @@ func TestDashboardPreactImportMap(t *testing.T) {
 
 func TestDashboardPreactProbeWired(t *testing.T) {
 	for _, needle := range []string{
-		"import { mountPreactRuntimeProbe } from './preact-loader.js';",
+		"mountPreactRuntimeProbe } from './preact-loader.js';",
 		"void mountPreactRuntimeProbe();",
+		"await mountJobsFeature({",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard Preact probe wiring missing %q", needle)

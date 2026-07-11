@@ -64,6 +64,13 @@ belongs in the owning component. Persisted preferences remain server-backed:
 write them through an explicit action and let the authoritative snapshot
 confirm the resulting state.
 
+The Jobs tab is the first production island. `jobs-state.js` owns its query,
+page, sort, and request metadata; `jobs-island.js` owns all feature markup and
+events; `jobs-actions.js` is the mutation boundary. `refresh.js` may fetch and
+publish its `/api/jobs` page but must not render or read Jobs DOM. The shared
+cron create/edit modal remains an imperative boundary because agent/group row
+actions outside the island also open it.
+
 Flow tests in `pkg/claude/agentd/*_flow_test.go` are regular Go tests
 — they run under bare `go test ./...`. Boundaries (`tmux`, the
 `tclaude session new` subprocess) are mocked by assigning fake

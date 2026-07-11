@@ -69,20 +69,6 @@ function renderExportChecklist(status, failedAt) {
   }).join('') + `</div>`;
 }
 
-// renderExportStepper renders the Jobs tab's compact horizontal stepper for an
-// IN-FLIGHT status (cloning/requested/running). Terminal rows don't call this —
-// they show a plain ready/failed pill instead of four spent chips.
-function renderExportStepper(status) {
-  const active = activeExportStepIndex(status);
-  return `<span class="export-stepper">` + EXPORT_STEPS.map((s, i) => {
-    let cls = 'pending';
-    let icon = '';
-    if (i < active) { cls = 'done'; icon = '✓ '; }
-    else if (i === active) { cls = 'active'; icon = exportSpinnerHTML(); }
-    return `<span class="export-chip ${cls}">${icon}${esc(s.short)}</span>`;
-  }).join('<span class="export-chip-sep" aria-hidden="true">→</span>') + `</span>`;
-}
-
 // triggerExportDownload starts a browser download of a ready job's artifact.
 // Shared by the export modal (auto-download + "Download again" + history) and
 // the Jobs tab's per-row download button.
@@ -103,4 +89,7 @@ function fmtBytes(n) {
   return `${n} B`;
 }
 
-export { renderExportChecklist, renderExportStepper, triggerExportDownload, fmtBytes };
+export {
+  EXPORT_STEPS, activeExportStepIndex,
+  renderExportChecklist, triggerExportDownload, fmtBytes,
+};

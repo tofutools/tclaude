@@ -39,11 +39,10 @@ func TestDashboardMorph_Wired(t *testing.T) {
 	// The helper is defined and exported.
 	present("export function morphInto(", "morph.js exports the morphInto reconcile helper")
 
-	// Every per-tick render site the poll hits reconciles via morphInto rather
-	// than an innerHTML swap. tabs.js drives the four list tabs; refresh.js the
-	// two Access sub-panels.
+	// Every remaining legacy per-tick render site reconciles via morphInto rather
+	// than an innerHTML swap. Jobs is intentionally absent: its Preact subtree
+	// has its own keyed reconciliation and component coverage.
 	present("morphInto($('#groups-list'), renderGroups(", "Groups tab morphs instead of innerHTML swap")
-	present("morphInto($('#jobs-list'), renderJobs(", "Jobs tab morphs instead of innerHTML swap")
 	present("morphInto($('#sudo-list'), renderSudo(", "Sudo tab morphs instead of innerHTML swap")
 	present("morphInto($('#links-list'), renderLinks(", "Links tab morphs instead of innerHTML swap")
 	present("morphInto($('#permissions-body'), renderPermissions(", "Permissions panel morphs instead of innerHTML swap")
@@ -61,6 +60,9 @@ func TestDashboardMorph_Wired(t *testing.T) {
 	present(`data-key="${esc(m.conv_id)}"`, "member rows carry a stable data-key for keyed morphing")
 	present(`data-key="sudo-${esc(String(r.id))}"`, "sudo rows carry a stable data-key for keyed morphing")
 	present(`data-group-key=`, "group <details> keep their data-group-key match key")
+	present("function JobsApp(", "Jobs uses a Preact component instead of the custom DOM reconciler")
+	present("key=${`cron-${row.cron?.id}`}", "Jobs cron rows use stable Preact keys")
+	present("key=${`export-${row.export?.id}`}", "Jobs export rows use stable Preact keys")
 
 	// The old wholesale swaps at these six sites must be gone — their return
 	// would silently re-break copy-paste while every other guard stayed green.
