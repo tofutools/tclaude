@@ -1473,20 +1473,31 @@ function bindRowActions() {
           // recompute the spawn dialog's composed policy preview.
           const current = btn.getAttribute('data-sandbox-profile') || '';
           await openProfilePicker(btn, current, async (name) => {
-            const r = await fetch('/api/sandbox-profile-default', {
-              method: name ? 'PUT' : 'DELETE', credentials: 'same-origin',
-              headers: { 'Content-Type': 'application/json' },
-              body: name ? JSON.stringify({ name }) : undefined,
-            });
-            if (!r.ok) {
-              toast(`set global sandbox profile failed: ${await r.text()}`, true);
-              return false;
+            // openProfilePicker restores the stable chip before persistence.
+            // Keep the native button disabled until the mutation and repaint
+            // settle so rapid picks cannot race and finish out of order.
+            if (btn.dataset.sandboxProfilePending === 'true') return false;
+            btn.dataset.sandboxProfilePending = 'true';
+            btn.disabled = true;
+            try {
+              const r = await fetch('/api/sandbox-profile-default', {
+                method: name ? 'PUT' : 'DELETE', credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: name ? JSON.stringify({ name }) : undefined,
+              });
+              if (!r.ok) {
+                toast(`set global sandbox profile failed: ${await r.text()}`, true);
+                return false;
+              }
+              toast(name ? `global sandbox profile: ${name}` : 'global sandbox profile cleared');
+              await refresh();
+              renderDashSandboxProfile();
+              await refreshSpawnSandboxProfileUI($('#agent-spawn-group').value);
+              return true;
+            } finally {
+              delete btn.dataset.sandboxProfilePending;
+              btn.disabled = false;
             }
-            toast(name ? `global sandbox profile: ${name}` : 'global sandbox profile cleared');
-            await refresh();
-            renderDashSandboxProfile();
-            await refreshSpawnSandboxProfileUI($('#agent-spawn-group').value);
-            return true;
           }, {
             loadList: loadSandboxProfiles,
             noneLabel: '(none)',

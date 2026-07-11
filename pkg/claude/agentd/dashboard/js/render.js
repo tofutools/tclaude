@@ -1337,6 +1337,7 @@ function renderDashSandboxProfile() {
   const name = lastSnapshot.sandbox_profile_default || '';
   el.classList.toggle('unset', !name);
   el.setAttribute('data-sandbox-profile', name);
+  el.setAttribute('aria-label', name ? `Global sandbox profile: ${name}. Click to change.` : 'Set global sandbox profile');
   el.textContent = '🛡' + (name ? ' ' + name : '');
   el.title = name
     ? `Global sandbox profile: ${name} — newly launched agents inherit it before any group or explicit assignment. Click to change.`

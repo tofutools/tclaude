@@ -2309,6 +2309,8 @@ details[data-group-key][open] > summary .group-sandbox-profile {
 .group-default-model:hover, .user-default-model:hover, .group-sandbox-profile:hover, .global-sandbox-profile:hover { color: #d4d4d4; border-color: #58a6ff; }
 .group-default-model.unset, .user-default-model.unset, .group-sandbox-profile.unset, .global-sandbox-profile.unset { color: #484f58; font-style: italic; }
 .group-default-model.unset:hover, .user-default-model.unset:hover, .group-sandbox-profile.unset:hover, .global-sandbox-profile.unset:hover { color: #d4d4d4; }
+.global-sandbox-profile { background: transparent; }
+.global-sandbox-profile:disabled { cursor: wait; opacity: .65; }
 /* The inline 🧠 profile picker — a <select> swapped in for the group / user
    chip while choosing a default spawn profile (row-actions openProfilePicker).
    Same compact monospace look as the chip inputs above. */
