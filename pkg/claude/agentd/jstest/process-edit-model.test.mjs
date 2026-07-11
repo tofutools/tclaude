@@ -10,7 +10,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ProcessEditModel, blankEditView, graphEdgeID, MAX_UNDO,
-  PALETTE_PRIMITIVES, PALETTE_SNIPPETS,
+  PALETTE_PRIMITIVES, PALETTE_SNIPPETS, templateIDEditable,
 } from '../dashboard/js/process-edit-model.js';
 
 function view() {
@@ -220,7 +220,6 @@ test('regression: no-op rename and no-op join neither dirty nor burn an undo slo
 
 test('regression: no-op setTemplateMeta neither dirties nor burns an undo slot', () => {
   const model = new ProcessEditModel(view());
-  model.setTemplateMeta({ id: 'release' });          // unchanged id
   model.setTemplateMeta({ name: 'Release train' });  // unchanged name
   model.setTemplateMeta({ description: '' });        // absent stays absent
   assert.equal(model.dirty, false);
@@ -228,6 +227,70 @@ test('regression: no-op setTemplateMeta neither dirties nor burns an undo slot',
   model.setTemplateMeta({ name: 'Freight train' });  // a real change still lands
   assert.equal(model.template.name, 'Freight train');
   assert.equal(model.dirty, true);
+});
+
+test('template metadata edits are undoable and preserve the immutable id', () => {
+  const model = new ProcessEditModel(view());
+  model.setTemplateMeta({
+    name: 'Freight train',
+    description: 'Move releases safely',
+    doc: 'Operator-facing release procedure\nKeep the run history intact.',
+  });
+  assert.equal(model.template.id, 'release');
+  assert.equal(model.template.name, 'Freight train');
+  assert.equal(model.template.description, 'Move releases safely');
+  assert.equal(model.template.doc, 'Operator-facing release procedure\nKeep the run history intact.');
+  assert.equal(model.dirty, true);
+  assert.equal(model.undo(), true);
+  assert.equal(model.template.name, 'Release train');
+  assert.equal(model.template.description, undefined);
+  assert.equal(model.template.doc, undefined);
+});
+
+test('new-template id edits are dirty outside graph history until save pins the identity', () => {
+  const model = new ProcessEditModel(blankEditView('new-process'));
+  assert.equal(model.setTemplateID('release'), true);
+  assert.equal(model.dirty, true, 'navigation sees the id edit and prompts before discard');
+  assert.equal(model.canUndo, false, 'identity is not graph/content undo history');
+
+  model.markSaved({ sourceHash: 'saved-source' });
+  assert.equal(model.dirty, false);
+  assert.equal(model.undo(), false, 'no identity-only snapshot can produce false dirty after save');
+  assert.equal(model.dirty, false);
+
+  model.addNode('task', { id: 'draft' }); // history snapshot carries the saved id
+  assert.equal(model.undo(), true);
+  assert.equal(model.template.id, 'release', 'post-save graph history preserves the pinned store key');
+  assert.equal(model.dirty, false);
+  assert.equal(model.undo(), false, 'a second undo cannot reach unchanged-but-dirty identity history');
+  assert.equal(model.dirty, false);
+  assert.equal(model.setTemplateID('copy'), false);
+  assert.equal(model.template.id, 'release');
+});
+
+test('saving a draft id at the payload revision preserves in-flight edit dirtiness', () => {
+  const model = new ProcessEditModel(blankEditView('new-process'));
+  model.setTemplateID('release');
+  const savedAtRev = model.rev;
+  model.addNode('task', { id: 'in-flight' });
+  model.markSaved({ sourceHash: 'saved-source' }, savedAtRev);
+  assert.equal(model.template.id, 'release');
+  assert.equal(model.dirty, true, 'the topology edit is newer than the saved payload');
+  assert.equal(model.undo(), true);
+  assert.equal(model.dirty, false);
+});
+
+test('failed first-save force retry keeps the adopted identity locked and consistent', () => {
+  const model = new ProcessEditModel(blankEditView('collision'));
+  assert.equal(templateIDEditable(true, model.sourceHash), true);
+
+  // resolveConflict(force) adopts the existing head before recursively saving.
+  // If that retry fails or re-conflicts, blank remains true but the CAS base
+  // now fixes which store identity the editor owns.
+  model.sourceHash = 'existing-head-source';
+  assert.equal(templateIDEditable(true, model.sourceHash), false);
+  assert.equal(model.setTemplateID('misleading-copy'), false, 'rejected without throwing from the change event');
+  assert.equal(model.template.id, 'collision', 'visible title and model identity stay on the adopted head');
 });
 
 test('regression: markSaved at the payload rev keeps in-flight edits dirty', () => {

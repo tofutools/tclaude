@@ -25,7 +25,7 @@
 import { ProcessGraph } from './process-graph.js';
 import {
   ProcessEditModel, blankEditView,
-  PALETTE_PRIMITIVES, PALETTE_SNIPPETS,
+  PALETTE_PRIMITIVES, PALETTE_SNIPPETS, templateIDEditable,
 } from './process-edit-model.js';
 import { openNodeDialog } from './process-node-dialog.js';
 import { LiveValidation } from './process-validation.js';
@@ -81,6 +81,8 @@ export class ProcessTemplateEditor {
     this.selection = null;
     this.pendingMove = null;
     this.band = null;
+    this.savePending = false;
+    this.saveSeq = 0;
     this.abort = new AbortController();
     this.buildDOM();
     this.graph = new ProcessGraph(this.stageHost, this.model.graph(), {
@@ -120,19 +122,21 @@ export class ProcessTemplateEditor {
     });
     this.idInput.value = this.model.template.id || '';
     this.titleLabel = h('strong', { class: 'process-editor-title' });
+    this.identity = h('span', { class: 'process-editor-identity' });
 
     this.undoButton = h('button', { class: 'process-action', type: 'button', title: 'Undo (Ctrl+Z)', text: '↶ undo' });
     this.redoButton = h('button', { class: 'process-action', type: 'button', title: 'Redo (Ctrl+Shift+Z)', text: '↷ redo' });
+    this.settingsButton = h('button', { class: 'process-action', type: 'button', title: 'Edit template name and description', text: 'template settings…' });
     this.paletteButton = h('button', { class: 'process-action', type: 'button', title: 'Toggle the node palette', text: '⬒ palette' });
     this.saveButton = h('button', { class: 'process-action primary', type: 'button', title: 'Save a new version', text: 'Save' });
 
     const header = h('div', { class: 'process-editor-header' },
-      this.blank ? this.idInput : this.titleLabel,
+      this.identity,
       this.versionBadge,
       this.dirtyBadge,
       this.statusLine,
       h('span', { class: 'spacer' }),
-      this.undoButton, this.redoButton, this.paletteButton, this.saveButton,
+      this.settingsButton, this.undoButton, this.redoButton, this.paletteButton, this.saveButton,
     );
 
     this.palette = this.buildPalette();
@@ -176,12 +180,20 @@ export class ProcessTemplateEditor {
     this.saveButton.addEventListener('click', () => this.save(), { signal });
     this.undoButton.addEventListener('click', () => this.applyHistory('undo'), { signal });
     this.redoButton.addEventListener('click', () => this.applyHistory('redo'), { signal });
+    this.settingsButton.addEventListener('click', () => this.setSelection({ type: 'template' }), { signal });
     this.paletteButton.addEventListener('click', () => {
       this.palette.hidden = !this.palette.hidden;
     }, { signal });
     if (this.blank) {
       this.idInput.addEventListener('change', () => {
-        this.model.setTemplateMeta({ id: this.idInput.value.trim() });
+        if (this.savePending) {
+          this.idInput.value = this.model.template.id || '';
+          return;
+        }
+        if (!this.model.setTemplateID(this.idInput.value.trim())) {
+          this.idInput.value = this.model.template.id || '';
+          this.status('Template id is fixed once an existing version is selected.', true);
+        }
         this.updateChrome();
       }, { signal });
     }
@@ -213,6 +225,11 @@ export class ProcessTemplateEditor {
   }
 
   destroy() {
+    // Invalidate any delayed save completion before tearing down its DOM and
+    // callbacks. Fetch is not tied to the event-listener AbortController, so
+    // the request generation is the authoritative stale-response guard.
+    this.saveSeq += 1;
+    this.savePending = false;
     this.abort.abort();
     this.closeInline(false);
     this.validation?.destroy();
@@ -244,15 +261,22 @@ export class ProcessTemplateEditor {
     this.titleLabel.textContent = model.template.name
       ? `${model.template.name} (${model.template.id})`
       : model.template.id || 'untitled';
+    // A force retry pins the identity as soon as it adopts an existing CAS
+    // head. It stays locked even if the retry fails or re-conflicts: `blank`
+    // alone is not enough to decide that the id is still editable.
+    const showIDInput = templateIDEditable(this.blank, model.sourceHash);
+    const idEditable = showIDInput && !this.savePending;
+    this.idInput.disabled = !idEditable;
+    this.identity.replaceChildren(showIDInput ? this.idInput : this.titleLabel);
     this.versionBadge.textContent = model.semanticHash ? `v ${shortHash(model.semanticHash)}` : 'unsaved';
     this.versionBadge.title = model.semanticHash || 'This template has never been saved';
     this.dirtyBadge.hidden = !model.dirty;
-    // The id is only editable until the first version exists; after that the
-    // id is the store key and renaming means a different template.
-    this.idInput.disabled = !!model.sourceHash;
     this.undoButton.disabled = !model.canUndo;
     this.redoButton.disabled = !model.canRedo;
-    this.saveButton.disabled = !model.dirty && !!model.sourceHash;
+    // A blank editor has not completed a save, even if a force retry adopted
+    // an existing CAS head. Keep its retry path armed after a failed or
+    // cancelled retry; only a successfully loaded/saved clean editor is done.
+    this.saveButton.disabled = this.savePending || (!model.dirty && !this.blank);
     this.renderInspector();
   }
 
@@ -272,6 +296,17 @@ export class ProcessTemplateEditor {
   }
 
   setSelection(selection) {
+    // Template metadata is editor chrome, not a graph entity. Keep it outside
+    // process-selection's node/edge-only normalization while explicitly
+    // clearing the canvas highlight. A refresh replays this same branch;
+    // every node/edge/canvas gesture calls setSelection with another value and
+    // therefore leaves template settings cleanly.
+    if (selection?.type === 'template') {
+      this.selection = { type: 'template' };
+      this.graph.select(null);
+      this.renderInspector();
+      return;
+    }
     this.selection = makeSelection(selectionItems(selection));
     const graphical = selectionItems(this.selection).map((item) => {
       if (item.type === 'node') return { type: 'node', id: item.id };
@@ -286,7 +321,39 @@ export class ProcessTemplateEditor {
     const parts = [];
     const sel = this.selection;
     const selected = selectionItems(sel);
-    if (selected.length > 1) {
+    if (sel?.type === 'template') {
+      parts.push(h('span', { class: 'process-inspector-kind', text: 'template' }));
+      const idInput = h('input', {
+        class: 'process-inspector-input process-template-id-locked', type: 'text',
+        value: this.model.template.id || '', disabled: '',
+        title: 'Template ids are immutable after creation', 'aria-label': 'Template id (immutable)',
+      });
+      const nameInput = h('input', {
+        class: 'process-inspector-input', type: 'text', spellcheck: 'false',
+        placeholder: 'display name', 'aria-label': 'Template display name',
+      });
+      nameInput.value = this.model.template.name || '';
+      nameInput.addEventListener('change', () => {
+        this.mutate(() => this.model.setTemplateMeta({ name: nameInput.value.trim() }));
+      });
+      const descriptionInput = h('input', {
+        class: 'process-inspector-input process-template-description', type: 'text', spellcheck: 'true',
+        placeholder: 'description', 'aria-label': 'Template description',
+      });
+      descriptionInput.value = this.model.template.description || '';
+      descriptionInput.addEventListener('change', () => {
+        this.mutate(() => this.model.setTemplateMeta({ description: descriptionInput.value.trim() }));
+      });
+      const docInput = h('textarea', {
+        class: 'process-inspector-input process-template-doc', rows: '2', spellcheck: 'true',
+        placeholder: 'documentation', 'aria-label': 'Template documentation',
+      });
+      docInput.value = this.model.template.doc || '';
+      docInput.addEventListener('change', () => {
+        this.mutate(() => this.model.setTemplateMeta({ doc: docInput.value.trim() }));
+      });
+      parts.push(idInput, nameInput, descriptionInput, docInput);
+    } else if (selected.length > 1) {
       const nodeCount = selected.filter((item) => item.type === 'node').length;
       const edgeCount = selected.length - nodeCount;
       parts.push(h('span', { class: 'process-inspector-kind', text: 'multiple selection' }));
@@ -544,9 +611,13 @@ export class ProcessTemplateEditor {
   applyHistory(direction) {
     const moved = direction === 'undo' ? this.model.undo() : this.model.redo();
     if (!moved) return;
-    // A restored state may no longer contain the selected node/edge.
-    this.selection = makeSelection(selectionItems(this.selection).filter((item) => item.type === 'node'
-      ? this.model.node(item.id) : this.model.findEdge(item.from, item.outcome)));
+    // Template settings remain valid across metadata history. Graph selections
+    // still need liveness filtering because a restored topology may no longer
+    // contain their node/edge.
+    if (this.selection?.type !== 'template') {
+      this.selection = makeSelection(selectionItems(this.selection).filter((item) => item.type === 'node'
+        ? this.model.node(item.id) : this.model.findEdge(item.from, item.outcome)));
+    }
     this.refresh();
   }
 
@@ -665,52 +736,74 @@ export class ProcessTemplateEditor {
     const id = (this.model.template.id || '').trim();
     if (!id) {
       this.status('Template id is required before saving.', true);
-      return;
+      return false;
     }
-    this.saveButton.disabled = true;
+    if (this.savePending) return false;
+    const requestSeq = ++this.saveSeq;
+    this.savePending = true;
+    this.updateChrome();
+    try {
+      await this.saveRequest(requestSeq);
+      return true;
+    } catch (error) {
+      if (requestSeq === this.saveSeq) this.status(`Save failed: ${error.message}`, true);
+      return false;
+    } finally {
+      if (requestSeq === this.saveSeq) {
+        this.savePending = false;
+        this.updateChrome();
+      }
+    }
+  }
+
+  async saveRequest(requestSeq) {
+    if (requestSeq !== this.saveSeq) return;
+    const id = (this.model.template.id || '').trim();
+    const savedID = id;
     // The canvas stays interactive during the POST: capture the rev the
     // payload was built at, so edits made in flight keep the model dirty.
     const savedAtRev = this.model.rev;
-    try {
-      const response = await fetch(`/v1/process/templates/${encodeURIComponent(id)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(this.model.saveBody()),
-      });
-      const body = await response.json().catch(() => ({}));
-      if (response.status === 409 && body.code === 'process_template_conflict') {
-        await this.resolveConflict(body);
-        return;
-      }
-      if (!response.ok) {
-        this.status(body.message || body.error || `${response.status} ${response.statusText}`, true);
-        return;
-      }
-      this.model.markSaved(body, savedAtRev);
-      // Sync the validation controller with the save verdict: a failed
-      // debounced round deliberately keeps prior diagnostics, so without this
-      // the badges/panel stay stale until the next mutation. The follow-up
-      // schedule() re-validates the live draft in case edits landed while the
-      // POST was in flight (its seq guard drops any out-of-order result).
-      this.validation?.applyDiagnostics(body.diagnostics || []);
-      this.validation?.schedule();
-      this.blank = false;
-      const diagCount = (body.diagnostics || []).length;
-      this.status(`Saved version ${shortHash(body.semanticHash)}${diagCount ? ` · ${diagCount} advisory finding${diagCount === 1 ? '' : 's'}` : ''}.`);
-      this.updateChrome();
-      this.options.onSaved?.(body);
-    } catch (error) {
-      this.status(`Save failed: ${error.message}`, true);
-    } finally {
-      this.saveButton.disabled = false;
-      this.updateChrome();
+    const response = await fetch(`/v1/process/templates/${encodeURIComponent(id)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(this.model.saveBody()),
+    });
+    const body = await response.json().catch(() => ({}));
+    // A newer editor request/lifecycle generation owns the model now. Never
+    // let this completion overwrite its identity, CAS base, or status.
+    if (requestSeq !== this.saveSeq) return;
+    if (response.status === 409 && body.code === 'process_template_conflict') {
+      await this.resolveConflict(body, requestSeq);
+      return;
     }
+    if (!response.ok) {
+      this.status(body.message || body.error || `${response.status} ${response.statusText}`, true);
+      return;
+    }
+    // The POST path is the creation-time identity. Discard any draft id
+    // change made while the request was in flight before locking the model;
+    // history restoration also preserves this pinned id.
+    this.model.template.id = savedID;
+    this.idInput.value = savedID;
+    this.model.markSaved(body, savedAtRev);
+    // Sync the validation controller with the save verdict: a failed
+    // debounced round deliberately keeps prior diagnostics, so without this
+    // the badges/panel stay stale until the next mutation. The follow-up
+    // schedule() re-validates the live draft in case edits landed while the
+    // POST was in flight (its seq guard drops any out-of-order result).
+    this.validation?.applyDiagnostics(body.diagnostics || []);
+    this.validation?.schedule();
+    this.blank = false;
+    const diagCount = (body.diagnostics || []).length;
+    this.status(`Saved version ${shortHash(body.semanticHash)}${diagCount ? ` · ${diagCount} advisory finding${diagCount === 1 ? '' : 's'}` : ''}.`);
+    this.updateChrome();
+    this.options.onSaved?.(body);
   }
 
   // resolveConflict is the explicit 409 dialog (never a silent overwrite):
   // reload their head version (discarding local edits), or save as a new
   // version on top of theirs (rebasing this draft's CAS base).
-  async resolveConflict(conflict) {
+  async resolveConflict(conflict, requestSeq = this.saveSeq) {
     const firstSave = !this.model.sourceHash;
     const choice = await this.choiceModal({
       title: firstSave ? 'Template id already exists' : 'Template changed while you were editing',
@@ -722,12 +815,14 @@ export class ProcessTemplateEditor {
         { key: 'force', label: 'Save as new version anyway', primary: true },
       ],
     });
+    if (requestSeq !== this.saveSeq) return;
     if (choice === 'force') {
       this.model.sourceHash = conflict.currentSourceHash || '';
-      await this.save();
+      await this.saveRequest(requestSeq);
     } else if (choice === 'reload') {
       try {
         const view = await fetchEditView(this.model.template.id);
+        if (requestSeq !== this.saveSeq) return;
         this.model = new ProcessEditModel(view, this.model.config);
         this.blank = false;
         this.selection = null;
@@ -738,6 +833,7 @@ export class ProcessTemplateEditor {
         this.validation?.applyDiagnostics(view.diagnostics || []);
         this.status(`Reloaded their version ${shortHash(view.semanticHash)}.`);
       } catch (error) {
+        if (requestSeq !== this.saveSeq) return;
         this.status(`Reload failed: ${error.message}`, true);
       }
     }

@@ -44,6 +44,10 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		// The phase-4 run-view seam: mode-level insertion permission plus
 		// per-node/edge predicates for existing items.
 		"canInsert: config.canInsert !== false",
+		// Draft ids participate in dirty/discard state outside graph history;
+		// restore always retains the current identity.
+		"this.savedTemplateID = this.template.id || ''",
+		"this.template.id = id",
 	)
 	if strings.Contains(editModel, "document.") || strings.Contains(editModel, "fetch(") {
 		t.Error("process-edit-model.js must stay pure (no DOM, no fetch) so Node tests cover the shipped file")
@@ -62,6 +66,28 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"resolveConflict",
 		"'Reload their version (discard mine)'",
 		"'Save as new version anyway'",
+		// IDs are creation-time store keys. Existing templates render only the
+		// title, and a blank template swaps its id input out after first save.
+		"const showIDInput = templateIDEditable(this.blank, model.sourceHash)",
+		"const idEditable = showIDInput && !this.savePending",
+		"this.idInput.disabled = !idEditable",
+		"this.identity.replaceChildren(showIDInput ? this.idInput : this.titleLabel)",
+		"this.model.setTemplateID(this.idInput.value.trim())",
+		"Template id is fixed once an existing version is selected.",
+		"const savedID = id",
+		"this.model.template.id = savedID",
+		// Template-level metadata has an explicit editor affordance and travels
+		// through setTemplateMeta, the same dirty/undo gate as graph edits.
+		"text: 'template settings…'",
+		"this.settingsButton.addEventListener('click', () => this.setSelection({ type: 'template' })",
+		"if (selection?.type === 'template')",
+		"this.graph.select(null)",
+		"if (this.selection?.type !== 'template')",
+		"this.saveButton.disabled = this.savePending ||",
+		"if (this.savePending) return false",
+		"if (requestSeq !== this.saveSeq) return",
+		"this.saveSeq += 1",
+		"this.model.setTemplateMeta({ name:",
 		// Rewire affordance on mid-graph node deletion.
 		"'Delete + rewire through'",
 		// Hand-drawn self-loops are blocked at the gesture with a message.
@@ -139,6 +165,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		// Inline controls are explicitly dark-themed (UA-white trap).
 		".process-inspector-select",
 		"body.wizard .process-palette-card",
+		"body.wizard .process-editor .process-action",
 		// Live-validation issues panel, explicitly themed on both skins.
 		".process-issues-panel",
 		".process-issue:hover, .process-issue:focus-visible",

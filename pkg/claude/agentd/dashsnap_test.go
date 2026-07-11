@@ -586,6 +586,18 @@ func baseStates() []dashsnap.State {
 			SettleMS: 1100,
 		},
 		{
+			Key:     "process-editor-template-settings",
+			Title:   "Process editor — template name mid-edit",
+			Caption: "Template metadata editor mid-rename: immutable id plus a focused, changed-but-uncommitted display name alongside description and documentation.",
+			JS: processEditorStateJS(`ed.setSelection({type: 'template'});
+  var nameInput = document.querySelector('[aria-label="Template display name"]');
+  if (!nameInput) throw new Error('template display-name input missing');
+  nameInput.value = 'Release train — renamed';
+  nameInput.focus();
+  nameInput.select();`),
+			SettleMS: 1100,
+		},
+		{
 			Key:      "process-editor-dirty",
 			Title:    "Process editor — dirty",
 			Caption:  "After adding a task node and pinning a move: the ● modified badge lights, Save arms, and undo becomes available.",
@@ -598,7 +610,7 @@ func baseStates() []dashsnap.State {
 			Caption: "The same editor (palette + selection + dirty) under the wizard skin: violet chrome, gold accents, explicitly themed cards and controls.",
 			Wizard:  true,
 			JS: processEditorStateJS(`ed.model.addNode('task', {x: 470, y: 120, name: 'Review'}); ed.refresh({fit: true});
-  ed.setSelection({type: 'node', id: 'begin'});`),
+  ed.setSelection({type: 'template'});`),
 			SettleMS: 1100,
 		},
 		{

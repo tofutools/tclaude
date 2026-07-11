@@ -63,6 +63,13 @@ export function blankEditView(id) {
   };
 }
 
+// A blank shell stops owning its id as soon as conflict resolution adopts an
+// existing head as the CAS base, even if the retry has not saved successfully.
+// Keeping this predicate pure lets the model and rendered control agree.
+export function templateIDEditable(blank, sourceHash) {
+  return !!blank && !sourceHash;
+}
+
 export class ProcessEditModel {
   constructor(view, config = {}) {
     const v = view || blankEditView();
@@ -73,6 +80,7 @@ export class ProcessEditModel {
     if (!this.layout.nodes) this.layout.nodes = {};
     this.sourceHash = v.sourceHash || '';
     this.semanticHash = v.semanticHash || '';
+    this.savedTemplateID = this.template.id || '';
     this.diagnostics = clone(v.diagnostics) || [];
     this.config = {
       mode: config.mode || 'template',
@@ -97,7 +105,7 @@ export class ProcessEditModel {
   }
 
   get dirty() {
-    return this.rev !== this.savedRev;
+    return this.rev !== this.savedRev || (this.template.id || '') !== this.savedTemplateID;
   }
 
   get canUndo() {
@@ -118,7 +126,12 @@ export class ProcessEditModel {
   }
 
   restoreState(snapshot) {
+    // Identity lives outside graph/content undo. This keeps a draft id stable
+    // while topology history moves, and prevents pre-save snapshots from
+    // resurrecting another store key after the identity becomes pinned.
+    const id = this.template.id;
     this.template = snapshot.template;
+    this.template.id = id;
     this.edges = snapshot.edges;
     this.layout = snapshot.layout;
     this.rev = snapshot.rev;
@@ -415,15 +428,21 @@ export class ProcessEditModel {
     this.template.start = to;
   }
 
-  setTemplateMeta({ id, name, description } = {}) {
+  setTemplateID(id) {
+    if (this.sourceHash) return false;
+    if (id === this.template.id) return true;
+    this.template.id = id;
+    return true;
+  }
+
+  setTemplateMeta({ name, description, doc } = {}) {
     // Same no-op discipline as renameNode/setJoin/setEdgeOutcome: a change
     // event that commits the current value must not dirty the model.
-    const changed = (id !== undefined && id !== this.template.id)
-      || (name !== undefined && (name || undefined) !== this.template.name)
-      || (description !== undefined && (description || undefined) !== this.template.description);
+    const changed = (name !== undefined && (name || undefined) !== this.template.name)
+      || (description !== undefined && (description || undefined) !== this.template.description)
+      || (doc !== undefined && (doc || undefined) !== this.template.doc);
     if (!changed) return;
     this.begin();
-    if (id !== undefined) this.template.id = id;
     if (name !== undefined) {
       if (name) this.template.name = name;
       else delete this.template.name;
@@ -431,6 +450,10 @@ export class ProcessEditModel {
     if (description !== undefined) {
       if (description) this.template.description = description;
       else delete this.template.description;
+    }
+    if (doc !== undefined) {
+      if (doc) this.template.doc = doc;
+      else delete this.template.doc;
     }
   }
 
@@ -512,7 +535,10 @@ export class ProcessEditModel {
   // payload was built. Edits made while the POST was in flight keep the model
   // dirty because their revs are minted after savedAtRev.
   markSaved({ sourceHash, semanticHash, diagnostics } = {}, savedAtRev = this.rev) {
-    if (sourceHash) this.sourceHash = sourceHash;
+    if (sourceHash) {
+      this.sourceHash = sourceHash;
+      this.savedTemplateID = this.template.id || '';
+    }
     if (semanticHash) this.semanticHash = semanticHash;
     if (diagnostics) this.diagnostics = diagnostics;
     this.savedRev = savedAtRev;
