@@ -122,6 +122,31 @@ func TestAgentPermissions_GrantRevokeIdempotent(t *testing.T) {
 	assert.Equal(t, "member.add", got[0])
 }
 
+func TestAgentPermissions_RevokeByGranterAndEffect(t *testing.T) {
+	setupTestDB(t)
+
+	const conv = "abcd1234-0000-0000-0000-000000000002"
+	require.NoError(t, SetAgentPermissionOverride(conv, "groups.spawn", PermEffectDeny, "<scribe-summon>"))
+	require.NoError(t, SetAgentPermissionOverride(conv, "self.rename", PermEffectDeny, "<human>"))
+	require.NoError(t, SetAgentPermissionOverride(conv, "templates.manage", PermEffectGrant, "<scribe-summon>"))
+
+	n, err := RevokeAgentPermissionsByGranterAndEffect(conv, "<scribe-summon>", PermEffectDeny)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
+
+	overrides, err := ListAgentPermissionOverridesForConv(conv)
+	require.NoError(t, err)
+	assert.NotContains(t, overrides, "groups.spawn", "matching generated deny removed")
+	assert.Equal(t, PermEffectDeny, overrides["self.rename"], "human-authored deny preserved")
+	assert.Equal(t, PermEffectGrant, overrides["templates.manage"], "same-granter grant preserved")
+
+	n, err = RevokeAgentPermissionsByGranterAndEffect(conv, "<scribe-summon>", PermEffectDeny)
+	require.NoError(t, err)
+	assert.Zero(t, n, "repeat cleanup is idempotent")
+	_, err = RevokeAgentPermissionsByGranterAndEffect(conv, "<scribe-summon>", "invalid")
+	assert.Error(t, err)
+}
+
 func TestAgentMessageInsertAndList(t *testing.T) {
 	setupTestDB(t)
 

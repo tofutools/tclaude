@@ -336,6 +336,35 @@ func RevokeAgentPermission(convID, slug string) (int64, error) {
 	return n, nil
 }
 
+// RevokeAgentPermissionsByGranterAndEffect removes the permission overrides
+// for convID that were written by one specific granter with one specific
+// effect. It is intentionally provenance-scoped: callers can unwind their own
+// generated policy without disturbing a human-authored override on the same
+// agent. Idempotent — returns the number of rows removed.
+func RevokeAgentPermissionsByGranterAndEffect(convID, grantedBy, effect string) (int64, error) {
+	if effect != PermEffectGrant && effect != PermEffectDeny {
+		return 0, fmt.Errorf("invalid permission effect %q (want %q or %q)", effect, PermEffectGrant, PermEffectDeny)
+	}
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	agentID, err := AgentIDForConv(convID)
+	if err != nil {
+		return 0, err
+	}
+	if agentID == "" {
+		return 0, nil
+	}
+	res, err := d.Exec(`DELETE FROM agent_permissions
+		WHERE agent_id = ? AND granted_by = ? AND effect = ?`, agentID, grantedBy, effect)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 // RevokeAllAgentPermissionsForConv drops every per-conv permission
 // row for convID. Bulk cleanup variant for the conv-delete path.
 // Idempotent — returns the number of rows removed.
