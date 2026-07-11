@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -95,6 +97,21 @@ func answerChallenge(t *testing.T, ch writeProofChallengeResp) {
 		require.NoError(t, os.WriteFile(p, nil, 0o600))
 		t.Cleanup(func() { _ = os.Remove(p) })
 	}
+}
+
+func setEffectiveSandboxWriteRoot(t *testing.T, convID, writeRoot string) {
+	t.Helper()
+	agentID, _, err := db.EnsureAgentForConv(convID, "test:sandbox-write-root")
+	require.NoError(t, err)
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Global: &sandboxpolicy.Profile{
+		Name: "lifecycle-write-root",
+		Filesystem: []sandboxpolicy.FilesystemGrant{{
+			Path: writeRoot, Access: sandboxpolicy.AccessWrite,
+		}},
+	}})
+	require.NoError(t, err)
+	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &snapshot))
 }
 
 // agentReqProof issues an agent-caller request and, if the daemon answers
@@ -873,4 +890,65 @@ func TestSpawnDirProof_CloneCwdOverride(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, sess)
 	assert.Equal(t, resolvedDir, sess.Cwd, "clone must land in the verified resolved dir")
+}
+
+func TestSpawnDirProof_LifecycleChallengesIncludeCustomWriteRoots(t *testing.T) {
+	t.Run("clone", func(t *testing.T) {
+		prevCooldown := agentd.CloneCooldown
+		agentd.CloneCooldown = 0
+		t.Cleanup(func() { agentd.CloneCooldown = prevCooldown })
+
+		f := newFlow(t)
+		const caller = "profile-clone-aaaa-bbbb-cccc-111111111111"
+		cwd, err := filepath.EvalSymlinks(t.TempDir())
+		require.NoError(t, err)
+		writeRoot, err := filepath.EvalSymlinks(t.TempDir())
+		require.NoError(t, err)
+		f.HaveConvWithTitle(caller, "profile-cloner")
+		f.HaveAliveSession(caller, "spwn-profile-clone", "tclaude-profile-clone", cwd)
+		require.NoError(t, db.GrantAgentPermission(caller, agentd.PermSelfClone, "test"))
+		setEffectiveSandboxWriteRoot(t, caller, writeRoot)
+
+		challenge := decodeWriteProofChallenge(t, agentReq(t, f, caller, http.MethodPost,
+			"/v1/whoami/clone", map[string]any{"no_copy_conv": true}))
+		assert.ElementsMatch(t, []string{cwd, writeRoot}, challenge.WriteProof.Dirs)
+	})
+
+	t.Run("reincarnate", func(t *testing.T) {
+		f := newFlow(t)
+		const caller = "profile-reincarnate-aaaa-bbbb-cccc-111111111111"
+		cwd, err := filepath.EvalSymlinks(t.TempDir())
+		require.NoError(t, err)
+		writeRoot, err := filepath.EvalSymlinks(t.TempDir())
+		require.NoError(t, err)
+		f.HaveConvWithTitle(caller, "profile-reincarnator")
+		f.HaveAliveSession(caller, "spwn-profile-reincarnate", "tclaude-profile-reincarnate", cwd)
+		require.NoError(t, db.GrantAgentPermission(caller, agentd.PermSelfReincarnate, "test"))
+		setEffectiveSandboxWriteRoot(t, caller, writeRoot)
+
+		challenge := decodeWriteProofChallenge(t, agentReq(t, f, caller, http.MethodPost,
+			"/v1/whoami/reincarnate", map[string]any{"follow_up": "continue the task"}))
+		assert.ElementsMatch(t, []string{cwd, writeRoot}, challenge.WriteProof.Dirs)
+	})
+
+	t.Run("resume", func(t *testing.T) {
+		f := newFlow(t)
+		const caller = "profile-resumer-aaaa-bbbb-cccc-111111111111"
+		const target = "profile-resume-target-bbbb-cccc-222222222222"
+		f.HaveConvWithTitle(caller, "profile-resumer")
+		require.NoError(t, db.GrantAgentPermission(caller, agentd.PermAgentResume, "test"))
+
+		cwd, err := filepath.EvalSymlinks(t.TempDir())
+		require.NoError(t, err)
+		writeRoot, err := filepath.EvalSymlinks(t.TempDir())
+		require.NoError(t, err)
+		f.HaveConvWithTitle(target, "offline-target")
+		f.HaveAliveSession(target, "spwn-profile-resume", "tclaude-profile-resume", cwd)
+		f.MarkOffline("tclaude-profile-resume")
+		setEffectiveSandboxWriteRoot(t, target, writeRoot)
+
+		challenge := decodeWriteProofChallenge(t, agentReq(t, f, caller, http.MethodPost,
+			"/v1/agent/"+url.PathEscape(target)+"/resume", nil))
+		assert.ElementsMatch(t, []string{cwd, writeRoot}, challenge.WriteProof.Dirs)
+	})
 }

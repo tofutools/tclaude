@@ -397,6 +397,43 @@ type resumeGrant struct {
 	SkipOnline bool
 }
 
+type effectiveSandboxChangedError struct{ err error }
+
+func (e *effectiveSandboxChangedError) Error() string { return e.err.Error() }
+func (e *effectiveSandboxChangedError) Unwrap() error { return e.err }
+
+func writeEffectiveSandboxLoadError(w http.ResponseWriter, err error) {
+	var changed *effectiveSandboxChangedError
+	if errors.As(err, &changed) {
+		writeError(w, http.StatusConflict, "sandbox_profile_changed", changed.Error())
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "io", "load effective sandbox snapshot: "+err.Error())
+}
+
+// effectiveSandboxWriteDirsForConv loads and revalidates the immutable policy
+// a lifecycle relaunch will preserve, returning every custom write root that
+// must participate in the caller's write-proof challenge. Resolving this set
+// before the challenge keeps clone/reincarnate/resume from turning a preserved
+// profile into an unproved writable proxy.
+func effectiveSandboxWriteDirsForConv(convID string) (*sandboxpolicy.Snapshot, []string, error) {
+	snapshot, err := db.AgentEffectiveSandboxConfigForConv(convID)
+	if err != nil || snapshot == nil {
+		return snapshot, nil, err
+	}
+	validated, err := sandboxpolicy.RevalidateSnapshot(*snapshot)
+	if err != nil {
+		return nil, nil, &effectiveSandboxChangedError{err: err}
+	}
+	writeDirs := make([]string, 0, len(validated.Effective.Filesystem))
+	for _, grant := range validated.Effective.Filesystem {
+		if grant.Access == sandboxpolicy.AccessWrite {
+			writeDirs = appendUniqueDirs(writeDirs, grant.Path)
+		}
+	}
+	return &validated, writeDirs, nil
+}
+
 func memberConvIDs(members []*db.AgentGroupMember) []string {
 	ids := make([]string, 0, len(members))
 	for _, member := range members {
@@ -431,18 +468,10 @@ func requireResumeWriteProofs(w http.ResponseWriter, caller, token string, convI
 			continue
 		}
 		sandboxMode := sandboxForHarness(harnessName)
-		snapshot, err := db.AgentEffectiveSandboxConfigForConv(convID)
+		_, profileWriteDirs, err := effectiveSandboxWriteDirsForConv(convID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", "load effective sandbox snapshot: "+err.Error())
+			writeEffectiveSandboxLoadError(w, err)
 			return nil, "", nil, false
-		}
-		var profileWriteDirs []string
-		if snapshot != nil {
-			for _, profileGrant := range snapshot.Effective.Filesystem {
-				if profileGrant.Access == sandboxpolicy.AccessWrite {
-					profileWriteDirs = append(profileWriteDirs, profileGrant.Path)
-				}
-			}
 		}
 		if !childSandboxGrantsDirWrite(harnessName, sandboxMode) && len(profileWriteDirs) == 0 {
 			continue

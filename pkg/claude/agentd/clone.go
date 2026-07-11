@@ -515,6 +515,11 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm string, b
 	cwd := oldSess.Cwd
 	var proofDirs []string
 	var proofToken string
+	_, profileWriteDirs, snapshotErr := effectiveSandboxWriteDirsForConv(target)
+	if snapshotErr != nil {
+		writeEffectiveSandboxLoadError(w, snapshotErr)
+		return
+	}
 	srcHarness := harnessForConv(target).Name
 	cloneSandbox := sandboxForHarness(srcHarness)
 	codexGitCommonDir, gerr := spawnGitCommonDir(srcHarness, cloneSandbox, cwd)
@@ -545,8 +550,9 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm string, b
 	// including repository roots added by the managed sandbox. Inheriting cwd
 	// alone is not an exemption: a newly installed profile may grant a broader
 	// sibling-worktree container than the source session held.
-	if !isHumanCloneCaller(caller) && childSandboxGrantsDirWrite(srcHarness, cloneSandbox) {
+	if !isHumanCloneCaller(caller) && (childSandboxGrantsDirWrite(srcHarness, cloneSandbox) || len(profileWriteDirs) > 0) {
 		dirs := appendUniqueDirs([]string{cwd}, gitWriteDirs...)
+		dirs = appendUniqueDirs(dirs, profileWriteDirs...)
 		if len(dirs) > 0 {
 			proofed, ok := requireDirWriteProof(w, caller, body.WriteProofToken, dirs)
 			if !ok {
