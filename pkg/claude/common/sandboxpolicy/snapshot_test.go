@@ -48,14 +48,20 @@ func TestRequireContainedUsesPathCoverageAccessAndExactEnvironment(t *testing.T)
 		require.NoError(t, err)
 		return NewSnapshot(effective, nil)
 	}
-	parent := makeSnapshot([]FilesystemGrant{{Path: root, Access: AccessWrite}}, []EnvironmentEntry{{Name: "SAME", Value: "literal"}})
-	child := makeSnapshot([]FilesystemGrant{{Path: childDir, Access: AccessRead}}, []EnvironmentEntry{{Name: "SAME", Value: "literal"}})
-	require.NoError(t, RequireContained(parent, child))
-
-	stronger := makeSnapshot([]FilesystemGrant{{Path: root, Access: AccessRead}}, nil)
-	require.ErrorContains(t, RequireContained(stronger, parent), "filesystem write grant")
-	changedEnv := makeSnapshot(nil, []EnvironmentEntry{{Name: "SAME", Value: "changed"}})
-	require.ErrorContains(t, RequireContained(parent, changedEnv), "new or changed")
+	parentWrite := makeSnapshot([]FilesystemGrant{{Path: root, Access: AccessWrite}}, []EnvironmentEntry{{Name: "SAME", Value: "literal"}})
+	t.Run("parent write ancestor covers child read descendant", func(t *testing.T) {
+		childRead := makeSnapshot([]FilesystemGrant{{Path: childDir, Access: AccessRead}}, []EnvironmentEntry{{Name: "SAME", Value: "literal"}})
+		require.NoError(t, RequireContained(parentWrite, childRead))
+	})
+	t.Run("parent read does not cover child write", func(t *testing.T) {
+		parentRead := makeSnapshot([]FilesystemGrant{{Path: root, Access: AccessRead}}, nil)
+		childWrite := makeSnapshot([]FilesystemGrant{{Path: childDir, Access: AccessWrite}}, nil)
+		require.ErrorContains(t, RequireContained(parentRead, childWrite), "filesystem write grant")
+	})
+	t.Run("environment values must match exactly", func(t *testing.T) {
+		changedEnv := makeSnapshot(nil, []EnvironmentEntry{{Name: "SAME", Value: "changed"}})
+		require.ErrorContains(t, RequireContained(parentWrite, changedEnv), "new or changed")
+	})
 }
 
 func TestRevalidateSnapshotRejectsFilesystemRetarget(t *testing.T) {
