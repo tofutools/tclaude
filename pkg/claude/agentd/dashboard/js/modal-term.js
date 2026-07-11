@@ -24,6 +24,7 @@
 import { $ } from './helpers.js';
 import { confirmModal } from './refresh.js';
 import { openTerminalPane } from './terminals-tab.js';
+import { attachTerminalInteractions } from './terminal-interactions.js';
 
 let term = null;
 let fitAddon = null;
@@ -89,6 +90,13 @@ export function openTermModal({ wsPath, label, hideConv: hc }) {
     fitAddon = new FitAddon.FitAddon();
     term.loadAddon(fitAddon);
     term.open($('#term-session-xterm'));
+    attachTerminalInteractions({
+      term,
+      host: $('#term-session-xterm'),
+      copyButton: $('#term-session-copy'),
+      setStatus,
+      baseStatus: () => ws && ws.readyState === WebSocket.OPEN ? 'connected' : 'disconnected',
+    });
     // Keystrokes go over the wire as binary frames — never as a text
     // frame — so the server's resize-control-message check (which
     // only inspects TextMessage frames) can never misinterpret typed

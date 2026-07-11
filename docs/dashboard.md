@@ -550,6 +550,17 @@ rules may suppress it. Browsers supply the confirmation text, so it may refer
 generically to unsaved changes rather than naming the open terminal. Closing
 the last pane removes the guard; an idle dashboard never prompts.
 
+Web terminals support the same everyday interactions as native terminal
+windows. Drag across output to select it (use **Shift-drag** when tmux or the
+running TUI has captured the mouse), then press **Ctrl/⌘-Shift-C** or click
+**Copy**. HTTP(S) links open with **Ctrl/⌘-click**; requiring the modifier keeps
+ordinary terminal clicks available to the running program. Pasting a PNG, JPEG,
+or WebP clipboard image uploads it to a bounded temporary directory on the
+agentd host and pastes that host-side path into Claude Code or Codex as an image
+attachment. This also works through remote dashboard access—the image bytes
+come from the browser rather than agentd's OS clipboard. Plain-text paste is
+unchanged.
+
 The **Window focus** field also holds a **set the `tclaude:<id>` window/tab
 title** toggle (`focus.window_title`, on by default). tclaude normally stamps
 a `tclaude:<id>` title on each agent's terminal so it can find that window

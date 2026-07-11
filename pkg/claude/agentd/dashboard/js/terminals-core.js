@@ -14,10 +14,12 @@
 // their socket keeps writing into the off-screen xterm buffer, so switching to
 // a pane (or back to the tab) shows the up-to-date terminal.
 //
-// Terminal / FitAddon are globals from the vendored classic xterm scripts
+// Terminal / FitAddon / WebLinksAddon are globals from the vendored classic xterm scripts
 // loaded before the module graph (both dashboard.html and terminals.html load
 // them). The core imports nothing from the dashboard SPA, so the standalone
 // page stays free of dashboard.css / helpers.js.
+
+import { attachTerminalInteractions } from './terminal-interactions.js';
 
 const THEME = {
   background: '#0d1117', foreground: '#c9d1d9', cursor: '#c9d1d9',
@@ -206,6 +208,11 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
 
     header.append(titleEl, statusEl, reconnectBtn);
 
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'mux-btn';
+    copyBtn.textContent = 'Copy';
+    header.append(copyBtn);
+
     // Pop-out is meaningless in a solo tab (it IS the popped-out view).
     let popBtn = null;
     if (!solo) {
@@ -231,7 +238,12 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
     term.loadAddon(fitAddon);
     term.open(host);
 
-    const p = { key, label, seed, term, fitAddon, ws: null, wrap, statusEl, reconnectBtn, tab: null, ro: null };
+    const p = { key, label, seed, term, fitAddon, ws: null, wrap, statusEl, reconnectBtn, copyBtn, tab: null, ro: null, interactions: null };
+
+    p.interactions = attachTerminalInteractions({
+      term, host, copyButton: copyBtn, setStatus: (text) => setStatus(p, text),
+      baseStatus: () => p.ws && p.ws.readyState === WebSocket.OPEN ? 'connected' : 'disconnected',
+    });
 
     // Keystrokes go over the wire as binary frames — never text — so the
     // server's resize-control check (which only parses TextMessage frames) can
@@ -302,6 +314,7 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
     closeSocket(p);
     const detached = (opts && opts.skipDetach) ? null : hideOnDetach(p);
     if (p.ro) { try { p.ro.disconnect(); } catch (_) { /* already gone */ } }
+    if (p.interactions) { try { p.interactions.dispose(); } catch (_) { /* already disposed */ } }
     try { p.term.dispose(); } catch (_) { /* already disposed */ }
     p.wrap.remove();
     if (p.tab) p.tab.remove();

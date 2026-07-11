@@ -2677,11 +2677,14 @@ details[data-group-key][open] > summary .group-sandbox-profile {
 /* "⧉ tab" — hand this modal terminal to the dashboard's Terminals tab
    (js/terminals-tab.js). Themed dark: a bare <button> would render with
    the browser's white default. */
-.term-session-pop {
+.term-session-pop,
+.term-session-action {
   background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
   border-radius: 5px; padding: 3px 8px; font-size: 12px; cursor: pointer;
 }
-.term-session-pop:hover { background: #2d333b; border-color: #3d4451; }
+.term-session-pop:hover,
+.term-session-action:hover { background: #2d333b; border-color: #3d4451; }
+.term-session-action:disabled { opacity: 0.45; cursor: default; }
 .term-session-close {
   background: none; border: none; color: #7d8590; cursor: pointer;
   font-size: 20px; line-height: 1; padding: 0 4px;

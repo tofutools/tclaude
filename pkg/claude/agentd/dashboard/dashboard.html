@@ -1344,6 +1344,8 @@
     <div class="term-session-header">
       <h3 id="term-session-title">Terminal</h3>
       <span class="term-session-status" id="term-session-status"></span>
+      <button type="button" class="term-session-action" id="term-session-copy" disabled
+        title="Select terminal text first; use Shift+drag when the app captures the mouse">Copy</button>
       <button type="button" class="term-session-detach" id="term-session-detach"
         aria-label="Detach" title="Detach — drop this view now; the agent keeps running, reopen to reattach">Detach</button>
       <button type="button" class="term-session-pop" id="term-session-pop"
@@ -3207,9 +3209,10 @@
 
 <!-- Vendored xterm.js, classic (non-module) scripts so they run before
      dashboard.js's module graph (which includes modal-term.js) — they
-     attach plain globals (Terminal, FitAddon), not ES exports. -->
+     attach plain globals (Terminal, FitAddon, WebLinksAddon), not ES exports. -->
 <script src="/static/vendor/xterm/xterm.min.js"></script>
 <script src="/static/vendor/xterm/addon-fit.min.js"></script>
+<script src="/static/vendor/xterm/addon-web-links.min.js"></script>
 <script type="module" src="/static/js/dashboard.js"></script>
 </body>
 </html>
