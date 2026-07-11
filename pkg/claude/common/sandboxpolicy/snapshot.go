@@ -1,0 +1,141 @@
+package sandboxpolicy
+
+import (
+	"fmt"
+	"reflect"
+	"sort"
+	"time"
+)
+
+const SnapshotVersion = 1
+
+// AppliedProfile preserves stable registry provenance without making the
+// registry row authoritative after resolution. The effective values in the
+// snapshot are the launch authority; IDs and timestamps exist for audit only.
+type AppliedProfile struct {
+	Scope     Scope     `json:"scope"`
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// RequireContained rejects additive authority that the parent snapshot did
+// not already possess. Filesystem coverage is segment-aware: an ancestor
+// grant covers descendants, and write covers read. Environment entries must
+// match the parent's exact value; omission is a safe weakening.
+func RequireContained(parent, child Snapshot) error {
+	parent, err := RevalidateSnapshot(parent)
+	if err != nil {
+		return fmt.Errorf("parent sandbox snapshot: %w", err)
+	}
+	child, err = RevalidateSnapshot(child)
+	if err != nil {
+		return fmt.Errorf("child sandbox snapshot: %w", err)
+	}
+	for _, childGrant := range child.Effective.Filesystem {
+		covered := false
+		for _, parentGrant := range parent.Effective.Filesystem {
+			if !pathContainsOrEqual(parentGrant.Path, childGrant.Path) {
+				continue
+			}
+			if childGrant.Access == AccessWrite && parentGrant.Access != AccessWrite {
+				continue
+			}
+			covered = true
+			break
+		}
+		if !covered {
+			return fmt.Errorf("filesystem %s grant %q is not contained by the parent snapshot", childGrant.Access, childGrant.Path)
+		}
+	}
+	parentEnv := make(map[string]string, len(parent.Effective.Environment))
+	for _, entry := range parent.Effective.Environment {
+		parentEnv[entry.Name] = entry.Value
+	}
+	for _, entry := range child.Effective.Environment {
+		if value, ok := parentEnv[entry.Name]; !ok || value != entry.Value {
+			return fmt.Errorf("environment variable %q is new or changed from the parent snapshot", entry.Name)
+		}
+	}
+	return nil
+}
+
+// HasCapabilities reports whether a resolved snapshot adds any filesystem or
+// environment authority. It intentionally ignores provenance-only metadata.
+func HasCapabilities(snapshot Snapshot) bool {
+	return len(snapshot.Effective.Filesystem) > 0 || len(snapshot.Effective.Environment) > 0
+}
+
+// Snapshot is the immutable, versioned value passed across launch and
+// lifecycle boundaries. Version zero means no trusted snapshot was recorded
+// (for example, an agent created before snapshot support) and must not be
+// interpreted as an empty-but-authorized policy.
+type Snapshot struct {
+	Version   int              `json:"version"`
+	Effective EffectiveProfile `json:"effective"`
+	Applied   []AppliedProfile `json:"applied"`
+}
+
+// NewSnapshot freezes a resolver result and its stable registry provenance.
+// It clones every slice/map so later caller mutation cannot widen the launch.
+func NewSnapshot(effective EffectiveProfile, applied []AppliedProfile) Snapshot {
+	return Snapshot{
+		Version:   SnapshotVersion,
+		Effective: cloneEffectiveProfile(effective),
+		Applied:   append([]AppliedProfile(nil), applied...),
+	}
+}
+
+// EmptySnapshot is an explicit resolved policy with no additive profiles. It
+// differs from Snapshot{}: the latter is the fail-closed legacy/missing state.
+func EmptySnapshot() Snapshot {
+	effective, _ := Resolve(Scopes{})
+	return NewSnapshot(effective, nil)
+}
+
+// RevalidateSnapshot checks a frozen payload immediately before use. It
+// re-runs canonical path, protected-root, environment, and aggregate checks,
+// and rejects any path that now resolves to different bytes rather than
+// silently retargeting the stored authority after a rename/symlink swap.
+func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
+	if in.Version != SnapshotVersion {
+		return Snapshot{}, fmt.Errorf("unsupported sandbox snapshot version %d", in.Version)
+	}
+	normalized, err := Normalize(Profile{
+		Name:        "effective-sandbox-snapshot",
+		Filesystem:  in.Effective.Filesystem,
+		Environment: in.Effective.Environment,
+	})
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("revalidate effective sandbox snapshot: %w", err)
+	}
+	if !reflect.DeepEqual(normalized.Filesystem, in.Effective.Filesystem) {
+		return Snapshot{}, fmt.Errorf("effective sandbox filesystem changed since resolution")
+	}
+	if !reflect.DeepEqual(normalized.Environment, in.Effective.Environment) {
+		return Snapshot{}, fmt.Errorf("effective sandbox environment changed since resolution")
+	}
+	out := NewSnapshot(in.Effective, in.Applied)
+	return out, nil
+}
+
+func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
+	out := EffectiveProfile{
+		Filesystem:  append([]FilesystemGrant{}, in.Filesystem...),
+		Environment: append([]EnvironmentEntry{}, in.Environment...),
+		Provenance: ResolutionProvenance{
+			Applied:     append([]ProfileSource(nil), in.Provenance.Applied...),
+			Filesystem:  make(map[string][]ProfileSource, len(in.Provenance.Filesystem)),
+			Environment: make(map[string]ProfileSource, len(in.Provenance.Environment)),
+		},
+	}
+	for path, sources := range in.Provenance.Filesystem {
+		out.Provenance.Filesystem[path] = append([]ProfileSource(nil), sources...)
+	}
+	for name, source := range in.Provenance.Environment {
+		out.Provenance.Environment[name] = source
+	}
+	sort.Slice(out.Filesystem, func(i, j int) bool { return out.Filesystem[i].Path < out.Filesystem[j].Path })
+	sort.Slice(out.Environment, func(i, j int) bool { return out.Environment[i].Name < out.Environment[j].Name })
+	return out
+}

@@ -319,6 +319,11 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		return
 	}
 	cwd := oldSess.Cwd
+	effectiveSandbox, profileWriteDirs, snapshotErr := effectiveSandboxWriteDirsForConv(target)
+	if snapshotErr != nil {
+		writeEffectiveSandboxLoadError(w, snapshotErr)
+		return
+	}
 
 	// 2. Spawn a fresh tclaude session in the same cwd, carrying the
 	// predecessor's live model + reasoning effort (the JOH-36 follow-up:
@@ -356,8 +361,9 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		}
 		gitWriteDirs = harness.GitWorktreeWriteDirs(cwd, codexGitCommonDir, home)
 	}
-	if !isHumanCloneCaller(caller) && childSandboxGrantsDirWrite(oldSess.Harness, reincarnateSandbox) {
+	if !isHumanCloneCaller(caller) && (childSandboxGrantsDirWrite(oldSess.Harness, reincarnateSandbox) || len(profileWriteDirs) > 0) {
 		dirs := appendUniqueDirs([]string{cwd}, gitWriteDirs...)
+		dirs = appendUniqueDirs(dirs, profileWriteDirs...)
 		resolved, ok := requireDirWriteProof(w, caller, body.WriteProofToken, dirs)
 		if !ok {
 			return
@@ -395,6 +401,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		codexGitCommonDir = ""
 	}
 	if err := SpawnDetachedTclaudeNew(clcommon.SpawnArgs{
+		EffectiveSandbox:           effectiveSandbox,
 		Label:                      label,
 		Cwd:                        cwd,
 		CwdWriteProof:              proofToken,

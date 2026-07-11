@@ -3,8 +3,11 @@ package db
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"time"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 // pending_spawns is the durable record of a dashboard spawn whose conv-id
@@ -57,6 +60,10 @@ type PendingSpawn struct {
 	IsOwner             bool
 	PermissionOverrides map[string]string
 	ProcessCommandID    string
+	// EffectiveSandbox is the exact value snapshot authorized for the launch.
+	// A nil value is reserved for legacy rows created before snapshot support;
+	// recovery paths must not re-resolve mutable registry assignments for it.
+	EffectiveSandbox *sandboxpolicy.Snapshot
 	// CreatedAt is the RFC3339Nano spawn time, stamped by InsertPendingSpawn.
 	CreatedAt string
 }
@@ -76,15 +83,21 @@ func InsertPendingSpawn(p *PendingSpawn) error {
 	// agent_conversations (agentForConvExpr), the same boundary the v81 backfill
 	// used. Any ReplyToAgent/SpawnedByAgent preset on the struct is ignored — the
 	// conv columns are the source of truth, so the denormalised refs can't drift.
+	effectiveSandbox, err := marshalEffectiveSandboxSnapshot(p.EffectiveSandbox)
+	if err != nil {
+		return err
+	}
 	_, err = db.Exec(`
 		INSERT OR REPLACE INTO pending_spawns
 			(label, group_id, role, descr, name, initial_message, group_context,
 			 reply_to_conv, spawned_by_conv, reply_to_agent, spawned_by_agent,
-			 worktree_path, worktree_branch, is_owner, permission_overrides, process_command_id, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`, `+agentForConvExpr+`, ?, ?, ?, ?, ?, ?)`,
+			 worktree_path, worktree_branch, is_owner, permission_overrides, process_command_id,
+			 effective_sandbox_config, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`, `+agentForConvExpr+`, ?, ?, ?, ?, ?, ?, ?)`,
 		p.Label, p.GroupID, p.Role, p.Descr, p.Name, p.InitialMessage, p.GroupContext,
 		p.ReplyToConv, p.SpawnedByConv, p.ReplyToConv, p.SpawnedByConv,
 		p.WorktreePath, p.WorktreeBranch, boolToInt(p.IsOwner), marshalPermissionOverrides(p.PermissionOverrides), p.ProcessCommandID,
+		effectiveSandbox,
 		time.Now().Format(time.RFC3339Nano))
 	return err
 }
@@ -134,7 +147,8 @@ func GetPendingSpawn(label string) (*PendingSpawn, error) {
 	row := db.QueryRow(`
 		SELECT label, group_id, role, descr, name, initial_message, group_context,
 			reply_to_conv, spawned_by_conv, reply_to_agent, spawned_by_agent,
-			worktree_path, worktree_branch, is_owner, permission_overrides, process_command_id, created_at
+			worktree_path, worktree_branch, is_owner, permission_overrides, process_command_id,
+			effective_sandbox_config, created_at
 		FROM pending_spawns WHERE label = ?`, label)
 	p, err := scanPendingSpawn(row)
 	if err == sql.ErrNoRows {
@@ -153,7 +167,8 @@ func ListPendingSpawns() ([]*PendingSpawn, error) {
 	rows, err := db.Query(`
 		SELECT label, group_id, role, descr, name, initial_message, group_context,
 			reply_to_conv, spawned_by_conv, reply_to_agent, spawned_by_agent,
-			worktree_path, worktree_branch, is_owner, permission_overrides, process_command_id, created_at
+			worktree_path, worktree_branch, is_owner, permission_overrides, process_command_id,
+			effective_sandbox_config, created_at
 		FROM pending_spawns ORDER BY created_at ASC`)
 	if err != nil {
 		return nil, err
@@ -210,13 +225,53 @@ func scanPendingSpawn(s rowScanner) (*PendingSpawn, error) {
 	var p PendingSpawn
 	var isOwner int
 	var permOverrides string
+	var effectiveSandbox string
 	if err := s.Scan(&p.Label, &p.GroupID, &p.Role, &p.Descr, &p.Name,
 		&p.InitialMessage, &p.GroupContext, &p.ReplyToConv, &p.SpawnedByConv,
 		&p.ReplyToAgent, &p.SpawnedByAgent,
-		&p.WorktreePath, &p.WorktreeBranch, &isOwner, &permOverrides, &p.ProcessCommandID, &p.CreatedAt); err != nil {
+		&p.WorktreePath, &p.WorktreeBranch, &isOwner, &permOverrides, &p.ProcessCommandID,
+		&effectiveSandbox, &p.CreatedAt); err != nil {
 		return nil, err
 	}
 	p.IsOwner = isOwner != 0
 	p.PermissionOverrides = unmarshalPermissionOverrides(permOverrides)
+	var err error
+	p.EffectiveSandbox, err = unmarshalEffectiveSandboxSnapshot(effectiveSandbox)
+	if err != nil {
+		return nil, fmt.Errorf("decode pending spawn %q effective sandbox: %w", p.Label, err)
+	}
 	return &p, nil
+}
+
+func marshalEffectiveSandboxSnapshot(snapshot *sandboxpolicy.Snapshot) (string, error) {
+	if snapshot == nil {
+		return "", nil
+	}
+	if snapshot.Version != sandboxpolicy.SnapshotVersion {
+		return "", fmt.Errorf("unsupported sandbox snapshot version %d", snapshot.Version)
+	}
+	b, err := json.Marshal(snapshot)
+	if err != nil {
+		return "", fmt.Errorf("marshal effective sandbox snapshot: %w", err)
+	}
+	return string(b), nil
+}
+
+func unmarshalEffectiveSandboxSnapshot(raw string) (*sandboxpolicy.Snapshot, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	var snapshot sandboxpolicy.Snapshot
+	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+		return nil, err
+	}
+	if snapshot.Version != sandboxpolicy.SnapshotVersion {
+		return nil, fmt.Errorf("unsupported sandbox snapshot version %d", snapshot.Version)
+	}
+	// Frozen snapshots are bookkeeping data until a launch or lifecycle
+	// boundary consumes them. Do not touch the filesystem while scanning rows:
+	// a deleted worktree or temporary grant must not wedge unrelated session or
+	// pending-spawn listings. Every authority-use boundary revalidates the
+	// snapshot immediately before applying it.
+	return &snapshot, nil
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 func TestSandboxProfileCRUDRoundTrip(t *testing.T) {
@@ -203,4 +204,59 @@ func TestSandboxProfileAssignmentsSurviveRenameAndClearOnDelete(t *testing.T) {
 	require.ErrorIs(t, SetGlobalSandboxProfile("missing"), ErrSandboxProfileNotFound)
 	_, err = SetAgentGroupSandboxProfile("crew", "missing")
 	require.ErrorIs(t, err, ErrSandboxProfileNotFound)
+}
+
+func TestResolveEffectiveSandboxSnapshotComposesAtomicValuesAndStableProvenance(t *testing.T) {
+	setupTestDB(t)
+	d, err := Open()
+	require.NoError(t, err)
+	root := t.TempDir()
+	readDir := filepath.Join(root, "read")
+	writeDir := filepath.Join(root, "write")
+	require.NoError(t, os.Mkdir(readDir, 0o755))
+	require.NoError(t, os.Mkdir(writeDir, 0o755))
+	canonicalReadDir, err := filepath.EvalSymlinks(readDir)
+	require.NoError(t, err)
+	canonicalWriteDir, err := filepath.EvalSymlinks(writeDir)
+	require.NoError(t, err)
+
+	globalID, err := CreateSandboxProfile(&SandboxProfile{Name: "global", Filesystem: []SandboxFilesystemGrant{
+		{Path: writeDir, Access: sandboxpolicy.AccessRead},
+	}, Environment: []SandboxEnvironmentEntry{{Name: "TIER", Value: "global"}}})
+	require.NoError(t, err)
+	groupProfileID, err := CreateSandboxProfile(&SandboxProfile{Name: "group", Filesystem: []SandboxFilesystemGrant{
+		{Path: writeDir, Access: sandboxpolicy.AccessWrite}, {Path: readDir, Access: sandboxpolicy.AccessRead},
+	}, Environment: []SandboxEnvironmentEntry{{Name: "TIER", Value: "group"}}})
+	require.NoError(t, err)
+	explicitID, err := CreateSandboxProfile(&SandboxProfile{Name: "explicit", Environment: []SandboxEnvironmentEntry{
+		{Name: "TIER", Value: "explicit"},
+	}})
+	require.NoError(t, err)
+	mustExec(t, d, `INSERT INTO agent_groups (name, created_at) VALUES ('crew', 'now')`)
+	var groupID int64
+	require.NoError(t, d.QueryRow(`SELECT id FROM agent_groups WHERE name = 'crew'`).Scan(&groupID))
+	require.NoError(t, SetGlobalSandboxProfile("global"))
+	_, err = SetAgentGroupSandboxProfile("crew", "group")
+	require.NoError(t, err)
+
+	snapshot, err := ResolveEffectiveSandboxSnapshot(groupID, "explicit")
+	require.NoError(t, err)
+	assert.Equal(t, sandboxpolicy.SnapshotVersion, snapshot.Version)
+	assert.Equal(t, []sandboxpolicy.AppliedProfile{
+		{Scope: sandboxpolicy.ScopeGlobal, ID: globalID, Name: "global", UpdatedAt: snapshot.Applied[0].UpdatedAt},
+		{Scope: sandboxpolicy.ScopeGroup, ID: groupProfileID, Name: "group", UpdatedAt: snapshot.Applied[1].UpdatedAt},
+		{Scope: sandboxpolicy.ScopeExplicit, ID: explicitID, Name: "explicit", UpdatedAt: snapshot.Applied[2].UpdatedAt},
+	}, snapshot.Applied)
+	assert.Equal(t, []SandboxEnvironmentEntry{{Name: "TIER", Value: "explicit"}}, snapshot.Effective.Environment)
+	assert.Equal(t, []SandboxFilesystemGrant{
+		{Path: canonicalReadDir, Access: sandboxpolicy.AccessRead},
+		{Path: canonicalWriteDir, Access: sandboxpolicy.AccessWrite},
+	}, snapshot.Effective.Filesystem)
+
+	// The returned values remain authoritative after a registry edit.
+	groupProfile, err := GetSandboxProfile("group")
+	require.NoError(t, err)
+	groupProfile.Environment = []SandboxEnvironmentEntry{{Name: "TIER", Value: "mutated"}}
+	require.NoError(t, UpdateSandboxProfile(groupProfile))
+	assert.Equal(t, "explicit", snapshot.Effective.Environment[0].Value)
 }

@@ -17,6 +17,7 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -56,7 +57,8 @@ type SessionState struct {
 	// toRow/fromRow so the hook callback's load→mutate→save round-trip
 	// preserves it. Unlike Harness, "" is a genuine value (no sandbox) and
 	// is stored verbatim. The dashboard renders it as a per-agent badge.
-	SandboxMode string `json:"sandboxMode,omitempty"`
+	SandboxMode      string                  `json:"sandboxMode,omitempty"`
+	EffectiveSandbox *sandboxpolicy.Snapshot `json:"effectiveSandbox,omitempty"`
 	// AskUserQuestionTimeout is the resolved Claude Code AskUserQuestion
 	// idle-timeout (inherit|never|60s|5m|10m) the session was spawned under.
 	// Set once at spawn by `session new` and carried through toRow/fromRow so
@@ -174,6 +176,7 @@ func toRow(s *SessionState) *db.SessionRow {
 		LastHook:               s.LastHook,
 		Harness:                s.Harness,
 		SandboxMode:            s.SandboxMode,
+		EffectiveSandbox:       s.EffectiveSandbox,
 		AskUserQuestionTimeout: s.AskUserQuestionTimeout,
 	}
 }
@@ -195,6 +198,7 @@ func fromRow(r *db.SessionRow) *SessionState {
 		LastHook:               r.LastHook,
 		Harness:                r.Harness,
 		SandboxMode:            r.SandboxMode,
+		EffectiveSandbox:       r.EffectiveSandbox,
 		AskUserQuestionTimeout: r.AskUserQuestionTimeout,
 	}
 }

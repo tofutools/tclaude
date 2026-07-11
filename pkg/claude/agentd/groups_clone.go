@@ -94,9 +94,10 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 		return
 	}
 	type memberGrant struct {
-		commonDir string
-		writeDirs []string
-		cwd       string
+		commonDir        string
+		writeDirs        []string
+		profileWriteDirs []string
+		cwd              string
 		// skipOffline binds the proof-time liveness snapshot. A member that
 		// comes online later in the same request was not part of the proved
 		// launch set and must not be cloned without a fresh challenge.
@@ -115,12 +116,17 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 			}
 			harnessName := harnessForConv(member.ConvID).Name
 			sandboxMode := sandboxForHarness(harnessName)
+			_, profileWriteDirs, snapshotErr := effectiveSandboxWriteDirsForConv(member.ConvID)
+			if snapshotErr != nil {
+				writeEffectiveSandboxLoadError(w, snapshotErr)
+				return
+			}
 			commonDir, err := spawnGitCommonDir(harnessName, sandboxMode, sess.Cwd)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "io", err.Error())
 				return
 			}
-			grant := memberGrant{commonDir: commonDir, cwd: sess.Cwd}
+			grant := memberGrant{commonDir: commonDir, cwd: sess.Cwd, profileWriteDirs: profileWriteDirs}
 			if spawnUsesPinnedGitCommonDir(harnessName, sandboxMode) {
 				home, err := os.UserHomeDir()
 				if err != nil {
@@ -132,6 +138,7 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 			memberGrants[member.ConvID] = grant
 			rawDirs = appendUniqueDirs(rawDirs, sess.Cwd)
 			rawDirs = appendUniqueDirs(rawDirs, grant.writeDirs...)
+			rawDirs = appendUniqueDirs(rawDirs, grant.profileWriteDirs...)
 		}
 		if len(rawDirs) > 0 {
 			resolved, ok := requireDirWriteProof(w, caller, body.WriteProofToken, rawDirs)
@@ -281,6 +288,10 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 				Label:   label,
 				Error:   "add to new group: " + err.Error(),
 			})
+			continue
+		}
+		if err := inheritEffectiveSandboxSnapshot(m.ConvID, newConv); err != nil {
+			results = append(results, memberResult{SrcConv: m.ConvID, NewConv: newConv, Title: newTitle, Label: label, Error: "persist sandbox snapshot: " + err.Error()})
 			continue
 		}
 		// Rename the clone to its computed title, materialising the

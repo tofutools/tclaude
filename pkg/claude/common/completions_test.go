@@ -15,8 +15,9 @@ import (
 // `sh -c` command string exactly as production does, round-trips byte-for-byte
 // as a SINGLE argument — no temp file needed, no character left unescaped.
 // Single-quote wrapping makes every byte literal (newlines, $, backticks, ;,
-// globs, …); the only special case is an embedded ' which the '\'' trick
-// closes/reopens around. So we feed the genuinely nasty cases through a real
+// globs, …); the only special case is an embedded single quote, escaped by
+// closing and reopening the single-quoted segment. So we feed the genuinely
+// nasty cases through a real
 // shell and confirm what comes back equals what went in.
 func TestShellQuoteArg_RoundTripThroughShell(t *testing.T) {
 	if runtime.GOOS == "windows" {
@@ -172,6 +173,13 @@ func TestBuildEnvExports_EmptyAdditional(t *testing.T) {
 	result := BuildEnvExports(map[string]string{})
 	// Should still export current environment (minus skipped vars)
 	assert.NotEmpty(t, result, "BuildEnvExports() with empty map should still export current environment")
+}
+
+func TestBuildEnvExports_StripsOperatorToken(t *testing.T) {
+	t.Setenv("TCLAUDE_HUMAN_TOKEN", "operator-secret")
+	result := BuildEnvExports(map[string]string{})
+	assert.NotContains(t, result, "TCLAUDE_HUMAN_TOKEN")
+	assert.NotContains(t, result, "operator-secret")
 }
 
 func TestIsValidUUID(t *testing.T) {

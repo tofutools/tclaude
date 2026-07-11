@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 // Stable agent identity (JOH-26).
@@ -453,6 +455,53 @@ func SetAgentInitialSpawnConfig(agentID, cfg string) error {
 	_, err = d.Exec(`UPDATE agents SET initial_spawn_config = ? WHERE agent_id = ?`,
 		cfg, agentID)
 	return err
+}
+
+// SetAgentEffectiveSandboxConfig records the immutable values authorized for
+// an actor's launch. Unlike initial_spawn_config, this snapshot is read by
+// lifecycle paths; registry names and IDs inside it are provenance only.
+func SetAgentEffectiveSandboxConfig(agentID string, snapshot *sandboxpolicy.Snapshot) error {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return errors.New("SetAgentEffectiveSandboxConfig: agent_id required")
+	}
+	raw, err := marshalEffectiveSandboxSnapshot(snapshot)
+	if err != nil {
+		return err
+	}
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`UPDATE agents SET effective_sandbox_config = ? WHERE agent_id = ?`, raw, agentID)
+	return err
+}
+
+// AgentEffectiveSandboxConfigForConv loads the actor-level launch snapshot for
+// a conversation generation. A nil result is the fail-closed legacy sentinel,
+// not an explicitly resolved empty policy.
+func AgentEffectiveSandboxConfigForConv(convID string) (*sandboxpolicy.Snapshot, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	var raw string
+	err = d.QueryRow(`
+		SELECT a.effective_sandbox_config
+		FROM agent_conversations ac
+		JOIN agents a ON a.agent_id = ac.agent_id
+		WHERE ac.conv_id = ?`, strings.TrimSpace(convID)).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	snapshot, err := unmarshalEffectiveSandboxSnapshot(raw)
+	if err != nil {
+		return nil, fmt.Errorf("decode agent effective sandbox for conversation %q: %w", convID, err)
+	}
+	return snapshot, nil
 }
 
 // SetAgentProcessCommand binds a spawned actor to the deterministic process

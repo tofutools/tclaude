@@ -70,6 +70,10 @@ type SpawnSpec struct {
 	// its managed permission-profile file for the same grants and ignores this
 	// field.
 	SandboxWriteDirs []string
+	// SandboxReadDirs are canonical additive read-only roots from an effective
+	// sandbox profile. Harness adapters must either render them or reject the
+	// launch before BuildCommand; silently dropping them is not allowed.
+	SandboxReadDirs []string
 	// AskUserQuestionTimeout is the per-session Claude Code AskUserQuestion
 	// idle-timeout override (`never|60s|5m|10m`), delivered as part of the SAME
 	// `--settings` payload as SandboxMode (both are settings.json overrides, and

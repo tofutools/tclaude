@@ -11,7 +11,7 @@ CREATE TABLE sessions (
 			auto_registered INTEGER NOT NULL DEFAULT 0,
 			created_at      TEXT NOT NULL,
 			updated_at      TEXT NOT NULL
-		, context_pct REAL NOT NULL DEFAULT 0, subagent_count INTEGER NOT NULL DEFAULT 0, last_hook TEXT NOT NULL DEFAULT '', tokens_input INTEGER NOT NULL DEFAULT 0, tokens_output INTEGER NOT NULL DEFAULT 0, context_window_size INTEGER NOT NULL DEFAULT 0, nudged_pct REAL NOT NULL DEFAULT 0, exit_reason TEXT, model TEXT NOT NULL DEFAULT '', effort_level TEXT NOT NULL DEFAULT '', pending_conv TEXT NOT NULL DEFAULT '', cost_usd REAL NOT NULL DEFAULT 0, model_id TEXT NOT NULL DEFAULT '', harness TEXT NOT NULL DEFAULT 'claude', sandbox_mode TEXT NOT NULL DEFAULT '', remote_control INTEGER NOT NULL DEFAULT 0, virtual_cost_usd REAL NOT NULL DEFAULT 0, agent_id TEXT NOT NULL DEFAULT '', last_statusline_json TEXT NOT NULL DEFAULT '', subagents_json TEXT NOT NULL DEFAULT '', ask_user_question_timeout TEXT NOT NULL DEFAULT '');
+		, context_pct REAL NOT NULL DEFAULT 0, subagent_count INTEGER NOT NULL DEFAULT 0, last_hook TEXT NOT NULL DEFAULT '', tokens_input INTEGER NOT NULL DEFAULT 0, tokens_output INTEGER NOT NULL DEFAULT 0, context_window_size INTEGER NOT NULL DEFAULT 0, nudged_pct REAL NOT NULL DEFAULT 0, exit_reason TEXT, model TEXT NOT NULL DEFAULT '', effort_level TEXT NOT NULL DEFAULT '', pending_conv TEXT NOT NULL DEFAULT '', cost_usd REAL NOT NULL DEFAULT 0, model_id TEXT NOT NULL DEFAULT '', harness TEXT NOT NULL DEFAULT 'claude', sandbox_mode TEXT NOT NULL DEFAULT '', remote_control INTEGER NOT NULL DEFAULT 0, virtual_cost_usd REAL NOT NULL DEFAULT 0, agent_id TEXT NOT NULL DEFAULT '', last_statusline_json TEXT NOT NULL DEFAULT '', subagents_json TEXT NOT NULL DEFAULT '', ask_user_question_timeout TEXT NOT NULL DEFAULT '', effective_sandbox_config TEXT NOT NULL DEFAULT '');
 
 CREATE INDEX idx_sessions_conv_id ON sessions(conv_id);
 
@@ -408,7 +408,7 @@ CREATE TABLE pending_spawns (
 			worktree_path   TEXT NOT NULL DEFAULT '',
 			worktree_branch TEXT NOT NULL DEFAULT '',
 			created_at      TEXT NOT NULL
-		, reply_to_agent TEXT NOT NULL DEFAULT '', spawned_by_agent TEXT NOT NULL DEFAULT '', is_owner INTEGER NOT NULL DEFAULT 0, permission_overrides TEXT NOT NULL DEFAULT '', process_command_id TEXT NOT NULL DEFAULT '');
+		, reply_to_agent TEXT NOT NULL DEFAULT '', spawned_by_agent TEXT NOT NULL DEFAULT '', is_owner INTEGER NOT NULL DEFAULT 0, permission_overrides TEXT NOT NULL DEFAULT '', process_command_id TEXT NOT NULL DEFAULT '', effective_sandbox_config TEXT NOT NULL DEFAULT '');
 
 CREATE UNIQUE INDEX idx_pending_spawns_process_command ON pending_spawns(process_command_id) WHERE process_command_id <> '';
 
@@ -492,7 +492,7 @@ CREATE TABLE agents (
 			retired_by      TEXT NOT NULL DEFAULT '',
 			retire_reason   TEXT NOT NULL DEFAULT '',
 			pending_name    TEXT NOT NULL DEFAULT ''
-		, retired_by_agent TEXT NOT NULL DEFAULT '', initial_spawn_config TEXT NOT NULL DEFAULT '', task_ref_url TEXT NOT NULL DEFAULT '', task_ref_label TEXT NOT NULL DEFAULT '', process_command_id TEXT NOT NULL DEFAULT '');
+		, retired_by_agent TEXT NOT NULL DEFAULT '', initial_spawn_config TEXT NOT NULL DEFAULT '', task_ref_url TEXT NOT NULL DEFAULT '', task_ref_label TEXT NOT NULL DEFAULT '', process_command_id TEXT NOT NULL DEFAULT '', effective_sandbox_config TEXT NOT NULL DEFAULT '');
 
 CREATE UNIQUE INDEX idx_agents_process_command ON agents(process_command_id) WHERE process_command_id <> '';
 

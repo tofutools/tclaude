@@ -270,6 +270,10 @@ func BuildEnvExports(additional map[string]string) string {
 		"TERMCAP":      true,
 		"COLUMNS":      true,
 		"LINES":        true,
+		// The operator token authenticates a human at the daemon boundary. It
+		// must never enter a harness or plain-shell pane, where an agent could
+		// reuse it to impersonate the operator.
+		"TCLAUDE_HUMAN_TOKEN": true,
 	}
 
 	var exports []string

@@ -17,6 +17,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/cronexpr"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/worktree"
 )
@@ -2417,6 +2418,42 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 		return
 	}
 
+	// Freeze the target policy once for the whole template run. A create-new
+	// group has no group assignment yet, so it composes the global tier only;
+	// reinforce resolves the existing target group's assignment as well. Every
+	// synchronous and delayed wave receives these exact bytes even if registry
+	// rows or assignments change while the choreography is in flight.
+	sandboxGroupID := int64(0)
+	if reinforce {
+		sandboxGroupID = spec.intoExisting.ID
+	}
+	effectiveSandbox, policyErr := db.ResolveEffectiveSandboxSnapshot(sandboxGroupID, "")
+	if policyErr != nil {
+		cleanupDirWriteProofMarkers(spec.proofToken, spec.proofDirs)
+		writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", policyErr.Error())
+		return
+	}
+	if spec.caller != "" {
+		parentSnapshot, err := db.AgentEffectiveSandboxConfigForConv(spec.caller)
+		if err != nil {
+			cleanupDirWriteProofMarkers(spec.proofToken, spec.proofDirs)
+			writeError(w, http.StatusInternalServerError, "io", "load parent sandbox snapshot: "+err.Error())
+			return
+		}
+		if parentSnapshot == nil {
+			if sandboxpolicy.HasCapabilities(effectiveSandbox) {
+				cleanupDirWriteProofMarkers(spec.proofToken, spec.proofDirs)
+				writeError(w, http.StatusForbidden, "sandbox_profile_restricted",
+					"this parent predates effective sandbox snapshots and may not inherit custom capabilities; relaunch it under current policy or ask the human to instantiate the template")
+				return
+			}
+		} else if err := sandboxpolicy.RequireContained(*parentSnapshot, effectiveSandbox); err != nil {
+			cleanupDirWriteProofMarkers(spec.proofToken, spec.proofDirs)
+			writeError(w, http.StatusForbidden, "sandbox_profile_restricted", err.Error())
+			return
+		}
+	}
+
 	granter := granterLabel(spec.caller)
 
 	var g *db.AgentGroup
@@ -2546,7 +2583,8 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 	// group.
 	wr := spawnWaveAgents(g, waves[0].Agents, procPhases, groupContext, spec.cwd,
 		spec.worktreePath, spec.worktreeBranch, spec.perAgentWorktrees,
-		spec.caller, granter, tmpl.Name, nil, reinforce, spec.proofToken, spec.proofDirs, spec.codexGitCommonDir)
+		spec.caller, granter, tmpl.Name, nil, reinforce, spec.proofToken, spec.proofDirs, spec.codexGitCommonDir,
+		&effectiveSandbox)
 
 	resp := map[string]any{
 		"group":    spec.groupName,
@@ -2579,6 +2617,7 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 			GroupName:         spec.groupName,
 			TemplateName:      tmpl.Name,
 			TemplateID:        tmpl.ID,
+			EffectiveSandbox:  &effectiveSandbox,
 			GroupContext:      groupContext,
 			Cwd:               spec.cwd,
 			WorktreePath:      spec.worktreePath,

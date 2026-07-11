@@ -210,15 +210,17 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 	// not coalesced back to "claude" by the DB layer (JOH-218).
 	pid := session.ParsePIDFromTmux(tmuxSession)
 	state := &session.SessionState{
-		ID:          sessionID,
-		TmuxSession: tmuxSession,
-		PID:         pid,
-		Cwd:         rc.ProjectPath,
-		ConvID:      rc.ConvID,
-		Status:      session.StatusIdle,
-		Harness:     h.Name,
-		Created:     time.Now(),
-		Updated:     time.Now(),
+		ID:               sessionID,
+		TmuxSession:      tmuxSession,
+		PID:              pid,
+		Cwd:              rc.ProjectPath,
+		ConvID:           rc.ConvID,
+		Status:           session.StatusIdle,
+		Harness:          h.Name,
+		SandboxMode:      resumeSandboxMode(rc.ConvID),
+		EffectiveSandbox: resumeEffectiveSandboxForState(rc.ConvID),
+		Created:          time.Now(),
+		Updated:          time.Now(),
 	}
 
 	if err := session.SaveSessionState(state); err != nil {

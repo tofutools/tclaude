@@ -1,12 +1,20 @@
 package conv
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // resumeLaunchCmd injects the configured CLAUDE_CODE_RESUME_* overrides so the
@@ -24,9 +32,135 @@ func withResumeConfig(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir) // os.UserHomeDir reads this on Windows
+	db.ResetForTest()
 	cfg := config.DefaultConfig()
 	cfg.ClaudeResume = &config.ClaudeResumeConfig{ThresholdMinutes: new(config.ResumeThresholdMinutesSuppress)}
 	require.NoError(t, config.Save(cfg))
+}
+
+func TestResumeLaunchCmd_AppliesActorSnapshotAndStripsOperatorToken(t *testing.T) {
+	setupTestDB(t)
+	t.Setenv("TCLAUDE_HUMAN_TOKEN", "must-not-reach-pane")
+	readDir := t.TempDir()
+	writeDir := t.TempDir()
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Global: &sandboxpolicy.Profile{
+		Name: "resume-policy",
+		Filesystem: []sandboxpolicy.FilesystemGrant{
+			{Path: readDir, Access: sandboxpolicy.AccessRead},
+			{Path: writeDir, Access: sandboxpolicy.AccessWrite},
+		},
+		Environment: []sandboxpolicy.EnvironmentEntry{{Name: "LITERAL", Value: "spaces $(touch nope); `echo nope`"}},
+	}})
+	require.NoError(t, err)
+	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
+	agentID, _, err := db.EnsureAgentForConv(resumeConvClaude, "test")
+	require.NoError(t, err)
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &snapshot))
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "source-session", ConvID: resumeConvClaude, Harness: harness.DefaultName,
+		SandboxMode: harness.ClaudeSandboxOn,
+	}))
+
+	cmd, _, err := resumeLaunchCmd(harness.DefaultName, resumeConvClaude[:8], resumeConvClaude, nil)
+	require.NoError(t, err)
+	assert.Contains(t, cmd, "LITERAL=")
+	assert.Contains(t, cmd, "$(touch nope)")
+	assert.Contains(t, cmd, readDir)
+	assert.Contains(t, cmd, writeDir)
+	assert.Contains(t, cmd, "allowRead")
+	assert.Contains(t, cmd, "allowWrite")
+	assert.NotContains(t, cmd, "TCLAUDE_HUMAN_TOKEN")
+	assert.NotContains(t, cmd, "must-not-reach-pane")
+}
+
+func TestResumeLaunchCmd_CodexFilesystemRequiresManagedProfile(t *testing.T) {
+	setupTestDB(t)
+	writeDir := t.TempDir()
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Global: &sandboxpolicy.Profile{
+		Name: "resume-policy", Filesystem: []sandboxpolicy.FilesystemGrant{{Path: writeDir, Access: sandboxpolicy.AccessWrite}},
+	}})
+	require.NoError(t, err)
+	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
+	agentID, _, err := db.EnsureAgentForConv(resumeConvCodex, "test")
+	require.NoError(t, err)
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &snapshot))
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "source-session", ConvID: resumeConvCodex, Harness: harness.CodexName,
+		SandboxMode: harness.SandboxReadOnly,
+	}))
+
+	_, _, err = resumeLaunchCmd(harness.CodexName, resumeConvCodex[:8], resumeConvCodex, nil)
+	require.ErrorContains(t, err, "unsupported_sandbox_profile_filesystem")
+
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "source-session", ConvID: resumeConvCodex, Harness: harness.CodexName,
+		SandboxMode: harness.SandboxManagedProfile,
+	}))
+	cmd, _, err := resumeLaunchCmd(harness.CodexName, resumeConvCodex[:8], resumeConvCodex, nil)
+	require.NoError(t, err)
+	assert.Contains(t, cmd, " -p tclaude-agent-")
+	assert.Contains(t, cmd, "; rm -f -- ")
+	assert.True(t, strings.Contains(cmd, "codex resume"), cmd)
+}
+
+func TestResumeLaunchCmd_CodexManagedProfileIncludesGitWorktreeGrants(t *testing.T) {
+	setupTestDB(t)
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("git unavailable: %v", err)
+	}
+	home := t.TempDir()
+	codexHome := filepath.Join(home, ".codex")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("CODEX_HOME", codexHome)
+	repo := filepath.Join(t.TempDir(), "repo")
+	cmd := exec.Command("git", "init", "-q", repo)
+	require.NoError(t, cmd.Run())
+
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "source-session", ConvID: resumeConvCodex, Harness: harness.CodexName,
+		Cwd: repo, SandboxMode: harness.SandboxManagedProfile,
+	}))
+	launch, _, err := resumeLaunchCmd(harness.CodexName, resumeConvCodex[:8], resumeConvCodex, nil)
+	require.NoError(t, err)
+	assert.Contains(t, launch, " -p tclaude-agent-")
+
+	profiles, err := filepath.Glob(filepath.Join(codexHome, "tclaude-agent-*.config.toml"))
+	require.NoError(t, err)
+	require.Len(t, profiles, 1)
+	content, err := os.ReadFile(profiles[0])
+	require.NoError(t, err)
+	commonDir, err := harness.GitCommonDir(repo)
+	require.NoError(t, err)
+	for _, dir := range harness.GitWorktreeWriteDirs(repo, commonDir, home) {
+		assert.Contains(t, string(content), strconv.Quote(dir)+" = \"write\"")
+	}
+}
+
+func TestResumeLaunchCmd_ClaudeSandboxIncludesGitWorktreeGrants(t *testing.T) {
+	setupTestDB(t)
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("git unavailable: %v", err)
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	repo := filepath.Join(t.TempDir(), "repo")
+	cmd := exec.Command("git", "init", "-q", repo)
+	require.NoError(t, cmd.Run())
+
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "source-session", ConvID: resumeConvClaude, Harness: harness.DefaultName,
+		Cwd: repo, SandboxMode: harness.ClaudeSandboxOn,
+	}))
+	launch, _, err := resumeLaunchCmd(harness.DefaultName, resumeConvClaude[:8], resumeConvClaude, nil)
+	require.NoError(t, err)
+	commonDir, err := harness.GitCommonDir(repo)
+	require.NoError(t, err)
+	for _, dir := range harness.GitWorktreeWriteDirs(repo, commonDir, home) {
+		assert.Contains(t, launch, dir)
+	}
+	assert.Contains(t, launch, "allowWrite")
 }
 
 // A Claude resume carries the configured threshold as an exported env var, so
@@ -61,6 +195,7 @@ func TestResumeLaunchCmd_NoOverrideWhenUnconfigured(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
+	db.ResetForTest()
 	require.NoError(t, config.Save(config.DefaultConfig())) // no claude_resume block
 
 	cmd, _, err := resumeLaunchCmd("claude", resumeConvClaude[:8], resumeConvClaude, nil)

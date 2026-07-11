@@ -13,6 +13,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/claude/worktree"
 )
@@ -107,7 +108,8 @@ func partitionWaves(agents []db.GroupTemplateAgent) []db.WaveGroup {
 func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process []db.ProcessPhase,
 	groupContext, cwd, sharedWorktreePath, sharedWorktreeBranch string, perAgentWorktrees *db.WavePerAgentWorktrees,
 	caller, granter, templateName string, existing map[string]string, suppressOwner bool,
-	proofToken string, proofDirs []string, codexGitCommonDir string) waveSpawnResult {
+	proofToken string, proofDirs []string, codexGitCommonDir string,
+	effectiveSandbox *sandboxpolicy.Snapshot) waveSpawnResult {
 	wr := waveSpawnResult{
 		Results:      []instantiateAgentResult{},
 		SpawnedConvs: map[string]string{},
@@ -206,6 +208,7 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			spawnCodexGitCommonDir = codexGitCommonDir
 		}
 		outcome, fail := executeSpawn(g, spawnParams{
+			EffectiveSandbox:        effectiveSandbox,
 			Name:                    finalName,
 			Role:                    a.Role,
 			Descr:                   a.Descr,
@@ -649,7 +652,7 @@ func advanceChoreographyIfReady(c *db.WaveChoreography) {
 	wr := spawnWaveAgents(g, wave.Agents, c.Process, c.GroupContext, c.Cwd,
 		c.WorktreePath, c.WorktreeBranch, c.PerAgentWorktrees,
 		c.Caller, c.Granter, c.TemplateName, groupMemberNames(g), c.SuppressOwner,
-		c.ProofToken, c.ProofDirs, c.CodexGitCommonDir)
+		c.ProofToken, c.ProofDirs, c.CodexGitCommonDir, effectiveSandboxForWave(c))
 
 	// Accumulate the spawns for the final work-pattern routing.
 	maps.Copy(c.SpawnedConvs, wr.SpawnedConvs)
@@ -696,6 +699,17 @@ func advanceChoreographyIfReady(c *db.WaveChoreography) {
 	if err := db.UpsertWaveChoreography(c); err != nil {
 		slog.Warn("wave runner: persist advance failed", "group", c.GroupName, "error", err)
 	}
+}
+
+// effectiveSandboxForWave gives pre-snapshot choreography rows an explicit
+// empty policy rather than resolving mutable assignments at run time. New rows
+// always carry a snapshot; the fallback is a safe compatibility weakening.
+func effectiveSandboxForWave(c *db.WaveChoreography) *sandboxpolicy.Snapshot {
+	if c.EffectiveSandbox != nil {
+		return c.EffectiveSandbox
+	}
+	empty := sandboxpolicy.EmptySnapshot()
+	return &empty
 }
 
 // waveConvDead reports whether a session status means the member is done/dead

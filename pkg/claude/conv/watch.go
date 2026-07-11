@@ -18,6 +18,7 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
 	"github.com/tofutools/tclaude/pkg/claude/common/tuistyle"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -2218,16 +2219,107 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		return "", nil, fmt.Errorf("cannot resume conversation %s: %w", convID, err)
 	}
 	resumeEnv := map[string]string{"TCLAUDE_SESSION_ID": sessionID}
+	effectiveSandbox, err := db.AgentEffectiveSandboxConfigForConv(convID)
+	if err != nil {
+		return "", nil, fmt.Errorf("load effective sandbox snapshot for conversation %s: %w", convID, err)
+	}
+	var readDirs, writeDirs []string
+	if effectiveSandbox != nil {
+		validated, err := sandboxpolicy.RevalidateSnapshot(*effectiveSandbox)
+		if err != nil {
+			return "", nil, fmt.Errorf("sandbox_profile_changed: %w", err)
+		}
+		for _, entry := range validated.Effective.Environment {
+			resumeEnv[entry.Name] = entry.Value
+		}
+		for _, grant := range validated.Effective.Filesystem {
+			if grant.Access == sandboxpolicy.AccessWrite {
+				writeDirs = append(writeDirs, grant.Path)
+			} else {
+				readDirs = append(readDirs, grant.Path)
+			}
+		}
+	}
 	// Mirror the spawn path: keep Claude Code's "Resume from summary" chooser
 	// from interrupting this resume. No-op for non-Claude harnesses. See
 	// session.ApplyClaudeResumeEnv.
 	session.ApplyClaudeResumeEnv(h, resumeEnv)
-	cmd := h.Spawn.BuildCommand(harness.SpawnSpec{
-		EnvExports: clcommon.BuildEnvExports(resumeEnv),
-		ResumeID:   convID,
-		ExtraArgs:  extraArgs,
-	})
+	sandboxMode, resumeCwd := resumeSandboxState(convID)
+	if (h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile) ||
+		(h.Name == harness.DefaultName && sandboxMode != harness.ClaudeSandboxOff) {
+		gitWriteDirs, err := resumeGitWorktreeWriteDirs(resumeCwd)
+		if err != nil {
+			return "", nil, fmt.Errorf("resolve sandboxed resume Git grants: %w", err)
+		}
+		writeDirs = append(gitWriteDirs, writeDirs...)
+	}
+	spec := harness.SpawnSpec{
+		EnvExports:       clcommon.BuildEnvExports(resumeEnv),
+		ResumeID:         convID,
+		ExtraArgs:        extraArgs,
+		SandboxMode:      sandboxMode,
+		SandboxReadDirs:  readDirs,
+		SandboxWriteDirs: writeDirs,
+	}
+	cleanupPath := ""
+	if h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile {
+		profileName, profilePath, err := harness.EnsureCodexAgentLaunchProfileWithGrants(readDirs, writeDirs, session.GenerateSessionID())
+		if err != nil {
+			return "", nil, fmt.Errorf("prepare managed Codex resume profile: %w", err)
+		}
+		spec.SandboxMode = ""
+		spec.PermissionProfile = profileName
+		cleanupPath = profilePath
+	} else if h.Name == harness.CodexName && len(readDirs)+len(writeDirs) > 0 {
+		return "", nil, fmt.Errorf("unsupported_sandbox_profile_filesystem: Codex additive filesystem grants require sandbox %s", harness.SandboxManagedProfile)
+	}
+	cmd := h.Spawn.BuildCommand(spec)
+	if cleanupPath != "" {
+		cmd = resumeCommandWithFileCleanup(cmd, cleanupPath)
+	}
 	return cmd, h, nil
+}
+
+func resumeSandboxState(convID string) (mode, cwd string) {
+	row, err := db.FindSessionByConvID(convID)
+	if err != nil || row == nil {
+		return "", ""
+	}
+	return strings.TrimSpace(row.SandboxMode), strings.TrimSpace(row.Cwd)
+}
+
+func resumeSandboxMode(convID string) string {
+	mode, _ := resumeSandboxState(convID)
+	return mode
+}
+
+func resumeGitWorktreeWriteDirs(cwd string) ([]string, error) {
+	commonDir, err := harness.GitCommonDir(cwd)
+	if err != nil {
+		return nil, err
+	}
+	if commonDir == "" {
+		return nil, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	return harness.GitWorktreeWriteDirs(cwd, commonDir, home), nil
+}
+
+func resumeEffectiveSandboxForState(convID string) *sandboxpolicy.Snapshot {
+	snapshot, err := db.AgentEffectiveSandboxConfigForConv(convID)
+	if err != nil {
+		return nil
+	}
+	return snapshot
+}
+
+func resumeCommandWithFileCleanup(cmd, path string) string {
+	const statusVar = "tclaude_resume_status"
+	return cmd + "; " + statusVar + "=$?; rm -f -- " + clcommon.ShellQuoteArg(path) +
+		"; exit $" + statusVar
 }
 
 func createSessionForConv(conv *SessionEntry) error {
@@ -2300,15 +2392,17 @@ func createSessionForConv(conv *SessionEntry) error {
 	// coalesced back to "claude" — closes the inline TODO(JOH-155) for the
 	// watch-resume path now that codex resume lands here.
 	state := &session.SessionState{
-		ID:          sessionID,
-		TmuxSession: tmuxSession,
-		PID:         pid,
-		Cwd:         cwd,
-		ConvID:      conv.SessionID,
-		Status:      session.StatusIdle,
-		Harness:     h.Name,
-		Created:     time.Now(),
-		Updated:     time.Now(),
+		ID:               sessionID,
+		TmuxSession:      tmuxSession,
+		PID:              pid,
+		Cwd:              cwd,
+		ConvID:           conv.SessionID,
+		Status:           session.StatusIdle,
+		Harness:          h.Name,
+		SandboxMode:      resumeSandboxMode(conv.SessionID),
+		EffectiveSandbox: resumeEffectiveSandboxForState(conv.SessionID),
+		Created:          time.Now(),
+		Updated:          time.Now(),
 	}
 
 	if err := session.SaveSessionState(state); err != nil {

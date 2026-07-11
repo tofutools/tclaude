@@ -18,12 +18,15 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/ratelimit"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
 type NewParams struct {
-	Dir string `short:"C" long:"dir" optional:"true" help:"Directory to start session in (defaults to current directory)"`
+	SandboxSnapshotPath   string `short:"U" long:"sandbox-snapshot-path" optional:"true" help:"Internal: private effective sandbox snapshot handoff"`
+	SandboxSnapshotDigest string `short:"V" long:"sandbox-snapshot-digest" optional:"true" help:"Internal: expected effective sandbox snapshot digest"`
+	Dir                   string `short:"C" long:"dir" optional:"true" help:"Directory to start session in (defaults to current directory)"`
 	// CwdWriteProof is an internal daemon-to-session capability. The harness
 	// command checks its marker only after tmux has established the pane's cwd
 	// inode. Hidden from normal CLI help.
@@ -255,6 +258,20 @@ func sandboxDescr(sandboxMode, permissionProfile string) string {
 var JoinGroupHandler func(*NewParams) error
 
 func runNew(params *NewParams) error {
+	var effectiveSandbox *sandboxpolicy.Snapshot
+	params.SandboxSnapshotPath = strings.TrimSpace(params.SandboxSnapshotPath)
+	params.SandboxSnapshotDigest = strings.TrimSpace(params.SandboxSnapshotDigest)
+	if (params.SandboxSnapshotPath == "") != (params.SandboxSnapshotDigest == "") {
+		return fmt.Errorf("internal sandbox snapshot path and digest must be supplied together")
+	}
+	if params.SandboxSnapshotPath != "" {
+		defer func() { _ = os.Remove(params.SandboxSnapshotPath) }()
+		snapshot, err := sandboxpolicy.ReadSnapshotFile(params.SandboxSnapshotPath, params.SandboxSnapshotDigest)
+		if err != nil {
+			return err
+		}
+		effectiveSandbox = &snapshot
+	}
 	// "shell" is a sentinel, not a registered harness (see shell.go) — branch
 	// before any harness resolution so a plain shell never touches the
 	// coding-harness machinery below (model/effort validation, sandbox,
@@ -369,6 +386,10 @@ func runNew(params *NewParams) error {
 		params.PermissionProfile = harness.CodexAgentProfile
 		sandboxMode = ""
 		params.Sandbox = ""
+	}
+	if effectiveSandbox != nil && len(effectiveSandbox.Effective.Filesystem) > 0 &&
+		h.Name == harness.CodexName && params.PermissionProfile != harness.CodexAgentProfile {
+		return fmt.Errorf("unsupported_sandbox_profile_filesystem: codex additive filesystem grants require sandbox %s", harness.SandboxManagedProfile)
 	}
 
 	// Validate --permission-profile: a Codex-only knob (codex -p <name>) that
@@ -600,6 +621,11 @@ func runNew(params *NewParams) error {
 	additionalEnv := map[string]string{
 		"TCLAUDE_SESSION_ID": sessionID,
 	}
+	if effectiveSandbox != nil {
+		for _, entry := range effectiveSandbox.Effective.Environment {
+			additionalEnv[entry.Name] = entry.Value
+		}
+	}
 	launchPermissionProfile := params.PermissionProfile
 	launchProfilePath := ""
 	launchProfileOwnedByPane := false
@@ -645,7 +671,7 @@ func runNew(params *NewParams) error {
 	// Only the tclaude-owned profile is auto-created; any other name must
 	// already be defined by the user's own config.
 	if params.PermissionProfile == harness.CodexAgentProfile {
-		profileName, profilePath, err := ensureCodexManagedProfile(params, cwd, GenerateSessionID())
+		profileName, profilePath, err := ensureCodexManagedProfileWithSnapshot(params, cwd, GenerateSessionID(), effectiveSandbox)
 		if err != nil {
 			return err
 		}
@@ -690,7 +716,8 @@ func runNew(params *NewParams) error {
 		Model:                  model,
 		ExtraArgs:              extraArgs,
 		SandboxMode:            sandboxMode,
-		SandboxWriteDirs:       gitWorktreeWriteDirs(params, h.Name, sandboxMode, cwd),
+		SandboxWriteDirs:       append(gitWorktreeWriteDirs(params, h.Name, sandboxMode, cwd), sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessWrite)...),
+		SandboxReadDirs:        sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessRead),
 		AskUserQuestionTimeout: askTimeout,
 		PermissionProfile:      launchPermissionProfile,
 		ApprovalPolicy:         approvalPolicy,
@@ -717,8 +744,10 @@ func runNew(params *NewParams) error {
 		}
 		defer cleanupProofReady()
 		proofReadyPath = path
+		proofWriteDirs := append([]string{}, params.GitWorktreeWriteDirs...)
+		proofWriteDirs = append(proofWriteDirs, sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessWrite)...)
 		harnessCmd = guardHarnessCommandWithDirProof(
-			harnessCmd, proofToken, proofReadyPath, params.CwdWriteProof != "", params.GitWorktreeWriteDirs)
+			harnessCmd, proofToken, proofReadyPath, params.CwdWriteProof != "", proofWriteDirs)
 	}
 
 	// Create the detached tmux session running the harness command.
@@ -767,7 +796,8 @@ func runNew(params *NewParams) error {
 		// path) — the profile name. "" for a harness with no launch sandbox
 		// flag (Claude Code). Stored verbatim, never coalesced; this is the
 		// only write of the column, so it can't be re-derived later.
-		SandboxMode: sandboxDescr(sandboxMode, params.PermissionProfile),
+		SandboxMode:      sandboxDescr(sandboxMode, params.PermissionProfile),
+		EffectiveSandbox: effectiveSandbox,
 		// Record the resolved AskUserQuestion idle-timeout so a relaunch (resume /
 		// clone / reincarnate) can PRESERVE it — inherit/5m/never carried across
 		// the handoff instead of reverting to global settings.json (schema v97).
@@ -864,6 +894,10 @@ func validateGitWorktreeWriteDirPins(params *NewParams) error {
 }
 
 func ensureCodexManagedProfile(params *NewParams, cwd, launchID string) (string, string, error) {
+	return ensureCodexManagedProfileWithSnapshot(params, cwd, launchID, nil)
+}
+
+func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID string, effectiveSandbox *sandboxpolicy.Snapshot) (string, string, error) {
 	var writeDirs []string
 	if params.GitWorktreeWriteDirsPinned {
 		writeDirs = append([]string(nil), params.GitWorktreeWriteDirs...)
@@ -886,11 +920,26 @@ func ensureCodexManagedProfile(params *NewParams, cwd, launchID string) (string,
 		}
 		writeDirs = harness.GitWorktreeWriteDirs(cwd, commonDir, home)
 	}
-	profileName, path, err := harness.EnsureCodexAgentLaunchProfile(writeDirs, launchID)
+	writeDirs = append(writeDirs, sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessWrite)...)
+	readDirs := sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessRead)
+	profileName, path, err := harness.EnsureCodexAgentLaunchProfileWithGrants(readDirs, writeDirs, launchID)
 	if err != nil {
 		return "", "", fmt.Errorf("ensure codex permission profile %q: %w", params.PermissionProfile, err)
 	}
 	return profileName, path, nil
+}
+
+func sandboxSnapshotDirs(snapshot *sandboxpolicy.Snapshot, access sandboxpolicy.Access) []string {
+	if snapshot == nil {
+		return nil
+	}
+	out := make([]string, 0, len(snapshot.Effective.Filesystem))
+	for _, grant := range snapshot.Effective.Filesystem {
+		if grant.Access == access {
+			out = append(out, grant.Path)
+		}
+	}
+	return out
 }
 
 func commandWithFileCleanup(cmd, path string) string {

@@ -12,6 +12,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -50,9 +51,32 @@ type ResolvedLaunch struct {
 	Harness ResolvedField `json:"harness"`
 	Model   ResolvedField `json:"model"`
 	Effort  ResolvedField `json:"effort"`
+	// SandboxPolicy exposes the frozen profile chain, canonical grants, and
+	// environment names. Environment values remain private in the snapshot.
+	SandboxPolicy *ResolvedSandboxPolicy `json:"sandbox_policy,omitempty"`
 	// Notes disclose ignored profile fields outside the three echoed values
 	// above (for example a foreign sandbox or auto-review setting).
 	Notes []string `json:"notes,omitempty"`
+}
+
+type ResolvedSandboxPolicy struct {
+	Version     int                             `json:"version"`
+	Applied     []sandboxpolicy.AppliedProfile  `json:"applied"`
+	Filesystem  []sandboxpolicy.FilesystemGrant `json:"filesystem"`
+	Environment []string                        `json:"environment"`
+}
+
+func SummarizeSandboxPolicy(snapshot sandboxpolicy.Snapshot) *ResolvedSandboxPolicy {
+	environment := make([]string, 0, len(snapshot.Effective.Environment))
+	for _, entry := range snapshot.Effective.Environment {
+		environment = append(environment, entry.Name)
+	}
+	return &ResolvedSandboxPolicy{
+		Version:     snapshot.Version,
+		Applied:     append([]sandboxpolicy.AppliedProfile(nil), snapshot.Applied...),
+		Filesystem:  append([]sandboxpolicy.FilesystemGrant(nil), snapshot.Effective.Filesystem...),
+		Environment: environment,
+	}
 }
 
 // ResolvedField pairs a resolved launch value with its provenance. Value is the
@@ -103,6 +127,10 @@ func quoteName(name string) string { return `"` + name + `"` }
 // handleGroupSpawn decodes it. One type means the CLI and the
 // dashboard cannot drift in which fields the daemon understands.
 type SpawnRequest struct {
+	// SandboxProfile is an optional additive filesystem/environment profile.
+	// Only a daemon-boundary-classified human may set it; agent callers may
+	// inherit the group's/global policy but cannot select an escalation.
+	SandboxProfile string `json:"sandbox_profile,omitempty"`
 	// Profile names the CLI's explicit --profile. Launch fields remain separate
 	// on the wire so the daemon can distinguish direct flags (loud on
 	// incompatibility) from ambient profile values (skip + disclose when a
@@ -387,7 +415,8 @@ type SpawnParams struct {
 	// short is pinned so boa's short-flag enricher doesn't hand `-p` elsewhere.
 	// Precedence: explicit flags override the profile, which overrides the
 	// group / global / harness defaults (see mergeProfileIntoSpawn).
-	Profile string `long:"profile" short:"p" optional:"true" help:"Pre-fill spawn fields from a saved spawn profile (see 'tclaude agent profiles ls'). Explicit flags override the profile; the profile overrides group/global/harness defaults. remote_control is NOT taken from the profile — use --remote-control"`
+	Profile        string `long:"profile" short:"p" optional:"true" help:"Pre-fill spawn fields from a saved spawn profile (see 'tclaude agent profiles ls'). Explicit flags override the profile; the profile overrides group/global/harness defaults. remote_control is NOT taken from the profile — use --remote-control"`
+	SandboxProfile string `long:"sandbox-profile" optional:"true" help:"Human-only additive filesystem/environment sandbox profile for this spawn"`
 
 	Worktree     string `long:"worktree" short:"w" optional:"true" help:"Create (or reuse) a git worktree on this branch and spawn the agent into it. The worktree is created in the repo containing --cwd, unless --worktree-repo points elsewhere. Mirrors the dashboard spawn modal's worktree picker"`
 	WorktreeBase string `long:"worktree-base" optional:"true" help:"Base branch for a newly-created --worktree (default: the repo's default branch). Ignored when the --worktree branch already exists"`
@@ -911,6 +940,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 
 	req := SpawnRequest{
 		Profile:                strings.TrimSpace(p.Profile),
+		SandboxProfile:         strings.TrimSpace(p.SandboxProfile),
 		Name:                   name,
 		Role:                   merged.Role,
 		Descr:                  merged.Descr,
@@ -1063,6 +1093,22 @@ func printResolvedLaunch(stdout io.Writer, rl *ResolvedLaunch) {
 	fmt.Fprintf(stdout, "  Harness: %s\n", formatResolvedField(rl.Harness))
 	fmt.Fprintf(stdout, "  Model:   %s\n", formatResolvedField(rl.Model))
 	fmt.Fprintf(stdout, "  Effort:  %s\n", formatResolvedField(rl.Effort))
+	if policy := rl.SandboxPolicy; policy != nil {
+		profiles := make([]string, 0, len(policy.Applied))
+		for _, applied := range policy.Applied {
+			profiles = append(profiles, fmt.Sprintf("%s %q", applied.Scope, applied.Name))
+		}
+		chain := "no additive profiles"
+		if len(profiles) > 0 {
+			chain = strings.Join(profiles, " → ")
+		}
+		environment := "none"
+		if len(policy.Environment) > 0 {
+			environment = strings.Join(policy.Environment, ",")
+		}
+		fmt.Fprintf(stdout, "  Policy:  v%d %s (%d filesystem grants; env: %s)\n",
+			policy.Version, chain, len(policy.Filesystem), environment)
+	}
 	for _, note := range rl.Notes {
 		fmt.Fprintf(stdout, "  Note:    %s\n", note)
 	}
