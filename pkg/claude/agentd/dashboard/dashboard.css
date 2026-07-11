@@ -4368,22 +4368,6 @@ body.wizard .group-pending-title-wizard { display: inline; }
 }
 #command-palette-btn:hover,
 #window-all-btn:hover { border-color: #58a6ff; color: #d4d4d4; }
-/* Dashboard Back / Forward navigation chrome (TCL-317). Sits just right of the
-   title; shares the compact neutral launcher skin above. A disabled control
-   dims and drops its pointer cursor so "nowhere to go" reads at a glance
-   (AC #3). The glyph swaps to a spellbook arrow in wizard mode via the same
-   label-span mechanism as the nav tabs. */
-.nav-history { display: inline-flex; gap: 4px; margin-left: 12px; }
-.nav-hist-btn {
-  background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
-  border-radius: 4px; cursor: pointer; padding: 3px 10px; font-size: 14px;
-  line-height: 1; font-family: inherit; white-space: nowrap;
-}
-.nav-hist-btn:hover:not(:disabled) { border-color: #58a6ff; color: #d4d4d4; }
-.nav-hist-btn:disabled { opacity: 0.4; cursor: default; }
-.nav-hist-label-wizard { display: none; }
-body.wizard .nav-hist-label-regular { display: none; }
-body.wizard .nav-hist-label-wizard { display: inline; }
 /* (The top-bar #dock-toggle-top and its aria-expanded "on" accent were removed
    in JOH-390 item 7 — see the dashboard.html note. The dock's own edge tab +
    in-dock collapse are the remaining show/hide controls.) */
