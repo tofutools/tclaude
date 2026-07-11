@@ -61,6 +61,17 @@ func TestDashSnap(t *testing.T) {
 	// Millisecond granularity so two runs in the same second don't overwrite.
 	outDir := filepath.Join(dashSnapOutRoot(t), time.Now().Format("20060102-150405.000"))
 	states := dashSnapStates()
+	// Every visual state also proves that the dynamically loaded, embedded
+	// Preact + Signals probe rendered and reacted in a real browser. The probe is
+	// hidden, so this adds no screenshot noise; a failed/missing runtime becomes a
+	// per-state JS failure instead of silently passing the visual smoke.
+	const preactProbeReady = `
+var __preactProbe = document.querySelector('#preact-runtime-probe[data-state="ready"] [data-preact-probe="ready"]');
+if (!__preactProbe || __preactProbe.textContent !== 'ready') throw new Error('Preact runtime probe not ready');
+`
+	for i := range states {
+		states[i].JS = preactProbeReady + states[i].JS
+	}
 	if filter := os.Getenv("TCLAUDE_DASHSNAP_FILTER"); filter != "" {
 		filtered := states[:0]
 		for _, state := range states {

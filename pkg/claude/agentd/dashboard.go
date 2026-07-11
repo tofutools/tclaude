@@ -28,8 +28,11 @@ import (
 // directory: dashboard.html, dashboard.css, and the ES-module JS set
 // under dashboard/js/. agentd serves dashboard.html at "/" and the CSS
 // and JS as static assets under /static/ (see registerDashboardRoutes).
-// The browser loads the JS as native ES modules — <script type="module">
-// — so there is no bundler and no build step.
+// The legacy dashboard and Preact islands load source JS as native ES modules.
+// Preact, HTM, and Signals are vendored under dashboard/vendor/preact/ and an
+// import map gives application modules normal package specifiers. Islands are
+// dynamically loaded so a missing runtime module cannot prevent the legacy
+// graph from linking.
 //
 //go:embed dashboard
 var dashboardFS embed.FS
@@ -65,6 +68,7 @@ func mustReadFS(fsys fs.FS, name string) []byte {
 func init() {
 	_ = mime.AddExtensionType(".js", "text/javascript")
 	_ = mime.AddExtensionType(".css", "text/css")
+	_ = mime.AddExtensionType(".map", "application/json")
 }
 
 // dashboardSessionToken is generated once per agentd process and gates
@@ -171,6 +175,7 @@ func handleDashboardStatic() http.Handler {
 //     scraping it. An init token can only be minted via the human-only
 //     `/v1/dashboard/open` endpoint on the daemon's Unix socket (or
 //     the in-process tray handler).
+//
 // dashboardAppTabs are the top-level dashboard "location" path segments the
 // SPA owns (TCL-317 back/forward navigation). A deep browser path like /access
 // or /jobs must serve the same index HTML so the client router
