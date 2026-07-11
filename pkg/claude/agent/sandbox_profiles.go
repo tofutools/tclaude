@@ -45,6 +45,7 @@ func sandboxProfilesCmd() *cobra.Command {
 			sandboxProfilesLsCmd(), sandboxProfilesShowCmd(), sandboxProfilesCreateCmd(),
 			sandboxProfilesEditCmd(), sandboxProfilesRmCmd(), sandboxProfilesDefaultCmd(),
 			sandboxProfilesGroupCmd(), sandboxProfilesExportCmd(), sandboxProfilesImportCmd(),
+			sandboxProfilesDraftCmd(),
 		},
 	}.ToCobra()
 }
@@ -147,6 +148,49 @@ func printSandboxProfileHuman(w io.Writer, profile sandboxProfileJSON) {
 
 type sandboxProfilesFileParams struct {
 	File string `long:"file" short:"f" help:"Profile JSON path ('-' reads stdin); use the shape emitted by show --json"`
+}
+
+type sandboxProfilesDraftParams struct {
+	Token string `long:"token" help:"Opaque dashboard handoff token"`
+	File  string `long:"file" short:"f" help:"Profile JSON path ('-' reads stdin)"`
+}
+
+func sandboxProfilesDraftCmd() *cobra.Command {
+	return boa.CmdT[sandboxProfilesDraftParams]{
+		Use:         "draft --token <token> --file <path>",
+		Short:       "Submit a validated draft to the human dashboard without saving it",
+		Long:        "Submit a sandbox-profile proposal for human preview. This command never creates, edits, assigns, or applies a profile; the human must explicitly save it in the dashboard.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(p *sandboxProfilesDraftParams, _ *cobra.Command, _ []string) {
+			os.Exit(runSandboxProfilesDraft(p, os.Stdin, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runSandboxProfilesDraft(p *sandboxProfilesDraftParams, stdin io.Reader, stdout, stderr io.Writer) int {
+	token := strings.TrimSpace(p.Token)
+	if token == "" {
+		fmt.Fprintln(stderr, "Error: --token is required")
+		return rcInvalidArg
+	}
+	profile, rc := loadSandboxProfileFile(p.File, stdin, stderr)
+	if rc != rcOK {
+		return rc
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	body := struct {
+		Profile sandboxProfileJSON `json:"profile"`
+	}{Profile: *profile}
+	var resp struct {
+		Message string `json:"message"`
+	}
+	if err := DaemonRequest(http.MethodPost, "/v1/sandbox-profile-drafts/"+url.PathEscape(token), body, &resp, DaemonOpts{}); err != nil {
+		return printSandboxProfileDaemonError(stderr, err)
+	}
+	fmt.Fprintln(stdout, "Draft validated and sent to the dashboard. It has not been saved; the human must preview and explicitly save it.")
+	return rcOK
 }
 
 func sandboxProfilesCreateCmd() *cobra.Command {

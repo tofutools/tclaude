@@ -257,6 +257,10 @@ var permissionRegistry = []PermSlug{
 		Description: "Read, create, edit, delete and assign sandbox profiles — operator policy that can add host filesystem access and launch environment to agents. This is intentionally separate from profiles.manage and is not default-granted (effectively human-only).",
 	},
 	{
+		Slug:        PermSandboxProfilesDraft,
+		Description: "Submit a server-validated sandbox-profile draft for explicit human preview and save. Cannot persist or assign profiles and cannot launch agents. Intended for dashboard-summoned sandbox scribes.",
+	},
+	{
 		Slug:        PermRolesManage,
 		Description: "Create, edit and delete roles in the role library — named, reusable bundles of a canonical role-brief, a default launch shape and a default permission set that a template roster agent references and inherits from (JOH-240). Reads are open; writes rewrite shared role defaults, so not default-granted (effectively human-only).",
 	},

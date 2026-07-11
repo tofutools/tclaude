@@ -1,6 +1,7 @@
 import { $, esc, bindModalSubmitHotkey } from './helpers.js';
 import { lastSnapshot } from './dashboard.js';
 import { confirmModal, toast, bindBackdropDiscard, bindManageOverlayDismiss, refresh } from './refresh.js';
+import { openTermModal } from './modal-term.js';
 
 const API = '/api/sandbox-profiles';
 // Profile names cannot contain slashes, so this dropdown action cannot collide
@@ -11,6 +12,10 @@ let editingName = '';
 let editorOnCreate = null;
 let editorSaving = false;
 let spawnPreviewGeneration = 0;
+let scribePollGeneration = 0;
+
+const SANDBOX_SCRIBE_NAME = 'sandbox-scribe';
+const SANDBOX_SCRIBE_SLUGS = ['sandbox-profiles.draft'];
 
 async function api(path, opts = {}) {
   const r = await fetch(path, { credentials: 'same-origin', ...opts });
@@ -107,10 +112,10 @@ async function openManager() {
 
 function closeManager() { $('#sandbox-profiles-manage-modal').classList.remove('show'); }
 
-function openEditor(p = null, { onCreate = null } = {}) {
-  editingName = p ? p.name : '';
-  editorOnCreate = p ? null : onCreate;
-  $('#sandbox-profile-editor-title').textContent = p ? `Edit sandbox profile: ${p.name}` : 'New sandbox profile';
+function openEditor(p = null, { onCreate = null, targetName = '' } = {}) {
+  editingName = targetName || (p ? p.name : '');
+  editorOnCreate = editingName ? null : onCreate;
+  $('#sandbox-profile-editor-title').textContent = editingName ? `Edit sandbox profile: ${editingName}` : 'New sandbox profile';
   $('#sandbox-profile-editor-name').value = p ? p.name : '';
   $('#sandbox-profile-editor-filesystem').value = JSON.stringify((p && p.filesystem) || [], null, 2);
   $('#sandbox-profile-editor-environment').value = JSON.stringify((p && p.environment) || [], null, 2);
@@ -129,6 +134,99 @@ function setEditorSaving(saving) {
   editorSaving = saving;
   $('#sandbox-profile-editor-submit').disabled = saving;
   $('#sandbox-profile-editor-cancel').disabled = saving;
+}
+
+function sandboxScribeToken() {
+  if (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID().replaceAll('-', '');
+  }
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+}
+
+function sandboxScribeBrief(token, targetName, seed) {
+  const target = targetName
+    ? `This is a proposed replacement for the existing profile named "${targetName}".`
+    : 'This is a proposed new sandbox profile.';
+  return [
+    'You are a sandbox-profile scribe. Talk with the human to interactively design one additive filesystem/environment sandbox profile.',
+    'Critical safety boundary: create a structured DRAFT only. Never create, edit, delete, assign, or apply a sandbox profile; never launch or relaunch an agent; never request sandbox-profiles.manage. You only hold sandbox-profiles.draft.',
+    'Environment values are ordinary non-secret configuration. Filesystem entries are absolute-path grants with access "read" or "write". The daemon remains authoritative for canonicalization, protected paths, reserved environment variables, duplicate handling, and all other validation.',
+    target,
+    `Starting draft:\n${JSON.stringify(seed, null, 2)}`,
+    'Discuss the desired paths, access levels, environment names/values, and profile name. Wait until the human agrees that the proposal is ready.',
+    `Then write the complete profile JSON to a file and run exactly this draft handoff (add no assignment or launch commands):\n\`tclaude agent sandbox-profiles draft --token ${token} --file <path>\``,
+    'That command validates and returns the draft to the dashboard; it does NOT save anything. Remind the human to preview it there and explicitly press Save.',
+  ].join('\n\n');
+}
+
+async function pollSandboxScribeDraft(token, generation, targetName, onCreate) {
+  const deadline = Date.now() + 30 * 60 * 1000;
+  while (generation === scribePollGeneration && Date.now() < deadline) {
+    try {
+      const r = await fetch(`/api/sandbox-profile-drafts/${encodeURIComponent(token)}`, { credentials: 'same-origin' });
+      if (r.ok) {
+        const draft = await r.json();
+        if (generation !== scribePollGeneration) return;
+        openEditor(draft.profile, { targetName, onCreate });
+        $('#sandbox-profile-editor-error').textContent = 'Agent draft loaded. Review every field, then explicitly Save sandbox profile to apply it to the library. No assignments will be changed.';
+        toast('sandbox scribe draft ready — review and explicitly save');
+        return;
+      }
+      if (r.status !== 404) throw new Error((await r.text()) || `HTTP ${r.status}`);
+    } catch (err) {
+      if (generation === scribePollGeneration) toast(`sandbox draft handoff failed: ${err.message || String(err)}`, true);
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 1500));
+  }
+}
+
+async function summonSandboxScribe(seed, targetName = '', onCreate = null) {
+  const token = sandboxScribeToken();
+  const generation = ++scribePollGeneration;
+  closeEditor();
+  try {
+    const r = await fetch('/api/scribe', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: SANDBOX_SCRIBE_NAME,
+        slugs: SANDBOX_SCRIBE_SLUGS,
+        exclusive: true,
+        brief: sandboxScribeBrief(token, targetName, seed),
+      }),
+    });
+    if (!r.ok) throw new Error((await r.text()) || `HTTP ${r.status}`);
+    const resp = await r.json().catch(() => ({}));
+    const verb = resp.reused ? 'resumed' : 'summoned';
+    if (resp.focus_mode === 'browser' && resp.focus_ws) {
+      openTermModal({ wsPath: resp.focus_ws, label: SANDBOX_SCRIBE_NAME, hideConv: resp.conv_id || null });
+      toast(`${verb} ${SANDBOX_SCRIBE_NAME} — opened in-browser terminal`);
+    } else {
+      toast(`${verb} ${SANDBOX_SCRIBE_NAME} — opening its terminal`);
+    }
+    void pollSandboxScribeDraft(token, generation, targetName, onCreate);
+  } catch (err) {
+    const message = err.message || String(err);
+    openEditor(seed, { targetName, onCreate });
+    $('#sandbox-profile-editor-error').textContent = `Could not summon sandbox scribe: ${message}`;
+    toast(message, true);
+  }
+}
+
+function summonSandboxScribeFromEditor() {
+  const errEl = $('#sandbox-profile-editor-error');
+  errEl.textContent = '';
+  try {
+    const seed = {
+      name: $('#sandbox-profile-editor-name').value.trim(),
+      filesystem: JSON.parse($('#sandbox-profile-editor-filesystem').value || '[]'),
+      environment: JSON.parse($('#sandbox-profile-editor-environment').value || '[]'),
+    };
+    void summonSandboxScribe(seed, editingName, editorOnCreate);
+  } catch (err) {
+    errEl.textContent = `Fix the JSON before handing it to the agent: ${err.message || String(err)}`;
+  }
 }
 
 async function saveEditor() {
@@ -246,6 +344,7 @@ function bindSandboxProfilesUI() {
   bindManageOverlayDismiss('sandbox-profiles-manage-modal', closeManager);
   $('#filter-sandbox-profiles').addEventListener('input', paintSandboxProfiles);
   $('#sandbox-profile-create-open').addEventListener('click', () => openEditor());
+  $('#sandbox-profile-scribe-open').addEventListener('click', () => summonSandboxScribe({ name: '', filesystem: [], environment: [] }));
   $('#sandbox-profiles-list').addEventListener('click', e => {
     const btn = e.target.closest('[data-sandbox-profile-action]');
     if (!btn) return;
@@ -254,6 +353,7 @@ function bindSandboxProfilesUI() {
     if (btn.dataset.sandboxProfileAction === 'delete') void removeProfile(btn.dataset.name);
   });
   $('#sandbox-profile-editor-cancel').addEventListener('click', closeEditor);
+  $('#sandbox-profile-editor-scribe').addEventListener('click', summonSandboxScribeFromEditor);
   $('#sandbox-profile-editor-submit').addEventListener('click', saveEditor);
   bindModalSubmitHotkey($('#sandbox-profile-editor-modal'), $('#sandbox-profile-editor-submit'));
   bindBackdropDiscard('sandbox-profile-editor-modal', closeEditor, () => !editorSaving);

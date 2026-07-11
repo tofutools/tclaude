@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -59,6 +60,13 @@ type scribeSummonRequest struct {
 	// on reuse), e.g. ["templates.manage"]. Each is validated against the slug
 	// registry; an unknown slug is a 400 listing the known slugs.
 	Slugs []string `json:"slugs"`
+	// DenySlugs are explicit permission denies applied at birth and on reuse.
+	// This lets a capability-reducing scribe defend its safety boundary even
+	// when an older live incarnation or a global default granted more power.
+	DenySlugs []string `json:"deny_slugs,omitempty"`
+	// Exclusive turns Slugs into the exact positive capability set: every
+	// other registered permission is denied at birth and again on reuse.
+	Exclusive bool `json:"exclusive,omitempty"`
 	// Brief is the pre-briefing delivered to the scribe's inbox — the concept
 	// pointer + scope anchor the human's chat starts from. Same charset/length
 	// rule as any spawn initial_message.
@@ -121,6 +129,22 @@ func handleScribeSummon(w http.ResponseWriter, r *http.Request) {
 			in[s] = db.PermEffectGrant
 		}
 	}
+	for _, s := range body.DenySlugs {
+		if s = strings.TrimSpace(s); s != "" {
+			if in[s] == db.PermEffectGrant {
+				writeError(w, http.StatusBadRequest, "slugs", "permission slug "+s+" cannot be both granted and denied")
+				return
+			}
+			in[s] = db.PermEffectDeny
+		}
+	}
+	if body.Exclusive {
+		for _, spec := range permissionRegistry {
+			if in[spec.Slug] != db.PermEffectGrant {
+				in[spec.Slug] = db.PermEffectDeny
+			}
+		}
+	}
 	overrides, povErr := normalizeSpawnPermissionOverrides(in)
 	if povErr != "" {
 		writeError(w, http.StatusBadRequest, "slugs", povErr)
@@ -155,7 +179,7 @@ func handleScribeSummon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out, fail := summonScribe(name, overrides, brief)
+	out, fail := summonScribe(name, overrides, brief, body.Exclusive)
 	if fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
@@ -200,7 +224,7 @@ var scribeSummonMu sync.Mutex
 // summonScribe is the reusable core: ensure the scribe's eponymous group,
 // reuse-if-alive (re-grant + re-brief + re-focus), otherwise spawn one in the
 // shared, pre-trusted scribe workdir with the birth-time grants and auto-focus.
-func summonScribe(name string, overrides map[string]string, brief string) (*scribeOutcome, *spawnFailure) {
+func summonScribe(name string, overrides map[string]string, brief string, exclusive bool) (*scribeOutcome, *spawnFailure) {
 	scribeSummonMu.Lock()
 	defer scribeSummonMu.Unlock()
 
@@ -215,7 +239,13 @@ func summonScribe(name string, overrides map[string]string, brief string) (*scri
 	// re-opens its window. The live scribe already spawned into the trusted
 	// workdir, so no dir/trust work is needed on this path.
 	if convID := aliveScribeConv(g); convID != "" {
-		grantScribeSlugs(convID, overrides)
+		if err := applyScribeOverrides(convID, overrides, exclusive); err != nil {
+			if exclusive {
+				killScribeSession(convID)
+			}
+			return nil, &spawnFailure{http.StatusInternalServerError, "permission",
+				"refusing to reopen capability-reducing scribe after permission override failure: " + err.Error()}
+		}
 		rebriefScribe(convID, brief)
 		out := &scribeOutcome{ConvID: convID, Reused: true}
 		openScribeWindow(convID, out)
@@ -255,16 +285,26 @@ func summonScribe(name string, overrides map[string]string, brief string) (*scri
 		Name:                name,
 		Cwd:                 cwd,
 		InitialMessage:      brief,
-		AutoFocus:           true,
+		AutoFocus:           !exclusive,
 		PermissionOverrides: overrides,
 	}
 	outcome, spawnFail := executeSpawn(g, p)
 	if spawnFail != nil {
 		return nil, spawnFail
 	}
+	if exclusive {
+		if err := applyScribeOverrides(outcome.ConvID, overrides, true); err != nil {
+			killScribeSession(outcome.ConvID)
+			return nil, &spawnFailure{http.StatusInternalServerError, "permission",
+				"capability-reducing scribe stopped after permission override failure: " + err.Error()}
+		}
+	}
 	out := &scribeOutcome{ConvID: outcome.ConvID, FocusMode: outcome.FocusMode}
 	if outcome.FocusMode == "browser" {
 		out.FocusWS = spawnFocusWSPath(outcome.Label)
+	}
+	if exclusive {
+		openScribeWindow(outcome.ConvID, out)
 	}
 	return out, nil
 }
@@ -463,12 +503,30 @@ func pruneDeadScribes(g *db.AgentGroup) {
 	}
 }
 
-// grantScribeSlugs (re)applies the requested slug grants to a reused scribe —
-// best-effort, so a single grant failure doesn't sink the whole summon.
-func grantScribeSlugs(convID string, overrides map[string]string) {
+// applyScribeOverrides (re)applies the requested permission effects. An
+// exclusive capability-reducing summon fails closed on any write error; an
+// ordinary scribe preserves the established best-effort behavior.
+func applyScribeOverrides(convID string, overrides map[string]string, required bool) error {
+	if required {
+		if _, err := db.RevokeSudoGrantsByConv(convID); err != nil {
+			return fmt.Errorf("revoke active sudo grants: %w", err)
+		}
+	}
 	for slug, effect := range overrides {
 		if err := db.SetAgentPermissionOverride(convID, slug, effect, scribeGranter); err != nil {
 			slog.Warn("scribe: re-grant slug failed", "conv", short8(convID), "slug", slug, "error", err)
+			if required {
+				return fmt.Errorf("set %s=%s: %w", slug, effect, err)
+			}
+		}
+	}
+	return nil
+}
+
+func killScribeSession(convID string) {
+	if sess := pickAliveSession(convID); sess != nil {
+		if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(sess.TmuxSession)).Run(); err != nil {
+			slog.Error("scribe: failed to kill unsafe capability-reducing scribe", "conv", short8(convID), "error", err)
 		}
 	}
 }

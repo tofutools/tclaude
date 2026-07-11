@@ -862,6 +862,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("GET /v1/sandbox-profiles/export", handleSandboxProfilesExport)
 	mux.HandleFunc("POST /v1/sandbox-profiles/import", handleSandboxProfilesImport)
 	mux.HandleFunc("/v1/sandbox-profiles/{name}", handleSandboxProfileByName)
+	mux.HandleFunc("POST /v1/sandbox-profile-drafts/{token}", handleSandboxProfileDraftSubmit)
 	mux.HandleFunc("/v1/groups/{group}/sandbox-profile", handleGroupSandboxProfile)
 	// Role library (JOH-240). Reads open, writes gated on roles.manage.
 	mux.HandleFunc("/v1/roles", handleRoles)

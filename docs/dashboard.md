@@ -251,6 +251,13 @@ manager from **Groups → ⚙ → 🛡 sandbox profiles…** to create/edit/dele
 profiles and assign one global default or one default to each group. The spawn
 dialog also offers a human-controlled explicit profile selector.
 
+**🤖 configure with agent** summons a reusable sandbox scribe for either a new
+profile or the draft currently open in the editor. The scribe can discuss paths
+and environment entries and submit a server-validated structured draft, but it
+cannot save profiles, change assignments, or launch agents. Its result is
+loaded back into the normal editor; review every field and explicitly press
+**Save sandbox profile** to persist it.
+
 The spawn dialog's preview shows the composed global → group → explicit
 sources, effective filesystem access, and environment **names**. It never shows
 environment values. Values are ordinary non-secret configuration — do not put
