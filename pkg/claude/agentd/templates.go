@@ -1950,8 +1950,14 @@ func resolveTemplateAgentAccess(a db.GroupTemplateAgent, role *db.Role) (bool, [
 	// Tier 2: the agent's referenced spawn profile — its owner default + its
 	// grant/deny overrides. Profile slugs are applied in sorted order so a
 	// deploy's per-agent grant report is deterministic (the map itself is not).
-	if ref := strings.TrimSpace(a.SpawnProfile); ref != "" {
-		prof, err := db.GetSpawnProfile(ref)
+	if ref := strings.TrimSpace(a.SpawnProfile); ref != "" || a.SpawnProfileID > 0 {
+		var prof *db.SpawnProfile
+		var err error
+		if a.SpawnProfileID > 0 {
+			prof, err = db.GetSpawnProfileByID(a.SpawnProfileID)
+		} else {
+			prof, err = db.GetSpawnProfile(ref)
+		}
 		if err != nil {
 			return false, nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
 		}
