@@ -656,18 +656,26 @@ function applyGroupCreateTemplate() {
     previewRow.style.display = 'none';
     maxRow.style.display = '';
     submitBtn.textContent = 'Create';
+    // Switching a pinned subgroup dialog back to the blank profile restores
+    // the parent's defaults instead of leaving the inherited fields empty.
+    if (groupCreateParent) prefillGroupCreateFromSource(groupCreateParent);
     return;
   }
   const source = groupCreateMirrorSource();
-  if (source) {
+  if (groupCreateParent) {
+    // The pinned parent stays authoritative for descr/cwd. The helper combines
+    // its startup context with the selected template's context.
+    prefillGroupCreateFromSource(groupCreateParent);
+  } else if (source) {
     prefillGroupCreateFromSource(source);
   } else {
     $('#group-create-descr').value = t.descr || '';
     $('#group-create-context').value = t.default_context || '';
   }
-  sourceRow.style.display = '';
-  // A per-group quick-create already pins the parent. Keep the mirror-source
-  // checkbox out of that path so it cannot imply a different nesting target.
+  // A per-group quick-create already pins both the nesting parent and the
+  // inherited settings source. Hide the mirror selector and its parent
+  // checkbox there so neither control implies that a different group applies.
+  sourceRow.style.display = groupCreateParent ? 'none' : '';
   parentRow.style.display = source && !groupCreateParent ? '' : 'none';
   taskRow.style.display = '';
   previewRow.style.display = '';
