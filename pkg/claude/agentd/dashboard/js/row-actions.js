@@ -1992,6 +1992,9 @@ function bindRowActions() {
   // above, so pointer and keyboard share one path.
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' && e.key !== ' ') return;
+    // Match native-button semantics: no auto-repeat re-activation while a
+    // key is held, and no activation under Ctrl/Alt/Meta chords.
+    if (e.repeat || e.ctrlKey || e.altKey || e.metaKey) return;
     const chip = e.target.closest('span[data-act][role="button"]');
     if (!chip) return;
     e.preventDefault();

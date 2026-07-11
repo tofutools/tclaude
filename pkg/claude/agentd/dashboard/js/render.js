@@ -905,11 +905,12 @@ function renderRealGroup(g, childrenHTML) {
     if (hiddenOffline > 0) capChipTitleParts.push(`${hiddenOffline} offline hidden in this view`);
     const capChipTitle = capChipTitleParts.join(' · ') + (g.max_members ? ' — click to edit cap' : ' — click to set a cap');
     // Every actionable chip carries tabindex="0" role="button" so it is
-    // keyboard-reachable; spans (not <button>s) because the fold/skin CSS
-    // and the innerHTML re-render path are tuned to inline spans.
-    // Enter/Space activation is delegated in row-actions.js
-    // (bindRowActions' keydown listener), which routes through the same
-    // click dispatcher as the pointer path.
+    // keyboard-reachable; spans (not <button>s) because the <summary>
+    // fold/skin CSS is tuned to inline spans. Enter/Space activation is
+    // delegated in row-actions.js (bindRowActions' keydown listener),
+    // which routes through the same click dispatcher as the pointer path.
+    // Focus survives the 2s poll because #groups-list is reconciled via
+    // morphInto (tabs.js), not swapped wholesale.
     return `
     <details data-group-key="${esc(g.name)}" data-dnd-target-group="${esc(g.name)}"${detailsClassAttr}${isOpen ? ' open' : ''}>
       <summary draggable="true" data-group-reorder="${esc(g.name)}" title="Drag this header to reorder the group">

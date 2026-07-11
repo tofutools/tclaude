@@ -933,6 +933,12 @@ function bindGroupTitleToggle() {
         e.preventDefault();
         return;
       }
+      // A chip activation synthesized by row-actions' Enter/Space delegate
+      // also arrives with detail === 0. It's a chip action, not a
+      // fold/unfold — don't retarget the palette's default spawn group off
+      // it (a mouse click on the same chip doesn't either). The dispatcher's
+      // own preventDefault stops the summary toggle.
+      if (e.target.closest('[data-act]')) return;
       // Genuine keyboard fold/unfold — remember it as the last group touched
       // (drives the command palette's default spawn target).
       recordGroupInteraction(details.getAttribute('data-group-key'));
