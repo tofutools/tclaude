@@ -427,6 +427,30 @@ func TestProcessEngineAgentSpawnReportSettleAndResumeSuppression(t *testing.T) {
 	assert.Equal(t, state.ActorRef("agent:"+firstAgentID), settled.State.Nodes["work"].ActiveAttempt.Actor)
 }
 
+func TestProcessEngineInvalidAgentOverrideFailsBeforeCommandClaim(t *testing.T) {
+	_, root := processEngineFlow(t)
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "process-valid", Harness: "claude"})
+	require.NoError(t, err)
+	fs := createEngineRun(t, root, "invalid-agent-override", programTemplate("invalid-agent-override", model.Performer{
+		Kind: model.PerformerAgent, Profile: "process-valid", Model: "not-a-model", Prompt: "work",
+	}), false)
+	host, err := agentd.NewProcessEngineHostForTest(root)
+	require.NoError(t, err)
+	results, err := agentd.RunProcessEngineTickForTest(t.Context(), host)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Contains(t, results[0].Error, "not-a-model")
+
+	snapshot, err := fs.LoadRun(t.Context(), "invalid-agent-override")
+	require.NoError(t, err)
+	assert.Empty(t, snapshot.State.OutstandingCommands, "deterministic validation must fail before CommandIssued")
+	assert.Empty(t, snapshot.State.Obligations)
+	assert.Empty(t, snapshot.State.Contacts)
+	work := snapshot.State.Nodes["work"]
+	assert.Zero(t, work.Attempt)
+	assert.Nil(t, work.ActiveAttempt, "NodeAttemptStarted must not be recorded")
+}
+
 func TestProcessEngineOwnInboxDeliveryDoesNotPreemptAgent(t *testing.T) {
 	_, root := processEngineFlow(t)
 	_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "process-preempt", Harness: "claude"})
@@ -509,7 +533,7 @@ func TestProcessEngineHumanObligationAppearsAndResolvesThroughCLI(t *testing.T) 
 }
 
 func TestProcessEngineHumanCustomChoicesRouteWorkCheckAndReview(t *testing.T) {
-	_, root := processEngineFlow(t)
+	f, root := processEngineFlow(t)
 	human := func(ask string, choices []string, outcomes map[string]string) model.Performer {
 		return model.Performer{
 			Kind: model.PerformerHuman, Profile: "operator", Ask: ask,
@@ -548,14 +572,24 @@ func TestProcessEngineHumanCustomChoicesRouteWorkCheckAndReview(t *testing.T) {
 	capstoneTickWaiting(t, host, "implement.do")
 	snapshot, err := fs.LoadRun(t.Context(), "custom-choice-run")
 	require.NoError(t, err)
-	commandID := outstandingCommandForNode(t, snapshot.State, "implement.do", state.CommandKindStartAttempt)
-	message, err := db.FindHumanMessageForProcessCommand(commandID, "Process obligation")
-	require.NoError(t, err)
-	require.NotNil(t, message)
-	hidden := postDashReply(t, dashMessageMux(t), map[string]any{"id": message.ID, "body": "pass reviewed"})
+	listingRec := processEngineGet(t, f, "/v1/process/worklist?status=pending")
+	require.Equal(t, http.StatusOK, listingRec.Code, listingRec.Body.String())
+	var listing struct {
+		Items []worklist.Item `json:"items"`
+	}
+	testharness.DecodeJSON(t, listingRec, &listing)
+	require.Len(t, listing.Items, 1)
+	item := listing.Items[0]
+	require.Equal(t, "implement.do", item.Node)
+	hidden := humanReq(t, f, http.MethodPost, "/v1/process/worklist/"+item.ID+"/action", map[string]string{
+		"action": "pass", "comment": "hidden alias", "idempotencyKey": "hidden-pass",
+	})
 	require.Equal(t, http.StatusConflict, hidden.Code, hidden.Body.String())
 	assert.Equal(t, []string{"ship", "hold"}, firstObligationForNode(snapshot.State, "implement.do").AvailableActions)
-	capstoneReplyHuman(t, fs, "custom-choice-run", "implement.do", "ship reviewed")
+	accepted := humanReq(t, f, http.MethodPost, "/v1/process/worklist/"+item.ID+"/action", map[string]string{
+		"action": "SHIP", "comment": "ship reviewed", "idempotencyKey": "custom-ship",
+	})
+	require.Equal(t, http.StatusOK, accepted.Code, accepted.Body.String())
 
 	resolve("implement.test.quality", "green", []string{"green", "red"})
 	resolve("implement.review", "merge", []string{"merge", "revise"})

@@ -21,6 +21,14 @@ var processCommandIDPattern = regexp.MustCompile(`^cmd_[a-f0-9]{24}$`)
 type processAgentAdapter struct{}
 
 func (processAgentAdapter) Validate(request processexec.Request) error {
+	if err := validateProcessAgentRequest(request); err != nil {
+		return err
+	}
+	_, err := processAgentSpawnParams(request)
+	return err
+}
+
+func validateProcessAgentRequest(request processexec.Request) error {
 	if request.Performer.Kind != model.PerformerAgent {
 		return fmt.Errorf("agent adapter received performer kind %q", request.Performer.Kind)
 	}
@@ -49,14 +57,7 @@ func (a processAgentAdapter) Dispatch(_ context.Context, request processexec.Req
 	} else if existing != nil {
 		return agentDispatchResult(existing.AgentID, request), nil
 	}
-	profile, err := db.GetSpawnProfile(strings.TrimSpace(request.Performer.Profile))
-	if err != nil {
-		return processexec.DispatchResult{}, err
-	}
-	if profile == nil {
-		return processexec.DispatchResult{}, fmt.Errorf("spawn profile %q not found", request.Performer.Profile)
-	}
-	p, err := processSpawnParams(profile, request)
+	p, err := processAgentSpawnParams(request)
 	if err != nil {
 		return processexec.DispatchResult{}, err
 	}
@@ -72,6 +73,20 @@ func (a processAgentAdapter) Dispatch(_ context.Context, request processexec.Req
 		return processexec.DispatchResult{}, fmt.Errorf("spawned process agent has no stable identity")
 	}
 	return agentDispatchResult(agentID, request), nil
+}
+
+// processAgentSpawnParams is the side-effect-free launch-shape boundary used
+// before command claim and again immediately before spawn. The second lookup
+// intentionally revalidates profile edits/deletion that race the claim.
+func processAgentSpawnParams(request processexec.Request) (spawnParams, error) {
+	profile, err := db.GetSpawnProfile(strings.TrimSpace(request.Performer.Profile))
+	if err != nil {
+		return spawnParams{}, err
+	}
+	if profile == nil {
+		return spawnParams{}, fmt.Errorf("spawn profile %q not found", request.Performer.Profile)
+	}
+	return processSpawnParams(profile, request)
 }
 
 func agentDispatchResult(agentID string, request processexec.Request) processexec.DispatchResult {

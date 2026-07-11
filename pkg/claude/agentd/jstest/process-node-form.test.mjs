@@ -10,6 +10,7 @@ import { ProcessEditModel } from '../dashboard/js/process-edit-model.js';
 import {
   PERFORMER_KINDS, PERFORMER_FIELDS, RETRY_ON_FAIL_MODES,
   performerFieldsFor, defaultPerformer, setPerformerKind, setPerformerField,
+  setChoiceOutcome, syncChoiceOutcomes,
   setContactField, setRetryField, setStageEnabled, setPlanApproval,
   addCheck, removeCheck, moveCheck, setCheckID,
   setCaptures, setWaitField, setNodeText, parseLines, formatLines,
@@ -92,7 +93,7 @@ test('every performer field is declared for all three kinds or explicitly kind-s
   }
   // The kind-specific sets the dialog spec names, pinned:
   const keysFor = (kind) => performerFieldsFor(kind).map((field) => field.key);
-  assert.deepEqual(keysFor('human'), ['profile', 'ask', 'choices', 'assignee', 'prompt', 'timeout']);
+  assert.deepEqual(keysFor('human'), ['profile', 'ask', 'choices', 'choiceOutcomes', 'assignee', 'prompt', 'timeout']);
   assert.deepEqual(keysFor('agent'), ['profile', 'prompt', 'model', 'effort', 'timeout']);
   assert.deepEqual(keysFor('program'), ['profile', 'run', 'args', 'timeout']);
 });
@@ -120,11 +121,39 @@ test('setPerformerField trims, deletes blanks, and parses list fields', () => {
   const performer = defaultPerformer('human');
   setPerformerField(performer, 'ask', '  Ship it?  ');
   setPerformerField(performer, 'choices', 'ship\n\n hold ');
-  assert.deepEqual(performer, { kind: 'human', ask: 'Ship it?', choices: ['ship', 'hold'] });
+  assert.deepEqual(performer, {
+    kind: 'human', ask: 'Ship it?', choices: ['ship', 'hold'],
+    choiceOutcomes: { ship: 'pass', hold: 'pass' },
+  });
   setPerformerField(performer, 'choices', '');
   setPerformerField(performer, 'ask', '   ');
   assert.deepEqual(performer, { kind: 'human' });
   assert.throws(() => setPerformerField(performer, 'nonsense', 'x'), /unknown performer field/);
+});
+
+test('task-stage choice outcomes synchronize, route explicitly, and prune safely', () => {
+  const performer = defaultPerformer('human');
+  setPerformerField(performer, 'choices', 'ship\nhold');
+  setChoiceOutcome(performer, 'hold', 'fail');
+  assert.deepEqual(performer.choiceOutcomes, { ship: 'pass', hold: 'fail' });
+
+  setPerformerField(performer, 'choices', 'hold\nrevise');
+  assert.deepEqual(performer.choiceOutcomes, { hold: 'fail', revise: 'pass' }, 'removed labels prune and unchanged routes survive');
+  assert.throws(() => setChoiceOutcome(performer, 'ship', 'pass'), /unknown performer choice/);
+  assert.throws(() => setChoiceOutcome(performer, 'hold', 'maybe'), /invalid choice outcome/);
+
+  setPerformerKind(performer, 'agent');
+  assert.equal(performer.choiceOutcomes, undefined, 'kind switch prunes the human-only hidden map');
+});
+
+test('decision choices remain edge-driven and remove task-stage mappings', () => {
+  const performer = {
+    kind: 'human', choices: ['go', 'stop'], choiceOutcomes: { go: 'pass', stop: 'fail' },
+  };
+  syncChoiceOutcomes(performer, false);
+  assert.equal(performer.choiceOutcomes, undefined);
+  setPerformerField(performer, 'choices', 'ship\nhold', { choiceRouting: false });
+  assert.deepEqual(performer, { kind: 'human', choices: ['ship', 'hold'] });
 });
 
 test('contact schedule edits build and dissolve the per-slot schedule', () => {
@@ -253,4 +282,18 @@ test('the dialog edit path: performer kind switch + retry change through updateN
   const body = model.saveBody();
   assert.deepEqual(body.template.nodes.work.performer.kind, 'program');
   assert.ok(model.dirty);
+});
+
+test('the dialog save payload carries explicit task-stage choice routing', () => {
+  const model = new ProcessEditModel(view());
+  model.updateNode('work', (node) => {
+    setPerformerKind(node.performer, 'human');
+    setPerformerField(node.performer, 'ask', 'Ship?');
+    setPerformerField(node.performer, 'choices', 'ship\nhold');
+    setChoiceOutcome(node.performer, 'hold', 'fail');
+  });
+  assert.deepEqual(model.saveBody().template.nodes.work.performer, {
+    kind: 'human', profile: 'dev', prompt: 'Do the thing', ask: 'Ship?',
+    choices: ['ship', 'hold'], choiceOutcomes: { ship: 'pass', hold: 'fail' },
+  });
 });
