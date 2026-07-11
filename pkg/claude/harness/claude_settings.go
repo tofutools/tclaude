@@ -47,6 +47,24 @@ func claudeSettingsJSON(spec SpawnSpec) string {
 		}
 		filesystem["allowWrite"] = allowWrite
 	}
+	if dirs := normalizedSandboxWriteDirs(spec.SandboxReadDirs); len(dirs) > 0 &&
+		strings.TrimSpace(spec.SandboxMode) != ClaudeSandboxOff {
+		block, _ := settings["sandbox"].(map[string]any)
+		if block == nil {
+			block = map[string]any{}
+			settings["sandbox"] = block
+		}
+		filesystem, _ := block["filesystem"].(map[string]any)
+		if filesystem == nil {
+			filesystem = map[string]any{}
+			block["filesystem"] = filesystem
+		}
+		allowRead := make([]any, len(dirs))
+		for i, dir := range dirs {
+			allowRead[i] = dir
+		}
+		filesystem["allowRead"] = allowRead
+	}
 	if v := claudeAskTimeoutValue(spec.AskUserQuestionTimeout); v != "" {
 		settings["askUserQuestionTimeout"] = v
 	}

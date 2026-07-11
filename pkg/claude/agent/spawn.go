@@ -103,6 +103,10 @@ func quoteName(name string) string { return `"` + name + `"` }
 // handleGroupSpawn decodes it. One type means the CLI and the
 // dashboard cannot drift in which fields the daemon understands.
 type SpawnRequest struct {
+	// SandboxProfile is an optional additive filesystem/environment profile.
+	// Only a daemon-boundary-classified human may set it; agent callers may
+	// inherit the group's/global policy but cannot select an escalation.
+	SandboxProfile string `json:"sandbox_profile,omitempty"`
 	// Profile names the CLI's explicit --profile. Launch fields remain separate
 	// on the wire so the daemon can distinguish direct flags (loud on
 	// incompatibility) from ambient profile values (skip + disclose when a
@@ -387,7 +391,8 @@ type SpawnParams struct {
 	// short is pinned so boa's short-flag enricher doesn't hand `-p` elsewhere.
 	// Precedence: explicit flags override the profile, which overrides the
 	// group / global / harness defaults (see mergeProfileIntoSpawn).
-	Profile string `long:"profile" short:"p" optional:"true" help:"Pre-fill spawn fields from a saved spawn profile (see 'tclaude agent profiles ls'). Explicit flags override the profile; the profile overrides group/global/harness defaults. remote_control is NOT taken from the profile — use --remote-control"`
+	Profile        string `long:"profile" short:"p" optional:"true" help:"Pre-fill spawn fields from a saved spawn profile (see 'tclaude agent profiles ls'). Explicit flags override the profile; the profile overrides group/global/harness defaults. remote_control is NOT taken from the profile — use --remote-control"`
+	SandboxProfile string `long:"sandbox-profile" optional:"true" help:"Human-only additive filesystem/environment sandbox profile for this spawn"`
 
 	Worktree     string `long:"worktree" short:"w" optional:"true" help:"Create (or reuse) a git worktree on this branch and spawn the agent into it. The worktree is created in the repo containing --cwd, unless --worktree-repo points elsewhere. Mirrors the dashboard spawn modal's worktree picker"`
 	WorktreeBase string `long:"worktree-base" optional:"true" help:"Base branch for a newly-created --worktree (default: the repo's default branch). Ignored when the --worktree branch already exists"`
@@ -911,6 +916,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 
 	req := SpawnRequest{
 		Profile:                strings.TrimSpace(p.Profile),
+		SandboxProfile:         strings.TrimSpace(p.SandboxProfile),
 		Name:                   name,
 		Role:                   merged.Role,
 		Descr:                  merged.Descr,

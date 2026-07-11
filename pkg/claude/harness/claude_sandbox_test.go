@@ -215,6 +215,25 @@ func TestClaudeSettingsGitWorktreeWriteDirs(t *testing.T) {
 	}
 }
 
+func TestClaudeSettingsSandboxProfileReadAndWriteDirs(t *testing.T) {
+	payload := claudeSettingsJSON(SpawnSpec{
+		SandboxMode:      ClaudeSandboxOn,
+		SandboxReadDirs:  []string{"/opt/read"},
+		SandboxWriteDirs: []string{"/opt/write"},
+	})
+	var settings map[string]any
+	if err := json.Unmarshal([]byte(payload), &settings); err != nil {
+		t.Fatal(err)
+	}
+	filesystem := settings["sandbox"].(map[string]any)["filesystem"].(map[string]any)
+	if got := filesystem["allowRead"].([]any); len(got) != 1 || got[0] != "/opt/read" {
+		t.Fatalf("allowRead = %v", got)
+	}
+	if got := filesystem["allowWrite"].([]any); len(got) != 1 || got[0] != "/opt/write" {
+		t.Fatalf("allowWrite = %v", got)
+	}
+}
+
 // sandboxBlock parses claudeSandboxSettingsJSON(mode) and returns its inner
 // `sandbox` block. Asserting against the builder's output directly — rather than
 // re-parsing the shell-quoted BuildCommand arg — keeps the test robust to the

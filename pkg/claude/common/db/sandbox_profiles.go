@@ -483,3 +483,95 @@ func GetAgentGroupSandboxProfile(group string) (*SandboxProfile, error) {
 	}
 	return GetSandboxProfileByID(id.Int64)
 }
+
+// ResolveEffectiveSandboxSnapshot atomically reads the stable global/group
+// assignments plus an optional explicit human selection, then freezes their
+// composed values. Mutable profile references are never returned as launch
+// authority: only the versioned value snapshot is.
+func ResolveEffectiveSandboxSnapshot(groupID int64, explicitName string) (sandboxpolicy.Snapshot, error) {
+	d, err := Open()
+	if err != nil {
+		return sandboxpolicy.Snapshot{}, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return sandboxpolicy.Snapshot{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	loadByID := func(id int64) (*SandboxProfile, error) {
+		if id == 0 {
+			return nil, nil
+		}
+		profile, err := scanSandboxProfile(tx.QueryRow(sandboxProfileSelect+` WHERE id = ?`, id))
+		if err != nil {
+			return nil, err
+		}
+		if profile == nil {
+			return nil, fmt.Errorf("sandbox profile id %d referenced by assignment was not found", id)
+		}
+		return profile, nil
+	}
+	var globalID, groupProfileID int64
+	if err := tx.QueryRow(`SELECT COALESCE((SELECT profile_id FROM sandbox_profile_global_assignment WHERE id = 1), 0)`).Scan(&globalID); err != nil {
+		return sandboxpolicy.Snapshot{}, err
+	}
+	if groupID > 0 {
+		if err := tx.QueryRow(`SELECT COALESCE(sandbox_profile_id, 0) FROM agent_groups WHERE id = ?`, groupID).Scan(&groupProfileID); errors.Is(err, sql.ErrNoRows) {
+			return sandboxpolicy.Snapshot{}, fmt.Errorf("agent group %d not found", groupID)
+		} else if err != nil {
+			return sandboxpolicy.Snapshot{}, err
+		}
+	}
+	global, err := loadByID(globalID)
+	if err != nil {
+		return sandboxpolicy.Snapshot{}, err
+	}
+	group, err := loadByID(groupProfileID)
+	if err != nil {
+		return sandboxpolicy.Snapshot{}, err
+	}
+	var explicit *SandboxProfile
+	explicitName = strings.TrimSpace(explicitName)
+	if explicitName != "" {
+		explicit, err = scanSandboxProfile(tx.QueryRow(sandboxProfileSelect+` WHERE name = ?`, explicitName))
+		if errors.Is(err, sql.ErrNoRows) || explicit == nil {
+			return sandboxpolicy.Snapshot{}, ErrSandboxProfileNotFound
+		}
+		if err != nil {
+			return sandboxpolicy.Snapshot{}, err
+		}
+	}
+
+	toPolicy := func(p *SandboxProfile) *sandboxpolicy.Profile {
+		if p == nil {
+			return nil
+		}
+		return &sandboxpolicy.Profile{Name: p.Name, Filesystem: p.Filesystem, Environment: p.Environment}
+	}
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{
+		Global: toPolicy(global), Group: toPolicy(group), Explicit: toPolicy(explicit),
+	})
+	if err != nil {
+		return sandboxpolicy.Snapshot{}, err
+	}
+	applied := make([]sandboxpolicy.AppliedProfile, 0, 3)
+	for _, item := range []struct {
+		scope   sandboxpolicy.Scope
+		profile *SandboxProfile
+	}{
+		{sandboxpolicy.ScopeGlobal, global},
+		{sandboxpolicy.ScopeGroup, group},
+		{sandboxpolicy.ScopeExplicit, explicit},
+	} {
+		if item.profile != nil {
+			applied = append(applied, sandboxpolicy.AppliedProfile{
+				Scope: item.scope, ID: item.profile.ID, Name: item.profile.Name, UpdatedAt: item.profile.UpdatedAt,
+			})
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return sandboxpolicy.Snapshot{}, err
+	}
+	return sandboxpolicy.NewSnapshot(effective, applied), nil
+}

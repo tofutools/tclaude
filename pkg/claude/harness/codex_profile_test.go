@@ -39,6 +39,28 @@ func TestCodexAgentProfileContent(t *testing.T) {
 	}
 }
 
+func TestCodexAgentProfileContentIncludesAdditiveReadAndWriteGrants(t *testing.T) {
+	got, err := codexAgentProfileContentForNameAndGrants(
+		"tclaude-agent-test", "/tmp/agentd.sock", "/tmp/private",
+		[]string{"/opt/read", "/opt/both"}, []string{"/opt/write", "/opt/both"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`"/opt/read" = "read"`,
+		`"/opt/write" = "write"`,
+		`"/opt/both" = "write"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("profile missing %s:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, `"/opt/both" = "read"`) {
+		t.Fatalf("write must dominate duplicate read grant:\n%s", got)
+	}
+}
+
 // TestCodexAgentProfileContent_WithGitCommonDir pins the repo-scoped grant
 // that lets a sandboxed Codex worker commit from a linked worktree without
 // making the rest of $HOME writable.

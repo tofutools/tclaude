@@ -152,13 +152,14 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 	// welcome) the inline path runs — and, because the conv-id now exists, it
 	// only send-keys to a Codex pane that has cleared its startup gates.
 	p := spawnParams{
-		Role:           ps.Role,
-		Descr:          ps.Descr,
-		Name:           ps.Name,
-		InitialMessage: ps.InitialMessage,
-		GroupContext:   ps.GroupContext,
-		ReplyToConv:    ps.ReplyToConv,
-		SpawnedByConv:  ps.SpawnedByConv,
+		EffectiveSandbox: ps.EffectiveSandbox,
+		Role:             ps.Role,
+		Descr:            ps.Descr,
+		Name:             ps.Name,
+		InitialMessage:   ps.InitialMessage,
+		GroupContext:     ps.GroupContext,
+		ReplyToConv:      ps.ReplyToConv,
+		SpawnedByConv:    ps.SpawnedByConv,
 		// The durable agent_id companions (JOH-321 F2): minutes have passed since
 		// the spawn was recorded, so the spawner may have rotated. These let
 		// finishSpawnEnrollment re-resolve its LIVE generation for the briefing
