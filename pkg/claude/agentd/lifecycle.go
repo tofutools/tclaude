@@ -1954,7 +1954,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			if grant.Access == sandboxpolicy.AccessWrite {
 				proofDir, proofErr := sandboxWriteProofDir(grant.Path)
 				if proofErr != nil {
-					writeError(w, http.StatusBadRequest, "invalid_cwd", proofErr.Error())
+					writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", proofErr.Error())
 					return
 				}
 				dirs = appendUniqueDirs(dirs, proofDir)
