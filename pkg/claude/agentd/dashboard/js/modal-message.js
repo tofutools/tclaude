@@ -10,7 +10,7 @@ import { dashPrefs } from './prefs.js';
 import { recordGroupInteraction } from './last-group.js';
 import {
   bindTargetPicker, populateTargetPicker, readTargetPicker, pickCronTargetModal,
-  openSudoGrantModal, closeSudoGrantModal, submitSudoGrant, pickSudoAgentModal,
+  closeSudoGrantModal, submitSudoGrant,
 } from './modal-cron.js';
 // lastSnapshot lives in dashboard.js; refresh() / toast / openCleanupModal
 // in refresh.js. Imported back — benign cycles (see render.js); TDZ-safe.
@@ -280,10 +280,6 @@ function bindMessageModal() {
 }
 
 function bindSudoModal() {
-  $('#sudo-grant-open').addEventListener('click', async () => {
-    const convID = await pickSudoAgentModal();
-    if (convID) openSudoGrantModal(convID);
-  });
   $('#sudo-grant-cancel').addEventListener('click', closeSudoGrantModal);
   $('#sudo-grant-submit').addEventListener('click', submitSudoGrant);
   // Select-all / select-none act on every non-disabled checkbox

@@ -31,7 +31,7 @@ func TestDashboardHTML_SortableColumnsWired(t *testing.T) {
 	// generations) are included: they're the "non-real" groups that gained
 	// the same clickable, agent-id-leading headers as real groups.
 	for _, table := range []string{
-		"members", "sudo", "links",
+		"members", "links",
 		"retired", "conversations", "pending", "replaced",
 	} {
 		must("sortHead('"+table+"'", table+" table renders a sortable header")
@@ -40,6 +40,8 @@ func TestDashboardHTML_SortableColumnsWired(t *testing.T) {
 	// interactive keyed headers instead of emitting legacy sortHead HTML.
 	must("function SortHead(", "Jobs island renders its sortable header component")
 	must("JOBS_COLS.map(", "Jobs island uses the shared Jobs column specification")
+	// Access owns sudo sorting inside its Preact feature boundary.
+	must("SUDO_COLUMNS.map(", "Access island renders its sortable sudo headers")
 
 	// The headers must carry the attributes the click handler reads.
 	must("data-sort-table=", "headers tag their table key")

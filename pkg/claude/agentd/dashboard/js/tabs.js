@@ -1,13 +1,13 @@
-// tabs.js — the legacy Groups / Sudo / Links tab renderers.
+// tabs.js — the legacy Groups / Links tab renderers.
 //
-// Builds the listing tables for the Groups, Sudo and Links
+// Builds the listing tables for the Groups and Links
 // tabs from snapshot data, each with its text-filter helper.
 // Extracted from dashboard.js as part of the Stage 2 module split.
 
-import { $, esc, shortAgentId, idTooltip, relTime, syncBotAnimations, syncWizardOrbit } from './helpers.js';
+import { $, esc, relTime, syncBotAnimations, syncWizardOrbit } from './helpers.js';
 import {
   sortHead, applySort,
-  SUDO_COLS, SUDO_ACCESSORS, LINK_COLS, LINK_ACCESSORS,
+  LINK_COLS, LINK_ACCESSORS,
 } from './sort.js';
 import {
   virtualUngroupedGroup, ungroupedVisible,
@@ -180,8 +180,6 @@ function renderGroupsTab() {
     ? `${shownReal} / ${total}` : `${total} group${total === 1 ? '' : 's'}`;
 }
 
-// -- Sudo tab ---------------------------------------------------------
-
 function fmtRemaining(secs) {
   if (!secs || secs <= 0) return 'expired';
   if (secs < 60) return secs + 's';
@@ -193,54 +191,6 @@ function fmtRemaining(secs) {
   const h = Math.floor(secs / 3600);
   const m = Math.floor((secs % 3600) / 60);
   return m > 0 ? `${h}h${m}m` : `${h}h`;
-}
-
-function filterSudo(rows, q) {
-  if (!q) return rows;
-  const needle = q.toLowerCase();
-  return rows.filter(r =>
-    (r.conv_title || '').toLowerCase().includes(needle) ||
-    (r.conv_id || '').toLowerCase().includes(needle) ||
-    (r.agent_id || '').toLowerCase().includes(needle) ||
-    (r.slug || '').toLowerCase().includes(needle) ||
-    (r.reason || '').toLowerCase().includes(needle));
-}
-
-function renderSudo(rows) {
-  if (!rows || !rows.length) {
-    return '<div class="empty">No active sudo grants.</div>';
-  }
-  return `
-    <table>
-      ${sortHead('sudo', SUDO_COLS)}
-      <tbody>
-        ${applySort('sudo', rows, SUDO_ACCESSORS).map(r => `
-          <tr data-key="sudo-${esc(String(r.id))}">
-            <td>
-              <span class="rowname">${esc(r.conv_title || '(unknown)')}</span>
-              <span class="id" title="${esc(idTooltip(r.agent_id, r.conv_id))}">${esc(shortAgentId(r.agent_id, r.conv_id))}</span>
-            </td>
-            <td><span class="tag slug">${esc(r.slug)}</span></td>
-            <td><span class="last-hook">${esc(relTime(r.granted_at))}</span></td>
-            <td><span class="last-hook">${esc(fmtRemaining(r.remaining_seconds))}</span></td>
-            <td>${esc(r.reason || '')}</td>
-            <td><span class="muted" title="${esc(r.granted_by || '')}">${esc(r.granted_by || '')}</span></td>
-            <td><button class="danger" data-act="sudo-revoke" data-id="${r.id}" data-slug="${esc(r.slug)}" data-conv="${esc(r.conv_title || r.conv_id)}" title="Revoke this grant">revoke</button></td>
-          </tr>`).join('')}
-      </tbody>
-    </table>
-  `;
-}
-
-function renderSudoTab() {
-  if (!lastSnapshot) return;
-  const q = $('#filter-sudo').value;
-  const rows = lastSnapshot.sudo || [];
-  const filtered = filterSudo(rows, q);
-  morphInto($('#sudo-list'), renderSudo(filtered));
-  $('#filter-sudo-count').textContent = q
-    ? `${filtered.length} / ${rows.length}`
-    : `${rows.length} active grant${rows.length === 1 ? '' : 's'}`;
 }
 
 // -- Links tab --------------------------------------------------------
@@ -295,5 +245,5 @@ function renderLinksTab() {
 }
 
 export {
-  renderGroupsTab, renderSudoTab, renderLinksTab, fmtRemaining,
+  renderGroupsTab, renderLinksTab, fmtRemaining,
 };

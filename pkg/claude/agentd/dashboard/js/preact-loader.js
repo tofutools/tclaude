@@ -110,3 +110,25 @@ export async function mountCostsFeature(actionDependencies = {}) {
     },
   });
 }
+
+export async function mountAccessFeature(actionDependencies) {
+  const host = document.querySelector('#access-root');
+  if (!host) return null;
+  return mountFeatureIsland({
+    name: 'access', label: 'Access', hosts: [host], failureClass: 'access-error',
+    load: async () => {
+      const islandModule = import('./access-island.js');
+      const stateModule = import('./access-state.js');
+      const actionsModule = import('./access-actions.js');
+      const [{ mountAccessIsland }, { accessState }, { createAccessActions }] =
+        await Promise.all([islandModule, stateModule, actionsModule]);
+      const accessActions = createAccessActions({ ...actionDependencies, state: accessState });
+      return {
+        state: accessState,
+        mount: (registerCleanup) => mountAccessIsland({
+          host, state: accessState, actions: accessActions, registerCleanup,
+        }),
+      };
+    },
+  });
+}

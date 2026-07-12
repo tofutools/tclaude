@@ -81,7 +81,7 @@ async function submitSudoGrant() {
   }
 }
 
-// Per-row sudo-revoke is handled by bindRowActions (data-act="sudo-revoke").
+// Per-row sudo revoke is owned by the Access Preact island.
 // The Grant modal hooks into bindSudoModal below.
 
 // pickSudoAgentModal opens a filtered agent picker and resolves to
