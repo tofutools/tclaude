@@ -14,7 +14,13 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		`id="sandbox-profile-editor-environment"`:                        "raw environment editor",
 		`id="sandbox-profile-editor-includes"`:                           "raw includes editor",
 		`id="sandbox-profile-editor-agent-directories"`:                  "raw agent-owned directory editor",
+		`id="sandbox-profile-editor-submit"`:                             "stable submit hook for plain and wizard skins",
 		`class="sbx-agent-name"`:                                         "structured agent-owned directory row",
+		`.sbx-section input:not([type])`:                                 "Preact structured inputs retain dark modal styling",
+		`.sbx-section select`:                                            "Preact structured selects retain dark modal styling",
+		`.sbx-row button`:                                                "Preact structured row buttons retain dark modal styling",
+		`.sbx-row button:last-child:hover`:                               "Preact remove buttons retain destructive hover styling",
+		`#sandbox-profile-editor-submit:disabled::before`:                "wizard saving state suppresses the decorative submit label",
 		`/api/sandbox-profile-directories/inspect`:                       "missing-directory inspection",
 		`/api/sandbox-profile-directories/create`:                        "explicit missing-directory creation",
 		`agent_directories: draft.agent_directories`:                     "agent-owned directories persist in save payloads",
@@ -55,6 +61,9 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard missing %q (%s)", needle, why)
 		}
+	}
+	if !strings.Contains(dashboardAssets, `body.wizard #sandbox-profile-editor-modal .sbx-section input:not([type])`) {
+		t.Error("wizard structured sandbox inputs lost the arcane skin")
 	}
 
 	for _, retired := range []string{
