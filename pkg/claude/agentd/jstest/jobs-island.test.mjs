@@ -95,12 +95,21 @@ test('Jobs island renders reactively and preserves keyed DOM/focus across polls'
   await new Promise((resolve) => setTimeout(resolve, 275));
   assert.ok(calls.includes('refresh'));
 
+  await harness.act(() => harness.fireEvent(nextPage, 'click'));
+  assert.equal(state.offset.value, 50, 'failed successor request targets the next page');
   await harness.act(() => {
     state.beginRequest(3);
     state.failRequest(3, new Error('network down'));
   });
   assert.match(getByRole(mounted.container, 'alert').textContent, /network down/);
   assert.equal(mounted.container.querySelectorAll('tbody tr').length, 2, 'stale page remains visible');
+  assert.equal(nextPage.disabled, true, 'stale-page navigation is disabled until Retry succeeds');
+  const retry = getByRole(mounted.container, 'button', { name: 'Retry' });
+  const refreshesBeforeRetry = calls.filter((call) => call === 'refresh').length;
+  await harness.act(() => harness.fireEvent(retry, 'click'));
+  assert.equal(calls.filter((call) => call === 'refresh').length, refreshesBeforeRetry + 1);
+  assert.equal(nextPage.disabled, true, 'pager stays inert while displayed and requested pages differ');
+  assert.match(state.params.value, /offset=50/, 'Retry keeps targeting the failed requested page');
   await badge.unmount();
   await mounted.unmount();
 });

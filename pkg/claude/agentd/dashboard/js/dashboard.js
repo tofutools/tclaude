@@ -19,6 +19,7 @@ import {
   bindListPagers,
   confirmModal, refresh, toast,
 } from './refresh.js';
+import { bindAccessTab } from './access-tab.js';
 
 // Cosmetic re-skins — slop (?slop=1) and wizard (?wizard=1), mutually
 // exclusive (see `tclaude agent dashboard --slop|--wizard`). Run before any
@@ -194,9 +195,8 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   bindDockSaveDnd();
   bindFilter('groups');
   bindFilter('templates');
-  bindFilter('sudo');
+  bindAccessTab();
   bindFilter('links');
-  bindFilter('plugins');
   bindFilter('messages');
   bindSudoModal();
   bindPermEditModal();

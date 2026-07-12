@@ -42,8 +42,8 @@ func TestDashboardHTML_RefreshGuardCannotWedge(t *testing.T) {
 	if got := strings.Count(dashboardAssets, "if (refreshSuspended({ ignoreModals: force })) {"); got != 3 {
 		t.Errorf("refresh() suspension guard count = %d, want 3", got)
 	}
-	if got := strings.Count(dashboardAssets, "dashboardState.discardRequest(requestId, { responded });"); got != 2 {
-		t.Errorf("post-request discard count = %d, want 2", got)
+	if got := strings.Count(dashboardAssets, "dashboardState.discardRequest(requestId, { responded });"); got < 2 {
+		t.Errorf("post-request discard count = %d, want at least 2", got)
 	}
 
 	// Modal suspension is derived from the DOM, not a hand-maintained

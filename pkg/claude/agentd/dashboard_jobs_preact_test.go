@@ -22,6 +22,22 @@ func TestDashboardJobsPreactBoundary(t *testing.T) {
 			t.Errorf("Jobs state contains forbidden DOM/fetch knowledge %q", forbidden)
 		}
 	}
+	lifecycle := read("js/island-lifecycle.js")
+	for _, forbidden := range []string{"from 'preact'", `from "preact"`, "@preact/signals", "./jobs-"} {
+		if strings.Contains(lifecycle, forbidden) {
+			t.Errorf("island lifecycle contains feature/runtime dependency %q", forbidden)
+		}
+	}
+	for _, needle := range []string{
+		"claimHosts(name, hosts)",
+		"registerFeatureState(name, feature.state)",
+		"renderIslandLoadFailure(hosts[0]",
+		"releaseHosts(name, hosts)",
+	} {
+		if !strings.Contains(lifecycle, needle) {
+			t.Errorf("island lifecycle wiring missing %q", needle)
+		}
+	}
 	island := read("js/jobs-island.js")
 	for _, forbidden := range []string{"innerHTML", "morphInto", "./refresh.js", "fetch("} {
 		if strings.Contains(island, forbidden) {
@@ -38,8 +54,11 @@ func TestDashboardJobsPreactBoundary(t *testing.T) {
 		`<div id="jobs-root"></div>`,
 		`<span id="jobs-badge-root"></span>`,
 		"await mountJobsFeature({",
+		"return mountFeatureIsland({",
 		"jobsActive ? get('/api/jobs?' + jobs.params.value)",
 		"jobs.beginRequest(requestId)",
+		"!jobs.acceptsRequest(requestId)",
+		"jobsResult.ok) jobs.syncServedOffset",
 		"jobs.commitRequest(requestId)",
 		"jobs.failRequest(requestId, jobsResult.error)",
 	} {
