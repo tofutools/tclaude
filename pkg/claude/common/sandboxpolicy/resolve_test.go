@@ -187,6 +187,24 @@ func TestResolveEnforcesAggregateEnvironmentLimits(t *testing.T) {
 	assert.Contains(t, err.Error(), "too many entries")
 }
 
+func TestResolveAgentDirectoriesUnionAndLiteralConflict(t *testing.T) {
+	global := &Profile{Name: "global", AgentDirectories: []string{"GOCACHE", "GOLANGCI_LINT_CACHE"}}
+	group := &Profile{Name: "group", AgentDirectories: []string{"GOCACHE"}}
+	got, err := Resolve(Scopes{Global: global, Group: group})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"GOCACHE", "GOLANGCI_LINT_CACHE"}, got.AgentDirectories)
+	assert.Equal(t, []ProfileSource{
+		{Scope: ScopeGlobal, Profile: "global"},
+		{Scope: ScopeGroup, Profile: "group"},
+	}, got.Provenance.AgentDirectories["GOCACHE"])
+
+	_, err = Resolve(Scopes{
+		Global:   global,
+		Explicit: &Profile{Name: "explicit", Environment: []EnvironmentEntry{{Name: "GOCACHE", Value: "/literal"}}},
+	})
+	require.ErrorContains(t, err, `environment variable "GOCACHE" is both literal and agent-owned`)
+}
+
 func TestResolveWrapsScopeValidationErrors(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	bad := &Profile{Name: "bad", Environment: []EnvironmentEntry{{Name: "PATH", Value: "nope"}}}

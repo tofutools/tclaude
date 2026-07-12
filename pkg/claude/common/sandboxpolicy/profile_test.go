@@ -251,6 +251,24 @@ func TestNormalizeEnvironmentLimits(t *testing.T) {
 	assert.Contains(t, err.Error(), "too many entries")
 }
 
+func TestNormalizeAgentDirectoriesCanonicalAndRejectsConflicts(t *testing.T) {
+	got, err := Normalize(Profile{Name: "p", AgentDirectories: []string{
+		"GOLANGCI_LINT_CACHE", "GOCACHE", "GOCACHE",
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"GOCACHE", "GOLANGCI_LINT_CACHE"}, got.AgentDirectories)
+
+	_, err = Normalize(Profile{Name: "p", AgentDirectories: []string{"NOT-AN-ENV"}})
+	require.ErrorContains(t, err, "ASCII environment-variable name")
+	_, err = Normalize(Profile{Name: "p", AgentDirectories: []string{"HOME"}})
+	require.ErrorContains(t, err, "reserved")
+	_, err = Normalize(Profile{
+		Name: "p", Environment: []EnvironmentEntry{{Name: "GOCACHE", Value: "/literal"}},
+		AgentDirectories: []string{"GOCACHE"},
+	})
+	require.ErrorContains(t, err, "also has a literal environment value")
+}
+
 func TestNormalizeProfileName(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	for _, name := range []string{"", "a/b", "a\\b", "bad\nname", strings.Repeat("x", MaxProfileNameBytes+1)} {
