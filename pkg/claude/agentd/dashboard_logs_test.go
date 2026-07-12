@@ -151,6 +151,18 @@ func TestGatherLogRecordKeysSurviveRotationAndNewActiveFile(t *testing.T) {
 	}
 }
 
+func TestGatherLogRecordsSkipsSamePhysicalFileAtTwoPaths(t *testing.T) {
+	line := jsonLine("2026-07-01T12:00:00.000Z", "INFO", "one physical file")
+	path := writeLog(t, line)
+	if err := os.Link(path, path+".1"); err != nil {
+		t.Fatal(err)
+	}
+	records, sources, _ := gatherLogRecords(path, true, maxLogReadBytes)
+	if len(records) != 1 || len(sources) != 1 {
+		t.Fatalf("same physical file emitted records/sources twice: records=%d sources=%d", len(records), len(sources))
+	}
+}
+
 func TestBuildLogsResponse_LevelMinFilter(t *testing.T) {
 	path := writeLog(t,
 		jsonLine("2026-07-01T12:00:00.000Z", "DEBUG", "d"),

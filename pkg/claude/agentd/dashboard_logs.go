@@ -354,6 +354,7 @@ func gatherLogRecords(path string, includeRotated bool, maxBytes int64) (records
 	}
 
 	budget := maxBytes
+	seenGenerations := make(map[string]bool)
 	for _, f := range files {
 		if budget <= 0 {
 			truncated = true
@@ -363,6 +364,13 @@ func gatherLogRecords(path string, includeRotated bool, maxBytes int64) (records
 		if err != nil {
 			continue // missing / unreadable file — skip it
 		}
+		// Rotation can rename the active file after we read it but before we
+		// open .1. In that interleaving both paths name the same physical file;
+		// count it once and never emit duplicate row keys.
+		if seenGenerations[generation] {
+			continue
+		}
+		seenGenerations[generation] = true
 		if tr {
 			truncated = true
 		}
