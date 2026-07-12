@@ -53,6 +53,13 @@
   color: #d4d4d4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .mux-pane-status { font-size: 11px; color: #7d8590; flex: 1; }
+.terminal-interaction-hint {
+  color: #7d8590; font-size: 11px; white-space: nowrap;
+}
+
+@media (max-width: 850px) {
+  .terminal-interaction-hint { display: none; }
+}
 
 .mux-btn {
   background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;

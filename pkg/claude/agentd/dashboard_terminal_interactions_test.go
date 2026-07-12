@@ -60,6 +60,23 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 			t.Errorf("terminal-interactions.js missing %q", needle)
 		}
 	}
+	if strings.Contains(interactions, "host.title") {
+		t.Error("terminal surface must not use a native title tooltip; guidance belongs in non-overlaying UI")
+	}
+	if strings.Contains(interactions, "copyButton.title") {
+		t.Error("terminal Copy action must expose guidance accessibly without a native title tooltip")
+	}
+	for _, needle := range []string{
+		"hintEl.className = 'terminal-interaction-hint'",
+		"Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C",
+	} {
+		if !strings.Contains(core, needle) {
+			t.Errorf("mux terminal header missing persistent guidance %q", needle)
+		}
+	}
+	if !strings.Contains(dashboardAssets, `<span class="terminal-interaction-hint">Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C</span>`) {
+		t.Error("fallback terminal modal missing persistent selection/copy guidance")
+	}
 
 	for _, name := range []string{"dashboard.html", "terminals.html"} {
 		data, err := fs.ReadFile(dashboardAssetsFS, name)

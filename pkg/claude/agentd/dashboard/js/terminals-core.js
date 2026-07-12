@@ -204,12 +204,16 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
     statusEl.setAttribute('aria-live', 'polite');
     statusEl.setAttribute('aria-atomic', 'true');
 
+    const hintEl = document.createElement('span');
+    hintEl.className = 'terminal-interaction-hint';
+    hintEl.textContent = 'Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C';
+
     const reconnectBtn = document.createElement('button');
     reconnectBtn.className = 'mux-btn';
     reconnectBtn.textContent = 'Reconnect';
     reconnectBtn.style.display = 'none';
 
-    header.append(titleEl, statusEl, reconnectBtn);
+    header.append(titleEl, statusEl, hintEl, reconnectBtn);
 
     const copyBtn = document.createElement('button');
     copyBtn.className = 'mux-btn';
