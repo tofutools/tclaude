@@ -17,9 +17,8 @@ import {
   renderNotifyGlobal, renderGlobalActivity,
 } from './render.js';
 import { renderMailTab, onMailSearchChanged, renderAccessRequests } from './mail.js';
-import { renderGroupsTab, renderSudoTab, renderLinksTab } from './tabs.js';
+import { renderGroupsTab, renderLinksTab } from './tabs.js';
 import { renderTemplatesTab } from './modal-templates.js';
-import { renderAccessListSnapshot, renderAccessRegistrySnapshot } from './access-tab.js';
 import { applyProcessesTabVisibility } from './processes.js';
 import { morphInto } from './morph.js';
 import { renderDock } from './dock.js';
@@ -531,11 +530,9 @@ export async function refresh(opts = {}) {
     // keyed morphInto so its selection/scroll survive and a manager edit
     // shows up on the next tick.
     renderDock();
-    renderAccessListSnapshot();
     renderLinksTab();
     applyProcessesTabVisibility(data);
     applyDebugTabVisibility(data);
-    renderAccessRegistrySnapshot(data);
     renderMailTab();
     renderMessagesBadge(data.messages_unread || 0, data.access_requests_pending || 0);
     renderAccessRequests(data.access_requests || [], data.access_requests_pending || 0);
@@ -819,50 +816,12 @@ function applyDebugTabVisibility(data) {
     }
   }
 }
-// The "Access" tab merges three former tabs — Permissions, Slug
-// registry and Sudo — behind one nav button. Inside it a segmented
-// control switches between the three sub-panels. Unlike the top-level
-// tabs, the per-panel innerHTML keeps getting refreshed every 2s
-// regardless of which sub-tab is visible (the panels are just hidden),
-// so selecting a sub-tab is purely a CSS .active toggle that survives
-// the poll.
-function bindAccessSubtabs() {
-  const subnav = $('#tab-access .access-subnav');
-  if (!subnav) return;
-  subnav.addEventListener('click', e => {
-    const btn = e.target.closest('[data-subtab]');
-    if (!btn) return;
-    // Real <a href> subtab links: a modified/middle click opens /access/<sub>
-    // in a new tab; a plain click switches in place (preventDefault stops the
-    // anchor's navigation). See isModifiedClick / bindTabs.
-    if (isModifiedClick(e)) return;
-    e.preventDefault();
-    activateAccessSubtab(btn.dataset.subtab);
-  });
-  // Space-activation parity for the anchor subtabs (see bindTabs): <a> switches
-  // on Enter only, so shim Space to keep the former <button> keyboard behaviour.
-  subnav.addEventListener('keydown', e => {
-    if (e.key !== ' ' && e.key !== 'Spacebar') return;
-    const a = e.target.closest('a[data-subtab]');
-    if (!a) return;
-    e.preventDefault();
-    a.click();
-  });
-}
-
 // activateAccessSubtab selects one of the Access tab's sub-views
 // (permissions / slugs / sudo) by toggling .active on the matching
 // segmented-control button and its panel. Exported so deep links (the
 // 🔓 sudo-manage badge) can jump straight to a sub-view.
 export function activateAccessSubtab(name) {
-  $$('#tab-access .access-subtab').forEach(b => {
-    const on = b.dataset.subtab === name;
-    b.classList.toggle('active', on);
-    b.setAttribute('aria-selected', on ? 'true' : 'false');
-  });
-  $$('#tab-access .access-panel').forEach(p => {
-    p.classList.toggle('active', p.id === 'access-' + name);
-  });
+  featureState('access')?.setSubtab(name);
   // Tell the history router the location changed (→ /access/<sub>). One-way
   // event so refresh.js doesn't import nav-history.js; nav-history records it as
   // user navigation (no-op during its own programmatic restore). See
@@ -1020,7 +979,6 @@ function bindSortHeaders() {
     if (tableKey === 'members' || tableKey === 'replaced'
         || tableKey === 'retired' || tableKey === 'conversations'
         || tableKey === 'pending') renderGroupsTab();
-    else if (tableKey === 'sudo') renderSudoTab();
     else if (tableKey === 'links') renderLinksTab();
   });
 }
@@ -4619,7 +4577,7 @@ async function stopAgentReq(conv, label, force) {
 }
 
 export {
-  bindFilter, bindTabs, bindTabHotkeys, bindAccessSubtabs, bindDetailsPersistence, bindGroupTitleToggle, bindGroupQuickHover, bindSortHeaders,
+  bindFilter, bindTabs, bindTabHotkeys, bindDetailsPersistence, bindGroupTitleToggle, bindGroupQuickHover, bindSortHeaders,
   shutdownScope, powerOnScope, openWindowModal, retireConfirm, retireToast, shutdownConfirm,
   maybeHandleDanglingRetire, retireAgentInteractive, openRetirePreview, openRetireUngroupedPreview, openDeleteRetiredPreview, openWorktreeCleanup,
   openDeleteGroupModal,

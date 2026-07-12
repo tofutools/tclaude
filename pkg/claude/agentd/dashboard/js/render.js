@@ -1026,70 +1026,6 @@ function renderGroupLinksSection(groupName) {
   `;
 }
 
-function renderPermissions(perm, agents) {
-  const titleByConv = Object.fromEntries((agents || []).map(a => [a.conv_id, a.title]));
-  // Lead each roster row with the stable agent_id (rotation-immune); the
-  // cell hover shows both ids via idTooltip. The overrides map is
-  // conv-keyed, so resolve agent_id via the agents array (carries both).
-  const agentIdByConv = Object.fromEntries((agents || []).map(a => [a.conv_id, a.agent_id]));
-  const overrides = perm.overrides || {};
-  const defaults = perm.defaults || [];
-  // Split each conv's tri-state override map into granted / denied
-  // slug lists for display. The per-agent "permissions" button on the
-  // Groups tab is the write path; this tab is the roster.
-  const rows = Object.entries(overrides).map(([k, slugEffects]) => {
-    const granted = [], denied = [];
-    for (const [slug, effect] of Object.entries(slugEffects || {})) {
-      (effect === 'deny' ? denied : granted).push(slug);
-    }
-    granted.sort(); denied.sort();
-    return { k, granted, denied };
-  }).sort((a, b) => a.k < b.k ? -1 : 1);
-  return `
-    <h3 style="margin-top:0">Defaults <span class="muted" style="font-size:11px">— granted to every agent (config.json)</span></h3>
-    ${defaults.length === 0
-      ? '<div class="empty">No defaults set.</div>'
-      : `<div>${defaults.map(s => `<span class="tag default slug">${esc(s)}</span>`).join(' ')}</div>`}
-    <h3>Per-agent overrides <span class="muted" style="font-size:11px">— permanent grant / deny on top of defaults (SQLite agent_permissions). Edit via the per-agent “permissions” button.</span></h3>
-    ${rows.length === 0
-      ? '<div class="empty">No per-agent overrides yet. Use the per-agent “permissions” button.</div>'
-      : `<table>
-          <thead><tr><th>ID</th><th>Title</th><th>Granted</th><th>Denied</th></tr></thead>
-          <tbody>
-            ${rows.map(r => `
-              <tr data-key="${esc(r.k)}">
-                <td class="id" title="${esc(idTooltip(agentIdByConv[r.k], r.k))}">${esc(shortAgentId(agentIdByConv[r.k], r.k))}</td>
-                <td class="rowname">${esc(titleByConv[r.k] || '(unknown)')}</td>
-                <td>${r.granted.map(s => `<span class="tag slug">${esc(s)}</span>`).join(' ') || '<span class="muted">—</span>'}</td>
-                <td>${r.denied.map(s => `<span class="tag slug deny">${esc(s)}</span>`).join(' ') || '<span class="muted">—</span>'}</td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>`}
-  `;
-}
-
-function renderSlugs(slugs) {
-  if (!slugs || !slugs.length) return '<div class="empty">No slugs registered.</div>';
-  return `
-    <div class="muted" style="font-size:11px;margin-bottom:6px">
-      👑 = group ownership confers this slug for owned groups / their members, without an explicit grant (a per-agent deny still suppresses it).
-    </div>
-    <table>
-      <thead><tr><th>Slug</th><th>Owner</th><th>Description</th></tr></thead>
-      <tbody>
-        ${slugs.map(s => `
-          <tr data-key="${esc(s.slug)}">
-            <td><span class="slug">${esc(s.slug)}</span></td>
-            <td>${s.owner_implied ? '<span class="owner-badge" title="Conferred by group ownership">👑</span>' : '<span class="muted">—</span>'}</td>
-            <td>${esc(s.description || '')}</td>
-          </tr>
-        `).join('')}
-      </tbody>
-    </table>
-  `;
-}
-
 function showStatus(text, isError) {
   const el = $('#status');
   el.textContent = text;
@@ -1404,7 +1340,7 @@ function renderGlobalActivity() {
 }
 
 export {
-  renderGroups, renderGlobalActivity, renderPermissions, renderSlugs, showStatus,
+  renderGroups, renderGlobalActivity, showStatus,
   renderMessagesBadge, renderUsage, renderDashDefaultProfile, renderDashSandboxProfile,
   renderNotifyGlobal,
 };

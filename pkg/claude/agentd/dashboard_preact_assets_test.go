@@ -106,7 +106,7 @@ func TestDashboardPreactImportMap(t *testing.T) {
 
 func TestDashboardPreactProbeWired(t *testing.T) {
 	for _, needle := range []string{
-		"mountPreactRuntimeProbe } from './preact-loader.js';",
+		"mountPreactRuntimeProbe,",
 		"void mountPreactRuntimeProbe();",
 		"await mountJobsFeature({",
 	} {

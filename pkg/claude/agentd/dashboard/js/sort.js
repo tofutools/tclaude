@@ -212,24 +212,6 @@ const JOBS_ACCESSORS = {
   info: r => (r.cron ? r.cron.interval_seconds : r.export?.artifact_size),
 };
 
-const SUDO_COLS = [
-  { label: 'Agent', col: 'conv' },
-  { label: 'Slug', col: 'slug' },
-  { label: 'Granted at', col: 'granted' },
-  { label: 'Expires in', col: 'expires' },
-  { label: 'Reason', col: 'reason' },
-  { label: 'Granted by', col: 'by' },
-  { label: '' },
-];
-const SUDO_ACCESSORS = {
-  conv:    r => r.conv_title || r.agent_id || r.conv_id,
-  slug:    r => r.slug,
-  granted: r => r.granted_at,
-  expires: r => r.remaining_seconds,
-  reason:  r => r.reason,
-  by:      r => r.granted_by,
-};
-
 const LINK_COLS = [
   { label: 'ID', col: 'id' },
   { label: 'From', col: 'from' },
@@ -341,7 +323,7 @@ export {
   cycleSort, sortHead, applySort, applySortState, loadSortState,
   persistedTableSort, persistTableSort,
   MEMBER_COLS, MEMBER_ACCESSORS, JOBS_COLS, JOBS_ACCESSORS,
-  SUDO_COLS, SUDO_ACCESSORS, LINK_COLS, LINK_ACCESSORS,
+  LINK_COLS, LINK_ACCESSORS,
   REPLACED_COLS, REPLACED_ACCESSORS,
   RETIRED_COLS, RETIRED_ACCESSORS,
   CONVERSATIONS_COLS, CONVERSATIONS_ACCESSORS,

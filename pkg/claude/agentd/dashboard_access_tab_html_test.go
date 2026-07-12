@@ -11,8 +11,7 @@ import (
 // three as sub-views via an internal segmented control.
 //
 // This guards that merge: the three standalone tabs can't creep back, the
-// one Access tab and its three sub-panels exist, the renderers stay wired
-// to the new per-panel mount points, and the 🔓 sudo deep link routes
+// one Access tab and its Preact-owned sub-views exist, and the 🔓 sudo deep link routes
 // through the merged tab.
 func TestDashboardHTML_AccessTabMerged(t *testing.T) {
 	absent := func(needle, why string) {
@@ -42,26 +41,26 @@ func TestDashboardHTML_AccessTabMerged(t *testing.T) {
 	present(`>Access<`, "the Access nav button keeps its label")
 	present(`id="tab-access"`, "the merged Access tab section")
 	present(`class="access-subnav"`, "the Access tab's segmented sub-nav")
-	present(`data-subtab="permissions"`, "the Permissions sub-tab button")
-	present(`data-subtab="slugs"`, "the Slug-registry sub-tab button")
-	present(`data-subtab="sudo"`, "the Sudo sub-tab button")
+	present(`ACCESS_SUBTABS.map((subtab)`, "the three modeled sub-tab buttons")
+	present(`permissions: 'Permissions'`, "the Permissions sub-tab label")
+	present(`slugs: 'Slug registry'`, "the Slug-registry sub-tab label")
+	present(`sudo: 'Sudo'`, "the Sudo sub-tab label")
 	present(`id="access-permissions"`, "the Permissions sub-panel")
 	present(`id="access-slugs"`, "the Slug-registry sub-panel")
 	present(`id="access-sudo"`, "the Sudo sub-panel")
 
-	// The renderers stay wired to the new per-panel mount divs, and the
-	// sudo filter bar + grant button moved intact into the Access tab. Both
-	// now reconcile via morphInto (the copy-paste DOM-morph fix) rather than a
-	// wholesale innerHTML swap, but still target the same per-panel mounts.
-	present(`morphInto($('#permissions-body'), renderPermissions(`, "permissions renderer morphs into #permissions-body")
-	present(`morphInto($('#slugs-body'), renderSlugs(`, "slugs renderer morphs into #slugs-body")
+	// Preact owns the three panels, filter, grant button, and stable list rows.
+	present(`id="access-root"`, "the stable Preact feature host")
+	present(`function PermissionsView(`, "the Preact permissions view")
+	present(`function SlugsView(`, "the Preact slug view")
+	present(`function SudoView(`, "the Preact sudo view")
 	present(`id="sudo-list"`, "the sudo list mount moved into the Access tab")
 	present(`id="sudo-grant-open"`, "the + Grant sudo button moved into the Access tab")
 	present(`id="filter-sudo"`, "the sudo filter input moved into the Access tab")
 
-	// The sub-tab switcher exists, and the 🔓 sudo-manage deep link routes
+	// The Preact sub-tab switcher exists, and the 🔓 sudo-manage deep link routes
 	// through the merged tab rather than a now-gone standalone Sudo tab.
-	present(`function bindAccessSubtabs(`, "the sub-tab click binder")
+	present(`function AccessSubnav(`, "the Preact sub-tab control")
 	present(`function activateAccessSubtab(`, "the sub-tab activator")
 	present(`function showAccessTab(`, "the Access-tab deep-link helper")
 	present(`showAccessTab('sudo')`, "the sudo-manage badge deep-links into the Access tab's Sudo sub-view")

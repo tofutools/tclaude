@@ -297,44 +297,12 @@
          and create/edit launcher inside this stable feature host. -->
     <div id="plugins-root"></div>
   </section>
-  <!-- Access control — Permissions, Slug registry and Sudo were three
-       separate nav tabs (all governing what an agent may do); they're
-       merged here behind one tab with an internal segmented sub-nav.
-       The sub-tab switcher (bindAccessSubtabs / activateAccessSubtab in
-       refresh.js) toggles .active on the matching button + panel. The
-       renderers still write into the per-panel mount divs below
-       (#permissions-body / #slugs-body / #sudo-list). -->
+  <!-- Access control — Permissions, Slug registry and Sudo share one nav tab.
+       Preact owns the complete bounded feature below this stable host. -->
   <section id="tab-access">
-    <p class="access-intro">
-      Everything that governs <strong>what an agent is allowed to do</strong>, in one place:
-      the permanent <strong>Permissions</strong> roster, the <strong>Slug registry</strong> of
-      every grantable capability, and time-bounded <strong>Sudo</strong> elevations.
-    </p>
-    <div class="access-subnav" role="tablist" aria-label="Access control views">
-      <a class="access-subtab active" data-subtab="permissions" href="/access/permissions" role="tab" aria-selected="true" aria-controls="access-permissions">Permissions</a>
-      <a class="access-subtab" data-subtab="slugs" href="/access/slugs" role="tab" aria-selected="false" aria-controls="access-slugs">Slug registry</a>
-      <a class="access-subtab" data-subtab="sudo" href="/access/sudo" role="tab" aria-selected="false" aria-controls="access-sudo">Sudo</a>
-    </div>
-    <div class="access-panel active" id="access-permissions" role="tabpanel" aria-label="Permissions">
-      <div id="permissions-body"></div>
-    </div>
-    <div class="access-panel" id="access-slugs" role="tabpanel" aria-label="Slug registry">
-      <p class="access-sub-intro">
-        Every capability slug an agent can be granted — registered by the daemon, read-only here.
-        Grant them as permanent overrides (Permissions) or temporary elevations (Sudo).
-      </p>
-      <div id="slugs-body"></div>
-    </div>
-    <div class="access-panel" id="access-sudo" role="tabpanel" aria-label="Sudo">
-      <div class="filter-bar">
-        <input id="filter-sudo" type="text" placeholder="Filter active sudo grants (matches conv title / id / slug / reason)" autocomplete="off" spellcheck="false" />
-        <span class="filter-count" id="filter-sudo-count"></span>
-        <button class="clear-filter" id="filter-sudo-clear" title="Clear filter">×</button>
-        <span class="spacer"></span>
-        <button id="sudo-grant-open" class="primary" title="Proactively grant a time-bounded sudo elevation to an agent">+ Grant sudo</button>
-      </div>
-      <div id="sudo-list"></div>
-    </div>
+    <!-- Preact exclusively owns the Access sub-navigation, permission and slug
+         registries, sudo filtering/sorting/countdowns, and revoke controls. -->
+    <div id="access-root"></div>
   </section>
   <section id="tab-config">
     <!-- Wizard-mode-only flourish: a fantasy-serif title naming the config

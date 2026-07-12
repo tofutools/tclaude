@@ -15,11 +15,10 @@ import { bindSlopCredits } from './slop-credits.js';
 import { bindSlopSpectacle } from './slop-spectacle.js';
 import { bindVegasMusic } from './vegas.js';
 import {
-  bindFilter, bindTabs, bindTabHotkeys, bindAccessSubtabs, bindDetailsPersistence, bindGroupTitleToggle, bindGroupQuickHover, bindSortHeaders,
+  bindFilter, bindTabs, bindTabHotkeys, bindDetailsPersistence, bindGroupTitleToggle, bindGroupQuickHover, bindSortHeaders,
   bindListPagers,
   confirmModal, refresh, toast,
 } from './refresh.js';
-import { bindAccessTab } from './access-tab.js';
 
 // Cosmetic re-skins — slop (?slop=1) and wizard (?wizard=1), mutually
 // exclusive (see `tclaude agent dashboard --slop|--wizard`). Run before any
@@ -39,7 +38,10 @@ import { bindDnd } from './dnd.js';
 import { bindGroupReorder } from './group-reorder.js';
 import { bindDockDnd } from './dock-dnd.js';
 import { bindDockSaveDnd } from './dock-save-dnd.js';
-import { bindCronModal, openCronCreateModal, openCronEditModal } from './modal-cron.js';
+import {
+  bindCronModal, openCronCreateModal, openCronEditModal,
+  openSudoGrantModal, pickSudoAgentModal,
+} from './modal-cron.js';
 import { bindTermModal } from './modal-term.js';
 import { initTerminalsTab } from './terminals-tab.js';
 import {
@@ -75,7 +77,10 @@ import { bindCommandPalette } from './palette.js';
 import { bindDock } from './dock.js';
 import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
-import { mountCostsFeature, mountJobsFeature, mountPluginsFeature, mountPreactRuntimeProbe } from './preact-loader.js';
+import {
+  mountAccessFeature, mountCostsFeature, mountJobsFeature, mountPluginsFeature,
+  mountPreactRuntimeProbe,
+} from './preact-loader.js';
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
 import { triggerExportDownload } from './export-progress.js';
 import { startSnapshotPoll } from './snapshot-poll.js';
@@ -155,6 +160,15 @@ export function sudoBadge(activeSudo, fallbackConvID) {
     notify: toast,
   });
   await mountCostsFeature();
+  await mountAccessFeature({
+    requestMutation: dashboardActions.requestMutation,
+    confirm: confirmModal,
+    notify: toast,
+    openGrant: async () => {
+      const convID = await pickSudoAgentModal();
+      if (convID) openSudoGrantModal(convID);
+    },
+  });
 
   bindTabs();
   bindTabHotkeys();
@@ -172,7 +186,6 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   // pref; the shell + edge toggle are static so this binds once and survives
   // the poll (renderDock only reconciles #dock-body).
   bindDock();
-  bindAccessSubtabs();
   bindDetailsPersistence();
   bindGroupTitleToggle();
   bindGroupQuickHover();
@@ -201,7 +214,6 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   bindDockSaveDnd();
   bindFilter('groups');
   bindFilter('templates');
-  bindAccessTab();
   bindFilter('links');
   bindFilter('messages');
   bindSudoModal();

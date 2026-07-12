@@ -670,11 +670,8 @@ button.tool:hover { border-color: #58a6ff; }
 main { padding: 16px 24px; }
 section { display: none; }
 section.active { display: block; }
-/* Access tab — sub-navigation. Permissions, Slug registry and Sudo
-   all govern agent access control, so they share one nav tab and switch
-   between these three sub-views via an inset segmented control.
-   bindAccessSubtabs() (refresh.js) toggles .active on the matching
-   button + .access-panel. */
+/* Access tab — Preact-owned sub-navigation. Permissions, Slug registry and
+   Sudo share one nav tab and switch between these inset sub-views. */
 .access-intro {
   color: #8b949e; font-size: 13px; line-height: 1.5;
   margin: 0 0 14px; max-width: 760px;

@@ -5,7 +5,8 @@
 // renameEditing — the inline-rename-open flag refreshSuspended consults.
 
 import { $, $$, shortId, groupOfflineOverride, pickDirectory } from './helpers.js';
-import { renderGroupsTab, renderSudoTab } from './tabs.js';
+import { renderGroupsTab } from './tabs.js';
+import { featureState } from './feature-state-registry.js';
 import { dashPrefs } from './prefs.js';
 import { loadProfiles, setDashDefaultProfile } from './profiles.js';
 import { openProfileEditor } from './modal-profiles.js';
@@ -729,29 +730,9 @@ function bindRowActions() {
           // Click on the 🔓 badge: open the Access tab's Sudo sub-view
           // pre-filtered to this agent so the human can revoke specific
           // grants without scrolling through unrelated rows.
-          const filterInput = $('#filter-sudo');
-          filterInput.value = shortId(conv);
-          try { dashPrefs.setItem('tclaude.dash.filter.sudo', filterInput.value); } catch (_) {}
+          featureState('access')?.setSudoQuery(shortId(conv));
           showAccessTab('sudo');
-          renderSudoTab();
           return;
-        }
-        case 'sudo-revoke': {
-          const id = btn.getAttribute('data-id');
-          const slug = btn.getAttribute('data-slug') || '';
-          const confirmed = await confirmModal({
-            title: 'Revoke sudo grant?',
-            body: 'The agent loses access to this slug immediately. They can request again if needed.',
-            meta: `#${id} ${slug ? '· ' + slug : ''}${label ? ' · ' + label : ''}`,
-            okLabel: 'Revoke',
-          });
-          if (!confirmed) return;
-          const r = await fetch('/api/sudo/' + encodeURIComponent(id), {
-            method: 'DELETE', credentials: 'same-origin',
-          });
-          ok = r.ok;
-          if (!ok) toast(`Revoke failed: ${await r.text()}`, true);
-          break;
         }
         case 'promote-agent': {
           // Conversations list → roster. Backend PromoteAgent also

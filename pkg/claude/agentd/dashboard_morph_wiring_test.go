@@ -40,13 +40,10 @@ func TestDashboardMorph_Wired(t *testing.T) {
 	present("export function morphInto(", "morph.js exports the morphInto reconcile helper")
 
 	// Every remaining legacy per-tick render site reconciles via morphInto rather
-	// than an innerHTML swap. Jobs is intentionally absent: its Preact subtree
-	// has its own keyed reconciliation and component coverage.
+	// than an innerHTML swap. Jobs and Access are intentionally absent: their
+	// Preact subtrees have keyed reconciliation and component coverage.
 	present("morphInto($('#groups-list'), renderGroups(", "Groups tab morphs instead of innerHTML swap")
-	present("morphInto($('#sudo-list'), renderSudo(", "Sudo tab morphs instead of innerHTML swap")
 	present("morphInto($('#links-list'), renderLinks(", "Links tab morphs instead of innerHTML swap")
-	present("morphInto($('#permissions-body'), renderPermissions(", "Permissions panel morphs instead of innerHTML swap")
-	present("morphInto($('#slugs-body'), renderSlugs(", "Slugs panel morphs instead of innerHTML swap")
 	// The top-bar #usage widget (render.js) — first item of the coverage sweep
 	// (JOH-339): both the Codex two-line and the Claude single-row branches morph
 	// so the copyable cost/percent figures survive the tick. The `usage: n/a`
@@ -58,9 +55,10 @@ func TestDashboardMorph_Wired(t *testing.T) {
 	// nodes rather than rewriting content between them. Pin the key on a couple
 	// of representative row templates plus the pre-existing group key.
 	present(`data-key="${esc(m.conv_id)}"`, "member rows carry a stable data-key for keyed morphing")
-	present(`data-key="sudo-${esc(String(r.id))}"`, "sudo rows carry a stable data-key for keyed morphing")
 	present(`data-group-key=`, "group <details> keep their data-group-key match key")
 	present("function JobsApp(", "Jobs uses a Preact component instead of the custom DOM reconciler")
+	present("function AccessApp(", "Access uses a Preact component instead of the custom DOM reconciler")
+	present("key=${grant.id}", "Access sudo rows use stable Preact keys")
 	present("key=${`cron-${row.cron?.id}`}", "Jobs cron rows use stable Preact keys")
 	present("key=${`export-${row.export?.id}`}", "Jobs export rows use stable Preact keys")
 
