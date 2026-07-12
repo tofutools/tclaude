@@ -239,7 +239,7 @@ export function JobsApp({ state, actions }) {
               )}</tbody>
             </table>
             <${Pager} state=${state} paging=${paging} refresh=${actions.refresh}
-              disabled=${current.request.phase === 'error'} />
+              disabled=${(paging.offset || 0) !== state.offset.value} />
           </${Fragment}>`}
     </div>
   </div>`;

@@ -106,6 +106,8 @@ test('Jobs island renders reactively and preserves keyed DOM/focus across polls'
   const refreshesBeforeRetry = calls.filter((call) => call === 'refresh').length;
   await harness.act(() => harness.fireEvent(retry, 'click'));
   assert.equal(calls.filter((call) => call === 'refresh').length, refreshesBeforeRetry + 1);
+  assert.equal(nextPage.disabled, true, 'pager stays inert while displayed and requested pages differ');
+  assert.match(state.params.value, /offset=50/, 'Retry keeps targeting the failed requested page');
   await badge.unmount();
   await mounted.unmount();
 });
