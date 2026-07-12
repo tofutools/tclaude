@@ -232,12 +232,11 @@ func CodexUsageFromRollout(rolloutPath string) (*CodexUsage, error) {
 		if u == nil {
 			return true
 		}
-		// Events are written in chronological order, so the last populated
-		// one wins; the !Before comparison keeps that even if two share a
-		// timestamp.
-		if best == nil || !u.Observed.Before(best.Observed) {
-			best = u
-		}
+		// Rollout order is authoritative: the last populated record wins.
+		// Codex writes records chronologically, but using position rather than
+		// comparing envelope timestamps also keeps this forward reference
+		// exactly equivalent to the hook's reverse-tail projection.
+		best = u
 		return true
 	})
 	if err != nil {
