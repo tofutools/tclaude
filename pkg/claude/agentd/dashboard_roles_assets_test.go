@@ -44,6 +44,10 @@ func TestDashboardAssets_RoleLibraryWired(t *testing.T) {
 		"id=${`${domKind}-manage-modal`}",
 		`id="role-editor-modal"`,
 		`id="role-editor-brief"`,
+		`id="role-editor-submit"`,
+		`.cron-create-row input:not([type])`,
+		`body.wizard #role-editor-modal .cron-create-row input:not([type])`,
+		`id="profile-editor-perms" class="tool"`,
 		// dashboard.css — the pure-CSS wizard vocabulary swap ("roles" → "classes").
 		"body.wizard .roles-word-wizard { display: inline; }",
 	} {

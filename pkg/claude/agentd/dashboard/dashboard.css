@@ -3524,6 +3524,9 @@ body.wizard .group-pending-title-wizard { display: inline; }
    the only number input in a .cron-create-row, so this touches just that
    field. */
 .cron-create-row input[type=text],
+.cron-create-row input:not([type]),
+.sbx-section input:not([type]),
+.sbx-section select,
 .cron-create-row input[type=number],
 .cron-create-row input[type=url],
 .cron-create-row select,
@@ -3542,6 +3545,7 @@ body.wizard .group-pending-title-wizard { display: inline; }
   padding: 6px 10px; font-size: 13px; color: #c9d1d9; font-family: inherit;
 }
 .cron-create-row select { text-overflow: ellipsis; }
+.sbx-section select { text-overflow: ellipsis; }
 
 /* ---- Sandbox-profile structured editors (filesystem / environment tables) --
    Each lives in a .cron-create-row whose field is a vertical stack of rows plus
@@ -3549,6 +3553,14 @@ body.wizard .group-pending-title-wizard { display: inline; }
    input/select chrome (dark bg, border, focus ring) via descendant match; only
    layout + the non-full-width controls (access select, Browse/✕ buttons) need
    overrides here. */
+.sbx-section {
+  border: 0; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.sbx-section legend {
+  padding: 0; margin-bottom: 2px; color: #8b949e;
+  font-size: 12px; font-weight: 600;
+}
 .sbx-editor-section { align-items: flex-start; }
 .sbx-editor-field { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .sbx-rows { display: flex; flex-direction: column; gap: 6px; }
@@ -3567,15 +3579,15 @@ body.wizard .group-pending-title-wizard { display: inline; }
 .sbx-row-agent .sbx-agent-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .sbx-row .sbx-path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 /* Browse… and the ✕ delete button share the dark inline-button skin. */
-.sbx-row .sbx-browse, .sbx-row .sbx-del {
+.sbx-row button, .sbx-row .sbx-browse, .sbx-row .sbx-del {
   flex: 0 0 auto; align-self: stretch;
   background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
   color: #c9d1d9; font-family: inherit; font-size: 12px;
   padding: 0 10px; cursor: pointer; white-space: nowrap;
 }
-.sbx-row .sbx-del { padding: 0 9px; color: #8b949e; }
-.sbx-row .sbx-browse:hover, .sbx-row .sbx-del:hover { background: #2d333b; }
-.sbx-row .sbx-del:hover { color: #f0b0b0; border-color: #6e3a3a; }
+.sbx-row button:last-child, .sbx-row .sbx-del { padding: 0 9px; color: #8b949e; }
+.sbx-row button:hover, .sbx-row .sbx-browse:hover, .sbx-row .sbx-del:hover { background: #2d333b; }
+.sbx-row button:last-child:hover, .sbx-row .sbx-del:hover { color: #f0b0b0; border-color: #6e3a3a; }
 .sbx-row .sbx-browse:disabled { opacity: 0.5; cursor: default; }
 /* Sandbox-profile card body: one compact line per grant / env key, replacing
    the old ` · `-joined .modal-meta paragraph. Each line is a small tag plus a
@@ -3655,6 +3667,9 @@ body.wizard .group-pending-title-wizard { display: inline; }
   flex: 0 0 auto; padding-top: 6px; color: #7d8590; white-space: nowrap;
 }
 .cron-create-row input[type=text]:focus,
+.cron-create-row input:not([type]):focus,
+.sbx-section input:not([type]):focus,
+.sbx-section select:focus,
 .cron-create-row input[type=number]:focus,
 .cron-create-row input[type=url]:focus,
 .cron-create-row select:focus,
@@ -7553,6 +7568,7 @@ body.wizard #profile-editor-modal .cron-create-modal h3 {
 body.wizard #profile-editor-modal .cron-create-label,
 body.wizard #profile-editor-modal .spawn-perms-indicator { color: #b39ddb; }
 body.wizard #profile-editor-modal .cron-create-row input[type=text],
+body.wizard #profile-editor-modal .cron-create-row input:not([type]),
 body.wizard #profile-editor-modal .cron-create-row select,
 body.wizard #profile-editor-modal .cron-create-row textarea {
   background: #140f28;
@@ -7560,6 +7576,7 @@ body.wizard #profile-editor-modal .cron-create-row textarea {
   color: #f3e6c0;
 }
 body.wizard #profile-editor-modal .cron-create-row input[type=text]:focus,
+body.wizard #profile-editor-modal .cron-create-row input:not([type]):focus,
 body.wizard #profile-editor-modal .cron-create-row select:focus,
 body.wizard #profile-editor-modal .cron-create-row textarea:focus {
   border-color: #a97bd6;
@@ -8854,12 +8871,18 @@ body.wizard #sandbox-profile-editor-modal .cron-create-modal h3 {
 body.wizard #sandbox-profile-editor-modal .modal-meta,
 body.wizard #sandbox-profile-editor-modal .cron-create-label { color: #b39ddb; }
 body.wizard #sandbox-profile-editor-modal .cron-create-row input[type=text],
+body.wizard #sandbox-profile-editor-modal .cron-create-row input:not([type]),
+body.wizard #sandbox-profile-editor-modal .sbx-section input:not([type]),
+body.wizard #sandbox-profile-editor-modal .sbx-section select,
 body.wizard #sandbox-profile-editor-modal .cron-create-row textarea {
   background: #140f28;
   border-color: rgba(122, 93, 176, 0.5);
   color: #f3e6c0;
 }
 body.wizard #sandbox-profile-editor-modal .cron-create-row input[type=text]:focus,
+body.wizard #sandbox-profile-editor-modal .cron-create-row input:not([type]):focus,
+body.wizard #sandbox-profile-editor-modal .sbx-section input:not([type]):focus,
+body.wizard #sandbox-profile-editor-modal .sbx-section select:focus,
 body.wizard #sandbox-profile-editor-modal .cron-create-row textarea:focus { border-color: #a97bd6; }
 /* Secondary + inline buttons (Cancel / 🤖 configure). :not(#…-submit) excludes
    the Inscribe lever below so the two rules match disjoint elements. */
@@ -8889,11 +8912,12 @@ body.wizard #sandbox-profile-editor-modal #sandbox-profile-editor-submit::before
   font-size: 14px;
   letter-spacing: 1px;
 }
-body.wizard #sandbox-profile-editor-modal #sandbox-profile-editor-submit:hover {
+body.wizard #sandbox-profile-editor-modal #sandbox-profile-editor-submit:not(:disabled):hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
   box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
 }
 body.wizard #sandbox-profile-editor-modal #sandbox-profile-editor-submit:disabled { font-size: 14px; opacity: 0.55; }
+body.wizard #sandbox-profile-editor-modal #sandbox-profile-editor-submit:disabled::before { content: none; }
 
 /* Export / import (inscribe / read wards), mirror of the profile transfer
    dialogs. */
@@ -9023,6 +9047,7 @@ body.wizard #role-editor-modal .cron-create-modal h3 {
 }
 body.wizard #role-editor-modal .cron-create-label { color: #b39ddb; }
 body.wizard #role-editor-modal .cron-create-row input[type=text],
+body.wizard #role-editor-modal .cron-create-row input:not([type]),
 body.wizard #role-editor-modal .cron-create-row select,
 body.wizard #role-editor-modal .cron-create-row textarea {
   background: #140f28;
@@ -9030,6 +9055,7 @@ body.wizard #role-editor-modal .cron-create-row textarea {
   color: #f3e6c0;
 }
 body.wizard #role-editor-modal .cron-create-row input[type=text]:focus,
+body.wizard #role-editor-modal .cron-create-row input:not([type]):focus,
 body.wizard #role-editor-modal .cron-create-row select:focus,
 body.wizard #role-editor-modal .cron-create-row textarea:focus { border-color: #a97bd6; }
 /* Open <select> options render on the OS layer — dark ink on parchment. */
