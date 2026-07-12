@@ -16,12 +16,32 @@
 // "installed but not active" at a glance from any tab — or when a
 // DISABLED plugin still has a stoppable step running.
 
-import { $, esc, relTime } from './helpers.js';
+import { $, $$, esc, relTime } from './helpers.js';
 import { morphInto } from './morph.js';
 // lastSnapshot lives in dashboard.js; refresh()/toast/confirmModal in
 // refresh.js. Imported back — benign cycles (see render.js); TDZ-safe.
 import { lastSnapshot } from './dashboard.js';
-import { refresh, toast, confirmModal, bindBackdropDiscard } from './refresh.js';
+import { refresh, toast, confirmModal, bindBackdropDiscard, bindFilter } from './refresh.js';
+import { dashboardState } from './snapshot-store.js';
+
+function applyPluginsTabVisibility(data) {
+  const visible = !!(data && data.plugins_tab_visible);
+  document.body.classList.toggle('hide-plugins', !visible);
+  if (!visible) {
+    const sec = document.getElementById('tab-plugins');
+    if (sec && sec.classList.contains('active')) {
+      $$('nav [data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === 'groups'));
+      $$('main section').forEach(s => s.classList.toggle('active', s.id === 'tab-groups'));
+      dashboardState.setActiveTab('groups');
+    }
+  }
+}
+
+export function renderPluginsSnapshot(data) {
+  renderPluginsTab();
+  renderPluginsBadge(data.plugins_warn || 0);
+  applyPluginsTabVisibility(data);
+}
 
 // -- rendering ----------------------------------------------------------
 
@@ -388,6 +408,7 @@ function findSnapshotPlugin(name) {
 // own delegated listener ignores these acts (unknown to its switch),
 // so the two routers coexist.
 export function bindPluginsUI() {
+  bindFilter('plugins', renderPluginsTab);
   $('#plugin-create-open').addEventListener('click', () => openPluginModal(null));
   $('#plugin-modal-cancel').addEventListener('click', closePluginModal);
   $('#plugin-modal-submit').addEventListener('click', submitPluginModal);
