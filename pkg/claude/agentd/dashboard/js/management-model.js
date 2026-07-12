@@ -20,12 +20,22 @@ export function defaultHarness(catalog, requested = '') {
   return catalog?.[0]?.name || requested || 'claude';
 }
 
+export function harnessDefaults(harness) {
+  return {
+    sandbox: harness?.default_sandbox || harness?.sandbox_modes?.[0] || '',
+    approval: harness?.default_approval || harness?.approval_modes?.[0] || '',
+    ask_user_question_timeout: harness?.default_ask_timeout || harness?.ask_timeout_modes?.[0] || '',
+  };
+}
+
 export function profileDraft(seed = null, { editExisting = true, local = null } = {}, catalog = []) {
   const harness = defaultHarness(catalog, seed?.harness);
+  const h = harnessByName(catalog, harness);
+  const defaults = harnessDefaults(h);
   return {
     name: !local && editExisting ? seed?.name || '' : '', harness,
-    model: seed?.model || '', effort: seed?.effort || '', sandbox: seed?.sandbox || '',
-    approval: seed?.approval || '', ask_user_question_timeout: seed?.ask_user_question_timeout || '',
+    model: seed?.model || '', effort: seed?.effort || '', sandbox: seed?.sandbox || defaults.sandbox,
+    approval: seed?.approval || defaults.approval, ask_user_question_timeout: seed?.ask_user_question_timeout || defaults.ask_user_question_timeout,
     trust_dir: triValue(seed?.trust_dir), remote_control: triValue(seed?.remote_control),
     agent_name: seed?.agent_name || '', role: seed?.role || '', descr: seed?.descr || '',
     initial_message: seed?.initial_message || '', sync_worktree: triValue(seed?.sync_worktree),
@@ -65,10 +75,13 @@ export function profilePayload(draft, original = null, catalog = [], { local = f
 }
 
 export function roleDraft(seed = null, catalog = []) {
+  const harness = defaultHarness(catalog, seed?.harness);
+  const h = harnessByName(catalog, harness);
+  const defaults = harnessDefaults(h);
   return {
     name: seed?.name || '', descr: seed?.descr || '', brief: seed?.brief || '',
-    harness: defaultHarness(catalog, seed?.harness), model: seed?.model || '', effort: seed?.effort || '',
-    sandbox: seed?.sandbox || '', approval: seed?.approval || '', spawn_profile: seed?.spawn_profile || '',
+    harness, model: seed?.model || '', effort: seed?.effort || '',
+    sandbox: seed?.sandbox || defaults.sandbox, approval: seed?.approval || defaults.approval, spawn_profile: seed?.spawn_profile || '',
     permissions: [...(seed?.permissions || [])],
   };
 }
