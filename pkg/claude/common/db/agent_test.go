@@ -76,6 +76,29 @@ func TestAgentGroupMembershipAndShared(t *testing.T) {
 	require.Len(t, shared, 0, "expected no shared groups after remove, got %+v", names(shared))
 }
 
+func TestAgentGroupPermissionsFollowActiveMembership(t *testing.T) {
+	setupTestDB(t)
+
+	groupID, err := CreateAgentGroup("trusted", "")
+	require.NoError(t, err)
+	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{GroupID: groupID, ConvID: "conv-member"}))
+
+	require.NoError(t, ReplaceAgentGroupPermissions(groupID,
+		[]string{"human.notify", "human.notify", "groups.spawn"}, "human:test"))
+	grants, err := ListAgentGroupPermissions(groupID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"groups.spawn", "human.notify"}, grants)
+
+	ok, err := HasAgentGroupPermission("conv-member", "human.notify")
+	require.NoError(t, err)
+	assert.True(t, ok, "a current member receives the live group grant")
+
+	require.NoError(t, ArchiveAgentGroup("trusted"))
+	ok, err = HasAgentGroupPermission("conv-member", "human.notify")
+	require.NoError(t, err)
+	assert.False(t, ok, "archived groups confer no permissions")
+}
+
 func TestAgentPermissions_GrantRevokeIdempotent(t *testing.T) {
 	setupTestDB(t)
 

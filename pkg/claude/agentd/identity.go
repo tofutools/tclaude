@@ -350,7 +350,8 @@ const (
 //  2. Per-conv override (agent_permissions.effect, written by the
 //     dashboard permanent-permission editor / `permissions` CLI) —
 //     grant => allow, deny => authoritative deny.
-//  3. Config default-permissions list (~/.tclaude/config.json) — allow.
+//  3. Any active group the agent belongs to grants the slug — allow.
+//  4. Config default-permissions list (~/.tclaude/config.json) — allow.
 //
 // Nothing matched => permUndecided.
 func resolvePermission(convID, slug string) permResolution {
@@ -364,6 +365,9 @@ func resolvePermission(convID, slug string) permResolution {
 		if effect == db.PermEffectDeny {
 			return permDeny
 		}
+		return permAllow
+	}
+	if ok, err := db.HasAgentGroupPermission(convID, slug); err == nil && ok {
 		return permAllow
 	}
 	cfg, _ := config.Load()

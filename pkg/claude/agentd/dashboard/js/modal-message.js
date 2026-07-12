@@ -329,6 +329,7 @@ let permEditOwnedGroups = [];
 // receives the collected slug→effect map and returns a Promise; throwing
 // surfaces on the modal's error line. null means no editor is open.
 let permEditOnSave = null;
+let permEditGroupMode = false;
 
 // permRowEffective recomputes the "✓ granted / ✗ denied / ✓ via owner"
 // indicator on one row from its selected effect, whether the slug is a
@@ -345,6 +346,11 @@ function permRowEffective(row) {
   const viaOwner = effect === 'default' && !inDefault && ownerImplied && permEditOwnsGroup;
   const granted = effect === 'grant' || (effect === 'default' && inDefault) || viaOwner;
   const el = row.querySelector('.perm-row-eff');
+  if (permEditGroupMode) {
+    el.textContent = effect === 'grant' ? '✓ via group' : '— not via group';
+    el.className = 'perm-row-eff ' + (effect === 'grant' ? 'granted' : 'denied');
+    return;
+  }
   if (viaOwner) {
     el.textContent = '✓ via owner';
     el.className = 'perm-row-eff owner';
@@ -368,13 +374,14 @@ function convOwnedGroups(conv) {
 // conv-backed editor (openPermEditModal) and the pre-spawn buffer editor
 // (openSpawnPermEditor) differ only in their seed + save; everything visual is
 // shared so the spawn dialog gets the identical editor the live-agent path has.
-function openPermEditor({ subtitle, overrides, ownsGroup, ownedGroups, onSave }) {
+function openPermEditor({ subtitle, overrides, ownsGroup, ownedGroups, onSave, groupMode = false }) {
   const snap = lastSnapshot || {};
   const perms = snap.permissions || {};
   const slugs = (snap.slugs || []).slice().sort((a, b) => a.slug < b.slug ? -1 : 1);
   const defaultSet = new Set(perms.defaults || []);
   overrides = overrides || {};
   permEditOwnsGroup = !!ownsGroup;
+  permEditGroupMode = !!groupMode;
   permEditOwnedGroups = ownedGroups || [];
   permEditOnSave = onSave;
   $('#perm-edit-subtitle').textContent = subtitle || '';
@@ -414,7 +421,7 @@ function openPermEditor({ subtitle, overrides, ownsGroup, ownedGroups, onSave })
           <span class="perm-row-slug">${esc(s.slug)}${ownerBadge}</span>
           <span class="perm-row-desc" title="${esc(s.description || '')}">${esc(s.description || '')}</span>
         </div>
-        <div class="perm-tristate">${mk('default', 'Default')}${mk('grant', 'Grant')}${mk('deny', 'Deny')}</div>
+        <div class="perm-tristate">${mk('default', groupMode ? 'Not granted' : 'Default')}${mk('grant', 'Grant')}${groupMode ? '' : mk('deny', 'Deny')}</div>
         <span class="perm-row-eff"></span>
       </div>`;
     }).join('');
@@ -423,6 +430,33 @@ function openPermEditor({ subtitle, overrides, ownsGroup, ownedGroups, onSave })
   list.scrollTop = 0;
   $('#perm-edit-modal').classList.add('show');
   setTimeout(() => $('#perm-edit-filter').focus(), 0);
+}
+
+// openGroupPermEditor edits live additive membership policy. It intentionally
+// offers only Grant / Not granted: a group deny would make multi-group
+// composition surprising, while an agent's explicit Deny remains the single
+// authoritative subtraction layer.
+function openGroupPermEditor(group, grants) {
+  const overrides = {};
+  (grants || []).forEach(slug => { overrides[slug] = 'grant'; });
+  openPermEditor({
+    subtitle: `Group: ${group} · every current member receives these grants immediately`,
+    overrides,
+    ownsGroup: false,
+    ownedGroups: [],
+    groupMode: true,
+    onSave: async (selection) => {
+      const permissions = Object.keys(selection).filter(slug => selection[slug] === 'grant');
+      const r = await fetch(`/api/groups/${encodeURIComponent(group)}`, {
+        method: 'PATCH', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ permissions }),
+      });
+      if (!r.ok) throw new Error((await r.text()) || ('HTTP ' + r.status));
+      toast(`${group}: ${permissions.length} group permission grant${permissions.length === 1 ? '' : 's'} saved`);
+      await refresh();
+    },
+  });
 }
 
 // openPermEditModal is the conv-backed (live-agent) editor: it seeds from the
@@ -941,6 +975,6 @@ function bindGroupCreateModal() {
 
 export {
   openMessageCreateModal, bindMessageModal, bindSudoModal,
-  openPermEditModal, openSpawnPermEditor, bindPermEditModal,
+  openPermEditModal, openSpawnPermEditor, openGroupPermEditor, bindPermEditModal,
   bindGroupCreateModal, openGroupCreateModal,
 };

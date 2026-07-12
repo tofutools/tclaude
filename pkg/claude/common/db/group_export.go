@@ -75,6 +75,9 @@ func CollectGroupExport(name string) (*groupexport.Export, error) {
 		&exp.Group.MaxMembers, &exp.Group.CreatedAt, &exp.Group.ArchivedAt); err != nil {
 		return nil, fmt.Errorf("collect group row: %w", err)
 	}
+	if exp.Group.Permissions, err = collectGroupPermissions(d, g.ID); err != nil {
+		return nil, fmt.Errorf("collect group permissions: %w", err)
+	}
 
 	// --- group-scoped tables ---
 	if exp.Members, err = collectMembers(d, g.ID); err != nil {
@@ -132,6 +135,23 @@ func CollectGroupExport(name string) (*groupexport.Export, error) {
 	exp.Convs = collectConvStubs(d, convIDs)
 
 	return exp, nil
+}
+
+func collectGroupPermissions(d *sql.DB, groupID int64) ([]groupexport.GroupPermission, error) {
+	rows, err := d.Query(`SELECT slug, granted_at, granted_by FROM agent_group_permissions WHERE group_id = ? ORDER BY slug`, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := []groupexport.GroupPermission{}
+	for rows.Next() {
+		var p groupexport.GroupPermission
+		if err := rows.Scan(&p.Slug, &p.GrantedAt, &p.GrantedBy); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
 }
 
 // inClause builds an "IN (?, ?, …)" fragment plus the matching []any
@@ -681,6 +701,17 @@ func (c *importCtx) group() error {
 	}
 	if c.newGroupID, err = res.LastInsertId(); err != nil {
 		return fmt.Errorf("import: group id: %w", err)
+	}
+	for _, permission := range g.Permissions {
+		grantedAt := permission.GrantedAt
+		if grantedAt == "" {
+			grantedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		}
+		if _, err := c.tx.Exec(`INSERT OR IGNORE INTO agent_group_permissions
+			(group_id, slug, granted_at, granted_by) VALUES (?, ?, ?, ?)`,
+			c.newGroupID, permission.Slug, grantedAt, permission.GrantedBy); err != nil {
+			return fmt.Errorf("import: group permission %q: %w", permission.Slug, err)
+		}
 	}
 	return c.legacyDefaultModelProfile()
 }

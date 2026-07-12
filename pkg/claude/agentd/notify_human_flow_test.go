@@ -71,6 +71,45 @@ func TestNotifyHuman_GroupOwnerDelivers(t *testing.T) {
 	require.Len(t, msgs, 1)
 }
 
+// A plain member receives human.notify from live group policy without a
+// birth-time spawn profile or a copied per-agent grant.
+func TestNotifyHuman_GroupPermissionDelivers(t *testing.T) {
+	f := newFlow(t)
+
+	const memberConv = "gprm-1111-2222-3333-4444"
+	g := f.HaveGroup("notify-team")
+	f.HaveMember("notify-team", memberConv)
+	require.NoError(t, db.ReplaceAgentGroupPermissions(g.ID, []string{agentd.PermHumanNotify}, "test"))
+
+	r := testharness.JSONRequest(t, http.MethodPost, "/v1/notify-human",
+		map[string]any{"body": "group policy ping"})
+	r = agentd.AsAgentPeer(r, memberConv)
+	rec := testharness.Serve(f.Mux, r)
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	msgs, _ := db.ListHumanMessages()
+	require.Len(t, msgs, 1)
+}
+
+func TestNotifyHuman_DenyOverrideBeatsGroupPermission(t *testing.T) {
+	f := newFlow(t)
+
+	const memberConv = "gpdn-1111-2222-3333-4444"
+	g := f.HaveGroup("notify-team")
+	f.HaveMember("notify-team", memberConv)
+	require.NoError(t, db.ReplaceAgentGroupPermissions(g.ID, []string{agentd.PermHumanNotify}, "test"))
+	require.NoError(t, db.SetAgentPermissionOverride(memberConv, agentd.PermHumanNotify, db.PermEffectDeny, "test"))
+
+	r := testharness.JSONRequest(t, http.MethodPost, "/v1/notify-human",
+		map[string]any{"body": "blocked group policy ping"})
+	r = agentd.AsAgentPeer(r, memberConv)
+	rec := testharness.Serve(f.Mux, r)
+	require.Equal(t, http.StatusForbidden, rec.Code, "body=%s", rec.Body.String())
+
+	msgs, _ := db.ListHumanMessages()
+	require.Empty(t, msgs)
+}
+
 // Scenario: a group owner with an explicit DENY override on human.notify
 // is refused — deny is always authoritative and suppresses the owner
 // default, the same universal precedence every gate follows. The owner

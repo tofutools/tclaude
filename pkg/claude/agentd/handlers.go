@@ -2549,8 +2549,9 @@ type groupSummary struct {
 	// blank spawn fields for this group's agents (JOH-210); "" = none. It is
 	// the spawn default's single source — the vestigial per-group
 	// default_model was dropped (JOH-220).
-	DefaultProfile string `json:"default_profile,omitempty"`
-	Archived       bool   `json:"archived,omitempty"`
+	DefaultProfile string   `json:"default_profile,omitempty"`
+	Permissions    []string `json:"permissions,omitempty"`
+	Archived       bool     `json:"archived,omitempty"`
 	// NotifyMuted flags a group whose OS notifications are switched
 	// off (agent_groups.notify_enabled = false). omitempty: only the
 	// exceptional muted state is serialized.
@@ -2643,6 +2644,7 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			members, _ := db.ListAgentGroupMembers(g.ID)
+			groupPermissions, _ := db.ListAgentGroupPermissions(g.ID)
 			online := 0
 			for _, m := range members {
 				if isConvOnlineIn(m.ConvID, aliveSessions) {
@@ -2656,6 +2658,7 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 				Online:              online,
 				MaxMembers:          g.MaxMembers,
 				DefaultProfile:      g.DefaultProfile,
+				Permissions:         groupPermissions,
 				Archived:            g.IsArchived(),
 				NotifyMuted:         !g.NotifyEnabled,
 				RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl),
@@ -3019,6 +3022,9 @@ func normalizeGroupDescr(s string) string {
 //   - max_members — the group's hard member cap (0 = unlimited); a
 //     spawn that would exceed it is refused by the spawn-guardrail
 //     layer. See checkSpawnGuardrails.
+//   - permissions — live additive grants held by every current member. These
+//     are membership policy, not spawn defaults, and are never copied into
+//     agent_permissions.
 //
 // Partial-update contract, matching handleGroupMembersUpdate: only
 // fields present (non-nil) in the body are touched. descr / default_cwd
@@ -3034,7 +3040,8 @@ func normalizeGroupDescr(s string) string {
 // than a rename), so it rides the existing slug rather than minting a
 // new one. Default human-only.
 func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	if _, ok := requirePermission(w, r, PermGroupsRename); !ok {
+	caller, ok := requirePermission(w, r, PermGroupsRename)
+	if !ok {
 		return
 	}
 	if !requireGroupActive(w, g) {
@@ -3061,14 +3068,45 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		// caller can change it without touching the other fields; omitting it
 		// leaves the policy unchanged.
 		RemoteControlPolicy *string `json:"remote_control_policy,omitempty"`
+		// Permissions is a complete replacement allowlist. Pointer distinguishes
+		// omitted (unchanged) from [] (clear every group grant).
+		Permissions *[]string `json:"permissions,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "json", err.Error())
 		return
 	}
-	if body.Descr == nil && body.DefaultCwd == nil && body.DefaultContext == nil && body.DefaultProfile == nil && body.MaxMembers == nil && body.NotifyEnabled == nil && body.RemoteControlPolicy == nil {
+	if body.Permissions != nil {
+		// Authorize the higher-impact field before applying ANY part of a mixed
+		// PATCH, so a caller cannot get a partial settings update followed by a
+		// permission-administration 403.
+		if _, ok := requirePermission(w, r, PermPermissionsGrant); !ok {
+			return
+		}
+		if _, ok := requirePermission(w, r, PermPermissionsRevoke); !ok {
+			return
+		}
+	}
+	var normalizedPermissions []string
+	if body.Permissions != nil {
+		normalizedPermissions = make([]string, 0, len(*body.Permissions))
+		seen := map[string]bool{}
+		for _, raw := range *body.Permissions {
+			slug := strings.TrimSpace(raw)
+			if !IsKnownPermSlug(slug) {
+				writeError(w, http.StatusBadRequest, "invalid_permission", fmt.Sprintf("unknown permission slug %q", slug))
+				return
+			}
+			if !seen[slug] {
+				seen[slug] = true
+				normalizedPermissions = append(normalizedPermissions, slug)
+			}
+		}
+		sort.Strings(normalizedPermissions)
+	}
+	if body.Descr == nil && body.DefaultCwd == nil && body.DefaultContext == nil && body.DefaultProfile == nil && body.MaxMembers == nil && body.NotifyEnabled == nil && body.RemoteControlPolicy == nil && body.Permissions == nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg",
-			"nothing to update (expected descr, default_cwd, default_context, default_profile, max_members, notify_enabled and/or remote_control_policy)")
+			"nothing to update (expected descr, default_cwd, default_context, default_profile, max_members, notify_enabled, remote_control_policy and/or permissions)")
 		return
 	}
 	resp := map[string]any{"group": g.Name}
@@ -3210,6 +3248,21 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 			return
 		}
 		resp["remote_control_policy"] = remoteControlPolicyToWire(policy)
+	}
+
+	if body.Permissions != nil {
+		// Changing a group allowlist is permission administration, not ordinary
+		// cosmetic group editing. Both meta-slugs were checked before mutations
+		// because a replacement can widen and narrow the set in one request.
+		grantedBy := caller
+		if grantedBy == "" {
+			grantedBy = "<human>"
+		}
+		if err := db.ReplaceAgentGroupPermissions(g.ID, normalizedPermissions, grantedBy); err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		resp["permissions"] = normalizedPermissions
 	}
 
 	writeJSON(w, http.StatusOK, resp)
