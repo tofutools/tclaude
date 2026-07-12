@@ -1231,14 +1231,22 @@
         <button type="button" class="sbx-add-row" id="sandbox-profile-editor-inc-add">＋ include profile</button>
       </div>
     </div>
-    <label class="cron-create-row"><span class="cron-create-label">Agent-owned directories</span><textarea id="sandbox-profile-editor-agent-directories" rows="3" spellcheck="false" placeholder="GOCACHE&#10;GOLANGCI_LINT_CACHE"></textarea><span class="modal-meta">One environment-variable name per line. Agentd creates an isolated writable directory for each name at spawn.</span></label>
+    <div class="cron-create-row sbx-editor-section">
+      <span class="cron-create-label" title="Environment-variable names for which agentd creates an isolated writable directory at spawn; each variable is set to its directory's path.">Agent-owned directories</span>
+      <div class="sbx-editor-field">
+        <div class="sbx-rows" id="sandbox-profile-editor-agent-rows"></div>
+        <button type="button" class="sbx-add-row" id="sandbox-profile-editor-agent-add">＋ add agent-owned directory</button>
+        <span class="modal-meta">One environment-variable name per row. Agentd creates an isolated writable directory for each name at spawn.</span>
+      </div>
+    </div>
     <div class="sbx-advanced">
       <button type="button" class="sbx-advanced-toggle" id="sandbox-profile-editor-advanced-toggle" aria-expanded="false" aria-controls="sandbox-profile-editor-advanced">▸ Advanced — edit raw JSON</button>
       <div class="sbx-advanced-body" id="sandbox-profile-editor-advanced" hidden>
-        <p class="modal-meta">The structured editors above are views over these three JSON arrays; they stay in sync. Edit here for anything the tables can't express (they update on blur).</p>
+        <p class="modal-meta">The structured editors above are views over these four JSON arrays; they stay in sync. Edit here for anything the tables can't express (they update on blur).</p>
         <label class="cron-create-row"><span class="cron-create-label">Filesystem JSON</span><textarea id="sandbox-profile-editor-filesystem" rows="6" spellcheck="false" placeholder='[{"path":"~/absolute/path","access":"write"}]'></textarea></label>
         <label class="cron-create-row"><span class="cron-create-label">Environment JSON</span><textarea id="sandbox-profile-editor-environment" rows="6" spellcheck="false" placeholder='[{"name":"GOCACHE","value":"/absolute/path"}]'></textarea></label>
         <label class="cron-create-row"><span class="cron-create-label">Includes JSON</span><textarea id="sandbox-profile-editor-includes" rows="3" spellcheck="false" placeholder='["base-profile","team-caches"]'></textarea></label>
+        <label class="cron-create-row"><span class="cron-create-label">Agent dirs JSON</span><textarea id="sandbox-profile-editor-agent-directories" rows="3" spellcheck="false" placeholder='["GOCACHE","GOLANGCI_LINT_CACHE"]'></textarea></label>
       </div>
     </div>
     <div class="cron-create-error" id="sandbox-profile-editor-error"></div>

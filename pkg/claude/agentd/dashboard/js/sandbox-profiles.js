@@ -48,6 +48,7 @@ function profileSummary(p) {
   const fs = p.filesystem || [];
   const env = p.environment || [];
   const inc = p.includes || [];
+  const own = (p.agent_directories || []).length;
   const reads = fs.filter(g => g.access === 'read').length;
   const writes = fs.filter(g => g.access === 'write').length;
   const denies = fs.filter(g => g.access === 'deny').length;
@@ -57,7 +58,8 @@ function profileSummary(p) {
   if (writes) parts.push(`${writes} write`);
   if (denies) parts.push(`${denies} deny`);
   if (env.length) parts.push(`${env.length} env key${env.length === 1 ? '' : 's'}`);
-  return parts.join(' · ') || 'no filesystem or environment rules';
+  if (own) parts.push(`${own} agent dir${own === 1 ? '' : 's'}`);
+  return parts.join(' · ') || 'no sandbox rules';
 }
 
 // profileCapabilitiesHTML renders the profile's grants as a compact, scannable
@@ -77,7 +79,10 @@ function profileCapabilitiesHTML(p) {
   for (const e of (p.environment || [])) {
     rows.push(`<div class="sbx-cap"><span class="sbx-cap-tag sbx-cap-env">env</span><span class="sbx-cap-val" title="${esc(e.name)}">${esc(e.name)}</span></div>`);
   }
-  if (!rows.length) return `<div class="sbx-caps sbx-caps-empty">no filesystem or environment rules</div>`;
+  for (const name of (p.agent_directories || [])) {
+    rows.push(`<div class="sbx-cap"><span class="sbx-cap-tag sbx-cap-own">own</span><span class="sbx-cap-val" title="${esc(name)} — agentd creates an isolated writable directory at spawn">${esc(name)}</span></div>`);
+  }
+  if (!rows.length) return `<div class="sbx-caps sbx-caps-empty">no sandbox rules</div>`;
   return `<div class="sbx-caps">${rows.join('')}</div>`;
 }
 
@@ -111,13 +116,14 @@ async function openManager() {
 
 function closeManager() { $('#sandbox-profiles-manage-modal').classList.remove('show'); }
 
-// ---- Structured filesystem / environment editors ------------------------
+// ---- Structured filesystem / environment / agent-directory editors -------
 //
-// The two <textarea>s (#…-filesystem / #…-environment) remain the single source
-// of truth the save/scribe paths read — see saveEditor. The tables below are a
-// live *view* over that JSON: a row edit re-serializes its table straight back
-// into the textarea (rowsToFilesystemJSON / rowsToEnvironmentJSON), and opening
-// the profile or blurring the raw JSON re-renders the rows from it. So the two
+// The raw-JSON <textarea>s (#…-filesystem / #…-environment / #…-includes /
+// #…-agent-directories) remain the single source of truth the save/scribe
+// paths read — see saveEditor. The tables below are a live *view* over that
+// JSON: a row edit re-serializes its table straight back into the textarea
+// (rowsToFilesystemJSON / rowsToEnvironmentJSON / …), and opening the profile
+// or blurring the raw JSON re-renders the rows from it. So the two
 // representations stay in lock-step without the save code having to know the
 // tables exist. Blank rows are dropped on serialize, so an empty trailing row a
 // human is about to fill never lands in the profile.
@@ -174,6 +180,16 @@ function includeRowHTML(selected = '') {
   </div>`;
 }
 
+// Agent-owned directory rows carry a single environment-variable NAME; agentd
+// creates the per-agent directory and sets the variable at spawn, so there is
+// no value/path column to edit here.
+function agentDirectoryRowHTML(name = '') {
+  return `<div class="sbx-row sbx-row-agent" data-sbx-agent-row>
+    <input class="sbx-agent-name" type="text" autocomplete="off" spellcheck="false" placeholder="GOCACHE" value="${esc(name)}" aria-label="Agent-owned directory variable name" title="Environment-variable name; agentd creates an isolated writable directory for it at spawn" />
+    <button type="button" class="sbx-del" data-sbx-del title="Remove this agent-owned directory" aria-label="Remove agent-owned directory">✕</button>
+  </div>`;
+}
+
 // parseJSONArrayField returns the parsed array from a textarea, or null when the
 // contents aren't a JSON array (so callers can leave the tables untouched rather
 // than wiping them on a transient hand-edit typo).
@@ -208,6 +224,13 @@ function renderIncludeRows() {
   const rows = parseJSONArrayField('#sandbox-profile-editor-includes');
   if (rows == null) return false;
   $('#sandbox-profile-editor-inc-rows').innerHTML = rows.map(name => includeRowHTML(String(name))).join('');
+  return true;
+}
+
+function renderAgentDirectoryRows() {
+  const rows = parseJSONArrayField('#sandbox-profile-editor-agent-directories');
+  if (rows == null) return false;
+  $('#sandbox-profile-editor-agent-rows').innerHTML = rows.map(name => agentDirectoryRowHTML(String(name))).join('');
   return true;
 }
 
@@ -251,9 +274,26 @@ function rowsToIncludesJSON() {
   $('#sandbox-profile-editor-includes').value = JSON.stringify(out, null, 2);
 }
 
+// rowsToAgentDirectoriesJSON collects the agent-directory table in row order.
+// Names are trimmed and blank rows dropped; the daemon still owns reserved-
+// variable and validity checks.
+function rowsToAgentDirectoriesJSON() {
+  const out = [];
+  for (const row of $$('#sandbox-profile-editor-agent-rows [data-sbx-agent-row]')) {
+    const name = row.querySelector('.sbx-agent-name').value.trim();
+    if (!name) continue;
+    out.push(name);
+  }
+  $('#sandbox-profile-editor-agent-directories').value = JSON.stringify(out, null, 2);
+}
+
+// editorAgentDirectories reads the raw-JSON textarea (the source of truth,
+// like the other three arrays). A parse failure throws SyntaxError so
+// saveEditor reveals the advanced panel with the broken JSON.
 function editorAgentDirectories() {
-  return $('#sandbox-profile-editor-agent-directories').value
-    .split(/[\s,]+/).map(name => name.trim()).filter(Boolean);
+  const v = JSON.parse($('#sandbox-profile-editor-agent-directories').value || '[]');
+  if (!Array.isArray(v)) throw new SyntaxError('Agent dirs JSON must be an array of environment-variable names');
+  return v.map(name => String(name).trim()).filter(Boolean);
 }
 
 async function browseFilesystemRow(pathInput, btn) {
@@ -288,14 +328,16 @@ function setEditorAdvanced(open, { force = false } = {}) {
     rowsToFilesystemJSON();
     rowsToEnvironmentJSON();
     rowsToIncludesJSON();
+    rowsToAgentDirectoriesJSON();
   } else {
-    // Render all three (side effects wanted) before deciding, so a table with
+    // Render all four (side effects wanted) before deciding, so a table with
     // valid JSON still refreshes even when another one blocks the collapse.
     const fsOK = renderFilesystemRows();
     const envOK = renderEnvironmentRows();
     const incOK = renderIncludeRows();
-    if (!force && !(fsOK && envOK && incOK)) {
-      const broken = !fsOK ? 'Filesystem' : (!envOK ? 'Environment' : 'Includes');
+    const agentOK = renderAgentDirectoryRows();
+    if (!force && !(fsOK && envOK && incOK && agentOK)) {
+      const broken = !fsOK ? 'Filesystem' : (!envOK ? 'Environment' : (!incOK ? 'Includes' : 'Agent dirs'));
       $('#sandbox-profile-editor-error').textContent =
         `Fix the raw ${broken} JSON before collapsing the advanced editor.`;
       open = true; // veto the collapse; leave the panel open on the bad JSON
@@ -323,7 +365,7 @@ function openEditor(p = null, { onCreate = null, targetName = null } = {}) {
   $('#sandbox-profile-editor-filesystem').value = JSON.stringify((p && p.filesystem) || [], null, 2);
   $('#sandbox-profile-editor-environment').value = JSON.stringify((p && p.environment) || [], null, 2);
   $('#sandbox-profile-editor-includes').value = JSON.stringify((p && p.includes) || [], null, 2);
-  $('#sandbox-profile-editor-agent-directories').value = ((p && p.agent_directories) || []).join('\n');
+  $('#sandbox-profile-editor-agent-directories').value = JSON.stringify((p && p.agent_directories) || [], null, 2);
   setEditorAdvanced(false); // collapse the raw panel and render the tables from the JSON
   $('#sandbox-profile-editor-error').textContent = '';
   $('#sandbox-profile-editor-modal').classList.add('show');
@@ -705,6 +747,7 @@ async function removeProfile(name) {
 function flattenProfilePreview(profile, byName, state) {
   const fs = new Map();
   const env = new Map();
+  const own = new Map(); // agent-owned directory variable names
   state.onPath.add(profile.name);
   for (const name of (profile.includes || [])) {
     if (state.onPath.has(name)) { state.problems.add(name); continue; }
@@ -716,17 +759,23 @@ function flattenProfilePreview(profile, byName, state) {
       state.memo.set(name, flat);
     }
     for (const [path, access] of flat.fs) fs.set(path, access);
-    for (const key of flat.env.keys()) env.set(key, true);
+    // A name is either a literal env value or agent-owned, never both: the
+    // later layer wins per exact key, displacing the other kind (mirrors the
+    // daemon's flattener).
+    for (const key of flat.env.keys()) { own.delete(key); env.set(key, true); }
+    for (const key of flat.own.keys()) { env.delete(key); own.set(key, true); }
   }
   state.onPath.delete(profile.name);
   for (const grant of (profile.filesystem || [])) fs.set(grant.path, grant.access);
-  for (const entry of (profile.environment || [])) env.set(entry.name, true);
-  return { fs, env };
+  for (const entry of (profile.environment || [])) { own.delete(entry.name); env.set(entry.name, true); }
+  for (const name of (profile.agent_directories || [])) { env.delete(name); own.set(name, true); }
+  return { fs, env, own };
 }
 
 function composePreview(applied, byName = {}) {
   const fs = new Map();
   const env = new Map();
+  const own = new Map();
   const state = { memo: new Map(), onPath: new Set(), problems: new Set() };
   for (const { scope, profile } of applied) {
     const flat = flattenProfilePreview(profile, byName, state);
@@ -738,14 +787,16 @@ function composePreview(applied, byName = {}) {
       }
     }
     for (const name of flat.env.keys()) env.set(name, scope);
+    for (const name of flat.own.keys()) own.set(name, scope);
   }
   const scopes = applied.map(x => `${x.scope}:${x.profile.name}`).join(' → ') || 'no profiles applied';
   const grants = [...fs.entries()].map(([path, v]) => `${v.access} ${path} (${v.scope})`).join(' · ');
   const keys = [...env.entries()].map(([name, scope]) => `${name} (${scope})`).join(', ');
+  const ownKeys = [...own.entries()].map(([name, scope]) => `${name} (${scope})`).join(', ');
   const problems = state.problems.size
     ? ` · ⚠ unresolved includes: ${[...state.problems].sort().join(', ')}`
     : '';
-  return `${scopes}${grants ? ` · ${grants}` : ''}${keys ? ` · env: ${keys}` : ''}${problems}`;
+  return `${scopes}${grants ? ` · ${grants}` : ''}${keys ? ` · env: ${keys}` : ''}${ownKeys ? ` · agent dirs: ${ownKeys}` : ''}${problems}`;
 }
 
 // refreshSpawnSandboxProfileUI fills the explicit human-controlled selector
@@ -1018,7 +1069,7 @@ function bindSandboxProfilesUI() {
   bindManageOverlayDismiss('sandbox-profiles-manage-modal', closeManager);
   $('#filter-sandbox-profiles').addEventListener('input', paintSandboxProfiles);
   $('#sandbox-profile-create-open').addEventListener('click', () => openEditor());
-  $('#sandbox-profile-scribe-open').addEventListener('click', () => summonSandboxScribe({ name: '', filesystem: [], environment: [], includes: [] }));
+  $('#sandbox-profile-scribe-open').addEventListener('click', () => summonSandboxScribe({ name: '', filesystem: [], environment: [], includes: [], agent_directories: [] }));
   $('#sandbox-profile-export-open').addEventListener('click', openExportModal);
   $('#sandbox-profile-export-cancel').addEventListener('click', closeExportModal);
   $('#sandbox-profile-export-submit').addEventListener('click', submitExport);
@@ -1079,6 +1130,19 @@ function bindSandboxProfilesUI() {
     incRows.lastElementChild.querySelector('.sbx-inc-name').focus();
   });
 
+  // Structured agent-owned directory table: one variable name per row.
+  const agentRows = $('#sandbox-profile-editor-agent-rows');
+  agentRows.addEventListener('input', rowsToAgentDirectoriesJSON);
+  agentRows.addEventListener('change', rowsToAgentDirectoriesJSON);
+  agentRows.addEventListener('click', e => {
+    const del = e.target.closest('[data-sbx-del]');
+    if (del) { del.closest('.sbx-row').remove(); rowsToAgentDirectoriesJSON(); }
+  });
+  $('#sandbox-profile-editor-agent-add').addEventListener('click', () => {
+    agentRows.insertAdjacentHTML('beforeend', agentDirectoryRowHTML());
+    agentRows.lastElementChild.querySelector('.sbx-agent-name').focus();
+  });
+
   // Advanced raw-JSON panel: the toggle folds the tables into JSON / back; a
   // hand-edit re-flows into the tables on blur.
   $('#sandbox-profile-editor-advanced-toggle').addEventListener('click', () => {
@@ -1090,6 +1154,7 @@ function bindSandboxProfilesUI() {
   });
   $('#sandbox-profile-editor-environment').addEventListener('change', renderEnvironmentRows);
   $('#sandbox-profile-editor-includes').addEventListener('change', renderIncludeRows);
+  $('#sandbox-profile-editor-agent-directories').addEventListener('change', renderAgentDirectoryRows);
 
   $('#sandbox-profile-editor-cancel').addEventListener('click', closeEditor);
   $('#sandbox-profile-editor-scribe').addEventListener('click', summonSandboxScribeFromEditor);
