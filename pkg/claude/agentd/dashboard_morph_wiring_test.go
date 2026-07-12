@@ -155,10 +155,10 @@ func TestDashboardMorph_SweepWired(t *testing.T) {
 	gone("morphInto($('#logs-list'),", "legacy Logs morph renderer remains")
 	gone("$('#logs-list').innerHTML", "Logs list innerHTML swap regressed")
 
-	// Item 5 — Audit tab table (audit.js), keyed by the append-only audit row id
-	// (unique per entry) so a fresh command at the top moves survivors intact.
-	present("morphInto($('#audit-list'),", "Audit list morphs instead of innerHTML swap")
-	present(`data-key="audit-${esc(String(e.id))}"`, "audit rows carry the row-id data-key")
+	// Item 5 — Audit is Preact-owned and keyed by the append-only audit row id.
+	present("function AuditApp(", "Audit uses a Preact component")
+	present("key=${entry.id}", "Audit rows carry stable Preact keys")
+	gone("morphInto($('#audit-list'),", "legacy Audit morph renderer remains")
 	gone("$('#audit-list').innerHTML", "Audit list innerHTML swap regressed")
 
 	// Item 6/7 — Costs table and summary are Preact-owned. Multi-day rows use

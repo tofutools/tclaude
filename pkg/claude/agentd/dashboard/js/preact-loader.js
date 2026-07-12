@@ -154,3 +154,19 @@ export async function mountLogsFeature(actionDependencies = {}) {
     },
   });
 }
+
+export async function mountAuditFeature(actionDependencies = {}) {
+  const host = document.querySelector('#audit-root');
+  if (!host) return null;
+  return mountFeatureIsland({
+    name: 'audit', label: 'Audit', hosts: [host], failureClass: 'audit-error',
+    load: async () => {
+      const islandModule = import('./audit-island.js');
+      const stateModule = import('./audit-state.js');
+      const actionsModule = import('./audit-actions.js');
+      const [{ mountAuditIsland }, { auditState }, { createAuditActions }] = await Promise.all([islandModule, stateModule, actionsModule]);
+      const auditActions = createAuditActions({ state: auditState, ...actionDependencies });
+      return { state: auditState, mount: (registerCleanup) => mountAuditIsland({ host, state: auditState, actions: auditActions, registerCleanup }) };
+    },
+  });
+}

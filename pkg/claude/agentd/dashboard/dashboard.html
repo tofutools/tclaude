@@ -892,35 +892,10 @@
          table. costs-chart.js owns the imperative chart below that boundary. -->
     <div id="costs-root"></div>
   </section>
-  <!-- Audit tab — the trail of daemon-proxied tclaude commands (who ran
-       what against which target, including denied attempts). Rendered by
-       audit.js from /api/audit, fetched on tab activation + a slow
-       re-poll, like Costs — not the 2s snapshot tick. -->
+  <!-- Preact owns the Audit query, filtering, paging, slow snapshot-triggered
+       refresh, and stable keyed command rows inside this feature host. -->
   <section id="tab-audit">
-    <div class="filter-bar">
-      <input id="filter-audit" type="text" placeholder="Search (actor / verb / target / group / detail) — server-side" autocomplete="off" spellcheck="false" />
-      <span class="filter-count" id="filter-audit-count"></span>
-      <button class="clear-filter" id="filter-audit-clear" title="Clear search">×</button>
-      <label class="filter-toggle" title="Which command outcomes to show"><span>outcome</span>
-        <select id="audit-outcome">
-          <option value="">all</option>
-          <option value="success">success</option>
-          <option value="failure">denied / error</option>
-        </select>
-      </label>
-      <label class="filter-toggle" title="Which surface the command came in on"><span>source</span>
-        <select id="audit-source">
-          <option value="">all</option>
-          <option value="cli">CLI</option>
-          <option value="dashboard">dashboard</option>
-          <option value="popup">approval popup</option>
-        </select>
-      </label>
-      <span class="spacer"></span>
-      <span id="audit-retention" class="muted"></span>
-    </div>
-    <div id="audit-list"></div>
-    <div id="audit-pager" class="audit-pager" hidden></div>
+    <div id="audit-root"></div>
   </section>
   <!-- Debug tab — daemon self-diagnostics (TCL-376). v1 renders the
        poll-timing distributions the daemon records in-memory (perf.go):

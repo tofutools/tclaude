@@ -66,7 +66,6 @@ import {
 import { bindConfigTab } from './config.js';
 import { bindNotifyMenu } from './notify-menu.js';
 import { bindCostDisplayToggle } from './cost-display-toggle.js';
-import { bindAuditTab } from './audit.js';
 import { bindDebugTab } from './debug.js';
 import { initProcessesTab } from './processes.js';
 import { initMail, focusAccessRequest } from './mail.js';
@@ -77,7 +76,7 @@ import { bindDock } from './dock.js';
 import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
 import {
-  mountAccessFeature, mountCostsFeature, mountJobsFeature, mountLogsFeature, mountPluginsFeature,
+  mountAccessFeature, mountAuditFeature, mountCostsFeature, mountJobsFeature, mountLogsFeature, mountPluginsFeature,
   mountPreactRuntimeProbe,
 } from './preact-loader.js';
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
@@ -169,6 +168,7 @@ export function sudoBadge(activeSudo, fallbackConvID) {
     },
   });
   await mountLogsFeature();
+  await mountAuditFeature();
 
   bindTabs();
   bindTabHotkeys();
@@ -245,7 +245,6 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   // per-type checklist + human-message knob), backed by /api/notifications.
   bindNotifyMenu();
   bindCostDisplayToggle();
-  bindAuditTab();
   bindDebugTab();
   initProcessesTab();
   initMail();
