@@ -53,3 +53,48 @@ func TestWithGzipHonoursQualityZero(t *testing.T) {
 		t.Fatalf("body = %q, want plain", got)
 	}
 }
+
+// The pooled writer must produce a complete, independent gzip stream per
+// request — a stale Reset or a missing Close would corrupt the second
+// response.
+func TestWithGzipPooledWriterReuse(t *testing.T) {
+	handler := withGzip(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "body for "+r.URL.Path)
+	})
+	for _, path := range []string{"/api/snapshot", "/api/perf"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Accept-Encoding", "gzip")
+		rec := httptest.NewRecorder()
+		handler(rec, req)
+		zr, err := gzip.NewReader(rec.Body)
+		if err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		decoded, err := io.ReadAll(zr)
+		if err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		if got, want := string(decoded), "body for "+path; got != want {
+			t.Fatalf("%s: decoded = %q, want %q", path, got, want)
+		}
+	}
+}
+
+func TestAcceptsGzipWildcard(t *testing.T) {
+	for _, tc := range []struct {
+		header string
+		want   bool
+	}{
+		{"*", true},
+		{"identity;q=0.5, *;q=0.1", true},
+		{"*;q=0", false},
+		{"gzip;q=0, *", false}, // explicit gzip refusal wins over the wildcard
+		{"*;q=0, gzip", true},  // explicit gzip acceptance wins over the wildcard
+		{"br", false},
+		{"", false},
+	} {
+		if got := acceptsGzip(tc.header); got != tc.want {
+			t.Errorf("acceptsGzip(%q) = %v, want %v", tc.header, got, tc.want)
+		}
+	}
+}
