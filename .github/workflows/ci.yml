@@ -8,7 +8,9 @@ on:
     # (stable agent_id, decoupled from conv_id) — same deal; drop it once it→main lands.
     # dnd-palette is the long-lived drag-and-drop-palette integration branch
     # (JOH-374..377) — same deal; drop it once dnd-palette→main lands.
-    branches: [main, main-codex, implement-stable-agent-identity, dnd-palette]
+    # perf-followups is the long-lived dashboard-polling-performance integration
+    # branch (TCL-372/378/380/381) — same deal; drop it once perf-followups→main lands.
+    branches: [main, main-codex, implement-stable-agent-identity, dnd-palette, perf-followups]
 
 permissions:
   contents: read
