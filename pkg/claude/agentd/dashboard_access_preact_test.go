@@ -27,7 +27,7 @@ func TestDashboardAccessPreactBoundary(t *testing.T) {
 			t.Errorf("Access island bypasses its boundary with %q", forbidden)
 		}
 	}
-	for _, needle := range []string{`<div id="access-root"></div>`, "await mountAccessFeature({", "name: 'access'", "state: accessState", "data-sudo-countdown=${grant.id}"} {
+	for _, needle := range []string{`<div id="access-root"></div>`, "mountAccessFeature({", "name: 'access'", "state: accessState", "data-sudo-countdown=${grant.id}"} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("Access Preact wiring missing %q", needle)
 		}

@@ -86,7 +86,7 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	must("mountCostsFeature", "guarded Costs feature mount exported")
 
 	// dashboard.js: the module is actually imported and bound.
-	must("await mountCostsFeature();", "Costs island mounted at startup")
+	must("mountCostsFeature(),", "Costs island mounted in the concurrent bounded-feature group")
 
 	// dashboard.css: recorded vs projected bars are distinguishable.
 	must(".cost-bar", "bar style rule present")

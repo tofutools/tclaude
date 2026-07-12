@@ -60,8 +60,14 @@ func TestDashboardBoundedTabOwnership(t *testing.T) {
 	}
 
 	dashboard := read("js/dashboard.js")
-	if got := strings.Count(dashboard, "await mountAccessFeature({"); got != 1 {
+	if got := strings.Count(dashboard, "mountAccessFeature({"); got != 1 {
 		t.Errorf("Access island mount count = %d, want 1", got)
+	}
+	jobsMount := strings.Index(dashboard, "await mountJobsFeature({")
+	concurrentMounts := strings.Index(dashboard, "await Promise.all([")
+	bindTabs := strings.Index(dashboard, "bindTabs();")
+	if jobsMount < 0 || concurrentMounts < jobsMount || bindTabs < concurrentMounts {
+		t.Error("dashboard boot must await Jobs, then bounded islands concurrently, before binding navigation")
 	}
 	if strings.Contains(dashboard, "bindFilter('sudo')") || strings.Contains(dashboard, "bindFilter('plugins')") {
 		t.Error("dashboard bootstrap retains duplicate bounded-tab filter binding")

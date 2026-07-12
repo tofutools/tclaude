@@ -7,6 +7,7 @@ test('Audit island filters/sorts and preserves keyed row focus across refreshes'
   const mounted = await harness.mount(harness.html`<${AuditApp} state=${state} actions=${actions} />`); const row = mounted.container.querySelector('tr[data-key="audit-1"]'); row.tabIndex = 0; row.focus();
   await harness.act(() => { token = state.beginRequest(); state.commitRequest(token, payload([entry(2), entry(1)])); }); assert.equal(mounted.container.querySelector('tr[data-key="audit-1"]'), row); assert.equal(harness.document.activeElement, row);
   const search = getByRole(mounted.container, 'textbox', { name: 'Search audit events' }); await harness.input(search, 'deny'); assert.equal(state.view.value.query, 'deny');
+  await harness.act(() => harness.fireEvent(getByRole(mounted.container, 'button', { name: 'Clear audit search' }), 'click')); assert.equal(state.view.value.query, ''); assert.equal(harness.document.activeElement, search); assert.equal(mounted.container.querySelector('#filter-audit-count').getAttribute('aria-live'), 'polite');
   const actor = [...mounted.container.querySelectorAll('th')].find((th) => th.textContent.includes('Actor')); await harness.act(() => harness.fireEvent(actor, 'click')); assert.equal(state.view.value.sort, 'actor');
   assert.match(mounted.container.querySelector('#audit-retention').textContent, /keeping 30 days/); await mounted.unmount();
 });

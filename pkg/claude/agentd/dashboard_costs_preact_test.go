@@ -43,7 +43,7 @@ func TestDashboardCostsPreactBoundary(t *testing.T) {
 
 	for _, needle := range []string{
 		`<div id="costs-root"></div>`,
-		"await mountCostsFeature();",
+		"mountCostsFeature(),",
 		"return mountFeatureIsland({",
 		"name: 'costs'",
 		"state: costsState",

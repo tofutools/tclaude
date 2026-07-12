@@ -98,13 +98,21 @@ test('Config save validates, confirms, writes against its baseline, and clears d
     fetchImpl,
   }} />`);
   await adapter.loadConfigTab();
-  await harness.input(mounted.container.querySelector('#cfg-terminal'), 'ghostty');
+  const terminal = mounted.container.querySelector('#cfg-terminal');
+  terminal.focus();
+  await harness.input(terminal, 'ghostty');
   assert.equal(state.view.value.dirty, true);
   const saving = adapter.saveConfig();
   await new Promise(resolve => setTimeout(resolve, 0));
   const modal = mounted.container.querySelector('#config-diff-modal');
   assert.match(modal.querySelector('#config-diff-sub').textContent, /\/tmp\/config.json/);
-  harness.fireEvent(modal.querySelector('#config-diff-confirm'), 'click');
+  const confirm = modal.querySelector('#config-diff-confirm');
+  const cancel = modal.querySelector('#config-diff-cancel');
+  assert.equal(harness.document.activeElement, confirm);
+  cancel.focus();
+  harness.fireEvent(cancel, 'keydown', { key: 'Tab', shiftKey: true });
+  assert.equal(harness.document.activeElement, confirm);
+  harness.fireEvent(confirm, 'click');
   await saving;
   assert.deepEqual(requests.map(({ url }) => url), ['/api/config', '/api/config?dry_run=1', '/api/config']);
   const posted = JSON.parse(requests[1].options.body);
@@ -112,6 +120,7 @@ test('Config save validates, confirms, writes against its baseline, and clears d
   assert.equal(posted.config.terminal, 'ghostty');
   assert.equal(state.view.value.phase, 'ready');
   assert.equal(state.view.value.dirty, false);
+  assert.equal(harness.document.activeElement, terminal);
   await mounted.unmount();
 });
 
