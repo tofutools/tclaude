@@ -39,7 +39,7 @@ type ResolutionProvenance struct {
 	Applied          []ProfileSource            `json:"applied"`
 	Filesystem       map[string][]ProfileSource `json:"filesystem"`
 	Environment      map[string]ProfileSource   `json:"environment"`
-	AgentDirectories map[string][]ProfileSource `json:"agent_directories,omitempty"`
+	AgentDirectories map[string][]ProfileSource `json:"agent_directories"`
 }
 
 // EffectiveProfile is the fully-composed harness-neutral sandbox payload and
@@ -48,7 +48,7 @@ type ResolutionProvenance struct {
 type EffectiveProfile struct {
 	Filesystem       []FilesystemGrant    `json:"filesystem"`
 	Environment      []EnvironmentEntry   `json:"environment"`
-	AgentDirectories []string             `json:"agent_directories,omitempty"`
+	AgentDirectories []string             `json:"agent_directories"`
 	Provenance       ResolutionProvenance `json:"provenance"`
 }
 

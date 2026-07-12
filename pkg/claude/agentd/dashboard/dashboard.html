@@ -1204,7 +1204,7 @@
 <div class="modal-overlay" id="sandbox-profile-editor-modal">
   <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="sandbox-profile-editor-title">
     <h3 id="sandbox-profile-editor-title">New sandbox profile</h3>
-    <p class="modal-meta">Directory grants widen the sandbox; environment values are injected at launch. Paths are canonicalized (<code>~</code> is the daemon's home) and protected roots / reserved variables are rejected by the daemon. Environment values are non-secret configuration.</p>
+    <p class="modal-meta">Directory grants widen the sandbox; environment values are injected at launch. Agent-owned directories create a fresh writable cache directory for each spawned agent and set the named environment variable to its path. Paths are canonicalized (<code>~</code> is the daemon's home) and protected roots / reserved variables are rejected by the daemon. Environment values are non-secret configuration.</p>
     <label class="cron-create-row"><span class="cron-create-label">Name</span><input id="sandbox-profile-editor-name" type="text" autocomplete="off" spellcheck="false" placeholder="e.g. shared-build-caches" /></label>
     <div class="cron-create-row sbx-editor-section">
       <span class="cron-create-label">Filesystem</span>
@@ -1231,6 +1231,7 @@
         <button type="button" class="sbx-add-row" id="sandbox-profile-editor-inc-add">＋ include profile</button>
       </div>
     </div>
+    <label class="cron-create-row"><span class="cron-create-label">Agent-owned directories</span><textarea id="sandbox-profile-editor-agent-directories" rows="3" spellcheck="false" placeholder="GOCACHE&#10;GOLANGCI_LINT_CACHE"></textarea><span class="modal-meta">One environment-variable name per line. Agentd creates an isolated writable directory for each name at spawn.</span></label>
     <div class="sbx-advanced">
       <button type="button" class="sbx-advanced-toggle" id="sandbox-profile-editor-advanced-toggle" aria-expanded="false" aria-controls="sandbox-profile-editor-advanced">▸ Advanced — edit raw JSON</button>
       <div class="sbx-advanced-body" id="sandbox-profile-editor-advanced" hidden>

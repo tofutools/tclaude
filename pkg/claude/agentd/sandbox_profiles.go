@@ -23,12 +23,13 @@ const (
 var sandboxProfileBeforeMkdir = func(string) {}
 
 type sandboxProfileJSON struct {
-	Name        string                           `json:"name"`
-	Filesystem  []sandboxpolicy.FilesystemGrant  `json:"filesystem"`
-	Environment []sandboxpolicy.EnvironmentEntry `json:"environment"`
-	Includes    []string                         `json:"includes,omitempty"`
-	CreatedAt   string                           `json:"created_at,omitempty"`
-	UpdatedAt   string                           `json:"updated_at,omitempty"`
+	Name             string                           `json:"name"`
+	Filesystem       []sandboxpolicy.FilesystemGrant  `json:"filesystem"`
+	Environment      []sandboxpolicy.EnvironmentEntry `json:"environment"`
+	AgentDirectories []string                         `json:"agent_directories,omitempty"`
+	Includes         []string                         `json:"includes,omitempty"`
+	CreatedAt        string                           `json:"created_at,omitempty"`
+	UpdatedAt        string                           `json:"updated_at,omitempty"`
 }
 
 type sandboxProfileExportEnvelope struct {
@@ -56,7 +57,7 @@ type sandboxProfilePreviewJSON struct {
 
 func sandboxProfileToJSON(p *db.SandboxProfile, localFields bool) sandboxProfileJSON {
 	out := sandboxProfileJSON{
-		Name: p.Name, Filesystem: p.Filesystem, Environment: p.Environment, Includes: p.Includes,
+		Name: p.Name, Filesystem: p.Filesystem, Environment: p.Environment, AgentDirectories: p.AgentDirectories, Includes: p.Includes,
 	}
 	if localFields {
 		if !p.CreatedAt.IsZero() {
@@ -71,25 +72,25 @@ func sandboxProfileToJSON(p *db.SandboxProfile, localFields bool) sandboxProfile
 
 func buildSandboxProfile(body sandboxProfileJSON) (*db.SandboxProfile, []string, error) {
 	normalized, missing, err := sandboxpolicy.NormalizeForPersistence(sandboxpolicy.Profile{
-		Name: body.Name, Filesystem: body.Filesystem, Environment: body.Environment, Includes: body.Includes,
+		Name: body.Name, Filesystem: body.Filesystem, Environment: body.Environment, AgentDirectories: body.AgentDirectories, Includes: body.Includes,
 	})
 	if err != nil {
 		return nil, nil, err
 	}
 	return &db.SandboxProfile{
-		Name: normalized.Name, Filesystem: normalized.Filesystem, Environment: normalized.Environment, Includes: normalized.Includes,
+		Name: normalized.Name, Filesystem: normalized.Filesystem, Environment: normalized.Environment, AgentDirectories: normalized.AgentDirectories, Includes: normalized.Includes,
 	}, missing, nil
 }
 
 func buildSandboxProfileForImport(body sandboxProfileJSON) (*db.SandboxProfile, []string, error) {
 	normalized, missing, err := sandboxpolicy.NormalizeForImport(sandboxpolicy.Profile{
-		Name: body.Name, Filesystem: body.Filesystem, Environment: body.Environment, Includes: body.Includes,
+		Name: body.Name, Filesystem: body.Filesystem, Environment: body.Environment, AgentDirectories: body.AgentDirectories, Includes: body.Includes,
 	})
 	if err != nil {
 		return nil, nil, err
 	}
 	return &db.SandboxProfile{
-		Name: normalized.Name, Filesystem: normalized.Filesystem, Environment: normalized.Environment, Includes: normalized.Includes,
+		Name: normalized.Name, Filesystem: normalized.Filesystem, Environment: normalized.Environment, AgentDirectories: normalized.AgentDirectories, Includes: normalized.Includes,
 	}, missing, nil
 }
 

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/GiGurra/boa/pkg/boa"
@@ -67,10 +68,12 @@ type ResolvedSandboxPolicy struct {
 }
 
 func SummarizeSandboxPolicy(snapshot sandboxpolicy.Snapshot) *ResolvedSandboxPolicy {
-	environment := make([]string, 0, len(snapshot.Effective.Environment))
+	environment := make([]string, 0, len(snapshot.Effective.Environment)+len(snapshot.Effective.AgentDirectories))
 	for _, entry := range snapshot.Effective.Environment {
 		environment = append(environment, entry.Name)
 	}
+	environment = append(environment, snapshot.Effective.AgentDirectories...)
+	sort.Strings(environment)
 	return &ResolvedSandboxPolicy{
 		Version:     snapshot.Version,
 		Applied:     append([]sandboxpolicy.AppliedProfile(nil), snapshot.Applied...),

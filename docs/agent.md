@@ -326,7 +326,8 @@ All mutating subcommands take `--ask-human <duration>` (see
 ### sandbox profiles
 
 Sandbox profiles are operator-authored, harness-neutral bundles of filesystem
-access rules and environment configuration. Filesystem access accepts `read`,
+access rules, environment configuration, and optional agent-owned directory
+declarations. Filesystem access accepts `read`,
 `write`, or `deny`; deny blocks both reads and writes and dominates an
 exact-path grant from any other applied profile. This lets an explicit
 per-spawn profile subtract access inherited from a global or group profile.
@@ -335,6 +336,14 @@ profiles. Environment values
 are stored and displayed as ordinary **non-secret configuration** — do not put
 credentials in them. Profile payload reads and all mutations require the
 `sandbox-profiles.manage` permission.
+
+`agent_directories` is a JSON array of environment-variable names, for example
+`["GOCACHE", "GOLANGCI_LINT_CACHE"]`. At spawn, agentd creates a fresh private
+directory for each name under tclaude's cache tree, adds it to that agent's
+writable sandbox paths, and injects the literal path as the variable's value.
+The generated paths are frozen in the launch snapshot: resume and reincarnate
+retain them, while a clone receives fresh directories. A name cannot also have
+a literal `environment` value, and the normal reserved-variable rules apply.
 
 Deny rules are enforced by the harness OS sandbox (Claude `denyRead` plus
 `denyWrite`, Codex permission-profile `none`). An effective deny requires
@@ -364,7 +373,8 @@ tclaude agent sandbox-profiles import --file bundle.json [--on-conflict error|sk
 tclaude agent sandbox-profiles draft --token <dashboard-token> --file profile.json
 ```
 
-`show --json` emits the same profile shape accepted by `create` and `edit`.
+`show --json` emits the same profile shape accepted by `create` and `edit`,
+including `filesystem`, `environment`, and `agent_directories` arrays.
 The names `export` and `import` are reserved for the portable-transfer routes
 and are rejected case-insensitively at create, rename, and import boundaries.
 Export bundles are portable and versioned. Assignment export is opt-in, and an

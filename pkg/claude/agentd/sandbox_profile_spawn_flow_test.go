@@ -100,6 +100,44 @@ func TestSandboxProfileSpawnAcceptsMissingFilesystemRule(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist, "spawn must not create a missing profile path")
 }
 
+func TestSandboxProfileSpawnMaterializesUniqueAgentDirectories(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{
+		Name: "go-caches", AgentDirectories: []string{"GOCACHE", "GOLANGCI_LINT_CACHE"},
+	})
+	require.NoError(t, err)
+
+	pathsBySpawn := make([]map[string]string, 0, 2)
+	for _, name := range []string{"worker-one", "worker-two"} {
+		spawn := f.AsHuman().SpawnWith("crew", map[string]any{
+			"name": name, "sandbox_profile": "go-caches", "harness": "codex", "sandbox": "tclaude-agent",
+		})
+		require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+		snapshot, ok := f.World.SpawnSandboxPolicy(spawn.ConvID)
+		require.True(t, ok)
+		require.NotNil(t, snapshot)
+		assert.Equal(t, []string{"GOCACHE", "GOLANGCI_LINT_CACHE"}, snapshot.Effective.AgentDirectories)
+		require.Len(t, snapshot.Effective.Environment, 2)
+		require.Len(t, snapshot.Effective.Filesystem, 2)
+		paths := map[string]string{}
+		for _, entry := range snapshot.Effective.Environment {
+			paths[entry.Name] = entry.Value
+			info, statErr := os.Stat(entry.Value)
+			require.NoError(t, statErr)
+			assert.True(t, info.IsDir())
+		}
+		for _, grant := range snapshot.Effective.Filesystem {
+			assert.Equal(t, "write", string(grant.Access))
+			assert.Contains(t, []string{paths["GOCACHE"], paths["GOLANGCI_LINT_CACHE"]}, grant.Path)
+		}
+		pathsBySpawn = append(pathsBySpawn, paths)
+	}
+	assert.NotEqual(t, pathsBySpawn[0]["GOCACHE"], pathsBySpawn[1]["GOCACHE"])
+	assert.NotEqual(t, filepath.Dir(pathsBySpawn[0]["GOCACHE"]), filepath.Dir(pathsBySpawn[1]["GOCACHE"]))
+}
+
 func TestSandboxProfileSpawnRejectsAmbientCapabilityWideningAfterParentLaunch(t *testing.T) {
 	for _, scope := range []string{"global", "group"} {
 		t.Run(scope, func(t *testing.T) {

@@ -132,10 +132,9 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 		return Snapshot{}, fmt.Errorf("unsupported sandbox snapshot version %d", in.Version)
 	}
 	normalized, _, err := NormalizeForPersistence(Profile{
-		Name:             "effective-sandbox-snapshot",
-		Filesystem:       in.Effective.Filesystem,
-		Environment:      in.Effective.Environment,
-		AgentDirectories: in.Effective.AgentDirectories,
+		Name:        "effective-sandbox-snapshot",
+		Filesystem:  in.Effective.Filesystem,
+		Environment: in.Effective.Environment,
 	})
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("revalidate effective sandbox snapshot: %w", err)
@@ -146,7 +145,11 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 	if !reflect.DeepEqual(normalized.Environment, in.Effective.Environment) {
 		return Snapshot{}, fmt.Errorf("effective sandbox environment changed since resolution")
 	}
-	if !slices.Equal(normalized.AgentDirectories, in.Effective.AgentDirectories) {
+	agentDirectories, err := normalizeAgentDirectories(in.Effective.AgentDirectories, nil)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("revalidate effective sandbox agent directories: %w", err)
+	}
+	if !slices.Equal(agentDirectories, in.Effective.AgentDirectories) {
 		return Snapshot{}, fmt.Errorf("effective sandbox agent directories changed since resolution")
 	}
 	out := NewSnapshot(in.Effective, in.Applied)

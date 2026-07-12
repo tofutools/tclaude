@@ -13,6 +13,8 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		`id="sandbox-profile-editor-modal"`:                                "profile editor",
 		`id="sandbox-profile-editor-filesystem"`:                           "filesystem editor",
 		`id="sandbox-profile-editor-environment"`:                          "environment editor",
+		`id="sandbox-profile-editor-agent-directories"`:                    "agent-owned directory editor",
+		`agent_directories: editorAgentDirectories()`:                      "agent-owned directories persist in editor payloads",
 		`id="sandbox-profile-editor-missing"`:                              "missing-directory warning",
 		`id="sandbox-profile-editor-mkdir"`:                                "explicit missing-directory creation action",
 		`id="sandbox-profile-diff-modal"`:                                  "save diff confirmation",

@@ -2447,10 +2447,18 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 					"this parent predates effective sandbox snapshots and may not inherit custom capabilities; relaunch it under current policy or ask the human to instantiate the template")
 				return
 			}
-		} else if err := sandboxpolicy.RequireContained(*parentSnapshot, effectiveSandbox); err != nil {
-			cleanupDirWriteProofMarkers(spec.proofToken, spec.proofDirs)
-			writeError(w, http.StatusForbidden, "sandbox_profile_restricted", err.Error())
-			return
+		} else {
+			validatedParent, err := ensureAgentDirectoriesForRelaunch(*parentSnapshot)
+			if err != nil {
+				cleanupDirWriteProofMarkers(spec.proofToken, spec.proofDirs)
+				writeError(w, http.StatusConflict, "sandbox_profile_changed", err.Error())
+				return
+			}
+			if err := sandboxpolicy.RequireContained(validatedParent, effectiveSandbox); err != nil {
+				cleanupDirWriteProofMarkers(spec.proofToken, spec.proofDirs)
+				writeError(w, http.StatusForbidden, "sandbox_profile_restricted", err.Error())
+				return
+			}
 		}
 	}
 

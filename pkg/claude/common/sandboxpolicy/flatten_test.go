@@ -77,6 +77,24 @@ func TestFlattenLaterIncludeOverridesEarlier(t *testing.T) {
 	assert.Equal(t, []EnvironmentEntry{{Name: "SHARED", Value: "second"}}, got.Environment)
 }
 
+func TestFlattenAgentDirectoriesParticipateInEnvironmentOverrideOrder(t *testing.T) {
+	registry := map[string]*Profile{
+		"generated": {Name: "generated", AgentDirectories: []string{"CACHE", "GENERATED_ONLY"}},
+		"literal":   {Name: "literal", Environment: []EnvironmentEntry{{Name: "CACHE", Value: "/literal"}}},
+	}
+	got, err := Flatten(Profile{
+		Name: "top", Includes: []string{"generated", "literal"}, AgentDirectories: []string{"LOCAL_CACHE"},
+	}, registryLookup(registry))
+	require.NoError(t, err)
+	assert.Equal(t, []EnvironmentEntry{{Name: "CACHE", Value: "/literal"}}, got.Environment)
+	assert.Equal(t, []string{"GENERATED_ONLY", "LOCAL_CACHE"}, got.AgentDirectories)
+
+	got, err = Flatten(Profile{Name: "top", Includes: []string{"literal", "generated"}}, registryLookup(registry))
+	require.NoError(t, err)
+	assert.Empty(t, got.Environment)
+	assert.Equal(t, []string{"CACHE", "GENERATED_ONLY"}, got.AgentDirectories)
+}
+
 func TestFlattenDiamondIncludesResolveOnce(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

@@ -47,7 +47,7 @@ func TestDashboardSandboxProfilesCRUDAndAssignments(t *testing.T) {
 
 	rec = httptest.NewRecorder()
 	serveDashboardSandboxProfiles(rec, dashboardRequest(http.MethodPost, "/api/sandbox-profiles",
-		`{"name":"dev-cache","filesystem":[{"path":"`+cache+`","access":"write"}],"environment":[{"name":"GOCACHE","value":"`+cache+`"}]}`))
+		`{"name":"dev-cache","filesystem":[{"path":"`+cache+`","access":"write"}],"environment":[{"name":"GOCACHE","value":"`+cache+`"}],"agent_directories":["GOLANGCI_LINT_CACHE"]}`))
 	require.Equal(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
 
 	for _, tc := range []struct {
@@ -71,6 +71,7 @@ func TestDashboardSandboxProfilesCRUDAndAssignments(t *testing.T) {
 	assert.Equal(t, "dev-cache", profile.Name)
 	require.Len(t, profile.Filesystem, 1)
 	assert.Equal(t, canonicalCache, profile.Filesystem[0].Path)
+	assert.Equal(t, []string{"GOLANGCI_LINT_CACHE"}, profile.AgentDirectories)
 
 	rec = httptest.NewRecorder()
 	serveDashboardSandboxProfiles(rec, dashboardRequest(http.MethodPatch, "/api/sandbox-profiles/dev-cache?dry_run=1",

@@ -100,9 +100,10 @@ func TestResolveEffectiveSandboxSnapshotFlattensNestedIncludes(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = CreateSandboxProfile(&SandboxProfile{
-		Name:        "innermost",
-		Filesystem:  []SandboxFilesystemGrant{{Path: shared, Access: "read"}},
-		Environment: []SandboxEnvironmentEntry{{Name: "LAYER", Value: "innermost"}, {Name: "DEEP", Value: "yes"}},
+		Name:             "innermost",
+		Filesystem:       []SandboxFilesystemGrant{{Path: shared, Access: "read"}},
+		Environment:      []SandboxEnvironmentEntry{{Name: "LAYER", Value: "innermost"}, {Name: "DEEP", Value: "yes"}},
+		AgentDirectories: []string{"GOCACHE"},
 	})
 	require.NoError(t, err)
 	_, err = CreateSandboxProfile(&SandboxProfile{
@@ -129,6 +130,7 @@ func TestResolveEffectiveSandboxSnapshotFlattensNestedIncludes(t *testing.T) {
 		{Name: "DEEP", Value: "yes"},
 		{Name: "LAYER", Value: "outer"},
 	}, snapshot.Effective.Environment, "the outermost profile wins the shared variable")
+	assert.Equal(t, []string{"GOCACHE"}, snapshot.Effective.AgentDirectories, "agent-owned directory declarations flatten through includes")
 	require.Len(t, snapshot.Applied, 1)
 	assert.Equal(t, "outer", snapshot.Applied[0].Name, "provenance names the assigned profile, not its includes")
 }
