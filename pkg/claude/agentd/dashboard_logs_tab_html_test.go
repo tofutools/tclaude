@@ -47,7 +47,7 @@ func TestDashboardHTML_LogsTabWired(t *testing.T) {
 
 	// dashboard.js mounts the feature so the tab is live at boot.
 	must("mountLogsFeature", "dashboard.js imports the feature loader")
-	must("await mountLogsFeature();", "dashboard.js mounts the feature at boot")
+	must("mountLogsFeature(),", "dashboard.js mounts the feature in the concurrent bounded group")
 
 	// The level-pill rendering (colourises debug/info/warn/error + raw).
 	must("log-level", "the level pill class")

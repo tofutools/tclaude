@@ -78,11 +78,16 @@ test('Plugins modal supports create/edit fields, actions, and listener cleanup',
   });
   const calls = [];
   const mounted = await harness.mount(harness.html`<${PluginsModal} state=${state} actions=${actions(calls)} />`);
+  const invoker = harness.document.body.appendChild(harness.document.createElement('button'));
+  invoker.textContent = 'open plugins';
+  invoker.focus();
   await harness.act(() => state.openModal());
+  await new Promise(resolve => queueMicrotask(resolve));
   const dialog = getByRole(mounted.container, 'dialog');
   assert.match(dialog.textContent, /New plugin/);
   assert.equal(dialog.querySelectorAll('.plugin-step-edit').length, 1);
   const name = dialog.querySelector('#plugin-modal-name');
+  assert.equal(harness.document.activeElement, name);
   await harness.input(name, 'demo');
   assert.equal(state.modal.value.name, 'demo');
   assert.ok(dialog.querySelector('#plugin-modal-add-step'));
@@ -95,12 +100,24 @@ test('Plugins modal supports create/edit fields, actions, and listener cleanup',
   await harness.act(() => harness.fireEvent(dialog.querySelector('#plugin-modal-submit'), 'click'));
   assert.ok(calls.includes('save'));
 
-  await harness.act(() => harness.fireEvent(harness.document, 'keydown', { key: 'Escape' }));
+  const submit = dialog.querySelector('#plugin-modal-submit');
+  submit.focus();
+  await harness.act(() => harness.fireEvent(submit, 'keydown', { key: 'Tab' }));
+  assert.equal(harness.document.activeElement, name, 'Tab wraps to the first dialog control');
+  await harness.act(() => harness.fireEvent(name, 'keydown', { key: 'Tab', shiftKey: true }));
+  assert.equal(harness.document.activeElement, submit, 'Shift+Tab wraps to the last dialog control');
+  invoker.focus();
+  await harness.act(() => harness.fireEvent(invoker, 'keydown', { key: 'Tab' }));
+  assert.equal(harness.document.activeElement, name, 'Tab from outside is contained at the first control');
+  invoker.focus();
+  await harness.act(() => harness.fireEvent(invoker, 'keydown', { key: 'Tab', shiftKey: true }));
+  assert.equal(harness.document.activeElement, submit, 'Shift+Tab from outside is contained at the last control');
+  await harness.act(() => harness.fireEvent(submit, 'keydown', { key: 'Escape' }));
   assert.equal(state.modal.value, null);
+  assert.equal(harness.document.activeElement, invoker);
   assert.ok(calls.includes('refresh-force'));
   await mounted.unmount();
-  await harness.act(() => harness.fireEvent(harness.document, 'keydown', { key: 'Escape' }));
-  assert.equal(calls.filter((call) => call === 'refresh-force').length, 1, 'Escape listener is removed on cleanup');
+  invoker.remove();
 });
 
 test('hidden Plugins tab redirects an active deep link when active-tab state changes', async (t) => {

@@ -26,7 +26,7 @@ func TestDashboardConfigPreactBoundary(t *testing.T) {
 	}
 	for _, needle := range []string{
 		`<div id="config-root"></div>`,
-		"await mountConfigFeature({ toast, isCyclingTabs });",
+		"mountConfigFeature({ toast, isCyclingTabs }),",
 		"export function ConfigApp(",
 		"state: configState",
 		`id="cfg-save"`,

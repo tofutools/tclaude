@@ -151,25 +151,31 @@ export function sudoBadge(activeSudo, fallbackConvID) {
     createCron: () => openCronCreateModal({}),
     editCron: openCronEditModal,
   });
-  await mountPluginsFeature({
-    requestMutation: dashboardActions.requestMutation,
-    refresh: dashboardActions.refresh,
-    confirm: confirmModal,
-    notify: toast,
-  });
-  await mountCostsFeature();
-  await mountAccessFeature({
-    requestMutation: dashboardActions.requestMutation,
-    confirm: confirmModal,
-    notify: toast,
-    openGrant: async () => {
-      const convID = await pickSudoAgentModal();
-      if (convID) openSudoGrantModal(convID);
-    },
-  });
-  await mountLogsFeature();
-  await mountAuditFeature();
-  await mountConfigFeature({ toast, isCyclingTabs });
+  // The remaining bounded islands are independent. Load them concurrently so
+  // navigation setup is delayed by only the slowest optional feature import,
+  // not by the sum of seven dynamic-import chains. Await the whole group before
+  // initNavHistory below so initial deep links still find every lazy loader.
+  await Promise.all([
+    mountPluginsFeature({
+      requestMutation: dashboardActions.requestMutation,
+      refresh: dashboardActions.refresh,
+      confirm: confirmModal,
+      notify: toast,
+    }),
+    mountCostsFeature(),
+    mountAccessFeature({
+      requestMutation: dashboardActions.requestMutation,
+      confirm: confirmModal,
+      notify: toast,
+      openGrant: async () => {
+        const convID = await pickSudoAgentModal();
+        if (convID) openSudoGrantModal(convID);
+      },
+    }),
+    mountLogsFeature(),
+    mountAuditFeature(),
+    mountConfigFeature({ toast, isCyclingTabs }),
+  ]);
 
   bindTabs();
   bindTabHotkeys();

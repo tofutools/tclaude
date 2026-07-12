@@ -1,21 +1,25 @@
 import { h, render } from 'preact';
 import { useLayoutEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
+import { useDialogFocus } from './dialog-focus.js';
 import { ConfigFormMarkup } from './config-form-markup.js';
 import { bindConfigActivation, configLineDiff, configureConfigAdapter, configureConfigLifecycle, handleConfigEvent } from './config-form-adapter.js';
 
 const html = htm.bind(h);
 
 function ConfigDiffModal({ model, close }) {
+  const confirmRef = useRef(null);
+  const { dialogRef } = useDialogFocus({
+    open: !!model, initialFocusRef: confirmRef, onEscape: () => close(false),
+  });
   if (!model) return null;
   const diff = configLineDiff(model.beforeRaw, model.afterRaw);
   const adds = diff.filter(line => line.t === 'add').length;
   const dels = diff.filter(line => line.t === 'del').length;
   const sign = { add: '+', del: '-', ctx: ' ' };
   const cancelOutside = (event) => { if (event.target === event.currentTarget) close(false); };
-  const cancelEscape = (event) => { if (event.key === 'Escape') close(false); };
-  return html`<div id="config-diff-modal" class="modal-overlay show" role="dialog" aria-modal="true"
-    aria-labelledby="config-diff-title" onClick=${cancelOutside} onKeyDown=${cancelEscape}>
+  return html`<div ref=${dialogRef} id="config-diff-modal" class="modal-overlay show" role="dialog" aria-modal="true"
+    aria-labelledby="config-diff-title" onClick=${cancelOutside}>
     <div class="config-diff-modal">
       <h3 id="config-diff-title">Confirm config changes</h3>
       ${model.malformed && html`<div id="config-diff-warn" class="config-diff-warn" style="display:block">⚠ config.json on disk is corrupt and could not be parsed. The form shows DEFAULT values, not your previous settings. Saving replaces the corrupt file entirely — anything it contained is lost. The diff below is against defaults.</div>`}
@@ -24,7 +28,7 @@ function ConfigDiffModal({ model, close }) {
       <div class="modal-buttons">
         <button id="config-diff-cancel" type="button" onClick=${() => close(false)}>Cancel</button>
         <span class="spacer"></span>
-        <button id="config-diff-confirm" class="primary" type="button" autofocus
+        <button ref=${confirmRef} id="config-diff-confirm" class="primary" type="button"
           onClick=${() => close(true)}>${model.malformed ? 'Replace corrupt config.json' : 'Save to config.json'}</button>
       </div>
     </div>

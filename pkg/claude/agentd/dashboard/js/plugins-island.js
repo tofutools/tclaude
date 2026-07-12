@@ -1,6 +1,7 @@
 import { Fragment, h, render } from 'preact';
 import { useEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
+import { useDialogFocus } from './dialog-focus.js';
 import { AsyncLoadState } from './async-load-state.js';
 import { relTime } from './helpers.js';
 import { pluginBusyKey } from './plugins-state.js';
@@ -189,18 +190,11 @@ function StepEditor({ step, index, state }) {
 export function PluginsModal({ state, actions }) {
   const draft = state.view.value.modal;
   const nameRef = useRef(null);
-  useEffect(() => {
-    if (!draft) return undefined;
-    nameRef.current?.focus();
-    const onKeyDown = (event) => {
-      if (event.key === 'Escape') { state.closeModal(); void actions.refresh({ force: true }); }
-    };
-    document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
-  }, [!!draft]);
-  if (!draft) return null;
   const close = () => { state.closeModal(); void actions.refresh({ force: true }); };
-  return html`<div class="modal-overlay show" id="plugin-modal" onClick=${(event) => { if (event.target === event.currentTarget) close(); }}>
+  const { dialogRef } = useDialogFocus({ open: !!draft, initialFocusRef: nameRef, onEscape: close });
+  if (!draft) return null;
+  return html`<div ref=${dialogRef} class="modal-overlay show" id="plugin-modal"
+    onClick=${(event) => { if (event.target === event.currentTarget) close(); }}>
     <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="plugin-modal-title">
       <h3 id="plugin-modal-title">${draft.mode === 'edit' ? 'Edit plugin' : 'New plugin'}</h3>
       <label class="cron-create-row"><span class="cron-create-label">Name</span>

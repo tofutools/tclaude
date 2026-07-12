@@ -27,7 +27,7 @@ func TestDashboardLogsPreactBoundary(t *testing.T) {
 			t.Errorf("Logs island bypasses its boundary with %q", forbidden)
 		}
 	}
-	for _, needle := range []string{`<div id="logs-root"></div>`, "await mountLogsFeature();", "name: 'logs'", "state: logsState", "key=${key}"} {
+	for _, needle := range []string{`<div id="logs-root"></div>`, "mountLogsFeature(),", "name: 'logs'", "state: logsState", "key=${key}"} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("Logs Preact wiring missing %q", needle)
 		}
