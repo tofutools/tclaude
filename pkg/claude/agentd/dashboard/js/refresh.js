@@ -681,7 +681,10 @@ function bindTabs() {
       $$('main section').forEach(s => {
         s.classList.toggle('active', s.id === 'tab-' + b.dataset.tab);
       });
-      dashboardState.setActiveTab(b.dataset.tab);
+      const changed = dashboardState.setActiveTab(b.dataset.tab);
+      if (!changed) {
+        document.dispatchEvent(new CustomEvent('tclaude:tab-reselected', { detail: { tab: b.dataset.tab } }));
+      }
       if (b.dataset.tab === 'jobs') void refresh();
     });
     // <a> activates on Enter only, whereas the former <button> also switched on

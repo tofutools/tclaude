@@ -46,6 +46,11 @@ export function AuditApp({ state, actions }) {
     document.addEventListener('tclaude:snapshot', snapshot);
     return () => document.removeEventListener('tclaude:snapshot', snapshot);
   }, [current.active]);
+  useEffect(() => {
+    const reselected = (event) => { if (event.detail?.tab === 'audit' && state.view.value.active) actions.load(); };
+    document.addEventListener('tclaude:tab-reselected', reselected);
+    return () => document.removeEventListener('tclaude:tab-reselected', reselected);
+  }, []);
   useEffect(() => () => clearTimeout(searchTimer.current), []);
   const filter = (name, value, debounce = false) => { state.setFilter(name, value); clearTimeout(searchTimer.current); if (debounce) searchTimer.current = setTimeout(actions.load, 300); else actions.load(); };
   const retention = current.response ? current.response.pruning_on ? `keeping ${current.response.retention_days} day${current.response.retention_days === 1 ? '' : 's'}` : 'kept forever' : '';

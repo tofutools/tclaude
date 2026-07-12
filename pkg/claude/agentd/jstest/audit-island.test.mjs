@@ -13,9 +13,10 @@ test('Audit island filters/sorts and preserves keyed row focus across refreshes'
 test('Audit snapshot listener exists only while active and obeys the 30s gate', async (t) => {
   const harness = await createPreactHarness(t); const [{ createAuditState }, { AuditApp }] = await Promise.all([harness.importDashboardModule('js/audit-state.js'), harness.importDashboardModule('js/audit-island.js')]);
   let now = 0; const activeTab = harness.signals.signal('audit'); const state = createAuditState({ activeTab, now: () => now }); const calls = []; const mounted = await harness.mount(harness.html`<${AuditApp} state=${state} actions=${{ load: () => { calls.push(now); state.beginRequest(); } }} />`);
-  now = 10000; await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:snapshot'))); assert.equal(calls.length, 1);
-  now = 31001; await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:snapshot'))); assert.equal(calls.length, 2);
-  await harness.act(() => { activeTab.value = 'logs'; }); now = 70000; await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:snapshot'))); assert.equal(calls.length, 2);
+  await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:tab-reselected', { detail: { tab: 'audit' } }))); assert.equal(calls.length, 2, 'reselecting active Audit forces a refresh');
+  now = 10000; await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:snapshot'))); assert.equal(calls.length, 2);
+  now = 31001; await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:snapshot'))); assert.equal(calls.length, 3);
+  await harness.act(() => { activeTab.value = 'logs'; }); now = 70000; await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:snapshot'))); assert.equal(calls.length, 3);
   await mounted.unmount();
 });
 test('Audit island exposes errors and production cleanup', async (t) => {

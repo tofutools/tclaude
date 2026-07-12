@@ -27,7 +27,7 @@ func TestDashboardAuditPreactBoundary(t *testing.T) {
 			t.Errorf("Audit island bypasses its boundary with %q", forbidden)
 		}
 	}
-	for _, needle := range []string{`<div id="audit-root"></div>`, "await mountAuditFeature();", "name: 'audit'", "state: auditState", "key=${entry.id}"} {
+	for _, needle := range []string{`<div id="audit-root"></div>`, "await mountAuditFeature();", "name: 'audit'", "state: auditState", "key=${entry.id}", "tclaude:tab-reselected"} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("Audit Preact wiring missing %q", needle)
 		}
