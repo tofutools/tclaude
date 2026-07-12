@@ -17,7 +17,7 @@ import { bindVegasMusic } from './vegas.js';
 import {
   bindFilter, bindTabs, bindTabHotkeys, bindDetailsPersistence, bindGroupTitleToggle, bindGroupQuickHover, bindSortHeaders,
   bindListPagers,
-  confirmModal, isCyclingTabs, refresh, toast,
+  confirmDiscard, confirmModal, isCyclingTabs, refresh, toast,
 } from './refresh.js';
 
 // Cosmetic re-skins — slop (?slop=1) and wizard (?wizard=1), mutually
@@ -67,7 +67,6 @@ import { bindRemoteAdmin, loadRemoteAdmin } from './remote-admin.js';
 import { bindNotifyMenu } from './notify-menu.js';
 import { bindCostDisplayToggle } from './cost-display-toggle.js';
 import { bindDebugTab } from './debug.js';
-import { initProcessesTab } from './processes.js';
 import { initMail, focusAccessRequest } from './mail.js';
 import { initDashPrefs } from './prefs.js';
 import { loadSortState } from './sort.js';
@@ -76,7 +75,7 @@ import { bindDock } from './dock.js';
 import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
 import {
-  mountAccessFeature, mountAuditFeature, mountConfigFeature, mountCostsFeature, mountJobsFeature, mountLogsFeature, mountPluginsFeature,
+  mountAccessFeature, mountAuditFeature, mountConfigFeature, mountCostsFeature, mountJobsFeature, mountLogsFeature, mountPluginsFeature, mountProcessesFeature,
   mountPreactRuntimeProbe,
 } from './preact-loader.js';
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
@@ -175,6 +174,7 @@ export function sudoBadge(activeSudo, fallbackConvID) {
     mountLogsFeature(),
     mountAuditFeature(),
     mountConfigFeature({ toast, isCyclingTabs }),
+    mountProcessesFeature({ confirm: confirmModal, confirmDiscard, notify: toast }),
   ]);
 
   bindTabs();
@@ -254,7 +254,6 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   bindNotifyMenu();
   bindCostDisplayToggle();
   bindDebugTab();
-  initProcessesTab();
   initMail();
   // Slop-mode flair — each binder installs a delegated listener (or
   // starts an interval) once. They no-op while slop is off and the

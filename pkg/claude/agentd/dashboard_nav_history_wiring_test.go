@@ -67,7 +67,7 @@ func TestDashboardNavLinks_Wired(t *testing.T) {
 		// Subtabs are anchors too, carrying their nested path (/access/sudo,
 		// /processes/runs) while keeping tablist ARIA.
 		`data-subtab=${subtab} href=${` + "`/access/${subtab}`" + `} role="tab"`,
-		`<a class="process-subtab" data-process-subtab="runs" href="/processes/runs" role="tab"`,
+		"data-process-subtab=${name} href=${`/processes/${name}`} role=\"tab\"",
 		// The shared SPA-link guard: a modified/middle click is left to the
 		// browser (native new tab); a plain left-click / synthetic element.click()
 		// returns false and the handler preventDefaults + switches in place.

@@ -183,3 +183,20 @@ export async function mountConfigFeature(dependencies = {}) {
     },
   });
 }
+
+const processesDescriptor = createIslandDescriptor({
+  name: 'processes', label: 'Processes', hosts: { host: '#processes-root' }, failureClass: 'processes-error',
+  load: async ({ hosts: { host }, dependencies }) => {
+    const islandModule = import('./processes-island.js');
+    const stateModule = import('./processes-state.js');
+    const actionsModule = import('./processes-actions.js');
+    const [{ mountProcessesIsland }, { processesState }, { createProcessesActions }] =
+      await Promise.all([islandModule, stateModule, actionsModule]);
+    const actions = createProcessesActions({ state: processesState, ...dependencies });
+    return { state: processesState, mount: (registerCleanup) => mountProcessesIsland({ host, state: processesState, actions, registerCleanup }) };
+  },
+});
+
+export function mountProcessesFeature(dependencies = {}) {
+  return mountIslandDescriptor(processesDescriptor, dependencies);
+}

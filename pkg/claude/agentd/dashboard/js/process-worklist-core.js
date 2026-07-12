@@ -1,7 +1,7 @@
 // process-worklist-core.js — pure view/format logic for the Processes tab's
 // Worklist sub-view (TCL-297). No DOM, no fetch, no imports: everything here
 // is a deterministic function of (items, now), so jstest/process-worklist.test.mjs
-// can drive it under plain Node. process-worklist.js owns the DOM half.
+// can drive it under plain Node. processes-island.js owns the Preact view.
 //
 // The item shape mirrors the /v1/process/worklist REST contract (TCL-295):
 //   {id, run, node, attempt, kind, assignee, status, createdAt?, dueAt?,

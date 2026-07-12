@@ -1319,10 +1319,14 @@ func worklistTabJS(view, readySelector string) string {
   var sub = document.querySelector('[data-process-subtab="worklist"]');
   if (!sub) throw new Error('Worklist subtab missing');
   sub.click();
-  var chip = document.querySelector('button[data-worklist-view="%s"]');
+  var deadline = Date.now() + 3000;
+  var chip;
+  while (!(chip = document.querySelector('button[data-worklist-view="%s"]')) && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
   if (!chip) throw new Error('Worklist view chip %s missing');
   chip.click();
-  var deadline = Date.now() + 3000;
+  deadline = Date.now() + 3000;
   while (!document.querySelector('%s') && Date.now() < deadline) {
     await new Promise(function(resolve){ setTimeout(resolve, 40); });
   }

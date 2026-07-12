@@ -243,54 +243,10 @@
          loading/error states and action buttons are rendered by jobs-island.js. -->
     <div id="jobs-root"></div>
   </section>
-  <!-- Experimental Processes home. The editor and live viewer tickets mount
-       their full-canvas surfaces into the stable editor/viewer nodes below;
-       this ticket owns only the tab shell, lists, and REST-backed navigation. -->
+  <!-- Preact owns the Processes shell, lists and worklist. Its editor wrapper
+       gives the imperative graph one stable ref and one disposal owner. -->
   <section id="tab-processes">
-    <div class="process-subnav" role="tablist" aria-label="Process views">
-      <a class="process-subtab active" data-process-subtab="templates" href="/processes/templates" role="tab" aria-selected="true" aria-controls="process-panel-templates">Templates</a>
-      <a class="process-subtab" data-process-subtab="runs" href="/processes/runs" role="tab" aria-selected="false" aria-controls="process-panel-runs">Runs</a>
-      <a class="process-subtab" data-process-subtab="worklist" href="/processes/worklist" role="tab" aria-selected="false" aria-controls="process-panel-worklist">Worklist<span id="process-worklist-badge" class="tab-badge warn" hidden></span></a>
-      <span class="spacer"></span>
-      <span id="process-notice" class="process-notice" role="status"></span>
-    </div>
-    <div id="process-panel-templates" class="process-panel active" role="tabpanel" aria-label="Process templates">
-      <div class="filter-bar process-toolbar">
-        <strong>Reusable process graphs</strong>
-        <span class="spacer"></span>
-        <button id="process-template-new" class="process-action primary" type="button">+ new template</button>
-      </div>
-      <div id="process-templates-list" class="process-list"><p class="muted">Open this view to load templates.</p></div>
-    </div>
-    <div id="process-panel-runs" class="process-panel" role="tabpanel" aria-label="Process runs">
-      <div class="filter-bar process-toolbar"><strong>Instantiated runs</strong><span class="spacer"></span><button id="process-runs-refresh" class="process-action" type="button">↻ refresh</button></div>
-      <div id="process-runs-list" class="process-list"><p class="muted">Open this view to load runs.</p></div>
-    </div>
-    <div id="process-panel-worklist" class="process-panel" role="tabpanel" aria-label="Process worklist">
-      <div class="filter-bar process-toolbar">
-        <div class="process-worklist-views" role="group" aria-label="Worklist views">
-          <button class="process-view-chip" data-worklist-view="my-work" type="button" title="Pending items assigned to you (the operator)">My work<span class="wl-view-count"></span></button>
-          <button class="process-view-chip" data-worklist-view="waiting-on" type="button" title="Everything pending, grouped by whom it waits on">Waiting on<span class="wl-view-count"></span></button>
-          <button class="process-view-chip" data-worklist-view="due" type="button" title="Pending items with a deadline inside 24h or already past it">Due / overdue<span class="wl-view-count"></span></button>
-          <button class="process-view-chip" data-worklist-view="blocked" type="button" title="Nodes that exhausted their budget and wait on a retry / skip / cancel decision">Blocked<span class="wl-view-count"></span></button>
-          <button class="process-view-chip" data-worklist-view="decision" type="button" title="Decision nodes waiting on a human verdict">Needs decision<span class="wl-view-count"></span></button>
-          <button class="process-view-chip" data-worklist-view="review" type="button" title="Gate-stage items waiting on a human review">Needs review<span class="wl-view-count"></span></button>
-          <button class="process-view-chip" data-worklist-view="recent" type="button" title="Items created or resolved within the last 24h">Recently changed<span class="wl-view-count"></span></button>
-        </div>
-        <span class="spacer"></span>
-        <button id="process-worklist-refresh" class="process-action" type="button">↻ refresh</button>
-      </div>
-      <div id="process-worklist-degraded" class="wl-degraded" role="alert" hidden></div>
-      <div id="process-worklist-list" class="process-list"><p class="muted">Open this view to load the worklist.</p></div>
-    </div>
-    <div id="process-editor-view" class="process-canvas-view" hidden>
-      <button class="process-action" data-process-close-view type="button">← templates</button>
-      <div id="process-editor-canvas" class="process-canvas-mount" data-process-mount="editor"></div>
-    </div>
-    <div id="process-viewer-view" class="process-canvas-view" hidden>
-      <button class="process-action" data-process-close-view type="button">← runs</button>
-      <div id="process-viewer-canvas" class="process-canvas-mount" data-process-mount="viewer"></div>
-    </div>
+    <div id="processes-root"></div>
   </section>
   <section id="tab-plugins">
     <!-- Preact owns the filter, listing, status/actions, loading/error states,

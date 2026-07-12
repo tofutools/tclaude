@@ -229,8 +229,8 @@ function morphNode(from, to) {
 // control that already agrees. Text `value` is only synced when the control is
 // NOT focused, so an editable field being typed into is never clobbered — the
 // worklist's per-row comment input (process-worklist.js) lives inside a morphed
-// pane and DEPENDS on this focused-value guard (its unfocused value is covered
-// separately by the draft map the fresh render re-emits).
+// pane and may depend on this focused-value guard (its unfocused value should
+// be covered separately by state the fresh render re-emits).
 function syncFormProps(from, to) {
   const tag = from.nodeName;
   // `document` is absent under the Node unit test; treat "nothing focused".
