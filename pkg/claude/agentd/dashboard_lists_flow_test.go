@@ -322,6 +322,8 @@ func TestDashboardSnapshot_StaticVersionSkipsUnchangedBlobs(t *testing.T) {
 	secondPath := "/api/snapshot?static_version=" + version
 	second := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodGet, secondPath, nil))
 	require.Equal(t, http.StatusOK, second.Code, "second snapshot body=%s", second.Body.String())
+	assert.Equal(t, "no-store", second.Header().Get("Cache-Control"),
+		"dynamic snapshot responses must never be reused for a stable static_version URL")
 	assert.Less(t, second.Body.Len(), first.Body.Len(),
 		"unchanged registry handshake should reduce the snapshot response")
 	t.Logf("snapshot registry handshake: %d bytes -> %d bytes", first.Body.Len(), second.Body.Len())

@@ -414,7 +414,7 @@ export async function refresh(opts = {}) {
     const [snapR, retiredR, convR, replacedR, jobsR] = await Promise.all([
       fetch('/api/snapshot' + (staticVersion
         ? '?static_version=' + encodeURIComponent(staticVersion)
-        : ''), { credentials: 'same-origin' }),
+        : ''), { credentials: 'same-origin', cache: 'no-store' }),
       onGroups ? get('/api/retired?' + listParams('retired', groupsQ)) : Promise.resolve(undefined),
       (onGroups && conversationsVisible()) ? get('/api/conversations?' + listParams('conversations', groupsQ)) : Promise.resolve(undefined),
       (onGroups && replacedVisible()) ? get('/api/replaced?' + listParams('replaced', groupsQ)) : Promise.resolve(undefined),
