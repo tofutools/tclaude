@@ -232,12 +232,17 @@ func readLogTail(path string, maxBytes int64) (data []byte, start int64, generat
 	if err != nil {
 		return nil, 0, "", false, err
 	}
-	defer func() { _ = f.Close() }()
+	retained := false
+	defer func() {
+		if !retained {
+			_ = f.Close()
+		}
+	}()
 	info, err := f.Stat()
 	if err != nil {
 		return nil, 0, "", false, err
 	}
-	generation = logFileGeneration(info)
+	generation, retained = logFileGeneration(f, info)
 	size := info.Size()
 	if size <= maxBytes {
 		b, err := io.ReadAll(f)
@@ -260,6 +265,7 @@ func readLogTail(path string, maxBytes int64) (data []byte, start int64, generat
 
 type logFileIdentity struct {
 	info  os.FileInfo
+	file  *os.File
 	token uint64
 }
 
@@ -271,25 +277,28 @@ var logFileIdentityRegistry = struct {
 
 // logFileGeneration gives an opened physical file a daemon-local identity.
 // os.SameFile is portable across Linux and macOS, survives a rotation rename,
-// and distinguishes the replacement output.log. The small LRU is comfortably
-// above the maximum simultaneously scanned rotation set.
-func logFileGeneration(info os.FileInfo) string {
+// and distinguishes the replacement output.log. Retaining one handle per LRU
+// entry prevents a deleted file's identity from being recycled underneath the
+// registry; eviction closes that handle. The bound is comfortably above the
+// maximum simultaneously scanned rotation set.
+func logFileGeneration(file *os.File, info os.FileInfo) (token string, retained bool) {
 	logFileIdentityRegistry.Lock()
 	defer logFileIdentityRegistry.Unlock()
 	for i, entry := range logFileIdentityRegistry.entries {
 		if os.SameFile(info, entry.info) {
 			logFileIdentityRegistry.entries = append(logFileIdentityRegistry.entries[:i], logFileIdentityRegistry.entries[i+1:]...)
 			logFileIdentityRegistry.entries = append(logFileIdentityRegistry.entries, entry)
-			return strconv.FormatUint(entry.token, 36)
+			return strconv.FormatUint(entry.token, 36), false
 		}
 	}
 	logFileIdentityRegistry.next++
-	entry := logFileIdentity{info: info, token: logFileIdentityRegistry.next}
+	entry := logFileIdentity{info: info, file: file, token: logFileIdentityRegistry.next}
 	logFileIdentityRegistry.entries = append(logFileIdentityRegistry.entries, entry)
 	if len(logFileIdentityRegistry.entries) > 256 {
+		_ = logFileIdentityRegistry.entries[0].file.Close()
 		logFileIdentityRegistry.entries = logFileIdentityRegistry.entries[1:]
 	}
-	return strconv.FormatUint(entry.token, 36)
+	return strconv.FormatUint(entry.token, 36), true
 }
 
 type logRecord struct {
