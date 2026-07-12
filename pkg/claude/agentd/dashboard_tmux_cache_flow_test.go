@@ -20,10 +20,14 @@ func TestDashboardPoll_ThreeHandlersShareOneTmuxProbe(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 
 	f := newFlow(t)
-	// A TTL far larger than the microseconds three in-process HTTP calls take,
-	// so the second and third handlers are guaranteed cache hits. Cleanup
-	// (LIFO, before newFlow's) restores the TTL-0 neutralization.
-	t.Cleanup(agentd.SetTmuxCacheTTLForTest(500 * time.Millisecond))
+	// The cache reads real time.Now (only the TTL is overridden here, not the
+	// clock), so the "three handlers land within one TTL" invariant is
+	// wall-clock-dependent. Use a TTL vastly larger than any plausible test
+	// duration — including a severe CI stall or GC pause between the first and
+	// third handler — so the second and third calls are guaranteed cache hits
+	// and this assertion can never flake. Cleanup (LIFO, before newFlow's)
+	// restores the TTL-0 neutralization.
+	t.Cleanup(agentd.SetTmuxCacheTTLForTest(time.Hour))
 
 	const conv = "tmxc-aaaa-bbbb-cccc-dddddddddddd"
 	f.HaveConvWithTitle(conv, "worker")
