@@ -318,54 +318,49 @@ func MaxUpdatedAt() (time.Time, error) {
 	return time.Parse(time.RFC3339Nano, s.String)
 }
 
-// scanSession scans a single session row.
+// scanSession scans a single session row. sql.ErrNoRows (an empty *sql.Row)
+// propagates unwrapped so callers can special-case "not found".
 func scanSession(row *sql.Row) (*SessionRow, error) {
-	var s SessionRow
-	var autoReg, remoteCtl int
-	var createdStr, updatedStr, lastHookStr, effectiveSandbox string
-	err := row.Scan(&s.ID, &s.TmuxSession, &s.PID, &s.Cwd, &s.ConvID,
-		&s.Status, &s.StatusDetail, &s.SubagentCount, &s.SubagentsJSON, &autoReg, &createdStr, &updatedStr, &lastHookStr, &s.Harness, &s.SandboxMode, &s.AskUserQuestionTimeout, &effectiveSandbox, &remoteCtl)
-	if err != nil {
-		return nil, err
-	}
-	s.AutoRegistered = autoReg != 0
-	s.RemoteControl = remoteCtl != 0
-	s.EffectiveSandbox, err = unmarshalEffectiveSandboxSnapshot(effectiveSandbox)
-	if err != nil {
-		return nil, fmt.Errorf("decode session %q effective sandbox: %w", s.ID, err)
-	}
-	s.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdStr)
-	s.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedStr)
-	if lastHookStr != "" {
-		s.LastHook, _ = time.Parse(time.RFC3339Nano, lastHookStr)
-	}
-	return &s, nil
+	return scanSessionRow(row)
 }
 
-// scanSessions scans multiple session rows.
+// scanSessionRow scans one session row off a *sql.Row or *sql.Rows. It is the
+// shared per-row body of scanSession / scanSessions, and lets best-effort
+// batch callers (FindSessionsByConvIDs) decide per row whether a decode error
+// aborts the whole read or just skips the one bad row.
+func scanSessionRow(s rowScanner) (*SessionRow, error) {
+	var row SessionRow
+	var autoReg, remoteCtl int
+	var createdStr, updatedStr, lastHookStr, effectiveSandbox string
+	if err := s.Scan(&row.ID, &row.TmuxSession, &row.PID, &row.Cwd, &row.ConvID,
+		&row.Status, &row.StatusDetail, &row.SubagentCount, &row.SubagentsJSON, &autoReg, &createdStr, &updatedStr, &lastHookStr, &row.Harness, &row.SandboxMode, &row.AskUserQuestionTimeout, &effectiveSandbox, &remoteCtl); err != nil {
+		return nil, err
+	}
+	row.AutoRegistered = autoReg != 0
+	row.RemoteControl = remoteCtl != 0
+	var err error
+	row.EffectiveSandbox, err = unmarshalEffectiveSandboxSnapshot(effectiveSandbox)
+	if err != nil {
+		return nil, fmt.Errorf("decode session %q effective sandbox: %w", row.ID, err)
+	}
+	row.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdStr)
+	row.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedStr)
+	if lastHookStr != "" {
+		row.LastHook, _ = time.Parse(time.RFC3339Nano, lastHookStr)
+	}
+	return &row, nil
+}
+
+// scanSessions scans multiple session rows. All-or-nothing: a single bad row
+// aborts the whole read (used by callers that read a small, known set).
 func scanSessions(rows *sql.Rows) ([]*SessionRow, error) {
 	var result []*SessionRow
 	for rows.Next() {
-		var s SessionRow
-		var autoReg, remoteCtl int
-		var createdStr, updatedStr, lastHookStr, effectiveSandbox string
-		err := rows.Scan(&s.ID, &s.TmuxSession, &s.PID, &s.Cwd, &s.ConvID,
-			&s.Status, &s.StatusDetail, &s.SubagentCount, &s.SubagentsJSON, &autoReg, &createdStr, &updatedStr, &lastHookStr, &s.Harness, &s.SandboxMode, &s.AskUserQuestionTimeout, &effectiveSandbox, &remoteCtl)
+		s, err := scanSessionRow(rows)
 		if err != nil {
 			return nil, fmt.Errorf("scanning session row: %w", err)
 		}
-		s.AutoRegistered = autoReg != 0
-		s.RemoteControl = remoteCtl != 0
-		s.EffectiveSandbox, err = unmarshalEffectiveSandboxSnapshot(effectiveSandbox)
-		if err != nil {
-			return nil, fmt.Errorf("decode session %q effective sandbox: %w", s.ID, err)
-		}
-		s.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdStr)
-		s.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedStr)
-		if lastHookStr != "" {
-			s.LastHook, _ = time.Parse(time.RFC3339Nano, lastHookStr)
-		}
-		result = append(result, &s)
+		result = append(result, s)
 	}
 	return result, rows.Err()
 }

@@ -105,8 +105,16 @@ func TestDashboardPerf_RecordsPollTimings(t *testing.T) {
 	retired := perfEndpointNamed(t, perf, "/api/retired")
 	assert.Equal(t, 1, retired.Count)
 	require.Len(t, retired.Samples, 1)
-	// The list handlers record totals only — no phase marks.
-	assert.Empty(t, retired.Samples[0].Phases)
+	// /api/retired now records its named phase breakdown (TCL-368), in
+	// execution order, with the wrapper's synthetic "write" last — so the
+	// operator's Debug tab can see where the retired page's time goes just like
+	// the snapshot's.
+	wantRetiredPhases := []string{"count", "page", "tmux_ls", "rows", "write"}
+	var gotRetiredPhases []string
+	for _, p := range retired.Samples[0].Phases {
+		gotRetiredPhases = append(gotRetiredPhases, p.Name)
+	}
+	assert.Equal(t, wantRetiredPhases, gotRetiredPhases)
 
 	// ?limit trims the raw samples served, never the aggregates.
 	limited := fetchPerf(t, dash, "/api/perf?limit=1")

@@ -116,19 +116,55 @@ func handleDashboardRetired(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "GET only", http.StatusMethodNotAllowed)
 		return
 	}
+	// Wall-clock phase marks land in the /api/perf ring (perf.go, TCL-374),
+	// mirroring the snapshot handler. Nil-safe outside withPerfTiming (tests).
+	span := perfSpanFrom(r)
 	offset, limit, q := listPageParams(r)
 	total, totalUnfiltered, err := db.CountRetiredAgents(q)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
+	span.mark("count")
 	served := clampListOffset(offset, limit, total)
 	agents, err := db.ListRetiredAgentsPage(q, served, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
+	span.mark("page")
 	alive, _ := session.LiveTmuxSessions()
+	span.mark("tmux_ls")
+
+	// Batch this page's per-row reads (TCL-368) so /api/retired stops firing the
+	// same ~13-query-per-row shape the snapshot did: title (conv_index + actor
+	// pending-name) and liveness (sessions) for the whole page in one IN-query
+	// each instead of a GetConvIndex/GetAgentByConv/FindSessionsByConvID trio per
+	// retired actor. This handler polls every 2s while the Retired group is open.
+	convIDs := make([]string, 0, len(agents))
+	for _, e := range agents {
+		if e.CurrentConvID != "" {
+			convIDs = append(convIDs, e.CurrentConvID)
+		}
+	}
+	convIndex, _ := db.GetConvIndexBatch(convIDs)
+	convAgents, _ := db.AgentsByConv(convIDs)
+	sessions, _ := db.FindSessionsByConvIDs(convIDs)
+
+	// resolveRetiredByDisplay reads the retirer actor's row + title; many rows on
+	// a page were retired by the same actor (or a human literal), so memoize the
+	// resolution per (retiredBy, retiredByAgent) pair within the request.
+	retirerDisplay := map[string]string{}
+	displayFor := func(retiredBy, retiredByAgent string) string {
+		key := retiredBy + "\x00" + retiredByAgent
+		if d, ok := retirerDisplay[key]; ok {
+			return d
+		}
+		d := resolveRetiredByDisplay(retiredBy, retiredByAgent)
+		retirerDisplay[key] = d
+		return d
+	}
+
 	rows := make([]dashboardRetiredAgent, 0, len(agents))
 	for _, e := range agents {
 		retiredAt := ""
@@ -138,14 +174,15 @@ func handleDashboardRetired(w http.ResponseWriter, r *http.Request) {
 		rows = append(rows, dashboardRetiredAgent{
 			AgentID:          e.AgentID,
 			ConvID:           e.CurrentConvID,
-			Title:            agent.CachedTitle(e.CurrentConvID),
-			Online:           isConvOnlineIn(e.CurrentConvID, alive),
+			Title:            agent.CachedTitleFromParts(convIndex[e.CurrentConvID], convAgents[e.CurrentConvID].PendingName),
+			Online:           isConvOnlineInSessions(sessions[e.CurrentConvID], alive),
 			RetiredAt:        retiredAt,
 			RetiredBy:        e.RetiredBy,
-			RetiredByDisplay: resolveRetiredByDisplay(e.RetiredBy, e.RetiredByAgent),
+			RetiredByDisplay: displayFor(e.RetiredBy, e.RetiredByAgent),
 			RetireReason:     e.RetireReason,
 		})
 	}
+	span.mark("rows")
 	writeListPage(w, rows, served, limit, total, totalUnfiltered)
 }
 

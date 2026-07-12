@@ -25,7 +25,13 @@ type agentLocationView struct {
 // agent.ResolveLocation — the one resolver every surface routes
 // through so directory/branch changes propagate uniformly.
 func locationView(convID string) agentLocationView {
-	loc := agent.ResolveLocation(convID)
+	return locationViewFrom(agent.ResolveLocation(convID))
+}
+
+// locationViewFrom maps a resolved agent.Location onto the embedded wire block.
+// Split out so the dashboard snapshot's per-request batch loader can build the
+// view from agent.ResolveLocationFromParts (TCL-368) without re-fetching.
+func locationViewFrom(loc agent.Location) agentLocationView {
 	return agentLocationView{
 		Branch:        loc.CurrentBranch,
 		StartupDir:    loc.StartupDir,

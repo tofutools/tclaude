@@ -442,11 +442,23 @@ func FreshTitle(convID string) string {
 // (the CLI), use FreshTitle.
 func CachedTitle(convID string) string {
 	row, _ := db.GetConvIndex(convID)
+	return CachedTitleFromParts(row, pendingName(convID))
+}
+
+// CachedTitleFromParts is CachedTitle's preloaded-parts twin: it applies the
+// identical resolution priority (custom title > pending name > summary > first
+// prompt > UnknownTitle) to a conv_index row and actor pending-name the caller
+// already has in hand, reading nothing itself. The dashboard snapshot's
+// per-request batch loader uses it so a member/agent/owner row resolves its
+// title with zero point queries (TCL-368). Pass a nil row / empty pendingName
+// for a conv with no cached index / non-agent — the result degrades to
+// UnknownTitle exactly as CachedTitle would.
+func CachedTitleFromParts(row *db.ConvIndexRow, pendingName string) string {
 	if row != nil && row.CustomTitle != "" {
 		return row.CustomTitle
 	}
-	if pn := pendingName(convID); pn != "" {
-		return pn
+	if pendingName != "" {
+		return pendingName
 	}
 	if row != nil {
 		if t := displayTitle(row); t != "" {
