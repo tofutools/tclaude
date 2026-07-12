@@ -74,6 +74,32 @@ func TestSandboxProfileSpawnFreezesValuesAndExplicitSelectionIsHumanOnly(t *test
 	assert.Contains(t, resumedSnapshot.Effective.Environment[0].Value, "$(touch nope)")
 }
 
+func TestSandboxProfileSpawnAcceptsMissingFilesystemRule(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	canonicalParent, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	missing := filepath.Join(canonicalParent, "future", "cache")
+	_, err = db.CreateSandboxProfile(&db.SandboxProfile{
+		Name: "future-cache",
+		Filesystem: []db.SandboxFilesystemGrant{{
+			Path: missing, Access: "write",
+		}},
+	})
+	require.NoError(t, err)
+
+	spawn := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name": "worker", "sandbox_profile": "future-cache",
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	snapshot, ok := f.World.SpawnSandboxPolicy(spawn.ConvID)
+	require.True(t, ok)
+	require.NotNil(t, snapshot)
+	assert.Equal(t, []db.SandboxFilesystemGrant{{Path: missing, Access: "write"}}, snapshot.Effective.Filesystem)
+	_, err = os.Stat(missing)
+	require.ErrorIs(t, err, os.ErrNotExist, "spawn must not create a missing profile path")
+}
+
 func TestSandboxProfileSpawnRejectsAmbientCapabilityWideningAfterParentLaunch(t *testing.T) {
 	for _, scope := range []string{"global", "group"} {
 		t.Run(scope, func(t *testing.T) {
@@ -141,6 +167,38 @@ func TestSandboxProfileWriteRootParticipatesInAgentSpawnProof(t *testing.T) {
 	// accidentally materialised by the daemon itself.
 	_, statErr := os.Lstat(filepath.Join(writeRoot, challenge.WriteProof.Filename))
 	assert.ErrorIs(t, statErr, os.ErrNotExist)
+}
+
+func TestMissingSandboxProfileWriteRootProofsNearestExistingAncestor(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	writeParent, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	missingWriteRoot := filepath.Join(writeParent, "future", "cache")
+	_, err = db.CreateSandboxProfile(&db.SandboxProfile{
+		Name: "future-write",
+		Filesystem: []db.SandboxFilesystemGrant{{
+			Path: missingWriteRoot, Access: "write",
+		}},
+	})
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupSandboxProfile("crew", "future-write")
+	require.NoError(t, err)
+
+	parent := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name": "parent", "cwd": t.TempDir(),
+	})
+	require.Equalf(t, http.StatusOK, parent.Code, "spawn body=%s", parent.Raw)
+	require.NoError(t, db.GrantAgentPermission(parent.ConvID, agentd.PermGroupsSpawn, "test"))
+
+	childCwd, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	rec := agentReq(t, f, parent.ConvID, http.MethodPost,
+		"/v1/groups/"+url.PathEscape("crew")+"/spawn",
+		map[string]any{"name": "child", "cwd": childCwd})
+	challenge := decodeWriteProofChallenge(t, rec)
+	assert.ElementsMatch(t, []string{childCwd, writeParent}, challenge.WriteProof.Dirs)
+	assert.NotContains(t, challenge.WriteProof.Dirs, missingWriteRoot)
 }
 
 func TestSandboxProfileUnsupportedFilesystemFailsTypedBeforeSpawn(t *testing.T) {

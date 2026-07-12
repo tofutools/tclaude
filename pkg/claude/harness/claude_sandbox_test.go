@@ -2,6 +2,8 @@ package harness
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -239,6 +241,19 @@ func TestClaudeSettingsSandboxProfileFilesystemRules(t *testing.T) {
 		if !slices.Contains(got, any("/opt/secret")) || !slices.Contains(got, any(tclaudePrivateStateDirTilde)) {
 			t.Fatalf("%s must preserve baseline denies and add the profile deny: %v", key, got)
 		}
+	}
+}
+
+func TestClaudeSettingsKeepsMissingSandboxProfilePath(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "future", "cache")
+	payload := claudeSettingsJSON(SpawnSpec{
+		SandboxMode: ClaudeSandboxOn, SandboxWriteDirs: []string{missing},
+	})
+	if !strings.Contains(payload, missing) {
+		t.Fatalf("Claude settings dropped missing sandbox path %q: %s", missing, payload)
+	}
+	if _, err := os.Stat(missing); !os.IsNotExist(err) {
+		t.Fatalf("settings generation unexpectedly created %q: %v", missing, err)
 	}
 }
 

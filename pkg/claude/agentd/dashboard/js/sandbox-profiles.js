@@ -10,6 +10,8 @@ let profiles = [];
 let editingName = '';
 let editorOnCreate = null;
 let editorSaving = false;
+let editorDirectoryGeneration = 0;
+let editorDirectoryTimer = null;
 let spawnPreviewGeneration = 0;
 
 const SANDBOX_SCRIBE_NAME = 'sandbox-scribe';
@@ -191,6 +193,7 @@ function rowsToFilesystemJSON() {
     out.push({ path, access: row.querySelector('.sbx-access').value });
   }
   $('#sandbox-profile-editor-filesystem').value = JSON.stringify(out, null, 2);
+  queueMissingDirectoryRefresh();
 }
 
 // rowsToEnvironmentJSON collects the env table. The name is trimmed; the value
@@ -273,11 +276,15 @@ function openEditor(p = null, { onCreate = null, targetName = null } = {}) {
   setEditorAdvanced(false); // collapse the raw panel and render the tables from the JSON
   $('#sandbox-profile-editor-error').textContent = '';
   $('#sandbox-profile-editor-modal').classList.add('show');
+  queueMissingDirectoryRefresh({ immediate: true });
   setTimeout(() => $('#sandbox-profile-editor-name').focus(), 0);
 }
 
 function closeEditor() {
   if (editorSaving) return;
+  editorDirectoryGeneration++;
+  clearTimeout(editorDirectoryTimer);
+  $('#sandbox-profile-editor-missing').hidden = true;
   $('#sandbox-profile-editor-modal').classList.remove('show');
   editorOnCreate = null;
   // A sandbox scribe may have completed while this editor was open. Release
@@ -289,6 +296,91 @@ function setEditorSaving(saving) {
   editorSaving = saving;
   $('#sandbox-profile-editor-submit').disabled = saving;
   $('#sandbox-profile-editor-cancel').disabled = saving;
+  $('#sandbox-profile-editor-mkdir').disabled = saving;
+}
+
+function editorProfileBody() {
+  return {
+    name: $('#sandbox-profile-editor-name').value.trim(),
+    filesystem: JSON.parse($('#sandbox-profile-editor-filesystem').value || '[]'),
+    environment: JSON.parse($('#sandbox-profile-editor-environment').value || '[]'),
+  };
+}
+
+function editorDirectoryBody() {
+  return {
+    name: 'directory-preview',
+    filesystem: JSON.parse($('#sandbox-profile-editor-filesystem').value || '[]'),
+    environment: [],
+  };
+}
+
+function queueMissingDirectoryRefresh({ immediate = false } = {}) {
+  clearTimeout(editorDirectoryTimer);
+  const generation = ++editorDirectoryGeneration;
+  const run = async () => {
+    if (!$('#sandbox-profile-editor-modal').classList.contains('show')) return;
+    let body;
+    try {
+      body = editorDirectoryBody();
+    } catch (_) {
+      $('#sandbox-profile-editor-missing').hidden = true;
+      return;
+    }
+    try {
+      const res = await api('/api/sandbox-profile-directories/inspect', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      if (generation !== editorDirectoryGeneration) return;
+      const missing = (res && res.missing) || [];
+      const creatable = (res && res.creatable) || [];
+      const box = $('#sandbox-profile-editor-missing');
+      box.hidden = missing.length === 0;
+      if (!missing.length) return;
+      const count = missing.length;
+      $('#sandbox-profile-editor-missing-note').textContent =
+        `${count} director${count === 1 ? 'y does' : 'ies do'} not exist. Saving is allowed; read/write rules activate on a later launch, while deny targets must exist before launch.`;
+      const btn = $('#sandbox-profile-editor-mkdir');
+      btn.hidden = creatable.length === 0;
+      btn.textContent = `Create ${creatable.length} missing director${creatable.length === 1 ? 'y' : 'ies'}`;
+      btn.title = creatable.join('\n');
+    } catch (_) {
+      if (generation === editorDirectoryGeneration) $('#sandbox-profile-editor-missing').hidden = true;
+    }
+  };
+  if (immediate) void run();
+  else editorDirectoryTimer = setTimeout(run, 300);
+}
+
+async function createMissingDirectories() {
+  if (editorSaving) return;
+  const errEl = $('#sandbox-profile-editor-error');
+  errEl.textContent = '';
+  let body;
+  try {
+    body = editorDirectoryBody();
+  } catch (err) {
+    setEditorAdvanced(true, { force: true });
+    errEl.textContent = `Fix the JSON before creating directories: ${err.message || String(err)}`;
+    return;
+  }
+  setEditorSaving(true);
+  try {
+    const res = await api('/api/sandbox-profile-directories/create', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const created = (res && res.created) || [];
+    toast(`created ${created.length} sandbox director${created.length === 1 ? 'y' : 'ies'}`);
+    queueMissingDirectoryRefresh({ immediate: true });
+  } catch (err) {
+    errEl.textContent = err.message || String(err);
+    // mkdir-p may have created earlier paths before a later one failed. Re-run
+    // inspection so the warning/count reflects the filesystem's partial
+    // progress instead of leaving a stale pre-request list on screen.
+    queueMissingDirectoryRefresh({ immediate: true });
+  } finally {
+    setEditorSaving(false);
+  }
 }
 
 // confirmSandboxProfileDiff previews the daemon-normalized JSON returned by
@@ -463,11 +555,7 @@ async function saveEditor() {
   errEl.textContent = '';
   let body;
   try {
-    body = {
-      name: $('#sandbox-profile-editor-name').value.trim(),
-      filesystem: JSON.parse($('#sandbox-profile-editor-filesystem').value || '[]'),
-      environment: JSON.parse($('#sandbox-profile-editor-environment').value || '[]'),
-    };
+    body = editorProfileBody();
     if (!body.name) throw new Error('name is required');
   } catch (err) {
     // A JSON.parse failure means a hand-edit broke a raw textarea — reveal the
@@ -484,11 +572,12 @@ async function saveEditor() {
   // settles, so another editor invocation cannot steal the callback.
   const onCreate = editorOnCreate;
   setEditorSaving(true);
-  let savedBody = body;
-  let confirmed = false;
-  try {
-    const target = editingName ? `${API}/${encodeURIComponent(editingName)}` : API;
-    const preview = await api(`${target}?dry_run=1`, {
+	let savedBody = body;
+	let saved;
+	let confirmed = false;
+	try {
+		const target = editingName ? `${API}/${encodeURIComponent(editingName)}` : API;
+		const preview = await api(`${target}?dry_run=1`, {
       method: editingName ? 'PATCH' : 'POST',
       headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
@@ -509,7 +598,7 @@ async function saveEditor() {
     const commitTarget = editingName
       ? `${target}?revision=${encodeURIComponent(preview.revision || '')}`
       : target;
-    await api(commitTarget, {
+		saved = await api(commitTarget, {
       method: editingName ? 'PATCH' : 'POST',
       headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(savedBody),
     });
@@ -521,8 +610,9 @@ async function saveEditor() {
     $('#sandbox-profile-editor-submit').focus();
   }
 
-  closeEditor();
-  toast(`sandbox profile saved: ${savedBody.name}`);
+	closeEditor();
+	const missing = (saved && saved.missing) || [];
+	toast(`sandbox profile saved: ${savedBody.name}${missing.length ? ` (${missing.length} missing director${missing.length === 1 ? 'y' : 'ies'}; read/write rules wait for a later launch, deny targets must exist)` : ''}`);
   if (onCreate) {
     // Only a successful create reaches this handoff; cancel or validation
     // failure leaves the assignment untouched. The launching chip picker owns
@@ -847,6 +937,7 @@ function bindSandboxProfilesUI() {
     fsRows.insertAdjacentHTML('beforeend', filesystemRowHTML());
     fsRows.lastElementChild.querySelector('.sbx-path').focus();
   });
+  $('#sandbox-profile-editor-mkdir').addEventListener('click', createMissingDirectories);
 
   // Structured environment table: same wiring, minus the picker.
   const envRows = $('#sandbox-profile-editor-env-rows');
@@ -866,7 +957,10 @@ function bindSandboxProfilesUI() {
   $('#sandbox-profile-editor-advanced-toggle').addEventListener('click', () => {
     setEditorAdvanced($('#sandbox-profile-editor-advanced').hidden);
   });
-  $('#sandbox-profile-editor-filesystem').addEventListener('change', renderFilesystemRows);
+  $('#sandbox-profile-editor-filesystem').addEventListener('change', () => {
+    renderFilesystemRows();
+    queueMissingDirectoryRefresh({ immediate: true });
+  });
   $('#sandbox-profile-editor-environment').addEventListener('change', renderEnvironmentRows);
 
   $('#sandbox-profile-editor-cancel').addEventListener('click', closeEditor);

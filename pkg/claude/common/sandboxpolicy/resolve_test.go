@@ -89,6 +89,24 @@ func TestResolveEmptyScopesReturnsNonNilCollections(t *testing.T) {
 	assert.NotNil(t, got.Provenance.Environment)
 }
 
+func TestResolveRetainsCanonicalMissingFilesystemRule(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	parent := filepath.Join(home, "shared")
+	require.NoError(t, os.Mkdir(parent, 0o755))
+	canonicalParent, err := filepath.EvalSymlinks(parent)
+	require.NoError(t, err)
+	missing := filepath.Join(parent, "future", "cache")
+
+	got, err := Resolve(Scopes{Explicit: &Profile{
+		Name: "future", Filesystem: []FilesystemGrant{{Path: missing, Access: AccessWrite}},
+	}})
+	require.NoError(t, err)
+	canonicalMissing := filepath.Join(canonicalParent, "future", "cache")
+	assert.Equal(t, []FilesystemGrant{{Path: canonicalMissing, Access: AccessWrite}}, got.Filesystem)
+	assert.Equal(t, []ProfileSource{{Scope: ScopeExplicit, Profile: "future"}}, got.Provenance.Filesystem[canonicalMissing])
+}
+
 func TestResolveExplicitDenyDominatesAmbientGrant(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

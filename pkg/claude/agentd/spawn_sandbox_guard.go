@@ -35,12 +35,19 @@ func spawnSandboxLineageFailure(parentConvID, childHarness, childSandbox string)
 }
 
 func sandboxProfileCapabilityFailure(harnessName, sandboxMode string, snapshot *sandboxpolicy.Snapshot) *spawnFailure {
-	if snapshot == nil || len(snapshot.Effective.Filesystem) == 0 {
+	if snapshot == nil {
+		return nil
+	}
+	filesystem, err := sandboxpolicy.FilesystemForLaunch(snapshot.Effective)
+	if err != nil {
+		return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_filesystem", err.Error()}
+	}
+	if len(filesystem) == 0 {
 		return nil
 	}
 	switch harnessOrDefault(harnessName) {
 	case harness.DefaultName:
-		if strings.TrimSpace(sandboxMode) != harness.ClaudeSandboxOn && snapshotHasDeny(snapshot) {
+		if strings.TrimSpace(sandboxMode) != harness.ClaudeSandboxOn && filesystemHasDeny(filesystem) {
 			return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_filesystem",
 				fmt.Sprintf("Claude filesystem deny rules require sandbox %q; sandbox %q cannot guarantee enforcement", harness.ClaudeSandboxOn, sandboxMode)}
 		}
@@ -57,8 +64,8 @@ func sandboxProfileCapabilityFailure(harnessName, sandboxMode string, snapshot *
 	}
 }
 
-func snapshotHasDeny(snapshot *sandboxpolicy.Snapshot) bool {
-	for _, grant := range snapshot.Effective.Filesystem {
+func filesystemHasDeny(filesystem []sandboxpolicy.FilesystemGrant) bool {
+	for _, grant := range filesystem {
 		if grant.Access == sandboxpolicy.AccessDeny {
 			return true
 		}

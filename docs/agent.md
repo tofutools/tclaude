@@ -370,12 +370,19 @@ and are rejected case-insensitively at create, rename, and import boundaries.
 Export bundles are portable and versioned. Assignment export is opt-in, and an
 import only applies included global/group assignments when
 `--apply-assignments` is explicitly passed; missing groups are reported as
-warnings. Filesystem paths that do not exist on the receiving machine are also
-imported with warnings so the profile can be shared and edited locally. Such a
-profile remains unusable until its missing paths are corrected or created;
-spawn-time sandbox resolution still validates every path strictly. Without an
-explicit profile, resolution falls back from a group assignment to the global
-default.
+warnings. Filesystem paths do not have to exist when profiles are created,
+edited, or imported; they are retained in canonical lexical form after
+existing ancestors and protected roots are checked. Missing paths remain valid
+at spawn time. Missing read/write rules are inactive for that launch; on a
+later launch, a path that has become an ordinary directory is revalidated and
+its frozen rule becomes active. A missing deny target fails launch because the
+restriction cannot safely be omitted. The dashboard editor can explicitly create missing read/write paths
+with `mkdir -p` semantics; saving alone never mutates the filesystem, and
+deny-only paths are never created. Creation
+rejects symlink substitutions; on
+macOS, existing ancestors must also be readable because the platform has no
+search-only directory descriptor. Without an explicit profile, resolution
+falls back from a group assignment to the global default.
 
 The `draft` command is deliberately not a mutation. It requires only
 `sandbox-profiles.draft`, runs the normal server validation, and hands the

@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -58,6 +59,22 @@ func TestCodexAgentProfileContentIncludesAdditiveReadAndWriteGrants(t *testing.T
 	}
 	if strings.Contains(got, `"/opt/both" = "read"`) {
 		t.Fatalf("write must dominate duplicate read grant:\n%s", got)
+	}
+}
+
+func TestCodexAgentProfileContentKeepsMissingSandboxPath(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "future", "cache")
+	got, err := codexAgentProfileContentForNameAndRules(
+		"tclaude-agent-test", "/tmp/agentd.sock", "/tmp/private", nil, []string{missing}, nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, fmt.Sprintf("%q = \"write\"", missing)) {
+		t.Fatalf("Codex profile dropped missing sandbox path %q:\n%s", missing, got)
+	}
+	if _, err := os.Stat(missing); !os.IsNotExist(err) {
+		t.Fatalf("profile generation unexpectedly created %q: %v", missing, err)
 	}
 }
 

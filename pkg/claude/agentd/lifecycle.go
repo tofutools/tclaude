@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -425,13 +426,44 @@ func effectiveSandboxWriteDirsForConv(convID string) (*sandboxpolicy.Snapshot, [
 	if err != nil {
 		return nil, nil, &effectiveSandboxChangedError{err: err}
 	}
+	if _, err := sandboxpolicy.FilesystemForLaunch(validated.Effective); err != nil {
+		return nil, nil, &effectiveSandboxChangedError{err: err}
+	}
 	writeDirs := make([]string, 0, len(validated.Effective.Filesystem))
 	for _, grant := range validated.Effective.Filesystem {
 		if grant.Access == sandboxpolicy.AccessWrite {
-			writeDirs = appendUniqueDirs(writeDirs, grant.Path)
+			proofDir, err := sandboxWriteProofDir(grant.Path)
+			if err != nil {
+				return nil, nil, err
+			}
+			writeDirs = appendUniqueDirs(writeDirs, proofDir)
 		}
 	}
 	return &validated, writeDirs, nil
+}
+
+// sandboxWriteProofDir returns the concrete directory that controls whether a
+// frozen write path can materialize. Existing roots prove themselves; missing
+// roots prove their nearest existing ancestor. Thus an agent cannot arrange
+// for an unproved path to appear between the challenge and harness launch.
+func sandboxWriteProofDir(path string) (string, error) {
+	for {
+		info, err := os.Lstat(path)
+		if err == nil {
+			if !info.IsDir() {
+				return "", fmt.Errorf("sandbox profile write proof path %q is not a directory", path)
+			}
+			return path, nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return "", err
+		}
+		path = parent
+	}
 }
 
 func memberConvIDs(members []*db.AgentGroupMember) []string {
@@ -1920,7 +1952,12 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		dirs = appendUniqueDirs(dirs, gitWorktreeWriteDirs...)
 		for _, grant := range effectiveSandbox.Effective.Filesystem {
 			if grant.Access == sandboxpolicy.AccessWrite {
-				dirs = appendUniqueDirs(dirs, grant.Path)
+				proofDir, proofErr := sandboxWriteProofDir(grant.Path)
+				if proofErr != nil {
+					writeError(w, http.StatusBadRequest, "invalid_cwd", proofErr.Error())
+					return
+				}
+				dirs = appendUniqueDirs(dirs, proofDir)
 			}
 		}
 		resolved, ok := requireDirWriteProof(w, spawnerConvID, body.WriteProofToken, dirs)

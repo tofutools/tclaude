@@ -17,6 +17,11 @@ const (
 	sandboxProfileExportVersion = 1
 )
 
+// sandboxProfileBeforeMkdir is a test seam for exercising substitutions in
+// the narrow window between portable validation and descriptor-relative
+// creation. Production leaves it as a no-op.
+var sandboxProfileBeforeMkdir = func(string) {}
+
 type sandboxProfileJSON struct {
 	Name        string                           `json:"name"`
 	Filesystem  []sandboxpolicy.FilesystemGrant  `json:"filesystem"`
@@ -63,16 +68,16 @@ func sandboxProfileToJSON(p *db.SandboxProfile, localFields bool) sandboxProfile
 	return out
 }
 
-func buildSandboxProfile(body sandboxProfileJSON) (*db.SandboxProfile, error) {
-	normalized, err := sandboxpolicy.Normalize(sandboxpolicy.Profile{
+func buildSandboxProfile(body sandboxProfileJSON) (*db.SandboxProfile, []string, error) {
+	normalized, missing, err := sandboxpolicy.NormalizeForPersistence(sandboxpolicy.Profile{
 		Name: body.Name, Filesystem: body.Filesystem, Environment: body.Environment,
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	return &db.SandboxProfile{
 		Name: normalized.Name, Filesystem: normalized.Filesystem, Environment: normalized.Environment,
-	}, nil
+	}, missing, nil
 }
 
 func buildSandboxProfileForImport(body sandboxProfileJSON) (*db.SandboxProfile, []string, error) {
@@ -112,7 +117,7 @@ func handleSandboxProfiles(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 			return
 		}
-		p, err := buildSandboxProfile(body)
+		p, missing, err := buildSandboxProfile(body)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", err.Error())
 			return
@@ -141,7 +146,7 @@ func handleSandboxProfiles(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
 		}
-		writeJSON(w, http.StatusCreated, map[string]any{"id": id, "name": p.Name})
+		writeJSON(w, http.StatusCreated, map[string]any{"id": id, "name": p.Name, "missing": missing})
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET or POST")
 	}
@@ -187,7 +192,7 @@ func handleSandboxProfileByName(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 			return
 		}
-		p, err := buildSandboxProfile(body)
+		p, missing, err := buildSandboxProfile(body)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", err.Error())
 			return
@@ -229,7 +234,7 @@ func handleSandboxProfileByName(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "io", updateErr.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"id": p.ID, "name": p.Name})
+		writeJSON(w, http.StatusOK, map[string]any{"id": p.ID, "name": p.Name, "missing": missing})
 	case http.MethodDelete:
 		n, err := db.DeleteSandboxProfile(name)
 		if err != nil {
@@ -244,6 +249,80 @@ func handleSandboxProfileByName(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET, PATCH or DELETE")
 	}
+}
+
+// handleSandboxProfileDirectories backs the dashboard editor's explicit
+// mkdir-p affordance. Inspect is side-effect free; create only materializes
+// paths that the normal portable-profile validator identifies as missing.
+// A strict normalization after creation makes the response fail closed if a
+// path did not become a real, safe directory.
+func handleSandboxProfileDirectories(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requirePermission(w, r, PermSandboxProfilesManage); !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method", "POST")
+		return
+	}
+	var body sandboxProfileJSON
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
+	// Directory inspection/creation is independent of the draft's name and
+	// environment fields. Validate only the filesystem rules so an unrelated
+	// in-progress environment edit cannot hide or block the mkdir affordance.
+	body.Name = "directory-preview"
+	body.Environment = nil
+	profile, missing, err := buildSandboxProfile(body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", err.Error())
+		return
+	}
+	creatable := creatableSandboxProfileDirectories(profile, missing)
+	if r.PathValue("action") == "create" {
+		for _, path := range creatable {
+			sandboxProfileBeforeMkdir(path)
+			if err := mkdirAllNoFollow(path, 0o755); err != nil {
+				writeError(w, http.StatusInternalServerError, "io", fmt.Sprintf("create directory %q: %v", path, err))
+				return
+			}
+		}
+		active := make([]sandboxpolicy.FilesystemGrant, 0, len(profile.Filesystem))
+		for _, grant := range profile.Filesystem {
+			if grant.Access != sandboxpolicy.AccessDeny {
+				active = append(active, grant)
+			}
+		}
+		if _, err := sandboxpolicy.Normalize(sandboxpolicy.Profile{
+			Name: profile.Name, Filesystem: active, Environment: profile.Environment,
+		}); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", "validate created directories: "+err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"created": creatable})
+		return
+	} else if r.PathValue("action") != "inspect" {
+		writeError(w, http.StatusNotFound, "not_found", "unknown sandbox-profile directory action")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"missing": missing, "creatable": creatable})
+}
+
+func creatableSandboxProfileDirectories(profile *db.SandboxProfile, missing []string) []string {
+	missingSet := make(map[string]bool, len(missing))
+	for _, path := range missing {
+		missingSet[path] = true
+	}
+	out := make([]string, 0, len(missing))
+	for _, grant := range profile.Filesystem {
+		// A missing deny rule is already restrictive and creating its target
+		// would unexpectedly mutate the host without enabling an allowance.
+		if grant.Access != sandboxpolicy.AccessDeny && missingSet[grant.Path] {
+			out = append(out, grant.Path)
+		}
+	}
+	return out
 }
 
 func handleGlobalSandboxProfile(w http.ResponseWriter, r *http.Request) {
@@ -517,7 +596,7 @@ func handleSandboxProfilesImportInspect(w http.ResponseWriter, r *http.Request) 
 			warnings = append(warnings, sandboxProfileImportPathWarning{
 				Profile: profile.Name,
 				Path:    path,
-				Message: "path does not exist locally; edit the profile before use",
+				Message: "path does not exist locally; the rule will target it if created",
 			})
 		}
 	}

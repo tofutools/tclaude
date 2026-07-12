@@ -73,12 +73,16 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 			return "", "", "", "", &cloneSpawnError{Status: http.StatusConflict, Code: "sandbox_profile_changed", Msg: err.Error()}
 		}
 		effectiveSandbox = &validated
+		launchFilesystem, launchErr := sandboxpolicy.FilesystemForLaunch(validated.Effective)
+		if launchErr != nil {
+			return "", "", "", "", &cloneSpawnError{Status: http.StatusConflict, Code: "sandbox_profile_changed", Msg: launchErr.Error()}
+		}
 		if proofToken != "" {
 			proved := make(map[string]bool, len(proofDirs))
 			for _, dir := range proofDirs {
 				proved[dir] = true
 			}
-			for _, grant := range validated.Effective.Filesystem {
+			for _, grant := range launchFilesystem {
 				if grant.Access == sandboxpolicy.AccessWrite && !proved[grant.Path] {
 					return "", "", "", "", &cloneSpawnError{Status: http.StatusForbidden, Code: "write_proof_failed", Msg: "sandbox profile write root was not included in the clone write proof: " + grant.Path}
 				}

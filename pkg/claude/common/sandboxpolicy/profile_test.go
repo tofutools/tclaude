@@ -176,6 +176,19 @@ func TestNormalizeForImportRetainsMissingPathsWithWarnings(t *testing.T) {
 	assert.Equal(t, []string{want}, warnings)
 }
 
+func TestNormalizeForImportRejectsDanglingSymlinkInMissingPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dangling := filepath.Join(home, "dangling")
+	require.NoError(t, os.Symlink(filepath.Join(home, "absent-target"), dangling))
+
+	_, _, err := NormalizeForImport(Profile{Name: "portable", Filesystem: []FilesystemGrant{{
+		Path: filepath.Join(dangling, "cache"), Access: AccessWrite,
+	}}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "resolve symlinks")
+}
+
 func TestNormalizeForImportStillRejectsUnsafeOrMalformedMissingPaths(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
