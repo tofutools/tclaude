@@ -392,12 +392,13 @@ export async function refresh(opts = {}) {
     // fetched ALONGSIDE the snapshot (one Promise.all, one render); the windowed
     // pages are stitched back on below.
     //
-    // Two gates keep this cheap: (1) conversations + replaced are fetched only
-    // when the Groups tab is showing their (default-hidden) virtual group — no
-    // point pulling them every tick on another tab or when collapsed; retired is
-    // always fetched (default-visible + it drives the palette's delete-retired
-    // count). (2) the Groups filter box value rides along as the server-side `q`
-    // so the filter searches the WHOLE list, not just the loaded page.
+    // Two gates keep this cheap: (1) all three lists are fetched only on the
+    // Groups tab, and conversations + replaced additionally require their
+    // default-hidden virtual group to be visible. The palette's cross-tab
+    // delete-retired count comes from snapshot.retired_total, so it no longer
+    // needs the full retired request. (2) the Groups filter box value rides
+    // along as the server-side `q` so the filter searches the WHOLE list, not
+    // just the loaded page.
     //
     // List sub-fetches swallow a network rejection (→ null) so a blip on one
     // degrades to "keep the previous rows" (stitchListPage) rather than failing
@@ -409,9 +410,12 @@ export async function refresh(opts = {}) {
     // fetched only while its tab is showing; the nav badge stays live off the
     // snapshot's export_jobs_active count regardless.
     const get = (path) => fetch(path, { credentials: 'same-origin' }).catch(() => null);
+    const staticVersion = lastSnapshot?.static_version || '';
     const [snapR, retiredR, convR, replacedR, jobsR] = await Promise.all([
-      fetch('/api/snapshot', { credentials: 'same-origin' }),
-      get('/api/retired?' + listParams('retired', groupsQ)),
+      fetch('/api/snapshot' + (staticVersion
+        ? '?static_version=' + encodeURIComponent(staticVersion)
+        : ''), { credentials: 'same-origin' }),
+      onGroups ? get('/api/retired?' + listParams('retired', groupsQ)) : Promise.resolve(undefined),
       (onGroups && conversationsVisible()) ? get('/api/conversations?' + listParams('conversations', groupsQ)) : Promise.resolve(undefined),
       (onGroups && replacedVisible()) ? get('/api/replaced?' + listParams('replaced', groupsQ)) : Promise.resolve(undefined),
       jobsActive ? get('/api/jobs?' + jobs.params.value) : Promise.resolve(undefined),
@@ -463,6 +467,11 @@ export async function refresh(opts = {}) {
     // keeps the previous tick's rows for that list — a blip / a collapsed group
     // must not blank a section.
     const prevSnap = lastSnapshot || {};
+    if (data.static_unchanged && prevSnap.static_version === data.static_version) {
+      for (const key of ['slugs', 'templates', 'profiles', 'roles', 'plugins_catalog']) {
+        data[key] = prevSnap[key];
+      }
+    }
     data.paging = {};
     await stitchListPage(data, 'retired', retiredR, prevSnap);
     await stitchListPage(data, 'conversations', convR, prevSnap);

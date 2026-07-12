@@ -39,8 +39,10 @@ import (
 const maxListPageLimit = 500
 
 func registerDashboardLists(mux *http.ServeMux) {
-	// All four ride the dashboard's 2s poll alongside /api/snapshot, so
-	// they get the same wall-clock recording (perf.go, TCL-374).
+	// These endpoints can ride the dashboard poll alongside /api/snapshot when
+	// their owning tab is visible, so they get the same wall-clock recording
+	// (perf.go, TCL-374). /api/retired is gated to the Groups tab; its badge-only
+	// total now rides the base snapshot.
 	mux.HandleFunc("/api/retired", withPerfTiming("/api/retired", handleDashboardRetired))
 	mux.HandleFunc("/api/conversations", withPerfTiming("/api/conversations", handleDashboardConversations))
 	mux.HandleFunc("/api/replaced", withPerfTiming("/api/replaced", handleDashboardReplaced))

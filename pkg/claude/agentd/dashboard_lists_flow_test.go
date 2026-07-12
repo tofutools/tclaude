@@ -1,7 +1,9 @@
 package agentd_test
 
 import (
+	"compress/gzip"
 	"encoding/json"
+	"io"
 	"net/http"
 	"testing"
 	"time"
@@ -282,6 +284,12 @@ func TestDashboardSnapshot_DropsMovedListsButStillGuardsRoster(t *testing.T) {
 		_, present := raw[gone]
 		assert.False(t, present, "snapshot must no longer carry the %q key", gone)
 	}
+	var retiredTotal struct {
+		RetiredTotal int `json:"retired_total"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &retiredTotal), "decode retired total")
+	assert.Equal(t, 1, retiredTotal.RetiredTotal,
+		"snapshot carries the cheap retired count without embedding the retired roster")
 
 	// Roster still guards: neither the retired actor nor the superseded
 	// predecessor reaches agents[]/ungrouped[]; the live head does.
@@ -290,4 +298,62 @@ func TestDashboardSnapshot_DropsMovedListsButStillGuardsRoster(t *testing.T) {
 	assert.False(t, agentInSnap(snap.Agents, convP), "superseded predecessor must not be on the roster")
 	assert.False(t, ungroupedHas(snap, convP), "superseded predecessor must not be ungrouped")
 	assert.True(t, agentInSnap(snap.Agents, convH), "the live head IS the agent on the roster")
+}
+
+// Stable registry blobs ride the first snapshot, then collapse to null when
+// the browser echoes the matching static_version. The client restores those
+// fields from its previous snapshot; a changed hash sends complete blobs again.
+func TestDashboardSnapshot_StaticVersionSkipsUnchangedBlobs(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	first := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodGet, "/api/snapshot", nil))
+	require.Equal(t, http.StatusOK, first.Code, "first snapshot body=%s", first.Body.String())
+	var initial map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(first.Body.Bytes(), &initial))
+	var version string
+	require.NoError(t, json.Unmarshal(initial["static_version"], &version))
+	require.NotEmpty(t, version)
+	for _, key := range []string{"slugs", "templates", "profiles", "roles", "plugins_catalog"} {
+		require.NotEqual(t, "null", string(initial[key]), "initial %s must carry its complete value", key)
+	}
+
+	secondPath := "/api/snapshot?static_version=" + version
+	second := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodGet, secondPath, nil))
+	require.Equal(t, http.StatusOK, second.Code, "second snapshot body=%s", second.Body.String())
+	assert.Less(t, second.Body.Len(), first.Body.Len(),
+		"unchanged registry handshake should reduce the snapshot response")
+	t.Logf("snapshot registry handshake: %d bytes -> %d bytes", first.Body.Len(), second.Body.Len())
+	var unchanged map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(second.Body.Bytes(), &unchanged))
+	assert.JSONEq(t, "true", string(unchanged["static_unchanged"]))
+	for _, key := range []string{"slugs", "templates", "profiles", "roles", "plugins_catalog"} {
+		assert.Equal(t, "null", string(unchanged[key]), "unchanged %s should not be re-shipped", key)
+	}
+}
+
+func TestDashboardSnapshot_GzipTransport(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	plain := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodGet, "/api/snapshot", nil))
+	require.Equal(t, http.StatusOK, plain.Code)
+
+	req := testharness.JSONRequest(t, http.MethodGet, "/api/snapshot", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	compressed := testharness.Serve(mux, req)
+	require.Equal(t, http.StatusOK, compressed.Code)
+	assert.Equal(t, "gzip", compressed.Header().Get("Content-Encoding"))
+	assert.Contains(t, compressed.Header().Values("Vary"), "Accept-Encoding")
+
+	compressedBytes := compressed.Body.Len()
+	zr, err := gzip.NewReader(compressed.Body)
+	require.NoError(t, err)
+	decoded, err := io.ReadAll(zr)
+	require.NoError(t, err)
+	assert.True(t, json.Valid(decoded), "decompressed snapshot must remain valid JSON")
+	assert.Less(t, compressedBytes, plain.Body.Len())
+	t.Logf("snapshot gzip: %d bytes -> %d bytes", plain.Body.Len(), compressedBytes)
 }
