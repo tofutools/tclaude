@@ -26,6 +26,7 @@ type sandboxProfileJSON struct {
 	Name        string                           `json:"name"`
 	Filesystem  []sandboxpolicy.FilesystemGrant  `json:"filesystem"`
 	Environment []sandboxpolicy.EnvironmentEntry `json:"environment"`
+	Includes    []string                         `json:"includes,omitempty"`
 	CreatedAt   string                           `json:"created_at,omitempty"`
 	UpdatedAt   string                           `json:"updated_at,omitempty"`
 }
@@ -55,7 +56,7 @@ type sandboxProfilePreviewJSON struct {
 
 func sandboxProfileToJSON(p *db.SandboxProfile, localFields bool) sandboxProfileJSON {
 	out := sandboxProfileJSON{
-		Name: p.Name, Filesystem: p.Filesystem, Environment: p.Environment,
+		Name: p.Name, Filesystem: p.Filesystem, Environment: p.Environment, Includes: p.Includes,
 	}
 	if localFields {
 		if !p.CreatedAt.IsZero() {
@@ -70,25 +71,25 @@ func sandboxProfileToJSON(p *db.SandboxProfile, localFields bool) sandboxProfile
 
 func buildSandboxProfile(body sandboxProfileJSON) (*db.SandboxProfile, []string, error) {
 	normalized, missing, err := sandboxpolicy.NormalizeForPersistence(sandboxpolicy.Profile{
-		Name: body.Name, Filesystem: body.Filesystem, Environment: body.Environment,
+		Name: body.Name, Filesystem: body.Filesystem, Environment: body.Environment, Includes: body.Includes,
 	})
 	if err != nil {
 		return nil, nil, err
 	}
 	return &db.SandboxProfile{
-		Name: normalized.Name, Filesystem: normalized.Filesystem, Environment: normalized.Environment,
+		Name: normalized.Name, Filesystem: normalized.Filesystem, Environment: normalized.Environment, Includes: normalized.Includes,
 	}, missing, nil
 }
 
 func buildSandboxProfileForImport(body sandboxProfileJSON) (*db.SandboxProfile, []string, error) {
 	normalized, missing, err := sandboxpolicy.NormalizeForImport(sandboxpolicy.Profile{
-		Name: body.Name, Filesystem: body.Filesystem, Environment: body.Environment,
+		Name: body.Name, Filesystem: body.Filesystem, Environment: body.Environment, Includes: body.Includes,
 	})
 	if err != nil {
 		return nil, nil, err
 	}
 	return &db.SandboxProfile{
-		Name: normalized.Name, Filesystem: normalized.Filesystem, Environment: normalized.Environment,
+		Name: normalized.Name, Filesystem: normalized.Filesystem, Environment: normalized.Environment, Includes: normalized.Includes,
 	}, missing, nil
 }
 
@@ -140,6 +141,10 @@ func handleSandboxProfiles(w http.ResponseWriter, r *http.Request) {
 		id, err := db.CreateSandboxProfile(p)
 		if errors.Is(err, db.ErrSandboxProfileNameTaken) {
 			writeError(w, http.StatusConflict, "exists", err.Error())
+			return
+		}
+		if errors.Is(err, db.ErrSandboxProfileInvalidInclude) {
+			writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", err.Error())
 			return
 		}
 		if err != nil {
@@ -227,6 +232,9 @@ func handleSandboxProfileByName(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(updateErr, db.ErrSandboxProfileNameTaken) {
 			writeError(w, http.StatusConflict, "exists", updateErr.Error())
 			return
+		} else if errors.Is(updateErr, db.ErrSandboxProfileInvalidInclude) {
+			writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", updateErr.Error())
+			return
 		} else if errors.Is(updateErr, db.ErrSandboxProfileChanged) {
 			writeError(w, http.StatusConflict, "changed", "sandbox profile changed since preview; reopen it and review the latest changes")
 			return
@@ -237,6 +245,10 @@ func handleSandboxProfileByName(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"id": p.ID, "name": p.Name, "missing": missing})
 	case http.MethodDelete:
 		n, err := db.DeleteSandboxProfile(name)
+		if errors.Is(err, db.ErrSandboxProfileIncludedBy) {
+			writeError(w, http.StatusConflict, "included", err.Error())
+			return
+		}
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
@@ -454,18 +466,35 @@ func handleSandboxProfilesExport(w http.ResponseWriter, r *http.Request) {
 			exportedNames[p.Name] = true
 		}
 	} else {
+		// A named export follows includes transitively so the bundle stays
+		// self-contained: import validates the reference graph and would
+		// reject a profile whose include is neither local nor in the bundle.
+		requested := map[string]bool{}
 		for _, name := range names {
+			requested[name] = true
+		}
+		pending := append([]string{}, names...)
+		for i := 0; i < len(pending); i++ {
+			name := pending[i]
+			if exportedNames[name] {
+				continue
+			}
 			p, err := db.GetSandboxProfile(name)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "io", err.Error())
 				return
 			}
 			if p == nil {
-				writeError(w, http.StatusNotFound, "not_found", fmt.Sprintf("no such sandbox profile %q", name))
+				kind := "sandbox profile"
+				if !requested[name] {
+					kind = "included sandbox profile"
+				}
+				writeError(w, http.StatusNotFound, "not_found", fmt.Sprintf("no such %s %q", kind, name))
 				return
 			}
 			out = append(out, sandboxProfileToJSON(p, false))
 			exportedNames[p.Name] = true
+			pending = append(pending, p.Includes...)
 		}
 	}
 	var assignments *sandboxProfileAssignmentsJSON
@@ -584,14 +613,22 @@ func handleSandboxProfilesImportInspect(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	profiles := make([]sandboxProfileJSON, 0, len(env.Profiles))
+	built := make([]*db.SandboxProfile, 0, len(env.Profiles))
 	warnings := []sandboxProfileImportPathWarning{}
+	seen := map[string]bool{}
 	for i, body := range env.Profiles {
 		profile, missing, err := buildSandboxProfileForImport(body)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", fmt.Sprintf("profile #%d: %v", i+1, err))
 			return
 		}
+		if seen[profile.Name] {
+			writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", fmt.Sprintf("sandbox profile %q appears more than once", profile.Name))
+			return
+		}
+		seen[profile.Name] = true
 		profiles = append(profiles, sandboxProfileToJSON(profile, false))
+		built = append(built, profile)
 		for _, path := range missing {
 			warnings = append(warnings, sandboxProfileImportPathWarning{
 				Profile: profile.Name,
@@ -600,5 +637,28 @@ func handleSandboxProfilesImportInspect(w http.ResponseWriter, r *http.Request) 
 			})
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"profiles": profiles, "warnings": warnings})
+	// The preview gates the dashboard's Import button, so include-graph
+	// problems the import would reject must surface here too — not after the
+	// user has already confirmed a "valid" preview. The graph shape depends on
+	// the conflict policy ("skip" keeps a clashing local profile's own
+	// includes), and the policy is picked on the preview screen, so the
+	// response carries per-policy errors for the client to gate the selector
+	// with. Only a bundle invalid under every policy is rejected outright.
+	inspection, err := db.InspectSandboxProfileImportGraph(built)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	if inspection.OverwriteError != "" && inspection.SkipError != "" {
+		writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", inspection.OverwriteError)
+		return
+	}
+	includeErrors := map[string]string{}
+	if inspection.OverwriteError != "" {
+		includeErrors["overwrite"] = inspection.OverwriteError
+	}
+	if inspection.SkipError != "" {
+		includeErrors["skip"] = inspection.SkipError
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"profiles": profiles, "warnings": warnings, "include_errors": includeErrors})
 }

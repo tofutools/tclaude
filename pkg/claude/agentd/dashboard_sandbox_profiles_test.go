@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -238,4 +239,121 @@ func TestDashboardSandboxProfileDraftPreviewAndAcknowledge(t *testing.T) {
 	rec = httptest.NewRecorder()
 	serveDashboardSandboxProfiles(rec, dashboardRequest(http.MethodGet, "/api/sandbox-profile-drafts/"+token, ""))
 	assert.Equal(t, http.StatusNotFound, rec.Code, "the first GET atomically consumes the draft")
+}
+
+func TestDashboardSandboxProfileIncludesCRUDAndTransitiveExport(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+	cache := filepath.Join(os.Getenv("HOME"), "include-cache")
+	require.NoError(t, os.MkdirAll(cache, 0o755))
+
+	rec := httptest.NewRecorder()
+	serveDashboardSandboxProfiles(rec, dashboardRequest(http.MethodPost, "/api/sandbox-profiles",
+		`{"name":"base","filesystem":[{"path":"`+cache+`","access":"read"}],"environment":[{"name":"LAYER","value":"base"}]}`))
+	require.Equal(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+
+	rec = httptest.NewRecorder()
+	serveDashboardSandboxProfiles(rec, dashboardRequest(http.MethodPost, "/api/sandbox-profiles",
+		`{"name":"team","includes":["base"],"environment":[{"name":"LAYER","value":"team"}]}`))
+	require.Equal(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+
+	// The include list survives the wire round-trip in authored order.
+	rec = httptest.NewRecorder()
+	serveDashboardSandboxProfiles(rec, dashboardRequest(http.MethodGet, "/api/sandbox-profiles/team", ""))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var team sandboxProfileJSON
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &team))
+	assert.Equal(t, []string{"base"}, team.Includes)
+
+	// Dangling and cyclic includes are rejected as invalid input, not IO errors.
+	rec = httptest.NewRecorder()
+	serveDashboardSandboxProfiles(rec, dashboardRequest(http.MethodPost, "/api/sandbox-profiles",
+		`{"name":"broken","includes":["ghost"]}`))
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
+
+	rec = httptest.NewRecorder()
+	serveDashboardSandboxProfiles(rec, dashboardRequest(http.MethodPatch, "/api/sandbox-profiles/base",
+		`{"name":"base","includes":["team"]}`))
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
+
+	// Deleting a profile another one includes is refused with a clear conflict.
+	rec = httptest.NewRecorder()
+	serveDashboardSandboxProfiles(rec, dashboardRequest(http.MethodDelete, "/api/sandbox-profiles/base", ""))
+	assert.Equal(t, http.StatusConflict, rec.Code, "body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "team")
+
+	// A named export follows includes so the bundle stays self-contained.
+	rec = httptest.NewRecorder()
+	serveDashboardSandboxProfiles(rec, dashboardRequest(http.MethodGet, "/api/sandbox-profiles/export?name=team", ""))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var exported sandboxProfileExportEnvelope
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &exported))
+	names := make([]string, 0, len(exported.Profiles))
+	for _, p := range exported.Profiles {
+		names = append(names, p.Name)
+	}
+	assert.ElementsMatch(t, []string{"team", "base"}, names)
+}
+
+func TestDashboardSandboxProfileImportInspectValidatesIncludeGraph(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+	envelope := func(profiles string) string {
+		return `{"format":"tclaude-sandbox-profiles","format_version":1,"profiles":[` + profiles + `]}`
+	}
+
+	// A self-contained bundle with cross-references previews clean.
+	rec := httptest.NewRecorder()
+	serveDashboardSandboxProfiles(rec, dashboardRequest(http.MethodPost, "/api/sandbox-profiles/import/inspect",
+		envelope(`{"name":"team","includes":["base"]},{"name":"base"}`)))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	// The preview gates Import, so graph problems that fail under EVERY
+	// conflict policy must fail inspection too: a dangling include, a
+	// two-profile cycle among new profiles, and a duplicated bundle name.
+	for name, profiles := range map[string]string{
+		"dangling":  `{"name":"orphan","includes":["nowhere"]}`,
+		"cycle":     `{"name":"a","includes":["b"]},{"name":"b","includes":["a"]}`,
+		"duplicate": `{"name":"twin"},{"name":"twin"}`,
+	} {
+		rec = httptest.NewRecorder()
+		serveDashboardSandboxProfiles(rec, dashboardRequest(http.MethodPost, "/api/sandbox-profiles/import/inspect", envelope(profiles)))
+		assert.Equalf(t, http.StatusBadRequest, rec.Code, "%s: body=%s", name, rec.Body.String())
+	}
+
+	// Inspection never writes.
+	rec = httptest.NewRecorder()
+	serveDashboardSandboxProfiles(rec, dashboardRequest(http.MethodGet, "/api/sandbox-profiles", ""))
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "[]", strings.TrimSpace(rec.Body.String()))
+}
+
+// A bundle invalid under "overwrite" but importable with "skip" must preview
+// as 200 with a per-policy error, and the subsequent skip import must succeed
+// — the inspect-vs-import regression from the cold review.
+func TestDashboardSandboxProfileImportInspectReportsPerPolicyErrors(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+	rec := httptest.NewRecorder()
+	serveDashboardSandboxProfiles(rec, dashboardRequest(http.MethodPost, "/api/sandbox-profiles", `{"name":"A"}`))
+	require.Equal(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+
+	envelope := `{"format":"tclaude-sandbox-profiles","format_version":1,"profiles":[` +
+		`{"name":"A","includes":["B"]},{"name":"B","includes":["A"]}]}`
+	rec = httptest.NewRecorder()
+	serveDashboardSandboxProfiles(rec, dashboardRequest(http.MethodPost, "/api/sandbox-profiles/import/inspect", envelope))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var inspected struct {
+		IncludeErrors map[string]string `json:"include_errors"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &inspected))
+	assert.Contains(t, inspected.IncludeErrors["overwrite"], "cycle")
+	assert.NotContains(t, inspected.IncludeErrors, "skip")
+
+	rec = httptest.NewRecorder()
+	serveDashboardSandboxProfiles(rec, dashboardRequest(http.MethodPost, "/api/sandbox-profiles/import",
+		`{"format":"tclaude-sandbox-profiles","format_version":1,"on_conflict":"skip","profiles":[`+
+			`{"name":"A","includes":["B"]},{"name":"B","includes":["A"]}]}`))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"skipped":["A"]`)
 }

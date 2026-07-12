@@ -47,10 +47,12 @@ function profileOptions(blankLabel = '— none —') {
 function profileSummary(p) {
   const fs = p.filesystem || [];
   const env = p.environment || [];
+  const inc = p.includes || [];
   const reads = fs.filter(g => g.access === 'read').length;
   const writes = fs.filter(g => g.access === 'write').length;
   const denies = fs.filter(g => g.access === 'deny').length;
   const parts = [];
+  if (inc.length) parts.push(`${inc.length} include${inc.length === 1 ? '' : 's'}`);
   if (reads) parts.push(`${reads} read`);
   if (writes) parts.push(`${writes} write`);
   if (denies) parts.push(`${denies} deny`);
@@ -65,6 +67,9 @@ function profileSummary(p) {
 // text the way the old single ` · `-joined paragraph did.
 function profileCapabilitiesHTML(p) {
   const rows = [];
+  for (const name of (p.includes || [])) {
+    rows.push(`<div class="sbx-cap"><span class="sbx-cap-tag sbx-cap-incl">incl</span><span class="sbx-cap-val" title="${esc(name)}">${esc(name)}</span></div>`);
+  }
   for (const g of (p.filesystem || [])) {
     const acc = ['read', 'write', 'deny'].includes(g.access) ? g.access : 'read';
     rows.push(`<div class="sbx-cap"><span class="sbx-cap-tag sbx-cap-${acc}">${acc}</span><span class="sbx-cap-val" title="${esc(g.path)}">${esc(g.path)}</span></div>`);
@@ -152,6 +157,23 @@ function environmentRowHTML(entry = {}) {
   </div>`;
 }
 
+// includeRowHTML offers the saved library as a dropdown. The profile being
+// edited is excluded (self-includes are rejected by the daemon), and a value
+// that is not in the library — e.g. from a scribe draft or a raw-JSON edit —
+// is kept as an extra option rather than silently snapping to another profile;
+// the daemon rejects dangling names on save.
+function includeRowHTML(selected = '') {
+  const self = $('#sandbox-profile-editor-name').value.trim();
+  const names = profiles.map(p => p.name).filter(n => n !== self);
+  if (selected && !names.includes(selected)) names.unshift(selected);
+  const options = `<option value=""${selected ? '' : ' selected'}>— pick a profile —</option>`
+    + names.map(n => `<option value="${esc(n)}"${n === selected ? ' selected' : ''}>${esc(n)}</option>`).join('');
+  return `<div class="sbx-row sbx-row-inc" data-sbx-inc-row>
+    <select class="sbx-inc-name" aria-label="Included profile" title="Included profiles apply first, in order; this profile's own entries override them.">${options}</select>
+    <button type="button" class="sbx-del" data-sbx-del title="Remove this include" aria-label="Remove include">✕</button>
+  </div>`;
+}
+
 // parseJSONArrayField returns the parsed array from a textarea, or null when the
 // contents aren't a JSON array (so callers can leave the tables untouched rather
 // than wiping them on a transient hand-edit typo).
@@ -182,6 +204,13 @@ function renderEnvironmentRows() {
   return true;
 }
 
+function renderIncludeRows() {
+  const rows = parseJSONArrayField('#sandbox-profile-editor-includes');
+  if (rows == null) return false;
+  $('#sandbox-profile-editor-inc-rows').innerHTML = rows.map(name => includeRowHTML(String(name))).join('');
+  return true;
+}
+
 // rowsToFilesystemJSON collects the table into the textarea. A path is trimmed
 // and blank paths are dropped; the daemon still owns canonicalization, ~ and
 // protected-root checks (so we deliberately don't pre-validate here).
@@ -208,6 +237,18 @@ function rowsToEnvironmentJSON() {
     out.push({ name, value: row.querySelector('.sbx-env-value').value });
   }
   $('#sandbox-profile-editor-environment').value = JSON.stringify(out, null, 2);
+}
+
+// rowsToIncludesJSON collects the include table in row order — order is
+// semantic (later includes override earlier ones). Unpicked rows are dropped.
+function rowsToIncludesJSON() {
+  const out = [];
+  for (const row of $$('#sandbox-profile-editor-inc-rows [data-sbx-inc-row]')) {
+    const name = row.querySelector('.sbx-inc-name').value.trim();
+    if (!name) continue;
+    out.push(name);
+  }
+  $('#sandbox-profile-editor-includes').value = JSON.stringify(out, null, 2);
 }
 
 async function browseFilesystemRow(pathInput, btn) {
@@ -241,14 +282,17 @@ function setEditorAdvanced(open, { force = false } = {}) {
   if (open) {
     rowsToFilesystemJSON();
     rowsToEnvironmentJSON();
+    rowsToIncludesJSON();
   } else {
-    // Render both (side effects wanted) before deciding, so a table with valid
-    // JSON still refreshes even when the other one blocks the collapse.
+    // Render all three (side effects wanted) before deciding, so a table with
+    // valid JSON still refreshes even when another one blocks the collapse.
     const fsOK = renderFilesystemRows();
     const envOK = renderEnvironmentRows();
-    if (!force && !(fsOK && envOK)) {
+    const incOK = renderIncludeRows();
+    if (!force && !(fsOK && envOK && incOK)) {
+      const broken = !fsOK ? 'Filesystem' : (!envOK ? 'Environment' : 'Includes');
       $('#sandbox-profile-editor-error').textContent =
-        `Fix the raw ${fsOK ? 'Environment' : 'Filesystem'} JSON before collapsing the advanced editor.`;
+        `Fix the raw ${broken} JSON before collapsing the advanced editor.`;
       open = true; // veto the collapse; leave the panel open on the bad JSON
     }
   }
@@ -273,6 +317,7 @@ function openEditor(p = null, { onCreate = null, targetName = null } = {}) {
   $('#sandbox-profile-editor-name').value = p ? p.name : '';
   $('#sandbox-profile-editor-filesystem').value = JSON.stringify((p && p.filesystem) || [], null, 2);
   $('#sandbox-profile-editor-environment').value = JSON.stringify((p && p.environment) || [], null, 2);
+  $('#sandbox-profile-editor-includes').value = JSON.stringify((p && p.includes) || [], null, 2);
   setEditorAdvanced(false); // collapse the raw panel and render the tables from the JSON
   $('#sandbox-profile-editor-error').textContent = '';
   $('#sandbox-profile-editor-modal').classList.add('show');
@@ -304,6 +349,7 @@ function editorProfileBody() {
     name: $('#sandbox-profile-editor-name').value.trim(),
     filesystem: JSON.parse($('#sandbox-profile-editor-filesystem').value || '[]'),
     environment: JSON.parse($('#sandbox-profile-editor-environment').value || '[]'),
+    includes: JSON.parse($('#sandbox-profile-editor-includes').value || '[]'),
   };
 }
 
@@ -464,7 +510,7 @@ function sandboxScribeBrief(token, targetName, seed) {
   return [
     'You are a sandbox-profile scribe. Talk with the human to interactively design one filesystem/environment sandbox profile.',
     'Critical safety boundary: create a structured DRAFT only. Never create, edit, delete, assign, or apply a sandbox profile; never launch or relaunch an agent; never request sandbox-profiles.manage. Your purpose-specific permission is sandbox-profiles.draft.',
-    'Environment values are ordinary non-secret configuration. Filesystem entries are absolute-path rules with access "read", "write", or "deny"; deny means no read or write access. The daemon remains authoritative for canonicalization, protected paths, reserved environment variables, duplicate handling, and all other validation.',
+    'Environment values are ordinary non-secret configuration. Filesystem entries are absolute-path rules with access "read", "write", or "deny"; deny means no read or write access. A profile may also carry "includes": an ordered array of other existing profile names composed first (recursively); the profile\'s own entries then override any same-path or same-name values they supplied. The daemon remains authoritative for canonicalization, protected paths, reserved environment variables, duplicate handling, include existence/cycle checks, and all other validation.',
     target,
     `Starting draft:\n${JSON.stringify(seed, null, 2)}`,
     'Discuss the desired paths, access levels, environment names/values, and profile name. Wait until the human agrees that the proposal is ready.',
@@ -541,6 +587,7 @@ function summonSandboxScribeFromEditor() {
       name: $('#sandbox-profile-editor-name').value.trim(),
       filesystem: JSON.parse($('#sandbox-profile-editor-filesystem').value || '[]'),
       environment: JSON.parse($('#sandbox-profile-editor-environment').value || '[]'),
+      includes: JSON.parse($('#sandbox-profile-editor-includes').value || '[]'),
     };
     void summonSandboxScribe(seed, editingName, editorOnCreate);
   } catch (err) {
@@ -639,23 +686,58 @@ async function removeProfile(name) {
   } catch (err) { toast(err.message || String(err), true); }
 }
 
-function composePreview(applied) {
+// flattenProfilePreview mirrors the daemon's include expansion for the spawn
+// preview: includes apply first in order (recursively), the profile's own
+// entries override same-path/same-name values. Like the daemon it memoizes
+// each named profile (only completed, hence acyclic, ones enter the memo), so
+// a layered DAG with shared descendants stays linear instead of re-expanding
+// every path. The daemon validates existence and acyclicity authoritatively;
+// anything unresolvable here is collected into state.problems so the preview
+// can flag it instead of silently pretending the policy is smaller.
+function flattenProfilePreview(profile, byName, state) {
   const fs = new Map();
   const env = new Map();
+  state.onPath.add(profile.name);
+  for (const name of (profile.includes || [])) {
+    if (state.onPath.has(name)) { state.problems.add(name); continue; }
+    let flat = state.memo.get(name);
+    if (flat === undefined) {
+      const included = byName[name];
+      if (!included) { state.problems.add(name); continue; }
+      flat = flattenProfilePreview(included, byName, state);
+      state.memo.set(name, flat);
+    }
+    for (const [path, access] of flat.fs) fs.set(path, access);
+    for (const key of flat.env.keys()) env.set(key, true);
+  }
+  state.onPath.delete(profile.name);
+  for (const grant of (profile.filesystem || [])) fs.set(grant.path, grant.access);
+  for (const entry of (profile.environment || [])) env.set(entry.name, true);
+  return { fs, env };
+}
+
+function composePreview(applied, byName = {}) {
+  const fs = new Map();
+  const env = new Map();
+  const state = { memo: new Map(), onPath: new Set(), problems: new Set() };
   for (const { scope, profile } of applied) {
-    for (const grant of (profile.filesystem || [])) {
-      const prev = fs.get(grant.path);
+    const flat = flattenProfilePreview(profile, byName, state);
+    for (const [path, access] of flat.fs) {
+      const prev = fs.get(path);
       const rank = { read: 0, write: 1, deny: 2 };
-      if (!prev || rank[grant.access] >= rank[prev.access]) {
-        fs.set(grant.path, { access: grant.access, scope });
+      if (!prev || rank[access] >= rank[prev.access]) {
+        fs.set(path, { access, scope });
       }
     }
-    for (const entry of (profile.environment || [])) env.set(entry.name, scope);
+    for (const name of flat.env.keys()) env.set(name, scope);
   }
   const scopes = applied.map(x => `${x.scope}:${x.profile.name}`).join(' → ') || 'no profiles applied';
   const grants = [...fs.entries()].map(([path, v]) => `${v.access} ${path} (${v.scope})`).join(' · ');
   const keys = [...env.entries()].map(([name, scope]) => `${name} (${scope})`).join(', ');
-  return `${scopes}${grants ? ` · ${grants}` : ''}${keys ? ` · env: ${keys}` : ''}`;
+  const problems = state.problems.size
+    ? ` · ⚠ unresolved includes: ${[...state.problems].sort().join(', ')}`
+    : '';
+  return `${scopes}${grants ? ` · ${grants}` : ''}${keys ? ` · env: ${keys}` : ''}${problems}`;
 }
 
 // refreshSpawnSandboxProfileUI fills the explicit human-controlled selector
@@ -682,7 +764,7 @@ async function refreshSpawnSandboxProfileUI(groupName = '') {
     if (global.name && byName[global.name]) applied.push({ scope: 'global', profile: byName[global.name] });
     if (group.name && byName[group.name]) applied.push({ scope: 'group', profile: byName[group.name] });
     if (sel.value && byName[sel.value]) applied.push({ scope: 'explicit', profile: byName[sel.value] });
-    preview.textContent = composePreview(applied);
+    preview.textContent = composePreview(applied, byName);
   } catch (err) {
     if (generation !== spawnPreviewGeneration) return;
     preview.textContent = `Could not preview sandbox policy: ${err.message || String(err)}`;
@@ -704,6 +786,11 @@ const EXPORT_FORMAT = 'tclaude-sandbox-profiles';
 const EXPORT_VERSION = 1;
 
 let importEnvelope = null;
+// Per-conflict-policy include-graph errors from the daemon's inspect pass
+// ({overwrite?: msg, skip?: msg}). The graph shape depends on the policy —
+// "skip" keeps a clashing local profile's own includes — so a bundle can be
+// importable under one policy and not another; the selector gates on this.
+let importIncludeErrors = {};
 
 function downloadJSON(name, value) {
   const blob = new Blob([JSON.stringify(value, null, 2) + '\n'], { type: 'application/json' });
@@ -766,11 +853,27 @@ async function submitExport() {
 
 function resetImportPreview() {
   importEnvelope = null;
+  importIncludeErrors = {};
   const host = $('#sandbox-profile-import-preview');
   host.innerHTML = '';
   host.hidden = true;
   $('#sandbox-profile-import-conflict-row').style.display = 'none';
   $('#sandbox-profile-import-submit').disabled = true;
+}
+
+// updateImportPolicyGate disables Import while the currently selected conflict
+// policy would produce an include graph the import rejects, and explains why.
+// The daemon hard-rejects bundles invalid under every policy at inspect time,
+// so this only fires when another selector choice would succeed.
+function updateImportPolicyGate() {
+  if (!importEnvelope) return;
+  const conflictRow = $('#sandbox-profile-import-conflict-row');
+  const policy = conflictRow.style.display === 'none' ? 'error' : $('#sandbox-profile-import-conflict').value;
+  const problem = importIncludeErrors[policy] || '';
+  $('#sandbox-profile-import-error').textContent = problem
+    ? `Not importable with this name-clash policy: ${problem}`
+    : '';
+  $('#sandbox-profile-import-submit').disabled = !!problem;
 }
 
 function openImportModal() {
@@ -860,7 +963,9 @@ async function inspectImport() {
       body: JSON.stringify(env),
     });
     importEnvelope = env;
+    importIncludeErrors = inspected.include_errors || {};
     renderImportPreview(inspected.profiles || incoming, inspected.warnings || []);
+    updateImportPolicyGate();
   } catch (err) {
     errEl.textContent = err.message || String(err);
   } finally {
@@ -905,7 +1010,7 @@ function bindSandboxProfilesUI() {
   bindManageOverlayDismiss('sandbox-profiles-manage-modal', closeManager);
   $('#filter-sandbox-profiles').addEventListener('input', paintSandboxProfiles);
   $('#sandbox-profile-create-open').addEventListener('click', () => openEditor());
-  $('#sandbox-profile-scribe-open').addEventListener('click', () => summonSandboxScribe({ name: '', filesystem: [], environment: [] }));
+  $('#sandbox-profile-scribe-open').addEventListener('click', () => summonSandboxScribe({ name: '', filesystem: [], environment: [], includes: [] }));
   $('#sandbox-profile-export-open').addEventListener('click', openExportModal);
   $('#sandbox-profile-export-cancel').addEventListener('click', closeExportModal);
   $('#sandbox-profile-export-submit').addEventListener('click', submitExport);
@@ -914,6 +1019,7 @@ function bindSandboxProfilesUI() {
   $('#sandbox-profile-import-cancel').addEventListener('click', closeImportModal);
   $('#sandbox-profile-import-inspect').addEventListener('click', inspectImport);
   $('#sandbox-profile-import-submit').addEventListener('click', submitImport);
+  $('#sandbox-profile-import-conflict').addEventListener('change', updateImportPolicyGate);
   bindBackdropDiscard('sandbox-profile-import-modal', closeImportModal);
   $('#sandbox-profiles-list').addEventListener('click', e => {
     const btn = e.target.closest('[data-sandbox-profile-action]');
@@ -952,6 +1058,19 @@ function bindSandboxProfilesUI() {
     envRows.lastElementChild.querySelector('.sbx-env-name').focus();
   });
 
+  // Structured includes table: same wiring; each row is a library dropdown.
+  const incRows = $('#sandbox-profile-editor-inc-rows');
+  incRows.addEventListener('input', rowsToIncludesJSON);
+  incRows.addEventListener('change', rowsToIncludesJSON);
+  incRows.addEventListener('click', e => {
+    const del = e.target.closest('[data-sbx-del]');
+    if (del) { del.closest('.sbx-row').remove(); rowsToIncludesJSON(); }
+  });
+  $('#sandbox-profile-editor-inc-add').addEventListener('click', () => {
+    incRows.insertAdjacentHTML('beforeend', includeRowHTML());
+    incRows.lastElementChild.querySelector('.sbx-inc-name').focus();
+  });
+
   // Advanced raw-JSON panel: the toggle folds the tables into JSON / back; a
   // hand-edit re-flows into the tables on blur.
   $('#sandbox-profile-editor-advanced-toggle').addEventListener('click', () => {
@@ -962,6 +1081,7 @@ function bindSandboxProfilesUI() {
     queueMissingDirectoryRefresh({ immediate: true });
   });
   $('#sandbox-profile-editor-environment').addEventListener('change', renderEnvironmentRows);
+  $('#sandbox-profile-editor-includes').addEventListener('change', renderIncludeRows);
 
   $('#sandbox-profile-editor-cancel').addEventListener('click', closeEditor);
   $('#sandbox-profile-editor-scribe').addEventListener('click', summonSandboxScribeFromEditor);

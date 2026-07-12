@@ -255,6 +255,17 @@ manager from **Groups → ⚙ → 🛡 sandbox profiles…** to create/edit/dele
 profiles and assign one global default or one default to each group. The spawn
 dialog also offers a human-controlled explicit profile selector.
 
+A profile can also **include** other profiles, recursively. Included profiles
+apply first, in listed order, then the including profile's own entries
+override any exact-same-path or same-variable values they supplied — an
+authoring convenience for sharing a base profile across many variants. This
+within-profile layering is distinct from the cross-scope composition above:
+when the flattened global, group, and explicit profiles are combined, deny
+still dominates. The daemon keeps the include graph dangling-free and acyclic:
+saves referencing unknown profiles are rejected, renames follow into
+referrers, and a profile cannot be deleted while another profile includes it.
+Exporting a profile automatically bundles the profiles it includes.
+
 **🤖 configure with agent** summons a fresh, independently named sandbox scribe
 for either a new profile or the draft currently open in the editor. Existing
 scribes keep working in parallel. The scribe can discuss paths
