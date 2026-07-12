@@ -4,7 +4,37 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
+
+func TestInheritEffectiveSandboxSnapshotPreservesPrePersistedCloneSnapshot(t *testing.T) {
+	setupTestDB(t)
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Global: &sandboxpolicy.Profile{
+		Name: "cache", AgentDirectories: []string{"GOCACHE"},
+	}})
+	require.NoError(t, err)
+	source, sourceCleanup, err := materializeAgentDirectories(sandboxpolicy.NewSnapshot(effective, nil), "source")
+	require.NoError(t, err)
+	t.Cleanup(sourceCleanup)
+	target, targetCleanup, err := materializeAgentDirectories(source, "target")
+	require.NoError(t, err)
+	t.Cleanup(targetCleanup)
+
+	for conv, snapshot := range map[string]*sandboxpolicy.Snapshot{"source-conv": &source, "target-conv": &target} {
+		agentID, _, ensureErr := db.EnsureAgentForConv(conv, "test")
+		require.NoError(t, ensureErr)
+		require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, snapshot))
+	}
+	require.NoError(t, inheritEffectiveSandboxSnapshot("source-conv", "target-conv"))
+	persisted, err := db.AgentEffectiveSandboxConfigForConv("target-conv")
+	require.NoError(t, err)
+	require.NotNil(t, persisted)
+	assert.Equal(t, target.Effective.Environment, persisted.Effective.Environment)
+	assert.NotEqual(t, source.Effective.Environment, persisted.Effective.Environment)
+}
 
 // uniqueCloneTitle always appends `-c-N` (the shortened suffix scheme).
 // N is the smallest integer not already used by any

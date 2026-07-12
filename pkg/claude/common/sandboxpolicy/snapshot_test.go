@@ -48,6 +48,11 @@ func TestRequireContainedUsesPathCoverageAccessAndExactEnvironment(t *testing.T)
 		require.NoError(t, err)
 		return NewSnapshot(effective, nil)
 	}
+	makeAgentDirectorySnapshot := func(names ...string) Snapshot {
+		effective, err := Resolve(Scopes{Global: &Profile{Name: "p", AgentDirectories: names}})
+		require.NoError(t, err)
+		return NewSnapshot(effective, nil)
+	}
 	parentWrite := makeSnapshot([]FilesystemGrant{{Path: root, Access: AccessWrite}}, []EnvironmentEntry{{Name: "SAME", Value: "literal"}})
 	t.Run("parent write ancestor covers child read descendant", func(t *testing.T) {
 		childRead := makeSnapshot([]FilesystemGrant{{Path: childDir, Access: AccessRead}}, []EnvironmentEntry{{Name: "SAME", Value: "literal"}})
@@ -72,6 +77,13 @@ func TestRequireContainedUsesPathCoverageAccessAndExactEnvironment(t *testing.T)
 	t.Run("deny-only policy adds no capability", func(t *testing.T) {
 		denyOnly := makeSnapshot([]FilesystemGrant{{Path: childDir, Access: AccessDeny}}, nil)
 		assert.False(t, HasCapabilities(denyOnly))
+	})
+	t.Run("agent directories require matching parent declarations", func(t *testing.T) {
+		parent := makeAgentDirectorySnapshot("GOCACHE")
+		require.NoError(t, RequireContained(parent, makeAgentDirectorySnapshot("GOCACHE")))
+		require.ErrorContains(t, RequireContained(parent, makeAgentDirectorySnapshot("GOLANGCI_LINT_CACHE")), "not authorized")
+		require.ErrorContains(t, RequireContained(EmptySnapshot(), makeAgentDirectorySnapshot("GOCACHE")), "not authorized")
+		assert.True(t, HasCapabilities(makeAgentDirectorySnapshot("GOCACHE")))
 	})
 }
 

@@ -248,7 +248,10 @@ renaming or overwriting.
 ### Sandbox Profiles
 
 Sandbox profiles are separate, harness-neutral launch policy: absolute
-filesystem rules (`read`, `write`, or `deny`) plus environment entries. A deny
+filesystem rules (`read`, `write`, or `deny`), literal environment entries,
+and optional agent-owned directory variables. For each agent-owned variable,
+agentd creates a fresh private writable cache directory at spawn and injects
+its path as the variable's value. A deny
 blocks both reads and writes and dominates an exact-path grant from another
 applied profile. Open the
 manager from **Groups → ⚙ → 🛡 sandbox profiles…** to create/edit/delete named
@@ -268,8 +271,9 @@ Exporting a profile automatically bundles the profiles it includes.
 
 **🤖 configure with agent** summons a fresh, independently named sandbox scribe
 for either a new profile or the draft currently open in the editor. Existing
-scribes keep working in parallel. The scribe can discuss paths
-and environment entries and submit a server-validated structured draft, but it
+scribes keep working in parallel. The scribe can discuss paths, literal
+environment entries, and agent-owned directory variables and submit a
+server-validated structured draft, but it
 cannot save profiles, change assignments, or launch agents. Its result is
 loaded back into the normal editor; review every field and explicitly press
 **Save sandbox profile** to open a server-normalized JSON diff. Confirm that

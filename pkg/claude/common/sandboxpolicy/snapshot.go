@@ -3,6 +3,7 @@ package sandboxpolicy
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"time"
 )
@@ -79,6 +80,15 @@ func RequireContained(parent, child Snapshot) error {
 			return fmt.Errorf("environment variable %q is new or changed from the parent snapshot", entry.Name)
 		}
 	}
+	parentAgentDirectories := make(map[string]bool, len(parent.Effective.AgentDirectories))
+	for _, name := range parent.Effective.AgentDirectories {
+		parentAgentDirectories[name] = true
+	}
+	for _, name := range child.Effective.AgentDirectories {
+		if !parentAgentDirectories[name] {
+			return fmt.Errorf("agent-owned directory %q is not authorized by the parent snapshot", name)
+		}
+	}
 	return nil
 }
 
@@ -90,7 +100,7 @@ func HasCapabilities(snapshot Snapshot) bool {
 			return true
 		}
 	}
-	return len(snapshot.Effective.Environment) > 0
+	return len(snapshot.Effective.Environment) > 0 || len(snapshot.Effective.AgentDirectories) > 0
 }
 
 // Snapshot is the immutable, versioned value passed across launch and
@@ -144,6 +154,13 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 	if !reflect.DeepEqual(normalized.Environment, in.Effective.Environment) {
 		return Snapshot{}, fmt.Errorf("effective sandbox environment changed since resolution")
 	}
+	agentDirectories, err := normalizeAgentDirectories(in.Effective.AgentDirectories, nil)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("revalidate effective sandbox agent directories: %w", err)
+	}
+	if !slices.Equal(agentDirectories, in.Effective.AgentDirectories) {
+		return Snapshot{}, fmt.Errorf("effective sandbox agent directories changed since resolution")
+	}
 	out := NewSnapshot(in.Effective, in.Applied)
 	return out, nil
 }
@@ -177,12 +194,14 @@ func FilesystemForLaunch(in EffectiveProfile) ([]FilesystemGrant, error) {
 
 func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 	out := EffectiveProfile{
-		Filesystem:  append([]FilesystemGrant{}, in.Filesystem...),
-		Environment: append([]EnvironmentEntry{}, in.Environment...),
+		Filesystem:       append([]FilesystemGrant{}, in.Filesystem...),
+		Environment:      append([]EnvironmentEntry{}, in.Environment...),
+		AgentDirectories: append([]string{}, in.AgentDirectories...),
 		Provenance: ResolutionProvenance{
-			Applied:     append([]ProfileSource(nil), in.Provenance.Applied...),
-			Filesystem:  make(map[string][]ProfileSource, len(in.Provenance.Filesystem)),
-			Environment: make(map[string]ProfileSource, len(in.Provenance.Environment)),
+			Applied:          append([]ProfileSource(nil), in.Provenance.Applied...),
+			Filesystem:       make(map[string][]ProfileSource, len(in.Provenance.Filesystem)),
+			Environment:      make(map[string]ProfileSource, len(in.Provenance.Environment)),
+			AgentDirectories: make(map[string][]ProfileSource, len(in.Provenance.AgentDirectories)),
 		},
 	}
 	for path, sources := range in.Provenance.Filesystem {
@@ -191,7 +210,11 @@ func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 	for name, source := range in.Provenance.Environment {
 		out.Provenance.Environment[name] = source
 	}
+	for name, sources := range in.Provenance.AgentDirectories {
+		out.Provenance.AgentDirectories[name] = append([]ProfileSource(nil), sources...)
+	}
 	sort.Slice(out.Filesystem, func(i, j int) bool { return out.Filesystem[i].Path < out.Filesystem[j].Path })
 	sort.Slice(out.Environment, func(i, j int) bool { return out.Environment[i].Name < out.Environment[j].Name })
+	sort.Strings(out.AgentDirectories)
 	return out
 }

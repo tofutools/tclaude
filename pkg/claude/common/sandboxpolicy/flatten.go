@@ -71,9 +71,10 @@ func Flatten(in Profile, lookup LookupProfile) (Profile, error) {
 	}
 	parts := f.compose(root)
 	out := Profile{
-		Name:        root.Name,
-		Filesystem:  make([]FilesystemGrant, 0, len(parts.filesystem)),
-		Environment: make([]EnvironmentEntry, 0, len(parts.environment)),
+		Name:             root.Name,
+		Filesystem:       make([]FilesystemGrant, 0, len(parts.filesystem)),
+		Environment:      make([]EnvironmentEntry, 0, len(parts.environment)),
+		AgentDirectories: make([]string, 0, len(parts.agentDirectories)),
 	}
 	for _, grant := range parts.filesystem {
 		out.Filesystem = append(out.Filesystem, grant)
@@ -81,14 +82,19 @@ func Flatten(in Profile, lookup LookupProfile) (Profile, error) {
 	for _, entry := range parts.environment {
 		out.Environment = append(out.Environment, entry)
 	}
+	for name := range parts.agentDirectories {
+		out.AgentDirectories = append(out.AgentDirectories, name)
+	}
 	sort.Slice(out.Filesystem, func(i, j int) bool { return out.Filesystem[i].Path < out.Filesystem[j].Path })
 	sort.Slice(out.Environment, func(i, j int) bool { return out.Environment[i].Name < out.Environment[j].Name })
+	sort.Strings(out.AgentDirectories)
 	return out, nil
 }
 
 type flattenedParts struct {
-	filesystem  map[string]FilesystemGrant
-	environment map[string]EnvironmentEntry
+	filesystem       map[string]FilesystemGrant
+	environment      map[string]EnvironmentEntry
+	agentDirectories map[string]struct{}
 }
 
 type flattener struct {
@@ -154,8 +160,9 @@ func (f *flattener) chainDepth(name string) (int, error) {
 // the graph acyclic and depth-bounded, so this is a pure memoized merge.
 func (f *flattener) compose(p Profile) *flattenedParts {
 	out := &flattenedParts{
-		filesystem:  map[string]FilesystemGrant{},
-		environment: map[string]EnvironmentEntry{},
+		filesystem:       map[string]FilesystemGrant{},
+		environment:      map[string]EnvironmentEntry{},
+		agentDirectories: map[string]struct{}{},
 	}
 	for _, name := range p.Includes {
 		parts, done := f.memo[name]
@@ -164,13 +171,25 @@ func (f *flattener) compose(p Profile) *flattenedParts {
 			f.memo[name] = parts
 		}
 		maps.Copy(out.filesystem, parts.filesystem)
-		maps.Copy(out.environment, parts.environment)
+		for name, entry := range parts.environment {
+			delete(out.agentDirectories, name)
+			out.environment[name] = entry
+		}
+		for name := range parts.agentDirectories {
+			delete(out.environment, name)
+			out.agentDirectories[name] = struct{}{}
+		}
 	}
 	for _, grant := range p.Filesystem {
 		out.filesystem[grant.Path] = grant
 	}
 	for _, entry := range p.Environment {
+		delete(out.agentDirectories, entry.Name)
 		out.environment[entry.Name] = entry
+	}
+	for _, name := range p.AgentDirectories {
+		delete(out.environment, name)
+		out.agentDirectories[name] = struct{}{}
 	}
 	return out
 }

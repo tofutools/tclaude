@@ -36,18 +36,20 @@ type Scopes struct {
 // deny-dominates-write-dominates-read, while Environment names the single
 // last-scope winner.
 type ResolutionProvenance struct {
-	Applied     []ProfileSource            `json:"applied"`
-	Filesystem  map[string][]ProfileSource `json:"filesystem"`
-	Environment map[string]ProfileSource   `json:"environment"`
+	Applied          []ProfileSource            `json:"applied"`
+	Filesystem       map[string][]ProfileSource `json:"filesystem"`
+	Environment      map[string]ProfileSource   `json:"environment"`
+	AgentDirectories map[string][]ProfileSource `json:"agent_directories"`
 }
 
 // EffectiveProfile is the fully-composed harness-neutral sandbox payload and
 // its provenance. Its slices and provenance maps are non-nil even when no
 // scope is assigned.
 type EffectiveProfile struct {
-	Filesystem  []FilesystemGrant    `json:"filesystem"`
-	Environment []EnvironmentEntry   `json:"environment"`
-	Provenance  ResolutionProvenance `json:"provenance"`
+	Filesystem       []FilesystemGrant    `json:"filesystem"`
+	Environment      []EnvironmentEntry   `json:"environment"`
+	AgentDirectories []string             `json:"agent_directories"`
+	Provenance       ResolutionProvenance `json:"provenance"`
 }
 
 type resolvedFilesystemGrant struct {
@@ -66,17 +68,20 @@ type resolvedFilesystemGrant struct {
 // symlink, directory, and protected-root validation.
 func Resolve(in Scopes) (EffectiveProfile, error) {
 	result := EffectiveProfile{
-		Filesystem:  []FilesystemGrant{},
-		Environment: []EnvironmentEntry{},
+		Filesystem:       []FilesystemGrant{},
+		Environment:      []EnvironmentEntry{},
+		AgentDirectories: []string{},
 		Provenance: ResolutionProvenance{
-			Applied:     []ProfileSource{},
-			Filesystem:  map[string][]ProfileSource{},
-			Environment: map[string]ProfileSource{},
+			Applied:          []ProfileSource{},
+			Filesystem:       map[string][]ProfileSource{},
+			Environment:      map[string]ProfileSource{},
+			AgentDirectories: map[string][]ProfileSource{},
 		},
 	}
 
 	filesystem := map[string]resolvedFilesystemGrant{}
 	environment := map[string]string{}
+	agentDirectories := map[string][]ProfileSource{}
 	for _, tier := range []struct {
 		scope   Scope
 		profile *Profile
@@ -112,8 +117,17 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 			filesystem[grant.Path] = current
 		}
 		for _, entry := range normalized.Environment {
+			if _, exists := agentDirectories[entry.Name]; exists {
+				return EffectiveProfile{}, fmt.Errorf("environment variable %q is both literal and agent-owned across sandbox profile scopes", entry.Name)
+			}
 			environment[entry.Name] = entry.Value
 			result.Provenance.Environment[entry.Name] = source
+		}
+		for _, name := range normalized.AgentDirectories {
+			if _, exists := environment[name]; exists {
+				return EffectiveProfile{}, fmt.Errorf("environment variable %q is both literal and agent-owned across sandbox profile scopes", name)
+			}
+			agentDirectories[name] = append(agentDirectories[name], source)
 		}
 	}
 
@@ -160,11 +174,19 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 	for name, value := range environment {
 		mergedEnvironment = append(mergedEnvironment, EnvironmentEntry{Name: name, Value: value})
 	}
+	if len(mergedEnvironment)+len(agentDirectories) > MaxEnvironmentCount {
+		return EffectiveProfile{}, fmt.Errorf("effective environment and agent_directories have too many entries combined (maximum %d)", MaxEnvironmentCount)
+	}
 	var err error
 	result.Environment, err = normalizeEnvironment(mergedEnvironment)
 	if err != nil {
 		return EffectiveProfile{}, fmt.Errorf("validate effective environment: %w", err)
 	}
+	for name, sources := range agentDirectories {
+		result.AgentDirectories = append(result.AgentDirectories, name)
+		result.Provenance.AgentDirectories[name] = canonicalSources(sources)
+	}
+	sort.Strings(result.AgentDirectories)
 	return result, nil
 }
 

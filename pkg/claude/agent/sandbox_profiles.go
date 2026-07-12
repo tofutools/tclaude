@@ -22,12 +22,13 @@ import (
 // payload read on sandbox-profiles.manage to avoid disclosing accidental
 // credentials to ordinary agents.
 type sandboxProfileJSON struct {
-	Name        string                           `json:"name"`
-	Filesystem  []sandboxpolicy.FilesystemGrant  `json:"filesystem"`
-	Environment []sandboxpolicy.EnvironmentEntry `json:"environment"`
-	Includes    []string                         `json:"includes,omitempty"`
-	CreatedAt   string                           `json:"created_at,omitempty"`
-	UpdatedAt   string                           `json:"updated_at,omitempty"`
+	Name             string                           `json:"name"`
+	Filesystem       []sandboxpolicy.FilesystemGrant  `json:"filesystem"`
+	Environment      []sandboxpolicy.EnvironmentEntry `json:"environment"`
+	AgentDirectories []string                         `json:"agent_directories,omitempty"`
+	Includes         []string                         `json:"includes,omitempty"`
+	CreatedAt        string                           `json:"created_at,omitempty"`
+	UpdatedAt        string                           `json:"updated_at,omitempty"`
 }
 
 type sandboxProfileAssignmentJSON struct {
@@ -80,10 +81,10 @@ func runSandboxProfilesLs(p *sandboxProfilesLsParams, stdout, stderr io.Writer) 
 		fmt.Fprintln(stdout, "(no sandbox profiles)")
 		return rcOK
 	}
-	fmt.Fprintf(stdout, "%-24s  %10s  %11s  %8s\n", "NAME", "FILESYSTEM", "ENVIRONMENT", "INCLUDES")
-	fmt.Fprintln(stdout, strings.Repeat("─", 61))
+	fmt.Fprintf(stdout, "%-24s  %10s  %11s  %10s  %8s\n", "NAME", "FILESYSTEM", "ENVIRONMENT", "AGENT DIRS", "INCLUDES")
+	fmt.Fprintln(stdout, strings.Repeat("─", 73))
 	for _, profile := range profiles {
-		fmt.Fprintf(stdout, "%-24s  %10d  %11d  %8d\n", truncate(profile.Name, 24), len(profile.Filesystem), len(profile.Environment), len(profile.Includes))
+		fmt.Fprintf(stdout, "%-24s  %10d  %11d  %10d  %8d\n", truncate(profile.Name, 24), len(profile.Filesystem), len(profile.Environment), len(profile.AgentDirectories), len(profile.Includes))
 	}
 	return rcOK
 }
@@ -145,6 +146,14 @@ func printSandboxProfileHuman(w io.Writer, profile sandboxProfileJSON) {
 		fmt.Fprintln(w, "  environment:")
 		for _, entry := range profile.Environment {
 			fmt.Fprintf(w, "    %s=%s\n", entry.Name, entry.Value)
+		}
+	}
+	if len(profile.AgentDirectories) == 0 {
+		fmt.Fprintln(w, "  agent directories: (none)")
+	} else {
+		fmt.Fprintln(w, "  agent directories:")
+		for _, name := range profile.AgentDirectories {
+			fmt.Fprintf(w, "    %s\n", name)
 		}
 	}
 	if profile.CreatedAt != "" {

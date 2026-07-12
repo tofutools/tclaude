@@ -13,13 +13,14 @@ import (
 )
 
 const (
-	MaxProfileNameBytes = 200
-	MaxPathBytes        = 4096
-	MaxEnvironmentName  = 128
-	MaxEnvironmentValue = 16 * 1024
-	MaxEnvironmentCount = 128
-	MaxEnvironmentBytes = 64 * 1024
-	MaxIncludeCount = 32
+	MaxProfileNameBytes    = 200
+	MaxPathBytes           = 4096
+	MaxEnvironmentName     = 128
+	MaxEnvironmentValue    = 16 * 1024
+	MaxEnvironmentCount    = 128
+	MaxEnvironmentBytes    = 64 * 1024
+	MaxAgentDirectoryCount = 128
+	MaxIncludeCount        = 32
 	// MaxIncludeDepth bounds the longest include-EDGE chain reachable from a
 	// profile (a profile with no includes has depth 0). Registry write paths
 	// and launch-time flattening enforce the same unit and bound, so a policy
@@ -56,10 +57,11 @@ type EnvironmentEntry struct {
 // the override semantics. Flatten expands Includes; Resolve refuses profiles
 // that still carry them.
 type Profile struct {
-	Name        string             `json:"name"`
-	Filesystem  []FilesystemGrant  `json:"filesystem,omitempty"`
-	Environment []EnvironmentEntry `json:"environment,omitempty"`
-	Includes    []string           `json:"includes,omitempty"`
+	Name             string             `json:"name"`
+	Filesystem       []FilesystemGrant  `json:"filesystem,omitempty"`
+	Environment      []EnvironmentEntry `json:"environment,omitempty"`
+	AgentDirectories []string           `json:"agent_directories,omitempty"`
+	Includes         []string           `json:"includes,omitempty"`
 }
 
 var environmentNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -121,11 +123,15 @@ func normalize(in Profile, allowMissing bool) (Profile, []string, error) {
 	if err != nil {
 		return Profile{}, nil, err
 	}
+	agentDirectories, err := normalizeAgentDirectories(in.AgentDirectories, environment)
+	if err != nil {
+		return Profile{}, nil, err
+	}
 	includes, err := normalizeIncludes(name, in.Includes)
 	if err != nil {
 		return Profile{}, nil, err
 	}
-	return Profile{Name: name, Filesystem: filesystem, Environment: environment, Includes: includes}, missing, nil
+	return Profile{Name: name, Filesystem: filesystem, Environment: environment, AgentDirectories: agentDirectories, Includes: includes}, missing, nil
 }
 
 // normalizeIncludes validates include references syntactically. Whether each
@@ -155,6 +161,39 @@ func normalizeIncludes(profileName string, in []string) ([]string, error) {
 		}
 		seen[name] = true
 		out = append(out, name)
+	}
+	return out, nil
+}
+
+func normalizeAgentDirectories(in []string, environment []EnvironmentEntry) ([]string, error) {
+	if len(in) > MaxAgentDirectoryCount {
+		return nil, fmt.Errorf("agent_directories has too many entries (maximum %d)", MaxAgentDirectoryCount)
+	}
+	literal := make(map[string]struct{}, len(environment))
+	for _, entry := range environment {
+		literal[entry.Name] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for i, name := range in {
+		if len(name) > MaxEnvironmentName || !environmentNameRE.MatchString(name) {
+			return nil, fmt.Errorf("agent_directories[%d] %q is invalid (want an ASCII environment-variable name up to %d bytes)", i, name, MaxEnvironmentName)
+		}
+		if isReservedEnvironmentName(name) {
+			return nil, fmt.Errorf("agent_directories[%d] environment variable %q is reserved", i, name)
+		}
+		if _, conflict := literal[name]; conflict {
+			return nil, fmt.Errorf("agent_directories[%d] environment variable %q also has a literal environment value", i, name)
+		}
+		if _, duplicate := seen[name]; duplicate {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	if len(environment)+len(out) > MaxEnvironmentCount {
+		return nil, fmt.Errorf("environment and agent_directories have too many entries combined (maximum %d)", MaxEnvironmentCount)
 	}
 	return out, nil
 }

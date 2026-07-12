@@ -68,7 +68,7 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 		return "", "", "", "", &cloneSpawnError{Status: http.StatusInternalServerError, Code: "io", Msg: "load source sandbox snapshot: " + err.Error()}
 	}
 	if effectiveSandbox != nil {
-		validated, err := sandboxpolicy.RevalidateSnapshot(*effectiveSandbox)
+		validated, err := ensureAgentDirectoriesForRelaunch(*effectiveSandbox)
 		if err != nil {
 			return "", "", "", "", &cloneSpawnError{Status: http.StatusConflict, Code: "sandbox_profile_changed", Msg: err.Error()}
 		}
@@ -128,12 +128,22 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 	askTimeout := askTimeoutForRelaunch(sourceConv)
 	if noCopyConv {
 		label = generateSpawnLabel()
+		agentDirectoryCleanup := func() {}
+		if effectiveSandbox != nil && len(effectiveSandbox.Effective.AgentDirectories) > 0 {
+			materialized, cleanup, materializeErr := materializeAgentDirectories(*effectiveSandbox, label)
+			if materializeErr != nil {
+				return "", "", "", "", &cloneSpawnError{Status: http.StatusInternalServerError, Code: "spawn", Msg: materializeErr.Error()}
+			}
+			effectiveSandbox = &materialized
+			agentDirectoryCleanup = cleanup
+		}
 		// A clone is a relaunch, not a fresh opt-in, so it never engages the
 		// experimental auto-review guardian (autoReview=false) nor pre-trusts the
 		// cwd (trustDir=false — that edits ~/.codex/config.toml and is an explicit
 		// fresh-spawn opt-in) — same rationale as approvalForHarness re-defaulting
 		// rather than carrying per-conv state.
 		if fail := reassertFail(); fail != nil {
+			agentDirectoryCleanup()
 			return "", "", "", "", fail
 		}
 		proofArgs := clcommon.SpawnArgs{DirWriteProof: proofToken, EffectiveSandbox: effectiveSandbox}
@@ -155,6 +165,7 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 		proofArgs.AskUserQuestionTimeout = askTimeout
 		proofArgs.RemoteControl = remoteControl
 		if err := SpawnDetachedTclaudeNew(proofArgs); err != nil {
+			agentDirectoryCleanup()
 			return "", "", "", "", &cloneSpawnError{
 				Status: http.StatusInternalServerError, Code: "spawn",
 				Msg: "failed to launch tclaude session new: " + err.Error(),
@@ -194,7 +205,17 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 		}
 	}
 	newConv = copyResult.NewConvID
+	agentDirectoryCleanup := func() {}
+	if effectiveSandbox != nil && len(effectiveSandbox.Effective.AgentDirectories) > 0 {
+		materialized, cleanup, materializeErr := materializeAgentDirectories(*effectiveSandbox, newConv)
+		if materializeErr != nil {
+			return "", "", "", "", &cloneSpawnError{Status: http.StatusInternalServerError, Code: "spawn", Msg: materializeErr.Error()}
+		}
+		effectiveSandbox = &materialized
+		agentDirectoryCleanup = cleanup
+	}
 	if fail := reassertFail(); fail != nil {
+		agentDirectoryCleanup()
 		return "", "", "", "", fail
 	}
 	proofArgs := clcommon.SpawnArgs{DirWriteProof: proofToken, EffectiveSandbox: effectiveSandbox}
@@ -216,9 +237,26 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 	proofArgs.AskUserQuestionTimeout = askTimeout
 	proofArgs.RemoteControl = remoteControl
 	if err := SpawnDetachedTclaudeResume(proofArgs); err != nil {
+		agentDirectoryCleanup()
 		return "", "", "", "", &cloneSpawnError{
 			Status: http.StatusInternalServerError, Code: "spawn",
 			Msg: "failed to launch tclaude session new -r: " + err.Error(),
+		}
+	}
+	// Persist the launch snapshot before waiting for the session row. The copy
+	// path already knows its conversation ID, and may return success with a
+	// warning if registration times out; retaining the snapshot here prevents a
+	// later resume from falling back to the source agent's generated dirs.
+	if effectiveSandbox != nil {
+		agentID, _, persistErr := db.EnsureAgentForConv(newConv, "clone")
+		if persistErr == nil {
+			persistErr = db.SetAgentEffectiveSandboxConfig(agentID, effectiveSandbox)
+		}
+		if persistErr != nil {
+			return "", "", "", "", &cloneSpawnError{
+				Status: http.StatusInternalServerError, Code: "io",
+				Msg: "persist clone sandbox snapshot: " + persistErr.Error(),
+			}
 		}
 	}
 	deadline := time.Now().Add(reincarnateSpawnTimeout)
@@ -799,7 +837,19 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm string, b
 }
 
 func inheritEffectiveSandboxSnapshot(sourceConv, targetConv string) error {
-	snapshot, err := db.AgentEffectiveSandboxConfigForConv(sourceConv)
+	var snapshot *sandboxpolicy.Snapshot
+	if session, err := db.FindSessionByConvID(targetConv); err != nil {
+		return err
+	} else if session != nil {
+		snapshot = session.EffectiveSandbox
+	}
+	var err error
+	if snapshot == nil {
+		snapshot, err = db.AgentEffectiveSandboxConfigForConv(targetConv)
+	}
+	if err == nil && snapshot == nil {
+		snapshot, err = db.AgentEffectiveSandboxConfigForConv(sourceConv)
+	}
 	if err != nil || snapshot == nil {
 		return err
 	}

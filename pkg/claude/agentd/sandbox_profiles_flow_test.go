@@ -14,8 +14,9 @@ import (
 )
 
 type wireSandboxProfile struct {
-	Name       string `json:"name"`
-	Filesystem []struct {
+	Name             string   `json:"name"`
+	AgentDirectories []string `json:"agent_directories"`
+	Filesystem       []struct {
 		Path   string `json:"path"`
 		Access string `json:"access"`
 	} `json:"filesystem"`
@@ -95,6 +96,7 @@ func TestSandboxProfilesCRUDValidationAndAssignments(t *testing.T) {
 			{"name": "GOCACHE", "value": cache},
 			{"name": "GOCACHE", "value": cache},
 		},
+		"agent_directories": []string{"GOLANGCI_LINT_CACHE"},
 	})
 	require.Equalf(t, http.StatusCreated, rec.Code, "create body=%s", rec.Body.String())
 
@@ -107,6 +109,7 @@ func TestSandboxProfilesCRUDValidationAndAssignments(t *testing.T) {
 	assert.Equal(t, "write", got.Filesystem[0].Access)
 	require.Len(t, got.Environment, 1)
 	assert.Equal(t, "GOCACHE", got.Environment[0].Name)
+	assert.Equal(t, []string{"GOLANGCI_LINT_CACHE"}, got.AgentDirectories)
 
 	for _, body := range []map[string]any{
 		{"name": "export"},
@@ -114,6 +117,7 @@ func TestSandboxProfilesCRUDValidationAndAssignments(t *testing.T) {
 		{"name": "protected", "filesystem": []map[string]any{{"path": filepath.Join(home, ".tclaude", "data"), "access": "write"}}},
 		{"name": "reserved", "environment": []map[string]any{{"name": "TCLAUDE_SESSION_ID", "value": "spoof"}}},
 		{"name": "conflict", "environment": []map[string]any{{"name": "A", "value": "1"}, {"name": "A", "value": "2"}}},
+		{"name": "agent-dir-conflict", "environment": []map[string]any{{"name": "GOCACHE", "value": cache}}, "agent_directories": []string{"GOCACHE"}},
 	} {
 		rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", body)
 		assert.Equalf(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())

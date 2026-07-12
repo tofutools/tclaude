@@ -33,6 +33,7 @@ func TestSandboxProfileCRUDRoundTrip(t *testing.T) {
 			{Name: "ZED", Value: "last"},
 			{Name: "ALPHA", Value: "first"},
 		},
+		AgentDirectories: []string{"GOLANGCI_LINT_CACHE", "GOCACHE"},
 	})
 	require.NoError(t, err)
 
@@ -43,6 +44,7 @@ func TestSandboxProfileCRUDRoundTrip(t *testing.T) {
 	assert.NotNil(t, sparse.Filesystem, "empty payload round-trips as []")
 	assert.Empty(t, sparse.Environment)
 	assert.NotNil(t, sparse.Environment, "empty payload round-trips as []")
+	assert.NotNil(t, sparse.AgentDirectories, "empty payload round-trips as []")
 
 	got, err := GetSandboxProfile("populated")
 	require.NoError(t, err)
@@ -56,18 +58,21 @@ func TestSandboxProfileCRUDRoundTrip(t *testing.T) {
 		{Name: "ALPHA", Value: "first"},
 		{Name: "ZED", Value: "last"},
 	}, got.Environment)
+	assert.Equal(t, []string{"GOCACHE", "GOLANGCI_LINT_CACHE"}, got.AgentDirectories)
 	assert.False(t, got.CreatedAt.IsZero())
 	assert.False(t, got.UpdatedAt.IsZero())
 
 	got.Name = "renamed"
 	got.Filesystem = []SandboxFilesystemGrant{{Path: filepath.Join(work, "new"), Access: "read"}}
 	got.Environment = []SandboxEnvironmentEntry{}
+	got.AgentDirectories = []string{"GOMODCACHE"}
 	require.NoError(t, UpdateSandboxProfile(got))
 	updated, err := GetSandboxProfileByID(populatedID)
 	require.NoError(t, err)
 	assert.Equal(t, "renamed", updated.Name)
 	assert.Equal(t, []SandboxFilesystemGrant{{Path: filepath.Join(canonicalWork, "new"), Access: "read"}}, updated.Filesystem)
 	assert.Empty(t, updated.Environment)
+	assert.Equal(t, []string{"GOMODCACHE"}, updated.AgentDirectories)
 
 	list, err := ListSandboxProfiles()
 	require.NoError(t, err)

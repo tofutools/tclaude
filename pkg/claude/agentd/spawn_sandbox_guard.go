@@ -42,7 +42,7 @@ func sandboxProfileCapabilityFailure(harnessName, sandboxMode string, snapshot *
 	if err != nil {
 		return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_filesystem", err.Error()}
 	}
-	if len(filesystem) == 0 {
+	if len(filesystem) == 0 && len(snapshot.Effective.AgentDirectories) == 0 {
 		return nil
 	}
 	switch harnessOrDefault(harnessName) {

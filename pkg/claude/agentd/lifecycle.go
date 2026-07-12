@@ -422,7 +422,7 @@ func effectiveSandboxWriteDirsForConv(convID string) (*sandboxpolicy.Snapshot, [
 	if err != nil || snapshot == nil {
 		return snapshot, nil, err
 	}
-	validated, err := sandboxpolicy.RevalidateSnapshot(*snapshot)
+	validated, err := ensureAgentDirectoriesForRelaunch(*snapshot)
 	if err != nil {
 		return nil, nil, &effectiveSandboxChangedError{err: err}
 	}
@@ -629,7 +629,7 @@ func resumeOneConvWithGrant(convID string, recreateMissingDir bool, grant *resum
 		return res
 	}
 	if effectiveSandbox != nil {
-		validated, err := sandboxpolicy.RevalidateSnapshot(*effectiveSandbox)
+		validated, err := ensureAgentDirectoriesForRelaunch(*effectiveSandbox)
 		if err != nil {
 			res.Action = "error"
 			res.Detail = "sandbox_profile_changed: " + err.Error()
@@ -1903,9 +1903,16 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 					"this parent predates effective sandbox snapshots and may not inherit custom capabilities; relaunch it under current policy or ask the human to spawn the child")
 				return
 			}
-		} else if err := sandboxpolicy.RequireContained(*parentSnapshot, effectiveSandbox); err != nil {
-			writeError(w, http.StatusForbidden, "sandbox_profile_restricted", err.Error())
-			return
+		} else {
+			validatedParent, err := ensureAgentDirectoriesForRelaunch(*parentSnapshot)
+			if err != nil {
+				writeError(w, http.StatusConflict, "sandbox_profile_changed", err.Error())
+				return
+			}
+			if err := sandboxpolicy.RequireContained(validatedParent, effectiveSandbox); err != nil {
+				writeError(w, http.StatusForbidden, "sandbox_profile_restricted", err.Error())
+				return
+			}
 		}
 	}
 	if fail := sandboxProfileCapabilityFailure(h.Name, sandboxMode, &effectiveSandbox); fail != nil {
@@ -2910,6 +2917,27 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// `tclaude session ls`.
 	label := generateSpawnLabel()
 
+	// Agent-directory declarations are resolved only once a unique launch key
+	// exists. Freeze their literal paths into the snapshot before enrollment or
+	// the session-new handoff so every persistence/resume path sees the same
+	// values. A failed pre-fork launch removes the newly-created empty tree;
+	// once the subprocess starts, the tree belongs to that agent generation.
+	agentDirectoryCleanup := func() {}
+	agentDirectoriesLaunched := false
+	defer func() {
+		if !agentDirectoriesLaunched {
+			agentDirectoryCleanup()
+		}
+	}()
+	if p.EffectiveSandbox != nil && len(p.EffectiveSandbox.Effective.AgentDirectories) > 0 {
+		materialized, cleanup, err := materializeAgentDirectories(*p.EffectiveSandbox, label)
+		if err != nil {
+			return nil, &spawnFailure{http.StatusInternalServerError, "spawn", err.Error()}
+		}
+		p.EffectiveSandbox = &materialized
+		agentDirectoryCleanup = cleanup
+	}
+
 	spawnArgs := clcommon.SpawnArgs{
 		EffectiveSandbox:           p.EffectiveSandbox,
 		Label:                      label,
@@ -3035,6 +3063,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
 			"failed to launch tclaude session new: " + err.Error()}
 	}
+	agentDirectoriesLaunched = true
 
 	// Auto-focus closure: when the caller asked for it, open a terminal
 	// window attached to the freshly-spawned agent — via `tclaude session

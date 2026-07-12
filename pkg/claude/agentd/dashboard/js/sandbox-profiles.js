@@ -251,6 +251,11 @@ function rowsToIncludesJSON() {
   $('#sandbox-profile-editor-includes').value = JSON.stringify(out, null, 2);
 }
 
+function editorAgentDirectories() {
+  return $('#sandbox-profile-editor-agent-directories').value
+    .split(/[\s,]+/).map(name => name.trim()).filter(Boolean);
+}
+
 async function browseFilesystemRow(pathInput, btn) {
   const errEl = $('#sandbox-profile-editor-error');
   errEl.textContent = '';
@@ -318,6 +323,7 @@ function openEditor(p = null, { onCreate = null, targetName = null } = {}) {
   $('#sandbox-profile-editor-filesystem').value = JSON.stringify((p && p.filesystem) || [], null, 2);
   $('#sandbox-profile-editor-environment').value = JSON.stringify((p && p.environment) || [], null, 2);
   $('#sandbox-profile-editor-includes').value = JSON.stringify((p && p.includes) || [], null, 2);
+  $('#sandbox-profile-editor-agent-directories').value = ((p && p.agent_directories) || []).join('\n');
   setEditorAdvanced(false); // collapse the raw panel and render the tables from the JSON
   $('#sandbox-profile-editor-error').textContent = '';
   $('#sandbox-profile-editor-modal').classList.add('show');
@@ -350,6 +356,7 @@ function editorProfileBody() {
     filesystem: JSON.parse($('#sandbox-profile-editor-filesystem').value || '[]'),
     environment: JSON.parse($('#sandbox-profile-editor-environment').value || '[]'),
     includes: JSON.parse($('#sandbox-profile-editor-includes').value || '[]'),
+    agent_directories: editorAgentDirectories(),
   };
 }
 
@@ -508,12 +515,12 @@ function sandboxScribeBrief(token, targetName, seed) {
     ? `This is a proposed replacement for the existing profile named "${targetName}".`
     : 'This is a proposed new sandbox profile.';
   return [
-    'You are a sandbox-profile scribe. Talk with the human to interactively design one filesystem/environment sandbox profile.',
+    'You are a sandbox-profile scribe. Talk with the human to interactively design one filesystem/environment sandbox profile, including optional per-agent generated directories.',
     'Critical safety boundary: create a structured DRAFT only. Never create, edit, delete, assign, or apply a sandbox profile; never launch or relaunch an agent; never request sandbox-profiles.manage. Your purpose-specific permission is sandbox-profiles.draft.',
-    'Environment values are ordinary non-secret configuration. Filesystem entries are absolute-path rules with access "read", "write", or "deny"; deny means no read or write access. A profile may also carry "includes": an ordered array of other existing profile names composed first (recursively); the profile\'s own entries then override any same-path or same-name values they supplied. The daemon remains authoritative for canonicalization, protected paths, reserved environment variables, duplicate handling, include existence/cycle checks, and all other validation.',
+    'Environment values are ordinary non-secret configuration. Filesystem entries are absolute-path rules with access "read", "write", or "deny"; deny means no read or write access. agent_directories is an array of environment-variable names for which agentd creates isolated writable directories at spawn. A profile may also carry "includes": an ordered array of other existing profile names composed first (recursively); the profile\'s own entries then override any same-path or same-name values they supplied. The daemon remains authoritative for canonicalization, protected paths, reserved environment variables, duplicate handling, include existence/cycle checks, and all other validation.',
     target,
     `Starting draft:\n${JSON.stringify(seed, null, 2)}`,
-    'Discuss the desired paths, access levels, environment names/values, and profile name. Wait until the human agrees that the proposal is ready.',
+    'Discuss the desired paths, access levels, literal environment names/values, agent-owned directory variables, and profile name. Wait until the human agrees that the proposal is ready.',
     `Then write the complete profile JSON to a file and run exactly this draft handoff (add no assignment or launch commands):\n\`tclaude agent sandbox-profiles draft --token ${token} --file <path>\``,
     'That command validates and returns the draft to the dashboard; it does NOT save anything. Remind the human to preview it there and explicitly press Save.',
   ].join('\n\n');
@@ -588,6 +595,7 @@ function summonSandboxScribeFromEditor() {
       filesystem: JSON.parse($('#sandbox-profile-editor-filesystem').value || '[]'),
       environment: JSON.parse($('#sandbox-profile-editor-environment').value || '[]'),
       includes: JSON.parse($('#sandbox-profile-editor-includes').value || '[]'),
+      agent_directories: editorAgentDirectories(),
     };
     void summonSandboxScribe(seed, editingName, editorOnCreate);
   } catch (err) {

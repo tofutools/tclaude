@@ -1,6 +1,7 @@
 package sandboxpolicy
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -249,6 +250,31 @@ func TestNormalizeEnvironmentLimits(t *testing.T) {
 	_, err := Normalize(Profile{Name: "p", Environment: entries})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "too many entries")
+}
+
+func TestNormalizeAgentDirectoriesCanonicalAndRejectsConflicts(t *testing.T) {
+	got, err := Normalize(Profile{Name: "p", AgentDirectories: []string{
+		"GOLANGCI_LINT_CACHE", "GOCACHE", "GOCACHE",
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"GOCACHE", "GOLANGCI_LINT_CACHE"}, got.AgentDirectories)
+
+	_, err = Normalize(Profile{Name: "p", AgentDirectories: []string{"NOT-AN-ENV"}})
+	require.ErrorContains(t, err, "ASCII environment-variable name")
+	_, err = Normalize(Profile{Name: "p", AgentDirectories: []string{"HOME"}})
+	require.ErrorContains(t, err, "reserved")
+	_, err = Normalize(Profile{
+		Name: "p", Environment: []EnvironmentEntry{{Name: "GOCACHE", Value: "/literal"}},
+		AgentDirectories: []string{"GOCACHE"},
+	})
+	require.ErrorContains(t, err, "also has a literal environment value")
+
+	environment := make([]EnvironmentEntry, MaxEnvironmentCount)
+	for i := range environment {
+		environment[i] = EnvironmentEntry{Name: fmt.Sprintf("ENV_%d", i), Value: "x"}
+	}
+	_, err = Normalize(Profile{Name: "p", Environment: environment, AgentDirectories: []string{"ONE_MORE"}})
+	require.ErrorContains(t, err, "too many entries combined")
 }
 
 func TestNormalizeProfileName(t *testing.T) {
