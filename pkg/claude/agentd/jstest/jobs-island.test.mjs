@@ -101,6 +101,11 @@ test('Jobs island renders reactively and preserves keyed DOM/focus across polls'
   });
   assert.match(getByRole(mounted.container, 'alert').textContent, /network down/);
   assert.equal(mounted.container.querySelectorAll('tbody tr').length, 2, 'stale page remains visible');
+  assert.equal(nextPage.disabled, true, 'stale-page navigation is disabled until Retry succeeds');
+  const retry = getByRole(mounted.container, 'button', { name: 'Retry' });
+  const refreshesBeforeRetry = calls.filter((call) => call === 'refresh').length;
+  await harness.act(() => harness.fireEvent(retry, 'click'));
+  assert.equal(calls.filter((call) => call === 'refresh').length, refreshesBeforeRetry + 1);
   await badge.unmount();
   await mounted.unmount();
 });

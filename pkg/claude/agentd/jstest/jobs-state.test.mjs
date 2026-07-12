@@ -94,6 +94,8 @@ test('Jobs parameter changes immediately invalidate requests but retain requeste
   assert.equal(state.page('next', 80), true);
   assert.equal(state.offset.value, 25);
   assert.equal(state.acceptsRequest(11), false, 'old-page response is invalid immediately');
-  state.failRequest(11, new Error('network down'));
+  state.beginRequest(12);
+  assert.equal(state.failRequest(12, new Error('network down')), true);
+  assert.equal(state.request.value.phase, 'error');
   assert.equal(state.offset.value, 25, 'failed request does not restore the previous offset');
 });
