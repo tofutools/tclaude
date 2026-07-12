@@ -423,15 +423,6 @@ func countRotatedLogFiles(path string) int {
 }
 
 // splitNonEmptyLines splits on '\n' and drops blank lines.
-func splitNonEmptyLines(data []byte) []string {
-	records := splitNonEmptyRecords(data, "", 0)
-	out := make([]string, len(records))
-	for i, record := range records {
-		out[i] = record.text
-	}
-	return out
-}
-
 func splitNonEmptyRecords(data []byte, generation string, start int64) []logRecord {
 	raw := bytes.Split(data, []byte{'\n'})
 	out := make([]logRecord, 0, len(raw))
