@@ -26,11 +26,18 @@ function compare(left, right) {
   return String(a).toLowerCase().localeCompare(String(b).toLowerCase());
 }
 
+function isBlank(value) {
+  return value === null || value === undefined || value === '';
+}
+
 export function sortSudo(rows, sort) {
   if (!sort?.key) return rows.slice();
   const direction = sort.dir === 'desc' ? -1 : 1;
   return rows.slice().sort((left, right) => {
-    const primary = compare(sudoValue(left, sort.key), sudoValue(right, sort.key));
+    const leftValue = sudoValue(left, sort.key);
+    const rightValue = sudoValue(right, sort.key);
+    if (isBlank(leftValue) !== isBlank(rightValue)) return isBlank(leftValue) ? 1 : -1;
+    const primary = compare(leftValue, rightValue);
     if (primary) return primary * direction;
     return (Number(left.id) || 0) - (Number(right.id) || 0);
   });

@@ -21,6 +21,9 @@ test('Access model preserves permission, filter, sort, and expiry semantics', as
   assert.equal(model.matchesSudo(grants[0], 'SEND'), true);
   assert.deepEqual(model.sortSudo(grants, { key: 'conv', dir: 'asc' }).map((row) => row.id), [1, 2]);
   assert.deepEqual(model.sortSudo(grants, { key: 'expires', dir: 'desc' }).map((row) => row.id), [1, 2]);
+  assert.deepEqual(model.sortSudo([
+    { id: 1, reason: '' }, { id: 2, reason: 'alpha' }, { id: 3, reason: 'zulu' },
+  ], { key: 'reason', dir: 'desc' }).map((row) => row.id), [3, 2, 1], 'blank cells stay last descending');
   assert.equal(model.remainingSeconds({ expires_at: '2026-07-12T00:00:10Z' }, Date.parse('2026-07-12T00:00:03Z')), 7);
   assert.equal(model.remainingSeconds({ remaining_seconds: 9 }, Date.parse('2026-07-12T00:00:04Z'), Date.parse('2026-07-12T00:00:00Z')), 5);
   assert.equal(model.fmtRemaining(3661), '1h1m');
