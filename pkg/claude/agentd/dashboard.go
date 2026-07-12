@@ -2,8 +2,10 @@ package agentd
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"embed"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -106,7 +108,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/", handleDashboardRoot)
 	mux.HandleFunc("/terminals", handleDashboardTerminals)
 	mux.HandleFunc("/dashboard/login", handleDashboardLogin)
-	mux.HandleFunc("/api/snapshot", withPerfTiming("/api/snapshot", handleDashboardSnapshot))
+	mux.HandleFunc("/api/snapshot", withGzip(withPerfTiming("/api/snapshot", handleDashboardSnapshot)))
 	mux.HandleFunc("/api/perf", handleDashboardPerf)
 	mux.HandleFunc("/api/perf/reset", handleDashboardPerfReset)
 	mux.HandleFunc("/api/costs", handleDashboardCosts)
@@ -630,9 +632,15 @@ func dashboardAuthResult(r *http.Request) (ok bool, code int, msg string) {
 // gives the page everything it needs to render every tab; the page
 // re-fetches on a 2s timer.
 type snapshotPayload struct {
-	GeneratedAt string           `json:"generated_at"`
-	Version     string           `json:"version"`
-	Groups      []dashboardGroup `json:"groups"`
+	GeneratedAt string `json:"generated_at"`
+	Version     string `json:"version"`
+	// StaticVersion fingerprints the registry-shaped payload fields that rarely
+	// change. The browser echoes it on the next poll; when it still matches,
+	// StaticUnchanged is true and those fields are sent as null then restored
+	// from the previous snapshot client-side.
+	StaticVersion   string           `json:"static_version"`
+	StaticUnchanged bool             `json:"static_unchanged,omitempty"`
+	Groups          []dashboardGroup `json:"groups"`
 	// Names and assignments only: environment values remain behind the
 	// sandbox-profile management API. Keeping these in the regular snapshot
 	// lets global/group quick selectors repaint without extra polling requests.
@@ -673,6 +681,9 @@ type snapshotPayload struct {
 	// paginated window from GET /api/jobs alongside the poll
 	// (dashboard_jobs.go), mirroring the retired/conversations/replaced split.
 	ExportJobsActive int `json:"export_jobs_active"`
+	// RetiredTotal drives cross-tab badges/actions without fetching the full,
+	// paginated retired roster outside the Groups tab.
+	RetiredTotal int `json:"retired_total"`
 	// Sudo: every active grant across all agents, ordered by conv-id
 	// then soonest expiry. Powers the dedicated "Sudo" tab. Per-agent
 	// active state also surfaces on Agents[*].ActiveSudo so the Groups
@@ -1796,6 +1807,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		},
 		Slugs: append([]PermSlug{}, permissionRegistry...),
 	}
+	out.RetiredTotal = len(retiredAgents)
 	sort.Slice(out.Slugs, func(i, j int) bool { return out.Slugs[i].Slug < out.Slugs[j].Slug })
 
 	// Remote-access runtime state for the Config tab's guidance (JOH-227): has
@@ -2136,7 +2148,38 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	applyCostDisplayFactor(&out, cfg.ResolvedCostFactor())
 	span.mark("collectors")
 
+	// The large registries below change only after an explicit management
+	// action (or a binary upgrade for the built-in registries). Hash them into
+	// the dynamic snapshot and omit their contents when the browser proves it
+	// already has this exact version. We still collect them before hashing so a
+	// mutation is visible on the very next 2-second tick.
+	out.StaticVersion = snapshotStaticVersion(out)
+	if r.URL.Query().Get("static_version") == out.StaticVersion {
+		out.StaticUnchanged = true
+		out.Slugs = nil
+		out.Templates = nil
+		out.Profiles = nil
+		out.Roles = nil
+		out.PluginsCatalog = nil
+	}
+
 	writeJSON(w, http.StatusOK, out)
+}
+
+// snapshotStaticVersion returns a stable content fingerprint for the registry
+// blobs restored client-side on an unchanged poll. Struct field order makes the
+// JSON deterministic; each collector already returns a deterministic slice.
+func snapshotStaticVersion(out snapshotPayload) string {
+	static := struct {
+		Slugs          []PermSlug         `json:"slugs"`
+		Templates      []templateJSON     `json:"templates"`
+		Profiles       []spawnProfileJSON `json:"profiles"`
+		Roles          []roleJSON         `json:"roles"`
+		PluginsCatalog []Plugin           `json:"plugins_catalog"`
+	}{out.Slugs, out.Templates, out.Profiles, out.Roles, out.PluginsCatalog}
+	b, _ := json.Marshal(static) // all fields are JSON-native wire structs
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }
 
 // applyCostDisplayFactor scales every cost figure in the snapshot by the

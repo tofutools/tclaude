@@ -21,7 +21,7 @@ const liveTmuxCacheTTL = 200 * time.Millisecond
 
 // tmuxSessionCache coalesces session.LiveTmuxSessions probes across the
 // dashboard's parallel poll handlers behind a short TTL. Each 2s tick fires up
-// to three parallel requests — /api/snapshot, /api/retired, /api/conversations
+// to parallel requests — /api/snapshot plus the Groups tab's paginated lists
 // — and each needs the live tmux set; uncached, each forks its own `tmux ls`
 // (~5-15ms fork+exec on macOS, measured tmux_ls median 4.92ms). This cache
 // serves a shared snapshot for the TTL and, because get() holds the lock across

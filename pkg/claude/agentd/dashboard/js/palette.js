@@ -310,9 +310,10 @@ function buildCommands() {
   //     /api/cleanup/agents {mode:"delete"}. 🗑 distinguishes it from the ♻
   //     retire commands. Gated on ≥1 retired agent so the palette never
   //     offers a no-op.
-  // retired[] is windowed in the snapshot now — the true count lives in the
-  // pagination envelope. (The modal itself fetches the full list on open.)
-  const retiredCount = (snap.paging && snap.paging.retired && snap.paging.retired.total) || 0;
+  // retired[] is fetched only on the Groups tab now. The cheap total remains
+  // in every snapshot so this cross-tab command stays accurate. (The modal
+  // itself fetches the full list on open.)
+  const retiredCount = snap.retired_total || 0;
   if (retiredCount) {
     const plural = retiredCount === 1 ? '' : 's';
     cmds.push({

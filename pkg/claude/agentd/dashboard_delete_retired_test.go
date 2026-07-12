@@ -134,8 +134,8 @@ func TestDashboardHTML_DeleteRetiredWired(t *testing.T) {
 
 	// 8. The palette command is gated on ≥1 retired agent so it never offers
 	//    a no-op, and carries the 🗑 icon (distinct from the ♻ retire ones).
-	must("const retiredCount = (snap.paging && snap.paging.retired && snap.paging.retired.total) || 0",
-		"the palette command gates on the retired total from the pagination envelope (retired[] is windowed now)")
+	must("const retiredCount = snap.retired_total || 0",
+		"the palette command gates on the snapshot's cheap retired total even when the full list is not fetched")
 	must("if (retiredCount) {", "the command is only listed when there is at least one retired agent")
 	must("icon: wiz('🗑', '🔥'), label: wiz('Delete retired agents…', 'Dispel banished familiars…')",
 		"the palette command carries the distinct 🗑 delete label (arcane 🔥 Dispel in wizard mode)")
