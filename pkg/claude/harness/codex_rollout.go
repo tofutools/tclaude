@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -94,16 +95,13 @@ func parseCodexRolloutHead(path string) (*codexRollout, error) {
 	defer func() { _ = rc.Close() }()
 
 	out := &codexRollout{}
-	scanner := bufio.NewScanner(rc)
-	scanner.Buffer(make([]byte, 0, 64*1024), maxCodexRolloutLineBytes)
-	for scanner.Scan() {
-		line := scanner.Bytes()
+	err = scanCodexRolloutLines(rc, path, func(line []byte) bool {
 		if len(bytes.TrimSpace(line)) == 0 {
-			continue
+			return true
 		}
 		var env codexEnvelope
 		if json.Unmarshal(line, &env) != nil {
-			continue
+			return true
 		}
 		switch env.Type {
 		case "session_meta":
@@ -121,7 +119,7 @@ func parseCodexRolloutHead(path string) (*codexRollout, error) {
 			}
 		case "event_msg":
 			if out.FirstUserMsg != "" {
-				continue
+				return true
 			}
 			var e codexEventMsg
 			if json.Unmarshal(env.Payload, &e) == nil && e.Type == "user_message" && e.Message != "" {
@@ -142,13 +140,72 @@ func parseCodexRolloutHead(path string) (*codexRollout, error) {
 		// first prompt and a model — everything a SessionEntry needs.
 		// Stop here so we don't stream a multi-MB rollout to EOF.
 		if out.SessionID != "" && out.Cwd != "" && out.FirstUserMsg != "" && out.Model != "" {
-			break
+			return false
 		}
-	}
-	if err := scanner.Err(); err != nil {
+		return true
+	})
+	if err != nil {
 		return nil, fmt.Errorf("scan codex rollout %s: %w", path, err)
 	}
 	return out, nil
+}
+
+// scanCodexRolloutLines visits rollout records without retaining more than the
+// per-record limit. Oversized records are drained through their newline,
+// warned about once, and skipped so later events remain reachable. Returning
+// false from visit preserves the head scanners' early-stop behavior.
+func scanCodexRolloutLines(r io.Reader, rolloutPath string, visit func([]byte) bool) error {
+	reader := bufio.NewReaderSize(r, 64*1024)
+	line := make([]byte, 0, 64*1024)
+	for {
+		var (
+			lineBytes int64
+			oversized bool
+			err       error
+		)
+		line, lineBytes, oversized, err = readCodexRolloutLine(reader, line[:0])
+		if err != nil && err != io.EOF {
+			return err
+		}
+		if lineBytes == 0 && err == io.EOF {
+			return nil
+		}
+		if oversized {
+			slog.Warn("codex-rollout: skipping oversized record",
+				"path", rolloutPath, "bytes", lineBytes,
+				"limit_bytes", maxCodexRolloutLineBytes, "module", "harness")
+		} else if !visit(line) {
+			return nil
+		}
+		if err == io.EOF {
+			return nil
+		}
+	}
+}
+
+// readCodexRolloutLine reads and drains one record in bounded chunks. The
+// returned slice contains at most maxCodexRolloutLineBytes; lineBytes always
+// reports the full drained size so callers can maintain offsets and warnings.
+func readCodexRolloutLine(reader *bufio.Reader, line []byte) ([]byte, int64, bool, error) {
+	var lineBytes int64
+	oversized := false
+	for {
+		fragment, err := reader.ReadSlice('\n')
+		lineBytes += int64(len(fragment))
+		if !oversized {
+			remaining := maxCodexRolloutLineBytes - len(line)
+			if len(fragment) <= remaining {
+				line = append(line, fragment...)
+			} else {
+				line = append(line, fragment[:remaining]...)
+				oversized = true
+			}
+		}
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		return line, lineBytes, oversized, err
+	}
 }
 
 // openCodexRollout opens a rollout for reading, transparently wrapping a
@@ -194,21 +251,18 @@ func CodexEffortFromRollout(path string) (string, bool, error) {
 	}
 	defer func() { _ = rc.Close() }()
 
-	scanner := bufio.NewScanner(rc)
-	scanner.Buffer(make([]byte, 0, 64*1024), maxCodexRolloutLineBytes)
 	var latest string
-	for scanner.Scan() {
-		line := scanner.Bytes()
+	err = scanCodexRolloutLines(rc, path, func(line []byte) bool {
 		if len(bytes.TrimSpace(line)) == 0 {
-			continue
+			return true
 		}
 		var env codexEnvelope
 		if json.Unmarshal(line, &env) != nil || env.Type != "turn_context" {
-			continue
+			return true
 		}
 		var tc codexTurnContext
 		if json.Unmarshal(env.Payload, &tc) != nil {
-			continue
+			return true
 		}
 		effort := tc.Effort
 		if effort == "" {
@@ -217,8 +271,9 @@ func CodexEffortFromRollout(path string) (string, bool, error) {
 		if v, err := (codexModels{}).ValidateEffort(effort); err == nil && v != "" {
 			latest = v
 		}
-	}
-	if err := scanner.Err(); err != nil {
+		return true
+	})
+	if err != nil {
 		return "", false, fmt.Errorf("scan codex rollout %s: %w", path, err)
 	}
 	if latest == "" {

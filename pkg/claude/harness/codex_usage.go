@@ -1,7 +1,6 @@
 package harness
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -213,29 +212,25 @@ func CodexUsageFromRollout(rolloutPath string) (*CodexUsage, error) {
 	}
 	defer func() { _ = rc.Close() }()
 
-	scanner := bufio.NewScanner(rc)
-	scanner.Buffer(make([]byte, 0, 64*1024), maxCodexRolloutLineBytes)
-
 	var best *CodexUsage
-	for scanner.Scan() {
-		line := scanner.Bytes()
+	err = scanCodexRolloutLines(rc, rolloutPath, func(line []byte) bool {
 		if len(bytes.TrimSpace(line)) == 0 {
-			continue
+			return true
 		}
 		var env codexEnvelope
 		if json.Unmarshal(line, &env) != nil {
-			continue
+			return true
 		}
 		if env.Type != "event_msg" {
-			continue
+			return true
 		}
 		var ev codexTokenCountEvent
 		if json.Unmarshal(env.Payload, &ev) != nil || ev.Type != "token_count" {
-			continue
+			return true
 		}
 		u := codexUsageFromRateLimits(ev.RateLimits, env.Timestamp)
 		if u == nil {
-			continue
+			return true
 		}
 		// Events are written in chronological order, so the last populated
 		// one wins; the !Before comparison keeps that even if two share a
@@ -243,8 +238,9 @@ func CodexUsageFromRollout(rolloutPath string) (*CodexUsage, error) {
 		if best == nil || !u.Observed.Before(best.Observed) {
 			best = u
 		}
-	}
-	if err := scanner.Err(); err != nil {
+		return true
+	})
+	if err != nil {
 		return nil, fmt.Errorf("scan codex rollout %s: %w", rolloutPath, err)
 	}
 	return best, nil

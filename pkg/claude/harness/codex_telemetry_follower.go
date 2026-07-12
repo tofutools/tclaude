@@ -161,59 +161,43 @@ func scanCompleteCodexLines(r io.Reader, rolloutPath string, state *codexRuntime
 	reader := bufio.NewReaderSize(r, 64*1024)
 	line := make([]byte, 0, 64*1024)
 	for {
-		line = line[:0]
-		lineBytes := int64(0)
-		oversized := false
-		for {
-			fragment, readErr := reader.ReadSlice('\n')
-			lineBytes += int64(len(fragment))
-			if !oversized {
-				remaining := maxCodexRolloutLineBytes - len(line)
-				if len(fragment) <= remaining {
-					line = append(line, fragment...)
-				} else {
-					line = append(line, fragment[:remaining]...)
-					oversized = true
-				}
+		var lineBytes int64
+		var oversized bool
+		var readErr error
+		line, lineBytes, oversized, readErr = readCodexRolloutLine(reader, line[:0])
+		switch readErr {
+		case nil:
+			if oversized {
+				// Compaction replacement-history and image payloads can be tens
+				// of MiB. Match the telemetry parser's best-effort malformed-line
+				// contract: discard the completed record, advance past its
+				// newline, and continue to later telemetry without retaining the
+				// whole payload in memory. Do not flag decode doubt: rebuilding
+				// would encounter the same record and loop forever.
+				slog.Warn("codex-telemetry: skipping oversized rollout record",
+					"path", rolloutPath, "bytes", lineBytes,
+					"limit_bytes", maxCodexRolloutLineBytes, "module", "harness")
+			} else if ok := state.consumeLine(line); strict && !ok {
+				doubt = true
 			}
-
-			switch readErr {
-			case bufio.ErrBufferFull:
-				continue
-			case nil:
-				if oversized {
-					// Compaction replacement-history and image payloads can be tens
-					// of MiB. Match the telemetry parser's best-effort malformed-line
-					// contract: discard the completed record, advance past its
-					// newline, and continue to later telemetry without retaining the
-					// whole payload in memory. Do not flag decode doubt: rebuilding
-					// would encounter the same record and loop forever.
-					slog.Warn("codex-telemetry: skipping oversized rollout record",
-						"path", rolloutPath, "bytes", lineBytes,
-						"limit_bytes", maxCodexRolloutLineBytes, "module", "harness")
-				} else if ok := state.consumeLine(line); strict && !ok {
+			consumed += lineBytes
+		case io.EOF:
+			if lineBytes == 0 {
+				return consumed, doubt, nil
+			}
+			// Match the established parser for a syntactically complete EOF
+			// record. An oversized or invalid mid-write tail is not consumed;
+			// the follower retries it from the same offset after the next append.
+			trimmed := bytes.TrimSpace(line)
+			if !oversized && len(trimmed) > 0 && json.Valid(trimmed) {
+				if ok := state.consumeLine(line); strict && !ok {
 					doubt = true
 				}
 				consumed += lineBytes
-			case io.EOF:
-				if lineBytes == 0 {
-					return consumed, doubt, nil
-				}
-				// Match the established parser for a syntactically complete EOF
-				// record. An oversized or invalid mid-write tail is not consumed;
-				// the follower retries it from the same offset after the next append.
-				trimmed := bytes.TrimSpace(line)
-				if !oversized && len(trimmed) > 0 && json.Valid(trimmed) {
-					if ok := state.consumeLine(line); strict && !ok {
-						doubt = true
-					}
-					consumed += lineBytes
-				}
-				return consumed, doubt, nil
-			default:
-				return consumed, doubt, readErr
 			}
-			break
+			return consumed, doubt, nil
+		default:
+			return consumed, doubt, readErr
 		}
 	}
 }

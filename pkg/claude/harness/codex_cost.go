@@ -1,7 +1,6 @@
 package harness
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -94,22 +93,18 @@ func CodexVirtualCostFromRollout(rolloutPath, modelHint string) (CodexTokenCost,
 	}
 	defer func() { _ = rc.Close() }()
 
-	scanner := bufio.NewScanner(rc)
-	scanner.Buffer(make([]byte, 0, 64*1024), maxCodexRolloutLineBytes)
-
 	var (
 		latestModel string
 		latestInfo  *codexTokenCountInfo
 		observed    time.Time
 	)
-	for scanner.Scan() {
-		line := scanner.Bytes()
+	err = scanCodexRolloutLines(rc, rolloutPath, func(line []byte) bool {
 		if len(bytes.TrimSpace(line)) == 0 {
-			continue
+			return true
 		}
 		var env codexEnvelope
 		if json.Unmarshal(line, &env) != nil {
-			continue
+			return true
 		}
 		switch env.Type {
 		case "turn_context":
@@ -120,14 +115,15 @@ func CodexVirtualCostFromRollout(rolloutPath, modelHint string) (CodexTokenCost,
 		case "event_msg":
 			var ev codexTokenCountEvent
 			if json.Unmarshal(env.Payload, &ev) != nil || ev.Type != "token_count" {
-				continue
+				return true
 			}
 			info := ev.Info
 			latestInfo = &info
 			observed = parseCodexEventTime(env.Timestamp)
 		}
-	}
-	if err := scanner.Err(); err != nil {
+		return true
+	})
+	if err != nil {
 		return CodexTokenCost{}, false, fmt.Errorf("scan codex rollout %s: %w", rolloutPath, err)
 	}
 	if latestInfo == nil {
