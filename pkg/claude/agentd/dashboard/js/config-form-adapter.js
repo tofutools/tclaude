@@ -1,8 +1,22 @@
-import { $, $$, esc } from './helpers.js';
-import { toast, isCyclingTabs } from './refresh.js';
-import { lastSnapshot } from './dashboard.js';
+import { $, $$ } from './helpers.js';
+import { dashboardState } from './snapshot-store.js';
 import { loadProfiles } from './profiles.js';
-import { bindRemoteAdmin, loadRemoteAdmin } from './remote-admin.js';
+
+let configLifecycle = {};
+const fallbackLists = new Map();
+let configDependencies = {
+  toast: () => {},
+  isCyclingTabs: () => false,
+  fetchImpl: (...args) => globalThis.fetch(...args),
+  confirmDiff: async () => false,
+  lists: {
+    get: id => fallbackLists.get(id) || [],
+    set: (id, values) => fallbackLists.set(id, values),
+  },
+};
+export function configureConfigLifecycle(callbacks = {}) { configLifecycle = callbacks; }
+export function configureConfigAdapter(dependencies = {}) { configDependencies = { ...configDependencies, ...dependencies }; }
+const latestSnapshot = () => dashboardState.snapshot.value || {};
 
 // ===================================================================
 // Config tab — visual editor for ~/.tclaude/config.json
@@ -21,6 +35,7 @@ let configObj = null;     // last loaded full config object (clone source)
 let configBaseRaw = '';   // canonical JSON of the config currently on disk
 let configLoaded = false;
 let configFileMalformed = false; // on-disk file is corrupt → form shows defaults
+let configBindingEpoch = 0;
 
 function cfgInt(id, fallback) {
   const v = parseInt($('#' + id).value, 10);
@@ -29,6 +44,39 @@ function cfgInt(id, fallback) {
 function cfgFloat(id, fallback) {
   const v = parseFloat($('#' + id).value);
   return Number.isFinite(v) ? v : fallback;
+}
+function setSelectValue(select, value) {
+  if (!select) return;
+  const wanted = String(value ?? '');
+  const options = Array.from(select.querySelectorAll('option'));
+  options.forEach(option => {
+    option.removeAttribute('selected');
+    option.selected = false;
+  });
+  const selected = options.find(option => (option.getAttribute('value') ?? option.value ?? '') === wanted);
+  if (selected) {
+    selected.setAttribute('selected', '');
+    selected.selected = true;
+  }
+}
+function controlValue(control) {
+  if (!control) return '';
+  if (control.tagName === 'SELECT') {
+    const options = Array.from(control.querySelectorAll('option'));
+    const selected = options.find(option => option.selected || option.hasAttribute('selected'));
+    return selected?.getAttribute('value') ?? selected?.value
+      ?? options[0]?.getAttribute('value') ?? options[0]?.value ?? '';
+  }
+  return control.value;
+}
+function makeOption(value, label = value) {
+  const option = document.createElement('option');
+  option.value = value;
+  option.textContent = label;
+  return option;
+}
+function replaceOptions(select, entries) {
+  select?.replaceChildren(...entries.map(([value, label]) => makeOption(value, label)));
 }
 
 // populateAskSelects fills the Ask-defaults Model / Effort dropdowns from
@@ -39,15 +87,14 @@ function cfgFloat(id, fallback) {
 // the only one wired for `tclaude ask` today; a hand-set value absent from
 // the catalog is added back by setAskSelectValue so it still round-trips.
 function populateAskSelects() {
-  const harnesses = (lastSnapshot && lastSnapshot.harnesses) || [];
+  const harnesses = latestSnapshot().harnesses || [];
   const claude = harnesses.find(h => h.name === 'claude') || {};
   fillAskSelect($('#ask-model'), claude.models || []);
   fillAskSelect($('#ask-effort'), claude.effort_levels || []);
 }
 function fillAskSelect(sel, values) {
   if (!sel) return;
-  sel.innerHTML = '<option value="">Built-in default</option>' +
-    (values || []).map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+  replaceOptions(sel, [['', 'Built-in default'], ...(values || []).map(value => [value, value])]);
 }
 // populateAskProfileSelect fills the Ask-defaults Profile dropdown from the
 // saved spawn profiles (the Groups-tab profiles), selecting `selected`. A
@@ -58,6 +105,7 @@ function fillAskSelect(sel, values) {
 // the "(none)" option. A hand-set profile that's since been deleted is kept as
 // a "(missing)" option so the form shows what's on disk, not a silent reset.
 async function populateAskProfileSelect(selected) {
+  const bindingEpoch = configBindingEpoch;
   const sel = $('#ask-profile');
   if (!sel) return;
   const selectedName = (selected || '').trim();
@@ -66,27 +114,27 @@ async function populateAskProfileSelect(selected) {
   // races ahead of loadProfiles() still reads the real profile name off
   // #ask-profile rather than an empty value (which assembleConfig would persist
   // as "delete ask.profile", silently clearing a saved profile).
-  sel.innerHTML = '<option value="">(none — use Model/Effort below)</option>';
+  replaceOptions(sel, [['', '(none — use Model/Effort below)']]);
   if (selectedName) {
     const pending = document.createElement('option');
     pending.value = selectedName;
     pending.textContent = `${selectedName} (loading…)`;
     sel.appendChild(pending);
   }
-  sel.value = selectedName;
+  setSelectValue(sel, selectedName);
   applyAskProfileState();
 
   let profiles = [];
   try { profiles = await loadProfiles(); } catch { profiles = []; }
-  sel.innerHTML = '<option value="">(none — use Model/Effort below)</option>' +
-    profiles.map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
+  if (bindingEpoch !== configBindingEpoch || sel !== $('#ask-profile')) return;
+  replaceOptions(sel, [['', '(none — use Model/Effort below)'], ...profiles.map(profile => [profile.name, profile.name])]);
   if (selectedName && !profiles.some(p => p.name === selectedName)) {
     const o = document.createElement('option');
     o.value = selectedName;
     o.textContent = `${selectedName} (missing)`;
     sel.appendChild(o);
   }
-  sel.value = selectedName;
+  setSelectValue(sel, selectedName);
   applyAskProfileState();
 }
 
@@ -96,14 +144,14 @@ async function populateAskProfileSelect(selected) {
 // note. Called on load and on every Profile change.
 function applyAskProfileState() {
   const sel = $('#ask-profile');
-  const active = !!(sel && sel.value);
+  const active = !!controlValue(sel);
   const model = $('#ask-model'), effort = $('#ask-effort');
   if (model) model.disabled = active;
   if (effort) effort.disabled = active;
   const note = $('#ask-profile-state');
   if (note) {
     note.textContent = active
-      ? `Profile “${sel.value}” supplies the harness/model/effort — the Model/Effort below are ignored.`
+      ? `Profile “${controlValue(sel)}” supplies the harness/model/effort — the Model/Effort below are ignored.`
       : '';
   }
 }
@@ -114,13 +162,13 @@ function applyAskProfileState() {
 function setAskSelectValue(sel, value) {
   if (!sel) return;
   value = value || '';
-  if (value && !Array.from(sel.options).some(o => o.value === value)) {
+  if (value && !Array.from(sel.querySelectorAll('option')).some(o => (o.getAttribute('value') ?? o.value) === value)) {
     const o = document.createElement('option');
     o.value = value;
     o.textContent = value;
     sel.appendChild(o);
   }
-  sel.value = value;
+  setSelectValue(sel, value);
 }
 
 // populateScribeProfileSelect fills the Scribe-defaults Profile dropdown from
@@ -132,6 +180,7 @@ function setAskSelectValue(sel, value) {
 // "(default)" option. A hand-set profile that's since been deleted is kept as a
 // "(missing)" option so the form shows what's on disk, not a silent reset.
 async function populateScribeProfileSelect(selected) {
+  const bindingEpoch = configBindingEpoch;
   const sel = $('#scribe-profile');
   if (!sel) return;
   const selectedName = (selected || '').trim();
@@ -140,127 +189,46 @@ async function populateScribeProfileSelect(selected) {
   // races ahead of loadProfiles() still reads the real profile name off
   // #scribe-profile rather than an empty value (which assembleConfig would
   // persist as "delete scribe.profile", silently clearing a saved profile).
-  sel.innerHTML = '<option value="">(default — harness default)</option>';
+  replaceOptions(sel, [['', '(default — harness default)']]);
   if (selectedName) {
     const pending = document.createElement('option');
     pending.value = selectedName;
     pending.textContent = `${selectedName} (loading…)`;
     sel.appendChild(pending);
   }
-  sel.value = selectedName;
+  setSelectValue(sel, selectedName);
 
   let profiles = [];
   try { profiles = await loadProfiles(); } catch { profiles = []; }
-  sel.innerHTML = '<option value="">(default — harness default)</option>' +
-    profiles.map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
+  if (bindingEpoch !== configBindingEpoch || sel !== $('#scribe-profile')) return;
+  replaceOptions(sel, [['', '(default — harness default)'], ...profiles.map(profile => [profile.name, profile.name])]);
   if (selectedName && !profiles.some(p => p.name === selectedName)) {
     const o = document.createElement('option');
     o.value = selectedName;
     o.textContent = `${selectedName} (missing)`;
     sel.appendChild(o);
   }
-  sel.value = selectedName;
+  setSelectValue(sel, selectedName);
 }
 
-// cfgStringRow / cfgTransitionRow build one removable row of a list
-// editor. renderCfg*List (re)populates a container with rows + an
-// "+ add" button; readCfg*List collects the non-blank values back.
-function cfgStringRow(value, datalistId, placeholder) {
-  const row = document.createElement('div');
-  row.className = 'cfg-list-row';
-  const inp = document.createElement('input');
-  inp.type = 'text';
-  inp.value = value || '';
-  inp.placeholder = placeholder || '';
-  if (placeholder) inp.setAttribute('aria-label', placeholder);
-  inp.autocomplete = 'off';
-  inp.spellcheck = false;
-  if (datalistId) inp.setAttribute('list', datalistId);
-  const del = document.createElement('button');
-  del.type = 'button';
-  del.className = 'cfg-row-del';
-  del.textContent = '×';
-  del.title = 'Remove';
-  del.addEventListener('click', () => row.remove());
-  row.appendChild(inp);
-  row.appendChild(del);
-  return row;
-}
-function cfgTransitionRow(from, to) {
-  const row = document.createElement('div');
-  row.className = 'cfg-list-row';
-  const mk = (val, ph, role) => {
-    const i = document.createElement('input');
-    i.type = 'text';
-    i.value = val || '';
-    i.placeholder = ph;
-    i.setAttribute('aria-label', ph);
-    i.autocomplete = 'off';
-    i.spellcheck = false;
-    i.dataset.role = role;
-    i.setAttribute('list', 'cfg-state-list');
-    return i;
-  };
-  const arrow = document.createElement('span');
-  arrow.className = 'cfg-arrow';
-  arrow.textContent = '→';
-  const del = document.createElement('button');
-  del.type = 'button';
-  del.className = 'cfg-row-del';
-  del.textContent = '×';
-  del.title = 'Remove';
-  del.addEventListener('click', () => row.remove());
-  row.appendChild(mk(from, 'from state', 'from'));
-  row.appendChild(arrow);
-  row.appendChild(mk(to, 'to state', 'to'));
-  row.appendChild(del);
-  return row;
-}
 function renderCfgStringList(containerId, values, datalistId, placeholder) {
-  const c = $('#' + containerId);
-  c.innerHTML = '';
-  (values || []).forEach(v => c.appendChild(cfgStringRow(v, datalistId, placeholder)));
-  const add = document.createElement('button');
-  add.type = 'button';
-  add.className = 'cfg-list-add';
-  add.textContent = '+ add';
-  add.addEventListener('click', () => {
-    const row = cfgStringRow('', datalistId, placeholder);
-    c.insertBefore(row, add);
-    row.querySelector('input').focus();
-  });
-  c.appendChild(add);
+  configDependencies.lists.set(containerId, [...(values || [])]);
 }
 function renderCfgTransitionList(values) {
-  const c = $('#cfg-notif-transitions');
-  c.innerHTML = '';
-  (values || []).forEach(t => c.appendChild(cfgTransitionRow(t.from, t.to)));
-  const add = document.createElement('button');
-  add.type = 'button';
-  add.className = 'cfg-list-add';
-  add.textContent = '+ add transition';
-  add.addEventListener('click', () => {
-    const row = cfgTransitionRow('', '');
-    c.insertBefore(row, add);
-    row.querySelector('input').focus();
-  });
-  c.appendChild(add);
+  configDependencies.lists.set('cfg-notif-transitions', (values || []).map(value => ({ ...value })));
 }
 function readCfgStringList(containerId) {
-  return $$('#' + containerId + ' .cfg-list-row input')
-    .map(i => i.value.trim()).filter(Boolean);
+  return configDependencies.lists.get(containerId).map(value => String(value).trim()).filter(Boolean);
 }
 function readCfgTransitionList() {
-  const out = [];
-  $$('#cfg-notif-transitions .cfg-list-row').forEach(row => {
-    const from = row.querySelector('input[data-role=from]').value.trim();
-    const to = row.querySelector('input[data-role=to]').value.trim();
+  return configDependencies.lists.get('cfg-notif-transitions').flatMap(item => {
+    const from = String(item.from || '').trim();
+    const to = String(item.to || '').trim();
     // A row with either side filled is kept (a half-filled row then
     // surfaces as a server validation error rather than silently
     // vanishing); a fully blank row is dropped.
-    if (from || to) out.push({ from, to });
+    return from || to ? [{ from, to }] : [];
   });
-  return out;
 }
 
 // The "Notify me when an agent…" checklist is a friendly view over the
@@ -282,69 +250,22 @@ function setCfgNotifyType(to, on) {
   // and leave all other rules (from-specific or non-canonical) intact.
   const rules = readCfgTransitionList().filter(r => !(r.from === '*' && r.to === to));
   if (on) rules.push({ from: '*', to });
-  renderCfgTransitionList(rules);
+  configDependencies.lists.set('cfg-notif-transitions', rules);
   syncCfgNotifyTypes();
 }
 
-// cfgThresholdRow / renderCfgThresholdList / readCfgThresholdList edit
-// the pre_compact_guard floor ladder: one (window_size → min_tokens)
-// pair per row.
-function cfgThresholdRow(windowSize, minTokens) {
-  const row = document.createElement('div');
-  row.className = 'cfg-list-row';
-  const mk = (val, ph, role) => {
-    const i = document.createElement('input');
-    i.type = 'number';
-    i.min = '1';
-    i.value = (val != null && val !== '') ? val : '';
-    i.placeholder = ph;
-    i.setAttribute('aria-label', ph);
-    i.autocomplete = 'off';
-    i.dataset.role = role;
-    i.style.minWidth = '170px';
-    return i;
-  };
-  const arrow = document.createElement('span');
-  arrow.className = 'cfg-arrow';
-  arrow.textContent = '→';
-  const del = document.createElement('button');
-  del.type = 'button';
-  del.className = 'cfg-row-del';
-  del.textContent = '×';
-  del.title = 'Remove';
-  del.addEventListener('click', () => row.remove());
-  row.appendChild(mk(windowSize, 'window size (tokens)', 'window'));
-  row.appendChild(arrow);
-  row.appendChild(mk(minTokens, 'min used tokens before compaction', 'min'));
-  row.appendChild(del);
-  return row;
-}
 function renderCfgThresholdList(values) {
-  const c = $('#cfg-precompact-thresholds');
-  c.innerHTML = '';
-  (values || []).forEach(t => c.appendChild(cfgThresholdRow(t.window_size, t.min_tokens)));
-  const add = document.createElement('button');
-  add.type = 'button';
-  add.className = 'cfg-list-add';
-  add.textContent = '+ add floor';
-  add.addEventListener('click', () => {
-    const row = cfgThresholdRow('', '');
-    c.insertBefore(row, add);
-    row.querySelector('input').focus();
-  });
-  c.appendChild(add);
+  configDependencies.lists.set('cfg-precompact-thresholds', (values || []).map(value => ({ ...value })));
 }
 function readCfgThresholdList() {
-  const out = [];
-  $$('#cfg-precompact-thresholds .cfg-list-row').forEach(row => {
-    const w = row.querySelector('input[data-role=window]').value.trim();
-    const m = row.querySelector('input[data-role=min]').value.trim();
+  return configDependencies.lists.get('cfg-precompact-thresholds').flatMap(item => {
+    const w = String(item.window_size ?? '').trim();
+    const m = String(item.min_tokens ?? '').trim();
     // A row with either side filled is kept so a half-filled row
     // surfaces as a server validation error instead of silently
     // vanishing; a fully blank row is dropped.
-    if (w || m) out.push({ window_size: parseInt(w, 10) || 0, min_tokens: parseInt(m, 10) || 0 });
+    return w || m ? [{ window_size: parseInt(w, 10) || 0, min_tokens: parseInt(m, 10) || 0 }] : [];
   });
-  return out;
 }
 
 // syncCfgEnables greys out the companion inputs of any unchecked
@@ -396,7 +317,7 @@ function joinBind(host, port) {
 function syncCfgRemoteStatus() {
   const el = $('#cfg-remote-status');
   if (!el) return;
-  const ra = (lastSnapshot && lastSnapshot.remote_access) || {};
+  const ra = latestSnapshot().remote_access || {};
   const enabled = $('#cfg-remote-enabled').checked;
   // Mirror assembleConfig's effective port so the "live on …" comparison and
   // the saved bind agree (a blank port while enabled resolves to 8443).
@@ -431,7 +352,7 @@ function syncCfgRemoteStatus() {
 
 function populateConfigForm(cfg) {
   cfg = cfg || {};
-  $('#cfg-log-level').value = cfg.log_level || 'info';
+  setSelectValue($('#cfg-log-level'), cfg.log_level || 'info');
   $('#cfg-terminal').value = cfg.terminal || '';
   const pcg = cfg.pre_compact_guard || {};
   $('#cfg-precompact-enabled').checked = !!pcg.enabled;
@@ -455,8 +376,8 @@ function populateConfigForm(cfg) {
 
   // tui.color_scheme — the interactive watch views' palette. Absent/unknown
   // resolves to 'default'; only 'dark-high-contrast' is the non-default choice.
-  $('#cfg-tui-color-scheme').value = (cfg.tui && cfg.tui.color_scheme === 'dark-high-contrast')
-    ? 'dark-high-contrast' : 'default';
+  setSelectValue($('#cfg-tui-color-scheme'), (cfg.tui && cfg.tui.color_scheme === 'dark-high-contrast')
+    ? 'dark-high-contrast' : 'default');
 
   $('#cfg-focus-raiseonly').checked = !!(cfg.focus && cfg.focus.raise_only);
   // window_title: on is the default, so it's checked unless an explicit
@@ -468,7 +389,7 @@ function populateConfigForm(cfg) {
   // so the human sees exactly what's on disk (an explicit 0 stays 0).
   const tile = (cfg.focus && cfg.focus.tile) || {};
   $('#cfg-focus-tile').checked = !!tile.enabled;
-  $('#cfg-focus-tile-layout').value = tile.layout || 'grid';
+  setSelectValue($('#cfg-focus-tile-layout'), tile.layout || 'grid');
   $('#cfg-focus-tile-resize').checked = !!tile.resize;
   $('#cfg-focus-tile-gap').value = (tile.gap != null) ? tile.gap : '';
   $('#cfg-focus-tile-margin').value = (tile.margin != null) ? tile.margin : '';
@@ -505,9 +426,9 @@ function populateConfigForm(cfg) {
   // Activity bots — per-mode style of the deduped robot indicator.
   // Defaults: regular + wizard emoji, slop sprites (mirrors the Go resolvers).
   const ab = (cfg.dashboard && cfg.dashboard.activity_bots) || {};
-  $('#cfg-dashboard-activity-bots-regular').value = ab.regular || 'emoji';
-  $('#cfg-dashboard-activity-bots-slop').value = ab.slop || 'sprites';
-  $('#cfg-dashboard-activity-bots-wizard').value = ab.wizard || 'emoji';
+  setSelectValue($('#cfg-dashboard-activity-bots-regular'), ab.regular || 'emoji');
+  setSelectValue($('#cfg-dashboard-activity-bots-slop'), ab.slop || 'sprites');
+  setSelectValue($('#cfg-dashboard-activity-bots-wizard'), ab.wizard || 'emoji');
 
   // Always show the Plugins tab even with no plugins installed. Default off
   // (the tab auto-hides when empty); lives in the dashboard block.
@@ -639,7 +560,7 @@ function populateConfigForm(cfg) {
 function assembleConfig() {
   const cfg = JSON.parse(JSON.stringify(configObj || {}));
 
-  cfg.log_level = $('#cfg-log-level').value;
+  cfg.log_level = controlValue($('#cfg-log-level'));
   const term = $('#cfg-terminal').value.trim();
   if (term) cfg.terminal = term; else delete cfg.terminal;
 
@@ -684,7 +605,7 @@ function assembleConfig() {
   // the omitempty default — drop the field, and the block when it's all that's
   // left, so an all-default config doesn't marshal a spurious "tui": {} diff.
   const tui = (cfg.tui && typeof cfg.tui === 'object') ? cfg.tui : {};
-  const scheme = $('#cfg-tui-color-scheme').value;
+  const scheme = controlValue($('#cfg-tui-color-scheme'));
   if (scheme && scheme !== 'default') tui.color_scheme = scheme; else delete tui.color_scheme;
   if (Object.keys(tui).length) cfg.tui = tui; else delete cfg.tui;
 
@@ -748,9 +669,9 @@ function assembleConfig() {
   // "dashboard": {}. Mirrors the Go omitempty + per-mode-default resolvers.
   const dashboard = (cfg.dashboard && typeof cfg.dashboard === 'object') ? cfg.dashboard : {};
   const ab = (dashboard.activity_bots && typeof dashboard.activity_bots === 'object') ? dashboard.activity_bots : {};
-  const abReg = $('#cfg-dashboard-activity-bots-regular').value;
-  const abSlop = $('#cfg-dashboard-activity-bots-slop').value;
-  const abWiz = $('#cfg-dashboard-activity-bots-wizard').value;
+  const abReg = controlValue($('#cfg-dashboard-activity-bots-regular'));
+  const abSlop = controlValue($('#cfg-dashboard-activity-bots-slop'));
+  const abWiz = controlValue($('#cfg-dashboard-activity-bots-wizard'));
   if (abReg && abReg !== 'emoji') ab.regular = abReg; else delete ab.regular;
   if (abSlop && abSlop !== 'sprites') ab.slop = abSlop; else delete ab.slop;
   if (abWiz && abWiz !== 'emoji') ab.wizard = abWiz; else delete ab.wizard;
@@ -788,9 +709,9 @@ function assembleConfig() {
   // nothing left is dropped so an all-default ask doesn't marshal as a
   // spurious "ask": {} diff.
   const ask = (cfg.ask && typeof cfg.ask === 'object') ? cfg.ask : {};
-  const askProfile = $('#ask-profile') ? $('#ask-profile').value.trim() : '';
-  const askModel = $('#ask-model').value.trim();
-  const askEffort = $('#ask-effort').value.trim();
+  const askProfile = controlValue($('#ask-profile')).trim();
+  const askModel = controlValue($('#ask-model')).trim();
+  const askEffort = controlValue($('#ask-effort')).trim();
   // The profile selects the harness/model/effort a fresh ask runs at; the
   // Model/Effort here are kept (the no-profile fallback) but ignored while a
   // profile is set — resolveAskTarget applies that precedence server-side.
@@ -804,7 +725,7 @@ function assembleConfig() {
   // the block when the profile is cleared and nothing else remains — an
   // all-default scribe must not marshal as a spurious "scribe": {} diff.
   const scribe = (cfg.scribe && typeof cfg.scribe === 'object') ? cfg.scribe : {};
-  const scribeProfile = $('#scribe-profile') ? $('#scribe-profile').value.trim() : '';
+  const scribeProfile = controlValue($('#scribe-profile')).trim();
   if (scribeProfile) scribe.profile = scribeProfile; else delete scribe.profile;
   if (Object.keys(scribe).length) cfg.scribe = scribe; else delete cfg.scribe;
 
@@ -828,7 +749,7 @@ function assembleConfig() {
   // vs blank (default).
   const tc = (fc.tile && typeof fc.tile === 'object') ? fc.tile : {};
   if ($('#cfg-focus-tile').checked) tc.enabled = true; else delete tc.enabled;
-  const tileLayout = $('#cfg-focus-tile-layout').value;
+  const tileLayout = controlValue($('#cfg-focus-tile-layout'));
   if (tileLayout && tileLayout !== 'grid') tc.layout = tileLayout; else delete tc.layout;
   if ($('#cfg-focus-tile-resize').checked) tc.resize = true; else delete tc.resize;
   const tileGap = $('#cfg-focus-tile-gap').value.trim();
@@ -1022,14 +943,24 @@ function assembleConfig() {
 function clearConfigErrors() {
   const el = $('#cfg-errors');
   el.style.display = 'none';
-  el.innerHTML = '';
+  el.replaceChildren();
+}
+function renderMessageList(el, heading, messages) {
+  const strong = document.createElement('strong');
+  strong.textContent = heading;
+  const list = document.createElement('ul');
+  list.append(...messages.map(message => {
+    const item = document.createElement('li');
+    item.textContent = message;
+    return item;
+  }));
+  el.replaceChildren(strong, list);
 }
 function showConfigErrors(errs) {
   const el = $('#cfg-errors');
-  el.innerHTML = '<strong>Cannot save — fix these first:</strong><ul>' +
-    errs.map(e => `<li>${esc(e)}</li>`).join('') + '</ul>';
+  renderMessageList(el, 'Cannot save — fix these first:', errs);
   el.style.display = 'block';
-  el.scrollIntoView({ block: 'nearest' });
+  el.scrollIntoView?.({ block: 'nearest' });
 }
 
 // The notice box (amber) carries load-time facts about the file the
@@ -1039,11 +970,10 @@ function renderConfigNotice(messages) {
   const el = $('#cfg-notice');
   if (!messages.length) {
     el.style.display = 'none';
-    el.innerHTML = '';
+    el.replaceChildren();
     return;
   }
-  el.innerHTML = '<strong>Heads up:</strong><ul>' +
-    messages.map(m => `<li>${esc(m)}</li>`).join('') + '</ul>';
+  renderMessageList(el, 'Heads up:', messages);
   el.style.display = 'block';
 }
 
@@ -1108,19 +1038,21 @@ function applyConfigFilter() {
 }
 
 async function loadConfigTab() {
+  const bindingEpoch = configBindingEpoch;
   // Refresh the slug / group datalists from the latest snapshot.
-  const snap = lastSnapshot || {};
-  $('#cfg-slug-list').innerHTML = (snap.slugs || [])
-    .map(s => `<option value="${esc(s.slug)}"></option>`).join('');
-  $('#cfg-group-list').innerHTML = (snap.groups || [])
-    .map(g => `<option value="${esc(g.name)}"></option>`).join('');
+  const snap = latestSnapshot();
+  replaceOptions($('#cfg-slug-list'), (snap.slugs || []).map(slug => [slug.slug, '']));
+  replaceOptions($('#cfg-group-list'), (snap.groups || []).map(group => [group.name, '']));
   $('#cfg-status').textContent = 'loading…';
+  configLifecycle.loading?.();
   clearConfigErrors();
   renderConfigNotice([]);
   try {
-    const r = await fetch('/api/config', { credentials: 'same-origin' });
+    const r = await configDependencies.fetchImpl('/api/config', { credentials: 'same-origin' });
+    if (bindingEpoch !== configBindingEpoch) return;
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const data = await r.json();
+    if (bindingEpoch !== configBindingEpoch) return;
     configBaseRaw = data.raw || '{}';
     configObj = JSON.parse(configBaseRaw);
     configFileMalformed = !!data.malformed;
@@ -1138,22 +1070,22 @@ async function loadConfigTab() {
     $('#cfg-status').textContent = notices.length
       ? 'loaded with a notice — see above'
       : 'loaded — edits stay in this form until you Save';
+    configLifecycle.loaded?.(data);
   } catch (e) {
+    if (bindingEpoch !== configBindingEpoch) return;
     configLoaded = false;
     $('#cfg-status').textContent = 'failed to load';
     showConfigErrors(['Could not load config: ' + (e.message || e)]);
+    configLifecycle.failed?.(e);
   }
   // Re-apply any standing filter — a Reload rebuilds the inner lists, and
   // the operator may have a query typed; keep what's hidden hidden.
   applyConfigFilter();
-  // Localhost-only cert management renders independently of the config form's
-  // load result (it has its own endpoint + error handling).
-  void loadRemoteAdmin();
 }
 
-// cfgLineDiff returns an LCS-based line diff of two strings. Config
+// configLineDiff returns an LCS-based line diff of two strings. Config
 // JSON is tiny (tens of lines) so the O(n·m) table is trivial.
-function cfgLineDiff(aStr, bStr) {
+function configLineDiff(aStr, bStr) {
   const a = aStr.split('\n'), b = bStr.split('\n');
   const n = a.length, m = b.length;
   const dp = [];
@@ -1175,56 +1107,6 @@ function cfgLineDiff(aStr, bStr) {
   return out;
 }
 
-// configDiffModal renders the before/after diff and resolves true on
-// confirm, false on cancel / outside-click / Escape. When malformed
-// is set the on-disk file is corrupt: a red banner spells out that
-// the whole file is being replaced and the diff is only against
-// defaults, so the human cannot wipe a corrupt config unawares.
-function configDiffModal(beforeRaw, afterRaw, malformed) {
-  return new Promise(resolve => {
-    const overlay = $('#config-diff-modal');
-    const diff = cfgLineDiff(beforeRaw, afterRaw);
-    const adds = diff.filter(d => d.t === 'add').length;
-    const dels = diff.filter(d => d.t === 'del').length;
-    const warnEl = $('#config-diff-warn');
-    if (malformed) {
-      warnEl.textContent = '⚠ config.json on disk is corrupt and could not be parsed. ' +
-        'The form shows DEFAULT values, not your previous settings. Saving replaces the ' +
-        'corrupt file entirely — anything it contained is lost. The diff below is against defaults.';
-      warnEl.style.display = 'block';
-    } else {
-      warnEl.style.display = 'none';
-    }
-    $('#config-diff-confirm').textContent = malformed
-      ? 'Replace corrupt config.json' : 'Save to config.json';
-    $('#config-diff-sub').textContent =
-      `${adds} line(s) added, ${dels} removed — writing to ${$('#cfg-path').textContent}`;
-    const sign = { add: '+', del: '-', ctx: ' ' };
-    $('#config-diff-body').innerHTML = diff
-      .map(d => `<span class="dl ${d.t}">${esc(sign[d.t] + ' ' + d.s)}</span>`).join('');
-    const okBtn = $('#config-diff-confirm');
-    const cancelBtn = $('#config-diff-cancel');
-    const cleanup = (result) => {
-      overlay.classList.remove('show');
-      okBtn.removeEventListener('click', onOk);
-      cancelBtn.removeEventListener('click', onCancel);
-      overlay.removeEventListener('click', onOverlay);
-      document.removeEventListener('keydown', onKey);
-      resolve(result);
-    };
-    const onOk = () => cleanup(true);
-    const onCancel = () => cleanup(false);
-    const onOverlay = (e) => { if (e.target === overlay) cleanup(false); };
-    const onKey = (e) => { if (e.key === 'Escape') cleanup(false); };
-    okBtn.addEventListener('click', onOk);
-    cancelBtn.addEventListener('click', onCancel);
-    overlay.addEventListener('click', onOverlay);
-    document.addEventListener('keydown', onKey);
-    overlay.classList.add('show');
-    okBtn.focus();
-  });
-}
-
 // reportConfigHTTPError surfaces a non-OK /api/config response and
 // returns true when it handled one — the caller then aborts. 400 is
 // the structured validation contract; 409 is the drift guard (the
@@ -1233,59 +1115,72 @@ async function reportConfigHTTPError(resp) {
   if (resp.status === 400) {
     const d = await resp.json().catch(() => ({}));
     showConfigErrors(d.errors && d.errors.length ? d.errors : ['Config rejected by the server.']);
+    configLifecycle.failed?.(new Error('Config rejected by the server.'));
     return true;
   }
   if (resp.status === 409) {
     const d = await resp.json().catch(() => ({}));
     showConfigErrors([(d.error || 'config.json changed on disk') +
       ' — press Reload to pick up the current file, then re-apply your edits.']);
+    configLifecycle.failed?.(new Error(d.error || 'config.json changed on disk'));
     return true;
   }
   if (!resp.ok) {
     showConfigErrors(['Server error: HTTP ' + resp.status]);
+    configLifecycle.failed?.(new Error('Server error: HTTP ' + resp.status));
     return true;
   }
   return false;
 }
 
 async function saveConfig() {
-  if (!configLoaded) { toast('Config not loaded yet', true); return; }
+  const bindingEpoch = configBindingEpoch;
+  if (!configLoaded) { configDependencies.toast('Config not loaded yet', true); return; }
   clearConfigErrors();
   let edited;
   try {
     edited = assembleConfig();
   } catch (e) {
     showConfigErrors([e.message || String(e)]);
+    configLifecycle.failed?.(e);
     return;
   }
   // The body carries the edited config plus the canonical baseline
   // the form loaded — the server 409s if the file drifted since.
   const body = JSON.stringify({ config: edited, base: configBaseRaw });
-  const post = (query) => fetch('/api/config' + query, {
+  const post = (query) => configDependencies.fetchImpl('/api/config' + query, {
     method: 'POST', credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' }, body,
   });
   const saveBtn = $('#cfg-save');
   saveBtn.disabled = true;
+  configLifecycle.saving?.();
   try {
     // Phase 1: dry-run — server validates and returns the canonical
     // "after" without writing anything.
     const dry = await post('?dry_run=1');
+    if (bindingEpoch !== configBindingEpoch) return;
     if (await reportConfigHTTPError(dry)) return;
     const after = (await dry.json()).raw || '';
+    if (bindingEpoch !== configBindingEpoch) return;
     // When the on-disk file is corrupt the diff baseline is "defaults",
     // so after===base can hold even though the save still meaningfully
     // replaces the corrupt file — don't skip it then.
-    if (after === configBaseRaw && !configFileMalformed) { toast('No changes to save'); return; }
+    if (after === configBaseRaw && !configFileMalformed) { configDependencies.toast('No changes to save'); configLifecycle.ready?.(); return; }
 
     // Phase 2: human confirms the diff before the real write.
-    const ok = await configDiffModal(configBaseRaw, after, configFileMalformed);
-    if (!ok) { toast('Save cancelled'); return; }
+    const ok = await configDependencies.confirmDiff(
+      configBaseRaw, after, configFileMalformed, $('#cfg-path').textContent,
+    );
+    if (bindingEpoch !== configBindingEpoch) return;
+    if (!ok) { configDependencies.toast('Save cancelled'); configLifecycle.ready?.(); return; }
 
     // replace_malformed acknowledges wiping a corrupt on-disk file.
     const res = await post(configFileMalformed ? '?replace_malformed=1' : '');
+    if (bindingEpoch !== configBindingEpoch) return;
     if (await reportConfigHTTPError(res)) return;
     const data = await res.json();
+    if (bindingEpoch !== configBindingEpoch) return;
     configBaseRaw = data.raw || configBaseRaw;
     configObj = JSON.parse(configBaseRaw);
     configFileMalformed = false; // the file is canonical after a save
@@ -1295,9 +1190,12 @@ async function saveConfig() {
     // stale, so clear it.
     renderConfigNotice([]);
     $('#cfg-status').textContent = 'saved · ' + new Date().toLocaleTimeString();
-    toast('Config saved to ' + $('#cfg-path').textContent);
+    configDependencies.toast('Config saved to ' + $('#cfg-path').textContent);
+    configLifecycle.saved?.(data);
   } catch (e) {
+    if (bindingEpoch !== configBindingEpoch) return;
     showConfigErrors(['Save failed: ' + (e.message || e)]);
+    configLifecycle.failed?.(e);
   } finally {
     saveBtn.disabled = false;
   }
@@ -1316,82 +1214,64 @@ function focusConfigSearch() {
   filterInput.select();
 }
 
-function bindConfigTab() {
+function handleConfigEvent(event) {
+  const target = event.target;
+  const id = target.id;
+  if (event.type === 'input') {
+    if (id === 'cfg-filter') applyConfigFilter();
+    if (target.closest?.('#cfg-notif-transitions')) syncCfgNotifyTypes();
+    if (id === 'cfg-remote-host' || id === 'cfg-remote-port') syncCfgRemoteStatus();
+    return;
+  }
+  if (event.type === 'keydown' && id === 'cfg-filter' && event.key === 'Escape' && target.value) {
+    event.preventDefault();
+    target.value = '';
+    applyConfigFilter();
+    return;
+  }
+  if (event.type === 'change') {
+    if (['cfg-precompact-enabled', 'cfg-ratelimit-enabled', 'cfg-agent-spawnmax-enabled',
+      'cfg-nudge-enabled', 'cfg-agent-retired-cleanup-enabled'].includes(id)) syncCfgEnables();
+    const notifyType = target.getAttribute?.('data-cfg-notify-type');
+    if (notifyType) setCfgNotifyType(notifyType, target.checked);
+    if (id === 'ask-profile') applyAskProfileState();
+    if (id === 'cfg-remote-host' || id === 'cfg-remote-port') syncCfgRemoteStatus();
+    if (id === 'cfg-remote-enabled') {
+      const portEl = $('#cfg-remote-port');
+      if (target.checked && portEl && !portEl.value.trim()) portEl.value = REMOTE_DEFAULT_PORT;
+      syncCfgRemoteStatus();
+    }
+    return;
+  }
+  if (event.type !== 'click') return;
+  if (id === 'cfg-reload') { void loadConfigTab(); return; }
+  if (id === 'cfg-save') { void saveConfig(); return; }
+  if (id === 'cfg-filter-clear') {
+    const filterInput = $('#cfg-filter');
+    if (filterInput) { filterInput.value = ''; filterInput.focus(); }
+    applyConfigFilter();
+  }
+}
+
+function bindConfigActivation() {
+  const bindingEpoch = ++configBindingEpoch;
   // Lazy-load on the first activation of the Config tab.
   const navBtn = $('nav [data-tab="config"]');
-  if (navBtn) navBtn.addEventListener('click', () => {
+  const activate = () => {
     if (!configLoaded) loadConfigTab();
     // Focus the search on a deliberate switch — a mouse click, the command
     // palette's "Go to Config", or a "Config ↗" deep link — but NOT during
     // keyboard tab-cycling ([ / ] and ←/→). Focusing the <input> there
     // would trap those very hotkeys (isEditableTarget) and strand the user
     // on Config; see isCyclingTabs in refresh.js.
-    if (!isCyclingTabs()) focusConfigSearch();
-  });
-  $('#cfg-reload').addEventListener('click', loadConfigTab);
-  $('#cfg-save').addEventListener('click', saveConfig);
-  // Live section filter. Esc clears it; the clear button mirrors that.
-  const filterInput = $('#cfg-filter');
-  if (filterInput) {
-    filterInput.addEventListener('input', applyConfigFilter);
-    filterInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && filterInput.value) {
-        e.preventDefault();
-        filterInput.value = '';
-        applyConfigFilter();
-      }
-    });
-  }
-  const filterClear = $('#cfg-filter-clear');
-  if (filterClear) filterClear.addEventListener('click', () => {
-    if (filterInput) { filterInput.value = ''; filterInput.focus(); }
-    applyConfigFilter();
-  });
-  // Localhost-only remote-access cert management lives in the same tab; wire its
-  // buttons once here (its data loads via loadConfigTab → loadRemoteAdmin).
-  bindRemoteAdmin();
-  ['cfg-precompact-enabled', 'cfg-ratelimit-enabled',
-    'cfg-agent-spawnmax-enabled', 'cfg-nudge-enabled',
-    'cfg-agent-retired-cleanup-enabled'].forEach(id => {
-    $('#' + id).addEventListener('change', syncCfgEnables);
-  });
-  // The friendly per-type checklist edits the raw "Advanced" transition
-  // list in place (one wildcard rule per checked type).
-  $$('#cfg-notif-types [data-cfg-notify-type]').forEach(cb => {
-    cb.addEventListener('change', () => setCfgNotifyType(cb.getAttribute('data-cfg-notify-type'), cb.checked));
-  });
-  // Keep the checklist honest when the Advanced raw editor is edited
-  // directly: typing in a from/to input (input) or removing a row (the ×
-  // delete fires a click that bubbles here; defer so the row is gone
-  // first) re-derives which type boxes are lit. The container element
-  // survives renderCfgTransitionList's innerHTML rebuilds, so this one
-  // listener outlives the rows.
-  const transList = $('#cfg-notif-transitions');
-  if (transList) {
-    transList.addEventListener('input', syncCfgNotifyTypes);
-    transList.addEventListener('click', () => setTimeout(syncCfgNotifyTypes, 0));
-  }
-  // Toggle the Model/Effort selects live as the Ask profile changes.
-  const askProf = $('#ask-profile');
-  if (askProf) askProf.addEventListener('change', applyAskProfileState);
-
-  // Re-render the remote-access status line as the interface / port change, so
-  // the "run setup first" / "restart to apply" guidance stays honest.
-  ['cfg-remote-host', 'cfg-remote-port'].forEach(id => {
-    const elx = $('#' + id);
-    if (elx) {
-      elx.addEventListener('change', syncCfgRemoteStatus);
-      elx.addEventListener('input', syncCfgRemoteStatus);
-    }
-  });
-  // Enabling with an empty port pre-fills the conventional 8443 so the operator
-  // sees the bind it will use, then refreshes the status line.
-  const remoteEn = $('#cfg-remote-enabled');
-  if (remoteEn) remoteEn.addEventListener('change', () => {
-    const portEl = $('#cfg-remote-port');
-    if (remoteEn.checked && portEl && !portEl.value.trim()) portEl.value = REMOTE_DEFAULT_PORT;
-    syncCfgRemoteStatus();
-  });
+    if (!configDependencies.isCyclingTabs()) focusConfigSearch();
+  };
+  navBtn?.addEventListener('click', activate);
+  return () => {
+    if (configBindingEpoch === bindingEpoch) configBindingEpoch++;
+    configLoaded = false;
+    navBtn?.removeEventListener('click', activate);
+  };
 }
 
-export { bindConfigTab };
+export { assembleConfig, bindConfigActivation, configLineDiff, handleConfigEvent, loadConfigTab, populateConfigForm, saveConfig };

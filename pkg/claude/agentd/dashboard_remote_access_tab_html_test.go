@@ -33,7 +33,7 @@ func TestDashboardAssets_RemoteAccessWired(t *testing.T) {
 		"raCfg.bind = raBind;",
 		"cfg.remote_access = raCfg;",
 		// JS: the live status reads the snapshot's material/running state.
-		"lastSnapshot.remote_access",
+		"latestSnapshot().remote_access",
 		"ra.material_exists",
 		"ra.running",
 		// JS: enabling without a port falls back to the conventional 8443.

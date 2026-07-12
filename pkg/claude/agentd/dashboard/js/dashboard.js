@@ -17,7 +17,7 @@ import { bindVegasMusic } from './vegas.js';
 import {
   bindFilter, bindTabs, bindTabHotkeys, bindDetailsPersistence, bindGroupTitleToggle, bindGroupQuickHover, bindSortHeaders,
   bindListPagers,
-  confirmModal, refresh, toast,
+  confirmModal, isCyclingTabs, refresh, toast,
 } from './refresh.js';
 
 // Cosmetic re-skins — slop (?slop=1) and wizard (?wizard=1), mutually
@@ -63,7 +63,7 @@ import {
   bindAgentSpawnModal, bindCloneAgentModal,
   bindReincarnateAgentModal,
 } from './modal-spawn.js';
-import { bindConfigTab } from './config.js';
+import { bindRemoteAdmin, loadRemoteAdmin } from './remote-admin.js';
 import { bindNotifyMenu } from './notify-menu.js';
 import { bindCostDisplayToggle } from './cost-display-toggle.js';
 import { bindDebugTab } from './debug.js';
@@ -76,7 +76,7 @@ import { bindDock } from './dock.js';
 import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
 import {
-  mountAccessFeature, mountAuditFeature, mountCostsFeature, mountJobsFeature, mountLogsFeature, mountPluginsFeature,
+  mountAccessFeature, mountAuditFeature, mountConfigFeature, mountCostsFeature, mountJobsFeature, mountLogsFeature, mountPluginsFeature,
   mountPreactRuntimeProbe,
 } from './preact-loader.js';
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
@@ -169,6 +169,7 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   });
   await mountLogsFeature();
   await mountAuditFeature();
+  await mountConfigFeature({ toast, isCyclingTabs });
 
   bindTabs();
   bindTabHotkeys();
@@ -240,7 +241,8 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   bindAgentSpawnModal();
   bindCloneAgentModal();
   bindReincarnateAgentModal();
-  bindConfigTab();
+  bindRemoteAdmin();
+  document.querySelector('nav [data-tab="config"]')?.addEventListener('click', () => { void loadRemoteAdmin(); });
   // The top-bar bell's notification-settings popover (master on/off +
   // per-type checklist + human-message knob), backed by /api/notifications.
   bindNotifyMenu();

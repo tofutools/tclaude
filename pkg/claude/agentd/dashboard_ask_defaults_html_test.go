@@ -27,8 +27,8 @@ func TestDashboardAssets_AskDefaultsWired(t *testing.T) {
 		"setAskSelectValue($('#ask-model')",
 		"setAskSelectValue($('#ask-effort')",
 		"populateAskProfileSelect(ask.profile)",
-		"$('#ask-model').value.trim()",
-		"$('#ask-effort').value.trim()",
+		"controlValue($('#ask-model')).trim()",
+		"controlValue($('#ask-effort')).trim()",
 		"ask.profile = askProfile;",
 		"cfg.ask = ask;",
 	} {
