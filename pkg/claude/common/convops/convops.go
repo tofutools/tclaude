@@ -2,7 +2,6 @@
 package convops
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -512,215 +511,28 @@ func parseJSONLSession(filePath, sessionID string) (*SessionEntry, bool) {
 		return nil, false
 	}
 
-	var entry SessionEntry
-	entry.SessionID = sessionID
-	entry.FullPath = filePath
-	entry.FileMtime = info.ModTime().Unix()
-	entry.FileSize = info.Size()
+	// Drive the same forward accumulator the incremental follower uses, so
+	// a full parse and an appended-bytes parse converge by construction
+	// (see jsonl_follower.go). The scan runs to EOF: GitBranch is last-wins
+	// and BranchHistory is the complete set, both of which need the whole
+	// file. This path only runs on a cache miss / the CLI, so the extra
+	// reads are infrequent.
+	state := newJSONLScanState(sessionID, filePath)
+	_, _, scanErr := scanJSONLLines(file, filePath, &state, false)
 
-	scanner := bufio.NewScanner(file)
-	// bufio.Scanner's effective max-token size is the larger of the max
-	// arg and the initial buffer's cap, so the initial cap must not
-	// exceed maxJSONLLineBytes or a shrunk limit (tests) would have no
-	// effect. 64 KiB is the normal initial cap.
-	initCap := 64 * 1024
-	if maxJSONLLineBytes < initCap {
-		initCap = maxJSONLLineBytes
-	}
-	scanner.Buffer(make([]byte, 0, initCap), maxJSONLLineBytes)
-
-	var firstTimestamp string
-
-	// lastTurnInterrupted tracks whether the most recent conversation
-	// turn seen so far is a user-interrupt marker. Updated on every
-	// user/assistant record and read once after the loop — its final
-	// value reflects the file's last turn.
-	var lastTurnInterrupted bool
-
-	// branchAccum gathers, per (canonical repo dir, branch), the
-	// timestamps bracketing its appearance — folded into
-	// entry.BranchHistory once the whole file is read. The repo dir is
-	// part of the key: one conversation can touch the same branch name
-	// in two different repos, and those are distinct history entries.
-	type branchAccum struct {
-		repoDir   string
-		branch    string
-		firstSeen time.Time
-		lastSeen  time.Time
-	}
-	branches := map[string]*branchAccum{}
-	// canonCwd memoises db.CanonicalizeRepoDir. Claude Code stamps a
-	// fixed cwd onto every turn, so this resolves to a single entry —
-	// the per-turn cost is a map hit, not a filesystem stat.
-	canonCwd := map[string]string{}
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" {
-			continue
-		}
-
-		var msg jsonlMessage
-		if err := json.Unmarshal([]byte(line), &msg); err != nil {
-			continue
-		}
-
-		// Track first timestamp
-		if firstTimestamp == "" && msg.Timestamp != "" {
-			firstTimestamp = msg.Timestamp
-		}
-
-		// Capture project path from the first message that has it — the
-		// cwd is fixed for the life of a conversation, so first-wins.
-		if entry.ProjectPath == "" && msg.Cwd != "" {
-			entry.ProjectPath = msg.Cwd
-		}
-		// Git branch, by contrast, can change mid-conversation (a
-		// `git checkout`, a new worktree). Claude Code stamps the
-		// *current* branch onto every turn, so keep the LAST one seen
-		// in GitBranch: the index then reflects where the agent is now.
-		// GitBranchStartup keeps the FIRST one — the launch branch —
-		// so a UI can show an immutable "init" alongside "now".
-		if msg.GitBranch != "" {
-			if entry.GitBranchStartup == "" {
-				entry.GitBranchStartup = msg.GitBranch
-			}
-			entry.GitBranch = msg.GitBranch
-
-			// Accumulate the branch into the history set, keyed by the
-			// canonical repo dir + branch. Turns are chronological, so
-			// first/last seen fall out of min/max over their
-			// (best-effort parsed) timestamps.
-			repoDir, ok := canonCwd[msg.Cwd]
-			if !ok {
-				repoDir = db.CanonicalizeRepoDir(msg.Cwd)
-				canonCwd[msg.Cwd] = repoDir
-			}
-			accKey := repoDir + "\x00" + msg.GitBranch
-			acc := branches[accKey]
-			if acc == nil {
-				acc = &branchAccum{repoDir: repoDir, branch: msg.GitBranch}
-				branches[accKey] = acc
-			}
-			if ts := parseJSONLTimestamp(msg.Timestamp); !ts.IsZero() {
-				if acc.firstSeen.IsZero() || ts.Before(acc.firstSeen) {
-					acc.firstSeen = ts
-				}
-				if ts.After(acc.lastSeen) {
-					acc.lastSeen = ts
-				}
-			}
-		}
-
-		// Capture custom title (written by Claude Code after the first exchange)
-		if msg.Type == "custom-title" && msg.CustomTitle != "" {
-			entry.CustomTitle = msg.CustomTitle
-		}
-
-		// Capture summary (keep last one seen)
-		if msg.Type == "summary" && msg.Summary != "" {
-			entry.Summary = msg.Summary
-		}
-
-		// Capture first user message with actual text content as the prompt
-		if entry.FirstPrompt == "" && msg.Type == "user" && msg.Message.Role == "user" {
-			text := extractMessageContent(msg.Message.Content)
-			// Skip messages without text (e.g., tool_result blocks from resumed sessions)
-			// Also skip system-generated messages like "[Request interrupted by user...]"
-			// and system-injected messages (local-command-caveat, command-name, etc.)
-			if text != "" && !strings.HasPrefix(text, "[Request interrupted") && !isSystemInjectedMessage(text) {
-				entry.FirstPrompt = text
-				if msg.Timestamp != "" {
-					firstTimestamp = msg.Timestamp
-				}
-			}
-		}
-
-		// Track whether the most recent conversation turn is a
-		// user-interrupt marker. Claude Code writes a
-		// "[Request interrupted by user]" user turn — and fires NO
-		// hook — when the user cancels an in-flight turn with Escape
-		// (anthropics/claude-code#11189, closed as not-planned). A
-		// later genuine turn supersedes it.
-		//
-		// Only user/assistant records are conversation turns. Records
-		// of other types (summary, custom-title, file-history-snapshot,
-		// last-prompt/agent-name/permission-mode) can trail a real
-		// interrupt in the .jsonl yet are not turns — they fall
-		// through this switch and leave the flag intact. A user record
-		// with no extractable text is a tool_result carrier, not a
-		// turn either: skip it (the same treatment the FirstPrompt
-		// capture above gives tool_result blocks) so a cancelled-tool
-		// result trailing the marker does not wrongly clear the flag.
-		// Sub-agent sidechain turns are not distinguished — an
-		// interrupt cancels sub-agents too, so one rarely trails the
-		// marker, and the rest of this scan treats them uniformly.
-		switch msg.Type {
-		case "user":
-			if text := extractMessageContent(msg.Message.Content); text != "" {
-				lastTurnInterrupted = msg.Message.Role == "user" &&
-					interruptMarkers[strings.TrimSpace(text)]
-			}
-		case "assistant":
-			lastTurnInterrupted = false
-		}
-
-		// The scan deliberately runs to EOF. An earlier version broke
-		// out once CustomTitle/Summary/FirstPrompt/ProjectPath were all
-		// set, but that cut a compacted conv short and reported its
-		// branch as of the early-exit point — and would now miss every
-		// branch the agent moved onto after a summary turn. Reading the
-		// whole file keeps GitBranch (last-wins) exact and gives
-		// BranchHistory the complete set. This path only runs on a
-		// cache miss, so the extra reads are infrequent.
-	}
-	entry.LastTurnInterrupted = lastTurnInterrupted
-
-	// A scanner that stopped on an error rather than at EOF gives a
-	// TRUNCATED view: the BranchHistory below is a partial set, and
-	// rebuilding from it would let RebuildConvBranchHistoryScan delete
-	// real branches past the truncation point. Report it so the caller
-	// skips the rebuild and leaves the existing history intact.
-	scanComplete := true
-	if err := scanner.Err(); err != nil {
+	// A scan that stopped before EOF (an I/O error) gives a TRUNCATED
+	// view, and a scan that skipped an oversized record has a
+	// possibly-incomplete branch set: rebuilding from either would let
+	// RebuildConvBranchHistoryScan delete real branches. Report both via
+	// scanComplete so the caller skips the destructive rebuild while still
+	// upserting the row from what was read.
+	scanComplete := scanErr == nil && !state.oversizedSeen
+	if scanErr != nil {
 		slog.Warn("conv_index: .jsonl scan stopped before EOF; branch history not rebuilt",
-			"conv_id", sessionID, "error", err)
-		scanComplete = false
+			"conv_id", sessionID, "error", scanErr)
 	}
 
-	// Fold the accumulated branches into the history set. Map order is
-	// unstable, but RebuildConvBranchHistoryScan treats it as a set.
-	for _, acc := range branches {
-		entry.BranchHistory = append(entry.BranchHistory, db.BranchObservation{
-			Branch:    acc.branch,
-			RepoDir:   acc.repoDir,
-			FirstSeen: acc.firstSeen,
-			LastSeen:  acc.lastSeen,
-		})
-	}
-
-	if firstTimestamp == "" {
-		// No timestamped line anywhere in the file. Usually that's a
-		// genuinely empty .jsonl with nothing to index — but a
-		// conversation can be NAMED before it ever takes a turn: a
-		// spawned/reincarnated agent is /rename'd at startup, so its
-		// .jsonl holds a `custom-title` line (Claude Code's state-marker
-		// lines are not timestamped) yet no user/assistant turn. That
-		// named conversation is real and must be indexed — only a file
-		// with no title, no summary AND no prompt is a true empty stub.
-		if entry.CustomTitle == "" && entry.Summary == "" && entry.FirstPrompt == "" {
-			return nil, scanComplete
-		}
-		// Named-but-turnless: fall back to the file mtime so Created is
-		// non-empty (an empty Created marks a stub — see isStubRow).
-		entry.Created = info.ModTime().UTC().Format(time.RFC3339)
-	} else {
-		entry.Created = firstTimestamp
-	}
-	entry.Modified = info.ModTime().UTC().Format(time.RFC3339)
-	entry.MessageCount = 0
-
-	return &entry, scanComplete
+	return state.finalize(info), scanComplete
 }
 
 // IsSystemInjectedMessage returns true if the text is a system-injected
@@ -919,6 +731,16 @@ func ScanAndUpsertFile(filePath string) *SessionEntry {
 	}
 
 	scanned, scanComplete := parseJSONLSession(filePath, convID)
+	return upsertScanResult(filePath, convID, projectDir, info, scanned, scanComplete)
+}
+
+// upsertScanResult writes a completed scan (from either the full
+// parseJSONLSession or the incremental follower) into the DB cache: the
+// conv_index row, the branch-history rebuild, and the interrupted-session
+// recovery. scanned == nil is the stub case (nothing indexable). Returns
+// scanned. Shared so the full and incremental scan paths produce identical
+// DB side effects — the restart-equivalence property depends on it.
+func upsertScanResult(filePath, convID, projectDir string, info os.FileInfo, scanned *SessionEntry, scanComplete bool) *SessionEntry {
 	if scanned == nil {
 		stub := &db.ConvIndexRow{
 			ConvID:     convID,
