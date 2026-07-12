@@ -805,15 +805,14 @@ func TestDashboardAssets_FeatureFlagsWired(t *testing.T) {
 func TestDashboardAssets_ProcessesTabWired(t *testing.T) {
 	for _, needle := range []string{
 		`<a data-tab="processes"`,
-		`data-process-subtab="templates"`,
-		`data-process-subtab="runs"`,
-		`data-process-subtab="worklist"`,
+		`id="processes-root"`,
+		"data-process-subtab=${name}",
 		`id="process-editor-canvas"`,
 		`data-process-mount="editor"`,
 		`id="process-viewer-canvas"`,
 		`data-process-mount="viewer"`,
-		"processJSON('/v1/process/templates')",
-		"processJSON('/v1/process/runs')",
+		"templates: '/v1/process/templates'",
+		"runs: '/v1/process/runs'",
 		"applyProcessesTabVisibility(data)",
 		`body.hide-processes nav [data-tab="processes"]`,
 	} {
@@ -824,38 +823,34 @@ func TestDashboardAssets_ProcessesTabWired(t *testing.T) {
 }
 
 // TestDashboardAssets_ProcessWorklistWired pins the Worklist sub-view's
-// cross-file wiring (TCL-297): the HTML panel (view chips, degraded strip,
-// list mount, sub-nav badge), the JS fetch/action paths, and the poll hook.
+// cross-file wiring (TCL-297/TCL-353): the Preact view chips, degraded strip,
+// list mount, sub-nav badge, JS fetch/action paths, and the poll hook.
 // The module has no build step, so literal asset pins catch a renamed DOM id,
 // data-attr, or route before it becomes a browser-only failure. The pure view
-// logic itself is covered by jstest/process-worklist.test.mjs.
+// logic itself is covered by jstest/process-worklist.test.mjs and the Preact
+// component/action coverage in jstest/processes-preact.test.mjs.
 func TestDashboardAssets_ProcessWorklistWired(t *testing.T) {
 	for _, needle := range []string{
-		// dashboard.html — the panel shell: every §8c view chip, the shared
-		// toolbar, the degraded strip, the list mount, and the sub-nav badge.
-		`data-worklist-view="my-work"`,
-		`data-worklist-view="waiting-on"`,
-		`data-worklist-view="due"`,
-		`data-worklist-view="blocked"`,
-		`data-worklist-view="decision"`,
-		`data-worklist-view="review"`,
-		`data-worklist-view="recent"`,
+		// processes-island.js — Preact owns chips, degraded state, keyed rows,
+		// comment drafts, list mount, and the sub-nav badge.
+		"WORKLIST_VIEWS.map((view)",
+		"data-worklist-view=${view.key}",
 		`id="process-worklist-degraded"`,
 		`id="process-worklist-list"`,
 		`id="process-worklist-badge"`,
 		`id="process-worklist-refresh"`,
-		// process-worklist.js — the REST consumption: list fetch, the action
+		// processes-actions.js — the REST consumption: list fetch, the action
 		// POST through the retained-idempotency-key funnel (same key on a
 		// retry of the same logical action, cleared only on a definitive
 		// 2xx), and the advertised-spelling + required-comment gate from the
 		// core module.
-		"processJSON('/v1/process/worklist')",
+		"worklist: '/v1/process/worklist'",
 		"retainedActionKey(actionKeys, item, action, comment)",
 		"buildWorklistAction(item, action, comment, key)",
 		"actionKeys.delete(payload)",
 		// The comment-required affordance renders from STATE (an imperative
 		// classList.add would be stripped by the next poll's morph).
-		"commentMissing.has(item.id)",
+		"current.missingComments.has(item.id)",
 		// process-worklist-core.js — the secure-context-safe uuid mint
 		// (crypto.randomUUID is absent on plain-http non-loopback binds).
 		"export function mintUUID(",
@@ -864,12 +859,12 @@ func TestDashboardAssets_ProcessWorklistWired(t *testing.T) {
 		"/v1/process/worklist/${encodeURIComponent(item.id)}/action",
 		// Live refresh rides the snapshot poll's custom event.
 		"document.addEventListener('tclaude:snapshot'",
-		// Rows are keyed for the morph reconciler by item id.
-		`data-key="${esc(item.id)}"`,
+		// Rows are keyed by item id for Preact identity preservation.
+		"data-key=${item.id}",
 		// Agent obligations render without action buttons.
 		"agent reports via evidence",
-		// processes.js routes the sub-tab to the worklist loader.
-		"if (name === 'worklist') loadProcessWorklist();",
+		// actions route the active subtab through one request path.
+		"refreshActive() { return load(state.subtab.value); }",
 		// dashboard.css — the degraded strip and comment-required affordance.
 		".wl-degraded {",
 		".wl-comment.wl-comment-missing { border-color: #f85149; }",

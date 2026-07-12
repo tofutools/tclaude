@@ -145,12 +145,12 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"this.validation?.applyDiagnostics(view.diagnostics || [])",
 	)
 
-	processes := read("js/processes.js")
-	mustContain("processes.js", processes,
+	processes := read("js/processes-island.js")
+	mustContain("processes-island.js", processes,
 		// The editor loads lazily after the feature-gated tab opens.
 		"await import('./process-editor.js')",
-		"openTemplateEditor(mount, { id, blank })",
-		"confirmLeaveDirtyEditor",
+		"openTemplateEditor(mount, value)",
+		"editor?.destroy?.()",
 	)
 
 	css := read("dashboard.css")
@@ -175,7 +175,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 	// The graph core and validation loop stay out of every eager entry module:
 	// only the lazily imported editor may import them (flag-off page loads
 	// render nothing).
-	for _, entry := range []string{"js/dashboard.js", "js/tabs.js", "js/processes.js"} {
+	for _, entry := range []string{"js/dashboard.js", "js/tabs.js", "js/processes.js", "js/processes-state.js", "js/processes-actions.js"} {
 		for _, banned := range []string{"process-graph.js", "process-validation.js"} {
 			if strings.Contains(read(entry), banned) {
 				t.Errorf("%s eagerly imports %s; flag-off must render nothing", entry, banned)

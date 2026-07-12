@@ -4,12 +4,12 @@ package agentd_test
 // The backend derivation/action semantics are covered by the TCL-295 tests in
 // process_engine_flow_test.go; these pin the CONTRACT THE UI RIDES — and they
 // ride it through the DASHBOARD handler (the popup server's own mux), not the
-// daemon socket mux, because that is the surface process-worklist.js fetches.
+// daemon socket mux, because that is the surface processes-actions.js fetches.
 // The two muxes register routes independently: the first dashsnap run of this
 // ticket caught /v1/process/worklist missing from the dashboard mux entirely
 // while every daemon-mux test passed. Covered here: the row fields the
 // worklist renders (kind, assignee, nudge schedule, created/due, advertised
-// actions), the exact request shape process-worklist.js submits (advertised
+// actions), the exact request shape processes-actions.js submits (advertised
 // action spelling + required comment + fresh idempotency key), that a plain
 // re-fetch — the UI does no optimistic update — reflects the resolution, and
 // that unreadable runs surface as degradedRuns alongside the healthy items
@@ -78,7 +78,7 @@ func TestProcessWorklistUIActionRoundTripReflectsResolution(t *testing.T) {
 	assert.Equal(t, "worklist-ui-run", item.Links.RunID, "the run deep-link target")
 	assert.Equal(t, "decide", item.Links.NodeID)
 
-	// The exact shape process-worklist.js submits (buildWorklistAction): the
+	// The exact shape processes-actions.js submits (buildWorklistAction): the
 	// ADVERTISED action spelling, the trimmed required comment, and a fresh
 	// idempotency key minted per click.
 	rec = dashboardWorklistReq(t, dash, http.MethodPost, "/v1/process/worklist/"+item.ID+"/action", map[string]string{

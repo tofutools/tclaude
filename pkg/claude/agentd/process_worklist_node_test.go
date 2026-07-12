@@ -32,7 +32,9 @@ func TestProcessWorklist_JSSyntax(t *testing.T) {
 	node := processWorklistNode(t)
 	for _, file := range []string{
 		"dashboard/js/process-worklist-core.js",
-		"dashboard/js/process-worklist.js",
+		"dashboard/js/processes-actions.js",
+		"dashboard/js/processes-island.js",
+		"dashboard/js/processes-state.js",
 		"dashboard/js/processes.js",
 	} {
 		source, err := os.ReadFile(file)
