@@ -148,7 +148,7 @@ function SortHead({ active, onSort }) {
   })}</tr></thead>`;
 }
 
-function Pager({ state, paging, refresh }) {
+function Pager({ state, paging, refresh, disabled = false }) {
   const total = paging.total || 0;
   const size = state.limit.value;
   const off = paging.offset || 0;
@@ -160,8 +160,8 @@ function Pager({ state, paging, refresh }) {
   const move = (action) => {
     if (state.page(action, total)) void refresh();
   };
-  const button = (action, glyph, title, disabled) => html`
-    <button type="button" class="list-pager-btn" disabled=${disabled} title=${title}
+  const button = (action, glyph, title, atBoundary) => html`
+    <button type="button" class="list-pager-btn" disabled=${disabled || atBoundary} title=${title}
       aria-label=${title} onClick=${() => move(action)}>${glyph}</button>`;
   return html`<div class="list-pager">
     ${button('first', '«', 'First page', atFirst)}
@@ -169,7 +169,7 @@ function Pager({ state, paging, refresh }) {
     <span class="list-pager-count">${from}–${to} of ${total}</span>
     ${button('next', '›', 'Next page', atLast)}
     ${button('last', '»', 'Last page', atLast)}
-    <select class="list-pager-size" title="Rows per page" aria-label="Rows per page"
+    <select class="list-pager-size" title="Rows per page" aria-label="Rows per page" disabled=${disabled}
       value=${size} onChange=${(event) => { state.setPageSize(event.currentTarget.value); void refresh(); }}>
       ${JOBS_PAGE_SIZES.map((value) => html`<option value=${value}>${value}/page</option>`)}
     </select>
@@ -238,7 +238,8 @@ export function JobsApp({ state, actions }) {
                 : html`<${ExportRow} key=${`export-${row.export?.id}`} job=${row.export || {}} actions=${actions} />`
               )}</tbody>
             </table>
-            <${Pager} state=${state} paging=${paging} refresh=${actions.refresh} />
+            <${Pager} state=${state} paging=${paging} refresh=${actions.refresh}
+              disabled=${(paging.offset || 0) !== state.offset.value} />
           </${Fragment}>`}
     </div>
   </div>`;

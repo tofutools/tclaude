@@ -445,6 +445,13 @@ export async function refresh(opts = {}) {
       jobs?.discardRequest(requestId);
       return;
     }
+    // Query/page controls invalidate the feature request immediately, before
+    // their debounced/immediate successor refresh starts. Never publish rows
+    // fetched with parameters that no longer match the visible controls.
+    if (jobsActive && !jobs.acceptsRequest(requestId)) {
+      dashboardState.discardRequest(requestId, { responded });
+      return;
+    }
     // The suspend guard was sampled BEFORE the fetch; a drag/modal may have
     // opened since. Re-check before touching the DOM (this preserves any
     // optimistic drag mutation on the old snapshot; its teardown re-runs us).
@@ -472,6 +479,10 @@ export async function refresh(opts = {}) {
       jobs?.discardRequest(requestId);
       return;
     }
+    if (jobsActive && !jobs.acceptsRequest(requestId)) {
+      dashboardState.discardRequest(requestId, { responded });
+      return;
+    }
     if (refreshSuspended({ ignoreModals: force })) {
       dashboardState.discardRequest(requestId, { responded });
       jobs?.discardRequest(requestId);
@@ -483,7 +494,10 @@ export async function refresh(opts = {}) {
     syncServedOffset('retired', data.paging.retired.offset);
     syncServedOffset('conversations', data.paging.conversations.offset);
     syncServedOffset('replaced', data.paging.replaced.offset);
-    if (jobsActive) jobs.syncServedOffset(data.paging.jobs.offset);
+    // A failed sub-fetch carries the previous successful paging envelope so
+    // stale rows remain visible. Do not mistake that fallback for a served
+    // offset: Retry must keep targeting the page the user requested.
+    if (jobsActive && jobsResult.ok) jobs.syncServedOffset(data.paging.jobs.offset);
     // Snapshot the keyboard focus before the renders below replace the
     // tab bodies wholesale, so a Tab-navigating user isn't bounced to
     // the top of the page on every poll. Restored at the end once the

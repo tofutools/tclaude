@@ -1,7 +1,9 @@
 import { batch, computed, signal } from '@preact/signals';
 import { dashboardState } from './snapshot-store.js';
 import { dashPrefs } from './prefs.js';
-import { applySortState, JOBS_ACCESSORS } from './sort.js';
+import {
+  applySortState, JOBS_ACCESSORS, persistedTableSort, persistTableSort,
+} from './sort.js';
 
 const FILTER_KEY = 'tclaude.dash.filter.jobs';
 const PAGE_SIZE_KEY = 'tclaude.dash.list.jobs.pagesize';
@@ -67,13 +69,16 @@ export function createJobsState({ snapshot = dashboardState.snapshot, prefs = da
     query.value = prefs.getItem(FILTER_KEY) || '';
     const savedLimit = Number.parseInt(prefs.getItem(PAGE_SIZE_KEY) || '', 10);
     limit.value = JOBS_PAGE_SIZES.includes(savedLimit) ? savedLimit : DEFAULT_PAGE_SIZE;
-    try {
-      const savedSort = JSON.parse(prefs.getItem(SORT_KEY) || '{}')?.jobs;
-      if (savedSort && JOBS_ACCESSORS[savedSort.col] &&
-          (savedSort.dir === 'asc' || savedSort.dir === 'desc')) {
-        sort.value = savedSort;
-      }
-    } catch { /* malformed preferences fall back to server ordering */ }
+    const savedSort = prefs === dashPrefs
+      ? persistedTableSort('jobs')
+      : (() => {
+          try { return JSON.parse(prefs.getItem(SORT_KEY) || '{}')?.jobs; }
+          catch { return null; }
+        })();
+    if (savedSort && JOBS_ACCESSORS[savedSort.col] &&
+        (savedSort.dir === 'asc' || savedSort.dir === 'desc')) {
+      sort.value = savedSort;
+    }
     return true;
   }
 
@@ -85,16 +90,20 @@ export function createJobsState({ snapshot = dashboardState.snapshot, prefs = da
     });
     if (next) prefs.setItem(FILTER_KEY, next);
     else prefs.removeItem(FILTER_KEY);
+    invalidateRequest();
   }
 
   function cycleSort(col) {
     const next = nextSort(sort.value, col);
     sort.value = next;
-    let all = {};
-    try { all = JSON.parse(prefs.getItem(SORT_KEY) || '{}') || {}; } catch { /* replace malformed value */ }
-    if (next) all.jobs = next;
-    else delete all.jobs;
-    prefs.setItem(SORT_KEY, JSON.stringify(all));
+    if (prefs === dashPrefs) persistTableSort('jobs', next);
+    else {
+      let all = {};
+      try { all = JSON.parse(prefs.getItem(SORT_KEY) || '{}') || {}; } catch { /* replace malformed value */ }
+      if (next) all.jobs = next;
+      else delete all.jobs;
+      prefs.setItem(SORT_KEY, JSON.stringify(all));
+    }
   }
 
   function page(action, total) {
@@ -109,6 +118,7 @@ export function createJobsState({ snapshot = dashboardState.snapshot, prefs = da
     };
     if (!(action in destinations) || destinations[action] === current) return false;
     offset.value = destinations[action];
+    invalidateRequest();
     return true;
   }
 
@@ -119,6 +129,7 @@ export function createJobsState({ snapshot = dashboardState.snapshot, prefs = da
       offset.value = 0;
     });
     prefs.setItem(PAGE_SIZE_KEY, String(size));
+    invalidateRequest();
   }
 
   function syncServedOffset(value) {
@@ -127,6 +138,21 @@ export function createJobsState({ snapshot = dashboardState.snapshot, prefs = da
 
   function beginRequest(requestId) {
     request.value = { ...request.value, phase: 'loading', requestId, error: null };
+  }
+
+  function acceptsRequest(requestId) {
+    return request.value.requestId === requestId;
+  }
+
+  function invalidateRequest() {
+    if (!request.value.requestId) return false;
+    request.value = {
+      ...request.value,
+      phase: request.value.hasLoaded ? 'ready' : 'idle',
+      requestId: 0,
+      error: null,
+    };
+    return true;
   }
 
   function commitRequest(requestId) {
@@ -170,7 +196,8 @@ export function createJobsState({ snapshot = dashboardState.snapshot, prefs = da
   return Object.freeze({
     query, offset, limit, sort, request, params, view,
     initialize, setQuery, cycleSort, page, setPageSize, syncServedOffset,
-    beginRequest, commitRequest, failRequest, discardRequest, upsertCron,
+    beginRequest, acceptsRequest, invalidateRequest,
+    commitRequest, failRequest, discardRequest, upsertCron,
   });
 }
 
