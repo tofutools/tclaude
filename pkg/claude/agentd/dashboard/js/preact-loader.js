@@ -132,3 +132,25 @@ export async function mountAccessFeature(actionDependencies) {
     },
   });
 }
+
+export async function mountLogsFeature(actionDependencies = {}) {
+  const host = document.querySelector('#logs-root');
+  if (!host) return null;
+  return mountFeatureIsland({
+    name: 'logs', label: 'Logs', hosts: [host], failureClass: 'logs-error',
+    load: async () => {
+      const islandModule = import('./logs-island.js');
+      const stateModule = import('./logs-state.js');
+      const actionsModule = import('./logs-actions.js');
+      const [{ mountLogsIsland }, { logsState }, { createLogsActions }] =
+        await Promise.all([islandModule, stateModule, actionsModule]);
+      const logsActions = createLogsActions({ state: logsState, ...actionDependencies });
+      return {
+        state: logsState,
+        mount: (registerCleanup) => mountLogsIsland({
+          host, state: logsState, actions: logsActions, registerCleanup,
+        }),
+      };
+    },
+  });
+}

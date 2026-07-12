@@ -148,10 +148,11 @@ func TestDashboardMorph_SweepWired(t *testing.T) {
 	present(`data-key="${esc(t.name)}" data-template=`, "template cards carry a stable data-key")
 	gone("host.innerHTML = list.map(templateCardHTML).join('')", "Templates list innerHTML swap regressed")
 
-	// Item 4 — Logs tab table (logs.js). No stable per-line id (a burst can emit
-	// byte-identical lines), so rows are matched POSITIONALLY — a paged table,
-	// acceptable per the ticket. All three #logs-list writes route through morph.
-	present("morphInto($('#logs-list'),", "Logs list morphs instead of innerHTML swap")
+	// Item 4 — Logs is Preact-owned. Reverse occurrence keys keep byte-identical
+	// records unique while preserving existing rows when the live tail prepends.
+	present("function LogsApp(", "Logs uses a Preact component")
+	present("key=${key}", "Logs rows carry stable duplicate-safe Preact keys")
+	gone("morphInto($('#logs-list'),", "legacy Logs morph renderer remains")
 	gone("$('#logs-list').innerHTML", "Logs list innerHTML swap regressed")
 
 	// Item 5 — Audit tab table (audit.js), keyed by the append-only audit row id

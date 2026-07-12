@@ -72,6 +72,97 @@ func TestBuildLogsResponse_NewestFirstAndCount(t *testing.T) {
 	}
 }
 
+func TestBuildLogsResponseKeysSurviveFullPageTailRollover(t *testing.T) {
+	path := writeLog(t,
+		jsonLine("2026-07-01T12:00:00.000Z", "INFO", "same"),
+		jsonLine("2026-07-01T12:00:00.000Z", "INFO", "same"),
+	)
+	before := buildLogsResponse(path, false, logFilter{}, "all", 1, 2)
+	if err := os.WriteFile(path, []byte(strings.Join([]string{
+		jsonLine("2026-07-01T12:00:00.000Z", "INFO", "same"),
+		jsonLine("2026-07-01T12:00:00.000Z", "INFO", "same"),
+		jsonLine("2026-07-01T12:00:00.000Z", "INFO", "same"),
+	}, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	after := buildLogsResponse(path, false, logFilter{}, "all", 1, 2)
+	if before.Entries[0].Key != after.Entries[1].Key {
+		t.Fatalf("existing newest duplicate key changed across full-page rollover: %q -> %q", before.Entries[0].Key, after.Entries[1].Key)
+	}
+	if after.Entries[0].Key == after.Entries[1].Key {
+		t.Fatalf("duplicate rows share key %q", after.Entries[0].Key)
+	}
+}
+
+func TestGatherLogRecordKeysSurviveTailCapBoundaryAdvance(t *testing.T) {
+	line := jsonLine("2026-07-01T12:00:00.000Z", "INFO", "same")
+	path := writeLog(t, line, line, line)
+	// Start one byte before the oldest retained line. readLogTail drops that
+	// preceding newline, leaving exactly the newest two complete records.
+	maxBytes := int64(2*(len(line)+1) + 1)
+	before, _, _ := gatherLogRecords(path, false, maxBytes)
+	if err := os.WriteFile(path, []byte(strings.Repeat(line+"\n", 4)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	after, _, _ := gatherLogRecords(path, false, maxBytes)
+	if len(before) != 2 || len(after) != 2 {
+		t.Fatalf("record counts = %d then %d, want 2 then 2", len(before), len(after))
+	}
+	if before[1].key != after[0].key {
+		t.Fatalf("surviving record key changed as cap advanced: %q -> %q", before[1].key, after[0].key)
+	}
+}
+
+func TestGatherLogRecordKeysSurviveRotationAndNewActiveFile(t *testing.T) {
+	oldLine := jsonLine("2026-07-01T12:00:00.000Z", "INFO", "old physical file")
+	path := writeLog(t, oldLine)
+	before, _, _ := gatherLogRecords(path, false, maxLogReadBytes)
+	if err := os.Rename(path, path+".1"); err != nil {
+		t.Fatal(err)
+	}
+	newLine := jsonLine("2026-07-01T12:00:01.000Z", "INFO", "replacement active file")
+	if err := os.WriteFile(path, []byte(newLine+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	after, _, _ := gatherLogRecords(path, true, maxLogReadBytes)
+	if len(before) != 1 || len(after) != 2 {
+		t.Fatalf("record counts = %d then %d, want 1 then 2", len(before), len(after))
+	}
+	if before[0].key != after[0].key {
+		t.Fatalf("rotated physical file key changed: %q -> %q", before[0].key, after[0].key)
+	}
+	if after[0].key == after[1].key {
+		t.Fatalf("replacement active file reused rotated key %q", after[0].key)
+	}
+	oldInfo, err := os.Stat(path + ".1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path + ".1"); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _ = gatherLogRecords(path, false, maxLogReadBytes)
+	logFileIdentityRegistry.Lock()
+	defer logFileIdentityRegistry.Unlock()
+	for _, entry := range logFileIdentityRegistry.entries {
+		if os.SameFile(oldInfo, entry.info) {
+			t.Fatal("deleted rotated file identity remained retained after the next scan")
+		}
+	}
+}
+
+func TestGatherLogRecordsSkipsSamePhysicalFileAtTwoPaths(t *testing.T) {
+	line := jsonLine("2026-07-01T12:00:00.000Z", "INFO", "one physical file")
+	path := writeLog(t, line)
+	if err := os.Link(path, path+".1"); err != nil {
+		t.Fatal(err)
+	}
+	records, sources, _ := gatherLogRecords(path, true, maxLogReadBytes)
+	if len(records) != 1 || len(sources) != 1 {
+		t.Fatalf("same physical file emitted records/sources twice: records=%d sources=%d", len(records), len(sources))
+	}
+}
+
 func TestBuildLogsResponse_LevelMinFilter(t *testing.T) {
 	path := writeLog(t,
 		jsonLine("2026-07-01T12:00:00.000Z", "DEBUG", "d"),
