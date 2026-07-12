@@ -8,15 +8,18 @@
 // a per-phase aggregate table, so the dominant phase of a slow poll is
 // visible at a glance.
 //
-// Fetched on tab activation, then re-fetched on each snapshot tick
-// while the tab is showing (the tick event fires every ~2s, and
-// /api/perf is a cheap in-memory read) — never on other tabs.
+// Fetched on tab activation, then every 10s while the tab is showing.
+// This surface summarizes minutes of history, so coupling it to the
+// dashboard's ~2s snapshot tick only repeats full-ring aggregate and
+// sparkline work without adding useful resolution.
 
 import { $, esc } from './helpers.js';
 import { morphInto } from './morph.js';
 
 // Monotonic guard: a slow response must never repaint over a newer one.
 let loadSeq = 0;
+
+const DEBUG_POLL_MS = 10_000;
 
 // Fixed categorical slots for phase fills, assigned by each phase's
 // first-seen (execution) order — never re-derived from rank, so a phase
@@ -190,14 +193,15 @@ async function resetDebug() {
   loadDebug();
 }
 
-// bindDebugTab wires the tab: load on activation, then ride the
-// snapshot tick while visible.
+// bindDebugTab wires the tab: load on activation, then refresh on its
+// own slower cadence while visible. The timer stays cheap on other tabs:
+// it only performs the visibility check and never fetches.
 function bindDebugTab() {
   $('nav [data-tab="debug"]').addEventListener('click', loadDebug);
   $('#debug-reset').addEventListener('click', resetDebug);
-  document.addEventListener('tclaude:snapshot', () => {
+  setInterval(() => {
     if (debugTabActive()) loadDebug();
-  });
+  }, DEBUG_POLL_MS);
 }
 
 export { bindDebugTab };

@@ -1,6 +1,10 @@
 package agentd
 
 import (
+	"bytes"
+	"compress/gzip"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -138,4 +142,87 @@ func TestPerfEndpointViewOf_AggregatesAndLimit(t *testing.T) {
 	assert.Equal(t, float64(12), v.Phases[0].MaxMs)
 	assert.Equal(t, "b", v.Phases[1].Name)
 	assert.Equal(t, float64(18), v.Phases[1].MaxMs)
+}
+
+func BenchmarkPerfPayload(b *testing.B) {
+	for _, sampleCount := range []int{1, perfRingCap} {
+		b.Run(fmt.Sprintf("samples_%d", sampleCount), func(b *testing.B) {
+			samplesByEndpoint := benchmarkPerfSamples(sampleCount)
+			views := make([]perfEndpointView, 0, len(samplesByEndpoint))
+			for endpoint, samples := range samplesByEndpoint {
+				views = append(views, perfEndpointViewOf(endpoint, samples, 240))
+			}
+			envelope := struct {
+				GeneratedAt string             `json:"generated_at"`
+				Endpoints   []perfEndpointView `json:"endpoints"`
+			}{GeneratedAt: "2026-07-12T00:00:00Z", Endpoints: views}
+			payload, err := json.Marshal(envelope)
+			require.NoError(b, err)
+			var compressed bytes.Buffer
+			zw := gzip.NewWriter(&compressed)
+			_, err = zw.Write(payload)
+			require.NoError(b, err)
+			require.NoError(b, zw.Close())
+
+			b.Run("aggregate", func(b *testing.B) {
+				b.ReportAllocs()
+				for b.Loop() {
+					for endpoint, samples := range samplesByEndpoint {
+						_ = perfEndpointViewOf(endpoint, samples, 240)
+					}
+				}
+			})
+			b.Run("marshal", func(b *testing.B) {
+				b.ReportAllocs()
+				for b.Loop() {
+					_, err := json.Marshal(envelope)
+					if err != nil {
+						b.Fatal(err)
+					}
+				}
+				b.ReportMetric(float64(len(payload)), "payload_bytes")
+				b.ReportMetric(float64(compressed.Len()), "gzip_bytes")
+			})
+			b.Run("gzip", func(b *testing.B) {
+				b.ReportAllocs()
+				for b.Loop() {
+					var dst bytes.Buffer
+					zw := gzip.NewWriter(&dst)
+					if _, err := zw.Write(payload); err != nil {
+						b.Fatal(err)
+					}
+					if err := zw.Close(); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		})
+	}
+}
+
+func benchmarkPerfSamples(sampleCount int) map[string][]perfSample {
+	endpoints := map[string]int{
+		"/api/conversations": 5,
+		"/api/jobs":          5,
+		"/api/replaced":      5,
+		"/api/retired":       5,
+		"/api/snapshot":      8,
+	}
+	out := make(map[string][]perfSample, len(endpoints))
+	for endpoint, phaseCount := range endpoints {
+		samples := make([]perfSample, sampleCount)
+		for i := range samples {
+			phases := make([]perfPhase, phaseCount)
+			for j := range phases {
+				phases[j] = perfPhase{Name: fmt.Sprintf("phase_%d", j), Ms: float64((i+j)%100) / 10}
+			}
+			samples[i] = perfSample{
+				At:      time.Unix(int64(i), 0).UTC(),
+				TotalMs: float64(i%200) / 10,
+				Phases:  phases,
+			}
+		}
+		out[endpoint] = samples
+	}
+	return out
 }
