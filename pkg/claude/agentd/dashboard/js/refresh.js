@@ -20,7 +20,7 @@ import { renderMailTab, onMailSearchChanged, renderAccessRequests } from './mail
 import { renderGroupsTab, renderSudoTab, renderLinksTab } from './tabs.js';
 import { renderTemplatesTab } from './modal-templates.js';
 import { renderPluginsSnapshot } from './plugins.js';
-import { renderAccessSnapshot } from './access-tab.js';
+import { renderAccessListSnapshot, renderAccessRegistrySnapshot } from './access-tab.js';
 import { applyCostTabVisibility } from './costs.js';
 import { applyProcessesTabVisibility } from './processes.js';
 import { morphInto } from './morph.js';
@@ -533,10 +533,11 @@ export async function refresh(opts = {}) {
     // keyed morphInto so its selection/scroll survive and a manager edit
     // shows up on the next tick.
     renderDock();
-    renderAccessSnapshot(data);
+    renderAccessListSnapshot();
     renderLinksTab();
     renderPluginsSnapshot(data);
     applyProcessesTabVisibility(data);
+    renderAccessRegistrySnapshot(data);
     renderMailTab();
     renderMessagesBadge(data.messages_unread || 0, data.access_requests_pending || 0);
     renderAccessRequests(data.access_requests || [], data.access_requests_pending || 0);

@@ -11,8 +11,11 @@ export function bindAccessTab() {
   bindFilter('sudo', renderSudoTab);
 }
 
-export function renderAccessSnapshot(data) {
+export function renderAccessListSnapshot() {
   renderSudoTab();
+}
+
+export function renderAccessRegistrySnapshot(data) {
   // Reconcile rather than replace so selection in either roster survives the
   // 2-second poll. Access migration removes these morph consumers in one file.
   morphInto($('#permissions-body'), renderPermissions(data.permissions, data.agents));
