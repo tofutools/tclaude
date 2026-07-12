@@ -57,4 +57,10 @@ func TestDashboardHTML_DebugTabWired(t *testing.T) {
 	must(`body.hide-debug nav [data-tab="debug"]`, "CSS hides the nav button when gated off")
 	must(`id="cfg-dashboard-show-debug-tab"`, "the Config tab opt-in checkbox")
 	must("show_debug_tab", "config.js round-trips dashboard.show_debug_tab")
+
+	// The stats-reset control (TCL-377): the toolbar button and the POST
+	// endpoint debug.js calls before re-fetching.
+	must(`id="debug-reset"`, "the reset-stats toolbar button")
+	must("/api/perf/reset", "debug.js posts the ring-clearing endpoint")
+	must("function resetDebug", "debug.js exposes the reset handler")
 }

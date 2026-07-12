@@ -145,3 +145,36 @@ func TestDashboardSnapshot_DebugTabVisibilityRule(t *testing.T) {
 	assert.Equal(t, 2, perfEndpointNamed(t, perf, "/api/snapshot").Count,
 		"recording is not gated by the display toggle")
 }
+
+// TestDashboardPerf_Reset drives POST /api/perf/reset (TCL-377): a
+// recorded distribution is discarded so a fresh one starts — the
+// operator's "I just changed the setup under measurement" button —
+// and recording resumes normally afterwards.
+func TestDashboardPerf_Reset(t *testing.T) {
+	newFlow(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	agentd.ResetPerfForTest()
+	t.Cleanup(agentd.ResetPerfForTest)
+	dash := agentd.BuildDashboardHandlerForTest()
+
+	fetchSnapshotOnly(t, dash)
+	fetchSnapshotOnly(t, dash)
+	require.Equal(t, 2, perfEndpointNamed(t, fetchPerf(t, dash, "/api/perf"), "/api/snapshot").Count,
+		"two samples recorded before the reset")
+
+	rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodPost, "/api/perf/reset", nil))
+	require.Equal(t, http.StatusOK, rec.Code, "reset body=%s", rec.Body.String())
+
+	// Every ring is gone — the payload returns to its empty state...
+	assert.Empty(t, fetchPerf(t, dash, "/api/perf").Endpoints, "reset discards every endpoint's ring")
+
+	// ...and the next poll starts a fresh distribution (count restarts at 1;
+	// the /api/perf GETs themselves are not a polled endpoint and record nothing).
+	fetchSnapshotOnly(t, dash)
+	assert.Equal(t, 1, perfEndpointNamed(t, fetchPerf(t, dash, "/api/perf"), "/api/snapshot").Count,
+		"recording resumes fresh after the reset")
+
+	// GET on the reset path is refused — the mux pattern is POST-only.
+	rec = testharness.Serve(dash, testharness.JSONRequest(t, http.MethodGet, "/api/perf/reset", nil))
+	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code, "GET /api/perf/reset must be refused")
+}

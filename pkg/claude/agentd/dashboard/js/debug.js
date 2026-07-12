@@ -173,10 +173,28 @@ function debugTabActive() {
   return $('#tab-debug').classList.contains('active');
 }
 
+// resetDebug clears the daemon's timing rings, then re-fetches so the
+// tab immediately shows the empty (fresh-start) state. Used after
+// changing what's being measured — agent count, a config knob — so the
+// aggregates don't blend the before and after. No confirm: the data is
+// a self-refilling diagnostic buffer, not state anyone can lose.
+async function resetDebug() {
+  try {
+    const r = await fetch('/api/perf/reset', { method: 'POST', credentials: 'same-origin' });
+    if (!r.ok) throw new Error(await r.text() || r.status);
+  } catch (e) {
+    morphInto($('#debug-list'),
+      `<div class="empty">Failed to reset poll timings: ${esc(e.message || e)}</div>`);
+    return;
+  }
+  loadDebug();
+}
+
 // bindDebugTab wires the tab: load on activation, then ride the
 // snapshot tick while visible.
 function bindDebugTab() {
   $('nav [data-tab="debug"]').addEventListener('click', loadDebug);
+  $('#debug-reset').addEventListener('click', resetDebug);
   document.addEventListener('tclaude:snapshot', () => {
     if (debugTabActive()) loadDebug();
   });

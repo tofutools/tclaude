@@ -76,6 +76,17 @@ func (r *perfRing) ordered() []perfSample {
 var perfMu sync.Mutex
 var perfRings = map[string]*perfRing{}
 
+// perfReset discards every endpoint's recorded samples. The operator
+// uses it (via POST /api/perf/reset) to start a fresh distribution
+// after changing the setup under measurement — e.g. spawning or
+// retiring a batch of agents — so the aggregates don't blend the
+// before and after.
+func perfReset() {
+	perfMu.Lock()
+	defer perfMu.Unlock()
+	perfRings = map[string]*perfRing{}
+}
+
 func perfRecord(endpoint string, s perfSample) {
 	perfMu.Lock()
 	defer perfMu.Unlock()
@@ -258,4 +269,21 @@ func handleDashboardPerf(w http.ResponseWriter, r *http.Request) {
 		"generated_at": time.Now().Format(time.RFC3339),
 		"endpoints":    views,
 	})
+}
+
+// handleDashboardPerfReset serves POST /api/perf/reset — clears every
+// endpoint's timing ring (see perfReset). Cookie-authed
+// (dashboard-only). The method check lives here rather than in the mux
+// pattern: a method-scoped pattern would send a GET to the "/"
+// catch-all (a confusing 404) instead of a clean 405.
+func handleDashboardPerfReset(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	perfReset()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
