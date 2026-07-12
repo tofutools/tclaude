@@ -20,7 +20,7 @@ test('Costs island renders controls and preserves keyed table focus/selection ac
     harness.importDashboardModule('js/costs-state.js'), harness.importDashboardModule('js/costs-island.js'),
   ]);
   const snapshot = harness.signals.signal({ cost_tab_visible: true, cost_tab_whatif: false });
-  const activeTab = harness.signals.signal('groups');
+  const activeTab = harness.signals.signal('costs');
   const state = createCostsState({ snapshot, activeTab, prefs: storage, now: () => new Date(2026, 6, 10, 12) });
   state.initialize();
   state.beginRequest(1);
@@ -37,6 +37,9 @@ test('Costs island renders controls and preserves keyed table focus/selection ac
   });
   assert.equal(mounted.container.querySelector('.cost-col[data-tip]'), chartColumn, 'snapshot refresh preserves the imperative chart');
   assert.equal(harness.document.body.querySelector('.cost-tip'), tooltip, 'snapshot refresh preserves the open chart tooltip');
+  await harness.act(() => { activeTab.value = 'groups'; });
+  assert.equal(harness.document.body.querySelector('.cost-tip'), null, 'leaving Costs removes its body-level tooltip');
+  await harness.act(() => { activeTab.value = 'costs'; });
 
   const row = mounted.container.querySelector('tr[data-key="cost-conv-a-2026-07-10"]');
   const id = row.querySelector('.id');

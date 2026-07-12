@@ -190,7 +190,7 @@ export function CostsApp({ state, actions }) {
     <div id="costs-whatif-banner" class="cost-whatif-banner" hidden=${!current.whatif}>
       <strong>⚠ WHAT-IF</strong> — you're on a subscription, so these figures are an <em>estimate</em> of what this would cost on pay-per-token billing. They are <strong>not a real charge</strong>.
     </div>
-    ${current.request.hasLoaded && html`<${Fragment}><${CostsChart} chart=${current.chart} /><${CostsTable} state=${state} current=${current} /></${Fragment}>`}
+    ${current.request.hasLoaded && html`<${Fragment}><${CostsChart} chart=${current.chart} enabled=${current.active && current.visible} /><${CostsTable} state=${state} current=${current} /></${Fragment}>`}
   </div>`;
 }
 
