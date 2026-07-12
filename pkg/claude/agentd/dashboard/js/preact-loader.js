@@ -1,7 +1,7 @@
 // This source module intentionally has no Preact imports. A missing or broken
 // runtime module must not prevent the legacy dashboard module graph from
 // linking; future feature islands can use the same load-then-claim boundary.
-import { registerFeatureState } from './feature-state-registry.js';
+import { mountFeatureIsland } from './island-lifecycle.js';
 
 export async function mountPreactRuntimeProbe() {
   const host = document.createElement('span');
@@ -35,35 +35,27 @@ export async function mountJobsFeature(actionDependencies) {
   const host = document.querySelector('#jobs-root');
   const badgeHost = document.querySelector('#jobs-badge-root');
   if (!host || !badgeHost) return null;
-  try {
-    // Keep import() behind named promises: the repository's intentionally
-    // small module-graph scanner recognizes dynamic imports in expressions,
-    // while a bare import(...) line is intentionally rejected as ambiguous.
-    const islandModule = import('./jobs-island.js');
-    const stateModule = import('./jobs-state.js');
-    const actionsModule = import('./jobs-actions.js');
-    const [{ mountJobsIsland }, { jobsState }, { createJobsActions }] =
-      await Promise.all([islandModule, stateModule, actionsModule]);
-    const jobsActions = createJobsActions(actionDependencies);
-    const unregister = registerFeatureState('jobs', jobsState);
-    try {
-      const unmount = mountJobsIsland({ host, badgeHost, state: jobsState, actions: jobsActions });
-      return () => {
-        unmount();
-        unregister();
+  return mountFeatureIsland({
+    name: 'jobs',
+    label: 'Jobs',
+    hosts: [host, badgeHost],
+    failureClass: 'jobs-error',
+    load: async () => {
+      // Keep import() behind named promises: the repository's intentionally
+      // small module-graph scanner recognizes dynamic imports in expressions,
+      // while a bare import(...) line is intentionally rejected as ambiguous.
+      const islandModule = import('./jobs-island.js');
+      const stateModule = import('./jobs-state.js');
+      const actionsModule = import('./jobs-actions.js');
+      const [{ mountJobsIsland }, { jobsState }, { createJobsActions }] =
+        await Promise.all([islandModule, stateModule, actionsModule]);
+      const jobsActions = createJobsActions(actionDependencies);
+      return {
+        state: jobsState,
+        mount: (registerCleanup) => mountJobsIsland({
+          host, badgeHost, state: jobsState, actions: jobsActions, registerCleanup,
+        }),
       };
-    } catch (error) {
-      unregister();
-      throw error;
-    }
-  } catch (error) {
-    host.innerHTML = '';
-    const failure = document.createElement('div');
-    failure.className = 'jobs-error';
-    failure.setAttribute('role', 'alert');
-    failure.textContent = `Jobs failed to load: ${error?.message || error}`;
-    host.append(failure);
-    console.error('Jobs Preact island unavailable.', error);
-    return null;
-  }
+    },
+  });
 }
