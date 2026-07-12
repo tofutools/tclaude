@@ -72,7 +72,8 @@ if (!__preactProbe || __preactProbe.textContent !== 'ready') throw new Error('Pr
 	for i := range states {
 		states[i].JS = preactProbeReady + states[i].JS
 	}
-	if filter := os.Getenv("TCLAUDE_DASHSNAP_FILTER"); filter != "" {
+	filter := os.Getenv("TCLAUDE_DASHSNAP_FILTER")
+	if filter != "" {
 		filtered := states[:0]
 		for _, state := range states {
 			if strings.Contains(state.Key, filter) {
@@ -524,6 +525,48 @@ func baseStates() []dashsnap.State {
 			Caption:  "Processes Runs sub-view with a populated live run row, status, current activity, and viewer action.",
 			JS:       processTabJS("runs", `[data-process-run="dashsnap-release-42"]`),
 			SettleMS: 900,
+		},
+		{
+			Key:      "management-profiles",
+			Title:    "Management — spawn profiles",
+			Caption:  "Preact-owned spawn-profile manager with filtering, transfer actions, keyed cards, and create/edit/delete entry points.",
+			JS:       managementModalJS("/static/js/modal-profiles.js", "openProfilesManageModal", "#profiles-manage-modal"),
+			SettleMS: 700,
+		},
+		{
+			Key:      "management-profile-editor",
+			Title:    "Management — new spawn profile",
+			Caption:  "Spawn-profile editor with harness-driven fields, tri-state defaults, permissions boundary, validation, and save lifecycle.",
+			JS:       managementModalJS("/static/js/modal-profiles.js", "openProfileEditor", "#profile-editor-modal"),
+			SettleMS: 700,
+		},
+		{
+			Key:      "management-roles",
+			Title:    "Management — role library",
+			Caption:  "Preact-owned role library with stable role cards and canonical brief/launch/permission editing.",
+			JS:       managementModalJS("/static/js/modal-roles.js", "openRolesManageModal", "#roles-manage-modal"),
+			SettleMS: 700,
+		},
+		{
+			Key:      "management-role-editor",
+			Title:    "Management — new role",
+			Caption:  "Role editor with nested permission controls and stable spawn-profile references.",
+			JS:       managementModalJS("/static/js/modal-roles.js", "openRoleEditor", "#role-editor-modal"),
+			SettleMS: 700,
+		},
+		{
+			Key:      "management-sandbox-profiles",
+			Title:    "Management — sandbox profiles",
+			Caption:  "Preact-owned sandbox-policy manager with redacted capability cards, import/export, and the sandbox-scribe boundary.",
+			JS:       managementModalJS("/static/js/sandbox-profiles.js", "openSandboxProfilesManageModal", "#sandbox-profiles-manage-modal"),
+			SettleMS: 700,
+		},
+		{
+			Key:      "management-sandbox-editor",
+			Title:    "Management — new sandbox profile",
+			Caption:  "Structured filesystem/environment policy editor with raw JSON escape hatch, dry-run confirmation, and save-in-flight state.",
+			JS:       managementModalJS("/static/js/sandbox-profiles.js", "openSandboxProfileEditor", "#sandbox-profile-editor-modal"),
+			SettleMS: 700,
 		},
 		{
 			Key:      "processes-worklist",
@@ -1338,6 +1381,19 @@ func worklistTabJS(view, readySelector string) string {
     throw new Error('worklist badge expected 2, got ' + (badge ? badge.textContent : 'missing'));
   }
 })();`, view, view, readySelector, readySelector)
+}
+
+func managementModalJS(modulePath, opener, readySelector string) string {
+	return fmt.Sprintf(`return (async function(){
+  var module = await import(%q);
+  if (typeof module[%q] !== 'function') throw new Error('management opener missing: %s');
+  module[%q](null);
+  var deadline = Date.now() + 3000;
+  while (!document.querySelector(%q) && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  if (!document.querySelector(%q)) throw new Error('management modal did not render: %s');
+})();`, modulePath, opener, opener, opener, readySelector, readySelector, readySelector)
 }
 
 func boundedTabJS(tab, readySelector string) string {

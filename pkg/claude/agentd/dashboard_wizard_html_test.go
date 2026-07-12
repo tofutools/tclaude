@@ -591,7 +591,7 @@ func TestDashboardHTML_WizardSandboxProfiles(t *testing.T) {
 
 	// The JS-rendered editor title swaps via wizWord().
 	must("New ward", "the editor title reads 'New ward' when creating in wizard mode")
-	must("Edit ward: ${editingName}", "the editor title reads 'Edit ward: <name>' when editing in wizard mode")
+	must("Edit ward: ${seed.name}", "the editor title reads 'Edit ward: <name>' when editing in wizard mode")
 
 	// The dialog surfaces are re-skinned arcane, each scoped to its own id.
 	must("body.wizard #sandbox-profiles-manage-modal .manage-modal", "the ward overlay surface is re-skinned")

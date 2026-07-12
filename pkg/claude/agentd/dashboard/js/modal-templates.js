@@ -2340,10 +2340,9 @@ function bindTemplatesUI() {
   // pick up any profile it created/edited by re-fetching + re-rendering the
   // template editor's launch-profile dropdowns — but only while that editor is
   // still open behind it (onManageProfilesClosed guards on that). Covers both
-  // close paths: the Close button and a backdrop click.
-  $('#profiles-manage-close').addEventListener('click', onManageProfilesClosed);
-  $('#profiles-manage-modal').addEventListener('click', (e) => {
-    if (e.target === $('#profiles-manage-modal')) onManageProfilesClosed();
+  // every close path emits the same explicit ownership-boundary event.
+  document.addEventListener('tclaude:management-closed', (event) => {
+    if (event.detail?.kind === 'profiles') onManageProfilesClosed();
   });
   // Work-pattern rows: add / remove / reorder (delegated — the container
   // re-renders on every mutation).

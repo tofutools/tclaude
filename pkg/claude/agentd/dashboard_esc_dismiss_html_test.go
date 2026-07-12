@@ -47,8 +47,9 @@ func TestDashboardHTML_EscDismissWired(t *testing.T) {
 	// (One per bind*UI file so a whole file dropping its call is caught.)
 	must("bindBackdropDiscard('perm-edit-modal', closePermEditModal);", "the permission editor confirms before discarding")
 	must("bindBackdropDiscard('template-editor-modal', closeTemplateEditor);", "the template editor confirms before discarding")
-	must("bindBackdropDiscard('role-editor-modal', closeRoleEditor);", "the role editor confirms before discarding")
-	must("bindBackdropDiscard('profile-editor-modal', closeProfileEditor);", "the profile editor confirms before discarding")
+	must("if (!dirty || await confirmDiscard()) onClose();", "Preact management editors confirm before discarding")
+	must(`id="role-editor-modal"`, "the role editor uses the shared Preact dismissal boundary")
+	must(`id="profile-editor-modal"`, "the profile editor uses the shared Preact dismissal boundary")
 	must("bindBackdropDiscard('agent-spawn-modal', closeAgentSpawnModal);", "the spawn dialog confirms before discarding")
 	must("bindBackdropDiscard('cron-create-modal', closeCronCreateModal);", "the cron-create dialog confirms before discarding")
 	must("bindBackdropDiscard('human-reply-modal', closeHumanReplyModal);", "the human-reply dialog confirms before discarding")
@@ -58,8 +59,7 @@ func TestDashboardHTML_EscDismissWired(t *testing.T) {
 	// "discard?" for a typed filter). A child .modal-overlay on top claims
 	// Escape first via bindManageOverlayDismiss's own guard.
 	must("bindManageOverlayDismiss('templates-manage-modal', closeTemplatesManageModal);", "the templates browser closes cleanly")
-	must("bindManageOverlayDismiss('roles-manage-modal', closeRolesManageModal);", "the roles browser closes cleanly")
-	must("bindManageOverlayDismiss('profiles-manage-modal', closeProfilesManageModal);", "the profiles browser closes cleanly")
+	must("manage-overlay show", "Preact management browsers use the clean shared overlay close")
 	must("bindManageOverlayDismiss('links-manage-modal', closeLinksManageModal);", "the links browser closes cleanly")
 
 	// A manage overlay's Escape must key on the z-index/DOM-order topmost test,

@@ -35,23 +35,21 @@ func TestDashboardHTML_RemoteControlDefaultsWired(t *testing.T) {
 	// ---- 1. Spawn-profile editor: tri-state remote_control ---------------
 
 	// dashboard.html: the editor row + its tri-state <select>.
-	must(`id="profile-editor-remote-control-row"`, "profile editor has a remote-control row")
 	must(`id="profile-editor-remote-control"`, "profile editor has a remote-control select")
 
 	// modal-profiles.js: the row gates on the harness capability (shown for a
 	// Remote-Access harness like Claude, hidden for one without it like Codex),
 	// the same can_remote_control flag the spawn dialog reads.
-	must("#profile-editor-remote-control-row", "applyProfileEditorHarness toggles the remote-control row")
-	must("h.can_remote_control", "the profile remote-control row gates on the harness capability")
+	must("hidden=${hEntry && !hEntry.can_remote_control}", "profile remote-control row gates on the harness capability")
 
 	// modal-profiles.js: it reads the tri-state in (round-trips unset/off/on)
 	// and the body carries `remote_control` only when set AND the harness
 	// supports it (gated on the harness's can_remote_control).
-	must("setTri($('#profile-editor-remote-control'), seed ? seed.remote_control : null)",
+	must("remote_control: triValue(seed?.remote_control)",
 		"the editor reads the profile's remote_control tri-state on open")
-	must("readTri($('#profile-editor-remote-control'))", "the payload reads the remote-control tri-state")
-	must("body.remote_control = remoteControl", "the profile body carries remote_control when set")
-	must("hEntry ? !!hEntry.can_remote_control : true",
+	must("readTri(draft.remote_control)", "the payload reads the remote-control tri-state")
+	must("body.remote_control = remote", "the profile body carries remote_control when set")
+	must("(!h || h.can_remote_control)",
 		"the body opt-in is gated on the harness's Remote Access capability")
 
 	// profiles.js: the profile card summary surfaces an explicit remote_control.

@@ -45,7 +45,7 @@ import {
 import { bindTermModal } from './modal-term.js';
 import { initTerminalsTab } from './terminals-tab.js';
 import {
-  bindMessageModal, bindSudoModal, bindPermEditModal, bindGroupCreateModal,
+  bindMessageModal, bindSudoModal, bindPermEditModal, bindGroupCreateModal, openSpawnPermEditor,
 } from './modal-message.js';
 import { bindHumanReplyModal } from './modal-human-reply.js';
 import {
@@ -53,7 +53,7 @@ import {
   bindGroupCloneModal,
 } from './modal-templates.js';
 import { bindProfilesUI } from './modal-profiles.js';
-import { bindSandboxProfilesUI } from './sandbox-profiles.js';
+import { bindSandboxProfilesUI, refreshSpawnSandboxProfileUI, summonSandboxScribe } from './sandbox-profiles.js';
 import { bindRolesUI } from './modal-roles.js';
 import { bindCloneModal } from './modal-clone.js';
 import { bindNestModal } from './modal-nest.js';
@@ -75,7 +75,7 @@ import { bindDock } from './dock.js';
 import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
 import {
-  mountAccessFeature, mountAuditFeature, mountConfigFeature, mountCostsFeature, mountJobsFeature, mountLogsFeature, mountPluginsFeature, mountProcessesFeature,
+  mountAccessFeature, mountAuditFeature, mountConfigFeature, mountCostsFeature, mountJobsFeature, mountLogsFeature, mountManagementFeature, mountPluginsFeature, mountProcessesFeature,
   mountPreactRuntimeProbe,
 } from './preact-loader.js';
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
@@ -175,6 +175,13 @@ export function sudoBadge(activeSudo, fallbackConvID) {
     mountAuditFeature(),
     mountConfigFeature({ toast, isCyclingTabs }),
     mountProcessesFeature({ confirm: confirmModal, confirmDiscard, notify: toast }),
+    mountManagementFeature({
+      confirm: confirmModal, confirmDiscard, notify: toast,
+      getSnapshot: () => lastSnapshot,
+      openProfilePermissions: (options) => openSpawnPermEditor({ ...options, group: 'the spawn group' }),
+      refreshSandboxSpawn: () => refreshSpawnSandboxProfileUI(document.querySelector('#agent-spawn-group')?.value || ''),
+      summonSandboxScribe,
+    }),
   ]);
 
   bindTabs();
