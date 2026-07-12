@@ -254,6 +254,74 @@ func TestConvFollower_RewriteGrowsLargerAnchorCatches(t *testing.T) {
 		"anchor mismatch forced a full reparse; the stale first-wins prompt was discarded")
 }
 
+// snapshotRecord is a complete, valid JSON line that carries no indexable
+// content (no prompt / title / summary / timestamp) — it advances the byte
+// offset but leaves finalize returning a stub (nil entry).
+const snapshotRecord = `{"type":"file-history-snapshot","messageId":"x"}` + "\n"
+
+// TestConvFollower_StubWithOffsetStillAnchors: finding F2b. A stub commit
+// (non-indexable records that still advance the offset) must capture a tail
+// anchor from the path, not skip anchoring because the entry is nil — else a
+// stub with offset>0 would carry an empty anchor and full-reparse forever.
+func TestConvFollower_StubWithOffsetStillAnchors(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, followerTestConvID+".jsonl")
+	require.NoError(t, os.WriteFile(path, []byte(snapshotRecord), 0o600))
+
+	f := newConvFollower(followerTestConvID)
+	entry, _, err := f.refresh(path, statOf(t, path))
+	require.NoError(t, err)
+	require.Nil(t, entry, "non-indexable records finalize to a stub")
+	require.Greater(t, f.offset, int64(0), "the stub record still advanced the cursor")
+	require.NotEmpty(t, f.anchor, "a stub with a non-zero offset still captures an anchor (F2b)")
+
+	// Append another stub then a real prompt: the anchored stub cursor can
+	// increment, and the result matches a full reparse.
+	appendToFile(t, path, snapshotRecord)
+	appendToFile(t, path, userLine("main", "2026-03-01T10:00:00Z", "real prompt"))
+	entry, complete, err := f.refresh(path, statOf(t, path))
+	require.NoError(t, err)
+	assertMatchesFullReparse(t, path, entry, complete)
+	require.Equal(t, "real prompt", entry.FirstPrompt)
+}
+
+// TestConvFollower_EmptyAnchorForcesFullReparse: finding F2a. When the
+// committed anchor is empty (a prior best-effort capture failed) and the
+// offset is non-zero, the follower has nothing to validate the committed
+// bytes against, so it MUST full-reparse rather than trust the cursor — even
+// though size/inode/mtime would otherwise admit an incremental read.
+func TestConvFollower_EmptyAnchorForcesFullReparse(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, followerTestConvID+".jsonl")
+	require.NoError(t, os.WriteFile(path, []byte(userLine("main", "2026-03-01T10:00:00Z", "AAA")), 0o600))
+
+	f := newConvFollower(followerTestConvID)
+	entry, _, err := f.refresh(path, statOf(t, path))
+	require.NoError(t, err)
+	require.Equal(t, "AAA", entry.FirstPrompt)
+	require.NotEmpty(t, f.anchor, "precondition: a normal commit captured an anchor")
+	primedInode := statOf(t, path)
+
+	// Simulate a failed anchor capture on the prior commit.
+	f.anchor = nil
+
+	// In-place, same-inode rewrite that changes the head FirstPrompt (same
+	// length, so the boundary at the old offset still aligns) and grows the
+	// file. A naive increment would keep the stale first-wins "AAA"; the
+	// empty-anchor guard forces a full reparse to the correct "BBB".
+	v2 := userLine("main", "2026-03-01T10:00:00Z", "BBB") +
+		userLine("main", "2026-03-01T10:05:00Z", "CCC")
+	require.NoError(t, os.WriteFile(path, []byte(v2), 0o600))
+	require.True(t, os.SameFile(primedInode, statOf(t, path)), "precondition: same inode")
+
+	entry, complete, err := f.refresh(path, statOf(t, path))
+	require.NoError(t, err)
+	assertMatchesFullReparse(t, path, entry, complete)
+	require.Equal(t, "BBB", entry.FirstPrompt,
+		"empty anchor forced a full reparse; the stale cursor was not trusted")
+	require.NotEmpty(t, f.anchor, "the full reparse re-captured an anchor")
+}
+
 // TestConvFollower_OversizedRecordSkipped: a record past the line cap is
 // skipped (not a hard failure), the row is still built from the other
 // records, and the scan is marked incomplete (so the destructive

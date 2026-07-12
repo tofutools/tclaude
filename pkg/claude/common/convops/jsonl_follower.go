@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
-	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,18 +23,51 @@ import (
 // per path and, when the file has only grown, decodes just the appended
 // bytes.
 //
-// Correctness rests on two things:
-//   - The projection is a forward fold — every field parseJSONLSession
-//     derives is head-only (first-wins), last-seen, or additive, so
-//     accumulating forward yields the same result as a full scan. The
-//     accumulator here IS the body of parseJSONLSession's loop, so the two
-//     paths converge by construction (see parseJSONLSession, which now
-//     drives the same jsonlScanState).
-//   - We never trust a cursor we can't validate. Identity (inode) change,
-//     size shrink below the cursor, a tail-anchor mismatch just before the
-//     cursor, or any read/decode doubt discards the cursor and falls back
-//     to an authoritative full reparse — degrading to today's behavior, one
-//     full read, never to a corrupt index.
+// # The append-only contract
+//
+// The optimization rests on a domain assumption: a Claude Code transcript
+// .jsonl is APPEND-ONLY for the life of its path. The viability work for
+// TCL-381 characterized this empirically — a live transcript keeps a stable
+// inode with monotonically growing size; /clear rotates to a NEW conv-id /
+// path (never an in-place rewrite); resume and compaction append; cleanup
+// deletes the whole file (a Remove event). We do not re-validate the whole
+// file on every tick — that would mean reading it end-to-end, exactly the
+// cost this change removes. Instead the guards below are cheap TRIPWIRES
+// for the rewrite shapes that DO occur, backed by the append-only contract
+// for the rest.
+//
+// # What each guard catches
+//
+//   - Forward-fold correctness. Every field parseJSONLSession derives is
+//     head-only (first-wins), last-seen, or additive, so accumulating
+//     forward yields the same result as a full scan. The accumulator here
+//     IS the body of parseJSONLSession's loop, so the two paths converge by
+//     construction (parseJSONLSession now drives the same jsonlScanState).
+//   - Identity change (os.SameFile / inode): catches rotation and
+//     atomic replace-then-rename — a wholesale file swap.
+//   - Size shrink below the cursor: catches truncation / a shorter rewrite.
+//   - Tail-anchor: re-reads the committed last ~64 bytes before the cursor
+//     and compares. Catches an in-place rewrite (same inode) that ends
+//     LARGER than the cursor — the one shape size + inode miss — as long as
+//     it disturbs the bytes just before the cursor (an append-then-rewrite,
+//     or any rewrite that shifts the tail).
+//   - Read/decode doubt on the appended bytes: falls back to a full reparse.
+//
+// Any of these discards the cursor and full-reparses — degrading to today's
+// behavior (one full read), never to a corrupt index.
+//
+// # Accepted residual risk
+//
+// The anchor is a tripwire, not a proof that the folded prefix is unchanged:
+// validating the whole prefix would require reading the whole file. A
+// surgical, SAME-LENGTH interior pwrite that edits bytes strictly before the
+// cursor while leaving the last ~64 bytes (and the size, and the inode)
+// untouched would not be detected until the next full reparse — which
+// happens on the next daemon restart, or the next size shrink / rotation /
+// decode-doubt for that conv. Claude Code does not write transcripts this
+// way (it O_APPENDs whole records), so this is accepted residual risk rather
+// than a defended case. The invariant we DO guarantee: we never trust a
+// cursor whose validating anchor we could not read (see scanAppend).
 
 // maxJSONLLineBytes caps a single .jsonl record. Lives in convops.go
 // (shared with parseJSONLSession); referenced here.
@@ -69,8 +101,17 @@ type jsonlScanState struct {
 	// finalize. Keyed by repoDir+"\x00"+branch: one conversation can touch
 	// the same branch name in two repos, and those are distinct entries.
 	branches map[string]*branchAccum
-	// canonCwd memoises db.CanonicalizeRepoDir. Claude Code stamps a fixed
-	// cwd onto every turn, so this resolves to a single entry.
+	// canonCwd memoises db.CanonicalizeRepoDir WITHIN a single scan pass.
+	// Canonicalization is time-dependent external state — db.CanonicalizeRepoDir
+	// calls filepath.EvalSymlinks, so the same cwd string can resolve to
+	// different repo dirs if a symlink in the path is retargeted between
+	// ticks. The memo is therefore deliberately NOT carried across ticks
+	// (clone() gives each scan a fresh, empty map), so this tick's new
+	// records canonicalize against the filesystem exactly as a fresh full
+	// parse would. Already-accumulated branchAccum keys keep the repo dir
+	// observed when their turns were first read — historically accurate, and
+	// the reason follower/full-reparse equivalence is stated per-tick for
+	// NEW records rather than as a global re-canonicalization.
 	canonCwd map[string]string
 }
 
@@ -100,7 +141,8 @@ func newJSONLScanState(sessionID, fullPath string) jsonlScanState {
 // fallback runs. The entry is copied by value (its only slice field,
 // BranchHistory, is populated at finalize, not during accumulation); the
 // branch fold is deep-copied because its *branchAccum values are mutated
-// in place.
+// in place. canonCwd is intentionally reset to empty, NOT copied — the
+// memo must not survive across ticks (see its field comment).
 func (s *jsonlScanState) clone() jsonlScanState {
 	out := *s
 	out.branches = make(map[string]*branchAccum, len(s.branches))
@@ -108,8 +150,7 @@ func (s *jsonlScanState) clone() jsonlScanState {
 		cp := *acc
 		out.branches[k] = &cp
 	}
-	out.canonCwd = make(map[string]string, len(s.canonCwd))
-	maps.Copy(out.canonCwd, s.canonCwd)
+	out.canonCwd = map[string]string{}
 	return out
 }
 
@@ -409,7 +450,7 @@ func (f *convFollower) fullScan(path string, info os.FileInfo) (*SessionEntry, b
 	complete := scanErr == nil && !state.oversizedSeen
 	entry := state.finalize(info)
 
-	f.commit(info, consumed, state, entry, complete)
+	f.commit(path, info, consumed, state, entry, complete)
 	if scanErr != nil {
 		// Match parseJSONLSession: a scan that stopped before EOF is a
 		// truncated view; report it so the caller skips the branch-history
@@ -427,6 +468,16 @@ func (f *convFollower) scanAppend(path string, info os.FileInfo) (*SessionEntry,
 		return nil, false, false
 	}
 	defer func() { _ = file.Close() }()
+
+	// Never trust a cursor we can't validate: with a non-zero offset, an
+	// empty anchor means the last commit could not read its tail (a
+	// best-effort capture that failed). We have nothing to check the
+	// committed bytes against, so bail to a full reparse rather than
+	// blindly reading from a possibly-stale offset. (offset == 0 has no
+	// preceding bytes to validate — reading from 0 IS a scan from start.)
+	if f.offset > 0 && len(f.anchor) == 0 {
+		return nil, false, false
+	}
 
 	// Tail-anchor check: re-read the committed bytes just before the cursor
 	// and compare. A mismatch means the file was rewritten under the same
@@ -461,47 +512,44 @@ func (f *convFollower) scanAppend(path string, info os.FileInfo) (*SessionEntry,
 	// full reparse of the same bytes.
 	complete := !state.oversizedSeen
 	entry := state.finalize(info)
-	f.commitAt(info, newOffset, state, entry, complete)
+	f.commitAt(path, info, newOffset, state, entry, complete)
 	return entry, complete, true
 }
 
 // commit records a full-scan result: consumed is the absolute byte count of
 // complete records from offset 0.
-func (f *convFollower) commit(info os.FileInfo, consumed int64, state jsonlScanState, entry *SessionEntry, complete bool) {
-	f.commitAt(info, consumed, state, entry, complete)
+func (f *convFollower) commit(path string, info os.FileInfo, consumed int64, state jsonlScanState, entry *SessionEntry, complete bool) {
+	f.commitAt(path, info, consumed, state, entry, complete)
 }
 
 // commitAt durably advances the cursor to newOffset and snapshots the tail
 // anchor from disk. Anchoring reads the last convFollowerAnchorBytes before
 // newOffset so the next tick can prove the file was only appended to.
-func (f *convFollower) commitAt(info os.FileInfo, newOffset int64, state jsonlScanState, entry *SessionEntry, complete bool) {
+func (f *convFollower) commitAt(path string, info os.FileInfo, newOffset int64, state jsonlScanState, entry *SessionEntry, complete bool) {
 	f.info = info
 	f.offset = newOffset
 	f.state = state
 	f.entry = entry
 	f.complete = complete
 	f.primed = true
-	f.captureAnchor(newOffset)
+	f.captureAnchor(path, newOffset)
 }
 
-// captureAnchor reads the committed tail from f's path so scanAppend can
-// verify it next tick. Best-effort: on any read failure the anchor is
-// cleared, which just forces the next tick's guard to skip the anchor check
-// (the size/inode guards still apply, and a cleared anchor never
-// false-positives).
-func (f *convFollower) captureAnchor(offset int64) {
-	if f.entry == nil {
-		// A stub finalize (nothing indexable) — nothing committed worth
-		// anchoring; the size/inode guards still cover the next tick.
-		f.anchor = nil
-		return
-	}
+// captureAnchor reads the committed tail from path so scanAppend can verify
+// it next tick. It takes the path explicitly rather than f.entry.FullPath so
+// a STUB commit (finalize returned nil — non-indexable records that still
+// advanced the offset) anchors too; otherwise a stub with a non-zero offset
+// would carry an empty anchor and, under scanAppend's never-trust guard,
+// full-reparse on every subsequent tick. Best-effort: on any read failure
+// the anchor is cleared, which under that same guard forces the next tick to
+// full-reparse rather than trust an unvalidated cursor.
+func (f *convFollower) captureAnchor(path string, offset int64) {
 	n := min(int64(convFollowerAnchorBytes), offset)
 	if n <= 0 {
 		f.anchor = nil
 		return
 	}
-	file, err := os.Open(f.entry.FullPath) //nolint:gosec // our own monitored .jsonl
+	file, err := os.Open(path) //nolint:gosec // our own monitored .jsonl
 	if err != nil {
 		f.anchor = nil
 		return

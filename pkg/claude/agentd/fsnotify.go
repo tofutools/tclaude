@@ -189,14 +189,7 @@ func (m *convMonitor) loop() {
 		case <-m.stop:
 			return
 		case fe := <-fireCh:
-			// Forget the timer only if it is still the current one for
-			// this path: a Write that arrived after fe.pt fired may
-			// have installed a fresh timer that must stay tracked (so a
-			// later Write resets it, and shutdown still Stop()s it).
-			if timers[fe.path] == fe.pt {
-				delete(timers, fe.path)
-			}
-			m.reindex(fe.path, followers)
+			m.handleFire(fe, timers, known, followers)
 		case event, ok := <-m.watcher.Events:
 			if !ok {
 				return
@@ -372,6 +365,32 @@ func (m *convMonitor) reindex(path string, followers map[string]*convops.ConvFol
 		followers[path] = f
 	}
 	f.ReindexFile(path)
+}
+
+// handleFire processes one settled debounce fire on the loop goroutine:
+// forget the timer, re-index the path, and evict its follower if the path
+// is no longer tracked.
+//
+// The eviction closes a follower-map leak. A debounce timer can queue its
+// fireEvent into fireCh and only THEN have its path removed/renamed — the
+// Remove handler deletes followers[path] and clears known[path], but this
+// already-queued fire still drains afterward and m.reindex recreates a
+// follower for the now-dead path. known[path] is the liveness signal (a
+// Write/Create sets it, a Remove/Rename clears it): when it is false, the
+// follower reindex just recreated is for a dead path and nothing else will
+// ever clean it up, so drop it here.
+func (m *convMonitor) handleFire(fe fireEvent, timers map[string]*pendingTimer, known map[string]bool, followers map[string]*convops.ConvFollower) {
+	// Forget the timer only if it is still the current one for this path: a
+	// Write that arrived after fe.pt fired may have installed a fresh timer
+	// that must stay tracked (so a later Write resets it, and shutdown still
+	// Stop()s it).
+	if timers[fe.path] == fe.pt {
+		delete(timers, fe.path)
+	}
+	m.reindex(fe.path, followers)
+	if !known[fe.path] {
+		delete(followers, fe.path)
+	}
 }
 
 // reindexIfStale re-parses path only when the on-disk file is newer
