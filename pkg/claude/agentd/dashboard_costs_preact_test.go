@@ -34,7 +34,10 @@ func TestDashboardCostsPreactBoundary(t *testing.T) {
 		"host.addEventListener('mousemove', move)",
 		"host.removeEventListener('mousemove', move)",
 		"tooltip?.remove()",
-		"useEffect(() => mountImperativeCostChart(host.current, chart), [chart])",
+		"export function CostsChart({ chart, enabled = true })",
+		"if (!enabled)",
+		"return mountImperativeCostChart(host.current, chart);",
+		"}, [chart, enabled]);",
 	} {
 		if !strings.Contains(chart, needle) {
 			t.Errorf("imperative chart boundary missing lifecycle wiring %q", needle)

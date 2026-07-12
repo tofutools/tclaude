@@ -128,8 +128,14 @@ export function mountImperativeCostChart(host, chart) {
   };
 }
 
-export function CostsChart({ chart }) {
+export function CostsChart({ chart, enabled = true }) {
   const host = useRef(null);
-  useEffect(() => mountImperativeCostChart(host.current, chart), [chart]);
+  useEffect(() => {
+    if (!enabled) {
+      host.current.replaceChildren();
+      return undefined;
+    }
+    return mountImperativeCostChart(host.current, chart);
+  }, [chart, enabled]);
   return html`<div id="costs-chart" ref=${host}></div>`;
 }

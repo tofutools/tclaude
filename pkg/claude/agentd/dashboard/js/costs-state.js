@@ -40,8 +40,11 @@ export function createCostsState({
   const factor = signal({ raw: '', status: '', error: false, editVersion: 0, requestId: 0 });
   let initialized = false;
 
-  const view = computed(() => {
-    const snap = snapshot.value;
+  // Keep cost-only derivations outside the snapshot-dependent view. The
+  // dashboard publishes a fresh snapshot every two seconds; rebuilding the
+  // chart object for those unrelated updates makes CostsChart tear down its
+  // imperative chart effect (and the active body-level hover tooltip).
+  const costData = computed(() => {
     const data = payload.value;
     const agents = data?.agents || [];
     const harnesses = costHarnesses(agents);
@@ -50,6 +53,15 @@ export function createCostsState({
     const projection = narrowed && span.value === 'month'
       ? monthProjection(narrowed, fillEmpty.value, includeWeekends.value, now())
       : null;
+    return {
+      data, agents, harnesses, selected, narrowed, projection,
+      chart: narrowed ? buildCostChart(narrowed, projection, agents, selected, harnesses) : null,
+    };
+  });
+
+  const view = computed(() => {
+    const snap = snapshot.value;
+    const { data, agents, harnesses, selected, narrowed, projection, chart } = costData.value;
     const visibleRows = sortCostAgents(agents, sort.value)
       .filter((agent) => selected.has(harnessLabel(agent.harness)))
       .filter((agent) => matchesCostAgent(agent, query.value));
@@ -73,7 +85,7 @@ export function createCostsState({
       payload: data,
       narrowed,
       projection,
-      chart: narrowed ? buildCostChart(narrowed, projection, agents, selected, harnesses) : null,
+      chart,
       rows: visibleRows,
       totalConversations,
       shownConversations,
