@@ -64,6 +64,8 @@ func TestMaterializeAgentDirectoriesRejectsUnsafeLaunchKey(t *testing.T) {
 
 func TestMaterializeAgentDirectoriesCanonicalizesSymlinkedCachePrefix(t *testing.T) {
 	realCache := t.TempDir()
+	canonicalRealCache, err := filepath.EvalSymlinks(realCache)
+	require.NoError(t, err)
 	linkParent := t.TempDir()
 	cacheLink := filepath.Join(linkParent, "cache")
 	require.NoError(t, os.Symlink(realCache, cacheLink))
@@ -76,7 +78,7 @@ func TestMaterializeAgentDirectoriesCanonicalizesSymlinkedCachePrefix(t *testing
 	require.NoError(t, err)
 	t.Cleanup(cleanup)
 	require.Len(t, got.Effective.Environment, 1)
-	assert.True(t, strings.HasPrefix(got.Effective.Environment[0].Value, realCache+string(filepath.Separator)))
+	assert.True(t, strings.HasPrefix(got.Effective.Environment[0].Value, canonicalRealCache+string(filepath.Separator)))
 }
 
 func TestEnsureAgentDirectoriesRejectsFrozenBindingOutsideCacheRoot(t *testing.T) {
