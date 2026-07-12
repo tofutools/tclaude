@@ -19,6 +19,12 @@ const (
 	MaxEnvironmentValue = 16 * 1024
 	MaxEnvironmentCount = 128
 	MaxEnvironmentBytes = 64 * 1024
+	MaxIncludeCount = 32
+	// MaxIncludeDepth bounds the longest include-EDGE chain reachable from a
+	// profile (a profile with no includes has depth 0). Registry write paths
+	// and launch-time flattening enforce the same unit and bound, so a policy
+	// that persists is always resolvable.
+	MaxIncludeDepth = 16
 )
 
 type Access string
@@ -42,10 +48,18 @@ type EnvironmentEntry struct {
 // Profile is the harness-neutral, operator-authored capability bundle. It is
 // deliberately limited to filesystem and environment configuration;
 // harness launch posture belongs to spawn profiles instead.
+//
+// Includes composes other profiles by name, recursively: included profiles
+// apply first in listed order, then the profile's own entries override any
+// same-path or same-name values they supplied. Unlike Filesystem and
+// Environment, Includes keeps its authored order because that order carries
+// the override semantics. Flatten expands Includes; Resolve refuses profiles
+// that still carry them.
 type Profile struct {
 	Name        string             `json:"name"`
 	Filesystem  []FilesystemGrant  `json:"filesystem,omitempty"`
 	Environment []EnvironmentEntry `json:"environment,omitempty"`
+	Includes    []string           `json:"includes,omitempty"`
 }
 
 var environmentNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -107,7 +121,42 @@ func normalize(in Profile, allowMissing bool) (Profile, []string, error) {
 	if err != nil {
 		return Profile{}, nil, err
 	}
-	return Profile{Name: name, Filesystem: filesystem, Environment: environment}, missing, nil
+	includes, err := normalizeIncludes(name, in.Includes)
+	if err != nil {
+		return Profile{}, nil, err
+	}
+	return Profile{Name: name, Filesystem: filesystem, Environment: environment, Includes: includes}, missing, nil
+}
+
+// normalizeIncludes validates include references syntactically. Whether each
+// referenced profile exists (and whether the whole graph stays acyclic) is a
+// registry-level invariant checked where the registry is available: at store
+// time and again by Flatten at resolution time. Order is preserved verbatim
+// because later includes override earlier ones.
+func normalizeIncludes(profileName string, in []string) ([]string, error) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+	if len(in) > MaxIncludeCount {
+		return nil, fmt.Errorf("includes has too many entries (maximum %d)", MaxIncludeCount)
+	}
+	seen := make(map[string]bool, len(in))
+	out := make([]string, 0, len(in))
+	for i, include := range in {
+		name, err := normalizeName(include)
+		if err != nil {
+			return nil, fmt.Errorf("includes[%d]: %w", i, err)
+		}
+		if name == profileName {
+			return nil, fmt.Errorf("includes[%d]: sandbox profile %q must not include itself", i, name)
+		}
+		if seen[name] {
+			return nil, fmt.Errorf("includes[%d]: sandbox profile %q is included more than once", i, name)
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	return out, nil
 }
 
 func normalizeName(name string) (string, error) {

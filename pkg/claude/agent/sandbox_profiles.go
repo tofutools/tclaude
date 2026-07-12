@@ -25,6 +25,7 @@ type sandboxProfileJSON struct {
 	Name        string                           `json:"name"`
 	Filesystem  []sandboxpolicy.FilesystemGrant  `json:"filesystem"`
 	Environment []sandboxpolicy.EnvironmentEntry `json:"environment"`
+	Includes    []string                         `json:"includes,omitempty"`
 	CreatedAt   string                           `json:"created_at,omitempty"`
 	UpdatedAt   string                           `json:"updated_at,omitempty"`
 }
@@ -79,10 +80,10 @@ func runSandboxProfilesLs(p *sandboxProfilesLsParams, stdout, stderr io.Writer) 
 		fmt.Fprintln(stdout, "(no sandbox profiles)")
 		return rcOK
 	}
-	fmt.Fprintf(stdout, "%-24s  %10s  %11s\n", "NAME", "FILESYSTEM", "ENVIRONMENT")
-	fmt.Fprintln(stdout, strings.Repeat("─", 51))
+	fmt.Fprintf(stdout, "%-24s  %10s  %11s  %8s\n", "NAME", "FILESYSTEM", "ENVIRONMENT", "INCLUDES")
+	fmt.Fprintln(stdout, strings.Repeat("─", 61))
 	for _, profile := range profiles {
-		fmt.Fprintf(stdout, "%-24s  %10d  %11d\n", truncate(profile.Name, 24), len(profile.Filesystem), len(profile.Environment))
+		fmt.Fprintf(stdout, "%-24s  %10d  %11d  %8d\n", truncate(profile.Name, 24), len(profile.Filesystem), len(profile.Environment), len(profile.Includes))
 	}
 	return rcOK
 }
@@ -122,6 +123,14 @@ func runSandboxProfilesShow(p *sandboxProfilesShowParams, stdout, stderr io.Writ
 
 func printSandboxProfileHuman(w io.Writer, profile sandboxProfileJSON) {
 	fmt.Fprintf(w, "Sandbox profile: %s\n", profile.Name)
+	if len(profile.Includes) > 0 {
+		// Order matters: later includes — and then this profile's own entries —
+		// override same-path/same-name values from earlier ones.
+		fmt.Fprintln(w, "  includes (applied first, in order):")
+		for _, name := range profile.Includes {
+			fmt.Fprintf(w, "    %s\n", name)
+		}
+	}
 	if len(profile.Filesystem) == 0 {
 		fmt.Fprintln(w, "  filesystem: (none)")
 	} else {

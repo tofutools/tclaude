@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -13,10 +15,12 @@ import (
 )
 
 var (
-	ErrSandboxProfileNameTaken     = errors.New("a sandbox profile with that name already exists")
-	ErrSandboxProfileNotFound      = errors.New("sandbox profile not found")
-	ErrSandboxProfileChanged       = errors.New("sandbox profile changed since preview")
-	ErrSandboxProfileInvalidImport = errors.New("invalid sandbox profile import")
+	ErrSandboxProfileNameTaken      = errors.New("a sandbox profile with that name already exists")
+	ErrSandboxProfileNotFound       = errors.New("sandbox profile not found")
+	ErrSandboxProfileChanged        = errors.New("sandbox profile changed since preview")
+	ErrSandboxProfileInvalidImport  = errors.New("invalid sandbox profile import")
+	ErrSandboxProfileInvalidInclude = errors.New("invalid sandbox profile include")
+	ErrSandboxProfileIncludedBy     = errors.New("sandbox profile is included by other profiles")
 )
 
 // SandboxFilesystemGrant is one normalized filesystem capability in a sandbox
@@ -31,11 +35,15 @@ type SandboxEnvironmentEntry = sandboxpolicy.EnvironmentEntry
 
 // SandboxProfile is a stable-ID registry row. Environment values are
 // deliberately non-secret plaintext configuration, not a credential store.
+// Includes composes other profiles by name in authored order; the write
+// paths keep the reference graph dangling-free and acyclic, and resolution
+// flattens it before any value becomes launch authority.
 type SandboxProfile struct {
 	ID          int64                     `json:"id"`
 	Name        string                    `json:"name"`
 	Filesystem  []SandboxFilesystemGrant  `json:"filesystem"`
 	Environment []SandboxEnvironmentEntry `json:"environment"`
+	Includes    []string                  `json:"includes"`
 	CreatedAt   time.Time                 `json:"created_at"`
 	UpdatedAt   time.Time                 `json:"updated_at"`
 }
@@ -56,7 +64,7 @@ func CreateSandboxProfile(p *SandboxProfile) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	filesystemJSON, environmentJSON, err := marshalSandboxProfilePayload(p)
+	filesystemJSON, environmentJSON, includesJSON, err := marshalSandboxProfilePayload(p)
 	if err != nil {
 		return 0, err
 	}
@@ -64,22 +72,37 @@ func CreateSandboxProfile(p *SandboxProfile) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	tx, err := d.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
 	now := time.Now().Format(time.RFC3339Nano)
-	res, err := d.Exec(`INSERT INTO sandbox_profiles
-		(name, filesystem_json, environment_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
-		p.Name, filesystemJSON, environmentJSON, now, now)
+	res, err := tx.Exec(`INSERT INTO sandbox_profiles
+		(name, filesystem_json, environment_json, includes_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		p.Name, filesystemJSON, environmentJSON, includesJSON, now, now)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return 0, ErrSandboxProfileNameTaken
 		}
 		return 0, err
 	}
-	return res.LastInsertId()
+	if err := validateSandboxProfileIncludeGraph(tx); err != nil {
+		return 0, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 // UpdateSandboxProfile atomically replaces the complete payload. The row ID
-// is immutable; rename snapshots for both assignment surfaces are refreshed in
-// the same transaction.
+// is immutable; rename snapshots for both assignment surfaces — and include
+// references held by other profiles — are refreshed in the same transaction.
 func UpdateSandboxProfile(p *SandboxProfile) error {
 	return updateSandboxProfile(p, "")
 }
@@ -96,7 +119,7 @@ func updateSandboxProfile(p *SandboxProfile, revision string) error {
 	if err != nil {
 		return err
 	}
-	filesystemJSON, environmentJSON, err := marshalSandboxProfilePayload(p)
+	filesystemJSON, environmentJSON, includesJSON, err := marshalSandboxProfilePayload(p)
 	if err != nil {
 		return err
 	}
@@ -110,9 +133,15 @@ func updateSandboxProfile(p *SandboxProfile, revision string) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	var oldName string
+	if err := tx.QueryRow(`SELECT name FROM sandbox_profiles WHERE id = ?`, p.ID).Scan(&oldName); errors.Is(err, sql.ErrNoRows) {
+		return sql.ErrNoRows
+	} else if err != nil {
+		return err
+	}
 	now := time.Now().Format(time.RFC3339Nano)
-	query := `UPDATE sandbox_profiles SET name = ?, filesystem_json = ?, environment_json = ?, updated_at = ? WHERE id = ?`
-	args := []any{p.Name, filesystemJSON, environmentJSON, now, p.ID}
+	query := `UPDATE sandbox_profiles SET name = ?, filesystem_json = ?, environment_json = ?, includes_json = ?, updated_at = ? WHERE id = ?`
+	args := []any{p.Name, filesystemJSON, environmentJSON, includesJSON, now, p.ID}
 	if revision != "" {
 		query += ` AND updated_at = ?`
 		args = append(args, revision)
@@ -140,10 +169,193 @@ func updateSandboxProfile(p *SandboxProfile, revision string) error {
 	if _, err := tx.Exec(`UPDATE sandbox_profile_global_assignment SET profile_name = ? WHERE profile_id = ?`, p.Name, p.ID); err != nil {
 		return err
 	}
+	if oldName != p.Name {
+		if err := renameSandboxProfileIncludeRefs(tx, oldName, p.Name); err != nil {
+			return err
+		}
+	}
+	if err := validateSandboxProfileIncludeGraph(tx); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
-func marshalSandboxProfilePayload(p *SandboxProfile) (string, string, error) {
+// renameSandboxProfileIncludeRefs follows a rename into every profile whose
+// include list references the old name, mirroring how assignment name
+// snapshots track the stable ID. Referrers' timestamps are left untouched —
+// their effective content did not change.
+func renameSandboxProfileIncludeRefs(tx *sql.Tx, oldName, newName string) error {
+	graph, err := loadSandboxProfileIncludeGraph(tx)
+	if err != nil {
+		return err
+	}
+	for name, includes := range graph {
+		changed := false
+		for i, include := range includes {
+			if include == oldName {
+				includes[i] = newName
+				changed = true
+			}
+		}
+		if !changed {
+			continue
+		}
+		includesJSON, err := json.Marshal(includes)
+		if err != nil {
+			return fmt.Errorf("marshal sandbox profile %q includes: %w", name, err)
+		}
+		if _, err := tx.Exec(`UPDATE sandbox_profiles SET includes_json = ? WHERE name = ?`, string(includesJSON), name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// loadSandboxProfileIncludeGraph reads every profile's include list as
+// name → includes, the working shape for reference validation and rewrites.
+func loadSandboxProfileIncludeGraph(tx *sql.Tx) (map[string][]string, error) {
+	rows, err := tx.Query(`SELECT name, includes_json FROM sandbox_profiles`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	graph := map[string][]string{}
+	for rows.Next() {
+		var name, includesJSON string
+		if err := rows.Scan(&name, &includesJSON); err != nil {
+			return nil, err
+		}
+		var includes []string
+		if err := json.Unmarshal([]byte(includesJSON), &includes); err != nil {
+			return nil, fmt.Errorf("decode sandbox profile %q includes: %w", name, err)
+		}
+		graph[name] = includes
+	}
+	return graph, rows.Err()
+}
+
+// validateSandboxProfileIncludeGraph re-checks the whole registry inside the
+// writing transaction: every include must reference an existing profile and
+// the graph must stay acyclic within the policy depth bound. Validating the
+// complete graph after the write keeps create, edit, rename, and import on
+// one shared invariant instead of per-path reasoning about what could have
+// changed.
+func validateSandboxProfileIncludeGraph(tx *sql.Tx) error {
+	graph, err := loadSandboxProfileIncludeGraph(tx)
+	if err != nil {
+		return err
+	}
+	return validateIncludeGraphMap(graph)
+}
+
+// SandboxProfileImportGraphInspection reports, per conflict policy, the
+// include-graph error a bundle would hit on import. Empty strings mean that
+// policy's graph shape is valid. The two shapes can genuinely differ: under
+// "overwrite" every bundle profile replaces its local namesake, while under
+// "skip" a clashing local profile keeps its own includes — so a bundle that
+// closes a cycle through an overwritten profile can still be validly imported
+// with "skip". The "error" policy either aborts on the first clash or, with
+// no clashes, degenerates to the same shape as the other two.
+type SandboxProfileImportGraphInspection struct {
+	OverwriteError string
+	SkipError      string
+}
+
+// InspectSandboxProfileImportGraph validates the include graphs an import
+// would produce, without writing anything: the bundle is overlaid on the
+// current registry once per conflict-policy shape and each combined graph is
+// checked for dangling references, cycles, and depth. The transactional
+// import remains the final authority.
+func InspectSandboxProfileImportGraph(profiles []*SandboxProfile) (SandboxProfileImportGraphInspection, error) {
+	d, err := Open()
+	if err != nil {
+		return SandboxProfileImportGraphInspection{}, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return SandboxProfileImportGraphInspection{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	local, err := loadSandboxProfileIncludeGraph(tx)
+	if err != nil {
+		return SandboxProfileImportGraphInspection{}, err
+	}
+	shape := func(skipClashing bool) string {
+		graph := make(map[string][]string, len(local)+len(profiles))
+		maps.Copy(graph, local)
+		for _, profile := range profiles {
+			if profile == nil {
+				continue
+			}
+			if _, clashes := local[profile.Name]; clashes && skipClashing {
+				continue
+			}
+			graph[profile.Name] = profile.Includes
+		}
+		if err := validateIncludeGraphMap(graph); err != nil {
+			return err.Error()
+		}
+		return ""
+	}
+	return SandboxProfileImportGraphInspection{
+		OverwriteError: shape(false),
+		SkipError:      shape(true),
+	}, nil
+}
+
+// validateIncludeGraphMap is the pure invariant shared by the write paths and
+// import inspection: every edge target exists, no cycles, and no profile's
+// longest include-edge chain exceeds the policy bound.
+func validateIncludeGraphMap(graph map[string][]string) error {
+	for name, includes := range graph {
+		for _, include := range includes {
+			if _, exists := graph[include]; !exists {
+				return fmt.Errorf("%w: profile %q includes unknown sandbox profile %q", ErrSandboxProfileInvalidInclude, name, include)
+			}
+		}
+	}
+	depth := map[string]int{}
+	onPath := map[string]bool{}
+	var visit func(name string) (int, error)
+	visit = func(name string) (int, error) {
+		if d, done := depth[name]; done {
+			return d, nil
+		}
+		if onPath[name] {
+			return 0, fmt.Errorf("%w: include cycle through sandbox profile %q", ErrSandboxProfileInvalidInclude, name)
+		}
+		onPath[name] = true
+		defer delete(onPath, name)
+		deepest := 0
+		for _, include := range graph[name] {
+			d, err := visit(include)
+			if err != nil {
+				return 0, err
+			}
+			if d+1 > deepest {
+				deepest = d + 1
+			}
+		}
+		if deepest > sandboxpolicy.MaxIncludeDepth {
+			return 0, fmt.Errorf("%w: profile %q nests includes deeper than %d levels", ErrSandboxProfileInvalidInclude, name, sandboxpolicy.MaxIncludeDepth)
+		}
+		depth[name] = deepest
+		return deepest, nil
+	}
+	names := make([]string, 0, len(graph))
+	for name := range graph {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if _, err := visit(name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func marshalSandboxProfilePayload(p *SandboxProfile) (string, string, string, error) {
 	filesystem := p.Filesystem
 	if filesystem == nil {
 		filesystem = []SandboxFilesystemGrant{}
@@ -152,15 +364,23 @@ func marshalSandboxProfilePayload(p *SandboxProfile) (string, string, error) {
 	if environment == nil {
 		environment = []SandboxEnvironmentEntry{}
 	}
+	includes := p.Includes
+	if includes == nil {
+		includes = []string{}
+	}
 	filesystemJSON, err := json.Marshal(filesystem)
 	if err != nil {
-		return "", "", fmt.Errorf("marshal sandbox profile filesystem: %w", err)
+		return "", "", "", fmt.Errorf("marshal sandbox profile filesystem: %w", err)
 	}
 	environmentJSON, err := json.Marshal(environment)
 	if err != nil {
-		return "", "", fmt.Errorf("marshal sandbox profile environment: %w", err)
+		return "", "", "", fmt.Errorf("marshal sandbox profile environment: %w", err)
 	}
-	return string(filesystemJSON), string(environmentJSON), nil
+	includesJSON, err := json.Marshal(includes)
+	if err != nil {
+		return "", "", "", fmt.Errorf("marshal sandbox profile includes: %w", err)
+	}
+	return string(filesystemJSON), string(environmentJSON), string(includesJSON), nil
 }
 
 // normalizeSandboxProfileForStore is the single defensive persistence seam
@@ -175,7 +395,7 @@ func normalizeSandboxProfileForStore(p *SandboxProfile) (*SandboxProfile, error)
 		return nil, errors.New("sandbox profile is nil")
 	}
 	normalized, _, err := sandboxpolicy.NormalizeForPersistence(sandboxpolicy.Profile{
-		Name: p.Name, Filesystem: p.Filesystem, Environment: p.Environment,
+		Name: p.Name, Filesystem: p.Filesystem, Environment: p.Environment, Includes: p.Includes,
 	})
 	if err != nil {
 		return nil, err
@@ -184,6 +404,7 @@ func normalizeSandboxProfileForStore(p *SandboxProfile) (*SandboxProfile, error)
 	out.Name = normalized.Name
 	out.Filesystem = normalized.Filesystem
 	out.Environment = normalized.Environment
+	out.Includes = normalized.Includes
 	return &out, nil
 }
 
@@ -203,12 +424,12 @@ func GetSandboxProfileByID(id int64) (*SandboxProfile, error) {
 	return scanSandboxProfile(d.QueryRow(sandboxProfileSelect+` WHERE id = ?`, id))
 }
 
-const sandboxProfileSelect = `SELECT id, name, filesystem_json, environment_json, created_at, updated_at FROM sandbox_profiles`
+const sandboxProfileSelect = `SELECT id, name, filesystem_json, environment_json, includes_json, created_at, updated_at FROM sandbox_profiles`
 
 func scanSandboxProfile(row rowScanner) (*SandboxProfile, error) {
 	var p SandboxProfile
-	var filesystemJSON, environmentJSON, createdAt, updatedAt string
-	if err := row.Scan(&p.ID, &p.Name, &filesystemJSON, &environmentJSON, &createdAt, &updatedAt); errors.Is(err, sql.ErrNoRows) {
+	var filesystemJSON, environmentJSON, includesJSON, createdAt, updatedAt string
+	if err := row.Scan(&p.ID, &p.Name, &filesystemJSON, &environmentJSON, &includesJSON, &createdAt, &updatedAt); errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	} else if err != nil {
 		return nil, err
@@ -219,11 +440,17 @@ func scanSandboxProfile(row rowScanner) (*SandboxProfile, error) {
 	if err := json.Unmarshal([]byte(environmentJSON), &p.Environment); err != nil {
 		return nil, fmt.Errorf("decode sandbox profile %q environment: %w", p.Name, err)
 	}
+	if err := json.Unmarshal([]byte(includesJSON), &p.Includes); err != nil {
+		return nil, fmt.Errorf("decode sandbox profile %q includes: %w", p.Name, err)
+	}
 	if p.Filesystem == nil {
 		p.Filesystem = []SandboxFilesystemGrant{}
 	}
 	if p.Environment == nil {
 		p.Environment = []SandboxEnvironmentEntry{}
+	}
+	if p.Includes == nil {
+		p.Includes = []string{}
 	}
 	p.CreatedAt = parseTimeOrZero(createdAt)
 	p.UpdatedAt = parseTimeOrZero(updatedAt)
@@ -276,7 +503,7 @@ func ImportSandboxProfiles(profiles []*SandboxProfile, onConflict string, assign
 			return result, fmt.Errorf("%w: profile #%d: sandbox profile is nil", ErrSandboxProfileInvalidImport, i+1)
 		}
 		p, missing, err := sandboxpolicy.NormalizeForImport(sandboxpolicy.Profile{
-			Name: profile.Name, Filesystem: profile.Filesystem, Environment: profile.Environment,
+			Name: profile.Name, Filesystem: profile.Filesystem, Environment: profile.Environment, Includes: profile.Includes,
 		})
 		if err != nil {
 			return result, fmt.Errorf("%w: profile #%d: %v", ErrSandboxProfileInvalidImport, i+1, err)
@@ -285,6 +512,7 @@ func ImportSandboxProfiles(profiles []*SandboxProfile, onConflict string, assign
 		normalizedProfile.Name = p.Name
 		normalizedProfile.Filesystem = p.Filesystem
 		normalizedProfile.Environment = p.Environment
+		normalizedProfile.Includes = p.Includes
 		if seen[normalizedProfile.Name] {
 			return result, fmt.Errorf("%w: sandbox profile %q appears more than once", ErrSandboxProfileInvalidImport, normalizedProfile.Name)
 		}
@@ -329,24 +557,30 @@ func ImportSandboxProfiles(profiles []*SandboxProfile, onConflict string, assign
 			result.Warnings = append(result.Warnings, fmt.Sprintf(
 				"sandbox profile %q path %q does not exist locally; the rule will target it if created", item.profile.Name, path))
 		}
-		filesystemJSON, environmentJSON, err := marshalSandboxProfilePayload(item.profile)
+		filesystemJSON, environmentJSON, includesJSON, err := marshalSandboxProfilePayload(item.profile)
 		if err != nil {
 			return result, err
 		}
 		if item.existingID != 0 {
-			if _, err := tx.Exec(`UPDATE sandbox_profiles SET filesystem_json = ?, environment_json = ?, updated_at = ? WHERE id = ?`,
-				filesystemJSON, environmentJSON, now, item.existingID); err != nil {
+			if _, err := tx.Exec(`UPDATE sandbox_profiles SET filesystem_json = ?, environment_json = ?, includes_json = ?, updated_at = ? WHERE id = ?`,
+				filesystemJSON, environmentJSON, includesJSON, now, item.existingID); err != nil {
 				return result, err
 			}
 		} else if _, err := tx.Exec(`INSERT INTO sandbox_profiles
-			(name, filesystem_json, environment_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
-			item.profile.Name, filesystemJSON, environmentJSON, now, now); err != nil {
+			(name, filesystem_json, environment_json, includes_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+			item.profile.Name, filesystemJSON, environmentJSON, includesJSON, now, now); err != nil {
 			if isUniqueViolation(err) {
 				return result, ErrSandboxProfileNameTaken
 			}
 			return result, err
 		}
 		result.Imported = append(result.Imported, item.profile.Name)
+	}
+	// The bundle and the local registry are one graph after the writes above:
+	// a bundle profile may include a local one and vice versa (overwrite).
+	// Dangling or cyclic includes roll the whole import back.
+	if err := validateSandboxProfileIncludeGraph(tx); err != nil {
+		return result, fmt.Errorf("%w: %v", ErrSandboxProfileInvalidImport, err)
 	}
 
 	if assignments != nil {
@@ -406,6 +640,24 @@ func DeleteSandboxProfile(name string) (int64, error) {
 		return 0, nil
 	} else if err != nil {
 		return 0, err
+	}
+	// Assignments merely reference the profile and are cleared below, but an
+	// include is part of another profile's content: silently dropping it would
+	// silently shrink that profile. Fail loudly and let the operator edit the
+	// referrers first.
+	graph, err := loadSandboxProfileIncludeGraph(tx)
+	if err != nil {
+		return 0, err
+	}
+	referrers := make([]string, 0, len(graph))
+	for referrer, includes := range graph {
+		if slices.Contains(includes, name) {
+			referrers = append(referrers, referrer)
+		}
+	}
+	if len(referrers) > 0 {
+		sort.Strings(referrers)
+		return 0, fmt.Errorf("%w: %s", ErrSandboxProfileIncludedBy, strings.Join(referrers, ", "))
 	}
 	if _, err := tx.Exec(`UPDATE agent_groups SET sandbox_profile = '', sandbox_profile_id = NULL WHERE sandbox_profile_id = ?`, id); err != nil {
 		return 0, err
@@ -585,10 +837,43 @@ func ResolveEffectiveSandboxSnapshot(groupID int64, explicitName string) (sandbo
 		if p == nil {
 			return nil
 		}
-		return &sandboxpolicy.Profile{Name: p.Name, Filesystem: p.Filesystem, Environment: p.Environment}
+		return &sandboxpolicy.Profile{Name: p.Name, Filesystem: p.Filesystem, Environment: p.Environment, Includes: p.Includes}
+	}
+	// Includes are expanded inside the same transaction that read the
+	// assignments, so the flattened values and the applied provenance describe
+	// one consistent registry state. A dangling or cyclic include (possible
+	// only if the DB was edited outside tclaude) fails the launch closed.
+	lookupForFlatten := func(name string) (*sandboxpolicy.Profile, error) {
+		p, err := scanSandboxProfile(tx.QueryRow(sandboxProfileSelect+` WHERE name = ?`, name))
+		if err != nil {
+			return nil, err
+		}
+		return toPolicy(p), nil
+	}
+	flatten := func(p *SandboxProfile) (*sandboxpolicy.Profile, error) {
+		if p == nil {
+			return nil, nil
+		}
+		flattened, err := sandboxpolicy.Flatten(*toPolicy(p), lookupForFlatten)
+		if err != nil {
+			return nil, fmt.Errorf("flatten sandbox profile %q: %w", p.Name, err)
+		}
+		return &flattened, nil
+	}
+	globalPolicy, err := flatten(global)
+	if err != nil {
+		return sandboxpolicy.Snapshot{}, err
+	}
+	groupPolicy, err := flatten(group)
+	if err != nil {
+		return sandboxpolicy.Snapshot{}, err
+	}
+	explicitPolicy, err := flatten(explicit)
+	if err != nil {
+		return sandboxpolicy.Snapshot{}, err
 	}
 	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{
-		Global: toPolicy(global), Group: toPolicy(group), Explicit: toPolicy(explicit),
+		Global: globalPolicy, Group: groupPolicy, Explicit: explicitPolicy,
 	})
 	if err != nil {
 		return sandboxpolicy.Snapshot{}, err

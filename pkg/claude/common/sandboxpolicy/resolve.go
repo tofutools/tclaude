@@ -92,6 +92,11 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 		if err != nil {
 			return EffectiveProfile{}, fmt.Errorf("normalize %s sandbox profile %q at resolution time: %w", tier.scope, tier.profile.Name, err)
 		}
+		// Resolve deliberately has no registry access, so it cannot expand
+		// includes itself; accepting one silently would drop its grants.
+		if len(normalized.Includes) > 0 {
+			return EffectiveProfile{}, fmt.Errorf("%s sandbox profile %q still has unresolved includes at resolution time; flatten it first", tier.scope, normalized.Name)
+		}
 		source := ProfileSource{Scope: tier.scope, Profile: normalized.Name}
 		result.Provenance.Applied = append(result.Provenance.Applied, source)
 		for _, grant := range normalized.Filesystem {

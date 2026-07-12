@@ -3561,6 +3561,8 @@ body.wizard .group-pending-title-wizard { display: inline; }
 .sbx-row .sbx-access { flex: 0 0 7em; }
 /* Env name column is narrower than the value column. */
 .sbx-row-env .sbx-env-name { flex: 0 0 32%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* Include rows are a single library dropdown plus the ✕ button. */
+.sbx-row-inc .sbx-inc-name { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .sbx-row .sbx-path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 /* Browse… and the ✕ delete button share the dark inline-button skin. */
 .sbx-row .sbx-browse, .sbx-row .sbx-del {
@@ -3589,6 +3591,7 @@ body.wizard .group-pending-title-wizard { display: inline; }
 .sbx-cap-read  { color: #6cb6ff; background: rgba(56, 139, 253, 0.12); border-color: rgba(56, 139, 253, 0.30); }
 .sbx-cap-deny  { color: #f85149; background: rgba(248, 81, 73, 0.12); border-color: rgba(248, 81, 73, 0.35); }
 .sbx-cap-env   { color: #7ee787; background: rgba(63, 185, 80, 0.12); border-color: rgba(63, 185, 80, 0.30); }
+.sbx-cap-incl  { color: #d2a8ff; background: rgba(163, 113, 247, 0.12); border-color: rgba(163, 113, 247, 0.30); }
 .sbx-cap-val {
   flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px; color: #c9d1d9;
