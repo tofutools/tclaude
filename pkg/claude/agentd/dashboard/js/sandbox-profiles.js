@@ -59,7 +59,7 @@ function profileSummary(p) {
   if (denies) parts.push(`${denies} deny`);
   if (env.length) parts.push(`${env.length} env key${env.length === 1 ? '' : 's'}`);
   if (own) parts.push(`${own} agent dir${own === 1 ? '' : 's'}`);
-  return parts.join(' · ') || 'no filesystem or environment rules';
+  return parts.join(' · ') || 'no sandbox rules';
 }
 
 // profileCapabilitiesHTML renders the profile's grants as a compact, scannable
@@ -82,7 +82,7 @@ function profileCapabilitiesHTML(p) {
   for (const name of (p.agent_directories || [])) {
     rows.push(`<div class="sbx-cap"><span class="sbx-cap-tag sbx-cap-own">own</span><span class="sbx-cap-val" title="${esc(name)} — agentd creates an isolated writable directory at spawn">${esc(name)}</span></div>`);
   }
-  if (!rows.length) return `<div class="sbx-caps sbx-caps-empty">no filesystem or environment rules</div>`;
+  if (!rows.length) return `<div class="sbx-caps sbx-caps-empty">no sandbox rules</div>`;
   return `<div class="sbx-caps">${rows.join('')}</div>`;
 }
 
@@ -747,6 +747,7 @@ async function removeProfile(name) {
 function flattenProfilePreview(profile, byName, state) {
   const fs = new Map();
   const env = new Map();
+  const own = new Map(); // agent-owned directory variable names
   state.onPath.add(profile.name);
   for (const name of (profile.includes || [])) {
     if (state.onPath.has(name)) { state.problems.add(name); continue; }
@@ -758,17 +759,23 @@ function flattenProfilePreview(profile, byName, state) {
       state.memo.set(name, flat);
     }
     for (const [path, access] of flat.fs) fs.set(path, access);
-    for (const key of flat.env.keys()) env.set(key, true);
+    // A name is either a literal env value or agent-owned, never both: the
+    // later layer wins per exact key, displacing the other kind (mirrors the
+    // daemon's flattener).
+    for (const key of flat.env.keys()) { own.delete(key); env.set(key, true); }
+    for (const key of flat.own.keys()) { env.delete(key); own.set(key, true); }
   }
   state.onPath.delete(profile.name);
   for (const grant of (profile.filesystem || [])) fs.set(grant.path, grant.access);
-  for (const entry of (profile.environment || [])) env.set(entry.name, true);
-  return { fs, env };
+  for (const entry of (profile.environment || [])) { own.delete(entry.name); env.set(entry.name, true); }
+  for (const name of (profile.agent_directories || [])) { env.delete(name); own.set(name, true); }
+  return { fs, env, own };
 }
 
 function composePreview(applied, byName = {}) {
   const fs = new Map();
   const env = new Map();
+  const own = new Map();
   const state = { memo: new Map(), onPath: new Set(), problems: new Set() };
   for (const { scope, profile } of applied) {
     const flat = flattenProfilePreview(profile, byName, state);
@@ -780,14 +787,16 @@ function composePreview(applied, byName = {}) {
       }
     }
     for (const name of flat.env.keys()) env.set(name, scope);
+    for (const name of flat.own.keys()) own.set(name, scope);
   }
   const scopes = applied.map(x => `${x.scope}:${x.profile.name}`).join(' → ') || 'no profiles applied';
   const grants = [...fs.entries()].map(([path, v]) => `${v.access} ${path} (${v.scope})`).join(' · ');
   const keys = [...env.entries()].map(([name, scope]) => `${name} (${scope})`).join(', ');
+  const ownKeys = [...own.entries()].map(([name, scope]) => `${name} (${scope})`).join(', ');
   const problems = state.problems.size
     ? ` · ⚠ unresolved includes: ${[...state.problems].sort().join(', ')}`
     : '';
-  return `${scopes}${grants ? ` · ${grants}` : ''}${keys ? ` · env: ${keys}` : ''}${problems}`;
+  return `${scopes}${grants ? ` · ${grants}` : ''}${keys ? ` · env: ${keys}` : ''}${ownKeys ? ` · agent dirs: ${ownKeys}` : ''}${problems}`;
 }
 
 // refreshSpawnSandboxProfileUI fills the explicit human-controlled selector
@@ -1060,7 +1069,7 @@ function bindSandboxProfilesUI() {
   bindManageOverlayDismiss('sandbox-profiles-manage-modal', closeManager);
   $('#filter-sandbox-profiles').addEventListener('input', paintSandboxProfiles);
   $('#sandbox-profile-create-open').addEventListener('click', () => openEditor());
-  $('#sandbox-profile-scribe-open').addEventListener('click', () => summonSandboxScribe({ name: '', filesystem: [], environment: [], includes: [] }));
+  $('#sandbox-profile-scribe-open').addEventListener('click', () => summonSandboxScribe({ name: '', filesystem: [], environment: [], includes: [], agent_directories: [] }));
   $('#sandbox-profile-export-open').addEventListener('click', openExportModal);
   $('#sandbox-profile-export-cancel').addEventListener('click', closeExportModal);
   $('#sandbox-profile-export-submit').addEventListener('click', submitExport);
