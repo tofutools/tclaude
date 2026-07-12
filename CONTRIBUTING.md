@@ -71,6 +71,40 @@ publish its `/api/jobs` page but must not render or read Jobs DOM. The shared
 cron create/edit modal remains an imperative boundary because agent/group row
 actions outside the island also open it.
 
+### Preact island lifecycle
+
+Every production island uses `mountFeatureIsland` from
+`dashboard/js/island-lifecycle.js`. Give it a stable feature name, every host
+subtree the feature owns, and a loader callback that dynamically imports the
+optional Preact feature graph. The callback returns the feature state (when the
+authoritative poll needs it) and a mount function. That function receives
+`registerCleanup`; after each render, listener, timer, or subscription is
+created, register its idempotent cleanup immediately before starting the next
+side effect. The lifecycle can then roll back a partial mount in reverse order.
+It claims hosts, registers state, requires cleanup, and keeps load failures
+inside the primary host. Do not write another feature-local registry or loader
+lifecycle.
+
+Host ownership is exclusive. Legacy code may fetch and publish feature data but
+must not render into a claimed host. Island cleanup must release effects,
+listeners, timers, subscriptions, and registry entries; component tests should
+call cleanup twice to prove it is idempotent. Every registered cleanup is
+attempted even if another throws; host ownership is released only after they all
+succeed, so a partial unmount cannot overlap a later mount. Keep feature modules
+behind the dynamic loader so a missing optional asset cannot prevent the legacy
+dashboard module graph from linking.
+
+Use `AsyncLoadState` only for the shared accessible loading/error/retry notice.
+The feature still owns stale-content layout, request generations, paging,
+dialogs, focus policy, and mutations. Jobs is the first consumer; Plugins is the
+next named consumer. Extract broader controls only after two migrated features
+demonstrate the same behavioral contract.
+
+Signals hold durable or derived state. Use effects only to synchronize with an
+external system, API actions through `dashboard-actions.js`, stable domain IDs
+as component keys, and imperative refs only for genuinely imperative widgets
+or focus operations that cannot be expressed declaratively.
+
 Flow tests in `pkg/claude/agentd/*_flow_test.go` are regular Go tests
 — they run under bare `go test ./...`. Boundaries (`tmux`, the
 `tclaude session new` subprocess) are mocked by assigning fake

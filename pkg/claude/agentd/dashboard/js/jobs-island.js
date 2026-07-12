@@ -6,6 +6,7 @@ import { JOBS_PAGE_SIZES } from './jobs-state.js';
 import { formatJobInterval } from './jobs-format.js';
 import { EXPORT_STEPS, activeExportStepIndex, fmtBytes } from './export-progress.js';
 import { idTooltip, relTime, shortAgentId } from './helpers.js';
+import { AsyncLoadState } from './async-load-state.js';
 
 const html = htm.bind(h);
 
@@ -221,13 +222,11 @@ export function JobsApp({ state, actions }) {
         <span class="cron-open-label-wizard">⏳ Bind a recurring ritual</span>
       </button>
     </div>
-    ${current.request.error && html`<div class="jobs-error" role="alert">
-      Jobs refresh failed: ${current.request.error}.${current.request.hasLoaded ? ' Showing the last successful page.' : ''}
-      <button onClick=${() => void actions.refresh()}>Retry</button>
-    </div>`}
+    <${AsyncLoadState} label="Jobs" request=${current.request}
+      retry=${() => void actions.refresh()} errorClass="jobs-error" />
     <div id="jobs-list" aria-busy=${current.request.phase === 'loading' ? 'true' : 'false'}>
       ${!current.request.hasLoaded
-        ? (current.request.phase === 'error' ? null : html`<div class="empty">Loading jobs…</div>`)
+        ? null
         : current.rows.length === 0
           ? html`<${EmptyJobs} />`
           : html`<${Fragment}>
@@ -250,12 +249,10 @@ export function JobsBadge({ state }) {
   return html`<span id="jobs-badge" class="tab-badge count" hidden=${count === 0}>${count}</span>`;
 }
 
-export function mountJobsIsland({ host, badgeHost, state, actions }) {
+export function mountJobsIsland({ host, badgeHost, state, actions, registerCleanup }) {
   state.initialize();
   render(html`<${JobsApp} state=${state} actions=${actions} />`, host);
+  registerCleanup(() => render(null, host));
   render(html`<${JobsBadge} state=${state} />`, badgeHost);
-  return () => {
-    render(null, host);
-    render(null, badgeHost);
-  };
+  registerCleanup(() => render(null, badgeHost));
 }
