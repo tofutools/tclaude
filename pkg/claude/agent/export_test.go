@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -102,6 +103,13 @@ func TestCappedArtifactBufferStopsBeforeGrowthPastLimit(t *testing.T) {
 	assert.Equal(t, 4, n)
 	assert.ErrorIs(t, err, errExportArtifactTooLarge)
 	assert.Equal(t, []byte("abcd"), b.Bytes())
+}
+
+func TestCopyZipFileCappedStopsOnActualByteBudget(t *testing.T) {
+	var dst bytes.Buffer
+	n, err := copyZipFileCapped(&dst, strings.NewReader("abcdef"), 4)
+	assert.Equal(t, int64(5), n, "read exactly one byte beyond the budget to prove growth")
+	assert.ErrorIs(t, err, errExportArtifactTooLarge)
 }
 
 func TestSafeZipNamesRejectDegenerateRootsAndTraversal(t *testing.T) {

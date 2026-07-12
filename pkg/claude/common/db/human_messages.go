@@ -169,27 +169,28 @@ func ListHumanMessageAttachments() ([]*HumanMessageAttachment, error) {
 	return attachments, rows.Err()
 }
 
-// HumanMessageAttachmentUsage reports total stored bytes and the bytes owned
-// by one stable agent (falling back to a conversation id for legacy/non-agent
-// senders). The upload path serializes quota checks with commits.
-func HumanMessageAttachmentUsage(agentID, convID string) (total, sender int64, err error) {
+// HumanMessageAttachmentUsage reports stored bytes and row counts globally and
+// for one stable agent (falling back to a conversation id for legacy/non-agent
+// senders). Count quotas prevent zero/tiny files from exhausting DB rows/inodes.
+func HumanMessageAttachmentUsage(agentID, convID string) (totalBytes, senderBytes int64, totalCount, senderCount int, err error) {
 	d, err := Open()
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, 0, err
 	}
-	if err := d.QueryRow(`SELECT COALESCE(SUM(size_bytes), 0) FROM human_message_attachments`).Scan(&total); err != nil {
-		return 0, 0, err
+	if err := d.QueryRow(`SELECT COALESCE(SUM(size_bytes), 0), COUNT(*) FROM human_message_attachments`).
+		Scan(&totalBytes, &totalCount); err != nil {
+		return 0, 0, 0, 0, err
 	}
 	if agentID != "" {
-		err = d.QueryRow(`SELECT COALESCE(SUM(a.size_bytes), 0)
+		err = d.QueryRow(`SELECT COALESCE(SUM(a.size_bytes), 0), COUNT(*)
 			FROM human_message_attachments a JOIN human_messages m ON m.id = a.message_id
-			WHERE m.from_agent = ?`, agentID).Scan(&sender)
+			WHERE m.from_agent = ?`, agentID).Scan(&senderBytes, &senderCount)
 	} else {
-		err = d.QueryRow(`SELECT COALESCE(SUM(a.size_bytes), 0)
+		err = d.QueryRow(`SELECT COALESCE(SUM(a.size_bytes), 0), COUNT(*)
 			FROM human_message_attachments a JOIN human_messages m ON m.id = a.message_id
-			WHERE m.from_conv = ?`, convID).Scan(&sender)
+			WHERE m.from_conv = ?`, convID).Scan(&senderBytes, &senderCount)
 	}
-	return total, sender, err
+	return totalBytes, senderBytes, totalCount, senderCount, err
 }
 
 // DeleteHumanMessageAttachment removes stale metadata while preserving the

@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -75,12 +76,18 @@ const maxNotifyHumanRequestBytes = 6*(maxNotifyHumanBodyLen+maxNotifyHumanSubjec
 
 const maxNotifyHumanAttachmentBytes = 256 << 20
 
+const maxNotifyHumanAttachmentContentTypeBytes = 256
+
 var (
 	humanMessageAttachmentsMu             sync.Mutex
 	humanMessageAttachmentCleanupInterval       = 10 * time.Minute
+	humanMessageAttachmentUploadTimeout         = 5 * time.Minute
+	humanMessageAttachmentUploadSlot            = make(chan struct{}, 1)
 	errHumanMessageAttachmentQuota              = errors.New("human message attachment storage quota exceeded")
 	maxHumanMessageAttachmentSenderBytes  int64 = 512 << 20 // 512 MiB per stable agent
 	maxHumanMessageAttachmentTotalBytes   int64 = 2 << 30   // 2 GiB daemon-wide
+	maxHumanMessageAttachmentSenderCount        = 100
+	maxHumanMessageAttachmentTotalCount         = 1000
 )
 
 // handleNotifyHuman serves POST /v1/notify-human — the daemon side of
@@ -169,66 +176,67 @@ func handleNotifyHumanAttachment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "subject is too long")
 		return
 	}
-	contentType := strings.TrimSpace(r.Header.Get("Content-Type"))
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-	humanMessageAttachmentsMu.Lock()
-	defer humanMessageAttachmentsMu.Unlock()
-	agentID, _ := db.AgentIDForConv(callerConv)
-	totalBytes, senderBytes, err := db.HumanMessageAttachmentUsage(agentID, callerConv)
+	contentType, err := normalizeHumanMessageAttachmentContentType(r.Header.Get("Content-Type"))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "io", "check attachment quota: "+err.Error())
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
-	if totalBytes >= maxHumanMessageAttachmentTotalBytes || senderBytes >= maxHumanMessageAttachmentSenderBytes {
-		writeError(w, http.StatusRequestEntityTooLarge, "quota", "attachment storage quota is full; delete older message attachments first")
+	select {
+	case humanMessageAttachmentUploadSlot <- struct{}{}:
+		defer func() { <-humanMessageAttachmentUploadSlot }()
+	case <-r.Context().Done():
+		writeError(w, http.StatusRequestTimeout, "cancelled", "attachment upload cancelled")
 		return
 	}
 	if r.ContentLength > maxNotifyHumanAttachmentBytes {
 		writeError(w, http.StatusRequestEntityTooLarge, "too_large", "attachment exceeds the 256 MiB limit")
 		return
 	}
-	if r.ContentLength > 0 && (quotaWouldExceed(totalBytes, r.ContentLength, maxHumanMessageAttachmentTotalBytes) ||
-		quotaWouldExceed(senderBytes, r.ContentLength, maxHumanMessageAttachmentSenderBytes)) {
-		writeError(w, http.StatusRequestEntityTooLarge, "quota", "attachment would exceed the storage quota; delete older message attachments first")
+	agentID, _ := db.AgentIDForConv(callerConv)
+	humanMessageAttachmentsMu.Lock()
+	err = checkHumanMessageAttachmentQuota(agentID, callerConv, max(r.ContentLength, 0))
+	humanMessageAttachmentsMu.Unlock()
+	if err != nil {
+		writeHumanMessageAttachmentQuotaError(w, err)
 		return
 	}
-	base := humanMessageAttachmentsBaseDir()
-	if err := os.MkdirAll(base, 0o700); err != nil {
+	incoming := humanMessageAttachmentsIncomingDir()
+	if err := os.MkdirAll(incoming, 0o700); err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "create attachment directory: "+err.Error())
 		return
 	}
-	f, err := os.CreateTemp(base, "artifact-*")
+	f, err := os.CreateTemp(incoming, "artifact-*")
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "create attachment file: "+err.Error())
 		return
 	}
 	path := f.Name()
 	var written int64
+	var timedOut atomic.Bool
+	timer := time.AfterFunc(humanMessageAttachmentUploadTimeout, func() {
+		timedOut.Store(true)
+		_ = r.Body.Close()
+	})
 	if err = f.Chmod(0o600); err == nil {
 		written, err = io.Copy(f, http.MaxBytesReader(w, r.Body, maxNotifyHumanAttachmentBytes))
-		if err == nil && (quotaWouldExceed(totalBytes, written, maxHumanMessageAttachmentTotalBytes) ||
-			quotaWouldExceed(senderBytes, written, maxHumanMessageAttachmentSenderBytes)) {
-			err = errHumanMessageAttachmentQuota
-		}
 		if err == nil {
 			err = f.Sync()
 		}
 	}
+	_ = timer.Stop()
 	closeErr := f.Close()
 	if err == nil {
 		err = closeErr
 	}
 	if err != nil {
 		_ = os.Remove(path)
+		if timedOut.Load() {
+			writeError(w, http.StatusRequestTimeout, "timeout", "attachment upload timed out")
+			return
+		}
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
 			writeError(w, http.StatusRequestEntityTooLarge, "too_large", "attachment exceeds the 256 MiB limit")
-			return
-		}
-		if errors.Is(err, errHumanMessageAttachmentQuota) {
-			writeError(w, http.StatusRequestEntityTooLarge, "quota", "attachment would exceed the storage quota; delete older message attachments first")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "io", "store attachment: "+err.Error())
@@ -237,7 +245,14 @@ func handleNotifyHumanAttachment(w http.ResponseWriter, r *http.Request) {
 	// Best-effort on platforms/filesystems that permit directory fsync. File
 	// sync above is mandatory; reconciliation below repairs a missing/truncated
 	// referenced file after a system crash if directory durability lagged.
-	_ = syncDirectory(base)
+	_ = syncDirectory(incoming)
+	humanMessageAttachmentsMu.Lock()
+	defer humanMessageAttachmentsMu.Unlock()
+	if err := checkHumanMessageAttachmentQuota(agentID, callerConv, written); err != nil {
+		_ = os.Remove(path)
+		writeHumanMessageAttachmentQuotaError(w, err)
+		return
+	}
 	message, fromTitle, groupName := newHumanMessageRow(callerConv, meta.Subject, meta.Body, "", "", "")
 	id, err := db.InsertHumanMessageWithAttachment(message, &db.HumanMessageAttachment{
 		Filename: meta.Name, ContentType: contentType,
@@ -254,6 +269,51 @@ func handleNotifyHumanAttachment(w http.ResponseWriter, r *http.Request) {
 
 func humanMessageAttachmentsBaseDir() string {
 	return filepath.Join(config.DataDir(), "human-message-files")
+}
+
+func humanMessageAttachmentsIncomingDir() string {
+	return filepath.Join(humanMessageAttachmentsBaseDir(), ".incoming")
+}
+
+func normalizeHumanMessageAttachmentContentType(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		raw = "application/octet-stream"
+	}
+	if len(raw) > maxNotifyHumanAttachmentContentTypeBytes {
+		return "", fmt.Errorf("content type too long (max %d bytes)", maxNotifyHumanAttachmentContentTypeBytes)
+	}
+	mediaType, params, err := mime.ParseMediaType(raw)
+	if err != nil {
+		return "", fmt.Errorf("invalid content type: %w", err)
+	}
+	canonical := mime.FormatMediaType(mediaType, params)
+	if canonical == "" || len(canonical) > maxNotifyHumanAttachmentContentTypeBytes {
+		return "", fmt.Errorf("invalid content type")
+	}
+	return canonical, nil
+}
+
+func checkHumanMessageAttachmentQuota(agentID, convID string, incoming int64) error {
+	totalBytes, senderBytes, totalCount, senderCount, err := db.HumanMessageAttachmentUsage(agentID, convID)
+	if err != nil {
+		return fmt.Errorf("check attachment quota: %w", err)
+	}
+	if totalCount >= maxHumanMessageAttachmentTotalCount || senderCount >= maxHumanMessageAttachmentSenderCount ||
+		quotaWouldExceed(totalBytes, incoming, maxHumanMessageAttachmentTotalBytes) ||
+		quotaWouldExceed(senderBytes, incoming, maxHumanMessageAttachmentSenderBytes) {
+		return errHumanMessageAttachmentQuota
+	}
+	return nil
+}
+
+func writeHumanMessageAttachmentQuotaError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errHumanMessageAttachmentQuota) {
+		writeError(w, http.StatusRequestEntityTooLarge, "quota",
+			"attachment storage quota is full; delete older message attachments first")
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "io", err.Error())
 }
 
 func quotaWouldExceed(current, incoming, limit int64) bool {
@@ -350,6 +410,11 @@ func runHumanMessageAttachmentCleanup() {
 		}
 		if _, ok := referenced[filepath.Clean(path)]; ok {
 			return nil
+		}
+		if filepath.Clean(filepath.Dir(path)) == filepath.Clean(humanMessageAttachmentsIncomingDir()) {
+			if info, err := entry.Info(); err == nil && time.Since(info.ModTime()) < 2*humanMessageAttachmentUploadTimeout {
+				return nil // an upload may still be streaming; stale crash remnants age out
+			}
 		}
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			slog.Warn("human message attachment: remove orphan failed", "path", path, "error", err)

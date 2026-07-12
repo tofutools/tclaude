@@ -407,12 +407,22 @@ func RunHumanMessageAttachmentCleanupForTest() {
 }
 
 // SetHumanMessageAttachmentQuotasForTest shrinks storage limits for flow tests.
-func SetHumanMessageAttachmentQuotasForTest(perSender, total int64) func() {
+func SetHumanMessageAttachmentQuotasForTest(perSenderBytes, totalBytes int64, perSenderCount, totalCount int) func() {
 	oldSender, oldTotal := maxHumanMessageAttachmentSenderBytes, maxHumanMessageAttachmentTotalBytes
-	maxHumanMessageAttachmentSenderBytes, maxHumanMessageAttachmentTotalBytes = perSender, total
+	oldSenderCount, oldTotalCount := maxHumanMessageAttachmentSenderCount, maxHumanMessageAttachmentTotalCount
+	maxHumanMessageAttachmentSenderBytes, maxHumanMessageAttachmentTotalBytes = perSenderBytes, totalBytes
+	maxHumanMessageAttachmentSenderCount, maxHumanMessageAttachmentTotalCount = perSenderCount, totalCount
 	return func() {
 		maxHumanMessageAttachmentSenderBytes, maxHumanMessageAttachmentTotalBytes = oldSender, oldTotal
+		maxHumanMessageAttachmentSenderCount, maxHumanMessageAttachmentTotalCount = oldSenderCount, oldTotalCount
 	}
+}
+
+// SetHumanMessageAttachmentUploadTimeoutForTest shrinks the stalled-body deadline.
+func SetHumanMessageAttachmentUploadTimeoutForTest(timeout time.Duration) func() {
+	old := humanMessageAttachmentUploadTimeout
+	humanMessageAttachmentUploadTimeout = timeout
+	return func() { humanMessageAttachmentUploadTimeout = old }
 }
 
 // SetClipboardWriterForTest swaps the platform clipboard-write seam so a

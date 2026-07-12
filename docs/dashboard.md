@@ -567,6 +567,8 @@ authenticated route rather than receiving access to the agent's filesystem.
 Deleting the message deletes its stored artifact too. Uploads are capped at
 256 MiB each, 512 MiB per stable agent, and 2 GiB daemon-wide; the CLI rejects
 top-level symlinks and asks the agent to pass the resolved path explicitly.
+Count caps of 100 attachments per stable agent and 1,000 daemon-wide prevent
+empty or tiny files from exhausting database rows and filesystem inodes.
 
 After upgrading tclaude, run `tclaude setup --install-agent-skills` to refresh
 the bundled `human-notify` skill so agents discover the `--attach` workflow.

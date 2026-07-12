@@ -3,13 +3,16 @@ package agentd_test
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -60,6 +63,8 @@ func TestNotifyHuman_AttachmentDownloadAndDelete(t *testing.T) {
 
 	orphan := filepath.Join(filepath.Dir(storedPath), "artifact-crash-orphan")
 	require.NoError(t, os.WriteFile(orphan, []byte("orphan"), 0o600))
+	staleAt := time.Now().Add(-11 * time.Minute)
+	require.NoError(t, os.Chtimes(orphan, staleAt, staleAt))
 	agentd.RunHumanMessageAttachmentCleanupForTest()
 	_, err = os.Stat(orphan)
 	assert.True(t, os.IsNotExist(err), "the reconciler removes files with no attachment metadata")
@@ -92,7 +97,7 @@ func TestNotifyHuman_AttachmentQuotaRejectedBeforeStorage(t *testing.T) {
 	const conv = "quot-1111-2222-3333-4444"
 	f.HaveConvWithTitle(conv, "quota-maker")
 	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermHumanNotify, "test"))
-	t.Cleanup(agentd.SetHumanMessageAttachmentQuotasForTest(4, 100))
+	t.Cleanup(agentd.SetHumanMessageAttachmentQuotasForTest(4, 100, 100, 1000))
 	rec := postNotifyAttachment(t, f.Mux, conv, "too-big.txt", "12345")
 	require.Equal(t, http.StatusRequestEntityTooLarge, rec.Code, rec.Body.String())
 	msgs, err := db.ListHumanMessages()
@@ -101,6 +106,87 @@ func TestNotifyHuman_AttachmentQuotaRejectedBeforeStorage(t *testing.T) {
 	attachments, err := db.ListHumanMessageAttachments()
 	require.NoError(t, err)
 	assert.Empty(t, attachments)
+}
+
+func TestNotifyHuman_ZeroByteAttachmentsConsumeCountQuota(t *testing.T) {
+	f := newFlow(t)
+	const conv = "zcnt-1111-2222-3333-4444"
+	f.HaveConvWithTitle(conv, "zero-count-maker")
+	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermHumanNotify, "test"))
+	t.Cleanup(agentd.SetHumanMessageAttachmentQuotasForTest(1024, 4096, 1, 10))
+	require.Equal(t, http.StatusOK, postNotifyAttachment(t, f.Mux, conv, "first.txt", "").Code)
+	second := postNotifyAttachment(t, f.Mux, conv, "second.txt", "")
+	require.Equal(t, http.StatusRequestEntityTooLarge, second.Code, second.Body.String())
+}
+
+func TestNotifyHuman_AttachmentContentTypeBounded(t *testing.T) {
+	f := newFlow(t)
+	const conv = "ctyp-1111-2222-3333-4444"
+	f.HaveConvWithTitle(conv, "content-type-maker")
+	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermHumanNotify, "test"))
+	rec := postNotifyAttachmentWithContentType(t, f.Mux, conv, "x.bin", "x", "text/plain; note="+strings.Repeat("x", 300))
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	msgs, err := db.ListHumanMessages()
+	require.NoError(t, err)
+	assert.Empty(t, msgs)
+}
+
+func TestNotifyHuman_StalledAttachmentTimesOutWithoutBlockingCleanup(t *testing.T) {
+	f := newFlow(t)
+	const conv = "stal-1111-2222-3333-4444"
+	f.HaveConvWithTitle(conv, "stall-maker")
+	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermHumanNotify, "test"))
+	t.Cleanup(agentd.SetHumanMessageAttachmentUploadTimeoutForTest(40 * time.Millisecond))
+	body := &blockingUploadBody{started: make(chan struct{}), closed: make(chan struct{})}
+	metadata, err := json.Marshal(map[string]string{"body": "artifact ready", "name": "stalled.bin"})
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodPost, "/v1/notify-human/attachment", body)
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("X-Tclaude-Notify-Metadata", base64.RawURLEncoding.EncodeToString(metadata))
+	req = agentd.AsAgentPeer(req, conv)
+	result := make(chan *httptest.ResponseRecorder, 1)
+	go func() { result <- testharness.Serve(f.Mux, req) }()
+	select {
+	case <-body.started:
+	case <-time.After(time.Second):
+		t.Fatal("upload never began reading its request body")
+	}
+
+	cleanupDone := make(chan struct{})
+	go func() {
+		agentd.RunHumanMessageAttachmentCleanupForTest()
+		close(cleanupDone)
+	}()
+	select {
+	case <-cleanupDone:
+	case <-time.After(20 * time.Millisecond):
+		t.Fatal("attachment cleanup blocked behind the stalled body read")
+	}
+	select {
+	case rec := <-result:
+		require.Equal(t, http.StatusRequestTimeout, rec.Code, rec.Body.String())
+	case <-time.After(time.Second):
+		t.Fatal("stalled upload did not honor its body timeout")
+	}
+}
+
+type blockingUploadBody struct {
+	started   chan struct{}
+	closed    chan struct{}
+	startOnce sync.Once
+	closeOnce sync.Once
+}
+
+func (b *blockingUploadBody) Read([]byte) (int, error) {
+	b.startOnce.Do(func() { close(b.started) })
+	<-b.closed
+	return 0, errors.New("body closed")
+}
+
+func (b *blockingUploadBody) Close() error {
+	b.closeOnce.Do(func() { close(b.closed) })
+	return nil
 }
 
 func TestHumanMessageAttachmentCleanupDropsTruncatedReference(t *testing.T) {
@@ -127,12 +213,16 @@ func TestHumanMessageAttachmentCleanupDropsTruncatedReference(t *testing.T) {
 }
 
 func postNotifyAttachment(t *testing.T, mux http.Handler, conv, name, data string) *httptest.ResponseRecorder {
+	return postNotifyAttachmentWithContentType(t, mux, conv, name, data, "application/octet-stream")
+}
+
+func postNotifyAttachmentWithContentType(t *testing.T, mux http.Handler, conv, name, data, contentType string) *httptest.ResponseRecorder {
 	t.Helper()
 	metadata, err := json.Marshal(map[string]string{"body": "artifact ready", "name": name})
 	require.NoError(t, err)
 	req, err := http.NewRequest(http.MethodPost, "/v1/notify-human/attachment", strings.NewReader(data))
 	require.NoError(t, err)
-	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("X-Tclaude-Notify-Metadata", base64.RawURLEncoding.EncodeToString(metadata))
 	return testharness.Serve(mux, agentd.AsAgentPeer(req, conv))
 }

@@ -283,11 +283,13 @@ func zipPaths(paths []string) ([]byte, error) {
 		}
 		archiveRoot := uniqueZipName(safeZipComponent(filepath.Base(filepath.Clean(root))), seen)
 		if !info.IsDir() {
-			uncompressedBytes += info.Size()
-			if uncompressedBytes > maxExportArtifactBytes {
+			remaining := int64(maxExportArtifactBytes) - uncompressedBytes
+			if info.Size() > remaining {
 				return nil, errExportArtifactTooLarge
 			}
-			if err := addZipFile(zw, root, archiveRoot); err != nil {
+			copied, err := addZipFile(zw, root, archiveRoot, remaining)
+			uncompressedBytes += copied
+			if err != nil {
 				return nil, err
 			}
 			continue
@@ -312,8 +314,8 @@ func zipPaths(paths []string) ([]byte, error) {
 			if !info.Mode().IsRegular() {
 				return fmt.Errorf("%q is not a regular file", path)
 			}
-			uncompressedBytes += info.Size()
-			if uncompressedBytes > maxExportArtifactBytes {
+			remaining := int64(maxExportArtifactBytes) - uncompressedBytes
+			if info.Size() > remaining {
 				return errExportArtifactTooLarge
 			}
 			rel, err := filepath.Rel(root, path)
@@ -324,7 +326,9 @@ func zipPaths(paths []string) ([]byte, error) {
 			if err != nil {
 				return err
 			}
-			return addZipFile(zw, path, entryName)
+			copied, err := addZipFile(zw, path, entryName, remaining)
+			uncompressedBytes += copied
+			return err
 		})
 		if err != nil {
 			return nil, fmt.Errorf("archiving %q: %w", root, err)
@@ -336,25 +340,36 @@ func zipPaths(paths []string) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func addZipFile(zw *zip.Writer, path, entry string) error {
+func addZipFile(zw *zip.Writer, path, entry string, budget int64) (int64, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return fmt.Errorf("opening %q: %w", path, err)
+		return 0, fmt.Errorf("opening %q: %w", path, err)
 	}
 	defer func() { _ = f.Close() }()
 	if info, err := f.Stat(); err != nil {
-		return err
+		return 0, err
 	} else if !info.Mode().IsRegular() {
-		return fmt.Errorf("%q is not a regular file", path)
-	} else if info.Size() > maxExportArtifactBytes {
-		return errExportArtifactTooLarge
+		return 0, fmt.Errorf("%q is not a regular file", path)
+	} else if info.Size() > budget {
+		return 0, errExportArtifactTooLarge
 	}
 	w, err := zw.CreateHeader(&zip.FileHeader{Name: entry, Method: zip.Deflate})
 	if err != nil {
-		return err
+		return 0, err
 	}
-	_, err = io.Copy(w, f)
-	return err
+	copied, err := copyZipFileCapped(w, f, budget)
+	return copied, err
+}
+
+func copyZipFileCapped(dst io.Writer, src io.Reader, budget int64) (int64, error) {
+	copied, err := io.Copy(dst, io.LimitReader(src, budget+1))
+	if err != nil {
+		return copied, err
+	}
+	if copied > budget {
+		return copied, errExportArtifactTooLarge
+	}
+	return copied, nil
 }
 
 func readFileCapped(path string) ([]byte, error) {
