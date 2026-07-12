@@ -15,6 +15,7 @@ func TestDashboardSnapshotTransportWiring(t *testing.T) {
 	for _, needle := range []string{
 		"onGroups ? get('/api/retired?'",
 		"const staticVersion = lastSnapshot?.static_version || ''",
+		"{ credentials: 'same-origin', cache: 'no-store' }",
 		"data.static_unchanged && prevSnap.static_version === data.static_version",
 		"data[key] = prevSnap[key]",
 	} {

@@ -1572,6 +1572,11 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "GET only", http.StatusMethodNotAllowed)
 		return
 	}
+	// This response is dynamic even when static_version remains unchanged: the
+	// query parameter only lets us omit stable registry blobs, while agent
+	// liveness and status still change on every poll. Never let a browser or
+	// intermediary reuse an older response for the same versioned URL.
+	w.Header().Set("Cache-Control", "no-store")
 	// Wall-clock phase marks land in the /api/perf ring (perf.go,
 	// TCL-374). Nil-safe: a direct call outside withPerfTiming (tests)
 	// simply records nothing.
