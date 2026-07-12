@@ -10,6 +10,7 @@ import (
 	"mime"
 	"net/url"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -280,7 +281,7 @@ func zipPaths(paths []string) ([]byte, error) {
 		if info.Mode()&os.ModeSymlink != 0 {
 			return nil, fmt.Errorf("%q is a symlink", root)
 		}
-		archiveRoot := uniqueZipName(filepath.Base(filepath.Clean(root)), seen)
+		archiveRoot := uniqueZipName(safeZipComponent(filepath.Base(filepath.Clean(root))), seen)
 		if !info.IsDir() {
 			uncompressedBytes += info.Size()
 			if uncompressedBytes > maxExportArtifactBytes {
@@ -319,7 +320,11 @@ func zipPaths(paths []string) ([]byte, error) {
 			if err != nil {
 				return err
 			}
-			return addZipFile(zw, path, filepath.ToSlash(filepath.Join(archiveRoot, rel)))
+			entryName, err := safeZipEntry(archiveRoot, rel)
+			if err != nil {
+				return err
+			}
+			return addZipFile(zw, path, entryName)
 		})
 		if err != nil {
 			return nil, fmt.Errorf("archiving %q: %w", root, err)
@@ -386,6 +391,29 @@ func (b *cappedArtifactBuffer) Write(p []byte) (int, error) {
 }
 
 func (b *cappedArtifactBuffer) Bytes() []byte { return b.buf.Bytes() }
+
+func safeZipComponent(name string) string {
+	name = strings.TrimLeft(strings.ReplaceAll(name, `\`, "_"), "/")
+	if name == "" || name == "." || name == ".." {
+		return "artifact"
+	}
+	return name
+}
+
+func safeZipEntry(root, rel string) (string, error) {
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	for i, part := range parts {
+		if part == "" || part == "." || part == ".." {
+			return "", fmt.Errorf("unsafe archive path %q", rel)
+		}
+		parts[i] = safeZipComponent(part)
+	}
+	entry := pathpkg.Join(safeZipComponent(root), strings.Join(parts, "/"))
+	if entry == "." || entry == ".." || strings.HasPrefix(entry, "/") || strings.HasPrefix(entry, "../") {
+		return "", fmt.Errorf("unsafe archive path %q", entry)
+	}
+	return entry, nil
+}
 
 // uniqueZipName returns base, or base with a "-N" suffix before the extension
 // if base was already used, recording the chosen name in seen.

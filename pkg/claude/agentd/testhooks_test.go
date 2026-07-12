@@ -406,6 +406,15 @@ func RunHumanMessageAttachmentCleanupForTest() {
 	runHumanMessageAttachmentCleanup()
 }
 
+// SetHumanMessageAttachmentQuotasForTest shrinks storage limits for flow tests.
+func SetHumanMessageAttachmentQuotasForTest(perSender, total int64) func() {
+	oldSender, oldTotal := maxHumanMessageAttachmentSenderBytes, maxHumanMessageAttachmentTotalBytes
+	maxHumanMessageAttachmentSenderBytes, maxHumanMessageAttachmentTotalBytes = perSender, total
+	return func() {
+		maxHumanMessageAttachmentSenderBytes, maxHumanMessageAttachmentTotalBytes = oldSender, oldTotal
+	}
+}
+
 // SetClipboardWriterForTest swaps the platform clipboard-write seam so a
 // flow test can assert that handleClipboard reached the copy path with the
 // exact text — without execing a real wl-copy/xclip/pbcopy/clip.exe (which

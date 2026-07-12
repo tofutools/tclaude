@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -70,6 +71,70 @@ func TestNotifyHuman_AttachmentDownloadAndDelete(t *testing.T) {
 	require.Equal(t, http.StatusOK, del.Code, del.Body.String())
 	_, err = os.Stat(storedPath)
 	assert.True(t, os.IsNotExist(err), "deleting the message also removes its bytes")
+}
+
+func TestNotifyHuman_ZeroByteAttachment(t *testing.T) {
+	f := newFlow(t)
+	const conv = "zero-1111-2222-3333-4444"
+	f.HaveConvWithTitle(conv, "empty-file-maker")
+	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermHumanNotify, "test"))
+	rec := postNotifyAttachment(t, f.Mux, conv, "empty.txt", "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	msgs, err := db.ListHumanMessages()
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	require.NotNil(t, msgs[0].Attachment)
+	assert.Zero(t, msgs[0].Attachment.SizeBytes)
+}
+
+func TestNotifyHuman_AttachmentQuotaRejectedBeforeStorage(t *testing.T) {
+	f := newFlow(t)
+	const conv = "quot-1111-2222-3333-4444"
+	f.HaveConvWithTitle(conv, "quota-maker")
+	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermHumanNotify, "test"))
+	t.Cleanup(agentd.SetHumanMessageAttachmentQuotasForTest(4, 100))
+	rec := postNotifyAttachment(t, f.Mux, conv, "too-big.txt", "12345")
+	require.Equal(t, http.StatusRequestEntityTooLarge, rec.Code, rec.Body.String())
+	msgs, err := db.ListHumanMessages()
+	require.NoError(t, err)
+	assert.Empty(t, msgs)
+	attachments, err := db.ListHumanMessageAttachments()
+	require.NoError(t, err)
+	assert.Empty(t, attachments)
+}
+
+func TestHumanMessageAttachmentCleanupDropsTruncatedReference(t *testing.T) {
+	f := newFlow(t)
+	const conv = "trun-1111-2222-3333-4444"
+	f.HaveConvWithTitle(conv, "truncate-maker")
+	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermHumanNotify, "test"))
+	rec := postNotifyAttachment(t, f.Mux, conv, "report.txt", "original")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	msgs, err := db.ListHumanMessages()
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	require.NotNil(t, msgs[0].Attachment)
+	path := msgs[0].Attachment.StoragePath
+	require.NoError(t, os.WriteFile(path, []byte("x"), 0o600))
+
+	agentd.RunHumanMessageAttachmentCleanupForTest()
+	message, err := db.GetHumanMessage(msgs[0].ID)
+	require.NoError(t, err)
+	require.NotNil(t, message)
+	assert.Nil(t, message.Attachment, "broken bytes remove the download card but preserve the message")
+	_, err = os.Stat(path)
+	assert.True(t, os.IsNotExist(err))
+}
+
+func postNotifyAttachment(t *testing.T, mux http.Handler, conv, name, data string) *httptest.ResponseRecorder {
+	t.Helper()
+	metadata, err := json.Marshal(map[string]string{"body": "artifact ready", "name": name})
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodPost, "/v1/notify-human/attachment", strings.NewReader(data))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("X-Tclaude-Notify-Metadata", base64.RawURLEncoding.EncodeToString(metadata))
+	return testharness.Serve(mux, agentd.AsAgentPeer(req, conv))
 }
 
 // dashHandlerForTest returns the cookie-authed dashboard mux with the

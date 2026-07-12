@@ -86,6 +86,9 @@ zipped as `<directory>.zip`; multiple paths are combined into `export.zip`.
 private data directory, and the Messages reader exposes an authenticated
 download button, so this also works through remote dashboard access. The cap is
 256 MiB per published artifact. Deleting the message deletes the stored bytes.
+Top-level symlinks are rejected; pass the resolved path explicitly. Stored
+attachments are also capped at 512 MiB per stable agent and 2 GiB total, so
+delete older attachment messages before publishing when a quota is full.
 
 ## Permission
 

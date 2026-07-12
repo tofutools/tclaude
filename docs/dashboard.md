@@ -564,7 +564,9 @@ file, directory, or set of files. The message reader shows a download card;
 directories and multiple paths arrive as a zip. The daemon copies the bytes
 into its private data directory, so remote dashboards download through an
 authenticated route rather than receiving access to the agent's filesystem.
-Deleting the message deletes its stored artifact too.
+Deleting the message deletes its stored artifact too. Uploads are capped at
+256 MiB each, 512 MiB per stable agent, and 2 GiB daemon-wide; the CLI rejects
+top-level symlinks and asks the agent to pass the resolved path explicitly.
 
 After upgrading tclaude, run `tclaude setup --install-agent-skills` to refresh
 the bundled `human-notify` skill so agents discover the `--attach` workflow.

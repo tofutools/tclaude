@@ -145,27 +145,62 @@ func insertHumanMessageAttachment(exec humanMessageExecer, a *HumanMessageAttach
 	return nil
 }
 
-// ListHumanMessageAttachmentPaths returns the daemon-owned paths currently
-// referenced by metadata. The filesystem reconciler uses it as its mark set.
-func ListHumanMessageAttachmentPaths() ([]string, error) {
+// ListHumanMessageAttachments returns every persisted artifact reference for
+// filesystem reconciliation and quota accounting.
+func ListHumanMessageAttachments() ([]*HumanMessageAttachment, error) {
 	d, err := Open()
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT storage_path FROM human_message_attachments`)
+	rows, err := d.Query(`SELECT message_id, filename, content_type, size_bytes, storage_path
+		FROM human_message_attachments`)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	var paths []string
+	var attachments []*HumanMessageAttachment
 	for rows.Next() {
-		var path string
-		if err := rows.Scan(&path); err != nil {
+		var a HumanMessageAttachment
+		if err := rows.Scan(&a.MessageID, &a.Filename, &a.ContentType, &a.SizeBytes, &a.StoragePath); err != nil {
 			return nil, err
 		}
-		paths = append(paths, path)
+		attachments = append(attachments, &a)
 	}
-	return paths, rows.Err()
+	return attachments, rows.Err()
+}
+
+// HumanMessageAttachmentUsage reports total stored bytes and the bytes owned
+// by one stable agent (falling back to a conversation id for legacy/non-agent
+// senders). The upload path serializes quota checks with commits.
+func HumanMessageAttachmentUsage(agentID, convID string) (total, sender int64, err error) {
+	d, err := Open()
+	if err != nil {
+		return 0, 0, err
+	}
+	if err := d.QueryRow(`SELECT COALESCE(SUM(size_bytes), 0) FROM human_message_attachments`).Scan(&total); err != nil {
+		return 0, 0, err
+	}
+	if agentID != "" {
+		err = d.QueryRow(`SELECT COALESCE(SUM(a.size_bytes), 0)
+			FROM human_message_attachments a JOIN human_messages m ON m.id = a.message_id
+			WHERE m.from_agent = ?`, agentID).Scan(&sender)
+	} else {
+		err = d.QueryRow(`SELECT COALESCE(SUM(a.size_bytes), 0)
+			FROM human_message_attachments a JOIN human_messages m ON m.id = a.message_id
+			WHERE m.from_conv = ?`, convID).Scan(&sender)
+	}
+	return total, sender, err
+}
+
+// DeleteHumanMessageAttachment removes stale metadata while preserving the
+// human message itself (which remains readable without a download card).
+func DeleteHumanMessageAttachment(messageID int64) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`DELETE FROM human_message_attachments WHERE message_id = ?`, messageID)
+	return err
 }
 
 // GetHumanMessageAttachment returns a message's attachment, if any.

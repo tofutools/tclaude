@@ -104,6 +104,18 @@ func TestCappedArtifactBufferStopsBeforeGrowthPastLimit(t *testing.T) {
 	assert.Equal(t, []byte("abcd"), b.Bytes())
 }
 
+func TestSafeZipNamesRejectDegenerateRootsAndTraversal(t *testing.T) {
+	for _, root := range []string{"", ".", "..", "/"} {
+		assert.Equal(t, "artifact", safeZipComponent(root), root)
+	}
+	assert.Equal(t, ".._report", safeZipComponent(`..\report`))
+	entry, err := safeZipEntry("artifact", "nested/report.txt")
+	require.NoError(t, err)
+	assert.Equal(t, "artifact/nested/report.txt", entry)
+	_, err = safeZipEntry("artifact", "../report.txt")
+	assert.Error(t, err)
+}
+
 func TestZipFiles_DuplicateBaseNamesDisambiguated(t *testing.T) {
 	d1 := t.TempDir()
 	d2 := t.TempDir()

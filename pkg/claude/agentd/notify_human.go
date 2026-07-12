@@ -77,7 +77,10 @@ const maxNotifyHumanAttachmentBytes = 256 << 20
 
 var (
 	humanMessageAttachmentsMu             sync.Mutex
-	humanMessageAttachmentCleanupInterval = 10 * time.Minute
+	humanMessageAttachmentCleanupInterval       = 10 * time.Minute
+	errHumanMessageAttachmentQuota              = errors.New("human message attachment storage quota exceeded")
+	maxHumanMessageAttachmentSenderBytes  int64 = 512 << 20 // 512 MiB per stable agent
+	maxHumanMessageAttachmentTotalBytes   int64 = 2 << 30   // 2 GiB daemon-wide
 )
 
 // handleNotifyHuman serves POST /v1/notify-human — the daemon side of
@@ -166,26 +169,31 @@ func handleNotifyHumanAttachment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "subject is too long")
 		return
 	}
-	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxNotifyHumanAttachmentBytes))
-	if err != nil {
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
-			writeError(w, http.StatusRequestEntityTooLarge, "too_large", "attachment exceeds the 256 MiB limit")
-			return
-		}
-		writeError(w, http.StatusBadRequest, "io", "read attachment: "+err.Error())
-		return
-	}
-	if len(data) == 0 {
-		writeError(w, http.StatusBadRequest, "empty", "attachment is empty")
-		return
-	}
 	contentType := strings.TrimSpace(r.Header.Get("Content-Type"))
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
 	humanMessageAttachmentsMu.Lock()
 	defer humanMessageAttachmentsMu.Unlock()
+	agentID, _ := db.AgentIDForConv(callerConv)
+	totalBytes, senderBytes, err := db.HumanMessageAttachmentUsage(agentID, callerConv)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "check attachment quota: "+err.Error())
+		return
+	}
+	if totalBytes >= maxHumanMessageAttachmentTotalBytes || senderBytes >= maxHumanMessageAttachmentSenderBytes {
+		writeError(w, http.StatusRequestEntityTooLarge, "quota", "attachment storage quota is full; delete older message attachments first")
+		return
+	}
+	if r.ContentLength > maxNotifyHumanAttachmentBytes {
+		writeError(w, http.StatusRequestEntityTooLarge, "too_large", "attachment exceeds the 256 MiB limit")
+		return
+	}
+	if r.ContentLength > 0 && (quotaWouldExceed(totalBytes, r.ContentLength, maxHumanMessageAttachmentTotalBytes) ||
+		quotaWouldExceed(senderBytes, r.ContentLength, maxHumanMessageAttachmentSenderBytes)) {
+		writeError(w, http.StatusRequestEntityTooLarge, "quota", "attachment would exceed the storage quota; delete older message attachments first")
+		return
+	}
 	base := humanMessageAttachmentsBaseDir()
 	if err := os.MkdirAll(base, 0o700); err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "create attachment directory: "+err.Error())
@@ -197,8 +205,16 @@ func handleNotifyHumanAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := f.Name()
+	var written int64
 	if err = f.Chmod(0o600); err == nil {
-		_, err = f.Write(data)
+		written, err = io.Copy(f, http.MaxBytesReader(w, r.Body, maxNotifyHumanAttachmentBytes))
+		if err == nil && (quotaWouldExceed(totalBytes, written, maxHumanMessageAttachmentTotalBytes) ||
+			quotaWouldExceed(senderBytes, written, maxHumanMessageAttachmentSenderBytes)) {
+			err = errHumanMessageAttachmentQuota
+		}
+		if err == nil {
+			err = f.Sync()
+		}
 	}
 	closeErr := f.Close()
 	if err == nil {
@@ -206,13 +222,26 @@ func handleNotifyHumanAttachment(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		_ = os.Remove(path)
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, "too_large", "attachment exceeds the 256 MiB limit")
+			return
+		}
+		if errors.Is(err, errHumanMessageAttachmentQuota) {
+			writeError(w, http.StatusRequestEntityTooLarge, "quota", "attachment would exceed the storage quota; delete older message attachments first")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "io", "store attachment: "+err.Error())
 		return
 	}
+	// Best-effort on platforms/filesystems that permit directory fsync. File
+	// sync above is mandatory; reconciliation below repairs a missing/truncated
+	// referenced file after a system crash if directory durability lagged.
+	_ = syncDirectory(base)
 	message, fromTitle, groupName := newHumanMessageRow(callerConv, meta.Subject, meta.Body, "", "", "")
 	id, err := db.InsertHumanMessageWithAttachment(message, &db.HumanMessageAttachment{
 		Filename: meta.Name, ContentType: contentType,
-		SizeBytes: int64(len(data)), StoragePath: path,
+		SizeBytes: written, StoragePath: path,
 	})
 	if err != nil {
 		_ = os.Remove(path)
@@ -225,6 +254,19 @@ func handleNotifyHumanAttachment(w http.ResponseWriter, r *http.Request) {
 
 func humanMessageAttachmentsBaseDir() string {
 	return filepath.Join(config.DataDir(), "human-message-files")
+}
+
+func quotaWouldExceed(current, incoming, limit int64) bool {
+	return incoming < 0 || current > limit-incoming
+}
+
+func syncDirectory(path string) error {
+	dir, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = dir.Close() }()
+	return dir.Sync()
 }
 
 func removeHumanMessageAttachmentPaths(paths []string) {
@@ -261,14 +303,35 @@ func startHumanMessageAttachmentCleanup(stop <-chan struct{}) {
 func runHumanMessageAttachmentCleanup() {
 	humanMessageAttachmentsMu.Lock()
 	defer humanMessageAttachmentsMu.Unlock()
-	paths, err := db.ListHumanMessageAttachmentPaths()
+	attachments, err := db.ListHumanMessageAttachments()
 	if err != nil {
 		slog.Warn("human message attachment: reconciliation list failed", "error", err)
 		return // fail closed: never delete files without an authoritative mark set
 	}
-	referenced := make(map[string]struct{}, len(paths))
-	for _, path := range paths {
-		referenced[filepath.Clean(path)] = struct{}{}
+	referenced := make(map[string]struct{}, len(attachments))
+	for _, attachment := range attachments {
+		path := filepath.Clean(attachment.StoragePath)
+		info, statErr := os.Stat(path)
+		valid := statErr == nil && info.Mode().IsRegular() && info.Size() == attachment.SizeBytes
+		if valid {
+			referenced[path] = struct{}{}
+			continue
+		}
+		if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+			slog.Warn("human message attachment: validate referenced file failed",
+				"message", attachment.MessageID, "path", path, "error", statErr)
+			referenced[path] = struct{}{} // transient error: fail closed
+			continue
+		}
+		if err := db.DeleteHumanMessageAttachment(attachment.MessageID); err != nil {
+			slog.Warn("human message attachment: drop broken metadata failed",
+				"message", attachment.MessageID, "path", path, "error", err)
+			referenced[path] = struct{}{}
+			continue
+		}
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			slog.Warn("human message attachment: remove broken file failed", "path", path, "error", err)
+		}
 	}
 	base := humanMessageAttachmentsBaseDir()
 	var dirs []string

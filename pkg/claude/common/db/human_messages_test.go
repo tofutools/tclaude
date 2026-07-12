@@ -244,6 +244,10 @@ func TestHumanMessages_AttachmentInsertAndClearReturnExactPaths(t *testing.T) {
 	require.NoError(t, err)
 	_, err = MarkHumanMessageRead(readID)
 	require.NoError(t, err)
+	total, sender, err := HumanMessageAttachmentUsage("", "c")
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), total)
+	assert.Equal(t, int64(2), sender)
 
 	n, paths, err := DeleteReadHumanMessagesWithAttachments()
 	require.NoError(t, err)
@@ -254,4 +258,8 @@ func TestHumanMessages_AttachmentInsertAndClearReturnExactPaths(t *testing.T) {
 	require.NotNil(t, left)
 	require.NotNil(t, left.Attachment)
 	assert.Equal(t, "/private/unread", left.Attachment.StoragePath)
+	total, sender, err = HumanMessageAttachmentUsage("", "c")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), total)
+	assert.Equal(t, int64(1), sender)
 }
