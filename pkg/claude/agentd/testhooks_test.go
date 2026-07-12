@@ -109,6 +109,32 @@ func ResetDeliveryDebounceForTest() {
 	flushDebounceMu.Unlock()
 }
 
+// SetTmuxCacheTTLForTest overrides the shared LiveTmuxSessions cache TTL and
+// clears any warm entry, returning a restore closure. newFlow sets it to 0 so
+// the cache is transparent (every call re-probes) — preserving each existing
+// scenario's tmux-liveness freshness across back-to-back fetches. The TCL-370
+// coalescing test re-sets a positive TTL to observe the tick's parallel
+// handlers share one probe.
+func SetTmuxCacheTTLForTest(ttl time.Duration) func() {
+	liveTmuxCache.mu.Lock()
+	prev := liveTmuxCache.ttl
+	liveTmuxCache.ttl = ttl
+	liveTmuxCache.valid = false
+	liveTmuxCache.sessions = nil
+	liveTmuxCache.err = nil
+	liveTmuxCache.expires = time.Time{}
+	liveTmuxCache.mu.Unlock()
+	return func() {
+		liveTmuxCache.mu.Lock()
+		liveTmuxCache.ttl = prev
+		liveTmuxCache.valid = false
+		liveTmuxCache.sessions = nil
+		liveTmuxCache.err = nil
+		liveTmuxCache.expires = time.Time{}
+		liveTmuxCache.mu.Unlock()
+	}
+}
+
 // SweepWaveChoreographiesForTest runs one pass of the staged-spawn wave runner
 // (JOH-244) synchronously — the flow-test entry point that drives a
 // choreography forward one gate check without waiting on the production ticker.
