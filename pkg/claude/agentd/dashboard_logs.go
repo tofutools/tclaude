@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -63,6 +64,7 @@ const (
 // a rotated file, or a stray stdout write) is returned verbatim in Raw
 // with Msg mirroring it, so nothing is ever silently dropped.
 type logEntryView struct {
+	Key    string         `json:"key"`
 	Time   string         `json:"time,omitempty"`
 	Level  string         `json:"level,omitempty"`
 	Msg    string         `json:"msg"`
@@ -349,8 +351,16 @@ func buildLogsResponse(path string, includeRotated bool, filter logFilter, normL
 	totalUnfiltered := len(lines)
 
 	filtered := make([]logEntryView, 0, len(lines))
+	occurrences := make(map[string]int)
 	for _, ln := range lines {
+		occurrences[ln]++
 		e := parseLogLine(ln)
+		// The UI receives only one page, so it cannot distinguish identical
+		// records that slide across a full live-tail page. Assign identity across
+		// the complete chronological scan before filtering/pagination. Appends do
+		// not renumber existing records, even when the visible page stays full.
+		sum := sha256.Sum256([]byte(ln))
+		e.Key = fmt.Sprintf("%x:%d", sum[:8], occurrences[ln])
 		if filter.match(e) {
 			filtered = append(filtered, e)
 		}

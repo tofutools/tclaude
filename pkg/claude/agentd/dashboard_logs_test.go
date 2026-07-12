@@ -72,6 +72,28 @@ func TestBuildLogsResponse_NewestFirstAndCount(t *testing.T) {
 	}
 }
 
+func TestBuildLogsResponseKeysSurviveFullPageTailRollover(t *testing.T) {
+	path := writeLog(t,
+		jsonLine("2026-07-01T12:00:00.000Z", "INFO", "same"),
+		jsonLine("2026-07-01T12:00:00.000Z", "INFO", "same"),
+	)
+	before := buildLogsResponse(path, false, logFilter{}, "all", 1, 2)
+	if err := os.WriteFile(path, []byte(strings.Join([]string{
+		jsonLine("2026-07-01T12:00:00.000Z", "INFO", "same"),
+		jsonLine("2026-07-01T12:00:00.000Z", "INFO", "same"),
+		jsonLine("2026-07-01T12:00:00.000Z", "INFO", "same"),
+	}, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	after := buildLogsResponse(path, false, logFilter{}, "all", 1, 2)
+	if before.Entries[0].Key != after.Entries[1].Key {
+		t.Fatalf("existing newest duplicate key changed across full-page rollover: %q -> %q", before.Entries[0].Key, after.Entries[1].Key)
+	}
+	if after.Entries[0].Key == after.Entries[1].Key {
+		t.Fatalf("duplicate rows share key %q", after.Entries[0].Key)
+	}
+}
+
 func TestBuildLogsResponse_LevelMinFilter(t *testing.T) {
 	path := writeLog(t,
 		jsonLine("2026-07-01T12:00:00.000Z", "DEBUG", "d"),

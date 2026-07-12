@@ -58,6 +58,7 @@ export function createLogsState({ activeTab = dashboardState.activeTab } = {}) {
   }
   function failRequest(token, error) {
     if (request.value.token !== token) return false;
+    response.value = null;
     request.value = { phase: 'error', token, error: errorMessage(error) };
     return true;
   }

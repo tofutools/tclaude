@@ -17,6 +17,7 @@ test('Logs state owns filters, paging, stream state, and stale request rejection
   const failed = state.beginRequest();
   assert.equal(state.failRequest(failed, Object.assign(new Error('HTTP 500'), { body: 'boom' })), true);
   assert.match(state.view.value.request.error, /boom/);
+  assert.equal(state.view.value.response, null, 'accepted failure clears stale count/source/page metadata');
   activeTab.value = 'audit';
   assert.equal(state.view.value.active, false);
 });

@@ -33,14 +33,17 @@ export function pageCount(total, pageSize) {
   return Math.max(1, Math.ceil((Number(total) || 0) / (Number(pageSize) || 100)));
 }
 
-// Log records have no server id and byte-identical records can coexist. Count
-// duplicate fingerprints from the oldest end, so prepending a new identical
-// tail record does not change the keys of already-rendered duplicates.
+// Prefer the server's scan-wide identity. The fingerprint occurrence fallback
+// keeps this model tolerant of an older/canned payload that predates that key.
 export function keyedLogRows(rows) {
   const seen = new Map();
   const result = Array(rows?.length || 0);
   for (let index = (rows?.length || 0) - 1; index >= 0; index -= 1) {
     const row = rows[index];
+    if (row.key) {
+      result[index] = { row, key: row.key };
+      continue;
+    }
     const fingerprint = JSON.stringify(row);
     const occurrence = (seen.get(fingerprint) || 0) + 1;
     seen.set(fingerprint, occurrence);
