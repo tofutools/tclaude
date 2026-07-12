@@ -95,6 +95,8 @@ test('Jobs island renders reactively and preserves keyed DOM/focus across polls'
   await new Promise((resolve) => setTimeout(resolve, 275));
   assert.ok(calls.includes('refresh'));
 
+  await harness.act(() => harness.fireEvent(nextPage, 'click'));
+  assert.equal(state.offset.value, 50, 'failed successor request targets the next page');
   await harness.act(() => {
     state.beginRequest(3);
     state.failRequest(3, new Error('network down'));
