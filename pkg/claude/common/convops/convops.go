@@ -513,7 +513,8 @@ func parseJSONLSession(filePath, sessionID string) (*SessionEntry, bool) {
 
 	// Drive the same forward accumulator the incremental follower uses, so
 	// a full parse and an appended-bytes parse converge by construction
-	// (see jsonl_follower.go). The scan runs to EOF: GitBranch is last-wins
+	// (see jsonl_follower.go — up to the time-dependent cwd canonicalization
+	// noted on jsonlScanState.canonCwd). The scan runs to EOF: GitBranch is last-wins
 	// and BranchHistory is the complete set, both of which need the whole
 	// file. This path only runs on a cache miss / the CLI, so the extra
 	// reads are infrequent.

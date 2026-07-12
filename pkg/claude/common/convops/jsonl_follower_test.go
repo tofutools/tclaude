@@ -14,10 +14,13 @@ import (
 
 // The follower's core contract is restart-equivalence: the entry it
 // produces from reading only appended bytes must be byte-identical to a
-// full parseJSONLSession of the same file. These tests assert that property
-// directly (comparing follower output to a full reparse) across append,
-// shrink, inode swap, partial trailing line, oversized record, in-place
-// rewrite-grows, and randomized chunk boundaries.
+// full parseJSONLSession of the same file — up to the time-dependent cwd
+// canonicalization noted on jsonlScanState.canonCwd (a mid-conversation
+// symlink retarget, which these tests do not exercise, is the one case where
+// already-observed branch repo-dir keys intentionally diverge). These tests
+// assert that property directly (comparing follower output to a full
+// reparse) across append, shrink, inode swap, partial trailing line,
+// oversized record, in-place rewrite-grows, and randomized chunk boundaries.
 
 const followerTestConvID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 

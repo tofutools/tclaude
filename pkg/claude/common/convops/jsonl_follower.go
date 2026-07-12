@@ -42,7 +42,10 @@ import (
 //     head-only (first-wins), last-seen, or additive, so accumulating
 //     forward yields the same result as a full scan. The accumulator here
 //     IS the body of parseJSONLSession's loop, so the two paths converge by
-//     construction (parseJSONLSession now drives the same jsonlScanState).
+//     construction — up to the time-dependent cwd canonicalization noted on
+//     canonCwd, where already-observed branch repo-dir keys intentionally do
+//     NOT re-converge with a fresh reparse after a mid-conversation symlink
+//     retarget (that is per-tick-for-new-records equivalence, by design).
 //   - Identity change (os.SameFile / inode): catches rotation and
 //     atomic replace-then-rename — a wholesale file swap.
 //   - Size shrink below the cursor: catches truncation / a shorter rewrite.
@@ -59,15 +62,26 @@ import (
 // # Accepted residual risk
 //
 // The anchor is a tripwire, not a proof that the folded prefix is unchanged:
-// validating the whole prefix would require reading the whole file. A
-// surgical, SAME-LENGTH interior pwrite that edits bytes strictly before the
-// cursor while leaving the last ~64 bytes (and the size, and the inode)
-// untouched would not be detected until the next full reparse — which
-// happens on the next daemon restart, or the next size shrink / rotation /
-// decode-doubt for that conv. Claude Code does not write transcripts this
-// way (it O_APPENDs whole records), so this is accepted residual risk rather
-// than a defended case. The invariant we DO guarantee: we never trust a
-// cursor whose validating anchor we could not read (see scanAppend).
+// validating the whole prefix would require reading the whole file. The
+// undetected shape is specific. scanAppend only runs when the file grew
+// (size > offset, same inode); so the residual case is an interior
+// modification of bytes strictly BEFORE the anchor window, FOLLOWED BY an
+// append that grows the file past the cursor while leaving the last ~64
+// bytes untouched. That admits scanAppend, the anchor still matches, and the
+// stale prefix state is retained — not detected until the next full reparse
+// (the next daemon restart, or the next size shrink / rotation / decode-doubt
+// for that conv).
+//
+// A separate, coarser edge: an in-place SAME-LENGTH rewrite that lands within
+// the same one-second mtime tick as the committed stat hits refresh's
+// unchanged-file fast path (same inode, size and mtime) and is served from
+// memory. This is the mtime-resolution limitation the size check normally
+// backstops, but size is unchanged here too.
+//
+// Claude Code does not write transcripts either way (it O_APPENDs whole
+// records and never rewrites earlier bytes), so both are accepted residual
+// risk rather than defended cases. The invariant we DO guarantee: we never
+// trust a cursor whose validating anchor we could not read (see scanAppend).
 
 // maxJSONLLineBytes caps a single .jsonl record. Lives in convops.go
 // (shared with parseJSONLSession); referenced here.
