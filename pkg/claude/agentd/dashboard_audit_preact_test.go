@@ -16,6 +16,9 @@ func TestDashboardAuditPreactBoundary(t *testing.T) {
 		return string(data)
 	}
 	state := read("js/audit-state.js")
+	if !strings.Contains(state, "createRequestLifecycle") || !strings.Contains(state, "retainPayloadOnRefresh: true") || !strings.Contains(state, "retainPayloadOnError: false") {
+		t.Error("Audit state must use the explicit shared request lifecycle policy")
+	}
 	for _, forbidden := range []string{"document", "querySelector", "innerHTML", "fetch("} {
 		if strings.Contains(state, forbidden) {
 			t.Errorf("Audit state contains forbidden DOM/fetch knowledge %q", forbidden)
