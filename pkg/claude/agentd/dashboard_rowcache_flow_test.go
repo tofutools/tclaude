@@ -121,3 +121,64 @@ func TestDashboardSnapshot_RetiredGrantHolderExcluded(t *testing.T) {
 	assert.Nil(t, findAgent(snap.Agents, retiredConv), "retired grant holder absent from Agents (TCL-369)")
 	assert.Nil(t, findAgent(snap.Ungrouped, retiredConv), "retired grant holder absent from Ungrouped")
 }
+
+// Scenario: one session row carries a corrupt effective_sandbox_config that
+// scanSessionRow cannot decode. FindSessionsByConvIDs is best-effort per row, so
+// it skips just that row — a regression to the old all-or-nothing scan would
+// abort the batch, empty the sessions map for the WHOLE poll, and render EVERY
+// agent offline with blank state. This pins that a single bad row degrades only
+// its own conv, never its siblings.
+func TestDashboardSnapshot_CorruptSandboxRowDoesNotBlankSiblings(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+
+	const goodConv = "good-1111-2222-3333-444444444444"
+	const badConv = "badd-1111-2222-3333-444444444444"
+
+	f.HaveConvWithTitle(goodConv, "good-agent")
+	f.HaveConvWithTitle(badConv, "bad-agent")
+	f.HaveAliveSession(goodConv, "spwn-good", "tmux-good", "/tmp/good")
+	f.HaveAliveSession(badConv, "spwn-bad", "tmux-bad", "/tmp/bad")
+	f.HaveGroup("crew")
+	f.HaveMember("crew", goodConv)
+	f.HaveMember("crew", badConv)
+
+	// Corrupt the bad conv's stored effective_sandbox_config so the row fails to
+	// decode. Written directly since SaveSession would reject a bad snapshot.
+	conn, err := db.Open()
+	require.NoError(t, err)
+	_, err = conn.Exec(`UPDATE sessions SET effective_sandbox_config = ? WHERE conv_id = ?`,
+		"{not valid json", badConv)
+	require.NoError(t, err)
+
+	snap := fetchSnapshotOnly(t, agentd.BuildDashboardHandlerForTest())
+
+	var crew *dashGroup
+	for i := range snap.Groups {
+		if snap.Groups[i].Name == "crew" {
+			crew = &snap.Groups[i]
+		}
+	}
+	require.NotNil(t, crew, "crew group present")
+	memberByConv := func(conv string) *dashMember {
+		for i := range crew.Members {
+			if crew.Members[i].ConvID == conv {
+				return &crew.Members[i]
+			}
+		}
+		return nil
+	}
+
+	// The good conv is unaffected — still online with a real status.
+	good := memberByConv(goodConv)
+	require.NotNil(t, good, "good conv is a crew member")
+	assert.True(t, good.Online, "good conv stays online despite a sibling's corrupt sandbox row")
+	assert.NotEmpty(t, good.State.Status, "good conv keeps its resolved state")
+
+	// The corrupt conv degrades to offline (its only session row was skipped) —
+	// the blast radius is one conv, not the whole poll.
+	bad := memberByConv(badConv)
+	require.NotNil(t, bad, "bad conv still listed as a member")
+	assert.False(t, bad.Online, "corrupt-sandbox conv degrades to offline, not the whole poll")
+}

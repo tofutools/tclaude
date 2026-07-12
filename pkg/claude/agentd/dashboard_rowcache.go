@@ -53,10 +53,14 @@ type convRowBundle struct {
 // conv-id, and precomputes locations + the git_cache batch. convIDs is the full
 // conv set the snapshot will render (group members ∪ owners ∪ grant/override
 // holders ∪ active agents ∪ sudo holders); alive is the one-per-poll tmux
-// liveness set. A DB error on any loader degrades that table to empty — the
-// affected rows resolve to their zero-value ("unknown"/offline) shape, exactly
-// as the singular getters degrade for a missing conv, rather than failing the
-// whole poll.
+// liveness set.
+//
+// A DB error on a loader degrades that table to empty, so its rows resolve to
+// their zero-value ("unknown"/offline) shape rather than failing the whole poll.
+// The sessions loader (FindSessionsByConvIDs) is additionally best-effort per
+// row: one undecodable session row is skipped, not fatal — so a single corrupt
+// effective_sandbox_config can never blank liveness/state for the ENTIRE poll
+// (it would if the loader aborted and we discarded its error here).
 func newSnapshotRowCache(convIDs []string, alive map[string]struct{}) *snapshotRowCache {
 	rc := &snapshotRowCache{
 		alive: alive,

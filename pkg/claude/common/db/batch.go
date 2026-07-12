@@ -1,6 +1,7 @@
 package db
 
 import (
+	"log/slog"
 	"time"
 )
 
@@ -74,6 +75,15 @@ func GetConvIndexBatch(convIDs []string) (map[string]*ConvIndexRow, error) {
 // grouped by conv-id and — within each conv — ordered most-recently-updated
 // first, exactly as FindSessionsByConvID returns them. The daemon uses the
 // first live-tmux row per conv, so the per-conv ordering must be preserved.
+//
+// Unlike scanSessions (all-or-nothing), this is BEST-EFFORT per row: a single
+// undecodable row — realistically a corrupt effective_sandbox_config JSON blob —
+// is logged and skipped rather than failing the whole batch. That matters here
+// because this loader backs the whole dashboard poll: an aborted read would
+// return an empty map and render EVERY agent offline with empty state, whereas
+// the singular FindSessionsByConvID confines a bad row to its one conv. Skipping
+// the row keeps every other conv's liveness/state intact; the affected conv
+// degrades to its remaining good rows (or offline if it had only the bad one).
 func FindSessionsByConvIDs(convIDs []string) (map[string][]*SessionRow, error) {
 	out := make(map[string][]*SessionRow, len(convIDs))
 	if len(convIDs) == 0 {
@@ -92,13 +102,19 @@ func FindSessionsByConvIDs(convIDs []string) (map[string][]*SessionRow, error) {
 		if err != nil {
 			return nil, err
 		}
-		scanned, err := scanSessions(rows)
+		for rows.Next() {
+			s, err := scanSessionRow(rows)
+			if err != nil {
+				slog.Warn("db: skipping undecodable session row in batch load",
+					"error", err, "module", "db")
+				continue
+			}
+			out[s.ConvID] = append(out[s.ConvID], s)
+		}
+		err = rows.Err()
 		_ = rows.Close()
 		if err != nil {
 			return nil, err
-		}
-		for _, s := range scanned {
-			out[s.ConvID] = append(out[s.ConvID], s)
 		}
 	}
 	return out, nil
