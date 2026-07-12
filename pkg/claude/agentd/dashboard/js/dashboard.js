@@ -66,6 +66,7 @@ import { bindPluginsUI } from './plugins.js';
 import { bindCostsTab, bindCostDisplayToggle } from './costs.js';
 import { bindAuditTab } from './audit.js';
 import { bindLogsTab } from './logs.js';
+import { bindDebugTab } from './debug.js';
 import { initProcessesTab } from './processes.js';
 import { initMail, focusAccessRequest } from './mail.js';
 import { initDashPrefs } from './prefs.js';
@@ -230,6 +231,7 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   bindCostDisplayToggle();
   bindAuditTab();
   bindLogsTab();
+  bindDebugTab();
   initProcessesTab();
   initMail();
   // Slop-mode flair — each binder installs a delegated listener (or

@@ -369,6 +369,16 @@ type DashboardConfig struct {
 	// dashboard reads the resolved value off the snapshot each poll and toggles
 	// body.show-group-description. See (*Config).ShowGroupDescription.
 	ShowGroupDescription bool `json:"show_group_description,omitempty"`
+	// ShowDebugTab surfaces the dashboard's Debug tab — the daemon
+	// self-diagnostics view (poll-timing distributions from /api/perf,
+	// TCL-376). Default false: it is a maintainer/troubleshooting surface,
+	// so the nav stays uncluttered for everyone not chasing a slow poll.
+	// The gate is DISPLAY-only — the daemon records poll timings (and
+	// serves /api/perf) either way, so history exists from before the tab
+	// was switched on. The dashboard reads the resolved value off the
+	// snapshot each poll and toggles body.hide-debug. See
+	// (*Config).ShowDebugTab.
+	ShowDebugTab bool `json:"show_debug_tab,omitempty"`
 }
 
 // ActivityBotsConfig picks the activity-bot visual independently per mode,
@@ -1081,6 +1091,15 @@ func (c *Config) ShowAgentHideButton() bool {
 // back. Nil-safe on the receiver.
 func (c *Config) ShowGroupDescription() bool {
 	return c != nil && c.Dashboard != nil && c.Dashboard.ShowGroupDescription
+}
+
+// ShowDebugTab reports whether the dashboard's Debug tab (daemon
+// self-diagnostics — poll-timing distributions, TCL-376) should be shown —
+// config dashboard.show_debug_tab. Default false: it is a troubleshooting
+// surface, hidden until explicitly enabled. Display-only — the timing
+// recorder and /api/perf run regardless. Nil-safe on the receiver.
+func (c *Config) ShowDebugTab() bool {
+	return c != nil && c.Dashboard != nil && c.Dashboard.ShowDebugTab
 }
 
 // HScrollFollow reports whether the dashboard's full-bleed chrome bars

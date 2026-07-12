@@ -1294,6 +1294,49 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   background: #161b22; color: #d4d4d4; border: 1px solid #2a3340;
   border-radius: 4px; padding: 1px 4px; cursor: pointer;
 }
+/* Debug tab — poll-timing cards (debug.js / TCL-376). One card per
+   polled endpoint: header stat chips, the latency sparkline, and (for
+   /api/snapshot) the median phase-composition bar + aggregate table.
+   Fill colors are inline (a fixed validated palette in debug.js); all
+   text stays in the regular ink/muted tokens so identity never rides
+   on color alone. */
+.debug-card {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 8px;
+  padding: 12px 14px; margin-bottom: 14px;
+}
+.debug-card-head {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.debug-stat { color: #7d8590; font-size: 12px; white-space: nowrap; }
+.debug-stat strong { color: #d4d4d4; font-weight: 600; }
+.debug-spark {
+  display: block; width: 100%; height: 48px;
+  border-bottom: 1px solid #2a3340;
+}
+.debug-subhead { margin: 10px 0 6px; color: #7d8590; font-size: 12px; }
+.debug-phasebar {
+  display: flex; gap: 2px; height: 18px; border-radius: 4px; overflow: hidden;
+}
+.debug-phase-seg { min-width: 2px; }
+.debug-legend {
+  display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px;
+  font-size: 12px; color: #d4d4d4;
+}
+.debug-legend-item { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.debug-legend-chip {
+  display: inline-block; width: 9px; height: 9px; border-radius: 2px;
+  margin-right: 1px; flex: none;
+}
+.debug-table { border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+.debug-table th {
+  text-align: left; padding: 3px 14px 3px 0; border-bottom: 1px solid #2a3340;
+  color: #7d8590; font-weight: 600; white-space: nowrap;
+}
+.debug-table td {
+  padding: 3px 14px 3px 0; border-bottom: 1px solid #1b2029; white-space: nowrap;
+}
+.debug-table td .debug-legend-chip { margin-right: 6px; }
 /* Logs tab — the read-only viewer over ~/.tclaude/output.log (JSON lines).
    The message column is greedy + monospace; When / Level shrink to fit.
    Warn/error rows get a faint tinted gutter so they catch the eye. */
@@ -4854,6 +4897,13 @@ body.hide-costs #groups-cost-toggle { display: none; }
    Plugins was showing). */
 body.hide-plugins nav [data-tab="plugins"],
 body.hide-plugins #tab-plugins { display: none; }
+
+/* Debug-tab auto-hide. body.hide-debug is set by refresh.js when the
+   server's debug_tab_visible flag (config dashboard.show_debug_tab) is
+   off — the default. Display-only: the daemon's poll-timing recorder and
+   /api/perf run regardless. */
+body.hide-debug nav [data-tab="debug"],
+body.hide-debug #tab-debug { display: none; }
 
 /* Processes is a dark-launched feature. The page starts with hide-processes
    on <body>; refresh.js removes it only when the server snapshot confirms the

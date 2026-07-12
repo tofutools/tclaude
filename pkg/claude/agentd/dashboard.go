@@ -191,6 +191,7 @@ func handleDashboardStatic() http.Handler {
 var dashboardAppTabs = map[string]bool{
 	"groups": true, "jobs": true, "processes": true, "plugins": true, "access": true,
 	"messages": true, "costs": true, "audit": true, "logs": true, "config": true,
+	"debug": true,
 }
 
 // isDashboardAppPath reports whether a path should serve the dashboard SPA
@@ -736,6 +737,12 @@ type snapshotPayload struct {
 	// Plugins nav button + section entirely — the "don't show an empty
 	// Plugins tab" rule for the majority of users who never define one.
 	PluginsTabVisible bool `json:"plugins_tab_visible"`
+	// DebugTabVisible drives the Debug tab's auto-hide (config
+	// dashboard.show_debug_tab, TCL-376). Display-only: the poll-timing
+	// recorder and /api/perf serve regardless, so history exists from
+	// before the tab was switched on. Re-read on every snapshot so the
+	// Config-tab toggle takes effect without restarting agentd.
+	DebugTabVisible bool `json:"debug_tab_visible"`
 	// ProcessesEnabled gates both the experimental tab chrome and its REST
 	// surface. It is re-read on every snapshot so changing config takes effect
 	// without restarting agentd, matching processRoute.
@@ -2025,6 +2032,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// keep it (config dashboard.always_show_plugins_tab — the escape hatch to
 	// the install-from-catalog UI). Otherwise hide the empty tab.
 	out.PluginsTabVisible = len(out.Plugins) > 0 || out.PluginsError != "" || cfg.ShowPluginsTabAlways()
+	out.DebugTabVisible = cfg.ShowDebugTab()
 
 	// Display-only cost compensation, applied as the final step over the
 	// fully-assembled payload (cfg was loaded once at the top). The DB

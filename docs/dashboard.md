@@ -526,6 +526,18 @@ deletes every already-read message. It is the human's side of the
 human-notify channel — an explicit nudge surface kept separate from the busy
 terminal.
 
+### Debug
+
+Daemon self-diagnostics — hidden by default; enable it with the **Debug tab**
+checkbox on the Config tab (`dashboard.show_debug_tab`). It shows how long the
+dashboard's own background polls take inside `agentd`: one card per polled
+endpoint with a latency sparkline plus p50/p90/p99/max chips, and for
+`/api/snapshot` a per-phase breakdown (median composition bar + aggregate
+table) that points at the dominant phase of a slow poll. Timings are recorded
+in daemon memory regardless of the toggle (newest ≈ 34 minutes at the 2s
+poll; reset on daemon restart), so the history is already there when you
+switch the tab on.
+
 ### Config
 
 A visual editor for `~/.tclaude/config.json`, covering the settings this
