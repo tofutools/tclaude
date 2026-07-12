@@ -1356,9 +1356,17 @@ func persistCodexRolloutProjection(state *SessionState, input HookCallbackInput,
 		if err != nil {
 			slog.Warn("codex-usage: failed to marshal usage snapshot",
 				"session_id", state.ID, "error", err, "module", "hooks")
-		} else if _, err := db.SaveCodexUsageCacheIfNewer(data, u.Observed, path); err != nil {
-			slog.Warn("codex-usage: failed to persist usage snapshot",
-				"session_id", state.ID, "error", err, "module", "hooks")
+		} else {
+			// Within one rollout the last populated record wins by position.
+			// The shared account cache remains timestamp-gated across hooks and
+			// rollouts, so a clock-skewed older observation cannot regress data
+			// another callback already stored. Making position authoritative
+			// across processes would require the durable cursor/CAS state this
+			// projection deliberately avoids.
+			if _, err := db.SaveCodexUsageCacheIfNewer(data, u.Observed, path); err != nil {
+				slog.Warn("codex-usage: failed to persist usage snapshot",
+					"session_id", state.ID, "error", err, "module", "hooks")
+			}
 		}
 	}
 	if projection.HasCost {

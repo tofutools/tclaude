@@ -95,6 +95,27 @@ func TestCodexRuntimeTelemetry_PrefersThreadsRolloutPath(t *testing.T) {
 	assert.Equal(t, int64(1500), snap.Context.TokensInput)
 }
 
+func TestFindCodexRollout_ThreadsArchivePathPrefersLiveSibling(t *testing.T) {
+	home := t.TempDir()
+	const id = "019ec004-4250-79b1-9ade-ebaea41354ed"
+	dir := t.TempDir()
+	live := filepath.Join(dir, "rollout-2026-07-12T10-00-00-"+id+".jsonl")
+	archive := live + ".zst"
+	require.NoError(t, os.WriteFile(live, []byte("live\n"), 0o600))
+	require.NoError(t, os.WriteFile(archive, []byte("archive\n"), 0o600))
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".codex"), 0o700))
+	d, err := sql.Open("sqlite", filepath.Join(home, ".codex", "state_5.sqlite"))
+	require.NoError(t, err)
+	_, err = d.Exec(`CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT);
+		INSERT INTO threads (id, rollout_path) VALUES (?, ?)`, id, archive)
+	require.NoError(t, err)
+	require.NoError(t, d.Close())
+
+	got, err := findCodexRollout(home, id)
+	require.NoError(t, err)
+	assert.Equal(t, live, got)
+}
+
 func BenchmarkCodexHookProjection(b *testing.B) {
 	path := b.TempDir() + "/rollout.jsonl"
 	f, err := os.Create(path) //nolint:gosec // benchmark-owned temporary path

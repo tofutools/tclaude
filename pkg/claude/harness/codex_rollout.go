@@ -342,6 +342,16 @@ func findCodexRollout(home, convID string) (string, error) {
 	// compatibility fallback for old/missing state DBs and stale rows.
 	if p, err := codexThreadRolloutPath(home, convID); err == nil {
 		if codexIDFromRolloutName(filepath.Base(p)) == convID {
+			if strings.HasSuffix(p, ".zst") {
+				// During archival Codex writes the compressed sibling before
+				// removing the live JSONL. Preserve preferCodexRollout's contract
+				// without paying for a date-tree walk.
+				if live := strings.TrimSuffix(p, ".zst"); codexIDFromRolloutName(filepath.Base(live)) == convID {
+					if _, err := os.Stat(live); err == nil {
+						return live, nil
+					}
+				}
+			}
 			if _, err := os.Stat(p); err == nil {
 				return p, nil
 			}
