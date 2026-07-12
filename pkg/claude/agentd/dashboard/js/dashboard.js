@@ -63,7 +63,6 @@ import {
 } from './modal-spawn.js';
 import { bindConfigTab } from './config.js';
 import { bindNotifyMenu } from './notify-menu.js';
-import { bindPluginsUI } from './plugins.js';
 import { bindCostsTab, bindCostDisplayToggle } from './costs.js';
 import { bindAuditTab } from './audit.js';
 import { bindLogsTab } from './logs.js';
@@ -76,7 +75,7 @@ import { bindCommandPalette } from './palette.js';
 import { bindDock } from './dock.js';
 import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
-import { mountJobsFeature, mountPreactRuntimeProbe } from './preact-loader.js';
+import { mountJobsFeature, mountPluginsFeature, mountPreactRuntimeProbe } from './preact-loader.js';
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
 import { triggerExportDownload } from './export-progress.js';
 import { startSnapshotPoll } from './snapshot-poll.js';
@@ -148,6 +147,12 @@ export function sudoBadge(activeSudo, fallbackConvID) {
     download: triggerExportDownload,
     createCron: () => openCronCreateModal({}),
     editCron: openCronEditModal,
+  });
+  await mountPluginsFeature({
+    requestMutation: dashboardActions.requestMutation,
+    refresh: dashboardActions.refresh,
+    confirm: confirmModal,
+    notify: toast,
   });
 
   bindTabs();
@@ -226,7 +231,6 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   // The top-bar bell's notification-settings popover (master on/off +
   // per-type checklist + human-message knob), backed by /api/notifications.
   bindNotifyMenu();
-  bindPluginsUI();
   bindCostsTab();
   bindCostDisplayToggle();
   bindAuditTab();

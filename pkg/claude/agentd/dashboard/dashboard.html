@@ -151,7 +151,7 @@
   <a data-tab="terminals" href="/terminals" title="Live in-browser terminals — appears while ≥1 web terminal / window is open. Each can be popped out into its own browser window."><span class="tab-label-regular">Terminals</span><span class="tab-label-wizard">🔮 Scrying</span><span id="terminals-badge" class="tab-badge count" hidden></span></a>
   <a data-tab="jobs" href="/jobs" title="Jobs — agent export jobs (live progress; finished ones stay until dismissed) and recurring cron schedules"><span class="tab-label-regular">Jobs</span><span class="tab-label-wizard">⚒ Labours</span><span id="jobs-badge-root"></span></a>
   <a data-tab="processes" href="/processes" title="Processes — reusable graph templates, instantiated runs, and human work"><span class="tab-label-regular">Processes</span><span class="tab-label-wizard">🕸 Rites</span></a>
-  <a data-tab="plugins" href="/plugins"><span class="tab-label-regular">Plugins</span><span class="tab-label-wizard">🔧 Contraptions</span><span id="plugins-badge" class="tab-badge warn" hidden></span></a>
+  <a data-tab="plugins" href="/plugins"><span class="tab-label-regular">Plugins</span><span class="tab-label-wizard">🔧 Contraptions</span><span id="plugins-badge-root"></span></a>
   <a data-tab="access" href="/access" title="Agent access control — permanent permissions, the slug registry, and time-bounded sudo grants"><span class="tab-label-regular">Access</span><span class="tab-label-wizard">🛡 Wards</span></a>
   <a data-tab="messages" href="/messages"><span class="tab-label-regular">Messages</span><span class="tab-label-wizard">🕊 Missives</span><span id="messages-badge" class="tab-badge" hidden></span></a>
   <a data-tab="costs" href="/costs"><span class="tab-label-regular">Costs</span><span class="tab-label-wizard">💰 Coffers</span></a>
@@ -293,15 +293,9 @@
     </div>
   </section>
   <section id="tab-plugins">
-    <div class="filter-bar">
-      <input id="filter-plugins" type="text" placeholder="Filter (name / descr / step name / command)" autocomplete="off" spellcheck="false" />
-      <span class="filter-count" id="filter-plugins-count"></span>
-      <button class="clear-filter" id="filter-plugins-clear" title="Clear filter">×</button>
-      <span class="spacer"></span>
-      <button id="plugins-check-now" class="tool" title="Re-run every plugin's check commands right now (the daemon also re-checks once a minute)">⟳ check all now</button>
-      <button id="plugin-create-open" class="primary" title="Define a new plugin — a named list of check/run shell-command steps">+ new plugin</button>
-    </div>
-    <div id="plugins-list"></div>
+    <!-- Preact owns the filter, listing, status/actions, loading/error states,
+         and create/edit launcher inside this stable feature host. -->
+    <div id="plugins-root"></div>
   </section>
   <!-- Access control — Permissions, Slug registry and Sudo were three
        separate nav tabs (all governing what an agent may do); they're
@@ -2740,29 +2734,9 @@
     </div>
   </div>
 </div>
-<div class="modal-overlay" id="plugin-modal">
-  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="plugin-modal-title">
-    <h3 id="plugin-modal-title">New plugin</h3>
-    <label class="cron-create-row">
-      <span class="cron-create-label">Name</span>
-      <input id="plugin-modal-name" type="text" placeholder="e.g. excalidraw-mcp" autocomplete="off" spellcheck="false" />
-    </label>
-    <label class="cron-create-row">
-      <span class="cron-create-label">Descr</span>
-      <textarea id="plugin-modal-descr" rows="2" placeholder="optional — what this plugin provides" spellcheck="false"></textarea>
-    </label>
-    <div id="plugin-modal-steps"></div>
-    <div class="modal-buttons">
-      <button id="plugin-modal-add-step" type="button" class="tool" title="Append another check/run step">+ add step</button>
-    </div>
-    <div class="cron-create-error" id="plugin-modal-error"></div>
-    <div class="modal-buttons">
-      <button id="plugin-modal-cancel" type="button">Cancel</button>
-      <span class="spacer"></span>
-      <button id="plugin-modal-submit" class="primary" type="button">Create plugin</button>
-    </div>
-  </div>
-</div>
+<!-- Preact renders the Plugins create/edit dialog here so the overlay is not
+     hidden with the tab section while open. -->
+<div id="plugins-modal-root"></div>
 <!-- Links… manage overlay — the former Links tab, folded into the Groups
      tab's ⚙ cog menu. A .manage-overlay (not .modal-overlay) for the same
      reason as the Templates one above: the listing stays live so add/edit/

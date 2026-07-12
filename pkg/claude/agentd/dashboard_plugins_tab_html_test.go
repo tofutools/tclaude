@@ -37,23 +37,22 @@ func TestDashboardHTML_PluginsTab(t *testing.T) {
 	present(`id="plugin-modal-add-step"`, "the add-step button")
 	present(`id="plugin-modal-submit"`, "the modal submit button")
 
-	// JS renderer + snapshot contract. The snapshot carries plugins /
-	// plugins_catalog / plugins_warn (dashboard.go); the module must
-	// read the same keys.
-	present("function renderPluginsTab(", "the tab renderer in plugins.js")
-	present("function renderPluginsBadge(", "the badge renderer in plugins.js")
-	present("lastSnapshot.plugins_catalog", "renderer reads the catalog snapshot field")
-	present("data.plugins_warn", "refresh feeds the badge from the snapshot")
-	present(`data-act="plugin-step-toggle"`, "the per-step run/stop lamp")
-	present(`data-act="plugin-toggle"`, "the whole-plugin activate/deactivate lamp")
-	present(`data-step-stop`, "the modal's per-step stop command field")
-	present(`data-act="plugin-install"`, "the catalog install button")
+	// Preact renderer + snapshot contract. State derives the same server fields,
+	// while actions retain the existing endpoint paths.
+	present("export function PluginsApp(", "the Preact Plugins renderer")
+	present("value?.plugins_catalog", "state reads the catalog snapshot field")
+	present("value?.plugins_warn", "state reads the warning count")
+	present("actions.toggleStep(", "the per-step run/stop action")
+	present("actions.togglePlugin(", "the whole-plugin activate/deactivate action")
+	present("state.updateStep(index", "the modal's per-step fields")
+	present("actions.install(plugin", "the catalog install action")
+	present("mountPluginsFeature({", "the guarded feature bootstrap")
 }
 
 // TestDashboardHTML_PluginsTabAutoHide guards the Plugins-tab auto-hide
 // wiring across the embedded assets, mirroring the Costs-tab auto-hide
 // guard. The server's plugins_tab_visible flag (dashboard.go) drives a
-// body.hide-plugins CSS class via applyPluginsTabVisibility in plugins.js;
+// body.hide-plugins CSS class via the Plugins island;
 // the Config tab exposes the dashboard.always_show_plugins_tab opt-in. A
 // rename in any one file silently re-shows (or strands) the tab, so pin all
 // three sides together.
@@ -70,10 +69,9 @@ func TestDashboardHTML_PluginsTabAutoHide(t *testing.T) {
 	present(`body.hide-plugins nav [data-tab="plugins"]`, "the Plugins nav button hides on body.hide-plugins")
 	present("body.hide-plugins #tab-plugins", "the Plugins section hides alongside its nav button")
 
-	// JS: the feature-owned module reads the server flag and toggles the class.
-	present("function applyPluginsTabVisibility(", "the visibility applier in plugins.js")
-	present("data.plugins_tab_visible", "visibility reads the server's plugins_tab_visible flag")
-	present("'hide-plugins'", "refresh toggles body.hide-plugins")
+	// JS: feature state reads the server flag and the island toggles the class.
+	present("value?.plugins_tab_visible", "visibility reads the server's plugins_tab_visible flag")
+	present("classList.toggle('hide-plugins'", "the island toggles body.hide-plugins")
 
 	// Config tab: the always-show opt-in checkbox, loaded + saved by config.js.
 	present(`id="cfg-dashboard-always-show-plugins"`, "the Config-tab always-show-plugins checkbox")

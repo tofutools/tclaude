@@ -136,12 +136,12 @@ func TestDashboardMorph_SweepWired(t *testing.T) {
 		}
 	}
 
-	// Item 2 — Plugins tab list (plugins.js), keyed by plugin name (installed
-	// and catalog cards keep disjoint keyspaces).
-	present("morphInto($('#plugins-list'),", "Plugins tab morphs instead of innerHTML swap")
-	present(`data-key="plugin-${esc(p.name)}"`, "installed plugin cards carry a stable data-key")
-	present(`data-key="catalog-${esc(c.name)}"`, "catalog plugin cards carry a stable data-key")
-	gone("$('#plugins-list').innerHTML = html", "Plugins list innerHTML swap regressed")
+	// Item 2 — Plugins is now a Preact island. Its component keys cards by the
+	// stable plugin name; the old morph/innerHTML renderer must stay retired.
+	present("key=${plugin.name} plugin=${plugin}", "installed plugin cards carry stable Preact keys")
+	present("key=${plugin.name}>", "catalog plugin cards carry stable Preact keys")
+	gone("morphInto($('#plugins-list'),", "legacy Plugins morph renderer remains")
+	gone("$('#plugins-list').innerHTML", "Plugins list innerHTML swap regressed")
 
 	// Item 3 — Templates management overlay list (modal-templates.js). The
 	// overlay is a .manage-overlay, deliberately not refresh-suspended, so it

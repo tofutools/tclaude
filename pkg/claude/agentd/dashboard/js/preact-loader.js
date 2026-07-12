@@ -59,3 +59,32 @@ export async function mountJobsFeature(actionDependencies) {
     },
   });
 }
+
+// Plugins is the second bounded migration and follows the same guarded
+// lifecycle as Jobs. Its tab, nav badge, and modal are one ownership unit.
+export async function mountPluginsFeature(actionDependencies) {
+  const host = document.querySelector('#plugins-root');
+  const badgeHost = document.querySelector('#plugins-badge-root');
+  const modalHost = document.querySelector('#plugins-modal-root');
+  if (!host || !badgeHost || !modalHost) return null;
+  return mountFeatureIsland({
+    name: 'plugins',
+    label: 'Plugins',
+    hosts: [host, badgeHost, modalHost],
+    failureClass: 'plugins-error',
+    load: async () => {
+      const islandModule = import('./plugins-island.js');
+      const stateModule = import('./plugins-state.js');
+      const actionsModule = import('./plugins-actions.js');
+      const [{ mountPluginsIsland }, { pluginsState }, { createPluginsActions }] =
+        await Promise.all([islandModule, stateModule, actionsModule]);
+      const pluginsActions = createPluginsActions({ ...actionDependencies, state: pluginsState });
+      return {
+        state: pluginsState,
+        mount: (registerCleanup) => mountPluginsIsland({
+          host, badgeHost, modalHost, state: pluginsState, actions: pluginsActions, registerCleanup,
+        }),
+      };
+    },
+  });
+}

@@ -35,7 +35,6 @@ func TestDashboardBoundedTabOwnership(t *testing.T) {
 		"renderDock();",
 		"renderAccessListSnapshot();",
 		"renderLinksTab();",
-		"renderPluginsSnapshot(data);",
 		"applyProcessesTabVisibility(data);",
 		"applyDebugTabVisibility(data);",
 		"renderAccessRegistrySnapshot(data);",
@@ -58,11 +57,6 @@ func TestDashboardBoundedTabOwnership(t *testing.T) {
 			"function applyCostTabVisibility(",
 			"dashboardState.setActiveTab('groups')",
 		},
-		"js/plugins.js": {
-			"export function renderPluginsSnapshot(data)",
-			"applyPluginsTabVisibility(data)",
-			"bindFilter('plugins', renderPluginsTab)",
-		},
 		"js/access-tab.js": {
 			"export function renderAccessListSnapshot()",
 			"export function renderAccessRegistrySnapshot(data)",
@@ -80,18 +74,19 @@ func TestDashboardBoundedTabOwnership(t *testing.T) {
 	}
 
 	access := read("js/access-tab.js")
-	plugins := read("js/plugins.js")
 	dashboard := read("js/dashboard.js")
 	if got := strings.Count(access, "bindFilter('sudo', renderSudoTab)"); got != 1 {
 		t.Errorf("Access sudo filter binding count = %d, want 1", got)
-	}
-	if got := strings.Count(plugins, "bindFilter('plugins', renderPluginsTab)"); got != 1 {
-		t.Errorf("Plugins filter binding count = %d, want 1", got)
 	}
 	if got := strings.Count(dashboard, "bindAccessTab();"); got != 1 {
 		t.Errorf("Access bootstrap binding count = %d, want 1", got)
 	}
 	if strings.Contains(dashboard, "bindFilter('sudo')") || strings.Contains(dashboard, "bindFilter('plugins')") {
 		t.Error("dashboard bootstrap retains duplicate bounded-tab filter binding")
+	}
+	for _, retired := range []string{"./plugins.js", "renderPluginsSnapshot", "bindPluginsUI"} {
+		if strings.Contains(refresh+dashboard, retired) {
+			t.Errorf("legacy Plugins ownership remains in core graph: %q", retired)
+		}
 	}
 }
