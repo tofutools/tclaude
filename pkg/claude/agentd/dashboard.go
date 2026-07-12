@@ -1437,6 +1437,10 @@ func stateForConvIn(convID string, aliveSet map[string]struct{}) agentState {
 // (refreshCodexContextSnapshotOnRead) and the per-pick context / exit-reason
 // point reads, which stay per-conv.
 func stateForConvInSessions(rows []*db.SessionRow, aliveSet map[string]struct{}) agentState {
+	return stateForConvInSessionsTimed(rows, aliveSet, nil)
+}
+
+func stateForConvInSessionsTimed(rows []*db.SessionRow, aliveSet map[string]struct{}, recordCodexTelemetry func(time.Duration)) agentState {
 	if len(rows) == 0 {
 		return agentState{}
 	}
@@ -1473,7 +1477,7 @@ func stateForConvInSessions(rows []*db.SessionRow, aliveSet map[string]struct{})
 	// authoritative interrupted IDs and removes them from the shared hook ledger
 	// below. Other lifecycle still comes from hooks: Codex rollouts do not carry a
 	// terminal normal-completion activity event.
-	codexInterruptedSubagents := refreshCodexContextSnapshotOnRead(pick, alive)
+	codexInterruptedSubagents := refreshCodexContextSnapshotOnReadTimed(pick, alive, recordCodexTelemetry)
 	// Sub-agents run INSIDE the harness process, so a dead session has
 	// none by definition — a stale count on an exited row must not render
 	// a "🤖+N" badge. For a live row, prefer the TTL-filtered ledger over
@@ -1922,7 +1926,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			func(m dashboardMember) string { return m.ConvID })
 		out.Groups = append(out.Groups, dg)
 	}
-	span.mark("groups")
+	codexTelemetryInGroups := rc.codexTelemetryDuration
+	span.markExcluding("groups", codexTelemetryInGroups)
 	for convID, slugs := range allGrants {
 		addAgent(convID)
 		copySlice := append([]string{}, slugs...)
@@ -1990,7 +1995,11 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		rowEntry.AgentID = "" // the agent row already identifies the holder
 		sudoByConv[g.ConvID] = append(sudoByConv[g.ConvID], rowEntry)
 	}
-	span.mark("roster")
+	// All calls to rc.viewFor (group rows plus the grants/active-agent roster)
+	// have completed, so this nested metric is the request's total Codex
+	// telemetry cost rather than only the grouped subset.
+	span.addDuration("codex_telemetry", rc.codexTelemetryDuration)
+	span.markExcluding("roster", rc.codexTelemetryDuration-codexTelemetryInGroups)
 
 	out.Ungrouped = []dashboardAgent{}
 	for _, a := range agentRows {

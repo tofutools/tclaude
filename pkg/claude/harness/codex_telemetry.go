@@ -1,7 +1,6 @@
 package harness
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -154,89 +153,119 @@ func CodexRuntimeTelemetryFromRollout(rolloutPath string) (CodexRuntimeSnapshot,
 	}
 	defer func() { _ = rc.Close() }()
 
-	scanner := bufio.NewScanner(rc)
-	scanner.Buffer(make([]byte, 0, 64*1024), maxCodexRolloutLineBytes)
-
-	var latest *codexTokenCountInfo
-	interruptedSubagents := map[string]struct{}{}
-	followupCallIDs := map[string]struct{}{}
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(bytes.TrimSpace(line)) == 0 {
-			continue
-		}
-		var env codexEnvelope
-		if json.Unmarshal(line, &env) != nil {
-			continue
-		}
-		if env.Type == "response_item" {
-			var call codexFunctionCall
-			if json.Unmarshal(env.Payload, &call) == nil && call.Type == "function_call" &&
-				call.Name == "followup_task" && call.CallID != "" {
-				followupCallIDs[call.CallID] = struct{}{}
-			}
-			continue
-		}
-		if env.Type != "event_msg" {
-			continue
-		}
-		var kind struct {
-			Type string `json:"type"`
-		}
-		if json.Unmarshal(env.Payload, &kind) != nil {
-			continue
-		}
-		switch kind.Type {
-		case "token_count":
-			var ev codexTokenCountEvent
-			if json.Unmarshal(env.Payload, &ev) != nil {
-				continue
-			}
-			info := ev.Info
-			latest = &info
-		case "sub_agent_activity":
-			var ev codexSubagentActivityEvent
-			if json.Unmarshal(env.Payload, &ev) != nil || ev.AgentThreadID == "" {
-				continue
-			}
-			switch ev.Kind {
-			case "started":
-				// A previously interrupted child can be resumed under the same
-				// thread id. A fresh start is live evidence, so its old terminal
-				// fact no longer suppresses the hook-ledger entry.
-				delete(interruptedSubagents, ev.AgentThreadID)
-			case "interacted":
-				// Both followup_task and queue-only send_message emit
-				// "interacted". Only followup_task triggers a child turn; recover
-				// that distinction through event_id → function-call call_id.
-				if _, resumes := followupCallIDs[ev.EventID]; resumes {
-					delete(interruptedSubagents, ev.AgentThreadID)
-				}
-				delete(followupCallIDs, ev.EventID)
-			case "interrupted":
-				interruptedSubagents[ev.AgentThreadID] = struct{}{}
-			}
-		}
-	}
-	if err := scanner.Err(); err != nil {
+	state := newCodexRuntimeScanState()
+	if _, _, err := scanCompleteCodexLines(rc, rolloutPath, &state, false); err != nil {
 		return CodexRuntimeSnapshot{}, fmt.Errorf("scan codex rollout %s: %w", rolloutPath, err)
 	}
-	result := CodexRuntimeSnapshot{InterruptedSubagents: interruptedSubagents}
-	if latest == nil {
-		return result, nil
+	return state.snapshot(), nil
+}
+
+type codexRuntimeScanState struct {
+	latest               *codexTokenCountInfo
+	interruptedSubagents map[string]struct{}
+	followupCallIDs      map[string]struct{}
+}
+
+func newCodexRuntimeScanState() codexRuntimeScanState {
+	return codexRuntimeScanState{
+		interruptedSubagents: map[string]struct{}{},
+		followupCallIDs:      map[string]struct{}{},
 	}
-	snap := contextTelemetryFromTokenCount(*latest)
+}
+
+func (s codexRuntimeScanState) clone() codexRuntimeScanState {
+	out := codexRuntimeScanState{
+		latest:               s.latest,
+		interruptedSubagents: make(map[string]struct{}, len(s.interruptedSubagents)),
+		followupCallIDs:      make(map[string]struct{}, len(s.followupCallIDs)),
+	}
+	for id := range s.interruptedSubagents {
+		out.interruptedSubagents[id] = struct{}{}
+	}
+	for id := range s.followupCallIDs {
+		out.followupCallIDs[id] = struct{}{}
+	}
+	return out
+}
+
+// consumeLine advances the rollout state machine. false means the line could
+// not be decoded with confidence; full scans preserve their historical
+// skip-malformed behavior, while incremental scans use it to trigger a rebuild.
+func (s *codexRuntimeScanState) consumeLine(line []byte) bool {
+	if len(bytes.TrimSpace(line)) == 0 {
+		return true
+	}
+	var env codexEnvelope
+	if json.Unmarshal(line, &env) != nil {
+		return false
+	}
+	if env.Type == "response_item" {
+		var call codexFunctionCall
+		if json.Unmarshal(env.Payload, &call) != nil {
+			return false
+		}
+		if call.Type == "function_call" && call.Name == "followup_task" && call.CallID != "" {
+			s.followupCallIDs[call.CallID] = struct{}{}
+		}
+		return true
+	}
+	if env.Type != "event_msg" {
+		return true
+	}
+	var kind struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(env.Payload, &kind) != nil {
+		return false
+	}
+	switch kind.Type {
+	case "token_count":
+		var ev codexTokenCountEvent
+		if json.Unmarshal(env.Payload, &ev) != nil {
+			return false
+		}
+		info := ev.Info
+		s.latest = &info
+	case "sub_agent_activity":
+		var ev codexSubagentActivityEvent
+		if json.Unmarshal(env.Payload, &ev) != nil {
+			return false
+		}
+		if ev.AgentThreadID == "" {
+			return true
+		}
+		switch ev.Kind {
+		case "started":
+			delete(s.interruptedSubagents, ev.AgentThreadID)
+		case "interacted":
+			if _, resumes := s.followupCallIDs[ev.EventID]; resumes {
+				delete(s.interruptedSubagents, ev.AgentThreadID)
+			}
+			delete(s.followupCallIDs, ev.EventID)
+		case "interrupted":
+			s.interruptedSubagents[ev.AgentThreadID] = struct{}{}
+		}
+	}
+	return true
+}
+
+func (s *codexRuntimeScanState) snapshot() CodexRuntimeSnapshot {
+	result := CodexRuntimeSnapshot{InterruptedSubagents: s.interruptedSubagents}
+	if s.latest == nil {
+		return result
+	}
+	snap := contextTelemetryFromTokenCount(*s.latest)
 	// A token_count carrying no actual usage (all-zero last_token_usage —
 	// e.g. an event emitted before the first real response) has no occupancy
 	// signal. Report it as "nothing to persist" so it can't overwrite a good
 	// snapshot with a window-only row: db.UpdateContextSnapshot's all-zero
 	// guard would NOT catch that, because WindowSize is non-zero.
 	if snap.TokensInput == 0 && snap.TokensOutput == 0 {
-		return result, nil
+		return result
 	}
 	result.Context = snap
 	result.HasContext = true
-	return result, nil
+	return result
 }
 
 // contextTelemetryFromTokenCount turns a token_count info block into a

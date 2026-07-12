@@ -20,6 +20,8 @@ var codexContextRefreshMu struct {
 type codexReadThroughSnapshot struct {
 	at                   time.Time
 	interruptedSubagents map[string]struct{}
+	follower             *harness.CodexTelemetryFollower
+	refreshing           bool
 }
 
 // refreshCodexContextSnapshotOnRead gives Codex the same dashboard freshness
@@ -30,13 +32,29 @@ type codexReadThroughSnapshot struct {
 // interrupted-child set is a read-through value because Codex's rollout is
 // authoritative for that terminal fact when its SubagentStop hook was lost.
 func refreshCodexContextSnapshotOnRead(sess *db.SessionRow, alive bool) map[string]struct{} {
+	return refreshCodexContextSnapshotOnReadTimed(sess, alive, nil)
+}
+
+func refreshCodexContextSnapshotOnReadTimed(sess *db.SessionRow, alive bool, record func(time.Duration)) map[string]struct{} {
 	if sess == nil || !alive || sess.Harness != harness.CodexName || sess.ID == "" || sess.ConvID == "" {
 		return nil
 	}
-	cached, refresh := claimCodexContextRefresh(sess.ID, time.Now())
+	started := time.Now()
+	defer func() {
+		if record != nil {
+			record(time.Since(started))
+		}
+	}()
+	cached, refresh := claimCodexContextRefresh(sess.ID, started)
 	if !refresh {
 		return cached.interruptedSubagents
 	}
+	completed := false
+	defer func() {
+		if !completed {
+			releaseCodexRuntimeRefresh(sess.ID)
+		}
+	}()
 
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -44,13 +62,14 @@ func refreshCodexContextSnapshotOnRead(sess *db.SessionRow, alive bool) map[stri
 			"session_id", sess.ID, "error", err, "module", "agentd")
 		return cached.interruptedSubagents
 	}
-	snap, err := harness.CodexRuntimeTelemetry(home, sess.ConvID)
+	snap, err := cached.follower.RuntimeTelemetry(home, sess.ConvID)
 	if err != nil {
 		slog.Warn("codex-telemetry: failed read-through refresh",
 			"session_id", sess.ID, "conv_id", sess.ConvID, "error", err, "module", "agentd")
 		return cached.interruptedSubagents
 	}
 	cacheCodexRuntimeRefresh(sess.ID, time.Now(), snap.InterruptedSubagents)
+	completed = true
 	if !snap.HasContext {
 		return snap.InterruptedSubagents
 	}
@@ -69,10 +88,14 @@ func claimCodexContextRefresh(sessionID string, now time.Time) (codexReadThrough
 		codexContextRefreshMu.last = map[string]codexReadThroughSnapshot{}
 	}
 	prev := codexContextRefreshMu.last[sessionID]
-	if !prev.at.IsZero() && now.Sub(prev.at) < codexContextRefreshMinInterval {
+	if prev.refreshing || (!prev.at.IsZero() && now.Sub(prev.at) < codexContextRefreshMinInterval) {
 		return prev, false
 	}
+	if prev.follower == nil {
+		prev.follower = &harness.CodexTelemetryFollower{}
+	}
 	prev.at = now
+	prev.refreshing = true
 	codexContextRefreshMu.last[sessionID] = prev
 	return prev, true
 }
@@ -83,10 +106,19 @@ func cacheCodexRuntimeRefresh(sessionID string, now time.Time, interrupted map[s
 	if codexContextRefreshMu.last == nil {
 		codexContextRefreshMu.last = map[string]codexReadThroughSnapshot{}
 	}
-	codexContextRefreshMu.last[sessionID] = codexReadThroughSnapshot{
-		at:                   now,
-		interruptedSubagents: interrupted,
-	}
+	prev := codexContextRefreshMu.last[sessionID]
+	prev.at = now
+	prev.interruptedSubagents = interrupted
+	prev.refreshing = false
+	codexContextRefreshMu.last[sessionID] = prev
+}
+
+func releaseCodexRuntimeRefresh(sessionID string) {
+	codexContextRefreshMu.Lock()
+	defer codexContextRefreshMu.Unlock()
+	prev := codexContextRefreshMu.last[sessionID]
+	prev.refreshing = false
+	codexContextRefreshMu.last[sessionID] = prev
 }
 
 func sessionRowAliveIn(sess *db.SessionRow, aliveSet map[string]struct{}) bool {
