@@ -77,14 +77,21 @@ func Normalize(in Profile) (Profile, error) {
 	return profile, err
 }
 
-// NormalizeForImport validates a portable profile without requiring every
-// filesystem path to exist on this machine. Missing paths are retained in
-// canonical lexical form and returned separately so import surfaces can warn
+// NormalizeForPersistence validates profile data without requiring every
+// filesystem path to exist yet. Missing paths are retained in canonical
+// lexical form and returned separately so authoring/import surfaces can warn
 // the operator. Existing paths receive the same symlink, directory and
-// protected-root checks as Normalize. Normalize remains the authorization
-// boundary used by create/edit and immediately before a profile is applied.
-func NormalizeForImport(in Profile) (Profile, []string, error) {
+// protected-root checks as Normalize. Resolution and snapshot revalidation use
+// this variant so a missing rule can survive resolution and become active on a
+// later launch after the directory exists and is revalidated.
+func NormalizeForPersistence(in Profile) (Profile, []string, error) {
 	return normalize(in, true)
+}
+
+// NormalizeForImport is kept as the portable-transfer spelling for callers
+// that want to emphasize that boundary.
+func NormalizeForImport(in Profile) (Profile, []string, error) {
+	return NormalizeForPersistence(in)
 }
 
 func normalize(in Profile, allowMissing bool) (Profile, []string, error) {
@@ -233,14 +240,18 @@ func canonicalMissingDirectory(path string) (string, error) {
 	ancestor := path
 	suffix := []string{}
 	for {
-		info, err := os.Stat(ancestor)
+		_, err := os.Lstat(ancestor)
 		if err == nil {
-			if !info.IsDir() {
-				return "", fmt.Errorf("existing ancestor %q is not a directory", ancestor)
-			}
 			resolved, err := filepath.EvalSymlinks(ancestor)
 			if err != nil {
 				return "", err
+			}
+			info, err := os.Stat(resolved)
+			if err != nil {
+				return "", err
+			}
+			if !info.IsDir() {
+				return "", fmt.Errorf("existing ancestor %q is not a directory", ancestor)
 			}
 			for i := len(suffix) - 1; i >= 0; i-- {
 				resolved = filepath.Join(resolved, suffix[i])

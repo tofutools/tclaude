@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -10,8 +11,10 @@ import (
 )
 
 func TestSandboxProfileCapabilityFailureRequiresClaudeOnWithDeny(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	snapshot := &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{
-		Filesystem: []sandboxpolicy.FilesystemGrant{{Path: "/tmp/secret", Access: sandboxpolicy.AccessDeny}},
+		Filesystem: []sandboxpolicy.FilesystemGrant{{Path: root, Access: sandboxpolicy.AccessDeny}},
 	}}
 
 	require.Nil(t, sandboxProfileCapabilityFailure(harness.DefaultName, harness.ClaudeSandboxOn, snapshot))
@@ -20,4 +23,22 @@ func TestSandboxProfileCapabilityFailureRequiresClaudeOnWithDeny(t *testing.T) {
 		require.NotNil(t, failure)
 		require.Contains(t, failure.Msg, `require sandbox "on"`)
 	}
+}
+
+func TestSandboxProfileCapabilityFailureIgnoresMissingAllowRulesButRejectsMissingDeny(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	missing := filepath.Join(root, "future")
+	snapshot := &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{
+		Filesystem: []sandboxpolicy.FilesystemGrant{{
+			Path: missing, Access: sandboxpolicy.AccessRead,
+		}},
+	}}
+
+	require.Nil(t, sandboxProfileCapabilityFailure(harness.DefaultName, harness.ClaudeSandboxOff, snapshot))
+	require.Nil(t, sandboxProfileCapabilityFailure(harness.CodexName, harness.SandboxReadOnly, snapshot))
+	snapshot.Effective.Filesystem[0].Access = sandboxpolicy.AccessDeny
+	failure := sandboxProfileCapabilityFailure(harness.DefaultName, harness.ClaudeSandboxOn, snapshot)
+	require.NotNil(t, failure)
+	require.Contains(t, failure.Msg, "cannot be enforced")
 }

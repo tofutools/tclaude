@@ -178,7 +178,7 @@ func TestSandboxProfileCorruptJSONFailsLoudly(t *testing.T) {
 	require.ErrorContains(t, err, `decode sandbox profile "corrupt" filesystem`)
 }
 
-func TestSandboxProfileImportRetainsMissingPathsButResolutionFailsClosed(t *testing.T) {
+func TestSandboxProfileImportRetainsMissingPathsAndResolutionKeepsRule(t *testing.T) {
 	setupTestDB(t)
 	canonicalHome, err := filepath.EvalSymlinks(os.Getenv("HOME"))
 	require.NoError(t, err)
@@ -196,16 +196,39 @@ func TestSandboxProfileImportRetainsMissingPathsButResolutionFailsClosed(t *test
 	require.NoError(t, err)
 	require.NotNil(t, stored)
 	assert.Equal(t, missing, stored.Filesystem[0].Path)
-	_, err = sandboxpolicy.Resolve(sandboxpolicy.Scopes{Explicit: &sandboxpolicy.Profile{
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Explicit: &sandboxpolicy.Profile{
 		Name: stored.Name, Filesystem: stored.Filesystem, Environment: stored.Environment,
 	}})
-	require.ErrorContains(t, err, "resolve symlinks", "an imported warning never becomes an authorization bypass")
+	require.NoError(t, err)
+	assert.Equal(t, []sandboxpolicy.FilesystemGrant{{Path: missing, Access: sandboxpolicy.AccessWrite}}, effective.Filesystem)
 
 	require.NoError(t, os.MkdirAll(missing, 0o755))
 	_, err = sandboxpolicy.Resolve(sandboxpolicy.Scopes{Explicit: &sandboxpolicy.Profile{
 		Name: stored.Name, Filesystem: stored.Filesystem, Environment: stored.Environment,
 	}})
 	require.NoError(t, err, "the imported profile becomes usable once its local path exists")
+}
+
+func TestSandboxProfileCreateRetainsMissingPathsAndResolutionKeepsRule(t *testing.T) {
+	setupTestDB(t)
+	canonicalParent, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	missing := filepath.Join(canonicalParent, "future", "cache")
+	id, err := CreateSandboxProfile(&SandboxProfile{
+		Name:       "future",
+		Filesystem: []SandboxFilesystemGrant{{Path: missing, Access: sandboxpolicy.AccessWrite}},
+	})
+	require.NoError(t, err)
+
+	stored, err := GetSandboxProfileByID(id)
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	assert.Equal(t, missing, stored.Filesystem[0].Path)
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Explicit: &sandboxpolicy.Profile{
+		Name: stored.Name, Filesystem: stored.Filesystem, Environment: stored.Environment,
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, []sandboxpolicy.FilesystemGrant{{Path: missing, Access: sandboxpolicy.AccessWrite}}, effective.Filesystem)
 }
 
 func TestSandboxProfileAssignmentsSurviveRenameAndClearOnDelete(t *testing.T) {

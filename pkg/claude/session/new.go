@@ -272,6 +272,13 @@ func runNew(params *NewParams) error {
 		}
 		effectiveSandbox = &snapshot
 	}
+	// Freeze which filesystem rules are concrete once for this launch. Keep the
+	// original snapshot for persistence; launchSandbox is the consistent set
+	// used by capability checks, write proofs, and the harness handoff.
+	launchSandbox, err := sandboxSnapshotForLaunch(effectiveSandbox)
+	if err != nil {
+		return err
+	}
 	// "shell" is a sentinel, not a registered harness (see shell.go) — branch
 	// before any harness resolution so a plain shell never touches the
 	// coding-harness machinery below (model/effort validation, sandbox,
@@ -387,11 +394,11 @@ func runNew(params *NewParams) error {
 		sandboxMode = ""
 		params.Sandbox = ""
 	}
-	if effectiveSandbox != nil && len(effectiveSandbox.Effective.Filesystem) > 0 &&
+	if len(sandboxSnapshotActiveFilesystem(launchSandbox)) > 0 &&
 		h.Name == harness.CodexName && params.PermissionProfile != harness.CodexAgentProfile {
 		return fmt.Errorf("unsupported_sandbox_profile_filesystem: codex filesystem rules require sandbox %s", harness.SandboxManagedProfile)
 	}
-	if len(sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessDeny)) > 0 &&
+	if len(sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessDeny)) > 0 &&
 		h.Name == harness.DefaultName && sandboxMode != harness.ClaudeSandboxOn {
 		return fmt.Errorf("unsupported_sandbox_profile_filesystem: Claude filesystem deny rules require sandbox %s", harness.ClaudeSandboxOn)
 	}
@@ -675,7 +682,7 @@ func runNew(params *NewParams) error {
 	// Only the tclaude-owned profile is auto-created; any other name must
 	// already be defined by the user's own config.
 	if params.PermissionProfile == harness.CodexAgentProfile {
-		profileName, profilePath, err := ensureCodexManagedProfileWithSnapshot(params, cwd, GenerateSessionID(), effectiveSandbox)
+		profileName, profilePath, err := ensureCodexManagedProfileWithSnapshot(params, cwd, GenerateSessionID(), launchSandbox)
 		if err != nil {
 			return err
 		}
@@ -720,9 +727,9 @@ func runNew(params *NewParams) error {
 		Model:                  model,
 		ExtraArgs:              extraArgs,
 		SandboxMode:            sandboxMode,
-		SandboxWriteDirs:       append(gitWorktreeWriteDirs(params, h.Name, sandboxMode, cwd), sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessWrite)...),
-		SandboxReadDirs:        sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessRead),
-		SandboxDenyDirs:        sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessDeny),
+		SandboxWriteDirs:       append(gitWorktreeWriteDirs(params, h.Name, sandboxMode, cwd), sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessWrite)...),
+		SandboxReadDirs:        sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessRead),
+		SandboxDenyDirs:        sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessDeny),
 		AskUserQuestionTimeout: askTimeout,
 		PermissionProfile:      launchPermissionProfile,
 		ApprovalPolicy:         approvalPolicy,
@@ -750,7 +757,7 @@ func runNew(params *NewParams) error {
 		defer cleanupProofReady()
 		proofReadyPath = path
 		proofWriteDirs := append([]string{}, params.GitWorktreeWriteDirs...)
-		proofWriteDirs = append(proofWriteDirs, sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessWrite)...)
+		proofWriteDirs = append(proofWriteDirs, sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessWrite)...)
 		harnessCmd = guardHarnessCommandWithDirProof(
 			harnessCmd, proofToken, proofReadyPath, params.CwdWriteProof != "", proofWriteDirs)
 	}
@@ -946,6 +953,27 @@ func sandboxSnapshotDirs(snapshot *sandboxpolicy.Snapshot, access sandboxpolicy.
 		}
 	}
 	return out
+}
+
+func sandboxSnapshotActiveFilesystem(snapshot *sandboxpolicy.Snapshot) []sandboxpolicy.FilesystemGrant {
+	if snapshot == nil {
+		return nil
+	}
+	return snapshot.Effective.Filesystem
+}
+
+func sandboxSnapshotForLaunch(snapshot *sandboxpolicy.Snapshot) (*sandboxpolicy.Snapshot, error) {
+	if snapshot == nil {
+		return nil, nil
+	}
+	filesystem, err := sandboxpolicy.FilesystemForLaunch(snapshot.Effective)
+	if err != nil {
+		return nil, fmt.Errorf("sandbox_profile_changed: %w", err)
+	}
+	out := *snapshot
+	out.Effective = snapshot.Effective
+	out.Effective.Filesystem = filesystem
+	return &out, nil
 }
 
 func commandWithFileCleanup(cmd, path string) string {

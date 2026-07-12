@@ -121,14 +121,16 @@ func EmptySnapshot() Snapshot {
 }
 
 // RevalidateSnapshot checks a frozen payload immediately before use. It
-// re-runs canonical path, protected-root, environment, and aggregate checks,
-// and rejects any path that now resolves to different bytes rather than
-// silently retargeting the stored authority after a rename/symlink swap.
+// re-runs canonical path, protected-root, environment, and aggregate checks.
+// Missing paths remain valid and may later become ordinary directories at the
+// same canonical path. They stay inactive for a launch while absent; a
+// symlink/rename retarget that changes the normalized bytes is rejected rather
+// than silently redirecting authority.
 func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 	if in.Version != SnapshotVersion {
 		return Snapshot{}, fmt.Errorf("unsupported sandbox snapshot version %d", in.Version)
 	}
-	normalized, err := Normalize(Profile{
+	normalized, _, err := NormalizeForPersistence(Profile{
 		Name:        "effective-sandbox-snapshot",
 		Filesystem:  in.Effective.Filesystem,
 		Environment: in.Effective.Environment,
@@ -143,6 +145,33 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 		return Snapshot{}, fmt.Errorf("effective sandbox environment changed since resolution")
 	}
 	out := NewSnapshot(in.Effective, in.Applied)
+	return out, nil
+}
+
+// FilesystemForLaunch returns the rules safe to hand to a harness now. Missing
+// read/write paths stay frozen but inactive until a later launch. Missing deny
+// paths fail closed because omitting them would silently remove a restriction.
+// Re-canonicalizing each path also detects an ancestor symlink substitution in
+// the window after snapshot revalidation rather than activating a redirected
+// textual rule.
+func FilesystemForLaunch(in EffectiveProfile) ([]FilesystemGrant, error) {
+	out := make([]FilesystemGrant, 0, len(in.Filesystem))
+	for _, grant := range in.Filesystem {
+		canonical, missing, err := canonicalDirectory(grant.Path, true)
+		if err != nil {
+			return nil, fmt.Errorf("prepare filesystem %s rule %q for launch: %w", grant.Access, grant.Path, err)
+		}
+		if canonical != grant.Path {
+			return nil, fmt.Errorf("filesystem rule %q changed canonical target before launch", grant.Path)
+		}
+		if missing {
+			if grant.Access == AccessDeny {
+				return nil, fmt.Errorf("filesystem deny rule %q does not exist and cannot be enforced", grant.Path)
+			}
+			continue
+		}
+		out = append(out, grant)
+	}
 	return out, nil
 }
 

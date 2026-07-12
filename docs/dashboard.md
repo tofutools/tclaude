@@ -272,10 +272,21 @@ credentials in a sandbox profile — and changes take effect only when an agent
 is spawned or relaunched. The daemon remains authoritative for canonical path,
 protected-root, reserved-variable, containment, and harness capability checks.
 
-Portable sandbox-profile imports preview paths that do not exist on the local
-machine as warnings instead of rejecting the bundle. The profiles can still be
-imported and edited for the receiving machine, but cannot be applied until all
-missing paths have been corrected or created.
+Filesystem paths do not have to exist when a profile is saved. The editor
+marks missing paths and offers an explicit **Create missing directories**
+action with `mkdir -p` semantics; saving never creates directories implicitly.
+A profile containing missing read/write paths can still be applied at launch.
+Those rules stay frozen but inactive for that launch; if an ordinary directory
+exists on a later launch, it is revalidated and the rule becomes active. A
+missing deny target fails launch because the restriction cannot safely be
+omitted. Existing
+ancestors are still resolved and protected roots are still rejected while the
+profile is authored and again at launch. Directory creation uses
+no-follow traversal to reject symlink substitutions. The create action only
+materializes read/write targets, never deny-only paths. On macOS, where there is
+no search-only directory descriptor, existing ancestors must also be readable.
+Portable imports likewise preview missing local paths as warnings instead of
+rejecting the bundle.
 
 For routine assignment, the Groups toolbar has a global 🛡 chip beside the
 dashboard spawn-profile default, and every group header has its own 🛡 chip

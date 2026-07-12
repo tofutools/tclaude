@@ -92,3 +92,72 @@ func TestRevalidateSnapshotRejectsFilesystemRetarget(t *testing.T) {
 	_, err = RevalidateSnapshot(snapshot)
 	require.ErrorContains(t, err, "filesystem changed since resolution")
 }
+
+func TestRevalidateSnapshotAllowsMissingPathBeforeAndAfterCreation(t *testing.T) {
+	root := t.TempDir()
+	canonicalRoot, err := filepath.EvalSymlinks(root)
+	require.NoError(t, err)
+	missing := filepath.Join(canonicalRoot, "future", "cache")
+	effective, err := Resolve(Scopes{Global: &Profile{
+		Name: "base", Filesystem: []FilesystemGrant{{Path: missing, Access: AccessWrite}},
+	}})
+	require.NoError(t, err)
+	snapshot := NewSnapshot(effective, nil)
+
+	validated, err := RevalidateSnapshot(snapshot)
+	require.NoError(t, err)
+	assert.Equal(t, missing, validated.Effective.Filesystem[0].Path)
+	launchFilesystem, err := FilesystemForLaunch(validated.Effective)
+	require.NoError(t, err)
+	assert.Empty(t, launchFilesystem, "missing rule must be inactive for this launch")
+	require.NoError(t, os.MkdirAll(missing, 0o755))
+	validated, err = RevalidateSnapshot(snapshot)
+	require.NoError(t, err)
+	assert.Equal(t, missing, validated.Effective.Filesystem[0].Path)
+	launchFilesystem, err = FilesystemForLaunch(validated.Effective)
+	require.NoError(t, err)
+	assert.Equal(t, validated.Effective.Filesystem, launchFilesystem, "created rule activates on a later launch")
+}
+
+func TestFilesystemForLaunchFailsClosedForMissingDeny(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	missing := filepath.Join(root, "future")
+	_, err = FilesystemForLaunch(EffectiveProfile{Filesystem: []FilesystemGrant{{
+		Path: missing, Access: AccessDeny,
+	}}})
+	require.ErrorContains(t, err, "does not exist and cannot be enforced")
+}
+
+func TestFilesystemForLaunchRejectsAncestorSymlinkSubstitution(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	target := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(target, "cache"), 0o755))
+	missing := filepath.Join(root, "future", "cache")
+	effective, err := Resolve(Scopes{Global: &Profile{
+		Name: "base", Filesystem: []FilesystemGrant{{Path: missing, Access: AccessWrite}},
+	}})
+	require.NoError(t, err)
+	require.NoError(t, os.Symlink(target, filepath.Join(root, "future")))
+
+	_, err = FilesystemForLaunch(effective)
+	require.ErrorContains(t, err, "changed canonical target")
+}
+
+func TestRevalidateSnapshotRejectsMissingPathMaterializedAsSymlink(t *testing.T) {
+	root := t.TempDir()
+	target := t.TempDir()
+	canonicalRoot, err := filepath.EvalSymlinks(root)
+	require.NoError(t, err)
+	missing := filepath.Join(canonicalRoot, "future")
+	effective, err := Resolve(Scopes{Global: &Profile{
+		Name: "base", Filesystem: []FilesystemGrant{{Path: missing, Access: AccessWrite}},
+	}})
+	require.NoError(t, err)
+	snapshot := NewSnapshot(effective, nil)
+
+	require.NoError(t, os.Symlink(target, missing))
+	_, err = RevalidateSnapshot(snapshot)
+	require.ErrorContains(t, err, "filesystem changed since resolution")
+}

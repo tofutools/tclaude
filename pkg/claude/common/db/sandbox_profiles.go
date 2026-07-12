@@ -20,8 +20,8 @@ var (
 )
 
 // SandboxFilesystemGrant is one normalized filesystem capability in a sandbox
-// profile. Portable imports may retain canonical lexical paths that do not yet
-// exist locally; resolution validates them strictly before use.
+// profile. Profiles may retain canonical lexical paths that do not yet exist
+// locally; resolution preserves those rules for the harness sandbox.
 type SandboxFilesystemGrant = sandboxpolicy.FilesystemGrant
 
 // SandboxEnvironmentEntry remains a slice element (rather than a map value)
@@ -164,14 +164,17 @@ func marshalSandboxProfilePayload(p *SandboxProfile) (string, string, error) {
 }
 
 // normalizeSandboxProfileForStore is the single defensive persistence seam
-// shared by create/update (and reusable by import). The common policy package
-// owns the complete invariant so internal callers cannot bypass the same path,
-// protected-state and environment rules enforced by the HTTP boundary.
+// shared by create/update (and reusable by import). Missing filesystem paths
+// are valid profile data: they are retained in canonical lexical form so a
+// profile can be prepared before its directories exist. Existing ancestors,
+// protected-state paths, and environment entries still receive the full
+// validation here. Resolution uses the same persistence normalization so the
+// canonical missing rules can be passed through to the harness sandbox.
 func normalizeSandboxProfileForStore(p *SandboxProfile) (*SandboxProfile, error) {
 	if p == nil {
 		return nil, errors.New("sandbox profile is nil")
 	}
-	normalized, err := sandboxpolicy.Normalize(sandboxpolicy.Profile{
+	normalized, _, err := sandboxpolicy.NormalizeForPersistence(sandboxpolicy.Profile{
 		Name: p.Name, Filesystem: p.Filesystem, Environment: p.Environment,
 	})
 	if err != nil {
@@ -324,7 +327,7 @@ func ImportSandboxProfiles(profiles []*SandboxProfile, onConflict string, assign
 		}
 		for _, path := range missingByName[item.profile.Name] {
 			result.Warnings = append(result.Warnings, fmt.Sprintf(
-				"sandbox profile %q path %q does not exist locally; edit the profile before use", item.profile.Name, path))
+				"sandbox profile %q path %q does not exist locally; the rule will target it if created", item.profile.Name, path))
 		}
 		filesystemJSON, environmentJSON, err := marshalSandboxProfilePayload(item.profile)
 		if err != nil {

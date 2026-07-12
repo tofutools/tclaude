@@ -58,10 +58,12 @@ type resolvedFilesystemGrant struct {
 // Resolve composes global, group, then explicit profiles. Filesystem grants
 // form a canonical directory union where deny dominates write, which dominates
 // read, independent of tier. This makes a restrictive profile safe to layer
-// over a broader global/group grant. Environment entries use last-scope-wins. Every input is normalized at
-// resolution time, and each effective path is resolved once more after merge,
-// so a symlink/ancestor swap since persistence fails closed or follows the new
-// canonical target rather than trusting stale path text.
+// over a broader global/group grant. Environment entries use last-scope-wins.
+// Every input is normalized at resolution time, and each effective path is
+// resolved once more after merge. Missing paths retain the canonical lexical
+// form derived from their longest existing ancestor so profiles can apply
+// before those directories are created. Existing paths still receive full
+// symlink, directory, and protected-root validation.
 func Resolve(in Scopes) (EffectiveProfile, error) {
 	result := EffectiveProfile{
 		Filesystem:  []FilesystemGrant{},
@@ -86,7 +88,7 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 		if tier.profile == nil {
 			continue
 		}
-		normalized, err := Normalize(*tier.profile)
+		normalized, _, err := NormalizeForPersistence(*tier.profile)
 		if err != nil {
 			return EffectiveProfile{}, fmt.Errorf("normalize %s sandbox profile %q at resolution time: %w", tier.scope, tier.profile.Name, err)
 		}
@@ -121,7 +123,7 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 	sort.Strings(paths)
 	for _, path := range paths {
 		grant := filesystem[path]
-		normalized, _, err := normalizeFilesystem([]FilesystemGrant{{Path: path, Access: grant.access}}, false)
+		normalized, _, err := normalizeFilesystem([]FilesystemGrant{{Path: path, Access: grant.access}}, true)
 		if err != nil {
 			return EffectiveProfile{}, fmt.Errorf("revalidate effective filesystem path %q: %w", path, err)
 		}

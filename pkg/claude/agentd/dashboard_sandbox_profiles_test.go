@@ -126,6 +126,84 @@ func TestDashboardSandboxProfilesCRUDAndAssignments(t *testing.T) {
 	assert.NotContains(t, rec.Body.String(), canonicalCache, "snapshot must not expose sandbox-profile payload values")
 }
 
+func TestDashboardSandboxProfileMissingDirectoriesCanBeSavedAndCreatedExplicitly(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+	missing := filepath.Join(t.TempDir(), "nested", "cache")
+	body := `{"name":"future-cache","filesystem":[{"path":"` + missing + `","access":"write"}]}`
+	directoryBody := `{"name":"","filesystem":[{"path":"` + missing + `","access":"write"}],"environment":[{"name":"HOME","value":"in-progress-invalid-edit"}]}`
+
+	rec := httptest.NewRecorder()
+	serveDashboardSandboxProfiles(rec, dashboardRequest(http.MethodPost, "/api/sandbox-profiles", body))
+	require.Equal(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), missing)
+	_, err := os.Stat(missing)
+	require.ErrorIs(t, err, os.ErrNotExist, "saving a profile must not create its directories")
+
+	rec = httptest.NewRecorder()
+	serveDashboardSandboxProfiles(rec, dashboardRequest(http.MethodPost, "/api/sandbox-profile-directories/inspect", directoryBody))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), missing)
+	_, err = os.Stat(missing)
+	require.ErrorIs(t, err, os.ErrNotExist, "inspection must stay side-effect free")
+
+	rec = httptest.NewRecorder()
+	serveDashboardSandboxProfiles(rec, dashboardRequest(http.MethodPost, "/api/sandbox-profile-directories/create", directoryBody))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	info, err := os.Stat(missing)
+	require.NoError(t, err)
+	assert.True(t, info.IsDir())
+
+	rec = httptest.NewRecorder()
+	serveDashboardSandboxProfiles(rec, dashboardRequest(http.MethodPost, "/api/sandbox-profile-directories/inspect", body))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	assert.JSONEq(t, `{"missing":[],"creatable":[]}`, rec.Body.String())
+}
+
+func TestDashboardSandboxProfileDirectoryCreationSkipsDenyRules(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	readPath := filepath.Join(root, "read-cache")
+	denyPath := filepath.Join(root, "deny-cache")
+	body := `{"filesystem":[{"path":"` + readPath + `","access":"read"},{"path":"` + denyPath + `","access":"deny"}]}`
+
+	rec := httptest.NewRecorder()
+	serveDashboardSandboxProfiles(rec, dashboardRequest(http.MethodPost, "/api/sandbox-profile-directories/inspect", body))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	assert.JSONEq(t, `{"missing":["`+denyPath+`","`+readPath+`"],"creatable":["`+readPath+`"]}`, rec.Body.String())
+
+	rec = httptest.NewRecorder()
+	serveDashboardSandboxProfiles(rec, dashboardRequest(http.MethodPost, "/api/sandbox-profile-directories/create", body))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	assert.JSONEq(t, `{"created":["`+readPath+`"]}`, rec.Body.String())
+	require.DirExists(t, readPath)
+	_, err = os.Lstat(denyPath)
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestDashboardSandboxProfileDirectoryCreationRejectsSymlinkSubstitution(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+	base := t.TempDir()
+	victim := t.TempDir()
+	missing := filepath.Join(base, "swapped", "cache")
+	body := `{"filesystem":[{"path":"` + missing + `","access":"write"}]}`
+
+	previous := sandboxProfileBeforeMkdir
+	sandboxProfileBeforeMkdir = func(string) {
+		require.NoError(t, os.Symlink(victim, filepath.Join(base, "swapped")))
+	}
+	t.Cleanup(func() { sandboxProfileBeforeMkdir = previous })
+
+	rec := httptest.NewRecorder()
+	serveDashboardSandboxProfiles(rec, dashboardRequest(http.MethodPost, "/api/sandbox-profile-directories/create", body))
+	require.Equal(t, http.StatusInternalServerError, rec.Code, "body=%s", rec.Body.String())
+	_, err := os.Stat(filepath.Join(victim, "cache"))
+	require.ErrorIs(t, err, os.ErrNotExist, "a substituted symlink must not redirect directory creation")
+}
+
 func TestDashboardSandboxProfilesRequireDashboardAuth(t *testing.T) {
 	setupTestDB(t)
 	withDashboardAuth(t)

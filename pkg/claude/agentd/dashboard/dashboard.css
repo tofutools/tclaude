@@ -3602,6 +3602,19 @@ body.wizard .group-pending-title-wizard { display: inline; }
   padding: 4px 10px; cursor: pointer;
 }
 .sbx-add-row:hover { background: #1c2330; border-color: #3a4553; color: #c9d1d9; }
+.sbx-missing {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 7px 9px; border: 1px solid rgba(210, 153, 34, 0.4); border-radius: 4px;
+  background: rgba(210, 153, 34, 0.08); color: #d2a84b; font-size: 12px;
+}
+.sbx-missing[hidden] { display: none; }
+.sbx-missing button {
+  flex: 0 0 auto; background: #21262d; border: 1px solid #6e5a2d; border-radius: 4px;
+  color: #e3b341; font-family: inherit; font-size: 12px; padding: 4px 9px;
+  cursor: pointer; white-space: nowrap;
+}
+.sbx-missing button:hover { background: #2d2a20; border-color: #9e7c32; }
+.sbx-missing button:disabled { opacity: 0.55; cursor: default; }
 /* Advanced raw-JSON disclosure. */
 .sbx-advanced { display: flex; flex-direction: column; gap: 8px; }
 .sbx-advanced-toggle {

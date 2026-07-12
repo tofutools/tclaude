@@ -2232,7 +2232,11 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		for _, entry := range validated.Effective.Environment {
 			resumeEnv[entry.Name] = entry.Value
 		}
-		for _, grant := range validated.Effective.Filesystem {
+		launchFilesystem, err := sandboxpolicy.FilesystemForLaunch(validated.Effective)
+		if err != nil {
+			return "", nil, fmt.Errorf("sandbox_profile_changed: %w", err)
+		}
+		for _, grant := range launchFilesystem {
 			switch grant.Access {
 			case sandboxpolicy.AccessWrite:
 				writeDirs = append(writeDirs, grant.Path)

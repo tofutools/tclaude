@@ -55,7 +55,7 @@ func handleSandboxProfileDraftSubmit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "json", err.Error())
 		return
 	}
-	p, err := buildSandboxProfile(body.Profile)
+	p, _, err := buildSandboxProfile(body.Profile)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", err.Error())
 		return
