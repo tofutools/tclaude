@@ -167,6 +167,11 @@ func (m *convMonitor) loop() {
 	// for an already-tracked file (some platforms re-emit Create on
 	// writes) is debounced as a Write rather than re-indexed eagerly.
 	known := make(map[string]bool)
+	// followers holds one incremental cursor per live .jsonl path (TCL-381).
+	// Loop-goroutine-only, like `known`: every access is on this goroutine,
+	// so the followers need no lock. Cursors are in-memory only — a daemon
+	// restart starts each cold with one full reparse.
+	followers := make(map[string]*convops.ConvFollower)
 
 	// Startup scan: fsnotify only delivers events for *future* changes,
 	// so re-index every .jsonl that already exists, once, here. This
@@ -184,19 +189,12 @@ func (m *convMonitor) loop() {
 		case <-m.stop:
 			return
 		case fe := <-fireCh:
-			// Forget the timer only if it is still the current one for
-			// this path: a Write that arrived after fe.pt fired may
-			// have installed a fresh timer that must stay tracked (so a
-			// later Write resets it, and shutdown still Stop()s it).
-			if timers[fe.path] == fe.pt {
-				delete(timers, fe.path)
-			}
-			m.reindex(fe.path)
+			m.handleFire(fe, timers, known, followers)
 		case event, ok := <-m.watcher.Events:
 			if !ok {
 				return
 			}
-			m.handleEvent(event, timers, fireCh, known)
+			m.handleEvent(event, timers, fireCh, known, followers)
 		case err, ok := <-m.watcher.Errors:
 			if !ok {
 				return
@@ -214,7 +212,7 @@ func (m *convMonitor) loop() {
 // handleEvent routes one raw fsnotify event. A new project dir gets
 // Add()'d (fsnotify is not recursive); a .jsonl create / remove /
 // rename re-indexes immediately; a .jsonl write is debounced per-file.
-func (m *convMonitor) handleEvent(event fsnotify.Event, timers map[string]*pendingTimer, fireCh chan fireEvent, known map[string]bool) {
+func (m *convMonitor) handleEvent(event fsnotify.Event, timers map[string]*pendingTimer, fireCh chan fireEvent, known map[string]bool, followers map[string]*convops.ConvFollower) {
 	path := event.Name
 
 	// A new directory directly under the projects root is a new project
@@ -256,7 +254,10 @@ func (m *convMonitor) handleEvent(event fsnotify.Event, timers map[string]*pendi
 			delete(timers, path)
 		}
 		delete(known, path)
-		m.reindex(path)
+		// reindex self-cleans (an os.Stat miss deletes the conv_index row);
+		// then drop the cursor for a path that is gone or renamed away.
+		m.reindex(path, followers)
+		delete(followers, path)
 		return
 	}
 
@@ -268,7 +269,7 @@ func (m *convMonitor) handleEvent(event fsnotify.Event, timers map[string]*pendi
 			pt.timer.Stop()
 			delete(timers, path)
 		}
-		m.reindex(path)
+		m.reindex(path, followers)
 		return
 	}
 
@@ -345,17 +346,51 @@ func (m *convMonitor) reindexDir(dir string, known map[string]bool) int {
 	return n
 }
 
-// reindex refreshes one conversation's conv_index row from its .jsonl.
-// convops.ScanAndUpsertFile is idempotent and self-cleaning — it
-// upserts the row on a change and deletes it when the file is gone — so
-// the same call covers writes, creates, and removes.
+// reindex refreshes one conversation's conv_index row from its .jsonl,
+// through the path's incremental follower (TCL-381). The follower reads
+// only appended bytes when its cursor is valid and full-reparses on any
+// doubt, so a busy multi-MB transcript no longer pays a whole-file reparse
+// on every debounced write. Its DB side effects are identical to
+// convops.ScanAndUpsertFile: idempotent, self-cleaning (an os.Stat miss
+// deletes the row), covering writes, creates, and removes.
 //
 // This is the single seam where a "conv changed" event would be
 // published for the future SSE / dashboard-push PR. PR 1 has exactly one
 // effect — the conv_index refresh — and deliberately builds no
 // broadcaster / fan-out around it.
-func (m *convMonitor) reindex(path string) {
-	convops.ScanAndUpsertFile(path)
+func (m *convMonitor) reindex(path string, followers map[string]*convops.ConvFollower) {
+	f := followers[path]
+	if f == nil {
+		f = convops.NewConvFollower(path)
+		followers[path] = f
+	}
+	f.ReindexFile(path)
+}
+
+// handleFire processes one settled debounce fire on the loop goroutine:
+// forget the timer, re-index the path, and evict its follower if the path
+// is no longer tracked.
+//
+// The eviction closes a follower-map leak. A debounce timer can queue its
+// fireEvent into fireCh and only THEN have its path removed/renamed — the
+// Remove handler deletes followers[path] and clears known[path], but this
+// already-queued fire still drains afterward and m.reindex recreates a
+// follower for the now-dead path. known[path] is the liveness signal (a
+// Write/Create sets it, a Remove/Rename clears it): when it is false, the
+// follower reindex just recreated is for a dead path and nothing else will
+// ever clean it up, so drop it here.
+func (m *convMonitor) handleFire(fe fireEvent, timers map[string]*pendingTimer, known map[string]bool, followers map[string]*convops.ConvFollower) {
+	// Forget the timer only if it is still the current one for this path: a
+	// Write that arrived after fe.pt fired may have installed a fresh timer
+	// that must stay tracked (so a later Write resets it, and shutdown still
+	// Stop()s it).
+	if timers[fe.path] == fe.pt {
+		delete(timers, fe.path)
+	}
+	m.reindex(fe.path, followers)
+	if !known[fe.path] {
+		delete(followers, fe.path)
+	}
 }
 
 // reindexIfStale re-parses path only when the on-disk file is newer
