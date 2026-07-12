@@ -100,9 +100,14 @@ func TestDashboardHTML_UsageAlwaysReservesBothWindows(t *testing.T) {
 	}
 	must("usageWindowHTML('5h', src.five_hour || zero, hideMissing && !src.five_hour)", "the 5h slot is always emitted and can be hidden when absent")
 	must("usageWindowHTML('7d', src.seven_day || zero, hideMissing && !src.seven_day)", "the 7d slot is always emitted and can be hidden when absent")
-	must("subscriptionWindowsHTML(u && u.codex, true)", "Codex hides missing limit placeholders")
+	must("subscriptionWindowsHTML(codexUsage, true)", "Codex hides missing limit placeholders")
 	must("#usage .uw.umissing { visibility: hidden; }", "missing Codex windows retain their alignment geometry")
 	must("aria-hidden=\"true\"", "hidden placeholders are omitted from the accessibility tree")
+	// Tooltip periods are derived from reported windows, so weekly-only Codex
+	// plans do not continue claiming a 5-hour limit on hover.
+	must("if (codexUsage && codexUsage.five_hour) codexPeriods.push('5-hour')", "Codex tooltip includes 5h only when reported")
+	must("if (codexUsage && codexUsage.seven_day) codexPeriods.push('weekly')", "Codex tooltip includes weekly only when reported")
+	must("codexPeriods.length === 1 ? 'limit' : 'limits'", "weekly-only tooltip uses singular limit wording")
 	// The old conditional guards dropped a window when its data was absent —
 	// the exact shape that let the two rows carry different window counts.
 	reject("if (src.five_hour) wins.push(usageWindowHTML('5h'", "the conditional 5h guard is gone")

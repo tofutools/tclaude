@@ -1185,8 +1185,17 @@ function renderUsage(u) {
 
   const claudeWins = subscriptionWindowsHTML(u);
   if (claudeWins.length) titles.push('Claude subscription usage limits — 5-hour and 7-day rolling windows');
-  const codexWins = subscriptionWindowsHTML(u && u.codex, true);
-  if (codexWins.length) titles.push('Codex subscription usage limits — 5-hour and weekly rolling windows');
+  const codexUsage = u && u.codex;
+  const codexWins = subscriptionWindowsHTML(codexUsage, true);
+  const codexPeriods = [];
+  if (codexUsage && codexUsage.five_hour) codexPeriods.push('5-hour');
+  if (codexUsage && codexUsage.seven_day) codexPeriods.push('weekly');
+  if (codexWins.length && codexPeriods.length) {
+    const noun = codexPeriods.length === 1 ? 'limit' : 'limits';
+    const windowNoun = codexPeriods.length === 1 ? 'window' : 'windows';
+    titles.push('Codex subscription usage ' + noun + ' — '
+      + codexPeriods.join(' and ') + ' rolling ' + windowNoun);
+  }
 
   const mtd = Number((u && u.total_cost_usd) || 0);
   const today = Number((u && u.today_cost_usd) || 0);
