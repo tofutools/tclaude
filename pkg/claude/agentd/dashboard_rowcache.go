@@ -1,6 +1,8 @@
 package agentd
 
 import (
+	"time"
+
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
@@ -32,6 +34,8 @@ type snapshotRowCache struct {
 
 	locs map[string]agentLocationView
 	memo map[string]*convRowBundle
+
+	codexTelemetryDuration time.Duration
 }
 
 // convRowBundle is the fully-resolved per-conv row the dashboard renders,
@@ -143,7 +147,9 @@ func (rc *snapshotRowCache) viewFor(convID string) *convRowBundle {
 		Loc:     loc,
 		Links:   branchLinksForRow(convID, loc, rc.workspaces[convID], rc.gitCache),
 		Online:  isConvOnlineInSessions(rc.sessions[convID], rc.alive),
-		State:   stateForConvInSessions(rc.sessions[convID], rc.alive),
+		State: stateForConvInSessionsTimed(rc.sessions[convID], rc.alive, func(d time.Duration) {
+			rc.codexTelemetryDuration += d
+		}),
 	}
 	rc.memo[convID] = b
 	return b

@@ -111,12 +111,32 @@ type perfSpan struct {
 // mark closes the phase that started at the previous mark (or at
 // request start) and names it.
 func (s *perfSpan) mark(name string) {
+	s.markExcluding(name, 0)
+}
+
+// markExcluding closes a sequential phase while removing nested work that is
+// reported as its own metric. This keeps the flat /api/perf phase list a true
+// partition of total request time.
+func (s *perfSpan) markExcluding(name string, excluded time.Duration) {
 	if s == nil {
 		return
 	}
 	now := time.Now()
-	s.phases = append(s.phases, perfPhase{Name: name, Ms: durMs(now.Sub(s.last))})
+	d := now.Sub(s.last) - excluded
+	if d < 0 {
+		d = 0
+	}
+	s.phases = append(s.phases, perfPhase{Name: name, Ms: durMs(d)})
 	s.last = now
+}
+
+// addDuration records work excluded from its containing sequential phase(s)
+// without moving the phase cursor.
+func (s *perfSpan) addDuration(name string, d time.Duration) {
+	if s == nil {
+		return
+	}
+	s.phases = append(s.phases, perfPhase{Name: name, Ms: durMs(d)})
 }
 
 func durMs(d time.Duration) float64 {

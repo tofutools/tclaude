@@ -57,7 +57,10 @@ func TestQuantilesOf(t *testing.T) {
 
 func TestPerfSpan_NilSafe(t *testing.T) {
 	var s *perfSpan
-	assert.NotPanics(t, func() { s.mark("anything") })
+	assert.NotPanics(t, func() {
+		s.mark("anything")
+		s.addDuration("nested", time.Second)
+	})
 }
 
 func TestWithPerfTiming_RecordsTotalAndPhases(t *testing.T) {
