@@ -2,8 +2,8 @@
 name: human-notify
 description: >-
   Reach the human via `tclaude agent notify-human "<message>"` — the message
-  lands in the agentd dashboard's Messages tab, where the human reads it off
-  the busy terminal. Permission-gated on the `human.notify` slug (group owners
+  lands in the agentd dashboard's Messages tab and may carry an agent-published
+  downloadable file. Permission-gated on the `human.notify` slug (group owners
   also pass); the human grants the slug to a trusted coordinating agent (e.g.
   the PO), so an agent with neither the slug nor group ownership cannot post to
   the channel. Use to send the human status updates or questions that need a
@@ -70,11 +70,22 @@ tclaude agent notify-human "<message>"
 tclaude agent notify-human --subject "blocker" "<message>"
 tclaude agent notify-human --file status.md          # body from a file
 tclaude agent notify-human --file -                  # body from stdin
+tclaude agent notify-human "Report ready" --attach report.md
+tclaude agent notify-human "Site bundle ready" --attach dist/ --name site.zip
+tclaude agent notify-human "Artifacts ready" -a report.md -a chart.png
 ```
 
 Prefer `--file` for long, multi-line, or code-heavy bodies — it
 sidesteps shell quoting (an inline backtick is eaten by the shell).
 Same reasoning as `tclaude agent message --file`.
+
+Use repeatable `--attach <path>` flags when the result itself is a file the
+human should receive. A single file keeps its name and type. A directory is
+zipped as `<directory>.zip`; multiple paths are combined into `export.zip`.
+`--name` overrides the download filename. The daemon copies the bytes into its
+private data directory, and the Messages reader exposes an authenticated
+download button, so this also works through remote dashboard access. The cap is
+256 MiB per published artifact. Deleting the message deletes the stored bytes.
 
 ## Permission
 

@@ -70,12 +70,18 @@ func TestBuildExportArtifact_MissingFile(t *testing.T) {
 	assert.NotEmpty(t, stderr.String())
 }
 
-func TestBuildExportArtifact_DirectoryRejected(t *testing.T) {
+func TestBuildExportArtifact_DirectoryPackaged(t *testing.T) {
 	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "result.txt"), []byte("done"), 0o644))
 	var stderr bytes.Buffer
-	_, _, _, rc := buildExportArtifact([]string{dir}, "", &stderr)
-	assert.Equal(t, rcInvalidArg, rc)
-	assert.Contains(t, stderr.String(), "directory")
+	data, name, contentType, rc := buildExportArtifact([]string{dir}, "", &stderr)
+	require.Equal(t, rcOK, rc, stderr.String())
+	assert.Equal(t, filepath.Base(dir)+".zip", name)
+	assert.Equal(t, "application/zip", contentType)
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	require.NoError(t, err)
+	require.Len(t, zr.File, 1)
+	assert.Equal(t, filepath.Base(dir)+"/result.txt", zr.File[0].Name)
 }
 
 func TestZipFiles_DuplicateBaseNamesDisambiguated(t *testing.T) {

@@ -3,6 +3,7 @@ package agentd
 import (
 	"bytes"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -519,6 +520,19 @@ func recordApprovalDecision(req *approvalRequest, outcome approvalOutcome) {
 // as this did before, truncated a large clipboard body AFTER the human had
 // approved it: an approve-then-fail.)
 func snapshotRequestBody(r *http.Request) string {
+	// A notify-human attachment can be hundreds of MiB. Its small human-readable
+	// metadata lives in a bounded header specifically so an ad-hoc approval can
+	// describe the action without consuming, buffering, or truncating the binary
+	// request stream before the handler receives it.
+	if r.URL.Path == "/v1/notify-human/attachment" {
+		if raw, err := base64.RawURLEncoding.DecodeString(r.Header.Get("X-Tclaude-Notify-Metadata")); err == nil {
+			var pretty bytes.Buffer
+			if json.Indent(&pretty, raw, "", "  ") == nil {
+				return pretty.String() + "\n[binary attachment omitted]"
+			}
+		}
+		return "[binary attachment omitted]"
+	}
 	if r.Body == nil {
 		return ""
 	}

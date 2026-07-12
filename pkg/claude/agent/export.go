@@ -31,8 +31,8 @@ const maxExportArtifactBytes = 256 << 20 // 256 MiB
 
 func exportCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
-		Use:         "export",
-		Short:       "Deliver a shareable export the human requested from the dashboard",
+		Use:   "export",
+		Short: "Deliver a shareable export the human requested from the dashboard",
 		Long: "Respond to a dashboard export request (the \"📋 summary…\" action). " +
 			"When the human asks for an export, the daemon nudges your pane with a " +
 			"request id; run `tclaude agent export show <id>` to read what to produce, " +
@@ -56,8 +56,8 @@ type exportShowParams struct {
 
 func exportShowCmd() *cobra.Command {
 	return boa.CmdT[exportShowParams]{
-		Use:         "show",
-		Short:       "Show what a dashboard export request wants you to produce",
+		Use:   "show",
+		Short: "Show what a dashboard export request wants you to produce",
 		Long: "Fetch the brief for an export request the human made from the dashboard: " +
 			"the title, the format preset, and the free-text instructions. Fetching it " +
 			"tells the dashboard you have picked up the request. Then produce the file(s) " +
@@ -139,8 +139,8 @@ type exportSubmitParams struct {
 
 func exportSubmitCmd() *cobra.Command {
 	return boa.CmdT[exportSubmitParams]{
-		Use:         "submit",
-		Short:       "Deliver the export file(s) back to the dashboard",
+		Use:   "submit",
+		Short: "Deliver the export file(s) back to the dashboard",
 		Long: "Upload the file(s) you produced for a dashboard export request. A single " +
 			"file is delivered as-is (keeping its name); multiple files are zipped into " +
 			"one archive automatically. The dashboard removes its spinner and downloads " +
@@ -195,25 +195,22 @@ func runExportSubmit(p *exportSubmitParams, stdout, stderr io.Writer) int {
 	return rcOK
 }
 
-// buildExportArtifact reads the given files and produces the upload payload:
-// a single file is sent as-is (its base name, content-type by extension); two
-// or more are zipped into one archive. nameOverride, when set, becomes the
-// download filename. Returns (bytes, downloadName, contentType, rc).
+// buildExportArtifact reads the given paths and produces the upload payload:
+// a single file is sent as-is; directories and path sets become zip archives.
+// nameOverride, when set, becomes the download filename.
 func buildExportArtifact(files []string, nameOverride string, stderr io.Writer) ([]byte, string, string, int) {
-	// Validate every path up front so a bad file fails before any upload.
-	for _, f := range files {
+	// Validate every path up front so a bad path fails before any upload.
+	infos := make([]os.FileInfo, len(files))
+	for i, f := range files {
 		info, err := os.Stat(f)
 		if err != nil {
 			fmt.Fprintf(stderr, "Error: %v\n", err)
 			return nil, "", "", rcInvalidArg
 		}
-		if info.IsDir() {
-			fmt.Fprintf(stderr, "Error: %q is a directory — pass individual files\n", f)
-			return nil, "", "", rcInvalidArg
-		}
+		infos[i] = info
 	}
 
-	if len(files) == 1 {
+	if len(files) == 1 && !infos[0].IsDir() {
 		data, err := os.ReadFile(files[0])
 		if err != nil {
 			fmt.Fprintf(stderr, "Error: reading %q: %v\n", files[0], err)
@@ -226,14 +223,18 @@ func buildExportArtifact(files []string, nameOverride string, stderr io.Writer) 
 		return data, name, contentTypeForName(name), rcOK
 	}
 
-	data, err := zipFiles(files)
+	data, err := zipPaths(files)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: building zip: %v\n", err)
 		return nil, "", "", rcIOFailure
 	}
 	name := strings.TrimSpace(nameOverride)
 	if name == "" {
-		name = "export.zip"
+		if len(files) == 1 && infos[0].IsDir() {
+			name = filepath.Base(filepath.Clean(files[0])) + ".zip"
+		} else {
+			name = "export.zip"
+		}
 	}
 	return data, name, "application/zip", rcOK
 }
@@ -242,27 +243,67 @@ func buildExportArtifact(files []string, nameOverride string, stderr io.Writer) 
 // by base name; a collision is disambiguated with a numeric suffix so two
 // inputs sharing a base name don't overwrite each other in the archive.
 func zipFiles(files []string) ([]byte, error) {
+	return zipPaths(files)
+}
+
+// zipPaths packages files and directories. Directory symlinks are skipped:
+// an artifact should contain the selected tree, not silently escape it.
+func zipPaths(paths []string) ([]byte, error) {
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 	seen := make(map[string]int)
-	for _, f := range files {
-		content, err := os.ReadFile(f)
-		if err != nil {
-			return nil, fmt.Errorf("reading %q: %w", f, err)
-		}
-		entry := uniqueZipName(filepath.Base(f), seen)
-		w, err := zw.CreateHeader(&zip.FileHeader{Name: entry, Method: zip.Deflate})
+	for _, root := range paths {
+		info, err := os.Stat(root)
 		if err != nil {
 			return nil, err
 		}
-		if _, err := w.Write(content); err != nil {
-			return nil, err
+		archiveRoot := uniqueZipName(filepath.Base(filepath.Clean(root)), seen)
+		if !info.IsDir() {
+			if err := addZipFile(zw, root, archiveRoot); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.Type()&os.ModeSymlink != 0 {
+				if entry.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if entry.IsDir() {
+				return nil
+			}
+			rel, err := filepath.Rel(root, path)
+			if err != nil {
+				return err
+			}
+			return addZipFile(zw, path, filepath.ToSlash(filepath.Join(archiveRoot, rel)))
+		})
+		if err != nil {
+			return nil, fmt.Errorf("archiving %q: %w", root, err)
 		}
 	}
 	if err := zw.Close(); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+func addZipFile(zw *zip.Writer, path, entry string) error {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("reading %q: %w", path, err)
+	}
+	w, err := zw.CreateHeader(&zip.FileHeader{Name: entry, Method: zip.Deflate})
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(content)
+	return err
 }
 
 // uniqueZipName returns base, or base with a "-N" suffix before the extension

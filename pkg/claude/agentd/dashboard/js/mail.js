@@ -1198,6 +1198,24 @@ function humanReplyButton(m) {
     + ` title="Reply to this agent — opens a dialog to send your answer back">reply</button>`;
 }
 
+function attachmentSize(bytes) {
+  const n = Number(bytes || 0);
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(n < 10 * 1024 ? 1 : 0)} KiB`;
+  return `${(n / (1024 * 1024)).toFixed(n < 10 * 1024 * 1024 ? 1 : 0)} MiB`;
+}
+
+function humanAttachmentHTML(m) {
+  if (!m.attachment) return '';
+  const a = m.attachment;
+  const href = `/api/human-messages/${encodeURIComponent(m.id)}/attachment`;
+  return `<div class="mail-attachment">
+    <span class="mail-attachment-label">Agent file</span>
+    <a href="${href}" download="${esc(a.filename || '')}" title="Download this agent-published file">⤓ ${esc(a.filename || 'attachment')}</a>
+    <span class="mail-attachment-size">${esc(attachmentSize(a.size_bytes))}</span>
+  </div>`;
+}
+
 function paintReader() {
   const el = $('#mail-reader');
   if (!el) return;
@@ -1326,6 +1344,7 @@ function paintReader() {
       </div>
     </div>
     <div class="mail-reader-body">${linkify(m.body || '')}</div>
+    ${mail.selected === HUMAN_ID ? humanAttachmentHTML(m) : ''}
     ${actions}`);
 }
 

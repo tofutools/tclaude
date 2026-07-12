@@ -1,7 +1,11 @@
 package agentd_test
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -11,6 +15,53 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
+
+// Scenario: an agent publishes an artifact with its notification. The daemon
+// owns the bytes, the dashboard snapshot exposes only metadata, and the
+// cookie-authenticated download returns the original file.
+func TestNotifyHuman_AttachmentDownloadAndDelete(t *testing.T) {
+	f := newFlow(t)
+	const conv = "file-1111-2222-3333-4444"
+	f.HaveConvWithTitle(conv, "artifact-maker")
+	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermHumanNotify, "test"))
+
+	metadata, err := json.Marshal(map[string]string{
+		"body": "Here is the generated report.", "subject": "artifact", "name": "report.md",
+	})
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodPost, "/v1/notify-human/attachment", strings.NewReader("# Result\n\nDone.\n"))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "text/markdown; charset=utf-8")
+	req.Header.Set("X-Tclaude-Notify-Metadata", base64.RawURLEncoding.EncodeToString(metadata))
+	req = agentd.AsAgentPeer(req, conv)
+	rec := testharness.Serve(f.Mux, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var delivered struct {
+		ID int64 `json:"id"`
+	}
+	testharness.DecodeJSON(t, rec, &delivered)
+
+	msgs, err := db.ListHumanMessages()
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	require.NotNil(t, msgs[0].Attachment)
+	assert.Equal(t, "report.md", msgs[0].Attachment.Filename)
+	assert.Equal(t, int64(16), msgs[0].Attachment.SizeBytes)
+	storedPath := msgs[0].Attachment.StoragePath
+
+	dash := dashHandlerForTest(t)
+	download := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodGet,
+		"/api/human-messages/"+strconv.FormatInt(delivered.ID, 10)+"/attachment", nil))
+	require.Equal(t, http.StatusOK, download.Code, download.Body.String())
+	assert.Equal(t, "# Result\n\nDone.\n", download.Body.String())
+	assert.Contains(t, download.Header().Get("Content-Disposition"), "report.md")
+
+	del := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodPost,
+		"/api/human-messages/delete", map[string]any{"id": msgs[0].ID}))
+	require.Equal(t, http.StatusOK, del.Code, del.Body.String())
+	_, err = os.Stat(storedPath)
+	assert.True(t, os.IsNotExist(err), "deleting the message also removes its bytes")
+}
 
 // dashHandlerForTest returns the cookie-authed dashboard mux with the
 // popup base URL set, so checkDashboardAuth's Origin pin is satisfied.

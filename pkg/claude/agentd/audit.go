@@ -157,6 +157,9 @@ var auditRoutes = []auditRoute{
 
 	// Human notification channel.
 	{method: http.MethodPost, segs: []string{"notify-human"}, verb: "notify-human", describe: describeNotifyHuman},
+	// Binary attachment bodies must not be buffered by the audit layer. Their
+	// message metadata is persisted on the resulting human_messages row.
+	{method: http.MethodPost, segs: []string{"notify-human", "attachment"}, verb: "notify-human.attach"},
 
 	// Human clipboard write. The detail records only the byte count, never
 	// the copied text — clipboard content is often sensitive (a secret, a
@@ -195,7 +198,7 @@ func auditRequests(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		route, vars, source, ok := matchAuditRoute(r.Method, r.URL.Path)
 		var body []byte
-		if ok {
+		if ok && route.describe != nil {
 			body = bufferAuditBody(r)
 		}
 		rec := &statusRec{ResponseWriter: w, code: 200}

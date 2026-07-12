@@ -38,6 +38,18 @@ type HumanMessage struct {
 	ProcessRunID     string
 	ProcessNodeID    string
 	ProcessCommandID string
+	Attachment       *HumanMessageAttachment
+}
+
+// HumanMessageAttachment is one daemon-owned downloadable artifact published
+// with a human notification. Multiple input paths are packaged as one zip by
+// the CLI, keeping the message surface compact while still delivering a set.
+type HumanMessageAttachment struct {
+	MessageID   int64
+	Filename    string
+	ContentType string
+	SizeBytes   int64
+	StoragePath string
 }
 
 // IsRead reports whether the message has been marked read.
@@ -75,6 +87,67 @@ func InsertHumanMessage(m *HumanMessage) (int64, error) {
 		return 0, fmt.Errorf("insert human message: %w", err)
 	}
 	return res.LastInsertId()
+}
+
+// InsertHumanMessageAttachment records the artifact metadata for a message.
+// The caller writes the daemon-owned file first and removes it if this fails.
+func InsertHumanMessageAttachment(a *HumanMessageAttachment) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`INSERT INTO human_message_attachments
+		(message_id, filename, content_type, size_bytes, storage_path)
+		VALUES (?, ?, ?, ?, ?)`, a.MessageID, a.Filename, a.ContentType, a.SizeBytes, a.StoragePath)
+	if err != nil {
+		return fmt.Errorf("insert human message attachment: %w", err)
+	}
+	return nil
+}
+
+// GetHumanMessageAttachment returns a message's attachment, if any.
+func GetHumanMessageAttachment(messageID int64) (*HumanMessageAttachment, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	var a HumanMessageAttachment
+	err = d.QueryRow(`SELECT message_id, filename, content_type, size_bytes, storage_path
+		FROM human_message_attachments WHERE message_id = ?`, messageID).
+		Scan(&a.MessageID, &a.Filename, &a.ContentType, &a.SizeBytes, &a.StoragePath)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
+func attachHumanMessageArtifacts(d *sql.DB, messages []*HumanMessage) error {
+	if len(messages) == 0 {
+		return nil
+	}
+	byID := make(map[int64]*HumanMessage, len(messages))
+	for _, m := range messages {
+		byID[m.ID] = m
+	}
+	rows, err := d.Query(`SELECT message_id, filename, content_type, size_bytes, storage_path
+		FROM human_message_attachments`)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var a HumanMessageAttachment
+		if err := rows.Scan(&a.MessageID, &a.Filename, &a.ContentType, &a.SizeBytes, &a.StoragePath); err != nil {
+			return err
+		}
+		if m := byID[a.MessageID]; m != nil {
+			m.Attachment = &a
+		}
+	}
+	return rows.Err()
 }
 
 // ListHumanMessages returns every human message, newest first.
@@ -132,7 +205,16 @@ func ListHumanMessages() ([]*HumanMessage, error) {
 		}
 		out = append(out, &m)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := attachHumanMessageArtifacts(d, out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // GetHumanMessage loads one human message by id, or (nil, nil) when no
@@ -172,6 +254,10 @@ func GetHumanMessage(id int64) (*HumanMessage, error) {
 			slog.Warn("human_messages: unparseable read_at, leaving zero",
 				"id", m.ID, "value", readAt, "error", err)
 		}
+	}
+	m.Attachment, err = GetHumanMessageAttachment(m.ID)
+	if err != nil {
+		return nil, err
 	}
 	return &m, nil
 }

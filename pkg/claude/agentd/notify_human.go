@@ -2,14 +2,22 @@ package agentd
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"mime"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/notify"
 	processexec "github.com/tofutools/tclaude/pkg/claude/process/exec"
@@ -31,6 +39,12 @@ var humanMsgNotify = notify.SendHumanMessage
 type notifyHumanRequest struct {
 	Body    string `json:"body"`
 	Subject string `json:"subject"`
+}
+
+type notifyHumanAttachmentMetadata struct {
+	Body    string `json:"body"`
+	Subject string `json:"subject"`
+	Name    string `json:"name"`
 }
 
 // Size caps for a human notification. A notification is a short
@@ -57,6 +71,8 @@ const (
 // rejected pre-decode, yet still orders of magnitude below the multi-GB
 // range that is the real concern.
 const maxNotifyHumanRequestBytes = 6*(maxNotifyHumanBodyLen+maxNotifyHumanSubjectLen) + 1024
+
+const maxNotifyHumanAttachmentBytes = 256 << 20
 
 // handleNotifyHuman serves POST /v1/notify-human — the daemon side of
 // `tclaude agent notify-human`. It gates via requireNotifyHumanPermission,
@@ -110,6 +126,95 @@ func handleNotifyHuman(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "delivered": true})
 }
 
+// handleNotifyHumanAttachment receives one binary artifact plus base64url JSON
+// metadata in X-Tclaude-Notify-Metadata. Keeping metadata out of the binary body
+// lets the daemon stream/cap the file and avoids exposing an agent filesystem
+// path to the dashboard. Multiple agent paths arrive as one CLI-built zip.
+func handleNotifyHumanAttachment(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
+		return
+	}
+	callerConv, ok := requireNotifyHumanPermission(w, r)
+	if !ok {
+		return
+	}
+	rawMeta, err := base64.RawURLEncoding.DecodeString(r.Header.Get("X-Tclaude-Notify-Metadata"))
+	if err != nil || len(rawMeta) > maxNotifyHumanRequestBytes {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid attachment metadata")
+		return
+	}
+	var meta notifyHumanAttachmentMetadata
+	if err := json.Unmarshal(rawMeta, &meta); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid attachment metadata: "+err.Error())
+		return
+	}
+	meta.Body = strings.TrimSpace(meta.Body)
+	meta.Subject = strings.TrimSpace(meta.Subject)
+	meta.Name = sanitizeExportFilename(meta.Name)
+	if meta.Body == "" || len(meta.Body) > maxNotifyHumanBodyLen {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "body is required and must fit the notification limit")
+		return
+	}
+	if len(meta.Subject) > maxNotifyHumanSubjectLen {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "subject is too long")
+		return
+	}
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxNotifyHumanAttachmentBytes))
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, "too_large", "attachment exceeds the 256 MiB limit")
+			return
+		}
+		writeError(w, http.StatusBadRequest, "io", "read attachment: "+err.Error())
+		return
+	}
+	if len(data) == 0 {
+		writeError(w, http.StatusBadRequest, "empty", "attachment is empty")
+		return
+	}
+	id, fromTitle, groupName, err := insertHumanMessageRow(callerConv, meta.Subject, meta.Body, "", "", "")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "record message: "+err.Error())
+		return
+	}
+	dir := humanMessageAttachmentDir(id)
+	path := filepath.Join(dir, meta.Name)
+	contentType := strings.TrimSpace(r.Header.Get("Content-Type"))
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	cleanup := func() {
+		_, _ = db.DeleteHumanMessage(id)
+		_ = os.RemoveAll(dir)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		cleanup()
+		writeError(w, http.StatusInternalServerError, "io", "create attachment directory: "+err.Error())
+		return
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		cleanup()
+		writeError(w, http.StatusInternalServerError, "io", "store attachment: "+err.Error())
+		return
+	}
+	if err := db.InsertHumanMessageAttachment(&db.HumanMessageAttachment{
+		MessageID: id, Filename: meta.Name, ContentType: contentType,
+		SizeBytes: int64(len(data)), StoragePath: path,
+	}); err != nil {
+		cleanup()
+		writeError(w, http.StatusInternalServerError, "io", "record attachment: "+err.Error())
+		return
+	}
+	dispatchHumanMessageNotification(callerConv, fromTitle, groupName, meta.Subject, meta.Body)
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "delivered": true, "attachment": meta.Name})
+}
+
+func humanMessageAttachmentDir(id int64) string {
+	return filepath.Join(config.DataDir(), "human-message-files", strconv.FormatInt(id, 10))
+}
+
 // recordHumanMessage is the daemon-internal half of notify-human. Process
 // obligations and escalations use it without inventing an authorization
 // bypass: the permission gate remains exclusively at the external HTTP
@@ -120,6 +225,15 @@ func recordHumanMessage(fromConv, subject, body string) (int64, error) {
 }
 
 func recordHumanMessageWithProcess(fromConv, subject, body, runID, nodeID, commandID string) (int64, error) {
+	id, fromTitle, groupName, err := insertHumanMessageRow(fromConv, subject, body, runID, nodeID, commandID)
+	if err != nil {
+		return 0, err
+	}
+	dispatchHumanMessageNotification(fromConv, fromTitle, groupName, subject, body)
+	return id, nil
+}
+
+func insertHumanMessageRow(fromConv, subject, body, runID, nodeID, commandID string) (int64, string, string, error) {
 	fromTitle := notifyHumanCallerTitle(fromConv)
 	groupName := notifyHumanCallerGroup(fromConv)
 	id, err := db.InsertHumanMessage(&db.HumanMessage{
@@ -134,8 +248,12 @@ func recordHumanMessageWithProcess(fromConv, subject, body, runID, nodeID, comma
 		ProcessCommandID: commandID,
 	})
 	if err != nil {
-		return 0, err
+		return 0, "", "", err
 	}
+	return id, fromTitle, groupName, nil
+}
+
+func dispatchHumanMessageNotification(fromConv, fromTitle, groupName, subject, body string) {
 	// Also raise a desktop notification (off the request goroutine — a
 	// platform send can spawn a subprocess). Self-gates on config, so this
 	// is a no-op unless the human opted in. The per-agent / per-group
@@ -149,7 +267,6 @@ func recordHumanMessageWithProcess(fromConv, subject, body, runID, nodeID, comma
 		}
 		humanMsgNotify(senderSession, fromTitle, groupName, subject, body)
 	})
-	return id, nil
 }
 
 // notifyHumanSenderSessionID resolves the caller conv-id to its tclaude
@@ -221,15 +338,22 @@ func notifyHumanCallerGroup(callerConv string) string {
 // dashboardHumanMessage is the wire shape of one Messages-tab row in the
 // dashboard snapshot.
 type dashboardHumanMessage struct {
-	ID        int64  `json:"id"`
-	FromConv  string `json:"from_conv"`
-	FromAgent string `json:"from_agent"`
-	FromTitle string `json:"from_title"`
-	Group     string `json:"group"`
-	Subject   string `json:"subject"`
-	Body      string `json:"body"`
-	CreatedAt string `json:"created_at"`
-	Read      bool   `json:"read"`
+	ID         int64                            `json:"id"`
+	FromConv   string                           `json:"from_conv"`
+	FromAgent  string                           `json:"from_agent"`
+	FromTitle  string                           `json:"from_title"`
+	Group      string                           `json:"group"`
+	Subject    string                           `json:"subject"`
+	Body       string                           `json:"body"`
+	CreatedAt  string                           `json:"created_at"`
+	Read       bool                             `json:"read"`
+	Attachment *dashboardHumanMessageAttachment `json:"attachment,omitempty"`
+}
+
+type dashboardHumanMessageAttachment struct {
+	Filename    string `json:"filename"`
+	ContentType string `json:"content_type"`
+	SizeBytes   int64  `json:"size_bytes"`
 }
 
 // buildHumanMessagesSnapshot loads the human_messages rows for the
@@ -249,7 +373,7 @@ func buildHumanMessagesSnapshot() ([]dashboardHumanMessage, int) {
 		if !m.IsRead() {
 			unread++
 		}
-		out = append(out, dashboardHumanMessage{
+		view := dashboardHumanMessage{
 			ID:        m.ID,
 			FromConv:  m.FromConv,
 			FromAgent: m.FromAgent,
@@ -259,9 +383,60 @@ func buildHumanMessagesSnapshot() ([]dashboardHumanMessage, int) {
 			Body:      m.Body,
 			CreatedAt: m.CreatedAt.Format(time.RFC3339),
 			Read:      m.IsRead(),
-		})
+		}
+		if m.Attachment != nil {
+			view.Attachment = &dashboardHumanMessageAttachment{
+				Filename: m.Attachment.Filename, ContentType: m.Attachment.ContentType, SizeBytes: m.Attachment.SizeBytes,
+			}
+		}
+		out = append(out, view)
 	}
 	return out, unread
+}
+
+// handleDashboardHumanMessageAttachment is the cookie-authenticated download
+// surface. The browser receives only an attachment URL, never its daemon path.
+func handleDashboardHumanMessageAttachment(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET only", http.StatusMethodNotAllowed)
+		return
+	}
+	rest := strings.TrimPrefix(r.URL.Path, "/api/human-messages/")
+	parts := strings.Split(rest, "/")
+	if len(parts) != 2 || parts[1] != "attachment" {
+		http.NotFound(w, r)
+		return
+	}
+	id, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || id <= 0 {
+		http.NotFound(w, r)
+		return
+	}
+	a, err := db.GetHumanMessageAttachment(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if a == nil {
+		http.NotFound(w, r)
+		return
+	}
+	f, err := os.Open(a.StoragePath)
+	if err != nil {
+		writeError(w, http.StatusGone, "missing", "this attachment is no longer available")
+		return
+	}
+	defer func() { _ = f.Close() }()
+	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": a.Filename})
+	w.Header().Set("Content-Disposition", disposition)
+	w.Header().Set("Content-Type", a.ContentType)
+	w.Header().Set("Content-Length", strconv.FormatInt(a.SizeBytes, 10))
+	if _, err := io.Copy(w, f); err != nil {
+		slog.Warn("human message attachment: stream failed", "message", id, "error", err)
+	}
 }
 
 // handleDashboardHumanMessagesRead serves POST /api/human-messages/read
@@ -332,10 +507,20 @@ func handleDashboardHumanMessagesClear(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
 		return
 	}
+	rows, err := db.ListHumanMessages()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	n, err := db.DeleteReadHumanMessages()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	for _, m := range rows {
+		if m.IsRead() {
+			_ = os.RemoveAll(humanMessageAttachmentDir(m.ID))
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": n})
 }
@@ -371,6 +556,9 @@ func handleDashboardHumanMessagesDelete(w http.ResponseWriter, r *http.Request) 
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		for _, id := range body.IDs {
+			_ = os.RemoveAll(humanMessageAttachmentDir(id))
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"deleted": n})
 		return
 	}
@@ -386,6 +574,7 @@ func handleDashboardHumanMessagesDelete(w http.ResponseWriter, r *http.Request) 
 	n := 0
 	if deleted {
 		n = 1
+		_ = os.RemoveAll(humanMessageAttachmentDir(body.ID))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": n})
 }
