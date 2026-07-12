@@ -2566,6 +2566,7 @@ details[data-group-key][open] > summary .group-sandbox-profile {
    Below the toast (200) and the shared confirm (1000). */
 #profile-editor-modal { z-index: 150; }
 #sandbox-profile-editor-modal { z-index: 150; }
+#sandbox-profile-diff-modal { z-index: 1000; }
 #sandbox-profile-editor-filesystem,
 #sandbox-profile-editor-environment {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -10084,40 +10085,40 @@ body.wizard #tab-config .cfg-footer button.primary:not(:disabled):hover {
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
 }
 
-/* ─── Wizard config-diff modal — "seal the enchantment" confirm ──────
-   The diff-confirm dialog the Save lever opens, re-skinned arcane. Scoped to
-   #config-diff-modal. The green/red diff add/del lines + the red corrupt-config
+/* ─── Wizard diff modals — "seal the enchantment" confirm ─────────
+   The config and sandbox-profile diff-confirm dialogs, re-skinned arcane. The
+   green/red diff add/del lines + the red corrupt-config
    warning are semantic and kept; only the surface, title, sub-line, diff panel
    frame and the buttons are re-tinted. The confirm button's JS-set text
    ("Save to config.json" / "Replace corrupt config.json") is kept visible — no
    glyph swap — so the corrupt-config signal survives. */
-body.wizard #config-diff-modal .config-diff-modal {
+body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .config-diff-modal {
   background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
   border: 1px solid #7a5db0;
   box-shadow: 0 0 32px rgba(122, 93, 176, 0.35), 0 8px 24px rgba(0, 0, 0, 0.5);
   color: #e7d9f5;
 }
-body.wizard #config-diff-modal .config-diff-modal h3 {
+body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .config-diff-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
   letter-spacing: 1px;
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
 }
-body.wizard #config-diff-modal .cfg-diff-sub { color: #b39ddb; }
-body.wizard #config-diff-modal .config-diff {
+body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .cfg-diff-sub { color: #b39ddb; }
+body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .config-diff {
   background: #140f28; border-color: rgba(122, 93, 176, 0.4);
 }
-body.wizard #config-diff-modal .modal-buttons button:not(.primary) {
+body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .modal-buttons button:not(.primary) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
-body.wizard #config-diff-modal .modal-buttons button:not(.primary):hover { background: #3a2a63; }
-body.wizard #config-diff-modal .modal-buttons button.primary {
+body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .modal-buttons button:not(.primary):hover { background: #3a2a63; }
+body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .modal-buttons button.primary {
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
   border: 1px solid #d9b45a; color: #f3e6c0;
   text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
   box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
 }
-body.wizard #config-diff-modal .modal-buttons button.primary:hover {
+body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .modal-buttons button.primary:hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
   border-color: #f3e6c0;
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);

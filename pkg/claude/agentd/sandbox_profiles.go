@@ -40,6 +40,14 @@ type sandboxProfileAssignmentsJSON struct {
 	Groups map[string]string `json:"groups,omitempty"`
 }
 
+type sandboxProfilePreviewJSON struct {
+	Before *sandboxProfileJSON `json:"before,omitempty"`
+	After  sandboxProfileJSON  `json:"after"`
+	// Revision couples an edit preview to its eventual PATCH. It is omitted for
+	// creates, whose unique-name constraint already protects the commit.
+	Revision string `json:"revision,omitempty"`
+}
+
 func sandboxProfileToJSON(p *db.SandboxProfile, localFields bool) sandboxProfileJSON {
 	out := sandboxProfileJSON{
 		Name: p.Name, Filesystem: p.Filesystem, Environment: p.Environment,
@@ -109,6 +117,21 @@ func handleSandboxProfiles(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", err.Error())
 			return
 		}
+		if r.URL.Query().Get("dry_run") != "" {
+			existing, err := db.GetSandboxProfile(p.Name)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "io", err.Error())
+				return
+			}
+			if existing != nil {
+				writeError(w, http.StatusConflict, "exists", db.ErrSandboxProfileNameTaken.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, sandboxProfilePreviewJSON{
+				After: sandboxProfileToJSON(p, false),
+			})
+			return
+		}
 		id, err := db.CreateSandboxProfile(p)
 		if errors.Is(err, db.ErrSandboxProfileNameTaken) {
 			writeError(w, http.StatusConflict, "exists", err.Error())
@@ -155,6 +178,10 @@ func handleSandboxProfileByName(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "no such sandbox profile")
 			return
 		}
+		if revision := r.URL.Query().Get("revision"); revision != "" && revision != existing.UpdatedAt.Format(time.RFC3339Nano) {
+			writeError(w, http.StatusConflict, "changed", "sandbox profile changed since preview; reopen it and review the latest changes")
+			return
+		}
 		var body sandboxProfileJSON
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -166,11 +193,40 @@ func handleSandboxProfileByName(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		p.ID = existing.ID
-		if err := db.UpdateSandboxProfile(p); errors.Is(err, db.ErrSandboxProfileNameTaken) {
-			writeError(w, http.StatusConflict, "exists", err.Error())
+		if r.URL.Query().Get("dry_run") != "" {
+			if p.Name != existing.Name {
+				collision, err := db.GetSandboxProfile(p.Name)
+				if err != nil {
+					writeError(w, http.StatusInternalServerError, "io", err.Error())
+					return
+				}
+				if collision != nil && collision.ID != existing.ID {
+					writeError(w, http.StatusConflict, "exists", db.ErrSandboxProfileNameTaken.Error())
+					return
+				}
+			}
+			before := sandboxProfileToJSON(existing, false)
+			writeJSON(w, http.StatusOK, sandboxProfilePreviewJSON{
+				Before:   &before,
+				After:    sandboxProfileToJSON(p, false),
+				Revision: existing.UpdatedAt.Format(time.RFC3339Nano),
+			})
 			return
-		} else if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", err.Error())
+		}
+		var updateErr error
+		if revision := r.URL.Query().Get("revision"); revision != "" {
+			updateErr = db.UpdateSandboxProfileIfUnchanged(p, revision)
+		} else {
+			updateErr = db.UpdateSandboxProfile(p)
+		}
+		if errors.Is(updateErr, db.ErrSandboxProfileNameTaken) {
+			writeError(w, http.StatusConflict, "exists", updateErr.Error())
+			return
+		} else if errors.Is(updateErr, db.ErrSandboxProfileChanged) {
+			writeError(w, http.StatusConflict, "changed", "sandbox profile changed since preview; reopen it and review the latest changes")
+			return
+		} else if updateErr != nil {
+			writeError(w, http.StatusInternalServerError, "io", updateErr.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"id": p.ID, "name": p.Name})
