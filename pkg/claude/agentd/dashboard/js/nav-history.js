@@ -201,7 +201,7 @@ function onPopstate(e) {
 }
 
 // initNavHistory boots the router. Call it LATE in dashboard.js boot — after
-// every tab binder (bindTabs, bindCostsTab, bindAuditTab, …) is installed —
+// every tab binder/island (bindTabs, the Costs island, bindAuditTab, …) is installed —
 // because restoring a deep-link URL clicks that tab, and the click must find
 // its lazy-loader already wired.
 export function initNavHistory() {

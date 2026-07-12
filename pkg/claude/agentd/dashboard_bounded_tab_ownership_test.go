@@ -39,7 +39,6 @@ func TestDashboardBoundedTabOwnership(t *testing.T) {
 		"applyDebugTabVisibility(data);",
 		"renderAccessRegistrySnapshot(data);",
 		"renderMailTab();",
-		"applyCostTabVisibility(data);",
 		"dashboardState.commitRequest(requestId, data);",
 	}
 	last := -1
@@ -53,10 +52,6 @@ func TestDashboardBoundedTabOwnership(t *testing.T) {
 	}
 
 	want := map[string][]string{
-		"js/costs.js": {
-			"function applyCostTabVisibility(",
-			"dashboardState.setActiveTab('groups')",
-		},
 		"js/access-tab.js": {
 			"export function renderAccessListSnapshot()",
 			"export function renderAccessRegistrySnapshot(data)",
@@ -87,6 +82,11 @@ func TestDashboardBoundedTabOwnership(t *testing.T) {
 	for _, retired := range []string{"./plugins.js", "renderPluginsSnapshot", "bindPluginsUI"} {
 		if strings.Contains(refresh+dashboard, retired) {
 			t.Errorf("legacy Plugins ownership remains in core graph: %q", retired)
+		}
+	}
+	for _, retired := range []string{"./costs.js", "applyCostTabVisibility", "bindCostsTab"} {
+		if strings.Contains(refresh+dashboard, retired) {
+			t.Errorf("legacy Costs ownership remains in core graph: %q", retired)
 		}
 	}
 }

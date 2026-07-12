@@ -43,20 +43,19 @@ func TestDashboardHTML_WhatIfCostWired(t *testing.T) {
 	must(`id="cfg-cost-show-on-subscription"`, "the Config tab carries the show-on-subscription checkbox")
 	must(`id="groups-cost-toggle"`, "the Groups filter bar carries the 💲 cost toggle")
 
-	// costs.js: visibility is driven off the snapshot's server flags, with a
+	// Costs state/island: visibility is driven off the snapshot's server flags, with a
 	// stranded-active-tab fallback to Groups.
-	must("function applyCostTabVisibility(", "costs.js applies the Costs-tab visibility")
-	must("data.cost_tab_visible", "visibility reads the server's cost_tab_visible flag")
-	must("data.cost_tab_whatif", "WHAT-IF mode reads the server's cost_tab_whatif flag")
+	must("snap?.cost_tab_visible", "visibility reads the server's cost_tab_visible flag")
+	must("snap?.cost_tab_whatif", "WHAT-IF mode reads the server's cost_tab_whatif flag")
 	must("'hide-costs'", "refresh toggles body.hide-costs")
 
 	// costs.js: WHAT-IF mode appends ?whatif=1 and shows the banner; the toggle
 	// is bound and persisted.
-	must("lastSnapshot.cost_tab_whatif", "costs.js reads WHAT-IF mode off the snapshot")
+	must("current.whatif ? '&whatif=1'", "Costs actions read WHAT-IF mode from state")
 	must("'&whatif=1'", "the Costs tab fetches the virtual figures in WHAT-IF mode")
 	must("function bindCostDisplayToggle(", "the 💲 toggle is bound")
 	must("'agent-cost-hidden'", "the toggle drives body.agent-cost-hidden")
-	must("bindCostsTab, bindCostDisplayToggle", "bindCostDisplayToggle is exported from costs.js")
+	must("from './cost-display-toggle.js'", "bindCostDisplayToggle is wired from its shell module")
 
 	// config.js: the opt-in round-trips through the cost block.
 	must("cost.show_on_subscription", "config.js reads/writes the opt-in")

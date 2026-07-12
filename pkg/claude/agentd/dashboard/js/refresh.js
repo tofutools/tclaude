@@ -20,7 +20,6 @@ import { renderMailTab, onMailSearchChanged, renderAccessRequests } from './mail
 import { renderGroupsTab, renderSudoTab, renderLinksTab } from './tabs.js';
 import { renderTemplatesTab } from './modal-templates.js';
 import { renderAccessListSnapshot, renderAccessRegistrySnapshot } from './access-tab.js';
-import { applyCostTabVisibility } from './costs.js';
 import { applyProcessesTabVisibility } from './processes.js';
 import { morphInto } from './morph.js';
 import { renderDock } from './dock.js';
@@ -544,7 +543,6 @@ export async function refresh(opts = {}) {
     renderDashDefaultProfile();
     renderDashSandboxProfile();
     renderNotifyGlobal(!!data.notifications_enabled);
-    applyCostTabVisibility(data);
     setVegasRegularMode(!!data.vegas_in_regular_mode);
     // Horizontal-scroll chrome-bar mode (config dashboard.hscroll_follow,
     // default follow) — replaces the old per-browser header toggle button.

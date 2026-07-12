@@ -162,15 +162,11 @@ func TestDashboardMorph_SweepWired(t *testing.T) {
 	present(`data-key="audit-${esc(String(e.id))}"`, "audit rows carry the row-id data-key")
 	gone("$('#audit-list').innerHTML", "Audit list innerHTML swap regressed")
 
-	// Item 6 — Costs breakdown table (costs.js). conv_id alone is NOT row-unique
-	// (a multi-day chain splits a conversation into one row per day), so the row
-	// key combines conv_id with the row's own day.
-	present("morphInto($('#costs-table'),", "Costs table morphs instead of innerHTML swap")
-	present(`data-key="cost-${esc(a.conv_id)}-${esc(a.day)}"`, "cost rows carry a (conv_id, day) data-key")
-
-	// Item 7 — Costs summary line (costs.js).
-	present("morphInto($('#costs-summary'),", "Costs summary morphs instead of innerHTML swap")
-	gone("$('#costs-summary').innerHTML", "Costs summary innerHTML swap regressed")
+	// Item 6/7 — Costs table and summary are Preact-owned. Multi-day rows use
+	// (conv_id, day) keys; the retired string/morph renderer must stay gone.
+	present("key=${`${agent.conv_id}:${agent.day}`}", "cost rows carry a stable (conv_id, day) Preact key")
+	gone("morphInto($('#costs-table'),", "legacy Costs table morph remains")
+	gone("morphInto($('#costs-summary'),", "legacy Costs summary morph remains")
 
 	// Item 8 — Vegas high-rollers leaderboard (slop-credits.js), keyed by conv id
 	// so a rank shuffle moves the row intact.

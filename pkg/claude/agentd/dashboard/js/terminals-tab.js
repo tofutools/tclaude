@@ -34,8 +34,8 @@ export function initTerminalsTab() {
 }
 
 // applyTerminalsTabVisibility shows/hides the Terminals nav tab off the live
-// pane count `n`. Mirrors applyCostTabVisibility / applyPluginsTabVisibility in
-// refresh.js: body.hide-terminals removes the nav button + section via CSS, and
+// pane count `n`. Mirrors the Costs / Plugins island visibility effects:
+// body.hide-terminals removes the nav button + section via CSS, and
 // if the tab is the active one when it goes empty (the human closed the last
 // terminal) we fall back to Groups so they aren't stranded on a now-invisible
 // section.

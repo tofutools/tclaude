@@ -63,7 +63,7 @@ import {
 } from './modal-spawn.js';
 import { bindConfigTab } from './config.js';
 import { bindNotifyMenu } from './notify-menu.js';
-import { bindCostsTab, bindCostDisplayToggle } from './costs.js';
+import { bindCostDisplayToggle } from './cost-display-toggle.js';
 import { bindAuditTab } from './audit.js';
 import { bindLogsTab } from './logs.js';
 import { bindDebugTab } from './debug.js';
@@ -75,7 +75,7 @@ import { bindCommandPalette } from './palette.js';
 import { bindDock } from './dock.js';
 import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
-import { mountJobsFeature, mountPluginsFeature, mountPreactRuntimeProbe } from './preact-loader.js';
+import { mountCostsFeature, mountJobsFeature, mountPluginsFeature, mountPreactRuntimeProbe } from './preact-loader.js';
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
 import { triggerExportDownload } from './export-progress.js';
 import { startSnapshotPoll } from './snapshot-poll.js';
@@ -154,6 +154,7 @@ export function sudoBadge(activeSudo, fallbackConvID) {
     confirm: confirmModal,
     notify: toast,
   });
+  await mountCostsFeature();
 
   bindTabs();
   bindTabHotkeys();
@@ -231,7 +232,6 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   // The top-bar bell's notification-settings popover (master on/off +
   // per-type checklist + human-message knob), backed by /api/notifications.
   bindNotifyMenu();
-  bindCostsTab();
   bindCostDisplayToggle();
   bindAuditTab();
   bindLogsTab();
