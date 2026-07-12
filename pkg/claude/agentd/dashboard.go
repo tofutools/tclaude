@@ -109,7 +109,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/terminals", handleDashboardTerminals)
 	mux.HandleFunc("/dashboard/login", handleDashboardLogin)
 	mux.HandleFunc("/api/snapshot", withGzip(withPerfTiming("/api/snapshot", handleDashboardSnapshot)))
-	mux.HandleFunc("/api/perf", handleDashboardPerf)
+	mux.HandleFunc("/api/perf", withGzip(handleDashboardPerf))
 	mux.HandleFunc("/api/perf/reset", handleDashboardPerfReset)
 	mux.HandleFunc("/api/costs", handleDashboardCosts)
 	mux.HandleFunc("/api/audit", handleDashboardAudit)

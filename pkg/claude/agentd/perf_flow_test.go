@@ -1,7 +1,9 @@
 package agentd_test
 
 import (
+	"compress/gzip"
 	"encoding/json"
+	"io"
 	"net/http"
 	"testing"
 
@@ -121,6 +123,31 @@ func TestDashboardPerf_RecordsPollTimings(t *testing.T) {
 	snapLimited := perfEndpointNamed(t, limited, "/api/snapshot")
 	assert.Equal(t, 2, snapLimited.Count)
 	require.Len(t, snapLimited.Samples, 1)
+}
+
+func TestDashboardPerf_Gzip(t *testing.T) {
+	newFlow(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	agentd.ResetPerfForTest()
+	t.Cleanup(agentd.ResetPerfForTest)
+	dash := agentd.BuildDashboardHandlerForTest()
+
+	fetchSnapshotOnly(t, dash)
+	req := testharness.JSONRequest(t, http.MethodGet, "/api/perf", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	rec := testharness.Serve(dash, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "gzip", rec.Header().Get("Content-Encoding"))
+	assert.Contains(t, rec.Header().Values("Vary"), "Accept-Encoding")
+
+	zr, err := gzip.NewReader(rec.Body)
+	require.NoError(t, err)
+	decoded, err := io.ReadAll(zr)
+	require.NoError(t, err)
+	require.NoError(t, zr.Close())
+	var payload perfPayload
+	require.NoError(t, json.Unmarshal(decoded, &payload))
+	assert.Equal(t, 1, perfEndpointNamed(t, payload, "/api/snapshot").Count)
 }
 
 // TestDashboardSnapshot_DebugTabVisibilityRule pins the Debug tab's

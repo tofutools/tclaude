@@ -28,7 +28,8 @@ func TestDashboardHTML_DebugTabWired(t *testing.T) {
 	must("/api/perf", "debug.js fetches the poll-timing endpoint")
 	must("function bindDebugTab", "debug.js exposes the tab binder")
 	must(`nav [data-tab="debug"]`, "debug.js loads on tab activation")
-	must("tclaude:snapshot", "debug.js re-fetches on the snapshot tick while active")
+	must("DEBUG_POLL_MS = 10_000", "debug.js uses the slower debug-only poll cadence")
+	must("if (debugTabActive()) loadDebug()", "debug.js only polls while the Debug tab is active")
 
 	// The rendering pieces: sparkline, phase composition bar + legend,
 	// and the aggregate table (the non-graphical encoding of the same
