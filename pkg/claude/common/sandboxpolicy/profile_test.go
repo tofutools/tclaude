@@ -1,6 +1,7 @@
 package sandboxpolicy
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -267,6 +268,13 @@ func TestNormalizeAgentDirectoriesCanonicalAndRejectsConflicts(t *testing.T) {
 		AgentDirectories: []string{"GOCACHE"},
 	})
 	require.ErrorContains(t, err, "also has a literal environment value")
+
+	environment := make([]EnvironmentEntry, MaxEnvironmentCount)
+	for i := range environment {
+		environment[i] = EnvironmentEntry{Name: fmt.Sprintf("ENV_%d", i), Value: "x"}
+	}
+	_, err = Normalize(Profile{Name: "p", Environment: environment, AgentDirectories: []string{"ONE_MORE"}})
+	require.ErrorContains(t, err, "too many entries combined")
 }
 
 func TestNormalizeProfileName(t *testing.T) {

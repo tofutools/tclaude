@@ -174,6 +174,9 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 	for name, value := range environment {
 		mergedEnvironment = append(mergedEnvironment, EnvironmentEntry{Name: name, Value: value})
 	}
+	if len(mergedEnvironment)+len(agentDirectories) > MaxEnvironmentCount {
+		return EffectiveProfile{}, fmt.Errorf("effective environment and agent_directories have too many entries combined (maximum %d)", MaxEnvironmentCount)
+	}
 	var err error
 	result.Environment, err = normalizeEnvironment(mergedEnvironment)
 	if err != nil {

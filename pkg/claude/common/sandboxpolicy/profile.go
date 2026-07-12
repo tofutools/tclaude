@@ -192,6 +192,9 @@ func normalizeAgentDirectories(in []string, environment []EnvironmentEntry) ([]s
 		out = append(out, name)
 	}
 	sort.Strings(out)
+	if len(environment)+len(out) > MaxEnvironmentCount {
+		return nil, fmt.Errorf("environment and agent_directories have too many entries combined (maximum %d)", MaxEnvironmentCount)
+	}
 	return out, nil
 }
 
