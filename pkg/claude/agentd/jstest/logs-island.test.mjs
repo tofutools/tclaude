@@ -23,6 +23,10 @@ test('Logs island renders controls and preserves duplicate row focus across tail
   const search = getByRole(mounted.container, 'textbox', { name: 'Search logs' });
   await harness.input(search, 'panic');
   assert.equal(state.view.value.query, 'panic');
+  await harness.act(() => harness.fireEvent(getByRole(mounted.container, 'button', { name: 'Clear log search' }), 'click'));
+  assert.equal(state.view.value.query, '');
+  assert.equal(harness.document.activeElement, search);
+  assert.equal(mounted.container.querySelector('#filter-logs-count').getAttribute('aria-live'), 'polite');
   assert.match(mounted.container.querySelector('#logs-status').textContent, /2 lines/);
   await mounted.unmount();
 });

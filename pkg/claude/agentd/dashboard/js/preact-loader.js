@@ -170,3 +170,17 @@ export async function mountAuditFeature(actionDependencies = {}) {
     },
   });
 }
+
+export async function mountConfigFeature(dependencies = {}) {
+  const host = document.querySelector('#config-root');
+  if (!host) return null;
+  return mountFeatureIsland({
+    name: 'config', label: 'Config', hosts: [host], failureClass: 'config-error',
+    load: async () => {
+      const islandModule = import('./config-island.js');
+      const stateModule = import('./config-state.js');
+      const [{ mountConfigIsland }, { configState }] = await Promise.all([islandModule, stateModule]);
+      return { state: configState, mount: (registerCleanup) => mountConfigIsland({ host, state: configState, dependencies, registerCleanup }) };
+    },
+  });
+}

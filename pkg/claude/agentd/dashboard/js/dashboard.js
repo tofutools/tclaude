@@ -17,7 +17,7 @@ import { bindVegasMusic } from './vegas.js';
 import {
   bindFilter, bindTabs, bindTabHotkeys, bindDetailsPersistence, bindGroupTitleToggle, bindGroupQuickHover, bindSortHeaders,
   bindListPagers,
-  confirmModal, refresh, toast,
+  confirmModal, isCyclingTabs, refresh, toast,
 } from './refresh.js';
 
 // Cosmetic re-skins — slop (?slop=1) and wizard (?wizard=1), mutually
@@ -63,7 +63,7 @@ import {
   bindAgentSpawnModal, bindCloneAgentModal,
   bindReincarnateAgentModal,
 } from './modal-spawn.js';
-import { bindConfigTab } from './config.js';
+import { bindRemoteAdmin, loadRemoteAdmin } from './remote-admin.js';
 import { bindNotifyMenu } from './notify-menu.js';
 import { bindCostDisplayToggle } from './cost-display-toggle.js';
 import { bindDebugTab } from './debug.js';
@@ -76,7 +76,7 @@ import { bindDock } from './dock.js';
 import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
 import {
-  mountAccessFeature, mountAuditFeature, mountCostsFeature, mountJobsFeature, mountLogsFeature, mountPluginsFeature,
+  mountAccessFeature, mountAuditFeature, mountConfigFeature, mountCostsFeature, mountJobsFeature, mountLogsFeature, mountPluginsFeature,
   mountPreactRuntimeProbe,
 } from './preact-loader.js';
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
@@ -151,24 +151,31 @@ export function sudoBadge(activeSudo, fallbackConvID) {
     createCron: () => openCronCreateModal({}),
     editCron: openCronEditModal,
   });
-  await mountPluginsFeature({
-    requestMutation: dashboardActions.requestMutation,
-    refresh: dashboardActions.refresh,
-    confirm: confirmModal,
-    notify: toast,
-  });
-  await mountCostsFeature();
-  await mountAccessFeature({
-    requestMutation: dashboardActions.requestMutation,
-    confirm: confirmModal,
-    notify: toast,
-    openGrant: async () => {
-      const convID = await pickSudoAgentModal();
-      if (convID) openSudoGrantModal(convID);
-    },
-  });
-  await mountLogsFeature();
-  await mountAuditFeature();
+  // The remaining bounded islands are independent. Load them concurrently so
+  // navigation setup is delayed by only the slowest optional feature import,
+  // not by the sum of seven dynamic-import chains. Await the whole group before
+  // initNavHistory below so initial deep links still find every lazy loader.
+  await Promise.all([
+    mountPluginsFeature({
+      requestMutation: dashboardActions.requestMutation,
+      refresh: dashboardActions.refresh,
+      confirm: confirmModal,
+      notify: toast,
+    }),
+    mountCostsFeature(),
+    mountAccessFeature({
+      requestMutation: dashboardActions.requestMutation,
+      confirm: confirmModal,
+      notify: toast,
+      openGrant: async () => {
+        const convID = await pickSudoAgentModal();
+        if (convID) openSudoGrantModal(convID);
+      },
+    }),
+    mountLogsFeature(),
+    mountAuditFeature(),
+    mountConfigFeature({ toast, isCyclingTabs }),
+  ]);
 
   bindTabs();
   bindTabHotkeys();
@@ -240,7 +247,8 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   bindAgentSpawnModal();
   bindCloneAgentModal();
   bindReincarnateAgentModal();
-  bindConfigTab();
+  bindRemoteAdmin();
+  document.querySelector('nav [data-tab="config"]')?.addEventListener('click', () => { void loadRemoteAdmin(); });
   // The top-bar bell's notification-settings popover (master on/off +
   // per-type checklist + human-message knob), backed by /api/notifications.
   bindNotifyMenu();

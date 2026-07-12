@@ -41,7 +41,7 @@ func TestDashboardHTML_AuditTabWired(t *testing.T) {
 
 	// dashboard.js mounts the feature so the tab is live at boot.
 	must("mountAuditFeature", "dashboard.js imports the feature loader")
-	must("await mountAuditFeature();", "dashboard.js mounts the feature at boot")
+	must("mountAuditFeature(),", "dashboard.js mounts the feature in the concurrent bounded group")
 
 	// The symbolic rendering pieces: a verb chip, the operator chip, and
 	// the status pill that distinguishes a denial from a success.

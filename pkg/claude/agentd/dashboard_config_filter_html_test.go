@@ -6,10 +6,9 @@ import (
 )
 
 // TestDashboardHTML_ConfigSectionFilter guards the Config-tab section
-// filter across the files it spans: dashboard.html hosts the search bar,
-// config.js implements the live show/hide, dashboard.css styles the
-// no-match line. The repo has no JS test runner, so this asserts on the
-// embedded source concatenation at `go test ./...`.
+// filter across the files it spans: the Preact markup owns the search bar,
+// the Config adapter implements live show/hide, and dashboard.css styles the
+// no-match line. This asserts the embedded production wiring.
 //
 // The load-bearing invariant is that the filter resolves its sections
 // LIVE from the DOM (every .cfg-section), so a section added to
@@ -24,18 +23,18 @@ func TestDashboardHTML_ConfigSectionFilter(t *testing.T) {
 		}
 	}
 
-	// dashboard.html: the search box, its count/clear chrome, and the
+	// Preact markup: the search box, its count/clear chrome, and the
 	// no-match line the JS toggles.
 	must(`id="cfg-filter"`, "the Config-tab filter search box exists")
 	must(`id="cfg-filter-count"`, "the filter match-count element exists")
 	must(`id="cfg-filter-clear"`, "the filter clear button exists")
 	must(`id="cfg-filter-empty"`, "the no-match line exists")
 
-	// config.js: the filter is implemented and wired.
+	// Config adapter: the filter is implemented and wired through its disposer.
 	must("function applyConfigFilter(", "the filter apply fn is defined")
 	must("function cfgFilterBlocks(", "the live section resolver is defined")
 	must("function cfgSearchText(", "the title+content haystack builder is defined")
-	must("addEventListener('input', applyConfigFilter)", "the search box drives the filter")
+	must("if (id === 'cfg-filter') applyConfigFilter();", "the Preact search input drives the filter")
 
 	// The auto-pickup guarantee: sections are resolved live by class, not
 	// from a hardcoded name list. This selector is the contract — a new

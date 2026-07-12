@@ -391,6 +391,8 @@ func browserKey(name string) input.Key {
 		return input.Enter
 	case "escape":
 		return input.Escape
+	case "tab":
+		return input.Tab
 	default:
 		panic(fmt.Sprintf("unknown browser key %q", name))
 	}

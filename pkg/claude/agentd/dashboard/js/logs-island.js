@@ -60,6 +60,7 @@ function LogRows({ current }) {
 export function LogsApp({ state, actions }) {
   const current = state.view.value;
   const searchTimer = useRef(null);
+  const filterRef = useRef(null);
   useEffect(() => {
     if (!current.active) {
       clearTimeout(searchTimer.current);
@@ -77,9 +78,9 @@ export function LogsApp({ state, actions }) {
   };
   return html`<${Fragment}>
     <div class="filter-bar">
-      <input id="filter-logs" aria-label="Search logs" type="text" placeholder="Search (message / level / fields) — server-side" autocomplete="off" spellcheck=${false} value=${current.query} onInput=${(event) => filter('query', event.currentTarget.value, true)} />
-      <span class="filter-count" id="filter-logs-count">${current.totalUnfiltered === 0 ? '' : current.total === current.totalUnfiltered ? `${current.total} line${current.total === 1 ? '' : 's'}` : `${current.total} / ${current.totalUnfiltered}`}</span>
-      <button class="clear-filter" id="filter-logs-clear" title="Clear search" onClick=${() => filter('query', '')}>×</button>
+      <input ref=${filterRef} id="filter-logs" aria-label="Search logs" type="text" placeholder="Search (message / level / fields) — server-side" autocomplete="off" spellcheck=${false} value=${current.query} onInput=${(event) => filter('query', event.currentTarget.value, true)} />
+      <span class="filter-count" id="filter-logs-count" aria-live="polite">${current.totalUnfiltered === 0 ? '' : current.total === current.totalUnfiltered ? `${current.total} line${current.total === 1 ? '' : 's'}` : `${current.total} / ${current.totalUnfiltered}`}</span>
+      <button class="clear-filter" id="filter-logs-clear" title="Clear search" aria-label="Clear log search" onClick=${() => { filter('query', ''); filterRef.current?.focus(); }}>×</button>
       <label class="filter-toggle"><span>level</span><select id="logs-level" value=${current.level} onChange=${(event) => filter('level', event.currentTarget.value)}><option value="">all</option><option value="debug">debug+</option><option value="info">info+</option><option value="warn">warn+</option><option value="error">error</option></select></label>
       <label class="filter-toggle"><span>since</span><select id="logs-range" value=${current.rangeMs} onChange=${(event) => filter('rangeMs', Number(event.currentTarget.value))}><option value="0">all</option><option value="900000">15m</option><option value="3600000">1h</option><option value="21600000">6h</option><option value="86400000">24h</option><option value="604800000">7d</option></select></label>
       <label class="filter-toggle"><input type="checkbox" id="logs-rotated" checked=${current.includeRotated} onChange=${(event) => filter('includeRotated', event.currentTarget.checked)} /> <span>rotated</span></label>

@@ -148,7 +148,7 @@ export function bindNotifyMenu() {
   });
 
   // "Config tab ↗" — jump to the full editor. Clicking its nav button
-  // both switches the tab and triggers config.js's lazy-load listener.
+  // both switches the tab and triggers the Config island's lazy-load listener.
   const cfgLink = $('#notify-pop-config');
   if (cfgLink) cfgLink.addEventListener('click', () => {
     setOpen(false);
