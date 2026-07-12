@@ -7932,6 +7932,13 @@ body.wizard #edit-member-modal #edit-member-save:disabled::before { content: non
 body.wizard .profiles-word-regular { display: none; }
 body.wizard .profiles-word-wizard { display: inline; }
 
+/* Live group permission policy becomes "party boons" in wizard mode. The
+   shared pair is used by the Groups-cog opener and the group-shaped Grimoire
+   copy so a theme toggle updates an already-open editor without JS rerender. */
+.group-perms-word-wizard { display: none; }
+body.wizard .group-perms-word-regular { display: none; }
+body.wizard .group-perms-word-wizard { display: inline; }
+
 /* Wizard sandbox-profile vocabulary — "Wards". A sandbox profile is a
    protective ward that widens a familiar's reach, so in 🧙 mode every static
    spot naming it (the Groups-cog 🛡 entry, the manage overlay title + intro +

@@ -21,7 +21,7 @@ import { renderDashDefaultProfile, renderDashSandboxProfile } from './render.js'
 import {
   openSudoGrantModal, openCronCreateModal,
 } from './modal-cron.js';
-import { openMessageCreateModal, openPermEditModal, openGroupCreateModal } from './modal-message.js';
+import { openMessageCreateModal, openPermEditModal, openGroupPermEditor, openGroupCreateModal } from './modal-message.js';
 import { openHumanReplyModal } from './modal-human-reply.js';
 import { openGroupContextModal, openGroupCloneModal, openFromGroupModal } from './modal-templates.js';
 import { openLinkModal, openLinksManageModal } from './modal-link-wt.js';
@@ -1347,6 +1347,11 @@ function bindRowActions() {
             if (renameEditing) restore();
           });
           return; // Skip the default refresh; commit() / restore() handle it.
+        }
+        case 'set-group-permissions': {
+          const snapshot = (lastSnapshot?.groups || []).find(g => g.name === group);
+          openGroupPermEditor(group, snapshot?.permissions || []);
+          return;
         }
         case 'set-group-profile': {
           // The group 🧠 chip: pick the group's default spawn profile from a

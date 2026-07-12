@@ -183,14 +183,14 @@ func TestGroupsClone_OwnersCopied(t *testing.T) {
 
 // Scenario: the clone carries EVERY configurable group setting, not
 // just the description — default cwd, startup context, default profile,
-// the max-members cap and the notify switch. Each is set to a
+// live group permissions, the max-members cap and the notify switch. Each is set to a
 // distinctive non-default value on the source; the clone must match all
 // of them. Runs --no-agents so the assertion is purely about the group
 // row (no live-session plumbing needed). notify defaults to true, so
 // setting it false proves the value is copied rather than re-defaulted.
 func TestGroupsClone_CopiesAllSettings(t *testing.T) {
 	f := newFlow(t)
-	f.HaveGroup("team")
+	source := f.HaveGroup("team")
 
 	mustSet := func(_ int64, err error) { require.NoError(t, err) }
 	mustSet(db.SetAgentGroupDescr("team", "the team descr"))
@@ -199,6 +199,7 @@ func TestGroupsClone_CopiesAllSettings(t *testing.T) {
 	mustSet(db.SetAgentGroupDefaultProfile("team", "fast"))
 	mustSet(db.SetAgentGroupMaxMembers("team", 7))
 	mustSet(db.SetAgentGroupNotifyEnabled("team", false))
+	require.NoError(t, db.ReplaceAgentGroupPermissions(source.ID, []string{agentd.PermHumanNotify}, "test"))
 
 	resp := groupCloneRequest(t, f, "team", map[string]any{"no_clone_members": true})
 	newGroup, _ := db.GetAgentGroupByName(resp.Group)
@@ -208,6 +209,9 @@ func TestGroupsClone_CopiesAllSettings(t *testing.T) {
 	assert.Equal(t, "fast", newGroup.DefaultProfile, "default profile copied")
 	assert.Equal(t, 7, newGroup.MaxMembers, "max members copied")
 	assert.False(t, newGroup.NotifyEnabled, "notify switch copied (false, not re-defaulted to true)")
+	groupPermissions, err := db.ListAgentGroupPermissions(newGroup.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{agentd.PermHumanNotify}, groupPermissions, "live group permissions copied")
 	// default_context is normalized for the one-line header invariant
 	// only on descr; context is multi-line and copied verbatim.
 	assert.Equal(t, "shared startup context\nsecond line", newGroup.DefaultContext, "startup context copied verbatim")

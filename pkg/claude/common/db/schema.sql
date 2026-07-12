@@ -692,3 +692,14 @@ CREATE TABLE sandbox_profile_global_assignment (
 			profile_id   INTEGER NOT NULL REFERENCES sandbox_profiles(id) ON DELETE CASCADE
 		);
 
+CREATE TABLE agent_group_permissions (
+			group_id   INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
+			slug       TEXT NOT NULL,
+			granted_at TEXT NOT NULL,
+			granted_by TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (group_id, slug)
+		);
+
+CREATE INDEX idx_agent_group_permissions_slug
+			ON agent_group_permissions(slug);
+

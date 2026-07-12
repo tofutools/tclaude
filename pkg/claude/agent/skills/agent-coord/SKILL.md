@@ -292,9 +292,13 @@ profile tier you didn't intend, re-spawn with the explicit flag.
   `groups.retire` / `groups.resume`, plus `human.notify` — without an
   explicit grant (an explicit deny override still suppresses them).
 
-  Permissions live in two places:
+  Permissions live in three durable places:
   - **Defaults** — `agent.default_permissions` in
     `~/.tclaude/config.json`. Granted to every agent.
+  - **Group grants** — live additive grants for every current member of an
+    active group, configured in the dashboard's Groups tab under the group ⚙
+    menu. They are membership policy rather than spawn-time copies; an
+    individual agent's explicit deny still wins.
   - **Per-agent grants** — SQLite (`agent_permissions`), additive on
     top of defaults. Managed via the CLI:
 

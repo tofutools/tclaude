@@ -116,6 +116,15 @@ func TestUnmarshalUnsupportedVersion(t *testing.T) {
 		"a too-new format must surface as ErrUnsupportedFormat, got: %v", err)
 }
 
+func TestUnmarshalAcceptsOlderV2Archive(t *testing.T) {
+	archive := zipWithManifest(t, `{"format_version":2,"source_group":"team","group":{"descr":"legacy"}}`)
+	exp, err := Unmarshal(archive)
+	require.NoError(t, err)
+	assert.Equal(t, 2, exp.FormatVersion)
+	assert.Equal(t, "legacy", exp.Group.Descr)
+	assert.Empty(t, exp.Group.Permissions)
+}
+
 // TestUnmarshalMissingFormatVersion rejects a manifest with no (or zero)
 // format_version — a malformed or hand-mangled archive.
 func TestUnmarshalMissingFormatVersion(t *testing.T) {

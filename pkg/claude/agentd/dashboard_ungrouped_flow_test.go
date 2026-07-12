@@ -90,6 +90,7 @@ type dashPending struct {
 type dashGroup struct {
 	Name          string       `json:"name"`
 	Descr         string       `json:"descr"`
+	Permissions   []string     `json:"permissions"`
 	MaxMembers    int          `json:"max_members"`
 	NotifyEnabled bool         `json:"notify_enabled"`
 	Scribe        bool         `json:"scribe,omitempty"`
@@ -133,6 +134,7 @@ type dashAgent struct {
 	PresentedPRs    []dashPR  `json:"presented_prs,omitempty"`
 	Online          bool      `json:"online"`
 	Groups          []string  `json:"groups"`
+	Effective       []string  `json:"effective"`
 	Notify          string    `json:"notify,omitempty"`
 	NotifyEffective bool      `json:"notify_effective"`
 	State           dashState `json:"state"`

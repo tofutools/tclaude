@@ -329,6 +329,7 @@ let permEditOwnedGroups = [];
 // receives the collected slug→effect map and returns a Promise; throwing
 // surfaces on the modal's error line. null means no editor is open.
 let permEditOnSave = null;
+let permEditGroupMode = false;
 
 // permRowEffective recomputes the "✓ granted / ✗ denied / ✓ via owner"
 // indicator on one row from its selected effect, whether the slug is a
@@ -345,6 +346,13 @@ function permRowEffective(row) {
   const viaOwner = effect === 'default' && !inDefault && ownerImplied && permEditOwnsGroup;
   const granted = effect === 'grant' || (effect === 'default' && inDefault) || viaOwner;
   const el = row.querySelector('.perm-row-eff');
+  if (permEditGroupMode) {
+    el.innerHTML = effect === 'grant'
+      ? '<span class="group-perms-word-regular">✓ via group</span><span class="group-perms-word-wizard">✨ boon active</span>'
+      : '<span class="group-perms-word-regular">— not via group</span><span class="group-perms-word-wizard">— no boon</span>';
+    el.className = 'perm-row-eff ' + (effect === 'grant' ? 'granted' : 'denied');
+    return;
+  }
   if (viaOwner) {
     el.textContent = '✓ via owner';
     el.className = 'perm-row-eff owner';
@@ -368,16 +376,27 @@ function convOwnedGroups(conv) {
 // conv-backed editor (openPermEditModal) and the pre-spawn buffer editor
 // (openSpawnPermEditor) differ only in their seed + save; everything visual is
 // shared so the spawn dialog gets the identical editor the live-agent path has.
-function openPermEditor({ subtitle, overrides, ownsGroup, ownedGroups, onSave }) {
+function openPermEditor({ subtitle, wizardSubtitle = '', overrides, ownsGroup, ownedGroups, onSave, groupMode = false }) {
   const snap = lastSnapshot || {};
   const perms = snap.permissions || {};
   const slugs = (snap.slugs || []).slice().sort((a, b) => a.slug < b.slug ? -1 : 1);
   const defaultSet = new Set(perms.defaults || []);
   overrides = overrides || {};
   permEditOwnsGroup = !!ownsGroup;
+  permEditGroupMode = !!groupMode;
   permEditOwnedGroups = ownedGroups || [];
   permEditOnSave = onSave;
-  $('#perm-edit-subtitle').textContent = subtitle || '';
+  $('#perm-edit-title .perm-edit-title-regular').textContent = groupMode ? 'Edit group permissions' : 'Edit permanent permissions';
+  $('#perm-edit-title .perm-edit-title-wizard').textContent = groupMode ? '✨ Party Boons' : '📕 The Grimoire';
+  const banner = $('#perm-edit-banner');
+  banner.innerHTML = groupMode
+    ? '<span class="group-perms-word-regular"><strong>GROUP GRANTS</strong> — selected permissions apply immediately to every current member. Leaving or archiving the group removes this source; an agent-level <strong>Deny</strong> still wins.</span>'
+      + '<span class="group-perms-word-wizard"><strong>PARTY BOONS</strong> — bestow capabilities on every familiar in this party at once. A familiar who leaves loses these boons; a personal binding against one still wins.</span>'
+    : '<strong>PERMANENT</strong> — these per-agent overrides persist until you change them again. They are <em>not</em> the time-bounded “+ sudo” elevation: a sudo grant expires on its own, an override here does not. <strong>Grant</strong> adds a slug, <strong>Deny</strong> blocks one the global defaults would otherwise give, and <strong>Default</strong> inherits the global default.';
+  const subtitleEl = $('#perm-edit-subtitle');
+  subtitleEl.innerHTML = wizardSubtitle
+    ? `<span class="group-perms-word-regular">${esc(subtitle || '')}</span><span class="group-perms-word-wizard">${esc(wizardSubtitle)}</span>`
+    : esc(subtitle || '');
   // Owner note: a group owner holds the owner-conferred (👑) slugs below
   // for its owned groups / their members even at Default. Surface that so
   // the human isn't misled by a "✗ denied"-looking Default tri-state.
@@ -414,7 +433,7 @@ function openPermEditor({ subtitle, overrides, ownsGroup, ownedGroups, onSave })
           <span class="perm-row-slug">${esc(s.slug)}${ownerBadge}</span>
           <span class="perm-row-desc" title="${esc(s.description || '')}">${esc(s.description || '')}</span>
         </div>
-        <div class="perm-tristate">${mk('default', 'Default')}${mk('grant', 'Grant')}${mk('deny', 'Deny')}</div>
+        <div class="perm-tristate">${mk('default', groupMode ? '<span class="group-perms-word-regular">Not granted</span><span class="group-perms-word-wizard">Unbound</span>' : 'Default')}${mk('grant', groupMode ? '<span class="group-perms-word-regular">Grant</span><span class="group-perms-word-wizard">Bestow</span>' : 'Grant')}${groupMode ? '' : mk('deny', 'Deny')}</div>
         <span class="perm-row-eff"></span>
       </div>`;
     }).join('');
@@ -423,6 +442,37 @@ function openPermEditor({ subtitle, overrides, ownsGroup, ownedGroups, onSave })
   list.scrollTop = 0;
   $('#perm-edit-modal').classList.add('show');
   setTimeout(() => $('#perm-edit-filter').focus(), 0);
+}
+
+// openGroupPermEditor edits live additive membership policy. It intentionally
+// offers only Grant / Not granted: a group deny would make multi-group
+// composition surprising, while an agent's explicit Deny remains the single
+// authoritative subtraction layer.
+function openGroupPermEditor(group, grants) {
+  const overrides = {};
+  (grants || []).forEach(slug => { overrides[slug] = 'grant'; });
+  openPermEditor({
+    subtitle: `Group: ${group} · every current member receives these grants immediately`,
+    wizardSubtitle: `Party: ${group} · every familiar receives these boons immediately`,
+    overrides,
+    ownsGroup: false,
+    ownedGroups: [],
+    groupMode: true,
+    onSave: async (selection) => {
+      const permissions = Object.keys(selection).filter(slug => selection[slug] === 'grant');
+      const r = await fetch(`/api/groups/${encodeURIComponent(group)}`, {
+        method: 'PATCH', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ permissions }),
+      });
+      if (!r.ok) throw new Error((await r.text()) || ('HTTP ' + r.status));
+      toast(wizWord(
+        `${group}: ${permissions.length} group permission grant${permissions.length === 1 ? '' : 's'} saved`,
+        `${group}: ${permissions.length} party boon${permissions.length === 1 ? '' : 's'} bound`,
+      ));
+      await refresh();
+    },
+  });
 }
 
 // openPermEditModal is the conv-backed (live-agent) editor: it seeds from the
@@ -941,6 +991,6 @@ function bindGroupCreateModal() {
 
 export {
   openMessageCreateModal, bindMessageModal, bindSudoModal,
-  openPermEditModal, openSpawnPermEditor, bindPermEditModal,
+  openPermEditModal, openSpawnPermEditor, openGroupPermEditor, bindPermEditModal,
   bindGroupCreateModal, openGroupCreateModal,
 };

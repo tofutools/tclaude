@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/groupexport"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -192,7 +193,7 @@ func TestDashboardGroupImport_InspectReportsCollisionsWithoutWriting(t *testing.
 	assert.Equal(t, "team", ins.SourceGroup)
 	assert.Equal(t, "team", ins.TargetName)
 	assert.Equal(t, 2, ins.AgentCount)
-	assert.Equal(t, 2, ins.FormatVersion) // v2: default_model dropped (JOH-220)
+	assert.Equal(t, groupexport.FormatVersion, ins.FormatVersion)
 	assert.NotEmpty(t, ins.SourceOS, "the manifest records the source OS")
 	assert.True(t, ins.TargetNameValid)
 	assert.True(t, ins.GroupNameTaken, "the exported name 'team' already exists locally")

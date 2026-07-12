@@ -22,13 +22,17 @@ package groupexport
 // to the Export shape; the export format is meant to live in source
 // control, so forward-incompatible changes must be detectable.
 //
+// v3 adds Group.permissions as structured live membership grants. Older
+// readers must reject v3 rather than silently importing the group without its
+// authorization policy.
+//
 // v2 (JOH-220) drops the vestigial Group.default_model field: Spawn
 // Profiles (agent_groups.default_profile) replaced the per-group spawn
 // model, so a v2 export no longer carries default_model. A v1 archive that
 // still does imports fine — the importer reads its legacy default_model and
 // synthesizes a default spawn profile from it (see db.ImportGroup), so the
 // older export's effective spawn default does not silently regress.
-const FormatVersion = 2
+const FormatVersion = 3
 
 // Export is the complete, format-agnostic, in-memory representation of
 // one per-group export.
@@ -87,20 +91,29 @@ type Export struct {
 // on import) and default_cwd (a source path — reset to the import
 // target).
 type Group struct {
-	Descr          string `json:"descr"`
-	DefaultContext string `json:"default_context"`
+	Descr          string            `json:"descr"`
+	DefaultContext string            `json:"default_context"`
+	Permissions    []GroupPermission `json:"permissions,omitempty"`
 	// DefaultModel is LEGACY / import-only (JOH-220). The vestigial
-	// per-group default_model column was dropped, so a current (v2) export
+	// per-group default_model column was dropped, so a current export
 	// never writes this field — CollectGroupExport leaves it "" and
 	// omitempty keeps it out of the manifest. It survives on the struct
 	// solely to decode a pre-v2 (v1) archive that still carries it: on
 	// import a non-empty value is turned into a synthesized default spawn
 	// profile (see db.ImportGroup) so the older export's spawn default does
-	// not regress. Decodes to "" (unset) for any v2 archive.
+	// not regress. Decodes to "" (unset) for any v2+ archive.
 	DefaultModel string `json:"default_model,omitempty"`
 	MaxMembers   int    `json:"max_members"`
 	CreatedAt    string `json:"created_at"`
 	ArchivedAt   string `json:"archived_at"`
+}
+
+// GroupPermission is one agent_group_permissions row. The group id is implicit
+// in Group; timestamps and attribution are preserved byte-for-byte.
+type GroupPermission struct {
+	Slug      string `json:"slug"`
+	GrantedAt string `json:"granted_at"`
+	GrantedBy string `json:"granted_by"`
 }
 
 // Member is an agent_group_members row (the group_id is implicit).

@@ -1021,7 +1021,8 @@ has [classified the caller](#identity), it decides:
 
 1. **Human?** Pass — the human bypasses every gate.
 2. **Agent?** Allowed iff the slug is in `default_permissions`
-   (global), the agent's per-conv grants (SQLite), or an active
+   (global), a live grant from any active group it belongs to, the agent's
+   per-conv grants (SQLite), or an active
    `sudo` elevation. **Group-owner state** raises an owner's default
    slugs: owning a group confers, for that group, the `agent.*`
    manager-pattern checks against its members, the group-lifecycle
@@ -1036,11 +1037,18 @@ has [classified the caller](#identity), it decides:
 | Where                                     | What                          | How to edit               |
 |-------------------------------------------|-------------------------------|----------------------------|
 | `~/.tclaude/config.json` → `agent.default_permissions` | Slugs granted to **every** agent | hand-edit, or `permissions grant default <slug>` |
+| SQLite `agent_group_permissions` table    | Live additive grants for every current member of one active group | Groups tab → group ⚙ → **group permissions…** |
 | SQLite `agent_permissions` table          | Per-conv grants (additive on top of defaults) | `permissions grant <conv> <slug>` (writes the DB row) |
 | SQLite sudo-elevation table               | Time-bounded grants from `sudo` | `sudo request` / `sudo revoke` |
 
 An agent's effective permission set is
-`union(defaults, grants, active sudo elevations)`.
+`union(defaults, active-group grants, agent grants, active sudo elevations)`.
+Group grants are membership policy, not spawn configuration: they take effect
+immediately for existing members, disappear on leaving or archiving the group,
+and are not copied into the agent's own override rows. An explicit per-agent
+**deny** remains authoritative over defaults and group grants; sudo is the
+time-bounded exception above it. Membership in multiple groups unions their
+grants. Nested groups do not inherit membership or permissions.
 
 ### Slugs
 

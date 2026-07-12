@@ -80,7 +80,7 @@ func TestImportGroup_LegacyDefaultModelDedupesName(t *testing.T) {
 	assert.Equal(t, "haiku", prof.Model, "the suffixed profile carries the legacy model")
 }
 
-// TestImportGroup_V2ArchiveNoSynthesis confirms a current (v2) archive — which
+// TestImportGroup_V2ArchiveNoSynthesis confirms the older v2 shape — which
 // carries no default_model — imports with no synthesized profile and an unset
 // default_profile, so the back-compat path is a strict no-op there.
 func TestImportGroup_V2ArchiveNoSynthesis(t *testing.T) {
@@ -100,6 +100,38 @@ func TestImportGroup_V2ArchiveNoSynthesis(t *testing.T) {
 	profs, err := ListSpawnProfiles()
 	require.NoError(t, err)
 	assert.Empty(t, profs, "no spawn profile synthesized for a v2 archive")
+}
+
+func TestGroupExport_GroupPermissionsRoundTrip(t *testing.T) {
+	setupTestDB(t)
+
+	srcID, err := CreateAgentGroup("src", "")
+	require.NoError(t, err)
+	require.NoError(t, ReplaceAgentGroupPermissions(srcID, []string{"human.notify", "groups.spawn"}, "test"))
+	exp, err := CollectGroupExport("src")
+	require.NoError(t, err)
+	require.Len(t, exp.Group.Permissions, 2)
+	assert.Equal(t, "groups.spawn", exp.Group.Permissions[0].Slug)
+	assert.Equal(t, "human.notify", exp.Group.Permissions[1].Slug)
+	assert.Equal(t, "test", exp.Group.Permissions[0].GrantedBy)
+	assert.NotEmpty(t, exp.Group.Permissions[0].GrantedAt)
+
+	_, err = ImportGroup(GroupImportPlan{
+		Export: exp, TargetName: "dst", TargetCwd: "/tmp/import-target", ConvRemap: map[string]string{},
+	})
+	require.NoError(t, err)
+	dst, err := GetAgentGroupByName("dst")
+	require.NoError(t, err)
+	got, err := ListAgentGroupPermissions(dst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"groups.spawn", "human.notify"}, got)
+	d, err := Open()
+	require.NoError(t, err)
+	var grantedAt, grantedBy string
+	require.NoError(t, d.QueryRow(`SELECT granted_at, granted_by FROM agent_group_permissions WHERE group_id = ? AND slug = ?`,
+		dst.ID, "groups.spawn").Scan(&grantedAt, &grantedBy))
+	assert.Equal(t, exp.Group.Permissions[0].GrantedAt, grantedAt, "timestamp preserved")
+	assert.Equal(t, exp.Group.Permissions[0].GrantedBy, grantedBy, "attribution preserved")
 }
 
 // TestGroupExport_GroupTargetCronJob_RoundTrips covers the JOH-26 PR3a fix to

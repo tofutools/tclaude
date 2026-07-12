@@ -89,6 +89,86 @@ type AgentPermission struct {
 	GrantedBy string
 }
 
+// ListAgentGroupPermissions returns the sorted additive grants attached to a
+// group. Group grants are live membership policy, not birth-time agent rows.
+func ListAgentGroupPermissions(groupID int64) ([]string, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT slug FROM agent_group_permissions WHERE group_id = ? ORDER BY slug`, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := []string{}
+	for rows.Next() {
+		var slug string
+		if err := rows.Scan(&slug); err != nil {
+			return nil, err
+		}
+		out = append(out, slug)
+	}
+	return out, rows.Err()
+}
+
+// ReplaceAgentGroupPermissions atomically replaces a group's additive grants.
+func ReplaceAgentGroupPermissions(groupID int64, slugs []string, grantedBy string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var exists int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM agent_groups WHERE id = ?`, groupID).Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 0 {
+		return sql.ErrNoRows
+	}
+	if _, err := tx.Exec(`DELETE FROM agent_group_permissions WHERE group_id = ?`, groupID); err != nil {
+		return err
+	}
+	now := time.Now().Format(time.RFC3339Nano)
+	seen := map[string]bool{}
+	for _, slug := range slugs {
+		if seen[slug] {
+			continue
+		}
+		seen[slug] = true
+		if _, err := tx.Exec(`INSERT INTO agent_group_permissions (group_id, slug, granted_at, granted_by) VALUES (?, ?, ?, ?)`, groupID, slug, now, grantedBy); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// HasAgentGroupPermission reports whether the actor currently belongs to at
+// least one active group granting slug. Group nesting deliberately does not
+// imply membership or permission inheritance.
+func HasAgentGroupPermission(convID, slug string) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	agentID, err := AgentIDForConv(convID)
+	if err != nil || agentID == "" {
+		return false, err
+	}
+	var n int
+	err = d.QueryRow(`
+		SELECT COUNT(*)
+		FROM agent_group_permissions gp
+		JOIN agent_groups g ON g.id = gp.group_id AND g.archived_at = ''
+		JOIN agent_group_members gm ON gm.group_id = gp.group_id
+		WHERE gm.agent_id = ? AND gp.slug = ?`, agentID, slug).Scan(&n)
+	return n > 0, err
+}
+
 // HasAgentPermissionRow reports whether (convID, slug) is GRANTED in the
 // agent_permissions table. A deny-effect row reads as false here — the
 // daemon's per-agent override lookup wants "does an additive grant
@@ -564,7 +644,7 @@ func CreateAgentGroupWithParent(name, descr, parentName string) (int64, error) {
 
 // CreateAgentGroupFrom inserts a new group named `name` that carries
 // every configurable setting from `src` — descr, default cwd / context
-// / profile, the max-members cap and the notify switch. created_at is
+// / profile, live group permissions, the max-members cap and the notify switch. created_at is
 // stamped fresh and the new group comes up active (archived_at left
 // zero) regardless of src's archived state, so cloning an archived
 // group yields a live one. Returns the new group's ID.
@@ -629,6 +709,16 @@ func CreateAgentGroupFrom(name string, src AgentGroup) (int64, error) {
 	id, err := res.LastInsertId()
 	if err != nil {
 		return 0, err
+	}
+	// Group permissions are live group configuration, so a config clone carries
+	// them even when member agents are not cloned.
+	if src.ID > 0 {
+		if _, err := tx.Exec(`
+			INSERT INTO agent_group_permissions (group_id, slug, granted_at, granted_by)
+			SELECT ?, slug, ?, 'group-clone' FROM agent_group_permissions WHERE group_id = ?`,
+			id, time.Now().Format(time.RFC3339Nano), src.ID); err != nil {
+			return 0, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, err

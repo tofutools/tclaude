@@ -537,12 +537,19 @@ mode of, and remove links here.
 ### Permissions
 
 Every permission slug, expandable to the list of agents that currently hold it
-(via defaults, per-conv grants, or active sudo elevations).
+(via defaults, active-group grants, per-conv grants, or active sudo elevations).
 
 ### Slug registry
 
 The full registry of known permission slugs with their descriptions — the
 browser equivalent of `tclaude agent permissions slugs`.
+
+Each real group's ⚙ menu also has **🔑 group permissions…**. These are live,
+additive membership grants: every current member receives the selected slugs
+immediately, and leaving or archiving the group removes that source. This is
+separate from spawn-profile permissions, which are birth-time agent overrides.
+Group policy is allow-only so membership in several groups composes as a union;
+an explicit Deny on an individual agent still wins.
 
 ### Messages
 

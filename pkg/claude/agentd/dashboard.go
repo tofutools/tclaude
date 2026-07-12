@@ -1093,14 +1093,15 @@ type snapshotPermissionsView struct {
 }
 
 type dashboardGroup struct {
-	Name           string `json:"name"`
-	Descr          string `json:"descr"`
-	DefaultCwd     string `json:"default_cwd"`     // pre-fills the spawn form's cwd; "" = none
-	DefaultContext string `json:"default_context"` // shared startup context injected into spawned agents; "" = none
-	DefaultProfile string `json:"default_profile"` // spawn profile whose launch fields fill blank spawn fields for this group's agents; "" = none (the spawn default's single source — the vestigial default_model was dropped, JOH-220)
-	SandboxProfile string `json:"sandbox_profile"` // filesystem/environment profile assigned to this group; "" = inherit global
-	MaxMembers     int    `json:"max_members"`     // hard member cap; 0 = unlimited. A spawn that would exceed it is refused.
-	NotifyEnabled  bool   `json:"notify_enabled"`  // group OS-notification switch; false mutes every member (per-agent 'on' still overrides)
+	Name           string   `json:"name"`
+	Descr          string   `json:"descr"`
+	DefaultCwd     string   `json:"default_cwd"`     // pre-fills the spawn form's cwd; "" = none
+	DefaultContext string   `json:"default_context"` // shared startup context injected into spawned agents; "" = none
+	DefaultProfile string   `json:"default_profile"` // spawn profile whose launch fields fill blank spawn fields for this group's agents; "" = none (the spawn default's single source — the vestigial default_model was dropped, JOH-220)
+	SandboxProfile string   `json:"sandbox_profile"` // filesystem/environment profile assigned to this group; "" = inherit global
+	Permissions    []string `json:"permissions"`     // live additive grants held by current group members
+	MaxMembers     int      `json:"max_members"`     // hard member cap; 0 = unlimited. A spawn that would exceed it is refused.
+	NotifyEnabled  bool     `json:"notify_enabled"`  // group OS-notification switch; false mutes every member (per-agent 'on' still overrides)
 	// RemoteControlPolicy is the group's remote-control policy that overrides a
 	// spawn profile's remote-control default (JOH-262): "inherit" (defer to the
 	// profile), "optin" (force Remote Access on) or "deny" (force it off).
@@ -1202,7 +1203,7 @@ type dashboardAgent struct {
 	State       agentState           `json:"state"`
 	Groups      []string             `json:"groups"`
 	OwnedGroups []string             `json:"owned_groups"`          // subset of Groups the agent owns; UI tags these distinctly
-	Effective   []string             `json:"effective"`             // perms = union(defaults, per-conv grants)
+	Effective   []string             `json:"effective"`             // perms = (defaults ∪ active-group grants ∪ per-conv grants) − per-conv denies
 	ActiveSudo  []dashboardSudoEntry `json:"active_sudo,omitempty"` // current sudo grants (slug + id + remaining); empty when none
 	// Notify is the per-agent override ("on"/"off", "" = inherit);
 	// NotifyEffective folds the agent + group levels together (the
@@ -1841,11 +1842,13 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// so a parent_id with no live group simply doesn't resolve (child stays
 	// top-level) — the FK's ON DELETE SET NULL should already prevent that.
 	groupNameByID := make(map[int64]string, len(groups))
+	groupGrantsByConv := map[string][]string{}
 	for _, g := range groups {
 		groupNameByID[g.ID] = g.Name
 	}
 	for _, g := range groups {
-		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, DefaultCwd: g.DefaultCwd, DefaultContext: g.DefaultContext, DefaultProfile: g.DefaultProfile, SandboxProfile: g.SandboxProfile, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl), Mission: g.Mission, SourceTemplate: g.SourceTemplate, Scribe: isScribeGroup(g), Members: []dashboardMember{}}
+		groupPermissions, _ := db.ListAgentGroupPermissions(g.ID)
+		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, DefaultCwd: g.DefaultCwd, DefaultContext: g.DefaultContext, DefaultProfile: g.DefaultProfile, SandboxProfile: g.SandboxProfile, Permissions: groupPermissions, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl), Mission: g.Mission, SourceTemplate: g.SourceTemplate, Scribe: isScribeGroup(g), Members: []dashboardMember{}}
 		if g.ParentGroupID != nil {
 			dg.Parent = groupNameByID[*g.ParentGroupID]
 		}
@@ -1862,6 +1865,11 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			dg.Waves = wv
 		}
 		members := membersByGroup[g.ID]
+		if !g.IsArchived() {
+			for _, m := range members {
+				groupGrantsByConv[m.ConvID] = append(groupGrantsByConv[m.ConvID], groupPermissions...)
+			}
+		}
 		// Pre-load the owner set so we can tag members who are also
 		// owners. Mirrors handleGroupMembersList in handlers.go.
 		ownerSet := map[string]bool{}
@@ -2035,7 +2043,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		if supersededSet[a.ConvID] {
 			continue
 		}
-		// Effective = (defaults ∪ grant-overrides) − deny-overrides.
+		// Effective = (defaults ∪ active-group grants ∪ grant-overrides)
+		// − deny-overrides.
 		// Defaults come from config; per-conv grant/deny overrides from
 		// agent_permissions. A deny override subtracts a slug the
 		// defaults would otherwise grant — mirroring resolvePermission.
@@ -2055,6 +2064,9 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			merged = append(merged, s)
 		}
 		for _, s := range defaults {
+			addEffective(s)
+		}
+		for _, s := range groupGrantsByConv[a.ConvID] {
 			addEffective(s)
 		}
 		for _, s := range out.Permissions.Grants[a.ConvID] {

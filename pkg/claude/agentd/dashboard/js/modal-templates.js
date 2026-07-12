@@ -2930,6 +2930,7 @@ function renderGroupClonePreview(g, withAgents, copyOwners) {
     + orNone(g.descr, '📝 description')
     + row('📋 startup context', ctxLen > 0 ? `${ctxLen} chars` : 'none', ctxLen === 0)
     + orNone(g.default_profile, '🧠 profile')
+    + row('🔑 group permissions', (g.permissions || []).length ? `${g.permissions.length}` : 'none', !(g.permissions || []).length)
     + row('👥 max members', g.max_members ? String(g.max_members) : 'unlimited', !g.max_members)
     + row('🔔 notifications', g.notify_enabled ? 'on' : 'off')
     + row('👤 owners', ownerVal, ownerCount === 0 || !copyOwners)
