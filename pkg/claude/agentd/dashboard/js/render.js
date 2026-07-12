@@ -1086,8 +1086,9 @@ function usageBar(pct) {
 }
 
 // usageWindowHTML renders one rolling-limit window: label, coloured
-// mini bar, percent, and the remaining-time hint.
-function usageWindowHTML(label, win) {
+// mini bar, percent, and the remaining-time hint. A hidden window keeps the
+// same geometry so a missing Codex limit does not shift the following column.
+function usageWindowHTML(label, win, hidden) {
   const pct = win.pct || 0;
   // Always emit the .urem column, even when a window has no remaining-time
   // text. In the two-line Claude/Codex layout .urem carries a fixed min-width
@@ -1102,7 +1103,8 @@ function usageWindowHTML(label, win) {
   // that throws off the monospace column widths in the two-line layout.
   const remText = win.remaining ? '(' + esc(win.remaining) + ')' : '';
   const rem = '<span class="urem">' + remText + '</span>';
-  return '<span class="uw"><span class="ulabel">' + label + '</span>'
+  const attrs = hidden ? ' class="uw umissing" aria-hidden="true"' : ' class="uw"';
+  return '<span' + attrs + '><span class="ulabel">' + label + '</span>'
     + '<span class="ubar">' + usageBar(pct) + '</span>'
     + '<span class="upct">' + Math.round(pct) + '%</span>' + rem + '</span>';
 }
@@ -1140,21 +1142,16 @@ function costTokenHTML(today, mtd) {
 // both share the {available, five_hour, seven_day} shape). Returns an
 // array of token strings, empty when the source reports nothing.
 //
-// When the source is available it always emits BOTH windows — a missing
-// five_hour/seven_day renders as a 0% placeholder bar rather than being
-// dropped. The Claude and Codex rows are stacked and column-aligned (see
-// renderUsage), so the two rows MUST carry the same window slots or they
-// desync: a row with only a 7d token would slide its 7d under the other
-// row's 5h. The Go snapshot already pairs the windows ("show both or
-// neither" — pairUsageWindows zero-fills the absent one), but rendering
-// the placeholder here too keeps the layout aligned independent of that
-// guarantee — better a little too much usage data than a misaligned row.
-function subscriptionWindowsHTML(src) {
+// When the source is available it always emits BOTH window slots. Claude's
+// missing windows remain visible 0% placeholders. Codex can omit a limit
+// entirely (for example, the current weekly-only plan); hide that placeholder
+// while retaining its geometry so the 7d window remains aligned with Claude.
+function subscriptionWindowsHTML(src, hideMissing) {
   const wins = [];
   if (src && src.available) {
     const zero = { pct: 0, remaining: '' };
-    wins.push(usageWindowHTML('5h', src.five_hour || zero));
-    wins.push(usageWindowHTML('7d', src.seven_day || zero));
+    wins.push(usageWindowHTML('5h', src.five_hour || zero, hideMissing && !src.five_hour));
+    wins.push(usageWindowHTML('7d', src.seven_day || zero, hideMissing && !src.seven_day));
   }
   return wins;
 }
@@ -1188,7 +1185,7 @@ function renderUsage(u) {
 
   const claudeWins = subscriptionWindowsHTML(u);
   if (claudeWins.length) titles.push('Claude subscription usage limits — 5-hour and 7-day rolling windows');
-  const codexWins = subscriptionWindowsHTML(u && u.codex);
+  const codexWins = subscriptionWindowsHTML(u && u.codex, true);
   if (codexWins.length) titles.push('Codex subscription usage limits — 5-hour and weekly rolling windows');
 
   const mtd = Number((u && u.total_cost_usd) || 0);

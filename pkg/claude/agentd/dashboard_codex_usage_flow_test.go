@@ -86,6 +86,32 @@ func TestDashboardCodexUsage_ReadsSQLiteCache(t *testing.T) {
 	assert.Equal(t, 40.0, snap.Usage.Codex.SevenDay.Pct)
 }
 
+// Current Codex plans can report only a weekly limit: it moves into the
+// primary rollout slot and secondary is null. The duration-based parser still
+// classifies it as weekly, and the API must preserve the absent 5h window so
+// the browser can hide that slot instead of claiming a synthetic 0% limit.
+func TestDashboardCodexUsage_WeeklyOnlyPreservesMissingFiveHour(t *testing.T) {
+	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restoreURL)
+
+	f := newFlow(t)
+	cx := testharness.NewCodexSim(t, f.World.HomeDir, f.World.HomeDir)
+	require.NoError(t, cx.Start())
+	usage := testharness.CodexTokenUsage{InputTokens: 100, OutputTokens: 20, TotalTokens: 120}
+	require.NoError(t, cx.WriteTokenCountRateLimits(usage, usage,
+		&testharness.CodexRateLimitWindowSeed{UsedPercent: 48, WindowMinutes: 10080, ResetsAt: time.Now().Add(5 * 24 * time.Hour)},
+		nil,
+	))
+
+	agentd.RefreshCodexUsageForTest()
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+
+	require.NotNil(t, snap.Usage.Codex)
+	assert.Nil(t, snap.Usage.Codex.FiveHour, "an unreported 5h limit stays absent on the API")
+	require.NotNil(t, snap.Usage.Codex.SevenDay)
+	assert.Equal(t, 48.0, snap.Usage.Codex.SevenDay.Pct)
+}
+
 // Scenario: Codex usage must NOT vanish just because Codex has been idle a
 // while. Unlike the Claude readout (kept fresh by a network poller), Codex
 // figures come from rollouts that only update when Codex runs — so the readout

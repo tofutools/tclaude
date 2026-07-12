@@ -1468,6 +1468,10 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 #usage { font-size: 11px; color: #7d8590; display: flex; align-items: center; gap: 12px; }
 #usage.na { color: #6e7681; font-style: italic; }
 #usage .uw { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+/* An unavailable Codex window still occupies its fixed-width slot so the
+   following window stays aligned with the Claude row, but contributes no
+   misleading synthetic 0% bar. */
+#usage .uw.umissing { visibility: hidden; }
 #usage .ulabel { color: #7d8590; }
 #usage .ubar { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: -1px; }
 /* The bar's filled and empty cells use the SAME block glyph (█),
