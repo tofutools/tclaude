@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -28,6 +29,8 @@ import (
 // agentd/export.go) so `submit` can reject an oversize payload locally instead
 // of streaming it only to be 413'd. Keep the two in sync.
 const maxExportArtifactBytes = 256 << 20 // 256 MiB
+
+var errExportArtifactTooLarge = errors.New("artifact exceeds the 256 MiB limit")
 
 func exportCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
@@ -202,17 +205,29 @@ func buildExportArtifact(files []string, nameOverride string, stderr io.Writer) 
 	// Validate every path up front so a bad path fails before any upload.
 	infos := make([]os.FileInfo, len(files))
 	for i, f := range files {
-		info, err := os.Stat(f)
+		info, err := os.Lstat(f)
 		if err != nil {
 			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return nil, "", "", rcInvalidArg
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			fmt.Fprintf(stderr, "Error: %q is a symlink — attach its resolved file or directory explicitly\n", f)
+			return nil, "", "", rcInvalidArg
+		}
+		if !info.IsDir() && !info.Mode().IsRegular() {
+			fmt.Fprintf(stderr, "Error: %q is not a regular file or directory\n", f)
 			return nil, "", "", rcInvalidArg
 		}
 		infos[i] = info
 	}
 
 	if len(files) == 1 && !infos[0].IsDir() {
-		data, err := os.ReadFile(files[0])
+		data, err := readFileCapped(files[0])
 		if err != nil {
+			if errors.Is(err, errExportArtifactTooLarge) {
+				fmt.Fprintf(stderr, "Error: attachment is over the %d MiB limit\n", maxExportArtifactBytes>>20)
+				return nil, "", "", rcInvalidArg
+			}
 			fmt.Fprintf(stderr, "Error: reading %q: %v\n", files[0], err)
 			return nil, "", "", rcIOFailure
 		}
@@ -225,6 +240,10 @@ func buildExportArtifact(files []string, nameOverride string, stderr io.Writer) 
 
 	data, err := zipPaths(files)
 	if err != nil {
+		if errors.Is(err, errExportArtifactTooLarge) {
+			fmt.Fprintf(stderr, "Error: archive is over the %d MiB limit\n", maxExportArtifactBytes>>20)
+			return nil, "", "", rcInvalidArg
+		}
 		fmt.Fprintf(stderr, "Error: building zip: %v\n", err)
 		return nil, "", "", rcIOFailure
 	}
@@ -249,16 +268,24 @@ func zipFiles(files []string) ([]byte, error) {
 // zipPaths packages files and directories. Directory symlinks are skipped:
 // an artifact should contain the selected tree, not silently escape it.
 func zipPaths(paths []string) ([]byte, error) {
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
+	buf := &cappedArtifactBuffer{limit: maxExportArtifactBytes}
+	zw := zip.NewWriter(buf)
 	seen := make(map[string]int)
+	var uncompressedBytes int64
 	for _, root := range paths {
-		info, err := os.Stat(root)
+		info, err := os.Lstat(root)
 		if err != nil {
 			return nil, err
 		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("%q is a symlink", root)
+		}
 		archiveRoot := uniqueZipName(filepath.Base(filepath.Clean(root)), seen)
 		if !info.IsDir() {
+			uncompressedBytes += info.Size()
+			if uncompressedBytes > maxExportArtifactBytes {
+				return nil, errExportArtifactTooLarge
+			}
 			if err := addZipFile(zw, root, archiveRoot); err != nil {
 				return nil, err
 			}
@@ -277,6 +304,17 @@ func zipPaths(paths []string) ([]byte, error) {
 			if entry.IsDir() {
 				return nil
 			}
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("%q is not a regular file", path)
+			}
+			uncompressedBytes += info.Size()
+			if uncompressedBytes > maxExportArtifactBytes {
+				return errExportArtifactTooLarge
+			}
 			rel, err := filepath.Rel(root, path)
 			if err != nil {
 				return err
@@ -294,17 +332,60 @@ func zipPaths(paths []string) ([]byte, error) {
 }
 
 func addZipFile(zw *zip.Writer, path, entry string) error {
-	content, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
-		return fmt.Errorf("reading %q: %w", path, err)
+		return fmt.Errorf("opening %q: %w", path, err)
+	}
+	defer func() { _ = f.Close() }()
+	if info, err := f.Stat(); err != nil {
+		return err
+	} else if !info.Mode().IsRegular() {
+		return fmt.Errorf("%q is not a regular file", path)
+	} else if info.Size() > maxExportArtifactBytes {
+		return errExportArtifactTooLarge
 	}
 	w, err := zw.CreateHeader(&zip.FileHeader{Name: entry, Method: zip.Deflate})
 	if err != nil {
 		return err
 	}
-	_, err = w.Write(content)
+	_, err = io.Copy(w, f)
 	return err
 }
+
+func readFileCapped(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, maxExportArtifactBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxExportArtifactBytes {
+		return nil, errExportArtifactTooLarge
+	}
+	return data, nil
+}
+
+type cappedArtifactBuffer struct {
+	buf   bytes.Buffer
+	limit int
+}
+
+func (b *cappedArtifactBuffer) Write(p []byte) (int, error) {
+	remaining := b.limit - b.buf.Len()
+	if remaining <= 0 {
+		return 0, errExportArtifactTooLarge
+	}
+	if len(p) > remaining {
+		n, _ := b.buf.Write(p[:remaining])
+		return n, errExportArtifactTooLarge
+	}
+	return b.buf.Write(p)
+}
+
+func (b *cappedArtifactBuffer) Bytes() []byte { return b.buf.Bytes() }
 
 // uniqueZipName returns base, or base with a "-N" suffix before the extension
 // if base was already used, recording the chosen name in seen.

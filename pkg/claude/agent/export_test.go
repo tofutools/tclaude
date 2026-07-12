@@ -84,6 +84,26 @@ func TestBuildExportArtifact_DirectoryPackaged(t *testing.T) {
 	assert.Equal(t, filepath.Base(dir)+"/result.txt", zr.File[0].Name)
 }
 
+func TestBuildExportArtifact_SymlinkedDirectoryRejected(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "dist-real")
+	require.NoError(t, os.Mkdir(target, 0o755))
+	link := filepath.Join(dir, "dist")
+	require.NoError(t, os.Symlink(target, link))
+	var stderr bytes.Buffer
+	_, _, _, rc := buildExportArtifact([]string{link}, "", &stderr)
+	assert.Equal(t, rcInvalidArg, rc)
+	assert.Contains(t, stderr.String(), "symlink")
+}
+
+func TestCappedArtifactBufferStopsBeforeGrowthPastLimit(t *testing.T) {
+	b := &cappedArtifactBuffer{limit: 4}
+	n, err := b.Write([]byte("abcdef"))
+	assert.Equal(t, 4, n)
+	assert.ErrorIs(t, err, errExportArtifactTooLarge)
+	assert.Equal(t, []byte("abcd"), b.Bytes())
+}
+
 func TestZipFiles_DuplicateBaseNamesDisambiguated(t *testing.T) {
 	d1 := t.TempDir()
 	d2 := t.TempDir()

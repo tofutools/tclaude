@@ -393,6 +393,7 @@ func runServe(p *serveParams) error {
 	// jobs whose agent never delivered, and TTL-prunes terminal jobs + their
 	// on-disk artifacts under ~/.tclaude/exports. Shares the stop channel.
 	startExportJobsCleanup(cronStop)
+	startHumanMessageAttachmentCleanup(cronStop)
 
 	// Pending-spawn sweeper. Finishes enrollment for non-blocking spawns
 	// whose conv-id materialised only after the spawn returned PENDING —

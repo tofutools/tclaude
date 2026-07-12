@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -73,6 +74,11 @@ const (
 const maxNotifyHumanRequestBytes = 6*(maxNotifyHumanBodyLen+maxNotifyHumanSubjectLen) + 1024
 
 const maxNotifyHumanAttachmentBytes = 256 << 20
+
+var (
+	humanMessageAttachmentsMu             sync.Mutex
+	humanMessageAttachmentCleanupInterval = 10 * time.Minute
+)
 
 // handleNotifyHuman serves POST /v1/notify-human — the daemon side of
 // `tclaude agent notify-human`. It gates via requireNotifyHumanPermission,
@@ -174,36 +180,42 @@ func handleNotifyHumanAttachment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "empty", "attachment is empty")
 		return
 	}
-	id, fromTitle, groupName, err := insertHumanMessageRow(callerConv, meta.Subject, meta.Body, "", "", "")
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "io", "record message: "+err.Error())
-		return
-	}
-	dir := humanMessageAttachmentDir(id)
-	path := filepath.Join(dir, meta.Name)
 	contentType := strings.TrimSpace(r.Header.Get("Content-Type"))
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
-	cleanup := func() {
-		_, _ = db.DeleteHumanMessage(id)
-		_ = os.RemoveAll(dir)
-	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		cleanup()
+	humanMessageAttachmentsMu.Lock()
+	defer humanMessageAttachmentsMu.Unlock()
+	base := humanMessageAttachmentsBaseDir()
+	if err := os.MkdirAll(base, 0o700); err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "create attachment directory: "+err.Error())
 		return
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		cleanup()
+	f, err := os.CreateTemp(base, "artifact-*")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "create attachment file: "+err.Error())
+		return
+	}
+	path := f.Name()
+	if err = f.Chmod(0o600); err == nil {
+		_, err = f.Write(data)
+	}
+	closeErr := f.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		_ = os.Remove(path)
 		writeError(w, http.StatusInternalServerError, "io", "store attachment: "+err.Error())
 		return
 	}
-	if err := db.InsertHumanMessageAttachment(&db.HumanMessageAttachment{
-		MessageID: id, Filename: meta.Name, ContentType: contentType,
+	message, fromTitle, groupName := newHumanMessageRow(callerConv, meta.Subject, meta.Body, "", "", "")
+	id, err := db.InsertHumanMessageWithAttachment(message, &db.HumanMessageAttachment{
+		Filename: meta.Name, ContentType: contentType,
 		SizeBytes: int64(len(data)), StoragePath: path,
-	}); err != nil {
-		cleanup()
+	})
+	if err != nil {
+		_ = os.Remove(path)
 		writeError(w, http.StatusInternalServerError, "io", "record attachment: "+err.Error())
 		return
 	}
@@ -211,8 +223,82 @@ func handleNotifyHumanAttachment(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "delivered": true, "attachment": meta.Name})
 }
 
-func humanMessageAttachmentDir(id int64) string {
-	return filepath.Join(config.DataDir(), "human-message-files", strconv.FormatInt(id, 10))
+func humanMessageAttachmentsBaseDir() string {
+	return filepath.Join(config.DataDir(), "human-message-files")
+}
+
+func removeHumanMessageAttachmentPaths(paths []string) {
+	humanMessageAttachmentsMu.Lock()
+	defer humanMessageAttachmentsMu.Unlock()
+	for _, path := range paths {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			slog.Warn("human message attachment: remove failed; reconciler will retry",
+				"path", path, "error", err)
+		}
+	}
+}
+
+// startHumanMessageAttachmentCleanup reconciles private files against the DB
+// immediately at daemon startup and periodically thereafter. It recovers both
+// sides of the filesystem/SQLite crash boundary: an upload that wrote bytes but
+// never committed metadata, and a deletion whose post-commit Remove failed.
+func startHumanMessageAttachmentCleanup(stop <-chan struct{}) {
+	go func() {
+		runHumanMessageAttachmentCleanup()
+		ticker := time.NewTicker(humanMessageAttachmentCleanupInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				runHumanMessageAttachmentCleanup()
+			}
+		}
+	}()
+}
+
+func runHumanMessageAttachmentCleanup() {
+	humanMessageAttachmentsMu.Lock()
+	defer humanMessageAttachmentsMu.Unlock()
+	paths, err := db.ListHumanMessageAttachmentPaths()
+	if err != nil {
+		slog.Warn("human message attachment: reconciliation list failed", "error", err)
+		return // fail closed: never delete files without an authoritative mark set
+	}
+	referenced := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		referenced[filepath.Clean(path)] = struct{}{}
+	}
+	base := humanMessageAttachmentsBaseDir()
+	var dirs []string
+	err = filepath.WalkDir(base, func(path string, entry os.DirEntry, walkErr error) error {
+		if errors.Is(walkErr, os.ErrNotExist) {
+			return nil
+		}
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			if path != base {
+				dirs = append(dirs, path)
+			}
+			return nil
+		}
+		if _, ok := referenced[filepath.Clean(path)]; ok {
+			return nil
+		}
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			slog.Warn("human message attachment: remove orphan failed", "path", path, "error", err)
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		slog.Warn("human message attachment: reconciliation walk failed", "error", err)
+	}
+	for i := len(dirs) - 1; i >= 0; i-- {
+		_ = os.Remove(dirs[i]) // succeeds only when the legacy directory is empty
+	}
 }
 
 // recordHumanMessage is the daemon-internal half of notify-human. Process
@@ -234,9 +320,18 @@ func recordHumanMessageWithProcess(fromConv, subject, body, runID, nodeID, comma
 }
 
 func insertHumanMessageRow(fromConv, subject, body, runID, nodeID, commandID string) (int64, string, string, error) {
+	m, fromTitle, groupName := newHumanMessageRow(fromConv, subject, body, runID, nodeID, commandID)
+	id, err := db.InsertHumanMessage(m)
+	if err != nil {
+		return 0, "", "", err
+	}
+	return id, fromTitle, groupName, nil
+}
+
+func newHumanMessageRow(fromConv, subject, body, runID, nodeID, commandID string) (*db.HumanMessage, string, string) {
 	fromTitle := notifyHumanCallerTitle(fromConv)
 	groupName := notifyHumanCallerGroup(fromConv)
-	id, err := db.InsertHumanMessage(&db.HumanMessage{
+	return &db.HumanMessage{
 		FromConv:         fromConv,
 		FromTitle:        fromTitle,
 		GroupName:        groupName,
@@ -246,11 +341,7 @@ func insertHumanMessageRow(fromConv, subject, body, runID, nodeID, commandID str
 		ProcessRunID:     runID,
 		ProcessNodeID:    nodeID,
 		ProcessCommandID: commandID,
-	})
-	if err != nil {
-		return 0, "", "", err
-	}
-	return id, fromTitle, groupName, nil
+	}, fromTitle, groupName
 }
 
 func dispatchHumanMessageNotification(fromConv, fromTitle, groupName, subject, body string) {
@@ -507,21 +598,12 @@ func handleDashboardHumanMessagesClear(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
 		return
 	}
-	rows, err := db.ListHumanMessages()
+	n, paths, err := db.DeleteReadHumanMessagesWithAttachments()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	n, err := db.DeleteReadHumanMessages()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	for _, m := range rows {
-		if m.IsRead() {
-			_ = os.RemoveAll(humanMessageAttachmentDir(m.ID))
-		}
-	}
+	removeHumanMessageAttachmentPaths(paths)
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": n})
 }
 
@@ -551,14 +633,12 @@ func handleDashboardHumanMessagesDelete(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if len(body.IDs) > 0 {
-		n, err := db.DeleteHumanMessages(body.IDs)
+		n, paths, err := db.DeleteHumanMessagesWithAttachments(body.IDs)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		for _, id := range body.IDs {
-			_ = os.RemoveAll(humanMessageAttachmentDir(id))
-		}
+		removeHumanMessageAttachmentPaths(paths)
 		writeJSON(w, http.StatusOK, map[string]any{"deleted": n})
 		return
 	}
@@ -566,16 +646,12 @@ func handleDashboardHumanMessagesDelete(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "id or ids is required", http.StatusBadRequest)
 		return
 	}
-	deleted, err := db.DeleteHumanMessage(body.ID)
+	n, paths, err := db.DeleteHumanMessagesWithAttachments([]int64{body.ID})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	n := 0
-	if deleted {
-		n = 1
-		_ = os.RemoveAll(humanMessageAttachmentDir(body.ID))
-	}
+	removeHumanMessageAttachmentPaths(paths)
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": n})
 }
 

@@ -400,6 +400,12 @@ func SetHumanMessageNotifierForTest(fn func(senderSessionID, fromTitle, group, s
 	return func() { humanMsgNotify = prev }
 }
 
+// RunHumanMessageAttachmentCleanupForTest runs the filesystem/DB reconciler
+// synchronously for flow coverage.
+func RunHumanMessageAttachmentCleanupForTest() {
+	runHumanMessageAttachmentCleanup()
+}
+
 // SetClipboardWriterForTest swaps the platform clipboard-write seam so a
 // flow test can assert that handleClipboard reached the copy path with the
 // exact text — without execing a real wl-copy/xclip/pbcopy/clip.exe (which

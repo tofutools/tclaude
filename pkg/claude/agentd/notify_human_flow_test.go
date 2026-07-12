@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -55,6 +56,14 @@ func TestNotifyHuman_AttachmentDownloadAndDelete(t *testing.T) {
 	require.Equal(t, http.StatusOK, download.Code, download.Body.String())
 	assert.Equal(t, "# Result\n\nDone.\n", download.Body.String())
 	assert.Contains(t, download.Header().Get("Content-Disposition"), "report.md")
+
+	orphan := filepath.Join(filepath.Dir(storedPath), "artifact-crash-orphan")
+	require.NoError(t, os.WriteFile(orphan, []byte("orphan"), 0o600))
+	agentd.RunHumanMessageAttachmentCleanupForTest()
+	_, err = os.Stat(orphan)
+	assert.True(t, os.IsNotExist(err), "the reconciler removes files with no attachment metadata")
+	_, err = os.Stat(storedPath)
+	require.NoError(t, err, "the reconciler preserves DB-referenced bytes")
 
 	del := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodPost,
 		"/api/human-messages/delete", map[string]any{"id": msgs[0].ID}))

@@ -566,6 +566,9 @@ into its private data directory, so remote dashboards download through an
 authenticated route rather than receiving access to the agent's filesystem.
 Deleting the message deletes its stored artifact too.
 
+After upgrading tclaude, run `tclaude setup --install-agent-skills` to refresh
+the bundled `human-notify` skill so agents discover the `--attach` workflow.
+
 ### Debug
 
 Daemon self-diagnostics — hidden by default; enable it with the **Debug tab**
