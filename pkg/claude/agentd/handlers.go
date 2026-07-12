@@ -2601,6 +2601,14 @@ func isConvOnlineIn(convID string, alive map[string]struct{}) bool {
 	if err != nil {
 		return false
 	}
+	return isConvOnlineInSessions(candidates, alive)
+}
+
+// isConvOnlineInSessions is isConvOnlineIn over an already-fetched session
+// slice (most-recent-first, as FindSessionsByConvID returns). The dashboard
+// snapshot's per-request batch loader (TCL-368) resolves liveness through it so
+// a conv's rows are read once for the whole poll instead of per surface.
+func isConvOnlineInSessions(candidates []*db.SessionRow, alive map[string]struct{}) bool {
 	for _, c := range candidates {
 		if c.TmuxSession == "" {
 			continue

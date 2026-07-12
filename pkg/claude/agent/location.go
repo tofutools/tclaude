@@ -77,12 +77,49 @@ func (l Location) Moved() bool {
 // where an agent is working should route through it so they all pick
 // up directory/branch changes uniformly.
 func ResolveLocation(convID string) Location {
-	var loc Location
-
+	var startupDir string
 	if sess, err := db.FindSessionByConvID(convID); err == nil && sess != nil {
-		loc.StartupDir = sess.Cwd
+		startupDir = sess.Cwd
 	}
 	row := FreshConvRowResolved(convID)
+
+	workdir, _ := db.GetAgentWorkdir(convID)
+	// worktree_root is unset on a row from a pre-v28 hook, or one whose
+	// edit-time git resolution failed. Resolve the repo root on demand so
+	// the current dir is the repo root, not a deep sub-path — then heal the
+	// row so subsequent reads stay pure DB lookups (the v28 no-git-per-
+	// refresh goal). This git shell-out is the reason ResolveLocation is the
+	// CLI-surface resolver; the dashboard hot path uses
+	// ResolveLocationFromParts with batch-loaded rows and never heals here
+	// (TCL-367). Injecting the healed root into the workdir before the pure
+	// pass keeps the resolved Location identical to the pre-split behaviour.
+	if workdir.Dir != "" && workdir.WorktreeRoot == "" {
+		if root, branch := session.GitLocationOf(workdir.Dir); root != "" {
+			workdir.WorktreeRoot = root
+			workdir.Branch = branch
+			_ = db.HealAgentWorkdirGit(convID, root, branch)
+		}
+	}
+
+	workspace, _ := db.GetAgentWorkspace(convID)
+	return ResolveLocationFromParts(startupDir, row, workdir, workspace)
+}
+
+// ResolveLocationFromParts assembles a Location from already-fetched pieces —
+// pure: no DB read, no .jsonl rescan, no git shell-out. It is the resolver the
+// dashboard snapshot's per-request batch loader calls (TCL-367/TCL-368): the
+// caller bulk-loads sessions.cwd (startupDir), the conv_index row, the
+// agent_workdir row and the agent_workspace row once, then resolves every conv
+// through this function with zero per-conv queries.
+//
+// The one behavioural difference from ResolveLocation is the legacy
+// worktree_root fallback: a workdir row with a Dir but no WorktreeRoot degrades
+// to Dir here (no on-demand git resolution / row heal). ResolveLocation keeps
+// that git branch for the CLI surfaces — where the fsnotify monitor may not be
+// running — by healing the workdir before it delegates here, so a healed row
+// arrives with WorktreeRoot already populated and both paths agree.
+func ResolveLocationFromParts(startupDir string, row *db.ConvIndexRow, workdir db.AgentWorkdir, workspace db.AgentWorkspace) Location {
+	loc := Location{StartupDir: startupDir}
 
 	// Track the timestamp of the writer that last refreshed the
 	// launch-dir branch claim, so agent_workspace can supersede it
@@ -112,27 +149,17 @@ func ResolveLocation(convID string) Location {
 	loc.CurrentDir = loc.StartupDir
 
 	moved := false
-	if w, err := db.GetAgentWorkdir(convID); err == nil && w.Dir != "" {
+	if workdir.Dir != "" {
 		loc.Tracked = true
-		loc.EditDir = w.Dir
+		loc.EditDir = workdir.Dir
 		// CurrentDir mirrors the edit dir until a git root is known.
-		loc.CurrentDir = w.Dir
-		workdirBranch := w.Branch
-		switch {
-		case w.WorktreeRoot != "":
-			// A v28+ hook already resolved the git root at edit time.
-			loc.CurrentDir = w.WorktreeRoot
-		default:
-			// worktree_root is unset: a row from a pre-v28 hook, or one
-			// whose edit-time git resolution failed. Resolve the repo
-			// root on demand so the current dir is the repo root, not a
-			// deep sub-path — then heal the row so subsequent reads
-			// stay pure DB lookups (the v28 no-git-per-refresh goal).
-			if root, branch := session.GitLocationOf(w.Dir); root != "" {
-				loc.CurrentDir = root
-				workdirBranch = branch
-				_ = db.HealAgentWorkdirGit(convID, root, branch)
-			}
+		loc.CurrentDir = workdir.Dir
+		workdirBranch := workdir.Branch
+		if workdir.WorktreeRoot != "" {
+			// A v28+ hook (or ResolveLocation's on-demand heal) already
+			// resolved the git root. A legacy row with no worktree_root
+			// keeps CurrentDir == Dir — the hot-path degrade (TCL-367).
+			loc.CurrentDir = workdir.WorktreeRoot
 		}
 		// Only a genuine worktree divergence — the agent edits in a
 		// repo distinct from where Claude Code launched — overrides the
@@ -147,22 +174,20 @@ func ResolveLocation(convID string) Location {
 	// workspace. Only relevant for the launch-dir case (the statusbar
 	// can't see a worktree the agent has moved into via Bash); for that
 	// case, prefer its branch over conv_index when its row is newer.
-	if !moved {
-		if ws, err := db.GetAgentWorkspace(convID); err == nil && ws.ConvID != "" {
-			if ws.Branch != "" && ws.UpdatedAt.After(launchBranchTs) {
-				loc.CurrentBranch = ws.Branch
+	if !moved && workspace.ConvID != "" {
+		if workspace.Branch != "" && workspace.UpdatedAt.After(launchBranchTs) {
+			loc.CurrentBranch = workspace.Branch
+		}
+		// Cwd from the statusbar is CC's launch dir — useful when
+		// sessions.cwd / conv_index.project_path didn't resolve a
+		// startup dir at all (a corrupt early-life conv).
+		if workspace.Cwd != "" && loc.CurrentDir == "" {
+			loc.CurrentDir = workspace.Cwd
+			if loc.StartupDir == "" {
+				loc.StartupDir = workspace.Cwd
 			}
-			// Cwd from the statusbar is CC's launch dir — useful when
-			// sessions.cwd / conv_index.project_path didn't resolve a
-			// startup dir at all (a corrupt early-life conv).
-			if ws.Cwd != "" && loc.CurrentDir == "" {
-				loc.CurrentDir = ws.Cwd
-				if loc.StartupDir == "" {
-					loc.StartupDir = ws.Cwd
-				}
-				if loc.EditDir == "" {
-					loc.EditDir = ws.Cwd
-				}
+			if loc.EditDir == "" {
+				loc.EditDir = workspace.Cwd
 			}
 		}
 	}

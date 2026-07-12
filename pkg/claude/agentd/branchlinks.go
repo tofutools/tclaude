@@ -106,33 +106,51 @@ var branchHistoryPREnrichment bool
 // can't stack a fresh refresh on top of an in-progress one.
 var branchLinkInflight sync.Map
 
-// branchLinksFor resolves the link block for one agent. The current
-// branch always gets a lookup; the startup branch reuses that result
-// when it's the same branch in the same dir (the common case — the
-// agent never moved), and only gets its own lookup when it diverges.
+// branchLinksForRow resolves the link block for one agent from preloaded parts
+// — the dashboard snapshot's hot path (TCL-368). The caller supplies the
+// agent_workspace row it already batch-loaded plus a git_cache map keyed by
+// branch-link cache key, so every slot resolves from memory instead of a
+// per-slot db.LoadGitCache.
 //
-// When the statusbar has published a live agent_workspace snapshot for
-// convID whose branch matches a slot we just resolved, prefer that
-// snapshot's repo/PR over the bl_ cache: the statusbar already paid
-// for `git` + `gh` and stamped its result on CC's render cadence, so
-// it bridges the gap between a branch flip and the next async bl_
-// refresh (5–90s otherwise). The override only applies to the launch
-// dir — agent_workspace never sees a worktree the agent has Bash'ed
-// into, so a moved agent keeps the bl_ lookup for its worktree slot.
-func branchLinksFor(convID string, loc agentLocationView) repoLinksView {
+// The current branch always gets a lookup; the startup branch reuses that
+// result when it's the same branch in the same dir (the common case — the agent
+// never moved), and only gets its own lookup when it diverges. When the
+// statusbar has published a live agent_workspace snapshot for convID whose
+// branch matches a slot, that snapshot's repo/PR wins over the bl_ cache: the
+// statusbar already paid for `git` + `gh` and stamped its result on CC's render
+// cadence, bridging the gap between a branch flip and the next async bl_ refresh
+// (5–90s otherwise). The override only applies to the launch dir —
+// agent_workspace never sees a worktree the agent has Bash'ed into, so a moved
+// agent keeps the bl_ lookup for its worktree slot.
+//
+// The stale/miss background refresh still fires — lookupBranchLinkRow forwards
+// to scheduleBranchLinkRefresh — so a cold or aged entry keeps driving the async
+// git/gh resolution across the 2s poll.
+func branchLinksForRow(convID string, loc agentLocationView, ws db.AgentWorkspace, gitCache map[string]*db.GitCacheRow) repoLinksView {
+	return branchLinksForParts(convID, loc, ws, func(repoDir, branch string) (string, int, string, string) {
+		return lookupBranchLinkRow(gitCache, repoDir, branch)
+	})
+}
+
+// branchLinksForParts is the shared core of the branch-link resolution: it
+// resolves the current + startup link slots through the supplied lookup
+// function, then applies the live agent_workspace override. The per-slot link
+// source (a preloaded git_cache map, via lookupBranchLinkRow) and the workspace
+// row are threaded in as arguments so the resolution + override logic stays a
+// single implementation.
+func branchLinksForParts(convID string, loc agentLocationView, ws db.AgentWorkspace, lookup func(repoDir, branch string) (string, int, string, string)) repoLinksView {
 	var v repoLinksView
-	v.BranchURL, v.BranchPRNumber, v.BranchPRURL, v.BranchPRState = lookupBranchLink(loc.CurrentDir, loc.Branch)
+	v.BranchURL, v.BranchPRNumber, v.BranchPRURL, v.BranchPRState = lookup(loc.CurrentDir, loc.Branch)
 	if loc.StartupBranch == loc.Branch && loc.StartupDir == loc.CurrentDir {
 		v.StartupBranchURL, v.StartupPRNumber, v.StartupPRURL, v.StartupPRState = v.BranchURL, v.BranchPRNumber, v.BranchPRURL, v.BranchPRState
 	} else {
-		v.StartupBranchURL, v.StartupPRNumber, v.StartupPRURL, v.StartupPRState = lookupBranchLink(loc.StartupDir, loc.StartupBranch)
+		v.StartupBranchURL, v.StartupPRNumber, v.StartupPRURL, v.StartupPRState = lookup(loc.StartupDir, loc.StartupBranch)
 	}
 
 	if convID == "" {
 		return v
 	}
-	ws, err := db.GetAgentWorkspace(convID)
-	if err != nil || ws.ConvID == "" || ws.RepoURL == "" || ws.Branch == "" {
+	if ws.ConvID == "" || ws.RepoURL == "" || ws.Branch == "" {
 		return v
 	}
 	webURL := branchWebURL(ws.RepoURL, ws.DefaultBranch, ws.Branch)
@@ -149,20 +167,31 @@ func branchLinksFor(convID string, loc agentLocationView) repoLinksView {
 	return v
 }
 
-// lookupBranchLink returns the web link + PR info for a (repoDir,
-// branch) pair from the DB-backed cache. It NEVER shells out: on a
-// missing or stale entry it schedules an async refresh and returns
-// whatever it has (empty on a cold miss, stale otherwise). A blank
-// repoDir/branch — a detached HEAD, or an agent outside a git repo —
-// resolves to no link.
-func lookupBranchLink(repoDir, branch string) (url string, prNumber int, prURL, prState string) {
+// lookupBranchLinkRow returns the web link + PR info for a (repoDir, branch)
+// pair from a preloaded git_cache map (the snapshot hot path): it derives the
+// cache key, reads the row from the map (nil == miss), and resolves through the
+// shared core — which STILL schedules a background refresh on a stale/missing
+// entry. A blank repoDir/branch — a detached HEAD, or an agent outside a git
+// repo — resolves to no link.
+func lookupBranchLinkRow(gitCache map[string]*db.GitCacheRow, repoDir, branch string) (url string, prNumber int, prURL, prState string) {
 	if repoDir == "" || branch == "" {
 		return "", 0, "", ""
 	}
 	key := branchLinkCacheKey(repoDir, branch)
+	return lookupBranchLinkFromCache(repoDir, branch, key, gitCache[key])
+}
+
+// lookupBranchLinkFromCache is the shared resolution core for a (repoDir,
+// branch) pair given its already-loaded git_cache row (nil == cold miss). It
+// NEVER shells out: on a missing or stale entry it schedules the async refresh
+// and returns whatever the row held (empty on a cold miss, stale otherwise).
+// The refresh side effect is load-bearing — it is what drives PR/branch state
+// forward across the 2s poll — so both the singular and the batch caller route
+// through here to keep it firing.
+func lookupBranchLinkFromCache(repoDir, branch, key string, row *db.GitCacheRow) (url string, prNumber int, prURL, prState string) {
 	var info repoBranchInfo
 	fresh := false
-	if row, err := db.LoadGitCache(key); err == nil && row != nil {
+	if row != nil {
 		if json.Unmarshal(row.Data, &info) == nil {
 			fresh = time.Since(info.FetchedAt) < branchLinkTTL
 		}

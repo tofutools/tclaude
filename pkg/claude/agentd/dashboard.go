@@ -1423,7 +1423,21 @@ type agentState struct {
 // it; per-call fetching defeats the purpose.
 func stateForConvIn(convID string, aliveSet map[string]struct{}) agentState {
 	rows, err := db.FindSessionsByConvID(convID)
-	if err != nil || len(rows) == 0 {
+	if err != nil {
+		return agentState{}
+	}
+	return stateForConvInSessions(rows, aliveSet)
+}
+
+// stateForConvInSessions is stateForConvIn over an already-fetched session
+// slice (most-recent-first, as FindSessionsByConvID returns). The dashboard
+// snapshot's per-request batch loader (TCL-368) resolves each conv's state
+// through it so the conv's rows are read once per poll rather than per surface.
+// Behaviour is identical to stateForConvIn — including the codex read-through
+// (refreshCodexContextSnapshotOnRead) and the per-pick context / exit-reason
+// point reads, which stay per-conv.
+func stateForConvInSessions(rows []*db.SessionRow, aliveSet map[string]struct{}) agentState {
+	if len(rows) == 0 {
 		return agentState{}
 	}
 	pick := rows[0] // already sorted most-recent first
@@ -1571,6 +1585,21 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// agentRows: union of (every group member) + (every conv-id with
 	// explicit grants). Keyed by conv-id so members appearing in
 	// multiple groups dedupe naturally.
+
+	// Load each group's members + owners ONCE. ListAgentGroupMembers used to
+	// run twice per group (the muted-notify pass below + the main group loop),
+	// and ListAgentGroupOwners once in the group loop; keying both by group id
+	// here lets inMutedGroup, the conv-set collect and the group loop all reuse
+	// a single read.
+	membersByGroup := make(map[int64][]*db.AgentGroupMember, len(groups))
+	ownersByGroup := make(map[int64][]*db.AgentGroupOwner, len(groups))
+	for _, g := range groups {
+		members, _ := db.ListAgentGroupMembers(g.ID)
+		membersByGroup[g.ID] = members
+		owners, _ := db.ListAgentGroupOwners(g.ID)
+		ownersByGroup[g.ID] = owners
+	}
+
 	// Notification-filter state: the per-agent overrides plus the set
 	// of convs sitting in at least one muted (non-archived) group.
 	// notifyEffective mirrors notify.AllowedForConv — agent pref wins,
@@ -1582,10 +1611,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		if g.IsArchived() || g.NotifyEnabled {
 			continue
 		}
-		if members, err := db.ListAgentGroupMembers(g.ID); err == nil {
-			for _, m := range members {
-				inMutedGroup[m.ConvID] = true
-			}
+		for _, m := range membersByGroup[g.ID] {
+			inMutedGroup[m.ConvID] = true
 		}
 	}
 	notifyEffective := func(convID string) bool {
@@ -1598,23 +1625,102 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		return !inMutedGroup[convID]
 	}
 
+	// Retired / superseded conv sets, loaded UP FRONT (TCL-369) so addAgent can
+	// skip a retired/superseded conv before paying for its ~13-query row
+	// resolution, rather than building it and discarding it in the output loop.
+	// Both also remain the belt-and-braces roster filter further down.
+	//
+	// Retired ACTORS are demoted — they must never reach out.Agents. The
+	// actor-level roster is keyed on agents.retired_at, which only a human
+	// retire sets (a reincarnate / Claude Code /clear predecessor stays a
+	// generation of its active actor, so it is NOT here).
+	retiredAgents, _ := db.ListRetiredAgents()
+	retiredSet := make(map[string]bool, len(retiredAgents))
+	for _, e := range retiredAgents {
+		retiredSet[e.CurrentConvID] = true
+	}
+	// Superseded conversations — the predecessors of a reincarnation chain —
+	// are NOT agents: their identity moved to the chain head. The actor-level
+	// roster already excludes them (a predecessor is never an active actor's
+	// current conv), so supersededSet is a redundant read-time belt-and-braces
+	// guard — symmetric with retiredSet.
+	supersededSet := map[string]bool{}
+	if successions, err := db.ListAgentConvSuccessions(); err == nil {
+		for _, s := range successions {
+			supersededSet[s.OldConvID] = true
+		}
+	}
+
+	// Every active ACTOR — the canonical roster (JOH-26 PR3b reads the
+	// agent-level roster, one row per live actor at its current conv). Unlike
+	// the old "online ungrouped session" probe, this includes OFFLINE agents: a
+	// conv that was an agent yesterday keeps showing after its tmux pane closed,
+	// instead of silently vanishing. Plain conversations that were never
+	// promoted are not here — they surface in out.Conversations.
+	activeAgents, _ := db.ListActiveAgents()
+
+	// Active sudo grants across every agent. One DB scan; bucketed per conv-id
+	// below for O(1) per-agent Active rendering plus the top-level Sudo[] tab.
+	sudoGrants, _ := db.ListAllActiveSudoGrants()
+
+	// Collect the full conv set the snapshot will render — group members ∪
+	// owners ∪ grant/override holders ∪ active agents ∪ sudo holders — then
+	// batch-load every per-conv table once (TCL-368/TCL-367). rc.viewFor(convID)
+	// returns a memoized row bundle so the member loop, addAgent and the owners
+	// pass share ONE computation instead of ~13 point queries each, and the
+	// location resolves from the batch without a per-poll .jsonl rescan.
+	convSet := map[string]struct{}{}
+	addConv := func(convID string) {
+		if convID != "" {
+			convSet[convID] = struct{}{}
+		}
+	}
+	for _, members := range membersByGroup {
+		for _, m := range members {
+			addConv(m.ConvID)
+		}
+	}
+	for _, owners := range ownersByGroup {
+		for _, o := range owners {
+			addConv(o.ConvID)
+		}
+	}
+	for convID := range allGrants {
+		addConv(convID)
+	}
+	for convID := range allOverrides {
+		addConv(convID)
+	}
+	for _, e := range activeAgents {
+		addConv(e.CurrentConvID)
+	}
+	for _, g := range sudoGrants {
+		addConv(g.ConvID)
+	}
+	convIDs := make([]string, 0, len(convSet))
+	for convID := range convSet {
+		convIDs = append(convIDs, convID)
+	}
+	rc := newSnapshotRowCache(convIDs, aliveSessions)
+
 	// Preload every agent's task-reference link once (a single query)
 	// rather than a lookup per member/agent in this 2s-polled path.
-	// Keyed by agent_id; taskRefFor resolves a conv to its actor first.
+	// Keyed by agent_id; callers pass the row's cached agent_id (from rc)
+	// so no per-row AgentIDForConv query is needed.
 	taskRefs, _ := db.ListAgentTaskRefs()
-	taskRefFor := func(convID string) taskRefView {
-		return taskRefViewFor(taskRefs[peerAgentID(convID)])
+	taskRefFor := func(agentID string) taskRefView {
+		return taskRefViewFor(taskRefs[agentID])
 	}
 	presentedPRs := preloadPresentedPRsForDashboard(time.Now())
-	presentedPRsFor := func(convID string) []presentedPRView {
-		return presentedPRViews(presentedPRs[peerAgentID(convID)])
+	presentedPRsFor := func(agentID string) []presentedPRView {
+		return presentedPRViews(presentedPRs[agentID])
 	}
 	// Same preload discipline as taskRefs: one ListAllAgentTags per snapshot,
 	// keyed by agent_id, looked up per row (not a query per member/agent in
 	// this 2s-polled path). The stored set is already sorted alphabetically.
 	allTags, _ := db.ListAllAgentTags()
-	tagsFor := func(convID string) tagsView {
-		return tagsView{Tags: allTags[peerAgentID(convID)]}
+	tagsFor := func(agentID string) tagsView {
+		return tagsView{Tags: allTags[agentID]}
 	}
 	span.mark("preload")
 
@@ -1623,19 +1729,25 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		if existing, ok := agentRows[convID]; ok {
 			return existing
 		}
-		loc := locationView(convID)
-		links := branchLinksFor(convID, loc)
-		links.PresentedPRs = presentedPRsFor(convID)
+		// TCL-369: a retired/superseded conv never becomes an agent row, so
+		// skip its resolution entirely instead of building it and dropping it
+		// in the output loop. Callers that use the return value nil-check it.
+		if retiredSet[convID] || supersededSet[convID] {
+			return nil
+		}
+		b := rc.viewFor(convID)
+		links := b.Links
+		links.PresentedPRs = presentedPRsFor(b.AgentID)
 		a := &dashboardAgent{
-			AgentID:           peerAgentID(convID),
+			AgentID:           b.AgentID,
 			ConvID:            convID,
-			Title:             agent.CachedTitle(convID),
-			agentLocationView: loc,
+			Title:             b.Title,
+			agentLocationView: b.Loc,
 			repoLinksView:     links,
-			taskRefView:       taskRefFor(convID),
-			tagsView:          tagsFor(convID),
-			Online:            isConvOnlineIn(convID, aliveSessions),
-			State:             stateForConvIn(convID, aliveSessions),
+			taskRefView:       taskRefFor(b.AgentID),
+			tagsView:          tagsFor(b.AgentID),
+			Online:            b.Online,
+			State:             b.State,
 			// init non-nil so JSON serializes [] not null;
 			// the dashboard's JS does .length / .map without a guard.
 			Groups:          []string{},
@@ -1724,46 +1836,47 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		if wv := loadWaveStatus(g.ID); wv != nil {
 			dg.Waves = wv
 		}
-		members, _ := db.ListAgentGroupMembers(g.ID)
+		members := membersByGroup[g.ID]
 		// Pre-load the owner set so we can tag members who are also
 		// owners. Mirrors handleGroupMembersList in handlers.go.
 		ownerSet := map[string]bool{}
-		if owners, err := db.ListAgentGroupOwners(g.ID); err == nil {
-			for _, o := range owners {
-				ownerSet[o.ConvID] = true
-			}
+		for _, o := range ownersByGroup[g.ID] {
+			ownerSet[o.ConvID] = true
 		}
 		memberSet := map[string]bool{}
 		for _, m := range members {
 			memberSet[m.ConvID] = true
-			online := isConvOnlineIn(m.ConvID, aliveSessions)
-			loc := locationView(m.ConvID)
-			links := branchLinksFor(m.ConvID, loc)
-			links.PresentedPRs = presentedPRsFor(m.ConvID)
+			b := rc.viewFor(m.ConvID)
+			links := b.Links
+			links.PresentedPRs = presentedPRsFor(b.AgentID)
 			dg.Members = append(dg.Members, dashboardMember{
-				AgentID:           peerAgentID(m.ConvID),
+				AgentID:           b.AgentID,
 				ConvID:            m.ConvID,
-				Title:             agent.CachedTitle(m.ConvID),
-				CreatedAt:         agent.CachedCreated(m.ConvID),
+				Title:             b.Title,
+				CreatedAt:         b.Created,
 				Role:              m.Role,
 				Descr:             m.Descr,
-				agentLocationView: loc,
+				agentLocationView: b.Loc,
 				repoLinksView:     links,
-				taskRefView:       taskRefFor(m.ConvID),
-				tagsView:          tagsFor(m.ConvID),
-				Online:            online,
+				taskRefView:       taskRefFor(b.AgentID),
+				tagsView:          tagsFor(b.AgentID),
+				Online:            b.Online,
 				Owner:             ownerSet[m.ConvID],
-				State:             stateForConvIn(m.ConvID, aliveSessions),
+				State:             b.State,
 				Notify:            notifyPrefs[m.ConvID],
 				NotifyEffective:   notifyEffective(m.ConvID),
 			})
-			if online {
+			if b.Online {
 				dg.Online++
 			}
-			a := addAgent(m.ConvID)
-			a.Groups = append(a.Groups, g.Name)
-			if ownerSet[m.ConvID] {
-				a.OwnedGroups = append(a.OwnedGroups, g.Name)
+			// addAgent returns nil for a retired/superseded member (TCL-369):
+			// its member row above still renders, but it never joins the
+			// Agents/Ungrouped roster.
+			if a := addAgent(m.ConvID); a != nil {
+				a.Groups = append(a.Groups, g.Name)
+				if ownerSet[m.ConvID] {
+					a.OwnedGroups = append(a.OwnedGroups, g.Name)
+				}
 			}
 		}
 		// Surface owners who aren't members so the list stays
@@ -1773,32 +1886,33 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			if memberSet[ownerConv] {
 				continue
 			}
-			online := isConvOnlineIn(ownerConv, aliveSessions)
-			ownerLoc := locationView(ownerConv)
-			ownerLinks := branchLinksFor(ownerConv, ownerLoc)
-			ownerLinks.PresentedPRs = presentedPRsFor(ownerConv)
+			b := rc.viewFor(ownerConv)
+			ownerLinks := b.Links
+			ownerLinks.PresentedPRs = presentedPRsFor(b.AgentID)
 			dg.Members = append(dg.Members, dashboardMember{
-				AgentID:           peerAgentID(ownerConv),
+				AgentID:           b.AgentID,
 				ConvID:            ownerConv,
-				Title:             agent.CachedTitle(ownerConv),
-				CreatedAt:         agent.CachedCreated(ownerConv),
+				Title:             b.Title,
+				CreatedAt:         b.Created,
 				Role:              "owner",
-				agentLocationView: ownerLoc,
+				agentLocationView: b.Loc,
 				repoLinksView:     ownerLinks,
-				taskRefView:       taskRefFor(ownerConv),
-				tagsView:          tagsFor(ownerConv),
-				Online:            online,
+				taskRefView:       taskRefFor(b.AgentID),
+				tagsView:          tagsFor(b.AgentID),
+				Online:            b.Online,
 				Owner:             true,
-				State:             stateForConvIn(ownerConv, aliveSessions),
+				State:             b.State,
 				Notify:            notifyPrefs[ownerConv],
 				NotifyEffective:   notifyEffective(ownerConv),
 			})
 			// Pure-owners are reachable via this group too — surface
 			// the group on the agent's row in the Agents view so
-			// "what groups can this conv see?" matches reality.
-			a := addAgent(ownerConv)
-			a.Groups = append(a.Groups, g.Name)
-			a.OwnedGroups = append(a.OwnedGroups, g.Name)
+			// "what groups can this conv see?" matches reality. nil for a
+			// retired/superseded owner (TCL-369).
+			if a := addAgent(ownerConv); a != nil {
+				a.Groups = append(a.Groups, g.Name)
+				a.OwnedGroups = append(a.OwnedGroups, g.Name)
+			}
 		}
 		// Default ordering: newest-first by creation time (the Age
 		// column; the JS column sort treats this as the natural order it
@@ -1826,87 +1940,55 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		out.Permissions.Overrides[convID] = copyMap
 	}
 
-	// Every active ACTOR — the canonical roster (JOH-26 PR3b reads the
-	// agent-level roster, one row per live actor at its current conv). Unlike
-	// the old "online ungrouped session" probe, this includes OFFLINE agents: a
-	// conv that was an agent yesterday keeps showing after its tmux pane closed,
-	// instead of silently vanishing. Plain conversations that were never
-	// promoted are not here — they surface in out.Conversations.
-	activeAgents, _ := db.ListActiveAgents()
+	// Register every active actor's current conv on the roster. The set was
+	// loaded up front (activeAgents) so its conv-ids could join the batch; here
+	// we just fold them into agentRows. addAgent skips a retired/superseded conv
+	// (TCL-369) — harmless here, its return value is unused.
 	for _, e := range activeAgents {
 		addAgent(e.CurrentConvID)
 	}
 
-	// Retired ACTORS are demoted — they must never reach out.Agents. The
-	// actor-level roster is keyed on agents.retired_at, which only a human
-	// retire sets (a reincarnate / Claude Code /clear predecessor stays a
-	// generation of its active actor, so it is NOT here). retiredSet is the
-	// belt-and-braces guard for a partially-applied retire, and feeds the
-	// dedicated out.Retired list below.
-	retiredAgents, _ := db.ListRetiredAgents()
-	retiredSet := make(map[string]bool, len(retiredAgents))
-	for _, e := range retiredAgents {
-		retiredSet[e.CurrentConvID] = true
-	}
-
-	// Superseded conversations — the predecessors of a reincarnation chain —
-	// are NOT agents: their identity moved to the chain head. The actor-level
-	// roster already excludes them (a predecessor is never an active actor's
-	// current conv), so supersededSet is now a redundant read-time belt-and-
-	// braces guard — symmetric with retiredSet — kept so a ghost predecessor
-	// never reaches out.Agents / out.Ungrouped even under a partially-applied
-	// rotation.
-	supersededSet := map[string]bool{}
-	if successions, err := db.ListAgentConvSuccessions(); err == nil {
-		for _, s := range successions {
-			supersededSet[s.OldConvID] = true
-		}
-	}
-
-	// Active sudo grants across every agent. One DB scan, then we
-	// bucket per conv-id so the per-agent Active rendering is O(1)
-	// inside the agent loop. The same rows feed the top-level Sudo[]
-	// for the dedicated tab.
+	// Bucket the active sudo grants (loaded up front) per conv-id so the
+	// per-agent Active rendering is O(1) inside the output loop. The same rows
+	// feed the top-level Sudo[] for the dedicated tab.
 	sudoByConv := map[string][]dashboardSudoEntry{}
 	out.Sudo = []dashboardSudoEntry{}
-	if grants, err := db.ListAllActiveSudoGrants(); err == nil {
-		now := time.Now()
-		for _, g := range grants {
-			// Grantee name from the live conv_index cache — custom
-			// title > pending name > summary > first prompt, no .jsonl
-			// rescan. The pending-name tier covers a just-spawned
-			// grantee before its first index event; "(unknown)" means
-			// nothing resolved, which this surface renders as blank.
-			title := agent.CachedTitle(g.ConvID)
-			if title == agent.UnknownTitle {
-				title = ""
-			}
-			remaining := int64(0)
-			if rem := g.ExpiresAt.Sub(now); rem > 0 {
-				remaining = int64(rem.Seconds())
-			}
-			topEntry := dashboardSudoEntry{
-				ID:               g.ID,
-				AgentID:          g.AgentID,
-				ConvID:           g.ConvID,
-				ConvTitle:        title,
-				Slug:             g.Slug,
-				GrantedAt:        g.GrantedAt.Format(time.RFC3339Nano),
-				ExpiresAt:        g.ExpiresAt.Format(time.RFC3339Nano),
-				GrantedBy:        g.GrantedBy,
-				Reason:           g.Reason,
-				RemainingSeconds: remaining,
-			}
-			out.Sudo = append(out.Sudo, topEntry)
-			// On the per-agent slice we omit ConvID — the agent row's
-			// own ConvID already identifies who holds the grant. Saves
-			// bytes on agents with many grants and keeps the JSON
-			// readable in browser devtools.
-			rowEntry := topEntry
-			rowEntry.ConvID = ""
-			rowEntry.AgentID = "" // the agent row already identifies the holder
-			sudoByConv[g.ConvID] = append(sudoByConv[g.ConvID], rowEntry)
+	sudoNow := time.Now()
+	for _, g := range sudoGrants {
+		// Grantee name from the batch-loaded conv_index cache — custom
+		// title > pending name > summary > first prompt, no .jsonl
+		// rescan. The pending-name tier covers a just-spawned
+		// grantee before its first index event; "(unknown)" means
+		// nothing resolved, which this surface renders as blank.
+		title := rc.titleFor(g.ConvID)
+		if title == agent.UnknownTitle {
+			title = ""
 		}
+		remaining := int64(0)
+		if rem := g.ExpiresAt.Sub(sudoNow); rem > 0 {
+			remaining = int64(rem.Seconds())
+		}
+		topEntry := dashboardSudoEntry{
+			ID:               g.ID,
+			AgentID:          g.AgentID,
+			ConvID:           g.ConvID,
+			ConvTitle:        title,
+			Slug:             g.Slug,
+			GrantedAt:        g.GrantedAt.Format(time.RFC3339Nano),
+			ExpiresAt:        g.ExpiresAt.Format(time.RFC3339Nano),
+			GrantedBy:        g.GrantedBy,
+			Reason:           g.Reason,
+			RemainingSeconds: remaining,
+		}
+		out.Sudo = append(out.Sudo, topEntry)
+		// On the per-agent slice we omit ConvID — the agent row's
+		// own ConvID already identifies who holds the grant. Saves
+		// bytes on agents with many grants and keeps the JSON
+		// readable in browser devtools.
+		rowEntry := topEntry
+		rowEntry.ConvID = ""
+		rowEntry.AgentID = "" // the agent row already identifies the holder
+		sudoByConv[g.ConvID] = append(sudoByConv[g.ConvID], rowEntry)
 	}
 	span.mark("roster")
 
