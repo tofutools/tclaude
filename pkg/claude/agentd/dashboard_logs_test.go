@@ -113,6 +113,29 @@ func TestGatherLogRecordKeysSurviveTailCapBoundaryAdvance(t *testing.T) {
 	}
 }
 
+func TestGatherLogRecordKeysSurviveRotationAndNewActiveFile(t *testing.T) {
+	oldLine := jsonLine("2026-07-01T12:00:00.000Z", "INFO", "old physical file")
+	path := writeLog(t, oldLine)
+	before, _, _ := gatherLogRecords(path, false, maxLogReadBytes)
+	if err := os.Rename(path, path+".1"); err != nil {
+		t.Fatal(err)
+	}
+	newLine := jsonLine("2026-07-01T12:00:01.000Z", "INFO", "replacement active file")
+	if err := os.WriteFile(path, []byte(newLine+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	after, _, _ := gatherLogRecords(path, true, maxLogReadBytes)
+	if len(before) != 1 || len(after) != 2 {
+		t.Fatalf("record counts = %d then %d, want 1 then 2", len(before), len(after))
+	}
+	if before[0].key != after[0].key {
+		t.Fatalf("rotated physical file key changed: %q -> %q", before[0].key, after[0].key)
+	}
+	if after[0].key == after[1].key {
+		t.Fatalf("replacement active file reused rotated key %q", after[0].key)
+	}
+}
+
 func TestBuildLogsResponse_LevelMinFilter(t *testing.T) {
 	path := writeLog(t,
 		jsonLine("2026-07-01T12:00:00.000Z", "DEBUG", "d"),

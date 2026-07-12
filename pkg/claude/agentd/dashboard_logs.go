@@ -2,7 +2,6 @@ package agentd
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/common"
@@ -227,34 +227,69 @@ func parseLogLine(line string) logEntryView {
 // readLogTail reads up to maxBytes from the END of the file at path. When
 // the file is larger, it seeks to the tail and drops the leading partial
 // line (the seek lands mid-record), returning truncated=true.
-func readLogTail(path string, maxBytes int64) (data []byte, start int64, truncated bool, err error) {
+func readLogTail(path string, maxBytes int64) (data []byte, start int64, generation string, truncated bool, err error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, 0, false, err
+		return nil, 0, "", false, err
 	}
 	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
-		return nil, 0, false, err
+		return nil, 0, "", false, err
 	}
+	generation = logFileGeneration(info)
 	size := info.Size()
 	if size <= maxBytes {
 		b, err := io.ReadAll(f)
-		return b, 0, false, err
+		return b, 0, generation, false, err
 	}
 	start = size - maxBytes
 	if _, err := f.Seek(start, io.SeekStart); err != nil {
-		return nil, 0, false, err
+		return nil, 0, "", false, err
 	}
 	b, err := io.ReadAll(f)
 	if err != nil {
-		return nil, 0, false, err
+		return nil, 0, "", false, err
 	}
 	if i := bytes.IndexByte(b, '\n'); i >= 0 {
 		b = b[i+1:]
 		start += int64(i + 1)
 	}
-	return b, start, true, nil
+	return b, start, generation, true, nil
+}
+
+type logFileIdentity struct {
+	info  os.FileInfo
+	token uint64
+}
+
+var logFileIdentityRegistry = struct {
+	sync.Mutex
+	next    uint64
+	entries []logFileIdentity
+}{}
+
+// logFileGeneration gives an opened physical file a daemon-local identity.
+// os.SameFile is portable across Linux and macOS, survives a rotation rename,
+// and distinguishes the replacement output.log. The small LRU is comfortably
+// above the maximum simultaneously scanned rotation set.
+func logFileGeneration(info os.FileInfo) string {
+	logFileIdentityRegistry.Lock()
+	defer logFileIdentityRegistry.Unlock()
+	for i, entry := range logFileIdentityRegistry.entries {
+		if os.SameFile(info, entry.info) {
+			logFileIdentityRegistry.entries = append(logFileIdentityRegistry.entries[:i], logFileIdentityRegistry.entries[i+1:]...)
+			logFileIdentityRegistry.entries = append(logFileIdentityRegistry.entries, entry)
+			return strconv.FormatUint(entry.token, 36)
+		}
+	}
+	logFileIdentityRegistry.next++
+	entry := logFileIdentity{info: info, token: logFileIdentityRegistry.next}
+	logFileIdentityRegistry.entries = append(logFileIdentityRegistry.entries, entry)
+	if len(logFileIdentityRegistry.entries) > 256 {
+		logFileIdentityRegistry.entries = logFileIdentityRegistry.entries[1:]
+	}
+	return strconv.FormatUint(entry.token, 36)
 }
 
 type logRecord struct {
@@ -289,7 +324,7 @@ func gatherLogRecords(path string, includeRotated bool, maxBytes int64) (records
 			truncated = true
 			break
 		}
-		data, start, tr, err := readLogTail(f, budget)
+		data, start, generation, tr, err := readLogTail(f, budget)
 		if err != nil {
 			continue // missing / unreadable file — skip it
 		}
@@ -297,7 +332,7 @@ func gatherLogRecords(path string, includeRotated bool, maxBytes int64) (records
 			truncated = true
 		}
 		budget -= int64(len(data))
-		fileRecords := splitNonEmptyRecords(data, f, start)
+		fileRecords := splitNonEmptyRecords(data, generation, start)
 		// We iterate newest → oldest, so each file we visit is older than
 		// everything gathered so far: prepend to stay chronological.
 		records = append(fileRecords, records...)
@@ -354,11 +389,10 @@ func splitNonEmptyLines(data []byte) []string {
 	return out
 }
 
-func splitNonEmptyRecords(data []byte, path string, start int64) []logRecord {
+func splitNonEmptyRecords(data []byte, generation string, start int64) []logRecord {
 	raw := bytes.Split(data, []byte{'\n'})
 	out := make([]logRecord, 0, len(raw))
 	offset := start
-	pathSum := sha256.Sum256([]byte(path))
 	for _, lineBytes := range raw {
 		lineStart := offset
 		offset += int64(len(lineBytes) + 1)
@@ -366,7 +400,7 @@ func splitNonEmptyRecords(data []byte, path string, start int64) []logRecord {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		out = append(out, logRecord{text: line, key: fmt.Sprintf("%x:%d", pathSum[:8], lineStart)})
+		out = append(out, logRecord{text: line, key: fmt.Sprintf("%s:%d", generation, lineStart)})
 	}
 	return out
 }
