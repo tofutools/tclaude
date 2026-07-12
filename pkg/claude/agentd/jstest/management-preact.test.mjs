@@ -16,6 +16,8 @@ test('management model preserves full-replace profile and role semantics', async
   assert.equal(switched.approval, 'plan'); assert.equal(switched.auto_review, undefined); assert.equal(switched.trust_dir, undefined);
   const role = model.roleDraft({ name: 'reviewer', permissions: ['read'] }, catalog);
   assert.deepEqual(model.rolePayload(role, catalog).permissions, ['read']);
+  const defaults = model.profileDraft(null, {}, catalog); assert.equal(defaults.sandbox, 'inherit'); assert.equal(defaults.approval, 'inherit'); assert.equal(defaults.ask_user_question_timeout, 'inherit');
+  assert.deepEqual(model.harnessDefaults({ sandbox_modes: ['on'], approval_modes: ['plan'], ask_timeout_modes: ['60s'] }), { sandbox: 'on', approval: 'plan', ask_user_question_timeout: '60s' });
 });
 
 test('management actions reject stale loads and expose mutation failures', async (t) => {
@@ -43,7 +45,11 @@ test('management island renders keyed profile list and explicit editor state', a
   await harness.act(() => Promise.resolve());
   assert.equal(host.querySelectorAll('.profile-card').length, 1);
   host.querySelector('.profile-card button').click(); await harness.act(() => Promise.resolve());
-  const input = host.querySelector('#profile-editor-name'); assert.equal(input.value, 'one'); input.value = 'changed'; input.dispatchEvent(new harness.window.Event('input', { bubbles: true })); await harness.act(() => Promise.resolve());
+  const input = host.querySelector('#profile-editor-name'); assert.equal(input.value, 'one'); assert.match(input.placeholder, /profile name/);
+  const model = host.querySelector('#profile-editor-model'); assert.equal(model.tagName, 'SELECT'); assert.ok([...model.options].some((option) => option.value === 'sonnet'));
+  const askTimeout = host.querySelector('#profile-editor-ask-timeout'); assert.equal([...askTimeout.options].find((option) => option.value === 'inherit').textContent.includes('recommended'), true);
+  assert.match([...host.querySelectorAll('.cron-create-row input')].find((field) => field.placeholder?.includes('names the spawned agent')).placeholder, /names the spawned agent/);
+  input.value = 'changed'; input.dispatchEvent(new harness.window.Event('input', { bubbles: true })); await harness.act(() => Promise.resolve());
   const escape = new harness.window.Event('keydown', { bubbles: true }); Object.defineProperty(escape, 'key', { value: 'Escape' }); harness.document.dispatchEvent(escape); await harness.act(() => Promise.resolve());
   assert.ok(host.querySelector('#profile-editor-modal'), 'discard rejection keeps the topmost editor open');
   assert.ok(host.querySelector('#profiles-manage-modal'), 'Escape does not also close the underlying manager');
@@ -83,6 +89,7 @@ test('sandbox editor owns nested rows, raw validation, dirty discard, and save-i
   let saved = null; let scribe = null; const actions = { saveSandbox(value) { saved = value; }, configureSandboxWithAgent(value, options) { scribe = { value, options }; }, async inspectDirectories() { return { missing: ['/cache'], creatable: ['/cache'] }; }, async createDirectories() { return { created: ['/cache'] }; } };
   const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
   mountManagementIsland({ host, state, actions, confirmDiscard: async () => false, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } }); await harness.act(() => Promise.resolve());
+  assert.match(host.querySelector('#sandbox-profile-editor-modal .cron-create-row input').placeholder, /shared-build-caches/);
   host.querySelector('.sbx-section .sbx-add-row').click(); await harness.act(() => Promise.resolve());
   const path = host.querySelector('.sbx-path'); path.value = '/cache'; path.dispatchEvent(new harness.window.Event('input', { bubbles: true })); await harness.act(() => Promise.resolve());
   assert.equal(harness.document.activeElement === path || path.value === '/cache', true);
@@ -111,6 +118,7 @@ test('role editor preserves missing profile references and nested permission foc
   let saved = null; const actions = { async saveRole(value) { saved = value; state.closeDialog(); } }; const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
   mountManagementIsland({ host, state, actions, confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } }); await harness.act(() => Promise.resolve());
   const profile = [...host.querySelectorAll('option')].find((option) => option.value === 'removed-profile'); assert.match(profile.textContent, /missing/);
+  assert.match(host.querySelector('#role-editor-name').placeholder, /reviewer/); assert.equal(host.querySelector('#role-editor-model').tagName, 'SELECT'); assert.ok([...host.querySelector('#role-editor-harness').options].some((option) => option.value === 'claude'));
   const write = [...host.querySelectorAll('.ta-perms-list input')][1]; write.focus(); write.checked = true; write.dispatchEvent(new harness.window.Event('change', { bubbles: true })); await harness.act(() => Promise.resolve());
   assert.equal(harness.document.activeElement, write); assert.match(host.querySelector('.cron-create-label').parentElement.parentElement.textContent, /reviewer|Role/i);
   host.querySelector('#role-editor-modal .primary').click(); await harness.act(() => Promise.resolve()); assert.ok(saved); assert.deepEqual(saved.payload.permissions, ['read', 'write']);

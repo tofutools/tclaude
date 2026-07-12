@@ -87,12 +87,15 @@ func TestDashboardHTML_CustomModelFreeText(t *testing.T) {
 			}
 		}
 	}
-	// Preact profile/role editors use controlled text inputs with harness-backed
-	// datalists: presets remain discoverable and arbitrary ids need no sentinel.
+	// Preact profile/role editors retain the curated dropdown for harnesses with
+	// a model catalog, plus a controlled custom-ID fallback. Harnesses without a
+	// catalog use the free-text branch directly.
 	for _, needle := range []string{
-		`id=${profile ? 'profile-editor-model' : 'role-editor-model'}`,
-		"list=${`${profile ? 'profile' : 'role'}-models`}",
-		`value=${draft.model}`,
+		`const modelID = profile ? 'profile-editor-model' : 'role-editor-model'`,
+		`const modelControl = hasModelList ? html`,
+		`['__custom__', 'Custom model id…']`,
+		`setCustomModel(true)`,
+		"id=${`${modelID}-custom`}",
 		`onInput=${(event) => change(setDraft, 'model', event.currentTarget.value)}`,
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
@@ -115,15 +118,15 @@ func TestDashboardHTML_CustomModelFreeText(t *testing.T) {
 		t.Error("spawn harness re-apply must preserve a manual model when a sparse same-harness profile is applied")
 	}
 
-	// Only the spawn select needs a sentinel now; Preact text inputs accept
-	// arbitrary ids directly.
+	// The spawn selector remains static HTML; the shared Preact selector emits
+	// its sentinel dynamically from the options array above.
 	if got := strings.Count(dashboardAssets, `<option value="__custom__">Custom model id…</option>`); got != 1 {
 		t.Errorf("expected one spawn-dialog custom-model sentinel, got %d", got)
 	}
 
 	// Each revealed free-text input carries an accessible name — its row's label
 	// span is empty (grid alignment), so without this the input has no a11y name.
-	if got := strings.Count(dashboardAssets, `aria-label="Custom model id"`); got != 1 {
-		t.Errorf("expected one aria-labelled spawn custom-model input, got %d", got)
+	if got := strings.Count(dashboardAssets, `aria-label="Custom model id"`); got != 2 {
+		t.Errorf("expected accessible custom-model inputs for spawn and shared management editors, got %d", got)
 	}
 }
