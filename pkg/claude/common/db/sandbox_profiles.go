@@ -15,6 +15,7 @@ import (
 var (
 	ErrSandboxProfileNameTaken     = errors.New("a sandbox profile with that name already exists")
 	ErrSandboxProfileNotFound      = errors.New("sandbox profile not found")
+	ErrSandboxProfileChanged       = errors.New("sandbox profile changed since preview")
 	ErrSandboxProfileInvalidImport = errors.New("invalid sandbox profile import")
 )
 
@@ -80,6 +81,17 @@ func CreateSandboxProfile(p *SandboxProfile) (int64, error) {
 // is immutable; rename snapshots for both assignment surfaces are refreshed in
 // the same transaction.
 func UpdateSandboxProfile(p *SandboxProfile) error {
+	return updateSandboxProfile(p, "")
+}
+
+// UpdateSandboxProfileIfUnchanged applies the complete replacement only when
+// updated_at still matches revision. The comparison is part of the UPDATE so
+// another writer cannot slip between a handler-side check and the write.
+func UpdateSandboxProfileIfUnchanged(p *SandboxProfile, revision string) error {
+	return updateSandboxProfile(p, revision)
+}
+
+func updateSandboxProfile(p *SandboxProfile, revision string) error {
 	p, err := normalizeSandboxProfileForStore(p)
 	if err != nil {
 		return err
@@ -99,8 +111,13 @@ func UpdateSandboxProfile(p *SandboxProfile) error {
 	defer func() { _ = tx.Rollback() }()
 
 	now := time.Now().Format(time.RFC3339Nano)
-	res, err := tx.Exec(`UPDATE sandbox_profiles SET name = ?, filesystem_json = ?, environment_json = ?, updated_at = ? WHERE id = ?`,
-		p.Name, filesystemJSON, environmentJSON, now, p.ID)
+	query := `UPDATE sandbox_profiles SET name = ?, filesystem_json = ?, environment_json = ?, updated_at = ? WHERE id = ?`
+	args := []any{p.Name, filesystemJSON, environmentJSON, now, p.ID}
+	if revision != "" {
+		query += ` AND updated_at = ?`
+		args = append(args, revision)
+	}
+	res, err := tx.Exec(query, args...)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return ErrSandboxProfileNameTaken
@@ -112,6 +129,9 @@ func UpdateSandboxProfile(p *SandboxProfile) error {
 		return err
 	}
 	if n == 0 {
+		if revision != "" {
+			return ErrSandboxProfileChanged
+		}
 		return sql.ErrNoRows
 	}
 	if _, err := tx.Exec(`UPDATE agent_groups SET sandbox_profile = ? WHERE sandbox_profile_id = ?`, p.Name, p.ID); err != nil {

@@ -1,4 +1,5 @@
 import { $, $$ } from './helpers.js';
+import { lineDiff as configLineDiff } from './line-diff.js';
 import { dashboardState } from './snapshot-store.js';
 import { loadProfiles } from './profiles.js';
 
@@ -1081,30 +1082,6 @@ async function loadConfigTab() {
   // Re-apply any standing filter — a Reload rebuilds the inner lists, and
   // the operator may have a query typed; keep what's hidden hidden.
   applyConfigFilter();
-}
-
-// configLineDiff returns an LCS-based line diff of two strings. Config
-// JSON is tiny (tens of lines) so the O(n·m) table is trivial.
-function configLineDiff(aStr, bStr) {
-  const a = aStr.split('\n'), b = bStr.split('\n');
-  const n = a.length, m = b.length;
-  const dp = [];
-  for (let i = 0; i <= n; i++) dp.push(new Array(m + 1).fill(0));
-  for (let i = n - 1; i >= 0; i--) {
-    for (let j = m - 1; j >= 0; j--) {
-      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
-    }
-  }
-  const out = [];
-  let i = 0, j = 0;
-  while (i < n && j < m) {
-    if (a[i] === b[j]) { out.push({ t: 'ctx', s: a[i] }); i++; j++; }
-    else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push({ t: 'del', s: a[i] }); i++; }
-    else { out.push({ t: 'add', s: b[j] }); j++; }
-  }
-  while (i < n) out.push({ t: 'del', s: a[i++] });
-  while (j < m) out.push({ t: 'add', s: b[j++] });
-  return out;
 }
 
 // reportConfigHTTPError surfaces a non-OK /api/config response and

@@ -8,42 +8,50 @@ import (
 
 func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 	for needle, why := range map[string]string{
-		`id="sandbox-profiles-manage-open"`:                            "Groups menu entry",
-		`id="sandbox-profiles-manage-modal"`:                           "management overlay",
-		`id="sandbox-profile-editor-modal"`:                            "profile editor",
-		`id="sandbox-profile-editor-filesystem"`:                       "filesystem editor",
-		`id="sandbox-profile-editor-environment"`:                      "environment editor",
-		`id="sandbox-profile-scribe-open"`:                             "new-profile agent configuration",
-		`id="sandbox-profile-editor-scribe"`:                           "current-draft agent configuration",
-		`id="sandbox-profile-export-open"`:                             "export trigger",
-		`id="sandbox-profile-import-open"`:                             "import trigger",
-		`id="sandbox-profile-export-modal"`:                            "export modal",
-		`id="sandbox-profile-import-modal"`:                            "import modal",
-		`id="sandbox-profile-import-conflict"`:                         "import conflict-policy selector",
-		`function submitExport(`:                                       "export submit handler",
-		`function submitImport(`:                                       "import submit handler",
-		`${API}/export?`:                                               "export hits the shared daemon endpoint",
-		`${API}/import/inspect`:                                        "import preview uses server portability validation",
-		"`${API}/import`":                                              "import hits the shared daemon endpoint",
-		`profile-transfer-warning`:                                     "missing local paths render as preview warnings",
-		`apply_assignments: false`:                                     "import never re-applies exported assignments",
-		`id="dashboard-default-sandbox-profile"`:                       "global quick assignment chip",
-		`<button type="button" id="dashboard-default-sandbox-profile"`: "global chip keeps native keyboard semantics",
-		`data-act="set-dash-sandbox-profile"`:                          "global quick assignment picker wiring",
-		`data-act="set-group-sandbox-profile"`:                         "group quick assignment chip",
-		`case 'set-dash-sandbox-profile':`:                             "global quick assignment mutation handler",
-		`fetch('/api/sandbox-profile-default'`:                         "global assignment persistence",
-		`btn.dataset.sandboxProfilePending = 'true'`:                   "global assignment locks against concurrent writes",
-		`btn.disabled = true`:                                          "global chip is disabled during persistence",
-		`btn.disabled = false`:                                         "global chip is re-enabled after persistence",
-		`if (restoreFocus) chipEl.focus();`:                            "Escape returns keyboard focus to the chip",
-		`＋ new sandbox profile…`:                                       "quick selector create shortcut",
-		`openSandboxProfileEditor(null, { onCreate:`:                   "shortcut opens existing editor with assignment handoff",
-		`await onCreate(body.name)`:                                    "successful create assigns back to launching scope",
-		`if (editorSaving) return`:                                     "save and cancel lifecycle is locked while request is pending",
-		`const onCreate = editorOnCreate;`:                             "launching assignment target is captured before request",
-		`setEditorSaving(true)`:                                        "editor controls lock before create request",
-		`setEditorSaving(false)`:                                       "editor controls unlock on every settled request",
+		`id="sandbox-profiles-manage-open"`:                                "Groups menu entry",
+		`id="sandbox-profiles-manage-modal"`:                               "management overlay",
+		`id="sandbox-profile-editor-modal"`:                                "profile editor",
+		`id="sandbox-profile-editor-filesystem"`:                           "filesystem editor",
+		`id="sandbox-profile-editor-environment"`:                          "environment editor",
+		`id="sandbox-profile-diff-modal"`:                                  "save diff confirmation",
+		`id="sandbox-profile-diff-body"`:                                   "server-normalized JSON diff",
+		`id="sandbox-profile-scribe-open"`:                                 "new-profile agent configuration",
+		`id="sandbox-profile-editor-scribe"`:                               "current-draft agent configuration",
+		`id="sandbox-profile-export-open"`:                                 "export trigger",
+		`id="sandbox-profile-import-open"`:                                 "import trigger",
+		`id="sandbox-profile-export-modal"`:                                "export modal",
+		`id="sandbox-profile-import-modal"`:                                "import modal",
+		`id="sandbox-profile-import-conflict"`:                             "import conflict-policy selector",
+		`function submitExport(`:                                           "export submit handler",
+		`function submitImport(`:                                           "import submit handler",
+		`${API}/export?`:                                                   "export hits the shared daemon endpoint",
+		`${API}/import/inspect`:                                            "import preview uses server portability validation",
+		"`${API}/import`":                                                  "import hits the shared daemon endpoint",
+		`profile-transfer-warning`:                                         "missing local paths render as preview warnings",
+		`apply_assignments: false`:                                         "import never re-applies exported assignments",
+		`id="dashboard-default-sandbox-profile"`:                           "global quick assignment chip",
+		`<button type="button" id="dashboard-default-sandbox-profile"`:     "global chip keeps native keyboard semantics",
+		`data-act="set-dash-sandbox-profile"`:                              "global quick assignment picker wiring",
+		`data-act="set-group-sandbox-profile"`:                             "group quick assignment chip",
+		`case 'set-dash-sandbox-profile':`:                                 "global quick assignment mutation handler",
+		`fetch('/api/sandbox-profile-default'`:                             "global assignment persistence",
+		`btn.dataset.sandboxProfilePending = 'true'`:                       "global assignment locks against concurrent writes",
+		`btn.disabled = true`:                                              "global chip is disabled during persistence",
+		`btn.disabled = false`:                                             "global chip is re-enabled after persistence",
+		`if (restoreFocus) chipEl.focus();`:                                "Escape returns keyboard focus to the chip",
+		`＋ new sandbox profile…`:                                           "quick selector create shortcut",
+		`openSandboxProfileEditor(null, { onCreate:`:                       "shortcut opens existing editor with assignment handoff",
+		`await onCreate(savedBody.name)`:                                   "successful create assigns the previewed canonical name",
+		`if (editorSaving) return`:                                         "save and cancel lifecycle is locked while request is pending",
+		`const onCreate = editorOnCreate;`:                                 "launching assignment target is captured before request",
+		`setEditorSaving(true)`:                                            "editor controls lock before create request",
+		`setEditorSaving(false)`:                                           "editor controls unlock on every settled request",
+		"`${target}?dry_run=1`":                                            "save validates and previews before writing",
+		`confirmSandboxProfileDiff(preview.before || null, preview.after)`: "human confirms daemon-normalized diff",
+		`body: JSON.stringify(savedBody)`:                                  "real write matches the previewed payload",
+		`revision=${encodeURIComponent(preview.revision || '')}`:           "edit commit is coupled to the previewed revision",
+		`editorOverlay.inert = true`:                                       "underlying editor is inert while the diff is modal",
+		`editorOverlay.removeAttribute('aria-hidden')`:                     "underlying editor accessibility is restored after preview",
 		`bindBackdropDiscard('sandbox-profile-editor-modal', closeEditor, () => !editorSaving)`:        "saving editor blocks stale discard confirmation",
 		`bindManageOverlayDismiss } from './refresh.js'`:                                               "retired select mutation plumbing is no longer imported",
 		"`<span class=\"group-sandbox-profile${g.sandbox_profile ? '' : ' unset'}\"":                   "group chip renders icon-only via qo-text/unset when inheriting",
@@ -116,7 +124,7 @@ func TestDashboardSandboxQuickCreateLocksAndCapturesAssignmentTarget(t *testing.
 	}
 	js := string(raw)
 	capture := strings.Index(js, "const onCreate = editorOnCreate;")
-	request := strings.Index(js, "await api(editingName ?")
+	request := strings.Index(js, "const preview = await api(")
 	if capture < 0 || request < 0 || capture > request {
 		t.Fatalf("quick-create assignment target must be captured before the async create request (capture=%d request=%d)", capture, request)
 	}
@@ -124,13 +132,13 @@ func TestDashboardSandboxQuickCreateLocksAndCapturesAssignmentTarget(t *testing.
 		"if (editorSaving) return;":                             "duplicate save and dismiss are guarded",
 		"$('#sandbox-profile-editor-submit').disabled = saving": "submit locks during the request",
 		"$('#sandbox-profile-editor-cancel').disabled = saving": "cancel locks during the request",
-		"await onCreate(body.name);":                            "successful create hands off directly to assignment",
+		"await onCreate(savedBody.name);":                       "successful create hands off the previewed canonical name",
 	} {
 		if !strings.Contains(js, needle) {
 			t.Errorf("missing %q (%s)", needle, why)
 		}
 	}
-	if strings.Contains(js, "await loadSandboxProfiles();\n      await onCreate(body.name);") {
+	if strings.Contains(js, "await loadSandboxProfiles();\n    await onCreate(savedBody.name);") {
 		t.Error("quick-create must not insert a fallible list reload between successful create and assignment")
 	}
 }

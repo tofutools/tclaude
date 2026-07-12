@@ -261,7 +261,9 @@ scribes keep working in parallel. The scribe can discuss paths
 and environment entries and submit a server-validated structured draft, but it
 cannot save profiles, change assignments, or launch agents. Its result is
 loaded back into the normal editor; review every field and explicitly press
-**Save sandbox profile** to persist it.
+**Save sandbox profile** to open a server-normalized JSON diff. Confirm that
+preview to persist it. Creating or editing a profile is first validated as a
+dry run, so canceling the preview does not change the profile library.
 
 The spawn dialog's preview shows the composed global → group → explicit
 sources, effective filesystem access, and environment **names**. It never shows

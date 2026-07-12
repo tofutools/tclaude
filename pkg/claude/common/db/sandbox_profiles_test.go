@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -80,6 +81,45 @@ func TestSandboxProfileCRUDRoundTrip(t *testing.T) {
 	missing, err := GetSandboxProfileByID(populatedID)
 	require.NoError(t, err)
 	assert.Nil(t, missing)
+}
+
+func TestUpdateSandboxProfileIfUnchanged(t *testing.T) {
+	setupTestDB(t)
+	id, err := CreateSandboxProfile(&SandboxProfile{
+		Name:        "revisioned",
+		Environment: []SandboxEnvironmentEntry{{Name: "VALUE", Value: "initial"}},
+	})
+	require.NoError(t, err)
+	initial, err := GetSandboxProfileByID(id)
+	require.NoError(t, err)
+	staleRevision := initial.UpdatedAt.Format(time.RFC3339Nano)
+
+	newer := &SandboxProfile{
+		ID: id, Name: "revisioned",
+		Environment: []SandboxEnvironmentEntry{{Name: "VALUE", Value: "newer"}},
+	}
+	require.NoError(t, UpdateSandboxProfile(newer))
+
+	stale := &SandboxProfile{
+		ID: id, Name: "revisioned",
+		Environment: []SandboxEnvironmentEntry{{Name: "VALUE", Value: "stale overwrite"}},
+	}
+	require.ErrorIs(t, UpdateSandboxProfileIfUnchanged(stale, staleRevision), ErrSandboxProfileChanged)
+	preserved, err := GetSandboxProfileByID(id)
+	require.NoError(t, err)
+	require.Len(t, preserved.Environment, 1)
+	assert.Equal(t, "newer", preserved.Environment[0].Value)
+
+	matchingRevision := preserved.UpdatedAt.Format(time.RFC3339Nano)
+	final := &SandboxProfile{
+		ID: id, Name: "revisioned",
+		Environment: []SandboxEnvironmentEntry{{Name: "VALUE", Value: "final"}},
+	}
+	require.NoError(t, UpdateSandboxProfileIfUnchanged(final, matchingRevision))
+	updated, err := GetSandboxProfileByID(id)
+	require.NoError(t, err)
+	require.Len(t, updated.Environment, 1)
+	assert.Equal(t, "final", updated.Environment[0].Value)
 }
 
 func TestSandboxProfileNameAndPayloadIntegrity(t *testing.T) {

@@ -3,6 +3,7 @@ import { confirmModal, toast, bindBackdropDiscard, bindManageOverlayDismiss } fr
 import { openTermModal } from './modal-term.js';
 import { wizWord } from './slop.js';
 import { createSandboxDraftQueue } from './sandbox-draft-queue.js';
+import { lineDiff } from './line-diff.js';
 
 const API = '/api/sandbox-profiles';
 let profiles = [];
@@ -290,6 +291,73 @@ function setEditorSaving(saving) {
   $('#sandbox-profile-editor-cancel').disabled = saving;
 }
 
+// confirmSandboxProfileDiff previews the daemon-normalized JSON returned by
+// the dry-run endpoint. Environment values are intentionally included: the
+// editor already exposes them and sandbox profiles are explicitly not a
+// secrets facility.
+function confirmSandboxProfileDiff(before, after) {
+  return new Promise(resolve => {
+    const overlay = $('#sandbox-profile-diff-modal');
+    const editorOverlay = $('#sandbox-profile-editor-modal');
+    const editorDialog = editorOverlay.querySelector('[role="dialog"]');
+    const beforeRaw = before ? JSON.stringify(before, null, 2) : '';
+    const afterRaw = JSON.stringify(after, null, 2);
+    const diff = before
+      ? lineDiff(beforeRaw, afterRaw)
+      : afterRaw.split('\n').map(s => ({ t: 'add', s }));
+    const adds = diff.filter(line => line.t === 'add').length;
+    const dels = diff.filter(line => line.t === 'del').length;
+    const sign = { add: '+', del: '−', ctx: ' ' };
+    $('#sandbox-profile-diff-sub').textContent = before
+      ? `${adds} line(s) added, ${dels} removed — server-normalized preview`
+      : `${adds} line(s) added — new server-normalized profile`;
+    $('#sandbox-profile-diff-body').innerHTML = diff.map(line =>
+      `<span class="dl ${line.t}">${sign[line.t]} ${esc(line.s)}</span>`).join('');
+    const confirmBtn = $('#sandbox-profile-diff-confirm');
+    const cancelBtn = $('#sandbox-profile-diff-cancel');
+    const cleanup = result => {
+      overlay.classList.remove('show');
+      editorOverlay.inert = false;
+      editorOverlay.removeAttribute('aria-hidden');
+      editorDialog.setAttribute('aria-modal', 'true');
+      confirmBtn.removeEventListener('click', onConfirm);
+      cancelBtn.removeEventListener('click', onCancel);
+      overlay.removeEventListener('click', onBackdrop);
+      document.removeEventListener('keydown', onKey, true);
+      resolve(result);
+    };
+    const onConfirm = () => cleanup(true);
+    const onCancel = () => cleanup(false);
+    const onBackdrop = event => { if (event.target === overlay) cleanup(false); };
+    const onKey = event => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        cleanup(false);
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      if (event.shiftKey && document.activeElement === cancelBtn) {
+        event.preventDefault(); confirmBtn.focus();
+      } else if (!event.shiftKey && document.activeElement === confirmBtn) {
+        event.preventDefault(); cancelBtn.focus();
+      }
+    };
+    confirmBtn.addEventListener('click', onConfirm);
+    cancelBtn.addEventListener('click', onCancel);
+    overlay.addEventListener('click', onBackdrop);
+    document.addEventListener('keydown', onKey, true);
+    // Only the child diff is modal while it is open. Keep the editor visible
+    // for context, but remove it from focus and the accessibility tree until
+    // the preview closes.
+    overlay.classList.add('show');
+    confirmBtn.focus();
+    editorOverlay.inert = true;
+    editorOverlay.setAttribute('aria-hidden', 'true');
+    editorDialog.setAttribute('aria-modal', 'false');
+  });
+}
+
 function sandboxScribeToken() {
   if (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') {
     return globalThis.crypto.randomUUID().replaceAll('-', '');
@@ -416,25 +484,50 @@ async function saveEditor() {
   // settles, so another editor invocation cannot steal the callback.
   const onCreate = editorOnCreate;
   setEditorSaving(true);
+  let savedBody = body;
+  let confirmed = false;
   try {
-    await api(editingName ? `${API}/${encodeURIComponent(editingName)}` : API, {
+    const target = editingName ? `${API}/${encodeURIComponent(editingName)}` : API;
+    const preview = await api(`${target}?dry_run=1`, {
       method: editingName ? 'PATCH' : 'POST',
       headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const beforeRaw = preview.before ? JSON.stringify(preview.before) : '';
+    const afterRaw = JSON.stringify(preview.after);
+    if (preview.before && beforeRaw === afterRaw) {
+      toast('No sandbox profile changes to save');
+      return;
+    }
+    confirmed = await confirmSandboxProfileDiff(preview.before || null, preview.after);
+    if (!confirmed) {
+      toast('Sandbox profile save cancelled');
+      return;
+    }
+    // Persist the exact canonical payload the human previewed. The daemon
+    // validates it again on the real request before writing.
+    savedBody = preview.after;
+    const commitTarget = editingName
+      ? `${target}?revision=${encodeURIComponent(preview.revision || '')}`
+      : target;
+    await api(commitTarget, {
+      method: editingName ? 'PATCH' : 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(savedBody),
     });
   } catch (err) {
     errEl.textContent = err.message || String(err);
     return;
   } finally {
     setEditorSaving(false);
+    $('#sandbox-profile-editor-submit').focus();
   }
 
   closeEditor();
-  toast(`sandbox profile saved: ${body.name}`);
+  toast(`sandbox profile saved: ${savedBody.name}`);
   if (onCreate) {
     // Only a successful create reaches this handoff; cancel or validation
     // failure leaves the assignment untouched. The launching chip picker owns
     // assignment and repaint after the handoff.
-    await onCreate(body.name);
+    await onCreate(savedBody.name);
     return;
   }
   await openManager();

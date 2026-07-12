@@ -1245,8 +1245,8 @@ func TestDashboardHTML_WizardConfigTab(t *testing.T) {
 	must("body.wizard #tab-config .cfg-footer button.primary", "the Save lever gets the gilded-arcane treatment")
 
 	// The diff-confirm dialog is re-skinned too, scoped to #config-diff-modal.
-	must("body.wizard #config-diff-modal .config-diff-modal", "the diff-confirm surface is re-skinned")
-	must("body.wizard #config-diff-modal .modal-buttons button.primary", "the diff-confirm Save lever is re-skinned")
+	must("body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .config-diff-modal", "the config and sandbox-profile diff-confirm surfaces are re-skinned")
+	must("body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .modal-buttons button.primary", "the diff-confirm Save levers are re-skinned")
 }
 
 // TestDashboardCSS_WizardConfigTabScoped guards that the config-tab re-skin's
