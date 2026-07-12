@@ -35,6 +35,8 @@ func TestDashboardPreactProbeAssets(t *testing.T) {
 	for _, name := range []string{
 		"js/preact-loader.js",
 		"js/preact-probe.js",
+		"js/island-lifecycle.js",
+		"js/async-load-state.js",
 		"vendor/preact/LICENSE-preact.txt",
 		"vendor/preact/LICENSE-signals.txt",
 		"vendor/preact/LICENSE-htm.txt",
