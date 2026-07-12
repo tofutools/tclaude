@@ -3,6 +3,7 @@ package agentd
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -59,6 +60,23 @@ func TestMaterializeAgentDirectoriesRejectsUnsafeLaunchKey(t *testing.T) {
 	require.NoError(t, err)
 	_, _, err = materializeAgentDirectories(sandboxpolicy.NewSnapshot(effective, nil), "../escape")
 	require.ErrorContains(t, err, "invalid agent-directory launch key")
+}
+
+func TestMaterializeAgentDirectoriesCanonicalizesSymlinkedCachePrefix(t *testing.T) {
+	realCache := t.TempDir()
+	linkParent := t.TempDir()
+	cacheLink := filepath.Join(linkParent, "cache")
+	require.NoError(t, os.Symlink(realCache, cacheLink))
+	t.Setenv("XDG_CACHE_HOME", cacheLink)
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Global: &sandboxpolicy.Profile{
+		Name: "cache", AgentDirectories: []string{"GOCACHE"},
+	}})
+	require.NoError(t, err)
+	got, cleanup, err := materializeAgentDirectories(sandboxpolicy.NewSnapshot(effective, nil), "symlink-prefix")
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+	require.Len(t, got.Effective.Environment, 1)
+	assert.True(t, strings.HasPrefix(got.Effective.Environment[0].Value, realCache+string(filepath.Separator)))
 }
 
 func TestEnsureAgentDirectoriesRejectsFrozenBindingOutsideCacheRoot(t *testing.T) {

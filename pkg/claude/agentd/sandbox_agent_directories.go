@@ -27,6 +27,10 @@ func materializeAgentDirectories(snapshot sandboxpolicy.Snapshot, launchKey stri
 	if !filepath.IsAbs(cacheDir) {
 		return sandboxpolicy.Snapshot{}, func() {}, fmt.Errorf("resolve tclaude cache directory for agent-owned directories")
 	}
+	cacheDir, err := canonicalizeForSecureMkdir(cacheDir)
+	if err != nil {
+		return sandboxpolicy.Snapshot{}, func() {}, fmt.Errorf("resolve tclaude cache directory for agent-owned directories: %w", err)
+	}
 	base := filepath.Join(cacheDir, "agent-dirs")
 	root := filepath.Join(base, launchKey)
 	cleanup := func() { _ = os.RemoveAll(root) }
@@ -105,7 +109,11 @@ func ensureAgentDirectoriesForRelaunch(snapshot sandboxpolicy.Snapshot) (sandbox
 	if len(snapshot.Effective.AgentDirectories) == 0 {
 		return sandboxpolicy.RevalidateSnapshot(snapshot)
 	}
-	base := filepath.Clean(filepath.Join(tclcommon.CacheDir(), "agent-dirs"))
+	cacheDir, err := canonicalizeForSecureMkdir(tclcommon.CacheDir())
+	if err != nil {
+		return sandboxpolicy.Snapshot{}, fmt.Errorf("resolve tclaude cache directory for agent-owned directories: %w", err)
+	}
+	base := filepath.Clean(filepath.Join(cacheDir, "agent-dirs"))
 	if !filepath.IsAbs(base) {
 		return sandboxpolicy.Snapshot{}, fmt.Errorf("resolve tclaude cache directory for agent-owned directories")
 	}
@@ -135,4 +143,37 @@ func ensureAgentDirectoriesForRelaunch(snapshot sandboxpolicy.Snapshot) (sandbox
 		}
 	}
 	return sandboxpolicy.RevalidateSnapshot(snapshot)
+}
+
+// canonicalizeForSecureMkdir resolves symlinks in the existing prefix while
+// retaining any missing suffix for descriptor-relative creation. This matters
+// on macOS, where /var is normally a symlink to /private/var.
+func canonicalizeForSecureMkdir(path string) (string, error) {
+	path = filepath.Clean(path)
+	if !filepath.IsAbs(path) {
+		return "", fmt.Errorf("path is not absolute")
+	}
+	missing := []string{}
+	existing := path
+	for {
+		if _, err := os.Lstat(existing); err == nil {
+			break
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(existing)
+		if parent == existing {
+			return "", fmt.Errorf("no existing ancestor")
+		}
+		missing = append(missing, filepath.Base(existing))
+		existing = parent
+	}
+	canonical, err := filepath.EvalSymlinks(existing)
+	if err != nil {
+		return "", err
+	}
+	for i := len(missing) - 1; i >= 0; i-- {
+		canonical = filepath.Join(canonical, missing[i])
+	}
+	return canonical, nil
 }

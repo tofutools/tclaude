@@ -243,6 +243,22 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 			Msg: "failed to launch tclaude session new -r: " + err.Error(),
 		}
 	}
+	// Persist the launch snapshot before waiting for the session row. The copy
+	// path already knows its conversation ID, and may return success with a
+	// warning if registration times out; retaining the snapshot here prevents a
+	// later resume from falling back to the source agent's generated dirs.
+	if effectiveSandbox != nil {
+		agentID, _, persistErr := db.EnsureAgentForConv(newConv, "clone")
+		if persistErr == nil {
+			persistErr = db.SetAgentEffectiveSandboxConfig(agentID, effectiveSandbox)
+		}
+		if persistErr != nil {
+			return "", "", "", "", &cloneSpawnError{
+				Status: http.StatusInternalServerError, Code: "io",
+				Msg: "persist clone sandbox snapshot: " + persistErr.Error(),
+			}
+		}
+	}
 	deadline := time.Now().Add(reincarnateSpawnTimeout)
 	for time.Now().Before(deadline) {
 		if s, err := db.FindSessionByConvID(newConv); err == nil && s != nil && s.TmuxSession != "" {
@@ -829,6 +845,9 @@ func inheritEffectiveSandboxSnapshot(sourceConv, targetConv string) error {
 	}
 	var err error
 	if snapshot == nil {
+		snapshot, err = db.AgentEffectiveSandboxConfigForConv(targetConv)
+	}
+	if err == nil && snapshot == nil {
 		snapshot, err = db.AgentEffectiveSandboxConfigForConv(sourceConv)
 	}
 	if err != nil || snapshot == nil {

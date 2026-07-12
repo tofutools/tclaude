@@ -80,6 +80,15 @@ func RequireContained(parent, child Snapshot) error {
 			return fmt.Errorf("environment variable %q is new or changed from the parent snapshot", entry.Name)
 		}
 	}
+	parentAgentDirectories := make(map[string]bool, len(parent.Effective.AgentDirectories))
+	for _, name := range parent.Effective.AgentDirectories {
+		parentAgentDirectories[name] = true
+	}
+	for _, name := range child.Effective.AgentDirectories {
+		if !parentAgentDirectories[name] {
+			return fmt.Errorf("agent-owned directory %q is not authorized by the parent snapshot", name)
+		}
+	}
 	return nil
 }
 
@@ -91,7 +100,7 @@ func HasCapabilities(snapshot Snapshot) bool {
 			return true
 		}
 	}
-	return len(snapshot.Effective.Environment) > 0
+	return len(snapshot.Effective.Environment) > 0 || len(snapshot.Effective.AgentDirectories) > 0
 }
 
 // Snapshot is the immutable, versioned value passed across launch and
