@@ -26,7 +26,7 @@ func TestDashboardHTML_CodexUsageWired(t *testing.T) {
 
 	// render.js: the readout reads the nested codex object and renders the
 	// labelled lines through the shared helpers.
-	must("function subscriptionWindowsHTML(src)", "shared per-source window builder is defined")
+	must("function subscriptionWindowsHTML(src, hideMissing)", "shared per-source window builder is defined")
 	must("function usageLineHTML(label, tokens)", "labelled-line builder is defined")
 	must("u && u.codex", "renderUsage reads the codex sub-object off the snapshot")
 	must("usageLineHTML('Claude:'", "the Claude line is labelled")
@@ -80,18 +80,12 @@ func TestDashboardHTML_CodexUsageColumnAlignment(t *testing.T) {
 	must("win.remaining ? '(' + esc(win.remaining) + ')' : ''", "no leading space; parens only when there is remaining text")
 }
 
-// TestDashboardHTML_UsageAlwaysRendersBothWindows guards the "render a little
-// too much, never too little" rule for the two-line readout: when a usage
-// source is available, subscriptionWindowsHTML must emit BOTH the 5h and 7d
-// windows — a missing one as a 0% placeholder — never just the window that
-// happens to be present. The Claude and Codex rows are stacked and
-// column-aligned; if one row carried only a 7d token it would slide under the
-// other row's 5h and the whole readout would desync. The Go snapshot already
-// pairs the windows (pairUsageWindows zero-fills the absent one), but the
-// renderer guarantees it independently so partial data can't misalign the
-// browser layout. A refactor back to the old `if (src.five_hour)` guard
-// reopens the bug, so pin the unconditional both-windows shape here.
-func TestDashboardHTML_UsageAlwaysRendersBothWindows(t *testing.T) {
+// TestDashboardHTML_UsageAlwaysReservesBothWindows guards the two-line
+// readout's alignment rule: both window slots are emitted even when a source
+// omits one. Codex's omitted slot is hidden rather than rendered as a
+// misleading 0%, but visibility:hidden preserves its geometry so 7d remains
+// under 7d. Claude retains its visible zero placeholder behavior.
+func TestDashboardHTML_UsageAlwaysReservesBothWindows(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
 		if !strings.Contains(dashboardAssets, needle) {
@@ -104,8 +98,16 @@ func TestDashboardHTML_UsageAlwaysRendersBothWindows(t *testing.T) {
 			t.Errorf("dashboard assets still carry %q (%s)", needle, why)
 		}
 	}
-	must("usageWindowHTML('5h', src.five_hour || zero)", "the 5h window is always emitted, placeholder when absent")
-	must("usageWindowHTML('7d', src.seven_day || zero)", "the 7d window is always emitted, placeholder when absent")
+	must("usageWindowHTML('5h', src.five_hour || zero, hideMissing && !src.five_hour)", "the 5h slot is always emitted and can be hidden when absent")
+	must("usageWindowHTML('7d', src.seven_day || zero, hideMissing && !src.seven_day)", "the 7d slot is always emitted and can be hidden when absent")
+	must("subscriptionWindowsHTML(codexUsage, true)", "Codex hides missing limit placeholders")
+	must("#usage .uw.umissing { visibility: hidden; }", "missing Codex windows retain their alignment geometry")
+	must("aria-hidden=\"true\"", "hidden placeholders are omitted from the accessibility tree")
+	// Tooltip periods are derived from reported windows, so weekly-only Codex
+	// plans do not continue claiming a 5-hour limit on hover.
+	must("if (codexUsage && codexUsage.five_hour) codexPeriods.push('5-hour')", "Codex tooltip includes 5h only when reported")
+	must("if (codexUsage && codexUsage.seven_day) codexPeriods.push('weekly')", "Codex tooltip includes weekly only when reported")
+	must("codexPeriods.length === 1 ? 'limit' : 'limits'", "weekly-only tooltip uses singular limit wording")
 	// The old conditional guards dropped a window when its data was absent —
 	// the exact shape that let the two rows carry different window counts.
 	reject("if (src.five_hour) wins.push(usageWindowHTML('5h'", "the conditional 5h guard is gone")
@@ -129,12 +131,12 @@ func TestDashboardCSS_UsageRemColumnFitsWorstCaseRemaining(t *testing.T) {
 	// Representative resets covering every formatRemaining branch and the
 	// digit-width extremes a bounded (≤7-day) window can reach.
 	cases := []time.Time{
-		now.Add(30*time.Minute + 30*time.Second),               // "30m"     -> "(30m)"     5
-		now.Add(2*time.Hour + 35*time.Minute + 30*time.Second), // "2h35m"   -> "(2h35m)"   7
+		now.Add(30*time.Minute + 30*time.Second),                // "30m"     -> "(30m)"     5
+		now.Add(2*time.Hour + 35*time.Minute + 30*time.Second),  // "2h35m"   -> "(2h35m)"   7
 		now.Add(23*time.Hour + 59*time.Minute + 30*time.Second), // "23h59m" -> "(23h59m)"  8  (worst)
 		now.Add(6*24*time.Hour + 23*time.Hour + 30*time.Minute), // "6d23h"  -> "(6d23h)"   7
-		now.Add(-time.Hour),                                     // past     -> "(reset)"   7
-		{},                                                      // zero     -> ""          0
+		now.Add(-time.Hour), // past     -> "(reset)"   7
+		{},                  // zero     -> ""          0
 	}
 	worst := 0
 	var worstStr string

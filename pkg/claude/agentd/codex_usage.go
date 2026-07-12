@@ -160,12 +160,18 @@ func collectCodexUsageSnapshot() *codexDashboardUsage {
 	}
 	fh := codexUsageWindowFor(u.FiveHour)
 	wk := codexUsageWindowFor(u.Weekly)
-	// Same "show both bars or neither" rule as the Claude readout: when one
-	// window is still open the other renders as a 0% bar rather than
-	// vanishing, so the 5h and weekly bars never appear independently.
-	fh, wk, ok := pairUsageWindows(fh, wk)
-	if !ok {
+	if fh == nil && wk == nil {
 		return nil
+	}
+	// Preserve the distinction between a limit Codex did not report and one
+	// that it reported but has since reset. The browser hides an unreported
+	// window while retaining its alignment slot; a known reset still renders
+	// as the familiar 0% bar.
+	if u.FiveHour != nil && fh == nil {
+		fh = &usageWindow{}
+	}
+	if u.Weekly != nil && wk == nil {
+		wk = &usageWindow{}
 	}
 	return &codexDashboardUsage{Available: true, FiveHour: fh, SevenDay: wk}
 }
