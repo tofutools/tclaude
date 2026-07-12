@@ -13,7 +13,8 @@ import (
 // CodexRolloutProjection is the latest-oriented subset hook callbacks lift
 // from a rollout. Each value is a snapshot carried by one record rather than
 // an accumulator over the event stream, so a plain rollout can be projected
-// by reading records newest-first and stopping after every field is found.
+// by reading records newest-first. The scan stops once every field is found;
+// when a field is absent, it degrades to one full backward pass.
 type CodexRolloutProjection struct {
 	Context    ContextTelemetry
 	HasContext bool
@@ -180,8 +181,11 @@ func (s *codexProjectionScanState) projection() CodexRolloutProjection {
 	if s.info == nil {
 		return out
 	}
-	out.Context = contextTelemetryFromTokenCount(*s.info)
-	out.HasContext = out.Context.TokensInput != 0 || out.Context.TokensOutput != 0
+	context := contextTelemetryFromTokenCount(*s.info)
+	if context.TokensInput != 0 || context.TokensOutput != 0 {
+		out.Context = context
+		out.HasContext = true
+	}
 	for _, model := range []string{s.modelHint, s.model} {
 		if cost, ok := codexVirtualCost(model, s.info.TotalTokenUsage, s.info.ModelContextWindow); ok {
 			out.Cost = CodexTokenCost{CostUSD: cost, Model: model, Observed: parseCodexEventTime(s.observed)}

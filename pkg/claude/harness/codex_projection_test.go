@@ -73,6 +73,42 @@ func TestCodexHookProjection_EquivalentToForwardScans(t *testing.T) {
 	assert.Equal(t, got, fromHook)
 }
 
+func TestCodexHookProjection_WindowOnlyNewestTokenCountMatchesForward(t *testing.T) {
+	path := t.TempDir() + "/rollout.jsonl"
+	lines := [][]byte{
+		codexProjectionEnvelope(t, "2026-07-12T10:00:00Z", "turn_context", map[string]any{
+			"model": "gpt-5.3-codex", "effort": "high",
+		}),
+		codexProjectionTokenCount(t, "2026-07-12T11:00:00Z", 10, 1000, 100),
+		// The newest token_count has a real window but no occupancy signal.
+		// Forward telemetry deliberately returns a fully zero snapshot rather
+		// than exposing WindowSize alone and risking a good-row clobber.
+		codexProjectionTokenCount(t, "2026-07-12T12:00:00Z", 20, 0, 0),
+	}
+	require.NoError(t, os.WriteFile(path, append(bytes.Join(lines, []byte{'\n'}), '\n'), 0o600))
+
+	wantContext, wantContextOK, err := CodexTelemetryFromRollout(path)
+	require.NoError(t, err)
+	wantEffort, wantEffortOK, err := CodexEffortFromRollout(path)
+	require.NoError(t, err)
+	wantUsage, err := CodexUsageFromRollout(path)
+	require.NoError(t, err)
+	wantCost, wantCostOK, err := CodexVirtualCostFromRollout(path, "")
+	require.NoError(t, err)
+
+	got, err := CodexHookProjectionFromRollout(path, "")
+	require.NoError(t, err)
+	assert.Equal(t, wantContextOK, got.HasContext)
+	assert.Equal(t, wantContext, got.Context)
+	assert.Equal(t, wantEffortOK, got.HasEffort)
+	assert.Equal(t, wantEffort, got.Effort)
+	assert.Equal(t, wantUsage, got.Usage)
+	assert.Equal(t, wantCostOK, got.HasCost)
+	assert.Equal(t, wantCost, got.Cost)
+	assert.False(t, got.HasContext)
+	assert.Equal(t, ContextTelemetry{}, got.Context)
+}
+
 func TestCodexRuntimeTelemetry_PrefersThreadsRolloutPath(t *testing.T) {
 	home := t.TempDir()
 	const id = "019ec004-4250-79b1-9ade-ebaea41354ee"
