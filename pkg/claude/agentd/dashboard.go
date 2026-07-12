@@ -1568,10 +1568,14 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// One tmux ls for the whole snapshot. Every isConvOnlineIn /
 	// stateForConvIn call below tests liveness via map lookup off this
 	// set — replacing ~150 per-poll `has-session` subprocess spawns
-	// with one. Errors / no-server collapse to an empty map (== "all
-	// offline"), matching what per-row probes would have reported when
-	// the tmux server is down.
-	aliveSessions, _ := session.LiveTmuxSessions()
+	// with one. Routed through the short-TTL cache (TCL-370) so this
+	// tick's other parallel poll handlers (/api/retired,
+	// /api/conversations) share the same probe instead of each forking
+	// their own `tmux ls`; the span mark below reads ~0 on a cache hit.
+	// Errors / no-server collapse to an empty map (== "all offline"),
+	// matching what per-row probes would have reported when the tmux
+	// server is down.
+	aliveSessions, _ := cachedLiveTmuxSessions()
 	span.mark("tmux_ls")
 
 	groups, _ := db.ListAgentGroups()

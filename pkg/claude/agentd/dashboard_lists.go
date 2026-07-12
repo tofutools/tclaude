@@ -8,7 +8,6 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/convindex"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
-	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // Three paginated, server-filtered GET endpoints that carry the dashboard
@@ -133,7 +132,11 @@ func handleDashboardRetired(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	span.mark("page")
-	alive, _ := session.LiveTmuxSessions()
+	// Shared short-TTL probe (TCL-370): this handler polls in parallel with
+	// /api/snapshot and /api/conversations on the same 2s tick, so route
+	// liveness through the cache to share one `tmux ls` across the tick
+	// rather than forking a third. tmux_ls reads ~0 on a cache hit.
+	alive, _ := cachedLiveTmuxSessions()
 	span.mark("tmux_ls")
 
 	// Batch this page's per-row reads (TCL-368) so /api/retired stops firing the
@@ -210,7 +213,8 @@ func handleDashboardConversations(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	alive, _ := session.LiveTmuxSessions()
+	// Shared short-TTL probe (TCL-370) — see handleDashboardRetired.
+	alive, _ := cachedLiveTmuxSessions()
 	rows := make([]dashboardConversation, 0, len(convs))
 	for _, row := range convs {
 		if row.ConvID == "" {

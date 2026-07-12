@@ -33,6 +33,13 @@ func newFlow(t *testing.T) *testharness.Flow {
 	// snapshot. Handled history lives in the per-test DB.
 	agentd.ResetApprovalsForTest()
 
+	// The shared LiveTmuxSessions cache (TCL-370) is a daemon-wide global.
+	// Set its TTL to 0 for the scenario so every handler re-probes and sees
+	// live sim state — a test that flips tmux liveness mid-scenario must not
+	// read a stale cached snapshot. The coalescing test opts back into a
+	// positive TTL. Cleanup restores the production TTL for the next binary.
+	t.Cleanup(agentd.SetTmuxCacheTTLForTest(0))
+
 	// Shrink the production waits to test-scale durations. Production
 	// uses 60s alive-timeout + 1s ready-delay to absorb CC startup
 	// jitter; under simulator-backed tests the new conv is alive
