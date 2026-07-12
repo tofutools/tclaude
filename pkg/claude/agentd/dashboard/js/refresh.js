@@ -19,7 +19,6 @@ import {
 import { renderMailTab, onMailSearchChanged, renderAccessRequests } from './mail.js';
 import { renderGroupsTab, renderSudoTab, renderLinksTab } from './tabs.js';
 import { renderTemplatesTab } from './modal-templates.js';
-import { renderPluginsSnapshot } from './plugins.js';
 import { renderAccessListSnapshot, renderAccessRegistrySnapshot } from './access-tab.js';
 import { applyCostTabVisibility } from './costs.js';
 import { applyProcessesTabVisibility } from './processes.js';
@@ -535,7 +534,6 @@ export async function refresh(opts = {}) {
     renderDock();
     renderAccessListSnapshot();
     renderLinksTab();
-    renderPluginsSnapshot(data);
     applyProcessesTabVisibility(data);
     applyDebugTabVisibility(data);
     renderAccessRegistrySnapshot(data);
