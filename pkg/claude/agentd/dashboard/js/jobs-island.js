@@ -249,12 +249,10 @@ export function JobsBadge({ state }) {
   return html`<span id="jobs-badge" class="tab-badge count" hidden=${count === 0}>${count}</span>`;
 }
 
-export function mountJobsIsland({ host, badgeHost, state, actions }) {
+export function mountJobsIsland({ host, badgeHost, state, actions, registerCleanup }) {
   state.initialize();
   render(html`<${JobsApp} state=${state} actions=${actions} />`, host);
+  registerCleanup(() => render(null, host));
   render(html`<${JobsBadge} state=${state} />`, badgeHost);
-  return () => {
-    render(null, host);
-    render(null, badgeHost);
-  };
+  registerCleanup(() => render(null, badgeHost));
 }

@@ -52,7 +52,9 @@ export async function mountJobsFeature(actionDependencies) {
       const jobsActions = createJobsActions(actionDependencies);
       return {
         state: jobsState,
-        mount: () => mountJobsIsland({ host, badgeHost, state: jobsState, actions: jobsActions }),
+        mount: (registerCleanup) => mountJobsIsland({
+          host, badgeHost, state: jobsState, actions: jobsActions, registerCleanup,
+        }),
       };
     },
   });

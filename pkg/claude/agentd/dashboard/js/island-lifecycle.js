@@ -43,32 +43,48 @@ export async function mountFeatureIsland({
   requireOptions({ name, label, hosts, load });
   claimHosts(name, hosts);
   let unregister = null;
+  const cleanups = [];
+  const registerCleanup = (cleanup) => {
+    if (typeof cleanup !== 'function') {
+      throw new TypeError(`island ${name} cleanup must be a function`);
+    }
+    cleanups.push(cleanup);
+  };
+  const runCleanups = () => {
+    const errors = [];
+    for (const cleanup of cleanups.slice().reverse()) {
+      try { cleanup(); } catch (error) { errors.push(error); }
+    }
+    return errors;
+  };
   try {
     const feature = await load();
     if (!feature || typeof feature.mount !== 'function') {
       throw new TypeError(`island ${name} loader must return a mount function`);
     }
     if (feature.state) unregister = registerFeatureState(name, feature.state);
-    const unmount = feature.mount();
-    if (typeof unmount !== 'function') {
-      throw new TypeError(`island ${name} mount must return a cleanup function`);
-    }
+    feature.mount(registerCleanup);
+    if (cleanups.length === 0) throw new TypeError(`island ${name} mount must register cleanup`);
     let cleaned = false;
     return () => {
       if (cleaned) return;
-      cleaned = true;
-      try {
-        unmount();
-      } finally {
-        unregister?.();
-        releaseHosts(name, hosts);
+      const errors = runCleanups();
+      unregister?.();
+      if (errors.length > 0) {
+        throw new AggregateError(errors, `island ${name} cleanup failed`);
       }
+      releaseHosts(name, hosts);
+      cleaned = true;
     };
   } catch (error) {
+    const cleanupErrors = runCleanups();
     unregister?.();
     for (const host of hosts.slice(1)) host.replaceChildren();
     renderIslandLoadFailure(hosts[0], { label, error, className: failureClass });
     logger.error(`${label} island unavailable.`, error);
+    for (const cleanupError of cleanupErrors) {
+      logger.error(`${label} island rollback failed.`, cleanupError);
+    }
     return null;
   }
 }
