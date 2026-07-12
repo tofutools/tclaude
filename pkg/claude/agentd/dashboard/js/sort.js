@@ -30,9 +30,31 @@ function loadSortState() {
   catch (_) { sortState = {}; }
 }
 
+// Feature islands and legacy tables share one persisted object while they
+// temporarily use different in-memory state owners. Always merge against the
+// latest preference so either runtime can update one table without restoring
+// a stale boot-time copy of another table's sort.
+function persistedTableSort(tableKey) {
+  try { return (JSON.parse(dashPrefs.getItem(SORT_LS_KEY)) || {})[tableKey] || null; }
+  catch (_) { return null; }
+}
+
+function persistTableSort(tableKey, value) {
+  let all = {};
+  try { all = JSON.parse(dashPrefs.getItem(SORT_LS_KEY)) || {}; }
+  catch (_) { /* replace malformed preferences */ }
+  if (value) all[tableKey] = value;
+  else delete all[tableKey];
+  try { dashPrefs.setItem(SORT_LS_KEY, JSON.stringify(all)); }
+  catch (_) { /* write-through is best-effort */ }
+}
+
 // cycleSort advances one table's sort through the three-state cycle
 // and persists the result.
 function cycleSort(tableKey, col) {
+  // Pull in island writes made since boot before changing a legacy table.
+  try { sortState = JSON.parse(dashPrefs.getItem(SORT_LS_KEY)) || {}; }
+  catch (_) { /* keep the usable in-memory state if persistence is malformed */ }
   const cur = sortState[tableKey];
   if (!cur || cur.col !== col) {
     sortState[tableKey] = { col, dir: 'asc' };
@@ -41,8 +63,7 @@ function cycleSort(tableKey, col) {
   } else {
     delete sortState[tableKey];
   }
-  try { dashPrefs.setItem(SORT_LS_KEY, JSON.stringify(sortState)); }
-  catch (_) { /* write-through is best-effort — sort still works in-memory */ }
+  persistTableSort(tableKey, sortState[tableKey] || null);
 }
 
 // sortHead builds a table's <thead> from a column spec. Each spec
@@ -318,6 +339,7 @@ const PENDING_ACCESSORS = {
 
 export {
   cycleSort, sortHead, applySort, applySortState, loadSortState,
+  persistedTableSort, persistTableSort,
   MEMBER_COLS, MEMBER_ACCESSORS, JOBS_COLS, JOBS_ACCESSORS,
   SUDO_COLS, SUDO_ACCESSORS, LINK_COLS, LINK_ACCESSORS,
   REPLACED_COLS, REPLACED_ACCESSORS,
