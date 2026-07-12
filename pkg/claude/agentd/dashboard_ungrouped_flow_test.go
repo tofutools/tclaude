@@ -32,6 +32,7 @@ type dashSnapshot struct {
 	PluginsTabVisible    bool               `json:"plugins_tab_visible"`
 	DebugTabVisible      bool               `json:"debug_tab_visible"`
 	ProcessesEnabled     bool               `json:"processes_enabled"`
+	RetiredTotal         int                `json:"retired_total"`
 	RemoteAccess         dashRemoteAccess   `json:"remote_access"`
 }
 

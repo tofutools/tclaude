@@ -1,12 +1,44 @@
 export const SNAPSHOT_POLL_MS = 2000;
+export const SNAPSHOT_HIDDEN_POLL_MS = 10000;
 
 // startSnapshotPoll is the sole periodic scheduler for /api/snapshot. Manual
 // refresh/retry/mutation calls still route to the same refresh function; no
 // island owns a timer. Injection keeps the scheduling contract testable without
 // waiting on wall-clock time.
-export function startSnapshotPoll(refresh, { setIntervalImpl = globalThis.setInterval } = {}) {
+export function startSnapshotPoll(refresh, {
+  setTimeoutImpl = globalThis.setTimeout,
+  clearTimeoutImpl = globalThis.clearTimeout,
+  documentImpl = globalThis.document,
+} = {}) {
   if (typeof refresh !== 'function') throw new TypeError('snapshot poll requires refresh');
-  if (typeof setIntervalImpl !== 'function') throw new TypeError('snapshot poll requires setInterval');
+  if (typeof setTimeoutImpl !== 'function') throw new TypeError('snapshot poll requires setTimeout');
+  if (typeof clearTimeoutImpl !== 'function') throw new TypeError('snapshot poll requires clearTimeout');
+
+  let timer = null;
+  let stopped = false;
+  const delay = () => documentImpl?.hidden ? SNAPSHOT_HIDDEN_POLL_MS : SNAPSHOT_POLL_MS;
+  const schedule = () => {
+    if (!stopped) timer = setTimeoutImpl(tick, delay());
+  };
+  const tick = () => {
+    void refresh();
+    schedule();
+  };
+  const visibilityChanged = () => {
+    if (timer !== null) clearTimeoutImpl(timer);
+    // A visible dashboard should repaint immediately rather than waiting for
+    // the remainder of the background cadence.
+    if (!documentImpl.hidden) void refresh();
+    schedule();
+  };
+
   void refresh();
-  return setIntervalImpl(refresh, SNAPSHOT_POLL_MS);
+  schedule();
+  documentImpl?.addEventListener?.('visibilitychange', visibilityChanged);
+
+  return () => {
+    stopped = true;
+    if (timer !== null) clearTimeoutImpl(timer);
+    documentImpl?.removeEventListener?.('visibilitychange', visibilityChanged);
+  };
 }
