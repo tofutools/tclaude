@@ -431,6 +431,87 @@ func baseStates() []dashsnap.State {
 })();`
 	states := []dashsnap.State{
 		{
+			Key:      "bounded-jobs-normal",
+			Title:    "Bounded Preact — Jobs normal",
+			Caption:  "Jobs island completed its initial request and rendered its normal fixture state.",
+			JS:       boundedTabJS("jobs", "#cron-create-open"),
+			SettleMS: 500,
+		},
+		{
+			Key:      "bounded-plugins-normal",
+			Title:    "Bounded Preact — Plugins normal",
+			Caption:  "Plugins island completed its request and rendered the seeded Excalidraw catalog card.",
+			JS:       boundedTabJS("plugins", `.plugin-catalog-card[data-key="catalog-excalidraw-mcp"]`),
+			SettleMS: 500,
+		},
+		{
+			Key:      "bounded-costs-normal",
+			Title:    "Bounded Preact — Costs normal",
+			Caption:  "Costs island completed its request and rendered controls for the fixture's empty-cost span.",
+			JS:       boundedTabJS("costs", "#costs-factor"),
+			SettleMS: 500,
+		},
+		{
+			Key:      "bounded-access-normal",
+			Title:    "Bounded Preact — Access normal",
+			Caption:  "Access island rendered its normal fixture state with keyboard-navigable sub-tabs.",
+			JS:       boundedTabJS("access", ".access-subnav"),
+			SettleMS: 500,
+		},
+		{
+			Key:      "bounded-logs-normal",
+			Title:    "Bounded Preact — Logs normal",
+			Caption:  "Logs island completed its request and rendered controls for the fixture's empty log.",
+			JS:       boundedTabJS("logs", "#logs-refresh"),
+			SettleMS: 500,
+		},
+		{
+			Key:      "bounded-audit-normal",
+			Title:    "Bounded Preact — Audit normal",
+			Caption:  "Audit island completed its request and rendered controls for the fixture's empty audit log.",
+			JS:       boundedTabJS("audit", "#audit-outcome"),
+			SettleMS: 500,
+		},
+		{
+			Key:      "bounded-config-normal",
+			Title:    "Bounded Preact — Config normal",
+			Caption:  "Config island completed its load and rendered the existing form semantics behind its Preact owner.",
+			JS:       boundedTabJS("config", "#cfg-save"),
+			SettleMS: 500,
+		},
+		{
+			Key:      "bounded-jobs-empty",
+			Title:    "Bounded Preact — Jobs empty filter",
+			Caption:  "Representative empty state produced through the real Jobs filter input.",
+			JS:       boundedJobsEmptyJS(),
+			SettleMS: 500,
+		},
+		{
+			Key:      "bounded-logs-error",
+			Title:    "Bounded Preact — Logs error",
+			Caption:  "Representative request failure rendered as an accessible alert.",
+			JS:       boundedLogsErrorJS(),
+			SettleMS: 300,
+		},
+		{
+			Key:      "bounded-logs-poll-focus",
+			Title:    "Bounded Preact — Logs focus across poll",
+			Caption:  "Self-checked: filter focus, value, and selection survive a completed dashboard snapshot poll.",
+			JS:       boundedLogsPollFocusJS(),
+			SettleMS: 100,
+		},
+		{
+			Key:     "bounded-config-dialog-focus",
+			Title:   "Bounded Preact — Config dialog focus",
+			Caption: "Self-checked: the diff dialog takes focus and a real Tab key remains contained inside it.",
+			JS:      boundedConfigDialogJS(),
+			Actions: []dashsnap.BrowserAction{
+				{Kind: "key", Key: "tab"},
+				{Kind: "eval", JS: `var d=document.querySelector('#config-diff-modal'); if(!d || !d.contains(document.activeElement)) throw new Error('Tab focus escaped Config dialog');`},
+			},
+			SettleMS: 200,
+		},
+		{
 			Key:      "processes-templates",
 			Title:    "Processes — templates",
 			Caption:  "Feature-gated Processes tab with a populated versioned template list and dark-themed actions.",
@@ -1253,6 +1334,129 @@ func worklistTabJS(view, readySelector string) string {
     throw new Error('worklist badge expected 2, got ' + (badge ? badge.textContent : 'missing'));
   }
 })();`, view, view, readySelector, readySelector)
+}
+
+func boundedTabJS(tab, readySelector string) string {
+	return fmt.Sprintf(`return Promise.all([
+  import('/static/js/snapshot-store.js'),
+  import('/static/js/feature-state-registry.js')
+]).then(async function(modules) {
+var store = modules[0], registry = modules[1];
+var __tab = document.querySelector('nav [data-tab=%q]');
+if (!__tab) throw new Error('missing bounded tab: %s');
+if (%q === 'plugins' || %q === 'costs') {
+  store.dashboardState.snapshot.value = Object.assign({}, store.dashboardState.snapshot.value, {
+    plugins_tab_visible: true, cost_tab_visible: true
+  });
+  await Promise.resolve();
+}
+__tab.click();
+return new Promise(function(resolve, reject) {
+  var deadline = Date.now() + 4000;
+  (function ready() {
+    var node = document.querySelector(%q);
+    var panel = document.querySelector('#tab-' + %q);
+    var root = document.querySelector('#' + %q + '-root');
+    var state = registry.featureState(%q);
+    var phase = state?.request?.value?.phase || state?.phase?.value || state?.view?.value?.request?.phase;
+    var settled = root && state && !root.querySelector('[role="alert"]') && !root.querySelector('[aria-busy="true"]') &&
+      (%q === 'access' || phase === 'ready');
+    if (node && panel?.classList.contains('active') && node.getClientRects().length && settled) { resolve(); return; }
+    if (Date.now() >= deadline) { reject(new Error('bounded tab did not render: %s')); return; }
+    setTimeout(ready, 25);
+  })();
+});
+});`, tab, tab, tab, tab, readySelector, tab, tab, tab, tab, tab)
+}
+
+func boundedJobsEmptyJS() string {
+	return `return (async function(){
+  document.querySelector('nav [data-tab="jobs"]').click();
+  var deadline = Date.now() + 4000;
+  while (!document.querySelector('#filter-jobs') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 25); });
+  }
+  var input = document.querySelector('#filter-jobs');
+  if (!input) throw new Error('Jobs filter missing');
+  input.focus();
+  input.value = 'dashsnap-no-such-job';
+  input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'dashsnap-no-such-job' }));
+  while (!document.querySelector('#jobs-list .empty') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 50); });
+  }
+  var empty = document.querySelector('#jobs-list .empty');
+  if (!empty) throw new Error('Jobs empty state missing');
+})();`
+}
+
+func boundedLogsErrorJS() string {
+	return `
+document.querySelector('nav [data-tab="logs"]').click();
+return import('/static/js/feature-state-registry.js').then(function(registry) {
+  return new Promise(function(resolve, reject) {
+    var deadline = Date.now() + 4000;
+    (function ready() {
+      var state = registry.featureState('logs');
+      if (!state) { if (Date.now() < deadline) { setTimeout(ready, 25); return; } reject(new Error('Logs feature state unavailable')); return; }
+      if (state.request.value.phase !== 'ready') { if (Date.now() < deadline) { setTimeout(ready, 25); return; } reject(new Error('Logs initial request did not settle')); return; }
+      var token = state.beginRequest();
+      state.failRequest(token, new Error('DashSnap simulated failure'));
+      setTimeout(function() {
+        var alert = document.querySelector('#logs-root [role="alert"]');
+        if (!alert || !alert.textContent.includes('DashSnap simulated failure')) reject(new Error('Logs error alert missing'));
+        else resolve();
+      }, 50);
+    })();
+  });
+});`
+}
+
+func boundedLogsPollFocusJS() string {
+	return `
+document.querySelector('nav [data-tab="logs"]').click();
+return new Promise(function(resolve, reject) {
+  var deadline = Date.now() + 4000;
+  (function ready() {
+    var input = document.querySelector('#filter-logs');
+    if (!input) { if (Date.now() < deadline) { setTimeout(ready, 25); return; } reject(new Error('Logs filter missing')); return; }
+    input.focus();
+    input.value = 'focus-poll-proof';
+    input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'focus-poll-proof' }));
+    input.setSelectionRange(2, 8);
+    var timeout = setTimeout(function() {
+      document.removeEventListener('tclaude:snapshot', checked);
+      reject(new Error('No dashboard snapshot completed after editing Logs filter'));
+    }, 5000);
+    function checked() {
+      document.removeEventListener('tclaude:snapshot', checked);
+      clearTimeout(timeout);
+      requestAnimationFrame(function() { requestAnimationFrame(function() {
+        var current = document.querySelector('#filter-logs');
+        if (document.activeElement !== current) reject(new Error('Logs filter lost focus across poll'));
+        else if (current.value !== 'focus-poll-proof') reject(new Error('Logs filter value changed across poll'));
+        else if (current.selectionStart !== 2 || current.selectionEnd !== 8) reject(new Error('Logs selection changed across poll'));
+        else resolve();
+      }); });
+    }
+    document.addEventListener('tclaude:snapshot', checked);
+  })();
+});`
+}
+
+func boundedConfigDialogJS() string {
+	return `
+document.querySelector('nav [data-tab="config"]').click();
+return import('/static/js/feature-state-registry.js').then(function(registry) {
+  var state = registry.featureState('config');
+  if (!state) throw new Error('Config feature state unavailable');
+  void state.confirmDiff('{"theme":"dark"}\n', '{"theme":"light"}\n', false, '/tmp/config.json');
+  return new Promise(function(resolve, reject) { requestAnimationFrame(function() { requestAnimationFrame(function() {
+    var dialog = document.querySelector('#config-diff-modal');
+    if (!dialog) reject(new Error('Config diff dialog missing'));
+    else if (document.activeElement?.id !== 'config-diff-confirm') reject(new Error('Config dialog initial focus missing'));
+    else resolve();
+  }); }); });
+});`
 }
 
 // scrollClearJS builds a self-checking JOH-388 req-3 state: on the groups tab
