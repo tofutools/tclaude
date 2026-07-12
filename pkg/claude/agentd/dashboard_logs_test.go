@@ -94,6 +94,25 @@ func TestBuildLogsResponseKeysSurviveFullPageTailRollover(t *testing.T) {
 	}
 }
 
+func TestGatherLogRecordKeysSurviveTailCapBoundaryAdvance(t *testing.T) {
+	line := jsonLine("2026-07-01T12:00:00.000Z", "INFO", "same")
+	path := writeLog(t, line, line, line)
+	// Start one byte before the oldest retained line. readLogTail drops that
+	// preceding newline, leaving exactly the newest two complete records.
+	maxBytes := int64(2*(len(line)+1) + 1)
+	before, _, _ := gatherLogRecords(path, false, maxBytes)
+	if err := os.WriteFile(path, []byte(strings.Repeat(line+"\n", 4)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	after, _, _ := gatherLogRecords(path, false, maxBytes)
+	if len(before) != 2 || len(after) != 2 {
+		t.Fatalf("record counts = %d then %d, want 2 then 2", len(before), len(after))
+	}
+	if before[1].key != after[0].key {
+		t.Fatalf("surviving record key changed as cap advanced: %q -> %q", before[1].key, after[0].key)
+	}
+}
+
 func TestBuildLogsResponse_LevelMinFilter(t *testing.T) {
 	path := writeLog(t,
 		jsonLine("2026-07-01T12:00:00.000Z", "DEBUG", "d"),

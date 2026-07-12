@@ -227,32 +227,39 @@ func parseLogLine(line string) logEntryView {
 // readLogTail reads up to maxBytes from the END of the file at path. When
 // the file is larger, it seeks to the tail and drops the leading partial
 // line (the seek lands mid-record), returning truncated=true.
-func readLogTail(path string, maxBytes int64) (data []byte, truncated bool, err error) {
+func readLogTail(path string, maxBytes int64) (data []byte, start int64, truncated bool, err error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, false, err
+		return nil, 0, false, err
 	}
 	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
-		return nil, false, err
+		return nil, 0, false, err
 	}
 	size := info.Size()
 	if size <= maxBytes {
 		b, err := io.ReadAll(f)
-		return b, false, err
+		return b, 0, false, err
 	}
-	if _, err := f.Seek(size-maxBytes, io.SeekStart); err != nil {
-		return nil, false, err
+	start = size - maxBytes
+	if _, err := f.Seek(start, io.SeekStart); err != nil {
+		return nil, 0, false, err
 	}
 	b, err := io.ReadAll(f)
 	if err != nil {
-		return nil, false, err
+		return nil, 0, false, err
 	}
 	if i := bytes.IndexByte(b, '\n'); i >= 0 {
 		b = b[i+1:]
+		start += int64(i + 1)
 	}
-	return b, true, nil
+	return b, start, true, nil
+}
+
+type logRecord struct {
+	text string
+	key  string
 }
 
 // gatherLogLines returns the log lines in chronological order (oldest
@@ -263,7 +270,7 @@ func readLogTail(path string, maxBytes int64) (data []byte, truncated bool, err 
 // It also returns one logSource per file it successfully read (active log
 // first, then each rotated sibling visited), so a caller can report which
 // files — and how many lines from each — make up the response.
-func gatherLogLines(path string, includeRotated bool, maxBytes int64) (lines []string, sources []logSource, truncated bool) {
+func gatherLogRecords(path string, includeRotated bool, maxBytes int64) (records []logRecord, sources []logSource, truncated bool) {
 	// Newest-first file order: the active log, then each rotated sibling.
 	files := []string{path}
 	if includeRotated {
@@ -282,7 +289,7 @@ func gatherLogLines(path string, includeRotated bool, maxBytes int64) (lines []s
 			truncated = true
 			break
 		}
-		data, tr, err := readLogTail(f, budget)
+		data, start, tr, err := readLogTail(f, budget)
 		if err != nil {
 			continue // missing / unreadable file — skip it
 		}
@@ -290,16 +297,16 @@ func gatherLogLines(path string, includeRotated bool, maxBytes int64) (lines []s
 			truncated = true
 		}
 		budget -= int64(len(data))
-		fileLines := splitNonEmptyLines(data)
+		fileRecords := splitNonEmptyRecords(data, f, start)
 		// We iterate newest → oldest, so each file we visit is older than
 		// everything gathered so far: prepend to stay chronological.
-		lines = append(fileLines, lines...)
+		records = append(fileRecords, records...)
 		// Record the file in visit order (active first) — that is the
 		// natural order for a "which files did we read" display.
 		sources = append(sources, logSource{
 			Path:    f,
 			Name:    filepath.Base(f),
-			Lines:   len(fileLines),
+			Lines:   len(fileRecords),
 			Bytes:   int64(len(data)),
 			Rotated: f != path,
 		})
@@ -309,6 +316,15 @@ func gatherLogLines(path string, includeRotated bool, maxBytes int64) (lines []s
 		if tr {
 			break
 		}
+	}
+	return records, sources, truncated
+}
+
+func gatherLogLines(path string, includeRotated bool, maxBytes int64) (lines []string, sources []logSource, truncated bool) {
+	records, sources, truncated := gatherLogRecords(path, includeRotated, maxBytes)
+	lines = make([]string, len(records))
+	for i, record := range records {
+		lines[i] = record.text
 	}
 	return lines, sources, truncated
 }
@@ -330,14 +346,27 @@ func countRotatedLogFiles(path string) int {
 
 // splitNonEmptyLines splits on '\n' and drops blank lines.
 func splitNonEmptyLines(data []byte) []string {
-	raw := strings.Split(string(data), "\n")
-	out := make([]string, 0, len(raw))
-	for _, ln := range raw {
-		ln = strings.TrimRight(ln, "\r")
-		if strings.TrimSpace(ln) == "" {
+	records := splitNonEmptyRecords(data, "", 0)
+	out := make([]string, len(records))
+	for i, record := range records {
+		out[i] = record.text
+	}
+	return out
+}
+
+func splitNonEmptyRecords(data []byte, path string, start int64) []logRecord {
+	raw := bytes.Split(data, []byte{'\n'})
+	out := make([]logRecord, 0, len(raw))
+	offset := start
+	pathSum := sha256.Sum256([]byte(path))
+	for _, lineBytes := range raw {
+		lineStart := offset
+		offset += int64(len(lineBytes) + 1)
+		line := strings.TrimRight(string(lineBytes), "\r")
+		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		out = append(out, ln)
+		out = append(out, logRecord{text: line, key: fmt.Sprintf("%x:%d", pathSum[:8], lineStart)})
 	}
 	return out
 }
@@ -347,20 +376,13 @@ func splitNonEmptyLines(data []byte) []string {
 // HTTP handler so it is unit-testable against a temp log file without a
 // home dir or a live server.
 func buildLogsResponse(path string, includeRotated bool, filter logFilter, normLevel string, page, pageSize int) logsResponse {
-	lines, sources, truncated := gatherLogLines(path, includeRotated, maxLogReadBytes)
-	totalUnfiltered := len(lines)
+	records, sources, truncated := gatherLogRecords(path, includeRotated, maxLogReadBytes)
+	totalUnfiltered := len(records)
 
-	filtered := make([]logEntryView, 0, len(lines))
-	occurrences := make(map[string]int)
-	for _, ln := range lines {
-		occurrences[ln]++
-		e := parseLogLine(ln)
-		// The UI receives only one page, so it cannot distinguish identical
-		// records that slide across a full live-tail page. Assign identity across
-		// the complete chronological scan before filtering/pagination. Appends do
-		// not renumber existing records, even when the visible page stays full.
-		sum := sha256.Sum256([]byte(ln))
-		e.Key = fmt.Sprintf("%x:%d", sum[:8], occurrences[ln])
+	filtered := make([]logEntryView, 0, len(records))
+	for _, record := range records {
+		e := parseLogLine(record.text)
+		e.Key = record.key
 		if filter.match(e) {
 			filtered = append(filtered, e)
 		}
