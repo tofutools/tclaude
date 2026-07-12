@@ -134,6 +134,21 @@ func TestGatherLogRecordKeysSurviveRotationAndNewActiveFile(t *testing.T) {
 	if after[0].key == after[1].key {
 		t.Fatalf("replacement active file reused rotated key %q", after[0].key)
 	}
+	oldInfo, err := os.Stat(path + ".1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path + ".1"); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _ = gatherLogRecords(path, false, maxLogReadBytes)
+	logFileIdentityRegistry.Lock()
+	defer logFileIdentityRegistry.Unlock()
+	for _, entry := range logFileIdentityRegistry.entries {
+		if os.SameFile(oldInfo, entry.info) {
+			t.Fatal("deleted rotated file identity remained retained after the next scan")
+		}
+	}
 }
 
 func TestBuildLogsResponse_LevelMinFilter(t *testing.T) {

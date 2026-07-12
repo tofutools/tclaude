@@ -242,7 +242,7 @@ func readLogTail(path string, maxBytes int64) (data []byte, start int64, generat
 	if err != nil {
 		return nil, 0, "", false, err
 	}
-	generation, retained = logFileGeneration(f, info)
+	generation, retained = logFileGeneration(path, f, info)
 	size := info.Size()
 	if size <= maxBytes {
 		b, err := io.ReadAll(f)
@@ -266,6 +266,7 @@ func readLogTail(path string, maxBytes int64) (data []byte, start int64, generat
 type logFileIdentity struct {
 	info  os.FileInfo
 	file  *os.File
+	path  string
 	token uint64
 }
 
@@ -275,30 +276,48 @@ var logFileIdentityRegistry = struct {
 	entries []logFileIdentity
 }{}
 
+var logGatherMu sync.Mutex
+
 // logFileGeneration gives an opened physical file a daemon-local identity.
 // os.SameFile is portable across Linux and macOS, survives a rotation rename,
 // and distinguishes the replacement output.log. Retaining one handle per LRU
-// entry prevents a deleted file's identity from being recycled underneath the
-// registry; eviction closes that handle. The bound is comfortably above the
-// maximum simultaneously scanned rotation set.
-func logFileGeneration(file *os.File, info os.FileInfo) (token string, retained bool) {
+// entry prevents identity recycling; the serialized scan updates rename paths
+// before pruning handles whose physical file is no longer observable. The
+// bound is comfortably above the maximum simultaneously scanned rotation set.
+func logFileGeneration(path string, file *os.File, info os.FileInfo) (token string, retained bool) {
 	logFileIdentityRegistry.Lock()
 	defer logFileIdentityRegistry.Unlock()
 	for i, entry := range logFileIdentityRegistry.entries {
 		if os.SameFile(info, entry.info) {
+			entry.path = path
 			logFileIdentityRegistry.entries = append(logFileIdentityRegistry.entries[:i], logFileIdentityRegistry.entries[i+1:]...)
 			logFileIdentityRegistry.entries = append(logFileIdentityRegistry.entries, entry)
 			return strconv.FormatUint(entry.token, 36), false
 		}
 	}
 	logFileIdentityRegistry.next++
-	entry := logFileIdentity{info: info, file: file, token: logFileIdentityRegistry.next}
+	entry := logFileIdentity{info: info, file: file, path: path, token: logFileIdentityRegistry.next}
 	logFileIdentityRegistry.entries = append(logFileIdentityRegistry.entries, entry)
 	if len(logFileIdentityRegistry.entries) > 256 {
 		_ = logFileIdentityRegistry.entries[0].file.Close()
 		logFileIdentityRegistry.entries = logFileIdentityRegistry.entries[1:]
 	}
 	return strconv.FormatUint(entry.token, 36), true
+}
+
+func pruneLogFileIdentities() {
+	logFileIdentityRegistry.Lock()
+	defer logFileIdentityRegistry.Unlock()
+	kept := logFileIdentityRegistry.entries[:0]
+	for _, entry := range logFileIdentityRegistry.entries {
+		info, err := os.Stat(entry.path)
+		if err == nil && os.SameFile(info, entry.info) {
+			kept = append(kept, entry)
+			continue
+		}
+		_ = entry.file.Close()
+	}
+	logFileIdentityRegistry.entries = kept
 }
 
 type logRecord struct {
@@ -315,6 +334,13 @@ type logRecord struct {
 // first, then each rotated sibling visited), so a caller can report which
 // files — and how many lines from each — make up the response.
 func gatherLogRecords(path string, includeRotated bool, maxBytes int64) (records []logRecord, sources []logSource, truncated bool) {
+	// Serialize physical-file identity observation so a rotation rename can be
+	// followed across the complete active+.N set before stale handles are
+	// pruned. Log API requests are read-only and already bounded, so concurrent
+	// scans provide no useful throughput.
+	logGatherMu.Lock()
+	defer logGatherMu.Unlock()
+	defer pruneLogFileIdentities()
 	// Newest-first file order: the active log, then each rotated sibling.
 	files := []string{path}
 	if includeRotated {
