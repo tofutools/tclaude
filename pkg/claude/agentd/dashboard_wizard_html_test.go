@@ -685,6 +685,29 @@ func TestDashboardHTML_WizardGrimoireCopy(t *testing.T) {
 	must("body.wizard #perm-edit-modal #perm-edit-submit { font-size: 0; }", "the Save text is hidden so the glyph shows")
 }
 
+// TestDashboardHTML_WizardPartyBoons pins the group-shaped permission editor's
+// vocabulary. It reuses the Grimoire shell, but group grants are party boons:
+// the opener, title, banner, subtitle, choices, effective-state text and toast
+// all switch together instead of leaving a half-themed dialog.
+func TestDashboardHTML_WizardPartyBoons(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	must(`<span class="group-perms-word-wizard">party boons</span>`, "the group menu names party boons")
+	must("body.wizard .group-perms-word-wizard { display: inline; }", "wizard reveals party-boon vocabulary")
+	must("groupMode ? '✨ Party Boons' : '📕 The Grimoire'", "the group editor receives its own wizard title")
+	must("<strong>PARTY BOONS</strong>", "the group editor explains boons rather than per-agent overrides")
+	must("every familiar receives these boons immediately", "the group editor subtitle uses party vocabulary")
+	must(`<span class="group-perms-word-wizard">Bestow</span>`, "Grant becomes Bestow")
+	must(`<span class="group-perms-word-wizard">Unbound</span>`, "Not granted becomes Unbound")
+	must("✨ boon active", "effective group grants read as active boons")
+	must("party boon${permissions.length === 1 ? '' : 's'} bound", "the saved toast confirms bound boons")
+}
+
 // TestDashboardCSS_WizardRetireModalScoped guards that the wizard retire-dialog
 // re-skin stays scoped to #retire-modal. The retire modal is a generic .modal
 // (unlike the spawn dialog's .cron-create-modal), so an unscoped

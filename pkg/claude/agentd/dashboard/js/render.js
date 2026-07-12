@@ -462,6 +462,9 @@ function groupMenuItems(g, members) {
   const ctxTitle = ctxLen > 0
     ? `Startup context (${ctxLen} chars) delivered to the inbox of agents spawned here — click to edit`
     : 'No startup context — click to set one';
+  const groupPermsTitle = isWizardActive()
+    ? 'Bestow party boons on every familiar in this party. Membership changes take effect immediately; a personal binding against one still wins.'
+    : 'Grant permissions to every current member of this group. Membership changes take effect immediately; an agent-level Deny still wins.';
   // Quick-options pin toggle — only meaningful while auto-fold is on, so
   // it's omitted in "expanded" mode (nothing folds there). Pinning is a
   // per-browser dashPref (tclaude.dash.quickpin.<name>); render.js stamps
@@ -477,7 +480,7 @@ function groupMenuItems(g, members) {
     + `<button data-act="message-new" data-prefill='${esc(JSON.stringify({targetMode: 'group', groupName: g.name}))}' data-label="${esc(g.name)}" title="Send a one-shot message to ${esc(g.name)} — the whole group, or a ticked subset of its members">✉ message</button>`
     + `<button data-act="view-group-messages" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Open this group's messages in the Messages tab — every message touching a member (sent or received) plus the group's own multicasts">🗂 view messages</button>`
     + `<button data-act="set-group-context" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="${esc(ctxTitle)}">${ctxLabel}</button>`
-    + `<button data-act="set-group-permissions" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Grant permissions to every current member of this group. Membership changes take effect immediately; an agent-level Deny still wins.">🔑 group permissions${(g.permissions || []).length ? ` (${g.permissions.length})` : ''}…</button>`
+    + `<button data-act="set-group-permissions" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="${esc(groupPermsTitle)}">🔑 <span class="group-perms-word-regular">group permissions</span><span class="group-perms-word-wizard">party boons</span>${(g.permissions || []).length ? ` (${g.permissions.length})` : ''}…</button>`
     + groupNotifyMenuItem(g)
     + remoteControlPolicyMenuItem(g)
     + quickPinItem
