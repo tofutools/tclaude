@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
@@ -118,7 +119,7 @@ func (f *CodexTelemetryFollower) fullScan(path string, info os.FileInfo) (CodexR
 	}
 	defer func() { _ = file.Close() }()
 	state := newCodexRuntimeScanState()
-	offset, _, err := scanCompleteCodexLines(file, &state, false)
+	offset, _, err := scanCompleteCodexLines(file, path, &state, false)
 	if err != nil {
 		return CodexRuntimeSnapshot{}, fmt.Errorf("scan codex rollout %s: %w", path, err)
 	}
@@ -141,7 +142,7 @@ func (f *CodexTelemetryFollower) scanAppend(path string) error {
 	// Parse into a copy so a read/decode failure cannot partially advance the
 	// durable state before the caller's full-rescan fallback succeeds.
 	state := f.state.clone()
-	read, doubt, err := scanCompleteCodexLines(file, &state, true)
+	read, doubt, err := scanCompleteCodexLines(file, path, &state, true)
 	if err != nil {
 		return err
 	}
@@ -156,30 +157,63 @@ func (f *CodexTelemetryFollower) scanAppend(path string) error {
 // scanCompleteCodexLines consumes newline-terminated records only. A writer may
 // be between write(2)s when the dashboard polls; the unterminated tail stays at
 // the current offset and is retried with the next append.
-func scanCompleteCodexLines(r io.Reader, state *codexRuntimeScanState, strict bool) (consumed int64, doubt bool, err error) {
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 0, 64*1024), maxCodexRolloutLineBytes)
-	scanner.Split(func(data []byte, atEOF bool) (int, []byte, error) {
-		if i := bytes.IndexByte(data, '\n'); i >= 0 {
-			return i + 1, data[:i+1], nil
-		}
-		if atEOF && len(bytes.TrimSpace(data)) > 0 && json.Valid(bytes.TrimSpace(data)) {
-			// Match the established full parser for a complete final JSON value
-			// even if the writer has not appended its newline yet. An invalid
-			// (mid-write) tail remains unconsumed and is retried from its start.
-			return len(data), data, nil
-		}
-		if atEOF {
-			return 0, nil, nil
-		}
-		return 0, nil, nil
-	})
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		consumed += int64(len(line))
-		if ok := state.consumeLine(line); strict && !ok {
-			doubt = true
+func scanCompleteCodexLines(r io.Reader, rolloutPath string, state *codexRuntimeScanState, strict bool) (consumed int64, doubt bool, err error) {
+	reader := bufio.NewReaderSize(r, 64*1024)
+	line := make([]byte, 0, 64*1024)
+	for {
+		line = line[:0]
+		lineBytes := int64(0)
+		oversized := false
+		for {
+			fragment, readErr := reader.ReadSlice('\n')
+			lineBytes += int64(len(fragment))
+			if !oversized {
+				remaining := maxCodexRolloutLineBytes - len(line)
+				if len(fragment) <= remaining {
+					line = append(line, fragment...)
+				} else {
+					line = append(line, fragment[:remaining]...)
+					oversized = true
+				}
+			}
+
+			switch readErr {
+			case bufio.ErrBufferFull:
+				continue
+			case nil:
+				if oversized {
+					// Compaction replacement-history and image payloads can be tens
+					// of MiB. Match the telemetry parser's best-effort malformed-line
+					// contract: discard the completed record, advance past its
+					// newline, and continue to later telemetry without retaining the
+					// whole payload in memory. Do not flag decode doubt: rebuilding
+					// would encounter the same record and loop forever.
+					slog.Warn("codex-telemetry: skipping oversized rollout record",
+						"path", rolloutPath, "bytes", lineBytes,
+						"limit_bytes", maxCodexRolloutLineBytes, "module", "harness")
+				} else if ok := state.consumeLine(line); strict && !ok {
+					doubt = true
+				}
+				consumed += lineBytes
+			case io.EOF:
+				if lineBytes == 0 {
+					return consumed, doubt, nil
+				}
+				// Match the established parser for a syntactically complete EOF
+				// record. An oversized or invalid mid-write tail is not consumed;
+				// the follower retries it from the same offset after the next append.
+				trimmed := bytes.TrimSpace(line)
+				if !oversized && len(trimmed) > 0 && json.Valid(trimmed) {
+					if ok := state.consumeLine(line); strict && !ok {
+						doubt = true
+					}
+					consumed += lineBytes
+				}
+				return consumed, doubt, nil
+			default:
+				return consumed, doubt, readErr
+			}
+			break
 		}
 	}
-	return consumed, doubt, scanner.Err()
 }

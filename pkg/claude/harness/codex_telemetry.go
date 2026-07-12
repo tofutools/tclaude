@@ -1,7 +1,6 @@
 package harness
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -154,17 +153,8 @@ func CodexRuntimeTelemetryFromRollout(rolloutPath string) (CodexRuntimeSnapshot,
 	}
 	defer func() { _ = rc.Close() }()
 
-	scanner := bufio.NewScanner(rc)
-	scanner.Buffer(make([]byte, 0, 64*1024), maxCodexRolloutLineBytes)
-
 	state := newCodexRuntimeScanState()
-	for scanner.Scan() {
-		// Full scans retain the historical best-effort contract: malformed
-		// lines are ignored. The incremental follower is stricter because a
-		// malformed newly-appended line is a reason to rebuild from byte zero.
-		_ = state.consumeLine(scanner.Bytes())
-	}
-	if err := scanner.Err(); err != nil {
+	if _, _, err := scanCompleteCodexLines(rc, rolloutPath, &state, false); err != nil {
 		return CodexRuntimeSnapshot{}, fmt.Errorf("scan codex rollout %s: %w", rolloutPath, err)
 	}
 	return state.snapshot(), nil

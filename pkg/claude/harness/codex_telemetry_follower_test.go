@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -172,6 +173,50 @@ func TestCodexTelemetryFollower_StatSkipAndZstdPathRefresh(t *testing.T) {
 	archivedAgain, err := follower.RuntimeTelemetry(home, id)
 	require.NoError(t, err)
 	assert.Equal(t, archived, archivedAgain)
+}
+
+func TestCodexTelemetryFollower_SkipsOversizedRecordAndContinues(t *testing.T) {
+	home := t.TempDir()
+	const id = "019ec004-4250-79b1-9ade-ebaea41354e1"
+	path := newFollowerTestRollout(t, home, id)
+	appendTokenCount(t, path, 100, 10, 110)
+
+	follower := &CodexTelemetryFollower{}
+	first, err := follower.RuntimeTelemetry(home, id)
+	require.NoError(t, err)
+	assert.Equal(t, int64(100), first.Context.TokensInput)
+
+	// Current Codex compaction replacement-history records can exceed 10 MiB.
+	// The runtime follower must chunk-discard the complete irrelevant record,
+	// commit its newline offset, and still observe telemetry appended after it.
+	prefix := []byte(`{"timestamp":"2026-07-12T10:00:00Z","type":"compacted","payload":{"replacement_history":"`)
+	suffix := []byte("\"}}\n")
+	oversized := make([]byte, 0, len(prefix)+maxCodexRolloutLineBytes+1)
+	oversized = append(oversized, prefix...)
+	oversized = append(oversized, bytes.Repeat([]byte("x"), maxCodexRolloutLineBytes+1)...)
+	offsetBeforeTail := follower.offset
+	appendBytes(t, path, oversized)
+	whilePartial, err := follower.RuntimeTelemetry(home, id)
+	require.NoError(t, err)
+	assert.Equal(t, first, whilePartial)
+	assert.Equal(t, offsetBeforeTail, follower.offset, "unterminated oversized tail is not consumed")
+
+	appendBytes(t, path, suffix)
+	appendTokenCount(t, path, 900, 90, 990)
+
+	got, err := follower.RuntimeTelemetry(home, id)
+	require.NoError(t, err)
+	assert.Equal(t, int64(900), got.Context.TokensInput, "incremental scan reaches telemetry after oversized record")
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, info.Size(), follower.offset, "offset advances beyond oversized record newline")
+
+	full, err := CodexRuntimeTelemetryFromRollout(path)
+	require.NoError(t, err)
+	assert.Equal(t, got, full, "full runtime scan also reaches later telemetry")
+	fromFreshFollower, err := (&CodexTelemetryFollower{}).RuntimeTelemetry(home, id)
+	require.NoError(t, err)
+	assert.Equal(t, got, fromFreshFollower, "follower full scan matches incremental scan")
 }
 
 func assertFollowerMatchesFull(t *testing.T, follower *CodexTelemetryFollower, home, id, path string) CodexRuntimeSnapshot {
