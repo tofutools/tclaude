@@ -207,9 +207,7 @@ export function attachTerminalInteractions({ term, host, copyButton, setStatus, 
   let tmuxDrag = null;
   let pendingTmuxCopy = null;
   const disposables = [];
-  const oldTitle = host.title;
   const ownerDocument = host.ownerDocument || document;
-  host.title = `${SELECT_HINT}. Ctrl/Cmd+Shift+C copies.`;
 
   function flash(message, delay = 2200) {
     if (!setStatus) return;
@@ -225,9 +223,9 @@ export function attachTerminalInteractions({ term, host, copyButton, setStatus, 
     // is the discoverable path to the platform-specific force-selection hint.
     copyButton.disabled = false;
     copyButton.dataset.hasSelection = selected ? 'true' : 'false';
-    copyButton.title = selected
+    copyButton.setAttribute('aria-label', selected
       ? 'Copy selected terminal text (Ctrl/Cmd+Shift+C)'
-      : SELECT_HINT;
+      : `Copy terminal text. ${SELECT_HINT}`);
   }
 
   function cancelPendingTmuxCopy() {
@@ -321,8 +319,8 @@ export function attachTerminalInteractions({ term, host, copyButton, setStatus, 
   };
   const linkHandler = {
     activate: (event, text) => activateLink(event, text),
-    hover: () => { host.title = 'Ctrl/Cmd-click to open link'; },
-    leave: () => { host.title = oldTitle || `${SELECT_HINT}. Ctrl/Cmd+Shift+C copies.`; },
+    hover: () => {},
+    leave: () => {},
     allowNonHttpProtocols: false,
   };
   term.options.linkHandler = linkHandler; // explicit OSC 8 hyperlinks
@@ -451,7 +449,6 @@ export function attachTerminalInteractions({ term, host, copyButton, setStatus, 
       host.removeEventListener('paste', onPaste, true);
       if (copyButton) copyButton.removeEventListener('click', copySelection);
       for (const d of disposables) { try { d.dispose(); } catch (_) { /* already disposed */ } }
-      host.title = oldTitle;
     },
   };
 }
