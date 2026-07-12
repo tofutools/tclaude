@@ -110,6 +110,33 @@ test('a partial mount rolls back each registered side effect', async (t) => {
   assert.match(getByRole(host, 'alert').textContent, /second host failed/);
 });
 
+test('failed-mount rollback retries only transiently failing cleanup steps', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { mountFeatureIsland } = await harness.importDashboardModule('js/island-lifecycle.js');
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  let liveSubscriptions = 1;
+  let attempts = 0;
+  const errors = [];
+  const cleanup = await mountFeatureIsland({
+    name: 'rollback-retry', label: 'Rollback retry', hosts: [host],
+    load: async () => ({
+      mount: (registerCleanup) => {
+        registerCleanup(() => {
+          attempts += 1;
+          if (attempts === 1) throw new Error('transient cleanup failure');
+          liveSubscriptions -= 1;
+        });
+        throw new Error('mount failed');
+      },
+    }),
+    logger: { error: (...args) => errors.push(args) },
+  });
+  assert.equal(cleanup, null);
+  assert.equal(attempts, 2);
+  assert.equal(liveSubscriptions, 0);
+  assert.equal(errors.length, 1, 'resolved rollback failure is not logged as permanent');
+});
+
 test('throwing cleanup attempts every disposer and retains ownership until retry succeeds', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ mountFeatureIsland }, { featureState }] = await Promise.all([

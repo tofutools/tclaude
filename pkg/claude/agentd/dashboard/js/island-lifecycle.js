@@ -50,12 +50,12 @@ export async function mountFeatureIsland({
     }
     cleanups.push(cleanup);
   };
-  const runCleanups = () => {
-    const errors = [];
-    for (const cleanup of cleanups.slice().reverse()) {
-      try { cleanup(); } catch (error) { errors.push(error); }
+  const runCleanups = (steps = cleanups.slice().reverse()) => {
+    const failures = [];
+    for (const cleanup of steps) {
+      try { cleanup(); } catch (error) { failures.push({ cleanup, error }); }
     }
-    return errors;
+    return failures;
   };
   try {
     const feature = await load();
@@ -68,21 +68,27 @@ export async function mountFeatureIsland({
     let cleaned = false;
     return () => {
       if (cleaned) return;
-      const errors = runCleanups();
+      const failures = runCleanups();
       unregister?.();
-      if (errors.length > 0) {
-        throw new AggregateError(errors, `island ${name} cleanup failed`);
+      if (failures.length > 0) {
+        throw new AggregateError(failures.map(({ error }) => error), `island ${name} cleanup failed`);
       }
       releaseHosts(name, hosts);
       cleaned = true;
     };
   } catch (error) {
-    const cleanupErrors = runCleanups();
+    // Idempotent cleanup may fail transiently because a later-created resource
+    // had not finished unwinding yet. After every step has had one attempt,
+    // retry only failures once; permanent failures keep host ownership claimed.
+    let rollbackFailures = runCleanups();
+    if (rollbackFailures.length > 0) {
+      rollbackFailures = runCleanups(rollbackFailures.map(({ cleanup }) => cleanup));
+    }
     unregister?.();
     for (const host of hosts.slice(1)) host.replaceChildren();
     renderIslandLoadFailure(hosts[0], { label, error, className: failureClass });
     logger.error(`${label} island unavailable.`, error);
-    for (const cleanupError of cleanupErrors) {
+    for (const { error: cleanupError } of rollbackFailures) {
       logger.error(`${label} island rollback failed.`, cleanupError);
     }
     return null;
