@@ -8,12 +8,16 @@ import (
 )
 
 // liveTmuxCacheTTL bounds how long a cached tmux-liveness snapshot is reused
-// before the next caller re-probes. 500ms sits well under the 2s dashboard
-// poll cadence (so a fresh probe still happens on most ticks) yet comfortably
-// spans one tick's fan-out of parallel requests (so those share a single
-// probe). A pane spawned or killed mid-window may therefore be up to one TTL
-// (~500ms) late in the alive set — acceptable at a 2s poll cadence.
-const liveTmuxCacheTTL = 500 * time.Millisecond
+// before the next caller re-probes. A single tick's parallel fan-out clusters
+// its cache reads within tens of ms, so 200ms still coalesces a whole tick onto
+// one probe, while keeping the worst-case staleness an *unsynchronized* consumer
+// can observe small: a second dashboard client polling on its own tick phase, or
+// a manual refresh right after a spawn/retire, sees at most 200ms of stale
+// liveness (vs 500ms at a longer TTL). A pane spawned or killed mid-window may
+// therefore be up to one TTL (~200ms) late in the alive set — comfortably within
+// the 2s poll cadence. If a stalled straggler re-probes just past the window it
+// costs one extra ~5ms fork, which is acceptable.
+const liveTmuxCacheTTL = 200 * time.Millisecond
 
 // tmuxSessionCache coalesces session.LiveTmuxSessions probes across the
 // dashboard's parallel poll handlers behind a short TTL. Each 2s tick fires up
