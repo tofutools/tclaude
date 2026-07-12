@@ -738,11 +738,7 @@ func StartConvMonitorForTest(t *testing.T, debounce time.Duration) *convMonitor 
 // ResetPerfForTest clears the in-memory poll-timing rings (perf.go) so a
 // flow test asserting on /api/perf starts from an empty recorder rather
 // than samples recorded by earlier tests in the same process.
-func ResetPerfForTest() {
-	perfMu.Lock()
-	defer perfMu.Unlock()
-	perfRings = map[string]*perfRing{}
-}
+func ResetPerfForTest() { perfReset() }
 
 type dashTestHandler struct{ inner http.Handler }
 
