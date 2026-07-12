@@ -28,7 +28,7 @@ func TestDashboardSpawnOwnerPermsUI_Wired(t *testing.T) {
 	present(`id="agent-spawn-perms-indicator"`, "spawn dialog has the overrides indicator")
 
 	// Profile editor — the tri-state owner + Permissions… button.
-	present(`id="profile-editor-owner"`, "profile editor has the owner tri-state")
+	present(`'profile-editor-owner'`, "profile editor has the owner tri-state")
 	present(`id="profile-editor-perms"`, "profile editor has the Permissions… button")
 
 	// The shared editor gained a buffer (no-conv) mode + its pre-spawn opener.
@@ -42,8 +42,8 @@ func TestDashboardSpawnOwnerPermsUI_Wired(t *testing.T) {
 		"the spawn body sends the buffered overrides")
 
 	// The profile payload carries them too (tri-state owner + overrides).
-	present("body.is_owner = owner", "the profile payload sends the tri-state owner")
-	present("body.permission_overrides = profilePermOverrides",
+	present("['include_group_default_context', draft.include_group_default_context], ['is_owner', draft.is_owner]", "the profile payload includes the tri-state owner")
+	present("body.permission_overrides = { ...draft.permission_overrides }",
 		"the profile payload sends its buffered overrides")
 }
 

@@ -31,11 +31,11 @@ func TestDashboardHTML_ModelCaptureOutOfCatalog(t *testing.T) {
 		}
 	}
 
-	// Profile editor seeds the Model control through the helper, so a captured
-	// (from-agent) or extracted (extractAgentToProfile) full model id stays
-	// selected instead of dropping.
-	if !strings.Contains(dashboardAssets, "setModelSelectValue(profileActiveModelEl(), seed.model)") {
-		t.Error("openProfileEditor: must seed the Model control via setModelSelectValue so an out-of-catalog model stays selectable")
+	// The migrated profile editor uses a controlled free-text input backed by a
+	// datalist, so an out-of-catalog id is represented directly in state.
+	if !strings.Contains(dashboardAssets, "model: seed?.model || ''") ||
+		!strings.Contains(dashboardAssets, "model: draft.model.trim()") {
+		t.Error("Preact profile editor must seed and submit the exact model string")
 	}
 
 	// Spawn dialog applies a profile's model through the helper too — a profile
@@ -68,10 +68,8 @@ func TestDashboardHTML_CustomModelFreeText(t *testing.T) {
 		}
 	}
 
-	// Every curated Model <select> ends with the sentinel option, and
-	// each editor carries the revealed free-text input + its row. Missing any
-	// leg silently breaks the feature in that one editor.
-	for _, base := range []string{"agent-spawn-model", "profile-editor-model", "role-editor-model"} {
+	// The still-imperative spawn editor retains the select+sentinel helper.
+	for _, base := range []string{"agent-spawn-model"} {
 		for _, needle := range []string{
 			`id="` + base + `-custom"`,     // the free-text input
 			`id="` + base + `-custom-row"`, // its toggled row
@@ -89,13 +87,24 @@ func TestDashboardHTML_CustomModelFreeText(t *testing.T) {
 			}
 		}
 	}
+	// Preact profile/role editors use controlled text inputs with harness-backed
+	// datalists: presets remain discoverable and arbitrary ids need no sentinel.
+	for _, needle := range []string{
+		`id=${profile ? 'profile-editor-model' : 'role-editor-model'}`,
+		"list=${`${profile ? 'profile' : 'role'}-models`}",
+		`value=${draft.model}`,
+		`onInput=${(event) => change(setDraft, 'model', event.currentTarget.value)}`,
+	} {
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard JS missing %q — Preact model input wiring broken", needle)
+		}
+	}
 
 	// Each editor rebuilds that shared selector from the selected harness's
 	// catalog, so Codex and Claude receive the same preset + custom-ID behavior.
 	for _, call := range []string{
 		"populateModelSelect($('#agent-spawn-model'), h.models)",
-		"populateModelSelect($('#profile-editor-model'), h.models)",
-		"populateModelSelect($('#role-editor-model'), h.models)",
+		"const models = hEntry?.models || []",
 	} {
 		if !strings.Contains(dashboardAssets, call) {
 			t.Errorf("dashboard JS missing %q — per-harness model catalog is not wired across every editor", call)
@@ -106,14 +115,15 @@ func TestDashboardHTML_CustomModelFreeText(t *testing.T) {
 		t.Error("spawn harness re-apply must preserve a manual model when a sparse same-harness profile is applied")
 	}
 
-	// The sentinel <option> must appear once per editor (3 curated selects).
-	if got := strings.Count(dashboardAssets, `<option value="__custom__">Custom model id…</option>`); got != 3 {
-		t.Errorf("expected 3 \"Custom model id…\" sentinel options (spawn/profile/role), got %d", got)
+	// Only the spawn select needs a sentinel now; Preact text inputs accept
+	// arbitrary ids directly.
+	if got := strings.Count(dashboardAssets, `<option value="__custom__">Custom model id…</option>`); got != 1 {
+		t.Errorf("expected one spawn-dialog custom-model sentinel, got %d", got)
 	}
 
 	// Each revealed free-text input carries an accessible name — its row's label
 	// span is empty (grid alignment), so without this the input has no a11y name.
-	if got := strings.Count(dashboardAssets, `aria-label="Custom model id"`); got != 3 {
-		t.Errorf("expected 3 aria-labelled custom-model inputs (spawn/profile/role), got %d", got)
+	if got := strings.Count(dashboardAssets, `aria-label="Custom model id"`); got != 1 {
+		t.Errorf("expected one aria-labelled spawn custom-model input, got %d", got)
 	}
 }

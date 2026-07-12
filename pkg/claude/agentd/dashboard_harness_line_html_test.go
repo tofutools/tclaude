@@ -161,7 +161,7 @@ func TestDashboardHTML_SpawnHarnessMenusWired(t *testing.T) {
 	must("body.ask_user_question_timeout = askTimeout", "the chosen AskUserQuestion timeout is sent in the spawn body")
 	// modal-profiles.js: the profile editor edits + persists the same field.
 	must(`id="profile-editor-ask-timeout"`, "profile editor has an AskUserQuestion-timeout selector")
-	must("body.ask_user_question_timeout = $('#profile-editor-ask-timeout').value", "the profile editor persists the AskUserQuestion timeout")
+	must("body.ask_user_question_timeout = draft.ask_user_question_timeout", "the profile editor persists the AskUserQuestion timeout")
 
 	// modal-spawn.js: the Effort menu is rebuilt per harness from the
 	// catalog's effort_levels (single source of truth — the static HTML

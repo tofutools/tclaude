@@ -200,3 +200,19 @@ const processesDescriptor = createIslandDescriptor({
 export function mountProcessesFeature(dependencies = {}) {
   return mountIslandDescriptor(processesDescriptor, dependencies);
 }
+
+const managementDescriptor = createIslandDescriptor({
+  name: 'management', label: 'Management', hosts: { root: '#management-root' }, primaryHost: 'root', failureClass: 'management-error',
+  load: async ({ hosts, dependencies }) => {
+    const islandModule = import('./management-island.js');
+    const stateModule = import('./management-state.js');
+    const actionsModule = import('./management-actions.js');
+    const [{ mountManagementIsland }, { createManagementState }, { createManagementActions }] = await Promise.all([islandModule, stateModule, actionsModule]);
+    const state = createManagementState(); const actions = createManagementActions({ state, ...dependencies });
+    return { state, mount: (registerCleanup) => mountManagementIsland({ host: hosts.root, state, actions, registerCleanup, ...dependencies }) };
+  },
+});
+
+export function mountManagementFeature(dependencies = {}) {
+  return mountIslandDescriptor(managementDescriptor, dependencies);
+}

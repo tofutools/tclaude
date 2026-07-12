@@ -30,10 +30,12 @@ func TestDashboardHTML_SpawnProfilesUI(t *testing.T) {
 		}
 	}
 
-	// The data layer module exists and is wired into boot.
+	// The data layer and Preact management feature exist and are wired at boot.
 	present(`function loadProfiles(`, "profiles.js data layer")
 	present(`function bindProfilesUI(`, "profiles UI binder")
 	present(`bindProfilesUI();`, "profiles UI binder is called at boot")
+	present(`mountManagementFeature({`, "Preact management feature is mounted before compatibility binders")
+	present(`hosts: { root: '#management-root' }`, "management descriptor owns one explicit root")
 
 	// 1. Spawn dialog: load-from-profile selector + Clear + Save-as-profile.
 	present(`id="agent-spawn-load-profile"`, "spawn dialog load-from-profile selector")
@@ -49,23 +51,25 @@ func TestDashboardHTML_SpawnProfilesUI(t *testing.T) {
 
 	// 2. Manage-profiles overlay + editor, reached from the Groups cog.
 	present(`id="profiles-manage-open"`, "the Groups cog's manage-profiles button")
-	present(`id="profiles-manage-modal"`, "the manage-profiles overlay")
-	present(`id="profile-create-open"`, "the + new profile button")
+	present(`id="management-root"`, "the shared Preact management root")
+	present("id=${`${domKind}-manage-modal`}", "the manage-profiles overlay is component-owned")
+	present(`id=${profiles ? 'profile-create-open'`, "the + new profile button")
 	present(`id="profile-export-open"`, "the export-profiles button")
 	present(`id="profile-import-open"`, "the import-profiles button")
-	present(`id="profiles-list"`, "the profiles card list mount")
+	present(`id=${profiles ? 'profiles-list'`, "the profiles card list mount")
 	present(`id="profile-export-modal"`, "the profile export modal")
 	present(`id="profile-export-list"`, "the profile export checklist")
 	present(`id="profile-import-modal"`, "the profile import modal")
 	present(`id="profile-import-preview"`, "the profile import preview")
 	present(`id="profile-editor-modal"`, "the profile editor modal")
 	present(`id="profile-editor-name"`, "the editor's profile-name field")
-	present(`id="profile-editor-harness"`, "the editor's harness selector")
+	present(`id=${profile ? 'profile-editor-harness'`, "the editor's harness selector")
 	present(`id="profile-editor-submit"`, "the editor's Save button")
-	present(`function openProfileExportModal(`, "profile export dialog wiring")
-	present(`function inspectProfileImportSource(`, "profile import inspect wiring")
-	present(`function profileImportDecisions(`, "profile import per-row decisions")
+	present(`function ProfileExport(`, "profile export component")
+	present(`function ProfileImport(`, "profile import component")
+	present(`const [decisions, setDecisions]`, "profile import per-row decision state")
 	present(`exportProfiles, inspectProfileImport, importProfiles`, "profile transfer data helpers are exported")
+	absent(`function paintProfilesList(`, "legacy profile HTML-string rendering is retired")
 	present(`.profile-import-conflict select,`, "profile import conflict select/input controls get dark modal styling")
 
 	// 3. Group default-profile picker: the 🧠 badge is clickable.

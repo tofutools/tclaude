@@ -1,0 +1,37 @@
+const API = '/api/sandbox-profiles';
+
+async function request(path, options = {}) {
+  const response = await fetch(path, { credentials: 'same-origin', ...options });
+  if (!response.ok) {
+    const raw = await response.text();
+    try { const body = JSON.parse(raw); throw new Error(body.message || body.error || raw || `HTTP ${response.status}`); }
+    catch (error) { if (error instanceof SyntaxError) throw new Error(raw || `HTTP ${response.status}`); throw error; }
+  }
+  if (response.status === 204) return null;
+  return response.json().catch(() => ({}));
+}
+
+export async function loadSandboxProfiles() { const value = await request(API); return Array.isArray(value) ? value : []; }
+export async function previewSandboxProfile(name, body) {
+  const target = name ? `${API}/${encodeURIComponent(name)}` : API;
+  return request(`${target}?dry_run=1`, { method: name ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+}
+export async function saveSandboxProfile(name, body, revision = '') {
+  const target = name ? `${API}/${encodeURIComponent(name)}?revision=${encodeURIComponent(revision)}` : API;
+  return request(target, { method: name ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+}
+export function deleteSandboxProfile(name) { return request(`${API}/${encodeURIComponent(name)}`, { method: 'DELETE' }); }
+export async function exportSandboxProfiles(names) { const query = new URLSearchParams(); names.forEach((name) => query.append('name', name)); return request(`${API}/export?${query}`); }
+export function inspectSandboxImport(envelope) { return request(`${API}/import/inspect`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(envelope) }); }
+export function importSandboxProfiles(envelope, onConflict) { return request(`${API}/import`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...envelope, on_conflict: onConflict, apply_assignments: false }) }); }
+export function inspectSandboxDirectories(body) { return request('/api/sandbox-profile-directories/inspect', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); }
+export function createSandboxDirectories(body) { return request('/api/sandbox-profile-directories/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); }
+
+export function sandboxProfileSummary(profile) {
+  const fs = profile.filesystem || []; const env = profile.environment || []; const inc = profile.includes || []; const own = profile.agent_directories || [];
+  const parts = [['read', 'read'], ['write', 'write'], ['deny', 'deny']].flatMap(([access, label]) => { const count = fs.filter((entry) => entry.access === access).length; return count ? [`${count} ${label}`] : []; });
+  if (inc.length) parts.push(`${inc.length} include${inc.length === 1 ? '' : 's'}`);
+  if (env.length) parts.push(`${env.length} env key${env.length === 1 ? '' : 's'}`);
+  if (own.length) parts.push(`${own.length} agent dir${own.length === 1 ? '' : 's'}`);
+  return parts.join(' · ') || 'no sandbox rules';
+}

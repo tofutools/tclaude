@@ -15,7 +15,7 @@ func TestDashboardAssets_RoleLibraryWired(t *testing.T) {
 		// roles.js — the data layer's endpoint + exports.
 		"const API = '/api/roles';",
 		"loadRoles, cachedRoles, invalidateRoles,",
-		// modal-roles.js — the manage overlay + editor entry points.
+		// modal-roles.js — compatibility entry points into the Preact owner.
 		"function bindRolesUI(",
 		"function openRolesManageModal(",
 		"function openRoleEditor(",
@@ -37,9 +37,11 @@ func TestDashboardAssets_RoleLibraryWired(t *testing.T) {
 		`<div class="ta-role-inspect">`,
 		// dashboard.css — the inspect panel's dark-theme styling.
 		".role-inspect {",
-		// dashboard.html — the Groups-cog entry + the two modals.
+		// dashboard.html + management-island.js — the Groups-cog entry, root,
+		// and Preact-owned modal ids.
 		`id="roles-manage-open"`,
-		`id="roles-manage-modal"`,
+		`id="management-root"`,
+		"id=${`${domKind}-manage-modal`}",
 		`id="role-editor-modal"`,
 		`id="role-editor-brief"`,
 		// dashboard.css — the pure-CSS wizard vocabulary swap ("roles" → "classes").

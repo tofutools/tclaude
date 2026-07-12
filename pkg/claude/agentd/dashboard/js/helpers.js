@@ -306,19 +306,27 @@ function makeModalResizable(modalEl, key, opts = {}) {
   if (saved.w) modalEl.style.width = saved.w + 'px';
   if (saved.h) modalEl.style.height = saved.h + 'px';
   let downW = 0, downH = 0;
-  modalEl.addEventListener('pointerdown', () => {
+  const onPointerDown = () => {
     downW = modalEl.offsetWidth; downH = modalEl.offsetHeight;
-  });
-  modalEl.addEventListener('pointerup', () => {
+  };
+  const onPointerUp = () => {
     const w = modalEl.offsetWidth, h = modalEl.offsetHeight;
     if (w === downW && h === downH) return;     // a click, not a resize
     if (w === saved.w && h === saved.h) return; // already the stored size
     saved = { w, h };
     try { dashPrefs.setItem(key, JSON.stringify(saved)); } catch (_) {}
-  });
+  };
+  modalEl.addEventListener('pointerdown', onPointerDown);
+  modalEl.addEventListener('pointerup', onPointerUp);
+  const observers = [];
+  const cleanup = () => {
+    modalEl.removeEventListener('pointerdown', onPointerDown);
+    modalEl.removeEventListener('pointerup', onPointerUp);
+    observers.forEach(observer => observer.disconnect());
+  };
   // List panels stop here (see the header note): no content-tracking min-size,
   // no auto-grow — just the persist/restore above, with a fixed CSS floor.
-  if (opts.fitContent === false) return;
+  if (opts.fitContent === false) return cleanup;
   // Re-measure the min size whenever the modal becomes visible (its overlay
   // gains `show`) — content and viewport can differ per open. Observing the
   // class avoids editing every open*Modal call site, and only fires on the
@@ -326,9 +334,11 @@ function makeModalResizable(modalEl, key, opts = {}) {
   // (refreshModalMinSize mutates modalEl, not the overlay).
   const overlay = modalEl.closest('.modal-overlay');
   if (overlay) {
-    new MutationObserver(() => {
+    const overlayObserver = new MutationObserver(() => {
       if (overlay.classList.contains('show')) refreshModalMinSize(modalEl);
-    }).observe(overlay, { attributes: true, attributeFilter: ['class'] });
+    });
+    overlayObserver.observe(overlay, { attributes: true, attributeFilter: ['class'] });
+    observers.push(overlayObserver);
   }
   // Auto-grow a pinned height to fit content revealed after a drag. The
   // attributeFilter keeps this to the structural changes that move the
@@ -337,12 +347,15 @@ function makeModalResizable(modalEl, key, opts = {}) {
   // descendant-only guard (target !== modalEl) skips the card's own size
   // changes — the resize drag and our grow-write — so auto-grow neither fights
   // a drag nor recurses on itself.
-  new MutationObserver((records) => {
+  const contentObserver = new MutationObserver((records) => {
     if (records.some(r => r.target !== modalEl)) growModalToFitContent(modalEl);
-  }).observe(modalEl, {
+  });
+  contentObserver.observe(modalEl, {
     childList: true, subtree: true,
     attributes: true, attributeFilter: ['style', 'class', 'hidden'],
   });
+  observers.push(contentObserver);
+  return cleanup;
 }
 
 // bindSelectTitles keeps every <select> under `root` tooltip-synced: an
