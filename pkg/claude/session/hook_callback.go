@@ -1112,11 +1112,7 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	// not on every PreToolUse/PostToolUse tick: that keeps the rollout read
 	// (and, on the fallback, the ~/.codex/sessions walk) to ~once per turn.
 	// No-op for CC (it already has the statusbar) and best-effort.
-	if stopped || input.HookEventName == "SessionStart" {
-		persistCodexContextTelemetry(state, input)
-	}
-	persistCodexVirtualCostFromHook(state, input)
-	persistCodexUsageFromHook(state, input)
+	persistCodexRolloutProjection(state, input, stopped || input.HookEventName == "SessionStart")
 
 	// Refresh usage cache when user is likely looking at the status bar.
 	// Runs synchronously — hook callbacks are separate processes so this
@@ -1309,134 +1305,67 @@ func harnessUsesSlashContextControls(name string) bool {
 	return h.SupportsCompact()
 }
 
-// persistCodexContextTelemetry lifts the latest context-window snapshot off
-// a Codex session's rollout and stores it on the sessions row, mirroring
-// what the statusbar's UpdateContextSnapshot does for Claude Code. It is a
-// no-op for every other harness (CC already has the statusbar path) and
-// best-effort throughout: a missing rollout, a session with no token_count
-// event yet, or a transient read error just leaves the previous snapshot in
-// place. The all-zero guard inside db.UpdateContextSnapshot keeps a
-// pre-first-response read from clobbering a good snapshot.
-func persistCodexContextTelemetry(state *SessionState, input HookCallbackInput) {
+// persistCodexRolloutProjection lifts all latest-oriented Codex telemetry in
+// one reverse-tail scan. Hook callbacks are separate processes, so the
+// daemon's incremental follower cannot amortize these reads across events.
+func persistCodexRolloutProjection(state *SessionState, input HookCallbackInput, refreshContext bool) {
 	if state == nil || state.Harness != harness.CodexName || state.ConvID == "" {
 		return
 	}
-
-	var (
-		snap      harness.ContextTelemetry
-		ok        bool
-		err       error
-		effort    string
-		effortOK  bool
-		effortErr error
-	)
-	// Fast path: the hook payload's transcript_path is this session's
-	// rollout, so read it straight — no ~/.codex/sessions walk. Guarded by
-	// the rollout-filename shape so a stray/foreign path can't be parsed as
-	// a rollout. Fall through to the by-id lookup when it's absent or not a
-	// rollout path (older payload, unexpected shape).
-	if p := input.TranscriptPath; p != "" && harness.IsCodexRolloutPath(p) {
-		snap, ok, err = harness.CodexTelemetryFromRollout(p)
-		effort, effortOK, effortErr = harness.CodexEffortFromRollout(p)
-	} else {
-		home, herr := os.UserHomeDir()
-		if herr != nil {
-			slog.Warn("codex-telemetry: cannot resolve home", "error", herr, "module", "hooks")
+	refreshAccount := false
+	switch input.HookEventName {
+	case "Stop", "SubagentStop", "SessionStart", "PostCompact":
+		refreshAccount = true
+	}
+	if !refreshContext && !refreshAccount {
+		return
+	}
+	var home string
+	if !harness.IsCodexRolloutPath(input.TranscriptPath) {
+		var err error
+		home, err = os.UserHomeDir()
+		if err != nil {
+			slog.Warn("codex-projection: cannot resolve home", "error", err, "module", "hooks")
 			return
 		}
-		snap, ok, err = harness.CodexContextTelemetry(home, state.ConvID)
-		effort, effortOK, effortErr = harness.CodexEffortLevel(home, state.ConvID)
 	}
+	projection, path, err := harness.CodexHookProjection(home, state.ConvID, input.TranscriptPath, input.Model)
 	if err != nil {
-		slog.Warn("codex-telemetry: failed to read rollout telemetry",
-			"conv_id", state.ConvID, "error", err, "module", "hooks")
+		slog.Warn("codex-projection: failed to read rollout",
+			"conv_id", state.ConvID, "path", path, "error", err, "module", "hooks")
+		return
 	}
-	if ok {
+	if refreshContext && projection.HasContext {
+		snap := projection.Context
 		if err := db.UpdateContextSnapshot(state.ID, snap.Pct, snap.TokensInput, snap.TokensOutput, snap.WindowSize); err != nil {
 			slog.Warn("codex-telemetry: failed to update context snapshot",
 				"session_id", state.ID, "error", err, "module", "hooks")
 		}
 	}
-	if effortErr != nil {
-		slog.Warn("codex-telemetry: failed to read rollout effort",
-			"session_id", state.ID, "error", effortErr, "module", "hooks")
-	}
-	if effortOK {
-		if err := db.UpdateSessionEffort(state.ID, effort); err != nil {
+	if refreshContext && projection.HasEffort {
+		if err := db.UpdateSessionEffort(state.ID, projection.Effort); err != nil {
 			slog.Warn("codex-telemetry: failed to update session effort",
 				"session_id", state.ID, "error", err, "module", "hooks")
 		}
 	}
-}
-
-// persistCodexUsageFromHook updates the shared Codex account-usage cache from
-// the exact rollout path Codex supplied in hook stdin. Codex does not include
-// the rate-limit windows directly in hook payloads; they live in the rollout's
-// token_count.rate_limits block. Unlike the daemon's repair poller, this path
-// does no rollout-tree discovery and fires at useful turn boundaries only.
-func persistCodexUsageFromHook(state *SessionState, input HookCallbackInput) {
-	if state == nil || state.Harness != harness.CodexName {
+	if !refreshAccount {
 		return
 	}
-	switch input.HookEventName {
-	case "Stop", "SubagentStop", "SessionStart", "PostCompact":
-	default:
-		return
+	if u := projection.Usage; u != nil && !u.Observed.IsZero() {
+		data, err := json.Marshal(u)
+		if err != nil {
+			slog.Warn("codex-usage: failed to marshal usage snapshot",
+				"session_id", state.ID, "error", err, "module", "hooks")
+		} else if _, err := db.SaveCodexUsageCacheIfNewer(data, u.Observed, path); err != nil {
+			slog.Warn("codex-usage: failed to persist usage snapshot",
+				"session_id", state.ID, "error", err, "module", "hooks")
+		}
 	}
-	p := input.TranscriptPath
-	if p == "" || !harness.IsCodexRolloutPath(p) {
-		return
-	}
-	u, err := harness.CodexUsageFromRollout(p)
-	if err != nil {
-		slog.Warn("codex-usage: failed to read rollout usage",
-			"session_id", state.ID, "path", p, "error", err, "module", "hooks")
-		return
-	}
-	if u == nil || u.Observed.IsZero() {
-		return
-	}
-	data, err := json.Marshal(u)
-	if err != nil {
-		slog.Warn("codex-usage: failed to marshal usage snapshot",
-			"session_id", state.ID, "error", err, "module", "hooks")
-		return
-	}
-	if _, err := db.SaveCodexUsageCacheIfNewer(data, u.Observed, p); err != nil {
-		slog.Warn("codex-usage: failed to persist usage snapshot",
-			"session_id", state.ID, "error", err, "module", "hooks")
-	}
-}
-
-// persistCodexVirtualCostFromHook lifts Codex's cumulative token usage from
-// the rollout and writes the pay-per-token-equivalent estimate into
-// sessions.virtual_cost_usd, the same WHAT-IF column Claude Code subscription
-// sessions populate from statusline cost.total_cost_usd.
-func persistCodexVirtualCostFromHook(state *SessionState, input HookCallbackInput) {
-	if state == nil || state.Harness != harness.CodexName {
-		return
-	}
-	switch input.HookEventName {
-	case "Stop", "SubagentStop", "SessionStart", "PostCompact":
-	default:
-		return
-	}
-	p := input.TranscriptPath
-	if p == "" || !harness.IsCodexRolloutPath(p) {
-		return
-	}
-	cost, ok, err := harness.CodexVirtualCostFromRollout(p, input.Model)
-	if err != nil {
-		slog.Warn("codex-cost: failed to read rollout cost",
-			"session_id", state.ID, "path", p, "error", err, "module", "hooks")
-		return
-	}
-	if !ok {
-		return
-	}
-	if err := db.UpdateSessionVirtualCost(state.ID, cost.CostUSD); err != nil {
-		slog.Warn("codex-cost: failed to update session virtual cost",
-			"session_id", state.ID, "model", cost.Model, "error", err, "module", "hooks")
+	if projection.HasCost {
+		if err := db.UpdateSessionVirtualCost(state.ID, projection.Cost.CostUSD); err != nil {
+			slog.Warn("codex-cost: failed to update session virtual cost",
+				"session_id", state.ID, "model", projection.Cost.Model, "error", err, "module", "hooks")
+		}
 	}
 }
 

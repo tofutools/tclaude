@@ -37,6 +37,33 @@ type codexThread struct {
 	ArchivedAt       sql.NullInt64 // unix seconds; null when never archived
 }
 
+// codexThreadRolloutPath reads only threads.rollout_path for one conversation.
+// Runtime telemetry needs no other thread metadata, so this avoids loading the
+// full registry merely to bypass a date-tree walk.
+func codexThreadRolloutPath(home, convID string) (string, error) {
+	path := codexStateDBPath(home)
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	d, err := sql.Open("sqlite", "file:"+path+"?mode=ro&_pragma=busy_timeout(5000)")
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = d.Close() }()
+	var rolloutPath sql.NullString
+	err = d.QueryRow(`SELECT rollout_path FROM threads WHERE id = ?`, convID).Scan(&rolloutPath)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return rolloutPath.String, nil
+}
+
 // loadCodexThreads reads every `threads` row into a map keyed by id (the
 // rollout uuid). An absent state DB is the documented "no enrichment"
 // case: it returns an empty map and no error. A present-but-unreadable DB

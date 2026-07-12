@@ -337,6 +337,16 @@ func scanCodexRollouts(home string) ([]string, error) {
 // session is mid-compression (both .jsonl and .jsonl.zst on disk) it
 // returns the preferred (uncompressed) one.
 func findCodexRollout(home, convID string) (string, error) {
+	// Codex already records the exact path on threads.rollout_path. Prefer
+	// that point lookup over walking the date tree; the walk remains the
+	// compatibility fallback for old/missing state DBs and stale rows.
+	if p, err := codexThreadRolloutPath(home, convID); err == nil {
+		if codexIDFromRolloutName(filepath.Base(p)) == convID {
+			if _, err := os.Stat(p); err == nil {
+				return p, nil
+			}
+		}
+	}
 	paths, err := scanCodexRollouts(home)
 	if err != nil {
 		return "", err
