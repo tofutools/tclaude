@@ -106,7 +106,8 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/", handleDashboardRoot)
 	mux.HandleFunc("/terminals", handleDashboardTerminals)
 	mux.HandleFunc("/dashboard/login", handleDashboardLogin)
-	mux.HandleFunc("/api/snapshot", handleDashboardSnapshot)
+	mux.HandleFunc("/api/snapshot", withPerfTiming("/api/snapshot", handleDashboardSnapshot))
+	mux.HandleFunc("/api/perf", handleDashboardPerf)
 	mux.HandleFunc("/api/costs", handleDashboardCosts)
 	mux.HandleFunc("/api/audit", handleDashboardAudit)
 	mux.HandleFunc("/api/logs", handleDashboardLogs)
@@ -1534,6 +1535,10 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "GET only", http.StatusMethodNotAllowed)
 		return
 	}
+	// Wall-clock phase marks land in the /api/perf ring (perf.go,
+	// TCL-374). Nil-safe: a direct call outside withPerfTiming (tests)
+	// simply records nothing.
+	span := perfSpanFrom(r)
 	// One tmux ls for the whole snapshot. Every isConvOnlineIn /
 	// stateForConvIn call below tests liveness via map lookup off this
 	// set — replacing ~150 per-poll `has-session` subprocess spawns
@@ -1541,6 +1546,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// offline"), matching what per-row probes would have reported when
 	// the tmux server is down.
 	aliveSessions, _ := session.LiveTmuxSessions()
+	span.mark("tmux_ls")
 
 	groups, _ := db.ListAgentGroups()
 	sandboxProfiles, _ := db.ListSandboxProfiles()
@@ -1602,6 +1608,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	tagsFor := func(convID string) tagsView {
 		return tagsView{Tags: allTags[peerAgentID(convID)]}
 	}
+	span.mark("preload")
 
 	agentRows := map[string]*dashboardAgent{}
 	addAgent := func(convID string) *dashboardAgent {
@@ -1793,6 +1800,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			func(m dashboardMember) string { return m.ConvID })
 		out.Groups = append(out.Groups, dg)
 	}
+	span.mark("groups")
 	for convID, slugs := range allGrants {
 		addAgent(convID)
 		copySlice := append([]string{}, slugs...)
@@ -1892,6 +1900,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			sudoByConv[g.ConvID] = append(sudoByConv[g.ConvID], rowEntry)
 		}
 	}
+	span.mark("roster")
 
 	out.Ungrouped = []dashboardAgent{}
 	for _, a := range agentRows {
@@ -1962,6 +1971,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	sort.Slice(out.Ungrouped, func(i, j int) bool {
 		return out.Ungrouped[i].Title < out.Ungrouped[j].Title
 	})
+	span.mark("assemble")
 
 	// The retired / conversations / replaced lists are no longer embedded in
 	// the snapshot — the dashboard fetches them from their own paginated
@@ -2020,6 +2030,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// fully-assembled payload (cfg was loaded once at the top). The DB
 	// rows feeding these figures stay raw — see config.CostConfig.
 	applyCostDisplayFactor(&out, cfg.ResolvedCostFactor())
+	span.mark("collectors")
 
 	writeJSON(w, http.StatusOK, out)
 }

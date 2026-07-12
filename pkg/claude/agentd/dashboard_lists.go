@@ -40,12 +40,14 @@ import (
 const maxListPageLimit = 500
 
 func registerDashboardLists(mux *http.ServeMux) {
-	mux.HandleFunc("/api/retired", handleDashboardRetired)
-	mux.HandleFunc("/api/conversations", handleDashboardConversations)
-	mux.HandleFunc("/api/replaced", handleDashboardReplaced)
+	// All four ride the dashboard's 2s poll alongside /api/snapshot, so
+	// they get the same wall-clock recording (perf.go, TCL-374).
+	mux.HandleFunc("/api/retired", withPerfTiming("/api/retired", handleDashboardRetired))
+	mux.HandleFunc("/api/conversations", withPerfTiming("/api/conversations", handleDashboardConversations))
+	mux.HandleFunc("/api/replaced", withPerfTiming("/api/replaced", handleDashboardReplaced))
 	// The Jobs tab's unified export+cron listing shares this family's
 	// offset/limit/q contract + envelope (handler in dashboard_jobs.go).
-	mux.HandleFunc("/api/jobs", handleDashboardJobs)
+	mux.HandleFunc("/api/jobs", withPerfTiming("/api/jobs", handleDashboardJobs))
 }
 
 // listPageParams parses the shared offset / limit / q query params. offset is
