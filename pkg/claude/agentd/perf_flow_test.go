@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -112,4 +113,35 @@ func TestDashboardPerf_RecordsPollTimings(t *testing.T) {
 	snapLimited := perfEndpointNamed(t, limited, "/api/snapshot")
 	assert.Equal(t, 2, snapLimited.Count)
 	require.Len(t, snapLimited.Samples, 1)
+}
+
+// TestDashboardSnapshot_DebugTabVisibilityRule pins the Debug tab's
+// auto-hide flag the front-end keys off (TCL-376): hidden by default,
+// shown only by the explicit config dashboard.show_debug_tab opt-in.
+// The gate is display-only — /api/perf keeps recording + serving either
+// way, which is also asserted here so flipping the toggle can never
+// silently disable the recorder.
+func TestDashboardSnapshot_DebugTabVisibilityRule(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	newFlow(t)
+	agentd.ResetPerfForTest()
+	t.Cleanup(agentd.ResetPerfForTest)
+	dash := agentd.BuildDashboardHandlerForTest()
+
+	// Default: no config → tab hidden.
+	snap := fetchSnapshotOnly(t, dash)
+	assert.False(t, snap.DebugTabVisible, "Debug tab hidden without the opt-in")
+
+	// Opt in → visible on the next poll, no daemon restart.
+	require.NoError(t, config.Save(&config.Config{
+		Dashboard: &config.DashboardConfig{ShowDebugTab: true},
+	}), "save config with show_debug_tab")
+	snap = fetchSnapshotOnly(t, dash)
+	assert.True(t, snap.DebugTabVisible, "dashboard.show_debug_tab shows the Debug tab")
+
+	// The recorder ran regardless of the flag: both polls above landed in
+	// the ring, and /api/perf serves them even when the tab is hidden.
+	perf := fetchPerf(t, dash, "/api/perf")
+	assert.Equal(t, 2, perfEndpointNamed(t, perf, "/api/snapshot").Count,
+		"recording is not gated by the display toggle")
 }

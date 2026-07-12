@@ -537,6 +537,11 @@ function populateConfigForm(cfg) {
   // dashboard.show_group_description true checks it.
   $('#cfg-dashboard-show-group-description').checked = !!(cfg.dashboard && cfg.dashboard.show_group_description);
 
+  // Debug tab — daemon poll-timing diagnostics (TCL-376). Hidden by
+  // default (unchecked); only an explicit dashboard.show_debug_tab true
+  // checks it.
+  $('#cfg-dashboard-show-debug-tab').checked = !!(cfg.dashboard && cfg.dashboard.show_debug_tab);
+
   // Ask defaults — profile + model/effort for `tclaude ask`. Options come
   // from the harness catalog / saved spawn profiles; an unset field shows
   // "Built-in default" (empty). populateAskProfileSelect is async (it fetches
@@ -772,6 +777,9 @@ function assembleConfig() {
   // show_group_description: false (hidden) is the default, so store only the
   // NON-default true and drop the key otherwise — mirrors the Go omitempty.
   if ($('#cfg-dashboard-show-group-description').checked) dashboard.show_group_description = true; else delete dashboard.show_group_description;
+  // show_debug_tab: false (hidden) is the default, so store only the
+  // NON-default true and drop the key otherwise — mirrors the Go omitempty.
+  if ($('#cfg-dashboard-show-debug-tab').checked) dashboard.show_debug_tab = true; else delete dashboard.show_debug_tab;
   if (Object.keys(dashboard).length) cfg.dashboard = dashboard; else delete cfg.dashboard;
 
   // ask is an optional block. Clone the existing one so a future sub-field

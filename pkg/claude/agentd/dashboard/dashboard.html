@@ -157,6 +157,7 @@
   <a data-tab="costs" href="/costs"><span class="tab-label-regular">Costs</span><span class="tab-label-wizard">💰 Coffers</span></a>
   <a data-tab="audit" href="/audit" title="Audit log — who ran which tclaude command (spawn, message, lifecycle, permissions…), including denied attempts"><span class="tab-label-regular">Audit</span><span class="tab-label-wizard">📖 Chronicle</span></a>
   <a data-tab="logs" href="/logs" title="Logs — tclaude's own daemon/CLI log (~/.tclaude/output.log), with level/time filters, search and optional live tail"><span class="tab-label-regular">Logs</span><span class="tab-label-wizard">🕯 Runes</span></a>
+  <a data-tab="debug" href="/debug" title="Debug — daemon self-diagnostics: dashboard poll timing distributions (per-endpoint latency + the snapshot's per-phase breakdown)"><span class="tab-label-regular">Debug</span><span class="tab-label-wizard">🧪 Alchemy</span></a>
   <a data-tab="config" href="/config"><span class="tab-label-regular">Config</span><span class="tab-label-wizard">📜 Almanac</span></a>
   <!-- Vegas — the shared soundtrack tab. CSS-hidden unless body.slop,
        body.wizard, or the regular-mode opt-in (body.vegas) is set (see
@@ -541,6 +542,11 @@
         <span class="cfg-label">Group descriptions</span>
         <label class="cfg-inline"><input type="checkbox" id="cfg-dashboard-show-group-description" /> show the 📝 description chip in each group header</label>
         <span class="cfg-hint">Every group can carry a short <strong>description</strong> — the 📝 chip beside the group name, click-to-edit. It's a <em>display-only</em> label: nothing in tclaude reads it, so it's a <strong>deprecated</strong> feature that mostly just clutters the header. The dashboard hides the chip <em>by default</em>; existing descriptions are kept in the database but not shown. <strong>Checked</strong> brings the chip back (and with it the only way to view or edit a group's description). Off by default. Stored as <code>dashboard.show_group_description</code> (the default is omitted; checked writes <code>true</code>).</span>
+      </div>
+      <div class="cfg-field">
+        <span class="cfg-label">Debug tab</span>
+        <label class="cfg-inline"><input type="checkbox" id="cfg-dashboard-show-debug-tab" /> show the Debug tab (daemon poll-timing diagnostics)</label>
+        <span class="cfg-hint">The <strong>Debug</strong> tab shows how long the dashboard's own background polls take inside the daemon — a latency sparkline + p50/p90/p99/max per endpoint, and the <code>/api/snapshot</code> handler's per-phase breakdown — for chasing a slow dashboard. It is a troubleshooting surface, so the nav hides it <em>by default</em>. <strong>Checked</strong> brings it back. The timing recorder runs either way (a few hundred KB of daemon memory), so the history is already there when you switch the tab on. Off by default. Stored as <code>dashboard.show_debug_tab</code> (the default is omitted; checked writes <code>true</code>).</span>
       </div>
     </div>
 
@@ -993,6 +999,21 @@
     </div>
     <div id="audit-list"></div>
     <div id="audit-pager" class="audit-pager" hidden></div>
+  </section>
+  <!-- Debug tab — daemon self-diagnostics (TCL-376). v1 renders the
+       poll-timing distributions the daemon records in-memory (perf.go):
+       one card per polled endpoint with a latency sparkline + percentile
+       chips, and for /api/snapshot the per-phase breakdown (median
+       composition bar + aggregate table). Rendered by debug.js from
+       /api/perf — fetched on tab activation, then re-fetched on each
+       snapshot tick while the tab is showing; never on other tabs. -->
+  <section id="tab-debug">
+    <div class="filter-bar">
+      <span class="muted">Wall-clock timings of the dashboard's background polls, recorded in-memory by this daemon process (newest ≈ 34 min at the 2s poll; reset on daemon restart).</span>
+      <span class="spacer"></span>
+      <span id="debug-updated" class="muted"></span>
+    </div>
+    <div id="debug-list"></div>
   </section>
   <!-- Logs tab — a read-only viewer over tclaude's own log file
        (~/.tclaude/output.log, JSON lines). Rendered by logs.js from

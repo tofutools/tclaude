@@ -38,7 +38,7 @@ export const DEFAULT_TAB = 'groups';
 // navigation (AC #5).
 export const KNOWN_TABS = new Set([
   'groups', 'terminals', 'jobs', 'processes', 'plugins',
-  'access', 'messages', 'costs', 'audit', 'logs', 'config', 'vegas',
+  'access', 'messages', 'costs', 'audit', 'logs', 'debug', 'config', 'vegas',
 ]);
 
 // KNOWN_SUBTABS enumerates the valid second-segment values per tab that has a
