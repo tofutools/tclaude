@@ -67,7 +67,7 @@ import { bindRemoteAdmin, loadRemoteAdmin } from './remote-admin.js';
 import { bindNotifyMenu } from './notify-menu.js';
 import { bindCostDisplayToggle } from './cost-display-toggle.js';
 import { bindDebugTab } from './debug.js';
-import { initMail, focusAccessRequest } from './mail.js';
+import { focusAccessRequest } from './mail-bridge.js';
 import { initDashPrefs } from './prefs.js';
 import { loadSortState } from './sort.js';
 import { bindCommandPalette } from './palette.js';
@@ -75,7 +75,7 @@ import { bindDock } from './dock.js';
 import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
 import {
-  mountAccessFeature, mountAuditFeature, mountConfigFeature, mountCostsFeature, mountJobsFeature, mountLogsFeature, mountManagementFeature, mountPluginsFeature, mountProcessesFeature,
+  mountAccessFeature, mountAuditFeature, mountConfigFeature, mountCostsFeature, mountJobsFeature, mountLogsFeature, mountManagementFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature,
   mountPreactRuntimeProbe,
 } from './preact-loader.js';
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
@@ -172,6 +172,7 @@ export function sudoBadge(activeSudo, fallbackConvID) {
       },
     }),
     mountLogsFeature(),
+    mountMessagesFeature(),
     mountAuditFeature(),
     mountConfigFeature({ toast, isCyclingTabs }),
     mountProcessesFeature({ confirm: confirmModal, confirmDiscard, notify: toast }),
@@ -229,7 +230,6 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   bindFilter('groups');
   bindFilter('templates');
   bindFilter('links');
-  bindFilter('messages');
   bindSudoModal();
   bindPermEditModal();
   bindCronModal();
@@ -261,7 +261,6 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   bindNotifyMenu();
   bindCostDisplayToggle();
   bindDebugTab();
-  initMail();
   // Slop-mode flair — each binder installs a delegated listener (or
   // starts an interval) once. They no-op while slop is off and the
   // body-class check inside each handler is what actually gates the

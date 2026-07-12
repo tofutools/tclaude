@@ -15,21 +15,21 @@ import (
 // recipient-filter → message-filter directly. The repo has no JS/DOM test
 // runner, so this asserts on the embedded source at `go test ./...`.
 func TestDashboardHTML_MessageFilterAboveList(t *testing.T) {
-	html := string(dashboardIndexHTML)
+	html := string(mustReadFS(dashboardAssetsFS, "js/mail-island.js"))
 
 	// Both filters still exist, and the message filter now lives inside the
 	// mail client (its grid), not a standalone top .filter-bar.
 	mailClient := strings.Index(html, `class="mail-client"`)
 	if mailClient < 0 {
-		t.Fatal("dashboard.html: .mail-client container not found")
+		t.Fatal("mail-island.js: .mail-client container not found")
 	}
 	boxIdx := strings.Index(html, `id="filter-mailboxes"`)
 	msgIdx := strings.Index(html, `id="filter-messages"`)
 	if boxIdx < 0 || msgIdx < 0 {
-		t.Fatal("dashboard.html: a Messages-tab filter input is missing")
+		t.Fatal("mail-island.js: a Messages-tab filter input is missing")
 	}
 	if msgIdx < mailClient {
-		t.Error("dashboard.html: #filter-messages should sit inside .mail-client (above the list), not in a top filter bar")
+		t.Error("mail-island.js: #filter-messages should sit inside .mail-client (above the list), not in a top filter bar")
 	}
 
 	// Tab order = DOM order: the message filter must come AFTER the
@@ -39,17 +39,17 @@ func TestDashboardHTML_MessageFilterAboveList(t *testing.T) {
 	// recipient input's tag to the start of the message input's tag (so
 	// neither input's own markup counts as "in between").
 	if msgIdx <= boxIdx {
-		t.Error("dashboard.html: #filter-messages must come after #filter-mailboxes in DOM (so Tab reaches the recipient filter first)")
+		t.Error("mail-island.js: #filter-messages must come after #filter-mailboxes in DOM (so Tab reaches the recipient filter first)")
 	}
 	boxTagEnd := strings.IndexByte(html[boxIdx:], '>')
 	msgTagStart := strings.LastIndex(html[:msgIdx], "<input")
 	if boxTagEnd < 0 || msgTagStart < 0 {
-		t.Fatal("dashboard.html: could not bound the gap between the two filter inputs")
+		t.Fatal("mail-island.js: could not bound the gap between the two filter inputs")
 	}
 	between := html[boxIdx+boxTagEnd : msgTagStart]
 	for _, focusable := range []string{"<input", "<button", "<select", "<textarea", "<a ", "tabindex"} {
 		if strings.Contains(between, focusable) {
-			t.Errorf("dashboard.html: a focusable %q sits between #filter-mailboxes and #filter-messages — they must be Tab-adjacent", focusable)
+			t.Errorf("mail-island.js: a focusable %q sits between #filter-mailboxes and #filter-messages — they must be Tab-adjacent", focusable)
 		}
 	}
 
@@ -62,7 +62,7 @@ func TestDashboardHTML_MessageFilterAboveList(t *testing.T) {
 		`id="filter-messages-clear"`, // the clear button bindFilter('messages') wires
 	} {
 		if !strings.Contains(html, needle) {
-			t.Errorf("dashboard.html missing %q in the relocated message-filter row", needle)
+			t.Errorf("mail-island.js missing %q in the relocated message-filter row", needle)
 		}
 	}
 
