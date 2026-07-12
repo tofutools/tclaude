@@ -710,3 +710,4 @@ CREATE TABLE human_message_attachments (
 			size_bytes   INTEGER NOT NULL,
 			storage_path TEXT NOT NULL
 		);
+
