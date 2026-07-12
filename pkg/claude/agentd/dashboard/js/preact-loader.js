@@ -88,3 +88,25 @@ export async function mountPluginsFeature(actionDependencies) {
     },
   });
 }
+
+export async function mountCostsFeature(actionDependencies = {}) {
+  const host = document.querySelector('#costs-root');
+  if (!host) return null;
+  return mountFeatureIsland({
+    name: 'costs', label: 'Costs', hosts: [host], failureClass: 'costs-error',
+    load: async () => {
+      const islandModule = import('./costs-island.js');
+      const stateModule = import('./costs-state.js');
+      const actionsModule = import('./costs-actions.js');
+      const [{ mountCostsIsland }, { costsState }, { createCostsActions }] =
+        await Promise.all([islandModule, stateModule, actionsModule]);
+      const costsActions = createCostsActions({ state: costsState, ...actionDependencies });
+      return {
+        state: costsState,
+        mount: (registerCleanup) => mountCostsIsland({
+          host, state: costsState, actions: costsActions, registerCleanup,
+        }),
+      };
+    },
+  });
+}

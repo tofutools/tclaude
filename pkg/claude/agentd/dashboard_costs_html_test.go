@@ -38,11 +38,11 @@ func TestDashboardHTML_TopBarTotalCostWired(t *testing.T) {
 	must("if (today > 0) parts.push(amt(today, 'today'))",
 		"today shown whenever anything was spent today, even when it equals mtd")
 
-	// The token links to the Costs tab: render.js tags it, costs.js
+	// The token links to the Costs tab: render.js tags it, the island
 	// delegates the click to the nav button.
 	must(`data-goto-tab="costs"`, "cost token tagged as a Costs-tab link")
-	must(`nav [data-tab="costs"]').click()`,
-		"costs.js opens the tab via the nav button on a token click")
+	must(`document.querySelector('nav [data-tab="costs"]')?.click()`,
+		"Costs island opens the tab via the nav button on a token click")
 
 	// The no-data state is unchanged: neither windows nor cost → n/a.
 	must("'usage: n/a'", "graceful n/a fallback still present")
@@ -74,8 +74,8 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	must(`id="costs-chart"`, "chart mount point present")
 	must(`id="costs-summary"`, "summary mount point present")
 	must(`id="costs-table"`, "breakdown table mount point present")
-	must(`data-span="month"`, "current-month span option present")
-	must(`data-span="30d"`, "last-30d span option present")
+	must(`data-span=${span.key}`, "fixed span options rendered by Preact")
+	must(`{ key: '30d', label: 'Last 30d'`, "last-30d span declared")
 
 	// costs.js: fetches the endpoint, projects the month from elapsed
 	// weekdays (weekends excluded), renders chart before table.
@@ -83,11 +83,10 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	must("function monthProjection", "month projection implemented")
 	must("isWeekendKey", "weekends excluded from the projection")
 	must("data.first_day", "projection anchors the weekday average at the first-ever costed day")
-	must("bindCostsTab", "tab binder exported")
+	must("mountCostsFeature", "guarded Costs feature mount exported")
 
 	// dashboard.js: the module is actually imported and bound.
-	must("from './costs.js'", "costs.js wired into the entrypoint")
-	must("bindCostsTab();", "tab binder invoked at startup")
+	must("await mountCostsFeature();", "Costs island mounted at startup")
 
 	// dashboard.css: recorded vs projected bars are distinguishable.
 	must(".cost-bar", "bar style rule present")
@@ -97,9 +96,9 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	// Stacked per-harness chart: recorded columns split into coloured
 	// segments from the per-agent rows; the harness filter doubles as the
 	// legend, and the hover tooltip itemises the split over a ruled total.
-	must("function stackedColHTML", "recorded columns rendered as a per-harness stack")
+	must("function mountImperativeCostChart", "recorded columns rendered by the imperative chart boundary")
 	must("function dailyBreakdown", "per-day per-harness split derived from the agent rows")
-	must("function costTipHTML", "per-harness hover legend builder present")
+	must("function tooltipRows", "per-harness hover legend builder present")
 	must(".cost-seg-h0", "harness palette defined (h0 = the historical money-green)")
 	must(".cost-col[data-tip]:hover .cost-seg", "stacked-segment hover highlight present")
 	must(".cost-legend-sw", "harness filter carries a colour-legend swatch")
@@ -119,7 +118,7 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	must("data-tip", "tooltip attribute rendered on nonzero columns")
 	must(".cost-col[data-tip]:hover .cost-bar", "hover bar-highlight rule present")
 	must(".cost-tip", "cursor-following tooltip element styled")
-	must("function bindCostsChartTip", "cursor-following tooltip wired")
+	must("host.addEventListener('mousemove', move)", "cursor-following tooltip wired")
 
 	// Breakdown table: the per-agent harness + model columns, now rendered through
 	// the sortable-header builder rather than a static <th>.
@@ -131,44 +130,44 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	// Sortable headers: clickable columns with a direction arrow, default
 	// activity/desc (which reproduces the server's recency order), wired on
 	// a delegated click — the same affordance as the Audit tab.
-	must("function costHeaderHTML", "sortable header builder present")
+	must("function SortHeader", "sortable Preact header component present")
 	must("th.cost-sort", "header click target class rendered + bound")
 	must("function sortCostAgents", "client-side column sort implemented")
-	must("function bindCostsSort", "header-click sort wired")
+	must("state.cycleSort(key)", "header sort action wired")
 	must("#costs-table th.cost-sort { cursor: pointer", "sortable headers styled clickable")
 
 	// Breakdown filter: harness checkboxes plus a client-side text narrowing of
 	// the table (matches name / id / harness / model), with the matched/all
 	// count chip and clear button.
 	must(`id="filter-costs-harnesses"`, "harness filter mount present")
-	must("function bindCostsHarnessFilter", "harness checkbox filter wired")
+	must("function HarnessFilter", "harness checkbox component wired")
 	must("tclaude.dash.costs.harnesses", "harness filter persisted")
 	// The harness subset narrows the whole tab, not just the table: the
 	// chart/summary/projection render from the filtered derivation, and a
 	// checkbox toggle re-paints all three panes from the payload in hand.
-	must("function costDataForSelectedHarnesses", "harness subset narrows the chart/summary totals")
-	must("renderCosts(lastCostData, lastCostSpan)", "checkbox toggle re-renders chart + summary + table without refetch")
+	must("function filterCostData", "harness subset narrows the chart/summary totals")
+	must("state.toggleHarness(harness)", "checkbox toggle re-derives chart + summary + table without refetch")
 	must(`id="filter-costs"`, "breakdown filter input present")
 	must(`id="filter-costs-count"`, "filter match-count chip present")
 	must(`id="filter-costs-clear"`, "filter clear button present")
-	must("function bindCostsFilter", "filter input wired")
+	must("state.setQuery(event.currentTarget.value)", "filter input wired")
 	must("No agents match the filter.", "empty-after-filter state rendered")
 
 	// Continued-conversation marker: a multi-day conversation splits into
 	// one row per day, and the earlier-day slices carry `continued`,
 	// rendered with a ↩ marker styled by .cost-cont.
-	must("a.continued", "continuation flag read from the API row")
+	must("agent.continued", "continuation flag read from the API row")
 	must("↩", "continuation marker glyph rendered")
 	must(".cost-cont", "continuation marker styled")
 
 	// Multi-day chain: a conversation with more than one slice tags its
 	// rows so the current generation (the latest-day head) reads as the
 	// live tip of a chain and hovering any row highlights the whole set.
-	must("sliceCount[a.conv_id]", "rows-per-conversation counted to detect multi-day chains")
+	must("slices[agent.conv_id]", "rows-per-conversation counted to detect multi-day chains")
 	must("↳", "chain-head marker glyph rendered on the latest day")
 	must(".cost-head", "chain-head marker styled")
 	must(`data-conv="`, "chain rows tagged with their shared conv id")
-	must("function bindCostsChainHover", "chain hover-highlight wired")
+	must("setHovered(event.target.closest('tr[data-conv]')", "chain hover-highlight wired")
 	must(".cost-chain-hl", "hovered chain highlight styled")
 	must("#costs-table tr.cost-chain td:first-child", "chain rows carry the left accent")
 
@@ -178,9 +177,9 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	// prefix, and carries the full "<agent_id> / <conv-id>" pair on the id
 	// span's hover title (idTooltip). The text filter matches the agent id
 	// too, now that it leads the cell.
-	must("shortAgentId(a.agent_id, a.conv_id)", "breakdown Agent cell leads with the stable agent id")
-	must("idTooltip(a.agent_id, a.conv_id)", "full agent/conv id pair on the id cell tooltip")
-	must("(a.agent_id || '').toLowerCase().includes(q)", "text filter matches the agent id")
+	must("shortAgentId(agent.agent_id, agent.conv_id)", "breakdown Agent cell leads with the stable agent id")
+	must("idTooltip(agent.agent_id, agent.conv_id)", "full agent/conv id pair on the id cell tooltip")
+	must("agent.agent_id", "text filter includes the agent id")
 }
 
 // TestDashboardHTML_CostsFillEmptyWeekdaysWired guards the Costs tab's
@@ -209,8 +208,8 @@ func TestDashboardHTML_CostsFillEmptyWeekdaysWired(t *testing.T) {
 	// costs.js: the toggle is persisted server-side via dashPrefs and
 	// passed into the projection.
 	must("tclaude.dash.costs.fillEmptyWeekdays", "toggle persisted under its own pref key")
-	must("monthProjection(data, fillEmptyWeekdays, includeWeekends)", "projection receives the fill flag")
-	must("function monthProjection(data, fillEmpty, weekendsIncl)", "projection takes the fill flag")
+	must("monthProjection(narrowed, fillEmpty.value, includeWeekends.value", "projection receives the fill flag")
+	must("function monthProjection(data, fillEmpty, weekendsIncluded", "projection takes the fill flag")
 
 	// costs.js: the projection builds the leading-weekday fill and the
 	// chart renders those columns as projected bars; the summary label
@@ -220,7 +219,7 @@ func TestDashboardHTML_CostsFillEmptyWeekdaysWired(t *testing.T) {
 
 	// costs.js: the toggle is inert (disabled) on the non-month spans
 	// that have no projection.
-	must("function syncFillToggle", "toggle disabled off the month span")
+	must("disabled=${current.span !== 'month'}", "toggle disabled off the month span")
 
 	// dashboard.css: a disabled toggle is visibly dimmed.
 	must(".filter-bar label.filter-toggle.disabled", "disabled toggle styled")
@@ -252,17 +251,17 @@ func TestDashboardHTML_CostsIncludeWeekendsWired(t *testing.T) {
 	// costs.js: persisted server-side via dashPrefs under its own key and
 	// passed into the projection alongside the fill flag.
 	must("tclaude.dash.costs.includeWeekends", "toggle persisted under its own pref key")
-	must("monthProjection(data, fillEmptyWeekdays, includeWeekends)", "projection receives the include-weekends flag")
+	must("monthProjection(narrowed, fillEmpty.value, includeWeekends.value", "projection receives the include-weekends flag")
 
 	// costs.js: the single weekend switch — every day counts when on,
 	// weekdays only otherwise — drives the denominator, the future
 	// projection and the leading fill consistently.
-	must("weekendsIncl || !isWeekendKey(key)", "weekend switch generalises the estimation unit")
+	must("weekendsIncluded || !isWeekendKey(key)", "weekend switch generalises the estimation unit")
 	must("weekendsIncluded", "projection reports whether weekends were included")
 
 	// costs.js: the summary's per-unit figure switches between /weekday
 	// and /day with the flag.
-	must("proj.weekendsIncluded ? 'day' : 'weekday'", "summary unit label tracks the flag")
+	must("projection?.weekendsIncluded ? 'day' : 'weekday'", "summary unit label tracks the flag")
 }
 
 // TestDashboardHTML_CostsMonthStepperWired guards the Costs tab's month
@@ -300,17 +299,17 @@ func TestDashboardHTML_CostsMonthStepperWired(t *testing.T) {
 	// costs.js: entering the stepper, paging with the arrows, and the
 	// bounds (› stops at the current month, ‹ stops at the first-data month).
 	must("function activateMonth", "stepper activation implemented")
-	must("function goMonth", "arrow stepping implemented")
-	must("function syncMonthNav", "arrow enable/disable bounds implemented")
-	must("data.first_day", "‹ bound anchored at the first-ever costed month")
+	must("current.monthOffset + 1", "older-month arrow stepping implemented")
+	must("current.monthOffset >= current.oldestMonthOffset", "arrow enable/disable bounds implemented")
+	must("oldestMonthOffset(data?.first_day", "‹ bound anchored at the first-ever costed month")
 	must("MONTH_NAMES", "stepper label shows the month name")
 
 	// costs.js: the current month (offset 0) is the head of the stepper —
 	// "This month" routes through activateMonth(0), the span folds back into
 	// 'month' there, and syncSpanHighlight lights the "This month" button
 	// alongside the stepper so the two stay in sync and both read as active.
-	must("function syncSpanHighlight", "dual span highlight implemented")
-	must("activateMonth(0)", "This month is the stepper's offset-0 head")
+	must("monthView ? ' active'", "dual span highlight implemented")
+	must("monthOffset.value = 0", "This month is the stepper's offset-0 head")
 
 	// dashboard.css: the stepper group is styled (divider + tight arrows).
 	must("#costs-month-nav", "stepper group styled")
@@ -336,8 +335,8 @@ func TestDashboardHTML_CostFactorWired(t *testing.T) {
 	// costs.js: load on activation, persist + reload on edit, all via
 	// /api/cost-factor.
 	must("/api/cost-factor", "costs.js talks to the cost-factor endpoint")
-	must("function loadCostFactor", "factor loaded when the tab opens")
-	must("function saveCostFactor", "factor persisted + costs reloaded on edit")
+	must("async function loadFactor", "factor loaded when the tab opens")
+	must("function saveFactor(raw)", "factor persisted + costs reloaded on edit")
 
 	// config.js: round-trips cost.estimate_factor.
 	must("estimate_factor", "config.js round-trips the cost.estimate_factor key")
