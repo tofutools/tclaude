@@ -43,9 +43,9 @@ func TestDashboardHTML_WhatIfCostWired(t *testing.T) {
 	must(`id="cfg-cost-show-on-subscription"`, "the Config tab carries the show-on-subscription checkbox")
 	must(`id="groups-cost-toggle"`, "the Groups filter bar carries the 💲 cost toggle")
 
-	// refresh.js: visibility is driven off the snapshot's server flags, with a
+	// costs.js: visibility is driven off the snapshot's server flags, with a
 	// stranded-active-tab fallback to Groups.
-	must("function applyCostTabVisibility(", "refresh.js applies the Costs-tab visibility")
+	must("function applyCostTabVisibility(", "costs.js applies the Costs-tab visibility")
 	must("data.cost_tab_visible", "visibility reads the server's cost_tab_visible flag")
 	must("data.cost_tab_whatif", "WHAT-IF mode reads the server's cost_tab_whatif flag")
 	must("'hide-costs'", "refresh toggles body.hide-costs")

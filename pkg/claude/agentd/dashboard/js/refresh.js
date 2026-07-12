@@ -12,16 +12,16 @@ import { listParams, syncServedOffset, listPagerNav, setListPageSize, fetchListF
 import { conversationsVisible, replacedVisible } from './virtual-groups.js';
 import { recordGroupInteraction } from './last-group.js';
 import {
-  renderPermissions, renderSlugs, showStatus,
+  showStatus,
   renderMessagesBadge, renderUsage, renderDashDefaultProfile, renderDashSandboxProfile,
   renderNotifyGlobal, renderGlobalActivity,
 } from './render.js';
 import { renderMailTab, onMailSearchChanged, renderAccessRequests } from './mail.js';
-import {
-  renderGroupsTab, renderSudoTab, renderLinksTab,
-} from './tabs.js';
+import { renderGroupsTab, renderSudoTab, renderLinksTab } from './tabs.js';
 import { renderTemplatesTab } from './modal-templates.js';
-import { renderPluginsTab, renderPluginsBadge } from './plugins.js';
+import { renderPluginsSnapshot } from './plugins.js';
+import { renderAccessSnapshot } from './access-tab.js';
+import { applyCostTabVisibility } from './costs.js';
 import { applyProcessesTabVisibility } from './processes.js';
 import { morphInto } from './morph.js';
 import { renderDock } from './dock.js';
@@ -125,7 +125,7 @@ export let sudoGrantBlocklist = ['permissions.grant', 'permissions.revoke'];
 // members) can consult it for the 🔓 badge without a server-side
 // duplication of dashboardMember.active_sudo.
 export let sudoByConv = {};
-function bindFilter(tab) {
+function bindFilter(tab, featureRerender = null) {
   const input = $(`#filter-${tab}`);
   const clear = $(`#filter-${tab}-clear`);
   const key = `tclaude.dash.filter.${tab}`;
@@ -144,9 +144,8 @@ function bindFilter(tab) {
       groupsFilterTimer = setTimeout(refresh, 250);
     }
     else if (tab === 'templates') renderTemplatesTab();
-    else if (tab === 'sudo') renderSudoTab();
+    else if (featureRerender) featureRerender();
     else if (tab === 'links') renderLinksTab();
-    else if (tab === 'plugins') renderPluginsTab();
     // The Messages search is server-side (pagination must span the whole
     // folder, not a client-loaded prefix), so a filter change resets to
     // page 1 and triggers a debounced reload rather than a cache repaint.
@@ -534,19 +533,10 @@ export async function refresh(opts = {}) {
     // keyed morphInto so its selection/scroll survive and a manager edit
     // shows up on the next tick.
     renderDock();
-    renderSudoTab();
+    renderAccessSnapshot(data);
     renderLinksTab();
-    renderPluginsTab();
-    renderPluginsBadge(data.plugins_warn || 0);
-    applyPluginsTabVisibility(data);
+    renderPluginsSnapshot(data);
     applyProcessesTabVisibility(data);
-    // Permissions + Slug registry now live as sub-panels of the merged
-    // "Access" tab; the renderers write into the per-panel mount divs.
-    // morphInto reconciles rather than swapping innerHTML, so a selection in
-    // the roster survives the 2s poll (the copy-paste fix); the mount divs
-    // themselves are never replaced.
-    morphInto($('#permissions-body'), renderPermissions(data.permissions, data.agents));
-    morphInto($('#slugs-body'), renderSlugs(data.slugs));
     renderMailTab();
     renderMessagesBadge(data.messages_unread || 0, data.access_requests_pending || 0);
     renderAccessRequests(data.access_requests || [], data.access_requests_pending || 0);
@@ -808,56 +798,6 @@ function bindTabHotkeys() {
       cycleTab(e.key === ']' ? 1 : -1);
     }
   });
-}
-
-// applyCostTabVisibility drives the Costs tab's auto-hide and WHAT-IF mode
-// off the snapshot's server-computed flags:
-//   - cost_tab_visible false → hide the Costs nav button + section entirely
-//     (a subscription account with no real spend and no WHAT-IF opt-in: the
-//     tab would only show an empty chart). The 💲 cost toggle hides too (CSS).
-//   - cost_tab_whatif true → body.cost-whatif lets the per-agent cost badge
-//     (helpers.js harnessLine) and the Costs tab render the hypothetical
-//     pay-per-token-equivalent figures, with a banner.
-// If the Costs tab is the active one when it gets hidden (e.g. the human just
-// turned the opt-in off in the Config tab), fall back to Groups so they
-// aren't stranded on a now-invisible section — mirrors leaveVegasTabIfActive
-// in vegas.js (kept local to avoid a circular import).
-function applyCostTabVisibility(data) {
-  const visible = !!(data && data.cost_tab_visible);
-  const whatif = !!(data && data.cost_tab_whatif);
-  document.body.classList.toggle('hide-costs', !visible);
-  document.body.classList.toggle('cost-whatif', whatif);
-  if (!visible) {
-    const sec = document.getElementById('tab-costs');
-    if (sec && sec.classList.contains('active')) {
-      $$('nav [data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === 'groups'));
-      $$('main section').forEach(s => s.classList.toggle('active', s.id === 'tab-groups'));
-      dashboardState.setActiveTab('groups');
-    }
-  }
-}
-
-// applyPluginsTabVisibility drives the Plugins tab's auto-hide off the
-// server's plugins_tab_visible flag (dashboard.go), mirroring
-// applyCostTabVisibility: most users never define a plugin, so an empty
-// Plugins tab is just clutter. body.hide-plugins removes the nav button +
-// section via CSS; the server keeps the tab visible whenever something IS
-// there to manage (≥1 plugin, a broken plugins.json, or the
-// dashboard.always_show_plugins_tab opt-in). If the Plugins tab is the
-// active one when it gets hidden — e.g. the human deleted their last plugin,
-// or turned the opt-in off in the Config tab — fall back to Groups so they
-// aren't stranded on a now-invisible section.
-function applyPluginsTabVisibility(data) {
-  const visible = !!(data && data.plugins_tab_visible);
-  document.body.classList.toggle('hide-plugins', !visible);
-  if (!visible) {
-    const sec = document.getElementById('tab-plugins');
-    if (sec && sec.classList.contains('active')) {
-      $$('nav [data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === 'groups'));
-      $$('main section').forEach(s => s.classList.toggle('active', s.id === 'tab-groups'));
-      dashboardState.setActiveTab('groups');
-    }
-  }
 }
 
 // The "Access" tab merges three former tabs — Permissions, Slug

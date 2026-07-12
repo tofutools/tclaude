@@ -17,6 +17,25 @@ import { dashPrefs } from './prefs.js';
 // loadCosts()/bindCostDisplayToggle() long after both modules finish
 // evaluating, never at module top level.
 import { lastSnapshot } from './dashboard.js';
+import { dashboardState } from './snapshot-store.js';
+
+// Snapshot-owned visibility remains separate from the Costs tab's slower
+// on-demand data fetch. Keeping it here gives the bounded Costs migration
+// exclusive ownership of every Costs-specific render path.
+function applyCostTabVisibility(data) {
+  const visible = !!(data && data.cost_tab_visible);
+  const whatif = !!(data && data.cost_tab_whatif);
+  document.body.classList.toggle('hide-costs', !visible);
+  document.body.classList.toggle('cost-whatif', whatif);
+  if (!visible) {
+    const sec = document.getElementById('tab-costs');
+    if (sec && sec.classList.contains('active')) {
+      $$('nav [data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === 'groups'));
+      $$('main section').forEach(s => s.classList.toggle('active', s.id === 'tab-groups'));
+      dashboardState.setActiveTab('groups');
+    }
+  }
+}
 
 // Sticky toggle: when on, the month projection fills the empty weekdays
 // before tclaude's first run this month at the per-weekday average, so
@@ -1301,4 +1320,4 @@ function bindCostDisplayToggle() {
   });
 }
 
-export { bindCostsTab, bindCostDisplayToggle };
+export { applyCostTabVisibility, bindCostsTab, bindCostDisplayToggle };

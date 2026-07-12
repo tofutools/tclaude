@@ -53,7 +53,7 @@ func TestDashboardHTML_PluginsTab(t *testing.T) {
 // TestDashboardHTML_PluginsTabAutoHide guards the Plugins-tab auto-hide
 // wiring across the embedded assets, mirroring the Costs-tab auto-hide
 // guard. The server's plugins_tab_visible flag (dashboard.go) drives a
-// body.hide-plugins CSS class via applyPluginsTabVisibility in refresh.js;
+// body.hide-plugins CSS class via applyPluginsTabVisibility in plugins.js;
 // the Config tab exposes the dashboard.always_show_plugins_tab opt-in. A
 // rename in any one file silently re-shows (or strands) the tab, so pin all
 // three sides together.
@@ -70,8 +70,8 @@ func TestDashboardHTML_PluginsTabAutoHide(t *testing.T) {
 	present(`body.hide-plugins nav [data-tab="plugins"]`, "the Plugins nav button hides on body.hide-plugins")
 	present("body.hide-plugins #tab-plugins", "the Plugins section hides alongside its nav button")
 
-	// JS: refresh.js reads the server's flag and toggles the body class.
-	present("function applyPluginsTabVisibility(", "the visibility applier in refresh.js")
+	// JS: the feature-owned module reads the server flag and toggles the class.
+	present("function applyPluginsTabVisibility(", "the visibility applier in plugins.js")
 	present("data.plugins_tab_visible", "visibility reads the server's plugins_tab_visible flag")
 	present("'hide-plugins'", "refresh toggles body.hide-plugins")
 
