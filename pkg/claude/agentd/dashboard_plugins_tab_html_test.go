@@ -47,6 +47,8 @@ func TestDashboardHTML_PluginsTab(t *testing.T) {
 	present("state.updateStep(index", "the modal's per-step fields")
 	present("actions.install(plugin", "the catalog install action")
 	present("mountPluginsFeature({", "the guarded feature bootstrap")
+	present("const pluginsDescriptor = createIslandDescriptor({", "the declarative multi-host descriptor")
+	present("return mountIslandDescriptor(pluginsDescriptor, actionDependencies)", "the descriptor mount path")
 }
 
 // TestDashboardHTML_PluginsTabAutoHide guards the Plugins-tab auto-hide

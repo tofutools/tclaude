@@ -10,6 +10,36 @@ function requireOptions({ name, label, hosts, load }) {
   if (typeof load !== 'function') throw new TypeError(`island ${name} requires a loader`);
 }
 
+export function createIslandDescriptor({ name, label, hosts, load, failureClass }) {
+  if (typeof name !== 'string' || !name) throw new TypeError('island descriptor requires a name');
+  if (typeof label !== 'string' || !label) throw new TypeError(`island ${name} descriptor requires a label`);
+  if (!hosts || Array.isArray(hosts) || typeof hosts !== 'object' ||
+      Object.keys(hosts).length === 0 || Object.values(hosts).some((selector) => typeof selector !== 'string' || !selector)) {
+    throw new TypeError(`island ${name} descriptor requires named host selectors`);
+  }
+  if (typeof load !== 'function') throw new TypeError(`island ${name} descriptor requires a loader`);
+  return Object.freeze({ name, label, hosts: Object.freeze({ ...hosts }), load, failureClass });
+}
+
+export async function mountIslandDescriptor(descriptor, dependencies = {}, {
+  documentRef = document,
+  mount = mountFeatureIsland,
+} = {}) {
+  const resolved = {};
+  for (const [key, selector] of Object.entries(descriptor.hosts)) {
+    const host = documentRef.querySelector(selector);
+    if (!host) return null;
+    resolved[key] = host;
+  }
+  return mount({
+    name: descriptor.name,
+    label: descriptor.label,
+    hosts: Object.values(resolved),
+    failureClass: descriptor.failureClass,
+    load: () => descriptor.load({ hosts: resolved, dependencies }),
+  });
+}
+
 function claimHosts(name, hosts) {
   for (const host of hosts) {
     const owner = host.dataset.islandOwner;
@@ -26,7 +56,7 @@ function releaseHosts(name, hosts) {
 
 export function renderIslandLoadFailure(host, { label, error, className = 'island-error' }) {
   host.replaceChildren();
-  const failure = document.createElement('div');
+  const failure = host.ownerDocument.createElement('div');
   failure.className = className;
   failure.setAttribute('role', 'alert');
   failure.textContent = `${label} failed to load: ${error?.message || error}`;

@@ -16,6 +16,9 @@ func TestDashboardLogsPreactBoundary(t *testing.T) {
 		return string(data)
 	}
 	state := read("js/logs-state.js")
+	if !strings.Contains(state, "createRequestLifecycle") || !strings.Contains(state, "retainPayloadOnRefresh: true") || !strings.Contains(state, "retainPayloadOnError: false") {
+		t.Error("Logs state must use the explicit shared request lifecycle policy")
+	}
 	for _, forbidden := range []string{"document", "querySelector", "innerHTML", "fetch("} {
 		if strings.Contains(state, forbidden) {
 			t.Errorf("Logs state contains forbidden DOM/fetch knowledge %q", forbidden)

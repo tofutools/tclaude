@@ -1,7 +1,7 @@
 // This source module intentionally has no Preact imports. A missing or broken
 // runtime module must not prevent the legacy dashboard module graph from
 // linking; future feature islands can use the same load-then-claim boundary.
-import { mountFeatureIsland } from './island-lifecycle.js';
+import { createIslandDescriptor, mountFeatureIsland, mountIslandDescriptor } from './island-lifecycle.js';
 
 export async function mountPreactRuntimeProbe() {
   const host = document.createElement('span');
@@ -31,16 +31,12 @@ export async function mountPreactRuntimeProbe() {
 // The Jobs pilot is the first production island. Keep the dynamic boundary so
 // a corrupt optional asset produces a visible feature-local error rather than
 // preventing the rest of the dashboard entry module from booting.
-export async function mountJobsFeature(actionDependencies) {
-  const host = document.querySelector('#jobs-root');
-  const badgeHost = document.querySelector('#jobs-badge-root');
-  if (!host || !badgeHost) return null;
-  return mountFeatureIsland({
+const jobsDescriptor = createIslandDescriptor({
     name: 'jobs',
     label: 'Jobs',
-    hosts: [host, badgeHost],
+    hosts: { host: '#jobs-root', badgeHost: '#jobs-badge-root' },
     failureClass: 'jobs-error',
-    load: async () => {
+    load: async ({ hosts: { host, badgeHost }, dependencies: actionDependencies }) => {
       // Keep import() behind named promises: the repository's intentionally
       // small module-graph scanner recognizes dynamic imports in expressions,
       // while a bare import(...) line is intentionally rejected as ambiguous.
@@ -57,22 +53,22 @@ export async function mountJobsFeature(actionDependencies) {
         }),
       };
     },
-  });
+});
+
+export async function mountJobsFeature(actionDependencies) {
+  return mountIslandDescriptor(jobsDescriptor, actionDependencies);
 }
 
 // Plugins is the second bounded migration and follows the same guarded
 // lifecycle as Jobs. Its tab, nav badge, and modal are one ownership unit.
-export async function mountPluginsFeature(actionDependencies) {
-  const host = document.querySelector('#plugins-root');
-  const badgeHost = document.querySelector('#plugins-badge-root');
-  const modalHost = document.querySelector('#plugins-modal-root');
-  if (!host || !badgeHost || !modalHost) return null;
-  return mountFeatureIsland({
+const pluginsDescriptor = createIslandDescriptor({
     name: 'plugins',
     label: 'Plugins',
-    hosts: [host, badgeHost, modalHost],
+    hosts: {
+      host: '#plugins-root', badgeHost: '#plugins-badge-root', modalHost: '#plugins-modal-root',
+    },
     failureClass: 'plugins-error',
-    load: async () => {
+    load: async ({ hosts: { host, badgeHost, modalHost }, dependencies: actionDependencies }) => {
       const islandModule = import('./plugins-island.js');
       const stateModule = import('./plugins-state.js');
       const actionsModule = import('./plugins-actions.js');
@@ -86,7 +82,10 @@ export async function mountPluginsFeature(actionDependencies) {
         }),
       };
     },
-  });
+});
+
+export async function mountPluginsFeature(actionDependencies) {
+  return mountIslandDescriptor(pluginsDescriptor, actionDependencies);
 }
 
 export async function mountCostsFeature(actionDependencies = {}) {

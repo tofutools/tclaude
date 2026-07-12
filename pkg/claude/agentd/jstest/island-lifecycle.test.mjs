@@ -2,6 +2,59 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
+test('declarative descriptor resolves named multi-hosts and preserves cleanup', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createIslandDescriptor, mountIslandDescriptor } =
+    await harness.importDashboardModule('js/island-lifecycle.js');
+  const host = harness.document.body.appendChild(harness.document.createElement('div')); host.id = 'feature';
+  const badge = harness.document.body.appendChild(harness.document.createElement('span')); badge.id = 'badge';
+  let received;
+  const descriptor = createIslandDescriptor({
+    name: 'described', label: 'Described', hosts: { host: '#feature', badge: '#badge' },
+    load: async (context) => ({
+      state: {},
+      mount(registerCleanup) { received = context; registerCleanup(() => {}); },
+    }),
+  });
+  const cleanup = await mountIslandDescriptor(descriptor, { api: 'dependency' });
+  assert.equal(received.hosts.host, host);
+  assert.equal(received.hosts.badge, badge);
+  assert.equal(received.dependencies.api, 'dependency');
+  assert.equal(host.dataset.islandOwner, 'described');
+  cleanup();
+  assert.equal(host.dataset.islandOwner, undefined);
+  assert.equal(badge.dataset.islandOwner, undefined);
+});
+
+test('descriptor skips absent hosts and isolates loader failures in its primary host', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createIslandDescriptor, mountIslandDescriptor } =
+    await harness.importDashboardModule('js/island-lifecycle.js');
+  const host = harness.document.body.appendChild(harness.document.createElement('div')); host.id = 'primary';
+  const absent = createIslandDescriptor({
+    name: 'absent', label: 'Absent', hosts: { host: '#missing' },
+    load: async () => { throw new Error('must not load'); },
+  });
+  assert.equal(await mountIslandDescriptor(absent), null);
+
+  const broken = createIslandDescriptor({
+    name: 'broken-descriptor', label: 'Broken descriptor', hosts: { host: '#primary' },
+    load: async () => { throw new Error('optional chunk failed'); },
+  });
+  const mount = (options) => mountFeatureIsland({ ...options, logger: { error() {} } });
+  const { mountFeatureIsland } = await harness.importDashboardModule('js/island-lifecycle.js');
+  const ambientDocument = globalThis.document;
+  delete globalThis.document;
+  try {
+    assert.equal(await mountIslandDescriptor(broken, {}, {
+      documentRef: harness.document, mount,
+    }), null);
+  } finally {
+    globalThis.document = ambientDocument;
+  }
+  assert.match(getByRole(host, 'alert').textContent, /optional chunk failed/);
+});
+
 test('island lifecycle claims hosts, registers state, and cleans up exactly once', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ mountFeatureIsland }, { featureState }] = await Promise.all([

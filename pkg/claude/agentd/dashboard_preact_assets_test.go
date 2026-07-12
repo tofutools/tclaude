@@ -36,6 +36,7 @@ func TestDashboardPreactProbeAssets(t *testing.T) {
 		"js/preact-loader.js",
 		"js/preact-probe.js",
 		"js/island-lifecycle.js",
+		"js/request-lifecycle.js",
 		"js/async-load-state.js",
 		"vendor/preact/LICENSE-preact.txt",
 		"vendor/preact/LICENSE-signals.txt",
