@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
 import { makeModalResizable } from './helpers.js';
 import { useDialogFocus } from './dialog-focus.js';
+import { isTopmostOverlay } from './overlay-stack.js';
 
 const html = htm.bind(h);
 
@@ -26,36 +27,12 @@ export function ManagementOverlay({
     if (blocked) return;
     if (!dirty || (await confirmDiscard())) onClose();
   };
-  const isTopmost = () => {
-    // Stacked editors are not necessarily last in the DOM: the profile editor
-    // host precedes the spawn dialog, then CSS lifts the editor above it.
-    // Follow the painted stack (z-index, with DOM order breaking ties) so the
-    // visually front-most dialog owns Escape.
-    const overlays = Array.from(
-      document.querySelectorAll('.manage-overlay.show, .modal-overlay.show'),
-    );
-    if (overlays.length <= 1) return true;
-    const current = overlayRef.current;
-    const zOf = (element) =>
-      parseInt(
-        globalThis.getComputedStyle?.(element)?.zIndex || element.style.zIndex,
-        10,
-      ) || 0;
-    const currentZ = zOf(current);
-    const currentIndex = overlays.indexOf(current);
-    return !overlays.some((other, index) => {
-      if (other === current) return false;
-      const otherZ = zOf(other);
-      if (otherZ !== currentZ) return otherZ > currentZ;
-      return index > currentIndex;
-    });
-  };
   const { dialogRef } = useDialogFocus({
     open: true,
     onEscape: () => {
       void close();
     },
-    shouldHandle: isTopmost,
+    shouldHandle: () => isTopmostOverlay(overlayRef.current),
   });
   useEffect(() => {
     if (!resizeKey) return undefined;

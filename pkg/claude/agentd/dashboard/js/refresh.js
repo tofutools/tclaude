@@ -38,6 +38,7 @@ import {
   shellConfirm as confirmModal,
   shellConfirmDiscard as confirmDiscard,
 } from './shell-state.js';
+import { isTopmostOverlay } from './overlay-stack.js';
 
 // refreshSuspended() is the single source of truth for whether the
 // auto-refresh is allowed to re-render the DOM right now. refresh()
@@ -771,28 +772,6 @@ function bindSortHeaders() {
 // to invoke once the user confirms (or the modal is clean). An optional
 // canDismiss predicate suppresses both the confirmation and close gesture
 // while a caller-owned operation such as an async save is in flight.
-
-// isTopmostOverlay reports whether `el` is the front-most shown overlay, so a
-// document-level Escape dismisses only the modal on top — not every shown
-// modal at once. The backdrop-CLICK path needs no equivalent (its event lands
-// on the top overlay's own element), but Escape is global. Front-most =
-// highest computed z-index, DOM order breaking ties (a later sibling paints on
-// top). Single-modal (the overwhelmingly common case) short-circuits to true,
-// so this only matters once a modal is stacked on another (e.g. the profile
-// editor opened over the spawn dialog).
-function isTopmostOverlay(el) {
-  const shown = [...document.querySelectorAll('.modal-overlay.show, .manage-overlay.show')];
-  if (shown.length <= 1) return true;
-  const zOf = (n) => parseInt(getComputedStyle(n).zIndex, 10) || 0;
-  const myZ = zOf(el);
-  return !shown.some((other) => {
-    if (other === el) return false;
-    const oz = zOf(other);
-    if (oz !== myZ) return oz > myZ;
-    // Tie on z-index: whichever is later in the DOM is painted on top.
-    return !!(el.compareDocumentPosition(other) & Node.DOCUMENT_POSITION_FOLLOWING);
-  });
-}
 
 export function bindBackdropDiscard(modalId, closeFn, canDismiss = () => true) {
   const el = $('#' + modalId);
