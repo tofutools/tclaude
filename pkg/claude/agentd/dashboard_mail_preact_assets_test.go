@@ -8,6 +8,7 @@ import (
 func TestDashboardMessagesPreactOwnershipAndParityHooks(t *testing.T) {
 	island := string(mustReadFS(dashboardAssetsFS, "js/mail-island.js"))
 	controller := string(mustReadFS(dashboardAssetsFS, "js/mail.js"))
+	css := string(mustReadFS(dashboardAssetsFS, "dashboard.css"))
 	html := string(dashboardIndexHTML)
 
 	for _, forbidden := range []string{"html`<>", "</>`"} {
@@ -49,5 +50,20 @@ func TestDashboardMessagesPreactOwnershipAndParityHooks(t *testing.T) {
 	}
 	if strings.Contains(html, `<div class="mail-client">`) {
 		t.Error("legacy static Messages client remains in dashboard.html")
+	}
+
+	hostStart := strings.Index(css, "#messages-root {")
+	if hostStart < 0 {
+		t.Fatal("Messages island host is missing its layout rule")
+	}
+	hostEnd := strings.Index(css[hostStart:], "}")
+	if hostEnd < 0 {
+		t.Fatal("Messages island host layout rule is unterminated")
+	}
+	hostRule := css[hostStart : hostStart+hostEnd]
+	for _, want := range []string{"display: flex", "flex: 1 1 auto", "min-height: 0"} {
+		if !strings.Contains(hostRule, want) {
+			t.Errorf("Messages island host layout rule missing %q", want)
+		}
 	}
 }

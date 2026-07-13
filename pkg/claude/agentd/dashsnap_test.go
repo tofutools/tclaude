@@ -448,7 +448,7 @@ func baseStates() []dashsnap.State {
 		{
 			Key:      "bounded-messages-populated",
 			Title:    "Bounded Preact — Messages populated",
-			Caption:  "Messages island renders the populated three-pane client, native filters/toggles, keyed rows and an open reader without losing the plain or wizard CSS contract.",
+			Caption:  "Messages island keeps all three panes independently scrollable, the sidebar footer toggles visible, and the client clear of the fixed dashboard footer in both skins.",
 			JS:       boundedMessagesJS(),
 			SettleMS: 600,
 		},
@@ -1099,6 +1099,34 @@ func boundedMessagesJS() string {
     document.querySelector('#tab-messages').prepend(debug);
     throw new Error('Messages island did not render: client=' + !!client + ' reader=' + !!reader);
   }
+  var root = document.querySelector('#messages-root');
+  var sidebar = document.querySelector('#mail-sidebar');
+  var list = document.querySelector('#mail-list');
+  var readerPane = document.querySelector('#mail-reader');
+  var footer = document.querySelector('footer');
+  var sidebarFoot = document.querySelector('.mail-sidebar-col .mail-sidebar-foot:last-of-type');
+  if (!root || !sidebar || !list || !readerPane || !footer || !sidebarFoot) throw new Error('Messages layout fixture is incomplete');
+
+  // Force each pane past the available height without changing production
+  // fixture data. A bounded layout gives every pane its own scrollbar; an
+  // unbounded mount host instead grows the whole page and fails these checks.
+  [sidebar, list, readerPane].forEach(function(pane) {
+    var probe = document.createElement('div');
+    probe.setAttribute('data-dashsnap-scroll-probe', '');
+    probe.style.cssText = 'height:1600px;min-height:1600px;width:1px;opacity:0;pointer-events:none';
+    pane.appendChild(probe);
+  });
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+
+  var nonScrolling = [sidebar, list, readerPane].filter(function(pane) {
+    return pane.scrollHeight <= pane.clientHeight;
+  });
+  if (nonScrolling.length) throw new Error('Messages panes are not independently scrollable: ' + nonScrolling.map(function(pane){ return pane.id; }).join(', '));
+  var footerTop = footer.getBoundingClientRect().top;
+  var clientBottom = client.getBoundingClientRect().bottom;
+  if (clientBottom > footerTop + 1) throw new Error('Messages client overlaps the fixed footer by ' + Math.round(clientBottom - footerTop) + 'px');
+  if (sidebarFoot.getBoundingClientRect().bottom > footerTop + 1) throw new Error('Sidebar footer toggles extend behind the dashboard footer');
+  if (document.documentElement.scrollHeight > window.innerHeight + 1) throw new Error('Messages tab scrolls the whole document instead of its panes');
 });`
 }
 

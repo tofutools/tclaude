@@ -290,6 +290,15 @@ body:has(#tab-messages.active) #tab-messages.active {
   flex: 1 1 auto; min-height: 0;
   display: flex; flex-direction: column;
 }
+/* The Preact mount adds one host between #tab-messages and .mail-client.
+   Carry the flex/min-height chain through that boundary so the grid receives
+   a definite viewport-bounded height. Without this, its 1fr row expands to
+   content height, the pane overflow rules never engage, and the fixed footer
+   overlaps the bottom of the unbounded client. */
+#messages-root {
+  display: flex; flex-direction: column;
+  flex: 1 1 auto; min-height: 0;
+}
 /* Freeze the chrome rows above the mail client so ONLY main flexes. In
    slop mode #slop-marquee sits between header and nav and has
    overflow:hidden, so as a flex item its automatic min-height resolves to
