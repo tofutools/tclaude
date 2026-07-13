@@ -7,6 +7,8 @@ import { dirtyDraft, harnessByName, harnessDefaults, profileDraft, profilePayloa
 import { registerManagementController } from './management-controller.js';
 import { sandboxProfileSummary } from './sandbox-profiles-data.js';
 import { makeModalResizable, pickDirectory } from './helpers.js';
+import { lineDiff } from './line-diff.js';
+import { useDialogFocus } from './dialog-focus.js';
 import { wizWord } from './slop.js';
 
 const html = htm.bind(h);
@@ -135,7 +137,7 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
   const baseline = useMemo(() => ({ name: seed?.name || '', filesystem: clone(seed?.filesystem || []), environment: clone(seed?.environment || []), includes: clone(seed?.includes || []), agent_directories: clone(seed?.agent_directories || []) }), [descriptor]);
   const [draft, setDraft] = useState(() => clone(baseline)); const [advanced, setAdvanced] = useState(false); const [rawFS, setRawFS] = useState(() => JSON.stringify(baseline.filesystem, null, 2)); const [rawEnv, setRawEnv] = useState(() => JSON.stringify(baseline.environment, null, 2)); const [rawIncludes, setRawIncludes] = useState(() => JSON.stringify(baseline.includes, null, 2)); const [rawAgentDirs, setRawAgentDirs] = useState(() => JSON.stringify(baseline.agent_directories, null, 2));
   const [directoryStatus, setDirectoryStatus] = useState({ missing: [], creatable: [] }); const [directoryBusy, setDirectoryBusy] = useState(false);
-  const directoryGeneration = useRef(0); const filesystemSignature = JSON.stringify(draft.filesystem); const latestFilesystem = useRef(filesystemSignature); latestFilesystem.current = filesystemSignature;
+  const directoryGeneration = useRef(0); const submitRef = useRef(null); const wasSaving = useRef(false); const filesystemSignature = JSON.stringify(draft.filesystem); const latestFilesystem = useRef(filesystemSignature); latestFilesystem.current = filesystemSignature;
   const dirty = dirtyDraft(draft, baseline);
   const saving = state.busy.value === 'sandbox-save';
   const setFS = (index, patch) => setDraft((value) => ({ ...value, filesystem: value.filesystem.map((row, i) => i === index ? { ...row, ...patch } : row) }));
@@ -144,6 +146,13 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
   const applyRaw = () => { try { const parsed = parseRaw(); setDraft((value) => ({ ...value, ...parsed })); state.error.value = ''; return true; } catch (error) { state.error.value = error.message || String(error); return false; } };
   const toggleAdvanced = () => { if (advanced && !applyRaw()) return; if (!advanced) { setRawFS(JSON.stringify(draft.filesystem, null, 2)); setRawEnv(JSON.stringify(draft.environment, null, 2)); setRawIncludes(JSON.stringify(draft.includes, null, 2)); setRawAgentDirs(JSON.stringify(draft.agent_directories, null, 2)); } setAdvanced(!advanced); };
   const submit = async () => { let value = draft; if (advanced) { try { value = { ...draft, ...parseRaw() }; } catch (error) { state.error.value = error.message || String(error); return; } } await actions.saveSandbox({ draft: value, original: seed, options }); };
+  useEffect(() => {
+    if (wasSaving.current && !saving) queueMicrotask(() => {
+      const button = submitRef.current;
+      if (button?.isConnected && !button.disabled && !button.closest('[inert]')) button.focus();
+    });
+    wasSaving.current = saving;
+  }, [saving]);
   useEffect(() => { if (advanced) return undefined; let active = true; const generation = ++directoryGeneration.current; const filesystem = clone(draft.filesystem); const timer = setTimeout(async () => { try { const result = await actions.inspectDirectories(filesystem); if (active && generation === directoryGeneration.current) setDirectoryStatus({ missing: result?.missing || [], creatable: result?.creatable || [] }); } catch (_) { if (active && generation === directoryGeneration.current) setDirectoryStatus({ missing: [], creatable: [] }); } }, 300); return () => { active = false; clearTimeout(timer); }; }, [advanced, filesystemSignature]);
   const createMissing = async () => { const filesystem = clone(draft.filesystem); const signature = JSON.stringify(filesystem); const generation = ++directoryGeneration.current; setDirectoryBusy(true); state.error.value = ''; try { const result = await actions.createDirectories(filesystem); const refreshed = await actions.inspectDirectories(filesystem); if (generation === directoryGeneration.current && signature === latestFilesystem.current) { const created = result?.created || []; state.error.value = `Created ${created.length} sandbox director${created.length === 1 ? 'y' : 'ies'}.`; setDirectoryStatus({ missing: refreshed?.missing || [], creatable: refreshed?.creatable || [] }); } } catch (error) { if (generation === directoryGeneration.current) state.error.value = error.message || String(error); } finally { setDirectoryBusy(false); } };
   const configureWithAgent = () => { let value = draft; if (advanced) { try { value = { ...draft, ...parseRaw() }; } catch (error) { state.error.value = error.message || String(error); return; } } state.closeDialog(); void actions.configureSandboxWithAgent(value, { targetName: options.targetName || seed?.name || '', onCreate: options.onCreate }); };
@@ -155,7 +164,7 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
     <fieldset class="sbx-section" hidden=${advanced}><legend title="Environment-variable names backed by isolated writable directories created per agent.">Agent-owned directories</legend><div class="sbx-rows">${draft.agent_directories.map((name, index) => html`<div key=${index} class="sbx-row"><input class="sbx-agent-name" value=${name} placeholder="GOCACHE" onInput=${(event) => setDraft((old) => ({ ...old, agent_directories: old.agent_directories.map((item, i) => i === index ? event.currentTarget.value : item) }))}/><button type="button" onClick=${() => setDraft((old) => ({ ...old, agent_directories: old.agent_directories.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row sbx-agent-add" onClick=${() => setDraft((old) => ({ ...old, agent_directories: [...old.agent_directories, ''] }))}>＋ add agent-owned directory</button></fieldset>
     ${!advanced && directoryStatus.missing.length > 0 && html`<div class="sbx-missing"><span>${directoryStatus.missing.length} director${directoryStatus.missing.length === 1 ? 'y does' : 'ies do'} not exist. Saving is allowed; read/write rules activate on a later launch, while deny targets must exist before launch.</span>${directoryStatus.creatable.length > 0 && html`<button type="button" disabled=${directoryBusy || saving} onClick=${createMissing}>${directoryBusy ? 'Creating…' : `Create ${directoryStatus.creatable.length} missing director${directoryStatus.creatable.length === 1 ? 'y' : 'ies'}`}</button>`}</div>`}
     <button type="button" class="sbx-advanced-toggle" aria-expanded=${advanced} onClick=${toggleAdvanced}>${advanced ? '▾' : '▸'} Advanced — edit raw JSON</button>${advanced && html`<div class="sbx-advanced-body"><${Row} label="Filesystem JSON"><textarea id="sandbox-profile-editor-filesystem" rows="6" value=${rawFS} onInput=${(event) => setRawFS(event.currentTarget.value)}/></${Row}><${Row} label="Environment JSON"><textarea id="sandbox-profile-editor-environment" rows="6" value=${rawEnv} onInput=${(event) => setRawEnv(event.currentTarget.value)}/></${Row}><${Row} label="Includes JSON"><textarea id="sandbox-profile-editor-includes" rows="3" value=${rawIncludes} onInput=${(event) => setRawIncludes(event.currentTarget.value)}/></${Row}><${Row} label="Agent dirs JSON"><textarea id="sandbox-profile-editor-agent-directories" rows="3" value=${rawAgentDirs} onInput=${(event) => setRawAgentDirs(event.currentTarget.value)}/></${Row}></div>`}
-    <div role="alert" class="cron-create-error">${state.error.value}</div><div class="modal-buttons"><button disabled=${saving || directoryBusy} onClick=${state.closeDialog}>Cancel</button><button id="sandbox-profile-editor-scribe" disabled=${saving || directoryBusy} onClick=${configureWithAgent}>🤖 configure with agent</button><span class="spacer"></span><button id="sandbox-profile-editor-submit" class="primary" disabled=${saving || directoryBusy} onClick=${submit}>${saving ? 'Saving…' : 'Save sandbox profile'}</button></div></${Overlay}>`;
+    <div role="alert" class="cron-create-error">${state.error.value}</div><div class="modal-buttons"><button disabled=${saving || directoryBusy} onClick=${state.closeDialog}>Cancel</button><button id="sandbox-profile-editor-scribe" disabled=${saving || directoryBusy} onClick=${configureWithAgent}>🤖 configure with agent</button><span class="spacer"></span><button ref=${submitRef} id="sandbox-profile-editor-submit" class="primary" disabled=${saving || directoryBusy} onClick=${submit}>${saving ? 'Saving…' : 'Save sandbox profile'}</button></div></${Overlay}>`;
 }
 
 function ProfileExport({ current, state, actions, confirmDiscard }) {
@@ -196,6 +205,41 @@ function SandboxImport({ current, state, actions, confirmDiscard }) {
     <div role="alert" class="cron-create-error">${error}</div><div class="modal-buttons"><button onClick=${state.closeDialog}>Cancel</button><span class="spacer"></span><button class="primary" disabled=${busy || !preview} onClick=${submit}>${busy === 'import' ? 'Importing…' : 'Import'}</button></div></${Overlay}>`;
 }
 
+function SandboxDiffModal({ model, close }) {
+  const confirmRef = useRef(null);
+  const { dialogRef } = useDialogFocus({ open: !!model, initialFocusRef: confirmRef, onEscape: () => close(false) });
+  useEffect(() => {
+    if (!model) return undefined;
+    const editor = document.querySelector('#sandbox-profile-editor-modal');
+    const editorDialog = editor?.querySelector('[role="dialog"]');
+    if (!editor) return undefined;
+    editor.inert = true;
+    editor.setAttribute('aria-hidden', 'true');
+    editorDialog?.setAttribute('aria-modal', 'false');
+    return () => {
+      editor.inert = false;
+      editor.removeAttribute('aria-hidden');
+      editorDialog?.setAttribute('aria-modal', 'true');
+    };
+  }, [model]);
+  if (!model) return null;
+  const beforeRaw = model.before ? JSON.stringify(model.before, null, 2) : '';
+  const afterRaw = JSON.stringify(model.after, null, 2);
+  const diff = model.before ? lineDiff(beforeRaw, afterRaw) : afterRaw.split('\n').map((s) => ({ t: 'add', s }));
+  const adds = diff.filter((line) => line.t === 'add').length;
+  const dels = diff.filter((line) => line.t === 'del').length;
+  const sign = { add: '+', del: '\u2212', ctx: ' ' };
+  const cancelOutside = (event) => { if (event.target === event.currentTarget) close(false); };
+  return html`<div ref=${dialogRef} id="sandbox-profile-diff-modal" class="modal-overlay show" role="dialog" aria-modal="true" aria-labelledby="sandbox-profile-diff-title" onClick=${cancelOutside}>
+    <div class="config-diff-modal">
+      <h3 id="sandbox-profile-diff-title">Confirm sandbox profile changes</h3>
+      <p id="sandbox-profile-diff-sub" class="cfg-diff-sub">${model.before ? `${adds} line(s) added, ${dels} removed — server-normalized preview` : `${adds} line(s) added — new server-normalized profile`}</p>
+      <div id="sandbox-profile-diff-body" class="config-diff">${diff.map((line, index) => html`<span key=${index} class=${`dl ${line.t}`}>${sign[line.t]} ${line.s}</span>`)}</div>
+      <div class="modal-buttons"><button id="sandbox-profile-diff-cancel" type="button" onClick=${() => close(false)}>Cancel</button><span class="spacer"></span><button ref=${confirmRef} id="sandbox-profile-diff-confirm" class="primary" type="button" onClick=${() => close(true)}>Save sandbox profile</button></div>
+    </div>
+  </div>`;
+}
+
 function ManagementApp({ state, actions, confirmDiscard, openProfilePermissions }) {
   const current = state.view.value; const descriptor = current.dialog;
   const previousManager = useRef('');
@@ -210,7 +254,8 @@ function ManagementApp({ state, actions, confirmDiscard, openProfilePermissions 
     ${descriptor?.kind === 'profile-import' && html`<${ProfileImport} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
     ${descriptor?.kind === 'sandbox-editor' && html`<${SandboxEditor} descriptor=${descriptor} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
     ${descriptor?.kind === 'sandbox-export' && html`<${SandboxExport} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
-    ${descriptor?.kind === 'sandbox-import' && html`<${SandboxImport} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}`;
+    ${descriptor?.kind === 'sandbox-import' && html`<${SandboxImport} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
+    <${SandboxDiffModal} model=${current.sandboxDiff} close=${state.cancelSandboxDiff} />`;
 }
 
 export function mountManagementIsland({ host, state, actions, confirmDiscard, openProfilePermissions, registerCleanup }) {
@@ -221,5 +266,5 @@ export function mountManagementIsland({ host, state, actions, confirmDiscard, op
   };
   const unregister = registerManagementController(controller);
   render(html`<${ManagementApp} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} openProfilePermissions=${openProfilePermissions}/>` , host);
-  registerCleanup(() => { unregister(); render(null, host); });
+  registerCleanup(() => { state.cancelSandboxDiff(false); unregister(); render(null, host); });
 }

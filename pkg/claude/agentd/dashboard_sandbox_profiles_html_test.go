@@ -34,6 +34,10 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		`function SandboxEditor(`:                                        "component-owned structured editor",
 		`function SandboxImport(`:                                        "component-owned import flow",
 		`function SandboxExport(`:                                        "component-owned export flow",
+		`function SandboxDiffModal(`:                                     "component-owned normalized diff preview",
+		`id="sandbox-profile-diff-modal"`:                               "sandbox diff confirmation overlay",
+		`id="sandbox-profile-diff-body"`:                                "line-by-line JSON diff",
+		`lineDiff(beforeRaw, afterRaw)`:                                  "edits render as an LCS line diff",
 		`previewSandboxProfile`:                                          "save validates before commit",
 		`preview.revision || ''`:                                         "commit is coupled to preview revision",
 		`await options.onCreate?.(preview.after.name)`:                   "successful create hands off canonical name",
@@ -67,9 +71,9 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 	}
 
 	for _, retired := range []string{
-		`id="sandbox-profile-diff-modal"`, `function paintSandboxProfiles(`,
+		`function paintSandboxProfiles(`,
 		`function bindLegacySandboxProfilesUI(`, `profileCapabilitiesHTML(`,
-		`data-sandbox-profile-action=`, `id="sandbox-profile-global"`,
+		`data-sandbox-profile-action=`, `id="sandbox-profile-global"`, `Validated policy to save:`,
 	} {
 		if strings.Contains(dashboardAssets, retired) {
 			t.Errorf("retired sandbox manager ownership remains: %q", retired)

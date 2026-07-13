@@ -63,21 +63,50 @@ test('sandbox actions preserve dry-run, canonical commit, delete, and import bou
   const [{ createManagementState }, { createManagementActions }] = await Promise.all([
     harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-actions.js'),
   ]);
-  const state = createManagementState(); const calls = []; let refreshed = 0;
+  const state = createManagementState(); const calls = []; let refreshed = 0; let genericConfirms = 0;
   const sandboxAPI = {
     loadSandboxProfiles: async () => [{ name: 'safe' }],
     previewSandboxProfile: async (name, body) => { calls.push(['preview', name, body]); return { before: null, after: body, revision: 'r1' }; },
     saveSandboxProfile: async (...args) => { calls.push(['save', ...args]); }, deleteSandboxProfile: async (name) => calls.push(['delete', name]),
     inspectSandboxImport: async (value) => ({ profiles: value.profiles }), importSandboxProfiles: async (...args) => { calls.push(['import', ...args]); return {}; },
   };
-  const actions = createManagementActions({ state, confirm: async () => true, notify() {}, refreshSandboxSpawn: async () => { refreshed += 1; }, sandboxAPI });
+  const actions = createManagementActions({ state, confirm: async () => { genericConfirms += 1; return true; }, notify() {}, refreshSandboxSpawn: async () => { refreshed += 1; }, sandboxAPI });
   const draft = { name: 'safe', filesystem: [{ path: '/tmp', access: 'write' }], environment: [], includes: ['base'], agent_directories: ['GOCACHE'] };
-  assert.equal(await actions.saveSandbox({ draft, original: null }), true);
+  const create = actions.saveSandbox({ draft, original: null }); await Promise.resolve();
+  assert.deepEqual(state.sandboxDiff.value, { before: null, after: draft }); state.cancelSandboxDiff(true);
+  assert.equal(await create, true);
   assert.deepEqual(calls[0], ['preview', '', draft]); assert.deepEqual(calls[1], ['save', '', draft, 'r1']); assert.equal(refreshed, 1);
-  const replacement = { ...draft, name: 'renamed' }; await actions.saveSandbox({ draft: replacement, original: replacement, options: { targetName: 'safe' } });
+  const replacement = { ...draft, name: 'renamed' }; const update = actions.saveSandbox({ draft: replacement, original: replacement, options: { targetName: 'safe' } }); await Promise.resolve(); state.cancelSandboxDiff(true); await update;
   assert.deepEqual(calls[2], ['preview', 'safe', replacement]); assert.deepEqual(calls[3], ['save', 'safe', replacement, 'r1']);
+  assert.equal(genericConfirms, 0, 'sandbox saves use the dedicated diff instead of the generic JSON confirmation blob');
   await actions.removeSandbox('safe'); assert.deepEqual(calls.find((call) => call[0] === 'delete'), ['delete', 'safe']);
+  assert.equal(genericConfirms, 1, 'ordinary destructive confirmations still use the shared prompt');
   await actions.importSandboxBundle({ profiles: [draft] }, 'skip'); assert.equal(calls.find((call) => call[0] === 'import')[2], 'skip');
+});
+
+test('sandbox save preview renders a focused line diff and restores the editor on cancel', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({ kind: 'sandbox-editor', seed: { name: 'dev', filesystem: [], environment: [], includes: [], agent_directories: [] }, options: {} });
+  const actions = { async inspectDirectories() { return { missing: [], creatable: [] }; }, async createDirectories() {}, saveSandbox() {}, configureSandboxWithAgent() {} };
+  const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
+  mountManagementIsland({ host, state, actions, confirmDiscard: async () => false, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } }); await harness.act(() => Promise.resolve());
+  const before = { name: 'dev', filesystem: [{ path: '/cache', access: 'read' }], environment: [] };
+  const after = { name: 'dev', filesystem: [{ path: '/cache', access: 'write' }], environment: [] };
+  const submit = host.querySelector('#sandbox-profile-editor-submit'); submit.focus(); state.busy.value = 'sandbox-save'; await harness.act(() => Promise.resolve());
+  const harnessFocus = submit.focus; Object.defineProperty(submit, 'focus', { configurable: true, value() { if (!this.disabled && !this.closest('[inert]')) harnessFocus.call(this); } });
+  const decision = state.confirmSandboxDiff(before, after); await harness.act(() => Promise.resolve());
+  const modal = host.querySelector('#sandbox-profile-diff-modal');
+  assert.ok(modal); assert.equal(modal.querySelectorAll('.dl.add').length, 1); assert.equal(modal.querySelectorAll('.dl.del').length, 1); assert.ok(modal.querySelectorAll('.dl.ctx').length > 0);
+  assert.match(modal.querySelector('#sandbox-profile-diff-sub').textContent, /1 line\(s\) added, 1 removed/);
+  assert.equal(harness.document.activeElement.id, 'sandbox-profile-diff-confirm');
+  const editor = host.querySelector('#sandbox-profile-editor-modal'); assert.equal(editor.inert, true); assert.equal(editor.getAttribute('aria-hidden'), 'true');
+  modal.querySelector('#sandbox-profile-diff-cancel').click(); state.busy.value = ''; await harness.act(() => Promise.resolve());
+  assert.equal(await decision, false); assert.equal(host.querySelector('#sandbox-profile-diff-modal'), null); assert.equal(editor.inert, false); assert.equal(editor.hasAttribute('aria-hidden'), false); assert.ok(host.querySelector('#sandbox-profile-editor-modal')); assert.equal(harness.document.activeElement, submit, 'focus returns after the editor is interactive again');
+  cleanups.reverse().forEach((fn) => fn());
 });
 
 test('sandbox editor owns nested rows, raw validation, dirty discard, and save-in-flight state', async (t) => {
