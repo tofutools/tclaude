@@ -162,8 +162,13 @@ adds an idempotent trusted-project entry to `~/.codex/config.toml` before Codex
 starts so a detached agent cannot freeze on the trust-folder modal. The managed
 sandbox baseline lives in `~/.codex/tclaude-agent.config.toml`, installed by
 `tclaude setup`. Spawn-time copies use launch-unique filenames and are removed
-when their Codex process exits. A bounded startup sweep removes old copies left
-by forced stops or host crashes; your own config and profiles are left untouched. The research behind
+when their Codex process exits. If Codex writes an app-tool **Always allow**
+choice into that active temporary profile, agentd verifies that the sealed
+sandbox baseline is unchanged and promotes only the new per-tool approval into
+the persistent `~/.codex/config.toml`; pane-exit cleanup repeats the check as a
+fallback. Existing global decisions are never overwritten. A bounded startup
+sweep removes old copies left by forced stops or host crashes; your other config
+and profiles are left untouched. The research behind
 the defaults lives in the `tclaude-harness-independence` Linear project
 (JOH-166/JOH-167/JOH-200/JOH-207).
 

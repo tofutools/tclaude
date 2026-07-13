@@ -2329,7 +2329,7 @@ func resumeEffectiveSandboxForState(convID string) *sandboxpolicy.Snapshot {
 
 func resumeCommandWithFileCleanup(cmd, path string) string {
 	const statusVar = "tclaude_resume_status"
-	return cmd + "; " + statusVar + "=$?; rm -f -- " + clcommon.ShellQuoteArg(path) +
+	return cmd + "; " + statusVar + "=$?; " + session.CodexProfileCleanupShell(path) +
 		"; exit $" + statusVar
 }
 

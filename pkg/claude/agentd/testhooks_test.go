@@ -786,6 +786,22 @@ func StartConvMonitorForTest(t *testing.T, debounce time.Duration) *convMonitor 
 	return m
 }
 
+// StartCodexApprovalMonitorForTest starts the managed-profile approval
+// monitor against the current test CODEX_HOME and stops it synchronously.
+func StartCodexApprovalMonitorForTest(t *testing.T, debounce time.Duration) *codexApprovalMonitor {
+	t.Helper()
+	prevDebounce := codexApprovalMonitorDebounce
+	codexApprovalMonitorDebounce = debounce
+	stop := make(chan struct{})
+	m := startCodexApprovalMonitor(stop)
+	t.Cleanup(func() {
+		close(stop)
+		m.wait()
+		codexApprovalMonitorDebounce = prevDebounce
+	})
+	return m
+}
+
 // ResetPerfForTest clears the in-memory poll-timing rings (perf.go) so a
 // flow test asserting on /api/perf starts from an empty recorder rather
 // than samples recorded by earlier tests in the same process.

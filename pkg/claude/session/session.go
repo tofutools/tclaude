@@ -146,6 +146,7 @@ func Cmd() *cobra.Command {
 			HookCallbackCmd(),
 			ReplayCmd(),
 			NotifyListenCmd(),
+			codexProfileCleanupCmd(),
 		},
 		RunFunc: func(_ *boa.NoParams, cmd *cobra.Command, args []string) {
 			// Default to interactive watch mode

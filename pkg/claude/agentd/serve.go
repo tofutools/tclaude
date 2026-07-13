@@ -439,6 +439,13 @@ func runServe(p *serveParams) error {
 	// .jsonl on every access. Shares the daemon-wide stop channel.
 	startConvMonitor(cronStop)
 
+	// Codex writes app-tool "Always allow" choices into the active -p config
+	// profile. For tclaude's launch-unique managed profiles that file is
+	// temporary, so watch verified profile additions and promote only those
+	// explicit choices into the persistent Codex config. The pane cleanup path
+	// performs the same reconciliation once more before deleting the profile.
+	startCodexApprovalMonitor(cronStop)
+
 	// Online conversations are enrolled as agents by the session reaper's
 	// continuous liveness sweep (its first tick fires immediately at
 	// startup) — see enrollOnlineSession. That subsumes the one-shot
