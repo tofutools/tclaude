@@ -1,10 +1,10 @@
 package agentd
 
 import (
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -130,7 +130,7 @@ func (m *codexApprovalMonitor) reconcile(path string) {
 	}
 	report, err := harness.PromoteCodexLaunchProfileApprovals(path)
 	if err != nil {
-		if os.IsNotExist(err) || strings.Contains(err.Error(), "no baseline seal") {
+		if errors.Is(err, os.ErrNotExist) || harness.IsCodexLaunchProfileNotSealed(err) {
 			slog.Debug("codex-approval-monitor: profile not eligible for promotion", "path", path, "error", err)
 			return
 		}

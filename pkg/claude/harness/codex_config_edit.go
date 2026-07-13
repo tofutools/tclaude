@@ -2,17 +2,25 @@ package harness
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/gofrs/flock"
 )
 
-const codexConfigEditMaxAttempts = 5
+const (
+	codexConfigEditMaxAttempts = 5
+	codexConfigLockRetry       = 50 * time.Millisecond
+)
 
-var codexConfigEditMu sync.Mutex
+var (
+	codexConfigEditMu      sync.Mutex
+	codexConfigLockTimeout = 10 * time.Second
+)
 
 // EditCodexConfigFile serializes every tclaude-owned edit of Codex's global
 // config. The advisory lock coordinates separate tclaude processes; the
@@ -42,8 +50,14 @@ func editCodexConfigFile(
 		return fmt.Errorf("create Codex config directory: %w", err)
 	}
 	fileLock := flock.New(configPath + ".tclaude.lock")
-	if err := fileLock.Lock(); err != nil {
+	lockCtx, cancelLock := context.WithTimeout(context.Background(), codexConfigLockTimeout)
+	defer cancelLock()
+	locked, err := fileLock.TryLockContext(lockCtx, codexConfigLockRetry)
+	if err != nil {
 		return fmt.Errorf("lock Codex config: %w", err)
+	}
+	if !locked {
+		return fmt.Errorf("lock Codex config: timed out after %s", codexConfigLockTimeout)
 	}
 	defer func() { _ = fileLock.Unlock() }()
 

@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -52,6 +53,9 @@ func cleanupCodexLaunchProfile(path string) error {
 
 	report, promoteErr := harness.PromoteCodexLaunchProfileApprovals(path)
 	if promoteErr != nil {
+		if errors.Is(promoteErr, os.ErrNotExist) {
+			return nil
+		}
 		if !harness.IsCodexLaunchProfileValidationError(promoteErr) {
 			// Preserve the only copy of the explicit choice when the persistent
 			// config is temporarily unreadable/unwritable. agentd's startup scan

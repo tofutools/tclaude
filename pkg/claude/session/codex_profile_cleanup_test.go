@@ -82,3 +82,25 @@ func TestCleanupCodexLaunchProfile_RetainsProfileAfterTransientMergeFailure(t *t
 	require.NoError(t, cleanupCodexLaunchProfile(profilePath))
 	assert.NoFileExists(t, profilePath)
 }
+
+func TestCleanupCodexLaunchProfile_RemovesInvalidProfileWithoutPromotion(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	_, profilePath, err := harness.EnsureCodexAgentLaunchProfile(nil, "cccccccccccccccc")
+	require.NoError(t, err)
+	data, err := os.ReadFile(profilePath)
+	require.NoError(t, err)
+	tampered := strings.Replace(string(data), `extends = ":workspace"`, `extends = ":danger"`, 1)
+	require.NotEqual(t, string(data), tampered)
+	require.NoError(t, os.WriteFile(profilePath, []byte(tampered), 0o600))
+	configPath := filepath.Join(home, ".codex", "config.toml")
+	originalConfig := []byte("# persistent config\n")
+	require.NoError(t, os.WriteFile(configPath, originalConfig, 0o600))
+
+	require.NoError(t, cleanupCodexLaunchProfile(profilePath))
+	assert.NoFileExists(t, profilePath)
+	after, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	assert.Equal(t, originalConfig, after)
+}

@@ -2,10 +2,13 @@ package harness
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -58,4 +61,21 @@ func TestEditCodexConfigFile_RetriesAfterWriterDuringTempStaging(t *testing.T) {
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
 	assert.Equal(t, "model = \"external\"\ntclaude_key = true\n", string(data))
+}
+
+func TestEditCodexConfigFile_TimesOutOnHeldProcessLock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	holder := flock.New(path + ".tclaude.lock")
+	require.NoError(t, holder.Lock())
+	defer func() { require.NoError(t, holder.Unlock()) }()
+
+	oldTimeout := codexConfigLockTimeout
+	codexConfigLockTimeout = 25 * time.Millisecond
+	t.Cleanup(func() { codexConfigLockTimeout = oldTimeout })
+
+	err := EditCodexConfigFile(path, 0o600, func(data []byte) (bool, []byte, error) {
+		return true, append(bytes.Clone(data), "key = true\n"...), nil
+	})
+	require.ErrorContains(t, err, "lock Codex config")
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
 }

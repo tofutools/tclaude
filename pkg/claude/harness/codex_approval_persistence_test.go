@@ -44,6 +44,12 @@ func TestExtractCodexLaunchProfileApprovals_VerifiedExactAddition(t *testing.T) 
 	require.Equal(t, []CodexToolApproval{{AppID: testCodexAppID, Tool: "linear.save_issue"}}, got)
 }
 
+func TestExtractCodexLaunchProfileApprovals_ClassifiesUnsealedProfile(t *testing.T) {
+	_, err := ExtractCodexLaunchProfileApprovals([]byte("model = \"still-being-written\"\n"))
+	require.Error(t, err)
+	assert.True(t, IsCodexLaunchProfileNotSealed(err))
+}
+
 func TestExtractCodexLaunchProfileApprovals_BaselineMutationFailsClosed(t *testing.T) {
 	home := t.TempDir()
 	_, path := sealedTestProfile(t, home, "2222222222222222")

@@ -18,6 +18,8 @@ import (
 
 var codexAppIDRe = regexp.MustCompile(`^asdk_app_[A-Za-z0-9]+$`)
 
+var errCodexLaunchProfileNotSealed = errors.New("managed Codex profile has no baseline seal")
+
 // CodexToolApproval is one app-tool "Always allow" choice that Codex
 // appended to a launch-specific config profile.
 type CodexToolApproval struct {
@@ -49,6 +51,12 @@ func IsCodexLaunchProfileValidationError(err error) bool {
 	return errors.As(err, &target)
 }
 
+// IsCodexLaunchProfileNotSealed reports whether promotion observed a managed
+// profile before its baseline seal had been written.
+func IsCodexLaunchProfileNotSealed(err error) bool {
+	return errors.Is(err, errCodexLaunchProfileNotSealed)
+}
+
 // CodexConfigDir exposes the directory where Codex resolves config.toml and
 // <name>.config.toml. It follows CODEX_HOME, matching the Codex CLI.
 func CodexConfigDir() (string, error) { return codexConfigDir() }
@@ -73,7 +81,7 @@ func ExtractCodexLaunchProfileApprovals(data []byte) ([]CodexToolApproval, error
 	marker := []byte(codexAgentProfileBaselineMarker)
 	idx := bytes.Index(data, marker)
 	if idx < 0 || (idx > 0 && data[idx-1] != '\n') {
-		return nil, fmt.Errorf("managed Codex profile has no baseline seal")
+		return nil, errCodexLaunchProfileNotSealed
 	}
 	if bytes.Contains(data[idx+len(marker):], marker) {
 		return nil, fmt.Errorf("managed Codex profile has multiple baseline seals")
