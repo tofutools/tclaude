@@ -74,6 +74,12 @@ func TestDashboardHasOneAuthoritativeSnapshotPoll(t *testing.T) {
 			const jobsDebounce = "setTimeout(() => void actions.refresh(), 250)"
 			manualDebounces += strings.Count(source, jobsDebounce)
 			source = strings.ReplaceAll(source, jobsDebounce, "")
+		case "js/groups-island.js":
+			// Groups owns the same one-shot server-filter debounce through the
+			// dashboard action boundary; it never schedules the recurring poll.
+			const groupsDebounce = "setTimeout(() => void actions.refresh(), 250)"
+			manualDebounces += strings.Count(source, groupsDebounce)
+			source = strings.ReplaceAll(source, groupsDebounce, "")
 		case "js/modal-human-reply.js":
 			// This legacy data-only timer runs only while its modal suspends the
 			// authoritative renderer. Keep the exception explicit until that

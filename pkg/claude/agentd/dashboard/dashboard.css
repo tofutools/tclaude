@@ -3135,6 +3135,10 @@ body.wizard .group-pending-title-wizard { display: inline; }
   display: flex; align-items: center; gap: 8px;
   margin: 0 0 12px 0;
 }
+/* The Groups controls are a separate Preact host. Its box stays out of the
+   flex layout so the owned input/count/view children retain the exact toolbar
+   geometry and descendant selectors used by the default and wizard themes. */
+#groups-filter-root { display: contents; }
 .filter-bar input {
   flex: 1; max-width: 360px;
   background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;

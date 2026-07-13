@@ -437,11 +437,14 @@ func baseStates() []dashsnap.State {
 	// reconcile it: click the 🎯 toggle iff the card is currently absent (folded).
 	// A no-op when the card is already open. Prepended to every state that expects
 	// the open card so ordering (and the folded state below) can't taint it.
-	const ensureForceOpen = `(function(){
+	const ensureForceOpen = `window.__groupsForceReady = (async function(){
   var det = document.querySelector('details[data-group-key="frontend-squad"]');
   if (det && det.open && !det.querySelector(':scope > .subtable > .group-force-block')) {
     var b = det.querySelector('.force-fold-btn[data-act="toggle-force-fold"]');
-    if (b) b.click();
+    if (b) {
+      b.click();
+      await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+    }
   }
 })();`
 	states := []dashsnap.State{
@@ -849,6 +852,56 @@ func baseStates() []dashsnap.State {
 			JS:      showGroups + expandGroups + ensureForceOpen + `document.body.classList.add('dock-open');`,
 		},
 		{
+			Key:     "groups-view-menu",
+			Title:   "Groups tab — Preact view controls",
+			Caption: "TCL-357 (self-checked): the Preact-owned view popover preserves every visibility and member-column control, with the same default/wizard styling and native checkbox behavior.",
+			JS: showGroups + collapseGroups + `document.body.classList.remove('dock-open');` + `return (async function(){
+  var button = document.querySelector('#filter-groups-view-btn');
+  if (!button) throw new Error('groups-view: trigger missing');
+  button.click();
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var menu = document.querySelector('#filter-groups-view-menu.open');
+  if (!menu) throw new Error('groups-view: menu did not open');
+  if (button.getAttribute('aria-expanded') !== 'true') throw new Error('groups-view: trigger aria-expanded is stale');
+  if (menu.querySelectorAll(':scope > label.filter-toggle').length !== 6) throw new Error('groups-view: visibility toggles missing');
+  if (!menu.querySelector('#filter-groups-cols input[type="checkbox"]')) throw new Error('groups-view: member-column toggles missing');
+})();`,
+		},
+		{
+			Key:     "groups-inline-editor",
+			Title:   "Groups tab — legacy inline editor boundary",
+			Caption: "TCL-357 (self-checked): the description editor remains styled in both skins while its exact Preact-managed chip stays connected and hidden behind the transient input.",
+			JS: showGroups + expandGroups + `document.body.classList.add('dock-open');` + `return (async function(){
+  var det = document.querySelector('details[data-group-key="frontend-squad"]');
+  var chip = det && det.querySelector(':scope > summary .group-descr');
+  if (!chip) throw new Error('groups-inline-editor: description chip missing');
+  chip.click();
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var input = det.querySelector(':scope > summary .group-descr-input');
+  if (!input) throw new Error('groups-inline-editor: input did not open');
+  if (!chip.isConnected || !chip.hidden) throw new Error('groups-inline-editor: managed chip was detached instead of hidden');
+})();`,
+		},
+		{
+			Key:     "groups-inline-editor-blur",
+			Title:   "Groups tab — inline editor blur focus",
+			Caption: "TCL-357 (self-checked): leaving a transient group editor restores its Preact-managed chip without stealing focus from the human's destination.",
+			JS: showGroups + expandGroups + `document.body.classList.add('dock-open');` + `return (async function(){
+  var det = document.querySelector('details[data-group-key="frontend-squad"]');
+  var chip = det && det.querySelector(':scope > summary .group-descr');
+  var destination = document.querySelector('#filter-groups');
+  if (!chip || !destination) throw new Error('groups-inline-editor-blur: controls missing');
+  chip.click();
+  await new Promise(function(resolve){ requestAnimationFrame(resolve); });
+  var input = det.querySelector(':scope > summary .group-descr-input');
+  if (!input) throw new Error('groups-inline-editor-blur: input did not open');
+  destination.focus();
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  if (document.activeElement !== destination) throw new Error('groups-inline-editor-blur: focus was stolen back from destination');
+  if (input.isConnected || chip.hidden) throw new Error('groups-inline-editor-blur: editor did not restore its managed chip');
+})();`,
+		},
+		{
 			// The 🎯 fold toggle: frontend-squad is a deployed force (fixture sets
 			// its mission), so its .group-force-block renders by default. Clicking
 			// the toggle in the action row must hide the card and leave the button
@@ -860,13 +913,15 @@ func baseStates() []dashsnap.State {
 			Key:     "force-folded",
 			Title:   "Groups tab — task-force card folded",
 			Caption: "The 🎯 toggle (self-checked): frontend-squad's info card is hidden; the accented 🎯 show-info button in the action row is the way back.",
-			JS: showGroups + expandGroups + ensureForceOpen + `document.body.classList.add('dock-open');` + `(function(){
+			JS: showGroups + expandGroups + ensureForceOpen + `document.body.classList.add('dock-open');` + `return (async function(){
+  await window.__groupsForceReady;
   var det = document.querySelector('details[data-group-key="frontend-squad"]');
   if (!det) throw new Error('force-folded: frontend-squad not found');
   if (!det.querySelector(':scope > .subtable > .group-force-block')) throw new Error('force-folded: expected an open force card before folding');
   var btn = det.querySelector('.force-fold-btn[data-act="toggle-force-fold"]');
   if (!btn) throw new Error('force-folded: no 🎯 toggle button in the action row');
   btn.click();
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
   var det2 = document.querySelector('details[data-group-key="frontend-squad"]');
   if (det2.querySelector(':scope > .subtable > .group-force-block')) throw new Error('force-folded: card still present after folding');
   var btn2 = det2.querySelector('.force-fold-btn.folded[data-act="toggle-force-fold"]');

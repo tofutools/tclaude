@@ -913,8 +913,8 @@ function renderRealGroup(g, childrenHTML) {
     // fold/skin CSS is tuned to inline spans. Enter/Space activation is
     // delegated in row-actions.js (bindRowActions' keydown listener),
     // which routes through the same click dispatcher as the pointer path.
-    // Focus survives the 2s poll because #groups-list is reconciled via
-    // morphInto (tabs.js), not swapped wholesale.
+    // Focus survives the 2s poll because the Groups island promotes stable
+    // renderer identities to Preact keys instead of swapping the list.
     return `
     <details data-group-key="${esc(g.name)}" data-dnd-target-group="${esc(g.name)}"${detailsClassAttr}${isOpen ? ' open' : ''}>
       <summary draggable="true" data-group-reorder="${esc(g.name)}" title="Drag this header to reorder the group">

@@ -40,14 +40,14 @@ func TestDashboardHTML_MemberColumnsShowHideWired(t *testing.T) {
 	must("renameNameCell(m, state, namePair)", "the id pair is passed to the name cell when ID is hidden")
 	must("function renameNameCell(m, state, idPair = '')", "renameNameCell accepts the optional id pair")
 
-	// refresh.js: the ▾ view "Columns" section is generated from the column
-	// model and each toggle persists + rerenders + feeds the badge.
-	must("hideableMemberCols()", "the menu is built from the hideable columns")
-	must("setMemberColHidden(c.key, !cb.checked)", "a column toggle persists its new state")
-	must("filter-${tab}-col-", "each column checkbox gets a stable id")
-	must("memberColDeviationCount()", "the view badge counts hidden columns too")
+	// groups-state/island: the ▾ view "Columns" section is generated from the
+	// column model and each toggle persists + rerenders + feeds the badge.
+	must("list: hideableMemberCols", "the menu is built from the hideable columns")
+	must("setHidden: setMemberColHidden", "a column toggle persists its new state")
+	must("filter-groups-col-${column.key}", "each column checkbox gets a stable id")
+	must("columns.deviationCount()", "the view badge counts hidden columns too")
 
-	// dashboard.html: the menu section + the JS-populated checkbox container.
+	// groups-island.js: the menu section + generated checkbox container.
 	must(`id="filter-groups-cols"`, "the Columns checkbox container is present")
 	must(`class="view-menu-heading"`, "the Columns section has a heading")
 	must(`class="view-menu-sep"`, "a divider separates row toggles from column toggles")

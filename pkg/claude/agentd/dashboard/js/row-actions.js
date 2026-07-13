@@ -7,6 +7,7 @@
 import { $, $$, shortId, groupOfflineOverride, pickDirectory } from './helpers.js';
 import { renderGroupsTab } from './tabs.js';
 import { featureState } from './feature-state-registry.js';
+import { mountTransientSiblingEditor } from './transient-editor.js';
 import { dashPrefs } from './prefs.js';
 import { loadProfiles, setDashDefaultProfile } from './profiles.js';
 import { openProfileEditor } from './modal-profiles.js';
@@ -59,34 +60,37 @@ import { lastSnapshot, setLastSnapshot, webTerminalDefault } from './dashboard.j
 let renameEditing = false;
 
 // inlineEdit turns a static element into a one-field click-to-edit:
-// it swaps `el` for a focused <input>, commits on Enter, and reverts
+// it temporarily hides `el` and mounts a focused sibling <input>, commits on
+// Enter, and reverts
 // on Esc / blur. The 2s auto-refresh is suspended (renameEditing) for
 // the input's whole lifetime so a poll can't blow it away mid-edit;
 // if the host row is a drag source its draggable attr is parked too,
 // so selecting text in the input can't accidentally start a row drag.
 //
-// onSave(value) is the caller's commit, invoked with the input still
-// in the DOM. It returns one of:
-//   'saved'  — the daemon accepted the change; inlineEdit calls
-//              refresh(), whose re-render replaces the input.
+// Keeping the original node connected is important for Preact-owned lists:
+// replacing it would detach the DOM node referenced by Preact's VNode. The
+// editor is always removed and the managed host revealed before a rerender.
+//
+// onSave(value) is the caller's commit, invoked with the input still in the
+// DOM. It returns one of:
+//   'saved'  — the daemon accepted the change; inlineEdit restores the host,
+//              then calls refresh().
 //   'revert' — nothing to persist (value unchanged) or the caller
 //              already toasted a failure; restore the original element.
 // A thrown error is caught, toasted, and treated as 'revert'.
 //
-// This is the canonical inline-edit primitive. The group-header chips
-// (rename-group, set-group-dir / -descr / -max-members) predate it and
-// still hand-roll the same pattern — migrating them is a deliberate
-// follow-up, kept out of this rename-focused change.
-function inlineEdit({ el, value, type = 'text', inputClass, placeholder, listId, onSave }) {
+// This is the canonical inline-edit primitive for agent names and group-header
+// chips alike.
+function inlineEdit({
+  el, value, type = 'text', inputClass, placeholder, listId, configureInput, onSave,
+}) {
   const prevSnapshot = lastSnapshot;
   renameEditing = true;
   // Park the host row's drag source while the input is open — an
   // <input> inside a draggable <tr> otherwise hands text-selection
-  // drags to the row-drag machinery. Restored on revert; the success
-  // path's refresh() rebuilds the row outright so no restore needed.
+  // drags to the row-drag machinery. Restored before every exit path.
   const dragRow = el.closest('[draggable="true"]');
   if (dragRow) dragRow.setAttribute('draggable', 'false');
-  const origEl = el.cloneNode(true);
   const input = document.createElement('input');
   input.type = type;
   if (inputClass) input.className = inputClass;
@@ -97,7 +101,8 @@ function inlineEdit({ el, value, type = 'text', inputClass, placeholder, listId,
   if (listId) input.setAttribute('list', listId);
   input.spellcheck = false;
   input.autocomplete = 'off';
-  el.replaceWith(input);
+  if (configureInput) configureInput(input);
+  const restoreEditor = mountTransientSiblingEditor(el, input);
   input.focus();
   input.select();
   // Datalist-backed editor: pop the suggestion list open right away —
@@ -116,15 +121,16 @@ function inlineEdit({ el, value, type = 'text', inputClass, placeholder, listId,
   // against a blur firing mid-commit and against a double Enter.
   let phase = 'editing';
   const teardownRestore = () => {
-    if (input.parentNode) input.replaceWith(origEl);
-    if (dragRow) dragRow.setAttribute('draggable', 'true');
     renameEditing = false;
+    restoreEditor();
+    if (dragRow) dragRow.setAttribute('draggable', 'true');
     setLastSnapshot(prevSnapshot);
   };
-  const revert = () => {
+  const revert = (restoreFocus = false) => {
     if (phase !== 'editing') return;
     phase = 'done';
     teardownRestore();
+    if (restoreFocus) el.focus();
   };
   const commit = async () => {
     if (phase !== 'editing') return;
@@ -139,6 +145,8 @@ function inlineEdit({ el, value, type = 'text', inputClass, placeholder, listId,
     phase = 'done';
     if (outcome === 'saved') {
       renameEditing = false;
+      restoreEditor();
+      if (dragRow) dragRow.setAttribute('draggable', 'true');
       refresh();
     } else {
       teardownRestore();
@@ -156,7 +164,7 @@ function inlineEdit({ el, value, type = 'text', inputClass, placeholder, listId,
       // below already committed.
       if (listId) { setTimeout(commit, 0); return; }
       ev.preventDefault(); commit();
-    } else if (ev.key === 'Escape') { ev.preventDefault(); revert(); }
+    } else if (ev.key === 'Escape') { ev.preventDefault(); revert(true); }
   });
   // Picking a datalist suggestion with the MOUSE saves immediately —
   // the user clicked a concrete choice, and requiring a follow-up
@@ -175,7 +183,7 @@ function inlineEdit({ el, value, type = 'text', inputClass, placeholder, listId,
   }
   // Blur cancels rather than commits — explicit Enter to save, same
   // contract as the group-header chips.
-  input.addEventListener('blur', revert);
+  input.addEventListener('blur', () => revert(false));
 }
 
 // openProfilePicker turns a 🧠 spawn-profile chip into a one-shot <select>
@@ -1048,12 +1056,6 @@ function bindRowActions() {
           return;
         }
         case 'rename-group': {
-          // Inline edit: replace the group's <strong> label with an
-          // <input>. Enter saves (POST /api/groups/{old}/rename),
-          // Esc cancels (revert without touching the daemon).
-          // Background poll is suspended while editing so a 2s
-          // refresh doesn't blow the input away mid-type.
-          //
           // The rename button lives in the group ⚙ menu, which sits in
           // the expanded .subtable — a SIBLING of <summary>, not a
           // descendant (moved there in #212). So we can't walk up to the
@@ -1066,67 +1068,33 @@ function bindRowActions() {
             toast('rename: could not locate group name element', true);
             return;
           }
-          // Suspend the auto-refresh while the input is open. The
-          // refresh re-runs renderGroups which would replace our
-          // input back with the static strong, losing keystrokes.
-          const prevSnapshot = lastSnapshot;
-          renameEditing = true;
           const oldName = group;
-          const input = document.createElement('input');
-          input.type = 'text';
-          input.className = 'group-rename-input';
-          input.value = oldName;
-          input.spellcheck = false;
-          input.autocomplete = 'off';
-          // Replace + focus + select.
-          nameEl.replaceWith(input);
-          input.focus();
-          input.select();
-          const restore = () => {
-            const restored = document.createElement('strong');
-            restored.className = 'group-name';
-            restored.dataset.groupName = oldName;
-            restored.textContent = oldName;
-            if (input.parentNode) input.replaceWith(restored);
-            renameEditing = false;
-            setLastSnapshot(prevSnapshot);
-          };
-          const commit = async () => {
-            const newName = input.value;
-            if (newName === oldName || newName.trim() === '') {
-              restore();
-              return;
-            }
-            const r = await fetch(`/api/groups/${encodeURIComponent(oldName)}/rename`, {
-              method: 'POST', credentials: 'same-origin',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ new_name: newName }),
-            });
-            if (!r.ok) {
-              toast(`rename failed: ${await r.text()}`, true);
-              restore();
-              return;
-            }
-            // Move the persisted "is open" flag onto the new key so
-            // the details stays in the state the user left it in.
-            const wasOpen = dashPrefs.getItem('tclaude.dash.group.' + oldName) === '1';
-            dashPrefs.removeItem('tclaude.dash.group.' + oldName);
-            if (wasOpen) dashPrefs.setItem('tclaude.dash.group.' + newName, '1');
-            renameEditing = false;
-            toast(`renamed: ${oldName} → ${newName}`);
-            refresh();
-          };
-          input.addEventListener('keydown', (ev) => {
-            if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
-            else if (ev.key === 'Escape') { ev.preventDefault(); restore(); }
+          inlineEdit({
+            el: nameEl,
+            value: oldName,
+            inputClass: 'group-rename-input',
+            onSave: async (raw) => {
+              const newName = raw.trim();
+              if (!newName || newName === oldName) return 'revert';
+              const r = await fetch(`/api/groups/${encodeURIComponent(oldName)}/rename`, {
+                method: 'POST', credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ new_name: newName }),
+              });
+              if (!r.ok) {
+                toast(`rename failed: ${await r.text()}`, true);
+                return 'revert';
+              }
+              // Move the persisted "is open" flag onto the new key so the
+              // details stays in the state the user left it in.
+              const wasOpen = dashPrefs.getItem('tclaude.dash.group.' + oldName) === '1';
+              dashPrefs.removeItem('tclaude.dash.group.' + oldName);
+              if (wasOpen) dashPrefs.setItem('tclaude.dash.group.' + newName, '1');
+              toast(`renamed: ${oldName} → ${newName}`);
+              return 'saved';
+            },
           });
-          input.addEventListener('blur', () => {
-            // Blur cancels rather than commits — avoids accidentally
-            // posting a stale name when the user clicks elsewhere
-            // mid-edit. They have to commit explicitly with Enter.
-            if (renameEditing) restore();
-          });
-          return; // Skip the default refresh; commit() / restore() handle it.
+          return;
         }
         case 'pick-group-dir': {
           // Click the 📁 icon → open the daemon's native directory
@@ -1148,14 +1116,8 @@ function bindRowActions() {
           return;
         }
         case 'set-group-dir': {
-          // Inline edit of the group's default spawn directory.
-          // The 📁 chip itself is the click target (data-act lives
-          // on the .group-default-cwd span), so btn IS the chip:
-          // replace it with an <input>, Enter saves (PATCH
-          // /api/groups/{name}), Esc / blur cancels. Auto-refresh
-          // suspended via renameEditing so the 2s tick can't drop
-          // the input. Fall back to a summary lookup in case the
-          // click landed on a descendant rather than the span.
+          // Inline edit of the group's default spawn directory. Fall back to a
+          // summary lookup in case the click landed on a descendant.
           const cwdEl = btn.classList.contains('group-default-cwd')
             ? btn
             : (btn.closest('summary') && btn.closest('summary').querySelector('.group-default-cwd'));
@@ -1163,65 +1125,32 @@ function bindRowActions() {
             toast('start dir: could not locate the dir element', true);
             return;
           }
-          const prevSnapshot = lastSnapshot;
-          renameEditing = true;
-          const origEl = cwdEl.cloneNode(true);
           const oldCwd = cwdEl.getAttribute('data-cwd') || '';
-          const input = document.createElement('input');
-          input.type = 'text';
-          input.className = 'group-default-cwd-input';
-          input.value = oldCwd;
-          input.placeholder = 'absolute path (~ OK) — empty clears the default';
-          input.spellcheck = false;
-          input.autocomplete = 'off';
-          cwdEl.replaceWith(input);
-          input.focus();
-          input.select();
-          const restore = () => {
-            if (input.parentNode) input.replaceWith(origEl);
-            renameEditing = false;
-            setLastSnapshot(prevSnapshot);
-          };
-          const commit = async () => {
-            const newCwd = input.value.trim();
-            if (newCwd === oldCwd) {
-              restore();
-              return;
-            }
-            const r = await fetch(`/api/groups/${encodeURIComponent(group)}`, {
-              method: 'PATCH', credentials: 'same-origin',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ default_cwd: newCwd }),
-            });
-            if (!r.ok) {
-              toast(`set dir failed: ${await r.text()}`, true);
-              restore();
-              return;
-            }
-            renameEditing = false;
-            toast(newCwd ? `${group}: default dir → ${newCwd}` : `${group}: default dir cleared`);
-            refresh();
-          };
-          input.addEventListener('keydown', (ev) => {
-            if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
-            // Escape refocuses the restored chip (keyboard parity with the
-            // profile picker's Escape); the blur path below must NOT — it
-            // fires because focus went somewhere else on purpose.
-            else if (ev.key === 'Escape') { ev.preventDefault(); restore(); origEl.focus(); }
+          inlineEdit({
+            el: cwdEl,
+            value: oldCwd,
+            inputClass: 'group-default-cwd-input',
+            placeholder: 'absolute path (~ OK) — empty clears the default',
+            onSave: async (raw) => {
+              const newCwd = raw.trim();
+              if (newCwd === oldCwd) return 'revert';
+              const r = await fetch(`/api/groups/${encodeURIComponent(group)}`, {
+                method: 'PATCH', credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ default_cwd: newCwd }),
+              });
+              if (!r.ok) {
+                toast(`set dir failed: ${await r.text()}`, true);
+                return 'revert';
+              }
+              toast(newCwd ? `${group}: default dir → ${newCwd}` : `${group}: default dir cleared`);
+              return 'saved';
+            },
           });
-          input.addEventListener('blur', () => {
-            // Blur cancels (like rename) — explicit Enter to save.
-            if (renameEditing) restore();
-          });
-          return; // Skip the default refresh; commit() / restore() handle it.
+          return;
         }
         case 'set-group-descr': {
           // Inline edit of the group's own description (the 📝 chip).
-          // Mirrors set-group-dir: swap the chip for a text <input>,
-          // Enter saves (PATCH /api/groups/{name}), Esc / blur
-          // cancels. Auto-refresh suspended via renameEditing so the
-          // 2s tick can't drop the input mid-edit. Fall back to a
-          // summary lookup in case the click landed on a descendant.
           const descrEl = btn.classList.contains('group-descr')
             ? btn
             : (btn.closest('summary') && btn.closest('summary').querySelector('.group-descr'));
@@ -1229,63 +1158,32 @@ function bindRowActions() {
             toast('description: could not locate the description element', true);
             return;
           }
-          const prevSnapshot = lastSnapshot;
-          renameEditing = true;
-          const origEl = descrEl.cloneNode(true);
           const oldDescr = descrEl.getAttribute('data-descr') || '';
-          const input = document.createElement('input');
-          input.type = 'text';
-          input.className = 'group-descr-input';
-          input.value = oldDescr;
-          input.placeholder = 'group description — empty clears it';
-          input.spellcheck = false;
-          input.autocomplete = 'off';
-          descrEl.replaceWith(input);
-          input.focus();
-          input.select();
-          const restore = () => {
-            if (input.parentNode) input.replaceWith(origEl);
-            renameEditing = false;
-            setLastSnapshot(prevSnapshot);
-          };
-          const commit = async () => {
-            const newDescr = input.value.trim();
-            if (newDescr === oldDescr) {
-              restore();
-              return;
-            }
-            const r = await fetch(`/api/groups/${encodeURIComponent(group)}`, {
-              method: 'PATCH', credentials: 'same-origin',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ descr: newDescr }),
-            });
-            if (!r.ok) {
-              toast(`set description failed: ${await r.text()}`, true);
-              restore();
-              return;
-            }
-            renameEditing = false;
-            toast(newDescr ? `${group}: description → ${newDescr}` : `${group}: description cleared`);
-            refresh();
-          };
-          input.addEventListener('keydown', (ev) => {
-            if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
-            // Escape refocuses the restored chip; blur-cancel must not (see
-            // the set-group-dir editor above).
-            else if (ev.key === 'Escape') { ev.preventDefault(); restore(); origEl.focus(); }
+          inlineEdit({
+            el: descrEl,
+            value: oldDescr,
+            inputClass: 'group-descr-input',
+            placeholder: 'group description — empty clears it',
+            onSave: async (raw) => {
+              const newDescr = raw.trim();
+              if (newDescr === oldDescr) return 'revert';
+              const r = await fetch(`/api/groups/${encodeURIComponent(group)}`, {
+                method: 'PATCH', credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ descr: newDescr }),
+              });
+              if (!r.ok) {
+                toast(`set description failed: ${await r.text()}`, true);
+                return 'revert';
+              }
+              toast(newDescr ? `${group}: description → ${newDescr}` : `${group}: description cleared`);
+              return 'saved';
+            },
           });
-          input.addEventListener('blur', () => {
-            // Blur cancels (like rename) — explicit Enter to save.
-            if (renameEditing) restore();
-          });
-          return; // Skip the default refresh; commit() / restore() handle it.
+          return;
         }
         case 'set-group-max-members': {
-          // Inline edit of the group's hard member cap (the 👥
-          // chip). Mirrors set-group-dir: swap the chip for a number
-          // <input>, Enter PATCHes /api/groups/{name}, Esc / blur
-          // cancels. Auto-refresh suspended via renameEditing so the
-          // 2s tick can't drop the input mid-edit.
+          // Inline edit of the group's hard member cap (the 👥 chip).
           const capEl = btn.classList.contains('group-max-members')
             ? btn
             : (btn.closest('summary') && btn.closest('summary').querySelector('.group-max-members'));
@@ -1293,60 +1191,38 @@ function bindRowActions() {
             toast('max members: could not locate the cap element', true);
             return;
           }
-          const prevSnapshot = lastSnapshot;
-          renameEditing = true;
-          const origEl = capEl.cloneNode(true);
           const oldMax = parseInt(capEl.getAttribute('data-max') || '0', 10) || 0;
-          const input = document.createElement('input');
-          input.type = 'number';
-          input.min = '0';
-          input.step = '1';
-          input.className = 'group-max-members-input';
-          input.value = String(oldMax);
-          input.title = '0 clears the cap (unlimited)';
-          capEl.replaceWith(input);
-          input.focus();
-          input.select();
-          const restore = () => {
-            if (input.parentNode) input.replaceWith(origEl);
-            renameEditing = false;
-            setLastSnapshot(prevSnapshot);
-          };
-          const commit = async () => {
-            const newMax = parseInt(input.value, 10);
-            if (!Number.isInteger(newMax) || newMax < 0) {
-              toast('max members must be a non-negative integer (0 = unlimited)', true);
-              restore();
-              return;
-            }
-            if (newMax === oldMax) {
-              restore();
-              return;
-            }
-            const r = await fetch(`/api/groups/${encodeURIComponent(group)}`, {
-              method: 'PATCH', credentials: 'same-origin',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ max_members: newMax }),
-            });
-            if (!r.ok) {
-              toast(`set max members failed: ${await r.text()}`, true);
-              restore();
-              return;
-            }
-            renameEditing = false;
-            toast(newMax > 0 ? `${group}: member cap → ${newMax}` : `${group}: member cap cleared`);
-            refresh();
-          };
-          input.addEventListener('keydown', (ev) => {
-            if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
-            // Escape refocuses the restored chip; blur-cancel must not (see
-            // the set-group-dir editor above).
-            else if (ev.key === 'Escape') { ev.preventDefault(); restore(); origEl.focus(); }
+          inlineEdit({
+            el: capEl,
+            value: String(oldMax),
+            type: 'number',
+            inputClass: 'group-max-members-input',
+            configureInput: (input) => {
+              input.min = '0';
+              input.step = '1';
+              input.title = '0 clears the cap (unlimited)';
+            },
+            onSave: async (raw) => {
+              const newMax = parseInt(raw, 10);
+              if (!Number.isInteger(newMax) || newMax < 0) {
+                toast('max members must be a non-negative integer (0 = unlimited)', true);
+                return 'revert';
+              }
+              if (newMax === oldMax) return 'revert';
+              const r = await fetch(`/api/groups/${encodeURIComponent(group)}`, {
+                method: 'PATCH', credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ max_members: newMax }),
+              });
+              if (!r.ok) {
+                toast(`set max members failed: ${await r.text()}`, true);
+                return 'revert';
+              }
+              toast(newMax > 0 ? `${group}: member cap → ${newMax}` : `${group}: member cap cleared`);
+              return 'saved';
+            },
           });
-          input.addEventListener('blur', () => {
-            if (renameEditing) restore();
-          });
-          return; // Skip the default refresh; commit() / restore() handle it.
+          return;
         }
         case 'set-group-permissions': {
           const snapshot = (lastSnapshot?.groups || []).find(g => g.name === group);

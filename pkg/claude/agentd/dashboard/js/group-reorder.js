@@ -53,13 +53,12 @@
 // loading.
 
 import { $, $$ } from './helpers.js';
-import { dashPrefs } from './prefs.js';
+import { setGroupOrderPref, sortGroupsByPref } from './group-order.js';
 import { renderGroupsTab } from './tabs.js';
 import { lastSnapshot } from './dashboard.js';
 import { refresh, toast, openDeleteGroupModal } from './refresh.js';
 import { isWizardActive } from './slop.js';
 
-const GROUP_ORDER_KEY = 'tclaude.dash.groupOrder';
 // Custom drag payload type. Intentionally NOT 'text/plain' — see the
 // module header: withholding text/plain is what makes dnd.js's member-row
 // drop handler bail on a group-reorder drop.
@@ -76,49 +75,6 @@ let groupReorderActive = false;
 // payload (browsers gate getData to the drop event), so we stash it here.
 let groupDragName = null;
 
-// groupOrderPref returns the saved order as an array of group-name
-// strings, or null when nothing is saved / the value is malformed.
-function groupOrderPref() {
-  const raw = dashPrefs.getItem(GROUP_ORDER_KEY);
-  if (!raw) return null;
-  try {
-    const arr = JSON.parse(raw);
-    if (!Array.isArray(arr)) return null;
-    return arr.filter(n => typeof n === 'string');
-  } catch (_) {
-    return null;
-  }
-}
-
-// setGroupOrderPref persists the given ordered name list. dashPrefs guards
-// unchanged values, so re-saving an identical order is a no-op write.
-function setGroupOrderPref(names) {
-  dashPrefs.setItem(GROUP_ORDER_KEY, JSON.stringify(names));
-}
-
-// sortGroupsByPref returns a NEW array of the given real groups ordered by
-// the saved preference. Groups named in the saved order sort by their
-// saved index; groups absent from it (created since the last reorder, or
-// before the human ever reordered) keep their incoming relative order,
-// placed AFTER every saved one — so a brand-new group lands at the bottom
-// of the custom order rather than jumping to the top. A saved name with no
-// matching group is simply ignored. Stable: equal ranks fall back to the
-// incoming index. Exported so renderGroupsTab applies the very order the
-// drop handler persists.
-function sortGroupsByPref(groups) {
-  const order = groupOrderPref();
-  if (!order || !order.length) return groups;
-  const rank = new Map();
-  order.forEach((name, i) => { if (!rank.has(name)) rank.set(name, i); });
-  return groups
-    .map((g, i) => ({ g, i }))
-    .sort((a, b) => {
-      const ra = rank.has(a.g.name) ? rank.get(a.g.name) : Infinity;
-      const rb = rank.has(b.g.name) ? rank.get(b.g.name) : Infinity;
-      return ra === rb ? a.i - b.i : ra - rb;
-    })
-    .map(x => x.g);
-}
 
 // reorderTarget resolves the real-group <details> under the drag cursor,
 // or null when the cursor is over a virtual group (fixed position — not a
