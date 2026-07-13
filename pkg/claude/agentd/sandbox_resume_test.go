@@ -30,3 +30,35 @@ func TestResolveResumeSandboxPolicyRejectsAmbiguousMultiGroupAssignment(t *testi
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot determine the sandbox source group")
 }
+
+func TestResolveResumeSandboxPolicyDoesNotInferLegacyGroupFromStaleProfileID(t *testing.T) {
+	setupTestDB(t)
+	const convID = "stale-profile-id-resume-conv"
+	agentID, _, err := db.EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+
+	oldID, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "old-policy"})
+	require.NoError(t, err)
+	_, err = db.CreateSandboxProfile(&db.SandboxProfile{Name: "new-policy"})
+	require.NoError(t, err)
+	previous := sandboxpolicy.EmptySnapshot()
+	previous.Applied = []sandboxpolicy.AppliedProfile{{
+		Scope: sandboxpolicy.ScopeGroup, ID: oldID, Name: "old-policy",
+	}}
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &previous))
+
+	for _, group := range []struct{ name, profile string }{
+		{name: "launch-group", profile: "new-policy"},
+		{name: "other-group", profile: "old-policy"},
+	} {
+		groupID, createErr := db.CreateAgentGroup(group.name, "")
+		require.NoError(t, createErr)
+		require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: groupID, ConvID: convID}))
+		_, assignErr := db.SetAgentGroupSandboxProfile(group.name, group.profile)
+		require.NoError(t, assignErr)
+	}
+
+	_, err = resolveResumeSandboxPolicy(convID)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot determine the sandbox source group")
+}

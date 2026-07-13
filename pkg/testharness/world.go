@@ -204,6 +204,7 @@ func (w *World) RecordSpawnSandboxPolicy(convID string, snapshot *sandboxpolicy.
 		return
 	}
 	copy := sandboxpolicy.NewSnapshot(snapshot.Effective, snapshot.Applied)
+	copy.ResolutionGroupID = snapshot.ResolutionGroupID
 	w.spawnSandboxPolicy[convID] = &copy
 }
 
@@ -215,6 +216,7 @@ func (w *World) SpawnSandboxPolicy(convID string) (*sandboxpolicy.Snapshot, bool
 		return nil, ok
 	}
 	copy := sandboxpolicy.NewSnapshot(snapshot.Effective, snapshot.Applied)
+	copy.ResolutionGroupID = snapshot.ResolutionGroupID
 	return &copy, ok
 }
 

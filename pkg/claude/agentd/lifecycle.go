@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -399,6 +400,13 @@ type resumeGrant struct {
 	SkipOnline bool
 }
 
+var resumeLaunchLocks sync.Map // map[convID]*sync.Mutex
+
+func resumeLaunchLock(convID string) *sync.Mutex {
+	lock, _ := resumeLaunchLocks.LoadOrStore(convID, &sync.Mutex{})
+	return lock.(*sync.Mutex)
+}
+
 func resumeSandboxWriteDirsForConv(convID string) (*resumeSandboxPolicy, []string, error) {
 	policy, err := resolveResumeSandboxPolicy(convID)
 	if err != nil {
@@ -593,6 +601,9 @@ func resumeOneConvWithGrant(convID string, recreateMissingDir bool, grant *resum
 		res.Action = "skipped:already_online"
 		return res
 	}
+	launchLock := resumeLaunchLock(convID)
+	launchLock.Lock()
+	defer launchLock.Unlock()
 	if isConvOnline(convID) {
 		res.Action = "skipped:already_online"
 		return res
@@ -719,6 +730,7 @@ func resumeOneConvWithGrant(convID string, recreateMissingDir bool, grant *resum
 	if grant != nil {
 		cwdProof = proofToken
 	}
+	var persistedAgentID string
 	if effectiveSandbox != nil {
 		agentID, err := db.AgentIDForConv(convID)
 		if err != nil {
@@ -732,6 +744,7 @@ func resumeOneConvWithGrant(convID string, recreateMissingDir bool, grant *resum
 				res.Detail = "record refreshed sandbox snapshot: " + err.Error()
 				return res
 			}
+			persistedAgentID = agentID
 		}
 	}
 	if err := SpawnDetachedTclaudeResume(clcommon.SpawnArgs{
@@ -753,6 +766,15 @@ func resumeOneConvWithGrant(convID string, recreateMissingDir bool, grant *resum
 	}); err != nil {
 		res.Action = "error"
 		res.Detail = "spawn: " + err.Error()
+		if persistedAgentID != "" {
+			var previous *sandboxpolicy.Snapshot
+			if resumePolicy != nil {
+				previous = resumePolicy.Previous
+			}
+			if restoreErr := db.SetAgentEffectiveSandboxConfig(persistedAgentID, previous); restoreErr != nil {
+				res.Detail += "; restore previous sandbox snapshot: " + restoreErr.Error()
+			}
+		}
 	} else {
 		res.Action = "resumed"
 		// Tag the fresh row's best-known state ON once it comes online. The
@@ -4620,8 +4642,9 @@ func liveSpawnNew(a clcommon.SpawnArgs) error {
 //     has *us* in its ancestry chain — important so it doesn't trip
 //     CC's own process-ownership / sandbox checks via parent walks.
 //
-// Errors only surface if exec.Start() itself fails (binary missing
-// from PATH, etc.).
+// The wrapper is reaped synchronously. It exits immediately after tmux accepts
+// or rejects the detached launch, so callers learn whether this resume won the
+// launch reservation and can roll back refreshed actor state on failure.
 func liveSpawnResume(a clcommon.SpawnArgs) error {
 	var cleanup func()
 	var err error
@@ -4644,27 +4667,13 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 		return err
 	}
 	pid := cmd.Process.Pid
-	if a.CwdWriteProof != "" || a.DirWriteProof != "" {
-		defer cleanup()
-		if err := cmd.Wait(); err != nil {
-			slog.Error("resume subprocess exited with error",
-				"conv", convID, "pid", pid, "err", err,
-				"stderr", stderr.String(), "stderr_truncated", stderr.Truncated())
-			return fmt.Errorf("resume session wrapper failed: %w: %s", err, stderr.String())
-		}
-		return nil
+	defer cleanup()
+	if err := cmd.Wait(); err != nil {
+		slog.Error("resume subprocess exited with error",
+			"conv", convID, "pid", pid, "err", err,
+			"stderr", stderr.String(), "stderr_truncated", stderr.Truncated())
+		return fmt.Errorf("resume session wrapper failed: %w: %s", err, stderr.String())
 	}
-	// Reap the wrapper when it finishes so we don't leak zombies. The
-	// wrapper exits quickly (after `tmux new-session -d` returns); the
-	// real CC process keeps running under the tmux server.
-	go func() {
-		defer cleanup()
-		if err := cmd.Wait(); err != nil {
-			slog.Error("resume subprocess exited with error",
-				"conv", convID, "pid", pid, "err", err,
-				"stderr", stderr.String(), "stderr_truncated", stderr.Truncated())
-		}
-	}()
 	return nil
 }
 

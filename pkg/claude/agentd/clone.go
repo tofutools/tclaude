@@ -837,6 +837,13 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm string, b
 }
 
 func inheritEffectiveSandboxSnapshot(sourceConv, targetConv string) error {
+	return inheritEffectiveSandboxSnapshotForGroup(sourceConv, targetConv, 0)
+}
+
+// inheritEffectiveSandboxSnapshotForGroup copies clone launch authority while
+// rebinding its resume provenance to the group the clone actually joined. A
+// group clone must not retain the source group's ID after membership diverges.
+func inheritEffectiveSandboxSnapshotForGroup(sourceConv, targetConv string, resolutionGroupID int64) error {
 	var snapshot *sandboxpolicy.Snapshot
 	if session, err := db.FindSessionByConvID(targetConv); err != nil {
 		return err
@@ -852,6 +859,11 @@ func inheritEffectiveSandboxSnapshot(sourceConv, targetConv string) error {
 	}
 	if err != nil || snapshot == nil {
 		return err
+	}
+	if resolutionGroupID != 0 {
+		rebound := *snapshot
+		rebound.ResolutionGroupID = resolutionGroupID
+		snapshot = &rebound
 	}
 	agentID, _, err := db.EnsureAgentForConv(targetConv, "clone")
 	if err != nil {

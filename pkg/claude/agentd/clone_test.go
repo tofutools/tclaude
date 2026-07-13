@@ -36,6 +36,26 @@ func TestInheritEffectiveSandboxSnapshotPreservesPrePersistedCloneSnapshot(t *te
 	assert.NotEqual(t, source.Effective.Environment, persisted.Effective.Environment)
 }
 
+func TestInheritEffectiveSandboxSnapshotForGroupRebindsResumeProvenance(t *testing.T) {
+	setupTestDB(t)
+	snapshot := sandboxpolicy.EmptySnapshot()
+	snapshot.ResolutionGroupID = 41
+	agentID, _, err := db.EnsureAgentForConv("source-conv", "test")
+	require.NoError(t, err)
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &snapshot))
+
+	require.NoError(t, inheritEffectiveSandboxSnapshotForGroup("source-conv", "target-conv", 99))
+	persisted, err := db.AgentEffectiveSandboxConfigForConv("target-conv")
+	require.NoError(t, err)
+	require.NotNil(t, persisted)
+	assert.Equal(t, int64(99), persisted.ResolutionGroupID)
+
+	source, err := db.AgentEffectiveSandboxConfigForConv("source-conv")
+	require.NoError(t, err)
+	require.NotNil(t, source)
+	assert.Equal(t, int64(41), source.ResolutionGroupID, "rebinding must not mutate the source snapshot")
+}
+
 // uniqueCloneTitle always appends `-c-N` (the shortened suffix scheme).
 // N is the smallest integer not already used by any
 // conv_index.custom_title matching the new prefix; clone-of-a-clone

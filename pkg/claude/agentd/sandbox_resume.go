@@ -10,6 +10,7 @@ import (
 
 type resumeSandboxPolicy struct {
 	Snapshot *sandboxpolicy.Snapshot
+	Previous *sandboxpolicy.Snapshot
 }
 
 // resolveResumeSandboxPolicy reconstructs an offline agent's policy from the
@@ -19,23 +20,21 @@ type resumeSandboxPolicy struct {
 func resolveResumeSandboxPolicy(convID string) (*resumeSandboxPolicy, error) {
 	previous, err := db.AgentEffectiveSandboxConfigForConv(convID)
 	if err != nil || previous == nil {
-		return &resumeSandboxPolicy{Snapshot: previous}, err
+		return &resumeSandboxPolicy{Snapshot: previous, Previous: previous}, err
 	}
 
-	var explicitProfileID, previousGroupProfileID int64
+	var explicitProfileID int64
 	var explicitProfileName string
 	for _, applied := range previous.Applied {
 		switch applied.Scope {
 		case sandboxpolicy.ScopeExplicit:
 			explicitProfileID = applied.ID
 			explicitProfileName = applied.Name
-		case sandboxpolicy.ScopeGroup:
-			previousGroupProfileID = applied.ID
 		}
 	}
 	groupID := previous.ResolutionGroupID
 	if groupID == 0 {
-		groupID, err = resumeSandboxGroupID(convID, previousGroupProfileID)
+		groupID, err = resumeSandboxGroupID(convID)
 		if err != nil {
 			return nil, err
 		}
@@ -60,16 +59,16 @@ func resolveResumeSandboxPolicy(convID string) (*resumeSandboxPolicy, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &resumeSandboxPolicy{Snapshot: &current}, nil
+	return &resumeSandboxPolicy{Snapshot: &current, Previous: previous}, nil
 }
 
 // resumeSandboxGroupID recovers the launch group for agents created before a
 // dedicated source-group field existed. The ordinary and overwhelmingly common
-// one-group case is exact. For multi-group actors, the previous snapshot's
-// stable group-profile ID disambiguates profile edits; an ambiguous assignment
-// change fails before launch instead of choosing a group that could widen the
-// sandbox unexpectedly.
-func resumeSandboxGroupID(convID string, previousGroupProfileID int64) (int64, error) {
+// one-group case is exact. A legacy multi-group snapshot has no trustworthy
+// launch-group provenance: an unchanged profile ID on another membership can
+// otherwise be mistaken for the launch group after the real assignment changes.
+// Resume therefore succeeds only when every current group tier is equivalent.
+func resumeSandboxGroupID(convID string) (int64, error) {
 	groups, err := db.ListGroupsForConv(convID)
 	if err != nil {
 		return 0, err
@@ -79,20 +78,6 @@ func resumeSandboxGroupID(convID string, previousGroupProfileID int64) (int64, e
 		return 0, nil
 	case 1:
 		return groups[0].ID, nil
-	}
-	if previousGroupProfileID > 0 {
-		var match int64
-		for _, group := range groups {
-			if group.SandboxProfileID != previousGroupProfileID {
-				continue
-			}
-			if match == 0 {
-				match = group.ID
-			}
-		}
-		if match != 0 {
-			return match, nil
-		}
 	}
 	// If every current membership composes the same group tier, selecting any
 	// one is value-equivalent (and zero means there is no group tier at all).
