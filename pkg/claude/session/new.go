@@ -757,9 +757,10 @@ func runNew(params *NewParams) error {
 		defer cleanupProofReady()
 		proofReadyPath = path
 		proofWriteDirs := append([]string{}, params.GitWorktreeWriteDirs...)
-		proofWriteDirs = append(proofWriteDirs, sandboxSnapshotProofDirs(launchSandbox, sandboxpolicy.AccessWrite)...)
+		sandboxProofDirs, generatedWriteDirs := sandboxSnapshotProofDirs(launchSandbox, sandboxpolicy.AccessWrite)
+		proofWriteDirs = append(proofWriteDirs, sandboxProofDirs...)
 		harnessCmd = guardHarnessCommandWithDirProof(
-			harnessCmd, proofToken, proofReadyPath, params.CwdWriteProof != "", proofWriteDirs)
+			harnessCmd, proofToken, proofReadyPath, params.CwdWriteProof != "", proofWriteDirs, generatedWriteDirs)
 	}
 
 	// Create the detached tmux session running the harness command.
@@ -955,15 +956,14 @@ func sandboxSnapshotDirs(snapshot *sandboxpolicy.Snapshot, access sandboxpolicy.
 	return out
 }
 
-// sandboxSnapshotProofDirs returns the sandbox roots whose marker must have
-// been created by the calling agent. Per-agent directories are deliberately
-// excluded: agentd creates their unpredictable, no-follow-pinned paths only
-// after the caller's proof challenge, so the caller cannot and need not prove
-// write access to them. They remain in sandboxSnapshotDirs and therefore stay
-// writable by the child harness.
-func sandboxSnapshotProofDirs(snapshot *sandboxpolicy.Snapshot, access sandboxpolicy.Access) []string {
+// sandboxSnapshotProofDirs separates caller-controlled sandbox roots, whose
+// marker must have been created by the calling agent, from daemon-materialized
+// per-agent directories. Agentd creates the latter only after the caller's
+// proof challenge, so they cannot require a caller marker; they still ride to
+// the launch guard separately for a final canonical/non-symlink path check.
+func sandboxSnapshotProofDirs(snapshot *sandboxpolicy.Snapshot, access sandboxpolicy.Access) (proofDirs, generatedDirs []string) {
 	if snapshot == nil {
-		return nil
+		return nil, nil
 	}
 	agentDirectoryNames := make(map[string]bool, len(snapshot.Effective.AgentDirectories))
 	for _, name := range snapshot.Effective.AgentDirectories {
@@ -975,13 +975,17 @@ func sandboxSnapshotProofDirs(snapshot *sandboxpolicy.Snapshot, access sandboxpo
 			agentDirectoryPaths[entry.Value] = true
 		}
 	}
-	out := make([]string, 0, len(snapshot.Effective.Filesystem))
 	for _, grant := range snapshot.Effective.Filesystem {
-		if grant.Access == access && !agentDirectoryPaths[grant.Path] {
-			out = append(out, grant.Path)
+		if grant.Access != access {
+			continue
+		}
+		if agentDirectoryPaths[grant.Path] {
+			generatedDirs = append(generatedDirs, grant.Path)
+		} else {
+			proofDirs = append(proofDirs, grant.Path)
 		}
 	}
-	return out
+	return proofDirs, generatedDirs
 }
 
 func sandboxSnapshotActiveFilesystem(snapshot *sandboxpolicy.Snapshot) []sandboxpolicy.FilesystemGrant {
@@ -1094,9 +1098,9 @@ func isValidSpawnCwdProofToken(proof string) bool {
 // tmux's already-established directory inode. Every extra permission root is
 // also required to remain canonical and carry the same unpredictable marker,
 // so the child never consumes a path substituted after daemon verification.
-// Daemon-materialized per-agent directories are not caller-controlled roots
-// and are filtered before reaching this guard.
-func guardHarnessCommandWithDirProof(harnessCmd, proof, readyPath string, checkCwd bool, dirs []string) string {
+// Daemon-materialized per-agent directories are not caller-controlled roots,
+// so they skip the marker requirement but retain the path-substitution check.
+func guardHarnessCommandWithDirProof(harnessCmd, proof, readyPath string, checkCwd bool, dirs, generatedDirs []string) string {
 	marker := clcommon.SpawnDirWriteProofPrefix + proof
 	ready := clcommon.ShellQuoteArg(readyPath)
 	fail := func(reason string) string {
@@ -1114,6 +1118,12 @@ func guardHarnessCommandWithDirProof(harnessCmd, proof, readyPath string, checkC
 		guard += "if [ \"$(cd " + quotedDir + " 2>/dev/null && pwd -P)\" != " + quotedDir +
 			" ] || [ ! -f " + quotedMarker + " ] || [ -L " + quotedMarker + " ] || [ -s " + quotedMarker + " ]; then " +
 			"echo 'tclaude: repository write proof changed; refusing harness launch' >&2; " + fail("repository-proof") + "; fi; "
+	}
+	for _, dir := range generatedDirs {
+		quotedDir := clcommon.ShellQuoteArg(dir)
+		guard += "if [ \"$(cd " + quotedDir + " 2>/dev/null && pwd -P)\" != " + quotedDir +
+			" ] || [ -L " + quotedDir + " ]; then " +
+			"echo 'tclaude: generated directory changed; refusing harness launch' >&2; " + fail("repository-proof") + "; fi; "
 	}
 	return guard + "printf '%s' ok > " + ready + " || exit 126; " + harnessCmd
 }
