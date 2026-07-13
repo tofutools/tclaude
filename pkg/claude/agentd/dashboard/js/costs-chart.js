@@ -67,6 +67,9 @@ export function mountImperativeCostChart(host, chart) {
   }
   const columns = element('div', 'cost-cols');
   const byDay = new Map();
+  const spanHarnesses = new Set(chart.days.flatMap((day) =>
+    (day.segments || []).map((segment) => segment.harness)));
+  const showHarnessBreakdown = spanHarnesses.size > 1;
   const labelEvery = chart.days.length > 62 ? 7 : chart.days.length > 35 ? 2 : 1;
   chart.days.forEach((day, index) => {
     byDay.set(day.day, day);
@@ -106,7 +109,7 @@ export function mountImperativeCostChart(host, chart) {
     }
     const day = byDay.get(column.dataset.day);
     tooltip.replaceChildren();
-    if (day?.segments?.length > 1) tooltip.append(tooltipRows(day));
+    if (showHarnessBreakdown && day?.segments?.length) tooltip.append(tooltipRows(day));
     else tooltip.textContent = column.dataset.tip;
     tooltip.style.display = 'block';
     const pad = 14;
