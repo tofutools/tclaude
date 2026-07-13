@@ -100,6 +100,23 @@ export function webTerminalDefault() {
   return !!(lastSnapshot && lastSnapshot.default_terminal === 'web');
 }
 
+// Let rAF/ResizeObserver-driven geometry (full-bleed bars and the dock's nav
+// inset) converge before the boot curtain lifts. Background tabs may throttle
+// rAF indefinitely, so each turn has a short timer fallback; a hidden document
+// is not painting layout shifts, and it will have settled by the time it becomes
+// visible.
+async function settleInitialLayout() {
+  for (let i = 0; i < 2; i++) {
+    await new Promise((resolve) => {
+      const timer = setTimeout(resolve, 100);
+      requestAnimationFrame(() => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+  }
+}
+
 // sudoBadge renders the per-row 🔓 indicator when an agent currently
 // holds ≥1 active grant. Tooltip lists the slugs + soonest expiry so
 // hovering tells the human everything they'd want to know without a
@@ -310,7 +327,6 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   // dispatches). Must bind after applySlopThemeIfRequested() above so an
   // already-slop page is handled by its initial-state check.
   bindVegasMusic();
-  startSnapshotPoll(refresh);
 
   // Capture the legacy deep-link params (?tab=…&access_request=…) BEFORE
   // initNavHistory rewrites the address bar to the canonical path — the rewrite
@@ -333,4 +349,34 @@ export function sudoBadge(activeSudo, fallbackConvID) {
     if (reqId !== null) focusAccessRequest(reqId || undefined);
     else document.querySelector('nav [data-tab="messages"]')?.click();
   }
+
+  // The static shell deliberately starts paint-curtained: URL theme classes,
+  // server-backed dock preferences, and snapshot-owned feature islands all
+  // change geometry during bootstrap. Complete one authoritative refresh after
+  // initial navigation has selected its real tab, then reveal a fully-laid-out
+  // first frame. Two animation-frame turns let Preact/Signals and the
+  // ResizeObserver-driven dock/nav geometry settle before visibility changes.
+  // dashboard.css carries an eight-second CSS-only failsafe in case the module
+  // graph faults before reaching this point.
+  let resolveFirstSnapshot;
+  const firstSnapshot = new Promise((resolve) => { resolveFirstSnapshot = resolve; });
+  const onFirstSnapshot = () => resolveFirstSnapshot();
+  document.addEventListener('tclaude:snapshot', onFirstSnapshot, { once: true });
+  let bootTimeout;
+  const bootTimedOut = new Promise((resolve) => {
+    // Beat the CSS-only eight-second failsafe slightly. If a snapshot request
+    // remains pending forever, the already-installed poll keeps retrying while
+    // this bound guarantees the usable/error shell is eventually revealed.
+    bootTimeout = setTimeout(resolve, 7500);
+  });
+
+  // Install the recurring cadence BEFORE awaiting the first attempt. A fetch
+  // can remain pending at the network layer; later request generations must
+  // still get their 2s retry opportunities instead of bootstrap wedging.
+  pageCleanups.push(startSnapshotPoll(refresh, { immediate: false }));
+  await Promise.race([refresh(), firstSnapshot, bootTimedOut]);
+  clearTimeout(bootTimeout);
+  document.removeEventListener('tclaude:snapshot', onFirstSnapshot);
+  await settleInitialLayout();
+  document.body.classList.remove('dashboard-booting');
 })();

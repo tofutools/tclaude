@@ -9,6 +9,7 @@ export function startSnapshotPoll(refresh, {
   setTimeoutImpl = globalThis.setTimeout,
   clearTimeoutImpl = globalThis.clearTimeout,
   documentImpl = globalThis.document,
+  immediate = true,
 } = {}) {
   if (typeof refresh !== 'function') throw new TypeError('snapshot poll requires refresh');
   if (typeof setTimeoutImpl !== 'function') throw new TypeError('snapshot poll requires setTimeout');
@@ -32,7 +33,7 @@ export function startSnapshotPoll(refresh, {
     schedule();
   };
 
-  void refresh();
+  if (immediate) void refresh();
   schedule();
   documentImpl?.addEventListener?.('visibilitychange', visibilityChanged);
 
