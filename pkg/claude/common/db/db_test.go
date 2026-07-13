@@ -428,14 +428,21 @@ func TestContextPctRoundTrip(t *testing.T) {
 	require.Equal(t, 0.0, pct, "default context_pct")
 
 	// Update context_pct via the statusbar path.
-	require.NoError(t, UpdateContextPct("ctx-001", 47.0), "UpdateContextPct")
+	require.NoError(t, UpdateContextSnapshot("ctx-001", 47.0, 90_000, 4_000, 200_000),
+		"UpdateContextSnapshot")
 	pct, _ = GetContextPct("ctx-001")
-	require.Equal(t, 47.0, pct, "context_pct after UpdateContextPct")
+	require.Equal(t, 47.0, pct, "context_pct after UpdateContextSnapshot")
 
-	// ResetCompact (called on PostCompact) zeroes context_pct back out.
+	// ResetCompact (called on PostCompact) clears every stale usage value but
+	// preserves the still-valid model context-window size.
 	require.NoError(t, ResetCompact("ctx-001"), "ResetCompact")
-	pct, _ = GetContextPct("ctx-001")
-	require.Equal(t, 0.0, pct, "context_pct after ResetCompact")
+	snap, err := GetContextSnapshot("ctx-001")
+	require.NoError(t, err, "GetContextSnapshot after ResetCompact")
+	assert.Zero(t, snap.ContextPct, "context_pct after ResetCompact")
+	assert.Zero(t, snap.TokensInput, "tokens_input after ResetCompact")
+	assert.Zero(t, snap.TokensOutput, "tokens_output after ResetCompact")
+	assert.Equal(t, int64(200_000), snap.ContextWindowSize,
+		"context_window_size survives ResetCompact")
 }
 
 // TestNudgedPct exercises the new sessions.nudged_pct column: it

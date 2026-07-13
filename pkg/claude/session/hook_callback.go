@@ -1335,11 +1335,19 @@ func persistCodexRolloutProjection(state *SessionState, input HookCallbackInput,
 			"conv_id", state.ConvID, "path", path, "error", err, "module", "hooks")
 		return
 	}
-	if refreshContext && projection.HasContext {
-		snap := projection.Context
-		if err := db.UpdateContextSnapshot(state.ID, snap.Pct, snap.TokensInput, snap.TokensOutput, snap.WindowSize); err != nil {
-			slog.Warn("codex-telemetry: failed to update context snapshot",
-				"session_id", state.ID, "error", err, "module", "hooks")
+	if refreshContext {
+		switch {
+		case projection.HasContext:
+			snap := projection.Context
+			if err := db.UpdateContextSnapshot(state.ID, snap.Pct, snap.TokensInput, snap.TokensOutput, snap.WindowSize); err != nil {
+				slog.Warn("codex-telemetry: failed to update context snapshot",
+					"session_id", state.ID, "error", err, "module", "hooks")
+			}
+		case projection.ContextReset:
+			if err := db.ResetCompact(state.ID); err != nil {
+				slog.Warn("codex-telemetry: failed to persist compaction reset",
+					"session_id", state.ID, "error", err, "module", "hooks")
+			}
 		}
 	}
 	if refreshContext && projection.HasEffort {

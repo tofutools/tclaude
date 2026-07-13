@@ -202,6 +202,12 @@ func TestCodexTelemetryFollower_SkipsOversizedRecordAndContinues(t *testing.T) {
 	assert.Equal(t, offsetBeforeTail, follower.offset, "unterminated oversized tail is not consumed")
 
 	appendBytes(t, path, suffix)
+	reset, err := follower.RuntimeTelemetry(home, id)
+	require.NoError(t, err)
+	assert.True(t, reset.ContextReset,
+		"oversized compacted record invalidates pre-compaction telemetry")
+	assert.False(t, reset.HasContext)
+
 	appendTokenCount(t, path, 900, 90, 990)
 
 	got, err := follower.RuntimeTelemetry(home, id)

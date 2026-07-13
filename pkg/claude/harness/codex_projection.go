@@ -16,13 +16,14 @@ import (
 // by reading records newest-first. The scan stops once every field is found;
 // when a field is absent, it degrades to one full backward pass.
 type CodexRolloutProjection struct {
-	Context    ContextTelemetry
-	HasContext bool
-	Effort     string
-	HasEffort  bool
-	Usage      *CodexUsage
-	Cost       CodexTokenCost
-	HasCost    bool
+	Context      ContextTelemetry
+	HasContext   bool
+	ContextReset bool
+	Effort       string
+	HasEffort    bool
+	Usage        *CodexUsage
+	Cost         CodexTokenCost
+	HasCost      bool
 }
 
 // CodexHookProjection prefers the exact rollout path carried by a hook. Older
@@ -52,7 +53,7 @@ func CodexHookProjectionFromRollout(path, modelHint string) (CodexRolloutProject
 			return CodexRolloutProjection{}, err
 		}
 		defer func() { _ = rc.Close() }()
-		if err := scanCodexRolloutLines(rc, path, func(line []byte) bool {
+		if err := scanCodexRolloutLinesWithOversizedPrefixes(rc, path, func(line []byte) bool {
 			state.consumeForward(line)
 			return true
 		}); err != nil {
@@ -68,20 +69,32 @@ func CodexHookProjectionFromRollout(path, modelHint string) (CodexRolloutProject
 }
 
 type codexProjectionScanState struct {
-	modelHint string
-	model     string
-	info      *codexTokenCountInfo
-	observed  string
-	effort    string
-	usage     *CodexUsage
+	modelHint      string
+	model          string
+	info           *codexTokenCountInfo
+	contextInfo    *codexTokenCountInfo
+	contextReset   bool
+	contextBlocked bool
+	contextDone    bool
+	observed       string
+	effort         string
+	usage          *CodexUsage
 }
 
 func (s *codexProjectionScanState) consumeForward(line []byte) {
+	if isCodexCompactedRecordPrefix(line) {
+		s.contextInfo = nil
+		s.contextReset = true
+		return
+	}
 	env, ok := decodeCodexProjectionEnvelope(line)
 	if !ok {
 		return
 	}
 	switch env.Type {
+	case "compacted":
+		s.contextInfo = nil
+		s.contextReset = true
 	case "turn_context":
 		model, effort := projectCodexTurnContext(env.Payload)
 		if model != "" {
@@ -96,6 +109,13 @@ func (s *codexProjectionScanState) consumeForward(line []byte) {
 			return
 		}
 		s.info = &info
+		context := contextTelemetryFromTokenCount(info)
+		if context.TokensInput != 0 || context.TokensOutput != 0 {
+			s.contextInfo = &info
+			s.contextReset = false
+		} else {
+			s.contextInfo = nil
+		}
 		s.observed = env.Timestamp
 		if usage != nil {
 			s.usage = usage
@@ -104,11 +124,25 @@ func (s *codexProjectionScanState) consumeForward(line []byte) {
 }
 
 func (s *codexProjectionScanState) consumeReverse(line []byte) {
+	if isCodexCompactedRecordPrefix(line) {
+		if !s.contextDone {
+			s.contextInfo = nil
+			s.contextReset = true
+			s.contextDone = true
+		}
+		return
+	}
 	env, ok := decodeCodexProjectionEnvelope(line)
 	if !ok {
 		return
 	}
 	switch env.Type {
+	case "compacted":
+		if !s.contextDone {
+			s.contextInfo = nil
+			s.contextReset = true
+			s.contextDone = true
+		}
 	case "turn_context":
 		model, effort := projectCodexTurnContext(env.Payload)
 		if s.model == "" {
@@ -125,6 +159,18 @@ func (s *codexProjectionScanState) consumeReverse(line []byte) {
 		if s.info == nil {
 			s.info = &info
 			s.observed = env.Timestamp
+		}
+		if !s.contextDone && !s.contextBlocked {
+			context := contextTelemetryFromTokenCount(info)
+			if context.TokensInput != 0 || context.TokensOutput != 0 {
+				s.contextInfo = &info
+				s.contextDone = true
+			} else {
+				// The latest token_count has no occupancy signal. It still
+				// blocks older token counts, but keep scanning for a compacted
+				// boundary so callers can actively clear persisted context.
+				s.contextBlocked = true
+			}
 		}
 		if s.usage == nil && usage != nil {
 			s.usage = usage
@@ -170,6 +216,9 @@ func (s *codexProjectionScanState) complete() bool {
 	if s.info == nil || s.effort == "" || s.usage == nil {
 		return false
 	}
+	if s.contextBlocked && !s.contextDone {
+		return false
+	}
 	if _, ok := codexModelPrices[s.modelHint]; ok {
 		return true
 	}
@@ -177,12 +226,17 @@ func (s *codexProjectionScanState) complete() bool {
 }
 
 func (s *codexProjectionScanState) projection() CodexRolloutProjection {
-	out := CodexRolloutProjection{Effort: s.effort, HasEffort: s.effort != "", Usage: s.usage}
+	out := CodexRolloutProjection{
+		ContextReset: s.contextReset,
+		Effort:       s.effort,
+		HasEffort:    s.effort != "",
+		Usage:        s.usage,
+	}
 	if s.info == nil {
 		return out
 	}
-	context := contextTelemetryFromTokenCount(*s.info)
-	if context.TokensInput != 0 || context.TokensOutput != 0 {
+	if s.contextInfo != nil {
+		context := contextTelemetryFromTokenCount(*s.contextInfo)
 		out.Context = context
 		out.HasContext = true
 	}
@@ -214,22 +268,33 @@ func scanCodexRolloutLinesReverse(path string, visit func([]byte) bool) error {
 	const blockSize int64 = 64 * 1024
 	reversed := make([]byte, 0, 64*1024)
 	var lineBytes int64
-	emit := func() bool {
+	emit := func(recordStart int64) (bool, error) {
 		if lineBytes > maxCodexRolloutLineBytes {
 			slog.Warn("codex-projection: skipping oversized rollout record",
 				"path", path, "bytes", lineBytes,
 				"limit_bytes", maxCodexRolloutLineBytes, "module", "harness")
+			// The reverse buffer retained the record suffix. Re-read only its
+			// small prefix so lifecycle markers before a huge payload (notably
+			// type=compacted) still reach the projection state machine.
+			prefix := make([]byte, 1024)
+			n, err := f.ReadAt(prefix, recordStart)
+			if err != nil && err != io.EOF {
+				return false, err
+			}
+			if !visit(prefix[:n]) {
+				return false, nil
+			}
 		} else {
 			for left, right := 0, len(reversed)-1; left < right; left, right = left+1, right-1 {
 				reversed[left], reversed[right] = reversed[right], reversed[left]
 			}
 			if !visit(reversed) {
-				return false
+				return false, nil
 			}
 		}
 		reversed = reversed[:0]
 		lineBytes = 0
-		return true
+		return true, nil
 	}
 
 	buf := make([]byte, blockSize)
@@ -247,8 +312,14 @@ func scanCodexRolloutLinesReverse(path string, visit func([]byte) bool) error {
 				if lineBytes > 0 {
 					lineBytes++ // match the forward reader's newline-inclusive limit/count
 				}
-				if lineBytes > 0 && !emit() {
-					return nil
+				if lineBytes > 0 {
+					keepGoing, emitErr := emit(start + int64(i) + 1)
+					if emitErr != nil {
+						return emitErr
+					}
+					if !keepGoing {
+						return nil
+					}
 				}
 				continue
 			}
@@ -260,7 +331,8 @@ func scanCodexRolloutLinesReverse(path string, visit func([]byte) bool) error {
 		end = start
 	}
 	if lineBytes > 0 {
-		emit()
+		_, err := emit(0)
+		return err
 	}
 	return nil
 }

@@ -45,8 +45,12 @@ type ContextTelemetry struct {
 // "completed" activity kind, so rollout activity must never be treated as a
 // complete active-set reconstruction.
 type CodexRuntimeSnapshot struct {
-	Context              ContextTelemetry
-	HasContext           bool
+	Context    ContextTelemetry
+	HasContext bool
+	// ContextReset means a compacted record is newer than the latest usable
+	// token_count. Callers must clear any persisted pre-compaction snapshot
+	// instead of leaving it in place or restoring it from older telemetry.
+	ContextReset         bool
 	InterruptedSubagents map[string]struct{}
 }
 
@@ -162,6 +166,7 @@ func CodexRuntimeTelemetryFromRollout(rolloutPath string) (CodexRuntimeSnapshot,
 
 type codexRuntimeScanState struct {
 	latest               *codexTokenCountInfo
+	contextReset         bool
 	interruptedSubagents map[string]struct{}
 	followupCallIDs      map[string]struct{}
 }
@@ -176,6 +181,7 @@ func newCodexRuntimeScanState() codexRuntimeScanState {
 func (s codexRuntimeScanState) clone() codexRuntimeScanState {
 	out := codexRuntimeScanState{
 		latest:               s.latest,
+		contextReset:         s.contextReset,
 		interruptedSubagents: make(map[string]struct{}, len(s.interruptedSubagents)),
 		followupCallIDs:      make(map[string]struct{}, len(s.followupCallIDs)),
 	}
@@ -198,6 +204,10 @@ func (s *codexRuntimeScanState) consumeLine(line []byte) bool {
 	var env codexEnvelope
 	if json.Unmarshal(line, &env) != nil {
 		return false
+	}
+	if env.Type == "compacted" {
+		s.invalidateContext()
+		return true
 	}
 	if env.Type == "response_item" {
 		var call codexFunctionCall
@@ -226,6 +236,10 @@ func (s *codexRuntimeScanState) consumeLine(line []byte) bool {
 		}
 		info := ev.Info
 		s.latest = &info
+		context := contextTelemetryFromTokenCount(info)
+		if context.TokensInput != 0 || context.TokensOutput != 0 {
+			s.contextReset = false
+		}
 	case "sub_agent_activity":
 		var ev codexSubagentActivityEvent
 		if json.Unmarshal(env.Payload, &ev) != nil {
@@ -249,8 +263,29 @@ func (s *codexRuntimeScanState) consumeLine(line []byte) bool {
 	return true
 }
 
+func (s *codexRuntimeScanState) invalidateContext() {
+	s.latest = nil
+	s.contextReset = true
+}
+
+// isCodexCompactedRecordPrefix recognizes the stable top-level marker before
+// payload. Oversized compacted.replacement_history records cannot be decoded
+// as complete JSON within the rollout line-size cap, but their retained prefix
+// still carries this marker.
+func isCodexCompactedRecordPrefix(line []byte) bool {
+	typeAt := bytes.Index(line, []byte(`"type":"compacted"`))
+	if typeAt < 0 {
+		return false
+	}
+	payloadAt := bytes.Index(line, []byte(`"payload"`))
+	return payloadAt < 0 || typeAt < payloadAt
+}
+
 func (s *codexRuntimeScanState) snapshot() CodexRuntimeSnapshot {
-	result := CodexRuntimeSnapshot{InterruptedSubagents: s.interruptedSubagents}
+	result := CodexRuntimeSnapshot{
+		ContextReset:         s.contextReset,
+		InterruptedSubagents: s.interruptedSubagents,
+	}
 	if s.latest == nil {
 		return result
 	}

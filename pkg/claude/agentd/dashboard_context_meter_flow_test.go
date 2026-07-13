@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -121,6 +122,45 @@ func TestDashboardSnapshot_CodexContextRefreshesFromRolloutOnRead(t *testing.T) 
 	assert.Equal(t, int64(49000), memberRow.State.TokensInput, "Members[] tokens_input")
 	assert.Equal(t, int64(1000), memberRow.State.TokensOutput, "Members[] tokens_output")
 	assert.Equal(t, int64(200000), memberRow.State.ContextWindowSize, "Members[] context_window_size")
+}
+
+// Regression: PostCompact clears SQLite, but a live dashboard read also scans
+// the Codex rollout. The compacted record must prevent that read-through from
+// restoring the latest pre-compaction token_count into the cleared row.
+func TestDashboardSnapshot_CodexCompactionKeepsAbsoluteUsageReset(t *testing.T) {
+	const conv = "019ec004-4250-79b1-9ade-ebaea4170181"
+	const label = "spwn-codexcompact"
+
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	agentd.ResetCodexContextRefreshForTest()
+
+	f := newFlow(t)
+	cx := f.HaveAliveCodexSession(conv, label, "tmux-codexcompact", "/tmp/codexcompact")
+	cx.ContextWindow = 200000
+	f.HaveEnrolledAgent(conv)
+
+	require.NoError(t, cx.WriteTokenCount(
+		testharness.CodexTokenUsage{InputTokens: 120000, OutputTokens: 8000, TotalTokens: 128000},
+		testharness.CodexTokenUsage{InputTokens: 49000, OutputTokens: 1000, TotalTokens: 50000}))
+	require.NoError(t, db.UpdateContextSnapshot(label, 25, 49000, 1000, 200000),
+		"persist pre-compaction snapshot")
+	require.NoError(t, cx.WriteCompacted())
+	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
+		HookEventName:  "PostCompact",
+		ConvID:         conv,
+		Cwd:            "/tmp/codexcompact",
+		Model:          cx.Model,
+		TranscriptPath: cx.RolloutPath,
+	}, label))
+
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	agentRow := findDashAgent(snap, conv)
+	require.NotNil(t, agentRow)
+	assert.Zero(t, agentRow.State.ContextPct)
+	assert.Zero(t, agentRow.State.TokensInput)
+	assert.Zero(t, agentRow.State.TokensOutput)
+	assert.Equal(t, int64(200000), agentRow.State.ContextWindowSize,
+		"known model window survives the usage reset")
 }
 
 // Scenario: a freshly-spawned agent whose statusline hook has not yet

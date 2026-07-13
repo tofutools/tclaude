@@ -1258,18 +1258,18 @@ func GetContextSnapshot(sessionID string) (ContextSnapshot, error) {
 	return s, err
 }
 
-// ResetCompact zeroes context_pct and nudged_pct for a session after a
-// compaction. Zeroing nudged_pct lets a compacted session be re-nudged
-// from scratch as its context climbs again; zeroing context_pct clears
-// the pre-compaction figure until the statusline hook reports the new,
-// smaller one.
+// ResetCompact clears the pre-compaction context snapshot and nudged_pct for
+// a session after a compaction. The context-window size remains known, but its
+// percentage and absolute input/output usage are stale until the next real
+// telemetry snapshot. Zeroing nudged_pct lets a compacted session be re-nudged
+// from scratch as its context climbs again.
 func ResetCompact(sessionID string) error {
 	db, err := Open()
 	if err != nil {
 		return err
 	}
 	_, err = db.Exec(`UPDATE sessions
-		SET context_pct = 0, nudged_pct = 0
+		SET context_pct = 0, tokens_input = 0, tokens_output = 0, nudged_pct = 0
 		WHERE id = ?`, sessionID)
 	return err
 }
