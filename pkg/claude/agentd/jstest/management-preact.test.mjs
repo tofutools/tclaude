@@ -58,6 +58,44 @@ test('management island renders keyed profile list and explicit editor state', a
   cleanups.reverse().forEach((fn) => fn()); assert.equal(host.childElementCount, 0);
 });
 
+test('profile editor Escape follows the visual stack over a later spawn dialog', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
+  const spawn = harness.document.createElement('div'); spawn.id = 'agent-spawn-modal'; spawn.className = 'modal-overlay show'; spawn.style.zIndex = '100'; harness.document.body.appendChild(spawn);
+  let discard = false; let confirms = 0;
+  mountManagementIsland({ host, state, actions: { saveProfile() {} }, confirmDiscard: async () => { confirms += 1; return discard; }, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } });
+
+  const openEditor = async () => {
+    state.openDialog({ kind: 'profile-editor', seed: { name: '', harness: 'claude' }, options: { editExisting: false }, catalog });
+    await harness.act(() => Promise.resolve());
+    host.querySelector('#profile-editor-modal').style.zIndex = '150';
+  };
+  const pressEscape = async () => {
+    const event = new harness.window.Event('keydown', { bubbles: true }); Object.defineProperty(event, 'key', { value: 'Escape' });
+    harness.document.dispatchEvent(event); await harness.act(() => Promise.resolve());
+  };
+
+  await openEditor(); await pressEscape();
+  assert.equal(host.querySelector('#profile-editor-modal'), null, 'a clean editor closes even though the spawn overlay is later in the DOM');
+  assert.equal(confirms, 0, 'a clean editor needs no discard confirmation');
+  assert.ok(spawn.isConnected, 'closing the editor leaves the underlying spawn dialog open');
+
+  await openEditor();
+  const name = host.querySelector('#profile-editor-name'); name.value = 'new-pattern'; name.dispatchEvent(new harness.window.Event('input', { bubbles: true })); await harness.act(() => Promise.resolve());
+  await pressEscape();
+  assert.ok(host.querySelector('#profile-editor-modal'), 'rejecting discard keeps the dirty editor open');
+  assert.equal(confirms, 1, 'a dirty editor offers discard confirmation');
+  discard = true; await pressEscape();
+  assert.equal(host.querySelector('#profile-editor-modal'), null, 'accepting discard closes the dirty editor');
+  assert.ok(spawn.isConnected, 'discarding the editor still leaves the underlying spawn dialog open');
+
+  cleanups.reverse().forEach((fn) => fn()); spawn.remove();
+});
+
 test('local profile editor skips its hidden autofocus field', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
