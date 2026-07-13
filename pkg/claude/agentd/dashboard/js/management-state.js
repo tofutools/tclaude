@@ -1,13 +1,17 @@
 import { signal, computed } from '@preact/signals';
 import { createRequestLifecycle } from './request-lifecycle.js';
+import { dashPrefs } from './prefs.js';
 
 export function createManagementState() {
   const manager = signal('');
   const dialog = signal(null);
+  const templateDialog = signal(null);
+  const templateManager = signal(false);
   const profileFilter = signal('');
   const roleFilter = signal('');
   const sandboxFilter = signal('');
-  const profiles = signal([]); const roles = signal([]); const sandboxProfiles = signal([]);
+  const templateFilter = signal(dashPrefs.getItem('tclaude.dash.filter.templates') || '');
+  const profiles = signal([]); const roles = signal([]); const sandboxProfiles = signal([]); const templates = signal([]); const templateGroups = signal([]);
   const profilesRequest = createRequestLifecycle({ payload: profiles, retainPayloadOnRefresh: true, retainPayloadOnError: true });
   const rolesRequest = createRequestLifecycle({ payload: roles, retainPayloadOnRefresh: true, retainPayloadOnError: true });
   const sandboxRequest = createRequestLifecycle({ payload: sandboxProfiles, retainPayloadOnRefresh: true, retainPayloadOnError: true });
@@ -17,9 +21,9 @@ export function createManagementState() {
   let settleSandboxDiff = null;
 
   const view = computed(() => ({
-    manager: manager.value, dialog: dialog.value,
-    profileFilter: profileFilter.value, roleFilter: roleFilter.value, sandboxFilter: sandboxFilter.value,
-    profiles: profiles.value || [], roles: roles.value || [], sandboxProfiles: sandboxProfiles.value || [],
+    manager: manager.value, dialog: dialog.value, templateDialog: templateDialog.value, templateManager: templateManager.value,
+    profileFilter: profileFilter.value, roleFilter: roleFilter.value, sandboxFilter: sandboxFilter.value, templateFilter: templateFilter.value,
+    profiles: profiles.value || [], roles: roles.value || [], sandboxProfiles: sandboxProfiles.value || [], templates: templates.value || [], templateGroups: templateGroups.value || [],
     requests: { profiles: profilesRequest.request.value, roles: rolesRequest.request.value, sandbox: sandboxRequest.request.value },
     busy: busy.value, error: error.value, sandboxDiff: sandboxDiff.value,
   }));
@@ -40,11 +44,21 @@ export function createManagementState() {
   }
 
   return Object.freeze({
-    manager, dialog, profileFilter, roleFilter, sandboxFilter, profiles, roles, sandboxProfiles, profilesRequest, rolesRequest, sandboxRequest,
+    manager, dialog, templateDialog, templateManager, profileFilter, roleFilter, sandboxFilter, templateFilter, profiles, roles, sandboxProfiles, templates, templateGroups, profilesRequest, rolesRequest, sandboxRequest,
     busy, error, sandboxDiff, view, confirmSandboxDiff, cancelSandboxDiff,
     openManager(kind) { error.value = ''; manager.value = kind; },
     closeManager() { manager.value = ''; },
     openDialog(value) { error.value = ''; dialog.value = value; },
     closeDialog() { cancelSandboxDiff(false); dialog.value = null; error.value = ''; },
+    openTemplateDialog(value) { error.value = ''; templateDialog.value = value; },
+    closeTemplateDialog() { templateDialog.value = null; error.value = ''; },
+    openTemplateManager() { templateManager.value = true; },
+    closeTemplateManager() { templateManager.value = false; },
+    setTemplateFilter(value) {
+      templateFilter.value = value;
+      if (value) dashPrefs.setItem('tclaude.dash.filter.templates', value);
+      else dashPrefs.removeItem('tclaude.dash.filter.templates');
+    },
+    updateTemplates(value, groups = []) { templates.value = Array.isArray(value) ? value : []; templateGroups.value = Array.isArray(groups) ? groups : []; },
   });
 }

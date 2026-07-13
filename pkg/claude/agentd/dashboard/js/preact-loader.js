@@ -226,7 +226,9 @@ const managementDescriptor = createIslandDescriptor({
     const actionsModule = import('./management-actions.js');
     const [{ mountManagementIsland }, { createManagementState }, { createManagementActions }] = await Promise.all([islandModule, stateModule, actionsModule]);
     const state = createManagementState(); const actions = createManagementActions({ state, ...dependencies });
-    return { state, mount: (registerCleanup) => mountManagementIsland({ host: hosts.root, state, actions, registerCleanup, ...dependencies }) };
+    return { state, mount: (registerCleanup) => {
+      mountManagementIsland({ host: hosts.root, state, actions, registerCleanup, ...dependencies });
+    } };
   },
 });
 

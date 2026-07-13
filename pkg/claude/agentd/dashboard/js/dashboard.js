@@ -50,7 +50,7 @@ import {
 import { bindHumanReplyModal } from './modal-human-reply.js';
 import {
   bindTemplatesUI, bindGroupImportModal, bindGroupContextModal,
-  bindGroupCloneModal,
+  bindGroupCloneModal, summonTemplateScribe,
 } from './modal-templates.js';
 import { bindProfilesUI } from './modal-profiles.js';
 import { bindSandboxProfilesUI, refreshSpawnSandboxProfileUI, summonSandboxScribe } from './sandbox-profiles.js';
@@ -68,7 +68,8 @@ import { bindNotifyMenu } from './notify-menu.js';
 import { bindCostDisplayToggle } from './cost-display-toggle.js';
 import { bindDebugTab } from './debug.js';
 import { focusAccessRequest } from './mail-bridge.js';
-import { initDashPrefs } from './prefs.js';
+import { dashPrefs, initDashPrefs } from './prefs.js';
+import { recordGroupInteraction } from './last-group.js';
 import { loadSortState } from './sort.js';
 import { bindCommandPalette } from './palette.js';
 import { bindDock } from './dock.js';
@@ -182,6 +183,13 @@ export function sudoBadge(activeSudo, fallbackConvID) {
       openProfilePermissions: (options) => openSpawnPermEditor({ ...options, group: 'the spawn group' }),
       refreshSandboxSpawn: () => refreshSpawnSandboxProfileUI(document.querySelector('#agent-spawn-group')?.value || ''),
       summonSandboxScribe,
+      summonTemplateScribe,
+      refresh,
+      onGroupImported: (name) => { dashPrefs.setItem(`tclaude.dash.group.${name}`, '1'); recordGroupInteraction(name); },
+      onGroupDeployed: (name) => {
+        dashPrefs.setItem(`tclaude.dash.group.${name}`, '1'); recordGroupInteraction(name);
+        document.querySelector('nav [data-tab="groups"]')?.click();
+      },
     }),
   ]);
 
@@ -228,7 +236,6 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   // dock-save-dnd.js), so it coexists with all three other DnD modules.
   bindDockSaveDnd();
   bindFilter('groups');
-  bindFilter('templates');
   bindFilter('links');
   bindSudoModal();
   bindPermEditModal();

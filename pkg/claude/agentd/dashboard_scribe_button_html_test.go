@@ -1,9 +1,6 @@
 package agentd
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
 // TestDashboardHTML_ScribeButtons pins the "Edit with agent" entry points
 // (JOH-361): a library-scope button in the Templates overlay header and a
@@ -15,7 +12,7 @@ import (
 func TestDashboardHTML_ScribeButtons(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -27,7 +24,7 @@ func TestDashboardHTML_ScribeButtons(t *testing.T) {
 	// The wizard label pair (plain boring + lore-coherent scribe wizardry), the
 	// same span-swap idiom the neighbouring header buttons use. Present on both
 	// buttons; a single Contains suffices.
-	must(`<span class="tpl-word-regular">🤖 Edit with agent</span><span class="tpl-word-wizard">📜 Dictate to a scribe</span>`,
+	must(`<${Words} plain="🤖 Edit with agent" wizard="📜 Dictate to a scribe"/>`,
 		"the wizard-mode label swap for the Edit-with-agent buttons")
 
 	// The editor button must NOT be #template-editor-submit, so the wizard
@@ -44,5 +41,5 @@ func TestDashboardHTML_ScribeButtons(t *testing.T) {
 
 	// The editor entry point consults the dirty flag before handing off — an
 	// open dirty editor would stomp the scribe's full-replace edits on save.
-	must(`templateEditorDiscard.isDirty()`, "the editor summon guards unsaved edits before handing off")
+	must(`dirty && !(await confirmDiscard())`, "the editor summon guards unsaved edits before handing off")
 }

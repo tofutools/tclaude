@@ -67,6 +67,7 @@
 package dashsnap
 
 import (
+	"errors"
 	"fmt"
 	"html"
 	"os"
@@ -249,6 +250,10 @@ func Capture(cfg Config) ([]Shot, error) {
 		png, capErr := captureState(page, cfg, st)
 		if capErr != nil {
 			shot.Err = capErr.Error()
+			var evalErr *rod.EvalError
+			if errors.As(capErr, &evalErr) && evalErr.Exception != nil && evalErr.Exception.Description != "" {
+				shot.Err = evalErr.Exception.Description
+			}
 			shots = append(shots, shot)
 			continue
 		}

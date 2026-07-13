@@ -115,12 +115,12 @@ func TestDashboardHTML_ForceRefreshOnCircleMutations(t *testing.T) {
 	// funcBody returns the source of the named function up to the next
 	// top-level function, so an assertion is scoped to that handler and can't
 	// be satisfied by a force call in a neighbour.
-	tmplJS := readMod("js/modal-templates.js")
+	tmplJS := readMod("js/management-actions.js")
 	funcBody := func(sig string) string {
 		t.Helper()
 		start := strings.Index(tmplJS, sig)
 		if start < 0 {
-			t.Fatalf("js/modal-templates.js: function %q not found", sig)
+			t.Fatalf("js/management-actions.js: function %q not found", sig)
 		}
 		rest := tmplJS[start+len(sig):]
 		end := len(rest)
@@ -137,12 +137,12 @@ func TestDashboardHTML_ForceRefreshOnCircleMutations(t *testing.T) {
 	// are the genuinely-broken cases — a modal stays open across the refresh;
 	// the editor/delete/import handlers force too so the behaviour is uniform.
 	for _, h := range []struct{ sig, why string }{
-		{"async function installStarter(", "copying a starter must repaint the circle list while the picker stays open"},
-		{"async function submitFromGroup(", "snapshot-a-group reopens the editor, so its refresh runs with a modal open"},
-		{"async function submitTemplateEditor(", "saving a circle must repaint the list at once"},
-		{"async function deleteTemplate(", "deleting a circle must drop the card at once"},
-		{"async function submitTemplateImport(", "importing a circle must show it in the list at once"},
-		{"async function submitDuplicate(", "duplicating a circle must show the copy in the list at once"},
+		{"async function installTemplateStarter(", "copying a starter must repaint the circle list while the picker stays open"},
+		{"async function snapshotTemplateFromGroup(", "snapshot-a-group reopens the editor, so its refresh runs with a modal open"},
+		{"async function saveTemplate(", "saving a circle must repaint the list at once"},
+		{"async function removeTemplate(", "deleting a circle must drop the card at once"},
+		{"async function importTemplate(", "importing a circle must show it in the list at once"},
+		{"async function duplicateTemplate(", "duplicating a circle must show the copy in the list at once"},
 	} {
 		if !strings.Contains(funcBody(h.sig), "refresh({ force: true })") {
 			t.Errorf("%s must call refresh({ force: true }) — %s", h.sig, h.why)

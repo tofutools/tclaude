@@ -15,7 +15,7 @@ import (
 func TestDashboardHTML_WizardTheme(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -124,7 +124,7 @@ func TestDashboardHTML_WizardTheme(t *testing.T) {
 func TestDashboardHTML_WizardTabNames(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -172,7 +172,7 @@ func TestDashboardHTML_WizardTabNames(t *testing.T) {
 func TestDashboardHTML_WizardSpawnModal(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -221,7 +221,7 @@ func TestDashboardHTML_WizardSpawnModal(t *testing.T) {
 func TestDashboardHTML_WizardRetireModal(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -255,7 +255,7 @@ func TestDashboardHTML_WizardRetireModal(t *testing.T) {
 func TestDashboardHTML_WizardSummonFx(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -293,7 +293,7 @@ func TestDashboardHTML_WizardSummonFx(t *testing.T) {
 func TestDashboardHTML_WizardEnterBanner(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -330,7 +330,7 @@ func TestDashboardHTML_WizardEnterBanner(t *testing.T) {
 func TestDashboardHTML_WizardPowerButtons(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -382,7 +382,7 @@ func TestDashboardHTML_WizardPowerButtons(t *testing.T) {
 func TestDashboardHTML_WizardProfileEditor(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -418,7 +418,7 @@ func TestDashboardCSS_WizardProfileEditorScoped(t *testing.T) {
 func TestDashboardHTML_WizardHumanReplyModal(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -456,7 +456,7 @@ func TestDashboardCSS_WizardHumanReplyModalScoped(t *testing.T) {
 func TestDashboardHTML_WizardExportModal(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -496,7 +496,7 @@ func TestDashboardCSS_WizardExportModalScoped(t *testing.T) {
 func TestDashboardHTML_WizardProfilesManage(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -530,7 +530,7 @@ func TestDashboardCSS_WizardProfilesManageScoped(t *testing.T) {
 func TestDashboardHTML_WizardProfileVocabulary(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -569,7 +569,7 @@ func TestDashboardHTML_WizardProfileVocabulary(t *testing.T) {
 func TestDashboardHTML_WizardSandboxProfiles(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -622,7 +622,7 @@ func TestDashboardCSS_WizardSandboxProfilesScoped(t *testing.T) {
 func TestDashboardHTML_WizardPermEditor(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -661,7 +661,7 @@ func TestDashboardCSS_WizardPermEditorScoped(t *testing.T) {
 func TestDashboardHTML_WizardGrimoireCopy(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -692,7 +692,7 @@ func TestDashboardHTML_WizardGrimoireCopy(t *testing.T) {
 func TestDashboardHTML_WizardPartyBoons(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -728,7 +728,7 @@ func TestDashboardCSS_WizardRetireModalScoped(t *testing.T) {
 func TestDashboardHTML_WizardConfirmModal(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -749,7 +749,7 @@ func TestDashboardHTML_WizardConfirmModal(t *testing.T) {
 func TestDashboardHTML_WizardEditMemberModal(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -800,7 +800,7 @@ func TestDashboardCSS_WizardEditMemberModalScoped(t *testing.T) {
 func TestDashboardHTML_WizardTermPickerModal(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -843,7 +843,7 @@ func TestDashboardCSS_WizardTermPickerModalScoped(t *testing.T) {
 func TestDashboardHTML_WizardSummonButton(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -866,7 +866,7 @@ func TestDashboardHTML_WizardSummonButton(t *testing.T) {
 func TestDashboardHTML_WizardPendingSpawnTitle(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -885,7 +885,7 @@ func TestDashboardHTML_WizardPendingSpawnTitle(t *testing.T) {
 func TestDashboardHTML_WizardPartyButton(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -923,7 +923,7 @@ func TestDashboardHTML_WizardPartyButton(t *testing.T) {
 func TestDashboardHTML_WizardGroupCreateDialog(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -976,7 +976,7 @@ func TestDashboardCSS_WizardGroupCreateModalScoped(t *testing.T) {
 func TestDashboardHTML_WizardCronDialog(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -1057,7 +1057,7 @@ func TestDashboardCSS_WizardSpawnModalScoped(t *testing.T) {
 func TestDashboardHTML_WizardCommandPalette(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -1104,7 +1104,7 @@ func TestDashboardHTML_WizardCommandPalette(t *testing.T) {
 func TestDashboardHTML_WizardCommandPaletteSynonyms(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -1202,7 +1202,7 @@ func TestDashboardCSS_WizardPillHideScopedToStateCell(t *testing.T) {
 func TestDashboardHTML_WizardCogs(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -1245,7 +1245,7 @@ func TestDashboardHTML_WizardCogs(t *testing.T) {
 func TestDashboardHTML_WizardConfigTab(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -1302,7 +1302,7 @@ func TestDashboardCSS_WizardConfigTabScoped(t *testing.T) {
 func TestDashboardHTML_WizardWindowButton(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -1339,7 +1339,7 @@ func TestDashboardHTML_WizardWindowButton(t *testing.T) {
 func TestDashboardHTML_WizardWindowModal(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -1401,7 +1401,7 @@ func TestDashboardCSS_WizardWindowModalScoped(t *testing.T) {
 func TestDashboardHTML_WizardCleanupModal(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -1444,7 +1444,7 @@ func TestDashboardCSS_WizardCleanupModalScoped(t *testing.T) {
 func TestDashboardHTML_WizardDeleteGroupModal(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -1475,13 +1475,13 @@ func TestDashboardHTML_WizardDeleteGroupModal(t *testing.T) {
 func TestDashboardHTML_WizardTemplatesManage(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
 
 	// The shared vocabulary span pair + its CSS swap rules.
-	must(`<span class="tpl-word-regular">Group templates</span><span class="tpl-word-wizard">🕯 Summoning circles</span>`, "the overlay title ships both voices")
+	must(`<${Words} plain="Group templates" wizard="🕯 Summoning circles"/>`, "the overlay title ships both voices")
 	must(".tpl-word-wizard { display: none; }", "the wizard template copy is hidden outside wizard mode")
 	must("body.wizard .tpl-word-wizard { display: inline; }", "the wizard template copy swaps in in wizard mode")
 
@@ -1490,8 +1490,8 @@ func TestDashboardHTML_WizardTemplatesManage(t *testing.T) {
 	must("body.wizard #templates-manage-modal .manage-modal", "the templates overlay surface is re-skinned")
 	must("body.wizard #templates-manage-modal #template-create-open.primary", "the + new template button gets the gilded-arcane treatment")
 	must("body.wizard #templates-manage-modal .template-card", "the template cards are re-skinned")
-	must(`<span class="tpl-word-regular">+ new template</span><span class="tpl-word-wizard">+ chalk a new circle</span>`, "the create button ships both voices")
-	must(`<span class="tpl-word-regular">⤓ from a group</span><span class="tpl-word-wizard">⤓ trace a party</span>`, "the from-a-group button ships both voices")
+	must(`<${Words} plain="+ new template" wizard="+ chalk a new circle"/>`, "the create button ships both voices")
+	must(`<${Words} plain="⤓ from a group" wizard="⤓ trace a party"/>`, "the from-a-group button ships both voices")
 
 	// The Groups-cog management entry swaps too (like ⧉ profiles… → ⧉ patterns…).
 	must(`<span class="tpl-word-regular">⧉ templates…</span><span class="tpl-word-wizard">⧉ circles…</span>`, "the templates… menu item ships both voices")
@@ -1516,18 +1516,18 @@ func TestDashboardCSS_WizardTemplatesManageScoped(t *testing.T) {
 func TestDashboardHTML_WizardTemplateEditor(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
 
 	must("body.wizard #template-editor-modal .cron-create-modal", "the editor surface is re-skinned")
-	// The JS-set title swaps via wizWord, like the profile editor's.
-	must("wizWord('New group template', 'Chalk a new summoning circle')", "the create title swaps in wizard mode")
-	must("`Redraw the circle: ${tmpl.name}`", "the edit title swaps in wizard mode")
+	// The Preact title always emits both vocab variants for live skin changes.
+	must(`plain="New group template" wizard="Chalk a new summoning circle"`, "the create title swaps in wizard mode")
+	must("`Redraw the circle: ${descriptor.seed.name}`", "the edit title swaps in wizard mode")
 	// The agents section + submit lever.
-	must(`<span class="tpl-word-regular">Agents</span><span class="tpl-word-wizard">Familiars</span>`, "the roster heading ships both voices")
-	must(`<span class="tpl-word-regular">+ add agent</span><span class="tpl-word-wizard">+ add familiar</span>`, "the add-agent button ships both voices")
+	must(`<${Words} plain="Agents" wizard="Familiars"/>`, "the roster heading ships both voices")
+	must(`<${Words} plain="+ add agent" wizard="+ add familiar"/>`, "the add-agent button ships both voices")
 	must(`content: "🕯 Seal the circle!"`, "the submit lever reads Seal the circle in wizard mode")
 	must(`content: "🕯 Sealing…"`, "the busy submit reads Sealing in wizard mode")
 	must("body.wizard #template-editor-modal #template-editor-submit", "the submit re-skin is scoped to the editor modal")
@@ -1542,13 +1542,13 @@ func TestDashboardHTML_WizardTemplateEditor(t *testing.T) {
 func TestDashboardHTML_WizardTemplateDeploy(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
 
 	must("body.wizard #template-deploy-modal .cron-create-modal", "the summon dialog surface is re-skinned")
-	must(`<span class="tpl-word-regular">Deploy a task force</span><span class="tpl-word-wizard">🧙 Summon a hero party</span>`, "the title ships both voices")
+	must(`<${Words} plain="Deploy a task force" wizard="🧙 Summon a hero party"/>`, "the title ships both voices")
 	must(`content: "🧙 Summon the hero party!"`, "the submit lever reads Summon in wizard mode")
 	must(`content: "🧙 Summoning…"`, "the busy submit reads Summoning in wizard mode")
 	must("body.wizard #template-deploy-modal #template-deploy-submit", "the submit re-skin is scoped to the summon modal")
@@ -1569,13 +1569,13 @@ func TestDashboardHTML_WizardTemplateDeploy(t *testing.T) {
 func TestDashboardHTML_WizardTemplateFromGroup(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
 
 	must("body.wizard #template-from-group-modal .cron-create-modal", "the trace dialog surface is re-skinned")
-	must(`<span class="tpl-word-regular">Save a group as a template</span><span class="tpl-word-wizard">🕯 Trace the party's circle</span>`, "the title ships both voices")
+	must(`<${Words} plain="Save a group as a template" wizard="🕯 Trace the party's circle"/>`, "the title ships both voices")
 	must(`content: "🕯 Trace it!"`, "the submit lever reads Trace it in wizard mode")
 	must(`content: "🕯 Tracing…"`, "the busy submit reads Tracing in wizard mode")
 	must("body.wizard #template-from-group-modal #template-from-group-submit", "the submit re-skin is scoped to the from-group modal")
@@ -1588,7 +1588,7 @@ func TestDashboardHTML_WizardTemplateFromGroup(t *testing.T) {
 func TestDashboardHTML_WizardGroupDialogs(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -1596,17 +1596,17 @@ func TestDashboardHTML_WizardGroupDialogs(t *testing.T) {
 	// Import: surface + honest-text gilded submit (disabled ≠ busy here, so
 	// no ::before copy swap — same reasoning as the reply dialog's Send).
 	must("body.wizard #group-import-modal .cron-create-modal", "the import dialog surface is re-skinned")
-	must(`<span class="tpl-word-regular">Import a group from a .zip archive</span><span class="tpl-word-wizard">⤒ Unseal a party archive</span>`, "the import title ships both voices")
+	must(`<${Words} plain="Import a group from a .zip archive" wizard="⤒ Unseal a party archive"/>`, "the import title ships both voices")
 	must("body.wizard #group-import-modal #group-import-submit", "the Import button gets the gilded chrome (label kept honest)")
 
 	// Startup context.
 	must("body.wizard #group-context-modal .cron-create-modal", "the context dialog surface is re-skinned")
-	must(`<span class="tpl-word-regular">Group startup context</span><span class="tpl-word-wizard">📜 The party's standing orders</span>`, "the context title ships both voices")
+	must(`<${Words} plain="Group startup context" wizard="📜 The party's standing orders"/>`, "the context title ships both voices")
 	must(`content: "📜 Decree it!"`, "the context submit lever reads Decree it in wizard mode")
 
 	// Clone.
 	must("body.wizard #group-clone-modal .cron-create-modal", "the clone dialog surface is re-skinned")
-	must(`<span class="tpl-word-regular">Clone group</span><span class="tpl-word-wizard">⧉ Mirror the party</span>`, "the clone title ships both voices")
+	must(`<${Words} plain="Clone group" wizard="⧉ Mirror the party"/>`, "the clone title ships both voices")
 	must(`content: "⧉ Mirror it!"`, "the clone submit lever reads Mirror it in wizard mode")
 	must(`content: "⧉ Mirroring…"`, "the busy clone submit reads Mirroring in wizard mode")
 	must("body.wizard #group-clone-modal .group-clone-preview", "the clone-will-carry preview is re-skinned")
@@ -1623,7 +1623,7 @@ func TestDashboardHTML_WizardGroupDialogs(t *testing.T) {
 func TestDashboardHTML_WizardTemplateNativeControlSweep(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -1670,7 +1670,7 @@ func TestDashboardCSS_WizardTemplateDialogsScoped(t *testing.T) {
 func TestDashboardHTML_GroupMenuSaveAsTemplate(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -1678,7 +1678,7 @@ func TestDashboardHTML_GroupMenuSaveAsTemplate(t *testing.T) {
 	must(`data-act="template-from-group"`, "the group cog menu carries the save-as-template action")
 	must("⧉ save as template…", "the menu item's label")
 	must("openFromGroupModal(group)", "the action opens the from-group modal with the group preselected")
-	must("function openFromGroupModal(presetGroup)", "the modal accepts a preset group")
+	must("openTemplateFromGroup(groupName || '')", "the modal accepts a preset group")
 }
 
 // TestDashboardHTML_FromGroupUpdateMode pins the from-group dialog's
@@ -1689,15 +1689,17 @@ func TestDashboardHTML_GroupMenuSaveAsTemplate(t *testing.T) {
 func TestDashboardHTML_FromGroupUpdateMode(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
 
 	must(`id="template-from-group-update-note"`, "the update-mode note div ships")
-	must("function refreshFromGroupUpdateState()", "the mode-flip helper exists")
-	must("classList.toggle('tfg-updating', updating)", "the mode class tracks the typed name")
-	must("template_name: name, update: updating", "submit sends the update flag the UI showed")
+	must("const updating = current.templates.some", "the controlled dialog derives update mode from the typed name")
+	must("updating ? 'Update template' : 'Save as template'", "the visible action tracks update mode")
+	must("const result = await templates.fromGroup({", "submit uses the from-group API")
+	must("template_name: name", "submit sends the visible template name")
+	must("update", "submit sends the update flag the UI showed")
 	must(`content: "🕯 Re-trace it!"`, "the wizard lever reads Re-trace in update mode")
 	must(`content: "🕯 Re-tracing…"`, "the busy wizard lever reads Re-tracing in update mode")
 }
@@ -1709,16 +1711,16 @@ func TestDashboardHTML_FromGroupUpdateMode(t *testing.T) {
 func TestDashboardHTML_TemplateWorkPatternEditor(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
 
 	must(`id="template-editor-pattern"`, "the pattern rows container ships")
 	must(`id="template-editor-add-pattern"`, "the add-step button ships")
-	must(`<span class="tpl-word-regular">Work pattern</span><span class="tpl-word-wizard">Rite of command</span>`, "the section heading ships both voices")
-	must("function renderEditorPattern()", "the pattern renderer exists")
-	must("work_pattern: templateEditorPattern", "submit sends the pattern")
+	must(`<${Words} plain="Work pattern" wizard="Rite of command"/>`, "the section heading ships both voices")
+	must("draft.work_pattern.map", "Preact renders the pattern from owned state")
+	must("work_pattern: draft.work_pattern.map", "submit sends the pattern")
 	must("{{task}}", "the task placeholder is documented in the row placeholder")
 	must("body.wizard #template-editor-modal select.tw-sendto", "the send-to select gets the arcane skin")
 }
@@ -1730,16 +1732,16 @@ func TestDashboardHTML_TemplateWorkPatternEditor(t *testing.T) {
 func TestDashboardHTML_TemplateProcessEditor(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
 
 	must(`id="template-editor-process"`, "the phase rows container ships")
 	must(`id="template-editor-add-phase"`, "the add-phase button ships")
-	must(`<span class="tpl-word-regular">Process</span><span class="tpl-word-wizard">Quest plan</span>`, "the section heading ships both voices")
-	must("function renderEditorProcess()", "the process renderer exists")
-	must("process: templateEditorProcess", "submit sends the process spec")
+	must(`<${Words} plain="Process" wizard="Quest plan"/>`, "the section heading ships both voices")
+	must("draft.process.map", "Preact renders the process from owned state")
+	must("process: draft.process.map", "submit sends the process spec")
 	must(`data-act="advance-phase"`, "the group summary ships the advance control")
 	must(".group-process-advance", "the advance button has the dark-theme skin")
 }
@@ -1751,22 +1753,21 @@ func TestDashboardHTML_TemplateProcessEditor(t *testing.T) {
 func TestDashboardHTML_TemplateWavesAndRhythms(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
 
 	// Per-agent wave field.
 	must(`class="ta-wave"`, "the per-agent wave input ships")
-	must("wave: parseInt($('.ta-wave', row).value, 10) || 0", "the agent scraper reads the wave")
+	must("wave: Number.parseInt(agent.wave, 10) || 0", "the controlled payload reads the wave")
 
 	// Rhythms list editor.
 	must(`id="template-editor-rhythms"`, "the rhythm rows container ships")
 	must(`id="template-editor-add-rhythm"`, "the add-rhythm button ships")
-	must(`<span class="tpl-word-regular">Rhythms</span><span class="tpl-word-wizard">Drumbeats</span>`, "the section heading ships both voices")
-	must("function renderEditorRhythms()", "the rhythm renderer exists")
-	must("function scrapeEditorRhythms()", "the rhythm scraper exists")
-	must("rhythms: templateEditorRhythms", "submit sends the rhythms")
+	must(`<${Words} plain="Rhythms" wizard="Drumbeats"/>`, "the section heading ships both voices")
+	must("draft.rhythms.map", "Preact renders rhythms from owned state")
+	must("rhythms: draft.rhythms.map", "submit sends the rhythms")
 	must(`id="template-editor-wave-max-wait"`, "the wave max-wait field ships")
 
 	// Cron modal role filter.
@@ -1784,20 +1785,20 @@ func TestDashboardHTML_TemplateWavesAndRhythms(t *testing.T) {
 func TestDashboardHTML_TemplatePerAgentWorktreesDefault(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
 
 	must(`id="template-editor-per-agent-worktrees"`, "the template editor exposes the default")
-	must("per_agent_worktrees: $('#template-editor-per-agent-worktrees').checked",
+	must("per_agent_worktrees: !!draft.per_agent_worktrees",
 		"template saves persist the default")
-	must("!!(tmpl && tmpl.per_agent_worktrees)", "template edits restore the stored default")
-	must("function applyDeployTemplateWorktreeDefault()", "the deploy prefill has one shared implementation")
-	must("const perAgent = !!(tmpl && tmpl.per_agent_worktrees)",
+	must("per_agent_worktrees: !!template?.per_agent_worktrees", "template edits restore the stored default")
+	must("setPerAgent(!!next?.per_agent_worktrees)", "switching templates reapplies the selected template's default")
+	must("const [perAgent, setPerAgent] = useState(",
+		"the deploy checkbox owns its selected-template default")
+	must("!!initialTemplate?.per_agent_worktrees",
 		"the deploy checkbox is seeded from the selected template")
-	must("applyDeployWtSync();\n  renderDeployPreview();",
-		"mission-driven group prefills resync the worktree branch prefix before repainting")
 	must(`id="template-deploy-wt-per-agent" type="checkbox"`,
 		"the seeded deploy choice remains an enabled per-run checkbox")
 }

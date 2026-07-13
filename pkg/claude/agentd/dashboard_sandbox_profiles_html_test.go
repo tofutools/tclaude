@@ -82,10 +82,10 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 }
 
 func TestDashboardSandboxCreateCapturesAssignmentTarget(t *testing.T) {
-	js := dashboardAssets
-	capture := strings.Index(js, "const body = { name: draft.name.trim()")
-	request := strings.Index(js, "await sandbox.previewSandboxProfile(targetName, body)")
-	handoff := strings.Index(js, "await options.onCreate?.(preview.after.name)")
+	js := compactDashboardSource(dashboardAssets)
+	capture := strings.Index(js, compactDashboardSource("const body = { name: draft.name.trim()"))
+	request := strings.Index(js, compactDashboardSource("await sandbox.previewSandboxProfile(targetName, body)"))
+	handoff := strings.Index(js, compactDashboardSource("await options.onCreate?.(preview.after.name)"))
 	if capture < 0 || request < capture || handoff < request {
 		t.Fatalf("sandbox save must capture the draft, preview it, commit it, then hand off its canonical name (capture=%d request=%d handoff=%d)", capture, request, handoff)
 	}

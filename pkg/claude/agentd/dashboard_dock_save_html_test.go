@@ -45,9 +45,9 @@ func TestDashboardHTML_DockSaveDrag(t *testing.T) {
 	must("preview: true", "a group drop captures a non-persisting template preview")
 	must("openTemplateEditor(tmpl, { asNew: true })", "a group drop opens the template editor in create mode")
 
-	// The template editor's create-mode-with-prefill option (asNew) exists.
-	must("function openTemplateEditor(tmpl, { asNew = false } = {}) {", "openTemplateEditor gained the asNew option")
-	must("const editing = tmpl && !asNew;", "asNew keeps the editor in create mode while pre-filling")
+	// The Preact template editor's create-mode-with-prefill option (asNew) exists.
+	must("const editing = descriptor.seed && !descriptor.options?.asNew;", "asNew keeps the editor in create mode while pre-filling")
+	must("state.openTemplateDialog({ kind: 'template-editor', seed, options });", "the seed and create-mode option enter owned Preact state")
 
 	// The capture highlight (a DISTINCT class from the forward drag's
 	// .dock-drop-over) + its CSS.

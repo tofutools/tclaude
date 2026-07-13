@@ -6,34 +6,18 @@ import { roleSummary } from './roles.js';
 import { dirtyDraft, harnessByName, harnessDefaults, profileDraft, profilePayload, readTri, roleDraft, rolePayload, TRI_OPTIONS } from './management-model.js';
 import { registerManagementController } from './management-controller.js';
 import { sandboxProfileSummary } from './sandbox-profiles-data.js';
-import { makeModalResizable, pickDirectory } from './helpers.js';
+import { pickDirectory } from './helpers.js';
 import { lineDiff } from './line-diff.js';
 import { useDialogFocus } from './dialog-focus.js';
 import { wizWord } from './slop.js';
+import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { GroupCloneDialog, GroupContextDialog, GroupImportDialog, TemplateDeployDialog, TemplateDuplicateDialog, TemplateEditor, TemplateFromGroupDialog, TemplateImportDialog, TemplateManager, TemplateStartersDialog } from './template-management-island.js';
 
 const html = htm.bind(h);
 
 function message(error) { return error?.message || String(error); }
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
 function change(setDraft, key, value) { setDraft((draft) => ({ ...draft, [key]: value })); }
-
-function Overlay({ id, manage = false, labelledby, onClose, dirty = false, blocked = false, confirmDiscard, resizeKey = '', children }) {
-  const overlayRef = useRef(null);
-  const dialogRef = useRef(null);
-  const close = async () => { if (blocked) return; if (!dirty || await confirmDiscard()) onClose(); };
-  useEffect(() => {
-    const key = (event) => {
-      if (event.key !== 'Escape') return;
-      const overlays = document.querySelectorAll('.manage-overlay.show, .modal-overlay.show');
-      if (overlays[overlays.length - 1] !== overlayRef.current) return;
-      event.preventDefault();
-      void close();
-    };
-    document.addEventListener('keydown', key); return () => document.removeEventListener('keydown', key);
-  }, [dirty, blocked]);
-  useEffect(() => resizeKey ? makeModalResizable(dialogRef.current, resizeKey) : undefined, [resizeKey]);
-  return html`<div ref=${overlayRef} class=${manage ? 'manage-overlay show' : 'modal-overlay show'} id=${id} onMouseDown=${(event) => { if (event.target === event.currentTarget) void close(); }}><div ref=${dialogRef} class=${manage ? 'manage-modal' : 'cron-create-modal template-editor-modal'} role="dialog" aria-modal="true" aria-labelledby=${labelledby}>${children}</div></div>`;
-}
 
 function RequestList({ request, label, retry, children }) {
   if ((request.phase === 'idle' || request.phase === 'loading') && !request.data?.length) return html`<div class="template-empty">Loading ${label}…</div>`;
@@ -240,14 +224,21 @@ function SandboxDiffModal({ model, close }) {
   </div>`;
 }
 
-function ManagementApp({ state, actions, confirmDiscard, openProfilePermissions }) {
+function ManagementApp({ state, actions, confirm, confirmDiscard, openProfilePermissions }) {
   const current = state.view.value; const descriptor = current.dialog;
   const previousManager = useRef('');
+  const templateManagerWasOpen = useRef(false);
   useEffect(() => {
     if (previousManager.current && !current.manager) document.dispatchEvent(new CustomEvent('tclaude:management-closed', { detail: { kind: previousManager.current } }));
     previousManager.current = current.manager;
   }, [current.manager]);
-  return html`${current.manager && html`<${Manager} kind=${current.manager} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
+  useEffect(() => {
+    if (templateManagerWasOpen.current && !current.templateManager) document.dispatchEvent(new CustomEvent('tclaude:management-closed', { detail: { kind: 'templates' } }));
+    templateManagerWasOpen.current = current.templateManager;
+  }, [current.templateManager]);
+  return html`${current.templateManager && html`<${TemplateManager} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
+    ${current.templateDialog?.kind === 'template-editor' && html`<${TemplateEditor} descriptor=${current.templateDialog} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} confirm=${confirm}/>`}
+    ${current.manager && html`<${Manager} kind=${current.manager} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
     ${descriptor?.kind === 'profile-editor' && html`<${ProfileEditor} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} openProfilePermissions=${openProfilePermissions}/>`}
     ${descriptor?.kind === 'role-editor' && html`<${RoleEditor} descriptor=${descriptor} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
     ${descriptor?.kind === 'profile-export' && html`<${ProfileExport} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
@@ -255,16 +246,31 @@ function ManagementApp({ state, actions, confirmDiscard, openProfilePermissions 
     ${descriptor?.kind === 'sandbox-editor' && html`<${SandboxEditor} descriptor=${descriptor} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
     ${descriptor?.kind === 'sandbox-export' && html`<${SandboxExport} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
     ${descriptor?.kind === 'sandbox-import' && html`<${SandboxImport} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
+    ${descriptor?.kind === 'template-duplicate' && html`<${TemplateDuplicateDialog} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
+    ${descriptor?.kind === 'template-import' && html`<${TemplateImportDialog} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
+    ${descriptor?.kind === 'template-from-group' && html`<${TemplateFromGroupDialog} descriptor=${descriptor} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
+    ${descriptor?.kind === 'template-starters' && html`<${TemplateStartersDialog} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
+    ${descriptor?.kind === 'group-import' && html`<${GroupImportDialog} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
+    ${descriptor?.kind === 'group-context' && html`<${GroupContextDialog} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
+    ${descriptor?.kind === 'group-clone' && html`<${GroupCloneDialog} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
+    ${descriptor?.kind === 'template-deploy' && html`<${TemplateDeployDialog} descriptor=${descriptor} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
     <${SandboxDiffModal} model=${current.sandboxDiff} close=${state.cancelSandboxDiff} />`;
 }
 
-export function mountManagementIsland({ host, state, actions, confirmDiscard, openProfilePermissions, registerCleanup }) {
+export function mountManagementIsland({ host, state, actions, confirm, confirmDiscard, openProfilePermissions, registerCleanup }) {
   const controller = {
     openProfilesManageModal: () => actions.openManager('profiles'), openProfileEditor: actions.openProfileEditor, removeProfile: actions.removeProfile,
     openRolesManageModal: () => actions.openManager('roles'), openRoleEditor: actions.openRoleEditor, removeRole: actions.removeRole,
     openSandboxProfilesManageModal: () => actions.openManager('sandbox'), openSandboxProfileEditor: actions.openSandboxEditor, removeSandboxProfile: actions.removeSandbox,
+    openTemplatesManageModal: actions.openTemplateManager, openTemplateEditor: actions.openTemplateEditor,
+    updateTemplates: actions.updateTemplates, removeTemplate: actions.removeTemplate,
+    exportTemplate: actions.exportTemplate,
+    openTemplateDuplicate: actions.openTemplateDuplicate, openTemplateFromGroup: actions.openTemplateFromGroup,
+    openTemplateImport: actions.openTemplateImport, openTemplateStarters: actions.openTemplateStarters,
+    openTemplateDeploy: actions.openTemplateDeploy,
+    openGroupImport: actions.openGroupImport, openGroupContext: actions.openGroupContext, openGroupClone: actions.openGroupClone,
   };
   const unregister = registerManagementController(controller);
-  render(html`<${ManagementApp} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} openProfilePermissions=${openProfilePermissions}/>` , host);
+  render(html`<${ManagementApp} state=${state} actions=${actions} confirm=${confirm} confirmDiscard=${confirmDiscard} openProfilePermissions=${openProfilePermissions}/>` , host);
   registerCleanup(() => { state.cancelSandboxDiff(false); unregister(); render(null, host); });
 }

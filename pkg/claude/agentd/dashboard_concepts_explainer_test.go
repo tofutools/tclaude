@@ -1,9 +1,6 @@
 package agentd
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
 // TestDashboardHTML_ConceptsExplainer pins the JOH-352 concepts explainer in the
 // embedded dashboard source. The template editor gains one collapsible panel
@@ -18,7 +15,7 @@ import (
 func TestDashboardHTML_ConceptsExplainer(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
@@ -30,7 +27,7 @@ func TestDashboardHTML_ConceptsExplainer(t *testing.T) {
 	must("tpl-concepts-wizard", "the wizard-mode body variant is present")
 
 	// (a) Plain-mode summary + the together framing.
-	must("ⓘ How deploying works — pattern, process &amp; rhythms", "plain summary names all three concepts")
+	must("ⓘ How deploying works — pattern, process & rhythms", "plain summary names all three concepts")
 	must("Three things shape a deployed force and they work <b>together</b>", "plain body leads with the together story")
 
 	// (b) Plain-mode honesty checklist — the three lifecycle claims that must
@@ -40,7 +37,7 @@ func TestDashboardHTML_ConceptsExplainer(t *testing.T) {
 	must("does <b>not</b> retune a force already in the field", "rhythms are a deploy-time snapshot, not retuned by later edits")
 
 	// (c) Wizard-mode summary + the SAME facts in flavored voice.
-	must("🔮 How a summoning works — rite, quest &amp; drumbeats", "wizard summary names all three concepts")
+	must("🔮 How a summoning works — rite, quest & drumbeats", "wizard summary names all three concepts")
 	must("Rite of command — the opening whispers.", "wizard names the work pattern as the rite")
 	must("Quest plan — the chapters.", "wizard names the process as the quest plan")
 	must("Drumbeats — the pulse.", "wizard names the rhythms as the drumbeats")

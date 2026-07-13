@@ -1,15 +1,11 @@
 package agentd
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
 // TestDashboardAssets_RoleLibraryWired guards the role-library dashboard
-// (JOH-240), whose pieces span several files that must stay in lockstep —
-// there's no JS render test, so we assert on the embedded concatenation at
-// `go test ./...`. A rename in any one file silently breaks the feature only
-// in the browser.
+// (JOH-240), whose pieces span several files that must stay in lockstep. The
+// Preact render behaviour has a JS DOM test; these asset assertions pin the
+// surrounding entry points and the controlled editor wiring.
 func TestDashboardAssets_RoleLibraryWired(t *testing.T) {
 	for _, needle := range []string{
 		// roles.js — the data layer's endpoint + exports.
@@ -24,16 +20,11 @@ func TestDashboardAssets_RoleLibraryWired(t *testing.T) {
 		"import { bindRolesUI } from './modal-roles.js';",
 		// palette.js — the command-palette entry.
 		"run: () => openRolesManageModal(),",
-		// modal-templates.js — the per-agent role dropdown reads/writes role_ref.
-		"function roleRefOptionsHTML(",
-		`<select class="ta-role-ref">`,
-		"role_ref: $('.ta-role-ref', row).value.trim(),",
-		// role-inspect.js — the shared transparency panel (JOH-351) + its wiring
-		// into the templates role dropdown. A rename in any file silently drops
-		// the inspect affordance in the browser only.
-		"function roleInspectHTML(",
-		"import { roleInspectHTML } from './role-inspect.js';",
-		"function roleInspectFor(",
+		// template-management-island/model — the controlled per-agent role
+		// dropdown reads/writes role_ref and renders its transparency panel.
+		`<select class="ta-role-ref" value=${agent.role_ref}`,
+		"role_ref: agent.role_ref.trim(),",
+		"function RoleInspect({ roleName, roles })",
 		`<div class="ta-role-inspect">`,
 		// dashboard.css — the inspect panel's dark-theme styling.
 		".role-inspect {",
@@ -51,7 +42,7 @@ func TestDashboardAssets_RoleLibraryWired(t *testing.T) {
 		// dashboard.css — the pure-CSS wizard vocabulary swap ("roles" → "classes").
 		"body.wizard .roles-word-wizard { display: inline; }",
 	} {
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard assets missing %q — role-library wiring broken", needle)
 		}
 	}
