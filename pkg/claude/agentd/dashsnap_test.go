@@ -451,8 +451,8 @@ func baseStates() []dashsnap.State {
 	states := []dashsnap.State{
 		{
 			Key:      "bounded-directory-picker",
-			Title:    "Bounded Preact — web directory picker",
-			Caption:  "The shared host-directory navigator used by every Browse… action, including focus containment, host path entry, parent/home navigation, folder list, and default/wizard chrome.",
+			Title:    "Bounded Preact — filtered directory picker",
+			Caption:  "The shared host-directory navigator used by every Browse… action, with the path's unfinished final component filtering and highlighting the existing folder pane in default/wizard chrome.",
 			JS:       directoryPickerDashSnapJS(),
 			SettleMS: 300,
 		},
@@ -1172,15 +1172,31 @@ func baseStates() []dashsnap.State {
 func directoryPickerDashSnapJS() string {
 	return `return (async function(){
   var helpers = await import('/static/js/helpers.js');
+  var existing = document.querySelector('#directory-picker-modal .modal-buttons button:not(.primary)');
+  if (existing) {
+    existing.click();
+    await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  }
   window.__dashsnapDirectoryPicker = helpers.pickDirectory({
-    startDir: '/tmp', title: 'Select a dashboard workspace'
+    startDir: '.', title: 'Select a dashboard workspace'
   });
   for (var i = 0; i < 80; i++) {
     var modal = document.querySelector('#directory-picker-modal');
     var list = modal && modal.querySelector('.directory-picker-list');
-    if (modal && list && !modal.querySelector('.directory-picker-path button').disabled) {
+    var count = modal && modal.querySelector('.directory-picker-count');
+    if (modal && list && count.textContent && !modal.querySelector('.directory-picker-path button').disabled) {
       if (modal.getAttribute('aria-hidden') === 'true') throw new Error('picker unexpectedly hidden');
-      if (document.activeElement !== modal.querySelector('#directory-picker-path')) throw new Error('picker did not take focus');
+      var input = modal.querySelector('#directory-picker-path');
+      if (document.activeElement !== input) throw new Error('picker did not take focus');
+      var first = list.querySelector('button');
+      if (!first) throw new Error('picker fixture has no folders to filter');
+      var name = first.lastElementChild.textContent;
+      var base = first.title.slice(0, first.title.length - name.length);
+      input.value = base + name.slice(0, Math.min(3, name.length));
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+      if (!list.querySelector('button.active')) throw new Error('filtered picker has no active match');
+      if (!count.textContent.includes(' of ')) throw new Error('filtered picker count missing');
       return;
     }
     await new Promise(function(resolve){ setTimeout(resolve, 25); });

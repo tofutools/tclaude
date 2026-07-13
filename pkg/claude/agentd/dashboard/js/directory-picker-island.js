@@ -6,12 +6,36 @@ import { ManagementOverlay as Overlay } from './management-overlay.js';
 
 const html = htm.bind(h);
 
+export function directoryFilterTerm(inputPath, viewPath) {
+  if (!viewPath) return null;
+  const normalizedView = viewPath === '/' ? '/' : `${viewPath.replace(/\/+$/, '')}/`;
+  if (inputPath === viewPath || inputPath === normalizedView) return '';
+  if (!inputPath.startsWith(normalizedView)) return null;
+  const term = inputPath.slice(normalizedView.length);
+  return term.includes('/') ? null : term;
+}
+
+export function filterDirectories(directories, term) {
+  if (!term) return directories;
+  const needle = term.toLowerCase();
+  const prefixes = [];
+  const substrings = [];
+  for (const directory of directories) {
+    const name = directory.name.toLowerCase();
+    if (name.startsWith(needle)) prefixes.push(directory);
+    else if (name.includes(needle)) substrings.push(directory);
+  }
+  return [...prefixes, ...substrings];
+}
+
 export function DirectoryPickerApp({ state, actions }) {
   const request = state.request.value;
   const pathRef = useRef(null);
+  const activeEntryRef = useRef(null);
   const generation = useRef(0);
   const [view, setView] = useState(null);
   const [path, setPath] = useState('');
+  const [activeIndex, setActiveIndex] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -19,6 +43,7 @@ export function DirectoryPickerApp({ state, actions }) {
     const requested = String(target || '').trim();
     const currentGeneration = ++generation.current;
     setPath(requested);
+    setActiveIndex(0);
     setBusy(true);
     setError('');
     try {
@@ -26,6 +51,7 @@ export function DirectoryPickerApp({ state, actions }) {
       if (currentGeneration !== generation.current) return;
       setView(result);
       setPath(result.path || requested);
+      setActiveIndex(0);
     } catch (browseError) {
       if (currentGeneration !== generation.current) return;
       setError(browseError?.message || String(browseError));
@@ -38,13 +64,30 @@ export function DirectoryPickerApp({ state, actions }) {
     if (!request) return undefined;
     setView(null);
     setPath(request.startDir);
+    setActiveIndex(0);
     setError('');
     void browse(request.startDir);
     return () => { generation.current += 1; };
   }, [request]);
 
+  const directories = view?.directories || [];
+  const filterTerm = directoryFilterTerm(path, view?.path);
+  const filtering = filterTerm !== null && filterTerm !== '';
+  const visibleDirectories = filtering ? filterDirectories(directories, filterTerm) : directories;
+  const selectedIndex = visibleDirectories.length ? Math.min(activeIndex, visibleDirectories.length - 1) : -1;
+  const activeDirectory = filtering && selectedIndex >= 0 ? visibleDirectories[selectedIndex] : null;
+  const optionID = (directory) => `directory-picker-option-${directories.indexOf(directory)}`;
+
+  useEffect(() => {
+    activeEntryRef.current?.scrollIntoView?.({ block: 'nearest' });
+  }, [selectedIndex, filterTerm, view?.path]);
+
   if (!request) return null;
   const validated = !!view?.path && path === view.path;
+  const typedOtherPath = !!view?.path && filterTerm === null && path.trim() !== view.path;
+  const count = filtering
+    ? `${visibleDirectories.length} of ${directories.length} folders`
+    : `${directories.length} folders`;
   const close = () => state.finish({ canceled: true });
   const choose = () => {
     if (validated && !busy) state.finish({ path: view.path });
@@ -59,11 +102,33 @@ export function DirectoryPickerApp({ state, actions }) {
     <h3 id="directory-picker-title">${request.title}</h3>
     <form class="directory-picker-path" onSubmit=${(event) => {
       event.preventDefault();
-      void browse(path);
+      void browse(activeDirectory?.path || path);
     }}>
       <label for="directory-picker-path">Host path</label>
       <input ref=${pathRef} id="directory-picker-path" value=${path}
-        onInput=${(event) => setPath(event.currentTarget.value)}
+        onInput=${(event) => {
+          setPath(event.currentTarget.value);
+          setActiveIndex(0);
+        }}
+        onKeyDown=${(event) => {
+          if (!activeDirectory || busy) return;
+          if (event.key === 'ArrowDown') {
+            event.preventDefault();
+            setActiveIndex(Math.min(selectedIndex + 1, visibleDirectories.length - 1));
+          } else if (event.key === 'ArrowUp') {
+            event.preventDefault();
+            setActiveIndex(Math.max(selectedIndex - 1, 0));
+          } else if (event.key === 'Tab' && !event.shiftKey && path !== activeDirectory.path) {
+            event.preventDefault();
+            setPath(activeDirectory.path);
+            setActiveIndex(0);
+          }
+        }}
+        role=${filtering ? 'combobox' : undefined}
+        aria-expanded=${filtering ? 'true' : undefined}
+        aria-autocomplete=${filtering ? 'list' : undefined}
+        aria-activedescendant=${activeDirectory ? optionID(activeDirectory) : undefined}
+        aria-controls="directory-picker-folders"
         autocomplete="off" spellcheck="false" data-select-on-focus />
       <button type="submit" disabled=${busy}>${busy ? 'Loading…' : 'Go'}</button>
     </form>
@@ -72,15 +137,28 @@ export function DirectoryPickerApp({ state, actions }) {
         onClick=${() => void browse(view?.parent)}>↑ Parent</button>
       <button type="button" disabled=${busy || !view?.home || view?.home === view?.path}
         onClick=${() => void browse(view?.home)}>⌂ Home</button>
-      <span class="directory-picker-count">${view ? `${view.directories?.length || 0} folders` : ''}</span>
+      <span class="directory-picker-count" role="status" aria-live="polite">${view ? count : ''}</span>
     </div>
-    <div class="directory-picker-list" role="list" aria-label="Folders">
-      ${(view?.directories || []).map((directory) => html`<div
-        key=${directory.path} role="listitem" class="directory-picker-entry"
-      ><button type="button" title=${directory.path} disabled=${busy}
+    ${typedOtherPath && html`<div class="directory-picker-hint">Press Enter to open the typed path.</div>`}
+    <div id="directory-picker-folders" class="directory-picker-list"
+      role=${filtering ? 'listbox' : 'list'} aria-label="Folders">
+      ${visibleDirectories.map((directory, index) => {
+        const active = filtering && index === selectedIndex;
+        return html`<div
+        key=${directory.path} role=${filtering ? 'presentation' : 'listitem'} class="directory-picker-entry"
+      ><button id=${filtering ? optionID(directory) : undefined}
+          type="button" title=${directory.path} disabled=${busy}
+          ref=${active ? activeEntryRef : undefined}
+          class=${active ? 'active' : undefined}
+          role=${filtering ? 'option' : undefined}
+          aria-selected=${filtering ? active ? 'true' : 'false' : undefined}
+          tabIndex=${filtering ? -1 : undefined}
           onClick=${() => void browse(directory.path)}
-        ><span aria-hidden="true">📁</span><span>${directory.name}</span></button></div>`)}
-      ${view && !view.directories?.length && html`<p class="directory-picker-empty">No subdirectories</p>`}
+        ><span aria-hidden="true">📁</span><span>${directory.name}</span></button></div>`;
+      })}
+      ${view && !visibleDirectories.length && html`<p class="directory-picker-empty">
+        ${filtering ? 'No matching folders' : 'No subdirectories'}
+      </p>`}
     </div>
     <div role="alert" class="directory-picker-error">${error}</div>
     <div class="modal-buttons">
