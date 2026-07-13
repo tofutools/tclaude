@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createPreactHarness, getByLabelText, getByRole } from './preact-harness.mjs';
+import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
 function memoryPrefs(initial = {}) {
   const values = new Map(Object.entries(initial));
