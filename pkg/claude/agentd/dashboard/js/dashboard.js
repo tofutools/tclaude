@@ -55,12 +55,10 @@ import { bindProfilesUI } from './modal-profiles.js';
 import { bindSandboxProfilesUI, refreshSpawnSandboxProfileUI, summonSandboxScribe } from './sandbox-profiles.js';
 import { bindRolesUI } from './modal-roles.js';
 import { bindCloneModal } from './modal-clone.js';
-import { bindNestModal } from './modal-nest.js';
 import { bindLinkModal } from './modal-link-wt.js';
 import { bindExportModal } from './modal-export.js';
 import {
-  bindAgentSpawnModal, bindCloneAgentModal,
-  bindReincarnateAgentModal,
+  bindAgentSpawnModal,
 } from './modal-spawn.js';
 import { bindRemoteAdmin, loadRemoteAdmin } from './remote-admin.js';
 import { bindNotifyMenu } from './notify-menu.js';
@@ -75,7 +73,7 @@ import { bindDock } from './dock.js';
 import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
 import {
-  mountAccessFeature, mountAuditFeature, mountConfigFeature, mountCostsFeature, mountGroupsFeature, mountJobsFeature, mountLogsFeature, mountManagementFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature,
+  mountAccessFeature, mountActionDialogsFeature, mountAuditFeature, mountConfigFeature, mountCostsFeature, mountGroupsFeature, mountJobsFeature, mountLogsFeature, mountManagementFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature,
   mountPreactRuntimeProbe,
 } from './preact-loader.js';
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
@@ -191,6 +189,12 @@ export function sudoBadge(activeSudo, fallbackConvID) {
         document.querySelector('nav [data-tab="groups"]')?.click();
       },
     }),
+    mountActionDialogsFeature({
+      confirmDiscard,
+      refresh: dashboardActions.refresh,
+      notify: toast,
+      getSnapshot: () => lastSnapshot,
+    }),
   ]);
 
   bindTabs();
@@ -248,15 +252,12 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   bindSandboxProfilesUI();
   bindRolesUI();
   bindCloneModal();
-  bindNestModal();
   bindGroupImportModal();
   bindGroupContextModal();
   bindGroupCloneModal();
   bindLinkModal();
   bindExportModal();
   bindAgentSpawnModal();
-  bindCloneAgentModal();
-  bindReincarnateAgentModal();
   bindRemoteAdmin();
   document.querySelector('nav [data-tab="config"]')?.addEventListener('click', () => { void loadRemoteAdmin(); });
   // The top-bar bell's notification-settings popover (master on/off +

@@ -10,8 +10,8 @@ import (
 // at the bottom of a tall, scrollable modal — easy to miss, especially when a
 // Ctrl/Cmd+Enter submit fired while that line sat below the scroll fold. This
 // guards the uplift: the line renders as a collapse-when-empty banner, and the
-// spawn-family submit paths route through showModalError (which scrolls it into
-// view + flashes it) rather than a bare textContent write.
+// legacy spawn submit path routes through showModalError, while the migrated
+// clone/reincarnate paths render the equivalent controlled ErrorBanner.
 func TestDashboardHTML_SpawnErrorBannerWired(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
@@ -47,12 +47,15 @@ func TestDashboardHTML_SpawnErrorBannerWired(t *testing.T) {
 	must(".cron-create-error.dismissible {",
 		"flex variant places the ✕ at the banner's right")
 
-	// Every spawn-family submit error path goes through the helper. Three
-	// dialogs each surface a non-OK fetch body the same way, so the
-	// `showModalError(errEl, (await r.text())` shape must appear 3×.
-	if n := strings.Count(dashboardAssets, "showModalError(errEl, (await r.text())"); n != 3 {
-		t.Errorf("want 3 spawn/clone/reincarnate fetch-error sites routed through showModalError; got %d", n)
+	// Spawn still uses the imperative helper. The Preact clone/reincarnate
+	// dialogs use the same scroll/flash/dismiss contract from controlled state.
+	if n := strings.Count(dashboardAssets, "showModalError(errEl, (await r.text())"); n != 1 {
+		t.Errorf("want the legacy spawn fetch-error site routed through showModalError; got %d", n)
 	}
+	must("function ErrorBanner({ id, error, onDismiss })", "Preact action dialogs share a controlled error banner")
+	must("element.scrollIntoView({ block: 'nearest' });", "Preact error banner scrolls into view")
+	must("<${ErrorBanner} id=\"clone-agent-error\"", "clone dialog uses the Preact banner")
+	must("<${ErrorBanner} id=\"reincarnate-agent-error\"", "reincarnate dialog uses the Preact banner")
 	// And none of the spawn-family error lines should be set with a bare
 	// textContent write any more — that was exactly the easy-to-miss path.
 	for _, id := range []string{"agent-spawn-error", "clone-agent-error", "reincarnate-agent-error"} {

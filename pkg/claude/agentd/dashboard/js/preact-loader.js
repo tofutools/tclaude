@@ -263,3 +263,31 @@ const managementDescriptor = createIslandDescriptor({
 export function mountManagementFeature(dependencies = {}) {
   return mountIslandDescriptor(managementDescriptor, dependencies);
 }
+
+const actionDialogsDescriptor = createIslandDescriptor({
+  name: 'action-dialogs',
+  label: 'Action dialogs',
+  hosts: { root: '#action-dialog-root' },
+  primaryHost: 'root',
+  failureClass: 'action-dialog-error',
+  load: async ({ hosts, dependencies }) => {
+    const islandModule = import('./action-dialog-island.js');
+    const stateModule = import('./action-dialog-state.js');
+    const actionsModule = import('./action-dialog-actions.js');
+    const [
+      { mountActionDialogIsland }, { createActionDialogState }, { createActionDialogActions },
+    ] = await Promise.all([islandModule, stateModule, actionsModule]);
+    const state = createActionDialogState();
+    const actions = createActionDialogActions({ state, ...dependencies });
+    return {
+      state,
+      mount: (registerCleanup) => mountActionDialogIsland({
+        host: hosts.root, state, actions, registerCleanup, ...dependencies,
+      }),
+    };
+  },
+});
+
+export function mountActionDialogsFeature(dependencies = {}) {
+  return mountIslandDescriptor(actionDialogsDescriptor, dependencies);
+}

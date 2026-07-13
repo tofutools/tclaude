@@ -537,6 +537,33 @@ func baseStates() []dashsnap.State {
 			SettleMS: 200,
 		},
 		{
+			Key:      "action-dialog-clone-agent",
+			Title:    "Action dialogs — clone agent",
+			Caption:  "Preact-owned clone dialog preserves the existing dark form chrome, worktree picker, copy-history default, resize grip, and both-skin field styling.",
+			JS:       actionDialogJS(`module.openCloneAgentDialog("f1000000-0000-4000-8000-000000000001", "fe-lead", "/tmp/lbl-fe-lead");`, "#clone-agent-modal", ""),
+			SettleMS: 500,
+		},
+		{
+			Key:     "action-dialog-reincarnate-force",
+			Title:   "Action dialogs — force reincarnate",
+			Caption: "Preact-owned reincarnate dialog in its destructive force mode, including controlled mode switching, required handoff copy, and busy-ready submit chrome.",
+			JS: actionDialogJS(`module.openReincarnateAgentDialog("f1000000-0000-4000-8000-000000000001", "fe-lead");`, "#reincarnate-agent-modal", `
+  var force = document.querySelector('#reincarnate-agent-modal input[value="force"]');
+  force.click();
+  await Promise.resolve();
+  var followup = document.querySelector('#reincarnate-agent-followup');
+  followup.value = 'Continue the Preact dashboard migration from the current worktree.';
+  followup.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText' }));`),
+			SettleMS: 300,
+		},
+		{
+			Key:      "action-dialog-nest-group",
+			Title:    "Action dialogs — nest group",
+			Caption:  "Preact-owned group nesting dialog preserves the parent selector, explanatory copy, focus boundary, and wizard-compatible scoped chrome.",
+			JS:       actionDialogJS(`module.openNestGroupDialog({group: "infra-crew"});`, "#group-nest-modal", ""),
+			SettleMS: 300,
+		},
+		{
 			Key:      "processes-templates",
 			Title:    "Processes — templates",
 			Caption:  "Feature-gated Processes tab with a populated versioned template list and dark-themed actions.",
@@ -1600,6 +1627,19 @@ func managementModalJS(modulePath, opener, readySelector string) string {
   }
   if (!document.querySelector(%q)) throw new Error('management modal did not render: %s');
 })();`, modulePath, opener, opener, opener, readySelector, readySelector, readySelector)
+}
+
+func actionDialogJS(call, readySelector, extraJS string) string {
+	return fmt.Sprintf(`return (async function(){
+  var module = await import('/static/js/action-dialog-controller.js');
+  %s
+  var deadline = Date.now() + 3000;
+  while (!document.querySelector(%q) && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  if (!document.querySelector(%q)) throw new Error('action dialog did not render: %s');
+  %s
+})();`, call, readySelector, readySelector, readySelector, extraJS)
 }
 
 func boundedTabJS(tab, readySelector string) string {

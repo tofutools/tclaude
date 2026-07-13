@@ -294,13 +294,14 @@ func TestDashboardJS_SelectTooltipWired(t *testing.T) {
 
 // TestDashboardJS_ModalResizePersisted guards that the resizable spawn /
 // clone dialogs persist their dragged size: a helper stores width+height
-// in dashPrefs and both modals wire it to their resizable card. A drop
+// in dashPrefs and both the legacy spawn binder and Preact clone overlay wire
+// it to their resizable card. A drop
 // here means the modal would silently forget its size across reopens.
 func TestDashboardJS_ModalResizePersisted(t *testing.T) {
 	for _, needle := range []string{
 		"function makeModalResizable(",                                  // helper exists (helpers.js)
 		"makeModalResizable($('#agent-spawn-modal .cron-create-modal')", // spawn modal wires it
-		"makeModalResizable($('#clone-agent-modal .cron-create-modal')", // clone modal wires it
+		`resizeKey="tclaude.dash.modalSize.clone-agent"`,                // Preact clone modal wires it
 		"makeModalResizable(dialogRef.current, resizeKey)",              // Preact management overlays wire it
 		`resizeKey: 'tclaude.dash.modalSize.templates-manage'`,
 		`fitContent: false`,

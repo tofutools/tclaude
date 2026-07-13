@@ -1,15 +1,15 @@
-// modal-spawn.js — the spawn / clone / reincarnate agent modals.
+// modal-spawn.js — the agent spawn modal.
 //
 // Extracted from dashboard.js in the Stage 2 module split. The spawn and
-// clone modals embed the worktree picker from modal-link-wt.
+// spawn modal embeds the worktree picker from modal-link-wt.
 
-import { $, $$, esc, shortId, syncSelectTitle, populateModelSelect, setModelSelectValue, syncCustomModelRow, MODEL_CUSTOM_VALUE, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, pickDirectory } from './helpers.js';
+import { $, esc, shortId, syncSelectTitle, populateModelSelect, setModelSelectValue, syncCustomModelRow, MODEL_CUSTOM_VALUE, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, pickDirectory } from './helpers.js';
 import { dashPrefs } from './prefs.js';
 import { loadProfiles, getProfile, getDashDefaultProfile } from './profiles.js';
 import { openProfileEditor } from './modal-profiles.js';
 import { groupDefaultContext } from './modal-templates.js';
 import {
-  WT_NEW, wtToggleNew, wtLoad, bindWtPicker, wtResolve, wtResolveCwd,
+  WT_NEW, wtToggleNew, wtLoad, bindWtPicker, wtResolve,
 } from './modal-link-wt.js';
 // lastSnapshot lives in dashboard.js; refresh() / toast in refresh.js.
 // Imported back — benign cycles (see render.js); TDZ-safe.
@@ -1691,238 +1691,6 @@ function bindAgentSpawnModal() {
   bindBackdropDiscard('agent-spawn-modal', closeAgentSpawnModal);
 }
 
-// ---- Clone agent modal --------------------------------------------------
-//
-// Submit POSTs to /api/agents/{conv}/clone with `{follow_up, no_copy_conv}`.
-// Follow-up is optional; newlines are stripped client-side because the
-// server rejects them (tmux send-keys would split them into multiple
-// submits).
-
-function openCloneAgentModal(conv, label, cwd) {
-  cwd = cwd || '';
-  const meta = $('#clone-agent-meta');
-  const src = label || shortId(conv);
-  meta.textContent = cwd ? `source: ${src}  ·  ${cwd}` : `source: ${src}`;
-  $('#clone-agent-followup').value = '';
-  $('#clone-agent-copy-conv').checked = true;
-  $('#clone-agent-wt-branch').value = '';
-  showModalError('clone-agent-error', '');
-  $('#clone-agent-modal').dataset.conv = conv;
-  $('#clone-agent-modal').dataset.label = label || '';
-  $('#clone-agent-modal').dataset.cwd = cwd;
-  // The picker lists worktrees of the source agent's repo; "+ create"
-  // forks a new one and the clone spawns there.
-  wtLoad('clone-agent', cwd, '(no worktree — same directory as source)');
-  $('#clone-agent-modal').classList.add('show');
-  setTimeout(() => $('#clone-agent-followup').focus(), 0);
-}
-
-function closeCloneAgentModal() {
-  $('#clone-agent-modal').classList.remove('show');
-}
-
-// normaliseFollowUp collapses newlines/tabs/runs-of-whitespace to a
-// single space and trims. Server rejects newlines outright; this
-// keeps the textarea ergonomic while staying safe.
-function normaliseFollowUp(s) {
-  return String(s || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
-}
-
-// Server's spawn poll is 30 s (reincarnateSpawnTimeout in clone.go).
-// Give a small grace window before the UI surfaces a timeout so a
-// just-barely-late response is treated as success, not error.
-const CLONE_FETCH_TIMEOUT_MS = 35_000;
-
-async function submitCloneAgent() {
-  const modal = $('#clone-agent-modal');
-  const conv = modal.dataset.conv;
-  const label = modal.dataset.label || shortId(conv);
-  const followUp = normaliseFollowUp($('#clone-agent-followup').value);
-  const copyConv = $('#clone-agent-copy-conv').checked;
-  const errEl = $('#clone-agent-error');
-  showModalError(errEl, '');
-  const submitBtn = $('#clone-agent-submit');
-  submitBtn.disabled = true;
-  submitBtn.textContent = 'Cloning…';
-  // AbortController gives us a clean "the server is hung" path instead
-  // of leaving the modal in 'Cloning…' until the browser's default
-  // network timeout (which can be minutes). The window is generous
-  // because the server itself polls up to 30 s for the new tmux
-  // session to register.
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), CLONE_FETCH_TIMEOUT_MS);
-  try {
-    // Resolve the worktree picker → optional cwd override. An empty
-    // result means "inherit the source's cwd" (historical behaviour).
-    const cwd = await wtResolveCwd('clone-agent', modal.dataset.cwd || '', '');
-    const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/clone`, {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ follow_up: followUp, no_copy_conv: !copyConv, cwd }),
-      signal: ctrl.signal,
-    });
-    if (!r.ok) {
-      showModalError(errEl, (await r.text()) || `HTTP ${r.status}`);
-      return;
-    }
-    let payload = {};
-    try { payload = await r.json(); } catch (_) {}
-    closeCloneAgentModal();
-    const dst = payload.new_conv ? ' → ' + shortId(payload.new_conv) : '';
-    if (payload.warning) {
-      // Server returned 200 but flagged a partial-success — keep the
-      // user informed instead of silently celebrating; isErr=true
-      // styles the toast as a warning.
-      toast(`cloned ${label}${dst} (warning: ${payload.warning})`, true);
-    } else {
-      toast(`cloned ${label}${dst}`);
-    }
-    refresh();
-  } catch (err) {
-    if (err && err.name === 'AbortError') {
-      showModalError(errEl, `clone timed out after ${CLONE_FETCH_TIMEOUT_MS / 1000}s — the new agent may still come online; check ~/.tclaude/output.log and refresh in a moment.`);
-    } else {
-      showModalError(errEl, (err && err.message) || String(err));
-    }
-  } finally {
-    clearTimeout(timer);
-    submitBtn.disabled = false;
-    submitBtn.textContent = 'Clone';
-  }
-}
-
-function bindCloneAgentModal() {
-  $('#clone-agent-cancel').addEventListener('click', closeCloneAgentModal);
-  $('#clone-agent-submit').addEventListener('click', submitCloneAgent);
-  // Ctrl/Cmd+Enter clones — same hotkey as the spawn dialog.
-  bindModalSubmitHotkey($('#clone-agent-modal'), $('#clone-agent-submit'));
-  bindWtPicker('clone-agent');
-  bindSelectTitles($('#clone-agent-modal'));
-  makeModalResizable($('#clone-agent-modal .cron-create-modal'), 'tclaude.dash.modalSize.clone-agent');
-  bindBackdropDiscard('clone-agent-modal', closeCloneAgentModal);
-}
-
-// ---- Reincarnate agent modal --------------------------------------------
-//
-// Two modes, chosen by the radiogroup; both POST to
-// /api/agents/{conv}/reincarnate:
-//   - "self" (the DEFAULT): POST {mode:'self', focus_hint?} — the
-//     daemon messages the agent to reincarnate itself. focus_hint is
-//     OPTIONAL, so Submit is always enabled.
-//   - "force": POST {mode:'force', follow_up} — the immediate
-//     daemon-driven reincarnation. follow_up is REQUIRED, so Submit
-//     is disabled until the follow-up textarea has content.
-
-function reincarnateMode() {
-  const checked = $('input[name=reincarnate-mode]:checked');
-  return (checked && checked.value) || 'self';
-}
-
-// updateReincarnateMode shows the fields for the selected mode,
-// relabels Submit, and recomputes its disabled state. Self-mode's
-// Submit is always enabled (the focus hint is optional); force-mode's
-// is gated on a non-empty follow-up.
-function updateReincarnateMode() {
-  const isForce = reincarnateMode() === 'force';
-  $('#reincarnate-self-fields').hidden = isForce;
-  $('#reincarnate-force-fields').hidden = !isForce;
-  const submitBtn = $('#reincarnate-agent-submit');
-  submitBtn.textContent = isForce ? 'Force reincarnate' : 'Ask agent';
-  submitBtn.disabled = isForce && !normaliseFollowUp($('#reincarnate-agent-followup').value);
-}
-
-function openReincarnateAgentModal(conv, label) {
-  const meta = $('#reincarnate-agent-meta');
-  meta.textContent = label ? `target: ${label}` : `target: ${shortId(conv)}`;
-  $('#reincarnate-agent-followup').value = '';
-  $('#reincarnate-agent-focus').value = '';
-  showModalError('reincarnate-agent-error', '');
-  // Every open resets to the self-reincarnate default.
-  const selfRadio = $('input[name=reincarnate-mode][value=self]');
-  if (selfRadio) selfRadio.checked = true;
-  updateReincarnateMode();
-  $('#reincarnate-agent-modal').dataset.conv = conv;
-  $('#reincarnate-agent-modal').dataset.label = label || '';
-  $('#reincarnate-agent-modal').classList.add('show');
-  setTimeout(() => $('#reincarnate-agent-focus').focus(), 0);
-}
-
-function closeReincarnateAgentModal() {
-  $('#reincarnate-agent-modal').classList.remove('show');
-}
-
-async function submitReincarnateAgent() {
-  const modal = $('#reincarnate-agent-modal');
-  const conv = modal.dataset.conv;
-  const label = modal.dataset.label || shortId(conv);
-  const errEl = $('#reincarnate-agent-error');
-  showModalError(errEl, '');
-  const mode = reincarnateMode();
-  let body;
-  if (mode === 'force') {
-    const followUp = normaliseFollowUp($('#reincarnate-agent-followup').value);
-    if (!followUp) {
-      showModalError(errEl, 'follow-up is required for force reincarnate');
-      return;
-    }
-    body = { mode: 'force', follow_up: followUp };
-  } else {
-    // Focus hint is optional — send it trimmed, or omit when blank.
-    const hint = $('#reincarnate-agent-focus').value.trim();
-    body = { mode: 'self' };
-    if (hint) body.focus_hint = hint;
-  }
-  const submitBtn = $('#reincarnate-agent-submit');
-  submitBtn.disabled = true;
-  submitBtn.textContent = mode === 'force' ? 'Reincarnating…' : 'Asking…';
-  try {
-    const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/reincarnate`, {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!r.ok) {
-      showModalError(errEl, (await r.text()) || `HTTP ${r.status}`);
-      return;
-    }
-    let payload = {};
-    try { payload = await r.json(); } catch (_) {}
-    closeReincarnateAgentModal();
-    if (mode === 'force') {
-      const suffix = payload.new_title ? ' → ' + payload.new_title : (payload.new_conv ? ' → ' + shortId(payload.new_conv) : '');
-      toast(`reincarnated ${label}${suffix}`);
-    } else {
-      toast(`asked ${label} to reincarnate itself`);
-    }
-    refresh();
-  } catch (err) {
-    showModalError(errEl, (err && err.message) || String(err));
-  } finally {
-    // Recompute label + disabled state for whatever mode is selected
-    // (relevant only on the error path — success closed the modal).
-    updateReincarnateMode();
-  }
-}
-
-function bindReincarnateAgentModal() {
-  $('#reincarnate-agent-cancel').addEventListener('click', closeReincarnateAgentModal);
-  $('#reincarnate-agent-submit').addEventListener('click', submitReincarnateAgent);
-  // Ctrl/Cmd+Enter submits — same hotkey as the spawn dialog. The button
-  // is disabled in force-mode until a follow-up is typed, and the helper
-  // no-ops on a disabled button, so the hotkey honours that gate too.
-  bindModalSubmitHotkey($('#reincarnate-agent-modal'), $('#reincarnate-agent-submit'));
-  $('#reincarnate-agent-followup').addEventListener('input', updateReincarnateMode);
-  $$('input[name=reincarnate-mode]').forEach(rdo => {
-    rdo.addEventListener('change', () => {
-      updateReincarnateMode();
-      const focusEl = reincarnateMode() === 'force'
-        ? $('#reincarnate-agent-followup') : $('#reincarnate-agent-focus');
-      setTimeout(() => focusEl.focus(), 0);
-    });
-  });
-  bindBackdropDiscard('reincarnate-agent-modal', closeReincarnateAgentModal);
-}
-
 // Renaming an agent is no longer a modal of its own — it folded into
 // the per-agent edit panel (editMemberModal, refresh.js) and the
 // click-to-edit name cell (the rename-name handler, row-actions.js).
@@ -1930,6 +1698,4 @@ function bindReincarnateAgentModal() {
 
 export {
   openAgentSpawnModal, bindAgentSpawnModal,
-  openCloneAgentModal, bindCloneAgentModal,
-  openReincarnateAgentModal, bindReincarnateAgentModal,
 };
