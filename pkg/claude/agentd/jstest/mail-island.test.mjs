@@ -21,6 +21,7 @@ function controllerFor(signal) {
     togglePageSelection: noop, deleteOneMessage: noop, deleteSelectedMessages: noop,
     setMessagesRead: noop, markAllAgentRead: noop, goToPage: noop, setPageSize: noop,
     decideAccess: noop, consumeAccessHighlight: noop,
+    renderMailTab: noop,
     highlightedAccessRequest: () => null,
     mailboxLabel: (mailbox) => mailbox.title || (mailbox.kind === 'human' ? 'Human notifications' : mailbox.id),
     mailboxTitleAttr: (mailbox) => mailbox.title || mailbox.id,
@@ -56,6 +57,30 @@ function populated() {
     } })],
   };
 }
+
+test('Messages loads immediately when its tab becomes active or is reselected', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { MailApp } = await harness.importDashboardModule('js/mail-island.js');
+  const { dashboardState } = await harness.importDashboardModule('js/snapshot-store.js');
+  const state = harness.signals.signal(populated());
+  const controller = controllerFor(state);
+  let loads = 0;
+  controller.renderMailTab = () => { loads += 1; };
+  const mounted = await harness.mount(harness.html`<${MailApp} controller=${controller} />`);
+
+  assert.equal(loads, 0);
+  await harness.act(() => { dashboardState.setActiveTab('messages'); });
+  assert.equal(loads, 1);
+  await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent(
+    'tclaude:tab-reselected', { detail: { tab: 'messages' } },
+  )));
+  assert.equal(loads, 2);
+  await mounted.unmount();
+  harness.document.dispatchEvent(new harness.window.CustomEvent(
+    'tclaude:tab-reselected', { detail: { tab: 'messages' } },
+  ));
+  assert.equal(loads, 2);
+});
 
 test('Messages island preserves native controls, CSS hooks, focus, reader, and keyed rows across incoming updates', async (t) => {
   const harness = await createPreactHarness(t);

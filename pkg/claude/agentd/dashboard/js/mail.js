@@ -461,9 +461,10 @@ function pruneSelections() {
 
 // --- rendering ------------------------------------------------------
 
-// renderMailTab is the entry the refresh loop calls every 2s and on tab
-// activation: repaint from cache (cheap, keeps the filter responsive),
-// and pull fresh data when the tab is actually being viewed.
+// renderMailTab is the entry the refresh loop calls every 2s and the Messages
+// island calls when dashboardState activates its tab: repaint from cache
+// (cheap, keeps the filter responsive), and pull fresh data when the tab is
+// actually being viewed.
 function renderMailTab() {
   paintMail();
   if (mailTabActive()) loadMail();
@@ -1384,8 +1385,6 @@ function initMail() {
   const controller = new AbortController();
   const { signal } = controller;
   const disposeResize = initMailResize();
-  $$('nav [data-tab="messages"]').forEach(button =>
-    button.addEventListener('click', renderMailTab, { signal }));
   $('#access-banner-review')?.addEventListener('click', () => focusAccessRequest(), { signal });
   document.addEventListener('tclaude:wizard', paintMail, { signal });
   return () => {
