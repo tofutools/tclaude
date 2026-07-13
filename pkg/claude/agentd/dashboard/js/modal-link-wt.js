@@ -4,7 +4,7 @@
 // this modal and the spawn modals). Extracted from dashboard.js in the
 // Stage 2 module split.
 
-import { $, esc, shortCwd, syncSelectTitle } from './helpers.js';
+import { $, esc, shortCwd, syncSelectTitle, themeWords } from './helpers.js';
 // lastSnapshot lives in dashboard.js; refresh() / toast in refresh.js;
 // renderLinksTab in tabs.js. Imported back — benign cycles (see render.js);
 // TDZ-safe (used only at runtime, never at top-level eval).
@@ -59,18 +59,18 @@ function openLinkModal(opts) {
   const submit = $('#link-modal-submit');
   const bidirRow = $('#link-modal-bidir-row');
   if (state === 'edit') {
-    title.textContent = 'Edit link mode';
+    title.innerHTML = themeWords('Edit link mode', 'Rebind an arcane channel');
     meta.textContent = `#${opts.linkID} · ${preset.from} → ${preset.to}`;
     meta.style.display = '';
-    submit.textContent = 'Save changes';
+    submit.innerHTML = themeWords('Save changes', 'Rebind channel');
     // From/To are immutable when editing — show as disabled.
     fromSel.disabled = true;
     toSel.disabled = true;
     bidirRow.style.display = 'none';
   } else {
-    title.textContent = 'Add inter-group link';
+    title.innerHTML = themeWords('Add inter-group link', 'Weave an arcane channel');
     meta.style.display = 'none';
-    submit.textContent = 'Create link';
+    submit.innerHTML = themeWords('Create link', 'Weave channel');
     fromSel.disabled = !!preset.from; // fix FROM when invoked from a group card
     toSel.disabled = false;
     bidirRow.style.display = '';
