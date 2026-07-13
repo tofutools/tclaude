@@ -646,6 +646,9 @@ func TestDashboardAssets_DirectoryPickerWired(t *testing.T) {
 		"#cfg-dashboard-default-web-directory-picker",
 		"dashboard.default_directory_picker = 'web'",
 		`id="directory-picker-modal"`,
+		`#directory-picker-modal {`,
+		`z-index: 10002`,
+		`.toast.error { border-left-color: #f85149; z-index: 10003; }`,
 		"body.wizard .directory-picker-modal",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {

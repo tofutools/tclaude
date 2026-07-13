@@ -14,6 +14,11 @@ function pageSize(list) {
   return Math.max(1, Math.floor(list.clientHeight / itemHeight));
 }
 
+function withTrailingSlash(path) {
+  if (!path || path === '/') return path;
+  return `${path.replace(/\/+$/, '')}/`;
+}
+
 export function directoryFilterTerm(inputPath, viewPath) {
   if (!viewPath) return null;
   const normalizedView = viewPath === '/' ? '/' : `${viewPath.replace(/\/+$/, '')}/`;
@@ -42,16 +47,19 @@ export function DirectoryPickerApp({ state, actions }) {
   const listRef = useRef(null);
   const activeEntryRef = useRef(null);
   const generation = useRef(0);
+  const inputRevision = useRef(0);
   const [view, setView] = useState(null);
   const [path, setPath] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
-  const browse = useCallback(async (target) => {
+  const browse = useCallback(async (target, appendSlash = false) => {
     const requested = String(target || '').trim();
     const currentGeneration = ++generation.current;
-    setPath(requested);
+    const revision = inputRevision.current;
+    const displayedRequest = appendSlash ? withTrailingSlash(requested) : requested;
+    setPath(displayedRequest);
     setActiveIndex(0);
     setBusy(true);
     setError('');
@@ -59,10 +67,17 @@ export function DirectoryPickerApp({ state, actions }) {
       const result = await actions.browse(requested);
       if (currentGeneration !== generation.current) return;
       setView(result);
-      setPath(result.path || requested);
+      const openedPath = result.path || requested;
+      if (inputRevision.current === revision) {
+        setPath(appendSlash ? withTrailingSlash(openedPath) : openedPath);
+      } else if (appendSlash && pathRef.current?.value.startsWith(displayedRequest)) {
+        const suffix = pathRef.current.value.slice(displayedRequest.length);
+        setPath(`${withTrailingSlash(openedPath)}${suffix}`);
+      }
       setActiveIndex(0);
     } catch (browseError) {
       if (currentGeneration !== generation.current) return;
+      if (inputRevision.current === revision) setPath(requested);
       setError(browseError?.message || String(browseError));
     } finally {
       if (currentGeneration === generation.current) setBusy(false);
@@ -93,7 +108,7 @@ export function DirectoryPickerApp({ state, actions }) {
   }, [selectedIndex, filterTerm, view?.path]);
 
   if (!request) return null;
-  const validated = !!view?.path && path === view.path;
+  const validated = !!view?.path && filterTerm === '';
   const typedOtherPath = !!view?.path && filterTerm === null && path.trim() !== view.path;
   const count = filtering
     ? `${visibleDirectories.length} of ${directories.length} folders`
@@ -112,11 +127,12 @@ export function DirectoryPickerApp({ state, actions }) {
     <h3 id="directory-picker-title">${request.title}</h3>
     <form class="directory-picker-path" onSubmit=${(event) => {
       event.preventDefault();
-      void browse(activeDirectory?.path || path);
+      void browse(activeDirectory?.path || path, true);
     }}>
       <label for="directory-picker-path">Host path</label>
       <input ref=${pathRef} id="directory-picker-path" value=${path}
         onInput=${(event) => {
+          inputRevision.current += 1;
           setPath(event.currentTarget.value);
           setActiveIndex(0);
         }}
@@ -153,9 +169,9 @@ export function DirectoryPickerApp({ state, actions }) {
     </form>
     <div class="directory-picker-nav">
       <button type="button" disabled=${busy || !view?.parent}
-        onClick=${() => void browse(view?.parent)}>↑ Parent</button>
+        onClick=${() => void browse(view?.parent, true)}>↑ Parent</button>
       <button type="button" disabled=${busy || !view?.home || view?.home === view?.path}
-        onClick=${() => void browse(view?.home)}>⌂ Home</button>
+        onClick=${() => void browse(view?.home, true)}>⌂ Home</button>
       <span class="directory-picker-count" role="status" aria-live="polite">${view ? count : ''}</span>
     </div>
     ${typedOtherPath && html`<div class="directory-picker-hint">Press Enter to open the typed path.</div>`}
@@ -172,7 +188,7 @@ export function DirectoryPickerApp({ state, actions }) {
           role=${selecting ? 'option' : undefined}
           aria-selected=${selecting ? active ? 'true' : 'false' : undefined}
           tabIndex=${selecting ? -1 : undefined}
-          onClick=${() => void browse(directory.path)}
+          onClick=${() => void browse(directory.path, true)}
         ><span aria-hidden="true">📁</span><span>${directory.name}</span></button></div>`;
       })}
       ${view && !visibleDirectories.length && html`<p class="directory-picker-empty">

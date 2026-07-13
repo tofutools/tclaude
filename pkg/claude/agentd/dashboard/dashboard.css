@@ -2421,7 +2421,7 @@ details[data-group-key][open] > summary .group-sandbox-profile {
    a poll succeeds again. Deliberately NOT .modal-overlay: the auto-refresh
    must keep polling beneath it to notice the reconnect, so it stays off the
    refreshSuspended() selector. z-index sits above every modal/palette/toast
-   (ceiling 10001) so nothing can paint over the "you are disconnected"
+   (ceiling 10003) so nothing can paint over the "you are disconnected"
    message. */
 .disconnect-overlay {
   position: fixed; inset: 0; z-index: 10050;
@@ -3130,7 +3130,7 @@ body.wizard .group-pending-title-wizard { display: inline; }
   transition: opacity 0.18s ease, transform 0.18s ease;
 }
 .toast.show { opacity: 1; transform: translateY(0); pointer-events: auto; }
-.toast.error { border-left-color: #f85149; }
+.toast.error { border-left-color: #f85149; z-index: 10003; }
 .filter-bar {
   display: flex; align-items: center; gap: 8px;
   margin: 0 0 12px 0;
@@ -3933,6 +3933,11 @@ body.wizard .group-pending-title-wizard { display: inline; }
 
 /* Shared web directory chooser. It is a bounded Preact island mounted outside
    feature tabs so every Browse… caller can use it, including remote browsers. */
+#directory-picker-modal {
+  /* Above every interactive/cosmetic surface, while error toasts (10003) and
+     the disconnected curtain (10050) remain visible over the picker. */
+  z-index: 10002;
+}
 .directory-picker-modal {
   background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
   box-shadow: 0 8px 24px rgba(0,0,0,.5); color: #c9d1d9;
