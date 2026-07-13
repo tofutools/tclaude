@@ -72,7 +72,7 @@ function composePreview(applied, byName = {}) {
 async function refreshSpawnSandboxProfileUI(groupName = '') {
   const select = $('#agent-spawn-sandbox-profile'); const preview = $('#agent-spawn-sandbox-profile-preview');
   if (!select || !preview) return;
-  const setPreview = (text) => { select.title = text; preview.textContent = text; };
+  const setPreview = (text) => { preview.textContent = text; };
   const generation = ++spawnPreviewGeneration; const selected = select.value;
   try {
     await loadSandboxProfiles(); if (generation !== spawnPreviewGeneration) return;

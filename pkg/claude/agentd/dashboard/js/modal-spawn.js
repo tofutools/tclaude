@@ -256,17 +256,15 @@ function applySpawnHarness(harnessName) {
   applyRememberedEffort(activeSpawnModelEl().value);
 }
 
-// applySpawnSandboxHint puts the selected mode's catalog description on the
-// Sandbox selector as a native hover tooltip. A visually-hidden live copy keeps
-// the same description available to keyboard and screen-reader users without
-// making every spawn dialog reserve a help line. Passing null clears both.
+// applySpawnSandboxHint puts the selected mode's catalog description in the
+// Sandbox selector's hover/focus tooltip. The same node is its live accessible
+// description, without making every spawn dialog reserve a help line.
 function applySpawnSandboxHint(h) {
   const selectEl = $('#agent-spawn-sandbox');
   const hintEl = $('#agent-spawn-sandbox-hint');
   if (!selectEl || !hintEl) return;
   const help = (h && h.sandbox_mode_help) || {};
   const text = help[selectEl.value] || '';
-  selectEl.title = text;
   hintEl.textContent = text;
 }
 
