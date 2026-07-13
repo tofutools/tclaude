@@ -26,17 +26,16 @@ import { openMessageCreateModal, openPermEditModal, openGroupPermEditor, openGro
 import { openHumanReplyModal } from './modal-human-reply.js';
 import { openGroupContextModal, openGroupCloneModal, openFromGroupModal } from './modal-templates.js';
 import { openLinkModal, openLinksManageModal } from './modal-link-wt.js';
-import { openNestModal } from './modal-nest.js';
+import {
+  openCloneAgentDialog, openNestGroupDialog, openReincarnateAgentDialog,
+} from './action-dialog-controller.js';
 import { openExportModal } from './modal-export.js';
 import { openTermModal } from './modal-term.js';
 import {
   openTerminalPane, closeTerminalsForConvs, focusTerminalForConv,
   openWebWindowPane, openWebTermPane, openGroupWebTermPane,
 } from './terminals-tab.js';
-import {
-  openAgentSpawnModal, openCloneAgentModal,
-  openReincarnateAgentModal,
-} from './modal-spawn.js';
+import { openAgentSpawnModal } from './modal-spawn.js';
 // openMailbox brings the Messages tab forward + selects a folder; mail.js
 // doesn't import row-actions.js, so this is a one-way edge (no cycle).
 import { openMailbox } from './mail-bridge.js';
@@ -1007,14 +1006,14 @@ function bindRowActions() {
           // Open the clone modal pre-populated with this agent. The
           // modal handles the POST + refresh. data-cwd seeds the
           // worktree picker with the source agent's repo.
-          openCloneAgentModal(agent, label, btn.getAttribute('data-cwd') || '');
+          openCloneAgentDialog(agent, label, btn.getAttribute('data-cwd') || '');
           return;
         }
         case 'reincarnate': {
           // Open the reincarnate modal pre-populated with this
           // agent. The modal enforces the required follow_up and
           // handles the POST + refresh.
-          openReincarnateAgentModal(agent, label);
+          openReincarnateAgentDialog(agent, label);
           return;
         }
         case 'export-summary': {
@@ -1472,7 +1471,7 @@ function bindRowActions() {
         case 'nest-group': {
           // Open the parent picker (n-level groups-in-groups, JOH-392). The
           // modal owns its PUT + toast + refresh.
-          openNestModal({ group });
+          openNestGroupDialog({ group });
           return;
         }
         case 'unnest-group': {

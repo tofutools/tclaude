@@ -982,6 +982,7 @@
   </div>
 </div>
 <div id="management-root"></div>
+<div id="action-dialog-root"></div>
 <!-- Generic "clone a preset under a new name" dialog for the palette dock's
      card ⚙ → Clone menu item (profiles + roles). Title / blurb / submit copy are
      JS-driven (modal-clone.js openCloneModal via wizWord) so one dialog serves
@@ -1000,22 +1001,6 @@
       <button id="clone-modal-cancel" type="button">Cancel</button>
       <span class="spacer"></span>
       <button id="clone-modal-submit" class="primary" type="button">Create copy</button>
-    </div>
-  </div>
-</div>
-<div class="modal-overlay" id="group-nest-modal">
-  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="group-nest-title">
-    <h3 id="group-nest-title"></h3>
-    <div class="modal-meta">Nest this group under another so it draws inside it on the board — collapse the parent to tuck the whole subgroup away, expand it to bring it back. Board layout only: nesting doesn't change messaging, permissions or spawns. A group can't nest under itself or one of its own descendants.</div>
-    <label class="cron-create-row">
-      <span class="cron-create-label">Parent</span>
-      <select id="group-nest-parent"></select>
-    </label>
-    <div class="cron-create-error" id="group-nest-error"></div>
-    <div class="modal-buttons">
-      <button id="group-nest-cancel" type="button">Cancel</button>
-      <span class="spacer"></span>
-      <button id="group-nest-submit" class="primary" type="button">Save</button>
     </div>
   </div>
 </div>
@@ -1466,77 +1451,6 @@
       <button id="agent-spawn-cancel" type="button">Cancel</button>
       <span class="spacer"></span>
       <button id="agent-spawn-submit" class="primary" type="button">Spawn</button>
-    </div>
-  </div>
-</div>
-<div class="modal-overlay" id="clone-agent-modal">
-  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="clone-agent-title">
-    <h3 id="clone-agent-title">Clone agent</h3>
-    <div class="modal-meta" id="clone-agent-meta"></div>
-    <label class="cron-create-row">
-      <span class="cron-create-label">Follow-up</span>
-      <textarea id="clone-agent-followup" rows="3" placeholder="optional — typed into the new pane as a handoff message (no newlines, ≤4096 chars)" spellcheck="false"></textarea>
-    </label>
-    <label class="cron-create-enabled" title="When checked, copies the source conv.jsonl onto the clone so it starts with the full history. Uncheck for a fresh CC instance that only inherits identity.">
-      <input id="clone-agent-copy-conv" type="checkbox" checked /> Copy conversation history (jsonl)
-    </label>
-    <label class="cron-create-row">
-      <span class="cron-create-label">Worktree</span>
-      <select id="clone-agent-worktree"><option value="">(no worktree — same directory as source)</option></select>
-    </label>
-    <label class="cron-create-row" id="clone-agent-wt-new-row" style="display:none">
-      <span class="cron-create-label">New branch</span>
-      <input id="clone-agent-wt-branch" type="text" placeholder="branch name for the new worktree" autocomplete="off" spellcheck="false" />
-    </label>
-    <label class="cron-create-row" id="clone-agent-wt-base-row" style="display:none">
-      <span class="cron-create-label">Base branch</span>
-      <select id="clone-agent-wt-base"></select>
-    </label>
-    <p class="wt-orphan-warn" id="clone-agent-wt-orphan-hint" style="display:none">
-      ⚠ This repo has no commits yet, so the worktree will be cut as an
-      <strong>orphan branch</strong> (no base to branch off). That's fine for
-      bootstrapping a fresh repo — once you make the first commit, later
-      worktrees branch off it normally.
-    </p>
-    <div class="cron-create-error" id="clone-agent-error"></div>
-    <div class="modal-buttons">
-      <button id="clone-agent-cancel" type="button">Cancel</button>
-      <span class="spacer"></span>
-      <button id="clone-agent-submit" class="primary" type="button">Clone</button>
-    </div>
-  </div>
-</div>
-<div class="modal-overlay" id="reincarnate-agent-modal">
-  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="reincarnate-agent-title">
-    <h3 id="reincarnate-agent-title">Reincarnate agent</h3>
-    <div class="modal-meta" id="reincarnate-agent-meta"></div>
-    <div class="reincarnate-mode" id="reincarnate-mode" role="radiogroup" aria-label="Reincarnate mode">
-      <label><input type="radio" name="reincarnate-mode" value="self" checked />
-        <span>Ask the agent to reincarnate itself</span>
-        <span class="opt-note">— graceful. Sends the agent a message; at its next clean point it writes its own handoff, collecting the context that matters, then reincarnates. May take a moment. Recommended.</span></label>
-      <label><input type="radio" name="reincarnate-mode" value="force" />
-        <span>Force reincarnate now</span>
-        <span class="opt-note">— immediate. The daemon spawns the successor and soft-exits the original right away. The agent gets no chance to write its own handoff — use only when it is stuck or unresponsive.</span></label>
-    </div>
-    <div id="reincarnate-self-fields">
-      <p style="margin:4px 0; font-size:12px; color:#7d8590">The agent is messaged and reincarnates itself at a clean point. Because it collects its own context, the successor inherits a handoff that reflects the agent's actual working state.</p>
-      <label class="cron-create-row">
-        <span class="cron-create-label">Focus hint</span>
-        <textarea id="reincarnate-agent-focus" rows="3" maxlength="4000" placeholder="optional — what should the agent concentrate on while gathering context for its handoff? e.g. focus on the open questions about X, or capture the current state of subsystem Y. Leave blank for a general handoff." spellcheck="false"></textarea>
-      </label>
-    </div>
-    <div id="reincarnate-force-fields" hidden>
-      <p style="margin:4px 0; font-size:12px; color:#7d8590">Spawns a fresh CC instance that inherits identity (groups, perms, ownership). The original is soft-exited. The successor's title is auto-renamed to <code>&lt;prev&gt;-r-&lt;N&gt;</code>.</p>
-      <label class="cron-create-row">
-        <span class="cron-create-label">Follow-up</span>
-        <textarea id="reincarnate-agent-followup" rows="4" placeholder="required — what should the successor pick up? Summarise the current task, where the relevant files are, what's next (no newlines, ≤16384 chars)" spellcheck="false"></textarea>
-      </label>
-    </div>
-    <div class="cron-create-error" id="reincarnate-agent-error"></div>
-    <div class="modal-buttons">
-      <button id="reincarnate-agent-cancel" type="button">Cancel</button>
-      <span class="spacer"></span>
-      <button id="reincarnate-agent-submit" class="primary" type="button">Ask agent</button>
     </div>
   </div>
 </div>
