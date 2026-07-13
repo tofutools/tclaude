@@ -8559,24 +8559,19 @@ body.wizard #links-manage-modal #links-list .row-actions button.danger:hover {
 
 /* The compact add-link action lives inside each expanded party card rather
    than either links modal, so it needs its own group-section hook. It keeps
-   the base button's small footprint while borrowing the gilded channel action
-   from the management overlay. */
+   the base button's small footprint and uses secondary wizard chrome: violet
+   and parchment at rest, with a restrained gold accent only on hover. */
 body.wizard .group-links-section > button {
-  /* The inherited label is 11px, so keep even the light gradient stop above
-     4.5:1 against the parchment text (#f3e6c0). */
-  background: linear-gradient(180deg, #654c98 0%, #3a2a63 100%);
-  border-color: #d9b45a;
-  color: #f3e6c0;
+  background: #241b3d;
+  border-color: #7a5db0;
+  color: #e7d9f5;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 0.3px;
-  text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
-  box-shadow: 0 0 8px rgba(122, 93, 176, 0.35);
+  letter-spacing: 0.2px;
 }
 body.wizard .group-links-section > button:hover {
-  background: linear-gradient(180deg, #6d52a4 0%, #4a367d 100%);
-  border-color: #f3e6c0;
-  color: #fff4d6;
-  box-shadow: 0 0 12px rgba(169, 123, 214, 0.65);
+  background: #3a2a63;
+  border-color: #d9b45a;
+  color: #f3e6c0;
 }
 
 body.wizard #link-modal .cron-create-modal {
