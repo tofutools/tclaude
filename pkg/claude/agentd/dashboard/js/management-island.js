@@ -7,6 +7,8 @@ import { dirtyDraft, harnessByName, harnessDefaults, profileDraft, profilePayloa
 import { registerManagementController } from './management-controller.js';
 import { sandboxProfileSummary } from './sandbox-profiles-data.js';
 import { makeModalResizable, pickDirectory } from './helpers.js';
+import { lineDiff } from './line-diff.js';
+import { useDialogFocus } from './dialog-focus.js';
 import { wizWord } from './slop.js';
 
 const html = htm.bind(h);
@@ -196,6 +198,41 @@ function SandboxImport({ current, state, actions, confirmDiscard }) {
     <div role="alert" class="cron-create-error">${error}</div><div class="modal-buttons"><button onClick=${state.closeDialog}>Cancel</button><span class="spacer"></span><button class="primary" disabled=${busy || !preview} onClick=${submit}>${busy === 'import' ? 'Importing…' : 'Import'}</button></div></${Overlay}>`;
 }
 
+function SandboxDiffModal({ model, close }) {
+  const confirmRef = useRef(null);
+  const { dialogRef } = useDialogFocus({ open: !!model, initialFocusRef: confirmRef, onEscape: () => close(false) });
+  useEffect(() => {
+    if (!model) return undefined;
+    const editor = document.querySelector('#sandbox-profile-editor-modal');
+    const editorDialog = editor?.querySelector('[role="dialog"]');
+    if (!editor) return undefined;
+    editor.inert = true;
+    editor.setAttribute('aria-hidden', 'true');
+    editorDialog?.setAttribute('aria-modal', 'false');
+    return () => {
+      editor.inert = false;
+      editor.removeAttribute('aria-hidden');
+      editorDialog?.setAttribute('aria-modal', 'true');
+    };
+  }, [model]);
+  if (!model) return null;
+  const beforeRaw = model.before ? JSON.stringify(model.before, null, 2) : '';
+  const afterRaw = JSON.stringify(model.after, null, 2);
+  const diff = model.before ? lineDiff(beforeRaw, afterRaw) : afterRaw.split('\n').map((s) => ({ t: 'add', s }));
+  const adds = diff.filter((line) => line.t === 'add').length;
+  const dels = diff.filter((line) => line.t === 'del').length;
+  const sign = { add: '+', del: '\u2212', ctx: ' ' };
+  const cancelOutside = (event) => { if (event.target === event.currentTarget) close(false); };
+  return html`<div ref=${dialogRef} id="sandbox-profile-diff-modal" class="modal-overlay show" role="dialog" aria-modal="true" aria-labelledby="sandbox-profile-diff-title" onClick=${cancelOutside}>
+    <div class="config-diff-modal">
+      <h3 id="sandbox-profile-diff-title">Confirm sandbox profile changes</h3>
+      <p id="sandbox-profile-diff-sub" class="cfg-diff-sub">${model.before ? `${adds} line(s) added, ${dels} removed — server-normalized preview` : `${adds} line(s) added — new server-normalized profile`}</p>
+      <div id="sandbox-profile-diff-body" class="config-diff">${diff.map((line, index) => html`<span key=${index} class=${`dl ${line.t}`}>${sign[line.t]} ${line.s}</span>`)}</div>
+      <div class="modal-buttons"><button id="sandbox-profile-diff-cancel" type="button" onClick=${() => close(false)}>Cancel</button><span class="spacer"></span><button ref=${confirmRef} id="sandbox-profile-diff-confirm" class="primary" type="button" onClick=${() => close(true)}>Save sandbox profile</button></div>
+    </div>
+  </div>`;
+}
+
 function ManagementApp({ state, actions, confirmDiscard, openProfilePermissions }) {
   const current = state.view.value; const descriptor = current.dialog;
   const previousManager = useRef('');
@@ -210,7 +247,8 @@ function ManagementApp({ state, actions, confirmDiscard, openProfilePermissions 
     ${descriptor?.kind === 'profile-import' && html`<${ProfileImport} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
     ${descriptor?.kind === 'sandbox-editor' && html`<${SandboxEditor} descriptor=${descriptor} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
     ${descriptor?.kind === 'sandbox-export' && html`<${SandboxExport} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
-    ${descriptor?.kind === 'sandbox-import' && html`<${SandboxImport} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}`;
+    ${descriptor?.kind === 'sandbox-import' && html`<${SandboxImport} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
+    <${SandboxDiffModal} model=${current.sandboxDiff} close=${state.cancelSandboxDiff} />`;
 }
 
 export function mountManagementIsland({ host, state, actions, confirmDiscard, openProfilePermissions, registerCleanup }) {

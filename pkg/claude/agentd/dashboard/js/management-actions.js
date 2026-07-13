@@ -78,8 +78,7 @@ export function createManagementActions({ state, confirm, notify, download = dow
       const targetName = options.targetName || original?.name || '';
       const preview = await sandbox.previewSandboxProfile(targetName, body);
       if (preview.before && JSON.stringify(preview.before) === JSON.stringify(preview.after)) { notify('No sandbox profile changes to save'); return false; }
-      const before = preview.before ? `Current policy:\n${JSON.stringify(preview.before, null, 2)}\n\n` : '';
-      const ok = await confirm({ title: 'Confirm sandbox profile changes', body: `${before}Validated policy to save:\n${JSON.stringify(preview.after, null, 2)}`, meta: `${preview.after.filesystem?.length || 0} filesystem rules · ${preview.after.environment?.length || 0} environment variables`, okLabel: 'Save sandbox profile' });
+      const ok = await state.confirmSandboxDiff(preview.before || null, preview.after);
       if (!ok) { notify('Sandbox profile save cancelled'); return false; }
       await sandbox.saveSandboxProfile(targetName, preview.after, preview.revision || '');
       state.closeDialog(); notify(`sandbox profile saved: ${preview.after.name}`); await load('sandbox'); await refreshSandboxSpawn(); await options.onCreate?.(preview.after.name); return true;

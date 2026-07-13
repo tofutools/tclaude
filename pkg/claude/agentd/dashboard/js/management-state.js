@@ -13,21 +13,38 @@ export function createManagementState() {
   const sandboxRequest = createRequestLifecycle({ payload: sandboxProfiles, retainPayloadOnRefresh: true, retainPayloadOnError: true });
   const busy = signal('');
   const error = signal('');
+  const sandboxDiff = signal(null);
+  let settleSandboxDiff = null;
 
   const view = computed(() => ({
     manager: manager.value, dialog: dialog.value,
     profileFilter: profileFilter.value, roleFilter: roleFilter.value, sandboxFilter: sandboxFilter.value,
     profiles: profiles.value || [], roles: roles.value || [], sandboxProfiles: sandboxProfiles.value || [],
     requests: { profiles: profilesRequest.request.value, roles: rolesRequest.request.value, sandbox: sandboxRequest.request.value },
-    busy: busy.value, error: error.value,
+    busy: busy.value, error: error.value, sandboxDiff: sandboxDiff.value,
   }));
+
+  function confirmSandboxDiff(before, after) {
+    cancelSandboxDiff(false);
+    return new Promise((resolve) => {
+      settleSandboxDiff = resolve;
+      sandboxDiff.value = { before, after };
+    });
+  }
+
+  function cancelSandboxDiff(result = false) {
+    const resolve = settleSandboxDiff;
+    settleSandboxDiff = null;
+    sandboxDiff.value = null;
+    resolve?.(result);
+  }
 
   return Object.freeze({
     manager, dialog, profileFilter, roleFilter, sandboxFilter, profiles, roles, sandboxProfiles, profilesRequest, rolesRequest, sandboxRequest,
-    busy, error, view,
+    busy, error, sandboxDiff, view, confirmSandboxDiff, cancelSandboxDiff,
     openManager(kind) { error.value = ''; manager.value = kind; },
     closeManager() { manager.value = ''; },
     openDialog(value) { error.value = ''; dialog.value = value; },
-    closeDialog() { dialog.value = null; error.value = ''; },
+    closeDialog() { cancelSandboxDiff(false); dialog.value = null; error.value = ''; },
   });
 }
