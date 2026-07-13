@@ -111,10 +111,12 @@ func legacyLinkModalPublishState() dashsnap.State {
 		Title:   "Legacy modal form survives publish",
 		Caption: "The static link modal remains open and retains selected form values and focus while refresh continues behind it.",
 		JS: `
+return (async function(){
 document.querySelector('nav [data-tab="groups"]').click();
 document.querySelector('.filter-bar-cog .cog-btn').click();
 document.querySelector('#links-manage-open').click();
 document.querySelector('#link-new-open').click();
+await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
 var from = document.querySelector('#link-modal-from');
 var to = document.querySelector('#link-modal-to');
 var mode = document.querySelector('#link-modal-mode');
@@ -122,10 +124,11 @@ var bidir = document.querySelector('#link-modal-bidir');
 if (!document.querySelector('#link-modal.show') || !from || !to || !mode || !bidir) throw new Error('link modal did not open');
 from.value = 'frontend-squad';
 to.value = 'infra-crew';
-mode.value = 'full';
+mode.value = 'owners->members';
 bidir.checked = true;
 mode.focus();
 window.__tcl362LinkForm = {from:from, to:to, mode:mode, bidir:bidir};
+})();
 `,
 		Actions: []dashsnap.BrowserAction{
 			{Kind: "eval", JS: waitForSnapshotPublishJS},
@@ -133,7 +136,7 @@ window.__tcl362LinkForm = {from:from, to:to, mode:mode, bidir:bidir};
 var form = window.__tcl362LinkForm;
 if (!document.querySelector('#link-modal.show')) throw new Error('publish closed legacy link modal');
 if (document.querySelector('#link-modal-from') !== form.from || document.querySelector('#link-modal-to') !== form.to || document.querySelector('#link-modal-mode') !== form.mode) throw new Error('publish replaced legacy form controls');
-if (form.from.value !== 'frontend-squad' || form.to.value !== 'infra-crew' || form.mode.value !== 'full' || !form.bidir.checked) throw new Error('publish changed legacy form state');
+if (form.from.value !== 'frontend-squad' || form.to.value !== 'infra-crew' || form.mode.value !== 'owners->members' || !form.bidir.checked) throw new Error('publish changed legacy form state: ' + JSON.stringify({from:form.from.value,to:form.to.value,mode:form.mode.value,bidir:form.bidir.checked}));
 if (document.activeElement !== form.mode) throw new Error('publish dropped legacy modal focus');
 `},
 			{Kind: "key", Key: "Escape"},
