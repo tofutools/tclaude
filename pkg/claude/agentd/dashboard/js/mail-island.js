@@ -3,6 +3,7 @@ import { useEffect } from 'preact/hooks';
 import htm from 'htm';
 import { registerMailController } from './mail-bridge.js';
 import { idTooltip, relTime, shortAgentId, shortId } from './helpers.js';
+import { dashboardState } from './snapshot-store.js';
 
 const html = htm.bind(h);
 
@@ -387,6 +388,17 @@ function MessageReader({ current, controller, model }) {
 }
 
 export function MailApp({ controller }) {
+  const activeTab = dashboardState.activeTab.value;
+  useEffect(() => {
+    if (activeTab === 'messages') controller.renderMailTab();
+  }, [activeTab, controller]);
+  useEffect(() => {
+    const refreshReselectedTab = (event) => {
+      if (event.detail?.tab === 'messages') controller.renderMailTab();
+    };
+    document.addEventListener('tclaude:tab-reselected', refreshReselectedTab);
+    return () => document.removeEventListener('tclaude:tab-reselected', refreshReselectedTab);
+  }, [controller]);
   const current = controller.state.view.value;
   const messages = controller.messageView();
   const wizard = document.body.classList.contains('wizard');
