@@ -1431,6 +1431,34 @@ func TestDashboardCSS_WizardCleanupModalScoped(t *testing.T) {
 	}
 }
 
+// TestDashboardHTML_WizardDeleteRetiredModal pins the wizard re-skin of the
+// delete-retired preview. The dialog shares .cleanup-modal with several bulk
+// action overlays, so its surface, filters, list, options, and actions must all
+// be themed beneath #delete-retired-modal. The submit remains destructive
+// during selection, then becomes an ordinary gilded Done button in the result
+// phase when refresh.js removes its .danger class.
+func TestDashboardHTML_WizardDeleteRetiredModal(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !dashboardSourceContains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	must("body.wizard #delete-retired-modal .cleanup-modal {", "the delete-retired surface is re-skinned")
+	must("body.wizard #delete-retired-modal .cleanup-modal h3", "the dialog title is re-skinned")
+	must("body.wizard #delete-retired-modal .cleanup-hint.danger", "the irreversible warning keeps an ember caution color")
+	must("body.wizard #delete-retired-modal .cleanup-toolbar button", "selection controls get arcane chrome")
+	must("body.wizard #delete-retired-modal .cleanup-toolbar input[type=number]", "the age filter is re-skinned")
+	must("body.wizard #delete-retired-modal .cleanup-list {", "the retired-agent preview list is re-skinned")
+	must("body.wizard #delete-retired-modal .cleanup-row input[type=checkbox]", "row checkboxes use the wizard accent")
+	must("body.wizard #delete-retired-modal .cleanup-row label .cleanup-badge:not(.online)", "wizard badge chrome leaves online and result status colors semantic")
+	must("body.wizard #delete-retired-modal .delete-agent-wt", "the worktree option is re-skinned")
+	must("body.wizard #delete-retired-modal #delete-retired-submit {", "the result-phase Done button gets gilded chrome")
+	must("body.wizard #delete-retired-modal #delete-retired-submit.danger {", "the selection-phase delete action stays destructive")
+	must("body.wizard #delete-retired-modal .modal-buttons button:not(#delete-retired-submit)", "Cancel gets the secondary arcane skin")
+}
+
 // TestDashboardHTML_WizardDeleteGroupModal pins the wizard re-skin of the
 // delete-group preview (#delete-group-modal), opened by the group cog and the
 // drag-to-banish overlay. It shares the cleanup-modal shell, so the skin must
