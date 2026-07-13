@@ -607,6 +607,14 @@ open-terminal, and bulk focus from the **🪟 windows…** modal into panes in t
 dashboard's **Terminals** tab. Bulk unfocus still detaches the selected terminal
 clients and closes matching web panes; it never stops the agents.
 
+Every dashboard **Browse…** directory action uses one shared chooser. On a
+loopback/localhost dashboard it opens the host's native OS dialog by default.
+For a dashboard reached through any non-loopback hostname it automatically
+uses an in-dashboard directory navigator backed by agentd, so the operator can
+browse paths on the daemon host without needing physical access to its desktop.
+Set `dashboard.default_directory_picker` to `"web"` (or enable **Directory
+picker** in the Config tab) to use the browser navigator on localhost too.
+
 While any web-terminal pane is open, the dashboard requests browser
 confirmation before closing, reloading, or navigating away (including
 **Ctrl+W** / **Cmd+W**). Supported desktop browsers generally show this prompt

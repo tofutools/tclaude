@@ -976,6 +976,23 @@ func TestDefaultTerminal(t *testing.T) {
 	assert.Equal(t, DefaultTerminalWeb, loaded.DefaultTerminal(), "web survives round-trip")
 }
 
+func TestDefaultDirectoryPicker(t *testing.T) {
+	assert.Equal(t, DefaultDirectoryPickerNative, (*Config)(nil).DefaultDirectoryPicker())
+	assert.Equal(t, DefaultDirectoryPickerNative, (&Config{}).DefaultDirectoryPicker())
+	assert.Equal(t, DefaultDirectoryPickerNative, (&Config{Dashboard: &DashboardConfig{DefaultDirectoryPicker: "wat"}}).DefaultDirectoryPicker())
+	assert.Equal(t, DefaultDirectoryPickerWeb, (&Config{Dashboard: &DashboardConfig{DefaultDirectoryPicker: DefaultDirectoryPickerWeb}}).DefaultDirectoryPicker())
+
+	clean, err := json.Marshal(&Config{})
+	require.NoError(t, err)
+	assert.NotContains(t, string(clean), "default_directory_picker")
+
+	t.Setenv("HOME", t.TempDir())
+	require.NoError(t, Save(&Config{Dashboard: &DashboardConfig{DefaultDirectoryPicker: DefaultDirectoryPickerWeb}}))
+	loaded, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, DefaultDirectoryPickerWeb, loaded.DefaultDirectoryPicker())
+}
+
 func TestShowAgentHideButton(t *testing.T) {
 	// Default is false (button hidden) for every "unset" shape.
 	assert.False(t, (*Config)(nil).ShowAgentHideButton(), "nil → hidden")

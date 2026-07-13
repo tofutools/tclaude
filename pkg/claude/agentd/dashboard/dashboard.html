@@ -1563,6 +1563,11 @@
   </div>
 </div>
 
+<!-- Shared Preact directory picker. Keep this host after every static overlay:
+     Browse… opens it above its still-visible caller, and ManagementOverlay's
+     DOM-order topmost check must give the picker Escape/Tab ownership. -->
+<div id="directory-picker-root"></div>
+
 <!-- Vendored xterm.js, classic (non-module) scripts so they run before
      dashboard.js's module graph (which includes modal-term.js) — they
      attach plain globals (Terminal, FitAddon, WebLinksAddon), not ES exports. -->

@@ -823,6 +823,10 @@ type snapshotPayload struct {
 	// those actions; the dedicated "web term" / "web window" buttons ignore it
 	// (always web). See Config.DefaultTerminal.
 	DefaultTerminal string `json:"default_terminal"`
+	// DefaultDirectoryPicker mirrors dashboard.default_directory_picker for
+	// local connections. The client additionally forces web mode whenever its
+	// hostname is not loopback.
+	DefaultDirectoryPicker string `json:"default_directory_picker"`
 	// ShowAgentHideButton mirrors config dashboard.show_agent_hide_button —
 	// whether each agent row's "hide window" button (the slashed-eye beside
 	// "focus", data-act="hide") is shown. Off by default: the button detaches
@@ -1800,12 +1804,13 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			Slop:    cfg.ActivityBotsSlop(),
 			Wizard:  cfg.ActivityBotsWizard(),
 		},
-		HScrollFollow:        cfg.HScrollFollow(),
-		GroupQuickOptions:    cfg.GroupQuickOptions(),
-		DefaultTerminal:      cfg.DefaultTerminal(),
-		ShowAgentHideButton:  cfg.ShowAgentHideButton(),
-		ShowGroupDescription: cfg.ShowGroupDescription(),
-		ProcessesEnabled:     cfg.ProcessesEnabled(),
+		HScrollFollow:          cfg.HScrollFollow(),
+		GroupQuickOptions:      cfg.GroupQuickOptions(),
+		DefaultTerminal:        cfg.DefaultTerminal(),
+		DefaultDirectoryPicker: cfg.DefaultDirectoryPicker(),
+		ShowAgentHideButton:    cfg.ShowAgentHideButton(),
+		ShowGroupDescription:   cfg.ShowGroupDescription(),
+		ProcessesEnabled:       cfg.ProcessesEnabled(),
 		Permissions: snapshotPermissionsView{
 			Defaults:  defaults,
 			Grants:    map[string][]string{},

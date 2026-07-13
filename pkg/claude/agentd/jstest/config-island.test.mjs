@@ -53,6 +53,7 @@ test('Config load populates representative fields, conditions, notices, and roun
     ratelimit: { five_hour_percent_max_used: 88, seven_day_percent_max_used: 97.5, future_limit: 7 },
     agent: { spawn_max_per_hour: 3, sudo: { max_duration: '2h' } },
     slop: { volume: 0.4 },
+    dashboard: { default_directory_picker: 'web' },
   };
   const state = createConfigState({ activeTab: harness.signals.signal('groups') });
   const fetchImpl = async (url) => {
@@ -66,12 +67,14 @@ test('Config load populates representative fields, conditions, notices, and roun
   assert.equal(logLevel.querySelector('option[value="warn"]').selected, true, logLevel.outerHTML);
   assert.equal(mounted.container.querySelector('#cfg-terminal').value, 'ghostty');
   assert.equal(mounted.container.querySelector('#cfg-record-hooks').checked, true);
+  assert.equal(mounted.container.querySelector('#cfg-dashboard-default-web-directory-picker').checked, true);
   assert.equal(mounted.container.querySelector('#cfg-ratelimit-5h').disabled, false);
   assert.match(mounted.container.querySelector('#cfg-notice').textContent, /future_root/);
   const assembled = adapter.assembleConfig();
   assert.equal(assembled.ratelimit.future_limit, 7);
   assert.equal(assembled.slop.volume, 0.4);
   assert.deepEqual(assembled.agent.sudo, { max_duration: '2h' });
+  assert.equal(assembled.dashboard.default_directory_picker, 'web');
   assert.equal(state.view.value.phase, 'ready');
   assert.equal(state.view.value.dirty, false);
   await mounted.unmount();

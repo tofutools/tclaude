@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -17,7 +20,62 @@ import (
 func servePickDir(w http.ResponseWriter, r *http.Request) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/pick-directory", handleDashboardPickDirAPI)
+	mux.HandleFunc("/api/browse-directories", handleDashboardBrowseDirsAPI)
 	mux.ServeHTTP(w, r)
+}
+
+func TestBrowseDirs_ListsOnlyDirectories(t *testing.T) {
+	withDashboardAuth(t)
+	root := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(root, "alpha"), 0o755))
+	require.NoError(t, os.Mkdir(filepath.Join(root, ".hidden"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "notes.txt"), []byte("not a folder"), 0o644))
+	if err := os.Symlink(filepath.Join(root, "alpha"), filepath.Join(root, "linked")); err != nil {
+		t.Logf("symlink unavailable: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	servePickDir(w, dashboardRequest(http.MethodPost, "/api/browse-directories", `{"path":`+strconv.Quote(root)+`}`))
+
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	var resp browseDirsResp
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, root, resp.Path)
+	assert.Equal(t, filepath.Dir(root), resp.Parent)
+	assert.NotEmpty(t, resp.Home)
+	assert.Contains(t, resp.Directories, browseDirEntry{Name: "alpha", Path: filepath.Join(root, "alpha")})
+	assert.Contains(t, resp.Directories, browseDirEntry{Name: ".hidden", Path: filepath.Join(root, ".hidden")})
+	assert.NotContains(t, resp.Directories, browseDirEntry{Name: "notes.txt", Path: filepath.Join(root, "notes.txt")})
+}
+
+func TestBrowseDirs_DefaultsToHome(t *testing.T) {
+	withDashboardAuth(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	w := httptest.NewRecorder()
+	servePickDir(w, dashboardRequest(http.MethodPost, "/api/browse-directories", `{}`))
+
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	var resp browseDirsResp
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, home, resp.Path)
+	assert.Equal(t, home, resp.Home)
+	assert.NotNil(t, resp.Directories)
+}
+
+func TestBrowseDirs_RejectsFileAndWrongMethod(t *testing.T) {
+	withDashboardAuth(t)
+	file := filepath.Join(t.TempDir(), "file")
+	require.NoError(t, os.WriteFile(file, []byte("x"), 0o644))
+
+	w := httptest.NewRecorder()
+	servePickDir(w, dashboardRequest(http.MethodPost, "/api/browse-directories", `{"path":`+strconv.Quote(file)+`}`))
+	assert.Equal(t, http.StatusBadRequest, w.Code, "body=%s", w.Body.String())
+
+	w = httptest.NewRecorder()
+	servePickDir(w, dashboardRequest(http.MethodGet, "/api/browse-directories", ``))
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
 
 // withStubPicker swaps the pickDirectory seam for a stub and restores it

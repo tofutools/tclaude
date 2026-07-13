@@ -449,6 +449,10 @@ function populateConfigForm(cfg) {
   // explicit dashboard.default_terminal:"web" checks it.
   $('#cfg-dashboard-default-web-terminal').checked = !!(cfg.dashboard && cfg.dashboard.default_terminal === 'web');
 
+  // Local dashboards keep the native chooser by default; checked forces the
+  // Preact web picker locally too. Remote origins use it regardless.
+  $('#cfg-dashboard-default-web-directory-picker').checked = !!(cfg.dashboard && cfg.dashboard.default_directory_picker === 'web');
+
   // Per-agent "hide window" button — the slashed-eye beside "focus". Hidden
   // by default (unchecked); only an explicit dashboard.show_agent_hide_button
   // true checks it.
@@ -693,6 +697,9 @@ function assembleConfig() {
   // "web" and drop the key otherwise — mirrors the Go omitempty + default-
   // native resolver.
   if ($('#cfg-dashboard-default-web-terminal').checked) dashboard.default_terminal = 'web'; else delete dashboard.default_terminal;
+  // Remote dashboards always route to the web picker; this persisted opt-in
+  // chooses the same UI on localhost instead of the native OS dialog.
+  if ($('#cfg-dashboard-default-web-directory-picker').checked) dashboard.default_directory_picker = 'web'; else delete dashboard.default_directory_picker;
   // show_agent_hide_button: false (hidden) is the default, so store only the
   // NON-default true and drop the key otherwise — mirrors the Go omitempty.
   if ($('#cfg-dashboard-show-agent-hide-btn').checked) dashboard.show_agent_hide_button = true; else delete dashboard.show_agent_hide_button;

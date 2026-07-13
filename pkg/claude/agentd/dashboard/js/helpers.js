@@ -1738,17 +1738,40 @@ function withPreservedFocus(fn) {
   restoreFocus(token);
 }
 
-// pickDirectory asks the daemon to open a NATIVE OS directory picker (the
-// browser can't pop one itself) and resolves to the human's choice. The
-// daemon runs on the desktop, outside any agent sandbox, so it can show
-// the dialog and report the path back over POST /api/pick-directory; the
-// fetch stays pending while the dialog is open. Returns one of:
+let webDirectoryPickerBridge = null;
+
+// configureDirectoryPickerBridge lets the optional Preact island claim the
+// web-picker path without making this legacy helper module import Preact. A
+// broken optional runtime therefore cannot stop the rest of the dashboard from
+// linking; remote callers receive a visible error instead of popping a dialog
+// on the daemon host that they cannot operate.
+function configureDirectoryPickerBridge(bridge) {
+  webDirectoryPickerBridge = bridge || null;
+}
+
+function isLoopbackDashboard(value = window.location?.hostname) {
+  let hostname = String(value || '').trim().toLowerCase().replace(/\.+$/, '');
+  if (hostname.startsWith('[') && hostname.endsWith(']')) hostname = hostname.slice(1, -1);
+  if (!hostname || hostname === 'localhost' || hostname === '::1') return true;
+  const octets = hostname.split('.');
+  return octets.length === 4 && octets[0] === '127' && octets.every((octet) =>
+    /^\d{1,3}$/.test(octet) && Number(octet) <= 255);
+}
+
+// pickDirectory resolves through the browser-rendered Preact picker for every
+// remote dashboard connection and when local web-picker mode is configured.
+// Local dashboards otherwise preserve the native host OS chooser. Returns:
 //   { path }            — a directory was chosen
 //   { canceled: true }  — the human dismissed the dialog (no change)
 //   { error: <message> } — no picker available / busy / failed
-// Callers branch on these without having to know the wire shape. Shared
-// by the group-create modal, the spawn modal and the group dir chip.
 async function pickDirectory({ startDir = '', title = 'Select a directory' } = {}) {
+  const useWeb = !isLoopbackDashboard() || !!webDirectoryPickerBridge?.prefersWeb?.();
+  if (useWeb) {
+    if (!webDirectoryPickerBridge?.open) {
+      return { error: 'web directory picker unavailable — type the host path instead' };
+    }
+    return webDirectoryPickerBridge.open({ startDir, title });
+  }
   let r;
   try {
     r = await fetch('/api/pick-directory', {
@@ -1869,7 +1892,7 @@ export {
   // slop-fx.js re-uses these for the manual-pull animation and the
   // 7-7-7 win detection — single source of truth.
   SLOP_SYMBOLS, SLOP_STOPPED,
-  // Native OS directory picker bridge — used by the group-create / spawn
-  // modals and the group dir chip (all call the same /api/pick-directory).
-  pickDirectory,
+  // Shared native/web directory-picker boundary. The Preact island registers
+  // its web implementation without pulling Preact into this legacy module.
+  pickDirectory, configureDirectoryPickerBridge, isLoopbackDashboard,
 };
