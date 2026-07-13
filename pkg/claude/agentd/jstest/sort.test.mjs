@@ -108,12 +108,18 @@ test("sortHead('retired', …) tags headers with the table key the click handler
 });
 
 test("member headers carry wizard-mode labels for class, quest and lore", () => {
-  const html = sortHead('members', MEMBER_COLS);
-  assert.match(html, /class="theme-copy-regular" title="Sort by Role">Role<\/span><span class="theme-copy-wizard" title="Sort by Class">Class<\/span>/);
-  assert.match(html, /class="theme-copy-regular" title="Sort by Task link">Task link<\/span><span class="theme-copy-wizard" title="Sort by Quest">Quest<\/span>/);
-  assert.match(html, /class="theme-copy-regular" title="Sort by Description">Description<\/span><span class="theme-copy-wizard" title="Sort by Lore">Lore<\/span>/);
-  assert.doesNotMatch(html, /data-sort-col="(?:role|task|descr)" title="Sort by/,
-    'the themed headers do not keep a plain-only tooltip on the th');
+  const regular = sortHead('members', MEMBER_COLS);
+  assert.match(regular, /class="theme-copy-regular">Role<\/span><span class="theme-copy-wizard">Class<\/span>/);
+  assert.match(regular, /class="theme-copy-regular">Task link<\/span><span class="theme-copy-wizard">Quest<\/span>/);
+  assert.match(regular, /class="theme-copy-regular">Description<\/span><span class="theme-copy-wizard">Lore<\/span>/);
+  assert.match(regular, /data-sort-col="role" title="Sort by Role"/);
+  assert.match(regular, /data-sort-col="task" title="Sort by Task link"/);
+  assert.match(regular, /data-sort-col="descr" title="Sort by Description"/);
+
+  const wizard = sortHead('members', MEMBER_COLS, true);
+  assert.match(wizard, /data-sort-col="role" title="Sort by Class"/);
+  assert.match(wizard, /data-sort-col="task" title="Sort by Quest"/);
+  assert.match(wizard, /data-sort-col="descr" title="Sort by Lore"/);
 });
 
 // --- Conversations -----------------------------------------------------

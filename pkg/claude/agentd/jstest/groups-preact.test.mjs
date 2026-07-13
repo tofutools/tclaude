@@ -195,9 +195,11 @@ test('Groups controls own query, visibility, columns, badge and dropdown behavio
   const roleLabel = role.closest('label');
   assert.equal(roleLabel.querySelector('.theme-copy-regular').textContent, 'Role');
   assert.equal(roleLabel.querySelector('.theme-copy-wizard').textContent, 'Class');
-  assert.equal(roleLabel.querySelector('.theme-copy-regular').title, 'Show the "Role" column');
-  assert.equal(roleLabel.querySelector('.theme-copy-wizard').title, 'Show the "Class" column');
-  assert.equal(roleLabel.hasAttribute('title'), false, 'the label has no stale plain-only tooltip');
+  assert.equal(roleLabel.title, 'Show the "Role" column');
+  await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent(
+    'tclaude:wizard', { detail: { active: true } },
+  )));
+  assert.equal(roleLabel.title, 'Show the "Class" column', 'the full label tooltip swaps with the theme');
   role.checked = false;
   await harness.act(() => harness.fireEvent(role, 'change'));
   assert.equal(hiddenRole, true);

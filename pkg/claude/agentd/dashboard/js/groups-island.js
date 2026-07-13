@@ -45,9 +45,23 @@ function ViewOption({ option, state, queueRefresh, wizard }) {
 function ColumnLabel({ column }) {
   if (!column.wizardLabel) return column.label;
   return html`
-    <span class="theme-copy-regular" title=${`Show the "${column.label}" column`}>${column.label}</span>
-    <span class="theme-copy-wizard" title=${`Show the "${column.wizardLabel}" column`}>${column.wizardLabel}</span>
+    <span class="theme-copy-regular">${column.label}</span>
+    <span class="theme-copy-wizard">${column.wizardLabel}</span>
   `;
+}
+
+function useWizardTheme() {
+  const [wizard, setWizard] = useState(() => document.body.classList.contains('wizard'));
+  useEffect(() => {
+    const update = (event) => setWizard(
+      typeof event.detail?.active === 'boolean'
+        ? event.detail.active
+        : document.body.classList.contains('wizard'),
+    );
+    document.addEventListener('tclaude:wizard', update);
+    return () => document.removeEventListener('tclaude:wizard', update);
+  }, []);
+  return wizard;
 }
 
 export function GroupsControls({ state, actions }) {
@@ -168,7 +182,7 @@ export function GroupsControls({ state, actions }) {
           ${columns.map((column) => html`
             <label
               class="filter-toggle"
-              title=${column.wizardLabel ? undefined : `Show the "${column.label}" column`}
+              title=${`Show the "${wizard && column.wizardLabel ? column.wizardLabel : column.label}" column`}
               key=${column.key}
             >
               <input
@@ -191,7 +205,11 @@ export function GroupsControls({ state, actions }) {
 export function GroupsList({ host, state, actions, renderGroupsHTML }) {
   useWizardTheme();
   const current = state.view.value;
-  const markup = renderGroupsHTML(current.groups);
+  const wizard = useWizardTheme();
+  // The legacy renderer reads the live body theme for themed attributes.
+  // Passing wizard also makes this island rerender immediately on a theme
+  // event instead of waiting for the next snapshot poll.
+  const markup = renderGroupsHTML(current.groups, wizard);
 
   useEffect(() => {
     syncBotAnimations();

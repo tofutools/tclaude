@@ -71,23 +71,20 @@ function cycleSort(tableKey, col) {
 // row-action columns) render as plain, non-clickable headers. The
 // active column shows a solid ▲/▼; the rest carry a faint arrow that
 // surfaces on hover, hinting they're clickable.
-function sortHead(tableKey, cols) {
+function sortHead(tableKey, cols, wizard = false) {
   const active = sortState[tableKey];
   const cells = cols.map(c => {
-    // Keep the tooltip on the same theme-specific span as the visible copy.
-    // CSS then swaps both instantly when wizard mode toggles; a title on the
-    // <th> itself would remain stuck on the plain label until the next render.
     const label = c.wizardLabel
-      ? `<span class="theme-copy-regular" title="Sort by ${esc(c.label)}">${esc(c.label)}</span>`
-        + `<span class="theme-copy-wizard" title="Sort by ${esc(c.wizardLabel)}">${esc(c.wizardLabel)}</span>`
+      ? `<span class="theme-copy-regular">${esc(c.label)}</span>`
+        + `<span class="theme-copy-wizard">${esc(c.wizardLabel)}</span>`
       : esc(c.label || '');
     if (!c.col) return `<th>${label}</th>`;
     const on = active && active.col === c.col;
     const arrow = on ? (active.dir === 'asc' ? '▲' : '▼') : '▾';
     const cls = on ? 'sortable sort-active' : 'sortable';
-    const title = c.wizardLabel ? '' : ` title="Sort by ${esc(c.label)}"`;
+    const titleLabel = wizard && c.wizardLabel ? c.wizardLabel : c.label;
     return `<th class="${cls}" data-sort-table="${esc(tableKey)}" `
-         + `data-sort-col="${esc(c.col)}"${title}>`
+         + `data-sort-col="${esc(c.col)}" title="Sort by ${esc(titleLabel)}">`
          + `${label}<span class="sort-arrow">${arrow}</span></th>`;
   });
   return `<thead><tr>${cells.join('')}</tr></thead>`;

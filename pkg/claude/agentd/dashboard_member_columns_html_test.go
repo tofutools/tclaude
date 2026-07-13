@@ -31,7 +31,7 @@ func TestDashboardHTML_MemberColumnsShowHideWired(t *testing.T) {
 	// render.js: the header AND the body render off the SAME visible-column
 	// list, so they can never drift out of alignment.
 	must("import { visibleMemberCols, memberColHidden } from './member-columns.js';", "render imports the store")
-	must("sortHead('members', visibleMemberCols())", "the members header renders only the visible columns")
+	must("sortHead('members', visibleMemberCols(), isWizardActive())", "the members header renders visible columns with the live theme")
 	must("wizardLabel: 'Class'", "the Role header and column toggle use wizard Class vocabulary")
 	must("wizardLabel: 'Quest'", "the Task link header and column toggle use wizard Quest vocabulary")
 	must("wizardLabel: 'Lore'", "the Description header and column toggle use wizard Lore vocabulary")
