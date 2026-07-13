@@ -3931,6 +3931,60 @@ body.wizard .group-pending-title-wizard { display: inline; }
 }
 .cron-create-modal .modal-buttons .secondary:hover { color: #c9d1d9; }
 
+/* Shared web directory chooser. It is a bounded Preact island mounted outside
+   feature tabs so every Browse… caller can use it, including remote browsers. */
+.directory-picker-modal {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.5); color: #c9d1d9;
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 18px 22px; width: min(700px, calc(100vw - 32px));
+  max-height: min(720px, calc(100vh - 32px));
+}
+.directory-picker-modal h3 { color: #d4d4d4; margin: 0; font-size: 16px; }
+.directory-picker-path { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.directory-picker-path label { color: #7d8590; font-size: 12px; }
+.directory-picker-path input {
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
+  color: #d4d4d4; font: 12px ui-monospace, SFMono-Regular, Consolas, monospace;
+  min-width: 0; padding: 7px 9px;
+}
+.directory-picker-path input:focus { border-color: #58a6ff; outline: none; }
+.directory-picker-path button, .directory-picker-nav button,
+.directory-picker-list button {
+  background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
+  color: #c9d1d9; cursor: pointer; font-family: inherit;
+}
+.directory-picker-entry { flex: 0 0 auto; }
+.directory-picker-path button, .directory-picker-nav button { padding: 6px 11px; }
+.directory-picker-path button:hover:not(:disabled),
+.directory-picker-nav button:hover:not(:disabled),
+.directory-picker-list button:hover:not(:disabled) { border-color: #58a6ff; background: #292f37; }
+.directory-picker-modal button:disabled { cursor: default; opacity: .45; }
+.directory-picker-nav { display: flex; gap: 8px; align-items: center; }
+.directory-picker-count { color: #7d8590; font-size: 11px; margin-left: auto; }
+.directory-picker-list {
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
+  display: flex; flex-direction: column; gap: 3px; min-height: 190px;
+  overflow-y: auto; padding: 6px;
+}
+.directory-picker-list button {
+  align-items: center; display: flex; flex: 0 0 auto; gap: 8px;
+  padding: 7px 9px; text-align: left; width: 100%;
+}
+.directory-picker-empty { color: #7d8590; margin: auto; }
+.directory-picker-error { color: #ffa198; min-height: 18px; }
+.directory-picker-modal .modal-buttons { border-top: 1px solid #2a3340; padding-top: 10px; }
+.directory-picker-modal .modal-buttons button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+body.wizard .directory-picker-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border-color: #7a5db0; box-shadow: 0 0 32px rgba(122, 93, 176, .35); color: #e7d9f5;
+}
+body.wizard .directory-picker-modal h3 { color: #f3e6c0; font-family: Papyrus, Luminari, 'Palatino Linotype', Palatino, serif; }
+body.wizard .directory-picker-path input,
+body.wizard .directory-picker-list { background: #140f28; border-color: rgba(122, 93, 176, .5); color: #f3e6c0; }
+body.wizard .directory-picker-modal button:not(.primary) { background: #241b3d; border-color: #d9b45a; color: #f3e6c0; }
+body.wizard .directory-picker-modal .modal-buttons { border-top-color: rgba(122, 93, 176, .4); }
+
 /* ─── Reply-to-notification dialog (#human-reply-modal) ──────────────
    The Human folder reader's `reply` button opens this. It reuses the
    .cron-create-modal shell; these rules style the read-only "To" block

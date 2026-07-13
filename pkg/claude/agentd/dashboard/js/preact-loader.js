@@ -291,3 +291,32 @@ const actionDialogsDescriptor = createIslandDescriptor({
 export function mountActionDialogsFeature(dependencies = {}) {
   return mountIslandDescriptor(actionDialogsDescriptor, dependencies);
 }
+
+const directoryPickerDescriptor = createIslandDescriptor({
+  name: 'directory-picker',
+  label: 'Directory picker',
+  hosts: { root: '#directory-picker-root' },
+  primaryHost: 'root',
+  failureClass: 'directory-picker-error',
+  load: async ({ hosts, dependencies }) => {
+    const islandModule = import('./directory-picker-island.js');
+    const stateModule = import('./directory-picker-state.js');
+    const actionsModule = import('./directory-picker-actions.js');
+    const [
+      { mountDirectoryPickerIsland }, { createDirectoryPickerState },
+      { createDirectoryPickerActions },
+    ] = await Promise.all([islandModule, stateModule, actionsModule]);
+    const state = createDirectoryPickerState();
+    const actions = createDirectoryPickerActions(dependencies);
+    return {
+      state,
+      mount: (registerCleanup) => mountDirectoryPickerIsland({
+        host: hosts.root, state, actions, registerCleanup, ...dependencies,
+      }),
+    };
+  },
+});
+
+export function mountDirectoryPickerFeature(dependencies = {}) {
+  return mountIslandDescriptor(directoryPickerDescriptor, dependencies);
+}

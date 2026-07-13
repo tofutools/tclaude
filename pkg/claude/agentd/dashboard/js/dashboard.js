@@ -73,7 +73,7 @@ import { bindDock } from './dock.js';
 import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
 import {
-  mountAccessFeature, mountActionDialogsFeature, mountAuditFeature, mountConfigFeature, mountCostsFeature, mountGroupsFeature, mountJobsFeature, mountLogsFeature, mountManagementFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature,
+  mountAccessFeature, mountActionDialogsFeature, mountAuditFeature, mountConfigFeature, mountCostsFeature, mountDirectoryPickerFeature, mountGroupsFeature, mountJobsFeature, mountLogsFeature, mountManagementFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature,
   mountPreactRuntimeProbe,
 } from './preact-loader.js';
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
@@ -175,6 +175,9 @@ export function sudoBadge(activeSudo, fallbackConvID) {
     mountAuditFeature(),
     mountConfigFeature({ toast, isCyclingTabs }),
     mountProcessesFeature({ confirm: confirmModal, confirmDiscard, notify: toast }),
+    mountDirectoryPickerFeature({
+      prefersWeb: () => lastSnapshot?.default_directory_picker === 'web',
+    }),
     mountManagementFeature({
       confirm: confirmModal, confirmDiscard, notify: toast,
       getSnapshot: () => lastSnapshot,

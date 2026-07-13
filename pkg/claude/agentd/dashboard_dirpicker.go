@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 
@@ -42,6 +44,102 @@ type pickDirResp struct {
 	Path     string `json:"path,omitempty"`     // chosen path
 	Canceled bool   `json:"canceled,omitempty"` // human dismissed the dialog
 	Error    string `json:"error,omitempty"`    // human-readable failure
+}
+
+// browseDirEntry is one child directory in the web picker's current folder.
+// Path is resolved by agentd so the browser never has to guess host path
+// separators or join rules.
+type browseDirEntry struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+}
+
+// browseDirsResp is the wire shape for POST /api/browse-directories.
+type browseDirsResp struct {
+	Path        string           `json:"path"`
+	Parent      string           `json:"parent,omitempty"`
+	Home        string           `json:"home,omitempty"`
+	Directories []browseDirEntry `json:"directories"`
+	Error       string           `json:"error,omitempty"`
+}
+
+// handleDashboardBrowseDirsAPI lists the direct child directories of a path
+// on the agentd host. The authenticated dashboard already accepts host paths
+// for spawn/group/template operations; this endpoint gives a remote browser a
+// usable way to choose one without trying to pop a native dialog on the host.
+func handleDashboardBrowseDirsAPI(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Path string `json:"path"`
+	}
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil && err != io.EOF {
+			writeJSON(w, http.StatusBadRequest, browseDirsResp{Error: "malformed JSON body: " + err.Error()})
+			return
+		}
+	}
+
+	home, _ := os.UserHomeDir()
+	requested := strings.TrimSpace(body.Path)
+	if requested == "" {
+		requested = home
+	}
+	if requested == "" {
+		requested = "."
+	}
+	abs, err := filepath.Abs(expandTilde(requested))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, browseDirsResp{Error: "resolve directory: " + err.Error()})
+		return
+	}
+	abs = filepath.Clean(abs)
+	info, err := os.Stat(abs)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, browseDirsResp{Error: "open directory: " + err.Error()})
+		return
+	}
+	if !info.IsDir() {
+		writeJSON(w, http.StatusBadRequest, browseDirsResp{Error: "not a directory: " + abs})
+		return
+	}
+	entries, err := os.ReadDir(abs)
+	if err != nil {
+		writeJSON(w, http.StatusForbidden, browseDirsResp{Error: "read directory: " + err.Error()})
+		return
+	}
+
+	directories := make([]browseDirEntry, 0, len(entries))
+	for _, entry := range entries {
+		isDir := entry.IsDir()
+		if !isDir && entry.Type()&os.ModeSymlink != 0 {
+			if target, statErr := os.Stat(filepath.Join(abs, entry.Name())); statErr == nil {
+				isDir = target.IsDir()
+			}
+		}
+		if !isDir {
+			continue
+		}
+		directories = append(directories, browseDirEntry{
+			Name: entry.Name(),
+			Path: filepath.Join(abs, entry.Name()),
+		})
+	}
+	parent := filepath.Dir(abs)
+	if parent == abs {
+		parent = ""
+	}
+	if home != "" {
+		home, _ = filepath.Abs(home)
+	}
+	writeJSON(w, http.StatusOK, browseDirsResp{
+		Path: abs, Parent: parent, Home: home, Directories: directories,
+	})
 }
 
 // handleDashboardPickDirAPI opens a native directory picker and returns

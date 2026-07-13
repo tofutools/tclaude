@@ -242,7 +242,8 @@ func seedProcessDashSnap(t *testing.T, f *testharness.Flow) {
 		}
 	}
 	requireNoError("enable Processes", config.Save(&config.Config{
-		Features: &config.FeaturesConfig{Processes: true},
+		Features:  &config.FeaturesConfig{Processes: true},
+		Dashboard: &config.DashboardConfig{DefaultDirectoryPicker: config.DefaultDirectoryPickerWeb},
 	}))
 	root := filepath.Join(f.World.HomeDir, ".tclaude", "processes")
 	t.Cleanup(agentd.SetProcessStoreRootForTest(root))
@@ -448,6 +449,13 @@ func baseStates() []dashsnap.State {
   }
 })();`
 	states := []dashsnap.State{
+		{
+			Key:      "bounded-directory-picker",
+			Title:    "Bounded Preact — web directory picker",
+			Caption:  "The shared host-directory navigator used by every Browse… action, including focus containment, host path entry, parent/home navigation, folder list, and default/wizard chrome.",
+			JS:       directoryPickerDashSnapJS(),
+			SettleMS: 300,
+		},
 		{
 			Key:      "bounded-messages-populated",
 			Title:    "Bounded Preact — Messages populated",
@@ -1159,6 +1167,26 @@ func baseStates() []dashsnap.State {
 		},
 	}
 	return append(states, processGraphStates()...)
+}
+
+func directoryPickerDashSnapJS() string {
+	return `return (async function(){
+  var helpers = await import('/static/js/helpers.js');
+  window.__dashsnapDirectoryPicker = helpers.pickDirectory({
+    startDir: '/tmp', title: 'Select a dashboard workspace'
+  });
+  for (var i = 0; i < 80; i++) {
+    var modal = document.querySelector('#directory-picker-modal');
+    var list = modal && modal.querySelector('.directory-picker-list');
+    if (modal && list && !modal.querySelector('.directory-picker-path button').disabled) {
+      if (modal.getAttribute('aria-hidden') === 'true') throw new Error('picker unexpectedly hidden');
+      if (document.activeElement !== modal.querySelector('#directory-picker-path')) throw new Error('picker did not take focus');
+      return;
+    }
+    await new Promise(function(resolve){ setTimeout(resolve, 25); });
+  }
+  throw new Error('directory picker did not become ready');
+})();`
 }
 
 // templateManagerJS opens the real Preact-owned management overlay through the

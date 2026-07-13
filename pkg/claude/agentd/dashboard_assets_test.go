@@ -636,6 +636,24 @@ func TestDashboardAssets_DefaultTerminalWired(t *testing.T) {
 	}
 }
 
+func TestDashboardAssets_DirectoryPickerWired(t *testing.T) {
+	for _, needle := range []string{
+		`id="directory-picker-root"`,
+		"mountDirectoryPickerFeature",
+		"configureDirectoryPickerBridge",
+		"/api/browse-directories",
+		"lastSnapshot?.default_directory_picker === 'web'",
+		"#cfg-dashboard-default-web-directory-picker",
+		"dashboard.default_directory_picker = 'web'",
+		`id="directory-picker-modal"`,
+		"body.wizard .directory-picker-modal",
+	} {
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard assets missing %q — web directory picker wiring broken", needle)
+		}
+	}
+}
+
 // TestDashboardAssets_GroupWebTerminalWired guards the group ⚙ menu's "open web
 // terminal" item — the group counterpart of the per-agent "web term" button. Its
 // pieces span three JS files plus a server route (dashboard_edit.go), and there's

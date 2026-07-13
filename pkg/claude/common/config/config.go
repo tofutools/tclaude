@@ -295,6 +295,13 @@ const (
 	DefaultTerminalWeb    = "web"
 )
 
+// Default-directory-picker modes — config dashboard.default_directory_picker.
+// Remote dashboard origins always override the local default to web mode.
+const (
+	DefaultDirectoryPickerNative = "native"
+	DefaultDirectoryPickerWeb    = "web"
+)
+
 // DashboardConfig holds display toggles for the agentd web dashboard.
 type DashboardConfig struct {
 	// ActivityBots selects the style of the per-group + global "activity
@@ -351,6 +358,13 @@ type DashboardConfig struct {
 	// web buttons and the native-window bulk "windows…" modal are unaffected.
 	// See (*Config).DefaultTerminal.
 	DefaultTerminal string `json:"default_terminal,omitempty"`
+	// DefaultDirectoryPicker selects the directory chooser used from a local
+	// dashboard: "native" (the default) opens the host OS dialog, while "web"
+	// uses the dashboard's browser-rendered directory navigator. Remote
+	// dashboard origins always use the web picker because a host-side native
+	// dialog cannot be operated from the remote browser. Empty / unknown falls
+	// back to native. See (*Config).DefaultDirectoryPicker.
+	DefaultDirectoryPicker string `json:"default_directory_picker,omitempty"`
 	// ShowAgentHideButton keeps the per-agent "hide window" button — the
 	// slashed-eye icon beside "focus" in each agent row's quick-control
 	// cluster — visible. That button detaches the agent's terminal window;
@@ -1164,6 +1178,19 @@ func (c *Config) DefaultTerminal() string {
 		}
 	}
 	return DefaultTerminalNative
+}
+
+// DefaultDirectoryPicker reports the configured directory chooser for local
+// dashboard connections. Remote browser connections override this to "web"
+// client-side because a native dialog would appear on the agentd host.
+func (c *Config) DefaultDirectoryPicker() string {
+	if c != nil && c.Dashboard != nil {
+		switch c.Dashboard.DefaultDirectoryPicker {
+		case DefaultDirectoryPickerNative, DefaultDirectoryPickerWeb:
+			return c.Dashboard.DefaultDirectoryPicker
+		}
+	}
+	return DefaultDirectoryPickerNative
 }
 
 // FocusConfig holds window-focus behavior knobs.
