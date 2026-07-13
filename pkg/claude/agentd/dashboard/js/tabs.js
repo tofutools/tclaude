@@ -4,7 +4,7 @@
 // tabs from snapshot data, each with its text-filter helper.
 // Extracted from dashboard.js as part of the Stage 2 module split.
 
-import { $, esc, relTime } from './helpers.js';
+import { $, esc, relTime, themeWords } from './helpers.js';
 import {
   sortHead, applySort,
   LINK_COLS, LINK_ACCESSORS,
@@ -50,7 +50,10 @@ function fmtRemaining(secs) {
 // who can message whom.
 function renderLinks(rows) {
   if (!rows || !rows.length) {
-    return '<div class="empty">No inter-group links yet. Create one with the <strong>+ new link</strong> button above.</div>';
+    return `<div class="empty">${themeWords(
+      'No inter-group links yet. Create one with the + new link button above.',
+      'No arcane channels yet. Weave one with the + weave channel button above.',
+    )}</div>`;
   }
   return `
     <table>
@@ -65,8 +68,8 @@ function renderLinks(rows) {
             <td><span class="id">${esc(l.mode)}</span></td>
             <td><span class="muted">${esc(relTime(l.created_at) || '')}</span></td>
             <td><div class="row-actions">
-              <button data-act="link-edit" data-id="${l.id}" data-from="${esc(l.from)}" data-to="${esc(l.to)}" data-mode="${esc(l.mode)}" title="Change this link's mode">edit</button>
-              <button class="danger" data-act="link-delete" data-id="${l.id}" data-group="${esc(l.from)}" data-from="${esc(l.from)}" data-to="${esc(l.to)}" title="Remove this link">delete</button>
+              <button data-act="link-edit" data-id="${l.id}" data-from="${esc(l.from)}" data-to="${esc(l.to)}" data-mode="${esc(l.mode)}" title="Change this link's mode">${themeWords('edit', 'rebind')}</button>
+              <button class="danger" data-act="link-delete" data-id="${l.id}" data-group="${esc(l.from)}" data-from="${esc(l.from)}" data-to="${esc(l.to)}" title="Remove this link">${themeWords('delete', 'sever')}</button>
             </div></td>
           </tr>
         `).join('')}
@@ -89,9 +92,12 @@ function renderLinksTab() {
   const rows = lastSnapshot.links || [];
   const filtered = filterLinks(rows, q);
   morphInto($('#links-list'), renderLinks(filtered));
-  $('#filter-links-count').textContent = q
+  $('#filter-links-count').innerHTML = q
     ? `${filtered.length} / ${rows.length}`
-    : `${rows.length} link${rows.length === 1 ? '' : 's'}`;
+    : themeWords(
+      `${rows.length} link${rows.length === 1 ? '' : 's'}`,
+      `${rows.length} channel${rows.length === 1 ? '' : 's'}`,
+    );
 }
 
 export {

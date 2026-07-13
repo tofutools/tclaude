@@ -1157,19 +1157,19 @@
      each group's expanded body. -->
 <div class="manage-overlay" id="links-manage-modal">
   <div class="manage-modal" role="dialog" aria-modal="true" aria-labelledby="links-manage-title">
-    <h3 id="links-manage-title">Inter-group links</h3>
-    <p class="manage-intro">Communication edges between groups: members of FROM may message members of TO. Direction matters — add a reverse edge for two-way reach.</p>
+    <h3 id="links-manage-title"><span class="theme-copy-regular">Inter-group links</span><span class="theme-copy-wizard">Arcane channels between parties</span></h3>
+    <p class="manage-intro"><span class="theme-copy-regular">Communication edges between groups: members of FROM may message members of TO. Direction matters — add a reverse edge for two-way reach.</span><span class="theme-copy-wizard">Missive channels between parties: familiars of FROM may whisper to familiars of TO. Direction matters — weave a reverse channel for two-way reach.</span></p>
     <div class="filter-bar">
       <input id="filter-links" type="text" placeholder="Filter (from / to / mode)" autocomplete="off" spellcheck="false" />
       <span class="filter-count" id="filter-links-count"></span>
       <button class="clear-filter" id="filter-links-clear" title="Clear filter">×</button>
       <span class="spacer"></span>
-      <button id="link-new-open" class="primary" title="Add a new inter-group communication link">+ new link</button>
+      <button id="link-new-open" class="primary" title="Add a new inter-group communication link"><span class="theme-copy-regular">+ new link</span><span class="theme-copy-wizard">+ weave channel</span></button>
     </div>
     <div id="links-list"></div>
     <div class="modal-buttons">
       <span class="spacer"></span>
-      <button id="links-manage-close" type="button">Close</button>
+      <button id="links-manage-close" type="button"><span class="theme-copy-regular">Close</span><span class="theme-copy-wizard">Dispel</span></button>
     </div>
   </div>
 </div>
@@ -1193,11 +1193,11 @@
       </select>
     </label>
     <label class="cron-create-enabled" id="link-modal-bidir-row" title="Also create the reverse link (TO → FROM) with the same mode in one call.">
-      <input id="link-modal-bidir" type="checkbox" /> Also create reverse link (TO → FROM)
+      <input id="link-modal-bidir" type="checkbox" /> <span class="theme-copy-regular">Also create reverse link (TO → FROM)</span><span class="theme-copy-wizard">Also weave a reverse channel (TO → FROM)</span>
     </label>
     <div class="cron-create-error" id="link-modal-error"></div>
     <div class="modal-buttons">
-      <button id="link-modal-cancel" type="button">Cancel</button>
+      <button id="link-modal-cancel" type="button"><span class="theme-copy-regular">Cancel</span><span class="theme-copy-wizard">Dispel</span></button>
       <span class="spacer"></span>
       <button id="link-modal-submit" class="primary" type="button">Create link</button>
     </div>

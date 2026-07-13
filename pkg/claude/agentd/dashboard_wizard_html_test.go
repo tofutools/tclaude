@@ -213,6 +213,28 @@ func TestDashboardHTML_WizardSpawnModal(t *testing.T) {
 	must("body.wizard #agent-spawn-modal .cron-create-row input[type=url]", "the wizard field re-skin covers the Task url input")
 }
 
+// TestDashboardHTML_WizardLinksDialogs pins the arcane skin and copy for the
+// inter-group links browser plus its create/edit child dialog. Both reuse
+// shared shells, so the id-scoped selectors are the regression boundary.
+func TestDashboardHTML_WizardLinksDialogs(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !dashboardSourceContains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	must(`class="theme-copy-wizard">Arcane channels between parties</span>`, "the links browser has wizard-mode title copy")
+	must(`class="theme-copy-wizard">+ weave channel</span>`, "the new-link action has wizard-mode copy")
+	must("themeWords('Add inter-group link', 'Weave an arcane channel')", "the create dialog title follows the active theme")
+	must("themeWords('Edit link mode', 'Rebind an arcane channel')", "the edit dialog title follows the active theme")
+	must("body.wizard #links-manage-modal .manage-modal", "the links browser surface is re-skinned")
+	must("body.wizard #links-manage-modal #links-list th", "the links table is re-skinned")
+	must("body.wizard #link-modal .cron-create-modal", "the link editor surface is re-skinned")
+	must("body.wizard #link-modal .cron-create-row select", "the link fields are re-skinned")
+	must("body.wizard #link-modal #link-modal-submit", "the link submit action is gilded")
+}
+
 // TestDashboardHTML_WizardRetireModal pins the wizard re-skin of the retire
 // confirmation ("Banish this familiar?"): the per-theme title copy swap and the
 // arcane CSS hooks — the destructive twin of the spawn dialog's Summon re-skin.

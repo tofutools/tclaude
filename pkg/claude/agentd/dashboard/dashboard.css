@@ -8381,6 +8381,103 @@ body.wizard #profiles-manage-modal .modal-buttons button {
 }
 body.wizard #profiles-manage-modal .modal-buttons button:hover { background: #3a2a63; }
 
+/* ─── Wizard inter-party channels ─────────────────────────────────────
+   The links browser and its create/edit child share the generic management
+   and cron-form shells with several unrelated dialogs. Keep their arcane
+   chrome scoped to the two overlay ids so a wizard-theme sweep cannot repaint
+   a sibling surface by accident. */
+body.wizard #links-manage-modal .manage-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35), 0 8px 24px rgba(0, 0, 0, 0.5);
+  color: #e7d9f5;
+}
+body.wizard #links-manage-modal .manage-modal h3,
+body.wizard #link-modal .cron-create-modal h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #links-manage-modal .manage-intro { color: #b39ddb; }
+body.wizard #links-manage-modal .filter-bar input {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
+}
+body.wizard #links-manage-modal .filter-bar input:focus { border-color: #a97bd6; }
+body.wizard #links-manage-modal .filter-bar .filter-count,
+body.wizard #links-manage-modal .filter-bar button.clear-filter { color: #b39ddb; }
+body.wizard #links-manage-modal .filter-bar button.clear-filter:hover { color: #f3e6c0; }
+body.wizard #links-manage-modal #link-new-open.primary {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  border: 1px solid #d9b45a;
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 0.5px;
+  text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
+  box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
+}
+body.wizard #links-manage-modal #link-new-open.primary:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  border-color: #f3e6c0;
+  box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
+}
+body.wizard #links-manage-modal #links-list th,
+body.wizard #links-manage-modal #links-list td { border-bottom-color: rgba(122, 93, 176, 0.35); }
+body.wizard #links-manage-modal #links-list th { color: #b39ddb; }
+body.wizard #links-manage-modal #links-list th.sortable:hover,
+body.wizard #links-manage-modal #links-list th.sort-active { color: #d9b45a; }
+body.wizard #links-manage-modal #links-list tr:hover { background: #241b3d; }
+body.wizard #links-manage-modal #links-list .rowname { color: #f3e6c0; }
+body.wizard #links-manage-modal #links-list .id,
+body.wizard #links-manage-modal #links-list .muted,
+body.wizard #links-manage-modal #links-list .empty { color: #b39ddb; }
+body.wizard #links-manage-modal #links-list .row-actions button,
+body.wizard #links-manage-modal .modal-buttons button {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #links-manage-modal #links-list .row-actions button:hover,
+body.wizard #links-manage-modal .modal-buttons button:hover { background: #3a2a63; }
+body.wizard #links-manage-modal #links-list .row-actions button.danger:hover {
+  color: #ffb4a8; border-color: #f0883e;
+}
+
+body.wizard #link-modal .cron-create-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #link-modal .modal-meta {
+  background: #241b3d; border-color: rgba(122, 93, 176, 0.5); color: #b39ddb;
+}
+body.wizard #link-modal .cron-create-label { color: #b39ddb; }
+body.wizard #link-modal .cron-create-enabled { color: #e7d9f5; }
+body.wizard #link-modal .cron-create-enabled input[type=checkbox] { accent-color: #a97bd6; }
+body.wizard #link-modal .cron-create-row select {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
+}
+body.wizard #link-modal .cron-create-row select:focus { border-color: #a97bd6; }
+body.wizard #link-modal .cron-create-row select option { color: #1a1330; background: #e7d9f5; }
+body.wizard #link-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
+body.wizard #link-modal button:not(#link-modal-submit) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #link-modal button:not(#link-modal-submit):hover { background: #3a2a63; }
+body.wizard #link-modal #link-modal-submit {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  color: #f3e6c0;
+  border: 2px solid #d9b45a;
+  border-radius: 6px;
+  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
+  letter-spacing: 0.5px;
+  font-weight: 700;
+}
+body.wizard #link-modal #link-modal-submit:hover:not(:disabled) {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
+}
+body.wizard #link-modal #link-modal-submit:disabled { opacity: 0.7; }
+
 /* ─── Wizard template vocabulary — "summoning circles" ───────────────
    In 🧙 mode a group template is a SUMMONING CIRCLE: you chalk a new one,
    trace a live party into one, and cast one to summon the whole party in
