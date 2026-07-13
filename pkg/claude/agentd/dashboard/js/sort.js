@@ -6,7 +6,7 @@
 // column specs and value accessors. Extracted from dashboard.js as
 // part of the Stage 2 module split.
 
-import { esc, themeWords } from './helpers.js';
+import { esc } from './helpers.js';
 import { dashPrefs } from './prefs.js';
 
 // --- column sorting --------------------------------------------------
@@ -74,13 +74,20 @@ function cycleSort(tableKey, col) {
 function sortHead(tableKey, cols) {
   const active = sortState[tableKey];
   const cells = cols.map(c => {
-    const label = c.wizardLabel ? themeWords(c.label || '', c.wizardLabel) : esc(c.label || '');
+    // Keep the tooltip on the same theme-specific span as the visible copy.
+    // CSS then swaps both instantly when wizard mode toggles; a title on the
+    // <th> itself would remain stuck on the plain label until the next render.
+    const label = c.wizardLabel
+      ? `<span class="theme-copy-regular" title="Sort by ${esc(c.label)}">${esc(c.label)}</span>`
+        + `<span class="theme-copy-wizard" title="Sort by ${esc(c.wizardLabel)}">${esc(c.wizardLabel)}</span>`
+      : esc(c.label || '');
     if (!c.col) return `<th>${label}</th>`;
     const on = active && active.col === c.col;
     const arrow = on ? (active.dir === 'asc' ? '▲' : '▼') : '▾';
     const cls = on ? 'sortable sort-active' : 'sortable';
+    const title = c.wizardLabel ? '' : ` title="Sort by ${esc(c.label)}"`;
     return `<th class="${cls}" data-sort-table="${esc(tableKey)}" `
-         + `data-sort-col="${esc(c.col)}" title="Sort by ${esc(c.label)}">`
+         + `data-sort-col="${esc(c.col)}"${title}>`
          + `${label}<span class="sort-arrow">${arrow}</span></th>`;
   });
   return `<thead><tr>${cells.join('')}</tr></thead>`;

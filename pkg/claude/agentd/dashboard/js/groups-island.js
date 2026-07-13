@@ -45,8 +45,8 @@ function ViewOption({ option, state, queueRefresh, wizard }) {
 function ColumnLabel({ column }) {
   if (!column.wizardLabel) return column.label;
   return html`
-    <span class="theme-copy-regular">${column.label}</span>
-    <span class="theme-copy-wizard">${column.wizardLabel}</span>
+    <span class="theme-copy-regular" title=${`Show the "${column.label}" column`}>${column.label}</span>
+    <span class="theme-copy-wizard" title=${`Show the "${column.wizardLabel}" column`}>${column.wizardLabel}</span>
   `;
 }
 
@@ -166,7 +166,11 @@ export function GroupsControls({ state, actions }) {
         >Columns</div>
         <div id="filter-groups-cols" class="view-cols">
           ${columns.map((column) => html`
-            <label class="filter-toggle" title=${`Show the "${column.label}" column`} key=${column.key}>
+            <label
+              class="filter-toggle"
+              title=${column.wizardLabel ? undefined : `Show the "${column.label}" column`}
+              key=${column.key}
+            >
               <input
                 id=${`filter-groups-col-${column.key}`}
                 type="checkbox"
