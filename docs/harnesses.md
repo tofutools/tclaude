@@ -171,8 +171,11 @@ explicit per-tool `approval_mode = "approve"` decisions into the persistent
 profiles are refused. Pane-exit cleanup repeats the reconciliation as a fallback.
 Existing global decisions are never overwritten, including conflicting
 decisions. A bounded startup sweep removes old copies left by forced stops or
-host crashes; your other config and profiles are left untouched. The research
-behind the defaults lives in the `tclaude-harness-independence` Linear project
+host crashes. Agentd startup recovery reconciles only profiles whose recorded
+Codex launch command still belongs to a live tmux pane; stopped-session
+leftovers are left for the age-bounded sweep. Your other config and profiles
+are left untouched. The research behind the defaults lives in the
+`tclaude-harness-independence` Linear project
 (JOH-166/JOH-167/JOH-200/JOH-207).
 
 ### Sandbox at spawn (Claude Code)
