@@ -90,16 +90,26 @@ const (
 	ConvRoleGeneration = "generation" // a superseded past generation
 )
 
-// newAgentID mints a fresh, opaque, prefixed agent id. Panics only if the
+// NewAgentID mints a fresh, opaque, prefixed agent id. It is exported for
+// launch paths that must reserve the stable actor identity before the harness
+// has produced a conversation id (pending Codex spawns). The caller must
+// persist the reservation until it can bind the id with
+// EnsureAgentForConvWithID.
+//
+// Panics only if the
 // system CSPRNG fails — an identity the daemon cannot generate is fatal,
 // same posture as the operator-token generator.
-func newAgentID() string {
+func NewAgentID() string {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		panic("db: crypto/rand failed generating agent_id: " + err.Error())
 	}
 	return AgentIDPrefix + hex.EncodeToString(b[:])
 }
+
+// newAgentID is the package-local spelling retained for ordinary allocation
+// paths that mint and bind an actor in one operation.
+func newAgentID() string { return NewAgentID() }
 
 // AllocateAgent mints a brand-new actor whose first (and current)
 // conversation generation is convID, and links convID to it. Use it on the
@@ -162,6 +172,15 @@ func EnsureAgentForConv(convID, via string) (agentID string, created bool, err e
 	} else if existing != "" {
 		return existing, false, nil
 	}
+	// A pending Codex spawn reserves its stable identity before its harness
+	// conv-id exists. Once the session row gains that conv-id, every generic
+	// self-enrollment path (hook, reaper, CLI middleware) must bind the reserved
+	// id instead of minting a competing actor during the sweeper race window.
+	if reserved, rerr := PendingAgentIDForConv(convID); rerr != nil {
+		return "", false, rerr
+	} else if reserved != "" {
+		return EnsureAgentForConvWithID(convID, reserved, via)
+	}
 	agentID, err = AllocateAgent(convID, via)
 	if err != nil {
 		// Lost a race with a concurrent allocate/link — re-read and return
@@ -172,6 +191,72 @@ func EnsureAgentForConv(convID, via string) (agentID string, created bool, err e
 		return "", false, err
 	}
 	return agentID, true, nil
+}
+
+// EnsureAgentForConvWithID binds convID to a caller-reserved stable actor id,
+// or returns the existing identical binding. It refuses to silently substitute
+// a different actor in either direction: the response may already have exposed
+// requestedAgentID as the canonical handle, so changing it would break stable
+// identity.
+func EnsureAgentForConvWithID(convID, requestedAgentID, via string) (agentID string, created bool, err error) {
+	convID = strings.TrimSpace(convID)
+	requestedAgentID = strings.TrimSpace(requestedAgentID)
+	if convID == "" || requestedAgentID == "" {
+		return "", false, errors.New("EnsureAgentForConvWithID: conv_id and agent_id required")
+	}
+	if !strings.HasPrefix(requestedAgentID, AgentIDPrefix) {
+		return "", false, fmt.Errorf("EnsureAgentForConvWithID: invalid agent_id %q", requestedAgentID)
+	}
+	if existing, rerr := AgentIDForConv(convID); rerr != nil {
+		return "", false, rerr
+	} else if existing != "" {
+		if existing != requestedAgentID {
+			return "", false, fmt.Errorf("EnsureAgentForConvWithID: conv %s already belongs to agent %s (reserved %s)",
+				convID, existing, requestedAgentID)
+		}
+		return existing, false, nil
+	}
+
+	d, err := Open()
+	if err != nil {
+		return "", false, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return "", false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	resolveRace := func(cause error) (string, bool, error) {
+		// End this transaction before checking the committed binding. In
+		// particular, a uniqueness error may be the result of another exact-id
+		// ensure winning while this transaction was in flight.
+		_ = tx.Rollback()
+		if existing, rerr := AgentIDForConv(convID); rerr == nil && existing == requestedAgentID {
+			return existing, false, nil
+		}
+		return "", false, cause
+	}
+
+	var occupiedConv string
+	err = tx.QueryRow(`SELECT current_conv_id FROM agents WHERE agent_id = ?`, requestedAgentID).Scan(&occupiedConv)
+	switch {
+	case err == nil:
+		return "", false, fmt.Errorf("EnsureAgentForConvWithID: agent %s already heads conv %s", requestedAgentID, occupiedConv)
+	case !errors.Is(err, sql.ErrNoRows):
+		return "", false, err
+	}
+	if err := insertAgentTx(tx, requestedAgentID, convID, via, time.Now()); err != nil {
+		return resolveRace(err)
+	}
+	if err := linkConvTx(tx, convID, requestedAgentID, ConvRoleHead, via, time.Now()); err != nil {
+		return resolveRace(err)
+	}
+	if err := tx.Commit(); err != nil {
+		// A concurrent generic ensure may have won after our initial read. It is
+		// only a successful idempotent race when it bound the reserved id.
+		return resolveRace(err)
+	}
+	return requestedAgentID, true, nil
 }
 
 // LinkConvToAgent maps an additional conversation generation onto an existing

@@ -15,17 +15,17 @@ import (
 // LABEL — the escape hatch for a spawn that is stuck in the "Pending"
 // virtual group and will never enrol (chiefly a Codex agent wedged behind
 // a startup gate the operator has given up on: an untrusted dir, a
-// new-config prompt, an abandoned OpenAI-auth modal). A pending spawn has
-// no conv-id and no agent_id yet, so the conv-keyed retire / stop / delete
-// endpoints cannot reach it; the only two things it owns are its
+// new-config prompt, an abandoned OpenAI-auth modal). A pending spawn has a
+// reserved agent_id but no conv-id yet, so the conv-keyed retire / stop / delete
+// endpoints cannot reach it; the only runtime things it owns are its
 // pending_spawns row and a session row (both keyed by the label), plus a
 // possibly-live tmux pane. This handler tears down all three:
 //
-//	POST /api/pending/delete/{label}
+//		POST /api/pending/delete/{label}
 //
-//  1. kill the tmux pane if it is still alive (the gated harness process),
-//  2. delete the session row,
-//  3. delete the pending_spawns row.
+//	 1. kill the tmux pane if it is still alive (the gated harness process),
+//	 2. delete the session row,
+//	 3. delete the pending_spawns row.
 //
 // It is the deliberate counterpart to the pending sweeper's happy path
 // (enrol → deletePendingSpawnRow): where the sweeper promotes a spawn once
@@ -73,6 +73,16 @@ func handleDashboardPendingDeleteAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	if p == nil {
 		http.Error(w, "no pending spawn "+label+" (already enrolled or cleaned up)", http.StatusNotFound)
+		return
+	}
+	// A launching reservation is published before SpawnDetachedTclaudeNew so
+	// hook/reaper enrollment can already see its stable identity. At this point
+	// no session row or pane is guaranteed to exist yet, so deleting the row
+	// could let the launch complete after cleanup and orphan its process. Once
+	// executeSpawn observes the session row it clears Launching; the normal
+	// teardown below is then safe and can reach the pane by label.
+	if p.Launching {
+		http.Error(w, "pending spawn "+label+" is still launching; try again", http.StatusConflict)
 		return
 	}
 

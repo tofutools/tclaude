@@ -191,6 +191,77 @@ func TestEnsureAgentForConvIdempotent(t *testing.T) {
 	assert.Equal(t, id1, id2, "same conv keeps the same actor")
 }
 
+func TestEnsureAgentForConvBindsPendingReservation(t *testing.T) {
+	setupTestDB(t)
+	reserved := NewAgentID()
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "spwn-reserved", ConvID: "conv-reserved", Status: "running", Harness: "codex",
+	}))
+	require.NoError(t, InsertPendingSpawn(&PendingSpawn{
+		Label: "spwn-reserved", AgentID: reserved, GroupID: 1,
+	}))
+
+	got, created, err := EnsureAgentForConv("conv-reserved", "session-start")
+	require.NoError(t, err)
+	assert.True(t, created)
+	assert.Equal(t, reserved, got, "generic hook/reaper enrollment must honor the pending response identity")
+
+	bound, err := AgentIDForConv("conv-reserved")
+	require.NoError(t, err)
+	assert.Equal(t, reserved, bound)
+}
+
+func TestClaimPendingSpawnAndBindAgentIsGapFree(t *testing.T) {
+	setupTestDB(t)
+	reserved := NewAgentID()
+	require.NoError(t, InsertPendingSpawn(&PendingSpawn{
+		Label: "spwn-claim-bind", AgentID: reserved, GroupID: 1,
+	}))
+
+	claimed, err := ClaimPendingSpawnAndBindAgent("spwn-claim-bind", "conv-claim-bind", reserved, "spawn")
+	require.NoError(t, err)
+	assert.True(t, claimed)
+	pending, err := GetPendingSpawn("spwn-claim-bind")
+	require.NoError(t, err)
+	assert.Nil(t, pending, "atomic claim removes the reservation")
+	bound, err := AgentIDForConv("conv-claim-bind")
+	require.NoError(t, err)
+	assert.Equal(t, reserved, bound, "the exact actor binding exists when the reservation disappears")
+}
+
+func TestClaimPendingSpawnAndBindAgentAcceptsPriorGenericBinding(t *testing.T) {
+	setupTestDB(t)
+	reserved := NewAgentID()
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "spwn-prior-bind", ConvID: "conv-prior-bind", Status: "running", Harness: "codex",
+	}))
+	require.NoError(t, InsertPendingSpawn(&PendingSpawn{
+		Label: "spwn-prior-bind", AgentID: reserved, GroupID: 1,
+	}))
+	got, _, err := EnsureAgentForConv("conv-prior-bind", "session-start")
+	require.NoError(t, err)
+	require.Equal(t, reserved, got)
+
+	claimed, err := ClaimPendingSpawnAndBindAgent("spwn-prior-bind", "conv-prior-bind", reserved, "spawn")
+	require.NoError(t, err)
+	assert.True(t, claimed, "the exact prior binding is an idempotent winner, not a conflict")
+	pending, err := GetPendingSpawn("spwn-prior-bind")
+	require.NoError(t, err)
+	assert.Nil(t, pending)
+}
+
+func TestEnsureAgentForConvWithIDRejectsIdentitySubstitution(t *testing.T) {
+	setupTestDB(t)
+	existing, _, err := EnsureAgentForConv("conv-existing", "spawn")
+	require.NoError(t, err)
+
+	_, _, err = EnsureAgentForConvWithID("conv-existing", NewAgentID(), "spawn")
+	require.Error(t, err)
+	bound, lookupErr := AgentIDForConv("conv-existing")
+	require.NoError(t, lookupErr)
+	assert.Equal(t, existing, bound, "a conflicting reservation must never replace the live actor")
+}
+
 // TestLinkConvToAgent models a rotation: a second conv generation joins an
 // existing actor and resolves to it; the actor now owns both generations.
 func TestLinkConvToAgent(t *testing.T) {

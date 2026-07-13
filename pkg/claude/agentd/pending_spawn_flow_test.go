@@ -1,14 +1,17 @@
 package agentd_test
 
 import (
+	"database/sql"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -79,13 +82,16 @@ func TestCodexAgent_PendingSpawnBackfillEnrollment(t *testing.T) {
 	// Spawn a Codex agent. Its conv-id never materialises within the grace,
 	// so the endpoint returns PENDING — 200 with an EMPTY conv_id — instead
 	// of hanging until a timeout (the freeze) or erroring.
-	resp := f.AsHuman().SpawnWith("codex-crew", map[string]any{
-		"name":            "codex-worker",
-		"harness":         "codex",
-		"initial_message": "Audit the auth module for timing-safe comparison bugs",
+	resp, stdout := runSpawnCLI(t, f, &agent.SpawnParams{
+		Group:          "codex-crew",
+		Name:           "codex-worker",
+		Harness:        "codex",
+		InitialMessage: "Audit the auth module for timing-safe comparison bugs",
 	})
-	require.Equal(t, http.StatusOK, resp.Code, "pending spawn still returns 200 (raw=%s)", resp.Raw)
 	require.Empty(t, resp.ConvID, "pending spawn returns an empty conv_id")
+	require.True(t, strings.HasPrefix(resp.AgentID, db.AgentIDPrefix), "pending spawn returns a stable agent_id")
+	assert.Contains(t, stdout, "Spawned "+agent.ShortAgentID(resp.AgentID, "")+" in group \"codex-crew\"")
+	assert.NotContains(t, stdout, "Spawned  in group", "operator output must never have a blank identity")
 	require.NotEmpty(t, resp.Label, "pending spawn returns its label")
 	require.NotEmpty(t, resp.TmuxSession, "pending spawn returns its tmux session")
 
@@ -94,6 +100,7 @@ func TestCodexAgent_PendingSpawnBackfillEnrollment(t *testing.T) {
 	ps, err := db.GetPendingSpawn(resp.Label)
 	require.NoError(t, err, "GetPendingSpawn")
 	require.NotNil(t, ps, "spawn recorded a pending_spawns row")
+	assert.Equal(t, resp.AgentID, ps.AgentID, "pending row persists the returned stable identity")
 	assert.Equal(t, g.ID, ps.GroupID, "pending row carries the target group")
 	assert.Equal(t, "codex-worker", ps.Name, "pending row carries the requested name")
 
@@ -125,6 +132,9 @@ func TestCodexAgent_PendingSpawnBackfillEnrollment(t *testing.T) {
 	m, err := db.FindMemberInGroup(g.ID, convID)
 	require.NoError(t, err, "FindMemberInGroup")
 	require.NotNil(t, m, "sweeper enrolled the conv into the group")
+	boundAgentID, err := db.AgentIDForConv(convID)
+	require.NoError(t, err)
+	assert.Equal(t, resp.AgentID, boundAgentID, "eventual enrollment binds the reserved stable identity")
 
 	// The over-cap briefing landed in the inbox during back-fill.
 	msg := soleInboxMessage(t, convID)
@@ -142,11 +152,11 @@ func TestCodexAgent_PendingResponseThenInlineBackgroundEnrollment(t *testing.T) 
 	t.Cleanup(agentd.SetAsyncSpawnInlineGraceForTest(700 * time.Millisecond))
 
 	delayed := &delayedCodexSpawner{
-		t:     t,
-		w:     f.World,
-		inner: f.World.DefaultMocks(t).Spawner,
-		delay: 150 * time.Millisecond,
-		conv:  map[string]string{},
+		t:       t,
+		w:       f.World,
+		inner:   f.World.DefaultMocks(t).Spawner,
+		release: make(chan struct{}),
+		conv:    map[string]string{},
 	}
 	prevSpawn := agentd.Spawn
 	agentd.Spawn = delayed
@@ -160,11 +170,14 @@ func TestCodexAgent_PendingResponseThenInlineBackgroundEnrollment(t *testing.T) 
 	})
 	require.Equal(t, http.StatusOK, resp.Code, "pending spawn still returns 200 (raw=%s)", resp.Raw)
 	require.Empty(t, resp.ConvID, "response should not wait for the delayed Codex conv-id")
+	require.True(t, strings.HasPrefix(resp.AgentID, db.AgentIDPrefix), "fast response carries reserved stable identity")
 	require.NotEmpty(t, resp.Label, "pending spawn returns its label")
 
 	ps, err := db.GetPendingSpawn(resp.Label)
 	require.NoError(t, err)
 	require.NotNil(t, ps, "fast response records the pending row immediately")
+	assert.Equal(t, resp.AgentID, ps.AgentID)
+	close(delayed.release)
 
 	var convID string
 	require.Eventually(t, func() bool {
@@ -181,6 +194,143 @@ func TestCodexAgent_PendingResponseThenInlineBackgroundEnrollment(t *testing.T) 
 		return err == nil && gone == nil
 	}, 2*time.Second, 20*time.Millisecond, "background enrollment clears the pending row")
 	f.AssertGroupMember("codex-crew", convID, "codex-worker", 3*time.Second)
+	boundAgentID, err := db.AgentIDForConv(convID)
+	require.NoError(t, err)
+	assert.Equal(t, resp.AgentID, boundAgentID, "background enrollment keeps the response identity")
+}
+
+func TestCodexAgent_LaunchingReservationRejectsPendingDelete(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	t.Cleanup(agentd.SetCodexAsyncSpawnResponseGraceForTest(20 * time.Millisecond))
+
+	started := make(chan string, 1)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+
+	blocked := &blockedLaunchCodexSpawner{
+		inner:   f.World.DefaultMocks(t).Spawner,
+		started: started,
+		release: release,
+	}
+	prevSpawn := agentd.Spawn
+	agentd.Spawn = blocked
+	t.Cleanup(func() { agentd.Spawn = prevSpawn })
+
+	f.HaveGroup("codex-crew")
+	spawned := make(chan testharness.SpawnResp, 1)
+	go func() {
+		spawned <- f.AsHuman().SpawnWith("codex-crew", map[string]any{
+			"name":    "codex-worker",
+			"harness": "codex",
+		})
+	}()
+
+	var label string
+	select {
+	case label = <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("spawn did not reach the blocked launch boundary")
+	}
+	ps, err := db.GetPendingSpawn(label)
+	require.NoError(t, err)
+	require.NotNil(t, ps, "stable identity reservation is visible before launch")
+	require.True(t, ps.Launching)
+	require.NotEmpty(t, ps.AgentID)
+	_, err = db.LoadSession(label)
+	require.ErrorIs(t, err, sql.ErrNoRows, "blocked launch has not created a session yet")
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	deleted := testharness.Serve(mux,
+		testharness.JSONRequest(t, http.MethodPost, "/api/pending/delete/"+label, nil))
+	require.Equal(t, http.StatusConflict, deleted.Code, "launching delete body=%s", deleted.Body.String())
+
+	stillReserved, err := db.GetPendingSpawn(label)
+	require.NoError(t, err)
+	require.NotNil(t, stillReserved, "rejected cancellation keeps the launch reservation")
+	assert.Equal(t, ps.AgentID, stillReserved.AgentID)
+
+	releaseOnce.Do(func() { close(release) })
+	var resp testharness.SpawnResp
+	select {
+	case resp = <-spawned:
+	case <-time.After(3 * time.Second):
+		t.Fatal("spawn did not finish after the launch boundary was released")
+	}
+	require.Equal(t, http.StatusOK, resp.Code, "spawn body=%s", resp.Raw)
+	assert.Equal(t, ps.AgentID, resp.AgentID, "rejected cancellation preserves the returned identity")
+}
+
+func TestCodexAgent_LateSessionClearsLaunchingReservation(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	t.Cleanup(agentd.SetCodexAsyncSpawnResponseGraceForTest(20 * time.Millisecond))
+	t.Cleanup(agentd.SetAsyncSpawnInlineGraceForTest(700 * time.Millisecond))
+
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	created := make(chan error, 1)
+	late := &lateSessionCodexSpawner{
+		t:       t,
+		w:       f.World,
+		inner:   f.World.DefaultMocks(t).Spawner,
+		release: release,
+		created: created,
+	}
+	prevSpawn := agentd.Spawn
+	agentd.Spawn = late
+	t.Cleanup(func() { agentd.Spawn = prevSpawn })
+
+	f.HaveGroup("codex-crew")
+	resp := f.AsHuman().SpawnWith("codex-crew", map[string]any{
+		"name":    "codex-worker",
+		"harness": "codex",
+	})
+	require.Equal(t, http.StatusOK, resp.Code, "pending spawn body=%s", resp.Raw)
+	require.Empty(t, resp.ConvID)
+	ps, err := db.GetPendingSpawn(resp.Label)
+	require.NoError(t, err)
+	require.NotNil(t, ps)
+	require.True(t, ps.Launching, "the original response poll ended before any session existed")
+
+	releaseOnce.Do(func() { close(release) })
+	require.NoError(t, <-created)
+	require.Eventually(t, func() bool {
+		updated, err := db.GetPendingSpawn(resp.Label)
+		return err == nil && updated != nil && !updated.Launching
+	}, 2*time.Second, 20*time.Millisecond, "post-response session discovery clears the launch marker")
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	deleted := testharness.Serve(mux,
+		testharness.JSONRequest(t, http.MethodPost, "/api/pending/delete/"+resp.Label, nil))
+	require.Equal(t, http.StatusOK, deleted.Code, "late-session pending spawn is cancellable; body=%s", deleted.Body.String())
+}
+
+func TestPendingSpawn_SweeperClearsLaunchingAfterSessionAppears(t *testing.T) {
+	f := newFlow(t)
+	g := f.HaveGroup("codex-crew")
+	const label = "spwn-late-session"
+	require.NoError(t, db.InsertPendingSpawn(&db.PendingSpawn{
+		Label:     label,
+		AgentID:   db.NewAgentID(),
+		Launching: true,
+		GroupID:   g.ID,
+		Name:      "codex-worker",
+	}))
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID:          label,
+		TmuxSession: label,
+		Status:      "running",
+		Harness:     "codex",
+	}))
+
+	agentd.RunPendingSpawnSweepForTest()
+	ps, err := db.GetPendingSpawn(label)
+	require.NoError(t, err)
+	require.NotNil(t, ps, "gated spawn remains pending without a conv-id")
+	assert.False(t, ps.Launching, "restart-safe sweeper clears the marker once the session exists")
 }
 
 // gatedCodexSpawner is a SpawnerLike whose codex SpawnNew models a Codex
@@ -202,6 +352,17 @@ func (s *gatedCodexSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 		return s.inner.SpawnNew(args)
 	}
 	label := args.Label
+	// The stable actor reservation must be durable before the harness process
+	// can emit a hook or be seen by the reaper. Force a sweep in this exact
+	// pre-session window: the Launching marker must protect the reservation.
+	agentd.RunPendingSpawnSweepForTest()
+	ps, err := db.GetPendingSpawn(label)
+	if err != nil {
+		return fmt.Errorf("lookup pre-launch pending reservation: %w", err)
+	}
+	if ps == nil || ps.AgentID == "" || !ps.Launching {
+		return fmt.Errorf("pending agent identity was not reserved before launch")
+	}
 	// Build the sim but do NOT Start it: no rollout (the spawn poll's
 	// conv-store discovery finds nothing) and not alive yet.
 	cx := testharness.NewCodexSim(s.t, s.w.HomeDir, args.Cwd)
@@ -228,13 +389,67 @@ func (s *gatedCodexSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 }
 
 type delayedCodexSpawner struct {
-	t     *testing.T
-	w     *testharness.World
-	inner testharness.SpawnerLike
-	delay time.Duration
+	t       *testing.T
+	w       *testharness.World
+	inner   testharness.SpawnerLike
+	release chan struct{}
 
 	mu   sync.Mutex
 	conv map[string]string
+}
+
+type blockedLaunchCodexSpawner struct {
+	inner   testharness.SpawnerLike
+	started chan<- string
+	release <-chan struct{}
+}
+
+type lateSessionCodexSpawner struct {
+	t       *testing.T
+	w       *testharness.World
+	inner   testharness.SpawnerLike
+	release <-chan struct{}
+	created chan<- error
+}
+
+func (s *lateSessionCodexSpawner) SpawnNew(args clcommon.SpawnArgs) error {
+	if args.Harness != "codex" {
+		return s.inner.SpawnNew(args)
+	}
+	cx := testharness.NewCodexSim(s.t, s.w.HomeDir, args.Cwd)
+	go func() {
+		<-s.release
+		if err := db.SaveSession(&db.SessionRow{
+			ID:          args.Label,
+			TmuxSession: args.Label,
+			Cwd:         cx.Cwd,
+			Status:      "running",
+			Harness:     "codex",
+		}); err != nil {
+			s.created <- err
+			return
+		}
+		s.w.Tmux.Register(args.Label, cx.Cwd, cx)
+		s.created <- nil
+	}()
+	return nil
+}
+
+func (s *lateSessionCodexSpawner) SpawnResume(args clcommon.SpawnArgs) error {
+	return s.inner.SpawnResume(args)
+}
+
+func (s *blockedLaunchCodexSpawner) SpawnNew(args clcommon.SpawnArgs) error {
+	if args.Harness != "codex" {
+		return s.inner.SpawnNew(args)
+	}
+	s.started <- args.Label
+	<-s.release
+	return s.inner.SpawnNew(args)
+}
+
+func (s *blockedLaunchCodexSpawner) SpawnResume(args clcommon.SpawnArgs) error {
+	return s.inner.SpawnResume(args)
 }
 
 func (s *delayedCodexSpawner) SpawnNew(args clcommon.SpawnArgs) error {
@@ -254,7 +469,7 @@ func (s *delayedCodexSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 	}
 	s.w.Tmux.Register(label, cx.Cwd, cx)
 	go func() {
-		time.Sleep(s.delay)
+		<-s.release
 		if err := cx.Start(); err != nil {
 			s.t.Logf("delayed codex start failed: %v", err)
 			return
