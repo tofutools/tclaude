@@ -35,9 +35,8 @@
 //     a dock drop (the dock is in neither's target selector), returning WITHOUT
 //     preventDefault — so this handler is the one that acts.
 //
-// Survives the 2s poll for free: dndDragActive / groupReorderActive already keep
-// refreshSuspended() from rebuilding the DOM mid-drag, so the dock (drop target)
-// and the dragged row/header (drag source) stay attached through the gesture.
+// Keyed Preact ownership retains dock, row and header nodes across snapshot
+// publishes; the imported active flags only identify the reverse source.
 
 import { $, $$ } from './helpers.js';
 import { toast } from './refresh.js';
@@ -103,9 +102,29 @@ function pillText() {
 
 function bindDockSaveDnd() {
   // No dock on the page → nothing to bind (mirrors the other dock modules).
-  if (!$('#agent-dock')) return;
+  if (!$('#agent-dock')) return () => {};
+  const removers = [];
+  const listen = (target, type, listener, options) => {
+    target.addEventListener(type, listener, options);
+    removers.push(() => target.removeEventListener(type, listener, options));
+  };
+  let reverseSource = null;
+  const endReverseDrag = () => {
+    reverseSource?.removeEventListener('dragend', endReverseDrag);
+    reverseSource = null;
+    clearDockSaveHighlight();
+  };
 
-  document.addEventListener('dragover', (e) => {
+  // The source-local terminal listener still fires when a structural publish
+  // detached a reverse-drag row/header before dragend could bubble to document.
+  listen(document, 'dragstart', (e) => {
+    if (!reverseActive()) return;
+    reverseSource?.removeEventListener('dragend', endReverseDrag);
+    reverseSource = e.target;
+    reverseSource.addEventListener('dragend', endReverseDrag, { once: true });
+  });
+
+  listen(document, 'dragover', (e) => {
     if (!reverseActive()) return;
     // Repaint from scratch each move so a box we've left goes dark even if its
     // dragleave was swallowed (Firefox occasionally drops the final dragleave).
@@ -130,9 +149,9 @@ function bindDockSaveDnd() {
   // dragend clears THIS module's highlight on every drag-end outcome (a
   // successful drop, an Escape-cancel, or a release over nothing). The source
   // module clears its own flags + the shared pill; we own only .dock-save-over.
-  document.addEventListener('dragend', clearDockSaveHighlight);
+  listen(document, 'dragend', endReverseDrag);
 
-  document.addEventListener('drop', (e) => {
+  listen(document, 'drop', (e) => {
     if (!reverseActive()) return;
     if (!dockUnder(e)) return;
     e.preventDefault();
@@ -158,6 +177,14 @@ function bindDockSaveDnd() {
       saveAgentAsProfile(payload.agent || payload.conv, payload.label || payload.conv);
     }
   });
+
+  let cleaned = false;
+  return () => {
+    if (cleaned) return;
+    cleaned = true;
+    for (const remove of removers.splice(0).reverse()) remove();
+    endReverseDrag();
+  };
 }
 
 // saveGroupAsTemplate fetches an UNSAVED template snapshot of the live group

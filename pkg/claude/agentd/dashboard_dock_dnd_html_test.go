@@ -19,16 +19,24 @@ func TestDashboardHTML_DockDnd(t *testing.T) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
+	mustNot := func(needle, why string) {
+		t.Helper()
+		if strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source still contains %q (%s)", needle, why)
+		}
+	}
 
-	// The module + its two exports (mirrors dnd.js / group-reorder.js).
-	must("export { bindDockDnd, dockDragActive };", "dock-dnd.js exports its binder + active flag")
-	must("bindDockDnd();", "dashboard.js boot wires the dock drag")
+	// The module exports its disposable binder. Its active flag remains private:
+	// keyed Preact dock nodes survive refreshes, so the shared poll no longer
+	// needs to observe or suspend around the gesture.
+	must("export { bindDockDnd };", "dock-dnd.js exports its binder")
+	must("dndCleanups.push(bindDockDnd());", "dashboard.js boot wires the disposable dock drag binder")
 	must("import { bindDockDnd } from './dock-dnd.js';", "dashboard.js imports the dock drag binder")
 
 	// The drag source: profile + role sections are draggable; the card sets the
 	// draggable attribute off the section's `drag` flag.
 	must("drag: true,", "a dock section opts into being a drag source")
-	must(`draggable="${draggable}"`, "cards render draggable off the section flag")
+	must("draggable=${draggable}", "cards render draggable off the section flag")
 
 	// Custom MIME (NOT text/plain) — the isolation contract with dnd.js: a dock
 	// drop carries this and only this, and dnd.js's member-drop bails on it.
@@ -36,10 +44,11 @@ func TestDashboardHTML_DockDnd(t *testing.T) {
 	must("e.dataTransfer.types.includes('application/x-tclaude-dock-item')",
 		"dnd.js's member-drop bails on a dock drop (MIME isolation)")
 
-	// The 2s morph guard: dockDragActive suspends auto-refresh for the whole
-	// gesture (refresh.js reads it, mirroring dndDragActive / groupReorderActive).
-	must("import { dockDragActive } from './dock-dnd.js';", "refresh.js imports the dock drag flag")
-	must("if (dockDragActive) return true;", "auto-refresh suspends while a dock drag is in flight")
+	// Preact owns keyed dock cards, so refresh continues during the gesture.
+	// The private flag still routes document-level drag events and cleanup.
+	must("let dockDragActive = false;", "dock-dnd.js keeps private gesture routing state")
+	mustNot("import { dockDragActive } from './dock-dnd.js';", "refresh.js must not import private dock drag state")
+	mustNot("if (dockDragActive) return true;", "dock drags must not suspend auto-refresh")
 
 	// The drop opens the EXISTING spawn dialog prefilled — no new endpoint, no
 	// clone of the modal. Group-drop pins the group; the profile/role rides in

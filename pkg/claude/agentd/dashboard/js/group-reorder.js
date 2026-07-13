@@ -64,12 +64,10 @@ import { isWizardActive } from './slop.js';
 // drop handler bail on a group-reorder drop.
 const GROUP_DRAG_MIME = 'application/x-tclaude-group';
 
-// groupReorderActive mirrors dnd.js's dndDragActive: a live-binding flag
-// refreshSuspended() reads so a 2s auto-refresh can't rebuild the Groups
-// tab DOM mid-drag (which would detach the dragged header and lose the
-// drag's own dragend cleanup). Exported as a `let` so importers see the
-// updated value.
+// Live routing state shared with reverse dock capture. Keyed Preact group
+// nodes survive snapshot publishes during the gesture.
 let groupReorderActive = false;
+let groupDragHandle = null;
 // The name of the group currently being dragged (null when idle). Read by
 // the dragover pill + drop handler; dragover can't read the DataTransfer
 // payload (browsers gate getData to the drop event), so we stash it here.
@@ -240,10 +238,12 @@ function applyGroupDrop(dragName, targetName, zone) {
 // flag, the dragged-source dimming, the drop-line markers and the pill.
 // Idempotent, so calling it from both the drop handler and dragend is safe.
 function endGroupDrag() {
-  // Clear the flag FIRST (mirrors dnd.js) so auto-refresh always resumes
-  // even if a DOM call below were to throw.
+  // Clear the flag FIRST (mirrors dnd.js) so later document events cannot be
+  // misrouted even if a DOM call below were to throw.
   groupReorderActive = false;
   groupDragName = null;
+  groupDragHandle?.removeEventListener('dragend', endGroupDrag);
+  groupDragHandle = null;
   $$('.group-reorder-source').forEach(d => d.classList.remove('group-reorder-source'));
   clearDropMarkers();
   const trash = $('#dnd-trash');
@@ -252,6 +252,11 @@ function endGroupDrag() {
 }
 
 function bindGroupReorder() {
+  const removers = [];
+  const listen = (target, type, listener, options) => {
+    target.addEventListener(type, listener, options);
+    removers.push(() => target.removeEventListener(type, listener, options));
+  };
   // Gesture-scoped draggable suppression (mirrors dnd.js's row handling).
   // The whole group <summary> is draggable, but a press that lands on an
   // interactive child — the title, a click-to-edit chip, a link chip, any
@@ -267,7 +272,7 @@ function bindGroupReorder() {
     suppressedSummary.draggable = true;
     suppressedSummary = null;
   };
-  document.addEventListener('pointerdown', (e) => {
+  listen(document, 'pointerdown', (e) => {
     const summary = e.target.closest('summary[data-group-reorder]');
     if (!summary) return;
     const ctl = e.target.closest('button, a, input, select, textarea, label, [data-act], [contenteditable], .group-name');
@@ -276,10 +281,10 @@ function bindGroupReorder() {
       suppressedSummary = summary;
     }
   });
-  document.addEventListener('pointerup', restoreSummaryDraggable);
-  document.addEventListener('pointercancel', restoreSummaryDraggable);
+  listen(document, 'pointerup', restoreSummaryDraggable);
+  listen(document, 'pointercancel', restoreSummaryDraggable);
 
-  document.addEventListener('dragstart', (e) => {
+  listen(document, 'dragstart', (e) => {
     // The drag handle is the group header (<summary> with data-group-reorder);
     // match on the attribute so the source element can change without touching
     // this code.
@@ -289,6 +294,9 @@ function bindGroupReorder() {
     if (!name) return;
     groupReorderActive = true;
     groupDragName = name;
+    groupDragHandle?.removeEventListener('dragend', endGroupDrag);
+    groupDragHandle = handle;
+    handle.addEventListener('dragend', endGroupDrag, { once: true });
     // Custom MIME ONLY — see the module header for why text/plain is
     // withheld. effectAllowed/dropEffect stay 'move' (reorder, never copy).
     e.dataTransfer.setData(GROUP_DRAG_MIME, name);
@@ -305,9 +313,9 @@ function bindGroupReorder() {
   // re-renders #groups-list and detaches the dragged header, after which a
   // dragend dispatched on the now-detached node never bubbles to this
   // document-level listener. So this is a fallback, not the primary path.
-  document.addEventListener('dragend', endGroupDrag);
+  listen(document, 'dragend', endGroupDrag);
 
-  document.addEventListener('dragover', (e) => {
+  listen(document, 'dragover', (e) => {
     if (!groupReorderActive) return;
     const trash = groupTrashTarget(e);
     if (trash) {
@@ -351,7 +359,7 @@ function bindGroupReorder() {
     }
   });
 
-  document.addEventListener('dragleave', (e) => {
+  listen(document, 'dragleave', (e) => {
     if (!groupReorderActive) return;
     const trash = groupTrashTarget(e);
     if (!trash) return;
@@ -359,7 +367,7 @@ function bindGroupReorder() {
     trash.classList.remove('dnd-drop-over');
   });
 
-  document.addEventListener('drop', (e) => {
+  listen(document, 'drop', (e) => {
     if (!groupReorderActive) return;
     const trash = groupTrashTarget(e);
     if (trash) {
@@ -381,11 +389,20 @@ function bindGroupReorder() {
     // Tear down NOW, before applyGroupDrop re-renders #groups-list and detaches
     // the dragged header. If we left teardown to dragend, that event — fired
     // on the detached header — would never bubble here, so the pill would stay
-    // stuck and groupReorderActive would wedge auto-refresh on. endGroupDrag
-    // is idempotent, so a dragend that does still fire is a harmless no-op.
+    // stuck and later document events would be misrouted. endGroupDrag is
+    // idempotent, so a dragend that does still fire is a harmless no-op.
     endGroupDrag();
     applyGroupDrop(dragName, targetName, zone);
   });
+
+  let cleaned = false;
+  return () => {
+    if (cleaned) return;
+    cleaned = true;
+    for (const remove of removers.splice(0).reverse()) remove();
+    restoreSummaryDraggable();
+    endGroupDrag();
+  };
 }
 
 export { bindGroupReorder, sortGroupsByPref, groupReorderActive };

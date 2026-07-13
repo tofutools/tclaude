@@ -1938,7 +1938,7 @@ return new Promise(function(resolve, reject){
 // feature. Two assertions, both rejecting on a miss so a regression fails the run
 // instead of passing as a silent captured "ok":
 //
-//	(a) Up-flip clip guard — the reason toggleCardMenu measures #dock-body and
+//	(a) Up-flip clip guard — the reason the dock component measures #dock-body and
 //	    NOT the viewport. Force the dock body to overflow (short max-height),
 //	    scroll the LAST card to its fold, open that card's menu, and assert it
 //	    stays within #dock-body's bottom. A downward drop there spills under the
@@ -1951,47 +1951,49 @@ return new Promise(function(resolve, reject){
 func cardMenuJS() string {
 	return `document.querySelector('nav [data-tab="groups"]').click();
 document.body.classList.add('dock-open');
-return new Promise(function(resolve, reject){
-  setTimeout(function(){
-    var body = document.querySelector('#dock-body');
-    var dock = document.querySelector('#agent-dock');
-    if (!body || !dock) { reject(new Error('card-menu FAIL: dock shell missing')); return; }
-    // (a) Force overflow, drive the LAST card to the fold, open its menu up-flipped.
-    var prevMax = body.style.maxHeight;
-    body.style.maxHeight = '200px';
-    var cards = body.querySelectorAll('.dock-card');
-    var last = cards[cards.length - 1];
-    if (!last) { reject(new Error('card-menu FAIL: no cards')); return; }
-    last.scrollIntoView({block: 'end'});
-    var lastCog = last.querySelector('.dock-card-manage[data-dock-act="card-menu"]');
-    lastCog.click();
-    var lastMenu = last.querySelector('.dock-card-menu.open');
-    if (!lastMenu) { reject(new Error('card-menu FAIL: bottom card menu did not open')); return; }
-    var lm = lastMenu.getBoundingClientRect();
-    var bb = body.getBoundingClientRect();
-    var flipped = lastMenu.classList.contains('opens-up');
-    var vFit = lm.bottom <= bb.bottom + 2;
-    lastCog.click(); // close
-    body.style.maxHeight = prevMax;
-    body.scrollTop = 0;
-    if (!vFit) { reject(new Error('card-menu FAIL: bottom card menu bottom=' + lm.bottom.toFixed(0) + ' clips past #dock-body bottom=' + bb.bottom.toFixed(0) + ' (opens-up=' + flipped + ')')); return; }
-    // (b) Screenshot + horizontal guard on the first profile card.
-    var card = body.querySelector('.dock-card[data-dock-kind="profiles"]');
-    if (!card) { reject(new Error('card-menu FAIL: no profile card')); return; }
-    card.querySelector('.dock-card-manage[data-dock-act="card-menu"]').click();
-    var menu = card.querySelector('.dock-card-menu.open');
-    if (!menu) { reject(new Error('card-menu FAIL: menu did not open')); return; }
-    var m = menu.getBoundingClientRect();
-    var d = dock.getBoundingClientRect();
-    var hFit = m.left >= d.left - 2 && m.right <= d.right + 2;
-    var o = document.createElement('div');
-    o.style.cssText = 'position:fixed;left:8px;bottom:36px;z-index:999;background:#000;color:#0f0;font:13px monospace;padding:6px;';
-    o.textContent = 'card-menu H-INSIDE=' + (hFit ? 'YES' : 'NO') + ' bottom-card V-FIT=' + (vFit ? 'YES' : 'NO') + ' (flip=' + (flipped ? 'up' : 'down') + ')';
-    document.body.appendChild(o);
-    if (hFit) resolve();
-    else reject(new Error('card-menu FAIL: menu (' + m.left.toFixed(0) + '..' + m.right.toFixed(0) + ') clips past the dock (' + d.left.toFixed(0) + '..' + d.right.toFixed(0) + ')'));
-  }, 200);
-});
+return (async function(){
+  var flush = function(){ return new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); }); };
+  await new Promise(function(resolve){ setTimeout(resolve, 200); });
+  var body = document.querySelector('#dock-body');
+  var dock = document.querySelector('#agent-dock');
+  if (!body || !dock) throw new Error('card-menu FAIL: dock shell missing');
+  // (a) Force overflow, drive the LAST card to the fold, open its menu up-flipped.
+  var prevMax = body.style.maxHeight;
+  body.style.maxHeight = '200px';
+  var cards = body.querySelectorAll('.dock-card');
+  var last = cards[cards.length - 1];
+  if (!last) throw new Error('card-menu FAIL: no cards');
+  last.scrollIntoView({block: 'end'});
+  var lastCog = last.querySelector('.dock-card-manage[data-dock-act="card-menu"]');
+  lastCog.click();
+  await flush();
+  var lastMenu = last.querySelector('.dock-card-menu.open');
+  if (!lastMenu) throw new Error('card-menu FAIL: bottom card menu did not open');
+  var lm = lastMenu.getBoundingClientRect();
+  var bb = body.getBoundingClientRect();
+  var flipped = lastMenu.classList.contains('opens-up');
+  var vFit = lm.bottom <= bb.bottom + 2;
+  lastCog.click(); // close
+  await flush();
+  body.style.maxHeight = prevMax;
+  body.scrollTop = 0;
+  if (!vFit) throw new Error('card-menu FAIL: bottom card menu bottom=' + lm.bottom.toFixed(0) + ' clips past #dock-body bottom=' + bb.bottom.toFixed(0) + ' (opens-up=' + flipped + ')');
+  // (b) Screenshot + horizontal guard on the first profile card.
+  var card = body.querySelector('.dock-card[data-dock-kind="profiles"]');
+  if (!card) throw new Error('card-menu FAIL: no profile card');
+  card.querySelector('.dock-card-manage[data-dock-act="card-menu"]').click();
+  await flush();
+  var menu = card.querySelector('.dock-card-menu.open');
+  if (!menu) throw new Error('card-menu FAIL: menu did not open');
+  var m = menu.getBoundingClientRect();
+  var d = dock.getBoundingClientRect();
+  var hFit = m.left >= d.left - 2 && m.right <= d.right + 2;
+  var o = document.createElement('div');
+  o.style.cssText = 'position:fixed;left:8px;bottom:36px;z-index:999;background:#000;color:#0f0;font:13px monospace;padding:6px;';
+  o.textContent = 'card-menu H-INSIDE=' + (hFit ? 'YES' : 'NO') + ' bottom-card V-FIT=' + (vFit ? 'YES' : 'NO') + ' (flip=' + (flipped ? 'up' : 'down') + ')';
+  document.body.appendChild(o);
+  if (!hFit) throw new Error('card-menu FAIL: menu (' + m.left.toFixed(0) + '..' + m.right.toFixed(0) + ') clips past the dock (' + d.left.toFixed(0) + '..' + d.right.toFixed(0) + ')');
+})();
 `
 }
 

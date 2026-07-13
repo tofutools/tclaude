@@ -22,23 +22,22 @@
 // item kind slots in by adding one SECTIONS entry.
 //
 // Data rides the 2s poll: the daemon carries the profile / template / role
-// registries on the snapshot (dashboard.go), so renderDock() reads
-// lastSnapshot and paints through the keyed morphInto reconciler — a
-// manager edit shows up on the next tick, and selections/scroll survive the
-// re-render. The shell (#agent-dock) + the edge toggle are STATIC markup in
-// dashboard.html, so they are never morphed and survive every poll; only
-// #dock-body's inner sections are reconciled.
+// registries on the snapshot (dashboard.go), so renderDock() publishes
+// lastSnapshot into the keyed Preact island — a manager edit shows up on the
+// next tick, and selections/scroll survive the render. The shell (#agent-dock)
+// + the edge toggle are STATIC markup in dashboard.html; only #dock-body's
+// inner sections are Preact-owned.
 //
 // Collapse/expand is persisted server-side via dashPrefs (NOT localStorage,
 // which the random per-start port would reset) under DOCK_OPEN_KEY. The
 // open state is a body class so CSS can reflow <main> to reclaim the space
 // when collapsed rather than overlaying dead area.
 
-import { $, $$, esc } from './helpers.js';
-import { morphInto } from './morph.js';
+import { $ } from './helpers.js';
 import { wizWord } from './slop.js';
 import { dashPrefs } from './prefs.js';
 import { lastSnapshot } from './dashboard.js';
+import { featureState } from './feature-state-registry.js';
 import { syncFullBleedBars } from './hscroll.js';
 // The compact one-line summaries live in the DATA modules (profiles.js /
 // roles.js); the editor/manager openers live in the MODAL modules. Importing
@@ -69,12 +68,12 @@ function summaryChips(summary, max = 4) {
     .split('·')
     .map(s => s.trim())
     .filter(Boolean);
-  if (!parts.length) return '';
+  if (!parts.length) return [];
   const shown = parts.slice(0, max);
   const extra = parts.length - shown.length;
-  const chips = shown.map(p => `<span class="dock-chip">${esc(p)}</span>`);
-  if (extra > 0) chips.push(`<span class="dock-chip dock-chip-more">+${extra}</span>`);
-  return chips.join(' ');
+  const chips = shown.map((text) => ({ text, more: false }));
+  if (extra > 0) chips.push({ text: `+${extra}`, more: true });
+  return chips;
 }
 
 // SECTIONS — the whole dock is three instances of this one shape. To add a
@@ -98,7 +97,7 @@ function summaryChips(summary, max = 4) {
 // data-dock-kind): all three kinds drop onto a group — profiles + roles open
 // the spawn dialog prefilled (JOH-375 2/4), templates open the unified summon
 // dialog with a drop-mode chooser (JOH-377 4/4).
-const SECTIONS = [
+export const dockSections = Object.freeze([
   {
     key: 'profiles',
     icon: '⚙',
@@ -131,7 +130,7 @@ const SECTIONS = [
     empty: () => wizWord('no templates yet', 'no circles yet'),
     items: (snap) => (snap && snap.templates) || [],
     name: (t) => t.name,
-    chips: (t) => templateReadbackBadges(t),
+    chipsHTML: (t) => templateReadbackBadges(t),
     drag: true,
     // The per-card ⚙ deep-links into THIS template's editor (JOH-390 item 6),
     // matching the profiles/roles cards — it used to fall back to the whole-kind
@@ -163,55 +162,7 @@ const SECTIONS = [
     onDeleteItem: (rl) => removeRole(rl.name).then(() => refresh({ force: true })),
     onManageAll: () => openRolesManageModal(),
   },
-];
-
-// sectionByKey resolves a section config from its key (the delegated click
-// handler reads data-dock-kind off the card / button).
-function sectionByKey(key) {
-  return SECTIONS.find(s => s.key === key) || null;
-}
-
-// cardHTML renders one card: a grip handle, the leading icon, the name, a
-// compact chip row, and a ⚙ affordance that opens a small actions menu (Edit /
-// Clone). The card carries data-dock-kind / data-dock-name — dock-dnd.js reads
-// them off dragstart. A section flagged `drag` makes its cards drag SOURCES
-// (draggable="true"); a future non-drag section (an editor / work-graph node)
-// would leave `drag` unset and fall back to the "(coming soon)" grip hint. All
-// three current kinds — profiles, templates, roles — are drag sources.
-//
-// The ⚙ used to deep-link straight to the item's editor; it now toggles a
-// sibling .dock-card-menu whose two items dispatch Edit (onManageItem) and Clone
-// (onCloneItem). Cog + menu are wrapped in a position:relative .dock-card-actions
-// so the absolutely-positioned menu anchors to the cog. The menu is a distinct
-// class (NOT the shared .action-menu bus) so it stays fully owned by dock.js's
-// own delegated handler — no coupling to row-actions.js's cog machinery, which
-// would race to close it (see bindDock). Clone re-letters to "Mirror" in wizard
-// mode, echoing the templates manager's 🪞 duplicate wording.
-function cardHTML(section, item) {
-  const name = section.name(item);
-  const chips = section.chips(item) || '';
-  const draggable = section.drag ? 'true' : 'false';
-  const gripTitle = section.drag
-    ? wizWord('drag onto a group to spawn', 'drag onto a party to summon')
-    : wizWord('drag onto a group (coming soon)', 'drag onto a party (coming soon)');
-  const kindName = `data-dock-kind="${esc(section.key)}" data-dock-name="${esc(name)}"`;
-  return `<div class="dock-card" draggable="${draggable}" data-key="${esc(name)}" data-dock-kind="${esc(section.key)}" data-dock-name="${esc(name)}" title="${esc(name)}">
-    <span class="dock-grip" aria-hidden="true" title="${gripTitle}">⠿</span>
-    <span class="dock-card-icon" aria-hidden="true">${section.icon}</span>
-    <span class="dock-card-body">
-      <span class="dock-card-name">${esc(name)}</span>
-      ${chips ? `<span class="dock-chips">${chips}</span>` : ''}
-    </span>
-    <span class="dock-card-actions">
-      <button type="button" class="dock-card-manage" data-dock-act="card-menu" ${kindName} aria-haspopup="menu" aria-expanded="false" title="${wizWord('More actions', 'More actions')}" aria-label="${wizWord('Actions for', 'Actions for')} ${esc(name)}">⚙</button>
-      <div class="dock-card-menu" role="menu" aria-label="${esc(name)}">
-        <button type="button" role="menuitem" class="dock-card-menu-item" data-dock-act="edit-item" ${kindName}>${wizWord('Edit', 'Edit')}</button>
-        <button type="button" role="menuitem" class="dock-card-menu-item" data-dock-act="clone-item" ${kindName}>${wizWord('Clone', 'Mirror')}</button>
-        <button type="button" role="menuitem" class="dock-card-menu-item danger" data-dock-act="delete-item" ${kindName}>${wizWord('Delete', 'Dispel')}</button>
-      </div>
-    </span>
-  </div>`;
-}
+]);
 
 // The per-section collapse flag lives under this dashPrefs prefix (req 5),
 // server-backed like the open/collapsed dock flag itself — NOT localStorage,
@@ -223,46 +174,20 @@ const DOCK_SECTION_KEY = 'tclaude.dash.dock.section.';
 // isSectionOpen reads a section's persisted collapse flag, defaulting to OPEN
 // (only an explicit '0' collapses) — the three kinds stay discoverable by
 // default, and a deliberate collapse survives restarts.
-function isSectionOpen(key) {
+export function isDockSectionOpen(key) {
   return dashPrefs.getItem(DOCK_SECTION_KEY + key) !== '0';
 }
 
-// sectionHTML renders one whole section: a heading with a ⧉ manage… jump,
-// then the keyed card list (or a quiet empty line — sections never hide, so
-// the three kinds are always discoverable).
-//
-// A <details>, NOT a plain <div> (req 5): each category collapses/expands on
-// its own, and native <details> gives us keyboard + a11y for free. The `open`
-// attribute is seeded from the persisted flag; the morph reconciler treats
-// <details open> as LIVE-owned (js/morph.js) so a fold survives every 2s tick,
-// and bindDock's toggle listener writes the flag back — live and fresh always
-// agree. (It's a <details>, not a <section>, so the dashboard's global
-// `section { display:none }` tab-pane rule can't hide it.)
-function sectionHTML(section, snap) {
-  const items = section.items(snap);
-  const body = items.length
-    ? items.map(it => cardHTML(section, it)).join('')
-    : `<div class="dock-empty">(${esc(section.empty())})</div>`;
-  const open = isSectionOpen(section.key) ? ' open' : '';
-  return `<details class="dock-section" data-key="${esc(section.key)}"${open}>
-    <summary class="dock-section-head">
-      <span class="dock-section-title"><span class="dock-section-chevron" aria-hidden="true">▸</span><span class="dock-section-icon" aria-hidden="true">${section.icon}</span> ${esc(section.title())} <span class="dock-section-count">${items.length}</span></span>
-      <button type="button" class="dock-section-manage" data-dock-act="manage-all" data-dock-kind="${esc(section.key)}" title="${wizWord('Open the manager for this kind', 'Open the manager for this kind')}">⧉</button>
-    </summary>
-    <div class="dock-section-items">${body}</div>
-  </details>`;
+export function setDockSectionOpen(key, open) {
+  if (open) dashPrefs.removeItem(DOCK_SECTION_KEY + key);
+  else dashPrefs.setItem(DOCK_SECTION_KEY + key, '0');
 }
 
-// renderDock repaints #dock-body from the live snapshot through morphInto —
-// called every 2s poll from refresh.js. Keys are stable (section key + item
-// name) so selections/scroll survive the reconcile and no duplicate sibling
-// keys corrupt the match (names are unique within a kind). A no-op when the
-// dock shell isn't present.
+// Compatibility publish boundary for the shared snapshot poll. The dock body
+// is exclusively Preact-owned; publishing a shallow snapshot wakes the keyed
+// component tree without rebuilding an active drag source or actions menu.
 export function renderDock() {
-  const body = $('#dock-body');
-  if (!body) return;
-  const snap = lastSnapshot;
-  morphInto(body, SECTIONS.map(s => sectionHTML(s, snap)).join(''));
+  featureState('dock')?.publish(lastSnapshot);
 }
 
 // isDockOpen reads the persisted flag, defaulting to OPEN when unset (the
@@ -350,8 +275,8 @@ function applyDockOpen(open) {
 // id-bound ones (#group-create-open's click) stay attached to the element across
 // the move; the cog + chip run off document-level delegated handlers (data-act /
 // the .action-menu cog bus) that don't care where the node lives. The toolbar
-// filter bar + the dock head are both STATIC markup (the poll only morphs
-// #dock-body / #groups-list), so nothing re-creates or clobbers the moved nodes.
+// filter bar + the dock head are both STATIC markup (Preact owns #dock-body and
+// #groups-list), so nothing re-creates or clobbers the moved nodes.
 //
 // The cog's .action-menu still anchors to .filter-bar-cog (position:relative
 // rides along) and opens downward INTO the dock body; at the header's top it
@@ -476,127 +401,7 @@ export function bindDock() {
     }
   }
 
-  // Persist each section's collapse/expand (req 5). <details> only fires
-  // `toggle` on itself (no bubbling), so a document-level capturing listener
-  // catches every section without re-binding per render — the same idiom the
-  // group <details> use (bindDetailsPersistence in refresh.js). Default is
-  // EXPANDED, so we store only the '0' collapse and clear it on re-open.
-  document.addEventListener('toggle', (e) => {
-    const d = e.target;
-    if (!(d instanceof HTMLDetailsElement) || !d.classList.contains('dock-section')) return;
-    const key = d.getAttribute('data-key');
-    if (!key) return;
-    if (d.open) dashPrefs.removeItem(DOCK_SECTION_KEY + key);
-    else dashPrefs.setItem(DOCK_SECTION_KEY + key, '0');
-  }, true);
-
-  // One delegated handler for every card / section manage affordance. The
-  // section manage (⧉) button lives inside the <summary>, so a plain click on
-  // it would ALSO toggle the <details>; preventDefault here cancels that native
-  // fold (the delegated listener runs in the bubble phase, before the default
-  // action) so the manager opens without collapsing the section.
-  //
-  // A card's ⚙ (card-menu) toggles the sibling .dock-card-menu; its two items
-  // (edit-item / clone-item) dispatch to the section's editor / clone opener.
-  // The menu open/close lives entirely here — no shared .action-menu bus — so
-  // it can't race with row-actions.js. resolveItem re-reads the LIVE snapshot so
-  // a card that vanished between paint and click (a concurrent delete on another
-  // tab) falls back to the whole-kind manager instead of dispatching on a stale
-  // object.
-  const resolveItem = (section, name) =>
-    section.items(lastSnapshot).find(it => section.name(it) === name) || null;
-  $('#dock-body')?.addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-dock-act]');
-    if (!btn) return;
-    const section = sectionByKey(btn.getAttribute('data-dock-kind'));
-    if (!section) return;
-    e.preventDefault();
-    const act = btn.getAttribute('data-dock-act');
-    if (act === 'manage-all') {
-      section.onManageAll();
-      return;
-    }
-    if (act === 'card-menu') {
-      toggleCardMenu(btn);
-      return;
-    }
-    if (act === 'edit-item' || act === 'clone-item' || act === 'delete-item') {
-      closeDockMenus();
-      const item = resolveItem(section, btn.getAttribute('data-dock-name'));
-      if (!item) { section.onManageAll(); return; }
-      if (act === 'edit-item') section.onManageItem(item);
-      else if (act === 'clone-item') section.onCloneItem(item);
-      else section.onDeleteItem(item);
-    }
-  });
-
-  // Dismiss an open card menu on any click outside a card's action cluster
-  // (a click on the cog / a menu item is handled above and stays inside
-  // .dock-card-actions, so it never trips this). Bound to the document so it
-  // catches clicks anywhere on the page, not just within the dock.
-  document.addEventListener('click', (e) => {
-    if (!e.target.closest('.dock-card-actions')) closeDockMenus();
-  });
-  // Escape closes an open card menu — parity with the shared ⚙ options menu and
-  // the dialogs. Only acts when one is actually open so it never swallows Escape
-  // from a modal / inline edit stacked elsewhere.
-  document.addEventListener('keydown', (e) => {
-    if (e.key !== 'Escape') return;
-    if (!document.querySelector('.dock-card-menu.open')) return;
-    e.preventDefault();
-    closeDockMenus();
-  });
-
-  // First paint now so the dock isn't blank until the first poll lands.
+  // Publish the current snapshot (if one already exists) into the Preact-owned
+  // dock body. Later polls use the same compatibility boundary.
   renderDock();
-}
-
-// closeDockMenus collapses every open card menu, resetting each owning cog's
-// aria-expanded. Called on outside-click, Escape, and before opening another
-// menu. Dropping the .open class also lifts the poll suspension refreshSuspended
-// keys on (.dock-card-menu.open), so the dock resumes morphing once no menu is
-// open. When focus sat inside a menu about to be display:none'd (a keyboard user
-// Tabbed onto Edit/Clone then pressed Escape / clicked away), hand it back to
-// that menu's cog so it doesn't fall to <body> and get lost — parity with
-// row-actions.js's closeAllActionMenus.
-function closeDockMenus() {
-  for (const menu of $$('.dock-card-menu.open')) {
-    const focusInside = menu.contains(document.activeElement);
-    menu.classList.remove('open', 'opens-up');
-    const cog = menu.parentElement && menu.parentElement.querySelector('.dock-card-manage');
-    if (cog) {
-      cog.setAttribute('aria-expanded', 'false');
-      if (focusInside) cog.focus();
-    }
-  }
-}
-
-// toggleCardMenu opens the menu belonging to a clicked ⚙ (closing any other
-// first), or closes it if it was already open. On open it flips the menu ABOVE
-// the cog when a downward drop would spill past the visible bottom but fits in
-// the space above — so a card near the dock's foot still shows its whole menu.
-// Crucially the clip boundary is #dock-body (overflow-y:auto), NOT the viewport:
-// the dock is its own scroll container whose bottom sits a footer's-height above
-// window.innerHeight, so measuring the viewport (as the shared .action-menu does
-// from its document-scrolled table) would miss a menu that clips under the dock's
-// fold while still above the viewport bottom. Fall back to the viewport only if
-// #dock-body isn't found. Opening one menu suspends the 2s poll (refreshSuspended
-// sees .dock-card-menu.open) so a re-render can't rebuild the card and drop the
-// menu mid-use.
-function toggleCardMenu(cog) {
-  const menu = cog.parentElement && cog.parentElement.querySelector('.dock-card-menu');
-  if (!menu) return;
-  const willOpen = !menu.classList.contains('open');
-  closeDockMenus();
-  if (!willOpen) return;
-  menu.classList.remove('opens-up');
-  menu.classList.add('open');
-  cog.setAttribute('aria-expanded', 'true');
-  const body = $('#dock-body');
-  const clip = body ? body.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
-  const mr = menu.getBoundingClientRect();
-  const cogTop = cog.getBoundingClientRect().top;
-  if (mr.bottom > clip.bottom && mr.height < cogTop - clip.top) {
-    menu.classList.add('opens-up');
-  }
 }

@@ -56,6 +56,34 @@ export function mountGroupsFeature(dependencies = {}) {
   return mountIslandDescriptor(groupsDescriptor, dependencies);
 }
 
+const dockDescriptor = createIslandDescriptor({
+  name: 'dock',
+  label: 'Dock',
+  hosts: { host: '#dock-body' },
+  failureClass: 'dock-error',
+  load: async ({ hosts: { host } }) => {
+    const islandModule = import('./dock-island.js');
+    const stateModule = import('./dock-state.js');
+    const controllerModule = import('./dock.js');
+    const [
+      { mountDockIsland }, { dockState },
+      { dockSections, isDockSectionOpen, setDockSectionOpen },
+    ] = await Promise.all([islandModule, stateModule, controllerModule]);
+    return {
+      state: dockState,
+      mount: (registerCleanup) => mountDockIsland({
+        host, state: dockState, sections: dockSections,
+        isSectionOpen: isDockSectionOpen, setSectionOpen: setDockSectionOpen,
+        registerCleanup,
+      }),
+    };
+  },
+});
+
+export function mountDockFeature(dependencies = {}) {
+  return mountIslandDescriptor(dockDescriptor, dependencies);
+}
+
 // The Jobs pilot is the first production island. Keep the dynamic boundary so
 // a corrupt optional asset produces a visible feature-local error rather than
 // preventing the rest of the dashboard entry module from booting.

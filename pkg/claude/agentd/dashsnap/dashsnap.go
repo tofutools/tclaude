@@ -120,7 +120,7 @@ type State struct {
 	// does not abort the run — the sheet records the error under the tile.
 	JS string
 	// Actions run after JS using Chrome's input domain. Supported kinds: click,
-	// key-down, key-up, key, mouse-down, move-by, mouse-up, eval.
+	// key-down, key-up, key, mouse-down, mouse-down-at, move-by, mouse-up, eval.
 	Actions []BrowserAction
 	// SettleMS optionally overrides the post-JS settle wait (ms) for states with
 	// animations/transitions that need longer to paint. 0 uses cfg.SettleMS.
@@ -370,6 +370,24 @@ func captureState(page *rod.Page, cfg Config, st State) (png []byte, err error) 
 				sp.Keyboard.MustType(browserKey(action.Key))
 			case "mouse-down":
 				sp.MustElement(action.Selector).MustHover()
+				sp.Mouse.MustDown(proto.InputMouseButtonLeft)
+				mouseDown = true
+			case "mouse-down-at":
+				var x, y float64
+				if strings.TrimSpace(action.JS) != "" {
+					position := sp.MustEval(`() => { ` + action.JS + ` }`)
+					x, y = position.Get("x").Num(), position.Get("y").Num()
+				} else {
+					position := sp.MustElement(action.Selector).MustEval(`() => {
+                      const rect = this.getBoundingClientRect();
+                      return {x: rect.left, y: rect.top};
+                    }`)
+					x, y = position.Get("x").Num()+action.DX, position.Get("y").Num()+action.DY
+				}
+				point := proto.NewPoint(x, y)
+				if err := sp.Mouse.MoveTo(point); err != nil {
+					panic(err)
+				}
 				sp.Mouse.MustDown(proto.InputMouseButtonLeft)
 				mouseDown = true
 			case "move-by":

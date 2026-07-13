@@ -25,7 +25,7 @@ func TestDashboardHTML_DockSaveDrag(t *testing.T) {
 	// dock-save-dnd.js exists and is bound AFTER the two reverse-source modules
 	// so its dragover wins the shared pill over the dock.
 	must("import { bindDockSaveDnd } from './dock-save-dnd.js';", "dashboard.js imports the reverse-drag binder")
-	must("bindDockSaveDnd();", "dashboard.js wires the reverse drag in")
+	must("dndCleanups.push(bindDockSaveDnd());", "dashboard.js wires the disposable reverse drag binder")
 	must("export { bindDockSaveDnd };", "dock-save-dnd exports its binder")
 
 	// It reuses the two EXISTING drag sources' MIMEs + active flags — no new

@@ -21,7 +21,7 @@ import (
 //     two document-level drop handlers stay isolated;
 //   - tabs.js renders real groups through sortGroupsByPref;
 //   - dashboard.js binds the feature at boot;
-//   - refresh.js suspends auto-refresh while a reorder drag is in flight.
+//   - keyed Preact group nodes let refresh continue while a drag is in flight.
 func TestDashboardJS_GroupReorderWired(t *testing.T) {
 	for _, c := range []struct{ needle, why string }{
 		// render.js: the group HEADER is the reorder drag handle — draggable
@@ -44,12 +44,12 @@ func TestDashboardJS_GroupReorderWired(t *testing.T) {
 		{`const list = reorder(distributed.groups.slice());`, "Groups state applies the saved group order"},
 		// dashboard.js: the feature is bound at boot.
 		{`bindGroupReorder()`, "dashboard.js wires the reorder binder at boot"},
-		// refresh.js: a reorder drag suspends auto-refresh on its own flag.
-		{`if (groupReorderActive) return true;`,
-			"refreshSuspended() pauses auto-refresh during a reorder drag"},
 	} {
 		if !strings.Contains(dashboardAssets, c.needle) {
 			t.Errorf("dashboard assets missing %q — %s", c.needle, c.why)
 		}
+	}
+	if strings.Contains(dashboardAssets, `if (groupReorderActive) return true;`) {
+		t.Error("refreshSuspended() must not pause auto-refresh during a keyed Preact group reorder")
 	}
 }

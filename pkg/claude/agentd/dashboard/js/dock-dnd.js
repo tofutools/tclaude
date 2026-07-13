@@ -31,11 +31,8 @@
 //   - The hover highlight uses a DISTINCT class (.dock-drop-over), so dnd.js's
 //     own dragleave/dragend — which strip only .dnd-drop-over — never fight it.
 //
-// Survives the 2s poll: dockDragActive is what refreshSuspended() reads to keep
-// auto-refresh from rebuilding the Groups tab / dock mid-drag (which would
-// detach the drag source or the drop target and lose the drag's own dragend
-// cleanup). Set in dragstart, cleared in dragend (fires on drop AND on
-// Escape-cancel), so the suspension covers the whole gesture.
+// Keyed Preact ownership retains both source and target across snapshot
+// publishes. The active state below only routes this custom MIME gesture.
 
 import { $, $$ } from './helpers.js';
 import { wizWord } from './slop.js';
@@ -52,15 +49,13 @@ const DOCK_DRAG_MIME = 'application/x-tclaude-dock-item';
 // even if some other code marked it draggable.
 const DRAGGABLE_KINDS = new Set(['profiles', 'roles', 'templates']);
 
-// dockDragActive mirrors dnd.js's dndDragActive / group-reorder's
-// groupReorderActive: a live-binding flag refreshSuspended() reads so a 2s
-// auto-refresh can't rebuild the DOM mid-drag. Exported as a `let` so importers
-// see the updated value.
+// Local gesture-routing state for the document-level hover/drop listeners.
 let dockDragActive = false;
 // The payload of the card currently being dragged ({kind, name}), or null when
 // idle. dragover/dragenter can't read the DataTransfer payload (browsers gate
 // getData to the drop event), so we stash it here for the hover pill.
 let dockDragItem = null;
+let dockDragSource = null;
 
 // Real-group drop target: a group's <details> box (header or expanded body).
 // Same boxes dnd.js's member drag targets, but only the REAL groups — a profile
@@ -140,16 +135,23 @@ function clearDockHighlights() {
 // the dragged-source dimming, the hover highlights and the pill. Idempotent, so
 // calling it from both the drop handler and dragend is safe.
 function endDockDrag() {
-  // Clear the flag FIRST (mirrors dnd.js / group-reorder) so auto-refresh
-  // always resumes even if a DOM call below were to throw.
+  // Clear the flag FIRST (mirrors dnd.js / group-reorder) so later document
+  // events cannot be misrouted even if a DOM call below were to throw.
   dockDragActive = false;
   dockDragItem = null;
+  dockDragSource?.removeEventListener('dragend', endDockDrag);
+  dockDragSource = null;
   $$('.dock-card.dock-drag-source').forEach(c => c.classList.remove('dock-drag-source'));
   clearDockHighlights();
   dockPill(null, null);
 }
 
 function bindDockDnd() {
+  const removers = [];
+  const listen = (target, type, listener, options) => {
+    target.addEventListener(type, listener, options);
+    removers.push(() => target.removeEventListener(type, listener, options));
+  };
   // Gesture-scoped draggable suppression (mirrors dnd.js's row handling and
   // group-reorder's summary handling). The whole card is draggable, but a press
   // that lands on its ⚙ manage button (or any interactive child) must produce
@@ -164,7 +166,7 @@ function bindDockDnd() {
     suppressedCard.draggable = true;
     suppressedCard = null;
   };
-  document.addEventListener('pointerdown', (e) => {
+  listen(document, 'pointerdown', (e) => {
     const card = e.target.closest('.dock-card[draggable="true"]');
     if (!card) return;
     const ctl = e.target.closest('button, a, input, select, textarea, label, [data-dock-act]');
@@ -173,10 +175,10 @@ function bindDockDnd() {
       suppressedCard = card;
     }
   });
-  document.addEventListener('pointerup', restoreCardDraggable);
-  document.addEventListener('pointercancel', restoreCardDraggable);
+  listen(document, 'pointerup', restoreCardDraggable);
+  listen(document, 'pointercancel', restoreCardDraggable);
 
-  document.addEventListener('dragstart', (e) => {
+  listen(document, 'dragstart', (e) => {
     const card = e.target.closest('.dock-card[draggable="true"]');
     if (!card) return;
     const kind = card.getAttribute('data-dock-kind');
@@ -184,6 +186,9 @@ function bindDockDnd() {
     if (!kind || !name || !DRAGGABLE_KINDS.has(kind)) return;
     dockDragActive = true;
     dockDragItem = { kind, name };
+    dockDragSource?.removeEventListener('dragend', endDockDrag);
+    dockDragSource = card;
+    card.addEventListener('dragend', endDockDrag, { once: true });
     // Custom MIME ONLY — see the module header for why text/plain is withheld.
     // effectAllowed/dropEffect stay 'copy' (a drop spawns a new agent; it never
     // moves the palette card).
@@ -194,11 +199,11 @@ function bindDockDnd() {
 
   // dragend is the guaranteed reset for EVERY drag-end outcome — a successful
   // drop, an Escape-cancel, or a release over nothing. The drop handler does
-  // NOT re-render before it opens the modal, so (unlike group-reorder) the card
-  // stays attached and this dragend always fires; it is the primary teardown.
-  document.addEventListener('dragend', endDockDrag);
+  // The source-local listener covers structural publishes that detach the card
+  // before this event can bubble to document.
+  listen(document, 'dragend', endDockDrag);
 
-  document.addEventListener('dragover', (e) => {
+  listen(document, 'dragover', (e) => {
     if (!dockDragActive) return;
     const target = dockTarget(e);
     // Repaint highlights from scratch each move so a box we've left goes dark
@@ -219,7 +224,7 @@ function bindDockDnd() {
   // highlight (it repaints every move), so no separate enter/leave bookkeeping
   // — this sidesteps the classic child-element dragleave flicker entirely.
 
-  document.addEventListener('drop', (e) => {
+  listen(document, 'drop', (e) => {
     if (!dockDragActive) return;
     const target = dockTarget(e);
     if (!target) return;
@@ -232,9 +237,7 @@ function bindDockDnd() {
       try { item = JSON.parse(raw); } catch (_) { /* keep the stashed item */ }
     }
     const group = target.group;
-    // Tear down BEFORE opening the modal: the modal is a .modal-overlay, so once
-    // it's up refreshSuspended() keeps auto-refresh parked on the modal instead
-    // of the drag — but the drag flag must still be cleared so it doesn't wedge
+    // Tear down BEFORE opening the modal so the routing flag cannot remain live
     // if the modal is dismissed. endDockDrag is idempotent, so the dragend that
     // still fires afterwards is a harmless no-op.
     endDockDrag();
@@ -257,6 +260,15 @@ function bindDockDnd() {
     else opts.profileName = item.name;
     openAgentSpawnModal(opts);
   });
+
+  let cleaned = false;
+  return () => {
+    if (cleaned) return;
+    cleaned = true;
+    for (const remove of removers.splice(0).reverse()) remove();
+    restoreCardDraggable();
+    endDockDrag();
+  };
 }
 
-export { bindDockDnd, dockDragActive };
+export { bindDockDnd };

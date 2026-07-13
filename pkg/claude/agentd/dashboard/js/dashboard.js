@@ -73,7 +73,7 @@ import { bindDock } from './dock.js';
 import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
 import {
-  mountAccessFeature, mountActionDialogsFeature, mountAuditFeature, mountConfigFeature, mountCostsFeature, mountDirectoryPickerFeature, mountGroupsFeature, mountJobsFeature, mountLogsFeature, mountManagementFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature,
+  mountAccessFeature, mountActionDialogsFeature, mountAuditFeature, mountConfigFeature, mountCostsFeature, mountDirectoryPickerFeature, mountDockFeature, mountGroupsFeature, mountJobsFeature, mountLogsFeature, mountManagementFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature,
   mountPreactRuntimeProbe,
 } from './preact-loader.js';
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
@@ -154,6 +154,7 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   // initNavHistory below so initial deep links still find every lazy loader.
   await Promise.all([
     mountGroupsFeature({ refresh: dashboardActions.refresh }),
+    mountDockFeature(),
     mountPluginsFeature({
       requestMutation: dashboardActions.requestMutation,
       refresh: dashboardActions.refresh,
@@ -218,19 +219,14 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   bindGroupQuickHover();
   bindSortHeaders();
   bindRowActions();
-  bindDnd();
-  bindGroupReorder();
+  const dndCleanups = [bindDnd(), bindGroupReorder()];
   // Drag a palette dock profile/role card onto a group → spawn dialog prefilled
-  // (JOH-375). Its own dockDragActive flag suspends auto-refresh mid-drag, and
-  // its document-level listeners coexist with dnd.js / group-reorder.js via a
-  // distinct custom MIME + a self-gating active flag (see dock-dnd.js).
+  // (JOH-375). Its document-level listeners coexist with dnd.js /
+  // group-reorder.js via a distinct custom MIME + self-gating state.
   //
-  // Order matters: keep this AFTER bindDnd() (as bindGroupReorder already is).
-  // dnd.js's dragend is NOT flag-gated — it calls refresh() on EVERY drag-end,
-  // dock drags included. Registered after bindDnd, dnd.js's dragend fires while
-  // dockDragActive is still true (our dragend runs later), so refreshSuspended()
-  // parks that refresh instead of re-rendering under the just-ended gesture.
-  bindDockDnd();
+  // Keep registration order stable so shared pill/highlight integrations see
+  // events in the same sequence as before the ownership migration.
+  dndCleanups.push(bindDockDnd());
   // The REVERSE palette drag (JOH-393): drag a live agent row / group header
   // ONTO the dock to capture it as a spawn profile / group template. Must be
   // registered AFTER bindDnd() + bindGroupReorder() so its dragover runs LAST
@@ -238,7 +234,13 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   // the cursor is off THEIR targets (the dock is off their targets). Self-gates
   // on their active flags + a distinct .dock-save-over highlight (see
   // dock-save-dnd.js), so it coexists with all three other DnD modules.
-  bindDockSaveDnd();
+  dndCleanups.push(bindDockSaveDnd());
+  window.addEventListener('pagehide', (event) => {
+    // A persisted pagehide enters the back-forward cache; bootstrap does not
+    // rerun on pageshow, so retain listeners for that suspended document.
+    if (event.persisted) return;
+    for (const cleanup of dndCleanups.reverse()) cleanup?.();
+  });
   bindFilter('links');
   bindSudoModal();
   bindPermEditModal();
