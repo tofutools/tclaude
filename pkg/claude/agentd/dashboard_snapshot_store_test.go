@@ -36,7 +36,7 @@ func TestDashboardSnapshotStoreBoundary(t *testing.T) {
 }
 
 func TestDashboardHasOneAuthoritativeSnapshotPoll(t *testing.T) {
-	var authoritativeSnapshotFetches, modalReplacementFetches, schedulerCalls, manualDebounces int
+	var authoritativeSnapshotFetches, schedulerCalls, manualDebounces int
 	scheduledRefresh := regexp.MustCompile(`(?s)set(?:Interval|Timeout)\s*\([^;]{0,300}\brefresh\b`)
 	snapshotFetch := regexp.MustCompile(`fetch\s*\(\s*['"\x60]/api/snapshot(?:\?[^'"\x60]*)?['"\x60]`)
 	schedulerCall := regexp.MustCompile(`(?m)^[\t ]*(?:(?:(?:const|let|var)\s+)?[\w$.]+\s*=\s*)?(?:[\w$.]+\.push\()?startSnapshotPoll\s*\(\s*refresh\b`)
@@ -93,14 +93,6 @@ func TestDashboardHasOneAuthoritativeSnapshotPoll(t *testing.T) {
 			const groupsDebounce = "setTimeout(() => void actions.refresh(), 250)"
 			manualDebounces += strings.Count(source, groupsDebounce)
 			source = strings.ReplaceAll(source, groupsDebounce, "")
-		case "js/modal-human-reply.js":
-			// This legacy data-only timer runs only while its modal suspends the
-			// authoritative renderer. Keep the exception explicit until that
-			// modal becomes an island and can subscribe to the shared store.
-			modalReplacementFetches += directSnapshotFetches
-			if strings.Count(source, "setInterval(pollReplyOnline, 2000)") != 1 {
-				t.Errorf("%s no longer has exactly one known modal replacement timer", name)
-			}
 		default:
 			if directSnapshotFetches != 0 {
 				t.Errorf("%s owns %d direct /api/snapshot fetches; use the shared store/actions", name, directSnapshotFetches)
@@ -116,9 +108,6 @@ func TestDashboardHasOneAuthoritativeSnapshotPoll(t *testing.T) {
 	}
 	if authoritativeSnapshotFetches != 1 {
 		t.Errorf("authoritative refresh /api/snapshot fetch count = %d, want exactly one", authoritativeSnapshotFetches)
-	}
-	if modalReplacementFetches != 1 {
-		t.Errorf("legacy modal replacement /api/snapshot fetch count = %d, want exactly one", modalReplacementFetches)
 	}
 	if schedulerCalls != 1 {
 		t.Errorf("snapshot scheduler installation count = %d, want exactly one", schedulerCalls)

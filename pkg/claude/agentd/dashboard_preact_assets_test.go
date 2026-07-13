@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestDashboardPreactProbeAssets(t *testing.T) {
+func TestDashboardPreactRuntimeAssets(t *testing.T) {
 	wantHashes := map[string]string{
 		"vendor/preact/preact.module.js":           "850dcba8ed3535b0a3611495c405551b9887724885d3b8482207a03de365d64e",
 		"vendor/preact/preact.module.js.map":       "a24b8606d61210775bbd11a742054c25b74f82c33bcde21efa1883253ce65630",
@@ -34,7 +34,6 @@ func TestDashboardPreactProbeAssets(t *testing.T) {
 
 	for _, name := range []string{
 		"js/preact-loader.js",
-		"js/preact-probe.js",
 		"js/island-lifecycle.js",
 		"js/request-lifecycle.js",
 		"js/async-load-state.js",
@@ -53,31 +52,13 @@ func TestDashboardPreactProbeAssets(t *testing.T) {
 		}
 	}
 
-	loader := mustReadFS(dashboardAssetsFS, "js/preact-loader.js")
-	for _, needle := range []string{
-		"await import('./preact-probe.js')",
-		"host.dataset.state = 'failed'",
-		"legacy dashboard remains active",
-	} {
-		if !strings.Contains(string(loader), needle) {
-			t.Errorf("Preact loader missing %q", needle)
-		}
+	loader := string(mustReadFS(dashboardAssetsFS, "js/preact-loader.js"))
+	if strings.Contains(loader, "preact-probe") || strings.Contains(loader, "mountPreactRuntimeProbe") {
+		t.Error("Preact loader retains the obsolete transition-era runtime probe")
 	}
-
-	probe := mustReadFS(dashboardAssetsFS, "js/preact-probe.js")
-	for _, needle := range []string{
-		"import { signal } from '@preact/signals';",
-		"import { h, render } from 'preact';",
-		"import htm from 'htm';",
-		"const html = htm.bind(h);",
-	} {
-		if !strings.Contains(string(probe), needle) {
-			t.Errorf("Preact probe missing no-build runtime wiring %q", needle)
-		}
-	}
-	for _, networkLoader := range []string{"fetch(", "XMLHttpRequest", "WebSocket(", `import("http`, `import('http`} {
-		if strings.Contains(string(probe), networkLoader) {
-			t.Errorf("Preact probe contains runtime network loader %q", networkLoader)
+	for _, needle := range []string{"import('./shell-island.js')", "import('./groups-island.js')", "import('./links-island.js')"} {
+		if !strings.Contains(loader, needle) {
+			t.Errorf("Preact loader missing production runtime consumer %q", needle)
 		}
 	}
 }
@@ -105,14 +86,13 @@ func TestDashboardPreactImportMap(t *testing.T) {
 	}
 }
 
-func TestDashboardPreactProbeWired(t *testing.T) {
-	for _, needle := range []string{
-		"mountPreactRuntimeProbe,",
-		"void mountPreactRuntimeProbe();",
-		"await mountJobsFeature({",
-	} {
-		if !strings.Contains(dashboardAssets, needle) {
-			t.Errorf("dashboard Preact probe wiring missing %q", needle)
+func TestDashboardPreactRuntimeWired(t *testing.T) {
+	if !strings.Contains(dashboardAssets, "await mountJobsFeature({") {
+		t.Error("dashboard production Preact runtime is not wired")
+	}
+	for _, forbidden := range []string{"mountPreactRuntimeProbe", "preact-runtime-probe", "preact-probe.js"} {
+		if strings.Contains(dashboardAssets, forbidden) {
+			t.Errorf("dashboard retains obsolete runtime probe contract %q", forbidden)
 		}
 	}
 }

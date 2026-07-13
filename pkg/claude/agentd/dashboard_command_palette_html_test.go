@@ -21,12 +21,12 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 		}
 	}
 
-	// Markup: the overlay rides on .modal-overlay (shared backdrop +
-	// auto-refresh suspend), with its search input, results list and the
-	// discoverable header button.
+	// Markup: the overlay rides on .modal-overlay for the shared backdrop, with
+	// its search input, results list and the discoverable header button. Its
+	// Preact-owned state survives ordinary snapshot publishes.
 	must(`id="command-palette-modal"`, "the palette overlay exists")
 	must("modal-overlay palette-overlay${current.open ? ' show' : ''}",
-		"the palette is a .modal-overlay so it suspends the 2s refresh while open")
+		"the palette uses the shared modal backdrop")
 	must(`id="palette-input"`, "the palette has a search input")
 	must(`id="palette-list"`, "the palette has a results list")
 	must(`id="command-palette-btn"`, "a header button opens the palette for discoverability")

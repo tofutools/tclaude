@@ -647,12 +647,10 @@ function bindPermEditModal() {
 // of the empty-group create. Agent : spawn-profile :: party : template.
 
 // gcTemplateCache holds a freshly-fetched template list for the picker, or null
-// to fall back to the live snapshot. It exists because opening "⧉ manage
-// circles…" stacks the templates manager over this (refresh-suspending) modal,
-// so lastSnapshot.templates goes stale while a circle is created/edited there —
-// on the manager's close we fetch /api/templates directly and hold the result
-// here so a just-created circle is not only visible in the dropdown but also
-// resolvable (selectable + submittable) by every reader below.
+// to fall back to the live snapshot. Opening "⧉ manage circles…" stacks the
+// templates manager over this dialog; on manager close we fetch /api/templates
+// directly and hold the result here so a just-created circle is immediately
+// visible and resolvable regardless of the main poll's timing.
 let gcTemplateCache = null;
 
 // groupCreateTemplates returns the templates the picker should offer — the
@@ -977,10 +975,9 @@ async function browseGroupCreateCwd() {
 // repopulateGroupCreateTemplatesIfOpen refreshes the party-profile dropdown
 // after the templates manager (opened from "⧉ manage circles…") closes, so a
 // circle created / renamed / deleted there shows up — but only while the
-// create-group dialog is still open behind it. Because that dialog is a
-// refresh-suspending modal-overlay, the live snapshot went stale while the
-// manager was stacked on top, so we fetch /api/templates DIRECTLY and hold it
-// in gcTemplateCache (a failed fetch falls back to the snapshot). If the
+// create-group dialog is still open behind it. We fetch /api/templates DIRECTLY
+// and hold it in gcTemplateCache so manager-close does not wait for the next
+// main poll (a failed fetch falls back to the snapshot). If the
 // selection survived, the human's edited copy of descr / context / task is left
 // intact (no re-prefill over their edits); if it vanished (deleted in the
 // manager), the dependent fields are reconciled back to the blank state.

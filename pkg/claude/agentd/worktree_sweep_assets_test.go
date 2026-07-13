@@ -26,12 +26,12 @@ func TestDashboardHTML_WorktreeCleanupWired(t *testing.T) {
 		}
 	}
 
-	// 1. Markup: the overlay rides on .modal-overlay (shared backdrop +
-	//    auto-refresh suspend) with the list, the opt-out toolbar
+	// 1. Markup: the overlay rides on .modal-overlay (shared backdrop) with the
+	//    list, the opt-out toolbar
 	//    (select-all/none + filter), the live rescan button, the category
 	//    mass-toggle row, the delete-branches toggle and the submit button.
 	must(`class="modal-overlay" id="worktree-cleanup-modal"`,
-		"the modal is a .modal-overlay so it suspends the 2s refresh while open")
+		"the modal uses the shared modal backdrop")
 	must(`id="worktree-cleanup-list"`, "the modal has a candidate list")
 	must(`id="worktree-cleanup-search"`, "the modal has a path/branch filter")
 	must(`id="worktree-cleanup-select-all"`, "the modal can select all candidates")

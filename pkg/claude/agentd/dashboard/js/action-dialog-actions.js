@@ -119,7 +119,7 @@ export function createActionDialogActions({
       });
       state.close();
       notify(parent ? `${group}: nested under ${parent}` : `${group}: moved to top level`);
-      await refresh({ force: true });
+      await refresh();
     },
   });
 }

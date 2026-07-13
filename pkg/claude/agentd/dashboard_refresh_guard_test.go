@@ -9,8 +9,8 @@ import (
 // The dashboard's auto-refresh used to wedge permanently after a
 // drag-and-drop retire because legacy rendering could detach the dragged row
 // before dragend reset its global suspension flag. Preact now owns keyed group
-// rows, so refresh stays live throughout a gesture and the flag is routing
-// state only.
+// rows, menus, modals, and slop machines, so only the transient imperative
+// inline editor still needs to pause a Groups publish.
 //
 // The fix lives entirely in dashboard.html's embedded JS, so there is
 // no server code path a flow test can exercise. This guards the shape
@@ -44,25 +44,31 @@ func TestDashboardHTML_RefreshGuardCannotWedge(t *testing.T) {
 	// A single predicate is the source of truth for refresh suspension.
 	must("function refreshSuspended(", "the single refresh-suspension predicate")
 
-	// refresh() must consult it once up front and after each fetch/parse
-	// phase — otherwise a refresh that began before a drag opened resumes
-	// mid-gesture and re-renders underneath it. Every check threads the force
-	// flag (see the force-refresh guard below). Post-request exits also settle
-	// the shared store token instead of leaving its poll state pending.
-	if got := strings.Count(dashboardAssets, "if (refreshSuspended({ ignoreModals: force })) {"); got != 3 {
+	// refresh() must consult it once up front and after each fetch/parse phase —
+	// otherwise a refresh that began before an inline editor opened can publish
+	// into the Groups tree and remove the transient input. Post-request exits also
+	// settle the shared store token instead of leaving its poll state pending.
+	if got := strings.Count(dashboardAssets, "if (refreshSuspended()) {"); got != 3 {
 		t.Errorf("refresh() suspension guard count = %d, want 3", got)
 	}
 	if got := strings.Count(dashboardAssets, "dashboardState.discardRequest(requestId, { responded });"); got < 2 {
 		t.Errorf("post-request discard count = %d, want at least 2", got)
 	}
 
-	// Modal suspension is derived from the DOM, not a hand-maintained
-	// boolean: a flag has to be reset on every modal close path or it
-	// leaks and wedges auto-refresh. The DOM cannot leak. A force-refresh
-	// opts out of ONLY this modal check (ignoreModals) — the rename/menu guards
-	// still hold — so a mutation fired from inside a modal can
-	// repaint the list behind it without reopening the wedge class of bug.
-	must("if (!ignoreModals && document.querySelector('.modal-overlay.show')) return true;", "modal suspension is DOM-derived and force-skippable, not a leakable flag")
+	// The transient editor is the sole suspension reason. Preact retains the
+	// keyed modal/menu/drag/slop nodes, so broad DOM selectors would unnecessarily
+	// freeze connection and shell state while those interactions are open.
+	must("if (renameEditing) return true;", "the transient inline editor remains protected")
+	for _, retired := range []string{
+		"ignoreModals",
+		"document.querySelector('.modal-overlay.show')",
+		"document.querySelector('.action-menu.open')",
+		`.slop-machine[data-status="pull-spinning"]`,
+		"refresh({ force: true })",
+	} {
+		mustNotRefresh(retired, "Preact-owned interactions must not widen refresh suspension")
+	}
+	mustNot("refresh({ force: true })", "all callers use the single ordinary refresh path")
 
 	// Keyed Preact rows survive publishes, so drag routing state must not leak
 	// into refreshSuspended or recreate the old wedge class.
@@ -80,19 +86,13 @@ func TestDashboardHTML_RefreshGuardCannotWedge(t *testing.T) {
 	must("for (const remove of removers.splice(0).reverse()) remove();", "unmount removes document drag listeners")
 }
 
-// The templates / summoning-circles list lives inside a .manage-overlay that is
-// deliberately NOT refresh-suspended, but its mutating actions fire from CHILD
-// .modal-overlay dialogs (the starters picker, the editor) that ARE — so a plain
-// refresh() from those handlers is dropped by the modal-suspend guard and the
-// circle list behind the dialog stays stale until the human closes and reopens
-// the whole view (the reported bug). The fix threads a `force` flag through
-// refresh() → refreshSuspended({ignoreModals}) that skips ONLY the modal check,
-// and every circle-list mutation calls refresh({ force: true }).
+// The templates / summoning-circles list lives inside a Preact-owned management
+// overlay. Its mutation handlers use the same ordinary refresh() path whether a
+// child editor remains open or not; modal visibility no longer changes polling.
 //
 // This has no server path of its own, so — like the sibling guards in this
 // package — it pins the wiring by string-searching the embedded modules. The
-// ignoreModals mechanic itself is guarded by TestDashboardHTML_RefreshGuardCannotWedge.
-func TestDashboardHTML_ForceRefreshOnCircleMutations(t *testing.T) {
+func TestDashboardHTML_RefreshOnCircleMutations(t *testing.T) {
 	readMod := func(name string) string {
 		t.Helper()
 		b, err := fs.ReadFile(dashboardAssetsFS, name)
@@ -102,17 +102,14 @@ func TestDashboardHTML_ForceRefreshOnCircleMutations(t *testing.T) {
 		return string(b)
 	}
 
-	// refresh() takes the options object and derives force from it. The
-	// `opts.force` read (rather than a positional boolean) is what makes it
-	// safe when refresh is used bare as an event callback — an Event has no
-	// .force, so it degrades to a normal refresh.
+	// refresh() no longer has a force mode: every mutation uses the same path.
 	refreshJS := readMod("js/refresh.js")
-	for _, needle := range []string{
-		"export async function refresh(opts = {})",
-		"const force = !!(opts && opts.force);",
-	} {
-		if !strings.Contains(refreshJS, needle) {
-			t.Errorf("js/refresh.js missing %q — force-refresh plumbing regressed", needle)
+	if !strings.Contains(refreshJS, "export async function refresh()") {
+		t.Error("js/refresh.js must expose the option-free refresh() path")
+	}
+	for _, retired := range []string{"ignoreModals", "opts.force", "refresh({ force: true })"} {
+		if strings.Contains(refreshJS, retired) {
+			t.Errorf("js/refresh.js still contains retired force plumbing %q", retired)
 		}
 	}
 
@@ -136,10 +133,8 @@ func TestDashboardHTML_ForceRefreshOnCircleMutations(t *testing.T) {
 		return rest[:end]
 	}
 
-	// Every circle-list mutation force-refreshes. installStarter (copy a bundled
-	// starter) and submitFromGroup (snapshot a group, then reopen the editor)
-	// are the genuinely-broken cases — a modal stays open across the refresh;
-	// the editor/delete/import handlers force too so the behaviour is uniform.
+	// Every circle-list mutation refreshes, including the paths that keep or
+	// reopen a child editor after the mutation.
 	for _, h := range []struct{ sig, why string }{
 		{"async function installTemplateStarter(", "copying a starter must repaint the circle list while the picker stays open"},
 		{"async function snapshotTemplateFromGroup(", "snapshot-a-group reopens the editor, so its refresh runs with a modal open"},
@@ -148,8 +143,12 @@ func TestDashboardHTML_ForceRefreshOnCircleMutations(t *testing.T) {
 		{"async function importTemplate(", "importing a circle must show it in the list at once"},
 		{"async function duplicateTemplate(", "duplicating a circle must show the copy in the list at once"},
 	} {
-		if !strings.Contains(funcBody(h.sig), "refresh({ force: true })") {
-			t.Errorf("%s must call refresh({ force: true }) — %s", h.sig, h.why)
+		body := funcBody(h.sig)
+		if !strings.Contains(body, "refresh()") {
+			t.Errorf("%s must call refresh() — %s", h.sig, h.why)
+		}
+		if strings.Contains(body, "force: true") {
+			t.Errorf("%s still uses the retired force-refresh option", h.sig)
 		}
 	}
 }

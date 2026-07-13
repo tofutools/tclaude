@@ -13,9 +13,7 @@
 // so a dead dashboard isn't left streaming lounge music as if all were well.
 // The moment a poll gets through again we clear both.
 //
-// The banner is deliberately NOT a .modal-overlay: refreshSuspended() (in
-// refresh.js) must stay false so the 2s poll keeps running underneath it —
-// otherwise we'd never see the reconnect that clears the banner.
+// The 2s poll keeps running underneath the banner so a reconnect clears it.
 
 import { setConnectionLost } from './vegas.js';
 import { dashboardState } from './snapshot-store.js';

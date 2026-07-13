@@ -106,12 +106,10 @@ func TestDashboardHTML_DndOperationsConfirm(t *testing.T) {
 				t.Errorf("%s: cancel guard (at %d) must precede the first fetch() (at %d)", name, cancel, fetch)
 			}
 		}
-		// Every gated function must re-sync on completion. The confirm
-		// modal suspends auto-refresh while open, and the dragend-fired
-		// refresh() bails for the same reason — so a `finally { await
-		// refresh() }` is what guarantees the dashboard is not left
-		// showing stale state on ANY exit path (including a confirmed-
-		// then-aborted op that hits an early return).
+		// Every gated function must re-sync on completion. A `finally { await
+		// refresh() }` guarantees the dashboard is not left showing optimistic or
+		// stale state on ANY exit path (including a confirmed-then-aborted op that
+		// hits an early return).
 		if !strings.Contains(body, "} finally {") {
 			t.Errorf("%s: must re-sync via a `finally { await refresh() }` block on every exit path", name)
 		}

@@ -13,10 +13,10 @@ import (
 )
 
 // TestDashboardPreactDnDChrome is the focused real-browser acceptance check for
-// TCL-359. It drives native Chrome input (not synthetic DragEvent fixtures) and
-// proves a shared snapshot publish neither replaces an active drag source nor
-// closes/focus-drops a dock menu. Escape then exercises the browser's cancelled
-// HTML5-drag path and every imperative binder's cleanup.
+// TCL-359/TCL-362. It drives native Chrome input (not synthetic DragEvent
+// fixtures) and proves shared snapshot publishes preserve keyed menus, form
+// state, disclosures and active drags. It also proves the one retained refresh
+// suspension contract protects the transient inline rename editor.
 func TestDashboardPreactDnDChrome(t *testing.T) {
 	if os.Getenv("TCLAUDE_DASHSNAP") == "" {
 		t.Skip("browser smoke — set TCLAUDE_DASHSNAP=1 (needs local Chrome)")
@@ -29,6 +29,9 @@ func TestDashboardPreactDnDChrome(t *testing.T) {
 
 	outDir := filepath.Join(dashSnapOutRoot(t), "preact-dnd-"+time.Now().Format("20060102-150405.000"))
 	states := []dashsnap.State{
+		groupMenuPublishState(),
+		legacyLinkModalPublishState(),
+		inlineRenameSuspensionState(),
 		dockMenuPublishState(false),
 		dockMenuPublishState(true),
 		dockDragCancelState(false),
@@ -67,6 +70,111 @@ func TestDashboardPreactDnDChrome(t *testing.T) {
 			strings.Join(failed, "\n"), filepath.Join(outDir, "index.html"))
 	}
 	t.Logf("Preact DnD browser smoke: %s", filepath.Join(outDir, "index.html"))
+}
+
+func groupMenuPublishState() dashsnap.State {
+	return dashsnap.State{
+		Key:     "preact-group-menu-publish",
+		Title:   "Preact group disclosure and menu survive publish",
+		Caption: "The same keyed group disclosure, open menu and focused item survive an unsuspended snapshot publish.",
+		JS: openGroupsAndDockJS + `
+return (async function(){
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var group = document.querySelector('details[data-group-key="frontend-squad"]');
+  var cog = group && group.querySelector('.group-actions .cog-btn');
+  if (!group || !cog) throw new Error('group menu controls missing');
+  cog.click();
+  var menu = group.querySelector('.group-actions .action-menu.open');
+  var item = menu && menu.querySelector('button');
+  if (!menu || !item) throw new Error('group menu did not open');
+  item.focus();
+  window.__tcl362Group = group;
+  window.__tcl362GroupMenu = menu;
+  window.__tcl362GroupItem = item;
+})();`,
+		Actions: []dashsnap.BrowserAction{
+			{Kind: "eval", JS: waitForSnapshotPublishJS},
+			{Kind: "eval", JS: `
+if (document.querySelector('details[data-group-key="frontend-squad"]') !== window.__tcl362Group) throw new Error('publish replaced keyed group disclosure');
+if (!window.__tcl362Group.open) throw new Error('publish collapsed group disclosure');
+if (!window.__tcl362GroupMenu.classList.contains('open')) throw new Error('publish closed group action menu');
+if (document.activeElement !== window.__tcl362GroupItem) throw new Error('publish dropped group menu focus');
+`},
+			{Kind: "key", Key: "Escape"},
+		},
+	}
+}
+
+func legacyLinkModalPublishState() dashsnap.State {
+	return dashsnap.State{
+		Key:     "legacy-link-modal-publish",
+		Title:   "Legacy modal form survives publish",
+		Caption: "The static link modal remains open and retains selected form values and focus while refresh continues behind it.",
+		JS: `
+return (async function(){
+document.querySelector('nav [data-tab="groups"]').click();
+document.querySelector('.filter-bar-cog .cog-btn').click();
+document.querySelector('#links-manage-open').click();
+document.querySelector('#link-new-open').click();
+await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+var from = document.querySelector('#link-modal-from');
+var to = document.querySelector('#link-modal-to');
+var mode = document.querySelector('#link-modal-mode');
+var bidir = document.querySelector('#link-modal-bidir');
+if (!document.querySelector('#link-modal.show') || !from || !to || !mode || !bidir) throw new Error('link modal did not open');
+from.value = 'frontend-squad';
+to.value = 'infra-crew';
+mode.value = 'owners->members';
+bidir.checked = true;
+mode.focus();
+window.__tcl362LinkForm = {from:from, to:to, mode:mode, bidir:bidir};
+})();
+`,
+		Actions: []dashsnap.BrowserAction{
+			{Kind: "eval", JS: waitForSnapshotPublishJS},
+			{Kind: "eval", JS: `
+var form = window.__tcl362LinkForm;
+if (!document.querySelector('#link-modal.show')) throw new Error('publish closed legacy link modal');
+if (document.querySelector('#link-modal-from') !== form.from || document.querySelector('#link-modal-to') !== form.to || document.querySelector('#link-modal-mode') !== form.mode) throw new Error('publish replaced legacy form controls');
+if (form.from.value !== 'frontend-squad' || form.to.value !== 'infra-crew' || form.mode.value !== 'owners->members' || !form.bidir.checked) throw new Error('publish changed legacy form state: ' + JSON.stringify({from:form.from.value,to:form.to.value,mode:form.mode.value,bidir:form.bidir.checked}));
+if (document.activeElement !== form.mode) throw new Error('publish dropped legacy modal focus');
+`},
+			{Kind: "key", Key: "Escape"},
+		},
+	}
+}
+
+func inlineRenameSuspensionState() dashsnap.State {
+	return dashsnap.State{
+		Key:     "inline-rename-suspends-publish",
+		Title:   "Inline rename is the sole refresh suspension",
+		Caption: "A transient sibling editor blocks the next scheduled snapshot request, preserves value/selection/focus, then allows polling to resume after Escape.",
+		JS: openGroupsAndDockJS + `
+return new Promise(function(resolve, reject) {
+  var timeout = setTimeout(function(){ reject(new Error('initial snapshot publish did not arrive')); }, 5000);
+  document.addEventListener('tclaude:snapshot', function opened() {
+    clearTimeout(timeout);
+    var chip = document.querySelector('details[data-group-key="frontend-squad"] .rowname-text[data-act="rename-name"]');
+    if (!chip) { reject(new Error('rename chip missing')); return; }
+    chip.click();
+    var input = chip.parentElement.querySelector('.rowname-input');
+    if (!input) { reject(new Error('inline rename editor did not open')); return; }
+    input.value = 'rename stays local';
+    input.setSelectionRange(2, 9);
+    var before = performance.getEntriesByType('resource').filter(function(e){ return e.name.indexOf('/api/snapshot') >= 0; }).length;
+    setTimeout(function() {
+      var after = performance.getEntriesByType('resource').filter(function(e){ return e.name.indexOf('/api/snapshot') >= 0; }).length;
+      if (after !== before) { reject(new Error('snapshot request started while inline editor was open')); return; }
+      if (!input.isConnected || input.value !== 'rename stays local' || input.selectionStart !== 2 || input.selectionEnd !== 9 || document.activeElement !== input) {
+        reject(new Error('inline editor state changed while refresh was suspended')); return;
+      }
+      var resumed = setTimeout(function(){ reject(new Error('snapshot polling did not resume after inline editor closed')); }, 5000);
+      document.addEventListener('tclaude:snapshot', function complete() { clearTimeout(resumed); resolve(); }, {once:true});
+      input.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}));
+    }, 2300);
+  }, {once:true});
+});`,
+	}
 }
 
 const openGroupsAndDockJS = `

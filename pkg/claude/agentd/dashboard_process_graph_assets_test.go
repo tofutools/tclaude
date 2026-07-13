@@ -39,7 +39,6 @@ func TestDashboardProcessGraphAssets(t *testing.T) {
 		"export class ProcessGraph",
 		"export function createProcessGraph(",
 		"export function normalizeWheelDelta(",
-		"data-morph-owned",
 		"onPortDragStart",
 		"onCanvasDrop",
 		"onCanvasClick",
@@ -64,16 +63,9 @@ func TestDashboardProcessGraphAssets(t *testing.T) {
 		"overlay-${overlay.severity}",
 		"process-edge-badge-${edge.badgeSeverity || 'error'}",
 		"centerOn(x, y)")
-	layoutBeforeOwnership := strings.Index(graph, "this.layout = layoutProcessGraph(this.graph")
-	ownershipAfterRender := strings.Index(graph, "container.setAttribute('data-morph-owned', 'process-graph')")
-	if layoutBeforeOwnership < 0 || ownershipAfterRender < 0 || layoutBeforeOwnership > ownershipAfterRender {
-		t.Error("ProcessGraph must validate/layout before marking or emptying the live morph host")
+	if strings.Contains(graph, "data-morph-owned") {
+		t.Error("process graph retains the deleted reconciler ownership marker")
 	}
-
-	morph := read("js/morph.js")
-	mustContain("morph.js", morph,
-		"if (from.hasAttribute('data-morph-owned')) {",
-		"if (fromParent.nodeType === 1 && fromParent.hasAttribute('data-morph-owned')) return;")
 
 	css := read("dashboard.css")
 	mustContain("dashboard.css", css,

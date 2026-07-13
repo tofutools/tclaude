@@ -59,7 +59,7 @@ func TestDashboardHTML_MessageFilterAboveList(t *testing.T) {
 		`<div class="mail-list-filter">`,
 		`id="mail-mark-all"`,
 		`id="mail-clear-read"`,
-		`id="filter-messages-clear"`, // the clear button bindFilter('messages') wires
+		`id="filter-messages-clear"`, // the Messages island wires the clear button
 	} {
 		if !strings.Contains(html, needle) {
 			t.Errorf("mail-island.js missing %q in the relocated message-filter row", needle)

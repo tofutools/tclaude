@@ -190,7 +190,7 @@ function StepEditor({ step, index, state }) {
 export function PluginsModal({ state, actions }) {
   const draft = state.view.value.modal;
   const nameRef = useRef(null);
-  const close = () => { state.closeModal(); void actions.refresh({ force: true }); };
+  const close = () => { state.closeModal(); void actions.refresh(); };
   const { dialogRef } = useDialogFocus({ open: !!draft, initialFocusRef: nameRef, onEscape: close });
   if (!draft) return null;
   return html`<div ref=${dialogRef} class="modal-overlay show" id="plugin-modal"

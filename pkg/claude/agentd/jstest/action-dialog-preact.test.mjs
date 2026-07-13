@@ -167,5 +167,5 @@ test('action mutations preserve endpoint payloads, notifications, and refresh bo
   await actions.nestGroup({ group: 'child', parent: '' });
   assert.equal(requests[2][0], '/api/groups/child/parent');
   assert.deepEqual(JSON.parse(requests[2][1].body), { parent: '' });
-  assert.deepEqual(refreshes, [null, null, { force: true }]);
+  assert.deepEqual(refreshes, [null, null, null]);
 });

@@ -259,10 +259,9 @@ function manualPull(machine, opts) {
   // animation is a fast spin followed by a snap-replace.
   const conv = machine.getAttribute('data-conv') || '';
   // These two sentinel data-status values ('pull-spinning' then
-  // 'pull-stopped' below) mark the cell for the pull's full ~2.7s
-  // lifetime. refreshSuspended() in refresh.js keys on them to pause
-  // the 2s auto-refresh while a pull is in flight, so a poll can't
-  // rebuild the row and cancel the spin. Keep the strings in sync.
+  // 'pull-stopped' below) mark the cell for the pull's full ~2.7s lifetime.
+  // html-vnodes.js treats the reel body as an opaque imperative boundary, so
+  // keyed Groups publishes retain the live spin.
   machine.setAttribute('data-status', 'pull-spinning');
   machine.innerHTML = pullReelHTML() + pullReelHTML() + pullReelHTML();
   emitSlopFx('spin', conv);

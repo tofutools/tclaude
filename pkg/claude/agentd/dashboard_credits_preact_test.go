@@ -32,10 +32,24 @@ func TestDashboardCreditsPreactBoundary(t *testing.T) {
 		`id="slop-credits"`, `class="slop-credits"`,
 		`title="Slop credits — climbs on every jackpot this session"`,
 		"current.credits.toLocaleString()", "slop-credits-bump",
-		"export function mountCreditsIsland(", "registerCleanup(() => render(null, host))",
+		"export function CreditsLeaderboard(", "key=${entry.conv}", "data-key=${entry.conv}",
+		`class="vegas-leaderboard-title"`, `class="vegas-leaderboard-list"`,
+		"export function mountCreditsIsland(",
+		"registerCleanup(() => render(null, counterHost))",
+		"registerCleanup(() => render(null, leaderboardHost))",
 	} {
 		if !strings.Contains(island, needle) {
 			t.Errorf("credits Preact contract missing %q", needle)
+		}
+	}
+	loader := read("js/preact-loader.js")
+	for _, needle := range []string{
+		"creditsLeaderboardHost: '#vegas-leaderboard'",
+		"counterHost: hosts.creditsHost",
+		"leaderboardHost: hosts.creditsLeaderboardHost",
+	} {
+		if !strings.Contains(loader, needle) {
+			t.Errorf("credits Preact loader contract missing %q", needle)
 		}
 	}
 
@@ -43,17 +57,18 @@ func TestDashboardCreditsPreactBoundary(t *testing.T) {
 	for _, needle := range []string{
 		"state.recordWin(d.fx, d.conv)",
 		"state.publishSnapshot(getSnapshot())",
-		"renderCreditsLeaderboard({ state, documentRef })",
 		"removeEventListener('tclaude:slopfx', onSlopFx)",
 		"removeEventListener('tclaude:snapshot', onSnapshot)",
 		"return cleanup",
-		"morphInto(host,",
 	} {
 		if !strings.Contains(bridge, needle) {
 			t.Errorf("credits event/leaderboard bridge missing %q", needle)
 		}
 	}
-	for _, retired := range []string{"function renderCounter(", "getElementById('slop-credits')", "let credits = 0"} {
+	for _, retired := range []string{
+		"function renderCounter(", "renderCreditsLeaderboard", "morphInto", "innerHTML",
+		"getElementById('slop-credits')", "isSlopActiveImpl", "let credits = 0",
+	} {
 		if strings.Contains(bridge, retired) {
 			t.Errorf("credits migration left retired shell mutation %q", retired)
 		}

@@ -247,7 +247,7 @@ export class ProcessGraph {
     this.options = { ...options };
     this.graph = graph || { nodes: [], edges: [] };
     // Validate/layout before touching the host. A bad draft must leave the
-    // existing morphed container repairable, not empty and live-owned.
+    // existing graph intact and repairable.
     this.layout = layoutProcessGraph(this.graph, this.options.layout || {});
     this.instanceID = nextGraphID++;
     this.markerID = `process-arrow-${this.instanceID}`;
@@ -288,9 +288,6 @@ export class ProcessGraph {
     this.bindEvents();
     this.render();
     container.replaceChildren(this.root);
-    // Mark ownership only after first layout/render succeeds. morph.js now
-    // preserves the interaction subtree across polling reconciliations.
-    container.setAttribute('data-morph-owned', 'process-graph');
     if (options.fitOnRender !== false) requestAnimationFrame(() => this.fitToView());
   }
 
@@ -852,7 +849,6 @@ export class ProcessGraph {
     if (this.destroyed) return;
     this.destroyed = true;
     this.abort.abort();
-    this.container.removeAttribute('data-morph-owned');
     this.container.replaceChildren();
   }
 }

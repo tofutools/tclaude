@@ -15,7 +15,7 @@ import { bindSlopCredits } from './slop-credits.js';
 import { bindSlopSpectacle } from './slop-spectacle.js';
 import { bindVegasMusic } from './vegas.js';
 import {
-  bindFilter, bindTabs, bindTabHotkeys, bindDetailsPersistence, bindGroupTitleToggle, bindGroupQuickHover, bindSortHeaders,
+  bindTabs, bindTabHotkeys, bindDetailsPersistence, bindGroupTitleToggle, bindGroupQuickHover,
   confirmDiscard, confirmModal, isCyclingTabs, refresh, toast,
 } from './refresh.js';
 
@@ -55,14 +55,13 @@ import { bindProfilesUI } from './modal-profiles.js';
 import { bindSandboxProfilesUI, refreshSpawnSandboxProfileUI, summonSandboxScribe } from './sandbox-profiles.js';
 import { bindRolesUI } from './modal-roles.js';
 import { bindCloneModal } from './modal-clone.js';
-import { bindLinkModal } from './modal-link-wt.js';
+import { bindLinkModal, openLinkModal } from './modal-link-wt.js';
 import { bindExportModal } from './modal-export.js';
 import {
   bindAgentSpawnModal,
 } from './modal-spawn.js';
 import { bindRemoteAdmin, loadRemoteAdmin } from './remote-admin.js';
 import { bindCostDisplayToggle } from './cost-display-toggle.js';
-import { bindDebugTab } from './debug.js';
 import { focusAccessRequest } from './mail-bridge.js';
 import { dashPrefs, initDashPrefs } from './prefs.js';
 import { recordGroupInteraction } from './last-group.js';
@@ -71,8 +70,7 @@ import { bindDock } from './dock.js';
 import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
 import {
-  mountAccessFeature, mountActionDialogsFeature, mountAuditFeature, mountConfigFeature, mountCostsFeature, mountDirectoryPickerFeature, mountDockFeature, mountGroupsFeature, mountJobsFeature, mountLogsFeature, mountManagementFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature,
-  mountPreactRuntimeProbe,
+  mountAccessFeature, mountActionDialogsFeature, mountAuditFeature, mountConfigFeature, mountCostsFeature, mountDebugFeature, mountDirectoryPickerFeature, mountDockFeature, mountGroupsFeature, mountJobsFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature,
 } from './preact-loader.js';
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
 import { triggerExportDownload } from './export-progress.js';
@@ -141,13 +139,9 @@ export function sudoBadge(activeSudo, fallbackConvID) {
 // synchronous for the benign import cycles documented above.)
 (async () => {
   await initDashPrefs();
-  // Future Preact islands call this stable action boundary rather than
+  // Preact islands call this stable action boundary rather than
   // importing refresh.js. The interval below remains the sole poll owner.
   configureDashboardActions({ refresh });
-  // Load the native Preact/HTM module behind an error-isolated dynamic import.
-  // This inert probe proves the production asset path without giving Preact
-  // ownership of an existing feature subtree yet (TCL-340).
-  void mountPreactRuntimeProbe();
   // sort.js seeds its in-memory sortState from a pref; re-seed it now
   // that the cache is populated (its import-time read saw an empty one).
   loadSortState();
@@ -160,7 +154,7 @@ export function sudoBadge(activeSudo, fallbackConvID) {
 
   // The Jobs pilot owns its filter, table, sort, paging, and badge subtrees.
   // Await the mount before legacy modal binders look up the create button.
-  await mountJobsFeature({
+  pageCleanups.push(await mountJobsFeature({
     requestMutation: dashboardActions.requestMutation,
     refresh: dashboardActions.refresh,
     confirm: confirmModal,
@@ -168,13 +162,14 @@ export function sudoBadge(activeSudo, fallbackConvID) {
     download: triggerExportDownload,
     createCron: () => openCronCreateModal({}),
     editCron: openCronEditModal,
-  });
+  }));
   // The remaining bounded islands are independent. Load them concurrently so
   // navigation setup is delayed by only the slowest optional feature import,
   // not by the sum of seven dynamic-import chains. Await the whole group before
   // initNavHistory below so initial deep links still find every lazy loader.
-  await Promise.all([
+  const featureCleanups = await Promise.all([
     mountGroupsFeature({ refresh: dashboardActions.refresh }),
+    mountLinksFeature({ openCreate: () => openLinkModal({ mode: 'create' }) }),
     mountDockFeature(),
     mountPluginsFeature({
       requestMutation: dashboardActions.requestMutation,
@@ -195,6 +190,7 @@ export function sudoBadge(activeSudo, fallbackConvID) {
     mountLogsFeature(),
     mountMessagesFeature(),
     mountAuditFeature(),
+    mountDebugFeature(),
     mountConfigFeature({ toast, isCyclingTabs }),
     mountProcessesFeature({ confirm: confirmModal, confirmDiscard, notify: toast }),
     mountDirectoryPickerFeature({
@@ -221,6 +217,7 @@ export function sudoBadge(activeSudo, fallbackConvID) {
       getSnapshot: () => lastSnapshot,
     }),
   ]);
+  pageCleanups.push(...featureCleanups);
 
   bindTabs();
   bindTabHotkeys();
@@ -235,7 +232,6 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   bindDetailsPersistence();
   bindGroupTitleToggle();
   bindGroupQuickHover();
-  bindSortHeaders();
   bindRowActions();
   pageCleanups.push(bindDnd(), bindGroupReorder());
   // Drag a palette dock profile/role card onto a group → spawn dialog prefilled
@@ -259,7 +255,6 @@ export function sudoBadge(activeSudo, fallbackConvID) {
     if (event.persisted) return;
     for (const cleanup of pageCleanups.reverse()) cleanup?.();
   });
-  bindFilter('links');
   bindSudoModal();
   bindPermEditModal();
   bindCronModal();
@@ -284,7 +279,6 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   bindRemoteAdmin();
   document.querySelector('nav [data-tab="config"]')?.addEventListener('click', () => { void loadRemoteAdmin(); });
   bindCostDisplayToggle();
-  bindDebugTab();
   // Slop-mode flair — each binder installs a delegated listener (or
   // starts an interval) once. They no-op while slop is off and the
   // body-class check inside each handler is what actually gates the

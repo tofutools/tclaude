@@ -1,32 +1,6 @@
-// This source module intentionally has no Preact imports. A missing or broken
-// runtime module must not prevent the legacy dashboard module graph from
-// linking; future feature islands can use the same load-then-claim boundary.
+// This source module intentionally has no Preact imports. Each bounded feature
+// loads its runtime graph only after claiming its stable hosts.
 import { createIslandDescriptor, mountFeatureIsland, mountIslandDescriptor } from './island-lifecycle.js';
-
-export async function mountPreactRuntimeProbe() {
-  const host = document.createElement('span');
-  host.id = 'preact-runtime-probe';
-  host.hidden = true;
-  host.dataset.state = 'loading';
-  document.body.append(host);
-
-  try {
-    const { mountPreactProbe } = await import('./preact-probe.js');
-    mountPreactProbe(host);
-    // Preact and Signals schedule their render flush in microtasks. Two turns
-    // prove both the initial render and the signal-driven update completed.
-    await Promise.resolve();
-    await Promise.resolve();
-    const probe = host.querySelector('[data-preact-probe="ready"]');
-    if (!probe || probe.textContent !== 'ready') {
-      throw new Error('Preact/Signals runtime probe did not become ready');
-    }
-    host.dataset.state = 'ready';
-  } catch (error) {
-    host.dataset.state = 'failed';
-    console.warn('Preact runtime probe unavailable; legacy dashboard remains active.', error);
-  }
-}
 
 const shellDescriptor = createIslandDescriptor({
   name: 'shell',
@@ -37,6 +11,7 @@ const shellDescriptor = createIslandDescriptor({
     statusHost: '#shell-status-root',
     notifyHost: '#shell-notify-root',
     creditsHost: '#shell-credits-root',
+    creditsLeaderboardHost: '#vegas-leaderboard',
     messagesBadgeHost: '#shell-messages-badge-root',
     metaHost: '#shell-meta-root',
     disconnectHost: '#shell-disconnect-root',
@@ -95,7 +70,8 @@ const shellDescriptor = createIslandDescriptor({
           registerCleanup,
         });
         mountCreditsIsland({
-          host: hosts.creditsHost,
+          counterHost: hosts.creditsHost,
+          leaderboardHost: hosts.creditsLeaderboardHost,
           state: creditsState,
           registerCleanup,
         });
@@ -148,6 +124,31 @@ const groupsDescriptor = createIslandDescriptor({
 
 export function mountGroupsFeature(dependencies = {}) {
   return mountIslandDescriptor(groupsDescriptor, dependencies);
+}
+
+const linksDescriptor = createIslandDescriptor({
+  name: 'links',
+  label: 'Inter-group links',
+  hosts: { filterHost: '#links-filter-root', listHost: '#links-list' },
+  failureClass: 'links-error',
+  load: async ({ hosts: { filterHost, listHost }, dependencies }) => {
+    const islandModule = import('./links-island.js');
+    const stateModule = import('./links-state.js');
+    const [{ mountLinksIsland }, { linksState }] = await Promise.all([
+      islandModule, stateModule,
+    ]);
+    return {
+      state: linksState,
+      mount: (registerCleanup) => mountLinksIsland({
+        filterHost, listHost, state: linksState, openCreate: dependencies.openCreate,
+        registerCleanup,
+      }),
+    };
+  },
+});
+
+export function mountLinksFeature(dependencies = {}) {
+  return mountIslandDescriptor(linksDescriptor, dependencies);
 }
 
 const dockDescriptor = createIslandDescriptor({
@@ -335,6 +336,37 @@ export async function mountAuditFeature(actionDependencies = {}) {
       return { state: auditState, mount: (registerCleanup) => mountAuditIsland({ host, state: auditState, actions: auditActions, registerCleanup }) };
     },
   });
+}
+
+const debugDescriptor = createIslandDescriptor({
+  name: 'debug',
+  label: 'Debug',
+  hosts: { host: '#debug-root' },
+  failureClass: 'debug-error',
+  load: async ({ hosts: { host }, dependencies }) => {
+    const islandModule = import('./debug-island.js');
+    const stateModule = import('./debug-state.js');
+    const actionsModule = import('./debug-actions.js');
+    const [{ mountDebugIsland }, { debugState }, { createDebugActions }] =
+      await Promise.all([islandModule, stateModule, actionsModule]);
+    const actions = createDebugActions({ state: debugState, ...dependencies });
+    return {
+      state: debugState,
+      mount: (registerCleanup) => mountDebugIsland({
+        host,
+        state: debugState,
+        actions,
+        registerCleanup,
+        pollMs: dependencies.pollMs,
+        setIntervalImpl: dependencies.setIntervalImpl,
+        clearIntervalImpl: dependencies.clearIntervalImpl,
+      }),
+    };
+  },
+});
+
+export function mountDebugFeature(dependencies = {}) {
+  return mountIslandDescriptor(debugDescriptor, dependencies);
 }
 
 export async function mountConfigFeature(dependencies = {}) {
