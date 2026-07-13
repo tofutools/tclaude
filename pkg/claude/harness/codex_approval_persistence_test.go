@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -114,6 +115,60 @@ func TestPromoteCodexLaunchProfileApprovals_ExistingDecisionWins(t *testing.T) {
 	after, err := os.ReadFile(configPath)
 	require.NoError(t, err)
 	assert.Equal(t, original, string(after))
+}
+
+func TestPromoteCodexLaunchProfileApprovals_InlineTablesFailWithoutChangingConfig(t *testing.T) {
+	for name, original := range map[string]string{
+		"inline apps":  "apps = {}\n",
+		"inline tools": "[apps." + testCodexAppID + "]\ntools = {}\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			_, path := sealedTestProfile(t, home, "7777777777777777")
+			appendTestApproval(t, path, "linear.save_issue")
+			configPath := filepath.Join(home, "config.toml")
+			require.NoError(t, os.WriteFile(configPath, []byte(original), 0o600))
+
+			_, err := PromoteCodexLaunchProfileApprovals(path)
+			require.ErrorContains(t, err, "conflict with existing Codex config shape")
+			after, readErr := os.ReadFile(configPath)
+			require.NoError(t, readErr)
+			assert.Equal(t, original, string(after))
+		})
+	}
+}
+
+func TestCodexConfigWriters_DoNotLoseConcurrentUpdates(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+	approval := CodexToolApproval{AppID: testCodexAppID, Tool: "linear.save_issue"}
+
+	start := make(chan struct{})
+	errCh := make(chan error, 2)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		errCh <- ensureDirTrustedInFile(configPath, "/proj/concurrent")
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		_, err := mergeCodexToolApprovals(configPath, []CodexToolApproval{approval})
+		errCh <- err
+	}()
+	close(start)
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		require.NoError(t, err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `[projects."/proj/concurrent"]`)
+	assert.Contains(t, string(data), `[apps.`+testCodexAppID+`.tools."linear.save_issue"]`)
 }
 
 func TestPromoteCodexLaunchProfileApprovals_PreservesConfigSymlink(t *testing.T) {

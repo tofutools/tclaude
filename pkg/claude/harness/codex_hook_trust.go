@@ -146,13 +146,6 @@ func codexTclaudeHookTrustEntries(
 	return entries, nil
 }
 
-type codexTrustWritePlan struct {
-	path    string
-	out     []byte
-	perm    os.FileMode
-	changed bool
-}
-
 func (codexHookInstaller) InstallTrusted() error {
 	if ok, reason := (codexHookInstaller{}).AutoTrustSupported(); !ok {
 		return fmt.Errorf("automatic Codex hook trust is unavailable: %s", reason)
@@ -172,17 +165,11 @@ func (codexHookInstaller) InstallTrusted() error {
 	if err != nil {
 		return err
 	}
-	trustPlan, err := planCodexHookTrustFile(configPath, entries)
-	if err != nil {
-		return fmt.Errorf("preflight Codex hook trust: %w", err)
-	}
 	// Trust first. If the later atomic hooks.json write fails, the hash has no
 	// matching declaration and is inert; writing in the opposite order can
 	// leave Codex blocked on startup review.
-	if trustPlan.changed {
-		if err := atomicWriteFile(trustPlan.path, trustPlan.out, trustPlan.perm); err != nil {
-			return fmt.Errorf("write Codex hook trust: %w", err)
-		}
+	if err := ensureCodexHookTrustInFile(configPath, entries); err != nil {
+		return fmt.Errorf("write Codex hook trust: %w", err)
 	}
 	if err := atomicWritePreservingMode(hookPlan.path, hookPlan.out, 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", hookPlan.path, err)
@@ -211,14 +198,7 @@ func (codexHookInstaller) TrustInstalled() error {
 	if err != nil {
 		return err
 	}
-	plan, err := planCodexHookTrustFile(configPath, entries)
-	if err != nil {
-		return err
-	}
-	if !plan.changed {
-		return nil
-	}
-	return atomicWriteFile(plan.path, plan.out, plan.perm)
+	return ensureCodexHookTrustInFile(configPath, entries)
 }
 
 func (codexHookInstaller) Trusted() bool {
@@ -262,34 +242,9 @@ func validateTrustedCodexHookCommand(command string) error {
 // hooks. A missing config is treated as empty; unrelated configuration and
 // explicit enabled=false state are preserved.
 func ensureCodexHookTrustInFile(configPath string, entries []codexHookTrustEntry) error {
-	plan, err := planCodexHookTrustFile(configPath, entries)
-	if err != nil {
-		return err
-	}
-	if !plan.changed {
-		return nil
-	}
-	return atomicWriteFile(plan.path, plan.out, plan.perm)
-}
-
-func planCodexHookTrustFile(configPath string, entries []codexHookTrustEntry) (codexTrustWritePlan, error) {
-	data, err := os.ReadFile(configPath)
-	if err != nil && !os.IsNotExist(err) {
-		return codexTrustWritePlan{}, fmt.Errorf("read Codex config for hook trust: %w", err)
-	}
-	changed, out, err := planCodexHookTrust(data, entries)
-	if err != nil {
-		return codexTrustWritePlan{}, err
-	}
-	target, err := atomicWriteTarget(configPath)
-	if err != nil {
-		return codexTrustWritePlan{}, err
-	}
-	perm := os.FileMode(0o644)
-	if fi, statErr := os.Stat(target); statErr == nil {
-		perm = fi.Mode().Perm()
-	}
-	return codexTrustWritePlan{path: target, out: out, perm: perm, changed: changed}, nil
+	return EditCodexConfigFile(configPath, 0o644, func(data []byte) (bool, []byte, error) {
+		return planCodexHookTrust(data, entries)
+	})
 }
 
 func atomicWritePreservingMode(path string, data []byte, defaultPerm os.FileMode) error {

@@ -98,27 +98,9 @@ func ensureDirTrustedInFile(configPath, projectDir string) error {
 	if !filepath.IsAbs(projectDir) {
 		return fmt.Errorf("codex dir-trust: project dir %q is not absolute", projectDir)
 	}
-	data, err := os.ReadFile(configPath)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("read Codex config: %w", err)
-	}
-
-	changed, out, err := planCodexDirTrust(data, projectDir)
-	if err != nil {
-		return err
-	}
-	if !changed {
-		return nil // already trusted — clean no-op (idempotent)
-	}
-
-	// Preserve the existing file's mode — a user who chmod'd config.toml to
-	// 0600 (Codex config can carry auth-adjacent settings) must not have it
-	// silently widened. Fall back to 0644 only when creating the file fresh.
-	perm := os.FileMode(0o644)
-	if fi, statErr := os.Stat(configPath); statErr == nil {
-		perm = fi.Mode().Perm()
-	}
-	return atomicWriteFile(configPath, out, perm)
+	return EditCodexConfigFile(configPath, 0o644, func(data []byte) (bool, []byte, error) {
+		return planCodexDirTrust(data, projectDir)
+	})
 }
 
 // planCodexDirTrust is the pure core: given the current config bytes and an

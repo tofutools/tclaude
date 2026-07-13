@@ -10,17 +10,12 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"sync"
 	"unicode/utf8"
 
-	"github.com/gofrs/flock"
 	"github.com/pelletier/go-toml/v2"
 )
 
-var (
-	codexAppIDRe      = regexp.MustCompile(`^asdk_app_[A-Za-z0-9]+$`)
-	codexConfigEditMu sync.Mutex
-)
+var codexAppIDRe = regexp.MustCompile(`^asdk_app_[A-Za-z0-9]+$`)
 
 // CodexToolApproval is one app-tool "Always allow" choice that Codex
 // appended to a launch-specific config profile.
@@ -65,7 +60,7 @@ func ExtractCodexLaunchProfileApprovals(data []byte) ([]CodexToolApproval, error
 	if idx < 0 || (idx > 0 && data[idx-1] != '\n') {
 		return nil, fmt.Errorf("managed Codex profile has no baseline seal")
 	}
-	if bytes.Index(data[idx+len(marker):], marker) >= 0 {
+	if bytes.Contains(data[idx+len(marker):], marker) {
 		return nil, fmt.Errorf("managed Codex profile has multiple baseline seals")
 	}
 	lineEndRel := bytes.IndexByte(data[idx:], '\n')
@@ -182,30 +177,26 @@ func PromoteCodexLaunchProfileApprovals(profilePath string) (CodexApprovalPromot
 		return report, err
 	}
 	configPath := filepath.Join(dir, "config.toml")
-	codexConfigEditMu.Lock()
-	defer codexConfigEditMu.Unlock()
-	fileLock := flock.New(configPath + ".tclaude.lock")
-	if err := fileLock.Lock(); err != nil {
-		return report, fmt.Errorf("lock Codex config for approval persistence: %w", err)
-	}
-	defer func() { _ = fileLock.Unlock() }()
 	return mergeCodexToolApprovals(configPath, approvals)
 }
 
 func mergeCodexToolApprovals(configPath string, approvals []CodexToolApproval) (CodexApprovalPromotion, error) {
 	report := CodexApprovalPromotion{Found: len(approvals)}
-	targetPath, err := atomicWriteTarget(configPath)
+	err := EditCodexConfigFile(configPath, 0o600, func(data []byte) (bool, []byte, error) {
+		report = CodexApprovalPromotion{Found: len(approvals)}
+		return planCodexToolApprovals(data, approvals, &report)
+	})
 	if err != nil {
-		return report, fmt.Errorf("resolve Codex config target: %w", err)
+		return report, fmt.Errorf("persist Codex app-tool approval: %w", err)
 	}
-	data, err := os.ReadFile(targetPath)
-	if err != nil && !os.IsNotExist(err) {
-		return report, fmt.Errorf("read Codex config: %w", err)
-	}
+	return report, nil
+}
+
+func planCodexToolApprovals(data []byte, approvals []CodexToolApproval, report *CodexApprovalPromotion) (bool, []byte, error) {
 	var config map[string]any
 	if len(bytes.TrimSpace(data)) > 0 {
 		if err := toml.Unmarshal(data, &config); err != nil {
-			return report, fmt.Errorf("parse Codex config: %w", err)
+			return false, nil, fmt.Errorf("parse Codex config: %w", err)
 		}
 	} else {
 		config = make(map[string]any)
@@ -215,7 +206,7 @@ func mergeCodexToolApprovals(configPath string, approvals []CodexToolApproval) (
 	for _, approval := range approvals {
 		decision, exists, shapeErr := existingCodexToolDecision(config, approval)
 		if shapeErr != nil {
-			return report, shapeErr
+			return false, nil, shapeErr
 		}
 		if exists {
 			if decision == "approve" {
@@ -229,7 +220,7 @@ func mergeCodexToolApprovals(configPath string, approvals []CodexToolApproval) (
 		toAdd = append(toAdd, approval)
 	}
 	if len(toAdd) == 0 {
-		return report, nil
+		return false, data, nil
 	}
 
 	out := append([]byte(nil), data...)
@@ -247,16 +238,15 @@ func mergeCodexToolApprovals(configPath string, approvals []CodexToolApproval) (
 		out = append(out, header...)
 		out = append(out, "approval_mode = \"approve\"\n"...)
 	}
-
-	perm := os.FileMode(0o600)
-	if stat, statErr := os.Stat(targetPath); statErr == nil {
-		perm = stat.Mode().Perm()
-	}
-	if err := atomicWriteFile(targetPath, out, perm); err != nil {
-		return report, fmt.Errorf("persist Codex app-tool approval: %w", err)
+	// Decoding the original config does not distinguish an inline table from
+	// a normal table. Validate the final document so constructs such as
+	// `apps = {}` cannot be turned into invalid TOML by an appended header.
+	var check map[string]any
+	if err := toml.Unmarshal(out, &check); err != nil {
+		return false, nil, fmt.Errorf("approval would conflict with existing Codex config shape: %w", err)
 	}
 	report.Added = len(toAdd)
-	return report, nil
+	return true, out, nil
 }
 
 func existingCodexToolDecision(config map[string]any, approval CodexToolApproval) (string, bool, error) {
@@ -266,7 +256,7 @@ func existingCodexToolDecision(config map[string]any, approval CodexToolApproval
 	}
 	apps, ok := stringMap(rawApps)
 	if !ok {
-		return "", false, fmt.Errorf("Codex config apps key has a conflicting non-table shape")
+		return "", false, fmt.Errorf("codex config apps key has a conflicting non-table shape")
 	}
 	rawApp, exists := apps[approval.AppID]
 	if !exists {
@@ -274,7 +264,7 @@ func existingCodexToolDecision(config map[string]any, approval CodexToolApproval
 	}
 	app, ok := stringMap(rawApp)
 	if !ok {
-		return "", false, fmt.Errorf("Codex config app %s has a conflicting non-table shape", approval.AppID)
+		return "", false, fmt.Errorf("codex config app %s has a conflicting non-table shape", approval.AppID)
 	}
 	rawTools, exists := app["tools"]
 	if !exists {
@@ -282,7 +272,7 @@ func existingCodexToolDecision(config map[string]any, approval CodexToolApproval
 	}
 	tools, ok := stringMap(rawTools)
 	if !ok {
-		return "", false, fmt.Errorf("Codex config app %s tools key has a conflicting non-table shape", approval.AppID)
+		return "", false, fmt.Errorf("codex config app %s tools key has a conflicting non-table shape", approval.AppID)
 	}
 	rawTool, exists := tools[approval.Tool]
 	if !exists {
@@ -290,15 +280,15 @@ func existingCodexToolDecision(config map[string]any, approval CodexToolApproval
 	}
 	tool, ok := stringMap(rawTool)
 	if !ok {
-		return "", false, fmt.Errorf("Codex config tool %s/%s has a conflicting non-table shape", approval.AppID, approval.Tool)
+		return "", false, fmt.Errorf("codex config tool %s/%s has a conflicting non-table shape", approval.AppID, approval.Tool)
 	}
 	rawDecision, exists := tool["approval_mode"]
 	if !exists {
-		return "", false, fmt.Errorf("Codex config tool %s/%s already exists without approval_mode; refusing a duplicate table", approval.AppID, approval.Tool)
+		return "", false, fmt.Errorf("codex config tool %s/%s already exists without approval_mode; refusing a duplicate table", approval.AppID, approval.Tool)
 	}
 	decision, ok := rawDecision.(string)
 	if !ok {
-		return "", false, fmt.Errorf("Codex config tool %s/%s has a non-string approval_mode", approval.AppID, approval.Tool)
+		return "", false, fmt.Errorf("codex config tool %s/%s has a non-string approval_mode", approval.AppID, approval.Tool)
 	}
 	return decision, true, nil
 }
