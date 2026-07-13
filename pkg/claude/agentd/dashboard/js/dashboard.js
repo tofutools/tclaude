@@ -48,8 +48,7 @@ import {
 } from './modal-message.js';
 import { bindHumanReplyModal } from './modal-human-reply.js';
 import {
-  bindTemplatesUI, bindGroupImportModal, bindGroupContextModal,
-  bindGroupCloneModal, summonTemplateScribe,
+  bindTemplatesUI, bindGroupImportModal, summonTemplateScribe,
 } from './modal-templates.js';
 import { bindProfilesUI } from './modal-profiles.js';
 import { bindSandboxProfilesUI, refreshSpawnSandboxProfileUI, summonSandboxScribe } from './sandbox-profiles.js';
@@ -271,8 +270,6 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   bindRolesUI();
   bindCloneModal();
   bindGroupImportModal();
-  bindGroupContextModal();
-  bindGroupCloneModal();
   bindLinkModal();
   bindExportModal();
   bindAgentSpawnModal();

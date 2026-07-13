@@ -58,6 +58,27 @@ test('management island renders keyed profile list and explicit editor state', a
   cleanups.reverse().forEach((fn) => fn()); assert.equal(host.childElementCount, 0);
 });
 
+test('sandbox manager renders included-profile tags with the styled class contract', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.sandboxRequest.commitRequest(state.sandboxRequest.beginRequest(), [{
+    name: 'child', filesystem: [], environment: [], includes: ['base'], agent_directories: [],
+  }]);
+  state.openManager('sandbox');
+  const actions = { load() {}, openSandboxEditor() {}, removeSandbox() {}, configureSandboxWithAgent() {} };
+  const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
+  mountManagementIsland({ host, state, actions, confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } });
+  await harness.act(() => Promise.resolve());
+  const tag = host.querySelector('.sbx-cap-inc');
+  assert.ok(tag, 'include tag uses the CSS-owned class');
+  assert.equal(tag.textContent, 'include');
+  assert.equal(tag.nextElementSibling.title, 'base');
+  cleanups.reverse().forEach((fn) => fn());
+});
+
 test('profile editor Escape follows the visual stack over a later spawn dialog', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }, { isTopmostOverlay }] = await Promise.all([

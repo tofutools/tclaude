@@ -1,6 +1,4 @@
 export const LOG_PAGE_SIZES = [50, 100, 250, 500];
-export const LOG_LEVELS = ['', 'debug', 'info', 'warn', 'error'];
-export const LOG_RANGES = [0, 900000, 3600000, 21600000, 86400000, 604800000];
 
 export function levelKey(level) {
   return ({ debug: 'debug', info: 'info', warn: 'warn', error: 'error' })[String(level || '').toLowerCase()] || 'raw';

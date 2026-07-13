@@ -15,7 +15,7 @@ import (
 // embedded into the agentd binary and served as-is. Preact island modules can
 // also use bare package specifiers resolved by the import map; those mappings
 // and vendored targets are checked by dashboard_preact_assets_test.go. The
-// browser links the legacy graph at load time, and ONE
+// browser links the static entry graph at load time, and ONE
 // bad named import aborts the WHOLE graph: `import { nope } from './x.js'`
 // where x.js doesn't export `nope` blanks the entire dashboard, not just
 // the importing feature. Neither `node --input-type=module --check` (which
@@ -63,6 +63,8 @@ var (
 	reExportDefault   = regexp.MustCompile(`^export\s+default\b`)
 	reExportFuncClass = regexp.MustCompile(`^export\s+(?:async\s+)?(?:function|class)\s+([A-Za-z_$][A-Za-z0-9_$]*)`)
 	reExportVarHead   = regexp.MustCompile(`^export\s+(?:const|let|var)\s+`)
+	reLoaderImport    = regexp.MustCompile(`(?m)^[ \t]*const[ \t]+([A-Za-z_$][A-Za-z0-9_$]*)[ \t]*=[ \t]*import\(['"](\./[^'"]+\.js)['"]\);`)
+	reLoaderPromise   = regexp.MustCompile(`(?s)const\s*\[(.*?)\]\s*=\s*await\s+Promise\.all\(\s*\[(.*?)\]\s*\);`)
 )
 
 func isIdentChar(c byte) bool {
@@ -255,6 +257,108 @@ func parseImportStmt(stmt string) ([]moduleImport, error) {
 	return imps, nil
 }
 
+// parseLoaderImports resolves preact-loader.js's guarded dynamic-import
+// pattern. Each feature first assigns import('./feature.js') promises to
+// variables, then destructures the matching modules from Promise.all. Static
+// import parsing cannot see either the target path or the requested export,
+// even though a mismatch fails that feature at runtime.
+func parseLoaderImports(src string) ([]moduleImport, error) {
+	type target struct {
+		path string
+		line int
+		pos  int
+	}
+	targets := map[string][]target{}
+	var imports []moduleImport
+	for _, match := range reLoaderImport.FindAllStringSubmatchIndex(src, -1) {
+		name := src[match[2]:match[3]]
+		path := src[match[4]:match[5]]
+		line := 1 + strings.Count(src[:match[0]], "\n")
+		targets[name] = append(targets[name], target{path: path, line: line, pos: match[0]})
+		imports = append(imports, moduleImport{path: path, line: line})
+	}
+	if len(targets) == 0 {
+		return nil, fmt.Errorf("no guarded dynamic imports found in preact loader")
+	}
+
+	used := map[int]bool{}
+	for _, match := range reLoaderPromise.FindAllStringSubmatchIndex(src, -1) {
+		left := nonEmptyParts(splitTopLevel(src[match[2]:match[3]], ','))
+		right := nonEmptyParts(splitTopLevel(src[match[4]:match[5]], ','))
+		if len(left) != len(right) {
+			return nil, fmt.Errorf("loader Promise.all at line %d has %d destructuring targets for %d imports",
+				1+strings.Count(src[:match[0]], "\n"), len(left), len(right))
+		}
+		for i, rawVar := range right {
+			variable := strings.TrimSpace(rawVar)
+			var selected target
+			found := false
+			declarations := targets[variable]
+			for j := len(declarations) - 1; j >= 0; j-- {
+				candidate := declarations[j]
+				if candidate.pos < match[0] && !used[candidate.pos] {
+					selected = candidate
+					found = true
+					break
+				}
+			}
+			if !found {
+				return nil, fmt.Errorf("loader Promise.all references unknown import variable %q", variable)
+			}
+			used[selected.pos] = true
+			names, err := parseLoaderDestructure(left[i])
+			if err != nil {
+				return nil, fmt.Errorf("loader result for %s: %w", variable, err)
+			}
+			for _, name := range names {
+				imports = append(imports, moduleImport{name: name, path: selected.path, line: selected.line})
+			}
+		}
+	}
+	for name, declarations := range targets {
+		for _, target := range declarations {
+			if !used[target.pos] {
+				return nil, fmt.Errorf("loader import variable %q at line %d is not consumed by Promise.all", name, target.line)
+			}
+		}
+	}
+	return imports, nil
+}
+
+func nonEmptyParts(parts []string) []string {
+	out := parts[:0]
+	for _, part := range parts {
+		if strings.TrimSpace(part) != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+func parseLoaderDestructure(raw string) ([]string, error) {
+	raw = strings.TrimSpace(raw)
+	if len(raw) < 2 || raw[0] != '{' || raw[len(raw)-1] != '}' {
+		return nil, fmt.Errorf("expected object destructuring, got %q", raw)
+	}
+	var names []string
+	for spec := range strings.SplitSeq(raw[1:len(raw)-1], ",") {
+		spec = strings.TrimSpace(spec)
+		if spec == "" {
+			continue
+		}
+		external, _, _ := strings.Cut(spec, ":")
+		external = strings.TrimSpace(external)
+		if !reIdent.MatchString(external) {
+			return nil, fmt.Errorf("cannot parse destructured export %q", spec)
+		}
+		names = append(names, external)
+	}
+	if len(names) == 0 {
+		return nil, fmt.Errorf("empty object destructuring %q", raw)
+	}
+	return names, nil
+}
+
 // parseExportBlock extracts the external names from an `export { ... };`
 // block. Interspersed `//` comments were already dropped during
 // accumulation. Fails loud on a re-export (`export { a } from '...'`), which
@@ -409,6 +513,17 @@ func TestDashboardModuleGraph(t *testing.T) {
 		}
 		parsed[name] = p
 	}
+	if loader, ok := parsed["js/preact-loader.js"]; ok {
+		data, readErr := fs.ReadFile(dashboardAssetsFS, "js/preact-loader.js")
+		if readErr != nil {
+			t.Errorf("reading Preact loader: %v", readErr)
+		} else if imports, parseErr := parseLoaderImports(string(data)); parseErr != nil {
+			t.Errorf("scanning guarded Preact loader graph: %v", parseErr)
+		} else {
+			loader.imports = append(loader.imports, imports...)
+			parsed["js/preact-loader.js"] = loader
+		}
+	}
 
 	for name, p := range parsed {
 		for _, imp := range p.imports {
@@ -433,6 +548,28 @@ func TestDashboardModuleGraph(t *testing.T) {
 					name, imp.line, imp.name, imp.path, target)
 			}
 		}
+	}
+}
+
+func TestParseLoaderImports(t *testing.T) {
+	src := `
+const widget = import('./widget.js');
+const state = import('./state.js');
+const [{ mountWidget }, { widgetState: localState }] = await Promise.all([
+  widget, state,
+]);`
+	got, err := parseLoaderImports(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []moduleImport{
+		{path: "./widget.js", line: 2},
+		{path: "./state.js", line: 3},
+		{name: "mountWidget", path: "./widget.js", line: 2},
+		{name: "widgetState", path: "./state.js", line: 3},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("loader imports = %#v, want %#v", got, want)
 	}
 }
 

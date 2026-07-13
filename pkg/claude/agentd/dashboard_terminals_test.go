@@ -2,11 +2,44 @@ package agentd
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+func TestDashboardXtermVendorAssets(t *testing.T) {
+	wantHashes := map[string]string{
+		"vendor/xterm/xterm.min.js":           "e4d246be46c786a973e6d6eea46aef1eed56660b2a7f469a3b48b3738321646e",
+		"vendor/xterm/xterm.min.css":          "99ae5d3f0651a557ba34946aeaa384c4ddd0e697ff205c7c1f5f955867063907",
+		"vendor/xterm/addon-fit.min.js":       "696bd2890cb91f96b6db0a83103d49088892ff440bf01d2da654c905cff7696c",
+		"vendor/xterm/addon-web-links.min.js": "7b5d634522f0e93ef567b4f6d72d4b71f0a5e95070f079b004f7b945b7c4c9ab",
+		"vendor/xterm/LICENSE.xterm":          "b569f629d00f2626a8100df2a1798210535621e42164dfd426a6fe5aac7b0ccd",
+	}
+	for name, want := range wantHashes {
+		data, err := fs.ReadFile(dashboardAssetsFS, name)
+		if err != nil {
+			t.Errorf("reading embedded xterm asset %q: %v", name, err)
+			continue
+		}
+		got := sha256.Sum256(data)
+		if hex.EncodeToString(got[:]) != want {
+			t.Errorf("embedded xterm asset %q hash changed; update the vendored manifest intentionally", name)
+		}
+	}
+	manifest, err := fs.ReadFile(dashboardAssetsFS, "vendor/xterm/README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, needle := range []string{"@xterm/xterm", "6.0.0", "@xterm/addon-fit", "0.11.0", "@xterm/addon-web-links", "0.12.0"} {
+		if !strings.Contains(string(manifest), needle) {
+			t.Errorf("xterm vendor manifest missing %q", needle)
+		}
+	}
+}
 
 // TestDashboardTerminals_RequiresAuth: the standalone /terminals page is
 // gated by the dashboard session cookie. An unauthenticated GET is bounced

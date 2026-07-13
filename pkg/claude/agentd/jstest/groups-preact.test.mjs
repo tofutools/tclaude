@@ -118,13 +118,21 @@ test('Groups list preserves keyed disclosure, focus and nodes across reorder/act
     'the theme repaint preserves keyed group disclosure identity');
 
   const machine = beta.querySelector('.slop-machine');
-  machine.innerHTML = '<span>working</span>'; // manual-pull restore creates foreign children
+  machine.innerHTML = '<span>spinning</span>'; // manual pull creates foreign reel children
+  const activeReel = machine.firstElementChild;
+  await harness.act(() => state.publish(snapshot([
+    { name: 'beta', members: [{ state: { status: 'asking' } }] },
+    { name: 'alpha', members: [{ state: { status: 'working' } }] },
+  ])));
+  assert.equal(machine.firstElementChild, activeReel,
+    'a same-status publish preserves an in-flight imperative reel pull');
+
   await harness.act(() => state.publish(snapshot([
     { name: 'beta', members: [{ state: { status: 'idle' } }] },
     { name: 'alpha', members: [{ state: { status: 'working' } }] },
   ])));
   assert.equal(machine.querySelector('span').textContent, 'idle',
-    'a status render replaces imperative reel children after a manual pull');
+    'a changed status replaces imperative reel children after a manual pull');
 
   await harness.act(() => state.publish(snapshot([
     { name: 'beta', members: [] },

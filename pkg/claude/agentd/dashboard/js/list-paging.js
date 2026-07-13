@@ -17,8 +17,6 @@
 
 import { dashPrefs } from './prefs.js';
 
-export const LIST_KINDS = ['retired', 'conversations', 'replaced'];
-
 // Page sizes the per-list selector offers; mirrors the Mail / Audit tabs.
 // Every value stays at or below the server's 500 cap.
 const PAGE_SIZES = [25, 50, 100, 200];
