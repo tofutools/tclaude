@@ -25,7 +25,7 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	// auto-refresh suspend), with its search input, results list and the
 	// discoverable header button.
 	must(`id="command-palette-modal"`, "the palette overlay exists")
-	must(`class="modal-overlay palette-overlay"`,
+	must("modal-overlay palette-overlay${current.open ? ' show' : ''}",
 		"the palette is a .modal-overlay so it suspends the 2s refresh while open")
 	must(`id="palette-input"`, "the palette has a search input")
 	must(`id="palette-list"`, "the palette has a results list")
@@ -35,14 +35,16 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	must(".palette-box {", "the palette box has a CSS rule")
 	must(".palette-item.selected", "the keyboard-selected command is highlighted")
 
-	// JS: the module is defined, exported, and called from boot.
-	must("export function bindCommandPalette(", "palette.js exports its binder")
-	must("bindCommandPalette();", "dashboard.js boot wires the palette")
+	// JS: command construction stays plain while Preact owns both markup roots
+	// and exposes one lifecycle-aware mount boundary.
+	must("export function buildCommands(snapshot)", "palette.js exports snapshot-injected command construction")
+	must("export function createPaletteState(", "palette state is isolated from rendering")
+	must("export function mountPaletteIsland(", "the Preact palette exports its island mount")
 
 	// The Ctrl/Cmd-K trigger: a modifier + the "k" key, claimed with
 	// preventDefault. Pressing it again toggles closed.
-	must(`(e.key || '').toLowerCase() !== 'k'`, "the trigger is the K key")
-	must("e.ctrlKey || e.metaKey", "the trigger requires Ctrl or Cmd")
+	must(`(event.key || '').toLowerCase() !== 'k'`, "the trigger is the K key")
+	must("event.ctrlKey || event.metaKey", "the trigger requires Ctrl or Cmd")
 
 	// The commands DELEGATE to operations that already exist — bulk
 	// window ops, per-agent jump/hide, the window-subset modal, and
@@ -197,8 +199,8 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 		"the bulk retire offers the idle and offline cohorts")
 	must("wiz(`Retire ${status} agents in ${g.name}`, `Banish ${status} familiars in ${g.name}`)",
 		"the palette offers a per-group bulk retire by status (plain + arcane Banish label)")
-	must("countGroupMembersByStatus(g.name, status)",
-		"the bulk retire command is gated on a live match count (no no-op)")
+	must("member.online && member.state?.status === status",
+		"the bulk retire command is gated directly from the injected snapshot (no no-op)")
 	must("openRetirePreview(g.name, status)",
 		"per-group bulk retire opens the preview modal")
 
@@ -214,7 +216,7 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	// carries a stable id), and closing returns focus to the trigger.
 	must("aria-activedescendant", "the combobox announces the active option to screen readers")
 	must("palette-opt-", "options carry stable ids for aria-activedescendant")
-	must("lastFocus = document.activeElement", "the trigger element is captured for focus restore")
+	must("lastFocusRef.current = documentRef.activeElement", "the trigger element is captured for focus restore")
 
 	// Keyboard model: ↑/↓ move one row (wrapping), PageUp/PageDown jump a
 	// viewport-worth (clamping at the ends), Enter runs, Esc closes.
@@ -225,7 +227,7 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	must("case 'Enter':", "Enter runs the selected command")
 	must("case 'Escape':", "Escape closes the palette")
 	must("function movePage(", "the page jump clamps at the ends (distinct from the wrapping move)")
-	must("function pageSize(", "the page jump is a measured viewport-worth of rows")
+	must("const pageSize = () =>", "the page jump is a measured viewport-worth of rows")
 	// The footer advertises the page-jump keys alongside the ↑/↓ nav hint.
 	must("<kbd>PgUp</kbd><kbd>PgDn</kbd> jump", "the palette footer documents PageUp/PageDown")
 }

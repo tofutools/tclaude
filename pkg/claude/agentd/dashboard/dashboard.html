@@ -25,54 +25,30 @@
   <div class="bar-inner header-inner">
   <h1>🤝 tclaude agent dashboard</h1>
   <!-- Global activity pulse — a deduped row of status "bots" aggregated
-       across every group + the ungrouped bucket (render.js
-       renderGlobalActivity, painted each 2s poll). One glance answers
+       across every group + the ungrouped bucket by the Preact shell's
+       accepted-snapshot view. One glance answers
        "is anything working / does anything need me?" without scanning
        the list; the title attribute breaks it down per group. Collapses
        (CSS :empty) when there are zero members, or when both modes'
        styles are "off". -->
-  <span class="global-activity" id="global-activity" aria-label="Activity across all groups"></span>
+  <span class="shell-contents-root" id="shell-activity-root"></span>
   <!-- The base URL + last-refresh heartbeat (#meta) used to sit here, but it
        crowded the title row's prime space; it now lives in the bottom footer
-       bar (see <footer> below). refresh.js still writes the same #meta node. -->
+       bar (see <footer> below), where the Preact shell keeps it keyed. -->
   <!-- The horizontal-scroll mode (follow vs static, JOH-313) used to be a
        per-browser toggle button here; it now lives in config
        (dashboard.hscroll_follow, editable on the Config tab) and rides the
        snapshot — refresh.js toggles body.hscroll-follow off it. -->
-  <span class="meta" style="margin-left:auto" id="usage"></span>
+  <span id="shell-usage-root" style="margin-left:auto"></span>
   <!-- Master OS-notification bell + per-type popover. The bell glyph
        mirrors config.notifications.enabled (the switch ABOVE the
-       per-group / per-agent filters), painted from
-       snapshot.notifications_enabled on every poll. Clicking it opens the
-       popover (notify-menu.js): a master on/off plus the per-type
+       per-group / per-agent filters), derived from the accepted snapshot
+       Signal on every poll. Clicking it opens the Preact popover: a master on/off plus the per-type
        checklist (which state transitions fire a banner) and the
        human-message knob — all backed by GET/POST /api/notifications. The
        same notifications block is editable in full on the Config tab. -->
-  <span class="notify-bell-wrap">
-    <button class="notify-bell" id="notify-global" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="notify-pop" data-enabled="0" hidden title="OS notifications"></button>
-    <div id="notify-pop" role="group" aria-label="Notification settings">
-      <label class="notify-pop-master" title="The master switch — off means nothing notifies, regardless of the per-type or per-group/agent settings.">
-        <input type="checkbox" id="notify-pop-enabled"> <b>All notifications</b>
-      </label>
-      <div class="notify-pop-sep"></div>
-      <div class="notify-pop-hint" id="notify-pop-types-hint">Notify me when an agent…</div>
-      <label class="notify-pop-row"><input type="checkbox" data-notify-type="idle"> Goes idle / finishes</label>
-      <label class="notify-pop-row"><input type="checkbox" data-notify-type="awaiting_permission"> Needs permission</label>
-      <label class="notify-pop-row"><input type="checkbox" data-notify-type="awaiting_input"> Awaits input</label>
-      <label class="notify-pop-row"><input type="checkbox" data-notify-type="error"> Errors</label>
-      <label class="notify-pop-row"><input type="checkbox" data-notify-type="exited"> Exits</label>
-      <div class="notify-pop-sep"></div>
-      <label class="notify-pop-row" title="A `tclaude agent notify-human` message also raises a desktop banner (it always lands in the Messages tab regardless).">
-        <input type="checkbox" id="notify-pop-human"> Sends me a message
-      </label>
-      <label class="notify-pop-row" title="An agent `--ask-human` access request also raises a desktop banner (it always lands in the Messages tab regardless).">
-        <input type="checkbox" id="notify-pop-access"> Requests access
-      </label>
-      <div class="notify-pop-sep"></div>
-      <button class="notify-pop-config" id="notify-pop-config" type="button" title="Open the Config tab for the full notifications settings (cooldown, custom command, advanced rules).">Config tab ↗</button>
-    </div>
-  </span>
-  <span class="meta" id="status"></span>
+  <span id="shell-notify-root"></span>
+  <span class="shell-contents-root" id="shell-status-root"></span>
   <!-- Vegas HUD — a credits counter (slop-credits.js), the master sound
        switch (slop-audio.js) and the 🎚️ volume mixer (slop-volume.js).
        CSS-hidden unless body.slop OR body.vegas (the regular-mode opt-in)
@@ -82,7 +58,7 @@
        no re-render. Not aria-hidden: it holds the interactive sound +
        volume controls, which must stay reachable when shown. -->
   <span class="slop-hud" id="slop-hud">
-    <span class="slop-credits" id="slop-credits" title="Slop credits — climbs on every jackpot this session">🪙 0</span>
+    <span class="shell-contents-root" id="shell-credits-root"></span>
     <button class="slop-hud-btn" id="slop-sound-btn" type="button" aria-pressed="true" title="Slop sound (music + FX): on — click to mute">🔊</button>
     <!-- The mixer — persistent music/FX volume sliders in a popover,
          anchored next to the master mute so all sound control lives in
@@ -108,7 +84,7 @@
       </div>
     </span>
   </span>
-  <button id="command-palette-btn" type="button" aria-label="Open the command palette (Ctrl/Cmd-K)" aria-haspopup="dialog" title="Command palette — a keyboard launcher (Ctrl/Cmd-K) to search and run dashboard actions: hide / focus all (or a group's, or one agent's) windows, jump to a tab, spawn an agent. Type to filter, ↑/↓ to pick, Enter to run.">🔍</button>
+  <span class="shell-contents-root" id="shell-palette-button-root"></span>
   <!-- The top-bar Palette/Grimoire dock toggle (JOH-388 req 2) was REMOVED per
        operator request (JOH-390 item 7): a duplicate reopen control next to the
        panel's own on-dock collapse + edge tab. The remaining show/hide
@@ -153,7 +129,7 @@
   <a data-tab="processes" href="/processes" title="Processes — reusable graph templates, instantiated runs, and human work"><span class="tab-label-regular">Processes</span><span class="tab-label-wizard">🕸 Rites</span></a>
   <a data-tab="plugins" href="/plugins"><span class="tab-label-regular">Plugins</span><span class="tab-label-wizard">🔧 Contraptions</span><span id="plugins-badge-root"></span></a>
   <a data-tab="access" href="/access" title="Agent access control — permanent permissions, the slug registry, and time-bounded sudo grants"><span class="tab-label-regular">Access</span><span class="tab-label-wizard">🛡 Wards</span></a>
-  <a data-tab="messages" href="/messages"><span class="tab-label-regular">Messages</span><span class="tab-label-wizard">🕊 Missives</span><span id="messages-badge" class="tab-badge" hidden></span></a>
+  <a data-tab="messages" href="/messages"><span class="tab-label-regular">Messages</span><span class="tab-label-wizard">🕊 Missives</span><span class="shell-contents-root" id="shell-messages-badge-root"></span></a>
   <a data-tab="costs" href="/costs"><span class="tab-label-regular">Costs</span><span class="tab-label-wizard">💰 Coffers</span></a>
   <a data-tab="audit" href="/audit" title="Audit log — who ran which tclaude command (spawn, message, lifecycle, permissions…), including denied attempts"><span class="tab-label-regular">Audit</span><span class="tab-label-wizard">📖 Chronicle</span></a>
   <a data-tab="logs" href="/logs" title="Logs — tclaude's own daemon/CLI log (~/.tclaude/output.log), with level/time filters, search and optional live tail"><span class="tab-label-regular">Logs</span><span class="tab-label-wizard">🕯 Runes</span></a>
@@ -461,10 +437,10 @@
      OUTSIDE the JOH-313 horizontal-scroll widening (unlike header/nav it has
      no .bar-inner): it always spans the visible viewport, never ragged. The
      page reserves --footer-h of bottom space so no content hides behind it.
-     refresh.js writes the same #meta node it always did. -->
+     The Preact shell derives #meta from the accepted snapshot Signal. -->
 <footer>
   <div class="footer-inner">
-    <span class="meta" id="meta">loading…</span>
+    <span class="shell-contents-root" id="shell-meta-root"></span>
   </div>
 </footer>
 <!-- Slop-mode side pull-lever — a casino lever pinned to the right edge,
@@ -479,24 +455,17 @@
   </div>
   <div class="slop-lever-label">PULL</div>
 </div>
-<!-- Disconnected banner — connection.js adds .show when the 2s poll can no
-     longer reach agentd (the /api/snapshot fetch REJECTS for FAIL_THRESHOLD
-     consecutive ticks) and removes it the instant a poll gets through again.
+<!-- Disconnected banner — connection.js publishes shared connection state when
+     the 2s poll can no longer reach agentd (the /api/snapshot fetch REJECTS for
+     FAIL_THRESHOLD consecutive ticks); the Preact shell derives .show and
+     removes it the instant a poll gets through again.
      Deliberately NOT a .modal-overlay: the auto-refresh must keep polling
      beneath it so the reconnect that clears it is actually seen (see
      refreshSuspended() in refresh.js). While it's up, vegas.js stops the radio
      and keeps it stopped so a dead dashboard isn't left playing music. Hidden
      by default via `display:none`; role=alert so screen readers announce the
      drop when it appears. -->
-<div class="disconnect-overlay" id="disconnect-overlay">
-  <div class="disconnect-card" role="alert" aria-live="assertive">
-    <div class="disconnect-icon" aria-hidden="true">⚠️</div>
-    <h2 class="disconnect-title" id="disconnect-title">Disconnected from agentd</h2>
-    <p class="disconnect-body">The dashboard can’t reach the tclaude&nbsp;agentd daemon.
-      Everything below may be stale, and the music has been stopped.</p>
-    <p class="disconnect-status" id="disconnect-status">Reconnecting…</p>
-  </div>
-</div>
+<div id="shell-disconnect-root"></div>
 <!-- Pending-approval attention banner. NON-blocking (a thin fixed bar, not a
      full-screen overlay): the operator may be mid-task, so it draws the eye and
      offers a one-click jump to the request rather than hijacking the screen.
@@ -506,17 +475,7 @@
   <span class="access-banner-text" id="access-banner-text">An agent is requesting access</span>
   <button class="access-banner-review" id="access-banner-review" type="button">Review</button>
 </div>
-<div class="modal-overlay" id="confirm-modal">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
-    <h3 id="confirm-title"></h3>
-    <p id="confirm-body"></p>
-    <div class="modal-meta" id="confirm-meta"></div>
-    <div class="modal-buttons">
-      <button id="confirm-cancel">Cancel</button>
-      <button id="confirm-ok" class="confirm-danger"></button>
-    </div>
-  </div>
-</div>
+<div id="shell-confirm-root"></div>
 <div class="modal-overlay" id="retire-modal">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="retire-title">
     <!-- Title copy swaps per theme (pure-CSS span swap, the wizard twin of the
@@ -1536,34 +1495,10 @@
        trick as the Summon / Awaken / Slumber buttons. -->
   <span class="dnd-trash-label"><span class="dnd-trash-label-regular">Retire</span><span class="dnd-trash-label-wizard">Banish</span></span>
 </div>
-<div class="toast" id="toast"></div>
-<!-- Command palette ("spotlight") — a Ctrl/Cmd-K keyboard launcher that
-     searches across the dashboard's existing operations (hide / focus
-     windows, tab navigation, spawn) and runs the picked one. palette.js
-     owns it; it's a thin surface over endpoints + modals that already
-     exist, so it holds no agent state of its own. A .modal-overlay so it
-     gets the shared backdrop AND suspends the 2s auto-refresh while open
-     (refreshSuspended() keys on .modal-overlay.show), keeping a
-     re-render from yanking focus out of the search box. -->
-<div class="modal-overlay palette-overlay" id="command-palette-modal">
-  <div class="palette-box" role="dialog" aria-modal="true" aria-label="Command palette">
-    <!-- Wizard-mode identity: the palette becomes "The Spellbook". Hidden by
-         default (CSS display:none), shown only under body.wizard — purely
-         decorative flair, so aria-hidden keeps it out of the a11y tree (the
-         dialog's aria-label already names it). -->
-    <div class="palette-title" aria-hidden="true">📖 The Spellbook</div>
-    <input id="palette-input" type="text" autocomplete="off" spellcheck="false"
-           role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list"
-           placeholder="Type a command…  (hide all windows · focus an agent · go to a tab · spawn…)" />
-    <div id="palette-list" class="palette-list" role="listbox" aria-label="Commands"></div>
-    <div class="palette-foot">
-      <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
-      <span><kbd>PgUp</kbd><kbd>PgDn</kbd> jump</span>
-      <span><kbd>↵</kbd> run</span>
-      <span><kbd>esc</kbd> close</span>
-    </div>
-  </div>
-</div>
+<div id="shell-toast-root"></div>
+<!-- The Preact shell owns the command palette overlay. It retains the shared
+     .modal-overlay.show contract so refresh remains suspended while open. -->
+<div id="shell-palette-modal-root"></div>
 
 <!-- Shared Preact directory picker. Keep this host after every static overlay:
      Browse… opens it above its still-visible caller, and ManagementOverlay's

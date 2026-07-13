@@ -85,9 +85,11 @@ func TestDashboardEmbed_HasExpectedFiles(t *testing.T) {
 // pins the client-side render contract.
 func TestDashboardFooterVersionWired(t *testing.T) {
 	for _, needle := range []string{
-		`class="meta-version">tclaude version ${esc(dashboardVersion)}</span>`,
-		`class="meta-base">${esc(data.popup_base)}</span>`,
-		`refreshed <span class="meta-time">`,
+		`id="shell-meta-root"`,
+		`const view = footerMetaView(state.snapshot.value);`,
+		`class="meta-version">tclaude version ${view.version}</span>`,
+		`class="meta-base">${view.base}</span>`,
+		`refreshed <span class="meta-time">${new Date(view.generatedAt).toLocaleTimeString()}</span>`,
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard footer missing %q", needle)
@@ -603,7 +605,8 @@ func TestDashboardAssets_QuickChipKeyboardOperability(t *testing.T) {
 //     pane-openers the web buttons AND the routed actions both call;
 //   - row-actions.js routes jump / open-window / term / term-dir / msg-focus;
 //   - refresh.js routes the bulk windows-modal focus;
-//   - palette.js routes the command-palette "focus window";
+//   - the shell palette injects the snapshot preference into palette.js's
+//     command/action boundary;
 //   - config.js + dashboard.html expose the Config-tab checkbox.
 func TestDashboardAssets_DefaultTerminalWired(t *testing.T) {
 	for _, needle := range []string{
@@ -618,8 +621,9 @@ func TestDashboardAssets_DefaultTerminalWired(t *testing.T) {
 		"if (webTerminalDefault()) { openWebTermPane(agent, label, termDirModal({ label })); return; }",
 		"if (webTerminalDefault()) { openWebWindowPane(agent, label); return; }",
 		"if (webTerminalDefault()) { openWebTermPane(agent, label, which); return; }",
-		// palette.js — the command-palette "focus window" branch.
-		"if (webTerminalDefault()) { openWebWindowPane(conv, label); toast(",
+		// palette.js — the shell-owned command palette passes the snapshot-derived
+		// preference into the command's "focus window" action.
+		"if (preferWebTerminal) { openWebWindowPane(conv, label); toast(",
 		// refresh.js — bulk focus opens every selected agent as a web pane and
 		// skips the native-only /api/agent-windows focus endpoint.
 		"if (dir === 'focus' && webTerminalDefault()) {",

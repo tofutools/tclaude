@@ -9,7 +9,8 @@ import (
 // Preact keeps the group and dock nodes stable across snapshot publishes, but
 // native HTML5 drag events still live at the document boundary. Each binder
 // must therefore expose an idempotent teardown rather than accumulating global
-// listeners if the owning page lifecycle ends.
+// listeners if the owning page lifecycle ends. The shell migration collects
+// those teardown functions with every other page-owned island/binder cleanup.
 func TestDashboardDndBindersAreDisposable(t *testing.T) {
 	directTerminal := map[string]string{
 		"dnd.js":           "row.addEventListener('dragend', endDndDrag, { once: true });",
@@ -38,8 +39,16 @@ func TestDashboardDndBindersAreDisposable(t *testing.T) {
 		}
 	}
 
-	if !strings.Contains(dashboardAssets, "for (const cleanup of dndCleanups.reverse()) cleanup?.();") {
-		t.Error("dashboard page lifecycle does not invoke the DnD binder teardowns")
+	for _, needle := range []string{
+		"const pageCleanups = [];",
+		"pageCleanups.push(bindDnd(), bindGroupReorder());",
+		"pageCleanups.push(bindDockDnd());",
+		"pageCleanups.push(bindDockSaveDnd());",
+		"for (const cleanup of pageCleanups.reverse()) cleanup?.();",
+	} {
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard shared page lifecycle missing %q", needle)
+		}
 	}
 	if !strings.Contains(dashboardAssets, "if (event.persisted) return;") {
 		t.Error("dashboard pagehide teardown must retain DnD listeners for bfcache restores")

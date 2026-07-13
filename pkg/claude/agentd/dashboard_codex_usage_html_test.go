@@ -11,11 +11,10 @@ import (
 
 // TestDashboardHTML_CodexUsageWired guards the top-bar Codex usage readout —
 // the labelled "Claude" / "Codex" two-line layout that renders when
-// snapshot.usage.codex is present. The pieces span render.js (builds the
+// snapshot.usage.codex is present. The pieces span shell-model.js (builds the
 // lines off usage.codex) and dashboard.css (the .multiline / .uline / .usrc
-// layout); a rename in one silently breaks the feature in the browser, and
-// the repo has no JS test runner, so this asserts on the embedded asset
-// bundle at `go test ./...`.
+// layout); shell-island.js consumes the accepted snapshot Signal and renders
+// keyed lines/tokens so recurring polls preserve live DOM identity.
 func TestDashboardHTML_CodexUsageWired(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
@@ -24,14 +23,16 @@ func TestDashboardHTML_CodexUsageWired(t *testing.T) {
 		}
 	}
 
-	// render.js: the readout reads the nested codex object and renders the
-	// labelled lines through the shared helpers.
-	must("function subscriptionWindowsHTML(src, hideMissing)", "shared per-source window builder is defined")
-	must("function usageLineHTML(label, tokens)", "labelled-line builder is defined")
-	must("u && u.codex", "renderUsage reads the codex sub-object off the snapshot")
-	must("usageLineHTML('Claude:'", "the Claude line is labelled")
-	must("usageLineHTML('Codex:'", "the Codex line is labelled")
-	must("classList.add('multiline')", "the two-line layout toggles the multiline class")
+	// shell-model.js derives a serialisable view from the nested Codex object;
+	// shell-island.js reads the snapshot Signal and keys both lines and tokens.
+	must("function subscriptionWindows(source, prefix, hideMissing = false)", "shared per-source window model is defined")
+	must("const codexUsage = usage?.codex", "usageView reads the Codex sub-object")
+	must("lines.push({ key: 'claude', label: 'Claude:', tokens: claude })", "the Claude line is labelled and keyed")
+	must("lines.push({ key: 'codex', label: 'Codex:', tokens: codex })", "the Codex line is labelled and keyed")
+	must("usageView(state.snapshot.value?.usage)", "the Preact shell consumes accepted snapshot state")
+	must("key=${line.key}", "Preact preserves usage-line identity across polls")
+	must("key=${token.key}", "Preact preserves usage-token identity across polls")
+	must("view.multiline ? ' multiline' : ''", "the derived layout toggles the multiline class")
 
 	// dashboard.css: the multiline layout + the right-aligned source label
 	// column that stacks the colons.
@@ -68,16 +69,16 @@ func TestDashboardHTML_CodexUsageColumnAlignment(t *testing.T) {
 	must("#usage.multiline .upct", "the percent column is fixed-width + right-aligned")
 	must("#usage.multiline .urem", "the reset-hint column is fixed-width")
 
-	// render.js must always emit the .urem span — even for a window with no
+	// The Preact island must always emit the .urem span — even for a window with no
 	// remaining-time text (a harness idle long enough that the window has
 	// reset) — so its fixed min-width still reserves the column and the rows
 	// stay aligned. Dropping the span collapsed the column and slid the
 	// following windows left.
-	must("const rem = '<span class=\"urem\">' + remText + '</span>'", "the reset-hint column is always emitted, even when empty")
+	must(`<span class="urem">${token.remaining}</span>`, "the reset-hint column is always emitted, even when empty")
 	// And it must NOT reintroduce a leading space before .urem (it would
 	// become a stray flex item and break the monospace column widths); the
 	// parens wrap only when there is remaining text.
-	must("win.remaining ? '(' + esc(win.remaining) + ')' : ''", "no leading space; parens only when there is remaining text")
+	must("remaining: win?.remaining ? `(${win.remaining})` : ''", "no leading space; parens only when there is remaining text")
 }
 
 // TestDashboardHTML_UsageAlwaysReservesBothWindows guards the two-line
@@ -98,20 +99,20 @@ func TestDashboardHTML_UsageAlwaysReservesBothWindows(t *testing.T) {
 			t.Errorf("dashboard assets still carry %q (%s)", needle, why)
 		}
 	}
-	must("usageWindowHTML('5h', src.five_hour || zero, hideMissing && !src.five_hour)", "the 5h slot is always emitted and can be hidden when absent")
-	must("usageWindowHTML('7d', src.seven_day || zero, hideMissing && !src.seven_day)", "the 7d slot is always emitted and can be hidden when absent")
-	must("subscriptionWindowsHTML(codexUsage, true)", "Codex hides missing limit placeholders")
+	must("usageWindow(`${prefix}-5h`, '5h', source.five_hour || zero, hideMissing && !source.five_hour)", "the 5h slot is always emitted and can be hidden when absent")
+	must("usageWindow(`${prefix}-7d`, '7d', source.seven_day || zero, hideMissing && !source.seven_day)", "the 7d slot is always emitted and can be hidden when absent")
+	must("subscriptionWindows(codexUsage, 'codex', true)", "Codex hides missing limit placeholders")
 	must("#usage .uw.umissing { visibility: hidden; }", "missing Codex windows retain their alignment geometry")
-	must("aria-hidden=\"true\"", "hidden placeholders are omitted from the accessibility tree")
+	must("aria-hidden=${token.hidden ? 'true' : null}", "hidden placeholders are omitted from the accessibility tree")
 	// Tooltip periods are derived from reported windows, so weekly-only Codex
 	// plans do not continue claiming a 5-hour limit on hover.
-	must("if (codexUsage && codexUsage.five_hour) codexPeriods.push('5-hour')", "Codex tooltip includes 5h only when reported")
-	must("if (codexUsage && codexUsage.seven_day) codexPeriods.push('weekly')", "Codex tooltip includes weekly only when reported")
+	must("if (codexUsage?.five_hour) codexPeriods.push('5-hour')", "Codex tooltip includes 5h only when reported")
+	must("if (codexUsage?.seven_day) codexPeriods.push('weekly')", "Codex tooltip includes weekly only when reported")
 	must("codexPeriods.length === 1 ? 'limit' : 'limits'", "weekly-only tooltip uses singular limit wording")
 	// The old conditional guards dropped a window when its data was absent —
 	// the exact shape that let the two rows carry different window counts.
-	reject("if (src.five_hour) wins.push(usageWindowHTML('5h'", "the conditional 5h guard is gone")
-	reject("if (src.seven_day) wins.push(usageWindowHTML('7d'", "the conditional 7d guard is gone")
+	reject("if (source.five_hour)", "the conditional 5h guard is gone")
+	reject("if (source.seven_day)", "the conditional 7d guard is gone")
 }
 
 // TestDashboardCSS_UsageRemColumnFitsWorstCaseRemaining ties the reset-hint

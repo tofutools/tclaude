@@ -6,14 +6,12 @@ import (
 )
 
 // TestDashboardHTML_TopBarTotalCostWired guards the top bar's cost
-// token: render.js reads usage.total_cost_usd and usage.today_cost_usd
+// token: shell-model.js reads usage.total_cost_usd and usage.today_cost_usd
 // off the snapshot and renders "$X.XX (mtd)" — with "$Y.YY (today)"
 // ahead of it whenever anything was spent today — next to or
 // instead of the subscription windows, so an API-billing account sees
-// its spend where "usage: n/a" used to sit. The token links to the
-// Costs tab (costs.js). Pieces span render.js + costs.js + dashboard.css
-// and the repo has no JS test runner, so this asserts on the embedded
-// concatenation at `go test ./...`.
+// its spend where "usage: n/a" used to sit. The token is rendered by the
+// Preact shell and links to the Costs tab (costs-island.js).
 func TestDashboardHTML_TopBarTotalCostWired(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
@@ -22,23 +20,25 @@ func TestDashboardHTML_TopBarTotalCostWired(t *testing.T) {
 		}
 	}
 
-	// render.js: the token reads both snapshot fields and only renders
-	// for nonzero cost, with the harness-line sub-cent floor.
-	must("u.total_cost_usd", "renderUsage reads the snapshot's month-to-date total")
-	must("u.today_cost_usd", "renderUsage reads the snapshot's today total")
-	must("costTokenHTML", "the cost token has its own builder")
+	// shell-model.js derives the token from accepted snapshot state and only
+	// returns it for nonzero cost, with the harness-line sub-cent floor.
+	must("const mtd = Number(usage?.total_cost_usd || 0)", "usageView reads the snapshot's month-to-date total")
+	must("const today = Number(usage?.today_cost_usd || 0)", "usageView reads the snapshot's today total")
+	must("function costToken(today, mtd)", "the cost token has its own model builder")
 	must("cost >= 0.005 ? '$' + cost.toFixed(2) : '<1¢'",
 		"two-decimal dollar format with a sub-cent floor")
 
 	// The today figure is rendered ahead of mtd whenever anything was spent
 	// today — including when it equals mtd (e.g. the first of the month),
 	// so the "(today)" figure never silently vanishes.
-	must("amt(today, 'today')", "today's figure rendered with its own label")
-	must("amt(mtd, 'mtd')", "month-to-date figure rendered with its own label")
-	must("if (today > 0) parts.push(amt(today, 'today'))",
+	must("today: today > 0 ? fmtCost(today) : ''", "today's figure rendered with its own label")
+	must("mtd: fmtCost(mtd)", "month-to-date figure rendered with its own label")
+	must("token.today ? html`",
 		"today shown whenever anything was spent today, even when it equals mtd")
+	must(`<span class="urem">(today)</span>`, "today's amount keeps its explicit label")
+	must(`<span class="urem">(mtd)</span>`, "month-to-date amount keeps its explicit label")
 
-	// The token links to the Costs tab: render.js tags it, the island
+	// The token links to the Costs tab: shell-island.js tags it, the Costs island
 	// delegates the click to the nav button.
 	must(`data-goto-tab="costs"`, "cost token tagged as a Costs-tab link")
 	must(`document.querySelector('nav [data-tab="costs"]')?.click()`,

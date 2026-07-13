@@ -1065,8 +1065,9 @@ func TestDashboardHTML_WizardCommandPalette(t *testing.T) {
 	// The title bar: present in the HTML, hidden by default, revealed +
 	// styled only under body.wizard. "The Spellbook" is the palette's
 	// wizard-mode name, the sibling of "The Wizard's Tower" page title.
-	must(`<div class="palette-title" aria-hidden="true">📖 The Spellbook</div>`,
+	must(`<div class="palette-title" aria-hidden="true">`,
 		"the wizard-mode Spellbook title bar exists in the palette markup")
+	must("📖 The Spellbook", "the wizard-mode title keeps its Spellbook copy")
 	must(".palette-title { display: none; }", "the title is hidden outside wizard mode")
 	must("body.wizard #command-palette-modal .palette-title",
 		"wizard mode reveals + styles the Spellbook title")
@@ -1080,18 +1081,13 @@ func TestDashboardHTML_WizardCommandPalette(t *testing.T) {
 	must("body.wizard #command-palette-btn", "the launcher button is re-skinned in wizard mode")
 	must(`content: "📖";`, "the launcher shows a spellbook glyph in wizard mode")
 
-	// The placeholder + empty-state copy are wizard-flavoured by palette.js
-	// (attribute/text can't be swapped in CSS), gated on isWizardActive().
-	must("const WIZARD_PLACEHOLDER", "palette.js defines the wizard placeholder copy")
-	must("const WIZARD_EMPTY", "palette.js defines the wizard empty-state copy")
-	must("input.placeholder = isWizardActive() ? WIZARD_PLACEHOLDER : defaultPlaceholder",
-		"the palette swaps the placeholder per theme on open")
-	must("isWizardActive() ? WIZARD_EMPTY", "the no-match line is wizard-flavoured")
-	// The theme copy is centralised so a theme flip WHILE the palette is open
-	// (the +W hotkey fires with focus in the box) re-applies it — the CSS
-	// chrome swaps instantly, so the JS copy must follow rather than lag a
-	// theme behind until the next open.
-	must("function applyThemeCopy(", "the palette centralises the theme-flavoured copy")
+	// The placeholder + empty-state copy are wizard-flavoured by the Preact
+	// island (attribute/text cannot be swapped in CSS).
+	must("export const WIZARD_PLACEHOLDER", "the palette island defines the wizard placeholder copy")
+	must("export const WIZARD_EMPTY", "the palette island defines the wizard empty-state copy")
+	must("placeholder=${wizard ? WIZARD_PLACEHOLDER : DEFAULT_PLACEHOLDER}",
+		"the Preact input derives its placeholder from the live theme")
+	must("wizard ? WIZARD_EMPTY : 'No matching commands'", "the no-match line is wizard-flavoured")
 }
 
 // TestDashboardHTML_WizardCommandPaletteSynonyms pins the wizard re-flavour of
@@ -1144,14 +1140,12 @@ func TestDashboardHTML_WizardCommandPaletteSynonyms(t *testing.T) {
 	must("party form fellowship warband adventuring muster gather assemble guild", "create-group carries the arcane party keywords")
 
 	// A mid-open theme flip must re-skin the baked labels, not just the
-	// placeholder — the tclaude:wizard listener rebuilds the command list AND
-	// resets the selection before re-rendering. Pin the exact 3-line sequence
-	// (rebuild → reset → re-render with the live query): openPalette also calls
-	// `commands = buildCommands();` but follows it with `input.value = ''`, not
-	// `render(input.value)`, so this needle is unique to the listener — deleting
-	// the listener's rebuild fails here rather than passing on openPalette's copy.
-	must("commands = buildCommands();\n    selected = 0;\n    render(input.value);",
-		"the tclaude:wizard listener rebuilds + resets selection so labels re-skin live without a stale highlight")
+	// placeholder. The island asks the state to rebuild; rebuild preserves the
+	// query and resets selection before Signals repaint the keyed rows.
+	must("if (state.open.value) state.rebuild();",
+		"the tclaude:wizard listener rebuilds open-palette commands")
+	must("commands.value = commandBuilder(snapshot.value || {});\n      selected.value = 0;",
+		"a rebuild uses the accepted snapshot and resets selection")
 
 	// The scorer's SYNONYMS map bridges the arcane verbs to the plain ones so
 	// typing either vocabulary finds the command in either theme.

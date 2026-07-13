@@ -31,8 +31,8 @@ func TestDashboardHTML_RetireUngroupedWired(t *testing.T) {
 	//    never a no-op, with both the plain label and the 🧙 wizard synonym
 	//    ("Banish unbound familiars…"). The plain "retire"/wizard "banish"
 	//    words already bridge via the scorer's SYNONYMS map.
-	must("const ungroupedCount = countUngroupedAgents();",
-		"the command is gated on the live ungrouped count")
+	must("const ungroupedCount = new Set((snap.ungrouped || []).map(a => a.conv_id).filter(Boolean)).size;",
+		"snapshot-injected command construction deduplicates the live ungrouped count")
 	must("if (ungroupedCount) {",
 		"the command is only listed when there is at least one ungrouped agent")
 	must("wiz('Retire ungrouped agents…', 'Banish unbound familiars…')",

@@ -1,158 +1,101 @@
-// notify-menu.js — the top-bar bell's notification-settings popover.
-//
-// The bell glyph (🔔/🔕) is painted by renderNotifyGlobal (render.js) from
-// every snapshot poll — it mirrors config.notifications.enabled, the
-// master switch ABOVE the per-group / per-agent filters. This module owns
-// the popover that drops from the bell on click:
-//
-//   • the master on/off (everything muted when off);
-//   • the per-type checklist — which session-state transitions raise a
-//     desktop banner (idle / needs-permission / awaits-input / error /
-//     exited). Each box is one wildcard transition rule server-side;
-//   • the human-message knob (a `tclaude agent notify-human` ping also
-//     raising a desktop banner — it always lands in the Messages tab).
-//   • the access-request knob (an agent `--ask-human` request also raising
-//     a desktop banner — it always lands in the Messages tab).
-//
-// All of it is backed by GET/POST /api/notifications — the lightweight
-// twin of the Config tab's full-config editor for the same notifications
-// block. State is fetched on every open (so a Config-tab edit, another
-// browser, or a CLI change is reflected) and the POST response re-seeds
-// the widgets after each change, so the popover never drifts from disk.
-//
-// NB: the per-type checklist only governs the events tclaude turns into
-// *desktop banners*. The underlying state transitions are still recorded
-// — unchecking "Exits" silences the banner, it does not stop tclaude
-// noticing the agent exited.
+// Actions for the Preact-owned global notification bell and settings popover.
+// State lives in notify-state.js and markup/listener ownership lives in
+// notify-island.js; this module is the only layer that knows the API route or
+// how the Config-tab shortcut is reached.
 
-import { $, $$ } from './helpers.js';
-import { toast } from './refresh.js';
-
-function popover() { return $('#notify-pop'); }
-function bell() { return $('#notify-global'); }
-
-function isOpen() {
-  const pop = popover();
-  return !!pop && pop.classList.contains('open');
+function detail(error) {
+  return error?.message || String(error);
 }
 
-function setOpen(open) {
-  const pop = popover();
-  const btn = bell();
-  if (!pop || !btn) return;
-  pop.classList.toggle('open', open);
-  btn.setAttribute('aria-expanded', open ? 'true' : 'false');
-}
-
-// paint reflects a /api/notifications state object onto the widgets.
-function paint(state) {
-  if (!state || typeof state !== 'object') return;
-  const enabled = !!state.enabled;
-  const master = $('#notify-pop-enabled');
-  if (master) master.checked = enabled;
-
-  const types = state.types || {};
-  $$('#notify-pop [data-notify-type]').forEach(cb => {
-    cb.checked = !!types[cb.getAttribute('data-notify-type')];
-  });
-
-  const human = $('#notify-pop-human');
-  // human_messages defaults ON within an enabled block — only an explicit
-  // false unchecks it.
-  if (human) human.checked = state.human_messages !== false;
-  const access = $('#notify-pop-access');
-  if (access) access.checked = !!state.access_requests;
-
-  // With the master off nothing notifies; dim the per-type rows so the
-  // popover reads honestly, but leave them editable — you can arrange the
-  // selection before flipping the master on.
-  const pop = popover();
-  if (pop) pop.classList.toggle('master-off', !enabled);
-}
-
-async function load() {
-  try {
-    const r = await fetch('/api/notifications', { credentials: 'same-origin' });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    paint(await r.json());
-  } catch (e) {
-    toast('Could not load notification settings: ' + (e.message || e), true);
+export function createNotifyActions({
+  state,
+  notify,
+  fetchImpl = globalThis.fetch,
+  documentRef = globalThis.document,
+} = {}) {
+  if (!state || typeof state.setOpen !== 'function' ||
+      typeof state.beginRequest !== 'function' || typeof state.commitRequest !== 'function') {
+    throw new TypeError('notify actions require state');
   }
-}
+  if (typeof notify !== 'function') throw new TypeError('notify actions require notify');
+  if (typeof fetchImpl !== 'function') throw new TypeError('notify actions require fetch');
 
-// post sends a partial update and re-paints from the authoritative
-// response. On failure it re-loads, so a rejected toggle never leaves a
-// checkbox showing a value that did not persist.
-async function post(body, okMsg) {
-  try {
-    const r = await fetch('/api/notifications', {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!r.ok) throw new Error((await r.text()) || ('HTTP ' + r.status));
-    paint(await r.json());
-    if (okMsg) toast(okMsg);
-  } catch (e) {
-    toast('Notification update failed: ' + (e.message || e), true);
-    load();
+  async function load() {
+    const requestId = state.beginRequest();
+    try {
+      const response = await fetchImpl('/api/notifications', { credentials: 'same-origin' });
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      return state.commitRequest(requestId, await response.json());
+    } catch (error) {
+      if (!state.failRequest(requestId, error)) return false;
+      notify('Could not load notification settings: ' + detail(error), true);
+      return false;
+    }
   }
-}
 
-export function bindNotifyMenu() {
-  const btn = bell();
-  const pop = popover();
-  if (!btn || !pop) return;
+  // A successful POST response is the authoritative complete settings block.
+  // On failure, reload from disk so an optimistic checkbox event can never
+  // leave the controlled inputs showing a value that did not persist.
+  async function post(body, okMessage) {
+    const requestId = state.beginRequest();
+    try {
+      const response = await fetchImpl('/api/notifications', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) {
+        throw new Error((await response.text()) || ('HTTP ' + response.status));
+      }
+      const committed = state.commitRequest(requestId, await response.json());
+      if (committed && okMessage) notify(okMessage);
+      return committed;
+    } catch (error) {
+      if (!state.failRequest(requestId, error)) return false;
+      notify('Notification update failed: ' + detail(error), true);
+      await load();
+      return false;
+    }
+  }
 
-  btn.addEventListener('click', () => {
-    const next = !isOpen();
-    setOpen(next);
-    if (next) load(); // fresh state on every open
-  });
+  function close() {
+    state.setOpen(false);
+  }
 
-  // Dismiss on an outside click or Escape — the same manners as the slop
-  // mixer and the filter-bar view menus.
-  document.addEventListener('pointerdown', (e) => {
-    if (!isOpen()) return;
-    if (pop.contains(e.target) || btn.contains(e.target)) return;
-    setOpen(false);
-  });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && isOpen()) setOpen(false);
-  });
+  function open() {
+    state.setOpen(true);
+    // Fresh state on every open: Config-tab edits, CLI writes and another
+    // browser are all reflected before the operator changes a setting.
+    return load();
+  }
 
-  // Master on/off — sits above every other filter.
-  const master = $('#notify-pop-enabled');
-  if (master) master.addEventListener('change', () => {
-    post({ enabled: master.checked },
-      master.checked ? 'OS notifications ON' : 'OS notifications OFF (everything muted)');
-  });
+  function toggle() {
+    if (state.open.value) {
+      close();
+      return Promise.resolve(false);
+    }
+    return open();
+  }
 
-  // Per-type checklist — each box maps to one {from:"*", to:<state>} rule.
-  $$('#notify-pop [data-notify-type]').forEach(cb => {
-    cb.addEventListener('change', () => {
-      post({ types: { [cb.getAttribute('data-notify-type')]: cb.checked } });
-    });
-  });
+  function openConfig() {
+    close();
+    documentRef?.querySelector?.('nav [data-tab="config"]')?.click();
+  }
 
-  // Human-message desktop banner.
-  const human = $('#notify-pop-human');
-  if (human) human.addEventListener('change', () => {
-    post({ human_messages: human.checked });
-  });
-
-  // Access-request desktop banner.
-  const access = $('#notify-pop-access');
-  if (access) access.addEventListener('change', () => {
-    post({ access_requests: access.checked });
-  });
-
-  // "Config tab ↗" — jump to the full editor. Clicking its nav button
-  // both switches the tab and triggers the Config island's lazy-load listener.
-  const cfgLink = $('#notify-pop-config');
-  if (cfgLink) cfgLink.addEventListener('click', () => {
-    setOpen(false);
-    const nav = $('nav [data-tab="config"]');
-    if (nav) nav.click();
+  return Object.freeze({
+    load,
+    post,
+    open,
+    close,
+    toggle,
+    openConfig,
+    setEnabled: (enabled) => post(
+      { enabled: !!enabled },
+      enabled ? 'OS notifications ON' : 'OS notifications OFF (everything muted)',
+    ),
+    setType: (type, enabled) => post({ types: { [type]: !!enabled } }),
+    setHumanMessages: (enabled) => post({ human_messages: !!enabled }),
+    setAccessRequests: (enabled) => post({ access_requests: !!enabled }),
   });
 }

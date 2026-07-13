@@ -24,12 +24,12 @@
 //
 // So the palette only adds a fast keyboard entry point to the window
 // hide/show, power control, retire + navigation the dashboard already
-// does; it owns no agent state of its own and reads the live roster
-// fresh from lastSnapshot each time it opens. NB power control STOPS or
+// does; it owns no agent state of its own and builds from the accepted
+// dashboardState snapshot injected by the Preact state boundary. NB power control STOPS or
 // RESUMES agent processes, unlike the window ops which only detach/raise
 // terminals — see section 1b.
 //
-// It is a .modal-overlay so it picks up the shared backdrop AND pauses
+// palette-island.js renders it as a .modal-overlay so it picks up the shared backdrop AND pauses
 // the 2s auto-refresh while open (refreshSuspended() keys on
 // .modal-overlay.show), which keeps a re-render from yanking focus out
 // of the search box mid-type.
@@ -39,12 +39,10 @@
 // row (wrapping), PageUp/PageDown jump a viewport-worth (clamping at the
 // ends), Enter runs it, typing filters.
 
-import { $, $$, esc } from './helpers.js';
-import { lastSnapshot, webTerminalDefault } from './dashboard.js';
+import { $, $$ } from './helpers.js';
 import {
   toast, openWindowModal,
   retireAgentInteractive, openRetirePreview, openRetireUngroupedPreview, openDeleteRetiredPreview,
-  countGroupMembersByStatus, countUngroupedAgents,
   openWorktreeCleanup,
   shutdownScope, powerOnScope, shutdownConfirm, stopAgentReq, resumeAgentReq,
 } from './refresh.js';
@@ -53,24 +51,11 @@ import { openProfilesManageModal } from './modal-profiles.js';
 import { openRolesManageModal } from './modal-roles.js';
 import { openGroupCreateModal } from './modal-message.js';
 import { toggleSlop, isSlopActive, toggleWizard, isWizardActive } from './slop.js';
-import { rankCommands } from './palette-score.js';
 import { recordGroupInteraction, lastInteractedGroup } from './last-group.js';
 import { setDockOpen } from './dock.js';
 import { scribeVisible } from './virtual-groups.js';
 import { scribeGroupVisible } from './scribe-groups.js';
 import { closeTerminalsForConvs, closeTerminalsForWindowOp, focusTerminalForConv, openWebWindowPane } from './terminals-tab.js';
-
-const MODAL_ID = 'command-palette-modal';
-
-// Wizard-mode copy — the placeholder + empty-state line get an arcane
-// re-flavour when body.wizard is set (the palette becomes "The Spellbook").
-// The placeholder can't be swapped in pure CSS (it's an attribute, not
-// content), so openPalette sets it per-theme on each open; the regular text
-// is captured from the HTML at bind time so the two never drift.
-const WIZARD_PLACEHOLDER =
-  'Speak an incantation…  (banish a familiar · scry a tab · summon…)';
-const WIZARD_EMPTY = 'No such incantation in this tome';
-let defaultPlaceholder = '';
 
 // wiz(regular, wizard) returns the arcane string in 🧙 mode, else the plain
 // one. buildCommands wraps every command's PRESENTED label + hint (and its
@@ -83,24 +68,6 @@ let defaultPlaceholder = '';
 // the open list on a mid-session theme flip, matching the placeholder swap.
 function wiz(regular, wizard) {
   return isWizardActive() ? wizard : regular;
-}
-
-// Module state for the current open. commands is the full list built at
-// open time; filtered is the current query's subset; selected indexes
-// into filtered. Cached element refs are filled in bindCommandPalette.
-let commands = [];
-let filtered = [];
-let selected = 0;
-let overlay = null;
-let input = null;
-let list = null;
-// The element focused when the palette opened, so closing returns focus
-// there (the 🔍 button, or wherever the hotkey was pressed) instead of
-// dropping it to <body>.
-let lastFocus = null;
-
-function isOpen() {
-  return overlay !== null && overlay.classList.contains('show');
 }
 
 // -- POST helpers — the same endpoints the windows modal / eye buttons
@@ -136,7 +103,7 @@ async function bulkWindowOp(payload, what) {
   }
 }
 
-async function jumpAgent(conv, label) {
+async function jumpAgent(conv, label, preferWebTerminal) {
   // If this agent already has an open web terminal / window pane in the
   // Terminals tab, jump to THAT instead of raising a native OS window — mirrors
   // the per-agent 'jump' row action.
@@ -144,7 +111,7 @@ async function jumpAgent(conv, label) {
   // With web terminals as the default (config dashboard.default_terminal =
   // "web"), open the agent's live session as a browser pane rather than raising
   // a native OS window — same as the per-agent 'jump' row action.
-  if (webTerminalDefault()) { openWebWindowPane(conv, label); toast(`focused: ${label}`); return; }
+  if (preferWebTerminal) { openWebWindowPane(conv, label); toast(`focused: ${label}`); return; }
   try {
     const r = await fetch(`/api/jump/${encodeURIComponent(conv)}`, {
       method: 'POST', credentials: 'same-origin',
@@ -225,8 +192,8 @@ function setAllGroupsOpen(open) {
 // (stop/start) sibling, then the retire blocks.
 // rankCommands re-ranks by query, so this order only governs the
 // empty-query view.
-function buildCommands() {
-  const snap = lastSnapshot || {};
+export function buildCommands(snapshot) {
+  const snap = snapshot || {};
   // Mirror the Groups tab's scribe treatment: live scribe groups and their
   // commands are always visible; dormant/offline ones follow the view toggle.
   // Per-AGENT commands (§7/§7b, sourced from snap.agents) are unaffected: the
@@ -337,7 +304,7 @@ function buildCommands() {
   //     retire, distinct from the 🗑 delete-retired above it. Gated on ≥1
   //     ungrouped agent so the palette never offers a no-op. In 🧙 mode
   //     these loose agents are "unbound familiars" and retire → banish.
-  const ungroupedCount = countUngroupedAgents();
+  const ungroupedCount = new Set((snap.ungrouped || []).map(a => a.conv_id).filter(Boolean)).size;
   if (ungroupedCount) {
     const plural = ungroupedCount === 1 ? '' : 's';
     cmds.push({
@@ -628,7 +595,7 @@ function buildCommands() {
       hint: wiz("raise / open this agent's terminal", "conjure this familiar's scrying portal"),
       keywords: 'focus show jump bring up window agent ' + label + ' ' + (a.conv_id || '')
         + ' reveal behold conjure portal scrying familiar',
-      run: () => jumpAgent(sel, label),
+      run: () => jumpAgent(sel, label, snap.default_terminal === 'web'),
     });
     cmds.push({
       icon: wiz('⏏', '🌫'), label: wiz(`Hide window: ${label}`, `Veil familiar: ${label}`),
@@ -681,7 +648,13 @@ function buildCommands() {
   //    offers a no-op.
   for (const g of groups) {
     for (const status of ['idle', 'offline']) {
-      const n = countGroupMembersByStatus(g.name, status);
+      const group = (snap.groups || []).find(candidate => candidate.name === g.name);
+      const n = new Set((group?.members || [])
+        .filter(member => status === 'offline'
+          ? !member.online
+          : member.online && member.state?.status === status)
+        .map(member => member.conv_id)
+        .filter(Boolean)).size;
       if (!n) continue;
       const plural = n === 1 ? '' : 's';
       cmds.push({
@@ -737,220 +710,4 @@ function buildCommands() {
   }
 
   return cmds;
-}
-
-// -- Rendering ---------------------------------------------------------
-
-function render(q) {
-  filtered = rankCommands(commands, q);
-  if (selected >= filtered.length) selected = filtered.length - 1;
-  if (selected < 0) selected = 0;
-  if (!filtered.length) {
-    const empty = isWizardActive() ? WIZARD_EMPTY : 'No matching commands';
-    list.innerHTML = `<div class="palette-empty">${esc(empty)}</div>`;
-    input.removeAttribute('aria-activedescendant');
-    return;
-  }
-  // Each option carries a stable id so the combobox input can point its
-  // aria-activedescendant at the keyboard-selected row — that's how a
-  // screen reader announces the active command as ↑/↓ move.
-  list.innerHTML = filtered.map((c, i) => `
-    <div class="palette-item${i === selected ? ' selected' : ''}" data-idx="${i}"
-         id="palette-opt-${i}" role="option" aria-selected="${i === selected ? 'true' : 'false'}">
-      <span class="palette-ico">${esc(c.icon || '•')}</span>
-      <span class="palette-label">${esc(c.label)}</span>
-      ${c.hint ? `<span class="palette-hint">${esc(c.hint)}</span>` : ''}
-    </div>`).join('');
-  paintSelection();
-}
-
-// paintSelection updates the highlight + ARIA without a full re-render
-// and scrolls the active row into view — used by ↑/↓ and hover. It also
-// re-points the input's aria-activedescendant at the active option.
-function paintSelection() {
-  const items = list.querySelectorAll('.palette-item');
-  items.forEach((el, i) => {
-    const on = i === selected;
-    el.classList.toggle('selected', on);
-    el.setAttribute('aria-selected', on ? 'true' : 'false');
-    if (on) el.scrollIntoView({ block: 'nearest' });
-  });
-  if (filtered.length) input.setAttribute('aria-activedescendant', 'palette-opt-' + selected);
-  else input.removeAttribute('aria-activedescendant');
-}
-
-function move(d) {
-  if (!filtered.length) return;
-  selected = (selected + d + filtered.length) % filtered.length;
-  paintSelection();
-}
-
-// pageSize is roughly how many rows a PageUp/PageDown jumps — the count
-// of items that fit in the visible scroll viewport (clientHeight / an
-// item's rendered height), floored to at least 1. clientHeight includes
-// the list's padding, so this can round up by a row versus a strict page;
-// harmless (scrollIntoView keeps the landing row visible and every row
-// stays reachable), so it's not worth reading computed padding to shave.
-// Measured live off the DOM so a resized window or a shorter list scales
-// the jump; falls back to a constant when the list isn't measurable yet
-// (no rows, or zero-height pre-layout).
-const PAGE_FALLBACK = 10;
-function pageSize() {
-  const first = list.querySelector('.palette-item');
-  const itemH = first ? first.offsetHeight : 0;
-  if (!itemH) return PAGE_FALLBACK;
-  return Math.max(1, Math.floor(list.clientHeight / itemH));
-}
-
-// movePage jumps the selection by a page and CLAMPS at the ends — unlike
-// ↑/↓ (move), which wrap. A page jump that wrapped top↔bottom would be
-// disorienting, and clamping matches how PageUp/PageDown behave in a
-// native list: hitting the top/bottom parks the selection there.
-function movePage(d) {
-  if (!filtered.length) return;
-  const next = selected + d * pageSize();
-  selected = Math.min(filtered.length - 1, Math.max(0, next));
-  paintSelection();
-}
-
-function runSelected() {
-  const cmd = filtered[selected];
-  if (!cmd) return;
-  // Close first so a command that opens its OWN modal (windows / spawn)
-  // isn't stacked under our overlay.
-  closePalette();
-  try {
-    cmd.run();
-  } catch (e) {
-    toast('command failed: ' + ((e && e.message) || e), true);
-  }
-}
-
-// -- Open / close ------------------------------------------------------
-
-// applyThemeCopy re-flavours the JS-driven text (the input placeholder) for
-// the live theme — the wizard "Spellbook" prompt vs. the captured regular
-// one. Called on each open AND on a mid-open theme flip (the CSS chrome
-// swaps instantly via body.wizard, so the JS copy must follow to match).
-function applyThemeCopy() {
-  input.placeholder = isWizardActive() ? WIZARD_PLACEHOLDER : defaultPlaceholder;
-}
-
-function openPalette() {
-  // Remember where focus was so closePalette can return it.
-  lastFocus = document.activeElement;
-  commands = buildCommands();
-  selected = 0;
-  input.value = '';
-  // Re-flavour the prompt per the live theme — wizard mode may have been
-  // toggled since the last open, so pick fresh each time.
-  applyThemeCopy();
-  overlay.classList.add('show');
-  render('');
-  // Focus after the show so the box is laid out; select-all is moot on
-  // an empty field but keeps the behaviour obvious if reopened dirty.
-  input.focus();
-}
-
-function closePalette() {
-  overlay.classList.remove('show');
-  input.removeAttribute('aria-activedescendant');
-  // Return focus to the trigger element rather than letting it drop to
-  // <body>. Guarded — the element may have been re-rendered away.
-  if (lastFocus && typeof lastFocus.focus === 'function') {
-    try { lastFocus.focus(); } catch (_) { /* element gone */ }
-  }
-  lastFocus = null;
-}
-
-// bindCommandPalette wires the global Ctrl/Cmd-K trigger and the
-// in-overlay interactions. Called once from dashboard.js boot.
-export function bindCommandPalette() {
-  overlay = $('#' + MODAL_ID);
-  input = $('#palette-input');
-  list = $('#palette-list');
-  // Defensive: if the markup ever goes missing, do nothing rather than
-  // throw and break the rest of boot.
-  if (!overlay || !input || !list) return;
-
-  // Capture the HTML's placeholder as the regular-theme prompt so the
-  // wizard swap in openPalette can restore it without duplicating the copy.
-  defaultPlaceholder = input.getAttribute('placeholder') || '';
-
-  // Global trigger. e.key is layout-stable for a plain letter; lower-
-  // case both so Shift+Ctrl+K (some setups) still matches. e.repeat is
-  // ignored so holding the chord doesn't strobe open/close.
-  document.addEventListener('keydown', (e) => {
-    if (e.repeat) return;
-    if (!(e.ctrlKey || e.metaKey)) return;
-    if ((e.key || '').toLowerCase() !== 'k') return;
-    e.preventDefault();
-    if (isOpen()) { closePalette(); return; }
-    // Don't pop the launcher on top of another open dialog (e.g. mid
-    // spawn-form): stacked overlays are a surprise and the dialog
-    // beneath keeps its own state. The hotkey resumes once it closes.
-    if (document.querySelector('.modal-overlay.show, .manage-overlay.show')) return;
-    openPalette();
-  });
-
-  // Typing filters; ↑/↓ move; Enter runs; Esc closes. Bound to the
-  // input (which holds focus the whole time the palette is open).
-  input.addEventListener('input', () => { selected = 0; render(input.value); });
-  input.addEventListener('keydown', (e) => {
-    switch (e.key) {
-      case 'ArrowDown': e.preventDefault(); move(1); break;
-      case 'ArrowUp': e.preventDefault(); move(-1); break;
-      case 'PageDown': e.preventDefault(); movePage(1); break;
-      case 'PageUp': e.preventDefault(); movePage(-1); break;
-      case 'Enter': e.preventDefault(); runSelected(); break;
-      case 'Escape': e.preventDefault(); closePalette(); break;
-      default: break;
-    }
-  });
-
-  // Mouse: hover selects, click runs.
-  list.addEventListener('mousemove', (e) => {
-    const item = e.target.closest('.palette-item');
-    if (!item) return;
-    const idx = Number(item.dataset.idx);
-    if (idx !== selected) { selected = idx; paintSelection(); }
-  });
-  list.addEventListener('click', (e) => {
-    const item = e.target.closest('.palette-item');
-    if (!item) return;
-    selected = Number(item.dataset.idx);
-    runSelected();
-  });
-
-  // Backdrop click closes (a click on the box itself does not).
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) closePalette();
-  });
-
-  // Theme flipped WHILE the palette is open (the +W hotkey fires even with
-  // focus in the search box). The CSS re-skin — the Spellbook title, the
-  // arcane chrome — swaps instantly on the body.wizard class, so re-apply the
-  // JS-driven copy so it doesn't lag a theme behind: the placeholder (via
-  // applyThemeCopy), the empty-state line (via the re-render), AND the command
-  // labels/hints themselves — those are baked by buildCommands' wiz() calls at
-  // open time, so we rebuild the list here to re-skin every Summon/Slumber/Veil
-  // presented label for the new theme. slop.js dispatches tclaude:wizard per
-  // toggle. Rebuilding re-reads lastSnapshot, same as a fresh open.
-  document.addEventListener('tclaude:wizard', () => {
-    if (!isOpen()) return;
-    // Reset the selection before re-ranking: a theme flip can re-order the
-    // filtered list (e.g. "veil" jumps from a weak keyword hit in the plain
-    // theme to a label-prefix hit in wizard mode), so a preserved index would
-    // land on a different command than the one that was highlighted. Start
-    // fresh at the top, the same way a keystroke does.
-    applyThemeCopy();
-    commands = buildCommands();
-    selected = 0;
-    render(input.value);
-  });
-
-  // The header 🔍 button is the discoverable entry point for anyone who
-  // doesn't know the hotkey.
-  const btn = $('#command-palette-btn');
-  if (btn) btn.addEventListener('click', openPalette);
 }

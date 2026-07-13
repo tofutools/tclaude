@@ -30,7 +30,7 @@ func TestDashboardHTML_DockDnd(t *testing.T) {
 	// keyed Preact dock nodes survive refreshes, so the shared poll no longer
 	// needs to observe or suspend around the gesture.
 	must("export { bindDockDnd };", "dock-dnd.js exports its binder")
-	must("dndCleanups.push(bindDockDnd());", "dashboard.js boot wires the disposable dock drag binder")
+	must("pageCleanups.push(bindDockDnd());", "dashboard.js registers the disposable dock drag binder with the shared page lifecycle")
 	must("import { bindDockDnd } from './dock-dnd.js';", "dashboard.js imports the dock drag binder")
 
 	// The drag source: profile + role sections are draggable; the card sets the

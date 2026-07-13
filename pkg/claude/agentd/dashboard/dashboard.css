@@ -49,6 +49,9 @@ header {
 }
 header h1 { margin: 0; font-size: 18px; font-weight: 600; }
 header .meta { color: #7d8590; font-size: 12px; }
+/* Stable Preact ownership hosts should not add a new flex/inline layout box;
+   their rendered child keeps the exact shell geometry that preceded them. */
+.shell-contents-root { display: contents; }
 /* Footer — a slim bar pinned to the viewport bottom, holding the base URL +
    last-refresh heartbeat that used to crowd the header's title row.
    position:fixed keeps it glanceable on every tab and at any scroll

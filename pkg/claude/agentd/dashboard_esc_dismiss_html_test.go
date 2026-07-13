@@ -26,10 +26,16 @@ func TestDashboardHTML_EscDismissWired(t *testing.T) {
 		}
 	}
 
-	// refresh.js: the shared "Discard input?" confirm is a single helper so
-	// every dirty-form dismiss path shows identical copy. bindBackdropDiscard
-	// and the inline editMemberModal both route through it.
-	must("export function confirmDiscard() {", "the shared discard-confirm helper exists")
+	// shell-state.js owns the shared "Discard input?" confirmation API, while
+	// refresh.js retains the compatibility export used by legacy and Preact
+	// form-dismiss paths. Keeping the copy at the shell-state boundary gives
+	// every caller the same confirmation without a second DOM owner.
+	must("export function shellConfirmDiscard() {", "shell state exposes the shared discard-confirm API")
+	must("shellConfirmDiscard as confirmDiscard,", "refresh aliases the shell-state API for existing callers")
+	must("return shellConfirm({", "discard confirmation routes through shell-owned confirmation state")
+	must("title: 'Discard input?',", "the shared discard-confirm title remains stable")
+	must("okLabel: 'Discard',", "the shared discard action remains explicit")
+	mustNot("export function confirmDiscard() {", "refresh no longer owns a second discard-confirm implementation")
 	must("if (dirty && !(await confirmDiscard())) return;", "a dirty form confirms before an accidental close")
 
 	// refresh.js: editMemberModal is the one editable form dismissed inline
