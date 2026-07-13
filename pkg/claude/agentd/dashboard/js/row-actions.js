@@ -1580,17 +1580,20 @@ function bindRowActions() {
           // attribute.
           const scope = btn.getAttribute('data-group') || from || to;
           const confirmed = await confirmModal({
-            title: 'Remove this link?',
-            body: 'Members of FROM lose the ability to message members of TO via this edge. Other groups / links are unaffected. This can\'t be undone — recreate to restore.',
+            title: wizWord('Remove this link?', 'Sever this arcane channel?'),
+            body: wizWord(
+              'Members of FROM lose the ability to message members of TO via this edge. Other groups / links are unaffected. This can\'t be undone — recreate to restore.',
+              'Familiars of FROM lose the ability to whisper to familiars of TO via this channel. Other parties / channels are unaffected. This can\'t be undone — weave it anew to restore.',
+            ),
             meta: `#${id} · ${from} → ${to}`,
-            okLabel: 'Remove link',
+            okLabel: wizWord('Remove link', 'Sever channel'),
           });
           if (!confirmed) return;
           const r = await fetch(`/api/groups/${encodeURIComponent(scope)}/links/${encodeURIComponent(id)}`, {
             method: 'DELETE', credentials: 'same-origin',
           });
           ok = r.ok;
-          if (!ok) toast(`Remove link failed: ${await r.text()}`, true);
+          if (!ok) toast(`${wizWord('Remove link', 'Sever channel')} failed: ${await r.text()}`, true);
           break;
         }
         case 'msg-focus': {

@@ -50,10 +50,10 @@ function fmtRemaining(secs) {
 // who can message whom.
 function renderLinks(rows) {
   if (!rows || !rows.length) {
-    return `<div class="empty">${themeWords(
-      'No inter-group links yet. Create one with the + new link button above.',
-      'No arcane channels yet. Weave one with the + weave channel button above.',
-    )}</div>`;
+    return '<div class="empty">'
+      + '<span class="theme-copy-regular">No inter-group links yet. Create one with the <strong>+ new link</strong> button above.</span>'
+      + '<span class="theme-copy-wizard">No arcane channels yet. Weave one with the <strong>+ weave channel</strong> button above.</span>'
+      + '</div>';
   }
   return `
     <table>
