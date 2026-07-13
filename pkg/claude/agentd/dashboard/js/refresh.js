@@ -572,7 +572,9 @@ export function activateAccessSubtab(name) {
   // event so refresh.js doesn't import nav-history.js; nav-history records it as
   // user navigation (no-op during its own programmatic restore). See
   // nav-history.js recordCurrentLocation.
-  document.dispatchEvent(new CustomEvent('tclaude:navigated'));
+  document.dispatchEvent(new CustomEvent('tclaude:navigated', {
+    detail: { location: { tab: 'access', subtab: name } },
+  }));
 }
 
 // showAccessTab brings the top-level Access tab forward and (optionally)

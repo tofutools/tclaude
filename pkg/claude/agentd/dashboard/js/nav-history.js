@@ -134,17 +134,17 @@ function record(loc) {
   history.pushState(serializeStack(stack), '', urlFor(loc));
 }
 
-// recordCurrentLocation reads the live location from the DOM and pushes it. It
-// is the single entry point for "the user just navigated" — the delegated <nav>
-// click observer (top-level tabs) and the `tclaude:navigated` event the subtab
-// activators emit (refresh.js / processes.js, after their own async confirms)
-// both reach it, so a subtab switch updates the URL the same way a tab switch
-// does (/access/sudo). No-ops until the router is initialised and while WE are
-// programmatically restoring a location, so neither boot nor a popstate
-// activation forges an entry.
-function recordCurrentLocation() {
+// recordCurrentLocation pushes the user's new location. Top-level tab clicks
+// are read from the live DOM after their delegated click handler has run.
+// Subtab activators may instead include detail.location on their navigation
+// event: signal-driven views can emit before Preact commits their active class,
+// so reading the DOM there would record the previously rendered subtab. No-ops
+// until the router is initialised and while WE are programmatically restoring a
+// location, so neither boot nor a popstate activation forges an entry.
+function recordCurrentLocation(event) {
   if (!ready || applying) return;
-  record(activeLocationFromDOM());
+  const announced = event?.detail?.location;
+  record(announced ? normalizeLocation(announced) : activeLocationFromDOM());
 }
 
 // reconcileLocation corrects the URL after an INVOLUNTARY re-location — a tab
