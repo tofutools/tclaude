@@ -13,7 +13,7 @@ import (
 
 const testCodexAppID = "asdk_app_69a089a326dc8191b32a3f2553f5be2c"
 
-func sealedTestProfile(t *testing.T, home, launchID string) (string, string) {
+func testLaunchProfile(t *testing.T, home, launchID string) (string, string) {
 	t.Helper()
 	t.Setenv("CODEX_HOME", home)
 	name, path, err := EnsureCodexAgentLaunchProfile([]string{"/tmp/work"}, launchID)
@@ -32,9 +32,9 @@ func appendTestApproval(t *testing.T, path, tool string) {
 	require.NoError(t, f.Close())
 }
 
-func TestExtractCodexLaunchProfileApprovals_VerifiedExactAddition(t *testing.T) {
+func TestExtractCodexLaunchProfileApprovals_ExplicitApprove(t *testing.T) {
 	home := t.TempDir()
-	_, path := sealedTestProfile(t, home, "1111111111111111")
+	_, path := testLaunchProfile(t, home, "1111111111111111")
 	appendTestApproval(t, path, "linear.save_issue")
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
@@ -44,27 +44,39 @@ func TestExtractCodexLaunchProfileApprovals_VerifiedExactAddition(t *testing.T) 
 	require.Equal(t, []CodexToolApproval{{AppID: testCodexAppID, Tool: "linear.save_issue"}}, got)
 }
 
-func TestExtractCodexLaunchProfileApprovals_ClassifiesUnsealedProfile(t *testing.T) {
-	_, err := ExtractCodexLaunchProfileApprovals([]byte("model = \"still-being-written\"\n"))
-	require.Error(t, err)
-	assert.True(t, IsCodexLaunchProfileNotSealed(err))
+func TestExtractCodexLaunchProfileApprovals_ValidProfileWithoutApprovals(t *testing.T) {
+	got, err := ExtractCodexLaunchProfileApprovals([]byte("model = \"gpt-test\"\n"))
+	require.NoError(t, err)
+	assert.Empty(t, got)
 }
 
-func TestExtractCodexLaunchProfileApprovals_BaselineMutationFailsClosed(t *testing.T) {
+func TestExtractCodexLaunchProfileApprovals_ApprovalOnlyProfile(t *testing.T) {
+	data := []byte("[apps." + testCodexAppID + ".tools.\"linear.save_issue\"]\n" +
+		"approval_mode = \"approve\"\n")
+	got, err := ExtractCodexLaunchProfileApprovals(data)
+	require.NoError(t, err)
+	require.Equal(t, []CodexToolApproval{{AppID: testCodexAppID, Tool: "linear.save_issue"}}, got)
+}
+
+func TestExtractCodexLaunchProfileApprovals_AcceptsReformattedProfile(t *testing.T) {
 	home := t.TempDir()
-	_, path := sealedTestProfile(t, home, "2222222222222222")
+	_, path := testLaunchProfile(t, home, "2222222222222222")
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
-	data = []byte(strings.Replace(string(data), `extends = ":workspace"`, `extends = ":danger"`, 1))
-	data = append(data, []byte("\n[apps."+testCodexAppID+".tools.\"linear.save_issue\"]\napproval_mode = \"approve\"\n")...)
+	reformatted := strings.Replace(string(data), `extends = ":workspace"`, `extends=":workspace"`, 1)
+	require.NotEqual(t, string(data), reformatted)
+	data = []byte(reformatted)
+	data = append(data, []byte("\n[apps."+testCodexAppID+".tools.\"linear.save_issue\"]\napproval_mode = \"approve\"\n"+
+		"# tclaude-managed-baseline-sha256: obsolete-and-ignored\n")...)
 
-	_, err = ExtractCodexLaunchProfileApprovals(data)
-	require.ErrorContains(t, err, "baseline changed")
+	got, err := ExtractCodexLaunchProfileApprovals(data)
+	require.NoError(t, err)
+	require.Equal(t, []CodexToolApproval{{AppID: testCodexAppID, Tool: "linear.save_issue"}}, got)
 }
 
-func TestExtractCodexLaunchProfileApprovals_IgnoresNonExactToolConfig(t *testing.T) {
+func TestExtractCodexLaunchProfileApprovals_AllowsSiblingSettingsAndIgnoresPrompt(t *testing.T) {
 	home := t.TempDir()
-	_, path := sealedTestProfile(t, home, "3333333333333333")
+	_, path := testLaunchProfile(t, home, "3333333333333333")
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
 	require.NoError(t, err)
 	_, err = f.WriteString("\n[apps." + testCodexAppID + ".tools.\"linear.save_issue\"]\n" +
@@ -78,12 +90,26 @@ func TestExtractCodexLaunchProfileApprovals_IgnoresNonExactToolConfig(t *testing
 
 	got, err := ExtractCodexLaunchProfileApprovals(data)
 	require.NoError(t, err)
-	assert.Empty(t, got)
+	require.Equal(t, []CodexToolApproval{{AppID: testCodexAppID, Tool: "linear.save_issue"}}, got)
+}
+
+func TestExtractCodexLaunchProfileApprovals_RejectsInvalidTOMLAndTableShapes(t *testing.T) {
+	for name, data := range map[string]string{
+		"invalid TOML":        "invalid = [\n",
+		"apps is not table":   "apps = 1\n",
+		"tool is not table":   "[apps." + testCodexAppID + ".tools]\n\"linear.save_issue\" = true\n",
+		"decision not string": "[apps." + testCodexAppID + ".tools.\"linear.save_issue\"]\napproval_mode = true\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := ExtractCodexLaunchProfileApprovals([]byte(data))
+			require.Error(t, err)
+		})
+	}
 }
 
 func TestPromoteCodexLaunchProfileApprovals_MergeAndIdempotence(t *testing.T) {
 	home := t.TempDir()
-	_, path := sealedTestProfile(t, home, "4444444444444444")
+	_, path := testLaunchProfile(t, home, "4444444444444444")
 	appendTestApproval(t, path, "linear.save_issue")
 	configPath := filepath.Join(home, "config.toml")
 	require.NoError(t, os.WriteFile(configPath, []byte("# keep me\nmodel = \"gpt-test\"\n"), 0o640))
@@ -108,7 +134,7 @@ func TestPromoteCodexLaunchProfileApprovals_MergeAndIdempotence(t *testing.T) {
 
 func TestPromoteCodexLaunchProfileApprovals_ExistingDecisionWins(t *testing.T) {
 	home := t.TempDir()
-	_, path := sealedTestProfile(t, home, "5555555555555555")
+	_, path := testLaunchProfile(t, home, "5555555555555555")
 	appendTestApproval(t, path, "linear.save_issue")
 	configPath := filepath.Join(home, "config.toml")
 	original := "[apps." + testCodexAppID + ".tools.\"linear.save_issue\"]\napproval_mode = \"prompt\"\n"
@@ -130,7 +156,7 @@ func TestPromoteCodexLaunchProfileApprovals_InlineTablesFailWithoutChangingConfi
 	} {
 		t.Run(name, func(t *testing.T) {
 			home := t.TempDir()
-			_, path := sealedTestProfile(t, home, "7777777777777777")
+			_, path := testLaunchProfile(t, home, "7777777777777777")
 			appendTestApproval(t, path, "linear.save_issue")
 			configPath := filepath.Join(home, "config.toml")
 			require.NoError(t, os.WriteFile(configPath, []byte(original), 0o600))
@@ -179,7 +205,7 @@ func TestCodexConfigWriters_DoNotLoseConcurrentUpdates(t *testing.T) {
 
 func TestPromoteCodexLaunchProfileApprovals_PreservesConfigSymlink(t *testing.T) {
 	home := t.TempDir()
-	_, path := sealedTestProfile(t, home, "aaaaaaaaaaaaaaaa")
+	_, path := testLaunchProfile(t, home, "aaaaaaaaaaaaaaaa")
 	appendTestApproval(t, path, "linear.save_issue")
 	target := filepath.Join(home, "real-config.toml")
 	require.NoError(t, os.WriteFile(target, []byte("# target\n"), 0o600))
@@ -197,13 +223,14 @@ func TestPromoteCodexLaunchProfileApprovals_PreservesConfigSymlink(t *testing.T)
 	assert.Contains(t, string(data), "linear.save_issue")
 }
 
-func TestCodexProfileSeal_OnlyLaunchSpecificProfiles(t *testing.T) {
+func TestCodexProfilesDoNotEmitByteBaselineSeals(t *testing.T) {
+	const legacyMarker = "# tclaude-managed-baseline-sha256: "
 	launch, err := codexAgentProfileContentForNameAndRules(
 		CodexAgentProfile+"-6666666666666666", "/tmp/agentd.sock", "/tmp/private", nil, nil, nil)
 	require.NoError(t, err)
-	assert.Contains(t, launch, codexAgentProfileBaselineMarker)
+	assert.NotContains(t, launch, legacyMarker)
 	base, err := codexAgentProfileContentForNameAndRules(
 		CodexAgentProfile, "/tmp/agentd.sock", "/tmp/private", nil, nil, nil)
 	require.NoError(t, err)
-	assert.NotContains(t, base, codexAgentProfileBaselineMarker)
+	assert.NotContains(t, base, legacyMarker)
 }

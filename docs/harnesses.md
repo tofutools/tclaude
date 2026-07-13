@@ -163,15 +163,16 @@ starts so a detached agent cannot freeze on the trust-folder modal. The managed
 sandbox baseline lives in `~/.codex/tclaude-agent.config.toml`, installed by
 `tclaude setup`. Spawn-time copies use launch-unique filenames and are removed
 when their Codex process exits. If a persistent-config merge fails transiently,
-the sealed copy is retained so agentd can retry rather than silently losing the
+the valid copy is retained so agentd can retry rather than silently losing the
 choice. If Codex writes an app-tool **Always allow** choice into that active
-temporary profile, agentd verifies that the sealed sandbox baseline is unchanged
-and promotes only the new per-tool approval into the persistent
-`~/.codex/config.toml`; pane-exit cleanup repeats the check as a fallback.
-Existing global decisions are never overwritten. A bounded startup sweep removes
-old copies left by forced stops or host crashes; your other config and profiles
-are left untouched. The research behind
-the defaults lives in the `tclaude-harness-independence` Linear project
+temporary profile, agentd parses the complete TOML document and promotes only
+explicit per-tool `approval_mode = "approve"` decisions into the persistent
+`~/.codex/config.toml`; unrelated profile settings are ignored, and malformed
+profiles are refused. Pane-exit cleanup repeats the reconciliation as a fallback.
+Existing global decisions are never overwritten, including conflicting
+decisions. A bounded startup sweep removes old copies left by forced stops or
+host crashes; your other config and profiles are left untouched. The research
+behind the defaults lives in the `tclaude-harness-independence` Linear project
 (JOH-166/JOH-167/JOH-200/JOH-207).
 
 ### Sandbox at spawn (Claude Code)

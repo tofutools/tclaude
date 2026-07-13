@@ -59,12 +59,11 @@ func cleanupCodexLaunchProfile(path string) error {
 		if !harness.IsCodexLaunchProfileValidationError(promoteErr) {
 			// Preserve the only copy of the explicit choice when the persistent
 			// config is temporarily unreadable/unwritable. agentd's startup scan
-			// can retry the still-sealed profile later.
+			// can retry the still-valid profile later.
 			return fmt.Errorf("persist Codex profile approvals (profile retained at %s): %w", path, promoteErr)
 		}
-		// A malformed or baseline-tampered profile is unsafe to retain as a
-		// proof-scoped authority file. It is deliberately removed without
-		// promoting anything.
+		// A malformed profile cannot be reconciled safely. It is deliberately
+		// removed without promoting anything.
 		slog.Warn("codex profile cleanup: removing invalid managed profile", "path", path, "error", promoteErr)
 	} else {
 		if len(report.Conflicts) > 0 {

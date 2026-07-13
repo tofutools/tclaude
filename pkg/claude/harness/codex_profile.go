@@ -1,7 +1,6 @@
 package harness
 
 import (
-	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -45,13 +44,6 @@ const codexAgentLaunchProfileMaxAge = 24 * time.Hour
 var codexProfileNameRe = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 var codexAgentLaunchIDRe = regexp.MustCompile(`^[0-9a-f]{16}$`)
 var codexAgentLaunchProfileFileRe = regexp.MustCompile(`^tclaude-agent-[0-9a-f]{16}\.config\.toml$`)
-
-// codexAgentProfileBaselineMarker seals the tclaude-owned prefix of every
-// launch-specific profile. Codex may append user choices (notably app-tool
-// "Always allow" entries) to the active -p profile. The agentd monitor uses
-// this marker to prove the sandbox baseline is byte-for-byte unchanged before
-// it considers promoting any appended approval into the user's config.toml.
-const codexAgentProfileBaselineMarker = "# tclaude-managed-baseline-sha256: "
 
 // ValidateCodexProfileName trims and validates a Codex permission-profile
 // name. "" passes through unchanged (the caller omits the flag); any other
@@ -217,13 +209,7 @@ func codexAgentProfileContentForNameAndRules(profileName, socketPath, privateSta
 	fmt.Fprintf(&b, "enabled = true\n\n")
 	fmt.Fprintf(&b, "[permissions.%s.network.unix_sockets]\n", p)
 	fmt.Fprintf(&b, "%q = \"allow\"\n", socketPath)
-	content := b.String()
-	if codexAgentLaunchProfileFileRe.MatchString(profileName + ".config.toml") {
-		sum := sha256.Sum256([]byte(content))
-		fmt.Fprintf(&b, "%s%x\n", codexAgentProfileBaselineMarker, sum)
-		content = b.String()
-	}
-	return content, nil
+	return b.String(), nil
 }
 
 func validateCodexProfilePath(label, path string) error {

@@ -2,8 +2,6 @@ package harness
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -18,10 +16,8 @@ import (
 
 var codexAppIDRe = regexp.MustCompile(`^asdk_app_[A-Za-z0-9]+$`)
 
-var errCodexLaunchProfileNotSealed = errors.New("managed Codex profile has no baseline seal")
-
-// CodexToolApproval is one app-tool "Always allow" choice that Codex
-// appended to a launch-specific config profile.
+// CodexToolApproval is one app-tool "Always allow" choice from a
+// launch-specific config profile.
 type CodexToolApproval struct {
 	AppID string
 	Tool  string
@@ -43,18 +39,12 @@ func (e *codexLaunchProfileValidationError) Error() string { return e.err.Error(
 func (e *codexLaunchProfileValidationError) Unwrap() error { return e.err }
 
 // IsCodexLaunchProfileValidationError reports whether promotion failed because
-// the managed profile itself was malformed or its sealed baseline changed.
+// the managed profile itself was malformed.
 // Such a profile is unsafe to retain even though transient global-config
 // failures should preserve it for a later retry.
 func IsCodexLaunchProfileValidationError(err error) bool {
 	var target *codexLaunchProfileValidationError
 	return errors.As(err, &target)
-}
-
-// IsCodexLaunchProfileNotSealed reports whether promotion observed a managed
-// profile before its baseline seal had been written.
-func IsCodexLaunchProfileNotSealed(err error) bool {
-	return errors.Is(err, errCodexLaunchProfileNotSealed)
 }
 
 // CodexConfigDir exposes the directory where Codex resolves config.toml and
@@ -73,56 +63,25 @@ func IsCodexAgentLaunchProfilePath(path string) bool {
 		codexAgentLaunchProfileFileRe.MatchString(filepath.Base(clean))
 }
 
-// ExtractCodexLaunchProfileApprovals verifies the sealed tclaude baseline and
-// returns only exact app-tool approval additions written after that baseline.
-// Unrelated Codex-owned additions (for example TUI onboarding state) are
-// ignored, while any mutation to the baseline prefix fails closed.
+// ExtractCodexLaunchProfileApprovals parses a managed profile and returns its
+// explicit app-tool "approve" decisions. Unrelated Codex-owned settings (for
+// example TUI onboarding state) and non-approve decisions are ignored. The
+// profile's permission settings are intentionally not an approval provenance
+// check: Codex may rewrite unrelated TOML, while the exact managed path lives
+// outside the sandboxed agent's writable roots. A process with ordinary user
+// access to this directory could already edit the persistent config directly.
 func ExtractCodexLaunchProfileApprovals(data []byte) ([]CodexToolApproval, error) {
-	marker := []byte(codexAgentProfileBaselineMarker)
-	idx := bytes.Index(data, marker)
-	if idx < 0 || (idx > 0 && data[idx-1] != '\n') {
-		return nil, errCodexLaunchProfileNotSealed
-	}
-	if bytes.Contains(data[idx+len(marker):], marker) {
-		return nil, fmt.Errorf("managed Codex profile has multiple baseline seals")
-	}
-	lineEndRel := bytes.IndexByte(data[idx:], '\n')
-	if lineEndRel < 0 {
-		return nil, fmt.Errorf("managed Codex profile has an unterminated baseline seal")
-	}
-	lineEnd := idx + lineEndRel
-	wantHex := strings.TrimSpace(string(data[idx+len(marker) : lineEnd]))
-	if len(wantHex) != sha256.Size*2 {
-		return nil, fmt.Errorf("managed Codex profile has an invalid baseline seal")
-	}
-	want, err := hex.DecodeString(wantHex)
-	if err != nil {
-		return nil, fmt.Errorf("managed Codex profile has an invalid baseline seal: %w", err)
-	}
-	got := sha256.Sum256(data[:idx])
-	if !bytes.Equal(want, got[:]) {
-		return nil, fmt.Errorf("managed Codex profile baseline changed; refusing approval promotion")
-	}
-
-	// Parse the whole document as well as the appended suffix. Whole-document
-	// parsing rejects a suffix that redefines a baseline key/table. Parsing the
-	// suffix separately gives us an exact boundary: only values Codex added
-	// after the seal are eligible for promotion.
-	var whole map[string]any
-	if err := toml.Unmarshal(data, &whole); err != nil {
+	var profile map[string]any
+	if err := toml.Unmarshal(data, &profile); err != nil {
 		return nil, fmt.Errorf("parse managed Codex profile: %w", err)
 	}
-	suffix := bytes.TrimSpace(data[lineEnd+1:])
-	if len(suffix) == 0 {
+	rawApps, exists := profile["apps"]
+	if !exists {
 		return nil, nil
 	}
-	var added map[string]any
-	if err := toml.Unmarshal(suffix, &added); err != nil {
-		return nil, fmt.Errorf("parse managed Codex profile additions: %w", err)
-	}
-	apps, ok := stringMap(added["apps"])
+	apps, ok := stringMap(rawApps)
 	if !ok {
-		return nil, nil
+		return nil, fmt.Errorf("managed Codex profile apps key has a non-table shape")
 	}
 
 	var approvals []CodexToolApproval
@@ -132,15 +91,33 @@ func ExtractCodexLaunchProfileApprovals(data []byte) ([]CodexToolApproval, error
 		}
 		app, ok := stringMap(rawApp)
 		if !ok {
+			return nil, fmt.Errorf("managed Codex profile app %s has a non-table shape", appID)
+		}
+		rawTools, exists := app["tools"]
+		if !exists {
 			continue
 		}
-		tools, ok := stringMap(app["tools"])
+		tools, ok := stringMap(rawTools)
 		if !ok {
-			continue
+			return nil, fmt.Errorf("managed Codex profile app %s tools key has a non-table shape", appID)
 		}
 		for toolName, rawTool := range tools {
+			if !validCodexToolName(toolName) {
+				continue
+			}
 			tool, ok := stringMap(rawTool)
-			if !ok || len(tool) != 1 || tool["approval_mode"] != "approve" || !validCodexToolName(toolName) {
+			if !ok {
+				return nil, fmt.Errorf("managed Codex profile tool %s/%s has a non-table shape", appID, toolName)
+			}
+			rawDecision, exists := tool["approval_mode"]
+			if !exists {
+				continue
+			}
+			decision, ok := rawDecision.(string)
+			if !ok {
+				return nil, fmt.Errorf("managed Codex profile tool %s/%s has a non-string approval_mode", appID, toolName)
+			}
+			if decision != "approve" {
 				continue
 			}
 			approvals = append(approvals, CodexToolApproval{AppID: appID, Tool: toolName})
@@ -167,9 +144,9 @@ func stringMap(v any) (map[string]any, bool) {
 	return m, ok
 }
 
-// PromoteCodexLaunchProfileApprovals copies verified app-tool "Always allow"
-// additions into the persistent Codex config. It never overwrites an existing
-// per-tool decision and never copies unrelated launch-profile changes.
+// PromoteCodexLaunchProfileApprovals copies explicit app-tool "Always allow"
+// decisions into the persistent Codex config. It never overwrites an existing
+// per-tool decision and never copies unrelated launch-profile settings.
 func PromoteCodexLaunchProfileApprovals(profilePath string) (CodexApprovalPromotion, error) {
 	var report CodexApprovalPromotion
 	if !IsCodexAgentLaunchProfilePath(profilePath) {
