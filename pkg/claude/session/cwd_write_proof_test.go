@@ -23,7 +23,7 @@ func TestSpawnCwdReadinessFileLivesInPrivateDataDir(t *testing.T) {
 	// The guard is a shell prefix executed before harnessCmd starts the
 	// sandboxed harness, so it can acknowledge readiness in the denied data
 	// subtree without granting that subtree to the agent.
-	cmd := exec.Command("sh", "-c", guardHarnessCommandWithDirProof("true", "", path, false, nil))
+	cmd := exec.Command("sh", "-c", guardHarnessCommandWithDirProof("true", "", path, false, nil, nil))
 	require.NoError(t, cmd.Run())
 	status, err := os.ReadFile(path)
 	require.NoError(t, err)
@@ -40,7 +40,7 @@ func TestGuardHarnessCommandWithCwdProof_ChecksMarkerThenRuns(t *testing.T) {
 	require.NoError(t, os.WriteFile(ready, []byte("pending"), 0o600))
 
 	cmd := exec.Command("sh", "-c", guardHarnessCommandWithDirProof(
-		"printf launched > "+clcommon.ShellQuoteArg(launched), proof, ready, true, nil))
+		"printf launched > "+clcommon.ShellQuoteArg(launched), proof, ready, true, nil, nil))
 	cmd.Dir = dir
 	require.NoError(t, cmd.Run())
 
@@ -68,7 +68,7 @@ func TestGuardHarnessCommandWithCwdProof_RejectsPathSwap(t *testing.T) {
 	require.NoError(t, os.WriteFile(ready, []byte("pending"), 0o600))
 
 	cmd := exec.Command("sh", "-c", guardHarnessCommandWithDirProof(
-		"printf launched > "+clcommon.ShellQuoteArg(launched), proof, ready, true, nil))
+		"printf launched > "+clcommon.ShellQuoteArg(launched), proof, ready, true, nil, nil))
 	cmd.Dir = target
 	err := cmd.Run()
 	require.Error(t, err)
@@ -95,7 +95,7 @@ func TestGuardHarnessCommandWithDirProofRejectsSwappedRepositoryRoot(t *testing.
 	ready := filepath.Join(root, "ready")
 	require.NoError(t, os.WriteFile(ready, []byte("pending"), 0o600))
 
-	cmd := exec.Command("sh", "-c", guardHarnessCommandWithDirProof("true", proof, ready, true, []string{grant}))
+	cmd := exec.Command("sh", "-c", guardHarnessCommandWithDirProof("true", proof, ready, true, []string{grant}, nil))
 	cmd.Dir = cwd
 	require.Error(t, cmd.Run())
 	status, err := os.ReadFile(ready)
@@ -115,7 +115,7 @@ func TestGuardHarnessCommandWithDirProofChecksRepositoryWithoutCwdMarker(t *test
 	ready := filepath.Join(root, "ready")
 	require.NoError(t, os.WriteFile(ready, []byte("pending"), 0o600))
 
-	cmd := exec.Command("sh", "-c", guardHarnessCommandWithDirProof("true", proof, ready, false, []string{grant}))
+	cmd := exec.Command("sh", "-c", guardHarnessCommandWithDirProof("true", proof, ready, false, []string{grant}, nil))
 	cmd.Dir = cwd
 	require.NoError(t, cmd.Run())
 	status, err := os.ReadFile(ready)

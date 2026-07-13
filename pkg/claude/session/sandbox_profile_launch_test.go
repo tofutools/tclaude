@@ -58,9 +58,11 @@ func TestSandboxSnapshotProofDirsExcludesMaterializedAgentDirectory(t *testing.T
 	assert.Equal(t, []string{customWriteDir, agentWriteDir},
 		sandboxSnapshotDirs(snapshot, sandboxpolicy.AccessWrite),
 		"the generated directory must remain writable by the child")
-	proofDirs := sandboxSnapshotProofDirs(snapshot, sandboxpolicy.AccessWrite)
+	proofDirs, generatedDirs := sandboxSnapshotProofDirs(snapshot, sandboxpolicy.AccessWrite)
 	assert.Equal(t, []string{customWriteDir}, proofDirs,
 		"only caller-controlled roots should require the caller's marker")
+	assert.Equal(t, []string{agentWriteDir}, generatedDirs,
+		"the generated root should retain a path-substitution check")
 
 	proof := "proof-agent-directory"
 	marker := clcommon.SpawnDirWriteProofPrefix + proof
@@ -71,11 +73,26 @@ func TestSandboxSnapshotProofDirsExcludesMaterializedAgentDirectory(t *testing.T
 	require.NoError(t, os.WriteFile(ready, []byte("pending"), 0o600))
 
 	cmd := exec.Command("sh", "-c", guardHarnessCommandWithDirProof(
-		"true", proof, ready, true, proofDirs))
+		"true", proof, ready, true, proofDirs, generatedDirs))
 	cmd.Dir = cwd
 	require.NoError(t, cmd.Run(),
 		"a daemon-materialized directory created after the challenge must not need a caller marker")
 	status, err := os.ReadFile(ready)
 	require.NoError(t, err)
 	assert.Equal(t, "ok", string(status))
+
+	// The generated directory needs no caller marker, but it must not be
+	// replaceable with a symlink between daemon materialization and launch.
+	forbidden := filepath.Join(root, "forbidden")
+	require.NoError(t, os.Mkdir(forbidden, 0o700))
+	require.NoError(t, os.Rename(agentWriteDir, agentWriteDir+"-old"))
+	require.NoError(t, os.Symlink(forbidden, agentWriteDir))
+	require.NoError(t, os.WriteFile(ready, []byte("pending"), 0o600))
+	cmd = exec.Command("sh", "-c", guardHarnessCommandWithDirProof(
+		"true", proof, ready, true, proofDirs, generatedDirs))
+	cmd.Dir = cwd
+	require.Error(t, cmd.Run())
+	status, err = os.ReadFile(ready)
+	require.NoError(t, err)
+	assert.Equal(t, "error:repository-proof", string(status))
 }
