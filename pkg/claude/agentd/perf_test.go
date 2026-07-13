@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -96,11 +97,15 @@ func TestWithPerfTiming_RecordsTotalAndPhases(t *testing.T) {
 	assert.Equal(t, "write", s.Phases[2].Name)
 	// The total covers the whole request, so it can't be smaller than
 	// the sum of its phases (they partition the same interval).
-	var phaseSum float64
+	var phaseMicros int64
 	for _, p := range s.Phases {
-		phaseSum += p.Ms
+		// durMs records whole microseconds as fractional milliseconds.
+		// Compare at that source precision so summing float64 values cannot
+		// turn (for example) 0.013 into 0.013000000000000001.
+		phaseMicros += int64(math.Round(p.Ms * 1000))
 	}
-	assert.GreaterOrEqual(t, s.TotalMs, phaseSum)
+	totalMicros := int64(math.Round(s.TotalMs * 1000))
+	assert.GreaterOrEqual(t, totalMicros, phaseMicros)
 }
 
 func TestWithPerfTiming_NoPhasesMeansNoSyntheticWrite(t *testing.T) {

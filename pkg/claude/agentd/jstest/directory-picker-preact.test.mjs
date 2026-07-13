@@ -143,6 +143,71 @@ test('Preact picker filters its folder pane and completes the active match', asy
   await mounted.unmount();
 });
 
+test('Preact picker navigates the unfiltered folder pane with arrow and page keys', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDirectoryPickerState }, { DirectoryPickerApp }] = await Promise.all([
+    harness.importDashboardModule('js/directory-picker-state.js'),
+    harness.importDashboardModule('js/directory-picker-island.js'),
+  ]);
+  const state = createDirectoryPickerState();
+  const directories = Array.from({ length: 15 }, (_, index) => ({
+    name: `folder-${index}`,
+    path: `/root/folder-${index}`,
+  }));
+  const calls = [];
+  const actions = { browse: async (path) => {
+    calls.push(path);
+    return path === '/root'
+      ? { path, parent: '/', home: '/home/me', directories }
+      : { path, parent: '/root', home: '/home/me', directories: [] };
+  } };
+  const mounted = await harness.mount(
+    harness.html`<${DirectoryPickerApp} state=${state} actions=${actions} />`,
+  );
+  let result;
+  await harness.act(() => { result = state.open({ startDir: '/root', title: 'Choose' }); });
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+
+  const input = mounted.container.querySelector('#directory-picker-path');
+  assert.equal(input.value, '/root');
+  assert.equal(input.getAttribute('role'), 'combobox');
+  assert.equal(mounted.container.querySelector('.directory-picker-list').getAttribute('role'), 'listbox');
+  assert.equal(mounted.container.querySelector('.directory-picker-list button.active').title, '/root/folder-0');
+
+  const down = harness.fireEvent(input, 'keydown', { key: 'ArrowDown' });
+  await harness.act(() => Promise.resolve());
+  assert.equal(down.defaultPrevented, true);
+  assert.equal(mounted.container.querySelector('.directory-picker-list button.active').title, '/root/folder-1');
+
+  const pageDown = harness.fireEvent(input, 'keydown', { key: 'PageDown' });
+  await harness.act(() => Promise.resolve());
+  assert.equal(pageDown.defaultPrevented, true);
+  assert.equal(mounted.container.querySelector('.directory-picker-list button.active').title, '/root/folder-11');
+
+  const pageDownAtEnd = harness.fireEvent(input, 'keydown', { key: 'PageDown' });
+  await harness.act(() => Promise.resolve());
+  assert.equal(pageDownAtEnd.defaultPrevented, true);
+  assert.equal(mounted.container.querySelector('.directory-picker-list button.active').title, '/root/folder-14');
+
+  const pageUp = harness.fireEvent(input, 'keydown', { key: 'PageUp' });
+  await harness.act(() => Promise.resolve());
+  assert.equal(pageUp.defaultPrevented, true);
+  assert.equal(mounted.container.querySelector('.directory-picker-list button.active').title, '/root/folder-4');
+
+  const up = harness.fireEvent(input, 'keydown', { key: 'ArrowUp' });
+  await harness.act(() => Promise.resolve());
+  assert.equal(up.defaultPrevented, true);
+  assert.equal(mounted.container.querySelector('.directory-picker-list button.active').title, '/root/folder-3');
+
+  harness.fireEvent(mounted.container.querySelector('.directory-picker-path'), 'submit');
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.deepEqual(calls, ['/root', '/root/folder-3']);
+
+  state.finish({ canceled: true });
+  assert.deepEqual(await result, { canceled: true });
+  await mounted.unmount();
+});
+
 test('Preact picker leaves the list intact for a directly typed path', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createDirectoryPickerState }, { DirectoryPickerApp }] = await Promise.all([
