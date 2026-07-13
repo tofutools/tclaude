@@ -113,17 +113,20 @@ function SudoView({ state, actions, current }) {
 }
 
 function AccessSubnav({ state, current }) {
+  const notifyNavigation = (subtab) => document.dispatchEvent(new CustomEvent('tclaude:navigated', {
+    detail: { location: { tab: 'access', subtab } },
+  }));
   const navigate = (event, subtab) => {
     if (event.button > 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
     state.setSubtab(subtab);
-    document.dispatchEvent(new CustomEvent('tclaude:navigated'));
+    notifyNavigation(subtab);
   };
   const keyDown = (event, subtab) => {
     if (event.key !== ' ' && event.key !== 'Spacebar') return;
     event.preventDefault();
     state.setSubtab(subtab);
-    document.dispatchEvent(new CustomEvent('tclaude:navigated'));
+    notifyNavigation(subtab);
   };
   return html`<div class="access-subnav" role="tablist" aria-label="Access control views">
     ${ACCESS_SUBTABS.map((subtab) => html`<a key=${subtab} class=${`access-subtab${current.subtab === subtab ? ' active' : ''}`}
