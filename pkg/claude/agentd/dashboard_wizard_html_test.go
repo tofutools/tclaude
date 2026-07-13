@@ -239,6 +239,7 @@ func TestDashboardHTML_WizardLinksDialogs(t *testing.T) {
 		t.Errorf("per-party add-link wizard copy appears %d times, want 2 (empty and populated link sections)", got)
 	}
 	must("body.wizard .group-links-section > button", "the per-party add-link action is gilded")
+	must("linear-gradient(180deg, #654c98 0%, #3a2a63 100%)", "the compact wizard action keeps AA text contrast")
 }
 
 // TestDashboardHTML_WizardRetireModal pins the wizard re-skin of the retire

@@ -8562,7 +8562,9 @@ body.wizard #links-manage-modal #links-list .row-actions button.danger:hover {
    the base button's small footprint while borrowing the gilded channel action
    from the management overlay. */
 body.wizard .group-links-section > button {
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  /* The inherited label is 11px, so keep even the light gradient stop above
+     4.5:1 against the parchment text (#f3e6c0). */
+  background: linear-gradient(180deg, #654c98 0%, #3a2a63 100%);
   border-color: #d9b45a;
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -8571,7 +8573,7 @@ body.wizard .group-links-section > button {
   box-shadow: 0 0 8px rgba(122, 93, 176, 0.35);
 }
 body.wizard .group-links-section > button:hover {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  background: linear-gradient(180deg, #6d52a4 0%, #4a367d 100%);
   border-color: #f3e6c0;
   color: #fff4d6;
   box-shadow: 0 0 12px rgba(169, 123, 214, 0.65);
