@@ -4,7 +4,7 @@
 // Extracted from dashboard.js in the Stage 2 module split. refresh() is
 // the 2-second snapshot poll that re-renders every tab.
 
-import { $, $$, isModifiedClick, esc, shortId, relTime, captureFocus, restoreFocus } from './helpers.js';
+import { $, $$, isModifiedClick, esc, themeWords, shortId, relTime, captureFocus, restoreFocus } from './helpers.js';
 import { cycleSort } from './sort.js';
 import { dashPrefs } from './prefs.js';
 import { listParams, syncServedOffset, fetchListFull } from './list-paging.js';
@@ -2011,7 +2011,7 @@ async function openWorktreeCleanup(group) {
   errEl.textContent = '';
   searchEl.value = '';
   branchesCb.checked = true;
-  titleEl.textContent = `Clean up worktrees in "${group}"`;
+  titleEl.innerHTML = themeWords(`Clean up worktrees in group "${group}"`, `Clean up worktrees in party "${group}"`);
   countEl.textContent = '';
   catsEl.innerHTML = '';
   submitBtn.disabled = true;
@@ -2032,18 +2032,19 @@ async function openWorktreeCleanup(group) {
   const agentLabel = (agents) => {
     if (!agents || !agents.length) return '';
     const names = agents.map(a => a.title || (a.conv_id || '').slice(0, 8));
-    return 'agent: ' + names.join(', ');
+    return (isWizardActive() ? 'familiar: ' : 'agent: ') + names.join(', ');
   };
 
   function renderHint() {
     const n = removable().length;
-    const where = repoRoots.length ? repoRoots.join(', ') : "this group's repo";
-    hintEl.textContent = n === 0
-      ? `No removable worktrees found in ${where}.`
-      : `${n} removable worktree${n === 1 ? '' : 's'} in ${where}. `
-        + `Orphans (no agent) and retired-agent leftovers are pre-ticked; worktrees a still-enrolled agent `
-        + `uses (resume-bound) and ones with uncommitted changes are left unticked for you to review. `
-        + `Only ticked worktrees are removed.`;
+    const regularWhere = repoRoots.length ? repoRoots.join(', ') : "this group's repo";
+    const wizardWhere = repoRoots.length ? repoRoots.join(', ') : "this party's repo";
+    hintEl.innerHTML = n === 0
+      ? themeWords(`No removable worktrees found in ${regularWhere}.`, `No removable worktrees found in ${wizardWhere}.`)
+      : themeWords(
+          `${n} removable worktree${n === 1 ? '' : 's'} in ${regularWhere}. Orphans (no agent) and retired-agent leftovers are pre-ticked; worktrees a still-enrolled agent uses (resume-bound) and ones with uncommitted changes are left unticked for you to review. Only ticked worktrees are removed.`,
+          `${n} removable worktree${n === 1 ? '' : 's'} in ${wizardWhere}. Orphans (no familiar) and banished-familiar leftovers are pre-ticked; worktrees a still-bound familiar uses and ones with uncommitted changes are left unticked for review. Only ticked worktrees are removed.`,
+        );
   }
 
   // Category mass-toggle chips: one per non-empty category (orphan /
@@ -2252,6 +2253,7 @@ async function openWorktreeCleanup(group) {
 function openWindowModal(scope, groupName) {
   const snap = lastSnapshot || {};
   const where = scope === 'group' ? `group "${groupName}"` : 'the dashboard';
+  const wizardWhere = scope === 'group' ? `party "${groupName}"` : 'the tower';
   const NO_ROLE = '(no role)';
   const NO_GROUP = '(no group)';
 
@@ -2295,7 +2297,10 @@ function openWindowModal(scope, groupName) {
     }
   }
   if (candidates.length === 0) {
-    toast(`agent windows: no running agents in ${where}`);
+    toast(wizWord(
+      `agent windows: no running agents in ${where}`,
+      `scrying portals: no channeling familiars in ${wizardWhere}`,
+    ));
     return;
   }
   // roleKeys(c) — the role buckets a candidate belongs to (for the
@@ -2361,13 +2366,13 @@ function openWindowModal(scope, groupName) {
     const wiz = isWizardActive();
     if (direction() === 'focus') {
       hintEl.textContent = wiz
-        ? `Conjure a scrying portal for each chosen channeling familiar in ${where}.`
+        ? `Conjure a scrying portal for each chosen channeling familiar in ${wizardWhere}.`
         : webTerminalDefault()
           ? `Open or focus a web terminal pane for each selected running agent in ${where}.`
           : `Open or raise a terminal window for each selected running agent in ${where}.`;
     } else {
       hintEl.textContent = wiz
-        ? `Draw the veil over the chosen familiars' scrying portals in ${where} so the `
+        ? `Draw the veil over the chosen familiars' scrying portals in ${wizardWhere} so the `
           + `desktop is decluttered. The familiars keep channeling — only the portals are dismissed.`
         : webTerminalDefault()
           ? `Detach the web terminal panes of the selected running agents in ${where}. `
@@ -2382,7 +2387,7 @@ function openWindowModal(scope, groupName) {
     // dashboard (the common case) can still bulk-toggle by group. The
     // synthetic NO_GROUP bucket appears whenever an ungrouped agent is
     // in scope, sorted last.
-    let html = '<span class="roles-label">groups</span>';
+    let html = `<span class="roles-label">${themeWords('groups', 'parties')}</span>`;
     for (const k of allGroupKeys) {
       const inK = candidates.filter(c => groupKeys(c).includes(k));
       const on = inK.filter(c => c.checked).length;
@@ -2396,7 +2401,7 @@ function openWindowModal(scope, groupName) {
     // Like the group filter, the role filter is always shown — even a
     // single role (or the synthetic NO_ROLE bucket alone) earns its
     // chip, so the two filter rows are consistently present.
-    let html = '<span class="roles-label">roles</span>';
+    let html = `<span class="roles-label">${themeWords('roles', 'classes')}</span>`;
     for (const k of allRoleKeys) {
       const inK = candidates.filter(c => roleKeys(c).includes(k));
       const on = inK.filter(c => c.checked).length;
@@ -2409,7 +2414,7 @@ function openWindowModal(scope, groupName) {
   function renderList() {
     const rows = candidates.filter(matchesFilter);
     if (rows.length === 0) {
-      listEl.innerHTML = '<div class="cleanup-empty">no agents match the filter</div>';
+      listEl.innerHTML = `<div class="cleanup-empty">${themeWords('no agents match the filter', 'no familiars match the filter')}</div>`;
       return;
     }
     listEl.innerHTML = rows.map(c => {
@@ -2956,7 +2961,7 @@ function retireConfirm({label, conv, perform}) {
           wtCb.disabled = true;
           wtRow.classList.add('disabled');
           const why = wt.kind === 'main' ? 'the repo’s main worktree, never removed'
-            : wt.shared ? 'shared with another agent'
+            : wt.shared ? (isWizardActive() ? 'shared with another familiar' : 'shared with another agent')
             : 'not removable';
           wtLabel.innerHTML = 'Git worktree kept '
             + `<span class="wt-note">${esc(pathTxt)} — ${esc(why)}</span>`;
@@ -3442,10 +3447,10 @@ function addMemberModal(groupName) {
         const role = meta.role ? `<span class="role">${esc(meta.role)}</span>` : '';
         const descr = meta.descr ? `<span class="descr">${esc(meta.descr)}</span>` : '';
         const groups = (a.groups || []).length
-          ? `<span class="groups-tag">in: ${esc((a.groups || []).join(', '))}</span>`
+          ? `<span class="groups-tag">${themeWords('in:', 'parties:')} ${esc((a.groups || []).join(', '))}</span>`
           : '';
         const promote = a._promote
-          ? '<span class="groups-tag promote-tag" title="Not an agent yet — adding it here promotes it">promotes to agent</span>'
+          ? `<span class="groups-tag promote-tag" title="Not an agent / familiar yet — adding it here promotes it">${themeWords('promotes to agent', 'awakens as familiar')}</span>`
           : '';
         return `<div class="add-member-row${i === highlight ? ' highlighted' : ''}" data-i="${i}">` +
                `${dot}<span class="rowname">${esc(display)}</span>` +
@@ -3591,9 +3596,10 @@ function deleteAgentModal(conv, label) {
     const wtLabel = $('#delete-agent-wt-label');
     const okBtn = $('#delete-agent-ok');
     const cancelBtn = $('#delete-agent-cancel');
-    $('#delete-agent-body').textContent =
-      'Wipes the conversation history (.jsonl) from disk and drops every group / '
-      + 'membership / ownership / permission row for this agent. This cannot be undone.';
+    $('#delete-agent-body').innerHTML = themeWords(
+      'Wipes the conversation history (.jsonl) from disk and drops every group / membership / ownership / permission row for this agent. This cannot be undone.',
+      'Burns the conversation scroll (.jsonl) and erases every party membership, ownership mark, and boon bound to this familiar. This cannot be undone.',
+    );
     $('#delete-agent-meta').textContent = label || conv;
     // Worktree row hidden until the fetch tells us there is one.
     wtRow.style.display = 'none';
@@ -3835,7 +3841,8 @@ export async function openCleanupModal(opts) {
     if (mode === 'group') {
       optsEl.innerHTML =
         '<label><input type="checkbox" id="cleanup-opt-owners" /> ' +
-        'Include offline owners <span class="opt-note">— also strips their owner status</span></label>';
+        themeWords('Include offline owners', 'Include slumbering party owners') +
+        ` <span class="opt-note">${themeWords('— also strips their owner status', '— also revokes their party-owner mark')}</span></label>`;
       return;
     }
     // agents mode: the tier selector (group mode returned above).
@@ -4003,7 +4010,10 @@ export async function openCleanupModal(opts) {
     countEl.textContent = n + ' selected';
     let label;
     if (mode === 'group') {
-      label = n ? `Remove ${n} from ${groupName}` : 'Remove from group';
+      submitBtn.innerHTML = themeWords(
+        n ? `Remove ${n} from ${groupName}` : 'Remove from group',
+        n ? `Dismiss ${n} from ${groupName}` : 'Dismiss from party',
+      );
     } else if (tr === 'delete') {
       label = n ? `Delete ${n} conversation${n === 1 ? '' : 's'} permanently` : 'Delete conversations';
     } else if (tr === 'retire') {
@@ -4013,7 +4023,7 @@ export async function openCleanupModal(opts) {
     } else {
       label = n ? `Remove ${n} agent${n === 1 ? '' : 's'} from all groups` : 'Remove from groups';
     }
-    submitBtn.textContent = label;
+    if (mode !== 'group') submitBtn.textContent = label;
     submitBtn.disabled = n === 0;
     submitBtn.classList.toggle('danger', tr === 'delete');
     applyHint();
@@ -4035,7 +4045,7 @@ export async function openCleanupModal(opts) {
   function applyChrome() {
     const titleEl = $('#cleanup-title');
     if (mode === 'group') {
-      titleEl.textContent = '🧹 Clean up group: ' + groupName;
+      titleEl.innerHTML = themeWords('🧹 Clean up group: ' + groupName, '🧹 Tidy party: ' + groupName);
     } else {
       titleEl.textContent = '🧹 Clean up agents and conversations';
     }
@@ -4048,9 +4058,10 @@ export async function openCleanupModal(opts) {
     if (phase === 'result') return;
     if (mode === 'group') {
       hintEl.className = 'cleanup-hint';
-      hintEl.textContent = 'Removes the selected confirmed-offline members from this group. '
-        + 'Their conversations keep running and stay on disk — only the membership is dropped. '
-        + 'Owners are excluded unless you opt in below.';
+      hintEl.innerHTML = themeWords(
+        'Removes the selected confirmed-offline members from this group. Their conversations keep running and stay on disk — only the membership is dropped. Owners are excluded unless you opt in below.',
+        'Dismisses the selected confirmed-slumbering familiars from this party. Their conversation scrolls remain on disk — only the party bond is broken. Party owners are excluded unless you opt in below.',
+      );
       return;
     }
     const tr = cleanupTier();

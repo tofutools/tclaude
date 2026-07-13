@@ -4,9 +4,10 @@
 // formatting, and the small pure-ish cell / pill / status-dot / row-
 // button builders the dashboard render code shares. Extracted verbatim
 // from dashboard.js as the first step of the Stage 2 module split.
-// Near-leaf: it imports only the prefs store (which itself imports
-// nothing), used by the per-group offline-override helpers below.
+// Near-leaf: it imports the prefs store for per-group offline overrides and
+// the dependency-free theme helper used by shared presentation-copy builders.
 import { dashPrefs } from './prefs.js';
+import { wizWord } from './slop.js';
 
 const $ = (sel, root) => (root || document).querySelector(sel);
 const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
@@ -27,6 +28,15 @@ function esc(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// themeWords emits both ordinary and wizard-mode copy and lets CSS reveal the
+// active voice. Unlike wizWord(), this swaps immediately when the theme flips
+// without waiting for the Groups list's next snapshot render. Keep it for
+// visible copy; title/aria attributes still use wizWord() at render time.
+function themeWords(plain, wizard) {
+  return `<span class="theme-copy-regular">${esc(plain)}</span>`
+    + `<span class="theme-copy-wizard">${esc(wizard)}</span>`;
 }
 function shortId(id) { return (id || '').slice(0, 8); }
 // shortAgentId is the narrow-table form of a stable agent_id: the `agt_` tag
@@ -1081,18 +1091,30 @@ function notifyMenuItem(m) {
   const mode = m.notify || 'inherit';
   const effective = !!m.notify_effective;
   const glyph = (mode === 'off' || (mode === 'inherit' && !effective)) ? '🔕' : '🔔';
-  let text, tip;
+  let text, wizardText, tip;
   if (mode === 'off') {
     text = `${glyph} notify: off`;
-    tip = `notifications muted for ${label} — click to force ON (overrides a group mute)`;
+    wizardText = `${glyph} omens: silent`;
+    tip = wizWord(
+      `notifications muted for ${label} — click to force ON (overrides a group mute)`,
+      `omens silenced for familiar ${label} — click to restore them (overrides a party silence)`,
+    );
   } else if (mode === 'on') {
     text = `${glyph} notify: on`;
-    tip = `notifications forced ON for ${label} (overrides a group mute) — click to inherit from group`;
+    wizardText = `${glyph} omens: on`;
+    tip = wizWord(
+      `notifications forced ON for ${label} (overrides a group mute) — click to inherit from group`,
+      `omens forced ON for familiar ${label} (overrides a party silence) — click to inherit from the party`,
+    );
   } else {
     text = `${glyph} notify: inherit (${effective ? 'on' : 'off'})`;
-    tip = `notifications inherit (currently ${effective ? 'on' : 'off — a group is muted'}) for ${label} — click to mute`;
+    wizardText = `${glyph} omens: inherit (${effective ? 'on' : 'silent'})`;
+    tip = wizWord(
+      `notifications inherit (currently ${effective ? 'on' : 'off — a group is muted'}) for ${label} — click to mute`,
+      `omens inherit from the party (currently ${effective ? 'on' : 'silent'}) for familiar ${label} — click to silence`,
+    );
   }
-  return `<button data-act="toggle-agent-notify" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-mode="${esc(mode)}" data-label="${esc(label)}" title="${esc(tip)}">${esc(text)}</button>`;
+  return `<button data-act="toggle-agent-notify" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-mode="${esc(mode)}" data-label="${esc(label)}" title="${esc(tip)}">${themeWords(text, wizardText)}</button>`;
 }
 
 // remoteControlMenuItem renders the ⚙-menu "toggle Remote Access" item — the
@@ -1113,10 +1135,17 @@ function remoteControlMenuItem(m, canRemote) {
   const glyph = on ? '📱' : '📴';
   const intent = on ? 'off' : 'on';
   const text = on ? `${glyph} remote: on` : `${glyph} remote: off`;
+  const wizardText = on ? `${glyph} remote scrying: on` : `${glyph} remote scrying: off`;
   const tip = on
-    ? `Remote Access is ON for ${label} — reachable from the Claude app/phone. Click to turn it OFF.`
-    : `Remote Access is OFF for ${label}. Click to turn it ON — expose this agent to the Claude app/phone.`;
-  return `<button data-act="toggle-remote-control" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-intent="${esc(intent)}" data-label="${esc(label)}" title="${esc(tip)}">${esc(text)}</button>`;
+    ? wizWord(
+        `Remote Access is ON for ${label} — reachable from the Claude app/phone. Click to turn it OFF.`,
+        `Remote scrying is ON for familiar ${label} — reachable from the Claude app/phone. Click to close it.`,
+      )
+    : wizWord(
+        `Remote Access is OFF for ${label}. Click to turn it ON — expose this agent to the Claude app/phone.`,
+        `Remote scrying is OFF for familiar ${label}. Click to open it to the Claude app/phone.`,
+      );
+  return `<button data-act="toggle-remote-control" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-intent="${esc(intent)}" data-label="${esc(label)}" title="${esc(tip)}">${themeWords(text, wizardText)}</button>`;
 }
 
 // MENU_SEP is the hairline divider between semantic groups of cog-menu
@@ -1160,7 +1189,11 @@ function memberActions(g, m, canRemote) {
 function cloneAgentButton(m) {
   const label = m.title || m.conv_id;
   const cwd = (m.state && m.state.cwd) || m.cwd || '';
-  return `<button data-act="clone" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(label)}" data-cwd="${esc(cwd)}" title="Fork a sibling that inherits identity (groups, perms, ownership). The original keeps running.">clone</button>`;
+  const tip = wizWord(
+    'Fork a sibling agent that inherits identity (groups, perms, ownership). The original keeps running.',
+    'Mirror this familiar into a sibling that inherits its parties, boons, and ownership. The original keeps channeling.',
+  );
+  return `<button data-act="clone" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(label)}" data-cwd="${esc(cwd)}" title="${esc(tip)}">${themeWords('clone', 'mirror familiar')}</button>`;
 }
 // reincarnateAgentButton renders a "reincarnate" button for any row
 // that represents a single agent. The modal it opens defaults to
@@ -1168,10 +1201,14 @@ function cloneAgentButton(m) {
 // a force mode does the immediate daemon-driven reincarnation.
 function reincarnateAgentButton(m) {
   const label = m.title || m.conv_id;
-  return `<button data-act="reincarnate" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(label)}" title="Reincarnate this agent — by default ask it to do so itself (it writes its own handoff); or force an immediate daemon-driven reincarnation.">reincarnate</button>`;
+  const tip = wizWord(
+    'Reincarnate this agent — by default ask it to do so itself (it writes its own handoff); or force an immediate daemon-driven reincarnation.',
+    'Reincarnate this familiar — by default ask it to write its own handoff; or force its immediate return in a fresh vessel.',
+  );
+  return `<button data-act="reincarnate" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(label)}" title="${esc(tip)}">${themeWords('reincarnate', 'reincarnate familiar')}</button>`;
 }
 function sudoMemberButton(m) {
-  return `<button data-act="sudo-grant" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Grant a time-bounded sudo elevation to this agent">+ sudo</button>`;
+  return `<button data-act="sudo-grant" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="${esc(wizWord('Grant a time-bounded sudo elevation to this agent', 'Grant this familiar a time-bounded sudo boon'))}">+ sudo</button>`;
 }
 // exportAgentButton renders the ⚙-menu "📋 summary…" item — opens the export
 // modal that asks the LIVE agent to consolidate a shareable artifact (a
@@ -1184,15 +1221,25 @@ function exportAgentButton(m) {
   const label = m.title || m.conv_id;
   const dis = m.online ? '' : ' disabled';
   const why = m.online
-    ? 'Ask this agent to produce a shareable export of the conversation (a summary / report) and download it here. Multiple files are zipped automatically.'
-    : 'Export needs a running agent — it produces the file in its own session. Unavailable while the agent is offline.';
-  return `<button data-act="export-summary" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(label)}"${dis} title="${esc(why)}">summary…</button>`;
+    ? wizWord(
+        'Ask this agent to produce a shareable export of the conversation (a summary / report) and download it here. Multiple files are zipped automatically.',
+        'Ask this familiar to inscribe a shareable account of its conversation and bring it here. Multiple scrolls are bundled automatically.',
+      )
+    : wizWord(
+        'Export needs a running agent — it produces the file in its own session. Unavailable while the agent is offline.',
+        'The familiar must be channeling to inscribe an export. Unavailable while it slumbers.',
+      );
+  return `<button data-act="export-summary" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(label)}"${dis} title="${esc(why)}">${themeWords('summary…', 'inscribe scroll…')}</button>`;
 }
 // permMemberButton renders the per-row "permissions" affordance —
 // opens the permanent-permission editor (grant / deny / default per
 // slug). The permanent twin of "+ sudo" right beside it.
 function permMemberButton(m) {
-  return `<button data-act="perm-edit" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Edit this agent's permanent permissions (grant / deny / inherit-default)">permissions</button>`;
+  const tip = wizWord(
+    "Edit this agent's permanent permissions (grant / deny / inherit-default)",
+    "Open this familiar's grimoire of permanent boons and bindings",
+  );
+  return `<button data-act="perm-edit" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="${esc(tip)}">${themeWords('permissions', 'grimoire')}</button>`;
 }
 // cronMemberButton renders the ⏰ "schedule a nudge for this member"
 // button. Opens the cron-create modal prefilled with Solo target =
@@ -1206,7 +1253,7 @@ function cronMemberButton(m) {
     target: m.agent_id || m.conv_id,
     owner: m.agent_id || m.conv_id,
   });
-  return `<button data-act="cron-new" data-prefill="${esc(prefill)}" data-label="${esc(label)}" title="Schedule a recurring nudge for ${esc(label)}">schedule…</button>`;
+  return `<button data-act="cron-new" data-prefill="${esc(prefill)}" data-label="${esc(label)}" title="${esc(wizWord(`Schedule a recurring nudge for ${label}`, `Bind a recurring ritual for familiar ${label}`))}">${themeWords('schedule…', 'bind ritual…')}</button>`;
 }
 
 // viewMessagesButton renders the ⚙-menu "view messages" item — a deep
@@ -1215,7 +1262,7 @@ function cronMemberButton(m) {
 // (view-agent-messages → openMailbox(conv)).
 function viewMessagesButton(m) {
   const label = m.title || m.conv_id;
-  return `<button data-act="view-agent-messages" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Open this agent's messages in the Messages tab">view messages</button>`;
+  return `<button data-act="view-agent-messages" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="${esc(wizWord("Open this agent's messages in the Messages tab", "Open this familiar's missives in the Messages tab"))}">${themeWords('view messages', 'view missives')}</button>`;
 }
 
 // termButton renders the "open a terminal in this agent's working
@@ -1224,7 +1271,7 @@ function viewMessagesButton(m) {
 // agent's tmux pane is currently alive.
 function termButton(m) {
   const label = m.title || m.conv_id;
-  return `<button data-act="term" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(label)}" title="Open a terminal in this agent's working directory">term</button>`;
+  return `<button data-act="term" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(label)}" title="${esc(wizWord("Open a terminal in this agent's working directory", "Open a scrying portal in this familiar's working directory"))}">${themeWords('term', 'scrying portal')}</button>`;
 }
 
 // webTermButton renders the "web term" affordance — the same shell-in-the-
@@ -1235,7 +1282,7 @@ function termButton(m) {
 // phone) even though the host itself has a display.
 function webTermButton(m) {
   const label = m.title || m.conv_id;
-  return `<button data-act="web-term" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(label)}" title="Open a terminal in this agent's working directory, in the browser (always a web terminal — never a native window)">web term</button>`;
+  return `<button data-act="web-term" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(label)}" title="${esc(wizWord("Open a terminal in this agent's working directory, in the browser (always a web terminal — never a native window)", "Open a browser scrying portal in this familiar's working directory"))}">${themeWords('web term', 'web scrying portal')}</button>`;
 }
 
 // openWindowButton renders the explicit "open a terminal attached to
@@ -1246,7 +1293,7 @@ function webTermButton(m) {
 // a windowless agent). Needs the agent online (404s without a live session).
 function openWindowButton(m) {
   const label = m.title || m.conv_id;
-  return `<button data-act="open-window" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(label)}" title="Open a terminal window attached to this agent's live session (its Claude Code TUI)">open window</button>`;
+  return `<button data-act="open-window" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(label)}" title="${esc(wizWord("Open a terminal window attached to this agent's live session (its Claude Code TUI)", "Reveal a scrying portal onto this familiar's live session"))}">${themeWords('open window', 'reveal portal')}</button>`;
 }
 
 // webOpenWindowButton renders the "web window" affordance — the same
@@ -1257,7 +1304,7 @@ function openWindowButton(m) {
 // remote dashboard (e.g. a phone) even though the host itself has a display.
 function webOpenWindowButton(m) {
   const label = m.title || m.conv_id;
-  return `<button data-act="web-open-window" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(label)}" title="Open a terminal attached to this agent's live session (its Claude Code TUI), in the browser (always a web terminal — never a native window)">web window</button>`;
+  return `<button data-act="web-open-window" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(label)}" title="${esc(wizWord("Open a terminal attached to this agent's live session (its Claude Code TUI), in the browser (always a web terminal — never a native window)", "Reveal a browser scrying portal onto this familiar's live session"))}">${themeWords('web window', 'web portal')}</button>`;
 }
 
 // Eye glyphs for the focus / hide window buttons — an open eye for
@@ -1367,15 +1414,19 @@ function actionCog(act, items) {
 // its group role and its group description. data-current carries the
 // title so the modal opens pre-filled.
 function editMemberButton(g, m) {
-  return `<button data-act="edit-member" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" data-current="${esc(m.title || '')}" data-role="${esc(m.role || '')}" data-descr="${esc(m.descr || '')}" data-tags="${esc(tagsAttr(m.tags))}" data-owner="${m.owner ? '1' : '0'}" title="Edit this agent — title, role, description, ownership, permissions">edit</button>`;
+  const tip = wizWord(
+    'Edit this agent — title, role, description, ownership, permissions',
+    'Enchant this familiar — title, class, description, party ownership, and grimoire',
+  );
+  return `<button data-act="edit-member" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" data-current="${esc(m.title || '')}" data-role="${esc(m.role || '')}" data-descr="${esc(m.descr || '')}" data-tags="${esc(tagsAttr(m.tags))}" data-owner="${m.owner ? '1' : '0'}" title="${esc(tip)}">${themeWords('edit', 'enchant')}</button>`;
 }
 function ownerToggleButton(g, m) {
   return m.owner
-    ? `<button class="warn" data-act="revoke-owner" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Revoke owner status">revoke owner</button>`
-    : `<button data-act="grant-owner" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Make this agent an owner of the group">make owner</button>`;
+    ? `<button class="warn" data-act="revoke-owner" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="${esc(wizWord('Revoke group owner status', 'Revoke party owner status'))}">${themeWords('revoke owner', 'revoke party owner')}</button>`
+    : `<button data-act="grant-owner" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="${esc(wizWord('Make this agent an owner of the group', 'Make this familiar an owner of the party'))}">${themeWords('make owner', 'make party owner')}</button>`;
 }
 function removeMemberButton(g, m) {
-  return `<button class="danger" data-act="remove-member" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Remove from group">remove</button>`;
+  return `<button class="danger" data-act="remove-member" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="${esc(wizWord('Remove this agent from the group', 'Remove this familiar from the party'))}">${themeWords('remove', 'dismiss from party')}</button>`;
 }
 // retireMemberButton renders the "retire" lifecycle action — the
 // ⚙-menu twin of dragging the row onto the virtual Retired group.
@@ -1397,7 +1448,11 @@ function retireMemberButton(m) {
   // stable agent_id resolves successfully even when the conversation is
   // gone, which would silently demote the orphan instead of offering to
   // remove it. So retire is a conv-keyed KEEP — see row-actions.js (JOH-322).
-  return `<button class="warn" data-act="retire-agent" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Retire this agent — demote it back to a plain conversation, revoking its group memberships and permission grants. Reversible via reinstate (stripped grants are not restored).">retire</button>`;
+  const tip = wizWord(
+    'Retire this agent — demote it back to a plain conversation, revoking its group memberships and permission grants. Reversible via reinstate (stripped grants are not restored).',
+    'Banish this familiar — return it to a plain conversation, revoking its party memberships and boons. Reversible via reinstate.',
+  );
+  return `<button class="warn" data-act="retire-agent" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="${esc(tip)}">${themeWords('retire', 'banish')}</button>`;
 }
 
 // ungroupedMemberActions renders the per-row action cell for a row in
@@ -1417,7 +1472,7 @@ function ungroupedMemberActions(m, canRemote) {
       + notifyMenuItem(m) + remoteControlMenuItem(m, canRemote) + cronMemberButton(m),
     cloneAgentButton(m) + reincarnateAgentButton(m),
     retireMemberButton(m)
-      + `<button class="danger" data-act="delete-agent" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Permanently delete this conversation">delete</button>`,
+      + `<button class="danger" data-act="delete-agent" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="${esc(wizWord('Permanently delete this agent and conversation', 'Permanently erase this familiar and its conversation scroll'))}">${themeWords('delete', 'erase familiar')}</button>`,
   ]);
   return `<div class="row-actions">${focusHideButtons(m)}${retireIconButton(m)}${actionCog('row-menu', menu)}</div>`;
 }
@@ -1880,7 +1935,7 @@ function syncWizardOrbit() {
 export {
   syncBotAnimations,
   syncWizardOrbit,
-  $, $$, isModifiedClick, esc, linkify, shortId, shortAgentId, idTooltip, syncSelectTitle, populateModelSelect, setModelSelectValue, MODEL_CUSTOM_VALUE, syncCustomModelRow, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, onlineDot, agentStatusDot, harnessLine, sandboxBadge, remoteControlBadge, statePill, slopMachine, wizardPill, contextMeter, activityBadges,
+  $, $$, isModifiedClick, esc, themeWords, linkify, shortId, shortAgentId, idTooltip, syncSelectTitle, populateModelSelect, setModelSelectValue, MODEL_CUSTOM_VALUE, syncCustomModelRow, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, onlineDot, agentStatusDot, harnessLine, sandboxBadge, remoteControlBadge, statePill, slopMachine, wizardPill, contextMeter, activityBadges,
   harnessCanRename, harnessCanRemoteControl,
   roleCell, descrCell, tagChips, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, taskCell, offlineDefault, groupOfflineOverride, groupShowOffline,

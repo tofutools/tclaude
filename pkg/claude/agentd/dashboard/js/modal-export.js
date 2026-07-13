@@ -24,6 +24,7 @@
 import { $, esc, shortId, relTime, bindModalSubmitHotkey } from './helpers.js';
 import { toast, bindBackdropDiscard } from './refresh.js';
 import { renderExportChecklist, triggerExportDownload, fmtBytes } from './export-progress.js';
+import { wizWord } from './slop.js';
 
 const POLL_INTERVAL_MS = 2000;
 // After this long with no result, nudge the human that the agent may be busy —
@@ -218,7 +219,10 @@ function startPoll(jobId) {
         updateChecklist(job.status);
         if (Date.now() - startedAt > SLOW_NOTE_AFTER_MS) {
           $('#export-agent-status-note').textContent =
-            'Still working — the agent may be busy with another task. Keep this open to download automatically when it lands.';
+            wizWord(
+              'Still working — the agent may be busy with another task. Keep this open to download automatically when it lands.',
+              'Still inscribing — the familiar may be occupied with another quest. Keep this open and the scroll will appear when ready.',
+            );
         }
       } else if (r.status === 404) {
         onExportFailed({ error: 'the export job is no longer available' });
@@ -256,7 +260,7 @@ function onExportFailed(job) {
   jobSettled = true;
   updateChecklist('failed');
   $('#export-agent-status-note').textContent =
-    '⚠️ ' + (job.error || 'the agent did not deliver an export');
+    '⚠️ ' + (job.error || wizWord('the agent did not deliver an export', 'the familiar did not deliver its scroll'));
 }
 
 // --- "Previous exports" history panel ---

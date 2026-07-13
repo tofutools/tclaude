@@ -470,10 +470,13 @@ function bindRowActions() {
         }
         case 'remove-member': {
           const confirmed = await confirmModal({
-            title: 'Remove member from group?',
-            body: 'This unsubscribes them from group messages and severs the manager-pattern path. Their conv keeps running.',
+            title: wizWord('Remove member from group?', 'Dismiss familiar from party?'),
+            body: wizWord(
+              'This unsubscribes them from group messages and severs the manager-pattern path. Their conv keeps running.',
+              'This removes the familiar from party missives and severs the manager-pattern path. Its conversation keeps channeling.',
+            ),
             meta: `${label} → ${group}`,
-            okLabel: 'Remove',
+            okLabel: wizWord('Remove', 'Dismiss'),
           });
           if (!confirmed) return;
           const r = await fetch(`/api/groups/${encodeURIComponent(group)}/members/${encodeURIComponent(agent)}`, {

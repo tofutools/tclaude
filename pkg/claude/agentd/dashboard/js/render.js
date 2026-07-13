@@ -5,7 +5,7 @@
 // dashboard.js as part of the Stage 2 module split.
 
 import {
-  $, esc, shortId, shortAgentId, idTooltip, onlineDot, agentStatusDot, harnessLine, sandboxBadge, statePill, slopMachine, wizardPill, contextMeter, activityBadges,
+  $, esc, themeWords, shortId, shortAgentId, idTooltip, onlineDot, agentStatusDot, harnessLine, sandboxBadge, statePill, slopMachine, wizardPill, contextMeter, activityBadges,
   harnessCanRename, harnessCanRemoteControl,
   roleCell, descrCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, taskCell, offlineDefault, groupShowOffline, syncBotAnimations,
@@ -414,10 +414,16 @@ function renderVirtualPendingGroup(g) {
 function groupNotifyMenuItem(g) {
   const on = g.notify_enabled;
   const text = on ? '🔔 notifications: on' : '🔕 notifications: muted';
+  const wizardText = on ? '🔔 omens: on' : '🔕 omens: silent';
+  const wiz = isWizardActive();
   const tip = on
-    ? 'OS notifications on for this group’s agents — click to mute the whole group (a per-agent 🔔 override still notifies)'
-    : 'OS notifications MUTED for this group’s agents — click to unmute (members with a per-agent 🔔 override notify anyway)';
-  return `<button data-act="toggle-group-notify" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-enabled="${on ? '1' : '0'}" title="${esc(tip)}">${esc(text)}</button>`;
+    ? wiz
+      ? 'Omens are enabled for this party’s familiars — click to silence the whole party (a familiar’s own 🔔 boon still speaks)'
+      : 'OS notifications on for this group’s agents — click to mute the whole group (a per-agent 🔔 override still notifies)'
+    : wiz
+      ? 'Omens are SILENCED for this party’s familiars — click to restore them (familiars with their own 🔔 boon still speak)'
+      : 'OS notifications MUTED for this group’s agents — click to unmute (members with a per-agent 🔔 override notify anyway)';
+  return `<button data-act="toggle-group-notify" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-enabled="${on ? '1' : '0'}" title="${esc(tip)}">${themeWords(text, wizardText)}</button>`;
 }
 
 // groupWebTermMenuItem renders the group ⚙ menu's "open web terminal" row — the
@@ -430,7 +436,10 @@ function groupNotifyMenuItem(g) {
 function groupWebTermMenuItem(g) {
   const dir = (g.default_cwd || '').trim();
   if (!dir) return '';
-  return `<button data-act="group-web-term" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Open a terminal in this group's default directory (${esc(dir)}), in the browser (always a web terminal — never a native window)">🖥 open web terminal</button>`;
+  const tip = isWizardActive()
+    ? `Open a browser scrying portal in this party's default directory (${dir})`
+    : `Open a terminal in this group's default directory (${dir}), in the browser (always a web terminal — never a native window)`;
+  return `<button data-act="group-web-term" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="${esc(tip)}">${themeWords('🖥 open web terminal', '🔮 open party portal')}</button>`;
 }
 
 // A real group's controls are split across three renderers: spawn / power on /
@@ -459,9 +468,16 @@ function groupMenuItems(g, members) {
   const ctxLabel = ctxLen > 0
     ? `📋 startup context (${ctxLen} chars)…`
     : `📋 set startup context…`;
-  const ctxTitle = ctxLen > 0
-    ? `Startup context (${ctxLen} chars) delivered to the inbox of agents spawned here — click to edit`
-    : 'No startup context — click to set one';
+  const ctxWizardLabel = ctxLen > 0
+    ? `📜 standing orders (${ctxLen} chars)…`
+    : `📜 decree standing orders…`;
+  const ctxTitle = isWizardActive()
+    ? (ctxLen > 0
+        ? `Standing orders (${ctxLen} chars) delivered to every familiar summoned into this party — click to edit`
+        : 'No standing orders — click to decree them')
+    : (ctxLen > 0
+        ? `Startup context (${ctxLen} chars) delivered to the inbox of agents spawned here — click to edit`
+        : 'No startup context — click to set one');
   const groupPermsTitle = isWizardActive()
     ? 'Bestow party boons on every familiar in this party. Membership changes take effect immediately; a personal binding against one still wins.'
     : 'Grant permissions to every current member of this group. Membership changes take effect immediately; an agent-level Deny still wins.';
@@ -471,29 +487,36 @@ function groupMenuItems(g, members) {
   // .quick-pinned on the <details> so the fold CSS skips this group.
   const qoFoldActive = !lastSnapshot || lastSnapshot.group_quick_options !== 'expanded';
   const qoPinned = dashPrefs.getItem('tclaude.dash.quickpin.' + g.name) === '1';
+  const quickPinTitle = isWizardActive()
+    ? (qoPinned
+        ? 'Quick options are pinned open for this party — click to let its enchanted header chips fold again.'
+        : "Pin this party's quick options open so its enchanted header chips stay expanded.")
+    : (qoPinned
+        ? 'Quick options are pinned open for this group — its header chips stay expanded even though auto-fold is on. Click to let them fold to icons again.'
+        : "Pin this group's quick options open — its header chips stay expanded (not folded to icons) even while auto-fold is on. Click to fold them with the rest.");
   const quickPinItem = qoFoldActive
-    ? `<button data-act="toggle-quick-pin" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-pinned="${qoPinned ? '1' : '0'}" title="${qoPinned ? 'Quick options are pinned open for this group — its header chips stay expanded even though auto-fold is on. Click to let them fold to icons again.' : "Pin this group's quick options open — its header chips stay expanded (not folded to icons) even while auto-fold is on. Click to fold them with the rest."}">${qoPinned ? '📌 unpin quick options' : '📌 pin quick options open'}</button>`
+    ? `<button data-act="toggle-quick-pin" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-pinned="${qoPinned ? '1' : '0'}" title="${esc(quickPinTitle)}">${qoPinned ? '📌 unpin quick options' : '📌 pin quick options open'}</button>`
     : '';
   const menu =
-    `<button data-act="add-member" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Add an existing conversation to this group">+ add member</button>`
-    + `<button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'group', groupName: g.name, scopeGroup: g.name}))}' data-label="${esc(g.name)}" title="Schedule a recurring cron job scoped to ${esc(g.name)} — multicast the whole group, or nudge a single member">⏰ multicast</button>`
-    + `<button data-act="message-new" data-prefill='${esc(JSON.stringify({targetMode: 'group', groupName: g.name}))}' data-label="${esc(g.name)}" title="Send a one-shot message to ${esc(g.name)} — the whole group, or a ticked subset of its members">✉ message</button>`
-    + `<button data-act="view-group-messages" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Open this group's messages in the Messages tab — every message touching a member (sent or received) plus the group's own multicasts">🗂 view messages</button>`
-    + `<button data-act="set-group-context" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="${esc(ctxTitle)}">${ctxLabel}</button>`
+    `<button data-act="add-member" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="${esc(isWizardActive() ? 'Invite an existing conversation to become a familiar in this party' : 'Add an existing conversation to this group')}">${themeWords('+ add member', '+ add familiar')}</button>`
+    + `<button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'group', groupName: g.name, scopeGroup: g.name}))}' data-label="${esc(g.name)}" title="${esc(isWizardActive() ? `Bind a recurring ritual to party ${g.name} — multicast every familiar, or nudge one` : `Schedule a recurring cron job scoped to ${g.name} — multicast the whole group, or nudge a single member`)}">${themeWords('⏰ multicast', '⏳ bind ritual')}</button>`
+    + `<button data-act="message-new" data-prefill='${esc(JSON.stringify({targetMode: 'group', groupName: g.name}))}' data-label="${esc(g.name)}" title="${esc(isWizardActive() ? `Send a missive to party ${g.name} — every familiar, or a chosen subset` : `Send a one-shot message to ${g.name} — the whole group, or a ticked subset of its members`)}">${themeWords('✉ message', '✒ missive')}</button>`
+    + `<button data-act="view-group-messages" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="${esc(isWizardActive() ? "Open this party's missives in the Messages tab" : "Open this group's messages in the Messages tab — every message touching a member (sent or received) plus the group's own multicasts")}">${themeWords('🗂 view messages', '🗂 view missives')}</button>`
+    + `<button data-act="set-group-context" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="${esc(ctxTitle)}">${themeWords(ctxLabel, ctxWizardLabel)}</button>`
     + `<button data-act="set-group-permissions" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="${esc(groupPermsTitle)}">🔑 <span class="group-perms-word-regular">group permissions</span><span class="group-perms-word-wizard">party boons</span>${(g.permissions || []).length ? ` (${g.permissions.length})` : ''}…</button>`
     + groupNotifyMenuItem(g)
     + remoteControlPolicyMenuItem(g)
     + quickPinItem
-    + `<button data-act="rename-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Rename this group">rename</button>`
+    + `<button data-act="rename-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="${esc(isWizardActive() ? 'Rename this party' : 'Rename this group')}">${themeWords('rename', 'rename party')}</button>`
     + groupNestMenuItems(g)
-    + `<button data-act="clone-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Clone this group — copy every setting (directory, description, startup context, default profile, group permissions, max-members, notify) and the owners into a new group. Optionally clone the member agents too.">⧉ clone…</button>`
-    + `<button data-act="template-from-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Save this group as a reusable template — snapshot its roles, owners, per-agent permissions and startup context into a blueprint you can instantiate as a fresh team">⧉ save as template…</button>`
-    + `<button data-act="export-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Export this whole group — members, permissions, messages and every conversation — to a portable .zip archive">⤓ export</button>`
-    + `<button data-act="cleanup-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Remove confirmed-offline members from this group">🧹 cleanup</button>`
-    + `<button data-act="cleanup-worktrees-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Clean up git worktrees — scan this group's repo(s) for stale worktrees (leftovers from retired/deleted agents and hand-made branches) and remove the ones you pick. Main repo and live-agent worktrees are protected.">🧹 cleanup worktrees…</button>`
-    + `<button data-act="window-modal-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" aria-label="Focus or unfocus this group's agent windows" title="Focus / unfocus agent windows — open a modal to bulk-attach (focus) or bulk-detach (unfocus) the terminal windows of agents in this group. Window-only: the agents keep running either way.">🪟 windows…</button>`
+    + `<button data-act="clone-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="${esc(isWizardActive() ? 'Mirror this party — copy its lore, boons, owners, and optionally its familiars into a new party' : 'Clone this group — copy every setting (directory, description, startup context, default profile, group permissions, max-members, notify) and the owners into a new group. Optionally clone the member agents too.')}">${themeWords('⧉ clone…', '⧉ mirror party…')}</button>`
+    + `<button data-act="template-from-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="${esc(isWizardActive() ? "Trace this party into a reusable summoning circle — preserve its classes, owners, familiars' grimoires, and standing orders" : 'Save this group as a reusable template — snapshot its roles, owners, per-agent permissions and startup context into a blueprint you can instantiate as a fresh team')}">${themeWords('⧉ save as template…', '🕯 trace as circle…')}</button>`
+    + `<button data-act="export-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="${esc(isWizardActive() ? 'Seal this whole party — familiars, boons, missives, and conversation scrolls — into a portable archive' : 'Export this whole group — members, permissions, messages and every conversation — to a portable .zip archive')}">${themeWords('⤓ export', '⤓ seal party archive')}</button>`
+    + `<button data-act="cleanup-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="${esc(isWizardActive() ? 'Remove confirmed-slumbering familiars from this party' : 'Remove confirmed-offline members from this group')}">${themeWords('🧹 cleanup', '🧹 tidy party')}</button>`
+    + `<button data-act="cleanup-worktrees-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="${esc(isWizardActive() ? "Clean up git worktrees in this party's repos. Main repo and live-familiar worktrees are protected." : "Clean up git worktrees — scan this group's repo(s) for stale worktrees (leftovers from retired/deleted agents and hand-made branches) and remove the ones you pick. Main repo and live-agent worktrees are protected.")}">🧹 cleanup worktrees…</button>`
+    + `<button data-act="window-modal-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="${esc(isWizardActive() ? "Reveal or veil the scrying portals of familiars in this party. The familiars keep channeling either way." : "Focus / unfocus agent windows — open a modal to bulk-attach (focus) or bulk-detach (unfocus) the terminal windows of agents in this group. Window-only: the agents keep running either way.")}">${themeWords('🪟 windows…', '👁 familiars…')}</button>`
     + groupWebTermMenuItem(g)
-    + `<button class="danger" data-act="delete-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-members="${members.length}" title="Delete this group">delete group</button>`;
+    + `<button class="danger" data-act="delete-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-members="${members.length}" title="${esc(isWizardActive() ? 'Disband this party' : 'Delete this group')}">${themeWords('delete group', 'disband party')}</button>`;
   return menu;
 }
 
@@ -554,10 +577,10 @@ function forceFoldToggleHTML(g) {
 // "un-nest" that clears the parent (data-act="unnest-group"). Both are
 // board-layout only; the picker's dialog spells that out.
 function groupNestMenuItems(g) {
-  const nestUnder = `<button data-act="nest-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Nest this group under another so it draws inside it on the board — collapse the parent to tuck the subgroup away. Board layout only.">📂 nest under…</button>`;
+  const nestUnder = `<button data-act="nest-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="${esc(isWizardActive() ? 'Nest this party under another party on the board — layout only' : 'Nest this group under another so it draws inside it on the board — collapse the parent to tuck the subgroup away. Board layout only.')}">${themeWords('📂 nest under…', '📂 nest party under…')}</button>`;
   if (!g.parent) return nestUnder;
   return nestUnder
-    + `<button data-act="unnest-group" data-group="${esc(g.name)}" data-parent="${esc(g.parent)}" data-label="${esc(g.name)}" title="Move this group back to the top level (currently nested under ${esc(g.parent)}).">📂 un-nest (under ${esc(g.parent)})</button>`;
+    + `<button data-act="unnest-group" data-group="${esc(g.name)}" data-parent="${esc(g.parent)}" data-label="${esc(g.name)}" title="${esc(isWizardActive() ? `Move this party back to the top level (currently nested under ${g.parent}).` : `Move this group back to the top level (currently nested under ${g.parent}).`)}">${themeWords(`📂 un-nest (under ${g.parent})`, `📂 un-nest party (under ${g.parent})`)}</button>`;
 }
 
 // remoteControlPolicyMenuItem renders the group's remote-control policy as a

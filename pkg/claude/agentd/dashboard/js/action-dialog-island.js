@@ -12,6 +12,12 @@ const WT_NEW = '__new__';
 function errorMessage(error) { return error?.message || String(error); }
 function shortID(value) { return String(value || '').slice(0, 8); }
 
+// Render both presentation vocabularies so an open dialog follows a live
+// regular ↔ wizard theme flip without resetting its Preact-owned form state.
+function Words({ plain, wizard }) {
+  return html`<span class="theme-copy-regular">${plain}</span><span class="theme-copy-wizard">${wizard}</span>`;
+}
+
 function ErrorBanner({ id, error, onDismiss }) {
   const ref = useRef(null);
   useEffect(() => {
@@ -169,7 +175,7 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
       confirmDiscard=${confirmDiscard}
       resizeKey="tclaude.dash.modalSize.clone-agent"
     >
-      <h3 id="clone-agent-title">Clone agent</h3>
+      <h3 id="clone-agent-title"><${Words} plain="Clone agent" wizard="⧉ Mirror familiar"/></h3>
       <div class="modal-meta" id="clone-agent-meta">
         source: ${source}${descriptor.cwd ? `  ·  ${descriptor.cwd}` : ''}
       </div>
@@ -204,10 +210,10 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
       />
       <${ErrorBanner} id="clone-agent-error" error=${error} onDismiss=${() => setError('')} />
       <div class="modal-buttons">
-        <button id="clone-agent-cancel" type="button" disabled=${busy} onClick=${actions.close}>Cancel</button>
+        <button id="clone-agent-cancel" type="button" disabled=${busy} onClick=${actions.close}><${Words} plain="Cancel" wizard="Dispel"/></button>
         <span class="spacer"></span>
         <button id="clone-agent-submit" class="primary" type="button" disabled=${busy} onClick=${submit}>
-          ${busy ? 'Cloning…' : 'Clone'}
+          <${Words} plain=${busy ? 'Cloning…' : 'Clone'} wizard=${busy ? 'Mirroring…' : 'Mirror familiar'}/>
         </button>
       </div>
     </${Overlay}>
@@ -249,31 +255,43 @@ function ReincarnateAgentDialog({ descriptor, actions, confirmDiscard }) {
       blocked=${busy}
       confirmDiscard=${confirmDiscard}
     >
-      <h3 id="reincarnate-agent-title">Reincarnate agent</h3>
+      <h3 id="reincarnate-agent-title"><${Words} plain="Reincarnate agent" wizard="Reincarnate familiar"/></h3>
       <div class="modal-meta" id="reincarnate-agent-meta">target: ${target}</div>
       <div class="reincarnate-mode" id="reincarnate-mode" role="radiogroup" aria-label="Reincarnate mode">
         <label>
           <input type="radio" name="reincarnate-mode" value="self" checked=${!force} onChange=${() => setMode('self')} />
-          <span>Ask the agent to reincarnate itself</span>
-          <span class="opt-note">— graceful. Sends the agent a message; at its next clean point it writes its own handoff, collecting the context that matters, then reincarnates. May take a moment. Recommended.</span>
+          <span><${Words} plain="Ask the agent to reincarnate itself" wizard="Ask the familiar to reincarnate itself"/></span>
+          <span class="opt-note"><${Words}
+            plain="— graceful. Sends the agent a message; at its next clean point it writes its own handoff, collecting the context that matters, then reincarnates. May take a moment. Recommended."
+            wizard="— graceful. Sends the familiar a missive; at its next clean point it writes its own handoff, gathers the lore that matters, then returns in a fresh vessel. Recommended."
+          /></span>
         </label>
         <label>
           <input type="radio" name="reincarnate-mode" value="force" checked=${force} onChange=${() => setMode('force')} />
           <span>Force reincarnate now</span>
-          <span class="opt-note">— immediate. The daemon spawns the successor and soft-exits the original right away. The agent gets no chance to write its own handoff — use only when it is stuck or unresponsive.</span>
+          <span class="opt-note"><${Words}
+            plain="— immediate. The daemon spawns the successor and soft-exits the original right away. The agent gets no chance to write its own handoff — use only when it is stuck or unresponsive."
+            wizard="— immediate. The daemon summons the successor and dismisses the original at once. The familiar cannot write its own handoff — use only when it is stuck or unresponsive."
+          /></span>
         </label>
       </div>
       ${!force ? html`
         <div id="reincarnate-self-fields">
-          <p class="modal-hint">The agent is messaged and reincarnates itself at a clean point. Because it collects its own context, the successor inherits a handoff that reflects the agent's actual working state.</p>
+          <p class="modal-hint"><${Words}
+            plain="The agent is messaged and reincarnates itself at a clean point. Because it collects its own context, the successor inherits a handoff that reflects the agent's actual working state."
+            wizard="The familiar receives a missive and reincarnates at a clean point. Because it gathers its own lore, the successor inherits a handoff reflecting the familiar's true working state."
+          /></p>
           <label class="cron-create-row">
             <span class="cron-create-label">Focus hint</span>
-            <textarea ref=${focusHintRef} id="reincarnate-agent-focus" rows="3" maxlength="4000" value=${focusHint} placeholder="optional — what should the agent concentrate on while gathering context for its handoff? e.g. focus on the open questions about X, or capture the current state of subsystem Y. Leave blank for a general handoff." spellcheck="false" onInput=${(event) => setFocusHint(event.currentTarget.value)}></textarea>
+            <textarea ref=${focusHintRef} id="reincarnate-agent-focus" rows="3" maxlength="4000" value=${focusHint} placeholder="optional — what should it concentrate on while gathering context for its handoff? e.g. focus on the open questions about X, or capture the current state of subsystem Y. Leave blank for a general handoff." spellcheck="false" onInput=${(event) => setFocusHint(event.currentTarget.value)}></textarea>
           </label>
         </div>
       ` : html`
         <div id="reincarnate-force-fields">
-          <p class="modal-hint">Spawns a fresh CC instance that inherits identity (groups, perms, ownership). The original is soft-exited. The successor's title is auto-renamed to <code>${'<prev>-r-<N>'}</code>.</p>
+          <p class="modal-hint"><${Words}
+            plain=${html`Spawns a fresh CC instance that inherits identity (groups, perms, ownership). The original is soft-exited. The successor's title is auto-renamed to <code>${'<prev>-r-<N>'}</code>.`}
+            wizard=${html`Summons a fresh familiar that inherits identity (parties, boons, ownership). The original is dismissed. The successor's title is auto-renamed to <code>${'<prev>-r-<N>'}</code>.`}
+          /></p>
           <label class="cron-create-row">
             <span class="cron-create-label">Follow-up</span>
             <textarea ref=${followUpRef} id="reincarnate-agent-followup" rows="4" value=${followUp} placeholder="required — what should the successor pick up? Summarise the current task, where the relevant files are, what's next (no newlines, ≤16384 chars)" spellcheck="false" onInput=${(event) => setFollowUp(event.currentTarget.value)}></textarea>
@@ -282,10 +300,13 @@ function ReincarnateAgentDialog({ descriptor, actions, confirmDiscard }) {
       `}
       <${ErrorBanner} id="reincarnate-agent-error" error=${error} onDismiss=${() => setError('')} />
       <div class="modal-buttons">
-        <button id="reincarnate-agent-cancel" type="button" disabled=${busy} onClick=${actions.close}>Cancel</button>
+        <button id="reincarnate-agent-cancel" type="button" disabled=${busy} onClick=${actions.close}><${Words} plain="Cancel" wizard="Dispel"/></button>
         <span class="spacer"></span>
         <button id="reincarnate-agent-submit" class="primary" type="button" disabled=${busy || (force && !normaliseFollowUp(followUp))} onClick=${submit}>
-          ${busy ? (force ? 'Reincarnating…' : 'Asking…') : (force ? 'Force reincarnate' : 'Ask agent')}
+          <${Words}
+            plain=${busy ? (force ? 'Reincarnating…' : 'Asking…') : (force ? 'Force reincarnate' : 'Ask agent')}
+            wizard=${busy ? (force ? 'Reincarnating…' : 'Asking…') : (force ? 'Force reincarnate' : 'Ask familiar')}
+          />
         </button>
       </div>
     </${Overlay}>
@@ -308,8 +329,11 @@ function NestGroupDialog({ descriptor, actions, confirmDiscard }) {
   };
   return html`
     <${Overlay} id="group-nest-modal" labelledby="group-nest-title" onClose=${actions.close} onSubmitHotkey=${submit} onSubmitEnter=${submit} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}>
-      <h3 id="group-nest-title">Nest group: ${descriptor.group}</h3>
-      <div class="modal-meta">Nest this group under another so it draws inside it on the board — collapse the parent to tuck the whole subgroup away, expand it to bring it back. Board layout only: nesting doesn't change messaging, permissions or spawns. A group can't nest under itself or one of its own descendants.</div>
+      <h3 id="group-nest-title"><${Words} plain=${`Nest group: ${descriptor.group}`} wizard=${`Nest party: ${descriptor.group}`}/></h3>
+      <div class="modal-meta"><${Words}
+        plain="Nest this group under another so it draws inside it on the board — collapse the parent to tuck the whole subgroup away, expand it to bring it back. Board layout only: nesting doesn't change messaging, permissions or spawns. A group can't nest under itself or one of its own descendants."
+        wizard="Nest this party under another so it draws inside it on the board — collapse the parent to tuck the whole subparty away, expand it to bring it back. Board layout only: nesting changes neither missives, boons, nor summons. A party cannot nest under itself or one of its descendants."
+      /></div>
       <label class="cron-create-row">
         <span class="cron-create-label">Parent</span>
         <select id="group-nest-parent" value=${parent} onChange=${(event) => setParent(event.currentTarget.value)}>
@@ -319,9 +343,9 @@ function NestGroupDialog({ descriptor, actions, confirmDiscard }) {
       </label>
       <${ErrorBanner} id="group-nest-error" error=${error} onDismiss=${() => setError('')} />
       <div class="modal-buttons">
-        <button id="group-nest-cancel" type="button" disabled=${busy} onClick=${actions.close}>Cancel</button>
+        <button id="group-nest-cancel" type="button" disabled=${busy} onClick=${actions.close}><${Words} plain="Cancel" wizard="Dispel"/></button>
         <span class="spacer"></span>
-        <button id="group-nest-submit" class="primary" type="button" disabled=${busy} onClick=${submit}>${busy ? 'Saving…' : 'Save'}</button>
+        <button id="group-nest-submit" class="primary" type="button" disabled=${busy} onClick=${submit}><${Words} plain=${busy ? 'Saving…' : 'Save'} wizard=${busy ? 'Nesting…' : 'Nest party'}/></button>
       </div>
     </${Overlay}>
   `;

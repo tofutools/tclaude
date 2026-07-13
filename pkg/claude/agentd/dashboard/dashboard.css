@@ -8096,6 +8096,13 @@ body.wizard #edit-member-modal #edit-member-save:disabled::before { content: non
 body.wizard .profiles-word-regular { display: none; }
 body.wizard .profiles-word-wizard { display: inline; }
 
+/* Shared copy swap for cog-menu labels and the dialogs they open. Entity
+   names are presentation-only (agent/group remain the wire nouns), so both
+   voices stay in the DOM and the active theme chooses familiar/party copy. */
+.theme-copy-wizard { display: none; }
+body.wizard .theme-copy-regular { display: none; }
+body.wizard .theme-copy-wizard { display: inline; }
+
 /* Live group permission policy becomes "party boons" in wizard mode. The
    shared pair is used by the Groups-cog opener and the group-shaped Grimoire
    copy so a theme toggle updates an already-open editor without JS rerender. */

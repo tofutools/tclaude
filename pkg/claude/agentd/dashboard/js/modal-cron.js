@@ -4,7 +4,8 @@
 // group/member target picker (used by this modal and the message
 // modal). Extracted from dashboard.js in the Stage 2 module split.
 
-import { $, $$, esc, shortAgentId, idTooltip } from './helpers.js';
+import { $, $$, esc, themeWords, shortAgentId, idTooltip } from './helpers.js';
+import { wizWord } from './slop.js';
 import { formatJobInterval } from './jobs-format.js';
 import { featureState } from './feature-state-registry.js';
 // lastSnapshot / sudoBadge live in dashboard.js; refresh() / toast and
@@ -220,6 +221,25 @@ let cronEditId = null;
 let cronOriginalTarget = null;       // for PATCH: only send `target` if user changed it
 let cronOriginalGroupID = null;      // ditto for `group_id`
 let cronOriginalExpr = '';           // edit mode: the job's cron_expr on open ('' = interval job)
+let cronScopeGroup = '';
+
+// Keep the accessible title in the active theme as well as the visible title.
+// Wizard CSS paints the short ritual heading, while this underlying text is
+// what aria-labelledby exposes and what regular mode reveals after a live
+// theme flip.
+function renderCronTitle() {
+  const title = $('#cron-create-title');
+  if (cronEditId != null) {
+    title.textContent = wizWord('Edit cron job', 'Re-bind the recurring ritual');
+  } else if (cronScopeGroup) {
+    title.textContent = wizWord(
+      `Schedule a cron job for group "${cronScopeGroup}"`,
+      `Bind a recurring ritual for party "${cronScopeGroup}"`,
+    );
+  } else {
+    title.textContent = wizWord('Schedule a cron job', 'Bind a recurring ritual');
+  }
+}
 
 // openCronCreateModal opens the modal in create mode. prefill is an
 // optional object: { targetMode, target, owner, name, subject, body,
@@ -232,13 +252,11 @@ function openCronCreateModal(prefill) {
   cronOriginalTarget = null;
   cronOriginalGroupID = null;
   cronOriginalExpr = '';
-  const scopeGroup = prefill && prefill.scopeGroup;
-  $('#cron-create-title').textContent = scopeGroup
-    ? `Schedule a cron job for group "${scopeGroup}"`
-    : 'Schedule a cron job';
+  cronScopeGroup = (prefill && prefill.scopeGroup) || '';
+  renderCronTitle();
   // Mode flag (create vs edit) for the 🧙 wizard title/submit ::before copy.
-  // It reflects the modal's MODE, not the theme — the theme→copy mapping stays
-  // pure-CSS, so a mid-session theme flip is instantly correct with no JS.
+  // It reflects the modal's MODE, not the theme. CSS swaps the painted heading;
+  // renderCronTitle keeps its underlying accessible name in the same voice.
   $('#cron-create-modal').classList.remove('cron-editing');
   $('#cron-create-meta').style.display = 'none';
   $('#cron-create-submit').textContent = 'Create';
@@ -252,6 +270,7 @@ function openCronCreateModal(prefill) {
 // POSTing /api/cron.
 function openCronEditModal(job) {
   cronEditId = job.id;
+  cronScopeGroup = '';
   // Baseline the change-detection on the stable agent_id (conv-id
   // fallback for a pre-identity job), matching jobToPrefill's target
   // prefill — so reopening an edit and saving without touching the
@@ -259,7 +278,7 @@ function openCronEditModal(job) {
   cronOriginalTarget = job.target_agent || job.target_conv || '';
   cronOriginalGroupID = job.group_id || 0;
   cronOriginalExpr = job.cron_expr || '';
-  $('#cron-create-title').textContent = 'Edit cron job';
+  renderCronTitle();
   // Edit mode: the wizard title/submit ::before copy reads "Re-bind…" (see the
   // .cron-editing rules in the wizard CSS block). Mode flag, not a theme read.
   $('#cron-create-modal').classList.add('cron-editing');
@@ -429,12 +448,12 @@ function setTargetPickerScope(prefix, groupName) {
 function targetPickerMarkup(prefix) {
   return `
     <div class="cron-target-modes">
-      <label><input type="radio" name="${prefix}-target-mode" value="solo" checked /> Solo agent</label>
-      <label><input type="radio" name="${prefix}-target-mode" value="group" /> Group (multicast)</label>
+      <label><input type="radio" name="${prefix}-target-mode" value="solo" checked /> ${themeWords('Solo agent', 'Solo familiar')}</label>
+      <label><input type="radio" name="${prefix}-target-mode" value="group" /> ${themeWords('Group (multicast)', 'Party (multicast)')}</label>
     </div>
     <div class="cron-target-input-row" id="${prefix}-target-solo">
       <input id="${prefix}-target" type="text" placeholder="agt_ id / title / conv-id / 8+-char prefix" autocomplete="off" spellcheck="false" />
-      <button type="button" id="${prefix}-target-pick" title="Pick from agent list">🔍</button>
+      <button type="button" id="${prefix}-target-pick" title="Pick from the agent / familiar list">🔍</button>
     </div>
     <!-- Scoped solo row — shown instead of the free-text input when
          the picker is scoped to a group (setTargetPickerScope): a
@@ -464,6 +483,16 @@ function bindTargetPicker(prefix) {
     // (conv-id fallback) — the rotation-immune target token (JOH-312).
     const picked = await pickCronTargetModal();
     if (picked) $('#' + prefix + '-target').value = picked;
+  });
+  // Native <option> elements cannot use the CSS span-swap used by the labels.
+  // Rebuild only the visible select on a live theme flip; the population
+  // helpers preserve the current value.
+  document.addEventListener('tclaude:wizard', () => {
+    const modal = $('#' + prefix + '-modal');
+    if (!modal || !modal.classList.contains('show')) return;
+    const mode = ($$('input[name=' + prefix + '-target-mode]:checked')[0] || {}).value || 'solo';
+    if (mode === 'group') populateTargetPickerGroups(prefix);
+    else if (targetPickerScopes[prefix]) populateTargetPickerMembers(prefix);
   });
 }
 
@@ -498,7 +527,7 @@ function populateTargetPickerGroups(prefix) {
   const prev = sel.value;
   sel.innerHTML = groups.length
     ? groups.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('')
-    : '<option value="">(no groups — create one first)</option>';
+    : `<option value="">${wizWord('(no groups — create one first)', '(no parties — form one first)')}</option>`;
   if (prev && groups.includes(prev)) sel.value = prev;
   sel.disabled = !!scope;
 }
@@ -517,7 +546,7 @@ function populateTargetPickerMembers(prefix) {
   // immune handle, like the free-text picker (JOH-312).
   sel.innerHTML = members.length
     ? members.map(m => `<option value="${esc(m.agent_id || m.conv_id)}">${esc(m.title || m.conv_id)}${m.online ? '' : ' (offline)'}</option>`).join('')
-    : '<option value="">(no members in this group)</option>';
+    : `<option value="">${wizWord('(no members in this group)', '(no familiars in this party)')}</option>`;
   if (prev && members.some(m => (m.agent_id || m.conv_id) === prev)) sel.value = prev;
 }
 
@@ -589,6 +618,7 @@ function showCronCreateModal() {
 function closeCronCreateModal() {
   $('#cron-create-modal').classList.remove('show');
   cronEditId = null;
+  cronScopeGroup = '';
   // Drop the scope so the registry's lifetime matches the modal's;
   // the next open re-arms it from its prefill regardless.
   setTargetPickerScope('cron-create', null);
@@ -624,9 +654,15 @@ async function submitCronForm(keepOpen) {
     // is an empty group, so the instruction must not mention them.
     const scopedSolo = mode === 'solo' && !!targetPickerScopes['cron-create'];
     errEl.textContent = mode === 'group'
-      ? 'Pick a group from the dropdown (or create one first via the Groups tab).'
+      ? wizWord(
+          'Pick a group from the dropdown (or create one first via the Groups tab).',
+          'Pick a party from the dropdown (or form one first via the Groups tab).',
+        )
       : scopedSolo
-        ? 'This group has no members to nudge — switch to Group (multicast), or add a member to the group first.'
+        ? wizWord(
+            'This group has no members to nudge — switch to Group (multicast), or add a member to the group first.',
+            'This party has no familiars to nudge — switch to Party (multicast), or invite a familiar first.',
+          )
         : 'Target is required — type an agt_ id / title / conv-id or use 🔍 to pick.';
     return;
   }
@@ -861,6 +897,9 @@ function bindCronModal() {
   bindBackdropDiscard('cron-create-modal', closeCronCreateModal);
   // Solo/group target picker — markup + mode radios + 🔍 button.
   bindTargetPicker('cron-create');
+  document.addEventListener('tclaude:wizard', () => {
+    if ($('#cron-create-modal').classList.contains('show')) renderCronTitle();
+  });
   // Schedule chips push value into the text input + highlight.
   $('#cron-create-chips').addEventListener('click', (e) => {
     const b = e.target.closest('button[data-chip]');
