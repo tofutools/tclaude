@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // Codex CLI status-line install.
@@ -87,12 +89,12 @@ const (
 type CodexConfigState int
 
 const (
-	CodexNotInstalled CodexConfigState = iota // no status_line; tclaude can add one
-	CodexInstalledState                       // tclaude-managed and current
-	CodexNeedsRepair                          // tclaude-managed but stale
-	CodexUserManagedState                     // user owns the status_line
-	CodexTuiConflictState                     // tui is an inline table/scalar/array; unsafe to edit
-	CodexNeedsManualFixState                  // managed value hand-edited into an unterminated (broken) array
+	CodexNotInstalled        CodexConfigState = iota // no status_line; tclaude can add one
+	CodexInstalledState                              // tclaude-managed and current
+	CodexNeedsRepair                                 // tclaude-managed but stale
+	CodexUserManagedState                            // user owns the status_line
+	CodexTuiConflictState                            // tui is an inline table/scalar/array; unsafe to edit
+	CodexNeedsManualFixState                         // managed value hand-edited into an unterminated (broken) array
 )
 
 // CodexConfigPath returns ~/.codex/config.toml, or "" if the home dir is unknown.
@@ -143,21 +145,18 @@ func InstallCodex() (CodexInstallOutcome, error) {
 		return 0, fmt.Errorf("cannot determine Codex config path (no home dir)")
 	}
 
-	data, err := os.ReadFile(path)
-	if err != nil && !os.IsNotExist(err) {
-		return 0, fmt.Errorf("read Codex config: %w", err)
-	}
-
-	outcome, newData := planCodexStatusLine(data)
-	switch outcome {
-	case CodexAlreadyInstalled, CodexUserManaged, CodexTuiConflict, CodexNeedsManualFix:
-		return outcome, nil // no write
-	}
-
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return 0, fmt.Errorf("create .codex dir: %w", err)
-	}
-	if err := os.WriteFile(path, newData, 0o644); err != nil {
+	var outcome CodexInstallOutcome
+	err := harness.EditCodexConfigFile(path, 0o644, func(data []byte) (bool, []byte, error) {
+		var newData []byte
+		outcome, newData = planCodexStatusLine(data)
+		switch outcome {
+		case CodexAlreadyInstalled, CodexUserManaged, CodexTuiConflict, CodexNeedsManualFix:
+			return false, data, nil
+		default:
+			return true, newData, nil
+		}
+	})
+	if err != nil {
 		return 0, fmt.Errorf("write Codex config: %w", err)
 	}
 	return outcome, nil

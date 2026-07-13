@@ -77,7 +77,11 @@ func TestEnsureCodexManagedProfilePinnedEmptyDoesNotDeriveFromCwd(t *testing.T) 
 func TestCommandWithFileCleanupPreservesExitAndRemovesProfile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "launch-profile.toml")
 	require.NoError(t, os.WriteFile(path, []byte("profile"), 0o600))
-	err := exec.Command("sh", "-c", commandWithFileCleanup("sh -c 'exit 7'", path)).Run()
+	// Simulate a pre-upgrade tclaude binary that lacks the hidden cleanup
+	// command. The guarded legacy fallback removes the old profile without
+	// resolving an executable through PATH.
+	cleanup := codexProfileCleanupShell(path, "/usr/bin/false")
+	err := exec.Command("sh", "-c", commandWithFileCleanupCommand("sh -c 'exit 7'", cleanup)).Run()
 	var exitErr *exec.ExitError
 	require.ErrorAs(t, err, &exitErr)
 	assert.Equal(t, 7, exitErr.ExitCode())
