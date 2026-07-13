@@ -1698,6 +1698,51 @@ func TestDashboardHTML_WizardCogNomenclature(t *testing.T) {
 	mustNot(`aria-label="Reveal or veil this party's familiars — focus or unfocus this group's agent windows"`, "group window button must not expose a mixed-theme accessible name")
 }
 
+// TestDashboardHTML_WizardCogDialogThemes covers the modal chrome reported
+// after the nomenclature sweep: the copy was already familiar/party-aware,
+// but these three cog-launched overlays still rendered with the regular dark
+// theme. Each skin must remain scoped because the shell classes are shared by
+// unrelated dialogs.
+func TestDashboardHTML_WizardCogDialogThemes(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !dashboardSourceContains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// Send-message / missive dialog, including its group-recipient list.
+	must("body.wizard #message-create-modal .cron-create-modal {", "missive dialog surface is re-skinned")
+	must("body.wizard #message-create-modal .cron-create-row textarea", "missive fields are re-skinned")
+	must("body.wizard #message-create-modal .cleanup-list", "party recipient list is re-skinned")
+	must("body.wizard #message-create-modal #message-create-submit {", "send-missive lever is re-skinned")
+	must(`<span class="theme-copy-wizard">✒ Send missive</span>`, "submit button uses wizard copy")
+	must(`<span class="theme-copy-wizard">Dispel</span>`, "missive cancel button uses wizard copy")
+	must(`$('#message-create-body').placeholder = wizWord('message text (required)', 'missive text (required)')`, "missive placeholder follows live theme flips")
+	must(`'Missive text is required.'`, "missive validation stays in wizard voice")
+
+	// Party worktree cleanup dialog, including dynamic category/submit copy.
+	must("body.wizard #worktree-cleanup-modal .cleanup-modal {", "worktree cleanup surface is re-skinned")
+	must("body.wizard #worktree-cleanup-modal .cleanup-toolbar button.active", "worktree category chips are re-skinned")
+	must("body.wizard #worktree-cleanup-modal .cleanup-list", "worktree candidate list is re-skinned")
+	must("body.wizard #worktree-cleanup-modal #worktree-cleanup-submit {", "prune lever is re-skinned")
+	must("n === 1 ? 'Prune 1 worktree' : `Prune ${n} worktrees`", "worktree submit swaps to prune copy")
+	must(`title="${esc(worktreeReason(c.reason))}"`, "worktree reason tooltip swaps its nouns")
+	must("document.addEventListener('tclaude:wizard', onWizard);", "open worktree dialog follows live theme flips")
+
+	// Invite-familiar picker.
+	must("body.wizard #add-member-modal .add-member-modal {", "invite dialog surface is re-skinned")
+	must("body.wizard #add-member-modal .add-member-search", "invite search is re-skinned")
+	must("body.wizard #add-member-modal .add-member-row.highlighted", "invite selection highlight is re-skinned")
+	must("body.wizard #add-member-modal .add-member-foot kbd", "invite keyboard hints are re-skinned")
+	must(`<span class="theme-copy-wizard">Include slumbering / archived</span>`, "invite footer uses wizard copy")
+	must(`(Try ticking "Include slumbering / archived" for a wider pool.)`, "invite empty state matches its wizard checkbox")
+
+	if strings.Contains(dashboardAssets, "body.wizard .add-member-modal {") {
+		t.Error("wizard invite re-skin is unscoped — will repaint the sudo/cron target pickers")
+	}
+}
+
 // TestDashboardHTML_WizardTemplateNativeControlSweep pins the JOH-349 sweep of
 // the native controls the earlier templates-family wizard work left
 // browser-default: the editor's number inputs, checkboxes, the role-library +
