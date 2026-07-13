@@ -111,7 +111,7 @@ func TestResumeLaunchCmd_CodexFilesystemRequiresManagedProfile(t *testing.T) {
 	cmd, _, err := resumeLaunchCmd(harness.CodexName, resumeConvCodex[:8], resumeConvCodex, nil)
 	require.NoError(t, err)
 	assert.Contains(t, cmd, " -p tclaude-agent-")
-	assert.Contains(t, cmd, "tclaude session codex-profile-cleanup --path")
+	assert.Contains(t, cmd, " session codex-profile-cleanup --path")
 	assert.Contains(t, cmd, "|| rm -f -- ")
 	assert.True(t, strings.Contains(cmd, "codex resume"), cmd)
 }

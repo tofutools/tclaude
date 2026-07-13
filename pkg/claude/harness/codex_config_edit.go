@@ -17,11 +17,23 @@ var codexConfigEditMu sync.Mutex
 // EditCodexConfigFile serializes every tclaude-owned edit of Codex's global
 // config. The advisory lock coordinates separate tclaude processes; the
 // stale-read check retries when Codex (which does not take our lock) changes
-// the file while an edit is being planned.
+// the file while an edit is being planned or staged. A non-cooperating writer
+// can never be made fully transactional with an advisory lock, so the temp
+// file is completely written and fsync'd before the final check to reduce the
+// remaining check-to-rename window to one local rename.
 func EditCodexConfigFile(
 	configPath string,
 	defaultPerm os.FileMode,
 	plan func([]byte) (bool, []byte, error),
+) error {
+	return editCodexConfigFile(configPath, defaultPerm, plan, prepareAtomicWriteFile)
+}
+
+func editCodexConfigFile(
+	configPath string,
+	defaultPerm os.FileMode,
+	plan func([]byte) (bool, []byte, error),
+	prepare func(string, []byte, os.FileMode) (*atomicFileReplacement, error),
 ) error {
 	codexConfigEditMu.Lock()
 	defer codexConfigEditMu.Unlock()
@@ -52,26 +64,34 @@ func EditCodexConfigFile(
 			return nil
 		}
 
-		// A non-tclaude writer cannot honor our advisory lock. Recheck both
-		// the symlink target and bytes immediately before replacement, and
-		// re-plan from the new state if either changed.
-		currentTarget, err := atomicWriteTarget(configPath)
-		if err != nil {
-			return fmt.Errorf("recheck Codex config target: %w", err)
-		}
-		current, err := readFileAllowMissing(currentTarget)
-		if err != nil {
-			return fmt.Errorf("recheck Codex config: %w", err)
-		}
-		if currentTarget != target || !bytes.Equal(current, before) {
-			continue
-		}
-
 		perm := defaultPerm
 		if fi, statErr := os.Stat(target); statErr == nil {
 			perm = fi.Mode().Perm()
 		}
-		if err := atomicWriteFile(target, out, perm); err != nil {
+		replacement, err := prepare(target, out, perm)
+		if err != nil {
+			return err
+		}
+
+		// A non-tclaude writer cannot honor our advisory lock. Recheck both
+		// the symlink target and bytes after the replacement has been fully
+		// staged, then re-plan from the new state if either changed.
+		currentTarget, err := atomicWriteTarget(configPath)
+		if err != nil {
+			replacement.discard()
+			return fmt.Errorf("recheck Codex config target: %w", err)
+		}
+		current, err := readFileAllowMissing(currentTarget)
+		if err != nil {
+			replacement.discard()
+			return fmt.Errorf("recheck Codex config: %w", err)
+		}
+		if currentTarget != target || !bytes.Equal(current, before) {
+			replacement.discard()
+			continue
+		}
+		if err := replacement.commit(); err != nil {
+			replacement.discard()
 			return err
 		}
 		return nil

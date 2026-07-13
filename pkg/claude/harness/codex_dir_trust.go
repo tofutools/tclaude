@@ -467,39 +467,74 @@ func tomlQuote(s string) string {
 // never sees a partially-written config and a crash mid-write leaves the
 // original intact. The parent dir is created if missing.
 func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
+	replacement, err := prepareAtomicWriteFile(path, data, perm)
+	if err != nil {
+		return err
+	}
+	defer replacement.discard()
+	return replacement.commit()
+}
+
+type atomicFileReplacement struct {
+	path    string
+	tmpName string
+	dir     string
+}
+
+// prepareAtomicWriteFile performs the comparatively slow temp-file write and
+// fsync without replacing path. Callers that need an optimistic stale-read
+// check can do it after prepare and immediately before commit.
+func prepareAtomicWriteFile(path string, data []byte, perm os.FileMode) (*atomicFileReplacement, error) {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("create %s: %w", dir, err)
+		return nil, fmt.Errorf("create %s: %w", dir, err)
 	}
 	tmp, err := os.CreateTemp(dir, ".config-*.tmp")
 	if err != nil {
-		return fmt.Errorf("create temp config: %w", err)
+		return nil, fmt.Errorf("create temp config: %w", err)
 	}
 	tmpName := tmp.Name()
-	// Best-effort cleanup if we bail before the rename; a no-op once renamed.
-	defer func() { _ = os.Remove(tmpName) }()
+	replacement := &atomicFileReplacement{path: path, tmpName: tmpName, dir: dir}
+	ok := false
+	defer func() {
+		if !ok {
+			replacement.discard()
+		}
+	}()
 
 	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("write temp config: %w", err)
+		return nil, fmt.Errorf("write temp config: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("sync temp config: %w", err)
+		return nil, fmt.Errorf("sync temp config: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temp config: %w", err)
+		return nil, fmt.Errorf("close temp config: %w", err)
 	}
 	if err := os.Chmod(tmpName, perm); err != nil {
-		return fmt.Errorf("chmod temp config: %w", err)
+		return nil, fmt.Errorf("chmod temp config: %w", err)
 	}
-	if err := os.Rename(tmpName, path); err != nil {
+	ok = true
+	return replacement, nil
+}
+
+func (r *atomicFileReplacement) discard() {
+	if r != nil && r.tmpName != "" {
+		_ = os.Remove(r.tmpName)
+	}
+}
+
+func (r *atomicFileReplacement) commit() error {
+	if err := os.Rename(r.tmpName, r.path); err != nil {
 		return fmt.Errorf("rename temp config into place: %w", err)
 	}
+	r.tmpName = ""
 	// fsync the parent directory so the rename itself is durable across a hard
 	// crash (the file content is already fsync'd above). Best-effort: a
 	// directory that can't be opened/synced doesn't undo the successful write.
-	if d, derr := os.Open(dir); derr == nil {
+	if d, derr := os.Open(r.dir); derr == nil {
 		_ = d.Sync()
 		_ = d.Close()
 	}

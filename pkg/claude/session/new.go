@@ -977,8 +977,12 @@ func sandboxSnapshotForLaunch(snapshot *sandboxpolicy.Snapshot) (*sandboxpolicy.
 }
 
 func commandWithFileCleanup(cmd, path string) string {
+	return commandWithFileCleanupCommand(cmd, CodexProfileCleanupShell(path))
+}
+
+func commandWithFileCleanupCommand(cmd, cleanup string) string {
 	statusVar := "tclaude_launch_status"
-	return cmd + "; " + statusVar + "=$?; " + CodexProfileCleanupShell(path) +
+	return cmd + "; " + statusVar + "=$?; " + cleanup +
 		"; exit $" + statusVar
 }
 

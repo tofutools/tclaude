@@ -36,11 +36,32 @@ func codexProfileCleanupCmd() *cobra.Command {
 }
 
 func cleanupCodexLaunchProfile(path string) error {
+	if !harness.IsCodexAgentLaunchProfilePath(path) {
+		return fmt.Errorf("refusing to clean up non-managed Codex profile path %q", path)
+	}
+	before, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect managed Codex launch profile: %w", err)
+	}
+	if !before.Mode().IsRegular() {
+		return fmt.Errorf("refusing to clean up managed Codex profile that is not a regular file")
+	}
+
 	report, promoteErr := harness.PromoteCodexLaunchProfileApprovals(path)
 	if promoteErr != nil {
-		// Cleanup must not retain a proof-scoped authority file indefinitely.
-		// Promotion fails closed; report it and continue removing the profile.
-		slog.Warn("codex profile cleanup: approval promotion skipped", "path", path, "error", promoteErr)
+		if !harness.IsCodexLaunchProfileValidationError(promoteErr) {
+			// Preserve the only copy of the explicit choice when the persistent
+			// config is temporarily unreadable/unwritable. agentd's startup scan
+			// can retry the still-sealed profile later.
+			return fmt.Errorf("persist Codex profile approvals (profile retained at %s): %w", path, promoteErr)
+		}
+		// A malformed or baseline-tampered profile is unsafe to retain as a
+		// proof-scoped authority file. It is deliberately removed without
+		// promoting anything.
+		slog.Warn("codex profile cleanup: removing invalid managed profile", "path", path, "error", promoteErr)
 	} else {
 		if len(report.Conflicts) > 0 {
 			slog.Warn("codex profile cleanup: kept existing global approval decisions",
@@ -50,6 +71,16 @@ func cleanupCodexLaunchProfile(path string) error {
 			slog.Info("codex profile cleanup: persisted app-tool Always allow choice",
 				"path", path, "added", report.Added, "already_present", report.Existing)
 		}
+	}
+	after, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("reinspect managed Codex launch profile: %w", err)
+	}
+	if !after.Mode().IsRegular() || !os.SameFile(before, after) {
+		return fmt.Errorf("managed Codex launch profile changed during cleanup; refusing removal")
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove managed Codex launch profile: %w", err)
@@ -61,7 +92,15 @@ func cleanupCodexLaunchProfile(path string) error {
 // tclaude binary that predates the hidden command falls back to the historical
 // rm-only cleanup, preserving compatibility across self-upgrades.
 func CodexProfileCleanupShell(path string) string {
+	cleanup := clcommon.DetectAbsoluteCmd("session", "codex-profile-cleanup")
+	return codexProfileCleanupShell(path, cleanup)
+}
+
+func codexProfileCleanupShell(path, cleanup string) string {
 	quoted := clcommon.ShellQuoteArg(path)
-	return "tclaude session codex-profile-cleanup --path " + quoted +
-		" >/dev/null 2>&1 || rm -f -- " + quoted
+	// Probe --help before the legacy rm fallback. A current binary may return
+	// non-zero because it intentionally retained a profile after a transient
+	// merge failure; that must not be mistaken for an old binary and deleted.
+	return cleanup + " --path " + quoted + " >/dev/null || { " + cleanup +
+		" --help >/dev/null 2>&1 || rm -f -- " + quoted + "; }"
 }

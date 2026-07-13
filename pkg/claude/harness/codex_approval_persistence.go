@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -32,6 +33,20 @@ type CodexApprovalPromotion struct {
 	Added     int
 	Existing  int
 	Conflicts []string
+}
+
+type codexLaunchProfileValidationError struct{ err error }
+
+func (e *codexLaunchProfileValidationError) Error() string { return e.err.Error() }
+func (e *codexLaunchProfileValidationError) Unwrap() error { return e.err }
+
+// IsCodexLaunchProfileValidationError reports whether promotion failed because
+// the managed profile itself was malformed or its sealed baseline changed.
+// Such a profile is unsafe to retain even though transient global-config
+// failures should preserve it for a later retry.
+func IsCodexLaunchProfileValidationError(err error) bool {
+	var target *codexLaunchProfileValidationError
+	return errors.As(err, &target)
 }
 
 // CodexConfigDir exposes the directory where Codex resolves config.toml and
@@ -165,7 +180,7 @@ func PromoteCodexLaunchProfileApprovals(profilePath string) (CodexApprovalPromot
 	}
 	approvals, err := ExtractCodexLaunchProfileApprovals(data)
 	if err != nil {
-		return report, err
+		return report, &codexLaunchProfileValidationError{err: err}
 	}
 	report.Found = len(approvals)
 	if len(approvals) == 0 {
