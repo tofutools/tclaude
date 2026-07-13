@@ -356,20 +356,21 @@ type mailboxMessage struct {
 	// after the conv is pruned. Empty when the conv was never an actor (a
 	// plain conv, or a since-deleted agent); the frontend then falls back to
 	// the short conv-id prefix via shortAgentId.
-	FromAgent    string          `json:"from_agent,omitempty"`
-	FromTitle    string          `json:"from_title,omitempty"`
-	ToConv       string          `json:"to_conv,omitempty"`
-	ToAgent      string          `json:"to_agent,omitempty"`
-	ToTitle      string          `json:"to_title,omitempty"`
-	ToRecipients []recipientLine `json:"to_recipients,omitempty"`
-	CcRecipients []recipientLine `json:"cc_recipients,omitempty"`
-	Group        string          `json:"group,omitempty"`
-	Subject      string          `json:"subject,omitempty"`
-	Body         string          `json:"body"`
-	CreatedAt    string          `json:"created_at"`
-	DeliveredAt  string          `json:"delivered_at,omitempty"`
-	Read         bool            `json:"read"`
-	ParentID     int64           `json:"parent_id,omitempty"`
+	FromAgent    string                           `json:"from_agent,omitempty"`
+	FromTitle    string                           `json:"from_title,omitempty"`
+	ToConv       string                           `json:"to_conv,omitempty"`
+	ToAgent      string                           `json:"to_agent,omitempty"`
+	ToTitle      string                           `json:"to_title,omitempty"`
+	ToRecipients []recipientLine                  `json:"to_recipients,omitempty"`
+	CcRecipients []recipientLine                  `json:"cc_recipients,omitempty"`
+	Group        string                           `json:"group,omitempty"`
+	Subject      string                           `json:"subject,omitempty"`
+	Body         string                           `json:"body"`
+	CreatedAt    string                           `json:"created_at"`
+	DeliveredAt  string                           `json:"delivered_at,omitempty"`
+	Read         bool                             `json:"read"`
+	ParentID     int64                            `json:"parent_id,omitempty"`
+	Attachment   *dashboardHumanMessageAttachment `json:"attachment,omitempty"`
 }
 
 // Mailbox pagination bounds. defaultMailboxPageSize is what the
@@ -600,16 +601,17 @@ func humanMailboxMessages() []mailboxMessage {
 	out := make([]mailboxMessage, 0, len(rows))
 	for _, m := range rows {
 		out = append(out, mailboxMessage{
-			ID:        m.ID,
-			Direction: "in",
-			FromConv:  m.FromConv,
-			FromAgent: m.FromAgent,
-			FromTitle: m.FromTitle,
-			Group:     m.Group,
-			Subject:   m.Subject,
-			Body:      m.Body,
-			CreatedAt: m.CreatedAt,
-			Read:      m.Read,
+			ID:         m.ID,
+			Direction:  "in",
+			FromConv:   m.FromConv,
+			FromAgent:  m.FromAgent,
+			FromTitle:  m.FromTitle,
+			Group:      m.Group,
+			Subject:    m.Subject,
+			Body:       m.Body,
+			CreatedAt:  m.CreatedAt,
+			Read:       m.Read,
+			Attachment: m.Attachment,
 		})
 	}
 	return out

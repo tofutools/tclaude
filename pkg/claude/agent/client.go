@@ -346,13 +346,30 @@ func daemonGetRaw(path string) ([]byte, http.Header, error) {
 // used to upload a group-export .zip — and decodes the JSON response
 // into out (pass nil to ignore the response body).
 func DaemonPostRaw(path, contentType string, body []byte, out any) error {
+	return DaemonPostRawWithOptions(path, contentType, body, nil, out, DaemonOpts{})
+}
+
+// DaemonPostRawWithOptions is the configurable raw upload transport. Headers
+// carry small metadata for binary endpoints; opts preserves the same ad-hoc
+// human approval behavior as JSON commands.
+func DaemonPostRawWithOptions(path, contentType string, body []byte, headers http.Header, out any, opts DaemonOpts) error {
 	req, err := http.NewRequest(http.MethodPost, "http://_"+path, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
 	attachHumanToken(req)
 	req.Header.Set("Content-Type", contentType)
-	resp, err := httpClientWithTimeout(daemonRawTimeout).Do(req)
+	for key, values := range headers {
+		for _, value := range values {
+			req.Header.Add(key, value)
+		}
+	}
+	client := httpClientWithTimeout(daemonRawTimeout)
+	if opts.AskHuman > 0 {
+		req.Header.Set("X-Tclaude-Ask-Human", opts.AskHuman.String())
+		client = httpClientWithTimeout(max(daemonRawTimeout, opts.AskHuman+30*time.Second))
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}

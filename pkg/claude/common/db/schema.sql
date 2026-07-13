@@ -703,3 +703,11 @@ CREATE TABLE agent_group_permissions (
 CREATE INDEX idx_agent_group_permissions_slug
 			ON agent_group_permissions(slug);
 
+CREATE TABLE human_message_attachments (
+			message_id   INTEGER PRIMARY KEY REFERENCES human_messages(id) ON DELETE CASCADE,
+			filename     TEXT NOT NULL,
+			content_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+			size_bytes   INTEGER NOT NULL,
+			storage_path TEXT NOT NULL
+		);
+

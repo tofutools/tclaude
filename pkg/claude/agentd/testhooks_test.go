@@ -400,6 +400,31 @@ func SetHumanMessageNotifierForTest(fn func(senderSessionID, fromTitle, group, s
 	return func() { humanMsgNotify = prev }
 }
 
+// RunHumanMessageAttachmentCleanupForTest runs the filesystem/DB reconciler
+// synchronously for flow coverage.
+func RunHumanMessageAttachmentCleanupForTest() {
+	runHumanMessageAttachmentCleanup()
+}
+
+// SetHumanMessageAttachmentQuotasForTest shrinks storage limits for flow tests.
+func SetHumanMessageAttachmentQuotasForTest(perSenderBytes, totalBytes int64, perSenderCount, totalCount int) func() {
+	oldSender, oldTotal := maxHumanMessageAttachmentSenderBytes, maxHumanMessageAttachmentTotalBytes
+	oldSenderCount, oldTotalCount := maxHumanMessageAttachmentSenderCount, maxHumanMessageAttachmentTotalCount
+	maxHumanMessageAttachmentSenderBytes, maxHumanMessageAttachmentTotalBytes = perSenderBytes, totalBytes
+	maxHumanMessageAttachmentSenderCount, maxHumanMessageAttachmentTotalCount = perSenderCount, totalCount
+	return func() {
+		maxHumanMessageAttachmentSenderBytes, maxHumanMessageAttachmentTotalBytes = oldSender, oldTotal
+		maxHumanMessageAttachmentSenderCount, maxHumanMessageAttachmentTotalCount = oldSenderCount, oldTotalCount
+	}
+}
+
+// SetHumanMessageAttachmentUploadTimeoutForTest shrinks the stalled-body deadline.
+func SetHumanMessageAttachmentUploadTimeoutForTest(timeout time.Duration) func() {
+	old := humanMessageAttachmentUploadTimeout
+	humanMessageAttachmentUploadTimeout = timeout
+	return func() { humanMessageAttachmentUploadTimeout = old }
+}
+
 // SetClipboardWriterForTest swaps the platform clipboard-write seam so a
 // flow test can assert that handleClipboard reached the copy path with the
 // exact text — without execing a real wl-copy/xclip/pbcopy/clip.exe (which

@@ -1,12 +1,37 @@
 package agentd
 
 import (
+	"encoding/base64"
+	"io"
+	"net/http"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
+
+func TestSnapshotRequestBodyAttachmentLeavesBinaryStreamUntouched(t *testing.T) {
+	const binary = "a large-ish binary body \x00 that must survive"
+	req, err := http.NewRequest(http.MethodPost, "/v1/notify-human/attachment", strings.NewReader(binary))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Tclaude-Notify-Metadata", base64.RawURLEncoding.EncodeToString(
+		[]byte(`{"body":"report ready","name":"report.zip"}`)))
+	preview := snapshotRequestBody(req)
+	if !strings.Contains(preview, "report ready") || !strings.Contains(preview, "binary attachment omitted") {
+		t.Fatalf("unexpected approval preview: %q", preview)
+	}
+	got, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != binary {
+		t.Fatalf("binary stream changed: got %q want %q", got, binary)
+	}
+}
 
 // TestEscapeForCmdExe pins the cmd.exe metachar escaping that makes
 // --slop survive the cmd /c start "" URL path on WSL and native

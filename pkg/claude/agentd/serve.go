@@ -393,6 +393,7 @@ func runServe(p *serveParams) error {
 	// jobs whose agent never delivered, and TTL-prunes terminal jobs + their
 	// on-disk artifacts under ~/.tclaude/exports. Shares the stop channel.
 	startExportJobsCleanup(cronStop)
+	startHumanMessageAttachmentCleanup(cronStop)
 
 	// Pending-spawn sweeper. Finishes enrollment for non-blocking spawns
 	// whose conv-id materialised only after the spawn returned PENDING —
@@ -884,6 +885,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/sudo", handleSudo)
 	mux.HandleFunc("/v1/sudo/", handleSudoByID)
 	mux.HandleFunc("/v1/notify-human", handleNotifyHuman)
+	mux.HandleFunc("/v1/notify-human/attachment", handleNotifyHumanAttachment)
 	mux.HandleFunc("/v1/clipboard", handleClipboard)
 	// Experimental process engine surfaces remain registered so off means a
 	// stable 404 rather than a different mux shape. processRoute reloads the

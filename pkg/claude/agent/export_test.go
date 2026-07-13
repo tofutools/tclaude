@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -70,12 +71,57 @@ func TestBuildExportArtifact_MissingFile(t *testing.T) {
 	assert.NotEmpty(t, stderr.String())
 }
 
-func TestBuildExportArtifact_DirectoryRejected(t *testing.T) {
+func TestBuildExportArtifact_DirectoryPackaged(t *testing.T) {
 	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "result.txt"), []byte("done"), 0o644))
 	var stderr bytes.Buffer
-	_, _, _, rc := buildExportArtifact([]string{dir}, "", &stderr)
+	data, name, contentType, rc := buildExportArtifact([]string{dir}, "", &stderr)
+	require.Equal(t, rcOK, rc, stderr.String())
+	assert.Equal(t, filepath.Base(dir)+".zip", name)
+	assert.Equal(t, "application/zip", contentType)
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	require.NoError(t, err)
+	require.Len(t, zr.File, 1)
+	assert.Equal(t, filepath.Base(dir)+"/result.txt", zr.File[0].Name)
+}
+
+func TestBuildExportArtifact_SymlinkedDirectoryRejected(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "dist-real")
+	require.NoError(t, os.Mkdir(target, 0o755))
+	link := filepath.Join(dir, "dist")
+	require.NoError(t, os.Symlink(target, link))
+	var stderr bytes.Buffer
+	_, _, _, rc := buildExportArtifact([]string{link}, "", &stderr)
 	assert.Equal(t, rcInvalidArg, rc)
-	assert.Contains(t, stderr.String(), "directory")
+	assert.Contains(t, stderr.String(), "symlink")
+}
+
+func TestCappedArtifactBufferStopsBeforeGrowthPastLimit(t *testing.T) {
+	b := &cappedArtifactBuffer{limit: 4}
+	n, err := b.Write([]byte("abcdef"))
+	assert.Equal(t, 4, n)
+	assert.ErrorIs(t, err, errExportArtifactTooLarge)
+	assert.Equal(t, []byte("abcd"), b.Bytes())
+}
+
+func TestCopyZipFileCappedStopsOnActualByteBudget(t *testing.T) {
+	var dst bytes.Buffer
+	n, err := copyZipFileCapped(&dst, strings.NewReader("abcdef"), 4)
+	assert.Equal(t, int64(5), n, "read exactly one byte beyond the budget to prove growth")
+	assert.ErrorIs(t, err, errExportArtifactTooLarge)
+}
+
+func TestSafeZipNamesRejectDegenerateRootsAndTraversal(t *testing.T) {
+	for _, root := range []string{"", ".", "..", "/"} {
+		assert.Equal(t, "artifact", safeZipComponent(root), root)
+	}
+	assert.Equal(t, ".._report", safeZipComponent(`..\report`))
+	entry, err := safeZipEntry("artifact", "nested/report.txt")
+	require.NoError(t, err)
+	assert.Equal(t, "artifact/nested/report.txt", entry)
+	_, err = safeZipEntry("artifact", "../report.txt")
+	assert.Error(t, err)
 }
 
 func TestZipFiles_DuplicateBaseNamesDisambiguated(t *testing.T) {

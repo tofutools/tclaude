@@ -1153,7 +1153,8 @@ for Claude Code, plus both `~/.agents/skills/` and `$CODEX_HOME/skills`
   the wizard-mode vocabulary. See [templates](#templates).
 - **`human-notify`** — send the human a notification via
   `tclaude agent notify-human`; it lands in the dashboard
-  [Messages tab](dashboard.md#messages).
+  [Messages tab](dashboard.md#messages). Add repeatable `--attach <path>` flags
+  to publish generated files or directories as a downloadable artifact.
 - **`human-clipboard`** — copy text to the human's system clipboard via
   `tclaude agent clipboard`; the daemon runs the platform copy tool on
   the host. Gated on `human.clipboard` (explicit grant or `--ask-human`

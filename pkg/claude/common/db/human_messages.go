@@ -38,6 +38,18 @@ type HumanMessage struct {
 	ProcessRunID     string
 	ProcessNodeID    string
 	ProcessCommandID string
+	Attachment       *HumanMessageAttachment
+}
+
+// HumanMessageAttachment is one daemon-owned downloadable artifact published
+// with a human notification. Multiple input paths are packaged as one zip by
+// the CLI, keeping the message surface compact while still delivering a set.
+type HumanMessageAttachment struct {
+	MessageID   int64
+	Filename    string
+	ContentType string
+	SizeBytes   int64
+	StoragePath string
 }
 
 // IsRead reports whether the message has been marked read.
@@ -50,6 +62,14 @@ func InsertHumanMessage(m *HumanMessage) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	return insertHumanMessage(d, m)
+}
+
+type humanMessageExecer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+func insertHumanMessage(exec humanMessageExecer, m *HumanMessage) (int64, error) {
 	created := m.CreatedAt
 	if created.IsZero() {
 		created = time.Now()
@@ -64,7 +84,7 @@ func InsertHumanMessage(m *HumanMessage) (int64, error) {
 	// / empty sender (the human-initiated path) resolves to ''. Any FromAgent
 	// preset on the struct is intentionally ignored — from_conv is the source of
 	// truth, so the denormalised ref can never drift from it.
-	res, err := d.Exec(`
+	res, err := exec.Exec(`
 		INSERT INTO human_messages
 			(from_conv, from_agent, from_title, group_name, subject, body, created_at, read_at,
 			 process_run_id, process_node_id, process_command_id)
@@ -75,6 +95,158 @@ func InsertHumanMessage(m *HumanMessage) (int64, error) {
 		return 0, fmt.Errorf("insert human message: %w", err)
 	}
 	return res.LastInsertId()
+}
+
+// InsertHumanMessageWithAttachment commits the message and attachment metadata
+// together. The caller must have already written StoragePath and removes it if
+// this transaction fails; a committed message can therefore never be visible
+// without its attachment row.
+func InsertHumanMessageWithAttachment(m *HumanMessage, a *HumanMessageAttachment) (int64, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	id, err := insertHumanMessage(tx, m)
+	if err != nil {
+		return 0, err
+	}
+	a.MessageID = id
+	if err := insertHumanMessageAttachment(tx, a); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit human message attachment: %w", err)
+	}
+	return id, nil
+}
+
+// InsertHumanMessageAttachment records the artifact metadata for a message.
+// The caller writes the daemon-owned file first and removes it if this fails.
+func InsertHumanMessageAttachment(a *HumanMessageAttachment) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	return insertHumanMessageAttachment(d, a)
+}
+
+func insertHumanMessageAttachment(exec humanMessageExecer, a *HumanMessageAttachment) error {
+	_, err := exec.Exec(`INSERT INTO human_message_attachments
+		(message_id, filename, content_type, size_bytes, storage_path)
+		VALUES (?, ?, ?, ?, ?)`, a.MessageID, a.Filename, a.ContentType, a.SizeBytes, a.StoragePath)
+	if err != nil {
+		return fmt.Errorf("insert human message attachment: %w", err)
+	}
+	return nil
+}
+
+// ListHumanMessageAttachments returns every persisted artifact reference for
+// filesystem reconciliation and quota accounting.
+func ListHumanMessageAttachments() ([]*HumanMessageAttachment, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT message_id, filename, content_type, size_bytes, storage_path
+		FROM human_message_attachments`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var attachments []*HumanMessageAttachment
+	for rows.Next() {
+		var a HumanMessageAttachment
+		if err := rows.Scan(&a.MessageID, &a.Filename, &a.ContentType, &a.SizeBytes, &a.StoragePath); err != nil {
+			return nil, err
+		}
+		attachments = append(attachments, &a)
+	}
+	return attachments, rows.Err()
+}
+
+// HumanMessageAttachmentUsage reports stored bytes and row counts globally and
+// for one stable agent (falling back to a conversation id for legacy/non-agent
+// senders). Count quotas prevent zero/tiny files from exhausting DB rows/inodes.
+func HumanMessageAttachmentUsage(agentID, convID string) (totalBytes, senderBytes int64, totalCount, senderCount int, err error) {
+	d, err := Open()
+	if err != nil {
+		return 0, 0, 0, 0, err
+	}
+	if err := d.QueryRow(`SELECT COALESCE(SUM(size_bytes), 0), COUNT(*) FROM human_message_attachments`).
+		Scan(&totalBytes, &totalCount); err != nil {
+		return 0, 0, 0, 0, err
+	}
+	if agentID != "" {
+		err = d.QueryRow(`SELECT COALESCE(SUM(a.size_bytes), 0), COUNT(*)
+			FROM human_message_attachments a JOIN human_messages m ON m.id = a.message_id
+			WHERE m.from_agent = ?`, agentID).Scan(&senderBytes, &senderCount)
+	} else {
+		err = d.QueryRow(`SELECT COALESCE(SUM(a.size_bytes), 0), COUNT(*)
+			FROM human_message_attachments a JOIN human_messages m ON m.id = a.message_id
+			WHERE m.from_conv = ?`, convID).Scan(&senderBytes, &senderCount)
+	}
+	return totalBytes, senderBytes, totalCount, senderCount, err
+}
+
+// DeleteHumanMessageAttachment removes stale metadata while preserving the
+// human message itself (which remains readable without a download card).
+func DeleteHumanMessageAttachment(messageID int64) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`DELETE FROM human_message_attachments WHERE message_id = ?`, messageID)
+	return err
+}
+
+// GetHumanMessageAttachment returns a message's attachment, if any.
+func GetHumanMessageAttachment(messageID int64) (*HumanMessageAttachment, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	var a HumanMessageAttachment
+	err = d.QueryRow(`SELECT message_id, filename, content_type, size_bytes, storage_path
+		FROM human_message_attachments WHERE message_id = ?`, messageID).
+		Scan(&a.MessageID, &a.Filename, &a.ContentType, &a.SizeBytes, &a.StoragePath)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
+func attachHumanMessageArtifacts(d *sql.DB, messages []*HumanMessage) error {
+	if len(messages) == 0 {
+		return nil
+	}
+	byID := make(map[int64]*HumanMessage, len(messages))
+	for _, m := range messages {
+		byID[m.ID] = m
+	}
+	rows, err := d.Query(`SELECT message_id, filename, content_type, size_bytes, storage_path
+		FROM human_message_attachments`)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var a HumanMessageAttachment
+		if err := rows.Scan(&a.MessageID, &a.Filename, &a.ContentType, &a.SizeBytes, &a.StoragePath); err != nil {
+			return err
+		}
+		if m := byID[a.MessageID]; m != nil {
+			m.Attachment = &a
+		}
+	}
+	return rows.Err()
 }
 
 // ListHumanMessages returns every human message, newest first.
@@ -132,7 +304,16 @@ func ListHumanMessages() ([]*HumanMessage, error) {
 		}
 		out = append(out, &m)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := attachHumanMessageArtifacts(d, out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // GetHumanMessage loads one human message by id, or (nil, nil) when no
@@ -172,6 +353,10 @@ func GetHumanMessage(id int64) (*HumanMessage, error) {
 			slog.Warn("human_messages: unparseable read_at, leaving zero",
 				"id", m.ID, "value", readAt, "error", err)
 		}
+	}
+	m.Attachment, err = GetHumanMessageAttachment(m.ID)
+	if err != nil {
+		return nil, err
 	}
 	return &m, nil
 }
@@ -288,6 +473,14 @@ func DeleteReadHumanMessages() (int, error) {
 	return int(n), nil
 }
 
+// DeleteReadHumanMessagesWithAttachments atomically captures the exact files
+// owned by the rows it deletes. This closes the list/delete race for the
+// dashboard clear-read action; filesystem removal happens after commit and an
+// agentd reconciler retries any failed removal.
+func DeleteReadHumanMessagesWithAttachments() (int, []string, error) {
+	return deleteHumanMessagesWithAttachments("read_at != ''", nil)
+}
+
 // DeleteHumanMessage hard-deletes a single message by id, regardless of
 // its read state — the per-message delete control on the tab, distinct
 // from the bulk "clear read" sweep. A non-existent id is a no-op, not an
@@ -331,4 +524,59 @@ func DeleteHumanMessages(ids []int64) (int, error) {
 	}
 	n, _ := res.RowsAffected()
 	return int(n), nil
+}
+
+// DeleteHumanMessagesWithAttachments is the attachment-aware dashboard delete.
+// It returns paths captured in the same transaction as the message deletion.
+func DeleteHumanMessagesWithAttachments(ids []int64) (int, []string, error) {
+	if len(ids) == 0 {
+		return 0, nil, nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	return deleteHumanMessagesWithAttachments("id IN ("+strings.Join(placeholders, ",")+")", args)
+}
+
+func deleteHumanMessagesWithAttachments(where string, args []any) (int, []string, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, nil, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return 0, nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	rows, err := tx.Query(`SELECT a.storage_path
+		FROM human_message_attachments a
+		JOIN human_messages m ON m.id = a.message_id
+		WHERE `+where, args...)
+	if err != nil {
+		return 0, nil, fmt.Errorf("list deleted human message attachments: %w", err)
+	}
+	var paths []string
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			_ = rows.Close()
+			return 0, nil, err
+		}
+		paths = append(paths, path)
+	}
+	if err := rows.Close(); err != nil {
+		return 0, nil, err
+	}
+	res, err := tx.Exec(`DELETE FROM human_messages WHERE `+where, args...)
+	if err != nil {
+		return 0, nil, fmt.Errorf("delete human messages with attachments: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if err := tx.Commit(); err != nil {
+		return 0, nil, fmt.Errorf("commit delete human messages with attachments: %w", err)
+	}
+	return int(n), paths, nil
 }
