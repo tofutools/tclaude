@@ -4,16 +4,26 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // codexApprovalMonitorDebounce lets Codex's atomic config edit settle before
 // the daemon parses and promotes an app-tool approval.
 var codexApprovalMonitorDebounce = 100 * time.Millisecond
+
+var codexApprovalCleanupTailRe = regexp.MustCompile(`^; (?:}; )?exit \$tclaude_(?:launch|resume)_status$`)
+
+var codexApprovalPaneStartCommands = func() ([]byte, error) {
+	return clcommon.TmuxCommand("list-panes", "-a", "-F", "#{pane_dead}\t#{pane_start_command}").Output()
+}
 
 type codexApprovalMonitor struct {
 	watcher *fsnotify.Watcher
@@ -63,15 +73,7 @@ func (m *codexApprovalMonitor) loop() {
 	defer close(m.done)
 	defer func() { _ = m.watcher.Close() }()
 
-	// A startup scan recovers approvals written while agentd was down, as long
-	// as the owning Codex pane is still alive and has not removed its profile.
-	if entries, err := os.ReadDir(m.dir); err == nil {
-		for _, entry := range entries {
-			if !entry.IsDir() {
-				m.reconcile(filepath.Join(m.dir, entry.Name()))
-			}
-		}
-	}
+	m.reconcileLiveProfilesAtStartup()
 
 	fireCh := make(chan codexApprovalFire, 32)
 	timers := make(map[string]*time.Timer)
@@ -122,6 +124,146 @@ func (m *codexApprovalMonitor) loop() {
 			slog.Warn("codex-approval-monitor: watcher error", "error", err)
 		}
 	}
+}
+
+// reconcileLiveProfilesAtStartup recovers approvals written while agentd was
+// down, but only for managed profiles named by currently live tmux panes.
+// Crash leftovers and retired/stopped sessions remain untouched for the normal
+// age-bounded stale-profile sweep.
+func (m *codexApprovalMonitor) reconcileLiveProfilesAtStartup() {
+	paneStarts, err := liveCodexApprovalPaneStarts()
+	if err != nil {
+		slog.Warn("codex-approval-monitor: cannot inspect live startup profiles", "error", err)
+		return
+	}
+	entries, err := os.ReadDir(m.dir)
+	if err != nil {
+		slog.Warn("codex-approval-monitor: cannot scan startup profiles", "path", m.dir, "error", err)
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		path := filepath.Join(m.dir, entry.Name())
+		if harness.IsCodexAgentLaunchProfilePath(path) && codexApprovalProfileOwnedByLivePane(path, paneStarts) {
+			m.reconcile(path)
+		}
+	}
+}
+
+func liveCodexApprovalPaneStarts() ([]string, error) {
+	out, err := codexApprovalPaneStartCommands()
+	if err != nil {
+		if _, ok := err.(*exec.ExitError); ok {
+			return nil, nil // no tmux server or no live panes
+		}
+		return nil, err
+	}
+	return codexApprovalLivePaneStarts(string(out)), nil
+}
+
+func codexApprovalLivePaneStarts(data string) []string {
+	commands := make([]string, 0)
+	for line := range strings.SplitSeq(data, "\n") {
+		dead, command, ok := strings.Cut(line, "\t")
+		if !ok || dead != "0" || command == "" {
+			continue
+		}
+		commands = append(commands, command)
+	}
+	return commands
+}
+
+func codexApprovalProfileOwnedByLivePane(path string, paneStarts []string) bool {
+	profile := strings.TrimSuffix(filepath.Base(path), ".config.toml")
+	profileArg := " -p " + profile
+	cleanup := "rm -f -- " + clcommon.ShellQuoteArg(path)
+	for _, rendered := range paneStarts {
+		command, ok := codexApprovalRawShellCommand(rendered)
+		if !ok {
+			continue
+		}
+		cleanupAt := strings.LastIndex(command, cleanup)
+		if cleanupAt < 0 || !codexApprovalHasProfileArg(command[:cleanupAt], profileArg) ||
+			cleanupAt != strings.LastIndex(command, "rm -f -- ") {
+			continue
+		}
+		tail := strings.TrimSpace(command[cleanupAt+len(cleanup):])
+		if codexApprovalCleanupTailRe.MatchString(tail) {
+			return true
+		}
+	}
+	return false
+}
+
+func codexApprovalHasProfileArg(command, profileArg string) bool {
+	unquoted := shellUnquotedMask(command)
+	for segment := range strings.SplitSeq(unquoted, ";") {
+		segment = strings.TrimSpace(segment)
+		if strings.HasPrefix(segment, "codex ") && strings.Contains(segment, profileArg) {
+			return true
+		}
+	}
+	return false
+}
+
+// shellUnquotedMask preserves unquoted shell syntax byte-for-byte and blanks
+// quoted/escaped content. It is intentionally a small recognizer, not a shell
+// evaluator: startup recovery only needs to distinguish the generated `codex
+// ... -p ...` command segment from prompt text that happens to discuss one.
+func shellUnquotedMask(command string) string {
+	masked := []byte(command)
+	var quote byte
+	for i := 0; i < len(masked); i++ {
+		char := masked[i]
+		if quote != 0 {
+			masked[i] = ' '
+			if quote == '"' && char == '\\' && i+1 < len(masked) {
+				i++
+				masked[i] = ' '
+				continue
+			}
+			if char == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch char {
+		case '\'', '"':
+			quote = char
+			masked[i] = ' '
+		case '\\':
+			masked[i] = ' '
+			if i+1 < len(masked) {
+				i++
+				masked[i] = ' '
+			}
+		}
+	}
+	return string(masked)
+}
+
+// codexApprovalRawShellCommand reverses tmux's pane_start_command rendering
+// for the `sh -c <command>` shape tclaude launches. tmux wraps the command in
+// double quotes and backslash-escapes characters special inside those quotes;
+// decoding them lets exact cleanup paths compare correctly even when
+// CODEX_HOME contains spaces, dollars, quotes, backslashes, or backticks.
+func codexApprovalRawShellCommand(rendered string) (string, bool) {
+	const prefix = `sh -c "`
+	if !strings.HasPrefix(rendered, prefix) || !strings.HasSuffix(rendered, `"`) {
+		return "", false
+	}
+	quoted := rendered[len(prefix) : len(rendered)-1]
+	var raw strings.Builder
+	raw.Grow(len(quoted))
+	for i := 0; i < len(quoted); i++ {
+		if quoted[i] == '\\' && i+1 < len(quoted) && strings.ContainsRune(`\"$`+"`", rune(quoted[i+1])) {
+			i++
+		}
+		raw.WriteByte(quoted[i])
+	}
+	return raw.String(), true
 }
 
 func (m *codexApprovalMonitor) reconcile(path string) {
