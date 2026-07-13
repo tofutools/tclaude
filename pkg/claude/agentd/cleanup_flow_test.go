@@ -430,6 +430,44 @@ func TestCleanup_Agents_RetireRemovesLinkedWorktree(t *testing.T) {
 	assert.Equal(t, db.AgentStateRetired, state)
 }
 
+// Scenario: two offline agents share a worktree and are retired together.
+// Their safety views must come from one pre-retire snapshot; otherwise the
+// first demotion disappears from the active roster before the second is
+// processed, and the later target can incorrectly remove their shared tree.
+func TestCleanup_Agents_RetireBatchKeepsCoSharedWorktree(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const convA = "rwba-1111-2222-3333-4444"
+	const convB = "rwbb-1111-2222-3333-4444"
+	const shared = "/tmp/wt-retire-batch-shared"
+	for _, c := range []struct {
+		conv, label, tmux string
+	}{
+		{convA, "spwn-rwba", "tmux-rwba"},
+		{convB, "spwn-rwbb", "tmux-rwbb"},
+	} {
+		f.HaveConvWithTitle(c.conv, "batch-worker")
+		f.HaveAliveSession(c.conv, c.label, c.tmux, shared)
+		f.HaveEnrolledAgent(c.conv)
+		f.MarkOffline(c.tmux)
+	}
+	fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+		shared: {Root: shared, Branch: "shared", Kind: "linked"},
+	})
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	resp := postCleanup(t, mux, "/api/cleanup/agents",
+		`{"agents":["`+convA+`","`+convB+`"],"mode":"retire","delete_worktrees":true}`)
+
+	assert.Equal(t, 2, resp.Retired)
+	assert.False(t, fw.wasRemoved(shared), "a co-shared worktree must be kept for the whole retire cohort")
+	require.Len(t, resp.Outcomes, 2)
+	for _, out := range resp.Outcomes {
+		assert.Contains(t, out.Detail, "shared", "each cohort member must receive the stable shared decision")
+	}
+}
+
 // Scenario: retire without delete_worktrees leaves the worktree alone —
 // the box is coupled to shutdown and defaults on, but an unticked box
 // (or an older client) must never nuke a worktree by accident.

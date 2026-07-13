@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/claude/worktree"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -142,6 +143,88 @@ func TestRetire_DeleteWorktreeKeepsSharedWorktree(t *testing.T) {
 	assert.Contains(t, resp.Worktree.Detail, "shared")
 	assert.False(t, fw.wasRemoved(shared),
 		"a worktree another agent still works in must be kept")
+}
+
+// Scenario: an agent is retired, then a fresh agent reuses the same name and
+// worktree path. The old conversation's session/location row remains in the
+// database by design, but its pane is offline and its actor is retired. The
+// fresh agent's retire preview must not mistake that historical row for a
+// surviving worktree claimant (the dashboard would otherwise disable its
+// delete-worktree checkbox as "shared with another agent").
+func TestRetireWorktreePreview_IgnoresOfflineRetiredPriorAgent(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const prior = "rwpr-1111-2222-3333-4444"
+	const current = "rwcu-1111-2222-3333-4444"
+	const reused = "/tmp/rw-reused-name"
+	const reusedTmux = "rw-reused-name"
+	f.HaveConvWithTitle(prior, "banana")
+	f.HaveAliveSession(prior, "spwn-rwpr", reusedTmux, reused)
+	f.HaveEnrolledAgent(prior)
+	f.MarkOffline(reusedTmux)
+	f.HaveRetiredAgent(prior)
+
+	f.HaveConvWithTitle(current, "banana")
+	f.HaveAliveSession(current, "spwn-rwcu", reusedTmux, reused)
+	f.HaveEnrolledAgent(current)
+	// SessionEnd can persist exited just before tmux actually disappears. The
+	// newest launch still owns the reused live name; an older non-exited row
+	// must not steal it merely because of status.
+	currentSession, err := db.LoadSession("spwn-rwcu")
+	require.NoError(t, err)
+	currentSession.Status = session.StatusExited
+	require.NoError(t, db.SaveSession(currentSession))
+	installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+		reused: {Root: reused, Branch: "banana", Kind: "linked"},
+	})
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	rec := testharness.Serve(mux,
+		testharness.JSONRequest(t, http.MethodGet, "/api/agents/"+current+"/worktree", nil))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var got struct {
+		Shared    bool `json:"shared"`
+		Removable bool `json:"removable"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	assert.False(t, got.Shared, "an offline retired predecessor is historical, not a surviving claimant")
+	assert.True(t, got.Removable, "the fresh agent must be allowed to remove its reused worktree")
+}
+
+// A retired actor whose pane was deliberately left running is different from
+// the stale-row case above: its process still has this worktree as its cwd, so
+// the preview must continue protecting the directory.
+func TestRetireWorktreePreview_KeepsWorktreeClaimedByLiveRetiredPane(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const prior = "rwlr-1111-2222-3333-4444"
+	const current = "rwlc-1111-2222-3333-4444"
+	const reused = "/tmp/rw-live-retired"
+	f.HaveConvWithTitle(prior, "banana")
+	f.HaveAliveSession(prior, "spwn-rwlr", "tmux-rwlr", reused)
+	f.HaveEnrolledAgent(prior)
+	f.HaveRetiredAgent(prior) // pane intentionally remains alive
+
+	f.HaveConvWithTitle(current, "banana")
+	f.HaveAliveSession(current, "spwn-rwlc", "tmux-rwlc", reused)
+	f.HaveEnrolledAgent(current)
+	installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+		reused: {Root: reused, Branch: "banana", Kind: "linked"},
+	})
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	rec := testharness.Serve(mux,
+		testharness.JSONRequest(t, http.MethodGet, "/api/agents/"+current+"/worktree", nil))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var got struct {
+		Shared    bool `json:"shared"`
+		Removable bool `json:"removable"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	assert.True(t, got.Shared, "a live retired pane still owns its cwd")
+	assert.False(t, got.Removable, "cleanup must not remove a running pane's worktree")
 }
 
 // Scenario: the repo's main worktree is never removed by retire.
