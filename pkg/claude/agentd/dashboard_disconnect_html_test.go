@@ -8,9 +8,9 @@ import (
 
 // TestDashboardHTML_DisconnectBanner pins the "disconnected from agentd"
 // watchdog: the connection.js module ships embedded, refresh.js reports each
-// poll's outcome to it, it raises the #disconnect-overlay banner and stops the
-// Vegas radio (vegas.js setConnectionLost), and the HTML + CSS hooks it needs
-// survive into dashboardAssets.
+// poll's outcome to it, it publishes connection state to the shared snapshot
+// store, the Preact shell raises #disconnect-overlay, and Vegas stops the radio
+// (vegas.js setConnectionLost).
 //
 // Same playbook as TestDashboardHTML_VegasTab — the feature is purely
 // client-side, so we string-search the embedded source rather than running the
@@ -47,15 +47,23 @@ func TestDashboardHTML_DisconnectBanner(t *testing.T) {
 	must("if (connectionLost) { stopMusic(); return; }",
 		"syncVegas refuses to (re)start the radio while disconnected")
 
-	// The banner DOM: the overlay, its show-hook id, and the human-readable
-	// copy. connection.js toggles .show on #disconnect-overlay.
+	// connection.js owns only the watchdog transition. The Preact shell reads
+	// the connection Signal, owns the overlay DOM, and keeps the established
+	// id/class/alert contracts.
+	must("dashboardState.setConnection('connected')", "successful polls publish connected state")
+	must("dashboardState.setConnection(", "failed polls publish retry/disconnected state")
+	must("state.connection.value.status === 'disconnected'", "the Preact shell subscribes to connection state")
+	must(`id="shell-disconnect-root"`, "the shell has an explicit disconnect host")
 	must(`id="disconnect-overlay"`, "the banner overlay ships in the HTML")
-	must(`class="disconnect-overlay"`, "connection.js toggles .show on this class")
+	must("disconnect-overlay${disconnected ? ' show' : ''}", "Preact derives the show class from connection state")
 	must("Disconnected from agentd", "the banner states the problem")
-	must(`getElementById('disconnect-overlay')`, "connection.js targets the overlay")
 	must(`id="disconnect-status"`, "the alert status line ships")
-	must(`getElementById('disconnect-status')`,
-		"connection.js rewrites the status line so the role=alert region announces")
+	must("${disconnected ? 'Reconnecting…' : ''}",
+		"the Preact alert status announces only while disconnected")
+	if strings.Contains(dashboardAssets, "getElementById('disconnect-overlay')") ||
+		strings.Contains(dashboardAssets, "getElementById('disconnect-status')") {
+		t.Error("connection watchdog must publish Signal state, not imperatively rewrite Preact-owned disconnect DOM")
+	}
 
 	// CSS: hidden by default (display:none) and revealed via .show, and it must
 	// NOT be a .modal-overlay (that would suspend the poll that clears it — the

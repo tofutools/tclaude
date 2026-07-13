@@ -44,7 +44,7 @@ func TestDashboardHTML_SlopExtras(t *testing.T) {
 	// ─── Bootstrap wiring (dashboard.js) ────────────────────────────
 	for _, b := range []struct{ exp, call, why string }{
 		{"export function bindSlopAudio", "bindSlopAudio();", "casino sound FX"},
-		{"export function bindSlopCredits", "bindSlopCredits();", "credits + leaderboard"},
+		{"export function bindSlopCredits", "pageCleanups.push(bindSlopCredits());", "credits + leaderboard with page teardown"},
 		{"export function bindSlopSpectacle", "bindSlopSpectacle();", "Konami / lever / confetti"},
 	} {
 		must(b.exp, "module exports the entry-point for "+b.why)

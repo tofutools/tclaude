@@ -10,8 +10,9 @@ import (
 // TestDashboardAssets_GroupActivityWired guards the group activity-bot
 // indicator, whose pieces live in four files that must stay in lockstep:
 // the pure aggregation module (group-activity.js), its use in the group
-// <summary> + the top-bar global slot (render.js), the bot/animation CSS
-// (dashboard.css) and the #global-activity mount (dashboard.html). A
+// <summary> (render.js) + the Preact-owned top-bar global slot
+// (shell-model.js/shell-island.js), the bot/animation CSS (dashboard.css),
+// and the explicit shell host (dashboard.html). A
 // rename in any one silently breaks the feature in the browser — there's
 // no JS render test, so we assert on the embedded concatenation at
 // `go test ./...`. (The aggregation LOGIC is covered separately by the
@@ -28,14 +29,19 @@ func TestDashboardAssets_GroupActivityWired(t *testing.T) {
 		"export function styledWizardBotsHTML(", // wizard glyph/sprite/off switchboard
 		"export function styledBotsHTML(",
 		"export function aggregateActivity(",
-		// render.js — wired into the group summary and the global slot.
-		"groupActivityChip(members)",     // dropped into <summary>
-		"function activityStyles(",       // reads the per-mode styles
-		"function renderGlobalActivity(", // top-bar renderer
-		"renderGlobalActivity,",          // exported from render.js
-		// refresh.js — called every poll.
-		"renderGlobalActivity()",
-		// dashboard.html — the global mount point.
+		// render.js — still wired into each legacy group summary.
+		"groupActivityChip(members)", // dropped into <summary>
+		"function activityStyles(",   // reads the per-mode styles
+		// shell-model.js derives the global view from the accepted snapshot.
+		"export function globalActivityView(snapshot, wizard = false)",
+		"const groups = snapshot.groups || []",
+		"const styles = snapshot.activity_bots || {}",
+		// shell-island.js subscribes to the Signal and gives the activity VNodes
+		// stable Preact ownership under an explicit HTML host.
+		"const snapshot = state.snapshot.value",
+		"const view = globalActivityView(snapshot, wizard)",
+		"trustedHTMLToVNodes(view.markup)",
+		`id="shell-activity-root"`,
 		`id="global-activity"`,
 		// dashboard.css — emoji bots, sprite bots, wizard bots, and the swaps.
 		".ga-regular",
@@ -61,6 +67,11 @@ func TestDashboardAssets_GroupActivityWired(t *testing.T) {
 	for _, needle := range needles {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard assets missing %q — group activity indicator wiring broken", needle)
+		}
+	}
+	for _, retired := range []string{"function renderGlobalActivity(", "renderGlobalActivity()"} {
+		if strings.Contains(dashboardAssets, retired) {
+			t.Errorf("dashboard assets still carry retired imperative global activity painter %q", retired)
 		}
 	}
 }

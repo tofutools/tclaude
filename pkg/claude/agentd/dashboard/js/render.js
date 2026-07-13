@@ -8,7 +8,7 @@ import {
   $, esc, themeWords, shortId, shortAgentId, idTooltip, onlineDot, agentStatusDot, harnessLine, sandboxBadge, statePill, slopMachine, wizardPill, contextMeter, activityBadges,
   harnessCanRename, harnessCanRemoteControl,
   roleCell, descrCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
-  cwdCell, branchCell, taskCell, offlineDefault, groupShowOffline, syncBotAnimations,
+  cwdCell, branchCell, taskCell, offlineDefault, groupShowOffline,
 } from './helpers.js';
 import {
   sortHead, applySort, MEMBER_ACCESSORS, REPLACED_COLS, REPLACED_ACCESSORS,
@@ -16,12 +16,11 @@ import {
   PENDING_COLS, PENDING_ACCESSORS,
 } from './sort.js';
 import { visibleMemberCols, memberColHidden } from './member-columns.js';
-import { groupActivityHTML, activitySummary, styledBotsHTML, styledWizardBotsHTML, aggregateActivity, themedSummaryText } from './group-activity.js';
+import { groupActivityHTML } from './group-activity.js';
 import { isWizardActive } from './slop.js';
 import { dashPrefs } from './prefs.js';
 import { listPagerHTML } from './list-paging.js';
 import { getDashDefaultProfile } from './profiles.js';
-import { morphInto } from './morph.js';
 
 // lastSnapshot and sudoBadge live in dashboard.js; sudoByConv lives in
 // refresh.js (refresh() rebuilds it on every poll). Imported back here —
@@ -1053,234 +1052,6 @@ function renderGroupLinksSection(groupName) {
   `;
 }
 
-function showStatus(text, isError) {
-  const el = $('#status');
-  el.textContent = text;
-  el.classList.toggle('error', !!isError);
-  // "live" lights the leading dot green via the #status.live::before
-  // rule in dashboard.css. Error path stays red; empty path renders
-  // no dot at all (the ::before is gated on :not(:empty)).
-  el.classList.toggle('live', !isError && !!text);
-}
-
-// === Messages tab — the mail client's nav-button badge ===
-// The unread count drives a badge on the Messages nav button, so the
-// human sees there's something to read from whatever tab they're on.
-// It tracks the human.notify channel (the operator's own folder) — the
-// agent-to-agent folders carry their own per-mailbox unread badges in
-// the mail-client sidebar (see mail.js). The rest of the Messages tab —
-// sidebar / list / reading pane — lives in mail.js.
-// accessPending (in-flight human-approval requests) folds into the same badge
-// because both live on the Messages tab, but it also makes the badge BLINK:
-// an approval is a blocked agent waiting on the operator, more urgent than an
-// unread notification. The blink class is toggled off when nothing is pending
-// so a plain unread count reads calmly.
-function renderMessagesBadge(unread, accessPending = 0) {
-  const badge = $('#messages-badge');
-  if (!badge) return;
-  const total = (unread || 0) + (accessPending || 0);
-  badge.textContent = total > 99 ? '99+' : String(total);
-  badge.hidden = total === 0;
-  badge.classList.toggle('blink', accessPending > 0);
-}
-
-// === Subscription-usage readout (top bar, left of the live dot) ===
-// Account-wide, not per-agent: one readout for the whole dashboard.
-// Mirrors the statusbar's "5h [bar] 17% (2h16m) | 7d ..." format.
-const USAGE_BAR_WIDTH = 8;
-
-// usageBarColor matches the statusbar thresholds: red >=80, yellow
-// >=60, green otherwise.
-function usageBarColor(pct) {
-  if (pct >= 80) return '#f85149';
-  if (pct >= 60) return '#d29922';
-  return '#3fb950';
-}
-
-// usageBar renders a mini progress bar from a single block glyph (█)
-// for BOTH the filled and the empty cells — they differ only in
-// colour, never in glyph. Using one glyph guarantees the filled and
-// empty segments render at an identical height: mixing in a shade
-// glyph (░) for the empty run made it render taller than the █ fill
-// in the browser's monospace font.
-function usageBar(pct) {
-  const p = Math.max(0, Math.min(100, pct || 0));
-  const filled = Math.round(p / 100 * USAGE_BAR_WIDTH);
-  const empty = USAGE_BAR_WIDTH - filled;
-  return '<span class="ubar-fill" style="color:' + usageBarColor(p) + '">'
-    + '█'.repeat(filled) + '</span>'
-    + '<span class="ubar-empty">' + '█'.repeat(empty) + '</span>';
-}
-
-// usageWindowHTML renders one rolling-limit window: label, coloured
-// mini bar, percent, and the remaining-time hint. A hidden window keeps the
-// same geometry so a missing Codex limit does not shift the following column.
-function usageWindowHTML(label, win, hidden) {
-  const pct = win.pct || 0;
-  // Always emit the .urem column, even when a window has no remaining-time
-  // text. In the two-line Claude/Codex layout .urem carries a fixed min-width
-  // so the windows line up field-for-field between the rows; a harness idle
-  // long enough that a window has reset reports no reset time (remaining ""),
-  // and dropping the span entirely collapsed its column and slid every
-  // following token left — an empty Codex 5h hint pulled its 7d window out
-  // from under Claude's. An empty span keeps the reserved width.
-  //
-  // No leading space before .urem: .uw is a flex row whose `gap` owns the
-  // spacing, and a literal space would become a stray anonymous flex item
-  // that throws off the monospace column widths in the two-line layout.
-  const remText = win.remaining ? '(' + esc(win.remaining) + ')' : '';
-  const rem = '<span class="urem">' + remText + '</span>';
-  const attrs = hidden ? ' class="uw umissing" aria-hidden="true"' : ' class="uw"';
-  return '<span' + attrs + '><span class="ulabel">' + label + '</span>'
-    + '<span class="ubar">' + usageBar(pct) + '</span>'
-    + '<span class="upct">' + Math.round(pct) + '%</span>' + rem + '</span>';
-}
-
-// fmtCost renders a dollar amount the way the per-agent harness line
-// does: "$0.42", with sub-cent totals as "<1¢" rather than a lying
-// "$0.00".
-function fmtCost(cost) {
-  return cost >= 0.005 ? '$' + cost.toFixed(2) : '<1¢';
-}
-
-// costTokenHTML renders the API cost as one top-bar token. It always
-// carries the month-to-date headline ("$0.42 (mtd)") and, whenever any
-// spend was recorded today, today's figure ahead of it ("$0.12 (today)
-// $0.42 (mtd)"). Today is shown even when it equals the mtd — e.g. on the
-// first of the month, when the whole month's spend is today's, both read
-// the same number on purpose, so the "(today)" figure never silently
-// vanishes on the day a user is most likely to be watching it. (today is
-// always ≤ mtd — the same DB delta walk windowed to today vs. the month,
-// both scaled by the same cost factor — so the pair never reads inverted;
-// see the TodayCostUSD ≤ TotalCostUSD invariant in usage.go.) The token
-// links to the Costs tab (data-goto-tab, wired in costs.js).
-function costTokenHTML(today, mtd) {
-  const amt = (v, label) => '<span class="ucost-amt">' + esc(fmtCost(v)) + '</span>'
-    + ' <span class="urem">(' + label + ')</span>';
-  const parts = [];
-  if (today > 0) parts.push(amt(today, 'today'));
-  parts.push(amt(mtd, 'mtd'));
-  return '<span class="uw ucost" data-goto-tab="costs">'
-    + '<span class="ulabel">api</span>' + parts.join(' ') + '</span>';
-}
-
-// subscriptionWindowsHTML builds the 5h/7d window tokens for one usage
-// source (the Claude top-level fields, or the nested .codex object —
-// both share the {available, five_hour, seven_day} shape). Returns an
-// array of token strings, empty when the source reports nothing.
-//
-// When the source is available it always emits BOTH window slots. Claude's
-// missing windows remain visible 0% placeholders. Codex can omit a limit
-// entirely (for example, the current weekly-only plan); hide that placeholder
-// while retaining its geometry so the 7d window remains aligned with Claude.
-function subscriptionWindowsHTML(src, hideMissing) {
-  const wins = [];
-  if (src && src.available) {
-    const zero = { pct: 0, remaining: '' };
-    wins.push(usageWindowHTML('5h', src.five_hour || zero, hideMissing && !src.five_hour));
-    wins.push(usageWindowHTML('7d', src.seven_day || zero, hideMissing && !src.seven_day));
-  }
-  return wins;
-}
-
-// usageLineHTML wraps one labelled readout line for the two-line
-// Claude/Codex layout: a right-aligned monospace source label (so the
-// colons stack — "Claude:" over " Codex:") followed by that source's
-// window tokens. An empty label keeps the column width so a trailing
-// cost line aligns its tokens under the windows above.
-function usageLineHTML(label, tokens) {
-  return '<span class="uline"><span class="usrc">' + esc(label) + '</span>'
-    + tokens.join('') + '</span>';
-}
-
-// renderUsage paints the top-bar readout from snapshot.usage:
-// subscription windows when available, plus the month-to-date API
-// cost summed across agent sessions when any was recorded — an
-// API-billing account has cost but no windows, so the cost token
-// replaces "usage: n/a" there; an account with both shows them side
-// by side. Only when neither exists does it degrade to a muted
-// "usage: n/a" rather than a broken or error state.
-//
-// When Codex usage is present (snapshot.usage.codex), the readout
-// switches to a labelled two-line layout — "Claude" over "Codex",
-// monospace-aligned so the windows line up in one column — instead of
-// the single unlabelled row the Claude-only case keeps.
-function renderUsage(u) {
-  const el = $('#usage');
-  if (!el) return;
-  const titles = [];
-
-  const claudeWins = subscriptionWindowsHTML(u);
-  if (claudeWins.length) titles.push('Claude subscription usage limits — 5-hour and 7-day rolling windows');
-  const codexUsage = u && u.codex;
-  const codexWins = subscriptionWindowsHTML(codexUsage, true);
-  const codexPeriods = [];
-  if (codexUsage && codexUsage.five_hour) codexPeriods.push('5-hour');
-  if (codexUsage && codexUsage.seven_day) codexPeriods.push('weekly');
-  if (codexWins.length && codexPeriods.length) {
-    const noun = codexPeriods.length === 1 ? 'limit' : 'limits';
-    const windowNoun = codexPeriods.length === 1 ? 'window' : 'windows';
-    titles.push('Codex subscription usage ' + noun + ' — '
-      + codexPeriods.join(' and ') + ' rolling ' + windowNoun);
-  }
-
-  const mtd = Number((u && u.total_cost_usd) || 0);
-  const today = Number((u && u.today_cost_usd) || 0);
-  const costHTML = mtd > 0 ? costTokenHTML(today, mtd) : '';
-  if (costHTML) {
-    let t = `API cost month-to-date: $${mtd.toFixed(4)}, summed across agent sessions recorded in tclaude's DB`;
-    if (today > 0) t += ` · today: $${today.toFixed(4)}`;
-    titles.push(t + ' · click to open the Costs tab');
-  }
-
-  // Codex data present → labelled two-line (Claude / Codex) layout, with
-  // the cost token on its own column-aligned line below when there is one.
-  if (codexWins.length) {
-    el.classList.add('multiline');
-    const lines = [];
-    if (claudeWins.length) lines.push(usageLineHTML('Claude:', claudeWins));
-    lines.push(usageLineHTML('Codex:', codexWins));
-    if (costHTML) lines.push(usageLineHTML('', [costHTML]));
-    el.classList.remove('na');
-    morphInto(el, lines.join('')); // morph so the copyable cost/percent figures survive the tick
-    el.title = titles.join(' · ');
-    return;
-  }
-
-  // Claude only → the original single unlabelled row (windows then cost).
-  el.classList.remove('multiline');
-  const wins = claudeWins.slice();
-  if (costHTML) wins.push(costHTML);
-  if (wins.length) {
-    el.classList.remove('na');
-    morphInto(el, wins.join('')); // morph so the copyable cost/percent figures survive the tick
-    el.title = titles.join(' · ');
-  } else {
-    el.classList.add('na');
-    el.textContent = 'usage: n/a';
-    el.title = 'Subscription usage data is currently unavailable';
-  }
-}
-
-// renderNotifyGlobal paints the top-bar master notification bell from
-// snapshot.notifications_enabled (config.notifications.enabled). The
-// button stays hidden until the first snapshot so it never flashes a
-// wrong state. Clicking the bell opens the per-type popover
-// (notify-menu.js), which fetches its own fresh state — the master on/off
-// lives inside it now, not on the bell itself. data-enabled is kept in
-// sync as a plain reflection of the snapshot for any external reader.
-function renderNotifyGlobal(enabled) {
-  const el = $('#notify-global');
-  if (!el) return;
-  el.hidden = false;
-  el.classList.toggle('muted', !enabled);
-  el.setAttribute('data-enabled', enabled ? '1' : '0');
-  el.textContent = enabled ? '🔔' : '🔕';
-  el.title = enabled
-    ? 'OS notifications ON — click to choose which notifications you want'
-    : 'OS notifications OFF — nothing notifies, regardless of group/agent bells. Click to configure.';
-}
-
 // renderDashDefaultProfile paints the groups-tab 🧠 chip showing the
 // DASHBOARD-level default spawn profile (a dashPrefs value, not server
 // state). It pre-fills the spawn dialog as the fallback when a group has no
@@ -1321,59 +1092,6 @@ function renderDashSandboxProfile() {
     : 'No global sandbox profile — click to set one. Newly launched agents inherit it unless their group adds another assignment.';
 }
 
-// renderGlobalActivity paints the top-bar #global-activity slot: the
-// same deduped bot row as the group headers, but aggregated across every
-// real group PLUS the ungrouped bucket — one glance tells you if anything
-// anywhere is working or needs you, without scanning the list or
-// unfolding groups. The tooltip breaks the total down per group (only
-// those with live, non-offline activity, so it stays short). Group names
-// go through the .title DOM PROPERTY (never innerHTML), so they're inert
-// — no escaping needed; the bot row HTML carries no caller input.
-function renderGlobalActivity() {
-  const el = $('#global-activity');
-  if (!el) return;
-  const snap = lastSnapshot;
-  if (!snap) { el.innerHTML = ''; el.removeAttribute('title'); return; }
-  const groups = snap.groups || [];
-  const lists = groups.map(g => g.members || []);
-  lists.push(snap.ungrouped || []);
-  // aggregateActivity dedups by conv_id — an agent in several groups is in
-  // each group's member list, so a naive flatten would multiply its counts.
-  const s = aggregateActivity(lists);
-  // Emit a regular-mode + slop-mode + wizard-mode wrapper in their configured
-  // styles, exactly like the group chips — CSS shows the right one per active
-  // theme. Clear out when every mode renders nothing (style off, or zero
-  // members).
-  const st = activityStyles();
-  // The container's own title (a DOM property, set below) can't CSS-swap, so
-  // it's re-flavoured live per theme; the per-wrapper bots carry fixed
-  // flavours (regular/slop plain, wizard arcane) and CSS reveals the active
-  // one, so a mid-session flip re-flavours the container title on the next
-  // 2s poll while the bot glyphs + their tooltips swap instantly.
-  const theme = isWizardActive() ? 'wizard' : '';
-  const wrap = (cls, inner) =>
-    inner ? `<span class="${cls} level-${s.level}">${inner}</span>` : '';
-  const reg = wrap('ga-regular', styledBotsHTML(s, st.regular));
-  const slop = wrap('ga-slop', styledBotsHTML(s, st.slop));
-  const wiz = wrap('ga-wizard', (st.wizard && st.wizard !== 'off') ? styledWizardBotsHTML(s, st.wizard) : '');
-  if (!reg && !slop && !wiz) { el.innerHTML = ''; el.removeAttribute('title'); return; }
-  // Per-source breakdown for the tooltip — skip sources that are only
-  // offline so the list highlights what's actually live.
-  const lines = [];
-  for (const g of groups) {
-    const gs = activitySummary(g.members || []);
-    if (gs.present.length && gs.level !== 'offline') lines.push(`${g.name}: ${themedSummaryText(gs, theme)}`);
-  }
-  const ung = activitySummary(snap.ungrouped || []);
-  if (ung.present.length && ung.level !== 'offline') lines.push(`Ungrouped: ${themedSummaryText(ung, theme)}`);
-  el.innerHTML = reg + slop + wiz;
-  syncBotAnimations(); // re-phase to wall-clock so the 2s poll doesn't restart-jump
-  el.title = `Activity across all groups — ${themedSummaryText(s, theme)}`
-    + (lines.length ? '\n' + lines.join('\n') : '');
-}
-
 export {
-  renderGroups, renderGlobalActivity, showStatus,
-  renderMessagesBadge, renderUsage, renderDashDefaultProfile, renderDashSandboxProfile,
-  renderNotifyGlobal,
+  renderGroups, renderDashDefaultProfile, renderDashSandboxProfile,
 };

@@ -450,6 +450,79 @@ func baseStates() []dashsnap.State {
 })();`
 	states := []dashsnap.State{
 		{
+			Key:     "shell-normal",
+			Title:   "Preact shell — populated",
+			Caption: "TCL-360: accepted snapshot data fills the activity, usage, status, badges and footer shell without changing the plain/wizard header geometry.",
+			JS: showGroups + collapseGroups + `document.body.classList.remove('dock-open');` + `
+  for (var id of ['global-activity','usage','status','messages-badge','meta','notify-global','command-palette-btn']) {
+    if (!document.getElementById(id)) throw new Error('shell-normal: missing #' + id);
+  }`,
+			SettleMS: 300,
+		},
+		{
+			Key:     "shell-notifications",
+			Title:   "Preact shell — notification popover",
+			Caption: "TCL-360 populated form gate: the real notification GET fills native checkboxes, labels, help titles and Config shortcut inside the plain/wizard shell.",
+			JS: showGroups + collapseGroups + `return (async function(){
+  var bell = document.querySelector('#notify-global');
+  if (!bell || bell.hidden) throw new Error('shell-notifications: bell missing or not ready');
+  bell.click();
+  var deadline = Date.now() + 3000;
+  while (!document.querySelector('#notify-pop.open') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 30); });
+  }
+  var pop = document.querySelector('#notify-pop.open');
+  if (!pop) throw new Error('shell-notifications: popover did not open');
+  if (pop.querySelectorAll('input[type="checkbox"]').length !== 8) throw new Error('shell-notifications: native checkbox catalog changed');
+  if (!pop.querySelector('#notify-pop-config')) throw new Error('shell-notifications: Config shortcut missing');
+})();`,
+			SettleMS: 200,
+		},
+		{
+			Key:     "shell-palette",
+			Title:   "Preact shell — command palette",
+			Caption: "TCL-360 keyboard shell gate: the launcher opens the modal-overlay, focuses the combobox and keeps its accessible active-option wiring in both themes.",
+			JS: showGroups + collapseGroups + `return (async function(){
+  document.querySelector('#command-palette-btn').click();
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var modal = document.querySelector('#command-palette-modal.show');
+  var input = document.querySelector('#palette-input');
+  if (!modal || !input) throw new Error('shell-palette: overlay did not open');
+  if (document.activeElement !== input) throw new Error('shell-palette: combobox did not take focus');
+  if (!input.getAttribute('aria-activedescendant')) throw new Error('shell-palette: active option is not announced');
+})();`,
+			SettleMS: 200,
+		},
+		{
+			Key:     "shell-feedback",
+			Title:   "Preact shell — error toast and confirmation",
+			Caption: "TCL-360 error/dialog gate: the shared error toast and confirmation render together with preserved copy, danger action and initial focus under plain/wizard styling.",
+			JS: showGroups + collapseGroups + `return (async function(){
+  var feedback = await import('/static/js/refresh.js');
+  feedback.toast('Representative shell error', true);
+  void feedback.confirmModal({title:'Confirm shell action', body:'This checks the shared confirmation surface.', meta:'representative metadata', okLabel:'Continue'});
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  if (!document.querySelector('#toast.show.error')) throw new Error('shell-feedback: error toast missing');
+  if (!document.querySelector('#confirm-modal.show')) throw new Error('shell-feedback: confirmation missing');
+  if (document.activeElement !== document.querySelector('#confirm-ok')) throw new Error('shell-feedback: confirm action did not take focus');
+})();`,
+			SettleMS: 200,
+		},
+		{
+			Key:     "shell-disconnected",
+			Title:   "Preact shell — disconnected",
+			Caption: "TCL-360 connection gate: two rejected-poll reports drive the shared connection Signal, accessible reconnect overlay and theme-compatible shell presentation.",
+			JS: showGroups + collapseGroups + `return (async function(){
+  var connection = await import('/static/js/connection.js');
+  connection.noteDisconnected();
+  connection.noteDisconnected();
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var overlay = document.querySelector('#disconnect-overlay.show');
+  if (!overlay || !overlay.querySelector('[role="alert"]')) throw new Error('shell-disconnected: accessible overlay missing');
+})();`,
+			SettleMS: 200,
+		},
+		{
 			Key:      "bounded-directory-picker",
 			Title:    "Bounded Preact — filtered directory picker",
 			Caption:  "The shared host-directory navigator used by every Browse… action, with the path's unfinished final component filtering and highlighting the existing folder pane in default/wizard chrome.",

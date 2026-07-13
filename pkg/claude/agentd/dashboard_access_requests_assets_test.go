@@ -35,7 +35,10 @@ func TestDashboardAssets_AccessRequestsWired(t *testing.T) {
 		"const request = model.allAccess.find(",
 		`<div class="mail-reader-body access-reader-body">`,
 		// The attention affordances: blinking nav badge + non-blocking banner.
-		"badge.classList.toggle('blink', accessPending > 0)",
+		// The shell badge derives from the accepted snapshot Signal instead of
+		// maintaining a second imperative DOM writer.
+		"const view = messagesBadgeView(state.snapshot.value);",
+		"view.blink ? ' blink' : ''",
 		`id="access-banner"`,
 		`id="access-banner-review"`,
 		// Deep link (?tab=messages&access_request=<id>) + the tick wiring.

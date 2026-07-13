@@ -22,67 +22,17 @@
 
 import { esc } from './helpers.js';
 import { morphInto } from './morph.js';
-import { lastSnapshot } from './dashboard.js';
 import { isSlopActive } from './slop.js';
+import { creditsState } from './credits-state.js';
+import { dashboardState } from './snapshot-store.js';
 
-// Credit payouts per win kind. Round, slot-machine-y numbers; the idle
-// transition is the "real" win so it pays best, the mega is the rare
-// 777 windfall.
-const PAYOUT = {
-  'win-idle': 100,
-  'win-pull': 50,
-  'win-spawn': 25,
-  'win-mega': 777,
-};
-
-// Hot streak: an agent with ≥ HOT_THRESHOLD wins inside the trailing
-// HOT_WINDOW_MS gets a 🔥 on the board. Enough to reward a genuinely
-// churning agent without flagging the whole list the moment things get
-// busy.
-const HOT_WINDOW_MS = 60 * 1000;
-const HOT_THRESHOLD = 3;
-const LEADERBOARD_MAX = 8;
-
-let credits = 0;
-const winsByConv = new Map();    // conv-id → total wins this session
-const winTimesByConv = new Map(); // conv-id → [recent win timestamps]
-
-// titleFor resolves a conv-id to its friendly agent title via the last
-// snapshot (same source slop-fx's marquee uses), falling back to a short
-// id slice before the first snapshot lands.
-function titleFor(conv) {
-  const snap = lastSnapshot;
-  if (snap) {
-    const a = (snap.agents || []).find((x) => x.conv_id === conv);
-    if (a && a.title) return a.title;
-  }
-  return conv.slice(0, 8);
-}
-
-function isHot(conv) {
-  const times = winTimesByConv.get(conv);
-  if (!times) return false;
-  const cutoff = Date.now() - HOT_WINDOW_MS;
-  return times.filter((t) => t >= cutoff).length >= HOT_THRESHOLD;
-}
-
-function renderCounter(bump) {
-  const el = document.getElementById('slop-credits');
-  if (!el) return;
-  el.textContent = '🪙 ' + credits.toLocaleString();
-  if (!bump) return;
-  // Restart the bump animation: drop the class, force a reflow, re-add.
-  el.classList.remove('slop-credits-bump');
-  void el.offsetWidth;
-  el.classList.add('slop-credits-bump');
-}
-
-function renderLeaderboard() {
-  const host = document.getElementById('vegas-leaderboard');
+export function renderCreditsLeaderboard({
+  state = creditsState,
+  documentRef = document,
+} = {}) {
+  const host = documentRef.getElementById('vegas-leaderboard');
   if (!host) return;
-  const entries = Array.from(winsByConv.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, LEADERBOARD_MAX);
+  const entries = state.view.value.entries;
   if (!entries.length) {
     morphInto(host,
       '<h3 class="vegas-leaderboard-title">🏆 High rollers</h3>' +
@@ -90,15 +40,14 @@ function renderLeaderboard() {
       'or pull a few levers to prime the pump.</div>');
     return;
   }
-  const rows = entries.map(([conv, wins], i) => {
-    const hot = isHot(conv);
-    const who = (hot ? '🔥 ' : '') + esc(titleFor(conv));
+  const rows = entries.map((entry) => {
+    const who = (entry.hot ? '🔥 ' : '') + esc(entry.title);
     // Keyed by conv id (unique per entry) so a rank shuffle moves the row
     // intact rather than rewriting a neighbour's name under a selection.
-    return `<li class="${hot ? 'hot' : ''}" data-key="${esc(conv)}">` +
-      `<span class="rank">${i + 1}</span>` +
+    return `<li class="${entry.hot ? 'hot' : ''}" data-key="${esc(entry.conv)}">` +
+      `<span class="rank">${entry.rank}</span>` +
       `<span class="who">${who}</span>` +
-      `<span class="wins">${wins} 🎰</span>` +
+      `<span class="wins">${entry.wins} 🎰</span>` +
       `</li>`;
   }).join('');
   // Morph rather than swap: the board rebuilds every 2s while slop+Vegas are
@@ -109,38 +58,45 @@ function renderLeaderboard() {
     `<ol class="vegas-leaderboard-list">${rows}</ol>`);
 }
 
-function recordWin(fx, conv) {
-  const payout = PAYOUT[fx];
-  if (!payout) return;
-  credits += payout;
-  renderCounter(true);
-  // Per-agent attribution only for the row-scoped wins. Spawn/mega carry
-  // no conv, so they enrich the pot but not the board.
-  if (conv && (fx === 'win-idle' || fx === 'win-pull')) {
-    winsByConv.set(conv, (winsByConv.get(conv) || 0) + 1);
-    const times = winTimesByConv.get(conv) || [];
-    times.push(Date.now());
-    // Trim to the hot-streak window so the array can't grow unbounded.
-    const cutoff = Date.now() - HOT_WINDOW_MS;
-    winTimesByConv.set(conv, times.filter((t) => t >= cutoff));
-    renderLeaderboard();
-  }
-}
+export function bindSlopCredits({
+  state = creditsState,
+  documentRef = document,
+  getSnapshot = () => dashboardState.snapshot.value,
+  isSlopActiveImpl = isSlopActive,
+  schedule = queueMicrotask,
+  registerCleanup,
+} = {}) {
+  state.publishSnapshot(getSnapshot());
+  renderCreditsLeaderboard({ state, documentRef });
 
-export function bindSlopCredits() {
-  renderCounter(false);
-  renderLeaderboard();
-
-  document.addEventListener('tclaude:slopfx', (e) => {
+  const onSlopFx = (e) => {
     const d = e.detail || {};
-    recordWin(d.fx, d.conv);
-  });
+    const result = state.recordWin(d.fx, d.conv);
+    if (result.attributed) renderCreditsLeaderboard({ state, documentRef });
+  };
 
   // Re-render the board when a fresh snapshot arrives so early wins that
   // showed a short conv-id pick up the real agent title, and so the 🔥
   // flame decays as the hot window rolls forward. Gated on slop — the
   // board only shows in the Vegas tab.
-  document.addEventListener('tclaude:snapshot', () => {
-    if (isSlopActive()) renderLeaderboard();
+  // refresh.js currently dispatches the event immediately before committing the
+  // shared Signal. Defer one microtask so the default getSnapshot reads the
+  // accepted value, while keeping the scheduling seam injectable in tests.
+  let active = true;
+  const onSnapshot = () => schedule(() => {
+    if (!active) return;
+    state.publishSnapshot(getSnapshot());
+    if (isSlopActiveImpl()) renderCreditsLeaderboard({ state, documentRef });
   });
+  documentRef.addEventListener('tclaude:slopfx', onSlopFx);
+  documentRef.addEventListener('tclaude:snapshot', onSnapshot);
+
+  const cleanup = () => {
+    if (!active) return;
+    active = false;
+    documentRef.removeEventListener('tclaude:slopfx', onSlopFx);
+    documentRef.removeEventListener('tclaude:snapshot', onSnapshot);
+  };
+  if (typeof registerCleanup === 'function') registerCleanup(cleanup);
+  return cleanup;
 }

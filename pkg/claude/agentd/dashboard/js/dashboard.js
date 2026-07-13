@@ -61,19 +61,17 @@ import {
   bindAgentSpawnModal,
 } from './modal-spawn.js';
 import { bindRemoteAdmin, loadRemoteAdmin } from './remote-admin.js';
-import { bindNotifyMenu } from './notify-menu.js';
 import { bindCostDisplayToggle } from './cost-display-toggle.js';
 import { bindDebugTab } from './debug.js';
 import { focusAccessRequest } from './mail-bridge.js';
 import { dashPrefs, initDashPrefs } from './prefs.js';
 import { recordGroupInteraction } from './last-group.js';
 import { loadSortState } from './sort.js';
-import { bindCommandPalette } from './palette.js';
 import { bindDock } from './dock.js';
 import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
 import {
-  mountAccessFeature, mountActionDialogsFeature, mountAuditFeature, mountConfigFeature, mountCostsFeature, mountDirectoryPickerFeature, mountDockFeature, mountGroupsFeature, mountJobsFeature, mountLogsFeature, mountManagementFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature,
+  mountAccessFeature, mountActionDialogsFeature, mountAuditFeature, mountConfigFeature, mountCostsFeature, mountDirectoryPickerFeature, mountDockFeature, mountGroupsFeature, mountJobsFeature, mountLogsFeature, mountManagementFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature,
   mountPreactRuntimeProbe,
 } from './preact-loader.js';
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
@@ -136,6 +134,12 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   // sort.js seeds its in-memory sortState from a pref; re-seed it now
   // that the cache is populated (its import-time read saw an empty one).
   loadSortState();
+  const pageCleanups = [];
+
+  // Mount the cross-tab shell before feature islands and legacy binders. Its
+  // feedback services retain the existing function APIs, while Preact owns
+  // their stable DOM hosts and document-level lifecycle.
+  pageCleanups.push(await mountShellFeature({ notify: toast }));
 
   // The Jobs pilot owns its filter, table, sort, paging, and badge subtrees.
   // Await the mount before legacy modal binders look up the create button.
@@ -206,9 +210,6 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   // Keep the full-bleed chrome bars sized to the scrollable content so a
   // horizontal page scrollbar doesn't leave them ragged (JOH-313).
   bindHScroll();
-  // The Ctrl/Cmd-K command palette. After bindTabs() so its "Go to <tab>"
-  // commands click nav buttons whose handlers are already wired.
-  bindCommandPalette();
   // The retractable right-side palette dock (JOH-374). After initDashPrefs
   // (awaited above) so its open/collapsed state seeds from the persisted
   // pref; the shell + edge toggle are static so this binds once and survives
@@ -219,14 +220,14 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   bindGroupQuickHover();
   bindSortHeaders();
   bindRowActions();
-  const dndCleanups = [bindDnd(), bindGroupReorder()];
+  pageCleanups.push(bindDnd(), bindGroupReorder());
   // Drag a palette dock profile/role card onto a group → spawn dialog prefilled
   // (JOH-375). Its document-level listeners coexist with dnd.js /
   // group-reorder.js via a distinct custom MIME + self-gating state.
   //
   // Keep registration order stable so shared pill/highlight integrations see
   // events in the same sequence as before the ownership migration.
-  dndCleanups.push(bindDockDnd());
+  pageCleanups.push(bindDockDnd());
   // The REVERSE palette drag (JOH-393): drag a live agent row / group header
   // ONTO the dock to capture it as a spawn profile / group template. Must be
   // registered AFTER bindDnd() + bindGroupReorder() so its dragover runs LAST
@@ -234,12 +235,12 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   // the cursor is off THEIR targets (the dock is off their targets). Self-gates
   // on their active flags + a distinct .dock-save-over highlight (see
   // dock-save-dnd.js), so it coexists with all three other DnD modules.
-  dndCleanups.push(bindDockSaveDnd());
+  pageCleanups.push(bindDockSaveDnd());
   window.addEventListener('pagehide', (event) => {
     // A persisted pagehide enters the back-forward cache; bootstrap does not
     // rerun on pageshow, so retain listeners for that suspended document.
     if (event.persisted) return;
-    for (const cleanup of dndCleanups.reverse()) cleanup?.();
+    for (const cleanup of pageCleanups.reverse()) cleanup?.();
   });
   bindFilter('links');
   bindSudoModal();
@@ -265,9 +266,6 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   bindAgentSpawnModal();
   bindRemoteAdmin();
   document.querySelector('nav [data-tab="config"]')?.addEventListener('click', () => { void loadRemoteAdmin(); });
-  // The top-bar bell's notification-settings popover (master on/off +
-  // per-type checklist + human-message knob), backed by /api/notifications.
-  bindNotifyMenu();
   bindCostDisplayToggle();
   bindDebugTab();
   // Slop-mode flair — each binder installs a delegated listener (or
@@ -300,7 +298,7 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   // counter + high-rollers leaderboard, and the Konami mega-jackpot / side
   // pull-lever / confetti spectacle. Each no-ops while slop is off.
   bindSlopAudio();
-  bindSlopCredits();
+  pageCleanups.push(bindSlopCredits());
   bindSlopSpectacle();
   // The volume mixer (header 🎚️ popover) — persistent music/FX sliders
   // backed by /api/slop/volumes (the "slop" block of config.json). Must

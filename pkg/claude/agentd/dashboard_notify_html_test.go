@@ -6,12 +6,10 @@ import (
 )
 
 // TestDashboardHTML_NotifyBellsWired guards the notification-filter UI
-// across the files it spans (render.js + helpers.js build the controls,
-// row-actions.js dispatches the clicks, refresh.js repaints the master
-// bell, dashboard.html hosts it, dashboard.css styles it). The repo has
-// no JS test runner, so this asserts on the embedded concatenation at
-// `go test ./...`; the daemon-side behaviour behind these endpoints is
-// covered by dashboard_notify_filter_flow_test.go.
+// across the files it spans. Per-agent/group menu rows remain legacy-rendered;
+// the global bell + popover are a bounded Preact island with separate state,
+// actions and view modules. Behaviour is covered by notify-preact.test.mjs and
+// the daemon endpoints by dashboard_notify_filter_flow_test.go.
 //
 // The per-group and per-agent controls used to be an always-visible
 // header chip / member-row bell. They moved INTO the ⚙ options menus to
@@ -31,12 +29,11 @@ func TestDashboardHTML_NotifyBellsWired(t *testing.T) {
 	}
 
 	// The per-agent + per-group notify controls render as ⚙ options-menu
-	// rows; the master bell is still its own painter.
+	// rows; the global bell and popover are rendered by their bounded island.
 	must("function notifyMenuItem(m)", "per-agent notify menu-item builder is defined")
 	must("function groupNotifyMenuItem(g)", "per-group notify menu-item builder is defined")
 	must(`data-act="toggle-agent-notify"`, "agent menu item carries the agent-toggle action")
 	must(`data-act="toggle-group-notify"`, "group menu item carries the group-toggle action")
-	must("function renderNotifyGlobal(enabled)", "master bell painter is defined")
 
 	// They are wired INTO the cog menus — not the always-visible header /
 	// row surfaces.
@@ -59,27 +56,32 @@ func TestDashboardHTML_NotifyBellsWired(t *testing.T) {
 	// The tri-state cycle: inherit → off → on → inherit.
 	must("cur === 'inherit' ? 'off' : cur === 'off' ? 'on' : 'inherit'", "agent notify cycles the tri-state")
 
-	// dashboard.html + refresh.js: the master bell exists and repaints
-	// from every snapshot poll.
+	// During the shell migration dashboard.html remains the host source and the
+	// accepted snapshot remains the master bell's source of truth.
 	must(`id="notify-global"`, "top-bar master bell element exists")
-	must("renderNotifyGlobal(!!data.notifications_enabled)", "master bell repaints from the snapshot")
+	must("bellEnabled: !!snap?.notifications_enabled", "Preact bell derives from the accepted snapshot")
 
 	// The master bell now OPENS a popover (notify-menu.js) instead of
 	// being a one-click toggle: the master on/off + per-type checklist +
 	// human-message + access-request knobs live inside it, all backed by
 	// /api/notifications.
 	mustNot("case 'toggle-global-notify':", "the blind one-click master toggle is gone")
-	must("function bindNotifyMenu()", "the bell popover binder is defined")
-	must("bindNotifyMenu();", "the popover binder is wired into bootstrap")
+	must("export function createNotifyState(", "notification state boundary is defined")
+	must("export function createNotifyActions(", "notification action boundary is defined")
+	must("export function NotifyApp(", "notification Preact view is defined")
+	must("export function mountNotifyIsland(", "notification shell mount is defined")
 	must(`id="notify-pop"`, "the popover element exists")
 	must(`id="notify-pop-enabled"`, "the popover's master on/off checkbox exists")
-	must(`data-notify-type="exited"`, "the per-type checklist carries the exited type")
-	must(`data-notify-type="awaiting_permission"`, "the per-type checklist carries the awaiting_permission type")
+	must(`'exited'`, "the per-type checklist carries the exited type")
+	must(`'awaiting_permission'`, "the per-type checklist carries the awaiting_permission type")
+	must("data-notify-type=${type}", "the Preact checklist preserves the type data attribute")
 	must(`id="notify-pop-human"`, "the human-message knob exists in the popover")
 	must(`id="notify-pop-access"`, "the access-request knob exists in the popover")
-	must("access_requests: access.checked", "the access-request knob posts its state")
+	must("{ access_requests: !!enabled }", "the access-request knob posts its state")
 	must("'/api/notifications'", "the popover reads/writes /api/notifications")
 	must(`nav [data-tab="config"]`, "the 'Config tab ↗' link jumps to the Config tab")
+	must("removeEventListener('pointerdown'", "outside-click listener is cleaned up on unmount")
+	must("removeEventListener('keydown'", "Escape listener is cleaned up on unmount")
 
 	// dashboard.css: the master bell, its popover, and the action-menu
 	// items are styled.

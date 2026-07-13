@@ -28,6 +28,100 @@ export async function mountPreactRuntimeProbe() {
   }
 }
 
+const shellDescriptor = createIslandDescriptor({
+  name: 'shell',
+  label: 'Dashboard shell',
+  hosts: {
+    activityHost: '#shell-activity-root',
+    usageHost: '#shell-usage-root',
+    statusHost: '#shell-status-root',
+    notifyHost: '#shell-notify-root',
+    creditsHost: '#shell-credits-root',
+    messagesBadgeHost: '#shell-messages-badge-root',
+    metaHost: '#shell-meta-root',
+    disconnectHost: '#shell-disconnect-root',
+    confirmHost: '#shell-confirm-root',
+    toastHost: '#shell-toast-root',
+    paletteButtonHost: '#shell-palette-button-root',
+    paletteModalHost: '#shell-palette-modal-root',
+  },
+  failureClass: 'shell-error',
+  load: async ({ hosts, dependencies }) => {
+    const islandModule = import('./shell-island.js');
+    const dashboardStateModule = import('./snapshot-store.js');
+    const shellStateModule = import('./shell-state.js');
+    const notifyIslandModule = import('./notify-island.js');
+    const notifyStateModule = import('./notify-state.js');
+    const notifyActionsModule = import('./notify-menu.js');
+    const creditsIslandModule = import('./credits-island.js');
+    const creditsStateModule = import('./credits-state.js');
+    const paletteIslandModule = import('./palette-island.js');
+    const paletteStateModule = import('./palette-state.js');
+    const paletteCommandsModule = import('./palette.js');
+    const [
+      { mountShellIsland }, { dashboardState }, { shellState },
+      { mountNotifyIsland }, { notifyState }, { createNotifyActions },
+      { mountCreditsIsland }, { creditsState },
+      { mountPaletteIsland }, { createPaletteState }, { buildCommands },
+    ] = await Promise.all([
+      islandModule, dashboardStateModule, shellStateModule,
+      notifyIslandModule, notifyStateModule, notifyActionsModule,
+      creditsIslandModule, creditsStateModule,
+      paletteIslandModule, paletteStateModule, paletteCommandsModule,
+    ]);
+    const notifyActions = createNotifyActions({
+      state: notifyState,
+      notify: dependencies.notify,
+    });
+    const paletteState = createPaletteState({
+      snapshot: dashboardState.snapshot,
+      commandBuilder: buildCommands,
+      onError: dependencies.notify,
+    });
+    return {
+      state: dashboardState,
+      mount: (registerCleanup) => {
+        mountShellIsland({
+          hosts,
+          state: dashboardState,
+          feedback: shellState,
+          dependencies,
+          registerCleanup,
+        });
+        mountNotifyIsland({
+          host: hosts.notifyHost,
+          state: notifyState,
+          actions: notifyActions,
+          registerCleanup,
+        });
+        mountCreditsIsland({
+          host: hosts.creditsHost,
+          state: creditsState,
+          registerCleanup,
+        });
+        mountPaletteIsland({
+          buttonHost: hosts.paletteButtonHost,
+          modalHost: hosts.paletteModalHost,
+          state: paletteState,
+          registerCleanup,
+        });
+      },
+    };
+  },
+});
+
+export async function mountShellFeature(dependencies = {}, lifecycleOptions) {
+  const cleanup = await mountIslandDescriptor(shellDescriptor, dependencies, lifecycleOptions);
+  if (typeof cleanup !== 'function') {
+    // Unlike bounded feature islands, the shell owns the confirmation and
+    // feedback surfaces used by the rest of bootstrap. Continuing after an
+    // aggregate leaf/import failure would leave confirmation promises with no
+    // mounted UI capable of resolving them.
+    throw new Error('Dashboard shell failed to mount');
+  }
+  return cleanup;
+}
+
 const groupsDescriptor = createIslandDescriptor({
   name: 'groups',
   label: 'Groups',

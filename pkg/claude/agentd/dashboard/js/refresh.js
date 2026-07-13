@@ -10,15 +10,12 @@ import { dashPrefs } from './prefs.js';
 import { listParams, syncServedOffset, fetchListFull } from './list-paging.js';
 import { recordGroupInteraction } from './last-group.js';
 import {
-  showStatus,
-  renderMessagesBadge, renderUsage, renderDashDefaultProfile, renderDashSandboxProfile,
-  renderNotifyGlobal, renderGlobalActivity,
+  renderDashDefaultProfile, renderDashSandboxProfile,
 } from './render.js';
 import { renderMailTab, renderAccessRequests } from './mail-bridge.js';
 import { renderGroupsTab, renderLinksTab } from './tabs.js';
 import { renderTemplatesTab } from './modal-templates.js';
 import { applyProcessesTabVisibility } from './processes.js';
-import { morphInto } from './morph.js';
 import { renderDock } from './dock.js';
 // renameEditing is owned by row-actions.js; refreshSuspended() only reads it.
 // lastSnapshot
@@ -35,6 +32,12 @@ import { noteConnected, noteDisconnected } from './connection.js';
 import { syncDashDefaultProfile } from './profiles.js';
 import { dashboardState } from './snapshot-store.js';
 import { featureState } from './feature-state-registry.js';
+import {
+  showShellStatus as showStatus,
+  shellToast as toast,
+  shellConfirm as confirmModal,
+  shellConfirmDiscard as confirmDiscard,
+} from './shell-state.js';
 
 // refreshSuspended() is the single source of truth for whether the
 // auto-refresh is allowed to re-render the DOM right now. refresh()
@@ -286,16 +289,6 @@ export async function refresh(opts = {}) {
     const focusToken = captureFocus();
     setLastSnapshot(data);
     syncDashDefaultProfile(data.spawn_profile_default);
-    // Split into a stable URL span (written once / only when the base changes)
-    // and a per-tick timestamp span, morphed in place. A single textContent
-    // write recreated the whole text node every 2s, so selecting the URL to
-    // copy it died on the next tick; now the URL span is isEqualNode-identical
-    // across ticks and skipped, so a selection anchored in it survives.
-    const dashboardVersion = data.version || 'unknown';
-    morphInto($('#meta'),
-      `<span class="meta-version">tclaude version ${esc(dashboardVersion)}</span>`
-      + `<span class="meta-sep"> · </span><span class="meta-base">${esc(data.popup_base)}</span>`
-      + `<span class="meta-sep"> · </span>refreshed <span class="meta-time">${esc(new Date(data.generated_at).toLocaleTimeString())}</span>`);
     // Refresh the proactive-grant blocklist hint from the snapshot
     // when present; falls back to the v1 hardcoded pair otherwise.
     // (Snapshot doesn't carry the resolved blocklist directly; the
@@ -309,7 +302,6 @@ export async function refresh(opts = {}) {
       sudoByConv[g.conv_id].push(g);
     });
     renderGroupsTab();
-    renderGlobalActivity();
     renderTemplatesTab();
     // Publish the shared snapshot into the keyed Preact-owned palette dock.
     renderDock();
@@ -317,12 +309,9 @@ export async function refresh(opts = {}) {
     applyProcessesTabVisibility(data);
     applyDebugTabVisibility(data);
     renderMailTab();
-    renderMessagesBadge(data.messages_unread || 0, data.access_requests_pending || 0);
     renderAccessRequests(data.access_requests || [], data.access_requests_pending || 0);
-    renderUsage(data.usage);
     renderDashDefaultProfile();
     renderDashSandboxProfile();
-    renderNotifyGlobal(!!data.notifications_enabled);
     setVegasRegularMode(!!data.vegas_in_regular_mode);
     // Horizontal-scroll chrome-bar mode (config dashboard.hscroll_follow,
     // default follow) — replaces the old per-browser header toggle button.
@@ -744,68 +733,7 @@ function bindSortHeaders() {
   });
 }
 
-// --- inline mutations: action buttons + confirm modal + toast ---
-
-// confirmModal pops the confirmation overlay; resolves true on
-// OK, false on Cancel / outside-click / Escape. Escape is handled in
-// capture phase with stopImmediatePropagation so that dismissing a
-// confirm popped on top of a form modal cancels only the confirm —
-// the Escape never leaks down to the underlying form's own dismiss
-// handler.
-export function confirmModal({title, body, meta, okLabel, cancelLabel}) {
-  return new Promise(resolve => {
-    const overlay = $('#confirm-modal');
-    $('#confirm-title').textContent = title;
-    $('#confirm-body').textContent = body;
-    $('#confirm-meta').textContent = meta || '';
-    $('#confirm-meta').style.display = meta ? 'block' : 'none';
-    const okBtn = $('#confirm-ok');
-    okBtn.textContent = okLabel || 'Confirm';
-    const cancelBtn = $('#confirm-cancel');
-    // The cancel button text is reset every call (the modal is a shared
-    // singleton); default 'Cancel' matches the static HTML, so callers that
-    // don't pass cancelLabel are unaffected.
-    cancelBtn.textContent = cancelLabel || 'Cancel';
-    const cleanup = (result) => {
-      overlay.classList.remove('show');
-      okBtn.removeEventListener('click', onOk);
-      cancelBtn.removeEventListener('click', onCancel);
-      overlay.removeEventListener('click', onOverlay);
-      document.removeEventListener('keydown', onKey, true);
-      resolve(result);
-    };
-    const onOk = () => cleanup(true);
-    const onCancel = () => cleanup(false);
-    const onOverlay = (e) => { if (e.target === overlay) cleanup(false); };
-    const onKey = (e) => {
-      if (e.key !== 'Escape') return;
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      cleanup(false);
-    };
-    okBtn.addEventListener('click', onOk);
-    cancelBtn.addEventListener('click', onCancel);
-    overlay.addEventListener('click', onOverlay);
-    document.addEventListener('keydown', onKey, true);
-    overlay.classList.add('show');
-    okBtn.focus();
-  });
-}
-
-// confirmDiscard pops the shared "Discard input?" confirmation used
-// whenever a dirty form is about to be dismissed by an ACCIDENTAL
-// gesture (Escape / backdrop click). Resolves true when the human
-// accepts the discard, false to keep editing. Extracted from
-// bindBackdropDiscard so a per-open Promise-based modal that can't use
-// the startup binding (e.g. editMemberModal) reuses the exact same copy
-// and confirm behavior instead of hand-rolling a second discard prompt.
-export function confirmDiscard() {
-  return confirmModal({
-    title: 'Discard input?',
-    body: 'Closing the form will discard any unsaved input. Continue?',
-    okLabel: 'Discard',
-  });
-}
+// --- inline mutations: action buttons + shared Preact feedback services ---
 
 // bindBackdropDiscard wires the dismissal handlers that protect a
 // data-entry modal from accidental close — both the backdrop click
@@ -3568,18 +3496,6 @@ function addMemberModal(groupName) {
   });
 }
 
-// toast shows a transient message in the bottom-right. error=true
-// makes the left border red. Auto-dismisses after 3s.
-let toastTimer = null;
-export function toast(message, error) {
-  const el = $('#toast');
-  el.textContent = message;
-  el.classList.toggle('error', !!error);
-  el.classList.add('show');
-  if (toastTimer) clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
-}
-
 // deleteAgentModal is the per-row "delete forever" confirm. Beyond
 // confirm/cancel it offers an opt-in to also remove the agent's git
 // worktree. The worktree's status is fetched async from
@@ -4350,6 +4266,7 @@ async function stopAgentReq(conv, label, force) {
 
 export {
   bindFilter, bindTabs, bindTabHotkeys, bindDetailsPersistence, bindGroupTitleToggle, bindGroupQuickHover, bindSortHeaders,
+  toast, confirmModal, confirmDiscard,
   shutdownScope, powerOnScope, openWindowModal, retireConfirm, retireToast, shutdownConfirm,
   maybeHandleDanglingRetire, retireAgentInteractive, openRetirePreview, openRetireUngroupedPreview, openDeleteRetiredPreview, openWorktreeCleanup,
   openDeleteGroupModal,

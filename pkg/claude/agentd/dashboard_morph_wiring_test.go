@@ -44,12 +44,18 @@ func TestDashboardMorph_Wired(t *testing.T) {
 	present("trustedHTMLToVNodes(markup)", "Groups converts its escaped legacy renderer output into keyed VNodes")
 	present("element.getAttribute('data-group-key')", "Groups promotes stable group identities to Preact keys")
 	present("morphInto($('#links-list'), renderLinks(", "Links tab morphs instead of innerHTML swap")
-	// The top-bar #usage widget (render.js) — first item of the coverage sweep
-	// (JOH-339): both the Codex two-line and the Claude single-row branches morph
-	// so the copyable cost/percent figures survive the tick. The `usage: n/a`
-	// textContent branch stays a plain write (nothing to preserve).
-	present("morphInto(el, lines.join(''))", "#usage Codex layout morphs instead of innerHTML swap")
-	present("morphInto(el, wins.join(''))", "#usage Claude layout morphs instead of innerHTML swap")
+	// The top-bar #usage widget has crossed the Preact boundary. It consumes the
+	// accepted snapshot Signal and keys lines/tokens, so copyable cost/percent
+	// nodes survive recurring polls without the legacy morph bridge.
+	present("function Usage({ state })", "#usage is Preact-owned")
+	present("usageView(state.snapshot.value?.usage)", "#usage derives from the accepted snapshot Signal")
+	present("key=${line.key}", "#usage lines carry stable Preact keys")
+	present("key=${token.key}", "#usage tokens carry stable Preact keys")
+	for _, retired := range []string{"function renderUsage(", "morphInto(el, lines.join(''))", "morphInto(el, wins.join(''))"} {
+		if dashboardSourceContains(dashboardAssets, retired) {
+			t.Errorf("dashboard assets still carry retired imperative #usage painter %q", retired)
+		}
+	}
 
 	// The reconcile is keyed: repeated rows carry data-key so a reorder moves
 	// nodes rather than rewriting content between them. Pin the key on a couple
@@ -135,13 +141,17 @@ func TestDashboardMorph_SweepWired(t *testing.T) {
 
 	// Item 8 — Vegas high-rollers leaderboard (slop-credits.js), keyed by conv id
 	// so a rank shuffle moves the row intact.
-	present(`data-key="${esc(conv)}"`, "leaderboard rows carry the conv data-key (proves the morphed board)")
+	present(`data-key="${esc(entry.conv)}"`, "leaderboard rows carry the conv data-key (proves the morphed board)")
 
-	// Item 9 — #meta top-bar line (refresh.js): split into a stable URL span and
-	// a per-tick timestamp span so selecting the URL survives the poll.
-	present("morphInto($('#meta'),", "#meta morphs instead of a wholesale textContent write")
+	// Item 9 — #meta top-bar line is Preact-owned. Its snapshot-derived component
+	// keeps the URL and timestamp in distinct stable spans so selecting the URL
+	// survives a poll.
+	present("function FooterMeta({ state })", "#meta is Preact-owned")
+	present("footerMetaView(state.snapshot.value)", "#meta derives from the accepted snapshot Signal")
+	present(`id="shell-meta-root"`, "#meta has an explicit shell host")
 	present(`<span class="meta-base">`, "#meta base URL lives in its own stable span")
 	present(`<span class="meta-time">`, "#meta timestamp lives in its own per-tick span")
+	gone("morphInto($('#meta'),", "legacy #meta morph painter remains")
 	gone("$('#meta').textContent = data.popup_base", "#meta wholesale textContent write regressed")
 }
 
