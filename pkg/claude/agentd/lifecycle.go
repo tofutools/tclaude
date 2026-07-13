@@ -987,12 +987,10 @@ const bulkRetireGroupConcurrency = 8
 // repo and worktrees a SURVIVING agent still works in are kept, and the
 // removal waits until the member's pane exits (its cwd is the worktree).
 // A worktree shared by two members BOTH retired in this batch is
-// conservatively kept: each still sees the OTHER's session row for that
-// worktree root — session rows outlive a soft-exit, so the shared check
-// (which keys on row existence, not pane liveness) marks it shared for
-// both. The safe failure mode — never a yank from under a sibling whose
-// pane is still draining. The per-member outcome rides back in
-// memberOpResult.Worktree.
+// conservatively kept: every member's view is resolved from the same
+// pre-mutation cohort snapshot, while all co-sharers are still active. The
+// safe failure mode — never a yank from under a sibling whose pane is still
+// draining. The per-member outcome rides back in memberOpResult.Worktree.
 //
 // Per-member outcomes (memberOpResult.Action):
 //   - retired                  — demoted (Detail summarises what changed)
@@ -1047,6 +1045,22 @@ func bulkRetireGroupMembers(g *db.AgentGroup, caller, reason string, shutdown, d
 		alive, _ = session.LiveTmuxSessions()
 	}
 
+	// Snapshot every member's worktree view before any worker demotes or stops
+	// anyone. The workers run concurrently; resolving inside a worker would
+	// make a co-shared worktree's safety decision depend on whether its sibling
+	// had already retired/exited. Pre-resolution keeps the whole batch on one
+	// stable pre-mutation view and preserves the conservative co-share rule.
+	retireWorktrees := map[string]agentWorktreeView{}
+	if deleteWorktree {
+		claimSnapshot := captureAgentWorktreeClaims()
+		for _, m := range members {
+			if m.ConvID != "" {
+				retireWorktrees[m.ConvID] = claimSnapshot.resolve(
+					m.ConvID, map[string]bool{m.ConvID: true})
+			}
+		}
+	}
+
 	results := make([]*memberOpResult, len(members))
 	ownerGroupsPer := make([][]int64, len(members))
 
@@ -1077,7 +1091,8 @@ func bulkRetireGroupMembers(g *db.AgentGroup, caller, reason string, shutdown, d
 						return nil // filtered out — omit from the response
 					}
 				}
-				res, ownerGroupsPer[i] = retireGroupMember(m.ConvID, by, reason, shutdown, deleteWorktree, res)
+				res, ownerGroupsPer[i] = retireGroupMember(
+					m.ConvID, by, reason, shutdown, deleteWorktree, retireWorktrees[m.ConvID], res)
 			}
 			results[i] = &res
 			return nil
@@ -1111,15 +1126,14 @@ func bulkRetireGroupMembers(g *db.AgentGroup, caller, reason string, shutdown, d
 //
 // When deleteWorktree is set the member's git worktree+branch is also
 // cleaned up, reusing the single-agent retire machinery: the worktree is
-// resolved BEFORE the shutdown — defensive ordering, since both inputs the
-// resolve reads (the recorded location and the sibling session rows the
-// shared-worktree check keys on) survive a soft-exit, but resolving up
-// front keeps the view stable. scheduleRetireWorktreeCleanup then runs it
-// — inline when the member is already offline, deferred to a waiter when a
-// /exit is in flight, kept when no shutdown was asked for. The per-member
-// plan rides back on res.Worktree, and its one-line note is folded into
-// Detail so the CLI/table row says what happened.
-func retireGroupMember(convID, by, reason string, shutdown, deleteWorktree bool, res memberOpResult) (memberOpResult, []int64) {
+// resolved for the whole cohort BEFORE any worker starts — defensive ordering
+// that keeps shared-worktree decisions stable across concurrent demotion and
+// shutdown. scheduleRetireWorktreeCleanup then runs it — inline when the
+// member is already offline, deferred to a waiter when a /exit is in flight,
+// kept when no shutdown was asked for. The per-member plan rides back on
+// res.Worktree, and its one-line note is folded into Detail so the CLI/table
+// row says what happened.
+func retireGroupMember(convID, by, reason string, shutdown, deleteWorktree bool, wt agentWorktreeView, res memberOpResult) (memberOpResult, []int64) {
 	// Gate on the LIVE generation (current conv of an active actor), not just
 	// "active": retire acts on the actor, so a superseded predecessor handle
 	// would demote the live agent. Members always come through as the current
@@ -1145,13 +1159,6 @@ func retireGroupMember(convID, by, reason string, shutdown, deleteWorktree bool,
 	res.Action = "retired"
 	res.Detail = summarizeRetireOutcome(outcome)
 
-	// Resolve the worktree BEFORE the shutdown — the safe order: the
-	// shared-worktree check and the recorded location both survive a
-	// soft-exit, so resolving up front keeps the view stable.
-	var wt agentWorktreeView
-	if deleteWorktree {
-		wt = resolveRetireWorktree(convID)
-	}
 	if shutdown {
 		sd := stopOneConv(convID, false /* soft exit */)
 		res.TmuxSes = sd.TmuxSes

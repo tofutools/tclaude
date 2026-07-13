@@ -309,12 +309,25 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 			willDelete[convID] = true
 		}
 	}
-	// Worktree roots still claimed by agents that survive this cleanup
-	// — resolved once, only when worktree removal was actually asked
-	// for, so the no-worktree path pays nothing.
-	var survivorRoots map[string]bool
-	if mode == "delete" && body.DeleteWorktrees {
-		survivorRoots = otherAgentWorktreeRoots(willDelete)
+	// Capture claimant state once for either destructive worktree path. The
+	// snapshot is reused across the whole batch and fails closed if discovery
+	// was incomplete.
+	var claimSnapshot agentWorktreeClaimSnapshot
+	if body.DeleteWorktrees && (mode == "delete" || mode == "retire") {
+		claimSnapshot = captureAgentWorktreeClaims()
+	}
+	// Snapshot retire worktree decisions before demoting or stopping any
+	// target. Otherwise a multi-agent pass can become scheduling/order
+	// dependent: an earlier co-sharer may be retired and offline by the time a
+	// later target asks whether their shared worktree is still claimed.
+	retireWorktrees := map[string]agentWorktreeView{}
+	if mode == "retire" && body.DeleteWorktrees {
+		for _, tg := range targets {
+			if tg.ok {
+				retireWorktrees[tg.convID] = claimSnapshot.resolve(
+					tg.convID, map[string]bool{tg.convID: true})
+			}
+		}
 	}
 
 	// retireShutdown (retire tier only): whether a successfully-retired
@@ -380,14 +393,6 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 				for _, gid := range ownerGroups {
 					ownerless[gid] = true
 				}
-				// Resolve the worktree BEFORE any shutdown — the deferred
-				// removal waits on the pane exiting, and the shared-worktree
-				// check reads sibling sessions the soft-stop starts tearing
-				// down. Only when the human asked to delete worktrees.
-				var wt agentWorktreeView
-				if body.DeleteWorktrees {
-					wt = resolveRetireWorktree(tg.convID)
-				}
 				// Optionally soft-stop the now-retired agent's session.
 				// stopOneConv is idempotent — an already-dead session
 				// (the common case for an offline target) is a no-op, so
@@ -407,7 +412,7 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 				// outright when shutdown was declined). The one-line plan note
 				// is folded into Detail so the outcome row says what happened.
 				if body.DeleteWorktrees {
-					if plan := scheduleRetireWorktreeCleanup(tg.convID, wt, retireShutdown); plan.Action != "none" {
+					if plan := scheduleRetireWorktreeCleanup(tg.convID, retireWorktrees[tg.convID], retireShutdown); plan.Action != "none" {
 						out.Detail += " · " + plan.Detail
 					}
 				}
@@ -415,8 +420,7 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 		case mode == "delete":
 			// Resolve the worktree BEFORE the purge — DeleteConvByID
 			// wipes the session rows the resolution reads from.
-			wt := inspectAgentWorktree(tg.convID)
-			wt.Shared = wt.Path != "" && survivorRoots[wt.Path]
+			wt := claimSnapshot.resolve(tg.convID, willDelete)
 			// Capture owned groups before the purge so the warning
 			// sweep can tell which ones lose their last owner.
 			ownedBefore, _ := db.ListGroupsOwnedBy(tg.convID)

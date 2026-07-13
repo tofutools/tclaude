@@ -8,6 +8,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/claude/worktree"
 )
 
@@ -77,41 +78,153 @@ func inspectAgentWorktree(convID string) agentWorktreeView {
 	return agentWorktreeView{Path: st.Root, Branch: st.Branch, Kind: st.Kind}
 }
 
-// otherAgentWorktreeRoots returns the set of git worktree roots in use
-// by agents OTHER than those in `excluding`. A worktree in this set is
-// "shared" — some agent that survives the current cleanup still
-// depends on it, so cleanup must leave it alone.
+// agentWorktreeClaimSnapshot is one operation's stable view of worktree
+// ownership. claims maps a root to the active agents / live panes using it;
+// views caches their already-inspected worktrees so a batch does not repeat
+// global DB/tmux discovery and git inspection once per member.
 //
-// The directory→root resolution is cached so a host with many agents
-// in the same worktree pays one git inspection per distinct dir, not
-// one per agent.
-func otherAgentWorktreeRoots(excluding map[string]bool) map[string]bool {
-	roots := map[string]bool{}
+// complete is false when any global discovery step failed. Deletion safety
+// fails closed in that case: shared reports every non-empty path as claimed.
+type agentWorktreeClaimSnapshot struct {
+	views    map[string]agentWorktreeView
+	claims   map[string]map[string]bool
+	complete bool
+}
+
+// captureAgentWorktreeClaims returns the worktrees in use by active agents or
+// actually-live panes at one point in time.
+//
+// Session rows are historical: retiring an agent deliberately keeps its
+// conversation and session metadata. Therefore row existence alone is not
+// proof that the worktree is still claimed. Count every active agent (online
+// or offline), plus any actually-live pane (including a retired/plain
+// conversation left running). An offline retired/plain conversation and an
+// offline superseded generation no longer claim their recorded worktree.
+//
+// Tmux names are reusable after a pane exits. Each live name is bound to its
+// newest launch row (created_at, then updated_at). Status is deliberately not
+// a discriminator: SessionEnd can mark the real owner exited just before its
+// tmux pane disappears. Exact timestamp ties retain every candidate and fail
+// conservatively across their roots.
+func captureAgentWorktreeClaims() agentWorktreeClaimSnapshot {
+	snap := agentWorktreeClaimSnapshot{
+		views:  map[string]agentWorktreeView{},
+		claims: map[string]map[string]bool{},
+	}
 	sessions, err := db.ListSessions()
 	if err != nil {
-		return roots
+		return snap
 	}
-	seenConv := map[string]bool{}
-	dirRoot := map[string]string{}
+	active, err := db.ListActiveAgents()
+	if err != nil {
+		return snap
+	}
+	alive, err := session.LiveTmuxSessions()
+	if err != nil {
+		return snap
+	}
+
+	// Resolve one location per claimant. Active agents claim their worktree
+	// even while offline. Live panes claim theirs regardless of enrollment
+	// state so cleanup can never remove a running process's cwd.
+	claimants := map[string]bool{}
+	for _, a := range active {
+		if a.CurrentConvID != "" {
+			claimants[a.CurrentConvID] = true
+		}
+	}
+	liveOwners := map[string][]*db.SessionRow{}
 	for _, s := range sessions {
-		if s.ConvID == "" || excluding[s.ConvID] || seenConv[s.ConvID] {
+		if s.ConvID == "" || s.TmuxSession == "" {
 			continue
 		}
-		seenConv[s.ConvID] = true
-		dir := agent.ResolveLocation(s.ConvID).CurrentDir
+		if _, ok := alive[s.TmuxSession]; !ok {
+			continue
+		}
+		cur := liveOwners[s.TmuxSession]
+		if len(cur) == 0 {
+			liveOwners[s.TmuxSession] = []*db.SessionRow{s}
+			continue
+		}
+		switch compareSessionLaunchRecency(s, cur[0]) {
+		case 1:
+			liveOwners[s.TmuxSession] = []*db.SessionRow{s}
+		case 0:
+			liveOwners[s.TmuxSession] = append(cur, s)
+		}
+	}
+	for _, owners := range liveOwners {
+		for _, s := range owners {
+			claimants[s.ConvID] = true
+		}
+	}
+
+	// Cache the full view per directory: agents commonly co-share a cwd, and
+	// InspectWorktree shells out to git.
+	dirViews := map[string]agentWorktreeView{}
+	for convID := range claimants {
+		dir := agent.ResolveLocation(convID).CurrentDir
 		if dir == "" {
 			continue
 		}
-		root, cached := dirRoot[dir]
+		view, cached := dirViews[dir]
 		if !cached {
-			root = inspectWorktreeFn(dir).Root
-			dirRoot[dir] = root
+			st := inspectWorktreeFn(dir)
+			view = agentWorktreeView{Path: st.Root, Branch: st.Branch, Kind: st.Kind}
+			dirViews[dir] = view
 		}
-		if root != "" {
-			roots[root] = true
+		snap.views[convID] = view
+		if view.Path != "" {
+			if snap.claims[view.Path] == nil {
+				snap.claims[view.Path] = map[string]bool{}
+			}
+			snap.claims[view.Path][convID] = true
 		}
 	}
-	return roots
+	snap.complete = true
+	return snap
+}
+
+// resolve returns convID's worktree view and marks it shared when a claimant
+// outside excluding uses the same root. An incomplete discovery snapshot is
+// unsafe for deletion, so every non-empty path fails closed as shared.
+func (s agentWorktreeClaimSnapshot) resolve(convID string, excluding map[string]bool) agentWorktreeView {
+	wt, ok := s.views[convID]
+	if !ok {
+		wt = inspectAgentWorktree(convID)
+	}
+	if wt.Path == "" {
+		return wt
+	}
+	if !s.complete {
+		wt.Shared = true
+		return wt
+	}
+	for claimant := range s.claims[wt.Path] {
+		if !excluding[claimant] {
+			wt.Shared = true
+			break
+		}
+	}
+	return wt
+}
+
+// compareSessionLaunchRecency compares rows that share a tmux name. The pane's
+// actual owner is the newest launch, not necessarily the newest status or the
+// only non-exited row. Returns -1 / 0 / 1 for older / tied / newer.
+func compareSessionLaunchRecency(candidate, current *db.SessionRow) int {
+	switch {
+	case candidate.CreatedAt.After(current.CreatedAt):
+		return 1
+	case candidate.CreatedAt.Before(current.CreatedAt):
+		return -1
+	case candidate.UpdatedAt.After(current.UpdatedAt):
+		return 1
+	case candidate.UpdatedAt.Before(current.UpdatedAt):
+		return -1
+	default:
+		return 0
+	}
 }
 
 // dashboardAgentWorktree answers GET /api/agents/{conv}/worktree —
@@ -127,9 +240,7 @@ func dashboardAgentWorktree(w http.ResponseWriter, convSelector string) {
 		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
 		return
 	}
-	wt := inspectAgentWorktree(convID)
-	wt.Shared = wt.Path != "" &&
-		otherAgentWorktreeRoots(map[string]bool{convID: true})[wt.Path]
+	wt := captureAgentWorktreeClaims().resolve(convID, map[string]bool{convID: true})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"kind":      wt.Kind,
 		"path":      wt.Path,
@@ -335,8 +446,5 @@ func postRetireWorktreeNotice(agentTitle, subject, detail string) {
 // the handler can resolve it BEFORE issuing the shutdown that the
 // deferred removal then waits on.
 func resolveRetireWorktree(convID string) agentWorktreeView {
-	wt := inspectAgentWorktree(convID)
-	wt.Shared = wt.Path != "" &&
-		otherAgentWorktreeRoots(map[string]bool{convID: true})[wt.Path]
-	return wt
+	return captureAgentWorktreeClaims().resolve(convID, map[string]bool{convID: true})
 }

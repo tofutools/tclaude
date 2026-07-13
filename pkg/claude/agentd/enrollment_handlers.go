@@ -177,6 +177,17 @@ func handleAgentRetire(w http.ResponseWriter, r *http.Request, convID string) {
 			fmt.Sprintf("conv %s is not a live agent at this generation (state: %s) — nothing to retire", short8(convID), state))
 		return
 	}
+	shutdown := retireShouldShutdown(r)
+	deleteWorktree := retireShouldDeleteWorktree(r)
+
+	// Resolve before demotion as well as before shutdown. Historical retired
+	// session rows are not worktree claimants, so the safety view must be taken
+	// while this target and every sibling still have their pre-retire state.
+	var wt agentWorktreeView
+	if deleteWorktree {
+		wt = resolveRetireWorktree(convID)
+	}
+
 	reason := strings.TrimSpace(r.URL.Query().Get("reason"))
 	outcome, _, err := retireAgentConv(convID, enrollmentActor(caller), reason)
 	if err != nil {
@@ -186,17 +197,6 @@ func handleAgentRetire(w http.ResponseWriter, r *http.Request, convID string) {
 	resp := map[string]any{
 		"conv_id": convID,
 		"outcome": outcome,
-	}
-
-	shutdown := retireShouldShutdown(r)
-	deleteWorktree := retireShouldDeleteWorktree(r)
-
-	// Resolve the worktree BEFORE issuing the shutdown: the deferred
-	// removal waits on the pane exiting, and the shared-worktree check
-	// reads sibling sessions that the soft-stop will start tearing down.
-	var wt agentWorktreeView
-	if deleteWorktree {
-		wt = resolveRetireWorktree(convID)
 	}
 
 	// Shutdown after the demotion: the agent is already a plain
