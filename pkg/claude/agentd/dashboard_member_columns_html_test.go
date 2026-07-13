@@ -32,6 +32,9 @@ func TestDashboardHTML_MemberColumnsShowHideWired(t *testing.T) {
 	// list, so they can never drift out of alignment.
 	must("import { visibleMemberCols, memberColHidden } from './member-columns.js';", "render imports the store")
 	must("sortHead('members', visibleMemberCols())", "the members header renders only the visible columns")
+	must("wizardLabel: 'Class'", "the Role header and column toggle use wizard Class vocabulary")
+	must("wizardLabel: 'Quest'", "the Task link header and column toggle use wizard Quest vocabulary")
+	must("wizardLabel: 'Lore'", "the Description header and column toggle use wizard Lore vocabulary")
 	must("visibleMemberCols().map((c) => cells[c.key]", "each row emits only the visible columns, in order")
 	// A missing cell must degrade to an empty <td> (fails ALIGNED), never to
 	// '' (which would shift every later cell left into a misaligned table).

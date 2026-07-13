@@ -42,6 +42,14 @@ function ViewOption({ option, state, queueRefresh, wizard }) {
   `;
 }
 
+function ColumnLabel({ column }) {
+  if (!column.wizardLabel) return column.label;
+  return html`
+    <span class="theme-copy-regular">${column.label}</span>
+    <span class="theme-copy-wizard">${column.wizardLabel}</span>
+  `;
+}
+
 export function GroupsControls({ state, actions }) {
   const inputRef = useRef(null);
   const refreshTimer = useRef(null);
@@ -167,7 +175,7 @@ export function GroupsControls({ state, actions }) {
                   column.key, event.currentTarget.checked,
                 )}
               />
-              <span>${column.label}</span>
+              <span><${ColumnLabel} column=${column} /></span>
             </label>
           `)}
         </div>

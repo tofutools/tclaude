@@ -6,7 +6,7 @@
 // column specs and value accessors. Extracted from dashboard.js as
 // part of the Stage 2 module split.
 
-import { esc } from './helpers.js';
+import { esc, themeWords } from './helpers.js';
 import { dashPrefs } from './prefs.js';
 
 // --- column sorting --------------------------------------------------
@@ -74,13 +74,14 @@ function cycleSort(tableKey, col) {
 function sortHead(tableKey, cols) {
   const active = sortState[tableKey];
   const cells = cols.map(c => {
-    if (!c.col) return `<th>${esc(c.label || '')}</th>`;
+    const label = c.wizardLabel ? themeWords(c.label || '', c.wizardLabel) : esc(c.label || '');
+    if (!c.col) return `<th>${label}</th>`;
     const on = active && active.col === c.col;
     const arrow = on ? (active.dir === 'asc' ? '▲' : '▼') : '▾';
     const cls = on ? 'sortable sort-active' : 'sortable';
     return `<th class="${cls}" data-sort-table="${esc(tableKey)}" `
          + `data-sort-col="${esc(c.col)}" title="Sort by ${esc(c.label)}">`
-         + `${esc(c.label)}<span class="sort-arrow">${arrow}</span></th>`;
+         + `${label}<span class="sort-arrow">${arrow}</span></th>`;
   });
   return `<thead><tr>${cells.join('')}</tr></thead>`;
 }
@@ -147,9 +148,9 @@ const MEMBER_COLS = [
   { key: 'age',    label: 'Age',         col: 'age',    hideable: true },
   { key: 'cwd',    label: 'CWD',         col: 'cwd',    hideable: true },
   { key: 'branch', label: 'Branch',      col: 'branch', hideable: true },
-  { key: 'role',   label: 'Role',        col: 'role',   hideable: true },
-  { key: 'task',   label: 'Task link',   col: 'task',   hideable: true },
-  { key: 'descr',  label: 'Description', col: 'descr',  hideable: true },
+  { key: 'role',   label: 'Role',        wizardLabel: 'Class', col: 'role',  hideable: true },
+  { key: 'task',   label: 'Task link',   wizardLabel: 'Quest', col: 'task',  hideable: true },
+  { key: 'descr',  label: 'Description', wizardLabel: 'Lore',  col: 'descr', hideable: true },
 ];
 const MEMBER_ACCESSORS = {
   // id sorts on the stable agent_id the column now displays (conv-id fallback).

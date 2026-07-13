@@ -21,6 +21,7 @@ import assert from 'node:assert/strict';
 import {
   cycleSort, sortHead, applySort, loadSortState,
   persistTableSort,
+  MEMBER_COLS,
   RETIRED_COLS, RETIRED_ACCESSORS,
   CONVERSATIONS_COLS, CONVERSATIONS_ACCESSORS,
   PENDING_COLS, PENDING_ACCESSORS,
@@ -104,6 +105,13 @@ test("sortHead('retired', …) tags headers with the table key the click handler
   assert.match(html, /data-sort-col="reason"/);
   // The dot/action columns render as plain, non-clickable headers.
   assert.match(html, /<th><\/th>/);
+});
+
+test("member headers carry wizard-mode labels for class, quest and lore", () => {
+  const html = sortHead('members', MEMBER_COLS);
+  assert.match(html, /class="theme-copy-regular">Role<\/span><span class="theme-copy-wizard">Class<\/span>/);
+  assert.match(html, /class="theme-copy-regular">Task link<\/span><span class="theme-copy-wizard">Quest<\/span>/);
+  assert.match(html, /class="theme-copy-regular">Description<\/span><span class="theme-copy-wizard">Lore<\/span>/);
 });
 
 // --- Conversations -----------------------------------------------------
