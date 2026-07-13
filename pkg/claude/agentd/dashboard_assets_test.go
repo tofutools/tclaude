@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode"
 )
 
 // dashboardJSModules lists every embedded ES-module file under js/,
@@ -41,6 +42,22 @@ var dashboardAssets = func() string {
 	}
 	return b.String()
 }()
+
+// dashboardSourceContains is for source-shape assertions spanning formatted
+// HTML/HTM. These tests should pin structure and copy, not Prettier's choice of
+// line breaks around attributes or component children.
+func compactDashboardSource(value string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return -1
+		}
+		return r
+	}, value)
+}
+
+func dashboardSourceContains(source, needle string) bool {
+	return strings.Contains(compactDashboardSource(source), compactDashboardSource(needle))
+}
 
 // TestDashboardEmbed_HasExpectedFiles guards that `//go:embed dashboard`
 // captured the page shell, its stylesheet, and the ES-module entrypoint
@@ -281,22 +298,17 @@ func TestDashboardJS_SelectTooltipWired(t *testing.T) {
 // here means the modal would silently forget its size across reopens.
 func TestDashboardJS_ModalResizePersisted(t *testing.T) {
 	for _, needle := range []string{
-		"function makeModalResizable(",                                      // helper exists (helpers.js)
-		"makeModalResizable($('#agent-spawn-modal .cron-create-modal')",     // spawn modal wires it
-		"makeModalResizable($('#clone-agent-modal .cron-create-modal')",     // clone modal wires it
-		"makeModalResizable($('#template-editor-modal .cron-create-modal')", // template editor wires it (JOH-357)
-		// The summoning-circles management panel wires it as a LIST (not a form):
-		// { fitContent: false } keeps persist/restore but drops the content-tracking
-		// min-size + auto-grow. Pinning the full call guards both the wiring and the
-		// list opt-out (a refactor dropping fitContent would make a long list
-		// un-shrinkable and fight the 2s live refresh).
-		"makeModalResizable($('#templates-manage-modal .manage-modal'), 'tclaude.dash.modalSize.templates-manage', { fitContent: false })",
-		"makeModalResizable(dialogRef.current, resizeKey)", // Preact sandbox-profile editor wires it
-		"tclaude.dash.modalSize.agent-spawn",               // per-modal pref key
-		"tclaude.dash.modalSize.template-editor",           // template editor pref key (JOH-357)
-		"tclaude.dash.modalSize.sandbox-profile-editor",    // sandbox-profile editor pref key
+		"function makeModalResizable(",                                  // helper exists (helpers.js)
+		"makeModalResizable($('#agent-spawn-modal .cron-create-modal')", // spawn modal wires it
+		"makeModalResizable($('#clone-agent-modal .cron-create-modal')", // clone modal wires it
+		"makeModalResizable(dialogRef.current, resizeKey)",              // Preact management overlays wire it
+		`resizeKey: 'tclaude.dash.modalSize.templates-manage'`,
+		`fitContent: false`,
+		"tclaude.dash.modalSize.agent-spawn",            // per-modal pref key
+		"tclaude.dash.modalSize.template-editor",        // template editor pref key (JOH-357)
+		"tclaude.dash.modalSize.sandbox-profile-editor", // sandbox-profile editor pref key
 	} {
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard JS missing %q — modal resize persistence broken", needle)
 		}
 	}

@@ -20,14 +20,15 @@ import (
 func TestDashboardHTML_TemplateDrop(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
 	mustOrder := func(first, second, why string) {
 		t.Helper()
-		i := strings.Index(dashboardAssets, first)
-		j := strings.Index(dashboardAssets, second)
+		source := compactDashboardSource(dashboardAssets)
+		i := strings.Index(source, compactDashboardSource(first))
+		j := strings.Index(source, compactDashboardSource(second))
 		if i < 0 || j < 0 || i >= j {
 			t.Errorf("dashboard source order wrong (%s): %q should appear before %q", why, first, second)
 		}
@@ -50,16 +51,15 @@ func TestDashboardHTML_TemplateDrop(t *testing.T) {
 
 	// The mode chooser markup — the three radio options, both vocab modes.
 	must(`id="template-deploy-mode"`, "the drop-mode chooser exists")
-	must(`name="template-deploy-mode" value="reinforce"`, "the reinforce mode radio exists")
-	must(`name="template-deploy-mode" value="copy"`, "the copy mode radio exists")
-	must(`name="template-deploy-mode" value="subgroup" checked`, "the subgroup mode radio exists and is the static default")
-	mustOrder(`name="template-deploy-mode" value="subgroup" checked`, `name="template-deploy-mode" value="reinforce"`,
+	must(`name="template-deploy-mode" value=${value} checked=${mode === value}`, "the controlled native mode radios exist")
+	must("[['subgroup', 'New subgroup copying this group’s settings'", "the subgroup mode is the default/first option")
+	mustOrder("['subgroup', 'New subgroup copying this group’s settings'", "['reinforce', 'Reinforce this group'",
 		"subgroup is the first drop-mode option")
-	must(`<span class="tpl-word-regular">Reinforce this group</span><span class="tpl-word-wizard">Summon into this party</span>`,
+	must(`['reinforce', 'Reinforce this group', 'Summon into this party']`,
 		"the reinforce option ships both voices")
-	must(`<span class="tpl-word-regular">New top-level group copying settings</span><span class="tpl-word-wizard">New top-level party in this party's image</span>`,
+	must(`'copy', 'New top-level group copying settings', 'New top-level party in this party’s image'`,
 		"the copy option ships both voices")
-	must(`<span class="tpl-word-regular">New subgroup copying this group's settings</span><span class="tpl-word-wizard">New sub-party in this party's image</span>`,
+	must(`'subgroup', 'New subgroup copying this group’s settings', 'New sub-party in this party’s image'`,
 		"the subgroup option ships both voices")
 
 	// The mirror/copy-mode fields + the per-mode note.
@@ -73,29 +73,33 @@ func TestDashboardHTML_TemplateDrop(t *testing.T) {
 
 	// One submit handler, mode-dispatched — reinforce and copy fork to their own
 	// POSTs; the create-new path is unchanged.
-	must("if (deployDropGroup && deployMode() === 'reinforce') return submitReinforce();", "reinforce mode dispatches to the reinforce POST")
-	must("if (deployDropGroup && (deployMode() === 'copy' || deployMode() === 'subgroup')) return submitCopyGroup();", "copy/subgroup modes dispatch to the instantiate POST")
-	must("/reinforce`, {", "reinforce mode POSTs to the reinforce endpoint")
-	must("/instantiate`, {", "copy mode POSTs to the existing instantiate endpoint")
+	must("actions.deployTemplate(templateName, 'reinforce', payload, mode)", "reinforce mode dispatches to the reinforce POST")
+	must("await actions.deployTemplate(", "copy/subgroup modes use the shared deploy action")
+	must("'instantiate', payload, mode,", "copy/subgroup modes dispatch to the instantiate POST")
+	must("kind === 'reinforce' ? 'reinforce' : kind === 'instantiate' ? 'instantiate' : 'deploy'", "the API action selects the existing endpoints")
 	// Copy mode ALWAYS sends context_override AND descr_override so the new group
 	// carries the visible, edited combined context (JOH-356) AND description
 	// (JOH-385). Sending them unconditionally is how an EMPTY source context /
 	// description is faithfully copied (a bare `descr` would let the backend
 	// re-default an empty description to "Instantiated from template X").
-	must("combineGroupAndTemplateContext(", "the visible context combines the mirrored group and template defaults")
+	must("combineContext(", "the visible context combines the mirrored group and template defaults")
 	must("## Mirrored group context", "the combined context labels the mirrored group portion")
 	must("## Template context", "the combined context labels the template portion")
-	must("const payload = { group_name: groupName, context_override: context, descr_override: descr };", "copy mode sends the visible combined context and description")
-	must("if (mode === 'subgroup') payload.parent = deployDropGroup;", "subgroup drop mode sends the parent group")
-	must("payload.descr_override = descr;", "normal deploy can mirror a group's description")
+	must("const payload = {", "copy mode constructs an explicit payload")
+	must("group_name: groupName.trim(),", "copy mode sends the visible group name")
+	must("context_override: context,", "copy mode sends the visible combined context")
+	must("descr_override: descr.trim(),", "copy mode sends the visible description")
+	must("if (mode === 'subgroup') payload.parent = dropGroup.name;", "subgroup drop mode sends the parent group")
+	must("payload.descr_override = descr.trim();", "normal deploy can mirror a group's description")
 	must("payload.context_override = context;", "normal deploy can mirror a group's context")
-	must("if ($('#template-deploy-parent').checked) payload.parent = mirrorSource;", "normal deploy can nest under the mirrored source")
+	must("if (parent) payload.parent = source;", "normal deploy can nest under the mirrored source")
 
 	// The chooser reflows the dialog live (no re-open) — the mode-radio change
 	// listener + the locked/prefilled group field.
-	must("rdo.addEventListener('change', applyDeployMode)", "switching mode reflows the dialog live")
-	must("groupInput.readOnly = true;", "reinforce mode locks the group name to the target")
-	must("return (checked && checked.value) || 'subgroup';", "the JS fallback default is subgroup")
+	must("onChange=${() => setMode(value)}", "switching mode reflows the dialog live")
+	must("readonly=${reinforcing}", "reinforce mode locks the group name to the target")
+	must("class=${reinforcing ? 'locked' : ''}", "reinforce mode visibly marks the locked group name")
+	must("useState(dropGroup ? 'subgroup' : '')", "the JS default is subgroup for group drops")
 
 	// CSS: the chooser is styled in both skins, wizard SCOPED under the modal (the
 	// anti-pin invariant — no unscoped body.wizard widening).

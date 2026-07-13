@@ -1041,6 +1041,20 @@ func baseStates() []dashsnap.State {
 			SettleMS: 350,
 		},
 		{
+			Key:      "template-manager",
+			Title:    "Template manager",
+			Caption:  "The Preact template manager with native filter controls, roster summaries and live deployed-force readback.",
+			JS:       templateManagerJS(),
+			SettleMS: 500,
+		},
+		{
+			Key:      "template-editor",
+			Title:    "Template editor",
+			Caption:  "The Preact template editor preserving the existing wide layout, native controls, placeholders and nested roster styling.",
+			JS:       templateEditorJS(),
+			SettleMS: 500,
+		},
+		{
 			Key:      "summon-normal",
 			Title:    "Summon dialog (normal)",
 			Caption:  "Template dropped on empty space → plain summon, no mode chooser.",
@@ -1063,6 +1077,57 @@ func baseStates() []dashsnap.State {
 		},
 	}
 	return append(states, processGraphStates()...)
+}
+
+// templateManagerJS opens the real Preact-owned management overlay through the
+// dashboard button and self-checks the stable DOM/CSS hooks shared by both
+// plain and wizard skins. The screenshot matrix applies each skin separately.
+func templateManagerJS() string {
+	return `document.querySelector('nav [data-tab="groups"]').click();
+var __open = document.querySelector('#templates-manage-open');
+if (!__open) throw new Error('template manager trigger not found');
+__open.click();
+return new Promise(function(resolve, reject){
+  setTimeout(function(){
+    var modal = document.querySelector('#templates-manage-modal.show');
+    var filter = modal && modal.querySelector('#filter-templates[type=text]');
+    var card = modal && modal.querySelector('.template-card[data-template="frontend-squad"]');
+    if (!modal) { reject(new Error('template manager did not open: ' + (document.querySelector('#management-root')?.textContent || 'empty management root'))); return; }
+    if (!filter || filter.placeholder.indexOf('template name') < 0) { reject(new Error('template filter parity check failed')); return; }
+    if (!card || !card.querySelector('button[data-tact=edit]')) { reject(new Error('template card actions missing')); return; }
+    resolve();
+  }, 250);
+});
+`
+}
+
+// templateEditorJS follows the same user path as the manager screenshot, then
+// opens a seeded template and verifies native form types/defaults before the
+// browser captures the plain/wizard visual result.
+func templateEditorJS() string {
+	return `document.querySelector('nav [data-tab="groups"]').click();
+var __open = document.querySelector('#templates-manage-open');
+if (!__open) throw new Error('template manager trigger not found');
+__open.click();
+return new Promise(function(resolve, reject){
+  setTimeout(function(){
+    var edit = document.querySelector('#templates-manage-modal .template-card[data-template="frontend-squad"] button[data-tact=edit]');
+    if (!edit) { reject(new Error('seeded template edit action missing')); return; }
+    edit.click();
+    setTimeout(function(){
+      var modal = document.querySelector('#template-editor-modal.show');
+      var name = modal && modal.querySelector('#template-editor-name[type=text]');
+      var roster = modal && modal.querySelector('#template-editor-agents .template-agent-row');
+      var role = roster && roster.querySelector('select.ta-role-ref');
+      var profile = roster && roster.querySelector('select.ta-profile-select');
+      if (!modal) { reject(new Error('template editor did not open')); return; }
+      if (!name || name.value !== 'frontend-squad' || !name.placeholder) { reject(new Error('template identity/default parity check failed')); return; }
+      if (!roster || !role || !profile) { reject(new Error('native roster controls missing')); return; }
+      resolve();
+    }, 250);
+  }, 250);
+});
+`
 }
 
 func boundedMessagesJS() string {
@@ -1827,16 +1892,36 @@ function __fire(el, type) {
 __fire(__card, 'dragstart');
 __fire(__drop, 'dragover');
 __fire(__drop, 'drop');
+return new Promise(function(resolve, reject){
+setTimeout(function(){
 if (!document.querySelector('#template-deploy-modal.show')) {
-  throw new Error('summon dialog did not open (#template-deploy-modal.show absent)');
+  reject(new Error('summon dialog did not open (#template-deploy-modal.show absent)')); return;
 }
 `, tfTemplate, tfTemplate, dropSel, dropSel)
 	if copyMode {
 		js += `
 var __copy = document.querySelector('#template-deploy-modal input[name=template-deploy-mode][value=copy]');
-if (!__copy) throw new Error('copy radio not found');
+if (!__copy) { reject(new Error('copy radio not found')); return; }
 __copy.click();
 `
+	} else {
+		js += `
+var __reinforce = document.querySelector('#template-deploy-modal input[name=template-deploy-mode][value=reinforce]');
+if (__reinforce) {
+  __reinforce.click();
+  setTimeout(function(){
+    var __groupName = document.querySelector('#template-deploy-group');
+    if (!__groupName.readOnly || !__groupName.classList.contains('locked')) { reject(new Error('reinforce group lock parity failed')); return; }
+    resolve();
+  }, 50);
+  return;
+}
+`
 	}
+	js += `
+resolve();
+}, 150);
+});
+`
 	return js
 }

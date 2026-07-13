@@ -58,6 +58,21 @@ test('management island renders keyed profile list and explicit editor state', a
   cleanups.reverse().forEach((fn) => fn()); assert.equal(host.childElementCount, 0);
 });
 
+test('local profile editor skips its hidden autofocus field', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({ kind: 'profile-editor', seed: { name: 'local', harness: 'claude' }, options: { local: true }, catalog });
+  const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
+  mountManagementIsland({ host, state, actions: { saveProfile() {} }, confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } });
+  await harness.act(() => Promise.resolve());
+  assert.equal(host.querySelector('#profile-editor-name').closest('[hidden]') !== null, true);
+  assert.equal(harness.document.activeElement, host.querySelector('#profile-editor-harness'), 'hidden autofocus fields cannot retain focus behind the modal');
+  cleanups.reverse().forEach((fn) => fn());
+});
+
 test('sandbox actions preserve dry-run, canonical commit, delete, and import boundaries', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { createManagementActions }] = await Promise.all([

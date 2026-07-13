@@ -15,13 +15,13 @@ import (
 func TestDashboardHTML_EscDismissWired(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard assets missing %q (%s)", needle, why)
 		}
 	}
 	mustNot := func(needle, why string) {
 		t.Helper()
-		if strings.Contains(dashboardAssets, needle) {
+		if dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard assets still contain %q (%s)", needle, why)
 		}
 	}
@@ -46,8 +46,8 @@ func TestDashboardHTML_EscDismissWired(t *testing.T) {
 	// bindBackdropDiscard — a sanity net that the coverage table is real.
 	// (One per bind*UI file so a whole file dropping its call is caught.)
 	must("bindBackdropDiscard('perm-edit-modal', closePermEditModal);", "the permission editor confirms before discarding")
-	must("bindBackdropDiscard('template-editor-modal', closeTemplateEditor);", "the template editor confirms before discarding")
-	must("if (!dirty || await confirmDiscard()) onClose();", "Preact management editors confirm before discarding")
+	must("dirty=${dirty} blocked=${saving} confirmDiscard=${confirmDiscard}", "the Preact template editor confirms before discarding")
+	must("if (!dirty || (await confirmDiscard())) onClose();", "Preact management editors confirm before discarding")
 	must(`id="role-editor-modal"`, "the role editor uses the shared Preact dismissal boundary")
 	must(`id="profile-editor-modal"`, "the profile editor uses the shared Preact dismissal boundary")
 	must("bindBackdropDiscard('agent-spawn-modal', closeAgentSpawnModal);", "the spawn dialog confirms before discarding")
@@ -58,7 +58,8 @@ func TestDashboardHTML_EscDismissWired(t *testing.T) {
 	// The non-form LISTING overlays get the friction-free clean close (no
 	// "discard?" for a typed filter). A child .modal-overlay on top claims
 	// Escape first via bindManageOverlayDismiss's own guard.
-	must("bindManageOverlayDismiss('templates-manage-modal', closeTemplatesManageModal);", "the templates browser closes cleanly")
+	must(`id: 'templates-manage-modal'`, "the Preact templates browser uses the clean manage-overlay boundary")
+	must(`manage: true`, "the templates browser uses the listing-overlay variant")
 	must("manage-overlay show", "Preact management browsers use the clean shared overlay close")
 	must("bindManageOverlayDismiss('links-manage-modal', closeLinksManageModal);", "the links browser closes cleanly")
 

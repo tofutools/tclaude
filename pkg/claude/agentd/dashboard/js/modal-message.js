@@ -965,9 +965,8 @@ function bindGroupCreateModal() {
   // (the JOH-350 "⧉ manage…" idiom); its create/edit/delete is picked up when
   // it closes (both close paths — Close button and backdrop).
   $('#group-create-manage-templates').addEventListener('click', () => openTemplatesManageModal());
-  $('#templates-manage-close').addEventListener('click', repopulateGroupCreateTemplatesIfOpen);
-  $('#templates-manage-modal').addEventListener('click', (e) => {
-    if (e.target === $('#templates-manage-modal')) repopulateGroupCreateTemplatesIfOpen();
+  document.addEventListener('tclaude:management-closed', (event) => {
+    if (event.detail?.kind === 'templates') repopulateGroupCreateTemplatesIfOpen();
   });
   // 🧹 cleanup: the Groups tab's "clean up" button opens the rich
   // multi-category cleanup modal — bulk unjoin / retire / delete /

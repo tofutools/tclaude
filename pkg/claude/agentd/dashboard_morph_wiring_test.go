@@ -31,7 +31,7 @@ func TestDashboardMorph_Wired(t *testing.T) {
 
 	present := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard assets missing %q — %s", needle, why)
 		}
 	}
@@ -88,13 +88,13 @@ func TestDashboardMorph_Wired(t *testing.T) {
 func TestDashboardMorph_SweepWired(t *testing.T) {
 	present := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard assets missing %q — %s", needle, why)
 		}
 	}
 	gone := func(needle, why string) {
 		t.Helper()
-		if strings.Contains(dashboardAssets, needle) {
+		if dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard assets still carry the retired swap %q — %s", needle, why)
 		}
 	}
@@ -106,11 +106,12 @@ func TestDashboardMorph_SweepWired(t *testing.T) {
 	gone("morphInto($('#plugins-list'),", "legacy Plugins morph renderer remains")
 	gone("$('#plugins-list').innerHTML", "Plugins list innerHTML swap regressed")
 
-	// Item 3 — Templates management overlay list (modal-templates.js). The
-	// overlay is a .manage-overlay, deliberately not refresh-suspended, so it
-	// repaints while read; keyed by template name.
-	present("morphInto(host, list.map(templateCardHTML).join(''))", "Templates list morphs instead of innerHTML swap")
-	present(`data-key="${esc(t.name)}" data-template=`, "template cards carry a stable data-key")
+	// Item 3 — Templates management is Preact-owned. Its keyed card components
+	// preserve live DOM while the unsuspended overlay refreshes behind the user;
+	// the retired string renderer and morph bridge must stay gone.
+	present("list.map((template) => html`<${TemplateCard} key=${template.name}", "template cards carry stable Preact keys")
+	present("data-key=${template.name} data-template=${template.name}", "template cards expose their stable data key")
+	gone("morphInto(host, list.map(templateCardHTML).join(''))", "legacy Templates morph renderer remains")
 	gone("host.innerHTML = list.map(templateCardHTML).join('')", "Templates list innerHTML swap regressed")
 
 	// Item 4 — Logs is Preact-owned. Reverse occurrence keys keep byte-identical
@@ -168,7 +169,7 @@ func TestDashboardMorph_AnimationStampsPreserved(t *testing.T) {
 		// channeling status, so a later return re-phases from that restart.
 		"orbitStampSig.delete(pill);",
 	} {
-		if !strings.Contains(dashboardAssets, needle) {
+		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard assets missing %q — animation-stamp preserve / stamp-once regressed", needle)
 		}
 	}

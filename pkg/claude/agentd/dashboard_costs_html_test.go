@@ -123,9 +123,9 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	// Breakdown table: the per-agent harness + model columns, now rendered through
 	// the sortable-header builder rather than a static <th>.
 	must("{ label: 'Harness', sort: 'harness'", "harness column defined in the sortable header set")
-	must("a.harness", "harness field rendered from the API row")
+	must("agent.harness", "harness field rendered from the API row")
 	must("{ label: 'Model', sort: 'model'", "model column defined in the sortable header set")
-	must("a.model", "model field rendered from the API row")
+	must("agent.model", "model field rendered from the API row")
 
 	// Sortable headers: clickable columns with a direction arrow, default
 	// activity/desc (which reproduces the server's recency order), wired on

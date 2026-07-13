@@ -4050,9 +4050,9 @@ body.wizard .group-pending-title-wizard { display: inline; }
   font-size: 11px; color: #d29922; background: #21262d;
   border: 1px solid #2a3340; border-radius: 4px; padding: 5px 8px;
 }
-/* Role-inspect panel (JOH-351): the shared "what does this role carry?" preview
-   rendered under the role dropdown by role-inspect.js. Empty (no role picked) it
-   collapses to nothing. Deeper-inset than the row so it reads as a sub-panel. */
+/* Role-inspect panel (JOH-351): the "what does this role carry?" preview
+   rendered under the Preact role dropdown. Empty (no role picked) it collapses
+   to nothing. Deeper-inset than the row so it reads as a sub-panel. */
 .ta-role-inspect:empty { display: none; }
 .role-inspect {
   background: #0b0f14; border: 1px solid #21262d; border-radius: 4px;
