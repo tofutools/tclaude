@@ -51,6 +51,33 @@ func TestCodexContextTelemetry_LastTokenCountWins(t *testing.T) {
 	assert.InDelta(t, 25.0, snap.Pct, 0.001, "50000/200000 = 25%, from last_token_usage not cumulative")
 }
 
+func TestCodexRuntimeTelemetry_CompactionInvalidatesPriorContext(t *testing.T) {
+	home := codexTestHome(t)
+	const id = "019ec004-4250-79b1-9ade-ebaea4135458"
+	cx := testharness.NewCodexSimWithID(t, home, id, "/home/u/proj")
+	cx.ContextWindow = 200000
+	require.NoError(t, cx.Start())
+	require.NoError(t, cx.WriteTokenCount(
+		testharness.CodexTokenUsage{InputTokens: 100000, OutputTokens: 5000, TotalTokens: 105000},
+		testharness.CodexTokenUsage{InputTokens: 49000, OutputTokens: 1000, TotalTokens: 50000}))
+	require.NoError(t, cx.WriteCompacted())
+
+	snap, err := harness.CodexRuntimeTelemetry(home, id)
+	require.NoError(t, err)
+	assert.True(t, snap.ContextReset, "compaction is an explicit reset boundary")
+	assert.False(t, snap.HasContext, "pre-compaction token_count must not survive the boundary")
+	assert.Equal(t, harness.ContextTelemetry{}, snap.Context)
+
+	require.NoError(t, cx.WriteTokenCount(
+		testharness.CodexTokenUsage{InputTokens: 110000, OutputTokens: 6000, TotalTokens: 116000},
+		testharness.CodexTokenUsage{InputTokens: 9000, OutputTokens: 1000, TotalTokens: 10000}))
+	snap, err = harness.CodexRuntimeTelemetry(home, id)
+	require.NoError(t, err)
+	assert.False(t, snap.ContextReset, "real post-compaction telemetry clears the reset marker")
+	require.True(t, snap.HasContext)
+	assert.Equal(t, int64(9000), snap.Context.TokensInput)
+}
+
 // A session that has only taken user input (no model response yet) carries
 // no token_count event — ok is false, not an error, so the caller leaves
 // the previous snapshot untouched.

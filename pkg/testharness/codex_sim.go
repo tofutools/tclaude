@@ -416,6 +416,15 @@ func (c *CodexSim) WriteTokenCount(total, last CodexTokenUsage) error {
 	})
 }
 
+// WriteCompacted writes Codex's top-level context-compaction boundary. Real
+// replacement_history payloads can be many MiB; most tests need only the
+// envelope type that telemetry readers use to invalidate prior occupancy.
+func (c *CodexSim) WriteCompacted() error {
+	return c.appendLine("compacted", map[string]any{
+		"replacement_history": "compacted test history",
+	})
+}
+
 // CodexRateLimitWindowSeed describes one rate-limit window for
 // WriteTokenCountRateLimits — a subscription account's 5-hour (≈300 min) or
 // weekly (≈10080 min) bucket. A zero ResetsAt writes resets_at:0 (the

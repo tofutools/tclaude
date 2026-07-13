@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -107,6 +108,33 @@ func TestCodexHookProjection_WindowOnlyNewestTokenCountMatchesForward(t *testing
 	assert.Equal(t, wantCost, got.Cost)
 	assert.False(t, got.HasContext)
 	assert.Equal(t, ContextTelemetry{}, got.Context)
+}
+
+func TestCodexHookProjection_OversizedCompactionInvalidatesContextButKeepsCost(t *testing.T) {
+	path := writeOversizedCodexRollout(t, [][]byte{
+		codexProjectionEnvelope(t, "2026-07-12T10:00:00Z", "turn_context", map[string]any{
+			"model": "gpt-5.3-codex", "effort": "high",
+		}),
+		codexProjectionTokenCount(t, "2026-07-12T11:00:00Z", 10, 1000, 100),
+	}, nil)
+
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	enc, err := zstd.NewWriter(nil)
+	require.NoError(t, err)
+	archive := path + ".zst"
+	require.NoError(t, os.WriteFile(archive, enc.EncodeAll(raw, nil), 0o600))
+	enc.Close()
+
+	for _, rollout := range []string{path, archive} {
+		t.Run(filepath.Ext(rollout), func(t *testing.T) {
+			got, err := CodexHookProjectionFromRollout(rollout, "")
+			require.NoError(t, err)
+			assert.True(t, got.ContextReset)
+			assert.False(t, got.HasContext, "pre-compaction occupancy is stale")
+			assert.True(t, got.HasCost, "cumulative token cost survives context compaction")
+		})
+	}
 }
 
 func TestCodexRuntimeTelemetry_PrefersThreadsRolloutPath(t *testing.T) {

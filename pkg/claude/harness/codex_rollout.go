@@ -155,6 +155,18 @@ func parseCodexRolloutHead(path string) (*codexRollout, error) {
 // warned about once, and skipped so later events remain reachable. Returning
 // false from visit preserves the head scanners' early-stop behavior.
 func scanCodexRolloutLines(r io.Reader, rolloutPath string, visit func([]byte) bool) error {
+	return scanCodexRolloutLinesMode(r, rolloutPath, false, visit)
+}
+
+// scanCodexRolloutLinesWithOversizedPrefixes is the projection-only variant:
+// visit receives the bounded prefix of an oversized record so it can recognize
+// top-level lifecycle markers before a huge payload without making every
+// rollout reader attempt to decode a multi-MiB truncated JSON document.
+func scanCodexRolloutLinesWithOversizedPrefixes(r io.Reader, rolloutPath string, visit func([]byte) bool) error {
+	return scanCodexRolloutLinesMode(r, rolloutPath, true, visit)
+}
+
+func scanCodexRolloutLinesMode(r io.Reader, rolloutPath string, visitOversized bool, visit func([]byte) bool) error {
 	reader := bufio.NewReaderSize(r, 64*1024)
 	line := make([]byte, 0, 64*1024)
 	for {
@@ -174,7 +186,14 @@ func scanCodexRolloutLines(r io.Reader, rolloutPath string, visit func([]byte) b
 			slog.Warn("codex-rollout: skipping oversized record",
 				"path", rolloutPath, "bytes", lineBytes,
 				"limit_bytes", maxCodexRolloutLineBytes, "module", "harness")
-		} else if !visit(line) {
+			if !visitOversized {
+				if err == io.EOF {
+					return nil
+				}
+				continue
+			}
+		}
+		if !visit(line) {
 			return nil
 		}
 		if err == io.EOF {

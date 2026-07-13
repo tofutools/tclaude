@@ -70,6 +70,13 @@ func refreshCodexContextSnapshotOnReadTimed(sess *db.SessionRow, alive bool, rec
 	}
 	cacheCodexRuntimeRefresh(sess.ID, time.Now(), snap.InterruptedSubagents)
 	completed = true
+	if snap.ContextReset {
+		if err := db.ResetCompact(sess.ID); err != nil {
+			slog.Warn("codex-telemetry: failed to persist compaction reset",
+				"session_id", sess.ID, "error", err, "module", "agentd")
+		}
+		return snap.InterruptedSubagents
+	}
 	if !snap.HasContext {
 		return snap.InterruptedSubagents
 	}

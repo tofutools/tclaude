@@ -177,6 +177,9 @@ func scanCompleteCodexLines(r io.Reader, rolloutPath string, state *codexRuntime
 				slog.Warn("codex-telemetry: skipping oversized rollout record",
 					"path", rolloutPath, "bytes", lineBytes,
 					"limit_bytes", maxCodexRolloutLineBytes, "module", "harness")
+				if isCodexCompactedRecordPrefix(line) {
+					state.invalidateContext()
+				}
 			} else if ok := state.consumeLine(line); strict && !ok {
 				doubt = true
 			}
