@@ -235,6 +235,10 @@ func TestDashboardHTML_WizardLinksDialogs(t *testing.T) {
 	must("body.wizard #link-modal .cron-create-modal", "the link editor surface is re-skinned")
 	must("body.wizard #link-modal .cron-create-row select", "the link fields are re-skinned")
 	must("body.wizard #link-modal #link-modal-submit", "the link submit action is gilded")
+	if got := strings.Count(dashboardAssets, "themeWords('+ link', '+ weave channel')"); got != 2 {
+		t.Errorf("per-party add-link wizard copy appears %d times, want 2 (empty and populated link sections)", got)
+	}
+	must("body.wizard .group-links-section > button", "the per-party add-link action is gilded")
 }
 
 // TestDashboardHTML_WizardRetireModal pins the wizard re-skin of the retire

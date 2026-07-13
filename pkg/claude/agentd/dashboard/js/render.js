@@ -1016,7 +1016,7 @@ function renderGroupLinksSection(groupName) {
     return `
       <div class="group-links-section">
         <span class="muted" style="font-size:11px">No links involving this group.</span>
-        <button data-act="link-new" data-from="${esc(groupName)}" data-label="${esc(groupName)}" title="Add an outbound link from this group">+ link</button>
+        <button data-act="link-new" data-from="${esc(groupName)}" data-label="${esc(groupName)}" title="${esc(isWizardActive() ? 'Weave an outbound arcane channel from this party' : 'Add an outbound link from this group')}">${themeWords('+ link', '+ weave channel')}</button>
       </div>
     `;
   }
@@ -1047,7 +1047,7 @@ function renderGroupLinksSection(groupName) {
           ${inc.map(l => renderRow(l, 'in')).join('')}
         </tbody>
       </table>
-      <button data-act="link-new" data-from="${esc(groupName)}" data-label="${esc(groupName)}" title="Add an outbound link from this group">+ link</button>
+      <button data-act="link-new" data-from="${esc(groupName)}" data-label="${esc(groupName)}" title="${esc(isWizardActive() ? 'Weave an outbound arcane channel from this party' : 'Add an outbound link from this group')}">${themeWords('+ link', '+ weave channel')}</button>
     </div>
   `;
 }
