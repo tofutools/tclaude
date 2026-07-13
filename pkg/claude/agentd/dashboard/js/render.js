@@ -140,9 +140,12 @@ function renderVirtualGroup(g) {
   const key = g.key || g.name;
   const isOpen = dashPrefs.getItem('tclaude.dash.group.' + key) === '1';
   const body = members.length === 0
-    ? '<div class="muted">(no ungrouped agents)</div>'
+    ? `<div class="muted">${themeWords('(no ungrouped agents)', '(no unbound familiars)')}</div>`
     : visible.length === 0
-    ? `<div class="muted">(${hiddenOffline} offline agent${hiddenOffline === 1 ? '' : 's'} hidden — toggle "show offline" to see ${hiddenOffline === 1 ? 'it' : 'them'})</div>`
+    ? `<div class="muted">${themeWords(
+        `(${hiddenOffline} offline agent${hiddenOffline === 1 ? '' : 's'} hidden — toggle "show offline" to see ${hiddenOffline === 1 ? 'it' : 'them'})`,
+        `(${hiddenOffline} slumbering familiar${hiddenOffline === 1 ? '' : 's'} hidden — enable "show slumbering" to reveal ${hiddenOffline === 1 ? 'it' : 'them'})`,
+      )}</div>`
     : `
         <table>
           ${sortHead('members', visibleMemberCols())}
@@ -153,10 +156,13 @@ function renderVirtualGroup(g) {
   return `
     <details class="group-virtual" data-group-key="${esc(key)}" data-dnd-target-ungrouped="1"${isOpen ? ' open' : ''}>
       <summary>
-        <strong class="group-name">${esc(g.name)}</strong>
+        <strong class="group-name">${themeWords(g.name, 'Unbound')}</strong>
         ${groupActivityChip(members)}
-        <span class="group-virtual-badge" title="A virtual group, not a real one — it can't be renamed, deleted, messaged or scheduled. It just collects agents that aren't in any group.">virtual</span>
-        <span class="muted">— ${members.length} agent${members.length === 1 ? '' : 's'} not in any group${hiddenOffline > 0 ? ` · ${hiddenOffline} offline hidden` : ''}</span>
+        <span class="group-virtual-badge" title="${esc(isWizardActive() ? "An ethereal party, not a true one — it cannot be renamed, dispelled, whispered to, or scheduled. It gathers familiars bound to no party." : "A virtual group, not a real one — it can't be renamed, deleted, messaged or scheduled. It just collects agents that aren't in any group.")}">${themeWords('virtual', 'ethereal')}</span>
+        <span class="muted">— ${themeWords(
+          `${members.length} agent${members.length === 1 ? '' : 's'} not in any group${hiddenOffline > 0 ? ` · ${hiddenOffline} offline hidden` : ''}`,
+          `${members.length} unbound familiar${members.length === 1 ? '' : 's'}${hiddenOffline > 0 ? ` · ${hiddenOffline} slumbering hidden` : ''}`,
+        )}</span>
       </summary>
       <div class="subtable">
         ${body}
@@ -181,7 +187,7 @@ function renderVirtualConversationsGroup(g) {
   const total = g.paging ? g.paging.total : members.length;
   const pager = listPagerHTML('conversations', g.paging);
   const body = members.length === 0
-    ? '<div class="muted">(no non-agent conversations)</div>'
+    ? `<div class="muted">${themeWords('(no non-agent conversations)', '(no plain scrolls)')}</div>`
     : `
         <table>
           ${sortHead('conversations', CONVERSATIONS_COLS)}
@@ -195,16 +201,19 @@ function renderVirtualConversationsGroup(g) {
                 <td class="id">${esc(shortId(c.conv_id))}</td>
                 <td><span class="rowname">${esc(c.title || '(untitled)')}</span></td>
                 <td><span class="last-hook">${esc(c.modified ? relTime(c.modified) : '')}</span></td>
-                <td><div class="row-actions"><button class="primary" data-act="promote-agent" data-conv="${esc(c.conv_id)}" data-label="${esc(c.title || c.conv_id)}" title="Promote this conversation into an agent">promote</button></div></td>
+                <td><div class="row-actions"><button class="primary" data-act="promote-agent" data-conv="${esc(c.conv_id)}" data-label="${esc(c.title || c.conv_id)}" title="${esc(isWizardActive() ? 'Awaken this plain scroll as a familiar' : 'Promote this conversation into an agent')}">${themeWords('promote', 'awaken')}</button></div></td>
               </tr>`).join('')}
           </tbody>
         </table>`;
   return `
     <details class="group-virtual" data-group-key="${esc(key)}"${isOpen ? ' open' : ''}>
       <summary>
-        <strong class="group-name">${esc(g.name)}</strong>
-        <span class="group-virtual-badge" title="A virtual group, not a real one — recent conversations that aren't agents. Drag one onto a group, or click promote, to make it an agent.">virtual</span>
-        <span class="muted">— ${total} conversation${total === 1 ? '' : 's'} that aren't agents</span>
+        <strong class="group-name">${themeWords(g.name, 'Plain scrolls')}</strong>
+        <span class="group-virtual-badge" title="${esc(isWizardActive() ? 'An ethereal party of plain scrolls without familiars. Drag one onto a party, or awaken it, to call forth a familiar.' : "A virtual group, not a real one — recent conversations that aren't agents. Drag one onto a group, or click promote, to make it an agent.")}">${themeWords('virtual', 'ethereal')}</span>
+        <span class="muted">— ${themeWords(
+          `${total} conversation${total === 1 ? '' : 's'} that aren't agents`,
+          `${total} plain scroll${total === 1 ? '' : 's'} awaiting ${total === 1 ? 'a familiar' : 'familiars'}`,
+        )}</span>
       </summary>
       <div class="subtable">
         ${body}
@@ -234,7 +243,7 @@ function renderVirtualRetiredGroup(g) {
   const total = g.paging ? g.paging.total : members.length;
   const pager = listPagerHTML('retired', g.paging);
   const body = members.length === 0
-    ? '<div class="muted">(no retired agents)</div>'
+    ? `<div class="muted">${themeWords('(no retired agents)', '(no banished familiars)')}</div>`
     : `
         <table>
           ${sortHead('retired', RETIRED_COLS)}
@@ -250,16 +259,19 @@ function renderVirtualRetiredGroup(g) {
                 <td><span class="last-hook">${esc(a.retired_at ? relTime(a.retired_at) : '')}</span></td>
                 <td${a.retired_by ? ` title="${esc(a.retired_by)}"` : ''}>${esc(a.retired_by_display || a.retired_by || '')}</td>
                 <td class="muted">${esc(a.retire_reason || '')}</td>
-                <td><div class="row-actions"><button class="primary" data-act="reinstate-agent" data-conv="${esc(a.conv_id)}" data-agent="${esc(a.agent_id || a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Reinstate this agent back to active status">reinstate</button></div></td>
+                <td><div class="row-actions"><button class="primary" data-act="reinstate-agent" data-conv="${esc(a.conv_id)}" data-agent="${esc(a.agent_id || a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="${esc(isWizardActive() ? 'Restore this banished familiar to active status' : 'Reinstate this agent back to active status')}">${themeWords('reinstate', 'restore')}</button></div></td>
               </tr>`).join('')}
           </tbody>
         </table>`;
   return `
     <details class="group-virtual" data-group-key="${esc(key)}" data-dnd-target-retired="1"${isOpen ? ' open' : ''}>
       <summary>
-        <strong class="group-name">${esc(g.name)}</strong>
-        <span class="group-virtual-badge" title="A virtual group, not a real one — agents that were retired (demoted back to plain conversations). Drag an agent here to retire it; drag a retired row onto a group, or click reinstate, to bring it back.">virtual</span>
-        <span class="muted">— ${total} retired agent${total === 1 ? '' : 's'}</span>
+        <strong class="group-name">${themeWords(g.name, 'Banished')}</strong>
+        <span class="group-virtual-badge" title="${esc(isWizardActive() ? 'An ethereal party of banished familiars returned to plain scrolls. Drag a familiar here to banish it; drag one onto a party, or restore it, to bring it back.' : 'A virtual group, not a real one — agents that were retired (demoted back to plain conversations). Drag an agent here to retire it; drag a retired row onto a group, or click reinstate, to bring it back.')}">${themeWords('virtual', 'ethereal')}</span>
+        <span class="muted">— ${themeWords(
+          `${total} retired agent${total === 1 ? '' : 's'}`,
+          `${total} banished familiar${total === 1 ? '' : 's'}`,
+        )}</span>
       </summary>
       <div class="subtable">
         ${body}
@@ -290,7 +302,7 @@ function renderVirtualReplacedGroup(g) {
   const total = g.paging ? g.paging.total : members.length;
   const pager = listPagerHTML('replaced', g.paging);
   const body = members.length === 0
-    ? '<div class="muted">(no replaced generations)</div>'
+    ? `<div class="muted">${themeWords('(no replaced generations)', '(no past incarnations)')}</div>`
     : `
         <table>
           ${sortHead('replaced', REPLACED_COLS)}
@@ -308,7 +320,7 @@ function renderVirtualReplacedGroup(g) {
                 <td><span class="last-hook" title="${esc(a.replaced_at || '')}">${esc(replacedVia)}${esc(replacedAge)}</span></td>
                 <td><div class="row-actions">
                   <button data-act="copy-generation-id" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Copy this generation's full conv-id — inspect it out-of-band with 'claude --resume <id>' from its dir, or 'tclaude agent seance --target <id>'">copy id</button>
-                  <button class="danger" data-act="delete-generation" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" data-actor="${esc(actorName)}" title="Permanently delete just this past generation (its .jsonl + DB rows). The live agent and its other generations are untouched.">delete generation</button>
+                  <button class="danger" data-act="delete-generation" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" data-actor="${esc(actorName)}" title="${esc(isWizardActive() ? 'Forever erase only this past incarnation. The living familiar and its other incarnations remain untouched.' : 'Permanently delete just this past generation (its .jsonl + DB rows). The live agent and its other generations are untouched.')}">${themeWords('delete generation', 'erase incarnation')}</button>
                 </div></td>
               </tr>`;
             }).join('')}
@@ -317,9 +329,12 @@ function renderVirtualReplacedGroup(g) {
   return `
     <details class="group-virtual" data-group-key="${esc(key)}"${isOpen ? ' open' : ''}>
       <summary>
-        <strong class="group-name">${esc(g.name)}</strong>
-        <span class="group-virtual-badge" title="A virtual group, not a real one — superseded past generations of agents (left behind by reincarnate / /clear). Archival and read-mostly: copy a conv-id to inspect it, or delete a generation to prune it. The live agent is never affected.">virtual</span>
-        <span class="muted">— ${total} replaced generation${total === 1 ? '' : 's'}</span>
+        <strong class="group-name">${themeWords(g.name, 'Past incarnations')}</strong>
+        <span class="group-virtual-badge" title="${esc(isWizardActive() ? 'An ethereal archive of superseded incarnations left by reincarnate / /clear. Copy a conv-id to scry one, or erase an incarnation to prune it. The living familiar is never affected.' : 'A virtual group, not a real one — superseded past generations of agents (left behind by reincarnate / /clear). Archival and read-mostly: copy a conv-id to inspect it, or delete a generation to prune it. The live agent is never affected.')}">${themeWords('virtual', 'ethereal')}</span>
+        <span class="muted">— ${themeWords(
+          `${total} replaced generation${total === 1 ? '' : 's'}`,
+          `${total} past incarnation${total === 1 ? '' : 's'}`,
+        )}</span>
       </summary>
       <div class="subtable">
         ${body}
@@ -341,8 +356,8 @@ function renderVirtualReplacedGroup(g) {
 // caller (tabs.js) only builds this group when there are pending spawns.
 function pendingFocusButton(p) {
   return p.online
-    ? `<button class="primary" data-act="focus-pending" data-label="${esc(p.label)}" title="Open this spawn's pane so you can clear its startup gate — trust the dir, dismiss the new-config prompt, or finish OpenAI auth. Once cleared it takes its first turn and becomes a normal agent.">focus</button>`
-    : `<button disabled title="This spawn's tmux pane is gone — it can no longer be focused, and will clear from this list shortly.">focus</button>`;
+    ? `<button class="primary" data-act="focus-pending" data-label="${esc(p.label)}" title="${esc(isWizardActive() ? "Open this would-be familiar's scrying portal so you can clear its summoning gate. Once cleared, it joins the living roster." : "Open this spawn's pane so you can clear its startup gate — trust the dir, dismiss the new-config prompt, or finish OpenAI auth. Once cleared it takes its first turn and becomes a normal agent.")}">${themeWords('focus', 'open portal')}</button>`
+    : `<button disabled title="${esc(isWizardActive() ? 'This would-be familiar’s portal has vanished and will soon fade from the summoning gate.' : "This spawn's tmux pane is gone — it can no longer be focused, and will clear from this list shortly.")}">${themeWords('focus', 'open portal')}</button>`;
 }
 
 // pendingDeleteButton clears a stuck spawn that will never enrol — the
@@ -352,7 +367,7 @@ function pendingFocusButton(p) {
 // (dnd.js) invokes the same endpoint. Always enabled — a dead pane is
 // exactly the case that most needs clearing.
 function pendingDeleteButton(p) {
-  return `<button class="danger" data-act="delete-pending" data-label="${esc(p.label)}" title="Delete this stuck spawn — kills its pane (if any) and removes it from the pending list. Use when a spawn will never clear its startup gate. It never became a real agent, so there is no conversation to keep.">🗑 delete</button>`;
+  return `<button class="danger" data-act="delete-pending" data-label="${esc(p.label)}" title="${esc(isWizardActive() ? 'Dispel this failed summoning and close its portal. It never became a familiar, so no conversation scroll is lost.' : 'Delete this stuck spawn — kills its pane (if any) and removes it from the pending list. Use when a spawn will never clear its startup gate. It never became a real agent, so there is no conversation to keep.')}">${themeWords('🗑 delete', '🪄 dispel')}</button>`;
 }
 
 function pendingTableHTML(rows) {
@@ -389,14 +404,17 @@ function renderVirtualPendingGroup(g) {
   const key = g.key || g.name;
   const isOpen = dashPrefs.getItem('tclaude.dash.group.' + key) !== '0';
   const body = members.length === 0
-    ? '<div class="muted">(no pending spawns)</div>'
+    ? `<div class="muted">${themeWords('(no pending spawns)', '(no familiars awaiting summoning)')}</div>`
     : pendingTableHTML(members);
   return `
     <details class="group-virtual" data-group-key="${esc(key)}"${isOpen ? ' open' : ''}>
       <summary>
-        <strong class="group-name">${esc(g.name)}</strong>
-        <span class="group-virtual-badge" title="A virtual group, not a real one — dashboard spawns waiting to clear a startup gate (untrusted dir / config prompt / OpenAI auth). Click a row's focus button to open its pane and clear the gate; it then becomes a normal agent.">virtual</span>
-        <span class="muted">— ${members.length} pending spawn${members.length === 1 ? '' : 's'}</span>
+        <strong class="group-name">${themeWords(g.name, 'Summoning')}</strong>
+        <span class="group-virtual-badge" title="${esc(isWizardActive() ? "An ethereal antechamber for familiars caught at the summoning gate. Open a familiar's portal to clear the ward; it then joins the living roster." : "A virtual group, not a real one — dashboard spawns waiting to clear a startup gate (untrusted dir / config prompt / OpenAI auth). Click a row's focus button to open its pane and clear the gate; it then becomes a normal agent.")}">${themeWords('virtual', 'ethereal')}</span>
+        <span class="muted">— ${themeWords(
+          `${members.length} pending spawn${members.length === 1 ? '' : 's'}`,
+          `${members.length} familiar${members.length === 1 ? '' : 's'} caught at the summoning gate`,
+        )}</span>
       </summary>
       <div class="subtable">
         ${body}
@@ -1015,7 +1033,7 @@ function renderGroupLinksSection(groupName) {
   if (total === 0) {
     return `
       <div class="group-links-section">
-        <span class="muted" style="font-size:11px">No links involving this group.</span>
+        <span class="muted" style="font-size:11px">${themeWords('No links involving this group.', 'No arcane channels are woven to or from this party.')}</span>
         <button data-act="link-new" data-from="${esc(groupName)}" data-label="${esc(groupName)}" title="${esc(isWizardActive() ? 'Weave an outbound arcane channel from this party' : 'Add an outbound link from this group')}">${themeWords('+ link', '+ weave channel')}</button>
       </div>
     `;
