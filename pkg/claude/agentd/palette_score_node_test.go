@@ -48,12 +48,16 @@ func TestPaletteScore_JS(t *testing.T) {
 	}
 	out, err := exec.Command(node, append([]string{"--test"}, files...)...).CombinedOutput()
 	if err != nil {
+		// A started Node process that exits non-zero means the JS suite ran and
+		// failed. Report its output in every environment, including CI; treating
+		// this as "node not runnable" hid the actual flaky assertion on both CI
+		// platforms and made the failure impossible to diagnose from job logs.
+		if _, ok := errors.AsType[*exec.ExitError](err); ok {
+			t.Fatalf("dashboard JS unit tests failed: %v\n%s", err, out)
+		}
 		if os.Getenv("CI") != "" {
 			t.Fatal("node not runnable in CI — JS unit tests did not run "+
 				"(the Test job is expected to run actions/setup-node)", err)
-		}
-		if _, ok := errors.AsType[*exec.ExitError](err); ok {
-			t.Fatalf("dashboard JS unit tests failed: %v\n%s", err, out)
 		}
 		t.Skip("unable to run node — skipping JS unit tests (install node to run them)", err)
 	}
