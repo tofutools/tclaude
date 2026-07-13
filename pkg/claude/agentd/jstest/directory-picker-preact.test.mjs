@@ -174,6 +174,11 @@ test('Preact picker navigates the unfiltered folder pane with arrow and page key
   assert.equal(mounted.container.querySelector('.directory-picker-list').getAttribute('role'), 'listbox');
   assert.equal(mounted.container.querySelector('.directory-picker-list button.active').title, '/root/folder-0');
 
+  const tab = harness.fireEvent(input, 'keydown', { key: 'Tab' });
+  await harness.act(() => Promise.resolve());
+  assert.equal(tab.defaultPrevented, false);
+  assert.equal(input.value, '/root', 'Tab must not complete an unfiltered folder');
+
   const down = harness.fireEvent(input, 'keydown', { key: 'ArrowDown' });
   await harness.act(() => Promise.resolve());
   assert.equal(down.defaultPrevented, true);

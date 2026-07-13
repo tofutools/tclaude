@@ -137,7 +137,7 @@ export function DirectoryPickerApp({ state, actions }) {
           } else if (event.key === 'PageUp') {
             event.preventDefault();
             setActiveIndex(Math.max(selectedIndex - pageSize(listRef.current), 0));
-          } else if (event.key === 'Tab' && !event.shiftKey && path !== activeDirectory.path) {
+          } else if (event.key === 'Tab' && filtering && !event.shiftKey && path !== activeDirectory.path) {
             event.preventDefault();
             setPath(activeDirectory.path);
             setActiveIndex(0);
