@@ -611,6 +611,33 @@ func baseStates() []dashsnap.State {
 			SettleMS: 300,
 		},
 		{
+			Key:     "links-management",
+			Title:   "Preact links / arcane channels manager",
+			Caption: "The bounded Links controls and keyed list retain the regular management vocabulary while wizard mode exposes channel, weave, rebind and sever copy.",
+			JS: showGroups + `return (async function(){
+  document.querySelector('.filter-bar-cog .cog-btn').click();
+  document.querySelector('#links-manage-open').click();
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var host = document.querySelector('#links-filter-root[data-island-owner="links"]');
+  var create = host && host.querySelector('#link-new-open');
+  var empty = document.querySelector('#links-list .empty');
+  if (!host || !create || !empty) throw new Error('links-management: bounded Links surface did not render');
+  var wizard = document.body.classList.contains('wizard');
+  var regularCopy = create.querySelector('.theme-copy-regular');
+  var wizardCopy = create.querySelector('.theme-copy-wizard');
+  var emptyRegular = empty.querySelector('.theme-copy-regular');
+  var emptyWizard = empty.querySelector('.theme-copy-wizard');
+  if (wizard) {
+    if (getComputedStyle(wizardCopy).display === 'none' || wizardCopy.textContent.trim() !== '+ weave channel') throw new Error('links-management: wizard create copy missing');
+    if (getComputedStyle(emptyWizard).display === 'none' || getComputedStyle(emptyRegular).display !== 'none') throw new Error('links-management: wizard empty copy missing');
+  } else {
+    if (getComputedStyle(regularCopy).display === 'none' || regularCopy.textContent.trim() !== '+ new link') throw new Error('links-management: regular create copy missing');
+    if (getComputedStyle(emptyRegular).display === 'none' || getComputedStyle(emptyWizard).display !== 'none') throw new Error('links-management: regular empty copy missing');
+  }
+})();`,
+			SettleMS: 250,
+		},
+		{
 			Key:      "bounded-costs-normal",
 			Title:    "Bounded Preact — Costs normal",
 			Caption:  "Costs island completed its request and rendered controls for the fixture's empty-cost span.",
