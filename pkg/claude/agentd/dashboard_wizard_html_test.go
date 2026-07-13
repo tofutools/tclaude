@@ -1612,11 +1612,10 @@ func TestDashboardHTML_WizardGroupDialogs(t *testing.T) {
 	must("body.wizard #group-clone-modal .group-clone-preview", "the clone-will-carry preview is re-skinned")
 }
 
-// TestDashboardHTML_WizardActionDialogs pins the scoped wizard chrome added to
-// the Preact-owned clone-agent, reincarnate-agent, and group-nesting dialogs.
-// These dialogs deliberately keep their ordinary operation names: unlike the
-// themed group-clone flow, this pass only makes their form chrome consistent
-// with the surrounding wizard dashboard.
+// TestDashboardHTML_WizardActionDialogs pins the scoped wizard chrome and
+// nomenclature used by the Preact-owned clone-agent, reincarnate-agent, and
+// group-nesting dialogs. Both voices stay mounted so a live theme flip does not
+// reset controlled form state.
 func TestDashboardHTML_WizardActionDialogs(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
@@ -1633,11 +1632,70 @@ func TestDashboardHTML_WizardActionDialogs(t *testing.T) {
 	must("body.wizard #reincarnate-agent-modal .reincarnate-mode", "the reincarnate mode selector gets wizard panel chrome")
 	must("body.wizard #reincarnate-agent-modal .reincarnate-mode label", "the reincarnate mode labels override their explicit plain-mode color")
 
-	// Keep the labels honest in both skins; the request is visual consistency,
-	// not wizard-vocabulary replacements for these operations.
-	must(`<h3 id="clone-agent-title">Clone agent</h3>`, "the clone operation name is retained")
-	must(`<h3 id="reincarnate-agent-title">Reincarnate agent</h3>`, "the reincarnate operation name is retained")
-	must(`<h3 id="group-nest-title">Nest group:`, "the group-nesting operation name is retained")
+	// Entity nouns and established verbs switch with the skin.
+	must(`<${Words} plain="Clone agent" wizard="⧉ Mirror familiar"/>`, "clone agent becomes mirror familiar")
+	must(`<${Words} plain="Reincarnate agent" wizard="Reincarnate familiar"/>`, "reincarnate targets a familiar")
+	must("wizard=${`Nest party: ${descriptor.group}`}", "group nesting becomes party nesting")
+	must(`plain="Ask the agent to reincarnate itself" wizard="Ask the familiar to reincarnate itself"`, "reincarnate mode swaps its target noun")
+	must(`plain=${busy ? 'Cloning…' : 'Clone'} wizard=${busy ? 'Mirroring…' : 'Mirror familiar'}`, "clone submit swaps verb and noun")
+}
+
+// TestDashboardHTML_WizardCogNomenclature covers the two Groups-tab cog menus
+// and the legacy dialogs they open. The wire/API nouns stay agent/group; this
+// test pins only presentation copy so wizard mode consistently says
+// familiar/party (and the already-established verbs such as banish/mirror).
+func TestDashboardHTML_WizardCogNomenclature(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !dashboardSourceContains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+	mustNot := func(needle, why string) {
+		t.Helper()
+		if dashboardSourceContains(dashboardAssets, needle) {
+			t.Errorf("dashboard source unexpectedly contains %q (%s)", needle, why)
+		}
+	}
+
+	// Shared live-theme copy primitive.
+	must(`.theme-copy-wizard { display: none; }`, "wizard copies are hidden normally")
+	must(`body.wizard .theme-copy-regular { display: none; }`, "wizard mode hides ordinary copies")
+	must(`body.wizard .theme-copy-wizard { display: inline; }`, "wizard mode reveals themed copies")
+
+	// Group cog: the entity-bearing actions use party/familiar language.
+	must(`themeWords('+ add member', '+ add familiar')`, "add-member becomes add-familiar")
+	must(`themeWords('⧉ clone…', '⧉ mirror party…')`, "clone-group becomes mirror-party")
+	must(`themeWords('⧉ save as template…', '🕯 trace as circle…')`, "save-template becomes trace-circle")
+	must(`themeWords('🪟 windows…', '👁 familiars…')`, "group windows names familiars")
+	must(`themeWords('delete group', 'disband party')`, "delete-group becomes disband-party")
+	must(`themeWords('📂 nest under…', '📂 nest party under…')`, "nest-group names the party")
+
+	// Agent cog: actions and destructive lifecycle verbs use familiar voice.
+	must(`themeWords('edit', 'enchant')`, "edit becomes enchant")
+	must(`themeWords('permissions', 'grimoire')`, "permissions becomes grimoire")
+	must(`themeWords('clone', 'mirror familiar')`, "clone becomes mirror familiar")
+	must(`themeWords('summary…', 'inscribe scroll…')`, "summary becomes inscribe-scroll")
+	must(`themeWords('schedule…', 'bind ritual…')`, "schedule becomes bind-ritual")
+	must(`themeWords('view messages', 'view missives')`, "messages become missives")
+	must(`themeWords('remove', 'dismiss from party')`, "remove-member names the party")
+	must(`themeWords('retire', 'banish')`, "retire becomes banish")
+	must(`themeWords('delete', 'erase familiar')`, "permanent delete names the familiar")
+
+	// Dialogs launched from those actions retain both noun sets.
+	must(`<span class="theme-copy-wizard">Invite familiar into party</span>`, "add-member dialog names familiar and party")
+	must(`Burns the conversation scroll (.jsonl) and erases every party membership`, "delete-agent warning uses wizard nouns")
+	must(`Open a scrying portal for this familiar.`, "terminal picker targets a familiar")
+	must(`Bestow a bounded sudo boon on a familiar.`, "sudo dialog targets a familiar")
+	must(`wizardSubtitle: `+"`"+`Familiar: ${label || shortId(conv)} · ${shortId(conv)}`+"`", "permission subtitle names the familiar")
+	must(`themeWords('Solo agent', 'Solo familiar')`, "shared target picker swaps agent noun")
+	must(`themeWords('Group (multicast)', 'Party (multicast)')`, "shared target picker swaps group noun")
+	must(`Send a missive to party`, "group message dialog names the party")
+	must(`wizWord('Send a message', 'Send a missive')`, "unscoped message dialog swaps its title")
+	must(`if ($('#cron-create-modal').classList.contains('show')) renderCronTitle();`, "open cron dialog follows live theme flips")
+	must(`if (!$('#message-create-modal').classList.contains('show')) return;`, "open message dialog follows live theme flips")
+	must(`const wizardWhere = scope === 'group' ? `+"`"+`party "${groupName}"`+"`"+` : 'the tower';`, "window dialog uses party in wizard hints")
+	mustNot(`aria-label="Reveal or veil this party's familiars — focus or unfocus this group's agent windows"`, "group window button must not expose a mixed-theme accessible name")
 }
 
 // TestDashboardHTML_WizardTemplateNativeControlSweep pins the JOH-349 sweep of

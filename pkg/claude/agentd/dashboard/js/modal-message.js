@@ -48,6 +48,34 @@ import { wizWord } from './slop.js';
 // conv_id as the snapshot / display fallback.
 let messageScopedGroup = null;
 
+function renderMessageThemeCopy() {
+  const scoped = !!messageScopedGroup;
+  const groupName = scoped ? messageScopedGroup.name : '';
+  $('#message-create-title').textContent = scoped
+    ? wizWord(`Send a message to group "${groupName}"`, `Send a missive to party "${groupName}"`)
+    : wizWord('Send a message', 'Send a missive');
+  $('#message-create-desc').textContent = scoped
+    ? wizWord(
+        `Delivers one immediate message to the members of "${groupName}" ticked below — every member is ticked by default, untick any to send to just a subset. Each recipient gets an inbox row plus a tmux nudge if online.`,
+        `Delivers one immediate missive to the familiars of "${groupName}" ticked below — every familiar is ticked by default; untick any to address only a subset. Each recipient receives an inbox scroll plus a tmux nudge if channeling.`,
+      )
+    : wizWord(
+        'Delivers one immediate message to a single agent, or multicasts it to every member of a group. Each recipient gets an inbox row plus a tmux nudge if online.',
+        'Delivers one immediate missive to a familiar, or multicasts it to every familiar in a party. Each recipient receives an inbox scroll plus a tmux nudge if channeling.',
+      );
+}
+
+function renderMessageGroupHint() {
+  if (!messageScopedGroup) return;
+  const { name: groupName, members } = messageScopedGroup;
+  $('#message-create-group-hint').textContent = members.length
+    ? wizWord(
+        `Members of "${groupName}" — all ticked; untick any to message a subset.`,
+        `Familiars of "${groupName}" — all ticked; untick any to send a missive to a subset.`,
+      )
+    : wizWord(`Group "${groupName}" has no members to message.`, `Party "${groupName}" has no familiars to receive a missive.`);
+}
+
 // openMessageCreateModal opens the modal. prefill is an optional
 // object { from, targetMode, target, groupName } — the context-aware
 // entry-point buttons (per-agent ✉, per-group ✉ message) drop the
@@ -72,12 +100,7 @@ function openMessageCreateModal(prefill) {
     $('#message-create-group-row').style.display = 'none';
     populateTargetPicker('message-create', prefill);
   }
-  $('#message-create-title').textContent = scoped
-    ? `Send a message to group "${prefill.groupName}"`
-    : 'Send a message';
-  $('#message-create-desc').textContent = scoped
-    ? `Delivers one immediate message to the members of "${prefill.groupName}" ticked below — every member is ticked by default, untick any to send to just a subset. Each recipient gets an inbox row plus a tmux nudge if online.`
-    : 'Delivers one immediate message to a single agent, or multicasts it to every member of a group. Each recipient gets an inbox row plus a tmux nudge if online.';
+  renderMessageThemeCopy();
   $('#message-create-modal').classList.add('show');
   setTimeout(() => $('#message-create-from').focus(), 0);
 }
@@ -95,9 +118,7 @@ function setupMessageGroupScope(groupName) {
     online: !!m.online, checked: true,
   }));
   messageScopedGroup = { name: groupName, members };
-  $('#message-create-group-hint').textContent = members.length
-    ? `Members of "${groupName}" — all ticked; untick any to message a subset.`
-    : `Group "${groupName}" has no members to message.`;
+  renderMessageGroupHint();
   renderMessageMembers();
 }
 
@@ -109,7 +130,7 @@ function renderMessageMembers() {
   const listEl = $('#message-create-members');
   const members = messageScopedGroup.members;
   if (members.length === 0) {
-    listEl.innerHTML = '<div class="cleanup-empty">no members in this group</div>';
+    listEl.innerHTML = `<div class="cleanup-empty">${wizWord('no members in this group', 'no familiars in this party')}</div>`;
   } else {
     listEl.innerHTML = members.map(m => {
       const online = m.online ? '<span class="cleanup-badge online">online</span>' : '';
@@ -160,7 +181,10 @@ async function submitMessageForm() {
   // Client-side gates with inline errors — the daemon validates
   // authoritatively too, so this only catches the obvious misses.
   if (!from) {
-    errEl.textContent = 'From is required — type a sender agent or use 🔍 to pick.';
+    errEl.textContent = wizWord(
+      'From is required — type a sender agent or use 🔍 to pick.',
+      'From is required — name a sending familiar or use 🔍 to pick.',
+    );
     return;
   }
   // Resolve the recipient(s): `mode` drives the success toast, `to`
@@ -173,7 +197,10 @@ async function submitMessageForm() {
     const all = messageScopedGroup.members;
     const picked = all.filter(m => m.checked);
     if (picked.length === 0) {
-      errEl.textContent = 'Pick at least one recipient — tick the members this message should reach.';
+      errEl.textContent = wizWord(
+        'Pick at least one recipient — tick the members this message should reach.',
+        'Pick at least one recipient — tick the familiars this missive should reach.',
+      );
       return;
     }
     // Every member ticked → a plain group: multicast, which tracks the
@@ -247,6 +274,12 @@ async function submitMessageForm() {
 function bindMessageModal() {
   // Solo/group target picker — markup + mode radios + 🔍 button.
   bindTargetPicker('message-create');
+  document.addEventListener('tclaude:wizard', () => {
+    if (!$('#message-create-modal').classList.contains('show')) return;
+    renderMessageThemeCopy();
+    renderMessageGroupHint();
+    if (messageScopedGroup) renderMessageMembers();
+  });
   $('#message-create-cancel').addEventListener('click', closeMessageCreateModal);
   $('#message-create-submit').addEventListener('click', submitMessageForm);
   bindBackdropDiscard('message-create-modal', closeMessageCreateModal);
@@ -392,7 +425,8 @@ function openPermEditor({ subtitle, wizardSubtitle = '', overrides, ownsGroup, o
   banner.innerHTML = groupMode
     ? '<span class="group-perms-word-regular"><strong>GROUP GRANTS</strong> — selected permissions apply immediately to every current member. Leaving or archiving the group removes this source; an agent-level <strong>Deny</strong> still wins.</span>'
       + '<span class="group-perms-word-wizard"><strong>PARTY BOONS</strong> — bestow capabilities on every familiar in this party at once. A familiar who leaves loses these boons; a personal binding against one still wins.</span>'
-    : '<strong>PERMANENT</strong> — these per-agent overrides persist until you change them again. They are <em>not</em> the time-bounded “+ sudo” elevation: a sudo grant expires on its own, an override here does not. <strong>Grant</strong> adds a slug, <strong>Deny</strong> blocks one the global defaults would otherwise give, and <strong>Default</strong> inherits the global default.';
+    : '<span class="theme-copy-regular"><strong>PERMANENT</strong> — these per-agent overrides persist until you change them again. They are <em>not</em> the time-bounded “+ sudo” elevation: a sudo grant expires on its own, an override here does not. <strong>Grant</strong> adds a slug, <strong>Deny</strong> blocks one the global defaults would otherwise give, and <strong>Default</strong> inherits the global default.</span>'
+      + '<span class="theme-copy-wizard"><strong>THE GRIMOIRE</strong> — these bindings follow this familiar until changed. They are <em>not</em> the time-bounded “+ sudo” boon: sudo fades on its own, a binding here does not. <strong>Grant</strong> bestows a slug, <strong>Deny</strong> seals one away, and <strong>Default</strong> inherits the tower default.</span>';
   const subtitleEl = $('#perm-edit-subtitle');
   subtitleEl.innerHTML = wizardSubtitle
     ? `<span class="group-perms-word-regular">${esc(subtitle || '')}</span><span class="group-perms-word-wizard">${esc(wizardSubtitle)}</span>`
@@ -404,9 +438,14 @@ function openPermEditor({ subtitle, wizardSubtitle = '', overrides, ownsGroup, o
   if (ownerNote) {
     if (permEditOwnsGroup && permEditOwnedGroups.length) {
       ownerNote.innerHTML =
+        '<span class="theme-copy-regular">' +
         `👑 <strong>Group owner</strong> of ${permEditOwnedGroups.map(g => `<code>${esc(g)}</code>`).join(', ')}. ` +
         `Owner-conferred slugs (marked 👑) are effectively held for those groups and their members ` +
-        `even at <strong>Default</strong> — shown as “✓ via owner”. A <strong>Deny</strong> still suppresses one.`;
+        `even at <strong>Default</strong> — shown as “✓ via owner”. A <strong>Deny</strong> still suppresses one.</span>` +
+        '<span class="theme-copy-wizard">' +
+        `👑 <strong>Party owner</strong> of ${permEditOwnedGroups.map(g => `<code>${esc(g)}</code>`).join(', ')}. ` +
+        `Owner-conferred boons (marked 👑) are held for those parties and their familiars even while ` +
+        `<strong>Unbound</strong> — shown as “✓ via owner”. A personal binding still wins.</span>`;
       ownerNote.hidden = false;
     } else {
       ownerNote.hidden = true;
@@ -483,6 +522,7 @@ function openPermEditModal(conv, label) {
   const ownedGroups = convOwnedGroups(conv);
   openPermEditor({
     subtitle: `Agent: ${label || shortId(conv)} · ${shortId(conv)}`,
+    wizardSubtitle: `Familiar: ${label || shortId(conv)} · ${shortId(conv)}`,
     overrides,
     ownsGroup: ownedGroups.length > 0,
     ownedGroups,

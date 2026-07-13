@@ -524,9 +524,11 @@
          normally, an arcane "Banish this familiar?" in 🧙 wizard mode — the
          antonym of the spawn dialog's "Summon a new familiar". -->
     <h3 id="retire-title"><span class="retire-title-regular">Retire this agent?</span><span class="retire-title-wizard">Banish this familiar?</span></h3>
-    <p>Demotes the agent to a plain conversation: revokes its group memberships and
+    <p><span class="theme-copy-regular">Demotes the agent to a plain conversation: revokes its group memberships and
       permission grants so it stops being an agent. The conversation itself stays on
-      disk and can be reinstated later — this is the non-destructive soft-delete.</p>
+      disk and can be reinstated later — this is the non-destructive soft-delete.</span><span class="theme-copy-wizard">Returns the familiar to a plain conversation: revokes its party memberships and
+      boons so it stops being a familiar. The conversation scroll stays on disk and
+      can be restored later — banishment is not destruction.</span></p>
     <div class="modal-meta" id="retire-meta"></div>
     <label class="delete-agent-wt" id="retire-shutdown-row">
       <input type="checkbox" id="retire-shutdown" checked />
@@ -563,10 +565,12 @@
          is a scrying portal in the palette's voice (the Terminals tab reads
          "🔮 Scrying"). -->
     <h3 id="term-title"><span class="term-title-regular">Open a terminal</span><span class="term-title-wizard">🔮 Open a scrying portal</span></h3>
-    <p>Spawn a terminal window for this agent. <strong>Current</strong> is where it
+    <p><span class="theme-copy-regular">Spawn a terminal window for this agent. <strong>Current</strong> is where it
     has most recently been editing files; <strong>Worktree</strong> is the git
     worktree/repo root around that; <strong>Launch</strong> is where Claude Code
-    was started.</p>
+    was started.</span><span class="theme-copy-wizard">Open a scrying portal for this familiar. <strong>Current</strong> is where it
+    most recently worked its craft; <strong>Worktree</strong> is the surrounding git
+    worktree/repo root; <strong>Launch</strong> is where it was summoned.</span></p>
     <div class="modal-meta" id="term-meta"></div>
     <div class="modal-buttons">
       <button id="term-cancel">Cancel</button>
@@ -611,22 +615,22 @@
       <label for="edit-member-title-input">Title</label>
       <input id="edit-member-title-input" type="text" autocomplete="off" spellcheck="false"
              placeholder="1-64 chars, [A-Za-z0-9_-[]{}() ] only" />
-      <label class="edit-member-auto-row" title="Inject a [system: …] nudge asking the agent to pick a descriptive title itself via the agent-rename skill / CLI.">
-        <input id="edit-member-auto" type="checkbox" /> Auto — let the agent choose its own title
+      <label class="edit-member-auto-row" title="Ask this agent / familiar to pick a descriptive title itself via the agent-rename skill / CLI.">
+        <input id="edit-member-auto" type="checkbox" /> <span class="theme-copy-regular">Auto — let the agent choose its own title</span><span class="theme-copy-wizard">Auto — let the familiar choose its own title</span>
       </label>
     </div>
     <div class="field">
-      <label for="edit-member-role">Role</label>
+      <label for="edit-member-role"><span class="theme-copy-regular">Role</span><span class="theme-copy-wizard">Class</span></label>
       <input id="edit-member-role" type="text" autocomplete="off" spellcheck="false" />
-      <label class="edit-member-owner-row" title="Group owners gain the implicit power to manage other members of this group — message, reincarnate, compact, rename, clone — without a per-slug grant.">
-        <input id="edit-member-owner" type="checkbox" /> Group owner
+      <label class="edit-member-owner-row" title="Group / party owners gain the implicit power to manage the other agents / familiars in it without a per-slug grant.">
+        <input id="edit-member-owner" type="checkbox" /> <span class="theme-copy-regular">Group owner</span><span class="theme-copy-wizard">Party owner</span>
       </label>
     </div>
     <div class="field">
       <label for="edit-member-descr">Description</label>
       <textarea id="edit-member-descr" rows="3" spellcheck="false"></textarea>
       <label for="edit-member-tags">Tags</label>
-      <input id="edit-member-tags" type="text" autocomplete="off" spellcheck="false" placeholder="comma-separated, e.g. tf:squad, priority" title="Short labels rendered as chips in the Description column. Comma-separated; agent-level, so they follow this agent across groups." />
+      <input id="edit-member-tags" type="text" autocomplete="off" spellcheck="false" placeholder="comma-separated, e.g. tf:squad, priority" title="Short labels rendered as chips in the Description column. They follow this agent / familiar across groups / parties." />
     </div>
     <div class="cron-create-error" id="edit-member-error"></div>
     <div class="modal-buttons">
@@ -634,7 +638,7 @@
            title): Permissions… → Grimoire…, Cancel → Dispel under body.wizard. The
            Save primary keeps its plain "Save" text and is re-lettered to a gilded
            "✨ Enchant!" lever via a ::before glyph (see the wizard CSS block). -->
-      <button id="edit-member-perms" type="button" title="Open the permanent-permission editor for this agent (grant / deny / inherit per slug)"><span class="em-btn-regular">Permissions…</span><span class="em-btn-wizard">Grimoire…</span></button>
+      <button id="edit-member-perms" type="button" title="Open this agent / familiar's permanent permission grimoire (grant / deny / inherit per slug)"><span class="em-btn-regular">Permissions…</span><span class="em-btn-wizard">Grimoire…</span></button>
       <span class="spacer"></span>
       <button id="edit-member-cancel"><span class="em-btn-regular">Cancel</span><span class="em-btn-wizard">Dispel</span></button>
       <button id="edit-member-save">Save</button>
@@ -643,8 +647,8 @@
 </div>
 <div class="modal-overlay" id="add-member-modal">
   <div class="add-member-modal" role="dialog" aria-modal="true" aria-labelledby="add-member-title">
-    <h3 id="add-member-title">Add member to <span class="muted" id="add-member-group"></span></h3>
-    <input id="add-member-search" class="add-member-search" type="text" placeholder="Filter by title / role / descr / conv-id…" autocomplete="off" spellcheck="false" />
+    <h3 id="add-member-title"><span class="theme-copy-regular">Add member to</span><span class="theme-copy-wizard">Invite familiar into party</span> <span class="muted" id="add-member-group"></span></h3>
+    <input id="add-member-search" class="add-member-search" type="text" placeholder="Filter by title / role or class / descr / conv-id…" autocomplete="off" spellcheck="false" />
     <div class="add-member-list" id="add-member-list"></div>
     <div class="add-member-foot">
       <label title="Include archived / never-online conversations in the candidate list">
@@ -657,7 +661,7 @@
 </div>
 <div class="modal-overlay" id="sudo-pick-agent-modal">
   <div class="add-member-modal" role="dialog" aria-modal="true" aria-labelledby="sudo-pick-agent-title">
-    <h3 id="sudo-pick-agent-title">Grant sudo to <span class="muted">— pick agent</span></h3>
+    <h3 id="sudo-pick-agent-title">Grant sudo to <span class="muted"><span class="theme-copy-regular">— pick agent</span><span class="theme-copy-wizard">— pick familiar</span></span></h3>
     <input id="sudo-pick-agent-search" class="add-member-search" type="text" placeholder="Filter by title / role / descr / conv-id…" autocomplete="off" spellcheck="false" />
     <div class="add-member-list" id="sudo-pick-agent-list"></div>
     <div class="add-member-foot">
@@ -672,7 +676,7 @@
 <div class="modal-overlay" id="sudo-grant-modal">
   <div class="sudo-grant-modal" role="dialog" aria-modal="true" aria-labelledby="sudo-grant-title">
     <h3 id="sudo-grant-title">Grant sudo</h3>
-    <p class="sudo-grant-hint">Proactively elevate an agent for a bounded window. Same blocklist + duration cap as the agent-initiated path; granted_by records <code>&lt;human-dashboard&gt;:proactive</code> on the audit row.</p>
+    <p class="sudo-grant-hint"><span class="theme-copy-regular">Proactively elevate an agent for a bounded window.</span><span class="theme-copy-wizard">Bestow a bounded sudo boon on a familiar.</span> Same blocklist + duration cap as the agent-initiated path; granted_by records <code>&lt;human-dashboard&gt;:proactive</code> on the audit row.</p>
     <label class="sudo-grant-row">
       <span class="sudo-grant-label">Conv</span>
       <input id="sudo-grant-conv" type="text" placeholder="title / conv-id / 8+-char prefix" autocomplete="off" spellcheck="false" />
@@ -737,7 +741,7 @@
 </div>
 <div class="modal-overlay" id="cron-pick-target-modal">
   <div class="add-member-modal" role="dialog" aria-modal="true" aria-labelledby="cron-pick-target-title">
-    <h3 id="cron-pick-target-title">Pick target <span class="muted">— agent</span></h3>
+    <h3 id="cron-pick-target-title">Pick target <span class="muted"><span class="theme-copy-regular">— agent</span><span class="theme-copy-wizard">— familiar</span></span></h3>
     <input id="cron-pick-target-search" class="add-member-search" type="text" placeholder="Filter by title / role / descr / conv-id / group…" autocomplete="off" spellcheck="false" />
     <div class="add-member-list" id="cron-pick-target-list"></div>
     <div class="add-member-foot">
@@ -762,7 +766,7 @@
       <div class="cron-create-target">
         <div class="cron-target-input-row">
           <input id="cron-create-owner" type="text" placeholder="(default: dashboard human) title / conv-id / 8+-char prefix" autocomplete="off" spellcheck="false" />
-          <button type="button" id="cron-create-owner-pick" title="Pick from agent list">🔍</button>
+          <button type="button" id="cron-create-owner-pick" title="Pick from the agent / familiar list">🔍</button>
         </div>
       </div>
     </label>
@@ -773,8 +777,8 @@
       <div class="cron-create-target" id="cron-create-target-mount"></div>
     </label>
     <label class="cron-create-row" id="cron-create-role-row" style="display:none">
-      <span class="cron-create-label" title="For a group target only: deliver only to members whose role matches (resolved at fire time). Blank / 'all' = the whole group.">Role filter</span>
-      <input id="cron-create-role" type="text" placeholder="optional — blank / all = whole group (e.g. dev)" autocomplete="off" spellcheck="false" />
+      <span class="cron-create-label" title="For a group / party target only: deliver only to members / familiars whose role / class matches. Blank or 'all' means the whole target."><span class="theme-copy-regular">Role filter</span><span class="theme-copy-wizard">Class filter</span></span>
+      <input id="cron-create-role" type="text" placeholder="optional — blank / all = entire target (e.g. dev)" autocomplete="off" spellcheck="false" />
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Schedule</span>
@@ -822,13 +826,13 @@
 <div class="modal-overlay" id="message-create-modal">
   <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="message-create-title">
     <h3 id="message-create-title">Send a message</h3>
-    <p id="message-create-desc" style="margin:4px 0; font-size:12px; color:#7d8590">Delivers one immediate message to a single agent, or multicasts it to every member of a group. Each recipient gets an inbox row plus a tmux nudge if online.</p>
+    <p id="message-create-desc" style="margin:4px 0; font-size:12px; color:#7d8590"><span class="theme-copy-regular">Delivers one immediate message to a single agent, or multicasts it to every member of a group.</span><span class="theme-copy-wizard">Delivers one immediate missive to a familiar, or multicasts it to every familiar in a party.</span></p>
     <label class="cron-create-row">
       <span class="cron-create-label">From</span>
       <div class="cron-create-target">
         <div class="cron-target-input-row">
-          <input id="message-create-from" type="text" placeholder="sender agent — title / conv-id / 8+-char prefix" autocomplete="off" spellcheck="false" />
-          <button type="button" id="message-create-from-pick" title="Pick from agent list">🔍</button>
+          <input id="message-create-from" type="text" placeholder="sender — title / conv-id / 8+-char prefix" autocomplete="off" spellcheck="false" />
+          <button type="button" id="message-create-from-pick" title="Pick from the agent / familiar list">🔍</button>
         </div>
       </div>
     </label>
@@ -1170,7 +1174,7 @@
 </div>
 <div class="modal-overlay" id="delete-agent-modal">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="delete-agent-title">
-    <h3 id="delete-agent-title">Permanently delete this agent?</h3>
+    <h3 id="delete-agent-title"><span class="theme-copy-regular">Permanently delete this agent?</span><span class="theme-copy-wizard">Permanently erase this familiar?</span></h3>
     <p id="delete-agent-body"></p>
     <div class="modal-meta" id="delete-agent-meta"></div>
     <label class="delete-agent-wt" id="delete-agent-wt-row" style="display:none">
@@ -1179,7 +1183,7 @@
     </label>
     <div class="modal-buttons">
       <button id="delete-agent-cancel">Cancel</button>
-      <button id="delete-agent-ok" class="confirm-danger">Delete forever</button>
+      <button id="delete-agent-ok" class="confirm-danger"><span class="theme-copy-regular">Delete forever</span><span class="theme-copy-wizard">Erase forever</span></button>
     </div>
   </div>
 </div>
@@ -1454,10 +1458,10 @@
 </div>
 <div class="modal-overlay" id="export-agent-modal">
   <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="export-agent-title">
-    <h3 id="export-agent-title">Export conversation</h3>
+    <h3 id="export-agent-title"><span class="theme-copy-regular">Export conversation</span><span class="theme-copy-wizard">Inscribe conversation scroll</span></h3>
     <div class="modal-meta" id="export-agent-meta"></div>
     <div id="export-agent-form">
-      <p class="export-intro">Ask this agent to consolidate a shareable export of the conversation — a summary or report for others to read. It runs on an isolated clone of the conversation, so the live agent is never disturbed; the file downloads here when it's ready. Multiple files are zipped automatically.</p>
+      <p class="export-intro"><span class="theme-copy-regular">Ask this agent to consolidate a shareable export of the conversation — a summary or report for others to read. It runs on an isolated clone of the conversation, so the live agent is never disturbed; the file downloads here when it's ready. Multiple files are zipped automatically.</span><span class="theme-copy-wizard">Ask this familiar to inscribe a shareable account of its conversation. The work runs through an isolated mirror, so the live familiar is never disturbed; the finished scroll appears here. Multiple scrolls are bundled automatically.</span></p>
       <label class="cron-create-row">
         <span class="cron-create-label">Format</span>
         <select id="export-agent-preset">
@@ -1476,7 +1480,7 @@
       </label>
       <label class="export-same-group" title="The export runs on an isolated clone of this conversation so the live agent is never disturbed. By default the clone is standalone. Check this to put the clone in the same group(s) as the original, so the summary writer can message peers if it needs to.">
         <input id="export-agent-same-group" type="checkbox" />
-        <span>Clone into the same group <span class="export-same-group-hint">— lets the summary writer message peers (default: isolated)</span></span>
+        <span><span class="theme-copy-regular">Clone into the same group <span class="export-same-group-hint">— lets the summary writer message peers (default: isolated)</span></span><span class="theme-copy-wizard">Mirror into the same party <span class="export-same-group-hint">— lets the scribe send missives to peers (default: isolated)</span></span></span>
       </label>
     </div>
     <div id="export-agent-status" role="status" aria-live="polite" aria-atomic="true" hidden>
