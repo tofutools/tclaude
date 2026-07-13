@@ -50,20 +50,6 @@ function ColumnLabel({ column }) {
   `;
 }
 
-function useWizardTheme() {
-  const [wizard, setWizard] = useState(() => document.body.classList.contains('wizard'));
-  useEffect(() => {
-    const update = (event) => setWizard(
-      typeof event.detail?.active === 'boolean'
-        ? event.detail.active
-        : document.body.classList.contains('wizard'),
-    );
-    document.addEventListener('tclaude:wizard', update);
-    return () => document.removeEventListener('tclaude:wizard', update);
-  }, []);
-  return wizard;
-}
-
 export function GroupsControls({ state, actions }) {
   const inputRef = useRef(null);
   const refreshTimer = useRef(null);
@@ -205,11 +191,7 @@ export function GroupsControls({ state, actions }) {
 export function GroupsList({ host, state, actions, renderGroupsHTML }) {
   useWizardTheme();
   const current = state.view.value;
-  const wizard = useWizardTheme();
-  // The legacy renderer reads the live body theme for themed attributes.
-  // Passing wizard also makes this island rerender immediately on a theme
-  // event instead of waiting for the next snapshot poll.
-  const markup = renderGroupsHTML(current.groups, wizard);
+  const markup = renderGroupsHTML(current.groups);
 
   useEffect(() => {
     syncBotAnimations();
