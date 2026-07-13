@@ -108,9 +108,14 @@ func HasCapabilities(snapshot Snapshot) bool {
 // (for example, an agent created before snapshot support) and must not be
 // interpreted as an empty-but-authorized policy.
 type Snapshot struct {
-	Version   int              `json:"version"`
-	Effective EffectiveProfile `json:"effective"`
-	Applied   []AppliedProfile `json:"applied"`
+	Version int `json:"version"`
+	// ResolutionGroupID is the launch group whose sandbox assignment supplied
+	// the group tier. It is recorded even when that group had no profile, so a
+	// later resume can pick up a new assignment without guessing among an
+	// actor's other memberships. Zero is the legacy/ungrouped sentinel.
+	ResolutionGroupID int64            `json:"resolution_group_id,omitempty"`
+	Effective         EffectiveProfile `json:"effective"`
+	Applied           []AppliedProfile `json:"applied"`
 }
 
 // NewSnapshot freezes a resolver result and its stable registry provenance.
@@ -162,6 +167,7 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 		return Snapshot{}, fmt.Errorf("effective sandbox agent directories changed since resolution")
 	}
 	out := NewSnapshot(in.Effective, in.Applied)
+	out.ResolutionGroupID = in.ResolutionGroupID
 	return out, nil
 }
 

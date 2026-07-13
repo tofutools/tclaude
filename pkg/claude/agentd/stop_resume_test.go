@@ -3,6 +3,7 @@ package agentd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -289,6 +291,8 @@ func TestHandleAgentResume_AgentCannotRecreateMissingDir(t *testing.T) {
 type recordingResumeSpawner struct {
 	convID, cwd, cwdWriteProof, effort, model, harness, sandbox, approval, codexGitCommonDir string
 	autoReview, codexGitCommonDirPinned                                                      bool
+	effectiveSandbox                                                                         *sandboxpolicy.Snapshot
+	spawnErr                                                                                 error
 }
 
 func installRecordingResumeSpawner(t *testing.T) *recordingResumeSpawner {
@@ -316,7 +320,8 @@ func (s *recordingResumeSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	s.autoReview = args.AutoReview
 	s.codexGitCommonDir = args.CodexGitCommonDir
 	s.codexGitCommonDirPinned = args.CodexGitCommonDirPinned
-	return nil
+	s.effectiveSandbox = args.EffectiveSandbox
+	return s.spawnErr
 }
 
 func TestResumeOneConv_ConvIndexProjectDirFallback(t *testing.T) {
@@ -365,4 +370,47 @@ func TestResumeOneConvWithGrant_DoesNotPassAnotherMembersProof(t *testing.T) {
 	require.Equal(t, "resumed", res.Action, "detail=%s", res.Detail)
 	assert.Empty(t, rec.cwdWriteProof,
 		"member without a cwd grant must not receive another member's group proof")
+}
+
+func TestResumeOneConv_RestoresPreviousSandboxSnapshotWhenLaunchFails(t *testing.T) {
+	setupTestDB(t)
+	rec := installRecordingResumeSpawner(t)
+	rec.spawnErr = errors.New("launch reservation lost")
+	const convID = "failed-resume-sandbox-conv-12345678"
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID: convID, ProjectPath: t.TempDir(), IndexedAt: time.Now(),
+	}))
+
+	profileID, err := db.CreateSandboxProfile(&db.SandboxProfile{
+		Name:        "changing-policy",
+		Environment: []db.SandboxEnvironmentEntry{{Name: "POLICY_VERSION", Value: "old"}},
+	})
+	require.NoError(t, err)
+	oldEffective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Explicit: &sandboxpolicy.Profile{
+		Name:        "changing-policy",
+		Environment: []sandboxpolicy.EnvironmentEntry{{Name: "POLICY_VERSION", Value: "old"}},
+	}})
+	require.NoError(t, err)
+	previous := sandboxpolicy.NewSnapshot(oldEffective, []sandboxpolicy.AppliedProfile{{
+		Scope: sandboxpolicy.ScopeExplicit, ID: profileID, Name: "changing-policy",
+	}})
+	agentID, _, err := db.EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &previous))
+	profile, err := db.GetSandboxProfileByID(profileID)
+	require.NoError(t, err)
+	profile.Environment[0].Value = "new"
+	require.NoError(t, db.UpdateSandboxProfile(profile))
+
+	res := resumeOneConv(convID)
+	require.Equal(t, "error", res.Action)
+	assert.Contains(t, res.Detail, "launch reservation lost")
+	require.NotNil(t, rec.effectiveSandbox)
+	assert.Equal(t, "new", rec.effectiveSandbox.Effective.Environment[0].Value)
+
+	persisted, err := db.AgentEffectiveSandboxConfigForConv(convID)
+	require.NoError(t, err)
+	require.NotNil(t, persisted)
+	assert.Equal(t, "old", persisted.Effective.Environment[0].Value,
+		"a failed launch must not commit policy for a pane that never started")
 }

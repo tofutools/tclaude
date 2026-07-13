@@ -15,7 +15,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
-func TestSandboxProfileSpawnFreezesValuesAndExplicitSelectionIsHumanOnly(t *testing.T) {
+func TestSandboxProfileSpawnRefreshesExplicitValuesOnResumeAndSelectionIsHumanOnly(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	profileID, err := db.CreateSandboxProfile(&db.SandboxProfile{
@@ -71,7 +71,114 @@ func TestSandboxProfileSpawnFreezesValuesAndExplicitSelectionIsHumanOnly(t *test
 	resumedSnapshot, ok := f.World.SpawnSandboxPolicy(spawn.ConvID)
 	require.True(t, ok)
 	require.NotNil(t, resumedSnapshot)
-	assert.Contains(t, resumedSnapshot.Effective.Environment[0].Value, "$(touch nope)")
+	assert.Equal(t, "mutated-after-launch", resumedSnapshot.Effective.Environment[0].Value)
+}
+
+func TestSandboxProfileResumeRefreshesComposedPolicyAndCanSpawnChild(t *testing.T) {
+	for _, harnessCase := range []struct {
+		name string
+		body map[string]any
+	}{
+		{name: "codex-managed", body: map[string]any{"harness": "codex", "sandbox": "tclaude-agent"}},
+		{name: "claude", body: map[string]any{"harness": "claude"}},
+	} {
+		for _, changedScope := range []string{"global", "group"} {
+			t.Run(harnessCase.name+"/"+changedScope, func(t *testing.T) {
+				f := newFlow(t)
+				f.HaveGroup("crew")
+				_, err := db.CreateSandboxProfile(&db.SandboxProfile{
+					Name: "global-policy", Environment: []db.SandboxEnvironmentEntry{{Name: "GLOBAL_VALUE", Value: "v1"}},
+				})
+				require.NoError(t, err)
+				_, err = db.CreateSandboxProfile(&db.SandboxProfile{
+					Name: "group-policy", Environment: []db.SandboxEnvironmentEntry{{Name: "GROUP_VALUE", Value: "v1"}},
+				})
+				require.NoError(t, err)
+				require.NoError(t, db.SetGlobalSandboxProfile("global-policy"))
+				_, err = db.SetAgentGroupSandboxProfile("crew", "group-policy")
+				require.NoError(t, err)
+
+				parentBody := map[string]any{"name": "parent", "cwd": t.TempDir()}
+				for key, value := range harnessCase.body {
+					parentBody[key] = value
+				}
+				parent := f.AsHuman().SpawnWith("crew", parentBody)
+				require.Equalf(t, http.StatusOK, parent.Code, "spawn body=%s", parent.Raw)
+				require.NoError(t, db.GrantAgentPermission(parent.ConvID, agentd.PermGroupsSpawn, "test"))
+
+				writeRoot, err := filepath.EvalSymlinks(t.TempDir())
+				require.NoError(t, err)
+				envName := "GLOBAL_VALUE"
+				if changedScope == "group" {
+					envName = "GROUP_VALUE"
+				}
+				replacement := changedScope + "-policy-v2"
+				_, err = db.CreateSandboxProfile(&db.SandboxProfile{
+					Name:        replacement,
+					Environment: []db.SandboxEnvironmentEntry{{Name: envName, Value: "v2"}},
+					Filesystem:  []db.SandboxFilesystemGrant{{Path: writeRoot, Access: "write"}},
+				})
+				require.NoError(t, err)
+				if changedScope == "global" {
+					require.NoError(t, db.SetGlobalSandboxProfile(replacement))
+				} else {
+					_, err = db.SetAgentGroupSandboxProfile("crew", replacement)
+					require.NoError(t, err)
+				}
+
+				f.MarkOffline(parent.TmuxSession)
+				resume := f.AsHuman().Resume(parent.ConvID)
+				f.AssertResumeSpawned(resume)
+				resumed, ok := f.World.SpawnSandboxPolicy(parent.ConvID)
+				require.True(t, ok)
+				require.NotNil(t, resumed)
+				assert.Contains(t, resumed.Effective.Filesystem, db.SandboxFilesystemGrant{Path: writeRoot, Access: "write"})
+				assert.Contains(t, resumed.Effective.Environment, db.SandboxEnvironmentEntry{Name: envName, Value: "v2"})
+				require.Len(t, resumed.Applied, 2, "global and group policies remain composed")
+				persisted, err := db.AgentEffectiveSandboxConfigForConv(parent.ConvID)
+				require.NoError(t, err)
+				require.NotNil(t, persisted)
+				assert.Equal(t, resumed.Effective, persisted.Effective)
+
+				childBody := map[string]any{"name": "child", "cwd": t.TempDir()}
+				for key, value := range harnessCase.body {
+					childBody[key] = value
+				}
+				child := f.AsAgent(parent.ConvID).SpawnWith("crew", childBody)
+				require.Equalf(t, http.StatusOK, child.Code, "child spawn body=%s", child.Raw)
+				childSnapshot, ok := f.World.SpawnSandboxPolicy(child.ConvID)
+				require.True(t, ok)
+				require.NotNil(t, childSnapshot)
+				assert.Contains(t, childSnapshot.Effective.Filesystem, db.SandboxFilesystemGrant{Path: writeRoot, Access: "write"})
+			})
+		}
+	}
+}
+
+func TestSandboxProfileResumeFailsBeforeLaunchWhenExplicitProfileDisappears(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "explicit-policy"})
+	require.NoError(t, err)
+	parent := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name": "parent", "sandbox_profile": "explicit-policy",
+	})
+	require.Equalf(t, http.StatusOK, parent.Code, "spawn body=%s", parent.Raw)
+	_, err = db.DeleteSandboxProfile("explicit-policy")
+	require.NoError(t, err)
+	f.MarkOffline(parent.TmuxSession)
+
+	resume := f.AsHuman().Resume(parent.ConvID)
+	assert.Equal(t, "error", resume.Action)
+	assert.Contains(t, resume.Detail, "sandbox_profile_changed")
+	assert.Contains(t, resume.Detail, "recreate it under that name")
+
+	// The recovery action is real: recreating the named profile gives it a new
+	// stable ID, and the next controlled resume resolves and launches it.
+	_, err = db.CreateSandboxProfile(&db.SandboxProfile{Name: "explicit-policy"})
+	require.NoError(t, err)
+	resume = f.AsHuman().Resume(parent.ConvID)
+	f.AssertResumeSpawned(resume)
 }
 
 func TestSandboxProfileSpawnAcceptsMissingFilesystemRule(t *testing.T) {

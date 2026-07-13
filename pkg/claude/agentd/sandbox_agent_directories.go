@@ -93,6 +93,7 @@ func materializeAgentDirectories(snapshot sandboxpolicy.Snapshot, launchKey stri
 		}
 	}
 	materialized := sandboxpolicy.NewSnapshot(effective, snapshot.Applied)
+	materialized.ResolutionGroupID = snapshot.ResolutionGroupID
 	validated, err := sandboxpolicy.RevalidateSnapshot(materialized)
 	if err != nil {
 		cleanup()
@@ -143,6 +144,79 @@ func ensureAgentDirectoriesForRelaunch(snapshot sandboxpolicy.Snapshot) (sandbox
 		}
 	}
 	return sandboxpolicy.RevalidateSnapshot(snapshot)
+}
+
+// reconcileAgentDirectoriesForResume applies a freshly-resolved profile while
+// retaining the private directory bindings that belong to this stable agent.
+// Existing declarations keep their frozen paths; newly-added declarations get
+// a stable actor-keyed path. Removed declarations disappear with the rest of
+// the old profile rather than leaking into the relaunched sandbox.
+func reconcileAgentDirectoriesForResume(current, previous sandboxpolicy.Snapshot, agentID string) (sandboxpolicy.Snapshot, error) {
+	if len(current.Effective.AgentDirectories) == 0 {
+		return sandboxpolicy.RevalidateSnapshot(current)
+	}
+	if len(previous.Effective.AgentDirectories) > 0 {
+		var err error
+		previous, err = ensureAgentDirectoriesForRelaunch(previous)
+		if err != nil {
+			return sandboxpolicy.Snapshot{}, err
+		}
+	}
+
+	oldBindings := make(map[string]string, len(previous.Effective.Environment))
+	oldNames := make(map[string]bool, len(previous.Effective.AgentDirectories))
+	for _, name := range previous.Effective.AgentDirectories {
+		oldNames[name] = true
+	}
+	for _, entry := range previous.Effective.Environment {
+		if oldNames[entry.Name] {
+			oldBindings[entry.Name] = entry.Value
+		}
+	}
+
+	agentID = strings.TrimSpace(agentID)
+	if !agentDirectoryLaunchKeyRE.MatchString(agentID) {
+		return sandboxpolicy.Snapshot{}, fmt.Errorf("invalid stable agent key for resumed agent-owned directories")
+	}
+	cacheDir, err := canonicalizeForSecureMkdir(tclcommon.CacheDir())
+	if err != nil {
+		return sandboxpolicy.Snapshot{}, fmt.Errorf("resolve tclaude cache directory for agent-owned directories: %w", err)
+	}
+	root := filepath.Join(cacheDir, "agent-dirs", agentID)
+	if err := mkdirAllNoFollow(root, 0o700); err != nil {
+		return sandboxpolicy.Snapshot{}, fmt.Errorf("create resumed agent-owned directory root: %w", err)
+	}
+
+	effective := current.Effective
+	effective.Filesystem = append([]sandboxpolicy.FilesystemGrant(nil), effective.Filesystem...)
+	effective.Environment = append([]sandboxpolicy.EnvironmentEntry(nil), effective.Environment...)
+	for _, name := range effective.AgentDirectories {
+		path := oldBindings[name]
+		if path == "" {
+			path = filepath.Join(root, name)
+			if err := mkdirAllNoFollow(path, 0o700); err != nil {
+				return sandboxpolicy.Snapshot{}, fmt.Errorf("create resumed agent-owned directory for %s: %w", name, err)
+			}
+			path, err = filepath.EvalSymlinks(path)
+			if err != nil {
+				return sandboxpolicy.Snapshot{}, fmt.Errorf("canonicalize resumed agent-owned directory for %s: %w", name, err)
+			}
+		}
+		effective.Filesystem = append(effective.Filesystem, sandboxpolicy.FilesystemGrant{
+			Path: path, Access: sandboxpolicy.AccessWrite,
+		})
+		effective.Environment = append(effective.Environment, sandboxpolicy.EnvironmentEntry{
+			Name: name, Value: path,
+		})
+		sources := effective.Provenance.AgentDirectories[name]
+		if len(sources) > 0 {
+			effective.Provenance.Filesystem[path] = append([]sandboxpolicy.ProfileSource(nil), sources...)
+			effective.Provenance.Environment[name] = sources[len(sources)-1]
+		}
+	}
+	resumed := sandboxpolicy.NewSnapshot(effective, current.Applied)
+	resumed.ResolutionGroupID = current.ResolutionGroupID
+	return sandboxpolicy.RevalidateSnapshot(resumed)
 }
 
 // canonicalizeForSecureMkdir resolves symlinks in the existing prefix while

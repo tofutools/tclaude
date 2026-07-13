@@ -344,6 +344,12 @@ writable sandbox paths, and injects the literal path as the variable's value.
 The generated paths are frozen in the launch snapshot: resume and reincarnate
 retain them, while a clone receives fresh directories. A name cannot also have
 a literal `environment` value, and the normal reserved-variable rules apply.
+At an agent resume boundary, the ordinary global, launch-group, and explicit
+profile values are resolved again from the current registry before the pane is
+started; a running agent is never widened in place. If the launch group is
+ambiguous or the changed policy cannot be represented by the preserved harness
+sandbox, resume fails before launch with a `sandbox_profile_changed` recovery
+message.
 
 Deny rules are enforced by the harness OS sandbox (Claude `denyRead` plus
 `denyWrite`, Codex permission-profile `none`). An effective deny requires

@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -392,10 +393,43 @@ type resumeGrant struct {
 	GitCommonDir     string
 	WriteDirs        []string
 	ProfileWriteDirs []string
+	SandboxPolicy    *resumeSandboxPolicy
 	// SkipOnline binds the proof-time online snapshot. An agent caller may not
 	// turn a member that needed no proof while online into an unproved launch if
 	// that pane exits later in the same bulk-resume request.
 	SkipOnline bool
+}
+
+var resumeLaunchLocks sync.Map // map[convID]*sync.Mutex
+
+func resumeLaunchLock(convID string) *sync.Mutex {
+	lock, _ := resumeLaunchLocks.LoadOrStore(convID, &sync.Mutex{})
+	return lock.(*sync.Mutex)
+}
+
+func resumeSandboxWriteDirsForConv(convID string) (*resumeSandboxPolicy, []string, error) {
+	policy, err := resolveResumeSandboxPolicy(convID)
+	if err != nil {
+		return nil, nil, &effectiveSandboxChangedError{err: err}
+	}
+	if policy == nil || policy.Snapshot == nil {
+		return policy, nil, nil
+	}
+	if _, err := sandboxpolicy.FilesystemForLaunch(policy.Snapshot.Effective); err != nil {
+		return nil, nil, &effectiveSandboxChangedError{err: err}
+	}
+	writeDirs := make([]string, 0, len(policy.Snapshot.Effective.Filesystem))
+	for _, grant := range policy.Snapshot.Effective.Filesystem {
+		if grant.Access != sandboxpolicy.AccessWrite {
+			continue
+		}
+		proofDir, err := sandboxWriteProofDir(grant.Path)
+		if err != nil {
+			return nil, nil, err
+		}
+		writeDirs = appendUniqueDirs(writeDirs, proofDir)
+	}
+	return policy, writeDirs, nil
 }
 
 type effectiveSandboxChangedError struct{ err error }
@@ -415,7 +449,7 @@ func writeEffectiveSandboxLoadError(w http.ResponseWriter, err error) {
 // effectiveSandboxWriteDirsForConv loads and revalidates the immutable policy
 // a lifecycle relaunch will preserve, returning every custom write root that
 // must participate in the caller's write-proof challenge. Resolving this set
-// before the challenge keeps clone/reincarnate/resume from turning a preserved
+// before the challenge keeps clone/reincarnate from turning a preserved
 // profile into an unproved writable proxy.
 func effectiveSandboxWriteDirsForConv(convID string) (*sandboxpolicy.Snapshot, []string, error) {
 	snapshot, err := db.AgentEffectiveSandboxConfigForConv(convID)
@@ -500,11 +534,13 @@ func requireResumeWriteProofs(w http.ResponseWriter, caller, token string, convI
 			continue
 		}
 		sandboxMode := sandboxForHarness(harnessName)
-		_, profileWriteDirs, err := effectiveSandboxWriteDirsForConv(convID)
+		policy, profileWriteDirs, err := resumeSandboxWriteDirsForConv(convID)
 		if err != nil {
 			writeEffectiveSandboxLoadError(w, err)
 			return nil, "", nil, false
 		}
+		grant := &resumeGrant{Cwd: cwd, SandboxPolicy: policy, ProfileWriteDirs: profileWriteDirs}
+		grants[convID] = grant
 		if !childSandboxGrantsDirWrite(harnessName, sandboxMode) && len(profileWriteDirs) == 0 {
 			continue
 		}
@@ -513,7 +549,7 @@ func requireResumeWriteProofs(w http.ResponseWriter, caller, token string, convI
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return nil, "", nil, false
 		}
-		grant := &resumeGrant{Cwd: cwd, GitCommonDir: commonDir, ProfileWriteDirs: profileWriteDirs}
+		grant.GitCommonDir = commonDir
 		if spawnUsesPinnedGitCommonDir(harnessName, sandboxMode) {
 			home, err := os.UserHomeDir()
 			if err != nil {
@@ -565,6 +601,9 @@ func resumeOneConvWithGrant(convID string, recreateMissingDir bool, grant *resum
 		res.Action = "skipped:already_online"
 		return res
 	}
+	launchLock := resumeLaunchLock(convID)
+	launchLock.Lock()
+	defer launchLock.Unlock()
 	if isConvOnline(convID) {
 		res.Action = "skipped:already_online"
 		return res
@@ -622,14 +661,25 @@ func resumeOneConvWithGrant(convID string, recreateMissingDir bool, grant *resum
 	// moment the new pane reports in — the armed flag lives on the old/dead row,
 	// which is still the most-recent until then.
 	remoteControl := remoteControlForRelaunch(convID, harnessName)
-	effectiveSandbox, snapshotErr := db.AgentEffectiveSandboxConfigForConv(convID)
-	if snapshotErr != nil {
-		res.Action = "error"
-		res.Detail = "load effective sandbox snapshot: " + snapshotErr.Error()
-		return res
+	var resumePolicy *resumeSandboxPolicy
+	if grant != nil {
+		resumePolicy = grant.SandboxPolicy
+	}
+	if resumePolicy == nil {
+		var snapshotErr error
+		resumePolicy, snapshotErr = resolveResumeSandboxPolicy(convID)
+		if snapshotErr != nil {
+			res.Action = "error"
+			res.Detail = "sandbox_profile_changed: " + snapshotErr.Error()
+			return res
+		}
+	}
+	var effectiveSandbox *sandboxpolicy.Snapshot
+	if resumePolicy != nil {
+		effectiveSandbox = resumePolicy.Snapshot
 	}
 	if effectiveSandbox != nil {
-		validated, err := ensureAgentDirectoriesForRelaunch(*effectiveSandbox)
+		validated, err := sandboxpolicy.RevalidateSnapshot(*effectiveSandbox)
 		if err != nil {
 			res.Action = "error"
 			res.Detail = "sandbox_profile_changed: " + err.Error()
@@ -640,6 +690,11 @@ func resumeOneConvWithGrant(convID string, recreateMissingDir bool, grant *resum
 	// Relaunch never re-engages the experimental guardian (auto-review is an
 	// explicit fresh-spawn opt-in, not persisted per-conv), so AutoReview stays false.
 	relaunchSandbox := sandboxForHarness(harnessName)
+	if fail := sandboxProfileCapabilityFailure(harnessName, relaunchSandbox, effectiveSandbox); fail != nil {
+		res.Action = "error"
+		res.Detail = "sandbox_profile_changed: " + fail.Msg
+		return res
+	}
 	codexGitCommonDir, gerr := spawnGitCommonDir(harnessName, relaunchSandbox, cwd)
 	if gerr != nil {
 		res.Action = "error"
@@ -675,6 +730,23 @@ func resumeOneConvWithGrant(convID string, recreateMissingDir bool, grant *resum
 	if grant != nil {
 		cwdProof = proofToken
 	}
+	var persistedAgentID string
+	if effectiveSandbox != nil {
+		agentID, err := db.AgentIDForConv(convID)
+		if err != nil {
+			res.Action = "error"
+			res.Detail = "record refreshed sandbox snapshot: " + err.Error()
+			return res
+		}
+		if agentID != "" {
+			if err := db.SetAgentEffectiveSandboxConfig(agentID, effectiveSandbox); err != nil {
+				res.Action = "error"
+				res.Detail = "record refreshed sandbox snapshot: " + err.Error()
+				return res
+			}
+			persistedAgentID = agentID
+		}
+	}
 	if err := SpawnDetachedTclaudeResume(clcommon.SpawnArgs{
 		EffectiveSandbox:           effectiveSandbox,
 		ConvID:                     convID,
@@ -694,6 +766,15 @@ func resumeOneConvWithGrant(convID string, recreateMissingDir bool, grant *resum
 	}); err != nil {
 		res.Action = "error"
 		res.Detail = "spawn: " + err.Error()
+		if persistedAgentID != "" {
+			var previous *sandboxpolicy.Snapshot
+			if resumePolicy != nil {
+				previous = resumePolicy.Previous
+			}
+			if restoreErr := db.SetAgentEffectiveSandboxConfig(persistedAgentID, previous); restoreErr != nil {
+				res.Detail += "; restore previous sandbox snapshot: " + restoreErr.Error()
+			}
+		}
 	} else {
 		res.Action = "resumed"
 		// Tag the fresh row's best-known state ON once it comes online. The
@@ -4561,8 +4642,9 @@ func liveSpawnNew(a clcommon.SpawnArgs) error {
 //     has *us* in its ancestry chain — important so it doesn't trip
 //     CC's own process-ownership / sandbox checks via parent walks.
 //
-// Errors only surface if exec.Start() itself fails (binary missing
-// from PATH, etc.).
+// The wrapper is reaped synchronously. It exits immediately after tmux accepts
+// or rejects the detached launch, so callers learn whether this resume won the
+// launch reservation and can roll back refreshed actor state on failure.
 func liveSpawnResume(a clcommon.SpawnArgs) error {
 	var cleanup func()
 	var err error
@@ -4585,27 +4667,13 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 		return err
 	}
 	pid := cmd.Process.Pid
-	if a.CwdWriteProof != "" || a.DirWriteProof != "" {
-		defer cleanup()
-		if err := cmd.Wait(); err != nil {
-			slog.Error("resume subprocess exited with error",
-				"conv", convID, "pid", pid, "err", err,
-				"stderr", stderr.String(), "stderr_truncated", stderr.Truncated())
-			return fmt.Errorf("resume session wrapper failed: %w: %s", err, stderr.String())
-		}
-		return nil
+	defer cleanup()
+	if err := cmd.Wait(); err != nil {
+		slog.Error("resume subprocess exited with error",
+			"conv", convID, "pid", pid, "err", err,
+			"stderr", stderr.String(), "stderr_truncated", stderr.Truncated())
+		return fmt.Errorf("resume session wrapper failed: %w: %s", err, stderr.String())
 	}
-	// Reap the wrapper when it finishes so we don't leak zombies. The
-	// wrapper exits quickly (after `tmux new-session -d` returns); the
-	// real CC process keeps running under the tmux server.
-	go func() {
-		defer cleanup()
-		if err := cmd.Wait(); err != nil {
-			slog.Error("resume subprocess exited with error",
-				"conv", convID, "pid", pid, "err", err,
-				"stderr", stderr.String(), "stderr_truncated", stderr.Truncated())
-		}
-	}()
 	return nil
 }
 

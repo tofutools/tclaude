@@ -346,6 +346,7 @@ func TestResolveEffectiveSandboxSnapshotComposesAtomicValuesAndStableProvenance(
 	snapshot, err := ResolveEffectiveSandboxSnapshot(groupID, "explicit")
 	require.NoError(t, err)
 	assert.Equal(t, sandboxpolicy.SnapshotVersion, snapshot.Version)
+	assert.Equal(t, groupID, snapshot.ResolutionGroupID)
 	assert.Equal(t, []sandboxpolicy.AppliedProfile{
 		{Scope: sandboxpolicy.ScopeGlobal, ID: globalID, Name: "global", UpdatedAt: snapshot.Applied[0].UpdatedAt},
 		{Scope: sandboxpolicy.ScopeGroup, ID: groupProfileID, Name: "group", UpdatedAt: snapshot.Applied[1].UpdatedAt},
@@ -363,4 +364,25 @@ func TestResolveEffectiveSandboxSnapshotComposesAtomicValuesAndStableProvenance(
 	groupProfile.Environment = []SandboxEnvironmentEntry{{Name: "TIER", Value: "mutated"}}
 	require.NoError(t, UpdateSandboxProfile(groupProfile))
 	assert.Equal(t, "explicit", snapshot.Effective.Environment[0].Value)
+}
+
+func TestResolveEffectiveSandboxSnapshotByIDFollowsExplicitProfileRename(t *testing.T) {
+	setupTestDB(t)
+	explicitID, err := CreateSandboxProfile(&SandboxProfile{
+		Name:        "before-rename",
+		Environment: []SandboxEnvironmentEntry{{Name: "VALUE", Value: "v1"}},
+	})
+	require.NoError(t, err)
+	profile, err := GetSandboxProfileByID(explicitID)
+	require.NoError(t, err)
+	profile.Name = "after-rename"
+	profile.Environment = []SandboxEnvironmentEntry{{Name: "VALUE", Value: "v2"}}
+	require.NoError(t, UpdateSandboxProfile(profile))
+
+	snapshot, err := ResolveEffectiveSandboxSnapshotByID(0, explicitID)
+	require.NoError(t, err)
+	require.Len(t, snapshot.Applied, 1)
+	assert.Equal(t, explicitID, snapshot.Applied[0].ID)
+	assert.Equal(t, "after-rename", snapshot.Applied[0].Name)
+	assert.Equal(t, []SandboxEnvironmentEntry{{Name: "VALUE", Value: "v2"}}, snapshot.Effective.Environment)
 }

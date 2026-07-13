@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -89,6 +90,56 @@ func TestGroupsClone_DefaultsSuffix(t *testing.T) {
 	require.NotNil(t, newGroup, "team-c-1 should exist")
 	newMembers, _ := db.ListAgentGroupMembers(newGroup.ID)
 	assert.Len(t, newMembers, 2, "new group member count")
+}
+
+func TestGroupsClone_ResumeRefreshesFromClonedGroupNotSourceGroup(t *testing.T) {
+	f := newFlow(t)
+	const sourceConv = "group-clone-policy-source-111111111111"
+	f.HaveConvWithTitle(sourceConv, "policy-worker")
+	f.HaveAliveSession(sourceConv, "spwn-policy-source", "tclaude-spwn-policy-source", t.TempDir())
+	sourceGroup := f.HaveGroup("policy-source-team")
+	f.HaveMember("policy-source-team", sourceConv)
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{
+		Name:        "source-policy",
+		Environment: []db.SandboxEnvironmentEntry{{Name: "POLICY_OWNER", Value: "source"}},
+	})
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupSandboxProfile("policy-source-team", "source-policy")
+	require.NoError(t, err)
+	launched, err := db.ResolveEffectiveSandboxSnapshot(sourceGroup.ID, "")
+	require.NoError(t, err)
+	agentID, err := db.AgentIDForConv(sourceConv)
+	require.NoError(t, err)
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &launched))
+
+	resp := groupCloneRequest(t, f, "policy-source-team", map[string]any{"new_name": "policy-clone-team"})
+	require.Len(t, resp.Members, 1)
+	require.Empty(t, resp.Members[0].Error)
+	cloneConv := resp.Members[0].NewConv
+	cloneGroup, err := db.GetAgentGroupByName("policy-clone-team")
+	require.NoError(t, err)
+	require.NotNil(t, cloneGroup)
+	persisted, err := db.AgentEffectiveSandboxConfigForConv(cloneConv)
+	require.NoError(t, err)
+	require.NotNil(t, persisted)
+	assert.Equal(t, cloneGroup.ID, persisted.ResolutionGroupID)
+
+	_, err = db.CreateSandboxProfile(&db.SandboxProfile{
+		Name:        "clone-policy",
+		Environment: []db.SandboxEnvironmentEntry{{Name: "POLICY_OWNER", Value: "clone"}},
+	})
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupSandboxProfile("policy-clone-team", "clone-policy")
+	require.NoError(t, err)
+	f.MarkOffline(resp.Members[0].Label)
+	resume := f.AsHuman().Resume(cloneConv)
+	f.AssertResumeSpawned(resume)
+	resumed, ok := f.World.SpawnSandboxPolicy(cloneConv)
+	require.True(t, ok)
+	require.NotNil(t, resumed)
+	require.Len(t, resumed.Effective.Environment, 1)
+	assert.Equal(t, sandboxpolicy.EnvironmentEntry{Name: "POLICY_OWNER", Value: "clone"}, resumed.Effective.Environment[0])
+	assert.Equal(t, cloneGroup.ID, resumed.ResolutionGroupID)
 }
 
 func TestGroupsClone_CodexCopyLeavesProoflessRepositoryDerivationToChild(t *testing.T) {

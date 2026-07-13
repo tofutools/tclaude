@@ -91,3 +91,34 @@ func TestEnsureAgentDirectoriesRejectsFrozenBindingOutsideCacheRoot(t *testing.T
 	_, err = ensureAgentDirectoriesForRelaunch(sandboxpolicy.NewSnapshot(effective, nil))
 	require.ErrorContains(t, err, "escapes tclaude's cache root")
 }
+
+func TestReconcileAgentDirectoriesForResumeRetainsExistingAndAddsStableBinding(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	oldEffective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Global: &sandboxpolicy.Profile{
+		Name: "old", AgentDirectories: []string{"GOCACHE"},
+	}})
+	require.NoError(t, err)
+	previous, cleanup, err := materializeAgentDirectories(sandboxpolicy.NewSnapshot(oldEffective, nil), "spwn-original")
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+	oldPath := previous.Effective.Environment[0].Value
+
+	currentEffective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Global: &sandboxpolicy.Profile{
+		Name:             "current",
+		Environment:      []sandboxpolicy.EnvironmentEntry{{Name: "PROFILE_VERSION", Value: "v2"}},
+		AgentDirectories: []string{"GOCACHE", "GOLANGCI_LINT_CACHE"},
+	}})
+	require.NoError(t, err)
+	current := sandboxpolicy.NewSnapshot(currentEffective, nil)
+	resumed, err := reconcileAgentDirectoriesForResume(current, previous, "agt_resume_test")
+	require.NoError(t, err)
+
+	bindings := map[string]string{}
+	for _, entry := range resumed.Effective.Environment {
+		bindings[entry.Name] = entry.Value
+	}
+	assert.Equal(t, "v2", bindings["PROFILE_VERSION"])
+	assert.Equal(t, oldPath, bindings["GOCACHE"])
+	assert.Contains(t, bindings["GOLANGCI_LINT_CACHE"], filepath.Join("agent-dirs", "agt_resume_test"))
+	assert.DirExists(t, bindings["GOLANGCI_LINT_CACHE"])
+}

@@ -290,7 +290,7 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 			})
 			continue
 		}
-		if err := inheritEffectiveSandboxSnapshot(m.ConvID, newConv); err != nil {
+		if err := inheritEffectiveSandboxSnapshotForGroup(m.ConvID, newConv, newGroupID); err != nil {
 			results = append(results, memberResult{SrcConv: m.ConvID, NewConv: newConv, Title: newTitle, Label: label, Error: "persist sandbox snapshot: " + err.Error()})
 			continue
 		}
