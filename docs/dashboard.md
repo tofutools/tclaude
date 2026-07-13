@@ -913,6 +913,34 @@ Cleanup is **human-only** — these endpoints live on the loopback dashboard
 server behind the same cookie + Origin pinning as every other mutation; agents
 on the `/v1` socket have no path to them.
 
+## Visual smoke testing
+
+The manually-run DashSnap harness drives a real headless Chrome through the
+dashboard's state matrix and writes screenshots plus an HTML contact sheet under
+`dashsnap-out/`. It is opt-in and is not part of CI:
+
+```bash
+TCLAUDE_DASHSNAP=1 go test ./pkg/claude/agentd/ \
+  -run TestDashSnap -v -count=1 -timeout 300s
+```
+
+Set `TCLAUDE_DASHSNAP_FILTER=groups-chip-keyboard` (or another state-key
+substring) before the command to capture a subset. Set
+`TCLAUDE_DASHSNAP_CHROME=/path/to/chrome` when Chrome is not in a usual platform
+install location.
+
+On Linux, the harness launches Chrome with `--no-sandbox` so it can run inside a
+restricted coding-agent environment. On macOS, it also points
+`MAC_CHROMIUM_TMPDIR` at a disposable, writable directory unless that variable
+is already set. That avoids Chromium's otherwise hard-coded user-temp socket
+path, but it cannot bypass a seatbelt sandbox that denies `mach-register`:
+Chrome's multi-process startup requires the
+`com.google.Chrome.MachPortRendezvousServer.*` service. A sandboxed macOS agent
+must therefore ask the operator to run the command outside the agent sandbox,
+or run the harness in a Linux environment. This is an OS sandbox capability
+boundary, not a filesystem permission that another writable-directory grant can
+fix.
+
 ## See also
 
 - [Agent Coordination](agent.md) — the `tclaude agent` CLI, `agentd`, groups,

@@ -45,7 +45,7 @@ import (
 // browser.
 func TestDashSnap(t *testing.T) {
 	if os.Getenv("TCLAUDE_DASHSNAP") == "" {
-		t.Skip("visual smoke harness — set TCLAUDE_DASHSNAP=1 to run (needs a Linux headless Chrome)")
+		t.Skip("visual smoke harness — set TCLAUDE_DASHSNAP=1 to run (needs a local headless Chrome)")
 	}
 
 	f := newFlow(t)

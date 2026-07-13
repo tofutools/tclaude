@@ -19,10 +19,11 @@
 // # Runtime prerequisites (discovered on the JOH-386 WSL2 box — the next
 // runner should not have to rediscover these)
 //
-//   - A LINUX-side headless Chrome/Chromium binary. On the dev box that is
+//   - A local headless Chrome/Chromium binary. On the WSL2 dev box that is
 //     Google Chrome at /usr/bin/google-chrome (-> /opt/google/chrome/chrome, a
 //     real ELF x86-64 binary). A Windows Chrome under /mnt/c/... does NOT count —
-//     it's the wrong process/display world.
+//     it's the wrong process/display world. Unsandboxed macOS runs may use the
+//     normal Google Chrome application binary.
 //   - We pin Chrome via launcher.Bin() so rod NEVER tries to auto-download a
 //     browser (there may be no network for that). Override the path with
 //     TCLAUDE_DASHSNAP_CHROME=/path/to/chrome if it lives elsewhere.
@@ -34,6 +35,13 @@
 //   - Chrome prints harmless stderr noise in this environment — crashpad
 //     "Read-only file system" lines and dbus/UPower "ServiceUnknown" lines. They
 //     are NOT failures; screenshots still render. Ignore them.
+//   - On macOS, Capture points MAC_CHROMIUM_TMPDIR at its disposable browser
+//     directory unless the caller already set it. This avoids Chromium ignoring
+//     TMPDIR and trying to create ProcessSingleton state under a restricted
+//     _CS_DARWIN_USER_TEMP_DIR. It does not grant Chrome permission to register
+//     its required Mach rendezvous service: coding-agent seatbelt sandboxes that
+//     deny mach-register still cannot launch Chrome. Run there outside the agent
+//     sandbox, or run the harness on Linux.
 //
 // # How to run
 //
@@ -167,7 +175,8 @@ const (
 
 // resolveChrome finds a Chrome binary WITHOUT ever triggering rod's auto-download
 // (there may be no network for it). Order: explicit arg, TCLAUDE_DASHSNAP_CHROME,
-// the known default path, then rod's own LookPath over the usual install spots.
+// the known Linux default path, then rod's own LookPath over the usual install
+// spots for the current platform.
 func resolveChrome(explicit string) (string, error) {
 	candidates := []string{
 		explicit,
@@ -186,7 +195,7 @@ func resolveChrome(explicit string) (string, error) {
 	if p, ok := launcher.LookPath(); ok {
 		return p, nil
 	}
-	return "", fmt.Errorf("no Linux Chrome/Chromium found (looked at TCLAUDE_DASHSNAP_CHROME, %s, and $PATH); "+
+	return "", fmt.Errorf("no Chrome/Chromium found (looked at TCLAUDE_DASHSNAP_CHROME, %s, and the platform's usual install locations); "+
 		"install one or set TCLAUDE_DASHSNAP_CHROME", defaultChromeBin)
 }
 
@@ -204,15 +213,24 @@ func Capture(cfg Config) ([]Shot, error) {
 	if err := os.MkdirAll(cfg.OutDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create out dir: %w", err)
 	}
+	browserRoot, err := os.MkdirTemp(cfg.OutDir, ".dashsnap-chrome-")
+	if err != nil {
+		return nil, fmt.Errorf("create browser temp dir: %w", err)
+	}
+	// Registered before the launcher's reap defer below so browser processes are
+	// dead before their profile/temp directory is removed (defer is LIFO).
+	defer func() { _ = os.RemoveAll(browserRoot) }()
 
 	l := launcher.New().
 		Bin(chromeBin).
+		UserDataDir(filepath.Join(browserRoot, "profile")).
 		Headless(true).
 		NoSandbox(true).
 		Leakless(false).
 		Set("disable-gpu").
 		Set("hide-scrollbars").
 		Set("window-size", fmt.Sprintf("%d,%d", cfg.Width, cfg.Height))
+	configurePlatformChrome(l, browserRoot)
 	// Leakless(false) disables rod's reaper watchdog, so once Launch may have
 	// spawned a process we must kill it ourselves or orphan a headless Chrome.
 	// Registered BEFORE Launch: Launch can fail after the spawn (e.g. "Failed to
@@ -222,7 +240,7 @@ func Capture(cfg Config) ([]Shot, error) {
 	defer l.Kill()
 	controlURL, err := l.Launch()
 	if err != nil {
-		return nil, fmt.Errorf("launch chrome (%s): %w", chromeBin, err)
+		return nil, fmt.Errorf("launch chrome (%s): %w%s", chromeBin, err, platformLaunchHint)
 	}
 
 	browser := rod.New().ControlURL(controlURL)
