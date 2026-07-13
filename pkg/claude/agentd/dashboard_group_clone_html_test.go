@@ -29,14 +29,12 @@ func TestDashboardHTML_GroupCloneModal(t *testing.T) {
 	// The Preact-controlled `checked=${withAgents}` attribute is dynamic, so its
 	// unchecked initial value is asserted behaviorally in the JS component test.
 
-	// The JS behaviour: default-name computation, preview render, the
-	// POST, and the init-time bind.
+	// The JS behaviour: default-name computation, preview render, and the POST.
 	must("defaultName: `${prefix}${suffix}`", "client computes the <source>-c-N default name")
 	must("function GroupClonePreview(", "the Preact modal renders a settings preview")
 	must("no_clone_members", "submit sends the with/without-agents flag")
 	must("copy_owners", "submit sends the owner-copy opt-in flag")
 	must("/clone`", "submit POSTs to the group clone endpoint")
-	must("bindGroupCloneModal()", "the modal is wired up at init")
 
 	// The preview's CSS ships with the page.
 	must(".group-clone-preview {", "the preview panel has a CSS rule")

@@ -179,9 +179,9 @@ export function mountDockFeature(dependencies = {}) {
   return mountIslandDescriptor(dockDescriptor, dependencies);
 }
 
-// The Jobs pilot is the first production island. Keep the dynamic boundary so
-// a corrupt optional asset produces a visible feature-local error rather than
-// preventing the rest of the dashboard entry module from booting.
+// Keep the Jobs graph behind the shared dynamic boundary so a corrupt optional
+// asset produces a visible feature-local error rather than preventing the rest
+// of the dashboard entry module from booting.
 const jobsDescriptor = createIslandDescriptor({
     name: 'jobs',
     label: 'Jobs',
@@ -210,8 +210,7 @@ export async function mountJobsFeature(actionDependencies) {
   return mountIslandDescriptor(jobsDescriptor, actionDependencies);
 }
 
-// Plugins is the second bounded migration and follows the same guarded
-// lifecycle as Jobs. Its tab, nav badge, and modal are one ownership unit.
+// The Plugins tab, nav badge, and modal form one guarded ownership unit.
 const pluginsDescriptor = createIslandDescriptor({
     name: 'plugins',
     label: 'Plugins',

@@ -193,20 +193,10 @@ nav [data-tab]:hover { color: #d4d4d4; }
 .access-reader-actions .grow { flex: 1 1 auto; }
 .access-reader-body { white-space: normal; }
 
-.access-card {
-  border: 1px solid #2a3340; border-left: 3px solid #d29922; border-radius: 6px;
-  background: #0f141a; margin: 8px 8px 0; padding: 10px 12px;
-}
-.access-card.attn { animation: access-attn 1.1s ease-in-out 2; }
 @keyframes access-attn {
   0%, 100% { box-shadow: 0 0 0 0 rgba(210, 153, 34, 0); }
   50% { box-shadow: 0 0 0 3px rgba(210, 153, 34, 0.5); }
 }
-@media (prefers-reduced-motion: reduce) { .access-card.attn { animation: none; } }
-.access-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
-.access-sigil { font-size: 15px; }
-.access-who { font-weight: 700; color: #e6edf3; }
-.access-verb { color: #8b949e; font-size: 12px; }
 .access-meta { display: flex; flex-direction: column; gap: 4px; }
 .access-row { display: flex; gap: 8px; font-size: 12px; align-items: baseline; }
 .access-row.access-body-row { flex-direction: column; gap: 3px; }
@@ -221,8 +211,6 @@ nav [data-tab]:hover { color: #d4d4d4; }
   padding: 6px 8px; font-size: 11.5px; color: #c9d1d9;
   white-space: pre-wrap; word-break: break-word; max-height: 12em; overflow-y: auto;
 }
-.access-foot { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
-.access-foot .grow { flex: 1; }
 .access-countdown { font-size: 11px; color: #8b949e; }
 .access-btn {
   border: 1px solid #2a3340; border-radius: 6px; padding: 5px 12px;
@@ -240,8 +228,6 @@ nav [data-tab]:hover { color: #d4d4d4; }
 
 /* Recently-handled history: decided requests stay in the folder (dimmed) so the
    operator can see what they chose, under a small divider below the pending ones. */
-.access-card.handled { border-left-color: #30363d; opacity: 0.72; }
-.access-card.handled .access-who { color: #adbac7; }
 .access-divider {
   margin: 16px 8px 2px; padding: 0 4px; font-size: 11px; font-weight: 600;
   letter-spacing: 0.04em; text-transform: uppercase; color: #6e7681;
@@ -265,18 +251,7 @@ body.wizard .access-banner {
 }
 body.wizard .access-banner-review { background: #a97bd6; color: #14102a; }
 body.wizard .access-banner-review:hover { background: #c39ee8; }
-body.wizard .access-card {
-  background: linear-gradient(180deg, #1a1330 0%, #211a38 100%);
-  border-color: rgba(122, 93, 176, 0.5); border-left-color: #a97bd6;
-}
-body.wizard .access-card.attn { animation: access-attn-wiz 1.1s ease-in-out 2; }
-@keyframes access-attn-wiz {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(169, 123, 214, 0); }
-  50% { box-shadow: 0 0 0 3px rgba(169, 123, 214, 0.55); }
-}
-@media (prefers-reduced-motion: reduce) { body.wizard .access-card.attn { animation: none; } }
-body.wizard .access-who { color: #f3e6c0; text-shadow: 0 0 6px rgba(169, 123, 214, 0.4); }
-body.wizard .access-verb, body.wizard .access-k, body.wizard .access-countdown { color: #b39ddb; }
+body.wizard .access-k, body.wizard .access-countdown { color: #b39ddb; }
 body.wizard .access-v { color: #e7d9f5; }
 body.wizard .access-body { background: #14102a; border-color: rgba(122, 93, 176, 0.4); color: #e7d9f5; }
 body.wizard .access-btn { background: #241b3d; border-color: rgba(122, 93, 176, 0.5); color: #e7d9f5; }
@@ -285,7 +260,6 @@ body.wizard .access-btn.approve { background: #3a2f16; border-color: #d4af37; co
 body.wizard .access-btn.approve:hover { background: #4a3c1c; }
 body.wizard .access-btn.always { background: #2a2140; border-color: #a97bd6; color: #f3e6c0; }
 body.wizard .access-btn.deny { background: #3a1c2a; border-color: #b3426a; color: #f0b3cb; }
-body.wizard .access-card.handled { border-left-color: rgba(122, 93, 176, 0.35); }
 body.wizard .access-divider { color: #8f7bb5; }
 body.wizard .access-outcome.approved { color: #7bd88f; }
 body.wizard .access-outcome.always { color: #e6c07b; }
@@ -2650,33 +2624,6 @@ details[data-group-key][open] > summary .group-sandbox-profile {
   width: 16px;
   height: 16px;
 }
-.profile-transfer-main {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.profile-transfer-name {
-  color: #d4d4d4;
-  font-weight: 600;
-  overflow-wrap: anywhere;
-}
-.profile-transfer-summary,
-.profile-transfer-note {
-  color: #8b949e;
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
-.profile-transfer-error {
-  color: #ff7b72;
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
-.profile-transfer-warning {
-  color: #d29922;
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
 .profile-import-conflict {
   display: flex;
   gap: 6px;
@@ -3620,8 +3567,6 @@ body.wizard .group-pending-title-wizard { display: inline; }
   padding: 0; margin-bottom: 2px; color: #8b949e;
   font-size: 12px; font-weight: 600;
 }
-.sbx-editor-section { align-items: flex-start; }
-.sbx-editor-field { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .sbx-rows { display: flex; flex-direction: column; gap: 6px; }
 .sbx-rows:empty { display: none; }
 .sbx-row { display: flex; gap: 6px; align-items: stretch; }
@@ -3630,24 +3575,23 @@ body.wizard .group-pending-title-wizard { display: inline; }
    5.5em clipped even the regular "write" label in Chromium. The same width
    also fits wizard mode's longer "inscribe" label. */
 .sbx-row .sbx-access { flex: 0 0 7em; }
-/* Env name column is narrower than the value column. */
-.sbx-row-env .sbx-env-name { flex: 0 0 32%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-/* Include rows are a single library dropdown plus the ✕ button. */
-.sbx-row-inc .sbx-inc-name { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.sbx-row .sbx-inc-name {
+  flex: 1; min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
 /* Agent-owned directory rows are a single variable-name input plus the ✕. */
-.sbx-row-agent .sbx-agent-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.sbx-agent-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .sbx-row .sbx-path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 /* Browse… and the ✕ delete button share the dark inline-button skin. */
-.sbx-row button, .sbx-row .sbx-browse, .sbx-row .sbx-del {
+.sbx-row button {
   flex: 0 0 auto; align-self: stretch;
   background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
   color: #c9d1d9; font-family: inherit; font-size: 12px;
   padding: 0 10px; cursor: pointer; white-space: nowrap;
 }
-.sbx-row button:last-child, .sbx-row .sbx-del { padding: 0 9px; color: #8b949e; }
-.sbx-row button:hover, .sbx-row .sbx-browse:hover, .sbx-row .sbx-del:hover { background: #2d333b; }
-.sbx-row button:last-child:hover, .sbx-row .sbx-del:hover { color: #f0b0b0; border-color: #6e3a3a; }
-.sbx-row .sbx-browse:disabled { opacity: 0.5; cursor: default; }
+.sbx-row button:last-child { padding: 0 9px; color: #8b949e; }
+.sbx-row button:hover { background: #2d333b; }
+.sbx-row button:last-child:hover { color: #f0b0b0; border-color: #6e3a3a; }
 /* Sandbox-profile card body: one compact line per grant / env key, replacing
    the old ` · `-joined .modal-meta paragraph. Each line is a small tag plus a
    monospace value that ellipsis-truncates rather than wrapping. */
@@ -3664,7 +3608,7 @@ body.wizard .group-pending-title-wizard { display: inline; }
 .sbx-cap-read  { color: #6cb6ff; background: rgba(56, 139, 253, 0.12); border-color: rgba(56, 139, 253, 0.30); }
 .sbx-cap-deny  { color: #f85149; background: rgba(248, 81, 73, 0.12); border-color: rgba(248, 81, 73, 0.35); }
 .sbx-cap-env   { color: #7ee787; background: rgba(63, 185, 80, 0.12); border-color: rgba(63, 185, 80, 0.30); }
-.sbx-cap-incl  { color: #d2a8ff; background: rgba(163, 113, 247, 0.12); border-color: rgba(163, 113, 247, 0.30); }
+.sbx-cap-inc   { color: #d2a8ff; background: rgba(163, 113, 247, 0.12); border-color: rgba(163, 113, 247, 0.30); }
 /* "own" = agent-owned directory variable (isolated per-agent dir at spawn). */
 .sbx-cap-own   { color: #56d4dd; background: rgba(57, 197, 207, 0.12); border-color: rgba(57, 197, 207, 0.30); }
 .sbx-cap-val {
@@ -4660,7 +4604,6 @@ body.wizard .directory-picker-modal .modal-buttons { border-top-color: rgba(122,
 .cfg-row-del:hover { border-color: #f85149; color: #f85149; }
 .cfg-list-add { align-self: flex-start; }
 .cfg-list-add:hover { border-color: #58a6ff; }
-.cfg-list-empty { font-size: 11px; color: #7d8590; font-style: italic; }
 .cfg-advanced { margin: 0 0 14px; border: 1px solid #30363d; border-radius: 8px; background: #0f141a; }
 .cfg-advanced > summary {
   cursor: pointer; font-size: 11px; color: #58a6ff; padding: 10px 14px;
@@ -5996,7 +5939,6 @@ body.slop-shake { animation: slop-shake 0.6s ease-in-out; }
 }
 .export-history-item button:hover { border-color: #58a6ff; }
 .export-history-item button.ehi-del:hover { border-color: #f85149; color: #f85149; }
-.export-history-empty { font-size: 12px; color: #6e7681; padding: 4px 2px; }
 
 /* ═══ Wizard theme (body.wizard) ═════════════════════════════════════
    The 🧙 "it's wizard time" re-skin — activated by ?wizard=1 on the URL
@@ -8166,7 +8108,6 @@ body.wizard #export-agent-modal .export-same-group { color: #e7d9f5; }
 body.wizard #export-agent-modal .export-same-group-hint { color: #b39ddb; }
 /* The working phase: spinner caption + note go parchment/violet, and the
    spinner itself spins tarnished-gold on a violet track (from arcane blue). */
-body.wizard #export-agent-modal .export-status-row { color: #e7d9f5; }
 body.wizard #export-agent-modal .export-status-note { color: #b39ddb; }
 body.wizard #export-agent-modal .export-spinner {
   border-color: rgba(122, 93, 176, 0.4);
@@ -8762,8 +8703,6 @@ body.wizard #template-editor-modal .template-agent-row {
 body.wizard #template-editor-modal .template-agent-num { color: #a97bd6; }
 body.wizard #template-editor-modal .template-agent-owner,
 body.wizard #template-editor-modal .ta-perms-list label { color: #e7d9f5; }
-body.wizard #template-editor-modal .ta-perms-details summary { color: #b39ddb; }
-body.wizard #template-editor-modal .ta-perms-details summary:hover { color: #f3e6c0; }
 /* Work-pattern rows ride the .template-agent-row re-skin above; only
    their send-to select needs its own arcane coat. */
 body.wizard #template-editor-modal .template-pattern-sendto { color: #b39ddb; }
@@ -9363,16 +9302,13 @@ body.wizard :is(#profile-export-modal, #profile-import-modal) .cron-create-modal
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
 }
 body.wizard :is(#profile-export-modal, #profile-import-modal) .modal-meta,
-body.wizard :is(#profile-export-modal, #profile-import-modal) .cron-create-label,
-body.wizard :is(#profile-export-modal, #profile-import-modal) .profile-transfer-summary,
-body.wizard :is(#profile-export-modal, #profile-import-modal) .profile-transfer-note {
+body.wizard :is(#profile-export-modal, #profile-import-modal) .cron-create-label {
   color: #b39ddb;
 }
 body.wizard :is(#profile-export-modal, #profile-import-modal) .profile-transfer-row {
   background: rgba(20, 15, 40, 0.78);
   border-color: rgba(122, 93, 176, 0.5);
 }
-body.wizard :is(#profile-export-modal, #profile-import-modal) .profile-transfer-name { color: #f3e6c0; }
 body.wizard :is(#profile-export-modal, #profile-import-modal) input,
 body.wizard :is(#profile-export-modal, #profile-import-modal) textarea,
 body.wizard :is(#profile-export-modal, #profile-import-modal) select {
@@ -9525,16 +9461,13 @@ body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) .c
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
 }
 body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) .modal-meta,
-body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-label,
-body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) .profile-transfer-summary,
-body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) .profile-transfer-note {
+body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-label {
   color: #b39ddb;
 }
 body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) .profile-transfer-row {
   background: rgba(20, 15, 40, 0.78);
   border-color: rgba(122, 93, 176, 0.5);
 }
-body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) .profile-transfer-name { color: #f3e6c0; }
 body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) input,
 body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) textarea,
 body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) select {
@@ -10696,13 +10629,11 @@ body.wizard #tab-config .cfg-section > h3 {
    toggle reads violet BY DESIGN, matching their base-theme prominence. */
 body.wizard #tab-config .cfg-advanced > summary { color: #d9b45a; }
 
-/* Field labels + body text go parchment; hints, the field-nested advanced
-   summary (the muted tier — see the two-tier note above) + the empty-list note
-   go violet. */
+/* Field labels + body text go parchment; hints and the field-nested advanced
+   summary (the muted tier — see the two-tier note above) go violet. */
 body.wizard #tab-config .cfg-field,
 body.wizard #tab-config .cfg-field .cfg-label { color: #e7d9f5; }
 body.wizard #tab-config .cfg-hint,
-body.wizard #tab-config .cfg-list-empty,
 body.wizard #tab-config .cfg-list-row .cfg-arrow,
 body.wizard #tab-config .cfg-field details.cfg-advanced > summary { color: #b39ddb; }
 

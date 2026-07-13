@@ -99,8 +99,8 @@ is blocked by the Claude Code bash sandbox anyway.
 
 ## Layout
 
-A single-page app that polls `GET /api/snapshot` every 5 seconds and renders
-nine tabs. Common affordances across the data tabs:
+A single-page app that polls `GET /api/snapshot` every 2 seconds and presents
+a tabbed operations surface. Common affordances across the data tabs:
 
 - **Click-to-sort** — column headers toggle ascending/descending.
 - **Search box** — per-tab text filter. On Groups it also matches role,
@@ -111,9 +111,9 @@ nine tabs. Common affordances across the data tabs:
   (`inherit → always show → always hide`).
 - **Expandable rows** — `<details>` open/closed state persists in
   `localStorage` across polls.
-- All edits are **optimistic**: the UI applies the change locally, fires the
-  API call, and rolls back on failure; the next 5s poll reconciles to
-  canonical state.
+- Interactive list edits are generally **optimistic**: the UI applies the
+  change locally, fires the API call, and rolls back on failure; the next
+  2-second poll reconciles to canonical state.
 
 ### Groups
 

@@ -30,11 +30,12 @@ import (
 // directory: dashboard.html, dashboard.css, and the ES-module JS set
 // under dashboard/js/. agentd serves dashboard.html at "/" and the CSS
 // and JS as static assets under /static/ (see registerDashboardRoutes).
-// The legacy dashboard and Preact islands load source JS as native ES modules.
+// The dashboard shell, feature islands, and retained imperative integrations
+// load source JS as native ES modules.
 // Preact, HTM, and Signals are vendored under dashboard/vendor/preact/ and an
 // import map gives application modules normal package specifiers. Islands are
-// dynamically loaded so a missing runtime module cannot prevent the legacy
-// graph from linking.
+// dynamically loaded so a missing optional feature module cannot prevent the
+// static entry graph from linking.
 //
 //go:embed dashboard
 var dashboardFS embed.FS

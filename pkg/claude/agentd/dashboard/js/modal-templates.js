@@ -35,10 +35,6 @@ export function deleteTemplate(name) {
   return managementController().removeTemplate(name);
 }
 
-export function openDeployModal(name) {
-  return managementController().openTemplateDeploy(name || '', '');
-}
-
 export function openSummonForDrop(templateName, dropGroup) {
   return managementController().openTemplateDeploy(templateName, (dropGroup || '').trim());
 }
@@ -69,11 +65,6 @@ export function bindTemplatesUI() {
 export function bindGroupImportModal() {
   document.querySelector('#group-import-open')?.addEventListener('click', () => managementController().openGroupImport());
 }
-
-// Kept as no-op compatibility hooks until the surrounding Groups runtime is
-// migrated; row-actions call the controller wrappers above directly.
-export function bindGroupContextModal() {}
-export function bindGroupCloneModal() {}
 
 const SCRIBE_NAME = 'circle-scribe';
 const SCRIBE_SLUGS = ['templates.manage'];

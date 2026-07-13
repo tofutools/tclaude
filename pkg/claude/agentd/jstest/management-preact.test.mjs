@@ -58,6 +58,27 @@ test('management island renders keyed profile list and explicit editor state', a
   cleanups.reverse().forEach((fn) => fn()); assert.equal(host.childElementCount, 0);
 });
 
+test('sandbox manager renders included-profile tags with the styled class contract', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.sandboxRequest.commitRequest(state.sandboxRequest.beginRequest(), [{
+    name: 'child', filesystem: [], environment: [], includes: ['base'], agent_directories: [],
+  }]);
+  state.openManager('sandbox');
+  const actions = { load() {}, openSandboxEditor() {}, removeSandbox() {}, configureSandboxWithAgent() {} };
+  const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
+  mountManagementIsland({ host, state, actions, confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } });
+  await harness.act(() => Promise.resolve());
+  const tag = host.querySelector('.sbx-cap-inc');
+  assert.ok(tag, 'include tag uses the CSS-owned class');
+  assert.equal(tag.textContent, 'include');
+  assert.equal(tag.nextElementSibling.title, 'base');
+  cleanups.reverse().forEach((fn) => fn());
+});
+
 test('profile editor Escape follows the visual stack over a later spawn dialog', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }, { isTopmostOverlay }] = await Promise.all([
@@ -184,7 +205,7 @@ test('sandbox editor owns nested rows, raw validation, dirty discard, and save-i
   const path = host.querySelector('.sbx-path'); path.value = '/cache'; path.dispatchEvent(new harness.window.Event('input', { bubbles: true })); await harness.act(() => Promise.resolve());
   assert.equal(harness.document.activeElement === path || path.value === '/cache', true);
   host.querySelector('.sbx-include-add').click(); host.querySelector('.sbx-agent-add').click(); await harness.act(() => Promise.resolve());
-  const include = [...host.querySelectorAll('.sbx-section select')].at(-1); include.querySelector('option[value="base"]').selected = true; include.dispatchEvent(new harness.window.Event('change', { bubbles: true })); const agentDir = host.querySelector('.sbx-agent-name'); agentDir.value = 'GOCACHE'; agentDir.dispatchEvent(new harness.window.Event('input', { bubbles: true })); await harness.act(() => Promise.resolve());
+  const access = host.querySelector('.sbx-access'); const include = host.querySelector('.sbx-inc-name'); assert.ok(access); assert.ok(include); assert.notEqual(access, include, 'access and included-profile selects have distinct layout contracts'); include.querySelector('option[value="base"]').selected = true; include.dispatchEvent(new harness.window.Event('change', { bubbles: true })); const agentDir = host.querySelector('.sbx-agent-name'); agentDir.value = 'GOCACHE'; agentDir.dispatchEvent(new harness.window.Event('input', { bubbles: true })); await harness.act(() => Promise.resolve());
   state.busy.value = 'sandbox-save'; await harness.act(() => Promise.resolve()); assert.equal(host.querySelector('#sandbox-profile-editor-modal .modal-buttons button').disabled, true);
   state.busy.value = ''; await harness.act(() => Promise.resolve());
   host.querySelector('.sbx-advanced-toggle').click(); await harness.act(() => Promise.resolve());

@@ -365,12 +365,12 @@ func TestDashboardCSS_SandboxProfileEditorResizable(t *testing.T) {
 	}
 }
 
-// TestDashboardCSS_SandboxProfileAccessSelectorFitsLabels guards the access
-// selector width. The control also contains native arrow chrome and horizontal
+// TestDashboardCSS_SandboxProfileSelectLayouts guards the distinct access and
+// included-profile selector layouts. The access control contains native arrow chrome and horizontal
 // padding, so the old 5.5em basis clipped the ordinary "write" label in
 // Chromium. Seven em fits both the regular labels and wizard mode's longer
 // "inscribe" label without making the selector flexible.
-func TestDashboardCSS_SandboxProfileAccessSelectorFitsLabels(t *testing.T) {
+func TestDashboardCSS_SandboxProfileSelectLayouts(t *testing.T) {
 	cssBytes, err := fs.ReadFile(dashboardAssetsFS, "dashboard.css")
 	if err != nil {
 		t.Fatalf("reading embedded dashboard.css: %v", err)
@@ -378,6 +378,9 @@ func TestDashboardCSS_SandboxProfileAccessSelectorFitsLabels(t *testing.T) {
 	css := string(cssBytes)
 	if !strings.Contains(css, ".sbx-row .sbx-access { flex: 0 0 7em; }") {
 		t.Error("dashboard.css access selector must reserve enough width for its labels and native arrow")
+	}
+	if !strings.Contains(css, ".sbx-row .sbx-inc-name {\n  flex: 1; min-width: 0;") {
+		t.Error("dashboard.css included-profile selector must fill the available row width")
 	}
 }
 
@@ -823,25 +826,21 @@ func TestDashboardAssets_UsageReadoutWired(t *testing.T) {
 	}
 }
 
-// TestDashboardAssets_FeatureFlagsWired guards the experimental feature
-// flags (config features.*, currently features.processes), whose Config-tab
-// pieces span dashboard.html + config.js and must stay in lockstep — there's
-// no JS render test, so we assert on the embedded concatenation at
-// `go test ./...`. The Go accessor + round-trip is covered separately by
-// config.TestProcessesEnabled / config.TestFeaturesConfig_RoundTrips. A
-// rename in either file silently breaks the toggle only in the browser:
-//   - dashboard.html — the Config-tab checkbox;
-//   - config.js — load (fill) + gather (save) the flag.
+// TestDashboardAssets_FeatureFlagsWired guards the experimental feature flags
+// (currently features.processes) across their exact Preact markup and adapter
+// owners. The Go accessor + round-trip is covered separately by
+// config.TestProcessesEnabled / config.TestFeaturesConfig_RoundTrips.
 func TestDashboardAssets_FeatureFlagsWired(t *testing.T) {
-	for _, needle := range []string{
-		// dashboard.html — the Config-tab checkbox.
-		`id="cfg-feature-processes"`,
-		// config.js — load + gather the flag (the key that actually writes).
-		"#cfg-feature-processes",
-		"feats.processes = true",
-	} {
-		if !strings.Contains(dashboardAssets, needle) {
-			t.Errorf("dashboard assets missing %q — experimental feature flags config broken", needle)
+	owners := map[string][]string{
+		"js/config-form-markup.js":  {`id="cfg-feature-processes"`, `features.processes`},
+		"js/config-form-adapter.js": {"#cfg-feature-processes", "feats.processes = true"},
+	}
+	for name, needles := range owners {
+		contents := string(mustReadFS(dashboardAssetsFS, name))
+		for _, needle := range needles {
+			if !strings.Contains(contents, needle) {
+				t.Errorf("%s missing %q — experimental feature flag config broken", name, needle)
+			}
 		}
 	}
 }
