@@ -408,9 +408,12 @@ CREATE TABLE pending_spawns (
 			worktree_path   TEXT NOT NULL DEFAULT '',
 			worktree_branch TEXT NOT NULL DEFAULT '',
 			created_at      TEXT NOT NULL
-		, reply_to_agent TEXT NOT NULL DEFAULT '', spawned_by_agent TEXT NOT NULL DEFAULT '', is_owner INTEGER NOT NULL DEFAULT 0, permission_overrides TEXT NOT NULL DEFAULT '', process_command_id TEXT NOT NULL DEFAULT '', effective_sandbox_config TEXT NOT NULL DEFAULT '');
+		, reply_to_agent TEXT NOT NULL DEFAULT '', spawned_by_agent TEXT NOT NULL DEFAULT '', is_owner INTEGER NOT NULL DEFAULT 0, permission_overrides TEXT NOT NULL DEFAULT '', process_command_id TEXT NOT NULL DEFAULT '', effective_sandbox_config TEXT NOT NULL DEFAULT '', agent_id TEXT NOT NULL DEFAULT '', launching INTEGER NOT NULL DEFAULT 0);
 
 CREATE UNIQUE INDEX idx_pending_spawns_process_command ON pending_spawns(process_command_id) WHERE process_command_id <> '';
+
+CREATE UNIQUE INDEX idx_pending_spawns_agent
+			ON pending_spawns(agent_id) WHERE agent_id <> '';
 
 CREATE TABLE spawn_profiles (
 			id                            INTEGER PRIMARY KEY AUTOINCREMENT,

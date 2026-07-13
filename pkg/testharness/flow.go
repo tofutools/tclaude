@@ -683,6 +683,7 @@ func (f *Flow) SetSessionStatus(convID, status string) {
 // SpawnResp parses POST /v1/groups/{name}/spawn.
 type SpawnResp struct {
 	Group       string `json:"group"`
+	AgentID     string `json:"agent_id"`
 	ConvID      string `json:"conv_id"`
 	Label       string `json:"label"`
 	TmuxSession string `json:"tmux_session"`

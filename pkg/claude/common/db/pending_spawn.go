@@ -3,8 +3,10 @@ package db
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
@@ -29,7 +31,14 @@ import (
 // pending_spawns row. The fields reconstruct the spawnParams subset
 // finishSpawnEnrollment consumes plus the group_id that locates the group.
 type PendingSpawn struct {
-	Label          string
+	Label string
+	// AgentID is the stable actor identity reserved before the harness conv-id
+	// materialises. Empty only for legacy rows written before schema v117.
+	AgentID string
+	// Launching protects a pre-launch reservation from the pending sweeper
+	// until the session wrapper has created its row. It is cleared as soon as
+	// executeSpawn observes that row; stale launch attempts age out in agentd.
+	Launching      bool
 	GroupID        int64
 	Role           string
 	Descr          string
@@ -89,12 +98,12 @@ func InsertPendingSpawn(p *PendingSpawn) error {
 	}
 	_, err = db.Exec(`
 		INSERT OR REPLACE INTO pending_spawns
-			(label, group_id, role, descr, name, initial_message, group_context,
+			(label, agent_id, launching, group_id, role, descr, name, initial_message, group_context,
 			 reply_to_conv, spawned_by_conv, reply_to_agent, spawned_by_agent,
 			 worktree_path, worktree_branch, is_owner, permission_overrides, process_command_id,
 			 effective_sandbox_config, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`, `+agentForConvExpr+`, ?, ?, ?, ?, ?, ?, ?)`,
-		p.Label, p.GroupID, p.Role, p.Descr, p.Name, p.InitialMessage, p.GroupContext,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`, `+agentForConvExpr+`, ?, ?, ?, ?, ?, ?, ?)`,
+		p.Label, p.AgentID, boolToInt(p.Launching), p.GroupID, p.Role, p.Descr, p.Name, p.InitialMessage, p.GroupContext,
 		p.ReplyToConv, p.SpawnedByConv, p.ReplyToConv, p.SpawnedByConv,
 		p.WorktreePath, p.WorktreeBranch, boolToInt(p.IsOwner), marshalPermissionOverrides(p.PermissionOverrides), p.ProcessCommandID,
 		effectiveSandbox,
@@ -145,7 +154,7 @@ func GetPendingSpawn(label string) (*PendingSpawn, error) {
 		return nil, err
 	}
 	row := db.QueryRow(`
-		SELECT label, group_id, role, descr, name, initial_message, group_context,
+		SELECT label, agent_id, launching, group_id, role, descr, name, initial_message, group_context,
 			reply_to_conv, spawned_by_conv, reply_to_agent, spawned_by_agent,
 			worktree_path, worktree_branch, is_owner, permission_overrides, process_command_id,
 			effective_sandbox_config, created_at
@@ -165,7 +174,7 @@ func ListPendingSpawns() ([]*PendingSpawn, error) {
 		return nil, err
 	}
 	rows, err := db.Query(`
-		SELECT label, group_id, role, descr, name, initial_message, group_context,
+		SELECT label, agent_id, launching, group_id, role, descr, name, initial_message, group_context,
 			reply_to_conv, spawned_by_conv, reply_to_agent, spawned_by_agent,
 			worktree_path, worktree_branch, is_owner, permission_overrides, process_command_id,
 			effective_sandbox_config, created_at
@@ -218,21 +227,126 @@ func ClaimPendingSpawn(label string) (bool, error) {
 	return n > 0, nil
 }
 
+// MarkPendingSpawnLaunched clears the short pre-launch protection once the
+// session row exists. Missing rows are a benign no-op (another backfill may
+// already have atomically claimed the reservation).
+func MarkPendingSpawnLaunched(label string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`UPDATE pending_spawns SET launching = 0 WHERE label = ?`, label)
+	return err
+}
+
+// ClaimPendingSpawnAndBindAgent atomically replaces a pending reservation with
+// its enrolled actor identity. On commit, observers see either the pending row
+// (and can discover its reserved agent_id) or the conv→agent binding — never a
+// gap where generic hook/reaper enrollment could mint a competing actor.
+//
+// Legacy pending rows have an empty reservedAgentID; those retain the old
+// claim-only behavior and let finishSpawnEnrollment allocate from the conv.
+func ClaimPendingSpawnAndBindAgent(label, convID, reservedAgentID, via string) (bool, error) {
+	label = strings.TrimSpace(label)
+	convID = strings.TrimSpace(convID)
+	reservedAgentID = strings.TrimSpace(reservedAgentID)
+	if label == "" || convID == "" {
+		return false, errors.New("ClaimPendingSpawnAndBindAgent: label and conv_id required")
+	}
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var storedAgentID string
+	err = tx.QueryRow(`SELECT agent_id FROM pending_spawns WHERE label = ?`, label).Scan(&storedAgentID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if storedAgentID != "" {
+		if reservedAgentID != "" && reservedAgentID != storedAgentID {
+			return false, fmt.Errorf("ClaimPendingSpawnAndBindAgent: pending %s reserves %s, not %s",
+				label, storedAgentID, reservedAgentID)
+		}
+		reservedAgentID = storedAgentID
+	}
+
+	if reservedAgentID != "" {
+		if !strings.HasPrefix(reservedAgentID, AgentIDPrefix) {
+			return false, fmt.Errorf("ClaimPendingSpawnAndBindAgent: invalid agent_id %q", reservedAgentID)
+		}
+		existing, err := agentIDForConvTx(tx, convID)
+		if err != nil {
+			return false, err
+		}
+		switch {
+		case existing == reservedAgentID:
+			// A generic enrollment path saw the still-visible reservation and
+			// already made the exact binding. Claiming only removes the intent.
+		case existing != "":
+			return false, fmt.Errorf("ClaimPendingSpawnAndBindAgent: conv %s belongs to %s, not reserved %s",
+				convID, existing, reservedAgentID)
+		default:
+			var occupiedConv string
+			err = tx.QueryRow(`SELECT current_conv_id FROM agents WHERE agent_id = ?`, reservedAgentID).Scan(&occupiedConv)
+			switch {
+			case err == nil:
+				return false, fmt.Errorf("ClaimPendingSpawnAndBindAgent: agent %s already heads conv %s",
+					reservedAgentID, occupiedConv)
+			case !errors.Is(err, sql.ErrNoRows):
+				return false, err
+			}
+			now := time.Now()
+			if err := insertAgentTx(tx, reservedAgentID, convID, via, now); err != nil {
+				return false, err
+			}
+			if err := linkConvTx(tx, convID, reservedAgentID, ConvRoleHead, via, now); err != nil {
+				return false, err
+			}
+		}
+	}
+	res, err := tx.Exec(`DELETE FROM pending_spawns WHERE label = ?`, label)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if n == 0 {
+		return false, nil
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // scanPendingSpawn reads one row into a PendingSpawn. rowScanner (defined
 // in agent.go) is the shared Scan surface of *sql.Row and *sql.Rows, so the
 // single-row Get and the multi-row List share this helper.
 func scanPendingSpawn(s rowScanner) (*PendingSpawn, error) {
 	var p PendingSpawn
+	var launching int
 	var isOwner int
 	var permOverrides string
 	var effectiveSandbox string
-	if err := s.Scan(&p.Label, &p.GroupID, &p.Role, &p.Descr, &p.Name,
+	if err := s.Scan(&p.Label, &p.AgentID, &launching, &p.GroupID, &p.Role, &p.Descr, &p.Name,
 		&p.InitialMessage, &p.GroupContext, &p.ReplyToConv, &p.SpawnedByConv,
 		&p.ReplyToAgent, &p.SpawnedByAgent,
 		&p.WorktreePath, &p.WorktreeBranch, &isOwner, &permOverrides, &p.ProcessCommandID,
 		&effectiveSandbox, &p.CreatedAt); err != nil {
 		return nil, err
 	}
+	p.Launching = launching != 0
 	p.IsOwner = isOwner != 0
 	p.PermissionOverrides = unmarshalPermissionOverrides(permOverrides)
 	var err error
@@ -241,6 +355,32 @@ func scanPendingSpawn(s rowScanner) (*PendingSpawn, error) {
 		return nil, fmt.Errorf("decode pending spawn %q effective sandbox: %w", p.Label, err)
 	}
 	return &p, nil
+}
+
+// PendingAgentIDForConv resolves the stable identity reserved by a pending
+// spawn once its session row has acquired convID. Generic enrollment paths use
+// this to avoid minting a competing actor before the pending sweeper runs.
+func PendingAgentIDForConv(convID string) (string, error) {
+	convID = strings.TrimSpace(convID)
+	if convID == "" {
+		return "", nil
+	}
+	d, err := Open()
+	if err != nil {
+		return "", err
+	}
+	var agentID string
+	err = d.QueryRow(`
+		SELECT p.agent_id
+		FROM pending_spawns p
+		JOIN sessions s ON s.id = p.label
+		WHERE s.conv_id = ? AND p.agent_id <> ''
+		ORDER BY p.created_at ASC
+		LIMIT 1`, convID).Scan(&agentID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return agentID, err
 }
 
 func marshalEffectiveSandboxSnapshot(snapshot *sandboxpolicy.Snapshot) (string, error) {

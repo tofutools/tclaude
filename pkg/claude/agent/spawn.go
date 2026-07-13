@@ -26,7 +26,8 @@ type SpawnResponse struct {
 	Group string `json:"group"`
 	// AgentID is the spawned agent's stable actor key — the canonical ID
 	// the CLI leads with; ConvID is the live generation behind it (kept as
-	// the snapshot/hover). "" when the spawn went pending (no conv yet).
+	// the snapshot/hover). AgentID remains present when an asynchronous Codex
+	// spawn is pending and only ConvID has not materialised yet.
 	AgentID     string `json:"agent_id,omitempty"`
 	ConvID      string `json:"conv_id"`
 	Label       string `json:"label"`

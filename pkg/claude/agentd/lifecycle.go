@@ -2325,10 +2325,14 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		// echo remains truthful even if a default profile changed mid-request.
 		"resolved": resolvedLaunch,
 	}
-	// Lead with the spawned agent's stable id when its conv has already
-	// enrolled (conv-id resolved inline); a pending spawn has no conv yet,
-	// so the field is simply omitted.
-	if aid := peerAgentID(outcome.ConvID); aid != "" {
+	// Lead with the spawned actor's stable id. Pending Codex spawns reserve it
+	// before their harness conv-id materialises; inline spawns resolve it from
+	// the enrolled conversation as before.
+	aid := outcome.AgentID
+	if aid == "" {
+		aid = peerAgentID(outcome.ConvID)
+	}
+	if aid != "" {
 		resp["agent_id"] = aid
 	}
 	// FocusMode is only ever non-empty when the caller asked for
@@ -2352,6 +2356,10 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 // length/charset-checked, reply-to resolved to a conv-id — so the
 // shared core does no HTTP-shaped validation of its own.
 type spawnParams struct {
+	// AgentID is a stable identity reserved before a pending harness conv-id
+	// materialises. Empty on ordinary inline spawns, whose actor is allocated
+	// together with the conv-id.
+	AgentID string
 	// EffectiveSandbox is the immutable additive capability snapshot resolved
 	// at the trusted caller boundary. Daemon-managed launch paths pass a
 	// versioned snapshot even when it is explicitly empty.
@@ -2526,6 +2534,7 @@ type spawnParams struct {
 
 // spawnOutcome is the success result of executeSpawn.
 type spawnOutcome struct {
+	AgentID     string
 	ConvID      string
 	Label       string
 	TmuxSession string
@@ -3142,7 +3151,30 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		return nil, fail
 	}
 
+	// Async harnesses without launch enrollment may return before their conv-id
+	// materialises. Reserve and persist the stable actor identity BEFORE the
+	// process starts, so an immediate hook/reaper enrollment can only bind this
+	// exact id. The row is atomically replaced by the actor binding once the conv
+	// appears; a genuinely pending response simply leaves it for back-fill.
+	reservedPending := p.Async && !launchEnroll
+	if reservedPending {
+		if g == nil {
+			return nil, &spawnFailure{http.StatusInternalServerError, "spawn", "ungrouped asynchronous spawn is not supported"}
+		}
+		p.AgentID = db.NewAgentID()
+		if err := db.InsertPendingSpawn(pendingSpawnFromParams(g, p, label)); err != nil {
+			return nil, &spawnFailure{http.StatusInternalServerError, "io",
+				"failed to reserve pending spawn " + label + ": " + err.Error()}
+		}
+	}
+
 	if err := SpawnDetachedTclaudeNew(spawnArgs); err != nil {
+		if reservedPending {
+			if deleteErr := db.DeletePendingSpawn(label); deleteErr != nil {
+				slog.Warn("spawn: failed to remove reservation after launch failure",
+					"label", label, "error", deleteErr)
+			}
+		}
 		if launchEnroll {
 			// The enrollment ran before the fork; roll it back so a failed
 			// launch doesn't strand a group member + orphan briefing.
@@ -3229,9 +3261,17 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	var convID, tmuxSession string
 	var lastDiscoveryScan time.Time
 	remoteArmed := false
+	pendingLaunchMarked := false
 	for time.Now().Before(deadline) {
 		s, err := db.LoadSession(label)
 		if err == nil && s != nil {
+			if reservedPending && !pendingLaunchMarked {
+				if err := db.MarkPendingSpawnLaunched(label); err != nil {
+					slog.Warn("spawn: failed to clear pending launch marker", "label", label, "error", err)
+				} else {
+					pendingLaunchMarked = true
+				}
+			}
 			tmuxSession = s.TmuxSession
 			if tmuxSession != "" {
 				focusSpawn() // pane is up — open it now, conv-id or not
@@ -3302,10 +3342,33 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// Conv-id resolved within the poll: finish enrollment inline (Codex, or CC
 	// with the legacy-injection revert flag) and inject the rename + welcome.
 	if convID != "" {
+		if reservedPending {
+			claimed, err := db.ClaimPendingSpawnAndBindAgent(label, convID, p.AgentID, "spawn")
+			if err != nil {
+				return nil, &spawnFailure{http.StatusInternalServerError, "identity",
+					"failed to bind reserved agent " + p.AgentID + " to spawned conv " + convID + ": " + err.Error()}
+			}
+			if !claimed {
+				// A concurrent pending back-fill claimed the row and owns the
+				// one-shot enrollment side effects. The actor binding is already
+				// visible, so returning its identity is safe.
+				bound, lookupErr := db.AgentIDForConv(convID)
+				if lookupErr != nil || bound != p.AgentID {
+					detail := fmt.Sprintf("reservation disappeared before binding (bound=%q)", bound)
+					if lookupErr != nil {
+						detail = lookupErr.Error()
+					}
+					return nil, &spawnFailure{http.StatusConflict, "identity",
+						"pending spawn " + label + " was canceled or conflicted: " + detail}
+				}
+				return &spawnOutcome{AgentID: p.AgentID, ConvID: convID, Label: label, TmuxSession: tmuxSession, FocusMode: focusMode,
+					Harness: p.Harness, Model: p.Model, Effort: p.Effort}, nil
+			}
+		}
 		if fail := finishSpawnEnrollment(g, p, convID); fail != nil {
 			return nil, fail
 		}
-		return &spawnOutcome{ConvID: convID, Label: label, TmuxSession: tmuxSession, FocusMode: focusMode,
+		return &spawnOutcome{AgentID: p.AgentID, ConvID: convID, Label: label, TmuxSession: tmuxSession, FocusMode: focusMode,
 			Harness: p.Harness, Model: p.Model, Effort: p.Effort}, nil
 	}
 
@@ -3317,13 +3380,15 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// appears. Restart-safe: the row carries everything finishSpawnEnrollment
 	// needs.
 	if p.Async {
-		if g == nil {
-			return nil, &spawnFailure{http.StatusInternalServerError, "spawn", "ungrouped asynchronous spawn is not supported"}
-		}
 		focusSpawn() // belt-and-suspenders: open the pane even if it came up slow
-		if err := db.InsertPendingSpawn(pendingSpawnFromParams(g, p, label)); err != nil {
+		ps, err := db.GetPendingSpawn(label)
+		if err != nil {
 			return nil, &spawnFailure{http.StatusInternalServerError, "io",
-				"spawned session " + label + " but failed to record it as pending: " + err.Error()}
+				"failed to verify pending spawn reservation " + label + ": " + err.Error()}
+		}
+		if ps == nil || ps.AgentID != p.AgentID {
+			return nil, &spawnFailure{http.StatusConflict, "identity",
+				"pending spawn " + label + " was canceled before its response"}
 		}
 		slog.Info("spawn: conv-id not yet materialised; recorded pending spawn",
 			"label", label, "group", g.Name, "harness", p.Harness)
@@ -3332,7 +3397,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 				backfillPendingSpawnInline(g, p, label, spawnHarness, launchedAt, backgroundBackfillBudget)
 			})
 		}
-		return &spawnOutcome{ConvID: "", Label: label, TmuxSession: tmuxSession, FocusMode: focusMode,
+		return &spawnOutcome{AgentID: p.AgentID, ConvID: "", Label: label, TmuxSession: tmuxSession, FocusMode: focusMode,
 			Harness: p.Harness, Model: p.Model, Effort: p.Effort}, nil
 	}
 
@@ -3360,6 +3425,8 @@ func spawnGroupID(g *db.AgentGroup) int64 {
 func pendingSpawnFromParams(g *db.AgentGroup, p spawnParams, label string) *db.PendingSpawn {
 	return &db.PendingSpawn{
 		Label:               label,
+		AgentID:             p.AgentID,
+		Launching:           true,
 		GroupID:             g.ID,
 		Role:                p.Role,
 		Descr:               p.Descr,
@@ -3390,6 +3457,7 @@ func pendingSpawnFromParams(g *db.AgentGroup, p spawnParams, label string) *db.P
 func backfillPendingSpawnInline(g *db.AgentGroup, p spawnParams, label string, h *harness.Harness, launchedAt time.Time, budget time.Duration) {
 	deadline := launchedAt.Add(budget)
 	var lastDiscoveryScan time.Time
+	launchMarked := false
 	for time.Now().Before(deadline) {
 		s, err := db.LoadSession(label)
 		if err != nil {
@@ -3400,6 +3468,14 @@ func backfillPendingSpawnInline(g *db.AgentGroup, p spawnParams, label string, h
 		}
 		if s == nil {
 			return
+		}
+		if !launchMarked {
+			if err := db.MarkPendingSpawnLaunched(label); err != nil {
+				slog.Warn("spawn: pending inline back-fill failed to clear launch marker",
+					"label", label, "error", err)
+			} else {
+				launchMarked = true
+			}
 		}
 		convID := s.ConvID
 		if convID == "" && s.TmuxSession != "" && time.Since(launchedAt) >= convStoreDiscoveryGrace &&
@@ -3443,7 +3519,7 @@ func completePendingSpawnBackfill(g *db.AgentGroup, p spawnParams, label, convID
 	if ps == nil {
 		return
 	}
-	claimed, err := db.ClaimPendingSpawn(label)
+	claimed, err := db.ClaimPendingSpawnAndBindAgent(label, convID, p.AgentID, "spawn")
 	if err != nil {
 		slog.Warn("spawn: pending inline back-fill claim failed",
 			"label", label, "conv", convID, "error", err)
@@ -3574,8 +3650,20 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string) (int64, *
 	// rather than the "group" tag AddAgentGroupMember's own EnsureAgentForConv
 	// would otherwise stamp (that call is a no-op once this conv is already
 	// linked). Idempotent.
-	agentID, _, err := db.EnsureAgentForConv(convID, "spawn")
+	var agentID string
+	var err error
+	if p.AgentID != "" {
+		agentID, _, err = db.EnsureAgentForConvWithID(convID, p.AgentID, "spawn")
+	} else {
+		agentID, _, err = db.EnsureAgentForConv(convID, "spawn")
+	}
 	if err != nil {
+		// A reserved id may already have been returned to the caller. Never
+		// continue by minting/substituting another actor through group-add.
+		if p.AgentID != "" {
+			return 0, &spawnFailure{http.StatusInternalServerError, "identity",
+				"failed to bind reserved agent " + p.AgentID + " to spawned conv " + convID + ": " + err.Error()}
+		}
 		slog.Warn("spawn: failed to ensure agent identity", "conv", convID, "error", err)
 	}
 

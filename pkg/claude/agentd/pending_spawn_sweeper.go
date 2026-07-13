@@ -18,6 +18,11 @@ import (
 // cheap session-row lookup.
 const pendingSpawnSweepInterval = 5 * time.Second
 
+// pendingSpawnLaunchGrace bounds protection for a reservation whose session
+// wrapper never created a row. Normal launches clear Launching as soon as the
+// row appears; a crashed daemon/launcher cannot leave the reservation forever.
+const pendingSpawnLaunchGrace = 30 * time.Second
+
 // startPendingSpawnSweeper runs the pending-spawn back-fill sweeper in its
 // own goroutine until stop closes (the daemon-wide quit channel). JOH-205
 // inc2: a non-blocking dashboard spawn whose conv-id had not materialised
@@ -78,6 +83,11 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 		return // transient — retry next tick
 	}
 	if sess == nil {
+		if ps.Launching {
+			if created, parseErr := time.Parse(time.RFC3339Nano, ps.CreatedAt); parseErr == nil && time.Since(created) < pendingSpawnLaunchGrace {
+				return
+			}
+		}
 		// The session row is gone (deleted, or never created because the
 		// launch wrapper died before writing it) — the spawn can never
 		// enroll. Drop the orphaned pending row so the table doesn't leak.
@@ -85,6 +95,14 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 			"label", ps.Label)
 		deletePendingSpawnRow(ps.Label)
 		return
+	}
+	if ps.Launching {
+		if err := db.MarkPendingSpawnLaunched(ps.Label); err != nil {
+			slog.Warn("pending-spawn sweeper: failed to clear launch marker",
+				"label", ps.Label, "error", err)
+			return // transient — retry next tick
+		}
+		ps.Launching = false
 	}
 
 	// The first-turn hook is the authoritative, per-spawn conv-id signal: it
@@ -128,22 +146,10 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 		return
 	}
 
-	// Idempotency: a prior sweep may have enrolled this conv but failed to
-	// delete the pending row. If the conv is already a member, the enrollment
-	// — and its one-shot /rename + welcome injection — already ran; don't run
-	// it again, just clear the leftover row.
-	if m, err := db.FindMemberInGroup(g.ID, convID); err != nil {
-		slog.Warn("pending-spawn sweeper: membership check failed",
-			"label", ps.Label, "conv", convID, "error", err)
-		return // transient — retry
-	} else if m != nil {
-		slog.Info("pending-spawn sweeper: already enrolled; clearing pending row",
-			"label", ps.Label, "conv", convID)
-		deletePendingSpawnRow(ps.Label)
-		return
-	}
-
-	claimed, err := db.ClaimPendingSpawn(ps.Label)
+	// Atomically replace the durable reservation with the exact actor binding.
+	// This closes the claim→enroll gap where a hook/reaper could otherwise mint
+	// a competing identity after the pending row disappeared.
+	claimed, err := db.ClaimPendingSpawnAndBindAgent(ps.Label, convID, ps.AgentID, "spawn")
 	if err != nil {
 		slog.Warn("pending-spawn sweeper: claim failed",
 			"label", ps.Label, "conv", convID, "error", err)
@@ -153,12 +159,27 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 		return // another back-fill path claimed it
 	}
 
+	// Idempotency: a prior enrollment may have completed its membership and
+	// one-shot welcome but failed before clearing the pending row. The atomic
+	// claim above has now cleared it; do not deliver the welcome twice.
+	if m, err := db.FindMemberInGroup(g.ID, convID); err != nil {
+		slog.Warn("pending-spawn sweeper: membership check failed",
+			"label", ps.Label, "conv", convID, "error", err)
+		requeuePendingSpawn(ps.Label, ps)
+		return
+	} else if m != nil {
+		slog.Info("pending-spawn sweeper: already enrolled; cleared pending row",
+			"label", ps.Label, "conv", convID)
+		return
+	}
+
 	// Reconstruct the spawnParams subset finishSpawnEnrollment consumes from
 	// the persisted intent, then back-fill the enrollment. This runs the same
 	// membership add + pending-name + inbox briefing + post-init (/rename +
 	// welcome) the inline path runs — and, because the conv-id now exists, it
 	// only send-keys to a Codex pane that has cleared its startup gates.
 	p := spawnParams{
+		AgentID:          ps.AgentID,
 		EffectiveSandbox: ps.EffectiveSandbox,
 		Role:             ps.Role,
 		Descr:            ps.Descr,

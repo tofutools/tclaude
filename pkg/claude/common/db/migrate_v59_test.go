@@ -117,6 +117,8 @@ func TestMigrateV58toV59_FreshSchemaRoundTrips(t *testing.T) {
 
 	ps := &PendingSpawn{
 		Label:          "spwn-roundtrip",
+		AgentID:        "agt_reserved_roundtrip",
+		Launching:      true,
 		GroupID:        42,
 		Role:           "reviewer",
 		Descr:          "reviews diffs",
@@ -134,6 +136,8 @@ func TestMigrateV58toV59_FreshSchemaRoundTrips(t *testing.T) {
 	require.NoError(t, err, "GetPendingSpawn")
 	require.NotNil(t, got)
 	assert.Equal(t, ps.Label, got.Label)
+	assert.Equal(t, ps.AgentID, got.AgentID)
+	assert.Equal(t, ps.Launching, got.Launching)
 	assert.Equal(t, ps.GroupID, got.GroupID)
 	assert.Equal(t, ps.Role, got.Role)
 	assert.Equal(t, ps.Descr, got.Descr)
