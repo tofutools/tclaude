@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createPreactHarness, getByLabelText, getByRole } from './preact-harness.mjs';
+import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
 function memoryPrefs(initial = {}) {
   const values = new Map(Object.entries(initial));
@@ -147,7 +147,7 @@ test('Groups controls own query, visibility, columns, badge and dropdown behavio
   let refreshes = 0;
   let resets = 0;
   const columns = {
-    list: () => [{ key: 'role', label: 'Role' }],
+    list: () => [{ key: 'role', label: 'Role', wizardLabel: 'Class' }],
     hidden: () => hiddenRole,
     setHidden: (_key, value) => { hiddenRole = value; },
     deviationCount: () => Number(hiddenRole),
@@ -191,7 +191,16 @@ test('Groups controls own query, visibility, columns, badge and dropdown behavio
   assert.equal(state.visibility.value.conversations, true);
   assert.equal(mounted.container.querySelector('#filter-groups-view-badge').textContent, '1');
 
-  const role = getByLabelText(mounted.container, 'Role');
+  const role = mounted.container.querySelector('#filter-groups-col-role');
+  const roleLabel = role.closest('label');
+  assert.equal(roleLabel.querySelector('.theme-copy-regular').textContent, 'Role');
+  assert.equal(roleLabel.querySelector('.theme-copy-wizard').textContent, 'Class');
+  assert.equal(roleLabel.title, 'Show the "Class" column');
+  harness.document.body.classList.remove('wizard');
+  await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent(
+    'tclaude:wizard', { detail: { active: false } },
+  )));
+  assert.equal(roleLabel.title, 'Show the "Role" column', 'the full label tooltip swaps with the theme');
   role.checked = false;
   await harness.act(() => harness.fireEvent(role, 'change'));
   assert.equal(hiddenRole, true);

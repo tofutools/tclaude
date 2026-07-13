@@ -148,7 +148,7 @@ function renderVirtualGroup(g) {
       )}</div>`
     : `
         <table>
-          ${sortHead('members', visibleMemberCols())}
+          ${sortHead('members', visibleMemberCols(), isWizardActive())}
           <tbody>
             ${applySort('members', visible, MEMBER_ACCESSORS).map(m => memberRowHTML(m, {ungrouped: true})).join('')}
           </tbody>
@@ -982,7 +982,7 @@ function renderRealGroup(g, childrenHTML) {
           ? `<div class="muted">(${hiddenOffline} offline member${hiddenOffline === 1 ? '' : 's'} hidden — toggle "show offline" to see ${hiddenOffline === 1 ? 'it' : 'them'})</div>`
           : `
         <table>
-          ${sortHead('members', visibleMemberCols())}
+          ${sortHead('members', visibleMemberCols(), isWizardActive())}
           <tbody>
             ${applySort('members', visible, MEMBER_ACCESSORS).map(m => memberRowHTML(m, {group: g})).join('')}
           </tbody>

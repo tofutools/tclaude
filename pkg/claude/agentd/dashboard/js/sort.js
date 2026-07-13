@@ -71,16 +71,21 @@ function cycleSort(tableKey, col) {
 // row-action columns) render as plain, non-clickable headers. The
 // active column shows a solid ▲/▼; the rest carry a faint arrow that
 // surfaces on hover, hinting they're clickable.
-function sortHead(tableKey, cols) {
+function sortHead(tableKey, cols, wizard = false) {
   const active = sortState[tableKey];
   const cells = cols.map(c => {
-    if (!c.col) return `<th>${esc(c.label || '')}</th>`;
+    const label = c.wizardLabel
+      ? `<span class="theme-copy-regular">${esc(c.label)}</span>`
+        + `<span class="theme-copy-wizard">${esc(c.wizardLabel)}</span>`
+      : esc(c.label || '');
+    if (!c.col) return `<th>${label}</th>`;
     const on = active && active.col === c.col;
     const arrow = on ? (active.dir === 'asc' ? '▲' : '▼') : '▾';
     const cls = on ? 'sortable sort-active' : 'sortable';
+    const titleLabel = wizard && c.wizardLabel ? c.wizardLabel : c.label;
     return `<th class="${cls}" data-sort-table="${esc(tableKey)}" `
-         + `data-sort-col="${esc(c.col)}" title="Sort by ${esc(c.label)}">`
-         + `${esc(c.label)}<span class="sort-arrow">${arrow}</span></th>`;
+         + `data-sort-col="${esc(c.col)}" title="Sort by ${esc(titleLabel)}">`
+         + `${label}<span class="sort-arrow">${arrow}</span></th>`;
   });
   return `<thead><tr>${cells.join('')}</tr></thead>`;
 }
@@ -147,9 +152,9 @@ const MEMBER_COLS = [
   { key: 'age',    label: 'Age',         col: 'age',    hideable: true },
   { key: 'cwd',    label: 'CWD',         col: 'cwd',    hideable: true },
   { key: 'branch', label: 'Branch',      col: 'branch', hideable: true },
-  { key: 'role',   label: 'Role',        col: 'role',   hideable: true },
-  { key: 'task',   label: 'Task link',   col: 'task',   hideable: true },
-  { key: 'descr',  label: 'Description', col: 'descr',  hideable: true },
+  { key: 'role',   label: 'Role',        wizardLabel: 'Class', col: 'role',  hideable: true },
+  { key: 'task',   label: 'Task link',   wizardLabel: 'Quest', col: 'task',  hideable: true },
+  { key: 'descr',  label: 'Description', wizardLabel: 'Lore',  col: 'descr', hideable: true },
 ];
 const MEMBER_ACCESSORS = {
   // id sorts on the stable agent_id the column now displays (conv-id fallback).
