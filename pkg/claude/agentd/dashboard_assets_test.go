@@ -365,19 +365,22 @@ func TestDashboardCSS_SandboxProfileEditorResizable(t *testing.T) {
 	}
 }
 
-// TestDashboardCSS_SandboxProfileAccessSelectorFitsLabels guards the first
-// sandbox-row selector width. The control also contains native arrow chrome and horizontal
+// TestDashboardCSS_SandboxProfileSelectLayouts guards the distinct access and
+// included-profile selector layouts. The access control contains native arrow chrome and horizontal
 // padding, so the old 5.5em basis clipped the ordinary "write" label in
 // Chromium. Seven em fits both the regular labels and wizard mode's longer
 // "inscribe" label without making the selector flexible.
-func TestDashboardCSS_SandboxProfileAccessSelectorFitsLabels(t *testing.T) {
+func TestDashboardCSS_SandboxProfileSelectLayouts(t *testing.T) {
 	cssBytes, err := fs.ReadFile(dashboardAssetsFS, "dashboard.css")
 	if err != nil {
 		t.Fatalf("reading embedded dashboard.css: %v", err)
 	}
 	css := string(cssBytes)
-	if !strings.Contains(css, ".sbx-row > select { flex: 0 0 7em; }") {
+	if !strings.Contains(css, ".sbx-row .sbx-access { flex: 0 0 7em; }") {
 		t.Error("dashboard.css access selector must reserve enough width for its labels and native arrow")
+	}
+	if !strings.Contains(css, ".sbx-row .sbx-inc-name {\n  flex: 1; min-width: 0;") {
+		t.Error("dashboard.css included-profile selector must fill the available row width")
 	}
 }
 

@@ -65,6 +65,7 @@ var (
 	reExportVarHead   = regexp.MustCompile(`^export\s+(?:const|let|var)\s+`)
 	reLoaderImport    = regexp.MustCompile(`(?m)^[ \t]*const[ \t]+([A-Za-z_$][A-Za-z0-9_$]*)[ \t]*=[ \t]*import\(['"](\./[^'"]+\.js)['"]\);`)
 	reLoaderPromise   = regexp.MustCompile(`(?s)const\s*\[(.*?)\]\s*=\s*await\s+Promise\.all\(\s*\[(.*?)\]\s*\);`)
+	reAwaitImport     = regexp.MustCompile(`(?m)^[ \t]*const[ \t]+\{([^}]*)\}[ \t]*=[ \t]*await[ \t]+import\(['"](\./[^'"]+\.js)['"]\);`)
 )
 
 func isIdentChar(c byte) bool {
@@ -325,6 +326,28 @@ func parseLoaderImports(src string) ([]moduleImport, error) {
 	return imports, nil
 }
 
+// parseAwaitImports resolves the direct dynamic-import form used by optional
+// feature actions: `const { external: local } = await import('./feature.js')`.
+// The browser checks both the path and requested export only when that action
+// runs, so the static graph scanner must add them explicitly for every module.
+func parseAwaitImports(src string) ([]moduleImport, error) {
+	var imports []moduleImport
+	for _, match := range reAwaitImport.FindAllStringSubmatchIndex(src, -1) {
+		clause := "{" + src[match[2]:match[3]] + "}"
+		impPath := src[match[4]:match[5]]
+		line := 1 + strings.Count(src[:match[0]], "\n")
+		names, err := parseLoaderDestructure(clause)
+		if err != nil {
+			return nil, fmt.Errorf("await import at line %d: %w", line, err)
+		}
+		imports = append(imports, moduleImport{path: impPath, line: line})
+		for _, name := range names {
+			imports = append(imports, moduleImport{name: name, path: impPath, line: line})
+		}
+	}
+	return imports, nil
+}
+
 func nonEmptyParts(parts []string) []string {
 	out := parts[:0]
 	for _, part := range parts {
@@ -511,6 +534,12 @@ func TestDashboardModuleGraph(t *testing.T) {
 			t.Errorf("scanning module graph: %v", err)
 			continue
 		}
+		awaitImports, err := parseAwaitImports(string(data))
+		if err != nil {
+			t.Errorf("scanning awaited imports in %q: %v", name, err)
+			continue
+		}
+		p.imports = append(p.imports, awaitImports...)
 		parsed[name] = p
 	}
 	if loader, ok := parsed["js/preact-loader.js"]; ok {
@@ -525,6 +554,13 @@ func TestDashboardModuleGraph(t *testing.T) {
 		}
 	}
 
+	for _, err := range validateModuleImports(parsed) {
+		t.Error(err)
+	}
+}
+
+func validateModuleImports(parsed map[string]moduleParse) []error {
+	var errs []error
 	for name, p := range parsed {
 		for _, imp := range p.imports {
 			// Relative imports are resolved here. Bare package imports are
@@ -536,19 +572,20 @@ func TestDashboardModuleGraph(t *testing.T) {
 			target := path.Join(path.Dir(name), imp.path)
 			tp, ok := parsed[target]
 			if !ok {
-				t.Errorf("%s:%d imports from %q → %q, which is not an embedded module",
-					name, imp.line, imp.path, target)
+				errs = append(errs, fmt.Errorf("%s:%d imports from %q → %q, which is not an embedded module",
+					name, imp.line, imp.path, target))
 				continue
 			}
 			if imp.name == "" {
 				continue // side-effect import: path validated, no name to check
 			}
 			if !tp.exports[imp.name] {
-				t.Errorf("%s:%d imports %q from %q, but %q does not export it",
-					name, imp.line, imp.name, imp.path, target)
+				errs = append(errs, fmt.Errorf("%s:%d imports %q from %q, but %q does not export it",
+					name, imp.line, imp.name, imp.path, target))
 			}
 		}
 	}
+	return errs
 }
 
 func TestParseLoaderImports(t *testing.T) {
@@ -570,6 +607,40 @@ const [{ mountWidget }, { widgetState: localState }] = await Promise.all([
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("loader imports = %#v, want %#v", got, want)
+	}
+}
+
+func TestParseAwaitImports(t *testing.T) {
+	src := `
+const { openEditor: launchEditor, mountWidget } = await import('./widget.js');`
+	got, err := parseAwaitImports(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []moduleImport{
+		{path: "./widget.js", line: 2},
+		{name: "openEditor", path: "./widget.js", line: 2},
+		{name: "mountWidget", path: "./widget.js", line: 2},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("await imports = %#v, want %#v", got, want)
+	}
+}
+
+func TestValidateModuleImportsRejectsMissingDynamicTargetsAndExports(t *testing.T) {
+	missingPath := map[string]moduleParse{
+		"js/entry.js": {imports: []moduleImport{{name: "openEditor", path: "./missing.js", line: 7}}, exports: map[string]bool{}},
+	}
+	if errs := validateModuleImports(missingPath); len(errs) != 1 || !strings.Contains(errs[0].Error(), "not an embedded module") {
+		t.Fatalf("missing-path errors = %v", errs)
+	}
+
+	missingExport := map[string]moduleParse{
+		"js/entry.js":  {imports: []moduleImport{{name: "openEditor", path: "./editor.js", line: 9}}, exports: map[string]bool{}},
+		"js/editor.js": {exports: map[string]bool{"other": true}},
+	}
+	if errs := validateModuleImports(missingExport); len(errs) != 1 || !strings.Contains(errs[0].Error(), "does not export") {
+		t.Fatalf("missing-export errors = %v", errs)
 	}
 }
 

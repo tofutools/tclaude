@@ -61,11 +61,14 @@ components read their state there and route refreshes, retries, and mutations
 through explicit action modules. Islands must not import `refresh.js`, start
 competing poll timers, or infer application state from DOM nodes.
 
-Every island exclusively owns the hosts declared by its loader. Imperative code
-may fetch or publish data for a feature, but it must not render into, move, or
-read application state from an island-owned host. Code outside those hosts may
-remain imperative where it has a clear owner; never let Preact and imperative
-code write the same subtree.
+Every island owns reconciliation of the hosts declared by its loader.
+Non-component modules must not independently replace a claimed host or treat
+its DOM as durable application state. Narrow adapters are allowed only when the
+island explicitly exposes the boundary: delegated actions may read an event
+target's `data-*`; transient editors may hide a managed node and insert a
+sibling; and `html-vnodes.js` treats slop-machine children as opaque. Keep those
+constraints covered behaviorally and do not widen them. Code outside claimed
+hosts may remain imperative where it has a clear owner.
 
 The global Signals boundary is for server-backed snapshot data, connection and
 poll metadata, the active tab, and computed feature views. Ephemeral UI state
@@ -92,13 +95,14 @@ inside the primary host. Do not write another feature-local registry or loader
 lifecycle.
 
 Host ownership is exclusive. Non-component code may fetch and publish feature
-data but must not render into a claimed host. Island cleanup must release effects,
-listeners, timers, subscriptions, and registry entries; component tests should
-call cleanup twice to prove it is idempotent. Every registered cleanup is
-attempted even if another throws; host ownership is released only after they all
-succeed, so a partial unmount cannot overlap a later mount. Keep feature modules
-behind the dynamic loader so a missing optional asset cannot prevent the static
-dashboard module graph from linking.
+data but must not independently reconcile or replace a claimed host; the
+bounded opaque and transient adapters above are explicit exceptions. Island
+cleanup must release effects, listeners, timers, subscriptions, and registry
+entries; component tests should call cleanup twice to prove it is idempotent.
+Every registered cleanup is attempted even if another throws; host ownership is
+released only after they all succeed, so a partial unmount cannot overlap a
+later mount. Keep feature modules behind the dynamic loader so a missing
+optional asset cannot prevent the static dashboard module graph from linking.
 
 Use `AsyncLoadState` only for the shared accessible loading/error/retry notice.
 The feature still owns stale-content layout, request generations, paging,
@@ -118,7 +122,7 @@ Some browser integrations deliberately remain outside Preact reconciliation:
   and terminal-specific input listeners below its stable host;
 - `process-graph.js` owns its SVG viewport and pointer mechanics while the
   Processes island owns the surrounding lists, dialogs, and selected data;
-- `costs-chart.js` owns the canvas chart below the Costs component's host;
+- `costs-chart.js` owns its imperative DOM bar chart below the Costs component's host;
 - `vegas.js`, `slop-audio.js`, `slop-fx.js`, and `wizard-fx.js` own media,
   audio contexts, transient animation nodes, and their one-way event buses.
 

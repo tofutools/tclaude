@@ -3574,7 +3574,11 @@ body.wizard .group-pending-title-wizard { display: inline; }
    enough room for the label plus the native select arrow and inline padding;
    5.5em clipped even the regular "write" label in Chromium. The same width
    also fits wizard mode's longer "inscribe" label. */
-.sbx-row > select { flex: 0 0 7em; }
+.sbx-row .sbx-access { flex: 0 0 7em; }
+.sbx-row .sbx-inc-name {
+  flex: 1; min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
 /* Agent-owned directory rows are a single variable-name input plus the ✕. */
 .sbx-agent-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .sbx-row .sbx-path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
