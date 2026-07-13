@@ -920,11 +920,12 @@ dashboard's state matrix and writes screenshots plus an HTML contact sheet under
 `dashsnap-out/`. It is opt-in and is not part of CI:
 
 ```bash
-TCLAUDE_DASHSNAP=1 TCLAUDE_DASHSNAP_FILTER=<state> \
-  go test ./pkg/claude/agentd/ -run TestDashSnap -v -count=1 -timeout 300s
+TCLAUDE_DASHSNAP=1 go test ./pkg/claude/agentd/ \
+  -run TestDashSnap -v -count=1 -timeout 300s
 ```
 
-Omit `TCLAUDE_DASHSNAP_FILTER` to capture every state. Set
+Set `TCLAUDE_DASHSNAP_FILTER=groups-chip-keyboard` (or another state-key
+substring) before the command to capture a subset. Set
 `TCLAUDE_DASHSNAP_CHROME=/path/to/chrome` when Chrome is not in a usual platform
 install location.
 
