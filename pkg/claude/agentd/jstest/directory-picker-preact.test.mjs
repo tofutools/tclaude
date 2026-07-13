@@ -102,12 +102,26 @@ test('Preact picker filters its folder pane and completes the active match', asy
   );
   assert.equal(host.querySelector('.directory-picker-count').textContent, '3 of 5 folders');
   assert.equal(host.querySelector('.directory-picker-list button.active').title, '/root/tclaude');
+  assert.equal(input.getAttribute('role'), 'combobox');
+  assert.equal(input.getAttribute('aria-autocomplete'), 'list');
+  assert.equal(host.querySelector('.directory-picker-list').getAttribute('role'), 'listbox');
+  assert.equal(input.getAttribute('aria-activedescendant'), 'directory-picker-option-1');
+  assert.equal(host.querySelector('.directory-picker-list button.active').getAttribute('role'), 'option');
+  assert.equal(host.querySelector('.directory-picker-list button.active').getAttribute('aria-selected'), 'true');
+  assert.equal(host.querySelector('.directory-picker-list button.active').tabIndex, -1);
 
   const down = harness.fireEvent(input, 'keydown', { key: 'ArrowDown' });
   await harness.act(() => Promise.resolve());
   assert.equal(down.defaultPrevented, true);
   assert.equal(host.querySelector('.directory-picker-list button.active').title, '/root/tclaude-dir-picker');
-  assert.equal(host.querySelector('.directory-picker-list button.active').getAttribute('aria-current'), 'true');
+  assert.equal(input.getAttribute('aria-activedescendant'), 'directory-picker-option-2');
+  assert.equal(host.querySelector('.directory-picker-list button.active').getAttribute('aria-selected'), 'true');
+  assert.equal(host.querySelector('#directory-picker-option-1').getAttribute('aria-selected'), 'false');
+
+  const reverseTab = harness.fireEvent(input, 'keydown', { key: 'Tab', shiftKey: true });
+  await harness.act(() => Promise.resolve());
+  assert.equal(reverseTab.defaultPrevented, true, 'dialog focus trap handles reverse Tab');
+  assert.equal(input.value, '/root/tcl');
 
   const tab = harness.fireEvent(input, 'keydown', { key: 'Tab' });
   await harness.act(() => Promise.resolve());
@@ -152,6 +166,8 @@ test('Preact picker leaves the list intact for a directly typed path', async (t)
   const input = mounted.container.querySelector('#directory-picker-path');
   await harness.input(input, '/other/workspace');
   assert.equal(mounted.container.querySelectorAll('.directory-picker-list button').length, 2);
+  assert.equal(input.getAttribute('role'), null);
+  assert.equal(mounted.container.querySelector('.directory-picker-list').getAttribute('role'), 'list');
   assert.match(mounted.container.querySelector('.directory-picker-hint').textContent, /Press Enter/);
   harness.fireEvent(mounted.container.querySelector('.directory-picker-path'), 'submit');
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));

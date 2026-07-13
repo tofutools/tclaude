@@ -76,6 +76,7 @@ export function DirectoryPickerApp({ state, actions }) {
   const visibleDirectories = filtering ? filterDirectories(directories, filterTerm) : directories;
   const selectedIndex = visibleDirectories.length ? Math.min(activeIndex, visibleDirectories.length - 1) : -1;
   const activeDirectory = filtering && selectedIndex >= 0 ? visibleDirectories[selectedIndex] : null;
+  const optionID = (directory) => `directory-picker-option-${directories.indexOf(directory)}`;
 
   useEffect(() => {
     activeEntryRef.current?.scrollIntoView?.({ block: 'nearest' });
@@ -117,12 +118,16 @@ export function DirectoryPickerApp({ state, actions }) {
           } else if (event.key === 'ArrowUp') {
             event.preventDefault();
             setActiveIndex(Math.max(selectedIndex - 1, 0));
-          } else if (event.key === 'Tab' && path !== activeDirectory.path) {
+          } else if (event.key === 'Tab' && !event.shiftKey && path !== activeDirectory.path) {
             event.preventDefault();
             setPath(activeDirectory.path);
             setActiveIndex(0);
           }
         }}
+        role=${filtering ? 'combobox' : undefined}
+        aria-expanded=${filtering ? 'true' : undefined}
+        aria-autocomplete=${filtering ? 'list' : undefined}
+        aria-activedescendant=${activeDirectory ? optionID(activeDirectory) : undefined}
         aria-controls="directory-picker-folders"
         autocomplete="off" spellcheck="false" data-select-on-focus />
       <button type="submit" disabled=${busy}>${busy ? 'Loading…' : 'Go'}</button>
@@ -135,15 +140,19 @@ export function DirectoryPickerApp({ state, actions }) {
       <span class="directory-picker-count" role="status" aria-live="polite">${view ? count : ''}</span>
     </div>
     ${typedOtherPath && html`<div class="directory-picker-hint">Press Enter to open the typed path.</div>`}
-    <div id="directory-picker-folders" class="directory-picker-list" role="list" aria-label="Folders">
+    <div id="directory-picker-folders" class="directory-picker-list"
+      role=${filtering ? 'listbox' : 'list'} aria-label="Folders">
       ${visibleDirectories.map((directory, index) => {
         const active = filtering && index === selectedIndex;
         return html`<div
-        key=${directory.path} role="listitem" class="directory-picker-entry"
-      ><button type="button" title=${directory.path} disabled=${busy}
+        key=${directory.path} role=${filtering ? 'presentation' : 'listitem'} class="directory-picker-entry"
+      ><button id=${filtering ? optionID(directory) : undefined}
+          type="button" title=${directory.path} disabled=${busy}
           ref=${active ? activeEntryRef : undefined}
           class=${active ? 'active' : undefined}
-          aria-current=${active ? 'true' : undefined}
+          role=${filtering ? 'option' : undefined}
+          aria-selected=${filtering ? active ? 'true' : 'false' : undefined}
+          tabIndex=${filtering ? -1 : undefined}
           onClick=${() => void browse(directory.path)}
         ><span aria-hidden="true">📁</span><span>${directory.name}</span></button></div>`;
       })}
