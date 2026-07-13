@@ -38,6 +38,129 @@ test('directory picker actions preserve host path payloads and API errors', asyn
   await assert.rejects(() => failing.browse('/root'), /permission denied/);
 });
 
+test('directory picker derives a final-component filter and ranks prefixes first', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { directoryFilterTerm, filterDirectories } = await harness.importDashboardModule(
+    'js/directory-picker-island.js',
+  );
+  assert.equal(directoryFilterTerm('/root/tcl', '/root'), 'tcl');
+  assert.equal(directoryFilterTerm('/root/', '/root'), '');
+  assert.equal(directoryFilterTerm('/root', '/root'), '');
+  assert.equal(directoryFilterTerm('/tmp/tcl', '/root'), null);
+  assert.equal(directoryFilterTerm('/root/team/tcl', '/root'), null);
+  assert.equal(directoryFilterTerm('/tmp', '/'), 'tmp');
+
+  const directories = [
+    { name: 'project-tclaude', path: '/root/project-tclaude' },
+    { name: 'TClaude', path: '/root/TClaude' },
+    { name: 'alpha', path: '/root/alpha' },
+    { name: 'tclaude-dir-picker', path: '/root/tclaude-dir-picker' },
+  ];
+  assert.deepEqual(
+    filterDirectories(directories, 'tcl').map((directory) => directory.name),
+    ['TClaude', 'tclaude-dir-picker', 'project-tclaude'],
+  );
+  assert.equal(filterDirectories(directories, ''), directories);
+});
+
+test('Preact picker filters its folder pane and completes the active match', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDirectoryPickerState }, { DirectoryPickerApp }] = await Promise.all([
+    harness.importDashboardModule('js/directory-picker-state.js'),
+    harness.importDashboardModule('js/directory-picker-island.js'),
+  ]);
+  const state = createDirectoryPickerState();
+  const calls = [];
+  const rootView = {
+    path: '/root', parent: '/', home: '/home/me',
+    directories: [
+      { name: 'alpha', path: '/root/alpha' },
+      { name: 'tclaude', path: '/root/tclaude' },
+      { name: 'tclaude-dir-picker', path: '/root/tclaude-dir-picker' },
+      { name: 'project-tclaude', path: '/root/project-tclaude' },
+      { name: 'zebra', path: '/root/zebra' },
+    ],
+  };
+  const actions = {
+    async browse(path) {
+      calls.push(path);
+      if (path === '/root') return rootView;
+      return { path, parent: '/root', home: '/home/me', directories: [] };
+    },
+  };
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const mounted = await harness.mount(harness.html`<${DirectoryPickerApp} state=${state} actions=${actions} />`, host);
+  let result;
+  await harness.act(() => { result = state.open({ startDir: '/root', title: 'Choose' }); });
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+
+  const input = host.querySelector('#directory-picker-path');
+  await harness.input(input, '/root/tcl');
+  assert.deepEqual(
+    [...host.querySelectorAll('.directory-picker-list button')].map((button) => button.textContent),
+    ['📁tclaude', '📁tclaude-dir-picker', '📁project-tclaude'],
+  );
+  assert.equal(host.querySelector('.directory-picker-count').textContent, '3 of 5 folders');
+  assert.equal(host.querySelector('.directory-picker-list button.active').title, '/root/tclaude');
+
+  const down = harness.fireEvent(input, 'keydown', { key: 'ArrowDown' });
+  await harness.act(() => Promise.resolve());
+  assert.equal(down.defaultPrevented, true);
+  assert.equal(host.querySelector('.directory-picker-list button.active').title, '/root/tclaude-dir-picker');
+  assert.equal(host.querySelector('.directory-picker-list button.active').getAttribute('aria-current'), 'true');
+
+  const tab = harness.fireEvent(input, 'keydown', { key: 'Tab' });
+  await harness.act(() => Promise.resolve());
+  assert.equal(tab.defaultPrevented, true);
+  assert.equal(input.value, '/root/tclaude-dir-picker');
+  assert.equal(host.querySelector('.directory-picker-count').textContent, '1 of 5 folders');
+  const completedTab = harness.fireEvent(input, 'keydown', { key: 'Tab' });
+  assert.equal(completedTab.defaultPrevented, false);
+
+  await harness.input(input, '/root/tcl');
+  harness.fireEvent(input, 'keydown', { key: 'ArrowDown' });
+  await harness.act(() => Promise.resolve());
+  harness.fireEvent(host.querySelector('.directory-picker-path'), 'submit');
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.deepEqual(calls, ['/root', '/root/tclaude-dir-picker']);
+  assert.equal(input.value, '/root/tclaude-dir-picker');
+  state.finish({ canceled: true });
+  assert.deepEqual(await result, { canceled: true });
+  await mounted.unmount();
+});
+
+test('Preact picker leaves the list intact for a directly typed path', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDirectoryPickerState }, { DirectoryPickerApp }] = await Promise.all([
+    harness.importDashboardModule('js/directory-picker-state.js'),
+    harness.importDashboardModule('js/directory-picker-island.js'),
+  ]);
+  const state = createDirectoryPickerState();
+  const calls = [];
+  const actions = { browse: async (path) => {
+    calls.push(path);
+    return { path, parent: '/', home: '/home/me', directories: path === '/root'
+      ? [{ name: 'alpha', path: '/root/alpha' }, { name: 'beta', path: '/root/beta' }]
+      : [] };
+  } };
+  const mounted = await harness.mount(
+    harness.html`<${DirectoryPickerApp} state=${state} actions=${actions} />`,
+  );
+  let result;
+  await harness.act(() => { result = state.open({ startDir: '/root', title: 'Choose' }); });
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  const input = mounted.container.querySelector('#directory-picker-path');
+  await harness.input(input, '/other/workspace');
+  assert.equal(mounted.container.querySelectorAll('.directory-picker-list button').length, 2);
+  assert.match(mounted.container.querySelector('.directory-picker-hint').textContent, /Press Enter/);
+  harness.fireEvent(mounted.container.querySelector('.directory-picker-path'), 'submit');
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.deepEqual(calls, ['/root', '/other/workspace']);
+  state.finish({ canceled: true });
+  await result;
+  await mounted.unmount();
+});
+
 test('Preact picker navigates host folders, chooses, cancels, and restores focus', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createDirectoryPickerState }, { DirectoryPickerApp }] = await Promise.all([

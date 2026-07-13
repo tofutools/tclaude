@@ -3959,9 +3959,13 @@ body.wizard .group-pending-title-wizard { display: inline; }
 .directory-picker-path button:hover:not(:disabled),
 .directory-picker-nav button:hover:not(:disabled),
 .directory-picker-list button:hover:not(:disabled) { border-color: #58a6ff; background: #292f37; }
+.directory-picker-list button.active:not(:disabled) {
+  background: #1f2937; border-color: #58a6ff; box-shadow: inset 3px 0 #58a6ff;
+}
 .directory-picker-modal button:disabled { cursor: default; opacity: .45; }
 .directory-picker-nav { display: flex; gap: 8px; align-items: center; }
 .directory-picker-count { color: #7d8590; font-size: 11px; margin-left: auto; }
+.directory-picker-hint { color: #7d8590; font-size: 11px; }
 .directory-picker-list {
   background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
   display: flex; flex-direction: column; gap: 3px; min-height: 190px;
@@ -3983,6 +3987,9 @@ body.wizard .directory-picker-modal h3 { color: #f3e6c0; font-family: Papyrus, L
 body.wizard .directory-picker-path input,
 body.wizard .directory-picker-list { background: #140f28; border-color: rgba(122, 93, 176, .5); color: #f3e6c0; }
 body.wizard .directory-picker-modal button:not(.primary) { background: #241b3d; border-color: #d9b45a; color: #f3e6c0; }
+body.wizard .directory-picker-list button.active:not(:disabled) {
+  background: #35274f; border-color: #f0ca68; box-shadow: inset 3px 0 #f0ca68;
+}
 body.wizard .directory-picker-modal .modal-buttons { border-top-color: rgba(122, 93, 176, .4); }
 
 /* ─── Reply-to-notification dialog (#human-reply-modal) ──────────────
