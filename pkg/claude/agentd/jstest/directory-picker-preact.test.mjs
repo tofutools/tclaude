@@ -218,10 +218,14 @@ test('Preact picker preserves continued typing while an opened directory loads',
 
   await harness.input(input, '/root/alpha/next');
   await harness.act(() => {
-    resolveChild({ path: '/root/alpha', parent: '/root', home: '/home/me', directories: [] });
-    return Promise.resolve();
+    resolveChild({ path: '/srv/alpha', parent: '/srv', home: '/home/me', directories: [] });
+    return new Promise((resolve) => setTimeout(resolve, 0));
   });
-  assert.equal(input.value, '/root/alpha/next', 'the browse response must not discard newer input');
+  assert.equal(
+    input.value,
+    '/srv/alpha/next',
+    'newer input is rebased onto the server-canonical path',
+  );
 
   state.finish({ canceled: true });
   await result;

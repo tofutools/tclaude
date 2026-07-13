@@ -58,7 +58,8 @@ export function DirectoryPickerApp({ state, actions }) {
     const requested = String(target || '').trim();
     const currentGeneration = ++generation.current;
     const revision = inputRevision.current;
-    setPath(appendSlash ? withTrailingSlash(requested) : requested);
+    const displayedRequest = appendSlash ? withTrailingSlash(requested) : requested;
+    setPath(displayedRequest);
     setActiveIndex(0);
     setBusy(true);
     setError('');
@@ -69,6 +70,9 @@ export function DirectoryPickerApp({ state, actions }) {
       const openedPath = result.path || requested;
       if (inputRevision.current === revision) {
         setPath(appendSlash ? withTrailingSlash(openedPath) : openedPath);
+      } else if (appendSlash && pathRef.current?.value.startsWith(displayedRequest)) {
+        const suffix = pathRef.current.value.slice(displayedRequest.length);
+        setPath(`${withTrailingSlash(openedPath)}${suffix}`);
       }
       setActiveIndex(0);
     } catch (browseError) {
