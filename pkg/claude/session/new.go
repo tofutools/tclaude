@@ -757,7 +757,7 @@ func runNew(params *NewParams) error {
 		defer cleanupProofReady()
 		proofReadyPath = path
 		proofWriteDirs := append([]string{}, params.GitWorktreeWriteDirs...)
-		proofWriteDirs = append(proofWriteDirs, sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessWrite)...)
+		proofWriteDirs = append(proofWriteDirs, sandboxSnapshotProofDirs(launchSandbox, sandboxpolicy.AccessWrite)...)
 		harnessCmd = guardHarnessCommandWithDirProof(
 			harnessCmd, proofToken, proofReadyPath, params.CwdWriteProof != "", proofWriteDirs)
 	}
@@ -955,6 +955,35 @@ func sandboxSnapshotDirs(snapshot *sandboxpolicy.Snapshot, access sandboxpolicy.
 	return out
 }
 
+// sandboxSnapshotProofDirs returns the sandbox roots whose marker must have
+// been created by the calling agent. Per-agent directories are deliberately
+// excluded: agentd creates their unpredictable, no-follow-pinned paths only
+// after the caller's proof challenge, so the caller cannot and need not prove
+// write access to them. They remain in sandboxSnapshotDirs and therefore stay
+// writable by the child harness.
+func sandboxSnapshotProofDirs(snapshot *sandboxpolicy.Snapshot, access sandboxpolicy.Access) []string {
+	if snapshot == nil {
+		return nil
+	}
+	agentDirectoryNames := make(map[string]bool, len(snapshot.Effective.AgentDirectories))
+	for _, name := range snapshot.Effective.AgentDirectories {
+		agentDirectoryNames[name] = true
+	}
+	agentDirectoryPaths := make(map[string]bool, len(agentDirectoryNames))
+	for _, entry := range snapshot.Effective.Environment {
+		if agentDirectoryNames[entry.Name] {
+			agentDirectoryPaths[entry.Value] = true
+		}
+	}
+	out := make([]string, 0, len(snapshot.Effective.Filesystem))
+	for _, grant := range snapshot.Effective.Filesystem {
+		if grant.Access == access && !agentDirectoryPaths[grant.Path] {
+			out = append(out, grant.Path)
+		}
+	}
+	return out
+}
+
 func sandboxSnapshotActiveFilesystem(snapshot *sandboxpolicy.Snapshot) []sandboxpolicy.FilesystemGrant {
 	if snapshot == nil {
 		return nil
@@ -1065,6 +1094,8 @@ func isValidSpawnCwdProofToken(proof string) bool {
 // tmux's already-established directory inode. Every extra permission root is
 // also required to remain canonical and carry the same unpredictable marker,
 // so the child never consumes a path substituted after daemon verification.
+// Daemon-materialized per-agent directories are not caller-controlled roots
+// and are filtered before reaching this guard.
 func guardHarnessCommandWithDirProof(harnessCmd, proof, readyPath string, checkCwd bool, dirs []string) string {
 	marker := clcommon.SpawnDirWriteProofPrefix + proof
 	ready := clcommon.ShellQuoteArg(readyPath)
