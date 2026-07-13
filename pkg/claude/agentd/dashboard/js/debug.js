@@ -67,8 +67,8 @@ function sparklineSVG(samples) {
     <svg class="debug-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img"
          aria-label="latency sparkline: ${n} samples, latest ${fmtMs(latest)}, max ${fmtMs(maxMs)}">
       <title>${n} samples — latest ${fmtMs(latest)}, max ${fmtMs(maxMs)}</title>
-      <path d="${area}" fill="rgba(57,135,229,0.15)" stroke="none"></path>
-      <polyline points="${pts.join(' ')}" fill="none" stroke="#3987e5"
+      <path class="debug-spark-area" d="${area}"></path>
+      <polyline class="debug-spark-line" points="${pts.join(' ')}"
                 stroke-width="2" vector-effect="non-scaling-stroke"
                 stroke-linejoin="round" stroke-linecap="round"></polyline>
     </svg>`;

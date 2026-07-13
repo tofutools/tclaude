@@ -551,6 +551,35 @@ func baseStates() []dashsnap.State {
 			SettleMS: 500,
 		},
 		{
+			Key:     "debug-alchemy",
+			Title:   "Debug / Alchemy diagnostics",
+			Caption: "The poll-timing cards retain their readable default skin while wizard mode adds the Alchemist's Observatory heading, violet panels and a gilded latency trace without recolouring categorical phase data.",
+			JS: `return (async function(){
+  document.querySelector('nav [data-tab="debug"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('.debug-card'); i++) {
+    await new Promise(function(resolve){ setTimeout(resolve, 50); });
+  }
+  var card = document.querySelector('.debug-card');
+  var line = document.querySelector('.debug-spark-line');
+  var title = document.querySelector('.debug-wizard-title');
+  if (!card || !line || !title) throw new Error('debug-alchemy: diagnostic chrome did not render');
+  var wizard = document.body.classList.contains('wizard');
+  var cardStyle = getComputedStyle(card);
+  var lineStyle = getComputedStyle(line);
+  var titleStyle = getComputedStyle(title);
+  if (wizard) {
+    if (titleStyle.display === 'none') throw new Error('debug-alchemy: wizard title is hidden');
+    if (!cardStyle.backgroundImage.includes('gradient')) throw new Error('debug-alchemy: wizard card lacks gradient chrome');
+    if (lineStyle.stroke !== 'rgb(217, 180, 90)') throw new Error('debug-alchemy: wizard sparkline is not gilded');
+  } else {
+    if (titleStyle.display !== 'none') throw new Error('debug-alchemy: wizard title leaked into plain mode');
+    if (cardStyle.backgroundImage !== 'none') throw new Error('debug-alchemy: wizard card chrome leaked into plain mode');
+    if (lineStyle.stroke !== 'rgb(57, 135, 229)') throw new Error('debug-alchemy: plain sparkline changed colour');
+  }
+})();`,
+			SettleMS: 300,
+		},
+		{
 			Key:      "bounded-costs-normal",
 			Title:    "Bounded Preact — Costs normal",
 			Caption:  "Costs island completed its request and rendered controls for the fixture's empty-cost span.",

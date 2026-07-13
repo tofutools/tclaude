@@ -308,11 +308,15 @@
        /api/perf — fetched on tab activation, then re-fetched on each
        snapshot tick while the tab is showing; never on other tabs. -->
   <section id="tab-debug">
+    <!-- The ordinary Debug tab is deliberately titleless; wizard mode gives
+         its Alchemy chamber a proper arcane heading. The technical copy below
+         still names exactly what is measured in both skins. -->
+    <h2 class="debug-wizard-title">🧪 The Alchemist's Observatory</h2>
     <div class="filter-bar">
-      <span class="muted">Wall-clock timings of the dashboard's background polls, recorded in-memory by this daemon process (newest ≈ 34 min at the 2s poll; reset on daemon restart).</span>
+      <span class="muted"><span class="theme-copy-regular">Wall-clock timings of the dashboard's background polls, recorded in-memory by this daemon process (newest ≈ 34 min at the 2s poll; reset on daemon restart).</span><span class="theme-copy-wizard">Arcane readings of the Tower's background scrying, recorded in this daemon's memory (newest ≈ 34 min at the 2s poll; the readings vanish when the daemon restarts).</span></span>
       <span class="spacer"></span>
       <span id="debug-updated" class="muted"></span>
-      <button class="tool" id="debug-reset" title="Discard every recorded sample and start a fresh distribution — useful after changing what's being measured (agent count, config)">↺ reset stats</button>
+      <button class="tool" id="debug-reset" title="Discard every recorded sample and start a fresh distribution — useful after changing what's being measured (agent count, config)"><span class="theme-copy-regular">↺ reset stats</span><span class="theme-copy-wizard">⚗ clear readings</span></button>
     </div>
     <div id="debug-list"></div>
   </section>

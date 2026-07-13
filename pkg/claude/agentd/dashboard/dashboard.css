@@ -1333,6 +1333,8 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   display: block; width: 100%; height: 48px;
   border-bottom: 1px solid #2a3340;
 }
+.debug-spark-area { fill: rgba(57, 135, 229, 0.15); stroke: none; }
+.debug-spark-line { fill: none; stroke: #3987e5; }
 .debug-subhead { margin: 10px 0 6px; color: #7d8590; font-size: 12px; }
 .debug-phasebar {
   display: flex; gap: 2px; height: 18px; border-radius: 4px; overflow: hidden;
@@ -9847,6 +9849,61 @@ body.wizard .filter-bar button.primary:hover {
   border-color: #f3e6c0;
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
 }
+
+/* ─── Wizard Debug tab — "The Alchemist's Observatory" ─────────────
+   The Debug tab is Alchemy in wizard mode, but its diagnostic cards used to
+   keep the default slate panels and electric-blue sparkline. Re-skin that
+   chrome into the shared violet-void / mystic-purple / gold palette while
+   preserving every categorical phase colour: those fills identify measured
+   phases and are data, not decoration. The title and toolbar copy use the
+   same regular/wizard span swap as the rest of the dashboard. */
+.debug-wizard-title { display: none; }
+body.wizard .debug-wizard-title {
+  display: block;
+  margin: 4px 0 10px;
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  font-size: 22px; letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #tab-debug .debug-card {
+  background:
+    radial-gradient(120% 90% at 50% 0%, rgba(122, 93, 176, 0.14), transparent 68%),
+    linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border-color: #7a5db0;
+  box-shadow: inset 0 0 18px rgba(169, 123, 214, 0.12);
+}
+body.wizard #tab-debug .debug-card-head .rowname {
+  color: #f3e6c0;
+  text-shadow: 0 0 5px rgba(217, 180, 90, 0.25);
+}
+body.wizard #tab-debug .muted,
+body.wizard #tab-debug .debug-stat,
+body.wizard #tab-debug .debug-subhead { color: #9a86c4; }
+body.wizard #tab-debug .debug-stat strong {
+  color: #f0d066;
+  text-shadow: 0 0 5px rgba(217, 180, 90, 0.3);
+}
+body.wizard #tab-debug .debug-spark { border-bottom-color: rgba(122, 93, 176, 0.45); }
+body.wizard #tab-debug .debug-spark-area { fill: rgba(217, 180, 90, 0.12); }
+body.wizard #tab-debug .debug-spark-line {
+  stroke: #d9b45a;
+  filter: drop-shadow(0 0 2px rgba(217, 180, 90, 0.45));
+}
+body.wizard #tab-debug .debug-phasebar {
+  box-shadow: 0 0 0 1px rgba(122, 93, 176, 0.35), 0 0 8px rgba(169, 123, 214, 0.12);
+}
+body.wizard #tab-debug .debug-legend { color: #e7d9f5; }
+body.wizard #tab-debug .debug-legend-chip { box-shadow: 0 0 0 1px rgba(243, 230, 192, 0.2); }
+body.wizard #tab-debug .debug-table th {
+  color: #d9b45a;
+  border-bottom-color: rgba(217, 180, 90, 0.45);
+}
+body.wizard #tab-debug .debug-table td {
+  color: #e7d9f5;
+  border-bottom-color: rgba(122, 93, 176, 0.22);
+}
+body.wizard #tab-debug .empty { color: #8f7bbf; }
 
 /* ─── Wizard Wards sub-nav — the three chambers of access control ─────
    The Access tab's inset segmented control (Permissions / Slug registry /

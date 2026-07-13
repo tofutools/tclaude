@@ -40,6 +40,17 @@ func TestDashboardHTML_DebugTabWired(t *testing.T) {
 	must("debug-table", "the per-phase aggregate table class")
 	must("PHASE_COLORS", "the fixed phase color slots")
 
+	// Alchemy is more than a nav-label swap in wizard mode: it gets a themed
+	// heading, copy, cards, sparkline and table chrome. The categorical phase
+	// fills intentionally retain PHASE_COLORS because they encode data.
+	must(`class="debug-wizard-title"`, "the wizard-only Alchemy heading")
+	must(`class="theme-copy-wizard">⚗ clear readings</span>`, "the reset control's Alchemy copy")
+	must(`class="debug-spark-area"`, "the sparkline area exposes a themeable class")
+	must(`class="debug-spark-line"`, "the sparkline stroke exposes a themeable class")
+	must("body.wizard #tab-debug .debug-card", "wizard mode themes the diagnostic cards")
+	must("body.wizard #tab-debug .debug-spark-line", "wizard mode themes the latency sparkline")
+	must("body.wizard #tab-debug .debug-table th", "wizard mode themes the phase table")
+
 	// dashboard.js imports + calls the binder so the tab is live at boot.
 	must("import { bindDebugTab }", "dashboard.js imports the binder")
 	must("bindDebugTab();", "dashboard.js calls the binder at boot")
