@@ -411,9 +411,8 @@
 <!-- Retractable right-side PALETTE DOCK (JOH-374). Lists the spawn PROFILES,
      group TEMPLATES (summoning circles) and ROLES (classes) as future
      drag SOURCES — this ticket is the panel shell; drag itself lands in the
-     follow-up tickets. The shell + edge toggle are STATIC so they survive
-     the 2s morph; js/dock.js only reconciles #dock-body's inner sections
-     (keyed morphInto). Open/collapse is body.dock-open, persisted via
+     follow-up tickets. The shell + edge toggle are STATIC while a keyed Preact
+     island exclusively owns #dock-body. Open/collapse is body.dock-open, persisted via
      dashPrefs (tclaude.dash.dock.open) so CSS reflows <main> to reclaim the
      space when collapsed rather than overlaying dead area. NB: named `dock`,
      not `palette`, because js/palette.js is the Ctrl/Cmd-K command palette. -->
@@ -433,8 +432,8 @@
          row 2 is the 🧠 dashboard-default-profile chip on its own line. dock.js's
          syncDockActions() moves those nodes here on open and back to the toolbar
          on collapse (the toolbar renders them exactly as before when the dock is
-         closed). The containers are STATIC (outside #dock-body) so the 2s morph
-         never clobbers them. -->
+         closed). The containers are STATIC, outside the #dock-body Preact
+         ownership boundary. -->
     <div class="dock-head">
       <div class="dock-head-main">
         <span id="dock-actions-primary" class="dock-actions"></span>
@@ -442,9 +441,8 @@
       </div>
       <div id="dock-actions-profile" class="dock-actions-profile"></div>
     </div>
-    <!-- dock.js renders the three keyed <details> sections here off the live
-         snapshot; their open/collapsed state (req 5) persists via dashPrefs and
-         survives the 2s morph (open is live-owned in js/morph.js). -->
+    <!-- The dock Preact island renders the three keyed <details> sections here
+         off the live snapshot; open/collapsed state persists via dashPrefs. -->
     <div id="dock-body" class="dock-body"></div>
   </div>
 </aside>

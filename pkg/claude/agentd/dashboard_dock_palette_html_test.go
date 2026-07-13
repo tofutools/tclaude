@@ -26,11 +26,13 @@ func TestDashboardHTML_DockPalette(t *testing.T) {
 		}
 	}
 
-	// Markup: the shell + edge toggle are static (they survive the 2s morph);
-	// only #dock-body's inner sections get reconciled.
+	// Markup: the shell + edge toggle are static; #dock-body is exclusively
+	// owned by the keyed Preact island.
 	must(`id="agent-dock"`, "the dock shell exists")
 	must(`id="dock-toggle"`, "the edge toggle exists")
-	must(`id="dock-body"`, "the morph-target body exists")
+	must(`id="dock-body"`, "the Preact island host exists")
+	must("mountDockFeature()", "dashboard boot mounts the dock island")
+	must("name: 'dock'", "the dock has an island descriptor")
 	// The in-dock collapse affordance in the (title-less, req 6) dock header.
 	must(`id="dock-collapse"`, "the in-dock collapse affordance exists")
 	// JOH-390 item 7: the top-bar "🧰 Palette"/"🧰 Grimoire" toggle (JOH-388 req 2)
@@ -96,17 +98,17 @@ func TestDashboardHTML_DockPalette(t *testing.T) {
 	// localStorage (the random per-start port would reset it).
 	must("tclaude.dash.dock.open", "the open state persists via a dashPrefs key")
 
-	// Data-driven sections: the three kinds are instances of one SECTIONS
+	// Data-driven sections: the three kinds are instances of one dockSections
 	// idiom (a fourth item kind slots in by adding an entry). Pin the keys so
 	// a section can't silently vanish.
-	must("const SECTIONS = [", "the sections are data-driven off one config array")
+	must("export const dockSections = Object.freeze([", "the sections are data-driven off one config array")
 	must(`key: 'profiles'`, "the profiles section exists")
 	must(`key: 'templates'`, "the templates section exists")
 	must(`key: 'roles'`, "the roles section exists")
 	// Cards carry their payload for the drag wiring (dock-dnd.js reads these off
 	// dragstart; see TestDashboardHTML_DockDnd for the 2/4 drag behaviour).
-	must(`data-dock-kind="`, "cards carry their kind for the DnD wiring")
-	must(`data-dock-name="`, "cards carry their name for the DnD wiring")
+	must("data-dock-kind=${section.key}", "cards carry their kind for the DnD wiring")
+	must("data-dock-name=${name}", "cards carry their name for the DnD wiring")
 
 	// The dock reads its data off the live snapshot (the profile + role
 	// registries now ride the poll, templates already did) — see
@@ -127,7 +129,7 @@ func TestDashboardHTML_DockPalette(t *testing.T) {
 
 	// Item 4: the groups-toolbar globals ("+ new group", the ⚙ cog, the 🧠
 	// default-profile chip) re-home into the open dock's head — two static
-	// containers (outside #dock-body so the morph never clobbers them) that
+	// containers (outside the #dock-body Preact ownership boundary) that
 	// dock.js's syncDockActions moves the live nodes into on open / back to the
 	// toolbar on collapse.
 	must(`id="dock-actions-primary"`, "the dock head hosts the re-homed new-group + cog row")

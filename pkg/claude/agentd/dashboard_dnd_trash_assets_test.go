@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"io/fs"
 	"strings"
 	"testing"
 )
@@ -50,17 +51,25 @@ func TestDashboardJS_DragToRetireBinWired(t *testing.T) {
 		}
 	}
 
-	// The bin must be hidden on dragend. Assert hideDndTrash() is called from
-	// the dragend handler (between the dragend listener and the dragover one),
-	// so a cancelled or missed drop can never strand the bin on screen.
-	dragend := strings.Index(dashboardAssets, "addEventListener('dragend'")
-	dragover := strings.Index(dashboardAssets, "addEventListener('dragover'")
-	hide := strings.Index(dashboardAssets, "hideDndTrash();")
-	if dragend < 0 || dragover < 0 || hide < 0 {
-		t.Fatalf("dashboard assets: dragend=%d dragover=%d hideDndTrash=%d — expected all present", dragend, dragover, hide)
+	// The shared terminal handler is registered on both document and the source
+	// row, so it still hides the bin when a structural Preact render detached the
+	// row before dragend could bubble.
+	b, err := fs.ReadFile(dashboardAssetsFS, "js/dnd.js")
+	if err != nil {
+		t.Fatalf("read dnd.js: %v", err)
 	}
-	if dragend >= hide || hide >= dragover {
-		t.Errorf("hideDndTrash() (at %d) must be called inside the dragend handler (between %d and %d) so a drag-end always hides the bin", hide, dragend, dragover)
+	dnd := string(b)
+	start := strings.Index(dnd, "const endDndDrag = (e) => {")
+	end := strings.Index(dnd, "  listen(document, 'dragstart'")
+	if start < 0 || end <= start {
+		t.Fatalf("dnd.js terminal handler bounds: start=%d end=%d", start, end)
+	}
+	terminal := dnd[start:end]
+	if !strings.Contains(terminal, "hideDndTrash();") {
+		t.Error("endDndDrag must hide the retire bin on every terminal path")
+	}
+	if !strings.Contains(dnd, "row.addEventListener('dragend', endDndDrag, { once: true });") {
+		t.Error("member source must own a terminal listener for detached-node cleanup")
 	}
 }
 

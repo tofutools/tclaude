@@ -20,17 +20,14 @@ import { renderTemplatesTab } from './modal-templates.js';
 import { applyProcessesTabVisibility } from './processes.js';
 import { morphInto } from './morph.js';
 import { renderDock } from './dock.js';
-// renameEditing (row-actions.js) and dndDragActive (dnd.js) are owned by
-// their feature modules; refreshSuspended() only reads them. lastSnapshot
+// renameEditing is owned by row-actions.js; refreshSuspended() only reads it.
+// lastSnapshot
 // is dashboard.js's shared state — read directly, written via the
 // setLastSnapshot setter (two writers: refresh() here, and the
 // row-actions rename-rollback). All deliberate, benign cycles (see
 // render.js): TDZ-safe — no top-level code reads a cyclic import.
 import { renameEditing } from './row-actions.js';
 import { closeTerminalsForWindowOp, openWebWindowPane } from './terminals-tab.js';
-import { dndDragActive } from './dnd.js';
-import { groupReorderActive } from './group-reorder.js';
-import { dockDragActive } from './dock-dnd.js';
 import { lastSnapshot, setLastSnapshot, webTerminalDefault } from './dashboard.js';
 import { setVegasRegularMode, isWizardActive } from './slop.js';
 import { setHScrollFollow } from './hscroll.js';
@@ -55,45 +52,31 @@ import { featureState } from './feature-state-registry.js';
 // so all of them suspend auto-refresh while open without each having
 // to remember to toggle a flag.
 //
-// ignoreModals bypasses ONLY the open-modal suspension (not the drag /
-// rename / reorder / open-menu / slop-pull guards). A handful of
+// ignoreModals bypasses ONLY the open-modal suspension (not the rename /
+// open-menu / slop-pull guards). A handful of
 // template/circle mutations fire refresh from INSIDE a modal that stays
 // open — installing a starter (the picker stays up to copy several),
 // snapshot-a-group (it reopens the editor on the fresh circle) — so a
 // plain, modal-suspended refresh would drop their tick and leave the
 // circle list stale until the human closed and reopened it. Those callers
-// pass force so the list behind the modal repaints immediately; the truly
-// destructive gestures still suspend, because re-rendering under an active
-// drag/rename/menu breaks it (that is the wedge class of bug this predicate
-// was written to avoid — see TestDashboardHTML_RefreshGuardCannotWedge).
+// pass force so the list behind the modal repaints immediately. Keyed
+// Preact-owned drag sources and targets do not suspend the shared poll.
 function refreshSuspended({ ignoreModals = false } = {}) {
   // An inline rename <input> is open — re-rendering would destroy it
   // mid-keystroke.
   if (renameEditing) return true;
-  // A drag-and-drop gesture is in flight — re-rendering would detach
-  // the dragged row, and a dragend dispatched on a now-detached node
-  // never bubbles up to the document-level handler, so the drag's
-  // own cleanup (this suspension included) would be lost forever.
-  if (dndDragActive) return true;
-  // A group-reorder drag is in flight — same reasoning as dndDragActive:
-  // re-rendering the Groups tab would detach the dragged grip mid-drag and
-  // lose the drag's own dragend cleanup (group-reorder.js).
-  if (groupReorderActive) return true;
-  // A palette-dock drag is in flight (a profile/role card headed for a group) —
-  // same reasoning: re-rendering the dock (#dock-body morph) or the Groups tab
-  // would detach the drag source or the drop target mid-gesture and lose the
-  // drag's own dragend cleanup (dock-dnd.js).
-  if (dockDragActive) return true;
+  // Groups rows/headers and dock cards are keyed Preact-owned nodes. Snapshot
+  // publishes retain active drag sources/targets, so gestures no longer widen
+  // this global refresh-suspension predicate.
   // Any modal overlay is open (unless a force-refresh opted out — see the
   // ignoreModals note above).
   if (!ignoreModals && document.querySelector('.modal-overlay.show')) return true;
   // A ⚙ options menu is open — re-rendering the Groups tab would
   // rebuild the row/group and collapse the menu out from under the
   // pointer. Closing the menu drops the .open class, lifting this.
-  // .dock-card-menu.open is the palette dock's own per-card actions menu
-  // (Edit / Clone); the dock morphs its cards on the poll, so an open one
-  // must pause the reconcile the same way (dock.js closeDockMenus lifts it).
-  if (document.querySelector('.action-menu.open, .dock-card-menu.open')) return true;
+  // Dock card menus are keyed Preact-owned state and survive snapshot
+  // publishes, so only the remaining legacy action menus suspend refresh.
+  if (document.querySelector('.action-menu.open')) return true;
   // A slop-mode slot machine is mid-pull. manualPull() in slop-fx.js
   // spins a row's .slop-machine for ~900ms, then holds the settled
   // combo for ~1.8s, tagging the cell with a sentinel data-status of
@@ -328,9 +311,7 @@ export async function refresh(opts = {}) {
     renderGroupsTab();
     renderGlobalActivity();
     renderTemplatesTab();
-    // The right-side palette dock (JOH-374) rides the poll like the rest —
-    // keyed morphInto so its selection/scroll survive and a manager edit
-    // shows up on the next tick.
+    // Publish the shared snapshot into the keyed Preact-owned palette dock.
     renderDock();
     renderLinksTab();
     applyProcessesTabVisibility(data);

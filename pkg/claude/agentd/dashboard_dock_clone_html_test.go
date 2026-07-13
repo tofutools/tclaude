@@ -30,7 +30,7 @@ func TestDashboardHTML_DockCardCloneMenu(t *testing.T) {
 
 	// --- The card ⚙ is now a menu trigger, not a direct editor deep-link. ---
 	must(`data-dock-act="card-menu"`, "the card ⚙ toggles its actions menu")
-	must(`class="dock-card-menu"`, "the card renders its actions menu")
+	must("dock-card-menu${menuOpen ? ' open' : ''}", "the card renders its actions menu from component state")
 	must(`data-dock-act="edit-item"`, "the menu's Edit item dispatches to the editor")
 	must(`data-dock-act="clone-item"`, "the menu's Clone item dispatches to the clone dialog")
 	must(`data-dock-act="delete-item"`, "the menu's Delete item dispatches to the delete flow")
@@ -42,11 +42,12 @@ func TestDashboardHTML_DockCardCloneMenu(t *testing.T) {
 	// second parallel path.
 	mustNot(`data-dock-act="manage-item"`, "the card ⚙ no longer deep-links straight to the editor")
 
-	// The menu is wholly owned by dock.js's own handler (a DISTINCT class, not
+	// The menu is wholly owned by the dock Preact component (a DISTINCT class, not
 	// the shared .action-menu bus) so it can't race with row-actions.js's cog
-	// machinery — see the module header. Pin the two helpers that own it.
-	must("function toggleCardMenu(", "dock.js owns the card-menu open/close")
-	must("function closeDockMenus(", "dock.js closes card menus on outside-click / Escape")
+	// machinery. Pin the component state and lifecycle that own it.
+	must("const [openMenu, setOpenMenu] = useState(null);", "the dock component owns card-menu state")
+	must("document.addEventListener('keydown', onKeyDown);", "the component owns Escape lifecycle")
+	must("document.removeEventListener('keydown', onKeyDown);", "the component cleans up Escape lifecycle")
 
 	// SECTIONS grew a clone hook per kind: profiles + roles use the generic
 	// name dialog (openCloneModal), templates reuse their own richer duplicate
@@ -68,9 +69,10 @@ func TestDashboardHTML_DockCardCloneMenu(t *testing.T) {
 	must(".dock-card-menu-item.danger {", "the destructive Delete item has a red skin")
 	must("body.wizard #agent-dock .dock-card-menu-item.danger", "the Delete item's destructive skin re-skins in wizard mode")
 
-	// An open card menu must pause the 2s poll (which morphs the dock cards),
-	// or a re-render would rebuild the card and drop the menu mid-use.
-	must(".action-menu.open, .dock-card-menu.open", "an open card menu suspends the auto-refresh reconcile")
+	// A keyed Preact card/menu survives snapshot publishes, so it must no longer
+	// widen the legacy action-menu refresh suspension.
+	must(`document.querySelector('.action-menu.open')`, "only legacy action menus suspend refresh")
+	mustNot(".action-menu.open, .dock-card-menu.open", "Preact-owned dock menus do not suspend refresh")
 
 	// --- The generic clone dialog (#clone-modal, modal-clone.js). ------------
 	must(`id="clone-modal"`, "the clone dialog exists")

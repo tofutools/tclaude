@@ -3,7 +3,8 @@
 // header — dropping anywhere over an expanded group counts).
 //
 // Extracted from dashboard.js in the Stage 2 module split. Owns
-// dndDragActive — the in-flight-drag flag refreshSuspended consults.
+// dndDragActive — in-flight member-drag routing state shared with reverse
+// dock capture.
 
 import { $, $$ } from './helpers.js';
 import { renderGroupsTab } from './tabs.js';
@@ -24,13 +25,9 @@ import { lastSnapshot } from './dashboard.js';
 // never groupless mid-drag — on a failed delete it ends up in both
 // groups (visible, recoverable) instead of nowhere (silently lost).
 //
-// Auto-refresh suspends while a drag is in flight via the
-// dndDragActive flag below — refreshSuspended() checks it — so a 2s
-// tick doesn't blow our optimistic mutation away while the
-// round-trip is mid-air. The drag deliberately does NOT share the
-// modal suspension: a single shared boolean let a drag and a modal
-// clobber each other's reset, which is how auto-refresh used to
-// wedge after a drag-and-drop retire.
+// Groups rows and targets are keyed Preact-owned nodes, so snapshot publishes
+// retain them during a gesture. This flag routes events; it does not suspend
+// the shared poll.
 let dndDragActive = false;
 // dndSourceUngrouped / dndSourceConversation / dndSourceRetired: which
 // virtual group the dragged row comes from. Set in dragstart, cleared
@@ -133,6 +130,11 @@ function hideDndTrash() {
   if (bin) bin.classList.remove('show', 'dnd-drop-over');
 }
 function bindDnd() {
+  const removers = [];
+  const listen = (target, type, listener, options) => {
+    target.addEventListener(type, listener, options);
+    removers.push(() => target.removeEventListener(type, listener, options));
+  };
   // The whole <tr> is draggable="true", so a press on an in-row control
   // (focus / hide eye, the ⚙ cog and its menu items, the status dot, the
   // click-to-edit name / cwd / role cells, the promote / reinstate
@@ -153,18 +155,19 @@ function bindDnd() {
   // The suppression is strictly gesture-scoped: pointerup / pointercancel
   // restore draggability immediately, so the row is never left
   // un-draggable between gestures (it doesn't have to wait for the next
-  // pointerdown or the 2s re-render to re-arm). Restoring on pointerup is
+  // pointerdown or a later snapshot publish to re-arm). Restoring on pointerup is
   // safe — the drag-vs-click decision is made during the move BEFORE
   // pointerup, so re-enabling at gesture end can't trigger an unwanted
   // drag. dndSuppressedRow remembers which row we touched so we restore
   // exactly that one (and only when we actually disabled it).
   let dndSuppressedRow = null;
+  let activeSourceRow = null;
   const restoreDraggable = () => {
     if (!dndSuppressedRow) return;
     dndSuppressedRow.draggable = true;
     dndSuppressedRow = null;
   };
-  document.addEventListener('pointerdown', (e) => {
+  listen(document, 'pointerdown', (e) => {
     const row = e.target.closest('.dnd-draggable');
     if (!row) return;
     const ctl = e.target.closest('button, a, input, select, textarea, label, [data-act], [contenteditable]');
@@ -173,9 +176,28 @@ function bindDnd() {
       dndSuppressedRow = row;
     }
   });
-  document.addEventListener('pointerup', restoreDraggable);
-  document.addEventListener('pointercancel', restoreDraggable);
-  document.addEventListener('dragstart', (e) => {
+  listen(document, 'pointerup', restoreDraggable);
+  listen(document, 'pointercancel', restoreDraggable);
+  const endDndDrag = (e) => {
+    if (!dndDragActive) return;
+    // A source-local listener also invokes this when a structural Preact
+    // publish detached the row before dragend could bubble to document.
+    dndDragActive = false;
+    dndSourceUngrouped = false;
+    dndSourceConversation = false;
+    dndSourceRetired = false;
+    dndSourcePending = false;
+    dndSourceGroup = '';
+    hideDndTrash();
+    const row = activeSourceRow || e?.target?.closest?.('.dnd-draggable');
+    activeSourceRow?.removeEventListener('dragend', endDndDrag);
+    activeSourceRow = null;
+    if (row) row.classList.remove('dnd-source-row');
+    $$('.dnd-drop-over').forEach(s => s.classList.remove('dnd-drop-over', 'dnd-effect-clone'));
+    $('#dnd-pill')?.classList.remove('show', 'clone');
+    refresh();
+  };
+  listen(document, 'dragstart', (e) => {
     const row = e.target.closest('.dnd-draggable');
     if (!row) return;
     const conv = row.getAttribute('data-dnd-conv');
@@ -209,6 +231,10 @@ function bindDnd() {
     e.dataTransfer.setData('text/plain', payload);
     e.dataTransfer.effectAllowed = 'copyMove';
     row.classList.add('dnd-source-row');
+    activeSourceRow?.removeEventListener('dragend', endDndDrag);
+    activeSourceRow = row;
+    // dragend targets its source even after that source leaves the document.
+    row.addEventListener('dragend', endDndDrag, { once: true });
     dndDragActive = true;
     dndSourceUngrouped = sourceUngrouped;
     dndSourceConversation = sourceConversation;
@@ -221,38 +247,9 @@ function bindDnd() {
     // its only valid target), so clearing never means dragging all the way
     // to the possibly-offscreen Retired group.
     showDndTrash(sourcePending || (!sourceRetired && !sourceConversation));
-    // dndDragActive (set above) is what suspends auto-refresh for the
-    // duration of the drag — see refreshSuspended().
   });
-  document.addEventListener('dragend', (e) => {
-    // Clear the drag state FIRST, ahead of any DOM cleanup below: if
-    // a classList / query call here ever threw, auto-refresh must
-    // still come back. dragend fires for every drag that had a
-    // dragstart — a successful drop, an Escape-cancel, or a release
-    // over nothing — so this is the one guaranteed reset covering
-    // every drag-end outcome (join, leave, retire, reinstate,
-    // promote, clone, cancelled drop, error path).
-    dndDragActive = false;
-    dndSourceUngrouped = false;
-    dndSourceConversation = false;
-    dndSourceRetired = false;
-    dndSourcePending = false;
-    dndSourceGroup = '';
-    // Hide the drag-to-retire bin alongside the flag resets, ahead of the
-    // DOM cleanup below: like those resets it must run on every drag-end
-    // outcome (drop, Escape-cancel, release over nothing), so it sits
-    // before any classList/query line that could in principle throw. It is
-    // itself null-guarded.
-    hideDndTrash();
-    const row = e.target.closest('.dnd-draggable');
-    if (row) row.classList.remove('dnd-source-row');
-    // Clear any lingering hover highlight (Firefox sometimes fires
-    // dragend without a final dragleave on the target).
-    $$('.dnd-drop-over').forEach(s => s.classList.remove('dnd-drop-over', 'dnd-effect-clone'));
-    $('#dnd-pill').classList.remove('show', 'clone');
-    refresh();
-  });
-  document.addEventListener('dragover', (e) => {
+  listen(document, 'dragend', endDndDrag);
+  listen(document, 'dragover', (e) => {
     if (!dndDragActive) return;
     const box = e.target.closest(DND_TARGET_SEL);
     if (!box) {
@@ -295,7 +292,7 @@ function bindDnd() {
     else text = '→ move to group';
     updateDndPill(e, {text, clone: isClone});
   });
-  document.addEventListener('dragenter', (e) => {
+  listen(document, 'dragenter', (e) => {
     if (!dndDragActive) return;
     const box = e.target.closest(DND_TARGET_SEL);
     if (!box) return;
@@ -304,7 +301,7 @@ function bindDnd() {
     if (dndInertOnto(box, isCloneGesture(e, box))) return;
     box.classList.add('dnd-drop-over');
   });
-  document.addEventListener('dragleave', (e) => {
+  listen(document, 'dragleave', (e) => {
     const box = e.target.closest(DND_TARGET_SEL);
     if (!box) return;
     // dragleave fires when the cursor crosses into a child element too;
@@ -312,7 +309,7 @@ function bindDnd() {
     if (box.contains(e.relatedTarget)) return;
     box.classList.remove('dnd-drop-over', 'dnd-effect-clone');
   });
-  document.addEventListener('drop', async (e) => {
+  listen(document, 'drop', async (e) => {
     // A group-reorder drag (group-reorder.js) carries this custom MIME and
     // deliberately never sets text/plain. Ignore such a drop outright — both
     // modules add a document-level drop listener, and this handler does NOT
@@ -418,6 +415,27 @@ function bindDnd() {
     if (payload.sourceGroup === targetGroup) return;
     await runDndMove(payload, targetGroup);
   });
+
+  let cleaned = false;
+  return () => {
+    if (cleaned) return;
+    cleaned = true;
+    for (const remove of removers.splice(0).reverse()) remove();
+    restoreDraggable();
+    activeSourceRow?.removeEventListener('dragend', endDndDrag);
+    activeSourceRow = null;
+    dndDragActive = false;
+    dndSourceUngrouped = false;
+    dndSourceConversation = false;
+    dndSourceRetired = false;
+    dndSourcePending = false;
+    dndSourceGroup = '';
+    hideDndTrash();
+    $$('.dnd-source-row').forEach((row) => row.classList.remove('dnd-source-row'));
+    $$('.dnd-drop-over').forEach((target) =>
+      target.classList.remove('dnd-drop-over', 'dnd-effect-clone'));
+    $('#dnd-pill')?.classList.remove('show', 'clone');
+  };
 }
 
 // runDndClone forks the source conv via POST /api/agents/{conv}/clone,
