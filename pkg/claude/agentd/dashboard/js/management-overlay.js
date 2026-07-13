@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
 import { makeModalResizable } from './helpers.js';
 import { useDialogFocus } from './dialog-focus.js';
+import { isTopmostOverlay } from './overlay-stack.js';
 
 const html = htm.bind(h);
 
@@ -26,18 +27,12 @@ export function ManagementOverlay({
     if (blocked) return;
     if (!dirty || (await confirmDiscard())) onClose();
   };
-  const isTopmost = () => {
-    const overlays = document.querySelectorAll(
-      '.manage-overlay.show, .modal-overlay.show',
-    );
-    return overlays[overlays.length - 1] === overlayRef.current;
-  };
   const { dialogRef } = useDialogFocus({
     open: true,
     onEscape: () => {
       void close();
     },
-    shouldHandle: isTopmost,
+    shouldHandle: () => isTopmostOverlay(overlayRef.current),
   });
   useEffect(() => {
     if (!resizeKey) return undefined;
