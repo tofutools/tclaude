@@ -132,6 +132,23 @@ export async function mountAccessFeature(actionDependencies) {
   });
 }
 
+const messagesDescriptor = createIslandDescriptor({
+  name: 'messages', label: 'Messages', hosts: { host: '#messages-root' }, failureClass: 'messages-error',
+  load: async ({ hosts: { host } }) => {
+    const islandModule = import('./mail-island.js');
+    const legacyModule = import('./mail.js');
+    const [{ mountMailIsland }, { mailController }] = await Promise.all([islandModule, legacyModule]);
+    return {
+      state: mailController.state,
+      mount: (registerCleanup) => mountMailIsland({ host, controller: mailController, registerCleanup }),
+    };
+  },
+});
+
+export function mountMessagesFeature(dependencies = {}) {
+  return mountIslandDescriptor(messagesDescriptor, dependencies);
+}
+
 export async function mountLogsFeature(actionDependencies = {}) {
   const host = document.querySelector('#logs-root');
   if (!host) return null;

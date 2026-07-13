@@ -38,7 +38,7 @@ import {
 } from './modal-spawn.js';
 // openMailbox brings the Messages tab forward + selects a folder; mail.js
 // doesn't import row-actions.js, so this is a one-way edge (no cycle).
-import { openMailbox } from './mail.js';
+import { openMailbox } from './mail-bridge.js';
 import { wizWord } from './slop.js';
 // refresh()/toast() and the shared action modals live in refresh.js;
 // lastSnapshot is dashboard.js's shared state, written here (rename

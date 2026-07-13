@@ -13,6 +13,7 @@ import (
 // (dashboard.html + css + every js/*.js) catches it at `go test ./...`,
 // the same string-pin approach as the slop / wizard guards.
 func TestDashboardHTML_HumanReplyWired(t *testing.T) {
+	island := string(mustReadFS(dashboardAssetsFS, "js/mail-island.js"))
 	must := func(needle, why string) {
 		t.Helper()
 		if !strings.Contains(dashboardAssets, needle) {
@@ -20,14 +21,18 @@ func TestDashboardHTML_HumanReplyWired(t *testing.T) {
 		}
 	}
 
-	// mail.js: the reader button renders with the msg-reply action and the
-	// sender attributes the dialog needs, and the online helper it shares
-	// with the focus button is exported for the dialog to gate on.
-	must("function humanReplyButton(", "mail.js renders the reply button")
-	must(`data-act="msg-reply"`, "the reply button carries the msg-reply action")
-	must("${humanReplyButton(m)}${humanFocusButton(m)}", "the reply button is placed in the human-folder reader actions")
+	// The Preact reader renders the delegated reply/focus controls with the
+	// sender attributes the dialog needs. The controller keeps the shared
+	// online helper exported for both the island and dialog.
+	if !strings.Contains(island, `data-act="msg-reply"`) {
+		t.Error("Messages island is missing the delegated reply action")
+	}
+	if !strings.Contains(island, `data-agent=${message.from_agent || ''}`) ||
+		!strings.Contains(island, `data-conv=${message.from_conv}`) {
+		t.Error("Messages island reply control is missing sender identity attributes")
+	}
 	must("function senderOnline(", "mail.js defines the shared sender-online helper")
-	must("openMailbox, senderOnline }", "mail.js exports senderOnline for the reply dialog")
+	must("focusAccessRequest, openMailbox, senderOnline,", "mail.js exports senderOnline for the reply dialog")
 
 	// row-actions.js: the delegated msg-reply handler opens the dialog.
 	must("case 'msg-reply':", "row-actions.js handles the msg-reply click")

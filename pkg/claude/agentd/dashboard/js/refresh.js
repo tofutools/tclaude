@@ -16,7 +16,7 @@ import {
   renderMessagesBadge, renderUsage, renderDashDefaultProfile, renderDashSandboxProfile,
   renderNotifyGlobal, renderGlobalActivity,
 } from './render.js';
-import { renderMailTab, onMailSearchChanged, renderAccessRequests } from './mail.js';
+import { renderMailTab, renderAccessRequests } from './mail-bridge.js';
 import { renderGroupsTab, renderLinksTab } from './tabs.js';
 import { renderTemplatesTab } from './modal-templates.js';
 import { applyProcessesTabVisibility } from './processes.js';
@@ -143,10 +143,6 @@ function bindFilter(tab, featureRerender = null) {
     else if (tab === 'templates') renderTemplatesTab();
     else if (featureRerender) featureRerender();
     else if (tab === 'links') renderLinksTab();
-    // The Messages search is server-side (pagination must span the whole
-    // folder, not a client-loaded prefix), so a filter change resets to
-    // page 1 and triggers a debounced reload rather than a cache repaint.
-    else if (tab === 'messages') onMailSearchChanged();
   };
   const onChange = () => {
     const v = input.value;

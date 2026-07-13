@@ -198,6 +198,20 @@ func seedDashSnapFixture(t *testing.T, f *testharness.Flow) {
 	for _, m := range infraMembers {
 		seedMember(t, f, infra.ID, otherGroup, m)
 	}
+	base := time.Now().Add(-8 * time.Minute)
+	if _, err := db.InsertAgentMessage(&db.AgentMessage{
+		GroupID: fe.ID, FromConv: feMembers[0].convID, ToConv: feMembers[1].convID,
+		Subject: "Review the Preact migration", Body: "Please verify the Messages reader at https://example.com/review.", CreatedAt: base,
+	}); err != nil {
+		t.Fatalf("seed dashboard agent message: %v", err)
+	}
+	if _, err := db.InsertHumanMessage(&db.HumanMessage{
+		FromConv: feMembers[1].convID, FromTitle: feMembers[1].title,
+		Subject: "Profile editor parity", Body: "The form and wizard-theme checks are ready for review.\n\nPlease test the focused controls and resize gutters.",
+		CreatedAt: base.Add(2 * time.Minute),
+	}); err != nil {
+		t.Fatalf("seed dashboard human message: %v", err)
+	}
 
 	// Nest infra-crew under frontend-squad so the Groups tab renders the group
 	// TREE (n-level groups-in-groups, JOH-392): infra-crew draws inside
@@ -431,6 +445,13 @@ func baseStates() []dashsnap.State {
   }
 })();`
 	states := []dashsnap.State{
+		{
+			Key:      "bounded-messages-populated",
+			Title:    "Bounded Preact — Messages populated",
+			Caption:  "Messages island renders the populated three-pane client, native filters/toggles, keyed rows and an open reader without losing the plain or wizard CSS contract.",
+			JS:       boundedMessagesJS(),
+			SettleMS: 600,
+		},
 		{
 			Key:      "bounded-jobs-normal",
 			Title:    "Bounded Preact — Jobs normal",
@@ -1042,6 +1063,43 @@ func baseStates() []dashsnap.State {
 		},
 	}
 	return append(states, processGraphStates()...)
+}
+
+func boundedMessagesJS() string {
+	return `return import('/static/js/feature-state-registry.js').then(async function(registry) {
+  var errors = [];
+  window.addEventListener('error', function(event){ errors.push(String(event.error?.stack || event.error || event.message)); });
+  var tab = document.querySelector('nav [data-tab="messages"]');
+  if (!tab) throw new Error('missing Messages tab');
+  tab.click();
+  var deadline = Date.now() + 4000;
+  while (Date.now() < deadline) {
+    var state = registry.featureState('messages');
+    var ready = state?.view?.value?.messageRequest?.phase === 'ready';
+    var human = document.querySelector('#mail-sidebar .mailbox[data-id="human"]');
+    if (ready && human) { human.click(); break; }
+    await new Promise(function(resolve){ setTimeout(resolve, 30); });
+  }
+  deadline = Date.now() + 4000;
+  while (Date.now() < deadline) {
+    var row = document.querySelector('#mail-list .mail-row');
+    if (row) { row.click(); break; }
+    await new Promise(function(resolve){ setTimeout(resolve, 30); });
+  }
+  deadline = Date.now() + 4000;
+  while (!document.querySelector('#mail-reader .mail-reader-body') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 30); });
+  }
+  var client = document.querySelector('#tab-messages.active .mail-client');
+  var reader = document.querySelector('#mail-reader .mail-reader-body');
+  if (!client || !reader) {
+    var state = registry.featureState('messages')?.view?.value;
+    var debug = document.createElement('pre');
+    debug.textContent = JSON.stringify({errors: errors, messages: state?.messages}, null, 2);
+    document.querySelector('#tab-messages').prepend(debug);
+    throw new Error('Messages island did not render: client=' + !!client + ' reader=' + !!reader);
+  }
+});`
 }
 
 // processGraphStates is a test-only host surface for the otherwise standalone

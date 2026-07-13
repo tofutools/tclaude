@@ -66,10 +66,9 @@
 // bulk bar as each batch lands, and mail.busy freezes the refresh +
 // handlers for the duration so nothing races the running op.
 
-import { $, $$, esc, linkify, relTime, shortId, shortAgentId, idTooltip, withPreservedFocus } from './helpers.js';
+import { $, $$, shortId, shortAgentId, idTooltip } from './helpers.js';
 import { dashPrefs } from './prefs.js';
 import { initMailResize } from './mail-resize.js';
-import { morphInto } from './morph.js';
 // lastSnapshot lives in dashboard.js; confirmModal/toast live in
 // refresh.js. Both are benign, TDZ-safe import cycles (see tabs.js):
 // nothing here reads them at module top level — only inside handlers —
@@ -77,8 +76,8 @@ import { morphInto } from './morph.js';
 import { lastSnapshot } from './dashboard.js';
 import { confirmModal, toast } from './refresh.js';
 import { fetchListFull } from './list-paging.js';
+import { createMailState, HUMAN_MAILBOX_ID as HUMAN_ID, messageDeleteEndpoint } from './mail-state.js';
 
-const HUMAN_ID = 'human';
 const ALL_ID = 'all';
 // The synthetic "access requests" folder — in-flight human-approval requests
 // (an agent blocked waiting for the operator to approve/deny a permission-gated
@@ -163,12 +162,13 @@ const WIPE_BATCH = 5;
 // wipe.
 //
 // Pagination + search are server-side: messages holds only the current
-// page; page/pageSize/total/totalUnfiltered come back with each fetch.
-// reqSeq tokens the in-flight fetch so a slow earlier response can't
-// clobber a newer page/search.
-const mail = {
+// page; page/pageSize/total/totalUnfiltered come back with each fetch. The
+// shared request lifecycle rejects stale responses.
+export const mailState = createMailState({
   mailboxes: [],
   selected: dashPrefs.getItem(SELECTED_KEY) || HUMAN_ID,
+  boxQuery: dashPrefs.getItem(BOX_FILTER_KEY) || '',
+  messageQuery: dashPrefs.getItem('tclaude.dash.filter.messages') || '',
   // showRetired drives the include_retired param on both fetches. Sticky
   // (persisted) so the operator's choice survives a reload.
   showRetired: dashPrefs.getItem(SHOW_RETIRED_KEY) === '1',
@@ -192,7 +192,6 @@ const mail = {
   pageSize: initialPageSize(),
   total: 0,
   totalUnfiltered: 0,
-  reqSeq: 0,
   searchTimer: null,
   // busy is set while a batched delete/wipe runs: it freezes the 2s
   // refresh (so mail.messages isn't swapped out from under the running
@@ -201,7 +200,8 @@ const mail = {
   // into one of the bulk bars — {where:'bulk'|'wipe', verb, done, total}.
   busy: false,
   progress: null,
-};
+});
+const mail = mailState.data;
 
 // pageCount derives the number of pages from the live total + page size
 // (at least 1, even for an empty folder).
@@ -212,7 +212,22 @@ function pageCount() {
 // currentSearch reads the live message-filter text (server-side search
 // term). Trimmed so trailing spaces don't count as a query.
 function currentSearch() {
-  return ($('#filter-messages')?.value || '').trim();
+  return (mail.messageQuery || '').trim();
+}
+
+function setBoxQuery(value) {
+  mail.boxQuery = String(value ?? '');
+  if (mail.boxQuery) dashPrefs.setItem(BOX_FILTER_KEY, mail.boxQuery);
+  else dashPrefs.removeItem(BOX_FILTER_KEY);
+  paintSidebar();
+}
+
+function setMessageQuery(value) {
+  mail.messageQuery = String(value ?? '');
+  const key = 'tclaude.dash.filter.messages';
+  if (mail.messageQuery) dashPrefs.setItem(key, mail.messageQuery);
+  else dashPrefs.removeItem(key);
+  onMailSearchChanged();
 }
 
 function mailTabActive() {
@@ -279,16 +294,19 @@ function prevGenConvSet() {
 // --- data loading ---------------------------------------------------
 
 async function loadMailboxes() {
+  const token = mailState.mailboxRequest.beginRequest();
   try {
     const params = new URLSearchParams();
     if (mail.showRetired) params.set('include_retired', '1');
     if (mail.showEmpty) params.set('include_empty', '1');
     const qs = params.toString();
     const r = await fetch(`/api/mailboxes${qs ? '?' + qs : ''}`, { credentials: 'same-origin' });
-    if (!r.ok) return;
+    if (!r.ok) throw new Error((await r.text()) || `mailboxes request failed (${r.status})`);
     const data = await r.json();
-    mail.mailboxes = data.mailboxes || [];
-  } catch { /* transient; keep the last roster painted */ }
+    mailState.mailboxRequest.commitRequest(token, data);
+  } catch (error) {
+    mailState.mailboxRequest.failRequest(token, error);
+  }
 }
 
 // prevGenFetchedAt throttles the full /api/replaced pull (see loadPrevGenIds).
@@ -317,9 +335,12 @@ async function loadMessages() {
   // The access-requests folder renders from the live snapshot, not from
   // /api/mailbox — there are no stored rows to page. Skip the fetch so it
   // doesn't 404 on a mailbox that doesn't exist server-side.
-  if (id === ACCESS_ID) { mail.messages = []; mail.total = 0; mail.totalUnfiltered = 0; return; }
+  const token = mailState.messageRequest.beginRequest();
+  if (id === ACCESS_ID) {
+    mailState.messageRequest.commitRequest(token, { messages: [], total: 0, total_unfiltered: 0 });
+    return;
+  }
   const q = currentSearch();
-  const seq = ++mail.reqSeq;
   const params = new URLSearchParams({
     id,
     q,
@@ -335,19 +356,15 @@ async function loadMessages() {
   try {
     const r = await fetch(`/api/mailbox?${params.toString()}`,
       { credentials: 'same-origin' });
-    if (!r.ok) { if (seq === mail.reqSeq) clearMessages(); return; }
+    if (!r.ok) throw new Error((await r.text()) || `mailbox request failed (${r.status})`);
     const data = await r.json();
-    // Guard against a stale response landing after the human switched
-    // folders / page / search mid-flight (reqSeq is the newest request).
-    if (mail.selected !== id || seq !== mail.reqSeq) return;
-    mail.messages = data.messages || [];
-    // Trust the server's clamped page (a stale page past the last one
-    // comes back pulled to the last page after a delete).
-    if (typeof data.page === 'number') mail.page = data.page;
-    if (typeof data.page_size === 'number') mail.pageSize = data.page_size;
-    mail.total = data.total || 0;
-    mail.totalUnfiltered = data.total_unfiltered || 0;
-  } catch { if (seq === mail.reqSeq) clearMessages(); }
+    // The request lifecycle rejects stale page/search responses; this guard
+    // covers a response whose mailbox was switched while it was in flight.
+    if (mail.selected !== id) return;
+    mailState.messageRequest.commitRequest(token, data);
+  } catch (error) {
+    if (mailState.messageRequest.failRequest(token, error)) clearMessages();
+  }
 }
 
 // clearMessages empties the current page and its totals together, so a
@@ -466,15 +483,7 @@ function renderMailTab() {
 // signature; the static filter inputs above the panes are never rebuilt
 // and keep their focus untouched.
 function paintMail() {
-  withPreservedFocus(() => {
-    paintBulkActions();
-    paintSidebar();
-    paintWipeBar();
-    paintList();
-    paintListBulkBar();
-    paintPager();
-    paintReader();
-  });
+  mailState.touch();
 }
 
 // reloadMessagesPage refetches the current folder's page (current
@@ -508,6 +517,11 @@ function scheduleMailReload() {
 // the bulk bar immediately so it feels responsive while the debounced
 // fetch is in flight.
 function onMailSearchChanged() {
+  // Compatibility with the legacy filter binder during the component-by-
+  // component cutover. Once Preact owns the input, setMessageQuery writes the
+  // same field directly and this assignment is a no-op.
+  const input = $('#filter-messages');
+  if (input) mail.messageQuery = input.value;
   mail.page = 1;
   mail.selectedMsgs.clear();
   paintListBulkBar();
@@ -564,6 +578,7 @@ function setShowRetired(on) {
     mail.page = 1;
     dashPrefs.setItem(SELECTED_KEY, ALL_ID);
   }
+  mailState.touch();
   reloadMail();
 }
 
@@ -607,7 +622,6 @@ function toggleAgentsExpand() {
   if (isAgentsExpanded()) {
     dashPrefs.removeItem(AGENTS_EXPAND_KEY);
     mail.selectedBoxes.clear();
-    paintWipeBar();
   } else {
     dashPrefs.setItem(AGENTS_EXPAND_KEY, '1');
   }
@@ -640,6 +654,7 @@ function setShowEmpty(on) {
     mail.page = 1;
     dashPrefs.setItem(SELECTED_KEY, ALL_ID);
   }
+  mailState.touch();
   reloadMail();
 }
 
@@ -670,10 +685,48 @@ function setShowPrevGens(on) {
       // The open folder changed (predecessor → firehose), so its messages
       // must be re-fetched; loadMessages repaints when it lands.
       loadMessages().then(() => { pruneSelections(); paintMail(); });
+      mailState.touch();
       return;
     }
   }
   paintMail();
+}
+
+function mailboxView() {
+  const q = (mail.boxQuery || '').toLowerCase();
+  const boxes = mail.mailboxes.filter(mb => mailboxMatchesFilter(mb, q));
+  const pinned = boxes.filter(mb => mb.kind === 'all' || mb.kind === 'human');
+  const access = accessRequestsMailbox();
+  if (mailboxMatchesFilter(access, q)) pinned.push(access);
+  const groups = boxes.filter(mb => mb.kind === 'group');
+  const prevGens = prevGenConvSet();
+  const agents = boxes.filter(mb => mb.kind === 'agent' && (mail.showPrevGens || !prevGens.has(mb.id)));
+  const agentByID = new Map(agents.map(mb => [mb.id, mb]));
+  return {
+    empty: boxes.length === 0,
+    hasRoster: mail.mailboxes.length > 0,
+    pinned,
+    groups: groups.map(group => ({
+      mailbox: group,
+      expanded: isGroupExpanded(group.title),
+      members: (group.member_convs || []).map(id => agentByID.get(id)).filter(Boolean),
+    })),
+    agents,
+    prevGens,
+    filtering: !!q,
+    agentsExpanded: !!q || isAgentsExpanded() || mail.selectedBoxes.size > 0,
+  };
+}
+
+function toggleBoxSelection(conv, checked) {
+  if (mail.busy || !conv) return;
+  if (checked) mail.selectedBoxes.add(conv); else mail.selectedBoxes.delete(conv);
+  mailState.touch();
+}
+
+function clearBoxSelection() {
+  mail.selectedBoxes.clear();
+  mailState.touch();
 }
 
 function mailboxLabel(mb) {
@@ -699,197 +752,21 @@ function mailboxTitleAttr(mb) {
   return mailboxLabel(mb);
 }
 
-function mailboxIcon(mb) {
-  if (mb.kind === 'all') return '🗂';
-  if (mb.kind === 'human') return '📬';
-  if (mb.kind === 'access-requests') return '🔐';
-  if (mb.kind === 'group') return '👥';
-  return `<span class="mail-dot ${mb.online ? 'online' : 'offline'}">●</span>`;
-}
-
 function mailboxMatchesFilter(mb, q) {
   if (!q) return true;
   return [mailboxLabel(mb), mb.id, mb.short, mb.agent_id, ...(mb.groups || [])]
     .some(s => (s || '').toLowerCase().includes(q));
 }
 
-// mailboxRowHTML renders one sidebar row — a pinned ("all"/"human"), group,
-// or agent folder. nested=true marks a member-agent row shown beneath an
-// expanded group: it indents and drops the bulk-wipe checkbox (the
-// canonical checkbox lives on the flat Agents row for that same conv).
-// prevGen=true marks a predecessor-generation folder (shown only when the
-// "show previous generations" toggle is on): it tags + dims the row so it
-// reads as a superseded past generation, not the live agent.
-function mailboxRowHTML(mb, nested = false, prevGen = false) {
-  const active = mb.id === mail.selected;
-  const unread = mb.unread
-    ? `<span class="mailbox-unread">${mb.unread > 99 ? '99+' : mb.unread}</span>`
-    : '';
-  // A group folder has no per-direction tally — show member count +
-  // message count instead of the agent folder's "received · sent".
-  const countTitle = mb.kind === 'group'
-    ? `${mb.members || 0} member${mb.members === 1 ? '' : 's'} · ${mb.total} message${mb.total === 1 ? '' : 's'}`
-    : mb.kind === 'access-requests'
-      ? `${mb.unread || 0} pending · ${mb.total} total access request${mb.total === 1 ? '' : 's'}`
-      : `${mb.in} received · ${mb.out} sent`;
-  const count = `<span class="mailbox-count" title="${esc(countTitle)}">${mb.total}</span>`;
-  // Retired folders only appear when the toggle is on; tag them so they
-  // read as demoted rather than a live agent. Predecessor generations get
-  // their own tag (the two are disjoint — a predecessor is never the live
-  // conv a retired actor is keyed on).
-  const tag = mb.retired ? '<span class="mailbox-tag" title="This agent has been retired">retired</span>' : '';
-  const prevTag = prevGen ? '<span class="mailbox-tag" title="A superseded past generation of this agent — a conversation left behind by a reincarnate / /clear">prev gen</span>' : '';
-  const btn = `<button class="mailbox${active ? ' active' : ''}${mb.unread ? ' has-unread' : ''}"
-    data-act="mailbox-select" data-id="${esc(mb.id)}" title="${esc(mailboxTitleAttr(mb))}">
-    <span class="mailbox-icon">${mailboxIcon(mb)}</span>
-    <span class="mailbox-name">${esc(mailboxLabel(mb))}</span>
-    ${tag}${prevTag}${count}${unread}
-  </button>`;
-  // Lead column. A flat agent row gets the bulk-wipe checkbox; a group row
-  // gets an expand caret (toggles its nested member folders); everything
-  // else — the pinned folders and the nested member rows — gets a spacer so
-  // every label stays aligned under the checkbox column. data-group (not
-  // data-name) keys the caret so focusSignature can restore focus to it
-  // across the 2s repaint.
-  let lead;
-  if (mb.kind === 'agent' && !nested) {
-    lead = `<input type="checkbox" class="mail-box-check" data-conv="${esc(mb.id)}"${mail.selectedBoxes.has(mb.id) ? ' checked' : ''} title="Select for bulk wipe" />`;
-  } else if (mb.kind === 'group') {
-    const expanded = isGroupExpanded(mb.title);
-    lead = `<button type="button" class="mail-group-caret" data-act="mailbox-toggle-group" data-group="${esc(mb.title)}" aria-expanded="${expanded ? 'true' : 'false'}" title="${expanded ? 'Collapse members' : 'Expand members'}">${expanded ? '▾' : '▸'}</button>`;
-  } else {
-    lead = '<span class="mail-box-check-spacer"></span>';
-  }
-  // Empty-mailbox agent folders only appear when the toggle is on; dim them
-  // (like retired) so they read as low-priority opt-in clutter. The "0"
-  // count is their tag, so no extra label. Retired and empty are disjoint in
-  // practice (a retired folder always has the mail that put it in the
-  // roster), so the two row classes never both apply.
-  // NB: the modifier is `empty-box`, not `empty` — a bare `.empty` is the
-  // global empty-state placeholder class (centered, 24px padding), which
-  // would otherwise hijack the row's layout.
-  const empty = mb.kind === 'agent' && !mb.total;
-  const cls = `mailbox-row${mb.retired ? ' retired' : ''}${empty ? ' empty-box' : ''}${prevGen ? ' prev-gen' : ''}${nested ? ' nested' : ''}`;
-  return `<div class="${cls}">${lead}${btn}</div>`;
-}
-
-function paintSidebar() {
-  const el = $('#mail-sidebar');
-  if (!el) return;
-  const q = ($('#filter-mailboxes')?.value || '').toLowerCase();
-  const boxes = mail.mailboxes.filter(mb => mailboxMatchesFilter(mb, q));
-  if (!boxes.length) {
-    el.innerHTML = mail.mailboxes.length
-      ? '<div class="empty">No mailboxes match the filter.</div>'
-      : '<div class="empty">No mailboxes.</div>';
-    return;
-  }
-  // The server orders the roster [all, human, groups…, agents…]. Render by
-  // explicit section rather than walking kind transitions, so a group can
-  // expand INLINE into its member folders without breaking the "Agents"
-  // divider that follows. A one-line divider heads the Groups and Agents
-  // sections; the pinned "all"/"human" folders need none.
-  const pinned = boxes.filter(mb => mb.kind === 'all' || mb.kind === 'human');
-  // The access-requests folder is synthetic (not in the server roster), so it
-  // isn't in `boxes`. Build it from the live snapshot and pin it after the
-  // all/human folders, honouring the sidebar text filter like any other row.
-  const accessMb = accessRequestsMailbox();
-  const accessPinned = mailboxMatchesFilter(accessMb, q) ? [accessMb] : [];
-  const groups = boxes.filter(mb => mb.kind === 'group');
-  // Predecessor ("previous") generations are archival: hidden from the agent
-  // listing — flat AND nested — until the operator ticks "show previous
-  // generations". Filtering the flat list here is what drops them from the
-  // nested member lists too: those resolve through agentById (built from this
-  // same filtered set just below), so a conv kept out of `agents` simply can't
-  // nest, exactly the way the retired / empty / text filters already work.
-  const prevGens = prevGenConvSet();
-  const agents = boxes.filter(mb =>
-    mb.kind === 'agent' && (mail.showPrevGens || !prevGens.has(mb.id)));
-  // Index the filtered agent folders so an expanded group nests the SAME
-  // folders its members map to — selecting a nested row opens the identical
-  // conv folder as the flat Agents entry. A member hidden by the retired /
-  // empty / prev-gen / text filters simply doesn't nest, exactly as it's
-  // absent from the flat list.
-  const agentById = new Map(agents.map(mb => [mb.id, mb]));
-
-  let html = [...pinned, ...accessPinned].map(mb => mailboxRowHTML(mb)).join('');
-  if (groups.length) {
-    html += `<div class="mailbox-section">${wz('Groups', 'Parties')}</div>`;
-    for (const g of groups) {
-      html += mailboxRowHTML(g);
-      if (!isGroupExpanded(g.title)) continue;
-      const members = (g.member_convs || [])
-        .map(id => agentById.get(id))
-        .filter(Boolean);
-      // A member_convs id can be absent from agentById when its mailbox is
-      // empty (and "show agents without messages" is off) or it doesn't match
-      // the sidebar text filter — both keep it out of the flat Agents list it
-      // would nest from. Retired ex-members are not a reason: the server only
-      // lists them in member_convs when "show retired agents" is on, and then
-      // their flat folder is shown too. Keep the placeholder neutral.
-      html += members.length
-        ? members.map(mb => mailboxRowHTML(mb, true, prevGens.has(mb.id))).join('')
-        : '<div class="mailbox-row nested"><span class="mail-box-check-spacer"></span>'
-          + '<div class="mailbox-nested-empty">no member folders shown</div></div>';
-    }
-  }
-  if (agents.length) {
-    // The flat per-agent roster is collapsed by default: every row carries a
-    // bulk-wipe checkbox (a rare, destructive affordance) and grouped agents
-    // are already reachable by expanding their group above, so an always-open
-    // flat list is mostly clutter. A live text filter force-expands the
-    // section so matches can't hide behind the fold; otherwise the header
-    // doubles as a fold toggle. Helper text under the expanded header explains
-    // what the per-row checkboxes are for (otherwise a mystery).
-    const filtering = !!q;
-    // Stay expanded while a bulk-wipe selection is pending: a ticked mailbox
-    // must never collapse out of view — you could neither see nor un-tick it,
-    // yet the 🗑 wipe bar would still count and wipe it. toggleAgentsExpand
-    // clears the selection before folding, so an explicit fold still wins
-    // (size → 0); this guards the indirect collapse routes — clearing or
-    // narrowing the mailbox filter, whose handler only repaints the sidebar.
-    const expanded = filtering || isAgentsExpanded() || mail.selectedBoxes.size > 0;
-    if (filtering) {
-      html += `<div class="mailbox-section">${wz('All agent mailboxes', 'The Rookery')}</div>`;
-    } else {
-      // Collapsed hides every per-agent unread badge, so roll them up onto the
-      // header — otherwise unread agent mail would silently vanish behind the
-      // fold. Expanded needs no rollup: each row shows its own badge.
-      const unread = expanded ? 0 : agents.reduce((n, mb) => n + (mb.unread || 0), 0);
-      const unreadBadge = unread ? ` <span class="mailbox-unread">${unread > 99 ? '99+' : unread}</span>` : '';
-      html += `<button type="button" class="mailbox-section mailbox-section-toggle${unread ? ' has-unread' : ''}" data-act="mailbox-toggle-agents-section" aria-expanded="${expanded ? 'true' : 'false'}" title="${expanded ? 'Collapse the agent list' : 'Expand the agent list'}"><span class="mailbox-section-caret">${expanded ? '▾' : '▸'}</span> ${wz('All agent mailboxes', 'The Rookery')} (${agents.length})${unreadBadge}</button>`;
-    }
-    if (expanded) {
-      html += '<div class="mailbox-section-help">Tick a mailbox to select it for bulk wipe; the 🗑 bar at the top of the sidebar then deletes every stored message in the ticked mailboxes.</div>';
-      html += agents.map(mb => mailboxRowHTML(mb, false, prevGens.has(mb.id))).join('');
-    }
-  }
-  // Morph rather than swap so a selection / focus in the sidebar survives the
-  // 2s repaint. Sidebar rows are intentionally UNKEYED: the same agent folder
-  // can appear twice as a sibling (nested under an expanded group AND in the
-  // flat "All agent mailboxes" list), so an id-based data-key would collide —
-  // positional reconcile is correct here and still skips unchanged rows.
-  morphInto(el, html);
-}
+// The Preact sidebar row uses these label/filter helpers for pinned
+// ("all"/"human"), group, agent, nested-member, and predecessor-generation
+// folders. The controller retains the mailbox rules while the island owns
+// the markup and DOM lifecycle.
+function paintSidebar() { mailState.touch(); }
 
 // paintWipeBar shows the "wipe selected mailboxes" bar when one or more
 // agent folders are ticked in the sidebar.
-function paintWipeBar() {
-  const bar = $('#mail-wipe-bar');
-  if (!bar) return;
-  if (mail.busy && mail.progress && mail.progress.where === 'wipe') {
-    bar.hidden = false;
-    bar.innerHTML = progressBarHTML(mail.progress);
-    return;
-  }
-  const n = mail.selectedBoxes.size;
-  bar.hidden = n === 0;
-  if (n === 0) { bar.innerHTML = ''; return; }
-  morphInto(bar, `
-    <span class="grow">${n} mailbox${n === 1 ? '' : 'es'} selected</span>
-    <button data-act="mail-clear-box-sel" title="Clear selection">clear</button>
-    <button class="danger" data-act="mail-wipe-selected" title="Delete every message in the selected mailboxes">🗑 wipe</button>`);
-}
+function paintWipeBar() { mailState.touch(); }
 
 // counterparty returns the name to show in a non-aggregate message-list
 // row — the OTHER party relative to the selected mailbox. For a received
@@ -969,17 +846,6 @@ function wz(plain, wizardly) {
 // theme. The empty-state + reader strings are chosen at paint time via wz();
 // these placeholders live on static inputs that are never rebuilt, so they're
 // set imperatively here (called from initMail + on every tclaude:wizard flip).
-function applyMailThemeText() {
-  const box = $('#filter-mailboxes');
-  if (box) box.placeholder = wz('Filter mailboxes (name / id)', 'Seek a familiar…');
-  const msg = $('#filter-messages');
-  if (msg) {
-    msg.placeholder = wz(
-      'Filter messages (sender / recipient / subject / body)',
-      'Search the scrolls…');
-  }
-}
-
 // filteredMessages is the set of messages currently in view — with
 // server-side search + pagination that is exactly the current page
 // (mail.messages). Shared by the list paint, the bulk bar, and select-all
@@ -988,389 +854,74 @@ function filteredMessages() {
   return mail.messages;
 }
 
-function paintList() {
-  const el = $('#mail-list');
-  if (!el) return;
-  // The access-requests folder renders live approval cards, not stored rows.
-  if (mail.selected === ACCESS_ID) { paintAccessRequests(el); return; }
-  const q = currentSearch();
-  const filtered = mail.messages;
-
-  // total = rows matching the search across the whole folder;
-  // totalUnfiltered = rows in the folder regardless of search. Show
-  // "matching / all" while searching, else a plain count.
-  const total = mail.total;
-  const totalUnfiltered = mail.totalUnfiltered;
-  const countEl = $('#filter-messages-count');
-  if (countEl) {
-    countEl.textContent = q
-      ? `${total} / ${totalUnfiltered}`
-      : `${totalUnfiltered} message${totalUnfiltered === 1 ? '' : 's'}`;
+function messageView() {
+  const search = currentSearch();
+  if (mail.selected === ACCESS_ID) {
+    const all = accessRequests();
+    const visible = all.filter(request => accessMatchesSearch(request, search));
+    return {
+      access: true, allAccess: all, pendingAccess: visible.filter(accessIsPending),
+      handledAccess: visible.filter(request => !accessIsPending(request)), search,
+    };
   }
-
-  if (!filtered.length) {
-    el.innerHTML = totalUnfiltered
-      ? `<div class="empty">${wz('No messages match the filter.', 'No scrolls match your seeking.')}</div>`
-      : `<div class="empty">${wz('This mailbox is empty.', 'This roost holds no scrolls.')}</div>`;
-    return;
-  }
-  // Both the "all" firehose and a group folder are aggregates with no
-  // single "self" to be relative to, so they render from→to rather than a
-  // received/sent arrow.
-  const isAggregate = mail.selected === ALL_ID || isGroupFolder();
-  // Morph rather than swap so a selection in a message row survives the 2s
-  // repaint, and keyed on the (unique-per-list) message id so a new message
-  // arriving moves rows intact instead of morphing neighbour into neighbour.
-  morphInto(el, filtered.map(m => {
-    const active = m.id === mail.selectedMsgId;
-    const unread = !m.read;
-    const checked = mail.selectedMsgs.has(m.id) ? ' checked' : '';
-    let head;
-    if (isAggregate) {
-      // The firehose has no "self" to be relative to — render from→to. A
-      // sender-less row (human/operator) drops the empty party and reads as a
-      // bare "→ recipient" rather than "(unknown) → recipient".
-      // The row leads with each party's name (agt-id fallback when nameless);
-      // the full "agent_id / conv-id" pair rides along as a hover (the
-      // auditable snapshot) — matching the roster/audit surfaces. A multicast
-      // recipient ("first +N") has no single party to hover.
-      const sender = allSenderLabel(m);
-      const fromHTML = sender
-        ? `<span class="mail-row-party"${m.from_conv ? ` title="${esc(idTooltip(m.from_agent, m.from_conv))}"` : ''}>${esc(sender)}</span>`
-        : '';
-      head = `${fromHTML}<span class="mail-row-arrow">→</span>
-        <span class="mail-row-party"${m.to_conv ? ` title="${esc(idTooltip(m.to_agent, m.to_conv))}"` : ''}>${esc(allRecipientLabel(m))}</span>`;
-    } else {
-      const arrow = m.direction === 'out'
-        ? '<span class="mail-dir out" title="sent">→</span>'
-        : '<span class="mail-dir in" title="received">←</span>';
-      // A sender-less received row (the human/operator's startup-context
-      // brief) has no party to name — show just the arrow, the way the "all"
-      // firehose drops an empty sender, instead of "(unknown sender)".
-      const party = counterparty(m);
-      // The other party (recipient for a sent row, sender for a received one):
-      // its full "agent_id / conv-id" pair is the hover snapshot behind the
-      // name / agt-id.
-      const partyConv = m.direction === 'out' ? m.to_conv : m.from_conv;
-      const partyAgent = m.direction === 'out' ? m.to_agent : m.from_agent;
-      const partyHTML = party
-        ? `<span class="mail-row-party"${partyConv ? ` title="${esc(idTooltip(partyAgent, partyConv))}"` : ''}>${esc(party)}</span>`
-        : '';
-      head = `${arrow}${partyHTML}`;
-    }
-    const grp = m.group ? `<span class="mail-row-group">${esc(m.group)}</span>` : '';
-    // data-kind drives the wizard-theme per-scroll styling (msgKind); it is
-    // emitted in every theme and only body.wizard CSS reads it.
-    return `<div class="mail-row-wrap" data-key="${m.id}" data-kind="${msgKind(m)}">
-      <input type="checkbox" class="mail-msg-check" data-id="${m.id}"${checked} title="Select message" />
-      <button class="mail-row${active ? ' active' : ''}${unread ? ' unread' : ''}"
-        data-act="mail-open" data-id="${m.id}">
-        <span class="mail-row-top">
-          ${unread ? '<span class="mail-row-dot" title="unread">●</span>' : ''}
-          ${head}
-          ${grp}
-          <span class="mail-row-time">${esc(relTime(m.created_at))}</span>
-        </span>
-        <span class="mail-row-subject">${esc(msgPreview(m))}</span>
-      </button>
-      <button class="mail-row-del" data-act="mail-msg-delete" data-id="${m.id}" title="Delete this message">🗑</button>
-    </div>`;
-  }).join(''));
+  return {
+    access: false,
+    messages: mail.messages,
+    search,
+    isAggregate: mail.selected === ALL_ID || isGroupFolder(),
+    pages: pageCount(),
+  };
 }
+
+function messageCountText() {
+  const model = messageView();
+  if (model.access) {
+    const parts = [model.pendingAccess.length ? `${model.pendingAccess.length} pending` : wz('none pending', 'no petitions')];
+    if (model.handledAccess.length) parts.push(`${model.handledAccess.length} handled`);
+    if (model.search) parts.push(`${model.pendingAccess.length + model.handledAccess.length} / ${model.allAccess.length}`);
+    return parts.join(' · ');
+  }
+  return model.search
+    ? `${mail.total} / ${mail.totalUnfiltered}`
+    : `${mail.totalUnfiltered} message${mail.totalUnfiltered === 1 ? '' : 's'}`;
+}
+
+function toggleMessageSelection(id, checked) {
+  id = Number(id);
+  if (mail.busy || !Number.isFinite(id)) return;
+  if (checked) mail.selectedMsgs.add(id); else mail.selectedMsgs.delete(id);
+  mailState.touch();
+}
+
+function togglePageSelection(checked) {
+  if (mail.busy) return;
+  for (const message of filteredMessages()) {
+    if (checked) mail.selectedMsgs.add(message.id); else mail.selectedMsgs.delete(message.id);
+  }
+  mailState.touch();
+}
+
+function paintList() { mailState.touch(); }
 
 // paintListBulkBar drives the select-all checkbox + "delete selected"
 // action over the messages currently in view. With server-side
 // pagination "in view" is this page, so select-all ticks just this page —
 // but the selection persists across pages, so the operator can walk pages
 // ticking more and then delete the lot in one batched op.
-function paintListBulkBar() {
-  const bar = $('#mail-bulk-bar');
-  if (!bar) return;
-  if (mail.busy && mail.progress && mail.progress.where === 'bulk') {
-    bar.hidden = false;
-    bar.innerHTML = progressBarHTML(mail.progress);
-    return;
-  }
-  const filtered = filteredMessages();
-  if (!filtered.length) { bar.hidden = true; bar.innerHTML = ''; return; }
-  bar.hidden = false;
-  const n = mail.selectedMsgs.size;
-  const allChecked = filtered.every(m => mail.selectedMsgs.has(m.id));
-  // Agent + "all" folders gain a read/unread toggle over the selection (the
-  // operator clearing several of a stuck agent's messages at once); the human
-  // folder keeps its own mark-read path (the filter-bar "mark all read"), so
-  // its bulk bar stays delete-only.
-  const readBtns = mail.selected !== HUMAN_ID
-    ? `<button data-act="mail-mark-read-selected" title="Mark the selected messages read"${n ? '' : ' disabled'}>✓ read</button>
-       <button data-act="mail-mark-unread-selected" title="Mark the selected messages unread"${n ? '' : ' disabled'}>○ unread</button>`
-    : '';
-  morphInto(bar, `
-    <label title="Select / deselect every message on this page">
-      <input type="checkbox" class="mail-select-all"${allChecked ? ' checked' : ''} /> all
-    </label>
-    <span class="grow">${n ? `${n} selected` : ''}</span>
-    ${readBtns}
-    <button class="danger" data-act="mail-del-selected" title="Delete the selected messages"${n ? '' : ' disabled'}>🗑 delete selected</button>`);
-}
+function paintListBulkBar() { mailState.touch(); }
 
 // paintPager renders the footer under the message list: a page-size
 // selector (always shown for a non-empty folder so the operator can tune
 // it) plus first/prev/«position»/next/last navigation when the folder
 // spans more than one page. Hidden entirely for an empty folder.
-function paintPager() {
-  const bar = $('#mail-pager');
-  if (!bar) return;
-  if (!mail.totalUnfiltered) { bar.hidden = true; bar.innerHTML = ''; return; }
-  bar.hidden = false;
-  const pages = pageCount();
-  const page = Math.min(mail.page, pages);
-  const sizeOpts = PAGE_SIZES.map(sz =>
-    `<option value="${sz}"${sz === mail.pageSize ? ' selected' : ''}>${sz}</option>`).join('');
-  const sizeSel = `<label class="mail-pager-size" title="Messages per page">
-      <select class="mail-page-size">${sizeOpts}</select> / page
-    </label>`;
-  let nav = '';
-  if (pages > 1) {
-    const atStart = page <= 1;
-    const atEnd = page >= pages;
-    nav = `
-      <button data-act="mail-page-first" title="First page"${atStart ? ' disabled' : ''}>«</button>
-      <button data-act="mail-page-prev" title="Previous page"${atStart ? ' disabled' : ''}>‹</button>
-      <span class="mail-pager-pos">Page ${page} / ${pages}</span>
-      <button data-act="mail-page-next" title="Next page"${atEnd ? ' disabled' : ''}>›</button>
-      <button data-act="mail-page-last" title="Last page"${atEnd ? ' disabled' : ''}>»</button>`;
-  }
-  morphInto(bar, `${nav}<span class="grow"></span>${sizeSel}`);
-}
+function paintPager() { mailState.touch(); }
 
-// recipientNames renders a decorated recipients array
-// ([{conv_id,agent_id,title}]) as "name <agt_xxxxxxxx>, …" for the reader
-// headers — leading with the stable agent_id (the conv-id prefix is the
-// fallback when a recipient was never an agent), with the conv-id it used as
-// the hover snapshot.
-function recipientNames(rs) {
-  if (!rs || !rs.length) return '';
-  return rs.map(r => {
-    const id = `<span class="mail-cid" title="${esc(idTooltip(r.agent_id, r.conv_id))}">${esc(shortAgentId(r.agent_id, r.conv_id))}</span>`;
-    return r.title ? `${esc(r.title)} ${id}` : id;
-  }).join(', ');
-}
-
-function readerHeaderRow(label, valueHTML) {
-  if (!valueHTML) return '';
-  return `<div class="mail-hrow"><span class="mail-hlabel">${label}</span><span class="mail-hval">${valueHTML}</span></div>`;
-}
-
-// humanFocusButton renders the "focus" action for a human-folder
-// message, disabled when the sending agent has no live window. Reuses
-// the msg-focus handler in row-actions.js (jump + mark read).
-function humanFocusButton(m) {
-  if (!m.from_conv) return '';
-  // Liveness keys on the SAME selector the focus TARGET (data-conv below)
-  // uses, so enablement and the jump can never disagree about which id is
-  // live: lead with the sender's stable agent_id when we have it (it stays
-  // valid across reincarnation, where from_conv becomes a dead-generation
-  // snapshot), else fall back to from_conv. Jump goes through
-  // agent.ResolveSelector (accepts an `agt_` id OR a conv-id). from_agent
-  // is only populated on human-folder messages once their companion lands
-  // (JOH-316 F2); until then both the enablement and the target degrade to
-  // from_conv, the same fallback the reader's From line uses (shortAgentId).
-  const focusable = senderOnline(m.from_agent, m.from_conv);
-  const label = m.from_title || m.from_conv;
-  return `<button data-act="msg-focus" data-id="${m.id}" data-conv="${esc(m.from_agent || m.from_conv)}" data-label="${esc(label)}"${focusable ? '' : ' disabled'} title="${focusable ? 'Focus this agent’s terminal window and mark the message read' : 'Sending agent is offline — no window to focus'}">focus</button>`;
-}
-
-// humanReplyButton renders the "reply" action for a human-folder message:
-// it opens a dialog to send the operator's answer back to the agent that
-// raised the notification. Unlike the focus button it stays ENABLED even
-// when the sender is offline — the dialog itself is the online-status
-// surface (it shows live / offline and blocks Send when offline), so the
-// button must be reachable to show it. Omitted only when there is no
-// originating conv to reply to (an old / sender-less row), mirroring the
-// focus button's own `!m.from_conv` guard. The data-* attributes carry
-// what the dialog needs; row-actions.js's msg-reply handler opens it.
-function humanReplyButton(m) {
-  if (!m.from_conv) return '';
-  const label = m.from_title || m.from_conv;
-  return `<button data-act="msg-reply" data-id="${m.id}"`
-    + ` data-agent="${esc(m.from_agent || '')}" data-conv="${esc(m.from_conv)}"`
-    + ` data-label="${esc(label)}" data-subject="${esc(m.subject || '')}"`
-    + ` title="Reply to this agent — opens a dialog to send your answer back">reply</button>`;
-}
-
-function attachmentSize(bytes) {
-  const n = Number(bytes || 0);
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(n < 10 * 1024 ? 1 : 0)} KiB`;
-  return `${(n / (1024 * 1024)).toFixed(n < 10 * 1024 * 1024 ? 1 : 0)} MiB`;
-}
-
-function humanAttachmentHTML(m) {
-  if (!m.attachment) return '';
-  const a = m.attachment;
-  const href = `/api/human-messages/${encodeURIComponent(m.id)}/attachment`;
-  return `<div class="mail-attachment">
-    <span class="mail-attachment-label">Agent file</span>
-    <a href="${href}" download="${esc(a.filename || '')}" title="Download this agent-published file">⤓ ${esc(a.filename || 'attachment')}</a>
-    <span class="mail-attachment-size">${esc(attachmentSize(a.size_bytes))}</span>
-  </div>`;
-}
-
-function paintReader() {
-  const el = $('#mail-reader');
-  if (!el) return;
-  if (mail.selected === ACCESS_ID) {
-    const all = accessRequests();
-    const r = accessRequestById(mail.selectedMsgId);
-    if (!all.length) {
-      el.removeAttribute('data-kind');
-      el.innerHTML = `<div class="empty">${wz(
-        'No access requests to review.',
-        'No petitions await judgement.')}</div>`;
-      return;
-    }
-    if (!r) {
-      el.removeAttribute('data-kind');
-      el.innerHTML = `<div class="empty">${wz(
-        'Select an access request to review its details.',
-        'Choose a petition to weigh its boon.')}</div>`;
-      return;
-    }
-    el.dataset.kind = 'decree';
-    const handled = !accessIsPending(r);
-    const whoIdHTML = r.conv_id
-      ? `<span class="mail-cid" title="${esc(idTooltip(r.agent_id, r.conv_id))}">${esc(shortAgentId(r.agent_id, r.conv_id))}</span>`
-      : '';
-    const whoHTML = r.conv_title ? `${esc(r.conv_title)} ${whoIdHTML}` : whoIdHTML;
-    const targetIdHTML = r.target_conv_id
-      ? `<span class="mail-cid" title="${esc(idTooltip('', r.target_conv_id))}">${esc(shortAgentId('', r.target_conv_id))}</span>`
-      : '';
-    const targetHTML = r.target_conv_title ? `${esc(r.target_conv_title)} ${targetIdHTML}` : targetIdHTML;
-    const created = r.created_at ? new Date(r.created_at).toLocaleString() : '';
-    const deadline = !handled && r.deadline ? accessCountdown(r.deadline) : '';
-    const decided = handled && r.decided_at ? new Date(r.decided_at).toLocaleString() : '';
-    morphInto(el, `
-      <div class="mail-reader-head">
-        <div class="mail-subject">${esc(wz('Access request', 'Petition'))} <span class="mail-id">#${esc(shortId(r.id))}</span></div>
-        <div class="mail-headers">
-          ${readerHeaderRow(wz('From', 'From'), whoHTML)}
-          ${readerHeaderRow(wz('Status', 'State'), handled ? `<span class="access-outcome ${accessOutcome(r.status).cls}">${accessOutcome(r.status).txt}</span>` : `<span class="mail-state-pending">${esc(accessStatusText(r))}</span>`)}
-          ${readerHeaderRow(wz('Created', 'Raised'), esc(created))}
-          ${readerHeaderRow(wz('Deadline', 'Sands'), esc(deadline))}
-          ${readerHeaderRow(wz('Decided', 'Judged'), esc(decided))}
-          ${readerHeaderRow(wz('Target', 'Quarry'), targetHTML)}
-        </div>
-      </div>
-      <div class="mail-reader-body access-reader-body">
-        <div class="access-meta">${accessMetaHTML(r)}</div>
-      </div>
-      ${accessActionsHTML(r)}`);
-    return;
-  }
-  const m = mail.messages.find(x => x.id === mail.selectedMsgId);
-  if (!m) {
-    el.removeAttribute('data-kind');
-    el.innerHTML = `<div class="empty">${wz('Select a message to read.', 'Unfurl a scroll to read it.')}</div>`;
-    return;
-  }
-  // Tag the reader with the open message's kind so the wizard theme can pick
-  // its surface (parchment scroll / arcane decree slab / broadsheet).
-  el.dataset.kind = msgKind(m);
-  const when = m.created_at ? new Date(m.created_at).toLocaleString() : '';
-  // From / To lead with the stable agent_id (name + agt_xxxxxxxx), with the
-  // full "agent_id / conv-id" pair on hover — the same handle the roster/audit
-  // surfaces lead with. shortAgentId falls back to the conv-id prefix for a
-  // party that was never an agent.
-  const fromIdHTML = m.from_conv
-    ? `<span class="mail-cid" title="${esc(idTooltip(m.from_agent, m.from_conv))}">${esc(shortAgentId(m.from_agent, m.from_conv))}</span>`
-    : '';
-  const fromHTML = m.from_title ? `${esc(m.from_title)} ${fromIdHTML}` : fromIdHTML;
-  // To: prefer the full recipients array (multicasts carry every
-  // addressee); fall back to the single to_conv for a plain 1:1.
-  let toHTML = recipientNames(m.to_recipients);
-  if (!toHTML && (m.to_title || m.to_conv)) {
-    const toIdHTML = m.to_conv
-      ? `<span class="mail-cid" title="${esc(idTooltip(m.to_agent, m.to_conv))}">${esc(shortAgentId(m.to_agent, m.to_conv))}</span>`
-      : '';
-    toHTML = m.to_title ? `${esc(m.to_title)} ${toIdHTML}` : toIdHTML;
-  }
-  const stateBits = [];
-  stateBits.push(m.read ? 'read' : '<span class="mail-state-unread">unread</span>');
-  if (m.delivered_at) stateBits.push('delivered');
-  else if (m.direction === 'out') stateBits.push('<span class="mail-state-pending">undelivered</span>');
-
-  // The human folder keeps mark-read + focus (its read-state is
-  // meaningful); every folder gets delete. The human-folder delete
-  // routes through row-actions.js's msg-delete; agent + "all" folders
-  // route through this module's mail-msg-delete.
-  let actions;
-  if (mail.selected === HUMAN_ID) {
-    // Opening a notification auto-marks it read (markOpenedHumanRead), so
-    // the reader almost always shows a read message — offer the "mark
-    // unread" opt-out, the way a mail client lets you flag something to
-    // revisit. An unread message (e.g. just marked unread, then re-opened
-    // without a reload) keeps the explicit "mark read". Both route through
-    // row-actions.js's msg-mark-read / msg-mark-unread handlers.
-    const readBtn = m.read
-      ? `<button data-act="msg-mark-unread" data-id="${m.id}" title="Mark this message unread">mark unread</button>`
-      : `<button data-act="msg-mark-read" data-id="${m.id}" title="Mark this message read">mark read</button>`;
-    const delBtn = `<button class="danger" data-act="msg-delete" data-id="${m.id}" title="Permanently delete this message">delete</button>`;
-    actions = `<div class="mail-reader-actions">${humanReplyButton(m)}${humanFocusButton(m)}${readBtn}${delBtn}</div>`;
-  } else {
-    // Agent + "all" folders: an explicit operator toggle of the row's
-    // read-state (set on the recipient's behalf — repairing a stuck agent's
-    // inbox), plus delete.
-    const readBtn = m.read
-      ? `<button data-act="mail-msg-mark-read" data-id="${m.id}" data-read="0" title="Mark this message unread for the recipient">mark unread</button>`
-      : `<button data-act="mail-msg-mark-read" data-id="${m.id}" data-read="1" title="Mark this message read on the recipient’s behalf">mark read</button>`;
-    const delBtn = `<button class="danger" data-act="mail-msg-delete" data-id="${m.id}" title="Permanently delete this message">delete</button>`;
-    actions = `<div class="mail-reader-actions">${readBtn}${delBtn}</div>`;
-  }
-
-  // Morph rather than swap: this is the primary copy surface (the message body),
-  // so preserving a live selection across the 2s repaint is the whole point.
-  // When the open message is unchanged the reader is isEqualNode-equal and the
-  // morph skips the entire subtree, leaving any selection completely untouched.
-  morphInto(el, `
-    <div class="mail-reader-head">
-      <div class="mail-subject">${esc(m.subject || '(no subject)')} <span class="mail-id">#${m.id}</span></div>
-      <div class="mail-headers">
-        ${readerHeaderRow('From', fromHTML)}
-        ${readerHeaderRow('To', toHTML)}
-        ${readerHeaderRow('Cc', recipientNames(m.cc_recipients))}
-        ${readerHeaderRow('Group', m.group ? esc(m.group) : '')}
-        ${readerHeaderRow('Date', esc(when))}
-        ${readerHeaderRow('Status', stateBits.join(' · '))}
-      </div>
-    </div>
-    <div class="mail-reader-body">${linkify(m.body || '')}</div>
-    ${mail.selected === HUMAN_ID ? humanAttachmentHTML(m) : ''}
-    ${actions}`);
-}
-
-// paintBulkActions shows the message-filter row's bulk read actions. The
-// human folder gets "mark all read" / "clear read" (over human_messages); a
-// single agent folder gets its own "mark all read" (marks every message that
-// agent has RECEIVED read, on its behalf — clearing a stuck agent's inbox).
-// The "all" firehose gets neither: "mark all read" across every conv's
-// traffic is not a meaningful operator action.
-function paintBulkActions() {
-  const human = mail.selected === HUMAN_ID;
-  // A group folder is an aggregate, not a single agent's inbox — exclude it
-  // from agentFolder so it never shows the per-folder "mark all read" (that
-  // marks one conv's received mail; a group has no single recipient).
-  const agentFolder = !human && mail.selected !== ALL_ID && !isGroupFolder();
-  const markAll = $('#mail-mark-all');
-  const clearRead = $('#mail-clear-read');
-  const agentMarkAll = $('#mail-agent-mark-all');
-  if (markAll) markAll.hidden = !human;
-  if (clearRead) clearRead.hidden = !human;
-  if (agentMarkAll) agentMarkAll.hidden = !agentFolder;
-}
+function paintReader() { mailState.touch(); }
 
 // --- selection ------------------------------------------------------
 
 function selectMailbox(id) {
+  if (mail.busy) return;
   if (!id || id === mail.selected) {
     // Re-click on the active folder: just refresh it.
     loadMessages().then(() => { pruneSelections(); paintMail(); });
@@ -1397,8 +948,7 @@ function selectMessage(id) {
   // keep read-state as the operator's explicit inbox-repair toggle (set on
   // a stuck agent's behalf), so merely opening one there must NOT flip it.
   if (mail.selected === HUMAN_ID) markOpenedHumanRead(mail.selectedMsgId);
-  paintList();        // re-highlight the active row (+ clear its unread dot)
-  paintReader();
+  paintReader();      // re-highlight the row and repaint the reader
 }
 
 // markOpenedHumanRead implements "opening it reads it" for the human
@@ -1491,7 +1041,7 @@ function accessOutcome(status) {
     case 'always': return { cls: 'always', txt: wz('★ Always allowed', '★ Granted ever after') };
     case 'declined': return { cls: 'declined', txt: wz('✕ Declined', '✕ Refused') };
     case 'timed out': return { cls: 'timedout', txt: wz('⏱ Timed out', '⏱ Sands ran out') };
-    default: return { cls: 'declined', txt: esc(status || '') };
+    default: return { cls: 'declined', txt: String(status || '') };
   }
 }
 
@@ -1531,112 +1081,9 @@ function accessStatusText(r) {
   return accessOutcome(r.status).txt;
 }
 
-// accessRowHTML renders one request as a selectable message-list row. Details
-// and decision buttons live in the reader pane, matching the Human / All mail
-// split: middle pane for scanning, right pane for the selected item.
-function accessRowHTML(r) {
-  const handled = !accessIsPending(r);
-  const active = String(mail.selectedMsgId || '') === r.id;
-  const attn = accessHighlightId === r.id ? ' access-attn' : '';
-  const idHover = idTooltip(r.agent_id, r.conv_id);
-  const when = handled ? (r.decided_at || r.created_at) : r.created_at;
-  const status = accessStatusText(r);
-  return `<div class="mail-row-wrap access-row-wrap${handled ? ' handled' : ''}" data-key="${esc(r.id)}" data-kind="decree">
-    <button class="mail-row access-row-item${active ? ' active' : ''}${!handled ? ' unread' : ''}${attn}"
-      data-act="access-open" data-id="${esc(r.id)}">
-      <span class="mail-row-top">
-        ${!handled ? '<span class="mail-row-dot" title="pending">●</span>' : ''}
-        <span class="mail-row-party"${idHover ? ` title="${esc(idHover)}"` : ''}>${esc(accessWho(r))}</span>
-        <span class="mail-row-group">${status}</span>
-        <span class="mail-row-time">${esc(relTime(when))}</span>
-      </span>
-      <span class="mail-row-subject">${esc(accessSubject(r))}</span>
-    </button>
-  </div>`;
-}
-
-function accessMetaHTML(r) {
-  let meta = `<div class="access-row"><span class="access-k">${wz('Permission', 'Boon')}</span><span class="access-v mono">${esc(r.perm)}</span></div>`;
-  if (r.path) meta += `<div class="access-row"><span class="access-k">${wz('Endpoint', 'Rite')}</span><span class="access-v mono">${esc(r.path)}</span></div>`;
-  if (r.target_group) meta += `<div class="access-row"><span class="access-k">${wz('Group', 'Party')}</span><span class="access-v">${esc(r.target_group)}</span></div>`;
-  if (r.target_conv_id) meta += `<div class="access-row"><span class="access-k">${wz('Target', 'Quarry')}</span><span class="access-v">${esc(r.target_conv_title || r.target_conv_id)}</span></div>`;
-  if (r.body) {
-    meta += `<div class="access-row access-body-row"><span class="access-k">${esc(r.body_label || 'Body')}</span><pre class="access-body">${esc(r.body)}</pre></div>`;
-  }
-  return meta;
-}
-
-function accessActionsHTML(r) {
-  const handled = !accessIsPending(r);
-  if (handled) {
-    const o = accessOutcome(r.status);
-    const when = r.decided_at ? relTime(r.decided_at) : '';
-    return `<div class="mail-reader-actions access-reader-actions">
-      <span class="access-outcome ${o.cls}">${o.txt}</span>${when ? `<span class="access-decided-at">${esc(when)}</span>` : ''}
-    </div>`;
-  }
-  const always = r.auto_grantable
-    ? `<button class="access-btn always" data-act="access-always" data-id="${esc(r.id)}" title="Approve now AND remember this permission for this agent, so it won't ask again">${wz('Always allow', 'Grant ever after')}</button>`
-    : '';
-  return `<div class="mail-reader-actions access-reader-actions">
-    <span class="access-countdown" title="If you don't decide, this request is automatically declined.">${esc(accessCountdown(r.deadline))}</span>
-    <span class="grow"></span>
-    <button class="access-btn extend" data-act="access-extend" data-id="${esc(r.id)}" title="Push the auto-decline back 5 minutes">+5m</button>
-    ${always}
-    <button class="access-btn deny" data-act="access-deny" data-id="${esc(r.id)}">${wz('Decline', 'Refuse')}</button>
-    <button class="access-btn approve" data-act="access-approve" data-id="${esc(r.id)}">${wz('Approve', 'Grant')}</button>
-  </div>`;
-}
-
-// paintAccessRequests renders the live approval rows into the message-list
-// pane (#mail-list): the pending (actionable) ones first, then a "recently
-// handled" history section. Keyed by request id so morph keeps selection /
-// the deep-link highlight across the 2s repaint.
-function paintAccessRequests(el) {
-  const all = accessRequests();
-  const q = currentSearch();
-  const visible = all.filter(r => accessMatchesSearch(r, q));
-  const pending = visible.filter(accessIsPending);
-  const handled = visible.filter(r => !accessIsPending(r));
-  const countEl = $('#filter-messages-count');
-  if (countEl) {
-    const parts = [pending.length ? `${pending.length} pending` : wz('none pending', 'no petitions')];
-    if (handled.length) parts.push(`${handled.length} handled`);
-    if (q) parts.push(`${visible.length} / ${all.length}`);
-    countEl.textContent = parts.join(' · ');
-  }
-  if (!all.length) {
-    // Keep any deep-link highlight pending: a boot-time ?access_request lands
-    // before the first snapshot, so the folder paints empty once, then fills.
-    el.innerHTML = `<div class="empty">${wz(
-      'No pending access requests. When an agent asks for access it can’t self-grant, it appears here for your decision.',
-      'No petitions await. When a familiar begs a boon beyond its station, it appears here for your judgement.')}</div>`;
-    return;
-  }
-  if (!visible.length) {
-    el.innerHTML = `<div class="empty">${wz('No access requests match the filter.', 'No petitions match your seeking.')}</div>`;
-    return;
-  }
-  let html = pending.map(accessRowHTML).join('');
-  if (handled.length) {
-    // Keyed divider so morph treats it as a stable node between the keyed rows.
-    html += `<div class="access-divider" data-key="__access_handled__">${wz('Recently handled', 'Judgements past')}</div>`;
-    html += handled.map(accessRowHTML).join('');
-  }
-  morphInto(el, html);
-  // Consume the one-shot deep-link highlight: scroll the flagged row in view.
-  if (accessHighlightId) {
-    const row = [...el.querySelectorAll('.access-row-wrap')].find(c => c.dataset.key === accessHighlightId);
-    if (row) row.scrollIntoView({ block: 'nearest' });
-    accessHighlightId = null;
-  }
-}
-
-// decideAccess records the operator's decision through the dashboard endpoint
-// that replaced the loopback popup. Optimistically flips the card to its handled
-// state (it STAYS in the folder as history, showing what was chosen) so the UI
-// feels instant; the next 2s snapshot reconciles with the server's canonical
-// outcome + timestamp.
+// Access-request rows are rendered by the Preact island. Details and decision
+// buttons live in the reader pane, matching the Human / All mail split:
+// middle pane for scanning, right pane for the selected item.
 async function decideAccess(id, decision) {
   if (!id) return;
   try {
@@ -1704,17 +1151,15 @@ function focusAccessRequest(id) {
   }
 }
 
+function highlightedAccessRequest() { return accessHighlightId; }
+function consumeAccessHighlight(id) {
+  if (accessHighlightId === id) accessHighlightId = null;
+}
+
 // --- mutations ------------------------------------------------------
 
 // progressBarHTML renders the "Deleting 150 / 300…" label + a filling bar
 // shown in a bulk bar while a batched op runs.
-function progressBarHTML(p) {
-  const pct = p.total ? Math.round((p.done / p.total) * 100) : 0;
-  return `<span class="mail-progress-label">${esc(p.verb)} ${p.done} / ${p.total}…</span>
-    <span class="mail-progress grow"><span class="mail-progress-fill" style="width:${pct}%"></span></span>`;
-}
-
-// chunk splits an array into runs of at most `size`.
 function chunk(arr, size) {
   const out = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
@@ -1763,10 +1208,7 @@ async function runBatches(items, size, where, verb, doBatch) {
 // mutates human_messages via its own endpoint; agent + "all" folders
 // delete agent_messages rows. Returns the deleted count, or null on
 // failure (already toasted).
-async function postDeleteMessages(ids) {
-  const url = mail.selected === HUMAN_ID
-    ? '/api/human-messages/delete'
-    : '/api/mailbox/delete';
+async function postDeleteMessages(ids, url) {
   try {
     const r = await fetch(url, {
       method: 'POST', credentials: 'same-origin',
@@ -1784,6 +1226,7 @@ async function postDeleteMessages(ids) {
 
 async function deleteOneMessage(id) {
   if (mail.busy || !Number.isFinite(id)) return;
+  const deleteURL = messageDeleteEndpoint(mail.selected);
   const confirmed = await confirmModal({
     title: 'Delete this message?',
     body: 'Permanently deletes this one message. This cannot be undone.',
@@ -1791,7 +1234,7 @@ async function deleteOneMessage(id) {
     okLabel: 'Delete',
   });
   if (!confirmed) return;
-  const n = await postDeleteMessages([id]);
+  const n = await postDeleteMessages([id], deleteURL);
   if (n === null) return;
   mail.selectedMsgs.delete(id);
   if (mail.selectedMsgId === id) mail.selectedMsgId = null;
@@ -1801,6 +1244,7 @@ async function deleteOneMessage(id) {
 
 async function deleteSelectedMessages() {
   if (mail.busy) return;
+  const deleteURL = messageDeleteEndpoint(mail.selected);
   // Snapshot the selection up front: runBatches iterates this captured
   // list, not the live Set, so a background refresh landing during the
   // confirm wait (before mail.busy is set) can prune the Set without
@@ -1818,7 +1262,7 @@ async function deleteSelectedMessages() {
   const { deleted, handled, ok } = await runBatches(
     ids, DELETE_BATCH, 'bulk', 'Deleting',
     async batch => {
-      const n = await postDeleteMessages(batch);
+      const n = await postDeleteMessages(batch, deleteURL);
       if (n === null) return null;
       // Drop the handled ids from the selection as each batch lands, so a
       // mid-run failure leaves the selection pointing only at what's left.
@@ -1937,166 +1381,36 @@ async function markAllAgentRead() {
 // --- wiring ---------------------------------------------------------
 
 function initMail() {
-  // Restore + wire the draggable column layout (sidebar / list / reader).
-  initMailResize();
-  const sec = $('#tab-messages');
-  if (sec) {
-    // Delegated click handler scoped to the Messages tab. The human-
-    // message mark-read / focus actions (msg-*) are handled by
-    // row-actions.js's document-level handler; the data-act values here
-    // don't overlap those.
-    sec.addEventListener('click', e => {
-      // A batched delete/wipe owns the view until it finishes — ignore
-      // clicks (including the row delete buttons) so no second mutation
-      // races the running one.
-      if (mail.busy) return;
-      const btn = e.target.closest('[data-act]');
-      if (!btn || !sec.contains(btn)) return;
-      const act = btn.getAttribute('data-act');
-      if (act === 'mailbox-select') {
-        selectMailbox(btn.getAttribute('data-id'));
-      } else if (act === 'access-open') {
-        selectMessage(btn.getAttribute('data-id'));
-      } else if (act === 'access-approve') {
-        decideAccess(btn.getAttribute('data-id'), 'approve');
-      } else if (act === 'access-deny') {
-        decideAccess(btn.getAttribute('data-id'), 'deny');
-      } else if (act === 'access-always') {
-        decideAccess(btn.getAttribute('data-id'), 'always');
-      } else if (act === 'access-extend') {
-        decideAccess(btn.getAttribute('data-id'), 'extend');
-      } else if (act === 'mailbox-toggle-group') {
-        toggleGroupExpand(btn.getAttribute('data-group'));
-      } else if (act === 'mailbox-toggle-agents-section') {
-        toggleAgentsExpand();
-      } else if (act === 'mail-open') {
-        selectMessage(btn.getAttribute('data-id'));
-      } else if (act === 'mail-msg-delete') {
-        deleteOneMessage(Number(btn.getAttribute('data-id')));
-      } else if (act === 'mail-msg-mark-read') {
-        setMessagesRead([Number(btn.getAttribute('data-id'))],
-          btn.getAttribute('data-read') === '1');
-      } else if (act === 'mail-mark-read-selected') {
-        setMessagesRead([...mail.selectedMsgs], true);
-      } else if (act === 'mail-mark-unread-selected') {
-        setMessagesRead([...mail.selectedMsgs], false);
-      } else if (act === 'mail-agent-mark-all') {
-        markAllAgentRead();
-      } else if (act === 'mail-del-selected') {
-        deleteSelectedMessages();
-      } else if (act === 'mail-wipe-selected') {
-        wipeSelectedMailboxes();
-      } else if (act === 'mail-clear-box-sel') {
-        mail.selectedBoxes.clear();
-        paintSidebar();
-        paintWipeBar();
-      } else if (act === 'mail-page-first') {
-        goToPage(1);
-      } else if (act === 'mail-page-prev') {
-        goToPage(mail.page - 1);
-      } else if (act === 'mail-page-next') {
-        goToPage(mail.page + 1);
-      } else if (act === 'mail-page-last') {
-        goToPage(pageCount());
-      }
-    });
-    // Checkbox toggles arrive as `change`, not `click` — and carry no
-    // data-act, so row-actions.js's click handler leaves them alone (no
-    // preventDefault) and they toggle normally. Selection state is the
-    // source of truth; the 2s repaint re-derives `checked` from it.
-    sec.addEventListener('change', e => {
-      if (mail.busy) return;  // selection is frozen during a batched op
-      const t = e.target;
-      if (t.classList.contains('mail-msg-check')) {
-        const id = Number(t.getAttribute('data-id'));
-        if (t.checked) mail.selectedMsgs.add(id); else mail.selectedMsgs.delete(id);
-        paintListBulkBar();
-      } else if (t.classList.contains('mail-box-check')) {
-        const conv = t.getAttribute('data-conv');
-        if (t.checked) mail.selectedBoxes.add(conv); else mail.selectedBoxes.delete(conv);
-        paintWipeBar();
-      } else if (t.classList.contains('mail-page-size')) {
-        setPageSize(Number(t.value));
-      } else if (t.classList.contains('mail-select-all')) {
-        const filtered = filteredMessages();
-        if (t.checked) filtered.forEach(m => mail.selectedMsgs.add(m.id));
-        else filtered.forEach(m => mail.selectedMsgs.delete(m.id));
-        paintList();
-        paintListBulkBar();
-      }
-    });
-  }
-  // Sidebar mailbox filter — name / short-id / group. Persisted like the
-  // other tab filters, but scoped to the roster pane (the top filter bar
-  // stays scoped to the open folder's messages).
-  const boxFilter = $('#filter-mailboxes');
-  if (boxFilter) {
-    boxFilter.value = dashPrefs.getItem(BOX_FILTER_KEY) || '';
-    boxFilter.addEventListener('input', () => {
-      const v = boxFilter.value;
-      if (v) dashPrefs.setItem(BOX_FILTER_KEY, v); else dashPrefs.removeItem(BOX_FILTER_KEY);
-      paintSidebar();
-    });
-  }
-  // "Show retired agents" sidebar toggle. A dedicated listener (not the
-  // delegated tab handler) so a mid-bulk-op click stays in sync: it
-  // reverts the box to the live state and no-ops rather than the delegated
-  // handler's silent early-return, which would leave the box visually
-  // toggled but the state unchanged. The checkbox is static (never
-  // repainted), so its checked state is the source of truth between
-  // toggles; seed it from the persisted pref.
-  const showRetired = $('#mail-show-retired');
-  if (showRetired) {
-    showRetired.checked = mail.showRetired;
-    showRetired.addEventListener('change', () => {
-      if (mail.busy) { showRetired.checked = mail.showRetired; return; }
-      setShowRetired(showRetired.checked);
-    });
-  }
-  // "Show agents without messages" sidebar toggle — the empty-mailbox twin
-  // of the retired toggle above; same mid-bulk-op resync rationale.
-  const showEmpty = $('#mail-show-empty');
-  if (showEmpty) {
-    showEmpty.checked = mail.showEmpty;
-    showEmpty.addEventListener('change', () => {
-      if (mail.busy) { showEmpty.checked = mail.showEmpty; return; }
-      setShowEmpty(showEmpty.checked);
-    });
-  }
-  // "Show previous generations" sidebar toggle — predecessor conv
-  // generations left behind by a reincarnate / /clear. A pure client-side
-  // roster filter (no re-fetch), so its handler just repaints via
-  // setShowPrevGens; same static-checkbox + mid-bulk-op resync rationale as
-  // the two toggles above.
-  const showPrevGens = $('#mail-show-prev-gens');
-  if (showPrevGens) {
-    showPrevGens.checked = mail.showPrevGens;
-    showPrevGens.addEventListener('change', () => {
-      if (mail.busy) { showPrevGens.checked = mail.showPrevGens; return; }
-      setShowPrevGens(showPrevGens.checked);
-    });
-  }
-  // Load immediately when the human switches TO the Messages tab, rather
-  // than waiting up to 2s for the next snapshot tick. bindTabs (in
-  // refresh.js) toggles the .active class on the same click; this
-  // listener fires after, so mailTabActive() inside renderMailTab sees
-  // the freshly-set class.
-  $$('nav [data-tab="messages"]').forEach(b =>
-    b.addEventListener('click', renderMailTab));
-
-  // The pending-approval attention banner's "Review" button jumps to the
-  // access-requests folder. Static element (never repainted), so bind once.
-  $('#access-banner-review')?.addEventListener('click', () => focusAccessRequest());
-
-  // Seed the theme-aware placeholder copy, and re-apply it (plus repaint the
-  // panes so the empty-state / reader copy + per-kind scroll styling refresh)
-  // whenever the 🧙 wizard theme flips. slop.js dispatches tclaude:wizard on
-  // every toggle; paintMail repaints from cache (no server round-trip).
-  applyMailThemeText();
-  document.addEventListener('tclaude:wizard', () => {
-    applyMailThemeText();
-    paintMail();
-  });
+  const controller = new AbortController();
+  const { signal } = controller;
+  const disposeResize = initMailResize();
+  $$('nav [data-tab="messages"]').forEach(button =>
+    button.addEventListener('click', renderMailTab, { signal }));
+  $('#access-banner-review')?.addEventListener('click', () => focusAccessRequest(), { signal });
+  document.addEventListener('tclaude:wizard', paintMail, { signal });
+  return () => {
+    controller.abort();
+    disposeResize();
+    if (mail.searchTimer) {
+      clearTimeout(mail.searchTimer);
+      mail.searchTimer = null;
+    }
+  };
 }
 
-export { renderMailTab, initMail, onMailSearchChanged, renderAccessRequests, focusAccessRequest, openMailbox, senderOnline };
+export const mailController = Object.freeze({
+  state: mailState,
+  renderMailTab, initMail, renderAccessRequests,
+  focusAccessRequest, openMailbox, senderOnline, setBoxQuery, setMessageQuery,
+  setShowRetired, setShowEmpty, setShowPrevGens,
+  mailboxView, mailboxLabel, mailboxTitleAttr, selectMailbox,
+  toggleGroupExpand, toggleAgentsExpand, toggleBoxSelection, clearBoxSelection,
+  wipeSelectedMailboxes,
+  messageView, messageCountText, counterparty, allSenderLabel, allRecipientLabel,
+  msgPreview, msgKind, selectMessage, toggleMessageSelection, togglePageSelection,
+  deleteOneMessage, deleteSelectedMessages, setMessagesRead, markAllAgentRead,
+  goToPage, setPageSize, decideAccess, accessWho, accessSubject,
+  accessStatusText, accessIsPending, accessOutcome, accessCountdown,
+  highlightedAccessRequest, consumeAccessHighlight,
+  reloadMessagesPage, reloadMail,
+});

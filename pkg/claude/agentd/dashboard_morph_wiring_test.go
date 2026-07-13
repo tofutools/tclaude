@@ -78,41 +78,6 @@ func TestDashboardMorph_Wired(t *testing.T) {
 	}
 }
 
-// TestDashboardMorph_MailWired guards the extension of the morph to the Messages
-// tab — the ORIGINAL copy-paste complaint (a message body in the reader pane
-// deselecting every 2s). paintMail's per-tick panes now reconcile via morphInto
-// instead of an innerHTML swap, message-list rows are keyed, and the reconciler
-// carries the form-control property special case the bulk-select checkboxes need.
-func TestDashboardMorph_MailWired(t *testing.T) {
-	present := func(needle, why string) {
-		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
-			t.Errorf("dashboard assets missing %q — %s", needle, why)
-		}
-	}
-
-	// morph.js gained the form-control property sync + the fast-path bypass that
-	// makes it correct for the bulk-select checkboxes (see syncFormProps).
-	present("function syncFormProps(", "morph.js syncs live form-control properties from the fresh render")
-	present("if (!isFormControl && from.isEqualNode(to)) return;", "form controls bypass the isEqualNode fast path")
-
-	// mail.js's per-tick paint panes morph instead of swapping innerHTML.
-	present("morphInto(el, html);", "paintSidebar morphs the sidebar")
-	present("morphInto(el, filtered.map(m => {", "paintList morphs the message list")
-	present("morphInto(el, `\n    <div class=\"mail-reader-head\">", "paintReader morphs the reader (primary copy surface)")
-	present("morphInto(bar, `${nav}<span class=\"grow\"></span>${sizeSel}`)", "paintPager morphs the pager")
-
-	// Message-list rows carry a stable data-key (the unique message id) so a new
-	// message arriving moves rows intact instead of morphing neighbour rows.
-	present(`data-key="${m.id}" data-kind=`, "message rows carry a data-key for keyed morphing")
-
-	// The old wholesale message-list swap is gone — its return would silently
-	// re-break the very use case this extension targets.
-	if strings.Contains(dashboardAssets, "el.innerHTML = filtered.map(m => {") {
-		t.Error("mail.js still carries the retired `el.innerHTML = filtered.map(...)` list swap — Messages copy-paste regressed")
-	}
-}
-
 // TestDashboardMorph_SweepWired guards the coverage sweep (JOH-339 items 2–9):
 // the remaining recurring innerHTML sites that a re-poll (2s snapshot, or the
 // slower logs-stream / audit-repoll / costs-repoll ticks) rebuilt wholesale,

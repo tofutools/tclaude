@@ -70,24 +70,36 @@ function persist() {
 // initMailResize restores the saved layout and wires each gutter's drag +
 // double-click-to-reset. Safe to call once at boot: the .mail-client markup
 // is static, and dashPrefs is already loaded (boot awaits initDashPrefs).
-function initMailResize() {
-  const client = $('.mail-client');
-  if (!client) return;
+function initMailResize(client = $('.mail-client')) {
+  if (!client) return () => {};
+  const controller = new AbortController();
+  const { signal } = controller;
+  const removeListeners = [];
   cols = loadCols();
   apply(client);
 
   $$('.mail-gutter', client).forEach(g => {
     const boundary = g.getAttribute('data-boundary');
-    g.addEventListener('pointerdown', e => startDrag(e, client, g, boundary));
-    g.addEventListener('dblclick', () => {
+    const onPointerDown = e => startDrag(e, client, g, boundary, signal);
+    const onDoubleClick = () => {
       cols = { ...DEFAULTS };
       apply(client);
       try { dashPrefs.removeItem(COLS_KEY); } catch (_) {}
+    };
+    g.addEventListener('pointerdown', onPointerDown);
+    g.addEventListener('dblclick', onDoubleClick);
+    removeListeners.push(() => {
+      g.removeEventListener('pointerdown', onPointerDown);
+      g.removeEventListener('dblclick', onDoubleClick);
     });
   });
+  return () => {
+    controller.abort();
+    removeListeners.forEach(remove => remove());
+  };
 }
 
-function startDrag(e, client, gutter, boundary) {
+function startDrag(e, client, gutter, boundary, signal) {
   if (e.button !== 0) return; // left button only
   e.preventDefault();
   gutter.setPointerCapture(e.pointerId);
@@ -123,18 +135,20 @@ function startDrag(e, client, gutter, boundary) {
   }
 
   function onUp() {
-    gutter.releasePointerCapture(e.pointerId);
+    if (gutter.hasPointerCapture(e.pointerId)) gutter.releasePointerCapture(e.pointerId);
     gutter.classList.remove('dragging');
     document.body.classList.remove('mail-col-resizing');
     gutter.removeEventListener('pointermove', onMove);
     gutter.removeEventListener('pointerup', onUp);
     gutter.removeEventListener('pointercancel', onUp);
+    signal?.removeEventListener('abort', onUp);
     if (moved) persist(); // a bare click (no drag) leaves the pref untouched
   }
 
   gutter.addEventListener('pointermove', onMove);
   gutter.addEventListener('pointerup', onUp);
   gutter.addEventListener('pointercancel', onUp);
+  signal?.addEventListener('abort', onUp, { once: true });
 }
 
 export { initMailResize };

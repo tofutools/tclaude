@@ -645,7 +645,7 @@ button.tool:hover { border-color: #58a6ff; }
 .mail-state-unread { color: #58a6ff; }
 .mail-state-pending { color: #d29922; }
 .mail-reader-body { color: #c9d1d9; white-space: pre-wrap; word-break: break-word; font-size: 13px; line-height: 1.5; }
-/* Linkified URLs in a message body (helpers.js linkify) — the dashboard
+/* Linkified URLs in a Preact-rendered message body — the dashboard
    has no global <a> style, so without this they'd fall back to the
    browser's default blue, unreadable on the dark theme. Use the accent
    blue, underline on hover, and break-anywhere so a long URL wraps inside
@@ -671,6 +671,11 @@ button.tool:hover { border-color: #58a6ff; }
 .mail-reader-actions button:hover:not(:disabled) { color: #d4d4d4; border-color: #58a6ff; }
 .mail-reader-actions button:disabled { opacity: .45; cursor: default; }
 .mail-reader-actions button.danger:hover { color: #f85149; border-color: #f85149; }
+.messages-error, .mail-error {
+  margin: 8px; padding: 8px 10px; border-left: 3px solid #f85149;
+  background: rgba(248, 81, 73, .08); color: #f0a3a0;
+}
+.messages-error button, .mail-error button { margin-left: 8px; }
 
 main { padding: 16px 24px; }
 section { display: none; }

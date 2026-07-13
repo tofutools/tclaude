@@ -24,7 +24,7 @@
 // replaces its fetch rather than duplicating it.
 
 import { $ } from './helpers.js';
-import { senderOnline } from './mail.js';
+import { senderOnline } from './mail-bridge.js';
 import { toast, refresh, bindBackdropDiscard } from './refresh.js';
 
 // replyCtx holds { id, agent, conv, label, subject, snap, online } while
