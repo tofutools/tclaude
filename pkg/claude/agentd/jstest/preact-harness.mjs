@@ -231,6 +231,7 @@ export async function createPreactHarness(t) {
   const html = htmModule.default.bind(preact.h);
 
   const importDashboardModule = (path) => import(pathToFileURL(join(workDir, path)));
+  const replaceDashboardModule = (path, source) => writeFile(join(workDir, path), source);
   const fireEvent = (element, type, init = {}) => {
     const event = new window.Event(type, { bubbles: true, cancelable: true });
     Object.assign(event, init);
@@ -267,6 +268,7 @@ export async function createPreactHarness(t) {
     input,
     mount,
     importDashboardModule,
+    replaceDashboardModule,
     getByRole,
     getByLabelText,
   };
