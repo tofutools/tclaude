@@ -307,7 +307,7 @@ function NestGroupDialog({ descriptor, actions, confirmDiscard }) {
     finally { setBusy(false); }
   };
   return html`
-    <${Overlay} id="group-nest-modal" labelledby="group-nest-title" onClose=${actions.close} onSubmitHotkey=${submit} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}>
+    <${Overlay} id="group-nest-modal" labelledby="group-nest-title" onClose=${actions.close} onSubmitHotkey=${submit} onSubmitEnter=${submit} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}>
       <h3 id="group-nest-title">Nest group: ${descriptor.group}</h3>
       <div class="modal-meta">Nest this group under another so it draws inside it on the board — collapse the parent to tuck the whole subgroup away, expand it to bring it back. Board layout only: nesting doesn't change messaging, permissions or spawns. A group can't nest under itself or one of its own descendants.</div>
       <label class="cron-create-row">

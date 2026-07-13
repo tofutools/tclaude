@@ -110,7 +110,9 @@ test('nest dialog uses an explicit parent model and controlled selection', async
   [...parent.options].forEach((option) => option.removeAttribute('selected'));
   parent.querySelector('option[value="beta"]').setAttribute('selected', '');
   await harness.act(() => parent.dispatchEvent(new harness.window.Event('change', { bubbles: true })));
-  host.querySelector('#group-nest-submit').click();
+  const enter = new harness.window.Event('keydown', { bubbles: true });
+  Object.defineProperty(enter, 'key', { value: 'Enter' });
+  host.querySelector('#group-nest-modal [role="dialog"]').dispatchEvent(enter);
   await harness.act(() => Promise.resolve());
   assert.deepEqual(calls[0], ['nest', { group: 'child', parent: 'beta' }]);
   await mounted.cleanup();

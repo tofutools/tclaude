@@ -13,6 +13,7 @@ export function ManagementOverlay({
   labelledby,
   onClose,
   onSubmitHotkey = null,
+  onSubmitEnter = null,
   dirty = false,
   blocked = false,
   confirmDiscard,
@@ -69,6 +70,16 @@ export function ManagementOverlay({
       aria-modal="true"
       aria-labelledby=${labelledby}
       onKeyDown=${(event) => {
+        if (
+          onSubmitEnter &&
+          event.key === 'Enter' &&
+          !event.ctrlKey &&
+          !event.metaKey
+        ) {
+          event.preventDefault();
+          onSubmitEnter();
+          return;
+        }
         if (
           onSubmitHotkey &&
           event.key === 'Enter' &&
