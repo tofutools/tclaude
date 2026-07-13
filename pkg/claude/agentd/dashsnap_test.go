@@ -450,6 +450,39 @@ func baseStates() []dashsnap.State {
 })();`
 	states := []dashsnap.State{
 		{
+			Key:     "startup-cls",
+			Title:   "Stable startup layout",
+			Caption: "The initial theme, persisted dock geometry, Preact shell and first snapshot become visible as one settled frame; buffered Chrome layout shifts stay below 0.01.",
+			JS: `return new Promise(function(resolve, reject) {
+  if (!PerformanceObserver.supportedEntryTypes.includes('layout-shift')) {
+    reject(new Error('Chrome does not expose layout-shift performance entries'));
+    return;
+  }
+  var score = 0;
+  var sources = [];
+  var observer = new PerformanceObserver(function(list) {
+    for (var entry of list.getEntries()) {
+      if (entry.hadRecentInput) continue;
+      score += entry.value;
+      for (var source of entry.sources) {
+        if (!source.node) continue;
+        sources.push(source.node.id ? '#' + source.node.id : source.node.className || source.node.tagName);
+      }
+    }
+  });
+  observer.observe({type: 'layout-shift', buffered: true});
+  setTimeout(function() {
+    observer.disconnect();
+    if (score > 0.01) {
+      reject(new Error('startup CLS ' + score.toFixed(4) + ' from ' + sources.slice(0, 12).join(', ')));
+      return;
+    }
+    resolve();
+  }, 50);
+});`,
+			SettleMS: 100,
+		},
+		{
 			Key:     "shell-normal",
 			Title:   "Preact shell — populated",
 			Caption: "TCL-360: accepted snapshot data fills the activity, usage, status, badges and footer shell without changing the plain/wizard header geometry.",

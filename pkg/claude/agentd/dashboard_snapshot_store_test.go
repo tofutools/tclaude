@@ -39,6 +39,7 @@ func TestDashboardHasOneAuthoritativeSnapshotPoll(t *testing.T) {
 	var authoritativeSnapshotFetches, modalReplacementFetches, schedulerCalls, manualDebounces int
 	scheduledRefresh := regexp.MustCompile(`(?s)set(?:Interval|Timeout)\s*\([^;]{0,300}\brefresh\b`)
 	snapshotFetch := regexp.MustCompile(`fetch\s*\(\s*['"\x60]/api/snapshot(?:\?[^'"\x60]*)?['"\x60]`)
+	schedulerCall := regexp.MustCompile(`(?m)^[\t ]*(?:(?:(?:const|let|var)\s+)?[\w$.]+\s*=\s*)?(?:[\w$.]+\.push\()?startSnapshotPoll\s*\(\s*refresh\b`)
 	for _, syntax := range []string{
 		"fetch('/api/snapshot')", `fetch("/api/snapshot")`, "fetch(`/api/snapshot`)",
 		"fetch('/api/snapshot?poll=1')", `fetch("/api/snapshot?poll=1")`, "fetch(`/api/snapshot?poll=1`)",
@@ -46,6 +47,18 @@ func TestDashboardHasOneAuthoritativeSnapshotPoll(t *testing.T) {
 		if !snapshotFetch.MatchString(syntax) {
 			t.Fatalf("direct snapshot fetch detector misses %q", syntax)
 		}
+	}
+	for _, syntax := range []string{
+		"startSnapshotPoll(refresh)",
+		"const stop = startSnapshotPoll(refresh, { immediate: false })",
+		"pageCleanups.push(startSnapshotPoll(refresh, { immediate: false }))",
+	} {
+		if !schedulerCall.MatchString(syntax) {
+			t.Fatalf("snapshot scheduler call detector misses %q", syntax)
+		}
+	}
+	if schedulerCall.MatchString("export function startSnapshotPoll(refresh, options) {}") {
+		t.Fatal("snapshot scheduler call detector mistakes the function declaration for an installation")
 	}
 	err := fs.WalkDir(dashboardAssetsFS, "js", func(name string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -60,7 +73,7 @@ func TestDashboardHasOneAuthoritativeSnapshotPoll(t *testing.T) {
 		}
 		source := string(data)
 		directSnapshotFetches := len(snapshotFetch.FindAllStringIndex(source, -1))
-		schedulerCalls += strings.Count(source, "startSnapshotPoll(refresh)")
+		schedulerCalls += len(schedulerCall.FindAllStringIndex(source, -1))
 		switch name {
 		case "js/refresh.js":
 			authoritativeSnapshotFetches += directSnapshotFetches

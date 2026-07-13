@@ -49,3 +49,23 @@ test('snapshot poll starts immediately and uses visible/hidden cadences', async 
   assert.deepEqual(calls.at(-1), { clear: 3 });
   assert.equal(listeners.has('visibilitychange'), false);
 });
+
+test('snapshot poll can schedule after an awaited bootstrap refresh', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { startSnapshotPoll } =
+    await harness.importDashboardModule('js/snapshot-poll.js');
+  const calls = [];
+  const stop = startSnapshotPoll(() => calls.push('refresh'), {
+    immediate: false,
+    documentImpl: { hidden: false, addEventListener() {}, removeEventListener() {} },
+    setTimeoutImpl: (callback, milliseconds) => {
+      calls.push({ callback, milliseconds });
+      return 1;
+    },
+    clearTimeoutImpl: (timer) => calls.push({ clear: timer }),
+  });
+
+  assert.equal(calls.filter(call => call === 'refresh').length, 0);
+  assert.equal(calls[0].milliseconds, 2000);
+  stop();
+});

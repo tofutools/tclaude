@@ -31,6 +31,33 @@ body {
   background: #0f1419;
   color: #d4d4d4;
 }
+/* The initial dashboard shell is intentionally incomplete: server-backed
+   preferences decide the dock width/open state, URL theme classes swap chrome,
+   and the first snapshot fills the Groups + dock islands. Keep those boxes in
+   layout but out of paint until bootstrap has applied all three, so the first
+   visible frame is already the final one instead of accumulating startup CLS.
+   The fixed label gives slow/failing starts an honest visible state without
+   affecting layout. The zero-duration delayed animation is a CSS-only
+   failsafe: even if the module graph fails before JS clears the class, the
+   dashboard becomes usable after eight seconds rather than staying curtained. */
+@keyframes dashboard-boot-failsafe { to { visibility: visible; } }
+@keyframes dashboard-boot-label-failsafe { to { visibility: hidden; } }
+body.dashboard-booting > * {
+  visibility: hidden;
+  animation: dashboard-boot-failsafe 0s 8s forwards;
+}
+body.dashboard-booting::before {
+  content: "Loading dashboard…";
+  position: fixed;
+  inset: 50% auto auto 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1000;
+  color: #7d8590;
+  font-size: 13px;
+  visibility: visible;
+  pointer-events: none;
+  animation: dashboard-boot-label-failsafe 0s 8s forwards;
+}
 /* header / nav are full-bleed bars: the background + border live on the
    outer element (so they fill the bar's whole width — JS widens it to the
    scrollable content width when the page can scroll sideways, JOH-313),
