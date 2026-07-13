@@ -25,7 +25,7 @@ import { renderDock } from './dock.js';
 import { renameEditing } from './row-actions.js';
 import { closeTerminalsForWindowOp, openWebWindowPane } from './terminals-tab.js';
 import { lastSnapshot, setLastSnapshot, webTerminalDefault } from './dashboard.js';
-import { setVegasRegularMode, isWizardActive } from './slop.js';
+import { setVegasRegularMode, isWizardActive, wizWord } from './slop.js';
 import { setHScrollFollow } from './hscroll.js';
 import { noteConnected, noteDisconnected } from './connection.js';
 import { syncDashDefaultProfile } from './profiles.js';
