@@ -19,7 +19,9 @@ const (
 // _CS_DARWIN_USER_TEMP_DIR and does not follow the ordinary TMPDIR override for
 // this state. Preserve an explicit caller setting.
 func configurePlatformChrome(l *launcher.Launcher, browserDir string) {
-	if _, ok := os.LookupEnv(macChromiumTmpDirEnv); ok {
+	// Chromium treats an explicitly empty value as unset and falls back to
+	// _CS_DARWIN_USER_TEMP_DIR, so replace empty as well as absent values.
+	if os.Getenv(macChromiumTmpDirEnv) != "" {
 		return
 	}
 	l.Env(append(os.Environ(), macChromiumTmpDirEnv+"="+browserDir)...)
