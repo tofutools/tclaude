@@ -5,6 +5,14 @@ import { configureDirectoryPickerBridge } from './helpers.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 
 const html = htm.bind(h);
+const PAGE_FALLBACK = 10;
+
+function pageSize(list) {
+  const first = list?.querySelector('.directory-picker-entry');
+  const itemHeight = first?.offsetHeight || 0;
+  if (!itemHeight) return PAGE_FALLBACK;
+  return Math.max(1, Math.floor(list.clientHeight / itemHeight));
+}
 
 export function directoryFilterTerm(inputPath, viewPath) {
   if (!viewPath) return null;
@@ -31,6 +39,7 @@ export function filterDirectories(directories, term) {
 export function DirectoryPickerApp({ state, actions }) {
   const request = state.request.value;
   const pathRef = useRef(null);
+  const listRef = useRef(null);
   const activeEntryRef = useRef(null);
   const generation = useRef(0);
   const [view, setView] = useState(null);
@@ -73,9 +82,10 @@ export function DirectoryPickerApp({ state, actions }) {
   const directories = view?.directories || [];
   const filterTerm = directoryFilterTerm(path, view?.path);
   const filtering = filterTerm !== null && filterTerm !== '';
+  const selecting = filterTerm !== null;
   const visibleDirectories = filtering ? filterDirectories(directories, filterTerm) : directories;
   const selectedIndex = visibleDirectories.length ? Math.min(activeIndex, visibleDirectories.length - 1) : -1;
-  const activeDirectory = filtering && selectedIndex >= 0 ? visibleDirectories[selectedIndex] : null;
+  const activeDirectory = selecting && selectedIndex >= 0 ? visibleDirectories[selectedIndex] : null;
   const optionID = (directory) => `directory-picker-option-${directories.indexOf(directory)}`;
 
   useEffect(() => {
@@ -118,15 +128,24 @@ export function DirectoryPickerApp({ state, actions }) {
           } else if (event.key === 'ArrowUp') {
             event.preventDefault();
             setActiveIndex(Math.max(selectedIndex - 1, 0));
-          } else if (event.key === 'Tab' && !event.shiftKey && path !== activeDirectory.path) {
+          } else if (event.key === 'PageDown') {
+            event.preventDefault();
+            setActiveIndex(Math.min(
+              selectedIndex + pageSize(listRef.current),
+              visibleDirectories.length - 1,
+            ));
+          } else if (event.key === 'PageUp') {
+            event.preventDefault();
+            setActiveIndex(Math.max(selectedIndex - pageSize(listRef.current), 0));
+          } else if (event.key === 'Tab' && filtering && !event.shiftKey && path !== activeDirectory.path) {
             event.preventDefault();
             setPath(activeDirectory.path);
             setActiveIndex(0);
           }
         }}
-        role=${filtering ? 'combobox' : undefined}
-        aria-expanded=${filtering ? 'true' : undefined}
-        aria-autocomplete=${filtering ? 'list' : undefined}
+        role=${selecting ? 'combobox' : undefined}
+        aria-expanded=${selecting ? 'true' : undefined}
+        aria-autocomplete=${selecting ? 'list' : undefined}
         aria-activedescendant=${activeDirectory ? optionID(activeDirectory) : undefined}
         aria-controls="directory-picker-folders"
         autocomplete="off" spellcheck="false" data-select-on-focus />
@@ -140,19 +159,19 @@ export function DirectoryPickerApp({ state, actions }) {
       <span class="directory-picker-count" role="status" aria-live="polite">${view ? count : ''}</span>
     </div>
     ${typedOtherPath && html`<div class="directory-picker-hint">Press Enter to open the typed path.</div>`}
-    <div id="directory-picker-folders" class="directory-picker-list"
-      role=${filtering ? 'listbox' : 'list'} aria-label="Folders">
+    <div ref=${listRef} id="directory-picker-folders" class="directory-picker-list"
+      role=${selecting ? 'listbox' : 'list'} aria-label="Folders">
       ${visibleDirectories.map((directory, index) => {
-        const active = filtering && index === selectedIndex;
+        const active = selecting && index === selectedIndex;
         return html`<div
-        key=${directory.path} role=${filtering ? 'presentation' : 'listitem'} class="directory-picker-entry"
-      ><button id=${filtering ? optionID(directory) : undefined}
+        key=${directory.path} role=${selecting ? 'presentation' : 'listitem'} class="directory-picker-entry"
+      ><button id=${selecting ? optionID(directory) : undefined}
           type="button" title=${directory.path} disabled=${busy}
           ref=${active ? activeEntryRef : undefined}
           class=${active ? 'active' : undefined}
-          role=${filtering ? 'option' : undefined}
-          aria-selected=${filtering ? active ? 'true' : 'false' : undefined}
-          tabIndex=${filtering ? -1 : undefined}
+          role=${selecting ? 'option' : undefined}
+          aria-selected=${selecting ? active ? 'true' : 'false' : undefined}
+          tabIndex=${selecting ? -1 : undefined}
           onClick=${() => void browse(directory.path)}
         ><span aria-hidden="true">📁</span><span>${directory.name}</span></button></div>`;
       })}
