@@ -43,6 +43,8 @@ test('clone dialog owns worktree state, dirty discard, and exact submit payload'
   const { harness, host, calls } = mounted;
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
   assert.equal(host.querySelector('#clone-agent-meta').textContent.trim(), 'source: worker  ·  /repo');
+  assert.equal(host.querySelector('#clone-agent-error').childNodes.length, 0,
+    'the shared :empty rule must collapse an error banner before an error exists');
   const worktree = host.querySelector('#clone-agent-worktree');
   assert.ok([...worktree.options].some((option) => option.value === 'wt:/repo-wt'));
 
@@ -79,6 +81,8 @@ test('reincarnate dialog gates force mode and preserves plain DOM hooks', async 
   force.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
   await harness.act(() => Promise.resolve());
   assert.equal(host.querySelector('#reincarnate-self-fields'), null);
+  assert.match(host.querySelector('#reincarnate-agent-modal').textContent, /<prev>-r-<N>/,
+    'HTM help copy must render angle brackets as text rather than encoded entities');
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
   assert.equal(harness.document.activeElement.id, 'reincarnate-agent-followup');
   const submit = host.querySelector('#reincarnate-agent-submit');

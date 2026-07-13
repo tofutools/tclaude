@@ -24,10 +24,11 @@ function ErrorBanner({ id, error, onDismiss }) {
     const timer = setTimeout(() => element.classList.remove('flash'), 900);
     return () => clearTimeout(timer);
   }, [error]);
+  if (!error) return html`<div ref=${ref} class="cron-create-error" id=${id} role="alert"></div>`;
   return html`
-    <div ref=${ref} class=${`cron-create-error${error ? ' dismissible' : ''}`} id=${id} role="alert">
-      <span>${error}</span>
-      ${error && html`<button type="button" class="cron-create-error-x" aria-label="Dismiss error" onClick=${onDismiss}>×</button>`}
+    <div ref=${ref} class="cron-create-error dismissible" id=${id} role="alert">
+      <span class="cron-create-error-msg">${error}</span>
+      <button type="button" class="cron-create-error-x" aria-label="Dismiss error" onClick=${onDismiss}>×</button>
     </div>
   `;
 }
@@ -272,7 +273,7 @@ function ReincarnateAgentDialog({ descriptor, actions, confirmDiscard }) {
         </div>
       ` : html`
         <div id="reincarnate-force-fields">
-          <p style="margin:4px 0; font-size:12px; color:#7d8590">Spawns a fresh CC instance that inherits identity (groups, perms, ownership). The original is soft-exited. The successor's title is auto-renamed to <code>&lt;prev&gt;-r-&lt;N&gt;</code>.</p>
+          <p style="margin:4px 0; font-size:12px; color:#7d8590">Spawns a fresh CC instance that inherits identity (groups, perms, ownership). The original is soft-exited. The successor's title is auto-renamed to <code>${'<prev>-r-<N>'}</code>.</p>
           <label class="cron-create-row">
             <span class="cron-create-label">Follow-up</span>
             <textarea ref=${followUpRef} id="reincarnate-agent-followup" rows="4" value=${followUp} placeholder="required — what should the successor pick up? Summarise the current task, where the relevant files are, what's next (no newlines, ≤16384 chars)" spellcheck="false" onInput=${(event) => setFollowUp(event.currentTarget.value)}></textarea>
