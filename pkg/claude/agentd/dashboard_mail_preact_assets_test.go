@@ -67,3 +67,26 @@ func TestDashboardMessagesPreactOwnershipAndParityHooks(t *testing.T) {
 		}
 	}
 }
+
+func TestDashboardViewMessagesOpensFirstMessage(t *testing.T) {
+	controller := string(mustReadFS(dashboardAssetsFS, "js/mail.js"))
+	start := strings.Index(controller, "async function openMailbox(id) {")
+	if start < 0 {
+		t.Fatal("Messages controller is missing openMailbox")
+	}
+	end := strings.Index(controller[start:], "\n}\n\n// --- access requests")
+	if end < 0 {
+		t.Fatal("could not isolate openMailbox")
+	}
+	openMailbox := controller[start : start+end]
+
+	awaitSelection := strings.Index(openMailbox, "const selected = await selectMailbox(id);")
+	selectFirst := strings.Index(openMailbox, "mail.selectedMsgId = mail.messages[0]?.id ?? null;")
+	paintReader := strings.Index(openMailbox, "paintReader();")
+	if awaitSelection < 0 || selectFirst < 0 || paintReader < 0 {
+		t.Fatalf("openMailbox must await the folder load, select its first message, and paint the reader:\n%s", openMailbox)
+	}
+	if awaitSelection >= selectFirst || selectFirst >= paintReader {
+		t.Fatalf("openMailbox selection steps are out of order:\n%s", openMailbox)
+	}
+}

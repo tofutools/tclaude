@@ -922,11 +922,14 @@ function paintReader() { mailState.touch(); }
 // --- selection ------------------------------------------------------
 
 function selectMailbox(id) {
-  if (mail.busy) return;
+  if (mail.busy) return Promise.resolve(false);
   if (!id || id === mail.selected) {
     // Re-click on the active folder: just refresh it.
-    loadMessages().then(() => { pruneSelections(); paintMail(); });
-    return;
+    return loadMessages().then(() => {
+      pruneSelections();
+      paintMail();
+      return !!id && mail.selected === id;
+    });
   }
   mail.selected = id;
   mail.selectedMsgId = null;
@@ -938,7 +941,11 @@ function selectMailbox(id) {
   if (mail.searchTimer) { clearTimeout(mail.searchTimer); mail.searchTimer = null; }
   dashPrefs.setItem(SELECTED_KEY, id);
   paintMail();        // immediate feedback (active folder, empty list)
-  loadMessages().then(() => { pruneSelections(); paintMail(); });
+  return loadMessages().then(() => {
+    pruneSelections();
+    paintMail();
+    return mail.selected === id;
+  });
 }
 
 function selectMessage(id) {
@@ -998,12 +1005,19 @@ function markOpenedHumanRead(id) {
 // cached roster back to "all" — which would bounce the deep link. A failed
 // roster refresh leaves the cache as-is; selectMailbox still loads the
 // folder directly (the server resolves it regardless of the roster).
+//
+// Awaiting selectMailbox also lets the deep link open the newest message on
+// page 1 immediately. Ordinary sidebar folder selection remains list-first;
+// only the explicit "view messages" shortcut opens a reader automatically.
 async function openMailbox(id) {
   if (!id) return;
   const navBtn = $('nav [data-tab="messages"]');
   if (navBtn) navBtn.click();
   await loadMailboxes();
-  selectMailbox(id);
+  const selected = await selectMailbox(id);
+  if (!selected) return;
+  mail.selectedMsgId = mail.messages[0]?.id ?? null;
+  paintReader();
 }
 
 // --- access requests (human approvals) ------------------------------
