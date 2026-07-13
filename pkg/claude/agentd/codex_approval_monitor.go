@@ -12,7 +12,7 @@ import (
 )
 
 // codexApprovalMonitorDebounce lets Codex's atomic config edit settle before
-// the daemon validates and promotes an appended app-tool approval.
+// the daemon parses and promotes an app-tool approval.
 var codexApprovalMonitorDebounce = 100 * time.Millisecond
 
 type codexApprovalMonitor struct {
@@ -130,7 +130,7 @@ func (m *codexApprovalMonitor) reconcile(path string) {
 	}
 	report, err := harness.PromoteCodexLaunchProfileApprovals(path)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) || harness.IsCodexLaunchProfileNotSealed(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			slog.Debug("codex-approval-monitor: profile not eligible for promotion", "path", path, "error", err)
 			return
 		}
