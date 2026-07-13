@@ -1316,18 +1316,19 @@
       <span class="cron-create-label">Sandbox</span>
       <div class="cron-create-target">
         <select id="agent-spawn-sandbox" aria-describedby="agent-spawn-sandbox-hint"></select>
-        <!-- Live help for the selected mode (esp. agentd reachability),
-             set from the harness catalog's sandbox_mode_help by
-             applySpawnSandboxHint(). aria-live so a screen reader announces the
-             ⚠ caveat when the selection changes. -->
-        <div id="agent-spawn-sandbox-hint" class="spawn-field-hint" aria-live="polite"></div>
+        <!-- The selected mode's help is exposed as the select's title tooltip.
+             Keep a visually-hidden copy so keyboard and screen-reader users get
+             the same dynamic explanation without reserving dialog space. -->
+        <div id="agent-spawn-sandbox-hint" class="spawn-field-tooltip-copy" aria-live="polite"></div>
       </div>
     </label>
     <label class="cron-create-row" id="agent-spawn-sandbox-profile-row" title="Optional explicit sandbox profile. Composes after the global and group sandbox profiles. Only the human dashboard may select this escalation-bearing policy.">
       <span class="cron-create-label">Sandbox profile</span>
       <div class="cron-create-target">
-        <select id="agent-spawn-sandbox-profile"><option value="">— global + group defaults only —</option></select>
-        <div id="agent-spawn-sandbox-profile-preview" class="spawn-field-hint" aria-live="polite"></div>
+        <select id="agent-spawn-sandbox-profile" aria-describedby="agent-spawn-sandbox-profile-preview"><option value="">— global + group defaults only —</option></select>
+        <!-- The composed-policy preview is the select's title tooltip; this
+             hidden copy preserves its accessible description and live update. -->
+        <div id="agent-spawn-sandbox-profile-preview" class="spawn-field-tooltip-copy" aria-live="polite"></div>
       </div>
     </label>
     <label class="cron-create-row" id="agent-spawn-approval-row" style="display:none" title="Permission mode for the new agent (Claude Code). inherit (recommended) leaves your settings.json permission rules + the agentd approval popup as-is. The explicit modes map to `claude --permission-mode`: plan (read-only), acceptEdits, default (prompt for everything), auto (classifier auto-decides), dontAsk (auto-deny anything not pre-allowed), bypassPermissions (skip all checks). Because the agent runs detached, several modes can block on a prompt no one answers — the live hint below flags those.">

@@ -72,6 +72,7 @@ function composePreview(applied, byName = {}) {
 async function refreshSpawnSandboxProfileUI(groupName = '') {
   const select = $('#agent-spawn-sandbox-profile'); const preview = $('#agent-spawn-sandbox-profile-preview');
   if (!select || !preview) return;
+  const setPreview = (text) => { select.title = text; preview.textContent = text; };
   const generation = ++spawnPreviewGeneration; const selected = select.value;
   try {
     await loadSandboxProfiles(); if (generation !== spawnPreviewGeneration) return;
@@ -83,8 +84,8 @@ async function refreshSpawnSandboxProfileUI(groupName = '') {
     if (global.name && byName[global.name]) applied.push({ scope: 'global', profile: byName[global.name] });
     if (group.name && byName[group.name]) applied.push({ scope: 'group', profile: byName[group.name] });
     if (select.value && byName[select.value]) applied.push({ scope: 'explicit', profile: byName[select.value] });
-    preview.textContent = composePreview(applied, byName);
-  } catch (error) { if (generation === spawnPreviewGeneration) preview.textContent = `Could not preview sandbox policy: ${error.message || String(error)}`; }
+    setPreview(composePreview(applied, byName));
+  } catch (error) { if (generation === spawnPreviewGeneration) setPreview(`Could not preview sandbox policy: ${error.message || String(error)}`); }
 }
 
 function sandboxScribeToken() {

@@ -3703,16 +3703,21 @@ body.wizard .group-pending-title-wizard { display: inline; }
 .cron-create-row > button.tool {
   flex: 0 0 auto; align-self: stretch; padding: 0 12px; white-space: nowrap;
 }
-/* Live per-option help under a spawn-dialog control (e.g. the Sandbox
-   selector): a muted one-liner that updates with the selection. The "warn"
-   variant flags an option with a caveat the operator should notice — for the
-   sandbox modes, losing agentd reachability or turning the sandbox off. */
+/* Live inline help under spawn-dialog controls that still need it (name,
+   permission mode, and question timeout). The "warn" variant flags a caveat
+   the operator should notice. */
 .spawn-field-hint { font-size: 11px; color: #7d8590; line-height: 1.4; }
 .spawn-field-hint:empty { display: none; }
 .spawn-field-hint.warn { color: #f0883e; }
 .spawn-field-hint code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 10px; background: #161b22; padding: 1px 4px; border-radius: 3px;
+}
+/* Dynamic dropdown help that should be available as a native title tooltip and
+   to assistive technology, but should not consume vertical dialog space. */
+.spawn-field-tooltip-copy {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
 /* Spawn-dialog attachments: a control row (Attach button + paste hint) above a
    list of pending files, each with an optional image thumbnail and a remove

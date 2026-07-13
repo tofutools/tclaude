@@ -256,21 +256,18 @@ function applySpawnHarness(harnessName) {
   applyRememberedEffort(activeSpawnModelEl().value);
 }
 
-// applySpawnSandboxHint sets the live help line under the Sandbox selector to
-// the catalog's description of the currently-selected mode — especially its
-// agentd-socket reachability, the thing that surprises operators. A description
-// carrying the "⚠" caveat marker (the raw --sandbox modes, which can't reach
-// agentd, and danger-full-access, which disables the sandbox) is shown in the
-// warn colour. Passing null (a harness with no launch sandbox) clears it.
+// applySpawnSandboxHint puts the selected mode's catalog description on the
+// Sandbox selector as a native hover tooltip. A visually-hidden live copy keeps
+// the same description available to keyboard and screen-reader users without
+// making every spawn dialog reserve a help line. Passing null clears both.
 function applySpawnSandboxHint(h) {
+  const selectEl = $('#agent-spawn-sandbox');
   const hintEl = $('#agent-spawn-sandbox-hint');
-  if (!hintEl) return;
+  if (!selectEl || !hintEl) return;
   const help = (h && h.sandbox_mode_help) || {};
-  const text = help[$('#agent-spawn-sandbox').value] || '';
-  // Trusted catalog copy (not user input): escape, then render `…` spans as
-  // <code> so the `tclaude agent` references read as code.
-  hintEl.innerHTML = esc(text).replace(/`([^`]+)`/g, '<code>$1</code>');
-  hintEl.classList.toggle('warn', text.includes('⚠'));
+  const text = help[selectEl.value] || '';
+  selectEl.title = text;
+  hintEl.textContent = text;
 }
 
 // applySpawnApprovalHint sets the live help line under the Permission-mode
