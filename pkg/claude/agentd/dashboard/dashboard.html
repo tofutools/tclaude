@@ -169,26 +169,9 @@
 <main>
   <section id="tab-groups" class="active">
     <div class="filter-bar">
-      <input id="filter-groups" type="text" placeholder="Filter (group name + member title/role/descr/cwd/branch)" autocomplete="off" spellcheck="false" />
-      <span class="filter-count" id="filter-groups-count"></span>
-      <button class="clear-filter" id="filter-groups-clear" title="Clear filter">×</button>
-      <div class="view-popover-wrap">
-        <button id="filter-groups-view-btn" class="view-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="filter-groups-view-menu" title="Choose which members and virtual groups to show on this tab">▾ view<span id="filter-groups-view-badge" class="view-badge" hidden></span></button>
-        <div id="filter-groups-view-menu" class="view-menu" role="menu">
-          <label class="filter-toggle" title="Show members whose tmux pane is offline. This is the tab-wide default — each group header has a per-group override."><input id="filter-groups-offline" type="checkbox" checked /><span>show offline</span></label>
-          <label class="filter-toggle" title="Show the virtual &quot;Ungrouped&quot; group at the bottom — online agents that aren't in any group. Drag rows onto a group to add them; drag group members onto it to remove them."><input id="filter-groups-ungrouped" type="checkbox" checked /><span>show ungrouped</span></label>
-          <label class="filter-toggle" title="Show the virtual &quot;Retired&quot; group — agents that were demoted back to plain conversations. Retired agents land here instead of vanishing off the tab; click reinstate to bring one back."><input id="filter-groups-retired" type="checkbox" checked /><span>show retired</span></label>
-          <label class="filter-toggle" title="Show the virtual &quot;Conversations&quot; group — recent conversations that aren't agents. Drag one onto a group (or click promote) to make it an agent."><input id="filter-groups-conversations" type="checkbox" /><span>show conversations</span></label>
-          <label class="filter-toggle" title="Show the virtual &quot;Replaced generations&quot; group — superseded past generations of agents (left behind by reincarnate / /clear). Archival and read-mostly: copy a conv-id to inspect it, or delete a generation to prune it. The live agent is never affected."><input id="filter-groups-replaced" type="checkbox" /><span>show replaced generations</span></label>
-          <label class="filter-toggle" title="Live scribe groups and their independently named agents are always shown. Enable this to also show dormant system groups left by offline scribes."><input id="filter-groups-scribe" type="checkbox" /><span>show offline scribes</span></label>
-          <div class="view-menu-sep" role="separator"></div>
-          <div class="view-menu-heading" title="Show or hide individual columns in the member tables. The Name and controls columns always stay. Hiding the ID column moves its agent-id / conv-id hover onto the Name.">Columns</div>
-          <!-- One checkbox per hideable member column, generated from
-               MEMBER_COLS (sort.js) so this list never drifts from the table.
-               Populated + wired in refresh.js bindFilter's view-popover block. -->
-          <div id="filter-groups-cols" class="view-cols"></div>
-        </div>
-      </div>
+      <!-- Preact owns the Groups query, visibility menu and column controls.
+           display:contents keeps their existing filter-bar flex geometry. -->
+      <div id="groups-filter-root"></div>
       <button id="groups-cost-toggle" class="cost-toggle" type="button" aria-pressed="true" title="Show or hide the per-agent cost badge on each row. On a subscription this shows the hypothetical pay-per-token-equivalent cost (WHAT-IF); on pay-per-token it shows the real spend.">💲</button>
       <span class="spacer"></span>
       <button type="button" id="dashboard-default-profile" class="user-default-model unset" data-act="set-dash-profile" data-profile="" aria-label="Set dashboard default spawn profile" title="Dashboard default spawn profile — pre-fills the spawn dialog when a group has no default of its own. Click to set.">🧠 …</button>

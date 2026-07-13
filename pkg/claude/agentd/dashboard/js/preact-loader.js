@@ -28,6 +28,34 @@ export async function mountPreactRuntimeProbe() {
   }
 }
 
+const groupsDescriptor = createIslandDescriptor({
+  name: 'groups',
+  label: 'Groups',
+  hosts: { filterHost: '#groups-filter-root', listHost: '#groups-list' },
+  failureClass: 'groups-error',
+  load: async ({ hosts: { filterHost, listHost }, dependencies }) => {
+    const islandModule = import('./groups-island.js');
+    const stateModule = import('./groups-state.js');
+    const actionsModule = import('./groups-actions.js');
+    const renderModule = import('./render.js');
+    const [
+      { mountGroupsIsland }, { groupsState }, { createGroupsActions }, { renderGroups },
+    ] = await Promise.all([islandModule, stateModule, actionsModule, renderModule]);
+    const actions = createGroupsActions({ state: groupsState, ...dependencies });
+    return {
+      state: groupsState,
+      mount: (registerCleanup) => mountGroupsIsland({
+        filterHost, listHost, state: groupsState, actions,
+        renderGroupsHTML: renderGroups, registerCleanup,
+      }),
+    };
+  },
+});
+
+export function mountGroupsFeature(dependencies = {}) {
+  return mountIslandDescriptor(groupsDescriptor, dependencies);
+}
+
 // The Jobs pilot is the first production island. Keep the dynamic boundary so
 // a corrupt optional asset produces a visible feature-local error rather than
 // preventing the rest of the dashboard entry module from booting.

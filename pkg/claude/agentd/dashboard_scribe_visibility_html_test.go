@@ -7,7 +7,7 @@ import (
 )
 
 func TestDashboardScribeVisibilityWiring(t *testing.T) {
-	tabs, err := fs.ReadFile(dashboardAssetsFS, "js/tabs.js")
+	groupsState, err := fs.ReadFile(dashboardAssetsFS, "js/groups-state.js")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -15,20 +15,21 @@ func TestDashboardScribeVisibilityWiring(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	html, err := fs.ReadFile(dashboardAssetsFS, "dashboard.html")
+	groupsIsland, err := fs.ReadFile(dashboardAssetsFS, "js/groups-island.js")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	for name, src := range map[string]string{
-		"Groups tab":      string(tabs),
+		"Groups tab":      string(groupsState),
 		"command palette": string(palette),
 	} {
-		if !strings.Contains(src, "scribeGroupVisible(g, showOfflineScribes)") {
+		if !strings.Contains(src, "scribeGroupVisible(") {
 			t.Errorf("%s does not apply the shared live-scribe visibility policy", name)
 		}
 	}
-	if !strings.Contains(string(html), "<span>show offline scribes</span>") {
+	if !strings.Contains(string(groupsIsland), "${option.label}") ||
+		!strings.Contains(string(groupsState), "label: 'show offline scribes'") {
 		t.Error("scribe visibility checkbox does not describe its offline-only effect")
 	}
 }

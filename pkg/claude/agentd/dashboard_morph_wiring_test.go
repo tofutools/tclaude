@@ -9,9 +9,8 @@ import (
 // The dashboard's 2s poll used to re-render every tab by replacing a
 // container's innerHTML wholesale, which destroyed the DOM under it — wiping
 // any text selection every tick, so copy-paste from the dashboard was
-// impossible. The fix (dashboard/js/morph.js) reconciles the freshly-rendered
-// HTML against the live DOM (keyed DOM morphing) so unchanged nodes are never
-// touched and a selection survives the poll.
+// impossible. Legacy surfaces use dashboard/js/morph.js; migrated islands use
+// Preact's keyed reconciliation. Both keep unchanged nodes untouched.
 //
 // The morph is pure client-side JS with no server path of its own, so — like
 // the other dashboard wiring guards in this package — this pins the pieces by
@@ -40,9 +39,10 @@ func TestDashboardMorph_Wired(t *testing.T) {
 	present("export function morphInto(", "morph.js exports the morphInto reconcile helper")
 
 	// Every remaining legacy per-tick render site reconciles via morphInto rather
-	// than an innerHTML swap. Jobs and Access are intentionally absent: their
-	// Preact subtrees have keyed reconciliation and component coverage.
-	present("morphInto($('#groups-list'), renderGroups(", "Groups tab morphs instead of innerHTML swap")
+	// than an innerHTML swap. Groups, Jobs and Access use keyed Preact trees.
+	present("function GroupsList(", "Groups uses a Preact component instead of the custom DOM reconciler")
+	present("trustedHTMLToVNodes(markup)", "Groups converts its escaped legacy renderer output into keyed VNodes")
+	present("element.getAttribute('data-group-key')", "Groups promotes stable group identities to Preact keys")
 	present("morphInto($('#links-list'), renderLinks(", "Links tab morphs instead of innerHTML swap")
 	// The top-bar #usage widget (render.js) — first item of the coverage sweep
 	// (JOH-339): both the Codex two-line and the Claude single-row branches morph

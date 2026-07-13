@@ -16,7 +16,6 @@ import { bindSlopSpectacle } from './slop-spectacle.js';
 import { bindVegasMusic } from './vegas.js';
 import {
   bindFilter, bindTabs, bindTabHotkeys, bindDetailsPersistence, bindGroupTitleToggle, bindGroupQuickHover, bindSortHeaders,
-  bindListPagers,
   confirmDiscard, confirmModal, isCyclingTabs, refresh, toast,
 } from './refresh.js';
 
@@ -76,7 +75,7 @@ import { bindDock } from './dock.js';
 import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
 import {
-  mountAccessFeature, mountAuditFeature, mountConfigFeature, mountCostsFeature, mountJobsFeature, mountLogsFeature, mountManagementFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature,
+  mountAccessFeature, mountAuditFeature, mountConfigFeature, mountCostsFeature, mountGroupsFeature, mountJobsFeature, mountLogsFeature, mountManagementFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature,
   mountPreactRuntimeProbe,
 } from './preact-loader.js';
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
@@ -156,6 +155,7 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   // not by the sum of seven dynamic-import chains. Await the whole group before
   // initNavHistory below so initial deep links still find every lazy loader.
   await Promise.all([
+    mountGroupsFeature({ refresh: dashboardActions.refresh }),
     mountPluginsFeature({
       requestMutation: dashboardActions.requestMutation,
       refresh: dashboardActions.refresh,
@@ -195,9 +195,6 @@ export function sudoBadge(activeSudo, fallbackConvID) {
 
   bindTabs();
   bindTabHotkeys();
-  // Delegated pager footers for the Retired / Conversations / Replaced virtual
-  // groups (their lists are paginated server-side now).
-  bindListPagers();
   // Keep the full-bleed chrome bars sized to the scrollable content so a
   // horizontal page scrollbar doesn't leave them ragged (JOH-313).
   bindHScroll();
@@ -235,7 +232,6 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   // on their active flags + a distinct .dock-save-over highlight (see
   // dock-save-dnd.js), so it coexists with all three other DnD modules.
   bindDockSaveDnd();
-  bindFilter('groups');
   bindFilter('links');
   bindSudoModal();
   bindPermEditModal();

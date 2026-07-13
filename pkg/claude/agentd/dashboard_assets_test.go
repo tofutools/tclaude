@@ -187,8 +187,8 @@ func TestDashboardJS_SlopPullPausesRefresh(t *testing.T) {
 func TestDashboardJS_PendingSpawnsRenderInTargetGroups(t *testing.T) {
 	for _, needle := range []string{
 		"function distributePendingToGroups(",
-		"return { ...g, pending: rows };",
-		"if (distributed.fallback.length) {",
+		"return { ...group, pending: rows };",
+		"if (distributed.fallback.length) list.unshift(virtualPendingGroup(distributed.fallback));",
 		"list.unshift(virtualPendingGroup(distributed.fallback));",
 		"function renderGroupPendingBlock(g)",
 		"groupPendingChip(g)",
@@ -570,9 +570,10 @@ func TestDashboardAssets_QuickChipKeyboardOperability(t *testing.T) {
 		// spans, funneled through the click dispatcher.
 		`e.target.closest('span[data-act][role="button"]')`,
 		"chip.click();",
-		// row-actions.js — the inline chip editors hand focus back to the
-		// restored chip on Escape (parity with the picker's restoreFocus).
-		"restore(); origEl.focus();",
+		// row-actions.js — the shared inline editor hands focus back to the
+		// exact managed chip on Escape (parity with the picker's restoreFocus).
+		"revert(true)",
+		"if (restoreFocus) el.focus();",
 		// dashboard.html — the toolbar 🧠 chip keeps native keyboard
 		// semantics, like its 🛡 sibling.
 		`<button type="button" id="dashboard-default-profile"`,

@@ -6,10 +6,8 @@
 
 import { $, $$, isModifiedClick, esc, shortId, relTime, captureFocus, restoreFocus } from './helpers.js';
 import { cycleSort } from './sort.js';
-import { hideableMemberCols, memberColHidden, setMemberColHidden, memberColDeviationCount } from './member-columns.js';
 import { dashPrefs } from './prefs.js';
-import { listParams, syncServedOffset, listPagerNav, setListPageSize, fetchListFull, resetListOffsets } from './list-paging.js';
-import { conversationsVisible, replacedVisible } from './virtual-groups.js';
+import { listParams, syncServedOffset, fetchListFull } from './list-paging.js';
 import { recordGroupInteraction } from './last-group.js';
 import {
   showStatus,
@@ -128,219 +126,17 @@ function bindFilter(tab, featureRerender = null) {
   const key = `tclaude.dash.filter.${tab}`;
   input.value = dashPrefs.getItem(key) || '';
   const rerender = () => {
-    if (tab === 'groups') {
-      renderGroupsTab();
-      // The three paginated virtual lists (Retired/Conversations/Replaced)
-      // filter SERVER-side — their full set isn't in memory — so any groups
-      // filter-bar change (a query edit, or newly showing a list) needs a
-      // round-trip to refetch the right q-matched window. Debounced so a fast
-      // typist fires one fetch (mirrors the Messages tab's server search). The
-      // page-1 reset on a QUERY change lives in onChange, not here, so toggling
-      // a "show X" checkbox doesn't bounce the other lists' pagers.
-      clearTimeout(groupsFilterTimer);
-      groupsFilterTimer = setTimeout(refresh, 250);
-    }
-    else if (tab === 'templates') renderTemplatesTab();
-    else if (featureRerender) featureRerender();
+    if (featureRerender) featureRerender();
     else if (tab === 'links') renderLinksTab();
   };
   const onChange = () => {
     const v = input.value;
     if (v) dashPrefs.setItem(key, v); else dashPrefs.removeItem(key);
-    // A groups QUERY change resets the three paginated lists to page 1 — a
-    // page-3 view of the old query is meaningless once the query (and its
-    // server-side result set) changes. rerender() then triggers the debounced
-    // refetch that sends the new q.
-    if (tab === 'groups') resetListOffsets();
     rerender();
   };
   input.addEventListener('input', onChange);
   clear.addEventListener('click', () => { input.value = ''; onChange(); input.focus(); });
-  // Optional per-tab "show offline" checkbox (the 'groups' tab only).
-  // Restore its persisted state — defaults to checked (show all)
-  // when the user has never touched it.
-  const offline = $(`#filter-${tab}-offline`);
-  if (offline) {
-    const okey = `tclaude.dash.offline.${tab}`;
-    const saved = dashPrefs.getItem(okey);
-    offline.checked = saved === null ? true : saved === '1';
-    offline.addEventListener('change', () => {
-      dashPrefs.setItem(okey, offline.checked ? '1' : '0');
-      rerender();
-    });
-  }
-  // Optional "show ungrouped" checkbox (groups tab only) — toggles
-  // the virtual Ungrouped group. Persisted like the offline toggle;
-  // defaults to checked when the user has never touched it.
-  const ungrouped = $(`#filter-${tab}-ungrouped`);
-  if (ungrouped) {
-    const ukey = `tclaude.dash.ungrouped.${tab}`;
-    const saved = dashPrefs.getItem(ukey);
-    ungrouped.checked = saved === null ? true : saved === '1';
-    ungrouped.addEventListener('change', () => {
-      dashPrefs.setItem(ukey, ungrouped.checked ? '1' : '0');
-      rerender();
-    });
-  }
-  // Optional "show conversations" checkbox (groups tab only) —
-  // toggles the virtual Conversations group. Defaults OFF (there can
-  // be many conversations) when the user has never touched it.
-  const conversations = $(`#filter-${tab}-conversations`);
-  if (conversations) {
-    const ckey = `tclaude.dash.conversations.${tab}`;
-    const saved = dashPrefs.getItem(ckey);
-    conversations.checked = saved === '1';
-    conversations.addEventListener('change', () => {
-      dashPrefs.setItem(ckey, conversations.checked ? '1' : '0');
-      rerender();
-    });
-  }
-  // Optional "show replaced generations" checkbox (groups tab only) —
-  // toggles the virtual Replaced-generations group (superseded past
-  // generations of agents). Defaults OFF (it's an archival, read-mostly
-  // list that grows over time) when the user has never touched it.
-  const replaced = $(`#filter-${tab}-replaced`);
-  if (replaced) {
-    const rgkey = `tclaude.dash.replaced.${tab}`;
-    const saved = dashPrefs.getItem(rgkey);
-    replaced.checked = saved === '1';
-    replaced.addEventListener('change', () => {
-      dashPrefs.setItem(rgkey, replaced.checked ? '1' : '0');
-      rerender();
-    });
-  }
-  // Optional "show retired" checkbox (groups tab only) — toggles the
-  // virtual Retired group. Defaults ON: a retired agent must stay
-  // visible somewhere on the tab rather than silently disappearing.
-  const retired = $(`#filter-${tab}-retired`);
-  if (retired) {
-    const rkey = `tclaude.dash.retired.${tab}`;
-    const saved = dashPrefs.getItem(rkey);
-    retired.checked = saved === null ? true : saved === '1';
-    retired.addEventListener('change', () => {
-      dashPrefs.setItem(rkey, retired.checked ? '1' : '0');
-      rerender();
-    });
-  }
-  // Optional "show offline scribes" checkbox (groups tab only). Live scribe
-  // groups are always visible; this preference reveals dormant system groups.
-  // Defaults OFF because those are machinery rather than managed teams.
-  const scribe = $(`#filter-${tab}-scribe`);
-  if (scribe) {
-    const sckey = `tclaude.dash.scribe.${tab}`;
-    const saved = dashPrefs.getItem(sckey);
-    scribe.checked = saved === '1';
-    scribe.addEventListener('change', () => {
-      dashPrefs.setItem(sckey, scribe.checked ? '1' : '0');
-      rerender();
-    });
-  }
-  // Optional ▾ view popover (groups tab only) — collapses the six
-  // "show X" checkboxes above behind a single button so the filter
-  // bar stays compact. Restoration of each checkbox's state has
-  // already happened above; this only wires the trigger + open/close
-  // behaviour + a badge that surfaces the number of toggles deviating
-  // from their defaults (so a user can see at a glance whether
-  // anything is being hidden).
-  const viewBtn = $(`#filter-${tab}-view-btn`);
-  const viewMenu = $(`#filter-${tab}-view-menu`);
-  const viewBadge = $(`#filter-${tab}-view-badge`);
-  if (viewBtn && viewMenu && viewBadge) {
-    // Defaults match the `checked` attributes in dashboard.html. The
-    // first three default ON (showing everything); 'conversations',
-    // 'replaced' and 'scribe' default OFF (each can grow large / is
-    // archival / is machinery). Edit BOTH places together if the defaults
-    // ever change.
-    const viewDefaults = {
-      [`filter-${tab}-offline`]: true,
-      [`filter-${tab}-ungrouped`]: true,
-      [`filter-${tab}-retired`]: true,
-      [`filter-${tab}-conversations`]: false,
-      [`filter-${tab}-replaced`]: false,
-      [`filter-${tab}-scribe`]: false,
-    };
-    const updateViewBadge = () => {
-      let n = 0;
-      for (const [id, want] of Object.entries(viewDefaults)) {
-        const el = document.getElementById(id);
-        if (el && el.checked !== want) n++;
-      }
-      // Each member column whose visibility differs from its default is one
-      // more deviation from the default view, so it adds to the same badge.
-      n += memberColDeviationCount();
-      if (n === 0) {
-        viewBadge.hidden = true;
-        viewBadge.textContent = '';
-      } else {
-        viewBadge.hidden = false;
-        viewBadge.textContent = String(n);
-      }
-    };
-    // Populate the "Columns" section (groups tab only) — one checkbox per
-    // hideable member column, built from MEMBER_COLS so the menu can't drift
-    // from the table. Checked = shown. Toggling persists via
-    // setMemberColHidden (dashPrefs) and rerenders; the badge picks the
-    // change up through the bubbled `change` listener below.
-    const colsBox = $(`#filter-${tab}-cols`);
-    if (colsBox) {
-      colsBox.replaceChildren();
-      for (const c of hideableMemberCols()) {
-        const label = document.createElement('label');
-        label.className = 'filter-toggle';
-        label.title = `Show the "${c.label}" column`;
-        const cb = document.createElement('input');
-        cb.type = 'checkbox';
-        cb.id = `filter-${tab}-col-${c.key}`;
-        cb.checked = !memberColHidden(c.key);
-        cb.addEventListener('change', () => {
-          setMemberColHidden(c.key, !cb.checked);
-          rerender();
-        });
-        const span = document.createElement('span');
-        span.textContent = c.label;
-        label.append(cb, span);
-        colsBox.append(label);
-      }
-    }
-    updateViewBadge();
-    // change bubbles up from the contained inputs, so one listener on
-    // the popover covers all the checkboxes (row + column toggles alike).
-    // The per-checkbox handlers already persist + rerender; this only
-    // refreshes the badge.
-    viewMenu.addEventListener('change', updateViewBadge);
-    const closeViewMenu = () => {
-      viewMenu.classList.remove('open');
-      viewBtn.setAttribute('aria-expanded', 'false');
-    };
-    viewBtn.addEventListener('click', () => {
-      const willOpen = !viewMenu.classList.contains('open');
-      viewMenu.classList.toggle('open', willOpen);
-      viewBtn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
-    });
-    // Outside-click dismissal. The trigger and the popover both live
-    // inside .view-popover-wrap, so any click that lands inside the
-    // wrapper (the button toggle, or a checkbox in the popover) is
-    // left alone; everything else closes.
-    document.addEventListener('click', (e) => {
-      if (!viewMenu.classList.contains('open')) return;
-      if (e.target.closest('.view-popover-wrap')) return;
-      closeViewMenu();
-    });
-    // Escape closes — parity with the ⚙ action menus and modals.
-    document.addEventListener('keydown', (e) => {
-      if (e.key !== 'Escape') return;
-      if (!viewMenu.classList.contains('open')) return;
-      e.preventDefault();
-      closeViewMenu();
-      viewBtn.focus();
-    });
-  }
 }
-
-// groupsFilterTimer debounces the server-side refetch the Groups filter box
-// triggers (the three paginated lists filter in SQL, so a query change needs a
-// round-trip — see bindFilter).
-let groupsFilterTimer = null;
 
 // groupsTabActive reports whether the Groups tab is the visible one — used to
 // skip the (default-hidden, expensive) conversations/replaced sub-fetches when
@@ -400,7 +196,8 @@ export async function refresh(opts = {}) {
     // degrades to "keep the previous rows" (stitchListPage) rather than failing
     // the tick. The snapshot fetch keeps its original behaviour — its network
     // error rejects to the outer catch.
-    const groupsQ = ($('#filter-groups')?.value || '').trim();
+    const groups = featureState('groups');
+    const groupsQ = (groups?.query.value || '').trim();
     const onGroups = groupsTabActive();
     // The Jobs tab's unified table (exports + cron) is windowed the same way —
     // fetched only while its tab is showing; the nav badge stays live off the
@@ -412,8 +209,8 @@ export async function refresh(opts = {}) {
         ? '?static_version=' + encodeURIComponent(staticVersion)
         : ''), { credentials: 'same-origin', cache: 'no-store' }),
       onGroups ? get('/api/retired?' + listParams('retired', groupsQ)) : Promise.resolve(undefined),
-      (onGroups && conversationsVisible()) ? get('/api/conversations?' + listParams('conversations', groupsQ)) : Promise.resolve(undefined),
-      (onGroups && replacedVisible()) ? get('/api/replaced?' + listParams('replaced', groupsQ)) : Promise.resolve(undefined),
+      (onGroups && groups?.visibility.value.conversations) ? get('/api/conversations?' + listParams('conversations', groupsQ)) : Promise.resolve(undefined),
+      (onGroups && groups?.visibility.value.replaced) ? get('/api/replaced?' + listParams('replaced', groupsQ)) : Promise.resolve(undefined),
       jobsActive ? get('/api/jobs?' + jobs.params.value) : Promise.resolve(undefined),
     ]);
     // agentd answered this poll (any HTTP status) — we're connected. Clear the
@@ -640,35 +437,6 @@ async function stitchListPage(data, kind, resp, prevSnap) {
     ok: resp === undefined,
     error: resp === undefined ? null : new Error(resp ? `HTTP ${resp.status}` : 'network error'),
   };
-}
-
-// bindListPagers wires the per-list pager footers rendered inside the Retired /
-// Conversations / Replaced virtual groups. Delegated on the stable #groups-list
-// parent (the group bodies are re-rendered wholesale every tick). Pager
-// controls carry data-pager (not data-act) so the global row-action handler
-// leaves them alone. A nav/size change updates the list's offset/limit, then
-// re-fetches via refresh() — keeping it the same single coordinated tick.
-export function bindListPagers() {
-  // The Groups tab's virtual lists still render legacy pager HTML. The Jobs
-  // island owns its pager events directly.
-  for (const root of [$('#groups-list')]) {
-    if (!root) continue;
-    root.addEventListener('click', (e) => {
-      const btn = e.target.closest('button[data-pager]');
-      if (!btn || btn.disabled) return;
-      const kind = btn.getAttribute('data-list');
-      const action = btn.getAttribute('data-pager');
-      const total = (lastSnapshot && lastSnapshot.paging && lastSnapshot.paging[kind]
-        && lastSnapshot.paging[kind].total) || 0;
-      if (listPagerNav(kind, action, total)) refresh();
-    });
-    root.addEventListener('change', (e) => {
-      const sel = e.target.closest('select[data-pager="size"]');
-      if (!sel) return;
-      setListPageSize(sel.getAttribute('data-list'), Number(sel.value) || 50);
-      refresh();
-    });
-  }
 }
 
 function bindTabs() {
@@ -978,6 +746,10 @@ function bindSortHeaders() {
   document.addEventListener('click', e => {
     const th = e.target.closest('th[data-sort-table]');
     if (!th) return;
+    // The Groups island owns its table sorting. Its keyed Preact tree handles
+    // the same data attributes locally; letting this legacy document handler
+    // see the click too would advance the three-state sort cycle twice.
+    if (th.closest('#groups-list[data-island-owner="groups"]')) return;
     const tableKey = th.dataset.sortTable;
     cycleSort(tableKey, th.dataset.sortCol);
     // 'replaced'/'retired'/'conversations'/'pending' are the virtual
