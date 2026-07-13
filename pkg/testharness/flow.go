@@ -244,11 +244,14 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	// Resume mints a fresh session row / TCLAUDE_SESSION_ID; track it.
 	cc.SessionID = label
 	if err := db.SaveSession(&db.SessionRow{
-		ID:          label,
-		TmuxSession: label,
-		ConvID:      convID,
-		Cwd:         cc.Cwd,
-		Status:      "running",
+		ID:               label,
+		TmuxSession:      label,
+		ConvID:           convID,
+		Cwd:              cc.Cwd,
+		Status:           "running",
+		Harness:          args.Harness,
+		SandboxMode:      args.Sandbox,
+		EffectiveSandbox: args.EffectiveSandbox,
 		// The resume mints a fresh row; carry the preserved ask-timeout onto it so
 		// a subsequent relaunch keeps it too (production session/new.go does this).
 		AskUserQuestionTimeout: args.AskUserQuestionTimeout,
@@ -403,6 +406,8 @@ func (s *simSpawner) spawnResumeCodex(args clcommon.SpawnArgs) error {
 		Status:                 "running",
 		AskUserQuestionTimeout: args.AskUserQuestionTimeout,
 		Harness:                codexHarnessName,
+		SandboxMode:            args.Sandbox,
+		EffectiveSandbox:       args.EffectiveSandbox,
 	}); err != nil {
 		return err
 	}

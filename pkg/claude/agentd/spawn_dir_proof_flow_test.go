@@ -943,6 +943,17 @@ func TestSpawnDirProof_LifecycleChallengesIncludeCustomWriteRoots(t *testing.T) 
 		writeRoot, err := filepath.EvalSymlinks(t.TempDir())
 		require.NoError(t, err)
 		f.HaveConvWithTitle(target, "offline-target")
+		group := f.HaveGroup("resume-policy")
+		require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: group.ID, ConvID: target}))
+		_, err = db.CreateSandboxProfile(&db.SandboxProfile{
+			Name: "resume-write-root",
+			Filesystem: []db.SandboxFilesystemGrant{{
+				Path: writeRoot, Access: "write",
+			}},
+		})
+		require.NoError(t, err)
+		_, err = db.SetAgentGroupSandboxProfile(group.Name, "resume-write-root")
+		require.NoError(t, err)
 		f.HaveAliveSession(target, "spwn-profile-resume", "tclaude-profile-resume", cwd)
 		f.MarkOffline("tclaude-profile-resume")
 		setEffectiveSandboxWriteRoot(t, target, writeRoot)

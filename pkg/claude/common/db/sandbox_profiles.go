@@ -796,6 +796,18 @@ func GetAgentGroupSandboxProfile(group string) (*SandboxProfile, error) {
 // composed values. Mutable profile references are never returned as launch
 // authority: only the versioned value snapshot is.
 func ResolveEffectiveSandboxSnapshot(groupID int64, explicitName string) (sandboxpolicy.Snapshot, error) {
+	return resolveEffectiveSandboxSnapshot(groupID, strings.TrimSpace(explicitName), 0)
+}
+
+// ResolveEffectiveSandboxSnapshotByID is the lifecycle-boundary counterpart to
+// ResolveEffectiveSandboxSnapshot. A resumed agent's explicit profile is
+// identified by the stable registry ID recorded in its previous snapshot, so a
+// profile rename does not silently drop or retarget that explicit policy.
+func ResolveEffectiveSandboxSnapshotByID(groupID, explicitProfileID int64) (sandboxpolicy.Snapshot, error) {
+	return resolveEffectiveSandboxSnapshot(groupID, "", explicitProfileID)
+}
+
+func resolveEffectiveSandboxSnapshot(groupID int64, explicitName string, explicitProfileID int64) (sandboxpolicy.Snapshot, error) {
 	d, err := Open()
 	if err != nil {
 		return sandboxpolicy.Snapshot{}, err
@@ -839,8 +851,15 @@ func ResolveEffectiveSandboxSnapshot(groupID int64, explicitName string) (sandbo
 		return sandboxpolicy.Snapshot{}, err
 	}
 	var explicit *SandboxProfile
-	explicitName = strings.TrimSpace(explicitName)
-	if explicitName != "" {
+	if explicitProfileID > 0 {
+		explicit, err = scanSandboxProfile(tx.QueryRow(sandboxProfileSelect+` WHERE id = ?`, explicitProfileID))
+		if errors.Is(err, sql.ErrNoRows) || explicit == nil {
+			return sandboxpolicy.Snapshot{}, ErrSandboxProfileNotFound
+		}
+		if err != nil {
+			return sandboxpolicy.Snapshot{}, err
+		}
+	} else if explicitName != "" {
 		explicit, err = scanSandboxProfile(tx.QueryRow(sandboxProfileSelect+` WHERE name = ?`, explicitName))
 		if errors.Is(err, sql.ErrNoRows) || explicit == nil {
 			return sandboxpolicy.Snapshot{}, ErrSandboxProfileNotFound
@@ -913,5 +932,7 @@ func ResolveEffectiveSandboxSnapshot(groupID int64, explicitName string) (sandbo
 	if err := tx.Commit(); err != nil {
 		return sandboxpolicy.Snapshot{}, err
 	}
-	return sandboxpolicy.NewSnapshot(effective, applied), nil
+	snapshot := sandboxpolicy.NewSnapshot(effective, applied)
+	snapshot.ResolutionGroupID = groupID
+	return snapshot, nil
 }
