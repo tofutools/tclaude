@@ -265,7 +265,7 @@ function ReincarnateAgentDialog({ descriptor, actions, confirmDiscard }) {
       </div>
       ${!force ? html`
         <div id="reincarnate-self-fields">
-          <p style="margin:4px 0; font-size:12px; color:#7d8590">The agent is messaged and reincarnates itself at a clean point. Because it collects its own context, the successor inherits a handoff that reflects the agent's actual working state.</p>
+          <p class="modal-hint">The agent is messaged and reincarnates itself at a clean point. Because it collects its own context, the successor inherits a handoff that reflects the agent's actual working state.</p>
           <label class="cron-create-row">
             <span class="cron-create-label">Focus hint</span>
             <textarea ref=${focusHintRef} id="reincarnate-agent-focus" rows="3" maxlength="4000" value=${focusHint} placeholder="optional — what should the agent concentrate on while gathering context for its handoff? e.g. focus on the open questions about X, or capture the current state of subsystem Y. Leave blank for a general handoff." spellcheck="false" onInput=${(event) => setFocusHint(event.currentTarget.value)}></textarea>
@@ -273,7 +273,7 @@ function ReincarnateAgentDialog({ descriptor, actions, confirmDiscard }) {
         </div>
       ` : html`
         <div id="reincarnate-force-fields">
-          <p style="margin:4px 0; font-size:12px; color:#7d8590">Spawns a fresh CC instance that inherits identity (groups, perms, ownership). The original is soft-exited. The successor's title is auto-renamed to <code>${'<prev>-r-<N>'}</code>.</p>
+          <p class="modal-hint">Spawns a fresh CC instance that inherits identity (groups, perms, ownership). The original is soft-exited. The successor's title is auto-renamed to <code>${'<prev>-r-<N>'}</code>.</p>
           <label class="cron-create-row">
             <span class="cron-create-label">Follow-up</span>
             <textarea ref=${followUpRef} id="reincarnate-agent-followup" rows="4" value=${followUp} placeholder="required — what should the successor pick up? Summarise the current task, where the relevant files are, what's next (no newlines, ≤16384 chars)" spellcheck="false" onInput=${(event) => setFollowUp(event.currentTarget.value)}></textarea>
