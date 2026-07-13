@@ -47,6 +47,7 @@ export function DirectoryPickerApp({ state, actions }) {
   const listRef = useRef(null);
   const activeEntryRef = useRef(null);
   const generation = useRef(0);
+  const inputRevision = useRef(0);
   const [view, setView] = useState(null);
   const [path, setPath] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
@@ -56,7 +57,8 @@ export function DirectoryPickerApp({ state, actions }) {
   const browse = useCallback(async (target, appendSlash = false) => {
     const requested = String(target || '').trim();
     const currentGeneration = ++generation.current;
-    setPath(requested);
+    const revision = inputRevision.current;
+    setPath(appendSlash ? withTrailingSlash(requested) : requested);
     setActiveIndex(0);
     setBusy(true);
     setError('');
@@ -65,10 +67,13 @@ export function DirectoryPickerApp({ state, actions }) {
       if (currentGeneration !== generation.current) return;
       setView(result);
       const openedPath = result.path || requested;
-      setPath(appendSlash ? withTrailingSlash(openedPath) : openedPath);
+      if (inputRevision.current === revision) {
+        setPath(appendSlash ? withTrailingSlash(openedPath) : openedPath);
+      }
       setActiveIndex(0);
     } catch (browseError) {
       if (currentGeneration !== generation.current) return;
+      if (inputRevision.current === revision) setPath(requested);
       setError(browseError?.message || String(browseError));
     } finally {
       if (currentGeneration === generation.current) setBusy(false);
@@ -123,6 +128,7 @@ export function DirectoryPickerApp({ state, actions }) {
       <label for="directory-picker-path">Host path</label>
       <input ref=${pathRef} id="directory-picker-path" value=${path}
         onInput=${(event) => {
+          inputRevision.current += 1;
           setPath(event.currentTarget.value);
           setActiveIndex(0);
         }}
@@ -159,9 +165,9 @@ export function DirectoryPickerApp({ state, actions }) {
     </form>
     <div class="directory-picker-nav">
       <button type="button" disabled=${busy || !view?.parent}
-        onClick=${() => void browse(view?.parent)}>↑ Parent</button>
+        onClick=${() => void browse(view?.parent, true)}>↑ Parent</button>
       <button type="button" disabled=${busy || !view?.home || view?.home === view?.path}
-        onClick=${() => void browse(view?.home)}>⌂ Home</button>
+        onClick=${() => void browse(view?.home, true)}>⌂ Home</button>
       <span class="directory-picker-count" role="status" aria-live="polite">${view ? count : ''}</span>
     </div>
     ${typedOtherPath && html`<div class="directory-picker-hint">Press Enter to open the typed path.</div>`}
@@ -178,7 +184,7 @@ export function DirectoryPickerApp({ state, actions }) {
           role=${selecting ? 'option' : undefined}
           aria-selected=${selecting ? active ? 'true' : 'false' : undefined}
           tabIndex=${selecting ? -1 : undefined}
-          onClick=${() => void browse(directory.path)}
+          onClick=${() => void browse(directory.path, true)}
         ><span aria-hidden="true">📁</span><span>${directory.name}</span></button></div>`;
       })}
       ${view && !visibleDirectories.length && html`<p class="directory-picker-empty">

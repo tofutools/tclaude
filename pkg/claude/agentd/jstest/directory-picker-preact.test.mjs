@@ -187,6 +187,47 @@ test('Preact picker accepts a trailing slash through Ctrl/Cmd+Enter and the choo
   await mounted.unmount();
 });
 
+test('Preact picker preserves continued typing while an opened directory loads', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDirectoryPickerState }, { DirectoryPickerApp }] = await Promise.all([
+    harness.importDashboardModule('js/directory-picker-state.js'),
+    harness.importDashboardModule('js/directory-picker-island.js'),
+  ]);
+  const state = createDirectoryPickerState();
+  let resolveChild;
+  const actions = { browse: async (path) => {
+    if (path === '/root') {
+      return {
+        path, parent: '/', home: '/home/me',
+        directories: [{ name: 'alpha', path: '/root/alpha' }],
+      };
+    }
+    return new Promise((resolve) => { resolveChild = resolve; });
+  } };
+  const mounted = await harness.mount(
+    harness.html`<${DirectoryPickerApp} state=${state} actions=${actions} />`,
+  );
+  let result;
+  await harness.act(() => { result = state.open({ startDir: '/root', title: 'Choose' }); });
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  const input = mounted.container.querySelector('#directory-picker-path');
+  await harness.input(input, '/root/al');
+  harness.fireEvent(mounted.container.querySelector('.directory-picker-path'), 'submit');
+  await harness.act(() => Promise.resolve());
+  assert.equal(input.value, '/root/alpha/', 'the separator appears before the browse response');
+
+  await harness.input(input, '/root/alpha/next');
+  await harness.act(() => {
+    resolveChild({ path: '/root/alpha', parent: '/root', home: '/home/me', directories: [] });
+    return Promise.resolve();
+  });
+  assert.equal(input.value, '/root/alpha/next', 'the browse response must not discard newer input');
+
+  state.finish({ canceled: true });
+  await result;
+  await mounted.unmount();
+});
+
 test('Preact picker navigates the unfiltered folder pane with arrow and page keys', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createDirectoryPickerState }, { DirectoryPickerApp }] = await Promise.all([
@@ -327,11 +368,19 @@ test('Preact picker navigates host folders, chooses, cancels, and restores focus
   host.querySelector('.directory-picker-list button').click();
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
   assert.deepEqual(calls, ['/root', '/root/alpha']);
-  assert.equal(host.querySelector('#directory-picker-path').value, '/root/alpha');
+  assert.equal(host.querySelector('#directory-picker-path').value, '/root/alpha/');
   assert.match(host.querySelector('.directory-picker-empty').textContent, /No subdirectories/);
+  host.querySelector('.directory-picker-nav button').click();
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.deepEqual(calls, ['/root', '/root/alpha', '/root']);
+  assert.equal(host.querySelector('#directory-picker-path').value, '/root/');
+  host.querySelectorAll('.directory-picker-nav button')[1].click();
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.deepEqual(calls, ['/root', '/root/alpha', '/root', '/home/me']);
+  assert.equal(host.querySelector('#directory-picker-path').value, '/home/me/');
   host.querySelector('.modal-buttons button.primary').click();
   await harness.act(() => Promise.resolve());
-  assert.deepEqual(await chosen, { path: '/root/alpha' });
+  assert.deepEqual(await chosen, { path: '/home/me' });
   assert.equal(host.querySelector('#directory-picker-modal'), null);
   assert.equal(harness.document.activeElement, invoker);
 
