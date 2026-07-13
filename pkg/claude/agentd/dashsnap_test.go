@@ -1080,11 +1080,13 @@ func boundedMessagesJS() string {
     if (ready && human) { human.click(); break; }
     await new Promise(function(resolve){ setTimeout(resolve, 30); });
   }
+  deadline = Date.now() + 4000;
   while (Date.now() < deadline) {
     var row = document.querySelector('#mail-list .mail-row');
     if (row) { row.click(); break; }
     await new Promise(function(resolve){ setTimeout(resolve, 30); });
   }
+  deadline = Date.now() + 4000;
   while (!document.querySelector('#mail-reader .mail-reader-body') && Date.now() < deadline) {
     await new Promise(function(resolve){ setTimeout(resolve, 30); });
   }
@@ -1095,6 +1097,7 @@ func boundedMessagesJS() string {
     var debug = document.createElement('pre');
     debug.textContent = JSON.stringify({errors: errors, messages: state?.messages}, null, 2);
     document.querySelector('#tab-messages').prepend(debug);
+    throw new Error('Messages island did not render: client=' + !!client + ' reader=' + !!reader);
   }
 });`
 }

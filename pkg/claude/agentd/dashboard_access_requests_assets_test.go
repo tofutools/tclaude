@@ -45,7 +45,7 @@ func TestDashboardAssets_AccessRequestsWired(t *testing.T) {
 		// Recently-handled history: outcome chips + the divider stay in the list.
 		"function accessOutcome(",
 		"function accessIsPending(",
-		`key="__access_handled__"`,
+		`data-key="__access_handled__"`,
 		// CSS presence (row + reader actions + blink + handled history).
 		".access-row-wrap.handled .mail-row",
 		".access-reader-actions",

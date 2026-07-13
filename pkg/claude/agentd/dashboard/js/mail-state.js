@@ -1,8 +1,10 @@
 import { computed, signal } from '@preact/signals';
 import { createRequestLifecycle } from './request-lifecycle.js';
 
+export const HUMAN_MAILBOX_ID = 'human';
+
 export function messageDeleteEndpoint(folderID) {
-  return folderID === 'human' ? '/api/human-messages/delete' : '/api/mailbox/delete';
+  return folderID === HUMAN_MAILBOX_ID ? '/api/human-messages/delete' : '/api/mailbox/delete';
 }
 
 // Messages has several coordinated Sets plus server-paged data. Keep the

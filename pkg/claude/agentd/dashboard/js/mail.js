@@ -76,9 +76,8 @@ import { initMailResize } from './mail-resize.js';
 import { lastSnapshot } from './dashboard.js';
 import { confirmModal, toast } from './refresh.js';
 import { fetchListFull } from './list-paging.js';
-import { createMailState, messageDeleteEndpoint } from './mail-state.js';
+import { createMailState, HUMAN_MAILBOX_ID as HUMAN_ID, messageDeleteEndpoint } from './mail-state.js';
 
-const HUMAN_ID = 'human';
 const ALL_ID = 'all';
 // The synthetic "access requests" folder — in-flight human-approval requests
 // (an agent blocked waiting for the operator to approve/deny a permission-gated
@@ -221,7 +220,6 @@ function setBoxQuery(value) {
   if (mail.boxQuery) dashPrefs.setItem(BOX_FILTER_KEY, mail.boxQuery);
   else dashPrefs.removeItem(BOX_FILTER_KEY);
   paintSidebar();
-  mailState.touch();
 }
 
 function setMessageQuery(value) {
@@ -230,7 +228,6 @@ function setMessageQuery(value) {
   if (mail.messageQuery) dashPrefs.setItem(key, mail.messageQuery);
   else dashPrefs.removeItem(key);
   onMailSearchChanged();
-  mailState.touch();
 }
 
 function mailTabActive() {
@@ -607,7 +604,6 @@ function toggleGroupExpand(name) {
   if (!name) return;
   if (isGroupExpanded(name)) dashPrefs.removeItem(GROUP_EXPAND_PREFIX + name);
   else dashPrefs.setItem(GROUP_EXPAND_PREFIX + name, '1');
-  mailState.touch();
   paintSidebar();
 }
 
@@ -626,11 +622,9 @@ function toggleAgentsExpand() {
   if (isAgentsExpanded()) {
     dashPrefs.removeItem(AGENTS_EXPAND_KEY);
     mail.selectedBoxes.clear();
-    paintWipeBar();
   } else {
     dashPrefs.setItem(AGENTS_EXPAND_KEY, '1');
   }
-  mailState.touch();
   paintSidebar();
 }
 
@@ -695,7 +689,6 @@ function setShowPrevGens(on) {
       return;
     }
   }
-  mailState.touch();
   paintMail();
 }
 
@@ -955,9 +948,7 @@ function selectMessage(id) {
   // keep read-state as the operator's explicit inbox-repair toggle (set on
   // a stuck agent's behalf), so merely opening one there must NOT flip it.
   if (mail.selected === HUMAN_ID) markOpenedHumanRead(mail.selectedMsgId);
-  paintList();        // re-highlight the active row (+ clear its unread dot)
-  paintReader();
-  mailState.touch();
+  paintReader();      // re-highlight the row and repaint the reader
 }
 
 // markOpenedHumanRead implements "opening it reads it" for the human
