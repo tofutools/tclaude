@@ -1047,18 +1047,18 @@ function renderGroupLinksSection(groupName) {
         <td><span class="rowname">${esc(other || '(deleted)')}</span></td>
         <td><span class="id">${esc(l.mode)}</span></td>
         <td><div class="row-actions">
-          <button data-act="link-edit" data-id="${l.id}" data-from="${esc(l.from)}" data-to="${esc(l.to)}" data-mode="${esc(l.mode)}" title="Change this link's mode">edit</button>
-          <button class="danger" data-act="link-delete" data-id="${l.id}" data-group="${esc(groupName)}" data-from="${esc(l.from)}" data-to="${esc(l.to)}" title="Remove this link">×</button>
+          <button data-act="link-edit" data-id="${l.id}" data-from="${esc(l.from)}" data-to="${esc(l.to)}" data-mode="${esc(l.mode)}" title="${esc(isWizardActive() ? 'Rebind this arcane channel' : "Change this link's mode")}">${themeWords('edit', 'rebind')}</button>
+          <button class="danger" data-act="link-delete" data-id="${l.id}" data-group="${esc(groupName)}" data-from="${esc(l.from)}" data-to="${esc(l.to)}" title="${esc(isWizardActive() ? 'Sever this arcane channel' : 'Remove this link')}">×</button>
         </div></td>
       </tr>
     `;
   };
   return `
     <div class="group-links-section">
-      <strong style="font-size:11px">Links</strong>
+      <strong style="font-size:11px">${themeWords('Links', 'Arcane channels')}</strong>
       <table>
         <thead>
-          <tr><th></th><th>Other group</th><th>Mode</th><th></th></tr>
+          <tr><th></th><th>${themeWords('Other group', 'Other party')}</th><th>Mode</th><th></th></tr>
         </thead>
         <tbody>
           ${out.map(l => renderRow(l, 'out')).join('')}

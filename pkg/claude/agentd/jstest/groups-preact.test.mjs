@@ -28,6 +28,7 @@ function testRenderer(groups) {
   return groups.map((group) => `
     <details data-group-key="${group.name}">
       <summary><strong class="group-name">${group.name}</strong></summary>
+      <span class="theme-probe" title="${document.body.classList.contains('wizard') ? 'party' : 'group'}"></span>
       ${group.members?.length ? `
         <span class="group-activity">${group.members[0].state?.status}</span>
         <span class="slop-machine" data-status="${group.members[0].state?.status}"><span>${group.members[0].state?.status}</span></span>
@@ -106,6 +107,15 @@ test('Groups list preserves keyed disclosure, focus and nodes across reorder/act
   assert.equal(alpha.querySelector('.group-descr'), descr, 'inline-edit host identity survives publish');
   assert.equal(descr.textContent, 'new', 'restored inline-edit host receives later updates');
   assert.equal(beta.querySelector('.group-activity').textContent, 'asking');
+
+  harness.document.body.classList.add('wizard');
+  await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent(
+    'tclaude:wizard', { detail: { active: true } },
+  )));
+  assert.equal(alpha.querySelector('.theme-probe').title, 'party',
+    'a live wizard flip repaints list-rendered title attributes');
+  assert.equal(host.querySelector('details[data-group-key="alpha"]'), alpha,
+    'the theme repaint preserves keyed group disclosure identity');
 
   const machine = beta.querySelector('.slop-machine');
   machine.innerHTML = '<span>working</span>'; // manual-pull restore creates foreign children

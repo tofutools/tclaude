@@ -257,6 +257,8 @@ func TestDashboardHTML_WizardGroupsTabCopy(t *testing.T) {
 
 	must("Filter (party name + familiar title/class/lore/grove/branch)", "the party filter explains its wizard-search fields")
 	must("document.addEventListener('tclaude:wizard', onWizard)", "the filter placeholder follows a live theme flip")
+	must("function useWizardTheme()", "the controls and group list share live wizard-theme state")
+	must("useWizardTheme();\n  const current = state.view.value;", "the group list repaints theme-dependent title attributes")
 	must("current.total === 1 ? 'party' : 'parties'", "the unfiltered count names parties")
 	must("wizardLabel: 'show unbound'", "the view menu names the unbound tray")
 	must("wizardLabel: 'show banished'", "the view menu names the banished tray")
@@ -288,6 +290,9 @@ func TestDashboardHTML_WizardGroupsTabCopy(t *testing.T) {
 	must(`<span class="theme-copy-wizard"><strong>party maneuvers:</strong>`, "the drag-and-drop footer has a wizard version")
 	must(`<em>Plain scroll</em> → party (awaken + bind)`, "the footer explains promotion in wizard terms")
 	must("No arcane channels are woven to or from this party.", "the per-party empty channel state follows the weaving metaphor")
+	must("themeWords('Links', 'Arcane channels')", "populated per-party channels keep their wizard heading")
+	must("themeWords('Other group', 'Other party')", "populated channel rows name the other party")
+	must("themeWords('edit', 'rebind')", "populated channel actions keep their wizard verb")
 }
 
 // TestDashboardHTML_WizardRetireModal pins the wizard re-skin of the retire
