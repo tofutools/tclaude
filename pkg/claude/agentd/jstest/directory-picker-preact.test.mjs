@@ -95,6 +95,10 @@ test('helper policy recognizes loopback and the configured web bridge', async (t
   assert.equal(helpers.isLoopbackDashboard('localhost'), true);
   assert.equal(helpers.isLoopbackDashboard('127.0.0.42'), true);
   assert.equal(helpers.isLoopbackDashboard('::1'), true);
+  assert.equal(helpers.isLoopbackDashboard('[::1]'), true);
+  assert.equal(helpers.isLoopbackDashboard('localhost.'), true);
+  assert.equal(helpers.isLoopbackDashboard('127.example.test'), false);
+  assert.equal(helpers.isLoopbackDashboard('127.0.0.999'), false);
   assert.equal(helpers.isLoopbackDashboard('dashboard.example.test'), false);
   helpers.configureDirectoryPickerBridge({
     prefersWeb: () => true,

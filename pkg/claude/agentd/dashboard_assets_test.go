@@ -652,6 +652,15 @@ func TestDashboardAssets_DirectoryPickerWired(t *testing.T) {
 			t.Errorf("dashboard assets missing %q — web directory picker wiring broken", needle)
 		}
 	}
+	html, err := fs.ReadFile(dashboardAssetsFS, "dashboard.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootAt := strings.LastIndex(string(html), `id="directory-picker-root"`)
+	lastStaticOverlayAt := strings.LastIndex(string(html), `class="modal-overlay`)
+	if rootAt < lastStaticOverlayAt {
+		t.Error("directory picker root must follow every static modal overlay so stacked Browse dialogs paint above their caller and own keyboard focus")
+	}
 }
 
 // TestDashboardAssets_GroupWebTerminalWired guards the group ⚙ menu's "open web

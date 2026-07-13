@@ -1750,8 +1750,12 @@ function configureDirectoryPickerBridge(bridge) {
 }
 
 function isLoopbackDashboard(value = window.location?.hostname) {
-  const hostname = String(value || '').toLowerCase();
-  return !hostname || hostname === 'localhost' || hostname === '::1' || hostname.startsWith('127.');
+  let hostname = String(value || '').trim().toLowerCase().replace(/\.+$/, '');
+  if (hostname.startsWith('[') && hostname.endsWith(']')) hostname = hostname.slice(1, -1);
+  if (!hostname || hostname === 'localhost' || hostname === '::1') return true;
+  const octets = hostname.split('.');
+  return octets.length === 4 && octets[0] === '127' && octets.every((octet) =>
+    /^\d{1,3}$/.test(octet) && Number(octet) <= 255);
 }
 
 // pickDirectory resolves through the browser-rendered Preact picker for every

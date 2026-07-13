@@ -1188,9 +1188,6 @@
 <!-- Preact renders the Plugins create/edit dialog here so the overlay is not
      hidden with the tab section while open. -->
 <div id="plugins-modal-root"></div>
-<!-- Shared Preact directory picker. It stays outside feature/tab roots because
-     Browse… can be invoked from both legacy and Preact-owned dialogs. -->
-<div id="directory-picker-root"></div>
 <!-- Links… manage overlay — the former Links tab, folded into the Groups
      tab's ⚙ cog menu. A .manage-overlay (not .modal-overlay) for the same
      reason as the Templates one above: the listing stays live so add/edit/
@@ -1565,6 +1562,11 @@
     </div>
   </div>
 </div>
+
+<!-- Shared Preact directory picker. Keep this host after every static overlay:
+     Browse… opens it above its still-visible caller, and ManagementOverlay's
+     DOM-order topmost check must give the picker Escape/Tab ownership. -->
+<div id="directory-picker-root"></div>
 
 <!-- Vendored xterm.js, classic (non-module) scripts so they run before
      dashboard.js's module graph (which includes modal-term.js) — they
