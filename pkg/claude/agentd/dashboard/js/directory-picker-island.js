@@ -14,6 +14,11 @@ function pageSize(list) {
   return Math.max(1, Math.floor(list.clientHeight / itemHeight));
 }
 
+function withTrailingSlash(path) {
+  if (!path || path === '/') return path;
+  return `${path.replace(/\/+$/, '')}/`;
+}
+
 export function directoryFilterTerm(inputPath, viewPath) {
   if (!viewPath) return null;
   const normalizedView = viewPath === '/' ? '/' : `${viewPath.replace(/\/+$/, '')}/`;
@@ -48,7 +53,7 @@ export function DirectoryPickerApp({ state, actions }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
-  const browse = useCallback(async (target) => {
+  const browse = useCallback(async (target, appendSlash = false) => {
     const requested = String(target || '').trim();
     const currentGeneration = ++generation.current;
     setPath(requested);
@@ -59,7 +64,8 @@ export function DirectoryPickerApp({ state, actions }) {
       const result = await actions.browse(requested);
       if (currentGeneration !== generation.current) return;
       setView(result);
-      setPath(result.path || requested);
+      const openedPath = result.path || requested;
+      setPath(appendSlash ? withTrailingSlash(openedPath) : openedPath);
       setActiveIndex(0);
     } catch (browseError) {
       if (currentGeneration !== generation.current) return;
@@ -93,7 +99,7 @@ export function DirectoryPickerApp({ state, actions }) {
   }, [selectedIndex, filterTerm, view?.path]);
 
   if (!request) return null;
-  const validated = !!view?.path && path === view.path;
+  const validated = !!view?.path && filterTerm === '';
   const typedOtherPath = !!view?.path && filterTerm === null && path.trim() !== view.path;
   const count = filtering
     ? `${visibleDirectories.length} of ${directories.length} folders`
@@ -112,7 +118,7 @@ export function DirectoryPickerApp({ state, actions }) {
     <h3 id="directory-picker-title">${request.title}</h3>
     <form class="directory-picker-path" onSubmit=${(event) => {
       event.preventDefault();
-      void browse(activeDirectory?.path || path);
+      void browse(activeDirectory?.path || path, true);
     }}>
       <label for="directory-picker-path">Host path</label>
       <input ref=${pathRef} id="directory-picker-path" value=${path}
