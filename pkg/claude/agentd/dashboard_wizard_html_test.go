@@ -238,8 +238,9 @@ func TestDashboardHTML_WizardLinksDialogs(t *testing.T) {
 	if got := strings.Count(dashboardAssets, "themeWords('+ link', '+ weave channel')"); got != 2 {
 		t.Errorf("per-party add-link wizard copy appears %d times, want 2 (empty and populated link sections)", got)
 	}
-	must("body.wizard .group-links-section > button", "the per-party add-link action is gilded")
-	must("linear-gradient(180deg, #654c98 0%, #3a2a63 100%)", "the compact wizard action keeps AA text contrast")
+	must("body.wizard .group-links-section > button", "the per-party add-link action keeps wizard styling")
+	must("body.wizard .group-links-section > button {\n  background: #241b3d;\n  border-color: #7a5db0;\n  color: #e7d9f5;", "the compact wizard action uses contrast-safe secondary chrome")
+	must("body.wizard .group-links-section > button:hover {\n  background: #3a2a63;\n  border-color: #d9b45a;\n  color: #f3e6c0;", "the compact wizard action keeps contrast-safe hover chrome")
 }
 
 // TestDashboardHTML_WizardRetireModal pins the wizard re-skin of the retire
