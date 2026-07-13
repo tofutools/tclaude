@@ -160,7 +160,6 @@ function bindLinkModal() {
   $('#links-manage-open').addEventListener('click', openLinksManageModal);
   $('#links-manage-close').addEventListener('click', closeLinksManageModal);
   bindManageOverlayDismiss('links-manage-modal', closeLinksManageModal);
-  $('#link-new-open').addEventListener('click', () => openLinkModal({ mode: 'create' }));
   $('#link-modal-cancel').addEventListener('click', closeLinkModal);
   $('#link-modal-submit').addEventListener('click', submitLinkModal);
   bindBackdropDiscard('link-modal', closeLinkModal);

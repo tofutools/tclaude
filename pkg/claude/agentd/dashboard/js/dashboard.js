@@ -55,7 +55,7 @@ import { bindProfilesUI } from './modal-profiles.js';
 import { bindSandboxProfilesUI, refreshSpawnSandboxProfileUI, summonSandboxScribe } from './sandbox-profiles.js';
 import { bindRolesUI } from './modal-roles.js';
 import { bindCloneModal } from './modal-clone.js';
-import { bindLinkModal } from './modal-link-wt.js';
+import { bindLinkModal, openLinkModal } from './modal-link-wt.js';
 import { bindExportModal } from './modal-export.js';
 import {
   bindAgentSpawnModal,
@@ -169,7 +169,7 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   // initNavHistory below so initial deep links still find every lazy loader.
   const featureCleanups = await Promise.all([
     mountGroupsFeature({ refresh: dashboardActions.refresh }),
-    mountLinksFeature(),
+    mountLinksFeature({ openCreate: () => openLinkModal({ mode: 'create' }) }),
     mountDockFeature(),
     mountPluginsFeature({
       requestMutation: dashboardActions.requestMutation,

@@ -131,7 +131,7 @@ const linksDescriptor = createIslandDescriptor({
   label: 'Inter-group links',
   hosts: { filterHost: '#links-filter-root', listHost: '#links-list' },
   failureClass: 'links-error',
-  load: async ({ hosts: { filterHost, listHost } }) => {
+  load: async ({ hosts: { filterHost, listHost }, dependencies }) => {
     const islandModule = import('./links-island.js');
     const stateModule = import('./links-state.js');
     const [{ mountLinksIsland }, { linksState }] = await Promise.all([
@@ -140,7 +140,8 @@ const linksDescriptor = createIslandDescriptor({
     return {
       state: linksState,
       mount: (registerCleanup) => mountLinksIsland({
-        filterHost, listHost, state: linksState, registerCleanup,
+        filterHost, listHost, state: linksState, openCreate: dependencies.openCreate,
+        registerCleanup,
       }),
     };
   },

@@ -21,6 +21,7 @@ func TestDashboardLinksPreactOwnership(t *testing.T) {
 	loader := read("js/preact-loader.js")
 	dashboard := read("js/dashboard.js")
 	tabs := read("js/tabs.js")
+	legacyModal := read("js/modal-link-wt.js")
 
 	for _, needle := range []string{
 		"export function LinksControls(",
@@ -28,6 +29,7 @@ func TestDashboardLinksPreactOwnership(t *testing.T) {
 		"key=${String(link.id)}",
 		`data-act="link-edit"`,
 		`data-act="link-delete"`,
+		"onClick=${openCreate}",
 		"onClick=${() => state.cycleSort(column.col)}",
 	} {
 		if !strings.Contains(island, needle) {
@@ -54,12 +56,13 @@ func TestDashboardLinksPreactOwnership(t *testing.T) {
 		"filterHost: '#links-filter-root'",
 		"listHost: '#links-list'",
 		"mountLinksFeature",
+		"openCreate: dependencies.openCreate",
 	} {
 		if !strings.Contains(loader, needle) {
 			t.Errorf("preact-loader.js missing Links ownership contract %q", needle)
 		}
 	}
-	if !strings.Contains(dashboard, "mountLinksFeature(),") {
+	if !strings.Contains(dashboard, "mountLinksFeature({ openCreate: () => openLinkModal({ mode: 'create' }) })") {
 		t.Error("dashboard bootstrap does not mount the Links island")
 	}
 	if !strings.Contains(tabs, "featureState('links')?.publish(lastSnapshot)") {
@@ -69,5 +72,8 @@ func TestDashboardLinksPreactOwnership(t *testing.T) {
 		if strings.Contains(dashboard+tabs, forbidden) {
 			t.Errorf("legacy Links ownership remains: %q", forbidden)
 		}
+	}
+	if strings.Contains(legacyModal, "$('#link-new-open')") {
+		t.Error("legacy modal bootstrap still requires the optional island-owned create control")
 	}
 }

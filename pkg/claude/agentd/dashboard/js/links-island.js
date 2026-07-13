@@ -21,7 +21,7 @@ function SortHeader({ column, state }) {
   `;
 }
 
-export function LinksControls({ state }) {
+export function LinksControls({ state, openCreate }) {
   const inputRef = useRef(null);
   const current = state.view.value;
   const regularCount = current.query
@@ -46,6 +46,7 @@ export function LinksControls({ state }) {
       }}>×</button>
     <span class="spacer"></span>
     <button id="link-new-open" class="primary"
+      onClick=${openCreate}
       title="Add a new inter-group communication link">
       <span class="theme-copy-regular">+ new link</span>
       <span class="theme-copy-wizard">+ weave channel</span>
@@ -88,13 +89,14 @@ export function LinksList({ state }) {
   `;
 }
 
-export function mountLinksIsland({ filterHost, listHost, state, registerCleanup }) {
+export function mountLinksIsland({ filterHost, listHost, state, openCreate, registerCleanup }) {
   if (!filterHost || !listHost) throw new TypeError('links island requires filter and list hosts');
   if (!state?.view) throw new TypeError('links island requires state');
+  if (typeof openCreate !== 'function') throw new TypeError('links island requires openCreate');
   if (typeof registerCleanup !== 'function') throw new TypeError('links island requires registerCleanup');
   state.initialize();
   registerCleanup(() => render(null, listHost));
   registerCleanup(() => render(null, filterHost));
-  render(html`<${LinksControls} state=${state} />`, filterHost);
+  render(html`<${LinksControls} state=${state} openCreate=${openCreate} />`, filterHost);
   render(html`<${LinksList} state=${state} />`, listHost);
 }

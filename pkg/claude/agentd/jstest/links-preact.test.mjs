@@ -60,8 +60,10 @@ test('Links Preact surface preserves keyed rows, focus and delegated action cont
   const filterHost = harness.document.body.appendChild(harness.document.createElement('div'));
   const listHost = harness.document.body.appendChild(harness.document.createElement('div'));
   const cleanups = [];
+  let createCalls = 0;
   await harness.act(() => mountLinksIsland({
-    filterHost, listHost, state, registerCleanup: (cleanup) => cleanups.push(cleanup),
+    filterHost, listHost, state, openCreate: () => { createCalls += 1; },
+    registerCleanup: (cleanup) => cleanups.push(cleanup),
   }));
   await harness.act(() => state.publish(sample));
 
@@ -81,6 +83,8 @@ test('Links Preact surface preserves keyed rows, focus and delegated action cont
   assert.equal(listHost.querySelectorAll('tbody tr').length, 1);
   assert.equal(filterHost.querySelector('#filter-links-count .theme-copy-regular').textContent, '1 / 2');
   assert.equal(filterHost.querySelector('#filter-links-count .theme-copy-wizard').textContent, '1 / 2');
+  await harness.act(() => harness.fireEvent(filterHost.querySelector('#link-new-open'), 'click'));
+  assert.equal(createCalls, 1, 'island-owned create control invokes its injected action');
   const clear = getByRole(filterHost, 'button', { name: 'Clear link filter' });
   await harness.act(() => harness.fireEvent(clear, 'click'));
   assert.equal(harness.document.activeElement, filter);
