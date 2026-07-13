@@ -28,6 +28,7 @@ function testRenderer(groups) {
   return groups.map((group) => `
     <details data-group-key="${group.name}">
       <summary><strong class="group-name">${group.name}</strong></summary>
+      <span class="theme-probe" title="${document.body.classList.contains('wizard') ? 'party' : 'group'}"></span>
       ${group.members?.length ? `
         <span class="group-activity">${group.members[0].state?.status}</span>
         <span class="slop-machine" data-status="${group.members[0].state?.status}"><span>${group.members[0].state?.status}</span></span>
@@ -107,6 +108,15 @@ test('Groups list preserves keyed disclosure, focus and nodes across reorder/act
   assert.equal(descr.textContent, 'new', 'restored inline-edit host receives later updates');
   assert.equal(beta.querySelector('.group-activity').textContent, 'asking');
 
+  harness.document.body.classList.add('wizard');
+  await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent(
+    'tclaude:wizard', { detail: { active: true } },
+  )));
+  assert.equal(alpha.querySelector('.theme-probe').title, 'party',
+    'a live wizard flip repaints list-rendered title attributes');
+  assert.equal(host.querySelector('details[data-group-key="alpha"]'), alpha,
+    'the theme repaint preserves keyed group disclosure identity');
+
   const machine = beta.querySelector('.slop-machine');
   machine.innerHTML = '<span>working</span>'; // manual-pull restore creates foreign children
   await harness.act(() => state.publish(snapshot([
@@ -156,17 +166,26 @@ test('Groups controls own query, visibility, columns, badge and dropdown behavio
   `);
 
   const filter = getByRole(mounted.container, 'textbox', { name: 'Filter groups' });
+  assert.equal(filter.placeholder, 'Filter (group name + member title/role/descr/cwd/branch)');
   await harness.input(filter, 'alpha');
   assert.equal(state.view.value.groups.filter((group) => !group.virtual).length, 1);
-  assert.equal(mounted.container.querySelector('#filter-groups-count').textContent, '1 / 2');
+  const count = mounted.container.querySelector('#filter-groups-count');
+  assert.equal(count.querySelector('.theme-copy-regular').textContent, '1 / 2');
+  assert.equal(count.querySelector('.theme-copy-wizard').textContent, '1 / 2');
   assert.equal(resets, 1);
+
+  await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent(
+    'tclaude:wizard', { detail: { active: true } },
+  )));
+  assert.equal(filter.getAttribute('aria-label'), 'Filter parties');
+  assert.equal(filter.placeholder, 'Filter (party name + familiar title/class/lore/grove/branch)');
 
   const view = getByRole(mounted.container, 'button', { name: '▾ view' });
   await harness.act(() => harness.fireEvent(view, 'click'));
   assert.equal(view.getAttribute('aria-expanded'), 'true');
   assert.ok(mounted.container.querySelector('#filter-groups-view-menu').classList.contains('open'));
 
-  const conversations = getByLabelText(mounted.container, 'show conversations');
+  const conversations = mounted.container.querySelector('#filter-groups-conversations');
   conversations.checked = true;
   await harness.act(() => harness.fireEvent(conversations, 'change'));
   assert.equal(state.visibility.value.conversations, true);

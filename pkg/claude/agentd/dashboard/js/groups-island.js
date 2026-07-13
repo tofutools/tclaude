@@ -1,16 +1,33 @@
 import { h, render } from 'preact';
-import { useEffect, useRef } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { GROUP_VIEW_OPTIONS } from './groups-state.js';
 import { trustedHTMLToVNodes } from './html-vnodes.js';
 import { syncBotAnimations, syncWizardOrbit } from './helpers.js';
+import { isWizardActive } from './slop.js';
 
 const html = htm.bind(h);
 
-function ViewOption({ option, state, queueRefresh }) {
+// The Groups island stays mounted while the cosmetic theme cycles. Copy pairs
+// switch through CSS, but placeholder/title/aria attributes are single-valued
+// and the legacy list renderer chooses them at render time, so both bounded
+// components subscribe to the wizard edge and repaint immediately.
+function useWizardTheme() {
+  const [wizard, setWizard] = useState(isWizardActive());
+  useEffect(() => {
+    const onWizard = (event) => setWizard(
+      event.detail?.active == null ? isWizardActive() : Boolean(event.detail.active),
+    );
+    document.addEventListener('tclaude:wizard', onWizard);
+    return () => document.removeEventListener('tclaude:wizard', onWizard);
+  }, []);
+  return wizard;
+}
+
+function ViewOption({ option, state, queueRefresh, wizard }) {
   const checked = state.visibility.value[option.key];
   return html`
-    <label class="filter-toggle" title=${option.title}>
+    <label class="filter-toggle" title=${wizard ? (option.wizardTitle || option.title) : option.title}>
       <input
         id=${`filter-groups-${option.key}`}
         type="checkbox"
@@ -20,7 +37,7 @@ function ViewOption({ option, state, queueRefresh }) {
           queueRefresh();
         }}
       />
-      <span>${option.label}</span>
+      <span><span class="theme-copy-regular">${option.label}</span><span class="theme-copy-wizard">${option.wizardLabel || option.label}</span></span>
     </label>
   `;
 }
@@ -33,6 +50,7 @@ export function GroupsControls({ state, actions }) {
   const current = state.view.value;
   const badge = state.deviationCount.value;
   const columns = state.columnOptions.value;
+  const wizard = useWizardTheme();
 
   const queueRefresh = () => {
     clearTimeout(refreshTimer.current);
@@ -62,17 +80,22 @@ export function GroupsControls({ state, actions }) {
     };
   }, []);
 
-  const count = current.query
+  const regularCount = current.query
     ? `${current.shownReal} / ${current.total}`
     : `${current.total} group${current.total === 1 ? '' : 's'}`;
+  const wizardCount = current.query
+    ? `${current.shownReal} / ${current.total}`
+    : `${current.total} ${current.total === 1 ? 'party' : 'parties'}`;
 
   return html`
     <input
       ref=${inputRef}
       id="filter-groups"
       type="text"
-      aria-label="Filter groups"
-      placeholder="Filter (group name + member title/role/descr/cwd/branch)"
+      aria-label=${wizard ? 'Filter parties' : 'Filter groups'}
+      placeholder=${wizard
+        ? 'Filter (party name + familiar title/class/lore/grove/branch)'
+        : 'Filter (group name + member title/role/descr/cwd/branch)'}
       autocomplete="off"
       spellcheck=${false}
       value=${current.query}
@@ -81,12 +104,15 @@ export function GroupsControls({ state, actions }) {
         queueRefresh();
       }}
     />
-    <span class="filter-count" id="filter-groups-count" aria-live="polite">${count}</span>
+    <span class="filter-count" id="filter-groups-count" aria-live="polite">
+      <span class="theme-copy-regular">${regularCount}</span>
+      <span class="theme-copy-wizard">${wizardCount}</span>
+    </span>
     <button
       class="clear-filter"
       id="filter-groups-clear"
-      title="Clear filter"
-      aria-label="Clear group filter"
+      title=${wizard ? 'Clear party filter' : 'Clear filter'}
+      aria-label=${wizard ? 'Clear party filter' : 'Clear group filter'}
       onClick=${() => {
         state.setQuery('');
         queueRefresh();
@@ -102,7 +128,9 @@ export function GroupsControls({ state, actions }) {
         aria-haspopup="menu"
         aria-expanded=${state.viewOpen.value ? 'true' : 'false'}
         aria-controls="filter-groups-view-menu"
-        title="Choose which members and virtual groups to show on this tab"
+        title=${wizard
+          ? 'Choose which familiars and ethereal parties to show on this tab'
+          : 'Choose which members and virtual groups to show on this tab'}
         onClick=${() => { state.viewOpen.value = !state.viewOpen.value; }}
       >
         ▾ view
@@ -120,6 +148,7 @@ export function GroupsControls({ state, actions }) {
             option=${option}
             state=${state}
             queueRefresh=${queueRefresh}
+            wizard=${wizard}
           />
         `)}
         <div class="view-menu-sep" role="separator"></div>
@@ -148,6 +177,7 @@ export function GroupsControls({ state, actions }) {
 }
 
 export function GroupsList({ host, state, actions, renderGroupsHTML }) {
+  useWizardTheme();
   const current = state.view.value;
   const markup = renderGroupsHTML(current.groups);
 

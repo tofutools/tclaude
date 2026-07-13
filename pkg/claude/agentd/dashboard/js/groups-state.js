@@ -23,32 +23,44 @@ export const GROUP_VIEW_OPTIONS = Object.freeze([
   {
     key: 'offline', defaultValue: true, pref: 'tclaude.dash.offline.groups',
     label: 'show offline',
+    wizardLabel: 'show slumbering',
     title: 'Show members whose tmux pane is offline. This is the tab-wide default — each group header has a per-group override.',
+    wizardTitle: 'Show slumbering familiars. This is the tab-wide default — each party banner has a per-party override.',
   },
   {
     key: 'ungrouped', defaultValue: true, pref: 'tclaude.dash.ungrouped.groups',
     label: 'show ungrouped',
+    wizardLabel: 'show unbound',
     title: `Show the virtual "Ungrouped" group at the bottom — online agents that aren't in any group. Drag rows onto a group to add them; drag group members onto it to remove them.`,
+    wizardTitle: `Show the ethereal "Unbound" party at the bottom — familiars not bound to any party. Drag them onto a party to bind them; drag party familiars back onto it to release them.`,
   },
   {
     key: 'retired', defaultValue: true, pref: 'tclaude.dash.retired.groups',
     label: 'show retired',
+    wizardLabel: 'show banished',
     title: 'Show the virtual "Retired" group — agents that were demoted back to plain conversations. Retired agents land here instead of vanishing off the tab; click reinstate to bring one back.',
+    wizardTitle: 'Show the ethereal "Banished" party — familiars returned to plain scrolls. Banished familiars land here instead of vanishing; restore one to bring it back.',
   },
   {
     key: 'conversations', defaultValue: false, pref: 'tclaude.dash.conversations.groups',
     label: 'show conversations',
+    wizardLabel: 'show plain scrolls',
     title: `Show the virtual "Conversations" group — recent conversations that aren't agents. Drag one onto a group (or click promote) to make it an agent.`,
+    wizardTitle: `Show the ethereal "Plain scrolls" party — recent scrolls without familiars. Drag one onto a party (or click awaken) to awaken it as a familiar.`,
   },
   {
     key: 'replaced', defaultValue: false, pref: 'tclaude.dash.replaced.groups',
     label: 'show replaced generations',
+    wizardLabel: 'show past incarnations',
     title: 'Show the virtual "Replaced generations" group — superseded past generations of agents (left behind by reincarnate / /clear). Archival and read-mostly: copy a conv-id to inspect it, or delete a generation to prune it. The live agent is never affected.',
+    wizardTitle: 'Show the ethereal "Past incarnations" party — superseded lives left behind by reincarnate / /clear. Copy a conv-id to scry one, or erase an incarnation to prune it. The living familiar is never affected.',
   },
   {
     key: 'scribe', defaultValue: false, pref: 'tclaude.dash.scribe.groups',
     label: 'show offline scribes',
+    wizardLabel: 'show slumbering scribes',
     title: 'Live scribe groups and their independently named agents are always shown. Enable this to also show dormant system groups left by offline scribes.',
+    wizardTitle: 'Live scribe parties and their familiars are always shown. Enable this to also show dormant circles left by slumbering scribes.',
   },
 ]);
 

@@ -243,6 +243,58 @@ func TestDashboardHTML_WizardLinksDialogs(t *testing.T) {
 	must("body.wizard .group-links-section > button:hover {\n  background: #3a2a63;\n  border-color: #d9b45a;\n  color: #f3e6c0;", "the compact wizard action keeps contrast-safe hover chrome")
 }
 
+// TestDashboardHTML_WizardGroupsTabCopy pins the Parties tab's wizard voice.
+// These controls and virtual cards remain mounted while the theme cycles, so
+// visible copy uses the shared CSS swap and the input placeholder listens for
+// the live wizard event rather than waiting for the next snapshot poll.
+func TestDashboardHTML_WizardGroupsTabCopy(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !dashboardSourceContains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	must("Filter (party name + familiar title/class/lore/grove/branch)", "the party filter explains its wizard-search fields")
+	must("document.addEventListener('tclaude:wizard', onWizard)", "the filter placeholder follows a live theme flip")
+	must("function useWizardTheme()", "the controls and group list share live wizard-theme state")
+	must("useWizardTheme();\n  const current = state.view.value;", "the group list repaints theme-dependent title attributes")
+	must("current.total === 1 ? 'party' : 'parties'", "the unfiltered count names parties")
+	must("wizardLabel: 'show unbound'", "the view menu names the unbound tray")
+	must("wizardLabel: 'show banished'", "the view menu names the banished tray")
+	must("wizardLabel: 'show plain scrolls'", "the view menu names the plain-scroll tray")
+	must("wizardLabel: 'show past incarnations'", "the view menu names the past-incarnations archive")
+
+	for _, pair := range []struct {
+		needle string
+		why    string
+	}{
+		{"themeWords(g.name, 'Unbound')", "Ungrouped becomes Unbound"},
+		{"themeWords('(no ungrouped agents)', '(no unbound familiars)')", "the Unbound empty state is themed"},
+		{"themeWords(g.name, 'Plain scrolls')", "Conversations becomes Plain scrolls"},
+		{"themeWords('(no non-agent conversations)', '(no plain scrolls)')", "the Plain scrolls empty state is themed"},
+		{"themeWords(g.name, 'Banished')", "Retired becomes Banished"},
+		{"themeWords('(no retired agents)', '(no banished familiars)')", "the Banished empty state is themed"},
+		{"themeWords(g.name, 'Past incarnations')", "Replaced generations becomes Past incarnations"},
+		{"themeWords('(no replaced generations)', '(no past incarnations)')", "the Past incarnations empty state is themed"},
+		{"themeWords(g.name, 'Summoning')", "Pending becomes Summoning"},
+		{"themeWords('(no pending spawns)', '(no familiars awaiting summoning)')", "the Summoning defensive empty state is themed"},
+		{"themeWords('virtual', 'ethereal')", "virtual-card badges use wizard vocabulary"},
+	} {
+		must(pair.needle, pair.why)
+	}
+	if got := strings.Count(dashboardAssets, "themeWords('virtual', 'ethereal')"); got != 5 {
+		t.Errorf("wizard virtual-card badge copy appears %d times, want 5", got)
+	}
+
+	must(`<span class="theme-copy-wizard"><strong>party maneuvers:</strong>`, "the drag-and-drop footer has a wizard version")
+	must(`<em>Plain scroll</em> → party (awaken + bind)`, "the footer explains promotion in wizard terms")
+	must("No arcane channels are woven to or from this party.", "the per-party empty channel state follows the weaving metaphor")
+	must("themeWords('Links', 'Arcane channels')", "populated per-party channels keep their wizard heading")
+	must("themeWords('Other group', 'Other party')", "populated channel rows name the other party")
+	must("themeWords('edit', 'rebind')", "populated channel actions keep their wizard verb")
+}
+
 // TestDashboardHTML_WizardRetireModal pins the wizard re-skin of the retire
 // confirmation ("Banish this familiar?"): the per-theme title copy swap and the
 // arcane CSS hooks — the destructive twin of the spawn dialog's Summon re-skin.
