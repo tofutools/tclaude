@@ -440,6 +440,8 @@ func TestRunHookCallback_PostCompactExemptFromForeignGuard(t *testing.T) {
 	}))
 	require.NoError(t, db.SetNudgedPct("pc-sess", 70),
 		"precondition: nudged_pct stamped")
+	require.NoError(t, db.UpdateContextSnapshot("pc-sess", 80, 150_000, 10_000, 200_000),
+		"precondition: context snapshot stamped")
 	require.NoError(t, db.UpdateSessionModelSlug("pc-sess", "gpt-5.4"),
 		"precondition: host model stamped")
 
@@ -461,6 +463,14 @@ func TestRunHookCallback_PostCompactExemptFromForeignGuard(t *testing.T) {
 		"PostCompact must not advance the conv-id (its case returns early)")
 	snap, err := db.GetContextSnapshot("pc-sess")
 	require.NoError(t, err)
+	assert.Zero(t, snap.ContextPct,
+		"PostCompact must clear the pre-compaction percentage")
+	assert.Zero(t, snap.TokensInput,
+		"PostCompact must clear the pre-compaction input-token count")
+	assert.Zero(t, snap.TokensOutput,
+		"PostCompact must clear the pre-compaction output-token count")
+	assert.Equal(t, int64(200_000), snap.ContextWindowSize,
+		"PostCompact preserves the model context-window size")
 	assert.Equal(t, "gpt-5.4", snap.Model,
 		"a mismatched PostCompact must not overwrite the host model")
 	assert.Equal(t, "gpt-5.4", snap.ModelID,
