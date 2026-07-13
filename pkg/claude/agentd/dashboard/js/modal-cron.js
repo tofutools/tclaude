@@ -754,7 +754,7 @@ async function submitCronForm(keepOpen) {
     // A newly-created row may not belong in the active query/page. Refetch the
     // authoritative window (also while "save another" keeps this modal open)
     // instead of locally inserting a row that violates those constraints.
-    void refresh({ force: true });
+    void refresh();
     if (keepOpen) {
       // Reset body + name for the next entry; keep target/schedule
       // since "create another" is usually batch-style.

@@ -4,8 +4,7 @@
 // Extracted from dashboard.js in the Stage 2 module split. refresh() is
 // the 2-second snapshot poll that re-renders every tab.
 
-import { $, $$, isModifiedClick, esc, themeWords, shortId, relTime, captureFocus, restoreFocus } from './helpers.js';
-import { cycleSort } from './sort.js';
+import { $, $$, isModifiedClick, esc, themeWords, shortId, relTime } from './helpers.js';
 import { dashPrefs } from './prefs.js';
 import { listParams, syncServedOffset, fetchListFull } from './list-paging.js';
 import { recordGroupInteraction } from './last-group.js';
@@ -41,61 +40,17 @@ import {
 
 // refreshSuspended() is the single source of truth for whether the
 // auto-refresh is allowed to re-render the DOM right now. refresh()
-// consults it both BEFORE its /api/snapshot fetch and AGAIN after,
-// so a refresh that started before a drag/modal opened can never
-// resume mid-gesture and re-render underneath it.
+// consults it both BEFORE its /api/snapshot fetch and AGAIN after, so a refresh
+// that started before a transient editor opened cannot publish underneath it.
 //
-// Modal state is derived from the DOM (.modal-overlay.show) rather
-// than a hand-maintained boolean on purpose: a flag must be reset on
-// every close path or it leaks and wedges auto-refresh forever — the
-// exact failure mode behind the drag-retire-freezes-refresh bug. The
-// DOM cannot leak: once an overlay's .show class is gone the modal
-// simply stops suspending, with no reset to forget. It is also
-// uniform — every modal, present and future, shares .modal-overlay,
-// so all of them suspend auto-refresh while open without each having
-// to remember to toggle a flag.
-//
-// ignoreModals bypasses ONLY the open-modal suspension (not the rename /
-// open-menu / slop-pull guards). A handful of
-// template/circle mutations fire refresh from INSIDE a modal that stays
-// open — installing a starter (the picker stays up to copy several),
-// snapshot-a-group (it reopens the editor on the fresh circle) — so a
-// plain, modal-suspended refresh would drop their tick and leave the
-// circle list stale until the human closed and reopened it. Those callers
-// pass force so the list behind the modal repaints immediately. Keyed
-// Preact-owned drag sources and targets do not suspend the shared poll.
-function refreshSuspended({ ignoreModals = false } = {}) {
+// Preact owns the modal, menu, drag and slop-machine surfaces and retains their
+// keyed nodes across snapshot publishes. The only remaining imperative edit
+// boundary is row-actions.js's transient sibling input/select: it is not part of
+// the Groups VNode tree, so a publish while it is open could remove it.
+function refreshSuspended() {
   // An inline rename <input> is open — re-rendering would destroy it
   // mid-keystroke.
   if (renameEditing) return true;
-  // Groups rows/headers and dock cards are keyed Preact-owned nodes. Snapshot
-  // publishes retain active drag sources/targets, so gestures no longer widen
-  // this global refresh-suspension predicate.
-  // Any modal overlay is open (unless a force-refresh opted out — see the
-  // ignoreModals note above).
-  if (!ignoreModals && document.querySelector('.modal-overlay.show')) return true;
-  // A ⚙ options menu is open — re-rendering the Groups tab would
-  // rebuild the row/group and collapse the menu out from under the
-  // pointer. Closing the menu drops the .open class, lifting this.
-  // Dock card menus are keyed Preact-owned state and survive snapshot
-  // publishes, so only the remaining legacy action menus suspend refresh.
-  if (document.querySelector('.action-menu.open')) return true;
-  // A slop-mode slot machine is mid-pull. manualPull() in slop-fx.js
-  // spins a row's .slop-machine for ~900ms, then holds the settled
-  // combo for ~1.8s, tagging the cell with a sentinel data-status of
-  // 'pull-spinning' then 'pull-stopped' for the whole ~2.7s. A
-  // re-render rebuilds the Groups tab and detaches the cell mid-spin —
-  // the bug where pulling the handle gets cancelled by the next poll.
-  // Defer the tick until the pull settles; slop-fx restores the cell's
-  // real data-status at the end, which lifts this on its own. Like the
-  // checks above it's DOM-derived, so there's no flag to leak: a cell
-  // detached mid-pull keeps a stale sentinel but is no longer in the
-  // live DOM, so it can't match here. Pulls are bounded (~2.7s each),
-  // so this only ever briefly delays a refresh — it can't wedge it.
-  // (Keep these sentinel values in sync with manualPull in slop-fx.js.)
-  if (document.querySelector('.slop-machine[data-status="pull-spinning"], .slop-machine[data-status="pull-stopped"]')) {
-    return true;
-  }
   return false;
 }
 // sudoGrantBlocklist: slugs the sudo-grant modal refuses to offer.
@@ -106,24 +61,6 @@ export let sudoGrantBlocklist = ['permissions.grant', 'permissions.revoke'];
 // members) can consult it for the 🔓 badge without a server-side
 // duplication of dashboardMember.active_sudo.
 export let sudoByConv = {};
-function bindFilter(tab, featureRerender = null) {
-  const input = $(`#filter-${tab}`);
-  const clear = $(`#filter-${tab}-clear`);
-  const key = `tclaude.dash.filter.${tab}`;
-  input.value = dashPrefs.getItem(key) || '';
-  const rerender = () => {
-    if (featureRerender) featureRerender();
-    else if (tab === 'links') renderLinksTab();
-  };
-  const onChange = () => {
-    const v = input.value;
-    if (v) dashPrefs.setItem(key, v); else dashPrefs.removeItem(key);
-    rerender();
-  };
-  input.addEventListener('input', onChange);
-  clear.addEventListener('click', () => { input.value = ''; onChange(); input.focus(); });
-}
-
 // groupsTabActive reports whether the Groups tab is the visible one — used to
 // skip the (default-hidden, expensive) conversations/replaced sub-fetches when
 // their virtual group can't be on screen anyway.
@@ -132,26 +69,11 @@ function groupsTabActive() {
   return !!s && s.classList.contains('active');
 }
 
-// Focus preservation across the 2s re-render lives in helpers.js
-// (captureFocus / restoreFocus / withPreservedFocus) — shared with
-// mail.js, which wraps its own async mail repaint the same way. refresh()
-// spreads capture and restore apart by hand below because they straddle
-// the non-render snapshot bookkeeping; a single-call wrapper wouldn't fit.
-export async function refresh(opts = {}) {
-  // force: proceed even while a .modal-overlay is open. Passed by the
-  // template/circle mutation handlers that fire from inside (or immediately
-  // reopen) a modal, so the list behind it repaints without the human having
-  // to close and reopen the view. opts may also be an Event object when
-  // refresh is used bare as a callback — .force is simply undefined there, so
-  // it reads as a normal (non-forced) refresh. See refreshSuspended's
-  // ignoreModals note.
-  const force = !!(opts && opts.force);
-  if (refreshSuspended({ ignoreModals: force })) {
-    // An inline-edit input, a modal, or a drag is in progress;
-    // re-rendering now would blow the input away mid-keystroke,
-    // disrupt the modal, or detach the dragged row. Skip this tick —
-    // the commit / cancel / dragend handlers each re-trigger
-    // refresh() once the user is done.
+export async function refresh() {
+  if (refreshSuspended()) {
+    // A transient inline-edit input/select is open. Skip this tick so the
+    // Groups publish cannot remove it mid-keystroke; its commit/cancel path
+    // re-triggers refresh() once the user is done.
     return;
   }
   // responded flips true the instant the /api/snapshot fetch resolves (agentd
@@ -231,10 +153,9 @@ export async function refresh(opts = {}) {
       dashboardState.discardRequest(requestId, { responded });
       return;
     }
-    // The suspend guard was sampled BEFORE the fetch; a drag/modal may have
-    // opened since. Re-check before touching the DOM (this preserves any
-    // optimistic drag mutation on the old snapshot; its teardown re-runs us).
-    if (refreshSuspended({ ignoreModals: force })) {
+    // The suspend guard was sampled BEFORE the fetch; an inline editor may have
+    // opened since. Re-check before publishing into the Groups tree.
+    if (refreshSuspended()) {
       dashboardState.discardRequest(requestId, { responded });
       jobs?.discardRequest(requestId);
       return;
@@ -257,8 +178,8 @@ export async function refresh(opts = {}) {
     await stitchListPage(data, 'replaced', replacedR, prevSnap);
     const jobsResult = await stitchListPage(data, 'jobs', jobsR, prevSnap);
     // stitchListPage awaited resp.json() (async boundaries) — re-check the request
-    // (a newer refresh may have started) AND the suspend guard (a drag/modal may
-    // have opened) before mutating shared offset state and the DOM.
+    // (a newer refresh may have started) AND the suspend guard (an inline editor
+    // may have opened) before mutating shared offset state and the DOM.
     if (!dashboardState.isCurrentRequest(requestId)) {
       jobs?.discardRequest(requestId);
       return;
@@ -267,7 +188,7 @@ export async function refresh(opts = {}) {
       dashboardState.discardRequest(requestId, { responded });
       return;
     }
-    if (refreshSuspended({ ignoreModals: force })) {
+    if (refreshSuspended()) {
       dashboardState.discardRequest(requestId, { responded });
       jobs?.discardRequest(requestId);
       return;
@@ -282,11 +203,6 @@ export async function refresh(opts = {}) {
     // stale rows remain visible. Do not mistake that fallback for a served
     // offset: Retry must keep targeting the page the user requested.
     if (jobsActive && jobsResult.ok) jobs.syncServedOffset(data.paging.jobs.offset);
-    // Snapshot the keyboard focus before the renders below replace the
-    // tab bodies wholesale, so a Tab-navigating user isn't bounced to
-    // the top of the page on every poll. Restored at the end once the
-    // fresh DOM is in place.
-    const focusToken = captureFocus();
     setLastSnapshot(data);
     syncDashDefaultProfile(data.spawn_profile_default);
     // Refresh the proactive-grant blocklist hint from the snapshot
@@ -350,9 +266,6 @@ export async function refresh(opts = {}) {
     // keeps the dependency one-way — refresh.js doesn't have to
     // import any feature module that wants to react to a tick.
     document.dispatchEvent(new CustomEvent('tclaude:snapshot'));
-    // Re-focus whatever the keyboard user had selected before the
-    // re-render detached it. No-op when focus was never stolen.
-    restoreFocus(focusToken);
     // Publish only after the full legacy render succeeds. Signal subscribers
     // can now react without observing a snapshot the current UI failed to
     // finish applying.
@@ -706,33 +619,6 @@ function bindDetailsPersistence() {
       dashPrefs.removeItem('tclaude.dash.group.' + key);
     }
   }, true);
-}
-
-// bindSortHeaders delegates clicks on sortable <th> cells. Headers
-// are re-rendered on every 2s refresh, so a single document-level
-// listener is simpler than re-binding per render (same approach as
-// bindDetailsPersistence). Clicking re-renders just the
-// affected tab so the new ordering — and the header arrow — show
-// immediately, without waiting for the next poll.
-function bindSortHeaders() {
-  document.addEventListener('click', e => {
-    const th = e.target.closest('th[data-sort-table]');
-    if (!th) return;
-    // The Groups island owns its table sorting. Its keyed Preact tree handles
-    // the same data attributes locally; letting this legacy document handler
-    // see the click too would advance the three-state sort cycle twice.
-    if (th.closest('#groups-list[data-island-owner="groups"]')) return;
-    const tableKey = th.dataset.sortTable;
-    cycleSort(tableKey, th.dataset.sortCol);
-    // 'replaced'/'retired'/'conversations'/'pending' are the virtual
-    // sub-tables (Replaced generations / Retired / Conversations / Pending),
-    // all rendered as part of the groups tab — so re-render that, same as
-    // 'members'.
-    if (tableKey === 'members' || tableKey === 'replaced'
-        || tableKey === 'retired' || tableKey === 'conversations'
-        || tableKey === 'pending') renderGroupsTab();
-    else if (tableKey === 'links') renderLinksTab();
-  });
 }
 
 // --- inline mutations: action buttons + shared Preact feedback services ---
@@ -1161,10 +1047,9 @@ function countGroupMembersByStatus(group, status) {
 // rules as the single retire (main repo / shared worktrees kept). Untick
 // it to keep the worktrees. Cancel / Esc / backdrop is a no-op.
 //
-// The candidate list is snapshotted from lastSnapshot at open time and
-// then OWNED by the modal: the 2s auto-refresh is suspended while a
-// .modal-overlay is open and submit posts these exact conv-ids, so the
-// cohort cannot shift under the human between preview and submit.
+// The candidate list is snapshotted from lastSnapshot at open time and then
+// OWNED by the modal. Background snapshots keep flowing, but submit posts these
+// exact conv-ids, so the cohort cannot shift under the human.
 function openRetirePreview(group, status) {
   const word = RETIRE_STATUS_LABELS[status] || status;
   const candidates = groupMembersByStatus(group, status).map(m => ({ ...m, checked: true }));
@@ -1421,10 +1306,9 @@ function countUngroupedAgents() {
 // as the single retire (main repo / shared worktrees kept). Untick it to
 // keep the worktrees. Cancel / Esc / backdrop is a no-op.
 //
-// Like openRetirePreview, the candidate list is snapshotted at open time
-// and OWNED by the modal: the 2s auto-refresh is suspended while a
-// .modal-overlay is open, so the population can't shift between preview
-// and submit.
+// Like openRetirePreview, the candidate list is snapshotted at open time and
+// OWNED by the modal, so background snapshots cannot shift the population
+// between preview and submit.
 function openRetireUngroupedPreview() {
   const candidates = ungroupedRetireCandidates().map(c => ({ ...c, checked: true }));
   if (candidates.length === 0) {
@@ -1647,11 +1531,10 @@ function openRetireUngroupedPreview() {
 // worktrees kept). Retired agents are offline, so there is no shutdown or
 // include_online toggle — the delete tier acts on them directly.
 //
-// Like the retire preview, the candidate list is snapshotted at open time
-// and OWNED by the modal: the 2s auto-refresh is suspended while a
-// .modal-overlay is open, so the population can't shift between preview and
-// submit. On success the editable list is swapped for the per-conv outcome
-// log the cleanup endpoint returns (the result phase).
+// Like the retire preview, the candidate list is snapshotted at open time and
+// OWNED by the modal, so background snapshots cannot shift the population
+// between preview and submit. On success the editable list is swapped for the
+// per-conv outcome log the cleanup endpoint returns (the result phase).
 async function openDeleteRetiredPreview() {
   // retired[] in the snapshot is only one page now — fetch the COMPLETE list
   // (the /api/retired no-param path) so this bulk-delete preview acts on every
@@ -1906,8 +1789,8 @@ async function openDeleteRetiredPreview() {
 // `checked` flag — orphans pre-ticked, resume-bound and dirty ones left
 // for the human to review.
 //
-// The modal then OWNS that list (the 2s auto-refresh is suspended while a
-// .modal-overlay is open). The human edits the selection — per-row, the
+// The modal then OWNS that list while background snapshots keep flowing. The
+// human edits the selection — per-row, the
 // category mass-toggle chips, select-all/none over the filtered view, the
 // title/path filter — and a live "⟳ rescan" re-pulls the candidate set
 // (preserving rows the human manually toggled). Submit POSTs the EXACT
@@ -3088,9 +2971,8 @@ function isValidRenameTitleJS(t) {
 //     by the caller via POST /api/agents/{conv}/rename.
 //   - role / descr — present only when changed, applied via the
 //     group-members PATCH. An unchanged field is omitted entirely.
-// Resolves to null on Cancel / outside-click / Escape. Auto-refresh
-// suspends while the modal is open — refreshSuspended() sees its
-// .modal-overlay.show.
+// Resolves to null on Cancel / outside-click / Escape. Auto-refresh continues
+// while the modal's local form state remains untouched.
 // editMemberModal is the single per-agent edit panel: title (incl. the
 // "auto" self-rename), group role, group description, the group-owner
 // toggle, and a Permissions… button that opens the permanent-permission
@@ -4135,11 +4017,9 @@ export async function openCleanupModal(opts) {
     catsEl.removeEventListener('change', onCatChange);
     optsEl.removeEventListener('change', onOptChange);
     listEl.removeEventListener('change', onListChange);
-    // refresh() belongs here, not in submit(): submit() runs while the
-    // overlay still carries .show, so refreshSuspended() would drop the
-    // re-render. After a completed cleanup (phase === 'result') the
-    // dashboard needs the post-cleanup snapshot — refresh once the
-    // overlay is gone.
+    // After a completed cleanup (phase === 'result') the dashboard needs the
+    // post-cleanup snapshot. Refresh on close so the result view remains stable
+    // until the human dismisses it.
     if (phase === 'result') refresh();
   }
   function onCancel() { close(); }
@@ -4305,7 +4185,7 @@ async function stopAgentReq(conv, label, force) {
 }
 
 export {
-  bindFilter, bindTabs, bindTabHotkeys, bindDetailsPersistence, bindGroupTitleToggle, bindGroupQuickHover, bindSortHeaders,
+  bindTabs, bindTabHotkeys, bindDetailsPersistence, bindGroupTitleToggle, bindGroupQuickHover,
   toast, confirmModal, confirmDiscard,
   shutdownScope, powerOnScope, openWindowModal, retireConfirm, retireToast, shutdownConfirm,
   maybeHandleDanglingRetire, retireAgentInteractive, openRetirePreview, openRetireUngroupedPreview, openDeleteRetiredPreview, openWorktreeCleanup,

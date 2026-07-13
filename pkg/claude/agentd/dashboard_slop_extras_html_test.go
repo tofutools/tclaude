@@ -9,7 +9,7 @@ import (
 // TestDashboardHTML_SlopExtras pins the wiring for the three slop-mode
 // extras that hang off slop-fx's `tclaude:slopfx` event bus — casino
 // sound FX (slop-audio.js), the credits counter + high-rollers
-// leaderboard (slop-credits.js), and the Konami / lever / confetti
+// leaderboard (Preact, fed by slop-credits.js), and the Konami / lever / confetti
 // spectacle (slop-spectacle.js).
 //
 // Same playbook as TestDashboardHTML_SlopFx / _VegasTab: the features are

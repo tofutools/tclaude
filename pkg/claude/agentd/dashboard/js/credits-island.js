@@ -26,15 +26,50 @@ export function CreditsCounter({ state }) {
   >🪙 ${current.credits.toLocaleString()}</span>`;
 }
 
+export function CreditsLeaderboard({ state }) {
+  const entries = state.view.value.entries;
+  if (!entries.length) {
+    return html`
+      <h3 class="vegas-leaderboard-title">🏆 High rollers</h3>
+      <div class="vegas-leaderboard-empty">
+        No jackpots yet — put the agents to work, or pull a few levers to prime the pump.
+      </div>
+    `;
+  }
+  return html`
+    <h3 class="vegas-leaderboard-title">
+      🏆 High rollers <span class="vegas-leaderboard-sub">this session</span>
+    </h3>
+    <ol class="vegas-leaderboard-list">
+      ${entries.map((entry) => html`
+        <li
+          key=${entry.conv}
+          data-key=${entry.conv}
+          class=${entry.hot ? 'hot' : ''}
+        >
+          <span class="rank">${entry.rank}</span>
+          <span class="who">${entry.hot ? '🔥 ' : ''}${entry.title}</span>
+          <span class="wins">${entry.wins} 🎰</span>
+        </li>
+      `)}
+    </ol>
+  `;
+}
+
 export function mountCreditsIsland({
-  host,
+  counterHost,
+  leaderboardHost,
   state = creditsState,
   registerCleanup,
 }) {
-  if (!host) throw new TypeError('credits island requires a host');
+  if (!counterHost || !leaderboardHost) {
+    throw new TypeError('credits island requires counter and leaderboard hosts');
+  }
   if (typeof registerCleanup !== 'function') {
     throw new TypeError('credits island requires registerCleanup');
   }
-  registerCleanup(() => render(null, host));
-  render(html`<${CreditsCounter} state=${state} />`, host);
+  registerCleanup(() => render(null, counterHost));
+  registerCleanup(() => render(null, leaderboardHost));
+  render(html`<${CreditsCounter} state=${state} />`, counterHost);
+  render(html`<${CreditsLeaderboard} state=${state} />`, leaderboardHost);
 }

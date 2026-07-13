@@ -86,10 +86,9 @@ export function createPluginsActions({ requestMutation, refresh, confirm, notify
           : '/api/plugins', { method: editing ? 'PUT' : 'POST', body, refreshAfter: false });
         state.closeModal();
         notify(editing ? `plugin ${body.name} saved` : `plugin ${body.name} created`);
-        // Preact removes the modal overlay after this synchronous state write.
-        // Bypass only the modal suspension so the canonical post-save snapshot
-        // is not dropped while the closing overlay finishes committing.
-        await refresh({ force: true });
+        // Preact removes the modal overlay after this synchronous state write;
+        // refresh immediately from the canonical post-save snapshot.
+        await refresh();
         return true;
       } catch (error) {
         state.failSubmit(detail(error));

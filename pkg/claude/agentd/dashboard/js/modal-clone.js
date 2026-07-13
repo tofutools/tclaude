@@ -82,9 +82,9 @@ async function submitClone() {
     await create(payload);
     closeCloneModal();
     toast(`cloned: ${name}`);
-    // The dock renders off the live snapshot, so force a re-fetch to surface the
+    // The dock renders off the live snapshot, so re-fetch to surface the
     // new card at once (the 2s poll would catch it a tick later regardless).
-    refresh({ force: true });
+    refresh();
   } catch (err) {
     errEl.textContent = (err && err.message) || String(err);
   } finally {

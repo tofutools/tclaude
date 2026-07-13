@@ -60,9 +60,9 @@ test('Plugins save surfaces validation failures in the modal and closes on succe
   });
   let failure = true;
   const calls = [];
-  let refreshOptions = null;
+  let refreshCount = 0;
   const actions = createPluginsActions({
-    state, refresh: async (options) => { refreshOptions = options; }, confirm: async () => true, notify: () => {},
+    state, refresh: async () => { refreshCount++; }, confirm: async () => true, notify: () => {},
     requestMutation: async (...args) => {
       calls.push(args);
       if (failure) throw Object.assign(new Error('HTTP 400'), { body: 'name required' });
@@ -78,5 +78,5 @@ test('Plugins save surfaces validation failures in the modal and closes on succe
   assert.equal(calls[1][1].body.name, 'demo');
   assert.equal(calls[1][1].refreshAfter, false);
   assert.equal(state.modal.value, null);
-  assert.deepEqual(refreshOptions, { force: true });
+  assert.equal(refreshCount, 1);
 });

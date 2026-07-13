@@ -79,7 +79,7 @@ export function createDashboardActions({
   }
 
   return Object.freeze({
-    refresh: (options) => refresh(options),
+    refresh: () => refresh(),
     retry: () => refresh(),
     requestMutation,
   });
@@ -101,7 +101,7 @@ function requireActions() {
 // dashboard boot configures its dependencies. Calls still fail loudly if a
 // future island invokes an action before bootstrap completes.
 export const dashboardActions = Object.freeze({
-  refresh: (options) => requireActions().refresh(options),
+  refresh: () => requireActions().refresh(),
   retry: () => requireActions().retry(),
   requestMutation: (path, options) => requireActions().requestMutation(path, options),
 });

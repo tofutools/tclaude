@@ -237,10 +237,9 @@ function mailTabActive() {
 
 // onlineConvs is the set of conv-ids with a live tmux window — focus is
 // only meaningful for those. Reads the passed snapshot, defaulting to the
-// one already in memory (lastSnapshot), so callers that hold a FRESHER
-// snapshot than lastSnapshot — e.g. the reply dialog, which polls while a
-// modal suspends the main refresh — can pass it in and get current
-// liveness without a global write.
+// one already in memory (lastSnapshot), so callers that hold a FRESHER snapshot
+// than lastSnapshot — e.g. the reply dialog's local data-only poll — can pass it
+// in and get current liveness without a global write.
 function onlineConvs(snap) {
   const set = new Set();
   snap = snap || lastSnapshot || {};
@@ -270,9 +269,8 @@ function onlineAgents(snap) {
 // never became an actor. Exported so the reply dialog gates on the
 // identical liveness signal the focus/reply buttons render from — one
 // source of truth for "can this agent receive a reply". `snap` defaults to
-// lastSnapshot; the reply dialog passes its own freshly-polled snapshot so
-// its indicator stays live even while the open modal suspends the main
-// refresh (which would otherwise freeze lastSnapshot at open time).
+// lastSnapshot; the reply dialog passes its own freshly-polled snapshot so its
+// indicator is independent of the main render/commit cadence.
 function senderOnline(fromAgent, fromConv, snap) {
   return fromAgent
     ? onlineAgents(snap).has(fromAgent)
@@ -474,15 +472,7 @@ function renderMailTab() {
 // filters. Sync — used by the filter inputs and after selection changes,
 // with no server round-trip.
 //
-// Wrapped in withPreservedFocus because this is the mail tab's single
-// repaint chokepoint, and several callers reach it ASYNCHRONOUSLY —
-// loadMail()/reloadMail() repaint after their fetch resolves, i.e. after
-// refresh.js's own synchronous focus restore has already run. Without
-// this wrap a Tab-navigating user (stepping the mailbox sidebar or the
-// message list) was bounced to the top each time fresh mail data landed.
-// The sidebar/list rows carry data-act + data-id, so they restore by
-// signature; the static filter inputs above the panes are never rebuilt
-// and keep their focus untouched.
+// Messages are Preact-owned, so keyed rows retain focus while state publishes.
 function paintMail() {
   mailState.touch();
 }
@@ -509,8 +499,7 @@ function scheduleMailReload() {
   }, SEARCH_DEBOUNCE_MS);
 }
 
-// onMailSearchChanged is the message-filter hook (called by refresh.js's
-// bindFilter when #filter-messages changes). A new search resets to page
+// onMailSearchChanged is the message-filter hook. A new search resets to page
 // 1 and clears the selection (the search changes the message universe, so
 // a cross-page selection made under the old query no longer makes sense),
 // then reloads from the server — pagination has to span the whole
@@ -518,9 +507,7 @@ function scheduleMailReload() {
 // the bulk bar immediately so it feels responsive while the debounced
 // fetch is in flight.
 function onMailSearchChanged() {
-  // Compatibility with the legacy filter binder during the component-by-
-  // component cutover. Once Preact owns the input, setMessageQuery writes the
-  // same field directly and this assignment is a no-op.
+  // Compatibility for callers that still invoke this hook directly.
   const input = $('#filter-messages');
   if (input) mail.messageQuery = input.value;
   mail.page = 1;

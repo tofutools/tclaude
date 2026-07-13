@@ -300,25 +300,10 @@
   <section id="tab-audit">
     <div id="audit-root"></div>
   </section>
-  <!-- Debug tab — daemon self-diagnostics (TCL-376). v1 renders the
-       poll-timing distributions the daemon records in-memory (perf.go):
-       one card per polled endpoint with a latency sparkline + percentile
-       chips, and for /api/snapshot the per-phase breakdown (median
-       composition bar + aggregate table). Rendered by debug.js from
-       /api/perf — fetched on tab activation, then re-fetched on each
-       snapshot tick while the tab is showing; never on other tabs. -->
+  <!-- Preact owns the Debug toolbar, endpoint cards, phase breakdowns and its
+       active-only 10s /api/perf poll inside this stable feature host. -->
   <section id="tab-debug">
-    <!-- The ordinary Debug tab is deliberately titleless; wizard mode gives
-         its Alchemy chamber a proper arcane heading. The technical copy below
-         still names exactly what is measured in both skins. -->
-    <h2 class="debug-wizard-title">🧪 The Alchemist's Observatory</h2>
-    <div class="filter-bar">
-      <span class="muted"><span class="theme-copy-regular">Wall-clock timings of the dashboard's background polls, recorded in-memory by this daemon process (newest ≈ 34 min at the 2s poll; reset on daemon restart).</span><span class="theme-copy-wizard">Arcane readings of the Tower's background scrying, recorded in this daemon's memory (newest ≈ 34 min at the 2s poll; the readings vanish when the daemon restarts).</span></span>
-      <span class="spacer"></span>
-      <span id="debug-updated" class="muted"></span>
-      <button class="tool" id="debug-reset" title="Discard every recorded sample and start a fresh distribution — useful after changing what's being measured (agent count, config)"><span class="theme-copy-regular">↺ reset stats</span><span class="theme-copy-wizard">⚗ clear readings</span></button>
-    </div>
-    <div id="debug-list"></div>
+    <div id="debug-root"></div>
   </section>
   <!-- Preact owns the Logs filters, server-side paging, status, table, and
        opt-in tail polling inside this stable feature host. -->
@@ -463,9 +448,8 @@
      the 2s poll can no longer reach agentd (the /api/snapshot fetch REJECTS for
      FAIL_THRESHOLD consecutive ticks); the Preact shell derives .show and
      removes it the instant a poll gets through again.
-     Deliberately NOT a .modal-overlay: the auto-refresh must keep polling
-     beneath it so the reconnect that clears it is actually seen (see
-     refreshSuspended() in refresh.js). While it's up, vegas.js stops the radio
+     While it is up, the auto-refresh keeps polling so the reconnect that clears
+     it is actually seen. vegas.js stops the radio
      and keeps it stopped so a dead dashboard isn't left playing music. Hidden
      by default via `display:none`; role=alert so screen readers announce the
      drop when it appears. -->
@@ -1163,13 +1147,7 @@
   <div class="manage-modal" role="dialog" aria-modal="true" aria-labelledby="links-manage-title">
     <h3 id="links-manage-title"><span class="theme-copy-regular">Inter-group links</span><span class="theme-copy-wizard">Arcane channels between parties</span></h3>
     <p class="manage-intro"><span class="theme-copy-regular">Communication edges between groups: members of FROM may message members of TO. Direction matters — add a reverse edge for two-way reach.</span><span class="theme-copy-wizard">Missive channels between parties: familiars of FROM may whisper to familiars of TO. Direction matters — weave a reverse channel for two-way reach.</span></p>
-    <div class="filter-bar">
-      <input id="filter-links" type="text" placeholder="Filter (from / to / mode)" autocomplete="off" spellcheck="false" />
-      <span class="filter-count" id="filter-links-count"></span>
-      <button class="clear-filter" id="filter-links-clear" title="Clear filter">×</button>
-      <span class="spacer"></span>
-      <button id="link-new-open" class="primary" title="Add a new inter-group communication link"><span class="theme-copy-regular">+ new link</span><span class="theme-copy-wizard">+ weave channel</span></button>
-    </div>
+    <div class="filter-bar" id="links-filter-root"></div>
     <div id="links-list"></div>
     <div class="modal-buttons">
       <span class="spacer"></span>
@@ -1500,8 +1478,8 @@
   <span class="dnd-trash-label"><span class="dnd-trash-label-regular">Retire</span><span class="dnd-trash-label-wizard">Banish</span></span>
 </div>
 <div id="shell-toast-root"></div>
-<!-- The Preact shell owns the command palette overlay. It retains the shared
-     .modal-overlay.show contract so refresh remains suspended while open. -->
+<!-- The Preact shell owns the command palette overlay. It uses the shared
+     .modal-overlay.show backdrop contract while refresh continues underneath. -->
 <div id="shell-palette-modal-root"></div>
 
 <!-- Shared Preact directory picker. Keep this host after every static overlay:

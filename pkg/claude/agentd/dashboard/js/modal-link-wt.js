@@ -6,7 +6,7 @@
 
 import { $, esc, shortCwd, syncSelectTitle, themeWords } from './helpers.js';
 // lastSnapshot lives in dashboard.js; refresh() / toast in refresh.js;
-// renderLinksTab in tabs.js. Imported back — benign cycles (see render.js);
+// renderLinksTab in tabs.js publishes into the Links island. Imported back — benign cycles (see render.js);
 // TDZ-safe (used only at runtime, never at top-level eval).
 import { lastSnapshot } from './dashboard.js';
 import { refresh, toast, bindBackdropDiscard, bindManageOverlayDismiss } from './refresh.js';
@@ -146,9 +146,8 @@ async function submitLinkModal() {
 //
 // The former Links tab, now reached from the Groups cog's "🔗 links…"
 // item and from the per-group link chips in each group header. Opening
-// paints the listing once; the 2s auto-refresh keeps it live afterwards
-// (a .manage-overlay does not suspend the refresh — see dashboard.css).
-// The +new-link / link-edit child modal opens on top and DOES suspend.
+// publishes the listing once; the 2s auto-refresh keeps it live afterwards, even
+// when the +new-link / link-edit child modal opens on top.
 function openLinksManageModal() {
   $('#links-manage-modal').classList.add('show');
   renderLinksTab();

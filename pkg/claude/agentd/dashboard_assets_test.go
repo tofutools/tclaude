@@ -158,26 +158,26 @@ func TestDashboardCSS_SlopPillHideScopedToStateCell(t *testing.T) {
 	}
 }
 
-// TestDashboardJS_SlopPullPausesRefresh guards the fix for the
-// slop-mode bug where the 2s auto-refresh cancelled a slot machine the
-// user had just pulled: refreshSuspended() (refresh.js) now defers the
-// poll while any .slop-machine is mid-pull, detected via the sentinel
-// data-status values manualPull() (slop-fx.js) tags the cell with for
-// the pull's ~2.7s lifetime. The two files are coupled only through
-// those literal strings, so a rename in one silently reopens the bug —
-// asserting both halves are present at `go test ./...` catches it. Keep
-// these needles in sync with both files if the sentinels ever change.
-func TestDashboardJS_SlopPullPausesRefresh(t *testing.T) {
+// TestDashboardJS_SlopPullUsesPreactOwnershipBoundary guards the slop-mode bug
+// where a snapshot publish cancelled a slot machine the user had just pulled.
+// manualPull still tags its ~2.7s phases, but the Groups Preact bridge now treats
+// the reel body as opaque and retains the keyed wrapper instead of suspending the
+// dashboard's global poll.
+func TestDashboardJS_SlopPullUsesPreactOwnershipBoundary(t *testing.T) {
 	for _, needle := range []string{
-		// refresh.js: the suspension check keys on the in-pull cell.
-		`.slop-machine[data-status="pull-spinning"], .slop-machine[data-status="pull-stopped"]`,
 		// slop-fx.js: manualPull tags the cell with each sentinel.
 		`machine.setAttribute('data-status', 'pull-spinning')`,
 		`machine.setAttribute('data-status', 'pull-stopped')`,
+		// html-vnodes.js: Preact does not reconcile the imperative reel children.
+		`if (node.classList.contains('slop-machine'))`,
+		`props.dangerouslySetInnerHTML = { __html: node.innerHTML };`,
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
-			t.Errorf("dashboard JS missing %q — slop-pull refresh pause regressed", needle)
+			t.Errorf("dashboard JS missing %q — slop-pull ownership boundary regressed", needle)
 		}
+	}
+	if strings.Contains(dashboardAssets, `.slop-machine[data-status="pull-spinning"], .slop-machine[data-status="pull-stopped"]`) {
+		t.Error("refresh suspension still keys on slop pull sentinels")
 	}
 }
 

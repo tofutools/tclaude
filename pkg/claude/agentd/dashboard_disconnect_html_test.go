@@ -65,9 +65,8 @@ func TestDashboardHTML_DisconnectBanner(t *testing.T) {
 		t.Error("connection watchdog must publish Signal state, not imperatively rewrite Preact-owned disconnect DOM")
 	}
 
-	// CSS: hidden by default (display:none) and revealed via .show, and it must
-	// NOT be a .modal-overlay (that would suspend the poll that clears it — the
-	// whole reason it's a separate class).
+	// CSS: hidden by default (display:none) and revealed via .show. It remains a
+	// distinct non-dialog overlay because it is connection status, not modal UI.
 	must(".disconnect-overlay {", "the overlay CSS ships")
 	must(".disconnect-overlay.show { display: flex; }",
 		"the overlay is revealed by the .show hook connection.js adds")

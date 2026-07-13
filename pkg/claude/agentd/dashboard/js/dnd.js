@@ -350,9 +350,9 @@ function bindDnd() {
     // circuits above have already returned, so a modal is only ever
     // shown for a gesture that would really change something — an
     // inert drop never reaches a runDnd* function and never prompts.
-    // On Cancel / Escape / outside-click the runDnd* function calls
-    // refresh() (the modal suspended auto-refresh while it was open)
-    // and returns without touching the daemon or lastSnapshot.
+    // On Cancel / Escape / outside-click the runDnd* function calls refresh()
+    // to reconcile any drag-local presentation, then returns without touching
+    // the daemon or lastSnapshot.
     // runDndRetire uses the richer retireConfirm modal — shutdown
     // checkbox and all — so a retire-by-drag and the per-row retire
     // button ask the identical question.
@@ -496,9 +496,8 @@ async function runDndClone(payload, targetGroup) {
   } catch (err) {
     toast(`clone failed: ${err && err.message || err}`, true);
   } finally {
-    // The confirm modal suspended auto-refresh while it was open, and
-    // the dragend-fired refresh() bailed for the same reason — so the
-    // dashboard has not re-rendered since before the drag. Sync now.
+    // Always re-sync after the operation so every partial/failed path converges
+    // on the daemon's authoritative snapshot.
     await refresh();
   }
 }
@@ -526,10 +525,9 @@ async function runDndMove(payload, targetGroup) {
   if (!confirmed) { await refresh(); return; }
   // Every post-confirm exit — a guard-clause return, the partial-
   // failure return, success, or an error — funnels through the
-  // finally so the dashboard re-syncs. The dragend-fired refresh()
-  // bailed while the confirm modal was open (refreshSuspended() saw
-  // it), so without this a confirmed-then-aborted move would leave
-  // the dashboard showing stale state until the next 2s tick.
+  // finally so the dashboard re-syncs immediately. Without this a
+  // confirmed-then-aborted move could leave optimistic state visible until the
+  // next 2s tick.
   try {
     if (!lastSnapshot || !Array.isArray(lastSnapshot.groups)) {
       toast(`move: dashboard snapshot not loaded`, true);

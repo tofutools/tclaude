@@ -40,14 +40,14 @@ func TestDashboardHTML_OptionsMenu(t *testing.T) {
 	must("' disabled'", "focus/hide render disabled when the agent is offline")
 	must("button:disabled", "disabled row buttons have a CSS rule")
 
-	// The cog toggle is dispatched in row-actions.js, closes any other
-	// open menu, and the auto-refresh is suspended while a menu is open.
+	// The cog toggle is dispatched in row-actions.js and closes any other open
+	// menu. Keyed Preact ownership lets snapshot refresh continue while it is open.
 	must("function closeAllActionMenus(",
 		"row-actions.js closes menus on outside / item clicks")
 	must("case 'row-menu':", "row-actions.js dispatches the agent-row cog")
 	must("case 'group-menu':", "row-actions.js dispatches the group cog")
-	must("querySelector('.action-menu.open')",
-		"refreshSuspended() pauses the 2s poll while a menu is open")
+	must("if (renameEditing) return true;",
+		"only a transient inline editor pauses the 2s poll")
 
 	// Keyboard + ARIA: Escape closes an open menu, focus returns to the
 	// owning cog, and the cog / menu / items carry the ARIA menu-button

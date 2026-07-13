@@ -17,7 +17,7 @@ function page(name = 'canvas') {
 
 function actions(calls) {
   return {
-    refresh: async (options) => calls.push(options?.force ? 'refresh-force' : 'refresh'),
+    refresh: async () => calls.push('refresh'),
     checkAll: () => calls.push('check-all'), checkPlugin: () => calls.push('check'),
     toggleStep: () => calls.push('step'), togglePlugin: () => calls.push('toggle'),
     install: () => calls.push('install'), deletePlugin: () => calls.push('delete'),
@@ -115,7 +115,7 @@ test('Plugins modal supports create/edit fields, actions, and listener cleanup',
   await harness.act(() => harness.fireEvent(submit, 'keydown', { key: 'Escape' }));
   assert.equal(state.modal.value, null);
   assert.equal(harness.document.activeElement, invoker);
-  assert.ok(calls.includes('refresh-force'));
+  assert.ok(calls.includes('refresh'));
   await mounted.unmount();
   invoker.remove();
 });

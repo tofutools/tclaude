@@ -61,17 +61,17 @@ func TestDashboardHTML_DockCardCloneMenu(t *testing.T) {
 	// toast). Profiles/roles get a dashboard refresh after (their removes only
 	// repaint the closed manager overlay); deleteTemplate already refreshes.
 	must("onDeleteItem:", "the sections carry a delete hook")
-	must("removeProfile(p.name).then(() => refresh({ force: true }))", "profile delete reuses removeProfile + refreshes the dock")
-	must("removeRole(rl.name).then(() => refresh({ force: true }))", "role delete reuses removeRole + refreshes the dock")
+	must("removeProfile(p.name).then(() => refresh())", "profile delete reuses removeProfile + refreshes the dock")
+	must("removeRole(rl.name).then(() => refresh())", "role delete reuses removeRole + refreshes the dock")
 	must("onDeleteItem: (t) => deleteTemplate(t.name)", "template delete reuses deleteTemplate (which self-refreshes)")
 	// The Delete item is styled destructive (red), distinct from Edit / Clone.
 	must(`class="dock-card-menu-item danger"`, "the Delete menu item is marked destructive")
 	must(".dock-card-menu-item.danger {", "the destructive Delete item has a red skin")
 	must("body.wizard #agent-dock .dock-card-menu-item.danger", "the Delete item's destructive skin re-skins in wizard mode")
 
-	// A keyed Preact card/menu survives snapshot publishes, so it must no longer
-	// widen the legacy action-menu refresh suspension.
-	must(`document.querySelector('.action-menu.open')`, "only legacy action menus suspend refresh")
+	// Keyed Preact card and Groups menus survive snapshot publishes, so neither
+	// participates in the narrow transient-editor refresh guard.
+	mustNot(`if (document.querySelector('.action-menu.open')) return true;`, "Preact-owned action menus must not suspend refresh")
 	mustNot(".action-menu.open, .dock-card-menu.open", "Preact-owned dock menus do not suspend refresh")
 
 	// --- The generic clone dialog (#clone-modal, modal-clone.js). ------------
@@ -85,10 +85,10 @@ func TestDashboardHTML_DockCardCloneMenu(t *testing.T) {
 	must("export function bindCloneModal(", "modal-clone.js exports the binder")
 	must("import { bindCloneModal } from './modal-clone.js';", "dashboard.js imports the clone binder")
 	must("bindCloneModal();", "dashboard.js boot wires the clone dialog")
-	// The clone POSTs the source object with the name swapped, then force-refreshes
+	// The clone POSTs the source object with the name swapped, then refreshes
 	// so the dock's snapshot-driven cards show the new one at once.
 	must("const payload = { ...source, name };", "the clone re-POSTs the source object with the name swapped")
-	must("refresh({ force: true })", "a successful clone force-refreshes the dock")
+	must("refresh()", "a successful clone refreshes the dock")
 
 	// --- Wizard styling (the operator flagged this twice). ------------------
 	// The menu chrome re-skins in wizard mode, kept SCOPED under #agent-dock (the

@@ -26,9 +26,9 @@ test('dashboard actions expose refresh, retry, and same-origin mutations', async
     },
   });
 
-  await actions.refresh({ force: true });
+  await actions.refresh();
   await actions.retry();
-  assert.deepEqual(refreshCalls, [{ force: true }, undefined]);
+  assert.deepEqual(refreshCalls, [undefined, undefined]);
 
   const result = await actions.requestMutation('/api/jobs/job-1', {
     method: 'PATCH',

@@ -227,7 +227,7 @@ function applyGroupDrop(dragName, targetName, zone) {
       return;
     }
     toast(plan.desiredParent ? `${dragName}: nested under ${plan.desiredParent}` : `${dragName}: moved to top level`);
-    refresh({ force: true });
+    refresh();
   }).catch((err) => {
     toast(`nest failed: ${(err && err.message) || err}`, true);
     renderGroupsTab();

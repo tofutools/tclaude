@@ -28,13 +28,13 @@ func TestDashboardHTML_DeleteRetiredWired(t *testing.T) {
 		}
 	}
 
-	// 1. Markup: the overlay rides on .modal-overlay (shared backdrop +
-	//    auto-refresh suspend), with the candidate list, the per-row opt-out
+	// 1. Markup: the overlay rides on .modal-overlay (shared backdrop), with the
+	//    candidate list, the per-row opt-out
 	//    toolbar (select-all/none + the title filter + the age floor), the
 	//    delete-worktrees toggle, and the submit button the JS drives.
 	must(`id="delete-retired-modal"`, "the delete-retired overlay exists")
 	must(`class="modal-overlay" id="delete-retired-modal"`,
-		"the preview is a .modal-overlay so it suspends the 2s refresh while open (population can't shift)")
+		"the preview uses the shared modal backdrop")
 	must(`id="delete-retired-list"`, "the preview has a candidate list")
 	must(`id="delete-retired-search"`, "the preview has a title/id filter")
 	must(`id="delete-retired-age"`, "the preview has an age-floor filter")

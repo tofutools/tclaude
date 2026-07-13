@@ -29,10 +29,9 @@
 // RESUMES agent processes, unlike the window ops which only detach/raise
 // terminals — see section 1b.
 //
-// palette-island.js renders it as a .modal-overlay so it picks up the shared backdrop AND pauses
-// the 2s auto-refresh while open (refreshSuspended() keys on
-// .modal-overlay.show), which keeps a re-render from yanking focus out
-// of the search box mid-type.
+// palette-island.js renders it as a .modal-overlay for the shared backdrop.
+// Preact owns its input, selection and focus, so snapshot publishes continue
+// underneath without yanking the search box mid-type.
 //
 // Trigger: Ctrl/Cmd-K (claimed with preventDefault; pressing it again
 // closes). Esc or a backdrop click closes. ↑/↓ move the selection one

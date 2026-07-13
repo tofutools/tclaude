@@ -1340,10 +1340,10 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   background: #161b22; color: #d4d4d4; border: 1px solid #2a3340;
   border-radius: 4px; padding: 1px 4px; cursor: pointer;
 }
-/* Debug tab — poll-timing cards (debug.js / TCL-376). One card per
+/* Debug tab — Preact-owned poll-timing cards (debug-island.js / TCL-376). One card per
    polled endpoint: header stat chips, the latency sparkline, and (for
    /api/snapshot) the median phase-composition bar + aggregate table.
-   Fill colors are inline (a fixed validated palette in debug.js); all
+   Fill colors are inline (a fixed validated palette in debug-island.js); all
    text stays in the regular ink/muted tokens so identity never rides
    on color alone. */
 .debug-card {
@@ -2451,8 +2451,8 @@ details[data-group-key][open] > summary .group-sandbox-profile {
 /* Disconnected overlay — connection.js adds .show when the 2s poll can't
    reach agentd for FAIL_THRESHOLD consecutive ticks, and removes it the moment
    a poll succeeds again. Deliberately NOT .modal-overlay: the auto-refresh
-   must keep polling beneath it to notice the reconnect, so it stays off the
-   refreshSuspended() selector. z-index sits above every modal/palette/toast
+   must keep polling beneath it to notice the reconnect. z-index sits above
+   every modal/palette/toast
    (ceiling 10003) so nothing can paint over the "you are disconnected"
    message. */
 .disconnect-overlay {

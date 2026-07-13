@@ -117,7 +117,7 @@ export const dockSections = Object.freeze([
     // Delete → the manager's confirm + delete + toast (removeProfile), then a
     // dashboard refresh so the dock card leaves at once (removeProfile only
     // repaints the closed manager overlay).
-    onDeleteItem: (p) => removeProfile(p.name).then(() => refresh({ force: true })),
+    onDeleteItem: (p) => removeProfile(p.name).then(() => refresh()),
     onManageAll: () => openProfilesManageModal(),
   },
   {
@@ -140,7 +140,7 @@ export const dockSections = Object.freeze([
     // carries a whole roster, so its bespoke blurb is worth keeping) rather than
     // the generic modal-clone.js one profiles/roles use. Both are name dialogs.
     onCloneItem: (t) => openDuplicateModal(t.name),
-    // Delete → deleteTemplate already runs the confirm + DELETE + force-refresh,
+    // Delete → deleteTemplate already runs the confirm + DELETE + refresh,
     // so the dock calls it directly (no extra refresh needed here).
     onDeleteItem: (t) => deleteTemplate(t.name),
     onManageAll: () => openTemplatesManageModal(),
@@ -159,7 +159,7 @@ export const dockSections = Object.freeze([
     onCloneItem: (rl) => openCloneModal({ kind: 'role', kindWizard: 'class', source: rl, create: createRole }),
     // Delete → removeRole's confirm + delete + toast (incl. the 409 role_in_use
     // surfacing), then a dashboard refresh so the dock card leaves at once.
-    onDeleteItem: (rl) => removeRole(rl.name).then(() => refresh({ force: true })),
+    onDeleteItem: (rl) => removeRole(rl.name).then(() => refresh()),
     onManageAll: () => openRolesManageModal(),
   },
 ]);

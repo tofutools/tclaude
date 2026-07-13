@@ -345,7 +345,7 @@ export function createManagementActions({
           : `template created: ${draft.name.trim()}`,
       );
       state.closeTemplateDialog();
-      await refresh({ force: true });
+      await refresh();
       return true;
     } catch (error) {
       state.error.value = error.message || String(error);
@@ -368,7 +368,7 @@ export function createManagementActions({
     try {
       await templates.deleteTemplate(name);
       notify(`template deleted: ${name}`);
-      await refresh({ force: true });
+      await refresh();
       return true;
     } catch (error) {
       notify(error.message || String(error), true);
@@ -478,7 +478,7 @@ export function createManagementActions({
     await templates.saveTemplate('', payload);
     notify(`template duplicated: ${payload.name}`);
     state.closeDialog();
-    await refresh({ force: true });
+    await refresh();
     return payload;
   }
   async function importTemplate(raw, options) {
@@ -489,7 +489,7 @@ export function createManagementActions({
       `${result.updated ? 'template overwritten' : 'template imported'}: ${name}${warnings.length ? ` — ${warnings.length} warning${warnings.length === 1 ? '' : 's'}: ${warnings.join('; ')}` : ''}`,
     );
     state.closeDialog();
-    await refresh({ force: true });
+    await refresh();
     return result;
   }
   async function snapshotTemplateFromGroup(group, name, update) {
@@ -508,7 +508,7 @@ export function createManagementActions({
         `template updated from ${group}: ${name} (briefs kept: ${(result.briefs_kept || []).length}, added: ${(result.added || []).length}, removed: ${(result.removed || []).length})${blankNote}`,
       );
     else notify(`template created from ${group}: ${name}${blankNote}`);
-    await refresh({ force: true });
+    await refresh();
     if (result.name || result.agents) openTemplateEditor(result);
     return result;
   }
@@ -526,7 +526,7 @@ export function createManagementActions({
         `added to your templates: ${finalName} — deploy or edit it from the list (nothing spawned yet)${warnings.length ? ` — ${warnings.length} warning${warnings.length === 1 ? '' : 's'}: ${warnings.join('; ')}` : ''}`,
       );
     }
-    await refresh({ force: true });
+    await refresh();
     return result;
   }
   function openGroupImport() {

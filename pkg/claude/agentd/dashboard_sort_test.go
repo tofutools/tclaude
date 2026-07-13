@@ -5,12 +5,9 @@ import (
 	"testing"
 )
 
-// Clickable column sorting lives entirely in dashboard.html's embedded
-// JS — there's no server code path to exercise with a flow test. This
-// guards against the markup/JS being silently dropped in a future
-// refactor of that file: it asserts the core helpers exist, that the
-// click delegation is actually installed, and that every primary table
-// opts in via a sortHead(...) call.
+// Clickable column sorting lives inside the bounded Groups and Links islands.
+// This guard pins the shared helpers and the local click ownership so a global
+// document handler cannot accidentally cycle a sort twice.
 func TestDashboardHTML_SortableColumnsWired(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
@@ -23,19 +20,23 @@ func TestDashboardHTML_SortableColumnsWired(t *testing.T) {
 	must("function sortHead(", "thead builder")
 	must("function applySort(", "row sorter")
 	must("function cycleSort(", "asc -> desc -> off cycle")
-	must("function bindSortHeaders(", "header click delegation")
-	must("bindSortHeaders();", "delegation is actually installed at startup")
+	must("const sortHeader = event.target.closest('th[data-sort-table]')", "Groups owns header clicks")
+	must("onClick=${() => state.cycleSort(column.col)}", "Links owns header clicks")
+	if strings.Contains(dashboardAssets, "function bindSortHeaders(") {
+		t.Error("retired global sort delegation remains")
+	}
 
 	// Every primary table opts in by rendering a sortHead(...) header.
 	// The virtual sub-tables (Retired / Conversations / Pending / Replaced
 	// generations) are included: they're the "non-real" groups that gained
 	// the same clickable, agent-id-leading headers as real groups.
 	for _, table := range []string{
-		"members", "links",
+		"members",
 		"retired", "conversations", "pending", "replaced",
 	} {
 		must("sortHead('"+table+"'", table+" table renders a sortable header")
 	}
+	must("LINK_COLS.map(", "Links island uses the shared Links column specification")
 	// Jobs is the Preact pilot: its component maps the same JOBS_COLS spec to
 	// interactive keyed headers instead of emitting legacy sortHead HTML.
 	must("function SortHead(", "Jobs island renders its sortable header component")

@@ -15,26 +15,19 @@
 // click) still can't slip through — and a 409 from it is trusted over the
 // client's own view.
 //
-// Keeping the indicator live: the dashboard's main 2s poll (refresh) is
-// SUSPENDED while any modal is open (refreshSuspended keys on
-// .modal-overlay.show), so lastSnapshot would freeze at open time and the
-// indicator would lie. So this dialog polls /api/snapshot itself while it
-// is open — the data only, no heavy re-render — and derives liveness from
-// that fresh snapshot. Because the main poll is suspended meanwhile, this
-// replaces its fetch rather than duplicating it.
+// Keeping the indicator live: the main dashboard poll continues underneath the
+// modal. Its post-commit snapshot event re-runs the gate from the authoritative
+// lastSnapshot, so this dialog does not create a second polling loop.
 
 import { $ } from './helpers.js';
 import { senderOnline } from './mail-bridge.js';
 import { toast, refresh, bindBackdropDiscard } from './refresh.js';
 
-// replyCtx holds { id, agent, conv, label, subject, snap, online } while
-// the dialog is open, and null when closed. `snap` is the dialog's own
-// freshly-polled snapshot (undefined until the first poll lands, so
-// senderOnline falls back to lastSnapshot — fresh at open). `sending`
-// guards the in-flight window so a poll can't re-enable Send mid-request.
+// replyCtx holds { id, agent, conv, label, subject, online } while the dialog is
+// open, and null when closed. `sending` guards the in-flight window so a
+// snapshot publish cannot re-enable Send mid-request.
 let replyCtx = null;
 let sending = false;
-let pollTimer = null;
 
 // openHumanReplyModal opens the reply dialog for one notification.
 // ctx = { id, agent, conv, label, subject } — id is the human_messages
@@ -50,7 +43,6 @@ function openHumanReplyModal(ctx) {
     conv: ctx.conv || '',
     label: ctx.label || ctx.conv || '(agent)',
     subject: ctx.subject || '',
-    snap: undefined,
   };
   sending = false;
   $('#human-reply-body').value = '';
@@ -70,20 +62,19 @@ function openHumanReplyModal(ctx) {
     toEl.appendChild(subj);
   }
   syncReplyOnline();
-  startReplyPoll();
+  startReplySnapshotSync();
   $('#human-reply-modal').classList.add('show');
   setTimeout(() => $('#human-reply-body').focus(), 0);
 }
 
-// isReplyTargetOnline reports the sender's liveness from the dialog's own
-// freshest snapshot (its poll result, falling back to lastSnapshot before
-// the first poll lands — which is fresh at open).
+// isReplyTargetOnline reports the sender's liveness from the latest accepted
+// dashboard snapshot.
 function isReplyTargetOnline() {
-  return !!replyCtx && senderOnline(replyCtx.agent, replyCtx.conv, replyCtx.snap);
+  return !!replyCtx && senderOnline(replyCtx.agent, replyCtx.conv);
 }
 
 // syncReplyOnline recomputes the sender's live/offline state and paints the
-// status line + Send button. Called on open and on every poll tick, so the
+// status line + Send button. Called on open and on every snapshot publish, so the
 // indication (and the Send gate) track the agent going offline/online. It
 // never touches the button while a send is in flight — `sending` owns the
 // disabled state then.
@@ -112,33 +103,17 @@ function paintReplyStatus(online) {
   }
 }
 
-// startReplyPoll / stopReplyPoll keep the dialog's snapshot fresh while it
-// is open (the main poll is suspended by the open modal — see the file
-// header). The first tick fires after the interval; the open already
-// painted from lastSnapshot, which is fresh at open time.
-function startReplyPoll() {
-  stopReplyPoll();
-  pollTimer = setInterval(pollReplyOnline, 2000);
+function startReplySnapshotSync() {
+  stopReplySnapshotSync();
+  document.addEventListener('tclaude:snapshot', syncReplyOnline);
 }
 
-function stopReplyPoll() {
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-}
-
-async function pollReplyOnline() {
-  if (!replyCtx) return;
-  try {
-    const r = await fetch('/api/snapshot', { credentials: 'same-origin' });
-    if (!r.ok) return;           // transient; next tick retries
-    const snap = await r.json();
-    if (!replyCtx) return;       // closed while the fetch was in flight
-    replyCtx.snap = snap;        // the dialog's freshest liveness source
-    syncReplyOnline();
-  } catch (_) { /* transient; next tick retries */ }
+function stopReplySnapshotSync() {
+  document.removeEventListener('tclaude:snapshot', syncReplyOnline);
 }
 
 function closeHumanReplyModal() {
-  stopReplyPoll();
+  stopReplySnapshotSync();
   $('#human-reply-modal').classList.remove('show');
   replyCtx = null;
   sending = false;
@@ -147,7 +122,7 @@ function closeHumanReplyModal() {
 // submitReply POSTs the reply to /api/human-messages/reply. It re-checks
 // the online gate client-side first (fast, avoids a doomed round-trip),
 // but the server is the authority — a 409 with code "offline" (the agent
-// went offline mid-dialog, before our poll caught it) is trusted: the
+// went offline mid-dialog, before our snapshot publish caught it) is trusted: the
 // status line + Send button are forced to the offline verdict rather than
 // re-derived from the possibly-stale snapshot.
 async function submitReply() {
@@ -186,10 +161,10 @@ async function submitReply() {
       errEl.textContent = msg;
       sending = false;
       if (code === 'offline') {
-        // The server is authoritative: it went offline before our poll
+        // The server is authoritative: it went offline before our snapshot
         // caught it. Force the offline paint + keep Send disabled rather
         // than re-deriving from a snapshot that still shows it online; the
-        // next poll reconciles to the same verdict.
+        // next publish reconciles to the same verdict.
         if (replyCtx) replyCtx.online = false;
         paintReplyStatus(false);
       } else {

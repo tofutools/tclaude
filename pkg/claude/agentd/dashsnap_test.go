@@ -61,16 +61,14 @@ func TestDashSnap(t *testing.T) {
 	// Millisecond granularity so two runs in the same second don't overwrite.
 	outDir := filepath.Join(dashSnapOutRoot(t), time.Now().Format("20060102-150405.000"))
 	states := dashSnapStates()
-	// Every visual state also proves that the dynamically loaded, embedded
-	// Preact + Signals probe rendered and reacted in a real browser. The probe is
-	// hidden, so this adds no screenshot noise; a failed/missing runtime becomes a
-	// per-state JS failure instead of silently passing the visual smoke.
-	const preactProbeReady = `
-var __preactProbe = document.querySelector('#preact-runtime-probe[data-state="ready"] [data-preact-probe="ready"]');
-if (!__preactProbe || __preactProbe.textContent !== 'ready') throw new Error('Preact runtime probe not ready');
+	// Every visual state also proves that the production shell island claimed
+	// and rendered its hosts through the embedded Preact + Signals graph.
+	const preactRuntimeReady = `
+var __preactShell = document.querySelector('#shell-status-root[data-island-owner="shell"]');
+if (!__preactShell || !__preactShell.firstElementChild) throw new Error('Preact shell runtime not ready');
 `
 	for i := range states {
-		states[i].JS = preactProbeReady + states[i].JS
+		states[i].JS = preactRuntimeReady + states[i].JS
 	}
 	filter := os.Getenv("TCLAUDE_DASHSNAP_FILTER")
 	if filter != "" {
@@ -1207,8 +1205,8 @@ func baseStates() []dashsnap.State {
 		{
 			// JOH-388 req 5: each category folds on its own. Collapse Templates
 			// to its header (chevron flips); Profiles + Roles stay expanded. The
-			// fold is set on the live <details>, and morph preserves it across the
-			// 2s tick (open is live-owned), matching the persisted-prefs path.
+			// fold is set on the live keyed <details>; Preact preserves it across
+			// the 2s tick, matching the persisted-prefs path.
 			Key:     "dock-section-collapsed",
 			Title:   "Palette dock — one category collapsed",
 			Caption: "Req 5: the Templates category collapsed to its header (chevron flipped right); Profiles + Roles stay expanded.",
@@ -1606,7 +1604,6 @@ func processGraphStateJS(title, graph string, colorSchemes ...string) string {
       try {
       instance.fitToView();
       if (!host.querySelector('.process-graph-svg')) throw new Error('process graph SVG did not render');
-      if (!host.hasAttribute('data-morph-owned')) throw new Error('process graph host lacks morph ownership boundary');
       var hoverNode = host.querySelector('.process-node');
       hoverNode.dispatchEvent(new PointerEvent('pointermove', {bubbles:true}));
       var hoverPorts = host.querySelector('.process-node-ports[data-node-id="' + CSS.escape(hoverNode.dataset.nodeId) + '"]');
@@ -1651,7 +1648,7 @@ func processGraphStateJS(title, graph string, colorSchemes ...string) string {
         constructorThrew = true;
       }
       if (!constructorThrew) throw new Error('invalid graph constructor did not reject');
-      if (errorHost.hasAttribute('data-morph-owned') || errorHost.firstChild !== sentinel) throw new Error('invalid constructor bricked its host');
+      if (errorHost.firstChild !== sentinel) throw new Error('invalid constructor bricked its host');
       errorHost.remove();
       instance.fitToView();
       resolve();

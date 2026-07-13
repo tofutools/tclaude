@@ -28,13 +28,13 @@ func TestDashboardHTML_RetirePreviewWired(t *testing.T) {
 		}
 	}
 
-	// 1. Markup: the overlay rides on .modal-overlay (shared backdrop +
-	//    auto-refresh suspend), with the list, the per-row opt-out toolbar
+	// 1. Markup: the overlay rides on .modal-overlay (shared backdrop), with the
+	//    list, the per-row opt-out toolbar
 	//    (select-all/none + filter), the shutdown toggle, and the submit
 	//    button the JS drives.
 	must(`id="retire-preview-modal"`, "the retire-preview overlay exists")
 	must(`class="modal-overlay" id="retire-preview-modal"`,
-		"the preview is a .modal-overlay so it suspends the 2s refresh while open (cohort can't shift)")
+		"the preview uses the shared modal backdrop")
 	must(`id="retire-preview-list"`, "the preview has a candidate list")
 	must(`id="retire-preview-search"`, "the preview has a title/id filter")
 	must(`id="retire-preview-select-all"`, "the preview can select all candidates")

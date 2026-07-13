@@ -290,9 +290,8 @@ async function openProfilePicker(chipEl, current, onCommit, opts = {}) {
 // closeAllActionMenus collapses every open ⚙ options menu. Called on
 // any non-cog click — outside-click dismissal and menu-item dismissal
 // alike — by the cog toggle, and by the Escape handler, so at most one
-// menu is ever open. While a menu is open refreshSuspended() pauses
-// the 2s poll (it sees .action-menu.open); dropping the .open class
-// here is therefore also what releases that suspension. It also keeps
+// menu is ever open. Keyed Preact ownership retains the menu across snapshot
+// publishes. This helper also keeps
 // the cog's aria-expanded in sync and — when focus sat inside a menu
 // about to be display:none'd — hands focus back to that cog so it
 // doesn't fall to <body> and get lost.
@@ -1726,9 +1725,8 @@ function bindRowActions() {
           // for a group cog the e.preventDefault() above already stops
           // the click from toggling the <details>.
           // closeAllActionMenus first so opening one always closes any
-          // other; opening a menu suspends the auto-refresh
-          // (refreshSuspended sees .action-menu.open) so a 2s poll
-          // can't re-render it away mid-use.
+          // other. Keyed Preact ownership keeps it open across a snapshot
+          // publish.
           const menu = btn.parentElement
             && btn.parentElement.querySelector('.action-menu');
           const willOpen = !!menu && !menu.classList.contains('open');
