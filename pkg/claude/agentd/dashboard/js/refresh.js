@@ -1931,6 +1931,7 @@ async function openWorktreeCleanup(group) {
 
   let candidates = [];
   let repoRoots = [];
+  let submitting = false;
   // Paths the human has manually toggled — preserved across a live rescan
   // so a re-scan refreshes untouched rows to the fresh server default
   // without clobbering an explicit choice.
@@ -1962,6 +1963,18 @@ async function openWorktreeCleanup(group) {
     const names = agents.map(a => a.title || (a.conv_id || '').slice(0, 8));
     return (isWizardActive() ? 'familiar: ' : 'agent: ') + names.join(', ');
   };
+  const worktreeReason = (reason) => {
+    if (!isWizardActive()) return reason || '';
+    return String(reason || '')
+      .replace('in use by a running agent', 'bound to a channeling familiar')
+      .replace('retired agent', 'banished familiar')
+      .replace('belongs to agent', 'belongs to familiar')
+      .replace('reinstate-resume loses this dir', 'restoration loses this directory')
+      .replace('never removed', 'never pruned')
+      .replace('safe to remove', 'safe to prune')
+      .replace('before deleting', 'before pruning')
+      .replace('deleting breaks its resume', 'pruning breaks its return path');
+  };
 
   function renderHint() {
     const n = removable().length;
@@ -1981,14 +1994,20 @@ async function openWorktreeCleanup(group) {
   // filter — that's the point of a bulk toggle); .active marks a
   // fully-ticked set.
   function renderCats() {
-    const defs = [['orphan', 'orphans'], ['retired', 'retired'], ['agent', 'agent-bound'], ['live', 'live']];
+    const defs = [
+      ['orphan', 'orphans', 'orphans'],
+      ['retired', 'retired', 'banished'],
+      ['agent', 'agent-bound', 'familiar-bound'],
+      ['live', 'live', 'channeling'],
+    ];
     let html = '';
-    for (const [cat, label] of defs) {
+    for (const [cat, label, wizardLabel] of defs) {
       const rows = catRows(cat);
       if (!rows.length) continue;
       const on = rows.filter(c => c.checked).length;
       html += `<button type="button" data-cat="${esc(cat)}" class="${on === rows.length ? 'active' : ''}"`
-        + ` title="Toggle all ${rows.length} ${esc(label)} worktrees">${esc(label)} ${on}/${rows.length}</button>`;
+        + ` title="${esc(wizWord(`Toggle all ${rows.length} ${label} worktrees`, `Toggle all ${rows.length} ${wizardLabel} worktrees`))}">`
+        + `${themeWords(label, wizardLabel)} ${on}/${rows.length}</button>`;
     }
     const dr = dirtyRows();
     if (dr.length) {
@@ -2012,10 +2031,11 @@ async function openWorktreeCleanup(group) {
     }
     listEl.innerHTML = all.map(c => {
       const dis = c.is_main;
-      const badges = `<span class="cleanup-badge cat-${esc(c.category)}">${esc(c.category)}</span>`
+      const wizardCategory = ({ retired: 'banished', agent: 'familiar', live: 'channeling' })[c.category] || c.category;
+      const badges = `<span class="cleanup-badge cat-${esc(c.category)}">${themeWords(c.category, wizardCategory)}</span>`
         + (c.dirty ? `<span class="cleanup-badge dirty">uncommitted</span>` : '')
         + (c.agents && c.agents.length ? `<span class="cleanup-badge">${esc(agentLabel(c.agents))}</span>` : '');
-      return `<div class="cleanup-row${dis ? ' disabled' : ''}" title="${esc(c.reason || '')}"><label>`
+      return `<div class="cleanup-row${dis ? ' disabled' : ''}" title="${esc(worktreeReason(c.reason))}"><label>`
         + `<input type="checkbox" data-path="${esc(c.path)}"${c.checked ? ' checked' : ''}${dis ? ' disabled' : ''} />`
         + `<span class="branch">${esc(c.branch || '(detached)')}</span>`
         + `${badges}`
@@ -2028,7 +2048,16 @@ async function openWorktreeCleanup(group) {
     const n = checkedRows().length;
     const total = removable().length;
     countEl.textContent = `${n} of ${total} selected`;
-    submitBtn.textContent = n === 1 ? 'Remove 1 worktree' : `Remove ${n} worktrees`;
+    if (submitting) {
+      submitBtn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>' + themeWords('Removing…', 'Pruning…');
+      submitBtn.disabled = true;
+      submitBtn.setAttribute('aria-busy', 'true');
+      return;
+    }
+    submitBtn.innerHTML = themeWords(
+      n === 1 ? 'Remove 1 worktree' : `Remove ${n} worktrees`,
+      n === 1 ? 'Prune 1 worktree' : `Prune ${n} worktrees`,
+    );
     submitBtn.disabled = n === 0;
     submitBtn.removeAttribute('aria-busy');
   }
@@ -2046,6 +2075,7 @@ async function openWorktreeCleanup(group) {
   const onSearch = () => renderList();
   const onSelectAll = () => { for (const c of removable().filter(matchesFilter)) { c.checked = true; touched.add(c.path); } render(); };
   const onSelectNone = () => { for (const c of removable().filter(matchesFilter)) { c.checked = false; touched.add(c.path); } render(); };
+  const onWizard = () => render();
   const onCats = (e) => {
     const b = e.target.closest('button');
     if (!b) return;
@@ -2102,6 +2132,7 @@ async function openWorktreeCleanup(group) {
     cancelBtn.removeEventListener('click', cleanup);
     overlay.removeEventListener('click', onOverlay);
     document.removeEventListener('keydown', onKey);
+    document.removeEventListener('tclaude:wizard', onWizard);
   };
   const onOverlay = (e) => { if (e.target === overlay) cleanup(); };
   const onKey = (e) => { if (e.key === 'Escape') cleanup(); };
@@ -2112,10 +2143,9 @@ async function openWorktreeCleanup(group) {
 
   async function onSubmit() {
     const paths = checkedRows().map(c => c.path);
-    if (paths.length === 0) return;
-    submitBtn.disabled = true;
-    submitBtn.setAttribute('aria-busy', 'true');
-    submitBtn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>Removing…';
+    if (paths.length === 0 || submitting) return;
+    submitting = true;
+    renderFooter();
     errEl.textContent = '';
     let r;
     try {
@@ -2126,11 +2156,13 @@ async function openWorktreeCleanup(group) {
       });
     } catch (e) {
       errEl.textContent = `cleanup failed: ${(e && e.message) || e}`;
+      submitting = false;
       renderFooter();
       return;
     }
     if (!r.ok) {
       errEl.textContent = await r.text();
+      submitting = false;
       renderFooter();
       return;
     }
@@ -2158,6 +2190,7 @@ async function openWorktreeCleanup(group) {
   cancelBtn.addEventListener('click', cleanup);
   overlay.addEventListener('click', onOverlay);
   document.addEventListener('keydown', onKey);
+  document.addEventListener('tclaude:wizard', onWizard);
 
   overlay.classList.add('show');
   await load(false);
@@ -3359,11 +3392,16 @@ function addMemberModal(groupName) {
       if (highlight >= candidates.length) highlight = Math.max(0, candidates.length - 1);
       if (highlight < 0) highlight = 0;
       if (!candidates.length) {
-        list.innerHTML = '<div class="add-member-empty">No matching conversations. ' +
-          (includeAll.checked
-            ? '(Try a different filter.)'
-            : '(Try ticking "Include offline / archived" for a wider pool.)') +
-          '</div>';
+        const regularRetry = includeAll.checked
+          ? '(Try a different filter.)'
+          : '(Try ticking "Include offline / archived" for a wider pool.)';
+        const wizardRetry = includeAll.checked
+          ? '(Try a different filter.)'
+          : '(Try ticking "Include slumbering / archived" for a wider pool.)';
+        list.innerHTML = `<div class="add-member-empty">${themeWords(
+          `No matching conversations. ${regularRetry}`,
+          `No matching conversations. ${wizardRetry}`,
+        )}</div>`;
         return;
       }
       list.innerHTML = candidates.map((a, i) => {

@@ -6975,6 +6975,106 @@ body.wizard #cron-create-modal #cron-create-submit:disabled { opacity: 0.7; }
 body.wizard #cron-create-modal #cron-create-submit:disabled::before { content: "⏳ Binding…"; }
 body.wizard #cron-create-modal.cron-editing #cron-create-submit:disabled::before { content: "⏳ Re-binding…"; }
 
+/* ─── Wizard missive dialog — "✒ Send a missive" ───────────────────
+   The group/agent cog message action reuses .cron-create-modal, so the skin
+   is deliberately scoped to #message-create-modal. The group-scoped form also
+   borrows cleanup list/toolbar primitives; those receive the same violet-void
+   treatment as the window and bulk-cleanup dialogs. */
+body.wizard #message-create-modal .cron-create-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #message-create-modal .cron-create-modal h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #message-create-modal #message-create-desc,
+body.wizard #message-create-modal .cleanup-hint,
+body.wizard #message-create-modal .cron-create-label { color: #b39ddb; }
+body.wizard #message-create-modal .cron-target-modes { color: #e7d9f5; }
+body.wizard #message-create-modal input[type=radio],
+body.wizard #message-create-modal input[type=checkbox] { accent-color: #a97bd6; }
+body.wizard #message-create-modal .cron-create-row input[type=text],
+body.wizard #message-create-modal .cron-create-row select,
+body.wizard #message-create-modal .cron-create-row textarea {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
+}
+body.wizard #message-create-modal .cron-create-row input[type=text]:focus,
+body.wizard #message-create-modal .cron-create-row select:focus,
+body.wizard #message-create-modal .cron-create-row textarea:focus { border-color: #a97bd6; }
+body.wizard #message-create-modal .cron-create-row select option {
+  color: #1a1330; background: #e7d9f5;
+}
+body.wizard #message-create-modal button:not(.primary) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #message-create-modal button:not(.primary):hover { background: #3a2a63; }
+body.wizard #message-create-modal .cleanup-toolbar { color: #b39ddb; }
+body.wizard #message-create-modal .cleanup-count { color: #e7d9f5; }
+body.wizard #message-create-modal .cleanup-list {
+  background: #120c24; border-color: rgba(122, 93, 176, 0.5);
+}
+body.wizard #message-create-modal .cleanup-row { border-bottom-color: #241b3d; }
+body.wizard #message-create-modal .cleanup-row .title { color: #f3e6c0; }
+body.wizard #message-create-modal .cleanup-row .id,
+body.wizard #message-create-modal .cleanup-badge,
+body.wizard #message-create-modal .cleanup-empty { color: #b39ddb; }
+body.wizard #message-create-modal .cleanup-badge { border-color: #3a2a63; }
+body.wizard #message-create-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
+body.wizard #message-create-modal #message-create-submit {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  color: #f3e6c0; border: 2px solid #d9b45a; border-radius: 6px;
+  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
+  letter-spacing: 0.5px; font-weight: 700;
+}
+body.wizard #message-create-modal #message-create-submit:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
+}
+body.wizard #message-create-modal #message-create-submit:disabled { opacity: 0.6; }
+
+/* ─── Wizard invite-familiar picker ──────────────────────────────────
+   #add-member-modal shares .add-member-modal with the sudo/cron target
+   pickers, so every rule stays under this overlay id. */
+body.wizard #add-member-modal .add-member-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #add-member-modal .add-member-modal h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #add-member-modal .add-member-modal h3 .muted { color: #d9b45a; }
+body.wizard #add-member-modal .add-member-search {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
+}
+body.wizard #add-member-modal .add-member-search:focus { border-color: #a97bd6; }
+body.wizard #add-member-modal .add-member-list {
+  background: #120c24; border-color: rgba(122, 93, 176, 0.5);
+}
+body.wizard #add-member-modal .add-member-row { border-bottom-color: #241b3d; }
+body.wizard #add-member-modal .add-member-row.highlighted { background: #3a2a63; }
+body.wizard #add-member-modal .add-member-row .rowname { color: #f3e6c0; }
+body.wizard #add-member-modal .add-member-row .id,
+body.wizard #add-member-modal .add-member-row .descr,
+body.wizard #add-member-modal .add-member-row .groups-tag,
+body.wizard #add-member-modal .add-member-row .offline,
+body.wizard #add-member-modal .add-member-empty,
+body.wizard #add-member-modal .add-member-foot { color: #b39ddb; }
+body.wizard #add-member-modal .add-member-row .role { color: #d9b45a; }
+body.wizard #add-member-modal .add-member-foot input[type=checkbox] { accent-color: #a97bd6; }
+body.wizard #add-member-modal .add-member-foot kbd {
+  background: #241b3d; border-color: #7a5db0; color: #f3e6c0;
+}
+
 /* ─── Wizard "⚔ Form a party" button — the 🧙 re-skin of the filter bar's
    "+ new group" primary. Its label is a pure-CSS span swap (the
    .group-create-label-regular / .group-create-label-wizard pair, same idiom as
@@ -7303,8 +7403,8 @@ body.wizard #command-palette-btn:hover { background: #3a2a63; border-color: #d9b
    re-letters it "👁 familiars…" — the palette's reveal/veil-of-familiars
    voice. The dialog reuses the shared .cleanup-modal shell, so every rule is
    scoped to #window-modal: the sibling worktree-cleanup / retire-preview /
-   delete-agent dialogs share that shell and must keep the default chrome (the
-   same discipline the retire / edit-member re-skins follow). */
+   delete-agent dialogs share that shell and must not inherit this dialog's
+   controls (the same discipline the other modal-specific re-skins follow). */
 
 /* Button label swap — both spans always ship; CSS picks the active one. */
 .win-label-wizard { display: none; }
@@ -7430,10 +7530,10 @@ body.wizard #window-modal #window-submit:disabled { opacity: 0.6; }
    tool that bulk unjoins / retires / deletes / reinstates active agents,
    retired agents and plain conversations. It reuses the same shared
    .cleanup-modal shell the #window-modal skin above re-skins, so — exactly as
-   there — every rule is scoped to #cleanup-modal, leaving the sibling
-   worktree-cleanup / retire-preview / delete-retired dialogs on the default
-   chrome (the same discipline the retire / edit-member / window re-skins
-   follow, guarded by TestDashboardCSS_WizardWindowModalScoped and friends).
+   there — every rule is scoped to #cleanup-modal, leaving sibling overlays to
+   their own modal-specific skins (or their default chrome). This is the same
+   discipline the retire / edit-member / window re-skins follow, guarded by
+   TestDashboardCSS_WizardWindowModalScoped and friends.
 
    The title + hint copy is JS-set honest prose (applyChrome / applyHint),
    not a per-theme span pair, so it is left legible and only the chrome is
@@ -7546,6 +7646,77 @@ body.wizard #cleanup-modal #cleanup-submit.danger:hover {
   box-shadow: 0 0 16px rgba(240, 136, 62, 0.8);
 }
 body.wizard #cleanup-modal #cleanup-submit:disabled { opacity: 0.6; }
+
+/* ─── Wizard worktree cleanup — "Prune worktrees" ───────────────────
+   This overlay shares .cleanup-modal with several lifecycle dialogs. Keep the
+   violet surface, list, controls, and destructive lever strictly scoped to
+   #worktree-cleanup-modal so those siblings retain their own skins. */
+body.wizard #worktree-cleanup-modal .cleanup-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #worktree-cleanup-modal .cleanup-modal h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #worktree-cleanup-modal .cleanup-hint,
+body.wizard #worktree-cleanup-modal .cleanup-toolbar { color: #b39ddb; }
+body.wizard #worktree-cleanup-modal .cleanup-count { color: #e7d9f5; }
+body.wizard #worktree-cleanup-modal .cleanup-toolbar button {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #worktree-cleanup-modal .cleanup-toolbar button:hover { background: #3a2a63; }
+body.wizard #worktree-cleanup-modal .cleanup-toolbar button.active {
+  background: #3a2a63; border-color: #f3e6c0; color: #f3e6c0;
+  box-shadow: 0 0 8px rgba(169, 123, 214, 0.45);
+}
+body.wizard #worktree-cleanup-modal .cleanup-toolbar input[type=search] {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
+}
+body.wizard #worktree-cleanup-modal .cleanup-toolbar input[type=search]:focus {
+  outline: none; border-color: #a97bd6;
+}
+body.wizard #worktree-cleanup-modal .cleanup-list {
+  background: #120c24; border-color: rgba(122, 93, 176, 0.5);
+}
+body.wizard #worktree-cleanup-modal .cleanup-row { border-bottom-color: #241b3d; }
+body.wizard #worktree-cleanup-modal .cleanup-row .branch { color: #e7d9f5; }
+body.wizard #worktree-cleanup-modal .cleanup-row .path,
+body.wizard #worktree-cleanup-modal .cleanup-empty { color: #b39ddb; }
+body.wizard #worktree-cleanup-modal .cleanup-badge { border-color: #3a2a63; }
+body.wizard #worktree-cleanup-modal .cleanup-row input[type=checkbox],
+body.wizard #worktree-cleanup-modal .delete-agent-wt input[type=checkbox] {
+  accent-color: #a97bd6;
+}
+body.wizard #worktree-cleanup-modal .delete-agent-wt { color: #e7d9f5; }
+body.wizard #worktree-cleanup-modal .delete-agent-wt .wt-note { color: #b39ddb; }
+body.wizard #worktree-cleanup-modal .delete-agent-wt code {
+  background: #241b3d; border: 1px solid #3a2a63; color: #f3e6c0;
+}
+body.wizard #worktree-cleanup-modal .modal-buttons {
+  border-top-color: rgba(122, 93, 176, 0.4);
+}
+body.wizard #worktree-cleanup-modal .modal-buttons button:not(#worktree-cleanup-submit) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #worktree-cleanup-modal .modal-buttons button:not(#worktree-cleanup-submit):hover {
+  background: #3a2a63;
+}
+body.wizard #worktree-cleanup-modal #worktree-cleanup-submit {
+  background: linear-gradient(180deg, #6e1f2a 0%, #3a1018 100%);
+  color: #f3e6c0; border: 2px solid #f0883e; border-radius: 6px;
+  box-shadow: 0 0 10px rgba(240, 136, 62, 0.5);
+  letter-spacing: 0.5px; font-weight: 700;
+}
+body.wizard #worktree-cleanup-modal #worktree-cleanup-submit:hover {
+  background: linear-gradient(180deg, #8a2836 0%, #4a141f 100%);
+  box-shadow: 0 0 16px rgba(240, 136, 62, 0.8);
+}
+body.wizard #worktree-cleanup-modal #worktree-cleanup-submit:disabled { opacity: 0.6; }
 
 /* ─── Wizard delete group — drag-to-banish group preview ────────────
    The delete-group preview reuses the shared .cleanup-modal shell and sits

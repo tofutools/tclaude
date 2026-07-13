@@ -63,6 +63,7 @@ function renderMessageThemeCopy() {
         'Delivers one immediate message to a single agent, or multicasts it to every member of a group. Each recipient gets an inbox row plus a tmux nudge if online.',
         'Delivers one immediate missive to a familiar, or multicasts it to every familiar in a party. Each recipient receives an inbox scroll plus a tmux nudge if channeling.',
       );
+  $('#message-create-body').placeholder = wizWord('message text (required)', 'missive text (required)');
 }
 
 function renderMessageGroupHint() {
@@ -217,13 +218,22 @@ async function submitMessageForm() {
     to = picked.target;
     if (!to) {
       errEl.textContent = mode === 'solo'
-        ? 'Target is required — type a title / conv-id or use 🔍 to pick.'
-        : 'Pick a group from the dropdown (or create one first via the Groups tab).';
+        ? wizWord(
+            'Target is required — type a title / conv-id or use 🔍 to pick.',
+            'Recipient is required — name a familiar or use 🔍 to pick.',
+          )
+        : wizWord(
+            'Pick a group from the dropdown (or create one first via the Groups tab).',
+            'Pick a party from the dropdown (or form one first via the Parties tab).',
+          );
       return;
     }
   }
   if (!bodyText) {
-    errEl.textContent = 'Body is required (the message text to send).';
+    errEl.textContent = wizWord(
+      'Body is required (the message text to send).',
+      'Missive text is required.',
+    );
     return;
   }
   const payload = { from, to, subject, body: bodyText };

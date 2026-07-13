@@ -611,10 +611,10 @@
     <div class="add-member-list" id="add-member-list"></div>
     <div class="add-member-foot">
       <label title="Include archived / never-online conversations in the candidate list">
-        <input id="add-member-all" type="checkbox" />Include offline / archived
+        <input id="add-member-all" type="checkbox" /><span class="theme-copy-regular">Include offline / archived</span><span class="theme-copy-wizard">Include slumbering / archived</span>
       </label>
       <span class="spacer"></span>
-      <span><kbd>↑↓</kbd> nav · <kbd>Enter</kbd> add · <kbd>Esc</kbd> close</span>
+      <span><kbd>↑↓</kbd> nav · <kbd>Enter</kbd> <span class="theme-copy-regular">add</span><span class="theme-copy-wizard">invite</span> · <kbd>Esc</kbd> close</span>
     </div>
   </div>
 </div>
@@ -785,7 +785,7 @@
 <div class="modal-overlay" id="message-create-modal">
   <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="message-create-title">
     <h3 id="message-create-title">Send a message</h3>
-    <p id="message-create-desc" style="margin:4px 0; font-size:12px; color:#7d8590"><span class="theme-copy-regular">Delivers one immediate message to a single agent, or multicasts it to every member of a group.</span><span class="theme-copy-wizard">Delivers one immediate missive to a familiar, or multicasts it to every familiar in a party.</span></p>
+    <p id="message-create-desc" class="modal-hint"><span class="theme-copy-regular">Delivers one immediate message to a single agent, or multicasts it to every member of a group.</span><span class="theme-copy-wizard">Delivers one immediate missive to a familiar, or multicasts it to every familiar in a party.</span></p>
     <label class="cron-create-row">
       <span class="cron-create-label">From</span>
       <div class="cron-create-target">
@@ -796,7 +796,7 @@
       </div>
     </label>
     <label class="cron-create-row" id="message-create-target-row">
-      <span class="cron-create-label">Target</span>
+      <span class="cron-create-label"><span class="theme-copy-regular">Target</span><span class="theme-copy-wizard">Recipient</span></span>
       <!-- Solo/group target picker — markup mounted by the shared
            targetPicker module (see bindTargetPicker('message-create')). -->
       <div class="cron-create-target" id="message-create-target-mount"></div>
@@ -825,14 +825,14 @@
       <input id="message-create-subject" type="text" placeholder="optional, shows in inbox listings" maxlength="100" autocomplete="off" spellcheck="false" />
     </label>
     <label class="cron-create-row">
-      <span class="cron-create-label">Body</span>
+      <span class="cron-create-label"><span class="theme-copy-regular">Body</span><span class="theme-copy-wizard">Missive</span></span>
       <textarea id="message-create-body" rows="4" placeholder="message text (required)" spellcheck="false"></textarea>
     </label>
     <div class="cron-create-error" id="message-create-error"></div>
     <div class="modal-buttons">
-      <button id="message-create-cancel" type="button">Cancel</button>
+      <button id="message-create-cancel" type="button"><span class="theme-copy-regular">Cancel</span><span class="theme-copy-wizard">Dispel</span></button>
       <span class="spacer"></span>
-      <button id="message-create-submit" class="primary" type="button">Send</button>
+      <button id="message-create-submit" class="primary" type="button"><span class="theme-copy-regular">Send</span><span class="theme-copy-wizard">✒ Send missive</span></button>
     </div>
   </div>
 </div>
@@ -1126,8 +1126,8 @@
     </label>
     <div class="cleanup-error" id="worktree-cleanup-error"></div>
     <div class="modal-buttons">
-      <button id="worktree-cleanup-cancel" type="button">Cancel</button>
-      <button id="worktree-cleanup-submit" class="primary danger" type="button">Remove</button>
+      <button id="worktree-cleanup-cancel" type="button"><span class="theme-copy-regular">Cancel</span><span class="theme-copy-wizard">Dispel</span></button>
+      <button id="worktree-cleanup-submit" class="primary danger" type="button"><span class="theme-copy-regular">Remove</span><span class="theme-copy-wizard">Prune</span></button>
     </div>
   </div>
 </div>
