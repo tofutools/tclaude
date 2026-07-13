@@ -1612,6 +1612,34 @@ func TestDashboardHTML_WizardGroupDialogs(t *testing.T) {
 	must("body.wizard #group-clone-modal .group-clone-preview", "the clone-will-carry preview is re-skinned")
 }
 
+// TestDashboardHTML_WizardActionDialogs pins the scoped wizard chrome added to
+// the Preact-owned clone-agent, reincarnate-agent, and group-nesting dialogs.
+// These dialogs deliberately keep their ordinary operation names: unlike the
+// themed group-clone flow, this pass only makes their form chrome consistent
+// with the surrounding wizard dashboard.
+func TestDashboardHTML_WizardActionDialogs(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !dashboardSourceContains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	const actionDialogs = "body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal)"
+	must(actionDialogs+" .cron-create-modal", "all three action-dialog surfaces get scoped wizard chrome")
+	must(actionDialogs+" .cron-create-modal h3", "all three action-dialog titles get the fantasy type treatment")
+	must(actionDialogs+" .cron-create-row :is(input[type=text], select, textarea)", "the action-dialog fields and dropdowns get the violet-void skin")
+	must(actionDialogs+" .modal-buttons button.primary", "the primary action buttons get the gilded lever treatment")
+	must("body.wizard #reincarnate-agent-modal .reincarnate-mode", "the reincarnate mode selector gets wizard panel chrome")
+	must("body.wizard #reincarnate-agent-modal .reincarnate-mode label", "the reincarnate mode labels override their explicit plain-mode color")
+
+	// Keep the labels honest in both skins; the request is visual consistency,
+	// not wizard-vocabulary replacements for these operations.
+	must(`<h3 id="clone-agent-title">Clone agent</h3>`, "the clone operation name is retained")
+	must(`<h3 id="reincarnate-agent-title">Reincarnate agent</h3>`, "the reincarnate operation name is retained")
+	must(`<h3 id="group-nest-title">Nest group:`, "the group-nesting operation name is retained")
+}
+
 // TestDashboardHTML_WizardTemplateNativeControlSweep pins the JOH-349 sweep of
 // the native controls the earlier templates-family wizard work left
 // browser-default: the editor's number inputs, checkboxes, the role-library +

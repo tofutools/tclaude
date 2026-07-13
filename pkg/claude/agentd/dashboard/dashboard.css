@@ -6492,6 +6492,89 @@ body.wizard #agent-spawn-modal #agent-spawn-submit:disabled {
 }
 body.wizard #agent-spawn-modal #agent-spawn-submit:disabled::before { content: "🔮 Summoning…"; }
 
+/* ─── Wizard agent action dialogs ───────────────────────────────────
+   Clone, reincarnate, and group nesting keep their ordinary operation names,
+   but share the same violet-void, gold-frame, and parchment-control treatment
+   as the other wizard forms. Keep this scoped to the three action-dialog
+   overlays: .cron-create-modal is also used by several unrelated dialogs. */
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal) .cron-create-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal) .cron-create-modal h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal) .modal-meta {
+  background: #140f28;
+  border-left-color: #d9b45a;
+  color: #b39ddb;
+}
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal) :is(.cron-create-label, .modal-hint) {
+  color: #b39ddb;
+}
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal) .cron-create-enabled { color: #e7d9f5; }
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal) .cron-create-row :is(input[type=text], select, textarea) {
+  background: #140f28;
+  border-color: rgba(122, 93, 176, 0.5);
+  color: #f3e6c0;
+}
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal) .cron-create-row :is(input[type=text], select, textarea):focus {
+  border-color: #a97bd6;
+}
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal) .cron-create-row select option {
+  color: #1a1330;
+  background: #e7d9f5;
+}
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal) :is(input[type=checkbox], input[type=radio]) {
+  accent-color: #d9b45a;
+}
+body.wizard #reincarnate-agent-modal .reincarnate-mode {
+  background: rgba(20, 15, 40, 0.72);
+  border-color: rgba(122, 93, 176, 0.5);
+  color: #e7d9f5;
+}
+body.wizard #reincarnate-agent-modal .reincarnate-mode label { color: #e7d9f5; }
+body.wizard #reincarnate-agent-modal .reincarnate-mode .opt-note { color: #b39ddb; }
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal) .modal-buttons {
+  border-top-color: rgba(122, 93, 176, 0.4);
+}
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal) .modal-buttons button:not(.primary) {
+  background: #241b3d;
+  border: 1px solid #d9b45a;
+  color: #f3e6c0;
+}
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal) .modal-buttons button:not(.primary):hover {
+  background: #3a2a63;
+}
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal) .modal-buttons button.primary {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  border: 2px solid #d9b45a;
+  border-radius: 6px;
+  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
+  color: #f3e6c0;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 6px 16px;
+  position: relative;
+  transition: transform 0.08s ease;
+}
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal) .modal-buttons button.primary:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
+}
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal) .modal-buttons button.primary:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
+}
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal) .modal-buttons button:disabled {
+  opacity: 0.7;
+}
+
 /* ─── Wizard retire modal — "Banish this familiar?" ─────────────────
    The arcane counterpart to the Summon dialog above: retiring a familiar
    is the antonym of summoning one, so the 🧙 theme re-skins the retire
@@ -7803,31 +7886,28 @@ body.wizard #export-agent-modal #export-agent-submit:disabled::before { content:
    near the modal's base rule) and covers both the whole-dialog scroll and the
    dialogs' multiline textareas.
 
-   The :is() list names exactly the five re-skinned dialogs by #id — NOT an
-   unscoped `.cron-create-modal`, which would repaint the clone / reincarnate /
-   message dialogs that share the class but keep their dark chrome in wizard
-   mode (they get the base dark bar). This is the same positive-per-#id scoping
-   the surface re-skins above follow (guarded against the unscoped form by
-   TestDashboardCSS_WizardGroupCreateModalScoped), collapsed with :is() so the
-   five ids don't have to be spelled out on every pseudo-element rule. All five
-   share the #140f28 arcane field palette. Treatment mirrors the mail panes. */
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-modal,
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-row textarea {
+   The :is() list names the re-skinned dialogs by #id — NOT an unscoped
+   `.cron-create-modal`. This is the same positive-per-#id scoping the surface
+   re-skins above follow, collapsed with :is() so the ids don't have to be
+   spelled out as separate rules. All share the #140f28 arcane field palette.
+   Treatment mirrors the mail panes. */
+body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-modal,
+body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-row textarea {
   scrollbar-color: #7a5db0 #140f28;
 }
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-modal::-webkit-scrollbar,
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-row textarea::-webkit-scrollbar { width: 10px; height: 10px; }
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-modal::-webkit-scrollbar-track,
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-row textarea::-webkit-scrollbar-track,
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-modal::-webkit-scrollbar-corner,
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-row textarea::-webkit-scrollbar-corner { background: #140f28; }
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-modal::-webkit-scrollbar-thumb,
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-row textarea::-webkit-scrollbar-thumb {
+body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-modal::-webkit-scrollbar,
+body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-row textarea::-webkit-scrollbar { width: 10px; height: 10px; }
+body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-modal::-webkit-scrollbar-track,
+body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-row textarea::-webkit-scrollbar-track,
+body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-modal::-webkit-scrollbar-corner,
+body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-row textarea::-webkit-scrollbar-corner { background: #140f28; }
+body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-modal::-webkit-scrollbar-thumb,
+body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-row textarea::-webkit-scrollbar-thumb {
   background: linear-gradient(180deg, #7a5db0, #3a2a63);
   border: 1px solid #d9b45a; border-radius: 6px;
 }
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-modal::-webkit-scrollbar-thumb:hover,
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-row textarea::-webkit-scrollbar-thumb:hover {
+body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-modal::-webkit-scrollbar-thumb:hover,
+body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-row textarea::-webkit-scrollbar-thumb:hover {
   background: linear-gradient(180deg, #8f6fca, #4a367d);
 }
 

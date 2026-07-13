@@ -539,7 +539,7 @@ func baseStates() []dashsnap.State {
 		{
 			Key:      "action-dialog-clone-agent",
 			Title:    "Action dialogs — clone agent",
-			Caption:  "Preact-owned clone dialog preserves the existing dark form chrome, worktree picker, copy-history default, resize grip, and both-skin field styling.",
+			Caption:  "Preact-owned clone dialog preserves its worktree picker, copy-history default, and resize grip while using scoped plain or wizard form chrome.",
 			JS:       actionDialogJS(`module.openCloneAgentDialog("f1000000-0000-4000-8000-000000000001", "fe-lead", "/tmp/lbl-fe-lead");`, "#clone-agent-modal", ""),
 			SettleMS: 500,
 		},
@@ -1639,7 +1639,38 @@ func actionDialogJS(call, readySelector, extraJS string) string {
   }
   if (!document.querySelector(%q)) throw new Error('action dialog did not render: %s');
   %s
-})();`, call, readySelector, readySelector, readySelector, extraJS)
+  var overlay = document.querySelector(%q);
+  var surface = overlay && overlay.querySelector('.cron-create-modal');
+  var title = surface && surface.querySelector('h3');
+  var primary = surface && surface.querySelector('.modal-buttons button.primary');
+  if (!surface || !title || !primary) throw new Error('action dialog chrome is incomplete: %s');
+  var surfaceStyle = getComputedStyle(surface);
+  var titleStyle = getComputedStyle(title);
+  var primaryStyle = getComputedStyle(primary);
+  if (document.body.classList.contains('wizard')) {
+    if (!surfaceStyle.backgroundImage.includes('linear-gradient')) {
+      throw new Error('wizard action dialog surface lacks gradient chrome');
+    }
+    if (surfaceStyle.borderColor !== 'rgb(122, 93, 176)') {
+      throw new Error('wizard action dialog border is ' + surfaceStyle.borderColor);
+    }
+    if (titleStyle.color !== 'rgb(243, 230, 192)') {
+      throw new Error('wizard action dialog title is ' + titleStyle.color);
+    }
+    if (primaryStyle.borderColor !== 'rgb(217, 180, 90)') {
+      throw new Error('wizard action dialog primary border is ' + primaryStyle.borderColor);
+    }
+    if (overlay.id === 'reincarnate-agent-modal') {
+      var modeLabel = overlay.querySelector('.reincarnate-mode label');
+      var modeLabelColor = modeLabel && getComputedStyle(modeLabel).color;
+      if (modeLabelColor !== 'rgb(231, 217, 245)') {
+        throw new Error('wizard reincarnate mode label is ' + modeLabelColor);
+      }
+    }
+  } else if (surfaceStyle.borderColor === 'rgb(122, 93, 176)') {
+    throw new Error('wizard action dialog chrome leaked into plain mode');
+  }
+})();`, call, readySelector, readySelector, readySelector, extraJS, readySelector, readySelector)
 }
 
 func boundedTabJS(tab, readySelector string) string {
