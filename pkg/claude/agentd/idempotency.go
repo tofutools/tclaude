@@ -36,6 +36,10 @@ func idempotencyRequests(h http.Handler) http.Handler {
 // reported as ambiguous: generic middleware cannot know whether the old
 // process committed an endpoint-specific side effect before it died.
 func idempotencyRequestsWithOwner(h http.Handler, ownerID string) http.Handler {
+	return idempotencyRequestsWithOwnerAndWaitHook(h, ownerID, nil)
+}
+
+func idempotencyRequestsWithOwnerAndWaitHook(h http.Handler, ownerID string, waitHook func()) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := strings.TrimSpace(r.Header.Get(agent.IdempotencyKeyHeader))
 		if key == "" || !isMutatingMethod(r.Method) {
@@ -79,6 +83,9 @@ func idempotencyRequestsWithOwner(h http.Handler, ownerID string) http.Handler {
 			return
 		}
 
+		if waitHook != nil {
+			waitHook()
+		}
 		record, err = waitForIdempotentResponse(r.Context(), key, ownerID)
 		switch {
 		case err == nil:
