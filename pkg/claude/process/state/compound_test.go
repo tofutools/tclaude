@@ -280,17 +280,24 @@ func TestResolvedBlockMirrorAndAuditInvariants(t *testing.T) {
 	child.Status = NodeStatusSkipped
 	child.BlockedAttempt = resolution.BlockedAttempt
 	child.BlockedNodeID = resolution.NodeID
+	child.BlockedAt = testTime
 	child.BlockResolution = &resolution
 	valid.Nodes[resolution.NodeID] = child
 	parent := valid.Nodes["implement"]
 	parent.BlockedAttempt = resolution.BlockedAttempt
 	parent.BlockedNodeID = resolution.NodeID
+	parent.BlockedAt = testTime
 	parent.BlockResolution = &resolution
 	valid.Nodes["implement"] = parent
 	valid.AdminRecords = append(valid.AdminRecords, AdminRecord{
 		Type: EventBlockResolutionRecorded, Actor: resolution.Actor, Reason: resolution.Reason,
 		EvidenceRef: resolution.EvidenceRef, Timestamp: resolution.Timestamp, Resolution: &resolution,
 	})
+	valid.OutstandingCommands["cmd_block"] = *blockCommandForTest("cmd_block", resolution.NodeID, 1, "human:operator", CommandStatusObserved)
+	valid.Contacts["cmd_block"] = ContactState{
+		CommandID: "cmd_block", Kind: WaitKindHuman, Assignee: "human:operator", Cadence: "30m0s", Budget: 5,
+		EscalationTarget: "human:operator", Paused: true, PauseReason: "block resolved",
+	}
 	if diagnostics := CheckInvariants(&valid); diagnostics.HasErrors() {
 		t.Fatalf("resolved blocked state must verify: %#v", diagnostics)
 	}
@@ -387,7 +394,7 @@ func TestParentBlockGenerationIsScopedToPoisonedChild(t *testing.T) {
 
 	// A delayed block for the resolved child is a no-op.
 	stale, err := Apply(st, Event{
-		Type: EventNodeBlocked, NodeID: "implement", FromNodeID: resolution.NodeID,
+		Type: EventNodeBlocked, At: testTime, NodeID: "implement", FromNodeID: resolution.NodeID,
 		Attempt: 1, Reason: "old poison", Owner: "human:operator",
 	})
 	if err != nil {
@@ -400,7 +407,7 @@ func TestParentBlockGenerationIsScopedToPoisonedChild(t *testing.T) {
 	// Another stage may poison on its own attempt 1; the old child's
 	// generation tombstone must not suppress that distinct block.
 	newer, err := Apply(stale, Event{
-		Type: EventNodeBlocked, NodeID: "implement", FromNodeID: "implement.test.tests",
+		Type: EventNodeBlocked, At: testTime, NodeID: "implement", FromNodeID: "implement.test.tests",
 		Attempt: 1, Reason: "test poison", Owner: "human:operator",
 	})
 	if err != nil {

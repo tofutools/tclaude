@@ -145,24 +145,33 @@ func TestEveryHumanWaitInVerifiedStoreSnapshotDerivesOneItem(t *testing.T) {
 }
 
 func TestBlockedMirrorDerivesCanonicalItemAndResolvedReplay(t *testing.T) {
+	blockedAt := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
 	resolution := &state.BlockResolution{
 		NodeID: "implement.test.tests", BlockedAttempt: 2, Decision: state.BlockDecisionRetry,
 		Actor: "human:operator", Reason: "transient failure reviewed", EvidenceRef: "worklist:one",
+		Timestamp: blockedAt.Add(time.Hour),
 	}
-	active := store.Snapshot{Run: store.RunRecord{ID: "blocked-run"}, State: &state.State{Nodes: map[string]state.NodeState{
+	active := store.Snapshot{Run: store.RunRecord{ID: "blocked-run"}, State: &state.State{StateSchemaVersion: state.StateSchemaVersion, Nodes: map[string]state.NodeState{
 		"implement": {
 			Status: state.NodeStatusBlocked, Children: []string{"implement.test.tests"},
 			BlockedAttempt: 2, BlockedNodeID: "implement.test.tests", BlockedReason: "tests exhausted", BlockedOwner: "human:oncall",
+			BlockedAt: blockedAt,
 		},
 		"implement.test.tests": {
 			Status: state.NodeStatusBlocked, Parent: "implement", Attempt: 2,
 			BlockedAttempt: 2, BlockedNodeID: "implement.test.tests", BlockedReason: "tests exhausted", BlockedOwner: "human:oncall",
+			BlockedAt:     blockedAt,
 			ActiveAttempt: &state.AttemptState{Attempt: 2, EvidenceRef: "artifact:test-output"},
 		},
+	}, OutstandingCommands: map[string]state.OutstandingCommand{
+		"block-cmd": {ID: "block-cmd", NodeID: "implement.test.tests", Attempt: 2, Kind: state.CommandKindBlockNode, Status: state.CommandStatusObserved},
+	}, Contacts: map[string]state.ContactState{
+		"block-cmd": {CommandID: "block-cmd", Kind: state.WaitKindHuman, Assignee: "human:oncall", Cadence: "30m0s", Budget: 5, Used: 1, EscalationTarget: "human:operator", NextContactAt: blockedAt.Add(30 * time.Minute)},
 	}}}
 	items := Derive([]store.Snapshot{active})
 	if len(items) != 1 || items[0].Node != "implement.test.tests" || items[0].Kind != KindBlocked ||
-		items[0].Assignee != "human:oncall" || items[0].Summary != "tests exhausted" || items[0].Nudge != nil {
+		items[0].Assignee != "human:oncall" || items[0].Summary != "tests exhausted" || !items[0].CreatedAt.Equal(blockedAt) ||
+		!items[0].ChangedAt.Equal(blockedAt) || items[0].Nudge == nil || items[0].Nudge.BudgetUsed != 1 || items[0].Nudge.BudgetMax != 5 {
 		t.Fatalf("blocked items = %#v", items)
 	}
 	if len(items[0].Links.EvidenceRefs) != 1 || items[0].Links.EvidenceRefs[0] != "artifact:test-output" {
@@ -181,10 +190,26 @@ func TestBlockedMirrorDerivesCanonicalItemAndResolvedReplay(t *testing.T) {
 	parent.BlockedOwner = ""
 	parent.BlockResolution = resolution
 	active.State.Nodes["implement"] = parent
+	contact := active.State.Contacts["block-cmd"]
+	contact.Paused = true
+	contact.PauseReason = "block resolved"
+	contact.NextContactAt = time.Time{}
+	active.State.Contacts["block-cmd"] = contact
 	resolved := Derive([]store.Snapshot{active})
 	if len(resolved) != 1 || resolved[0].ID != wantID || resolved[0].Status != state.WaitStatusSatisfied ||
-		resolved[0].Summary != resolution.Reason || resolved[0].Assignee != string(resolution.Actor) {
+		resolved[0].Summary != resolution.Reason || resolved[0].Assignee != string(resolution.Actor) ||
+		!resolved[0].CreatedAt.Equal(blockedAt) || !resolved[0].ChangedAt.Equal(resolution.Timestamp) || resolved[0].Nudge == nil || !resolved[0].Nudge.Paused {
 		t.Fatalf("resolved item = %#v", resolved)
+	}
+}
+
+func TestLegacyBlockedItemDoesNotFabricateTimelineOrNudge(t *testing.T) {
+	legacy := &state.State{StateSchemaVersion: 5, Nodes: map[string]state.NodeState{
+		"blocked": {Status: state.NodeStatusBlocked, Attempt: 1, BlockedAttempt: 1, BlockedNodeID: "blocked", BlockedReason: "legacy", BlockedOwner: "human:operator"},
+	}}
+	items := Derive([]store.Snapshot{{Run: store.RunRecord{ID: "legacy"}, State: legacy}})
+	if len(items) != 1 || !items[0].CreatedAt.IsZero() || !items[0].ChangedAt.IsZero() || items[0].Nudge != nil {
+		t.Fatalf("legacy blocked item = %#v", items)
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/process/state"
 )
 
 // writeCompoundTemplate is the design-doc section 12 strawman shape: an agent
@@ -167,10 +168,33 @@ func TestCompoundGateFailurePoisonsToBlocked(t *testing.T) {
 	// one failed verdict is spent immediately.
 	assertOutputContains(t, out.String(), `gate "implement.test.tests" exhausted its budget of 1 failed verdicts`)
 	assertOutputContains(t, out.String(), "owner human:operator")
+	assertOutputContains(t, out.String(), " since ")
+	fs, err := openStore(root, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := fs.LoadRun(t.Context(), "compound_poison")
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := snapshot.State.Nodes["implement.test.tests"]
+	if child.BlockedAt.IsZero() {
+		t.Fatal("manual poison did not persist blockedAt")
+	}
+	contactFound := false
+	for commandID, command := range snapshot.State.OutstandingCommands {
+		if command.Kind == state.CommandKindBlockNode && command.NodeID == "implement.test.tests" {
+			contact, ok := snapshot.State.Contacts[commandID]
+			contactFound = ok && contact.Kind == state.WaitKindHuman && contact.Assignee == "human:operator"
+		}
+	}
+	if !contactFound {
+		t.Fatalf("manual poison missing blocked owner contact: %#v", snapshot.State.Contacts)
+	}
 
 	// Blocked nodes are not advanceable.
 	out.Reset()
-	err := runAdvance(cmd, &advanceParams{RunID: "compound_poison", NodeID: "implement.test.tests", StoreRoot: root, Verdict: "pass", EvidenceRef: "x", Actor: "human:johan"}, &out)
+	err = runAdvance(cmd, &advanceParams{RunID: "compound_poison", NodeID: "implement.test.tests", StoreRoot: root, Verdict: "pass", EvidenceRef: "x", Actor: "human:johan"}, &out)
 	if err == nil || !strings.Contains(err.Error(), "blocked") {
 		t.Fatalf("expected blocked advance refusal, got %v", err)
 	}

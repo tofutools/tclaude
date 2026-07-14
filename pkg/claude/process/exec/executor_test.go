@@ -61,6 +61,51 @@ func TestObligationActionNormalizationIsSharedAndCaseInsensitive(t *testing.T) {
 	}
 }
 
+func TestBlockedOwnerContactScheduleSupportsHumanOwners(t *testing.T) {
+	tests := []struct {
+		owner   string
+		kind    state.WaitKind
+		cadence time.Duration
+		budget  int
+	}{
+		{owner: "human:operator", kind: state.WaitKindHuman, cadence: DefaultHumanContactCadence, budget: DefaultHumanContactBudget},
+		{owner: "role:oncall", kind: state.WaitKindHuman, cadence: DefaultHumanContactCadence, budget: DefaultHumanContactBudget},
+	}
+	for _, tt := range tests {
+		t.Run(tt.owner, func(t *testing.T) {
+			kind, cadence, budget, escalation, err := ContactScheduleForOwner(tt.owner)
+			if err != nil || kind != tt.kind || cadence != tt.cadence || budget != tt.budget || escalation != "human:operator" {
+				t.Fatalf("schedule = %q %s %d %q, err=%v", kind, cadence, budget, escalation, err)
+			}
+		})
+	}
+	if _, _, _, _, err := ContactScheduleForOwner("operator"); err == nil {
+		t.Fatal("untyped owner must not silently become a human contact")
+	}
+}
+
+func TestUnsupportedBlockedOwnersProduceNoBlockEntries(t *testing.T) {
+	for _, owner := range []string{"agent:agt_worker", "program:deploy", "system:deploy", "engine:scheduler"} {
+		t.Run(owner, func(t *testing.T) {
+			command := plan.BlockCommand("run", "work", "", 1, "retry budget exhausted", owner)
+			snapshot := store.Snapshot{
+				Run: store.RunRecord{ID: "run"},
+				State: &state.State{
+					RunID: "run", Nodes: map[string]state.NodeState{"work": {Status: state.NodeStatusFailed, Attempt: 1}},
+					OutstandingCommands: map[string]state.OutstandingCommand{}, Contacts: map[string]state.ContactState{},
+				},
+			}
+			entries, err := observationEntries(command, Observation{Verdict: "pass"}, snapshot, executorTestTime)
+			if err == nil || !strings.Contains(err.Error(), "only human/role blocked owners are supported") {
+				t.Fatalf("unsupported owner error = %v", err)
+			}
+			if len(entries) != 0 || snapshot.State.Nodes["work"].Status != state.NodeStatusFailed || len(snapshot.State.Contacts) != 0 {
+				t.Fatalf("unsupported owner produced block state: entries=%#v state=%#v", entries, snapshot.State)
+			}
+		})
+	}
+}
+
 func TestCustomChoiceOutcomesAreClosedAndRouteToBinaryVerdicts(t *testing.T) {
 	performer := model.Performer{
 		Kind: model.PerformerHuman, Choices: []string{"Ship", "Hold"},

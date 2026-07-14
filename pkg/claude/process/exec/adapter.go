@@ -136,6 +136,21 @@ func ContactScheduleFor(performer model.Performer) (time.Duration, int, string, 
 	return parsed, performer.Contact.Budget, escalation, nil
 }
 
+// ContactScheduleForOwner applies the human performer defaults to a typed
+// blocked owner. Only human/role owners are accepted until agent and program
+// block contacts have complete delivery, recovery, and escalation semantics.
+func ContactScheduleForOwner(owner string) (state.WaitKind, time.Duration, int, string, error) {
+	kind, ok := state.ContactKindForOwner(owner)
+	if !ok {
+		return "", 0, 0, "", fmt.Errorf("blocked owner %q has no contact kind", owner)
+	}
+	if kind != state.WaitKindHuman {
+		return "", 0, 0, "", fmt.Errorf("blocked owner %q has unsupported contact kind %q; only human/role blocked owners are supported", owner, kind)
+	}
+	cadence, budget, escalation, err := ContactScheduleFor(model.Performer{Kind: model.PerformerHuman})
+	return kind, cadence, budget, escalation, err
+}
+
 // ReconcileAdapter is implemented by performer adapters whose external side
 // effect can be rediscovered by the command idempotency key after a host
 // restart. found=false means the adapter completed its lookup but cannot prove

@@ -208,7 +208,11 @@ func renderNodeRow(tw io.Writer, nodeID string, node state.NodeState, indent boo
 func nodeDetail(node state.NodeState, gateBudget int) string {
 	var parts []string
 	if node.Status == state.NodeStatusBlocked {
-		parts = append(parts, fmt.Sprintf("blocked: %s (owner %s)", node.BlockedReason, node.BlockedOwner))
+		blocked := fmt.Sprintf("blocked: %s (owner %s)", node.BlockedReason, node.BlockedOwner)
+		if !node.BlockedAt.IsZero() {
+			blocked += " since " + formatTime(node.BlockedAt)
+		}
+		parts = append(parts, blocked)
 	}
 	if node.Parent != "" && node.Stage.IsGateStage() {
 		if gateBudget > 0 {

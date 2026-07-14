@@ -201,7 +201,7 @@ func (processAgentAdapter) ReconcileDeferred(_ context.Context, request processe
 }
 
 func (processAgentAdapter) Contact(_ context.Context, request processexec.Request, escalation bool) error {
-	agent, err := db.AgentForProcessCommand(request.Command.ID)
+	agent, err := processContactAgent(request)
 	if err != nil {
 		return err
 	}
@@ -219,12 +219,16 @@ func (processAgentAdapter) Contact(_ context.Context, request processexec.Reques
 		return fmt.Errorf("process agent for command %s is missing", request.Command.ID)
 	}
 	convID := agent.CurrentConvID
+	body := fmt.Sprintf("Please continue process %s node %s. Report with command %s when complete.", request.Input.RunID, request.Input.NodeID, request.Command.ID)
+	if request.Command.Kind == state.CommandKindBlockNode {
+		body = fmt.Sprintf("Process %s node %s is blocked and assigned to you: %s. Resolve it with tclaude process unblock.", request.Input.RunID, request.Input.NodeID, request.Command.Reason)
+	}
 	_, err = db.InsertAgentMessage(&db.AgentMessage{
 		GroupID:      0,
 		FromConv:     "",
 		ToConv:       convID,
 		Subject:      "Process nudge",
-		Body:         fmt.Sprintf("Please continue process %s node %s. Report with command %s when complete.", request.Input.RunID, request.Input.NodeID, request.Command.ID),
+		Body:         body,
 		ToRecipients: []string{convID},
 	})
 	if err == nil {
@@ -234,7 +238,7 @@ func (processAgentAdapter) Contact(_ context.Context, request processexec.Reques
 }
 
 func (processAgentAdapter) Activity(_ context.Context, request processexec.Request, since time.Time) (processexec.Activity, error) {
-	agent, err := db.AgentForProcessCommand(request.Command.ID)
+	agent, err := processContactAgent(request)
 	if err != nil || agent == nil {
 		return processexec.Activity{}, err
 	}
@@ -253,6 +257,17 @@ func (processAgentAdapter) Activity(_ context.Context, request processexec.Reque
 		return processexec.Activity{AutomatedDelivery: true, At: sessionRow.LastHook}, nil
 	}
 	return processexec.Activity{HumanInteracted: true, At: sessionRow.LastHook}, nil
+}
+
+func processContactAgent(request processexec.Request) (*db.Agent, error) {
+	if request.Command.Kind == state.CommandKindBlockNode {
+		owner := strings.TrimSpace(request.Command.Owner)
+		if !strings.HasPrefix(owner, "agent:") {
+			return nil, nil
+		}
+		return db.GetAgent(strings.TrimPrefix(owner, "agent:"))
+	}
+	return db.AgentForProcessCommand(request.Command.ID)
 }
 
 const processDeliveryCorrelationWindow = 10 * time.Second
@@ -359,8 +374,17 @@ func (a processHumanAdapter) ReconcileDeferred(_ context.Context, request proces
 func (processHumanAdapter) Contact(_ context.Context, request processexec.Request, escalation bool) error {
 	subject := "Process reminder"
 	body := fmt.Sprintf("Waiting on process %s node %s (command %s).", request.Input.RunID, request.Input.NodeID, request.Command.ID)
+	if request.Command.Kind == state.CommandKindBlockNode {
+		subject = "Process blocked reminder"
+		body = fmt.Sprintf("Process %s node %s is blocked: %s\n\nResolve it with: tclaude process unblock %s %s --store-root <process-store-root> --decision <retry|skip|cancel> --reason <resolution-reason> --evidence <reference>",
+			request.Input.RunID, request.Input.NodeID, request.Command.Reason, request.Input.RunID, request.Input.NodeID)
+	}
 	if escalation {
-		subject = "Process obligation escalation"
+		if request.Command.Kind == state.CommandKindBlockNode {
+			subject = "Process blocked escalation"
+		} else {
+			subject = "Process obligation escalation"
+		}
 		_, _, target, err := processexec.ContactScheduleFor(request.Performer)
 		if err != nil {
 			return err

@@ -427,6 +427,14 @@ func (h *Host) resume(ctx context.Context, snapshot store.Snapshot) (bool, strin
 				if contactErr != nil {
 					return false, "", contactErr
 				}
+				latest, loadErr = h.Store.LoadRun(ctx, snapshot.Run.ID)
+				if loadErr != nil {
+					return false, "", loadErr
+				}
+				_, blockedErr := h.serviceBlockedContacts(ctx, latest)
+				if blockedErr != nil {
+					return false, "", blockedErr
+				}
 				return false, waiting, nil
 			}
 			reason := fmt.Sprintf("needs reconciliation: performer command %s has no discoverable observation", commandID)
@@ -437,7 +445,43 @@ func (h *Host) resume(ctx context.Context, snapshot store.Snapshot) (bool, strin
 		}
 		return true, "", nil
 	}
-	return false, "", nil
+	_, err := h.serviceBlockedContacts(ctx, snapshot)
+	return false, "", err
+}
+
+func (h *Host) serviceBlockedContacts(ctx context.Context, snapshot store.Snapshot) (store.Snapshot, error) {
+	for _, commandID := range blockedContactCommandIDs(snapshot.State) {
+		var err error
+		_, err = h.serviceContact(ctx, snapshot, commandID)
+		if err != nil {
+			return snapshot, err
+		}
+		snapshot, err = h.Store.LoadRun(ctx, snapshot.Run.ID)
+		if err != nil {
+			return snapshot, err
+		}
+	}
+	return snapshot, nil
+}
+
+func blockedContactCommandIDs(st *state.State) []string {
+	if st == nil {
+		return nil
+	}
+	var ids []string
+	for commandID := range st.Contacts {
+		command, ok := st.OutstandingCommands[commandID]
+		if !ok || command.Kind != state.CommandKindBlockNode || command.Status != state.CommandStatusObserved {
+			continue
+		}
+		node, ok := st.Nodes[command.NodeID]
+		if !ok || node.Status != state.NodeStatusBlocked || node.BlockedAttempt != command.Attempt {
+			continue
+		}
+		ids = append(ids, commandID)
+	}
+	slices.Sort(ids)
+	return ids
 }
 
 const humanPreemptionGrace = 5 * time.Second
@@ -447,7 +491,7 @@ func (h *Host) serviceContact(ctx context.Context, snapshot store.Snapshot, comm
 	if !ok {
 		return fmt.Sprintf("performer command %s is in flight", commandID), nil
 	}
-	request, adapter, err := h.Executor.DeferredRequest(ctx, snapshot.Run.ID, commandID)
+	request, adapter, err := h.Executor.ContactRequest(ctx, snapshot.Run.ID, commandID)
 	if err != nil {
 		return "", err
 	}

@@ -10,6 +10,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/process/evidence"
+	processexec "github.com/tofutools/tclaude/pkg/claude/process/exec"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	processplan "github.com/tofutools/tclaude/pkg/claude/process/plan"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
@@ -263,6 +264,24 @@ func planStageAdvance(snapshot store.Snapshot, tmpl *model.Template, nodeID stri
 	case processplan.TransitionPoison:
 		settleEvent.NodeStatus = state.NodeStatusFailed
 		entries = append(entries, nodeLogEntry(nodeID, evidence.EntryKindAttempt, settleEvent, evidenceRef, at))
+		blockCommand := processplan.BlockCommand(snapshot.Run.ID, nodeID, node.Parent, attempt, transition.Reason, transition.Owner)
+		outstanding, err := blockCommand.OutstandingCommand(at)
+		if err != nil {
+			return nil, err
+		}
+		contact, err := processexec.BlockedContactState(blockCommand, at)
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, nodeLogEntry(nodeID, evidence.EntryKindGate, state.Event{
+			Type: state.EventCommandIssued, Command: &outstanding,
+		}, "", at))
+		entries = append(entries, nodeLogEntry(nodeID, evidence.EntryKindGate, state.Event{
+			Type: state.EventCommandObserved, CommandID: blockCommand.ID, Outcome: "pass",
+		}, "", at))
+		entries = append(entries, nodeLogEntry(nodeID, evidence.EntryKindGate, state.Event{
+			Type: state.EventContactScheduled, Contact: &contact,
+		}, "", at))
 		entries = append(entries, nodeLogEntry(nodeID, evidence.EntryKindGate, state.Event{
 			Type:    state.EventNodeBlocked,
 			Attempt: attempt,

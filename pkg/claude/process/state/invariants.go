@@ -22,6 +22,7 @@ func CheckInvariants(st *State) Diagnostics {
 	diagnostics = append(diagnostics, OutstandingCommandsAreWellFormed(st)...)
 	diagnostics = append(diagnostics, CompletedDecisionsHaveOneChosenEdge(st)...)
 	diagnostics = append(diagnostics, BlockedNodesHaveReasonAndOwner(st)...)
+	diagnostics = append(diagnostics, BlockedNodesHaveContactSchedules(st)...)
 	diagnostics = append(diagnostics, BlockResolutionsAreAudited(st)...)
 	diagnostics = append(diagnostics, BlockMirrorsAreConsistent(st)...)
 	diagnostics = append(diagnostics, SkippedNodesHaveBlockResolution(st)...)
@@ -651,14 +652,87 @@ func BlockedNodesHaveReasonAndOwner(st *State) Diagnostics {
 		if node.Status != NodeStatusBlocked {
 			continue
 		}
-		if strings.TrimSpace(node.BlockedReason) != "" && strings.TrimSpace(node.BlockedOwner) != "" {
+		if strings.TrimSpace(node.BlockedReason) == "" || strings.TrimSpace(node.BlockedOwner) == "" {
+			diagnostics = append(diagnostics, diagError(
+				"blocked_node_without_reason_owner",
+				"nodes."+nodeID,
+				fmt.Sprintf("blocked node %q must have blockedReason and blockedOwner", nodeID),
+			))
+		}
+		if st.StateSchemaVersion >= 6 && node.BlockedAt.IsZero() && !node.BlockedAtUnavailable {
+			diagnostics = append(diagnostics, diagError(
+				"blocked_node_without_timestamp",
+				"nodes."+nodeID+".blockedAt",
+				fmt.Sprintf("blocked node %q in state schema v%d must record blockedAt", nodeID, st.StateSchemaVersion),
+			))
+		}
+	}
+	return diagnostics
+}
+
+// BlockedNodesHaveContactSchedules binds the canonical blocked child to the
+// ContactState stored under its deterministic block command. Schema v5 and
+// older checkpoints predate this record and remain valid without fabrication.
+func BlockedNodesHaveContactSchedules(st *State) Diagnostics {
+	if st == nil {
+		return Diagnostics{diagError("nil_state", "", "process state is nil")}
+	}
+	if st.StateSchemaVersion < 6 {
+		return nil
+	}
+	var diagnostics Diagnostics
+	for _, nodeID := range sortedKeys(st.Nodes) {
+		node := st.Nodes[nodeID]
+		if node.BlockedAtUnavailable && !node.BlockedAt.IsZero() {
+			diagnostics = append(diagnostics, diagError(
+				"blocked_timestamp_marked_unavailable",
+				"nodes."+nodeID+".blockedAtUnavailable",
+				fmt.Sprintf("blocked node %q cannot record blockedAt and mark it unavailable", nodeID),
+			))
+		}
+		canonical := node.Parent != "" || len(node.Children) == 0
+		if !canonical || (node.Status != NodeStatusBlocked && node.BlockResolution == nil) {
 			continue
 		}
-		diagnostics = append(diagnostics, diagError(
-			"blocked_node_without_reason_owner",
-			"nodes."+nodeID,
-			fmt.Sprintf("blocked node %q must have blockedReason and blockedOwner", nodeID),
-		))
+		if node.BlockedAtUnavailable {
+			continue
+		}
+		if node.Status != NodeStatusBlocked && node.BlockedAt.IsZero() {
+			diagnostics = append(diagnostics, diagError("blocked_node_without_timestamp", "nodes."+nodeID+".blockedAt", fmt.Sprintf("blocked node %q in state schema v%d must record blockedAt", nodeID, st.StateSchemaVersion)))
+		}
+		matches := 0
+		for commandID, contact := range st.Contacts {
+			command, ok := st.OutstandingCommands[commandID]
+			serviceableStatus := command.Status == CommandStatusIssued || command.Status == CommandStatusObserved
+			if !ok || command.Kind != CommandKindBlockNode || !serviceableStatus || command.NodeID != nodeID || command.Attempt != node.BlockedAttempt {
+				continue
+			}
+			matches++
+			path := "contacts." + commandID
+			payloadOwner, payloadErr := blockCommandPayloadOwner(command)
+			if payloadErr != nil {
+				diagnostics = append(diagnostics, diagError("blocked_contact_payload_owner", path+".assignee", fmt.Sprintf("blocked contact for node %q has invalid command owner payload: %v", nodeID, payloadErr)))
+			} else {
+				if kind, ok := ContactKindForOwner(payloadOwner); !ok || kind != WaitKindHuman {
+					diagnostics = append(diagnostics, diagError("unsupported_blocked_contact_payload_owner", path+".assignee", fmt.Sprintf("blocked contact for node %q has unsupported command payload owner %q", nodeID, payloadOwner)))
+				}
+				if strings.TrimSpace(contact.Assignee) != payloadOwner {
+					diagnostics = append(diagnostics, diagError("blocked_contact_payload_owner_mismatch", path+".assignee", fmt.Sprintf("blocked contact for node %q owner %q does not match command payload owner %q", nodeID, contact.Assignee, payloadOwner)))
+				}
+			}
+			if node.Status == NodeStatusBlocked && strings.TrimSpace(contact.Assignee) != strings.TrimSpace(node.BlockedOwner) {
+				diagnostics = append(diagnostics, diagError("blocked_contact_owner_mismatch", path+".assignee", fmt.Sprintf("blocked contact for node %q owner %q does not match node owner %q", nodeID, contact.Assignee, node.BlockedOwner)))
+			}
+			if kind, ok := ContactKindForOwner(contact.Assignee); !ok || kind != contact.Kind {
+				diagnostics = append(diagnostics, diagError("blocked_contact_kind_mismatch", path+".kind", fmt.Sprintf("blocked contact for node %q has kind %q inconsistent with owner %q", nodeID, contact.Kind, contact.Assignee)))
+			}
+			if node.Status != NodeStatusBlocked && (!contact.Paused || !contact.NextContactAt.IsZero()) {
+				diagnostics = append(diagnostics, diagError("resolved_block_active_contact", path, fmt.Sprintf("resolved blocked node %q retains an active contact schedule", nodeID)))
+			}
+		}
+		if matches != 1 {
+			diagnostics = append(diagnostics, diagError("blocked_node_contact_count", "nodes."+nodeID, fmt.Sprintf("blocked node %q generation %d has %d contact schedules; expected exactly one", nodeID, node.BlockedAttempt, matches)))
+		}
 	}
 	return diagnostics
 }
@@ -725,6 +799,20 @@ func BlockMirrorsAreConsistent(st *State) Diagnostics {
 				"block_mirror_tombstone_mismatch",
 				path+".blockedAttempt",
 				fmt.Sprintf("expanded parent %q tombstone (%q, attempt %d) does not match child %q tombstone (%q, attempt %d)", parentID, childID, parent.BlockedAttempt, childID, child.BlockedNodeID, child.BlockedAttempt),
+			))
+		}
+		if !child.BlockedAt.Equal(parent.BlockedAt) {
+			diagnostics = append(diagnostics, diagError(
+				"block_mirror_timestamp_mismatch",
+				path+".blockedAt",
+				fmt.Sprintf("expanded parent %q blockedAt does not match child %q", parentID, childID),
+			))
+		}
+		if child.BlockedAtUnavailable != parent.BlockedAtUnavailable {
+			diagnostics = append(diagnostics, diagError(
+				"block_mirror_timestamp_availability_mismatch",
+				path+".blockedAtUnavailable",
+				fmt.Sprintf("expanded parent %q blockedAt availability does not match child %q", parentID, childID),
 			))
 		}
 		if !blockResolutionPointersEqual(parent.BlockResolution, child.BlockResolution) {

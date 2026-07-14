@@ -1,5 +1,7 @@
 package state
 
+import "strings"
+
 func (s RunStatus) IsValid() bool {
 	switch s {
 	case RunStatusPending,
@@ -99,5 +101,23 @@ func (k WaitKind) IsValid() bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// ContactKindForOwner maps the typed owner namespace onto the existing
+// per-kind contact policy axis. Block ownership is currently produced as
+// human:operator, but keeping this mapping complete prevents the blocked path
+// from baking in that present-day default.
+func ContactKindForOwner(owner string) (WaitKind, bool) {
+	owner = strings.TrimSpace(owner)
+	switch {
+	case strings.HasPrefix(owner, "human:"), strings.HasPrefix(owner, "role:"):
+		return WaitKindHuman, true
+	case strings.HasPrefix(owner, "agent:"):
+		return WaitKindAgent, true
+	case strings.HasPrefix(owner, "program:"), strings.HasPrefix(owner, "system:"), strings.HasPrefix(owner, "engine:"):
+		return WaitKindProgram, true
+	default:
+		return "", false
 	}
 }

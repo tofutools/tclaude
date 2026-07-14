@@ -1,6 +1,10 @@
 package state
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -188,7 +192,7 @@ func applyEvent(st *State, event Event) error {
 			return fmt.Errorf("needs-reconcile run pause requires a valid owner")
 		}
 		pause := *event.Pause
-		st.StateSchemaVersion = StateSchemaVersion
+		promoteSchema(st, 2)
 		st.Status = RunStatusPaused
 		st.Pause = &pause
 		return nil
@@ -555,6 +559,12 @@ func applyEvent(st *State, event Event) error {
 		if strings.TrimSpace(event.Reason) == "" || strings.TrimSpace(event.Owner) == "" {
 			return fmt.Errorf("node_blocked requires reason and owner")
 		}
+		if kind, ok := ContactKindForOwner(event.Owner); !ok || kind != WaitKindHuman {
+			return fmt.Errorf("node_blocked requires a human/role owner")
+		}
+		if event.At.IsZero() {
+			return fmt.Errorf("node_blocked requires timestamp")
+		}
 		blockedAttempt := event.Attempt
 		if blockedAttempt <= 0 {
 			blockedAttempt = node.Attempt
@@ -575,10 +585,12 @@ func applyEvent(st *State, event Event) error {
 		node.Status = NodeStatusBlocked
 		node.BlockedReason = event.Reason
 		node.BlockedOwner = event.Owner
+		node.BlockedAt = event.At.UTC()
+		node.BlockedAtUnavailable = false
 		node.BlockedAttempt = blockedAttempt
 		node.BlockedNodeID = blockedNodeID
 		node.BlockResolution = nil
-		st.StateSchemaVersion = StateSchemaVersion
+		promoteSchema(st, StateSchemaVersion)
 		st.Nodes[event.NodeID] = node
 		return nil
 	case EventNodeUnblocked:
@@ -592,6 +604,7 @@ func applyEvent(st *State, event Event) error {
 		}
 		if node.BlockResolution != nil {
 			if *node.BlockResolution == resolution {
+				pauseResolvedBlockContacts(st, resolution.NodeID)
 				return nil
 			}
 			return fmt.Errorf("node %q was already unblocked with a different resolution", event.NodeID)
@@ -631,6 +644,7 @@ func applyEvent(st *State, event Event) error {
 		node.BlockedAttempt = resolution.BlockedAttempt
 		node.BlockedNodeID = resolution.NodeID
 		node.BlockResolution = &resolution
+		pauseResolvedBlockContacts(st, resolution.NodeID)
 		if resolution.Decision == BlockDecisionRetry {
 			// A retry is an explicit fresh budget window. In particular, a gate
 			// must not immediately short-circuit against the same evidence and
@@ -638,7 +652,11 @@ func applyEvent(st *State, event Event) error {
 			node.FailCount = 0
 			node.LastEvidenceHash = ""
 		}
-		st.StateSchemaVersion = StateSchemaVersion
+		blockSchemaVersion := 5
+		if !node.BlockedAt.IsZero() {
+			blockSchemaVersion = StateSchemaVersion
+		}
+		promoteSchema(st, blockSchemaVersion)
 		st.Nodes[event.NodeID] = node
 		return nil
 	case EventWaitCreated:
@@ -865,7 +883,7 @@ func applyEvent(st *State, event Event) error {
 			obligation.CreatedAt = event.At
 		}
 		obligation.AvailableActions = append([]string(nil), obligation.AvailableActions...)
-		st.StateSchemaVersion = StateSchemaVersion
+		promoteSchema(st, 4)
 		st.Obligations[obligation.ID] = obligation
 		node, err := getNode(st, obligation.NodeID)
 		if err != nil {
@@ -885,7 +903,7 @@ func applyEvent(st *State, event Event) error {
 			return fmt.Errorf("obligation %q is not declared", id)
 		}
 		obligation.Status = WaitStatusSatisfied
-		st.StateSchemaVersion = StateSchemaVersion
+		promoteSchema(st, 4)
 		obligation.ResolvedAt = event.At
 		if event.EvidenceRef != "" {
 			obligation.EvidenceRef = event.EvidenceRef
@@ -908,13 +926,30 @@ func applyEvent(st *State, event Event) error {
 		if contact.CommandID == "" || !contact.Kind.IsValid() || strings.TrimSpace(contact.Cadence) == "" || contact.Budget <= 0 || strings.TrimSpace(contact.EscalationTarget) == "" {
 			return fmt.Errorf("contact for command %q is incomplete", contact.CommandID)
 		}
-		if _, ok := st.OutstandingCommands[contact.CommandID]; !ok {
+		command, ok := st.OutstandingCommands[contact.CommandID]
+		if !ok {
 			return fmt.Errorf("contact command %q is not outstanding", contact.CommandID)
+		}
+		if command.Kind == CommandKindBlockNode {
+			kind, typed := ContactKindForOwner(contact.Assignee)
+			if !typed || kind != WaitKindHuman || contact.Kind != WaitKindHuman {
+				return fmt.Errorf("blocked contact command %q requires a human/role owner", contact.CommandID)
+			}
+			payloadOwner, err := blockCommandPayloadOwner(command)
+			if err != nil {
+				return fmt.Errorf("blocked contact command %q: %w", contact.CommandID, err)
+			}
+			if kind, ok := ContactKindForOwner(payloadOwner); !ok || kind != WaitKindHuman {
+				return fmt.Errorf("blocked contact command %q payload owner %q is unsupported; only human/role owners are supported", contact.CommandID, payloadOwner)
+			}
+			if strings.TrimSpace(contact.Assignee) != payloadOwner {
+				return fmt.Errorf("blocked contact command %q assignee %q does not match payload owner %q", contact.CommandID, contact.Assignee, payloadOwner)
+			}
 		}
 		if contact.Used < 0 || contact.Used > contact.Budget {
 			return fmt.Errorf("contact command %q budget usage %d/%d is invalid", contact.CommandID, contact.Used, contact.Budget)
 		}
-		st.StateSchemaVersion = StateSchemaVersion
+		promoteSchema(st, 4)
 		st.Contacts[contact.CommandID] = contact
 		return nil
 	case EventAdminRepairRecorded, EventAdminProgramsAllowed, EventBlockResolutionRecorded:
@@ -978,6 +1013,58 @@ func applyEvent(st *State, event Event) error {
 	default:
 		return fmt.Errorf("unsupported process state event type %q", event.Type)
 	}
+}
+
+func pauseResolvedBlockContacts(st *State, blockedNodeID string) {
+	for commandID, contact := range st.Contacts {
+		command, ok := st.OutstandingCommands[commandID]
+		if !ok || command.Kind != CommandKindBlockNode || command.NodeID != blockedNodeID {
+			continue
+		}
+		contact.Paused = true
+		contact.PauseReason = "block resolved"
+		contact.NextContactAt = time.Time{}
+		st.Contacts[commandID] = contact
+	}
+}
+
+func promoteSchema(st *State, version int) {
+	if st.StateSchemaVersion < 6 && version >= 6 {
+		for nodeID, node := range st.Nodes {
+			if node.BlockedAt.IsZero() && (node.Status == NodeStatusBlocked || node.BlockResolution != nil) {
+				node.BlockedAtUnavailable = true
+				st.Nodes[nodeID] = node
+			}
+		}
+	}
+	if st.StateSchemaVersion < version {
+		st.StateSchemaVersion = version
+	}
+}
+
+func blockCommandPayloadOwner(command OutstandingCommand) (string, error) {
+	if len(command.Payload) == 0 || strings.TrimSpace(command.PayloadHash) == "" {
+		return "", fmt.Errorf("requires a durable hashed command payload")
+	}
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, command.Payload); err != nil {
+		return "", fmt.Errorf("decode durable command payload: %w", err)
+	}
+	sum := sha256.Sum256(compact.Bytes())
+	if hex.EncodeToString(sum[:]) != command.PayloadHash {
+		return "", fmt.Errorf("durable command payload hash does not match")
+	}
+	var payload struct {
+		Owner string `json:"owner"`
+	}
+	if err := json.Unmarshal(compact.Bytes(), &payload); err != nil {
+		return "", fmt.Errorf("decode durable command owner: %w", err)
+	}
+	owner := strings.TrimSpace(payload.Owner)
+	if owner == "" {
+		return "", fmt.Errorf("durable command payload requires owner")
+	}
+	return owner, nil
 }
 
 // requirePriorStagesCompleted enforces the stage chain on activation: a stage

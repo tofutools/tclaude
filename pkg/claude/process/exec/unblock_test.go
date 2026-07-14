@@ -39,6 +39,7 @@ func TestResolveBlockedRetryStartsFreshAttemptAndCompletes(t *testing.T) {
 	if replayed.LastLogSeq != firstSeq {
 		t.Fatalf("idempotent retry appended events: first seq %d, replay seq %d", firstSeq, replayed.LastLogSeq)
 	}
+	assertResolvedPair(t, replayed, state.NodeStatusReady, state.RunStatusRunning, state.BlockDecisionRetry)
 	if err := os.WriteFile(marker, []byte("pass\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +111,12 @@ func TestStaleBlockResumeAfterRetryResolutionIsNoOp(t *testing.T) {
 	}
 	// Simulate the paired block events landing through another worker while
 	// this issued command crashes before command_observed is appended.
+	contact, err := BlockedContactState(block, executorTestTime)
+	if err != nil {
+		t.Fatal(err)
+	}
 	blocked, err := fs.Append(t.Context(), snapshot.Run.ID, claimedState.LastLogSeq, []evidence.LogEntry{
+		nodeEntry(block.NodeID, state.Event{Type: state.EventContactScheduled, Contact: &contact}, "", executorTestTime),
 		nodeEntry(block.NodeID, state.Event{Type: state.EventNodeBlocked, Attempt: block.Attempt, Reason: block.Reason, Owner: block.Owner}, "", executorTestTime),
 		nodeEntry(block.TargetNodeID, state.Event{Type: state.EventNodeBlocked, Attempt: block.Attempt, FromNodeID: block.NodeID, Reason: block.Reason, Owner: block.Owner}, "", executorTestTime),
 	})
@@ -482,6 +488,23 @@ func assertResolvedPair(t *testing.T, st *state.State, childStatus state.NodeSta
 		if node.BlockedReason != "" || node.BlockedOwner != "" || node.BlockResolution == nil || node.BlockResolution.Decision != decision {
 			t.Fatalf("resolved node %s = %#v", nodeID, node)
 		}
+		if node.BlockedAt.IsZero() {
+			t.Fatalf("resolved node %s lost blockedAt: %#v", nodeID, node)
+		}
+	}
+	contactFound := false
+	for commandID, command := range st.OutstandingCommands {
+		if command.Kind != state.CommandKindBlockNode || command.NodeID != "work.test.tests" {
+			continue
+		}
+		contact := st.Contacts[commandID]
+		contactFound = true
+		if !contact.Paused || contact.PauseReason != "block resolved" || !contact.NextContactAt.IsZero() {
+			t.Fatalf("resolved block contact remains active: %#v", contact)
+		}
+	}
+	if !contactFound {
+		t.Fatal("resolved block has no retained contact history")
 	}
 	if len(st.AdminRecords) == 0 || st.AdminRecords[len(st.AdminRecords)-1].Type != state.EventBlockResolutionRecorded {
 		t.Fatalf("resolution audit missing: %#v", st.AdminRecords)

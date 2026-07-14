@@ -82,6 +82,7 @@ func TestDriveCompoundNodeThroughGates(t *testing.T) {
 	executor := New(fs, map[model.PerformerKind]Adapter{
 		model.PerformerProgram: ProgramAdapter{DefaultTimeout: 5 * time.Second},
 	})
+	executor.Now = func() time.Time { return executorTestTime }
 	finished, err := executor.Drive(t.Context(), snapshot.Run.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -214,6 +215,7 @@ func TestDriveCompoundGateFailurePoisonsToBlocked(t *testing.T) {
 	executor := New(fs, map[model.PerformerKind]Adapter{
 		model.PerformerProgram: ProgramAdapter{DefaultTimeout: 5 * time.Second},
 	})
+	executor.Now = func() time.Time { return executorTestTime }
 	finished, err := executor.Drive(t.Context(), snapshot.Run.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -234,6 +236,20 @@ func TestDriveCompoundGateFailurePoisonsToBlocked(t *testing.T) {
 		if !strings.Contains(node.BlockedReason, `gate "work.test.tests" exhausted its budget of 1 failed verdicts`) || node.BlockedOwner == "" {
 			t.Fatalf("blocked node = %#v", node)
 		}
+		if !node.BlockedAt.Equal(executorTestTime) {
+			t.Fatalf("blockedAt = %s, want %s", node.BlockedAt, executorTestTime)
+		}
+	}
+	var blockContact *state.ContactState
+	for commandID, command := range finished.State.OutstandingCommands {
+		if command.Kind == state.CommandKindBlockNode && command.NodeID == "work.test.tests" {
+			contact := finished.State.Contacts[commandID]
+			blockContact = &contact
+		}
+	}
+	if blockContact == nil || blockContact.Kind != state.WaitKindHuman || blockContact.Assignee != "human:operator" ||
+		blockContact.Budget != DefaultHumanContactBudget || !blockContact.NextContactAt.Equal(executorTestTime.Add(DefaultHumanContactCadence)) {
+		t.Fatalf("blocked contact = %#v", blockContact)
 	}
 	if finished.State.Nodes["work.review"].Status != state.NodeStatusPending {
 		t.Fatalf("review must not run after a poisoned check: %#v", finished.State.Nodes["work.review"])
