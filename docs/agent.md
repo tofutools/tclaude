@@ -1168,7 +1168,11 @@ for Claude Code, plus both `~/.agents/skills/` and `$CODEX_HOME/skills`
 - **`agent-rename`** — split out as its own skill so renames are
   obvious in the skill list.
 - **`agent-task`** — set / clear / show an agent's task-reference link
-  (the clickable URL in the dashboard's Task column).
+  (the dashboard's Task column). The human operator can also click any
+  agent's Task cell to attach, change, or clear its URL and optional display
+  name; a blank display name derives a short label automatically. Existing
+  short labels remain normal links; hovering or keyboard-focusing the Task
+  cell reveals its edit pencil without widening the column.
 - **`present-pr-to-operator`** — present a PR intentionally in the
   dashboard with `tclaude agent present-pr <url>`.
 - **`agent-lifecycle`** — context-window self-management: `compact`,

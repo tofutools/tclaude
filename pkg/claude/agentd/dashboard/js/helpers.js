@@ -1586,8 +1586,13 @@ function branchCell(m) {
 // (a Linear issue, GitHub issue/PR, ticket, …). `m.task_ref_url` is the
 // raw URL; `m.task_ref_label` is the display label the daemon already
 // derived (Linear→JOH-xxx, GitHub→#nnn, else host) or the human's
-// explicit override. Empty renders an em dash so the column stays
-// aligned.
+// explicit override.
+//
+// An empty cell exposes an attach affordance. Once set, the short label stays
+// a conventional link and a separate pencil opens the editor. The edit
+// control carries both the rotation-proof agent selector and the raw URL +
+// explicit label override so row-actions.js can round-trip exactly what was
+// stored. Editing and navigating therefore never compete for the same click.
 //
 // Defence in depth: the daemon only ever stores an http(s) task URL (the
 // write path scheme-validates it), but an href is a stored-XSS sink, so
@@ -1596,12 +1601,19 @@ function branchCell(m) {
 // inert text instead of a link.
 function taskCell(m) {
   const url = (m.task_ref_url || '').trim();
-  if (!url) return '<span class="muted">—</span>';
   const label = m.task_ref_label || url;
-  if (!/^https?:\/\//i.test(url)) {
-    return `<span class="task-ref muted" title="${esc(url)}">🔗 ${esc(label)}</span>`;
+  const selector = m.agent_id || m.conv_id || '';
+  const editTitle = url
+    ? `Edit this task link or its display name — ${url}`
+    : 'Click to attach a task link';
+  const editAttrs = `role="button" tabindex="0" data-act="edit-task" data-conv="${esc(m.conv_id || '')}" data-agent="${esc(selector)}" data-label="${esc(m.title || m.conv_id || '')}" data-current="${esc(url)}" data-current-task-label="${esc(m.task_ref_label_override || '')}" title="${esc(editTitle)}"`;
+  if (!url) {
+    return `<span class="task-edit task-attach" ${editAttrs}>${themeWords('＋ attach', '✧ bind quest')}</span>`;
   }
-  return `<a class="task-ref task-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer" draggable="false" title="Open task reference — ${esc(url)}">🔗 ${esc(label)}</a>`;
+  const display = /^https?:\/\//i.test(url)
+    ? `<a class="task-ref task-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer" draggable="false" title="Open task reference — ${esc(url)}">🔗 ${esc(label)}</a>`
+    : `<span class="task-ref muted" title="${esc(url)}">🔗 ${esc(label)}</span>`;
+  return `<span class="task-value">${display}<span class="task-edit task-edit-icon" ${editAttrs} aria-label="Edit task link">✎</span></span>`;
 }
 
 // tagChips renders an agent's tags as compact pill chips (the same

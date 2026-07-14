@@ -430,6 +430,56 @@ func TestDashboardEdit_StopResume_WrongMethod(t *testing.T) {
 	}
 }
 
+func TestDashboardEdit_TaskLinkSetLabelAndClear(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	const convID = "77777777-2222-3333-4444-555555555555"
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{ConvID: convID, CustomTitle: "worker"}))
+	agentID, _, err := db.EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+
+	// The dashboard routes by stable agent-id and acts as the human operator;
+	// no self.task / agent.task grant is needed on the target.
+	w := httptest.NewRecorder()
+	r := dashboardRequest(http.MethodPost, "/api/agents/"+agentID+"/task",
+		`{"url":"https://example.com/work/42","label":"Release blocker"}`)
+	handleDashboardAgentsAPI(w, r)
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	ref, err := db.GetAgentTaskRef(agentID)
+	require.NoError(t, err)
+	assert.Equal(t, "https://example.com/work/42", ref.URL)
+	assert.Equal(t, "Release blocker", ref.Label)
+
+	// Shared validation rejects unsafe schemes and leaves the old value intact.
+	w = httptest.NewRecorder()
+	r = dashboardRequest(http.MethodPost, "/api/agents/"+agentID+"/task",
+		`{"url":"javascript:alert(1)","label":"bad"}`)
+	handleDashboardAgentsAPI(w, r)
+	require.Equal(t, http.StatusBadRequest, w.Code, "body=%s", w.Body.String())
+	ref, err = db.GetAgentTaskRef(agentID)
+	require.NoError(t, err)
+	assert.Equal(t, "https://example.com/work/42", ref.URL)
+
+	w = httptest.NewRecorder()
+	r = dashboardRequest(http.MethodPost, "/api/agents/"+agentID+"/task", `{"clear":true}`)
+	handleDashboardAgentsAPI(w, r)
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	ref, err = db.GetAgentTaskRef(agentID)
+	require.NoError(t, err)
+	assert.Equal(t, db.AgentTaskRef{}, ref)
+}
+
+func TestDashboardEdit_TaskLinkWrongMethod(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	w := httptest.NewRecorder()
+	r := dashboardRequest(http.MethodGet, "/api/agents/worker/task", "")
+	handleDashboardAgentsAPI(w, r)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
 func TestDashboardEdit_DeleteAgent_MissingConv(t *testing.T) {
 	setupTestDB(t)
 	withDashboardAuth(t)

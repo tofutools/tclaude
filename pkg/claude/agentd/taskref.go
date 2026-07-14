@@ -38,9 +38,13 @@ const (
 // TaskURL is the raw stored URL (the edit affordance round-trips it);
 // TaskLabel is the *effective* display label — the human's explicit
 // label when set, otherwise one derived from the URL.
+// TaskLabelOverride is the raw explicit label (empty means auto-derive),
+// carried separately so the dashboard editor can prefill the operator's
+// actual choice instead of turning a derived label into a permanent override.
 type taskRefView struct {
-	TaskURL   string `json:"task_ref_url,omitempty"`
-	TaskLabel string `json:"task_ref_label,omitempty"`
+	TaskURL           string `json:"task_ref_url,omitempty"`
+	TaskLabel         string `json:"task_ref_label,omitempty"`
+	TaskLabelOverride string `json:"task_ref_label_override,omitempty"`
 }
 
 // taskRefViewFor builds the wire view for one agent's stored task ref.
@@ -50,8 +54,9 @@ func taskRefViewFor(ref db.AgentTaskRef) taskRefView {
 		return taskRefView{}
 	}
 	return taskRefView{
-		TaskURL:   ref.URL,
-		TaskLabel: effectiveTaskLabel(ref),
+		TaskURL:           ref.URL,
+		TaskLabel:         effectiveTaskLabel(ref),
+		TaskLabelOverride: strings.TrimSpace(ref.Label),
 	}
 }
 

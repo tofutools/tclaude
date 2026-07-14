@@ -1075,6 +1075,22 @@ func baseStates() []dashsnap.State {
 			JS:      showGroups + expandGroups + ensureForceOpen + `document.body.classList.add('dock-open');`,
 		},
 		{
+			Key:     "task-link-editor",
+			Title:   "Task link editor",
+			Caption: "The operator's Task/Quest editor: an existing short link stays navigable, its hover/focus pencil opens the prefilled URL + optional display-name dialog, and wizard mode applies the quill/violet/parchment treatment.",
+			JS: showGroups + expandGroups + `document.body.classList.remove('dock-open');` + `
+  var edit = document.querySelector('.task-edit-icon[data-current]');
+  if (!edit) throw new Error('task-link-editor: populated task edit control missing');
+  edit.click();
+  var modal = document.querySelector('#task-link-modal.show');
+  var url = document.querySelector('#task-link-url');
+  var label = document.querySelector('#task-link-label');
+  if (!modal || !url || !label) throw new Error('task-link-editor: dialog missing');
+  if (!url.value.startsWith('http')) throw new Error('task-link-editor: URL was not prefilled');
+  if (!label.value) throw new Error('task-link-editor: explicit label was not prefilled');`,
+			SettleMS: 250,
+		},
+		{
 			Key:     "groups-view-menu",
 			Title:   "Groups tab — Preact view controls",
 			Caption: "TCL-357 (self-checked): the Preact-owned view popover preserves every visibility and member-column control, with the same default/wizard styling and native checkbox behavior.",
