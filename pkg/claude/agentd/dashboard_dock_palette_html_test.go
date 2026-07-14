@@ -118,7 +118,7 @@ func TestDashboardHTML_DockPalette(t *testing.T) {
 	must(`role="region"`, "the card renders complete profile details as an accessible region")
 	must(`tabIndex="0"`, "overflowing profile details can receive focus and scroll from the keyboard")
 	must("detailsDescriptionID", "the action button and focusable region describe every full-detail chip")
-	must("onMouseEnter=${hasDetails ? showDetails : null}", "hover reveals the complete tooltip")
+	must("onMouseEnter=${hasDetails ? enterCard : null}", "hover reveals the complete tooltip")
 	must("onFocusIn=${hasDetails ? showDetails : null}", "keyboard focus reveals the complete tooltip")
 	must("window.addEventListener('resize', positionDetails)", "open details follow viewport geometry changes")
 	must("clipHost?.addEventListener('scroll', positionDetails", "open details follow dock scrolling")
@@ -129,6 +129,10 @@ func TestDashboardHTML_DockPalette(t *testing.T) {
 	must("title=${hasDetails ? null : name}", "rich details replace the card's native title tooltip")
 	must("title=${hasDetails ? null : gripTitle}", "profile drag grips do not add a second native tooltip")
 	must("title=${hasDetails ? null : 'More actions'}", "profile action buttons do not add a second native tooltip")
+	must("onDragStart=${section.drag ? () => {", "starting a card drag closes rich profile details")
+	must("detailsOpen && !menuOpen && !dragging", "rich details remain hidden throughout a card drag")
+	must("onDragLeave=${section.drag ? (event) => {", "native drag events track whether the pointer leaves its source card")
+	must("const endedOverCard = hit ? event.currentTarget.contains(hit) : hoveringRef.current", "dragend restores details only over the source card")
 
 	// The dock reads its data off the live snapshot (the profile + role
 	// registries now ride the poll, templates already did) — see

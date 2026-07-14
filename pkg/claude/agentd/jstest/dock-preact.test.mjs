@@ -188,6 +188,24 @@ test('Profile cards show complete details in a non-reflowing tooltip', async (t)
   assert.equal(tooltip.style.left, '60px', 'an open tooltip follows horizontal geometry changes');
   assert.equal(tooltip.style.top, '10px', 'an open tooltip follows dock scrolling');
 
+  await harness.act(() => harness.fireEvent(card, 'dragstart'));
+  assert.equal(tooltip.classList.contains('open'), false, 'starting a card drag hides its details');
+  await harness.act(() => harness.fireEvent(card, 'mouseenter'));
+  assert.equal(tooltip.classList.contains('open'), false, 'details stay hidden throughout the drag');
+  await harness.act(() => harness.fireEvent(card, 'dragend'));
+  assert.ok(tooltip.classList.contains('open'),
+    'ending a canceled drag over the same card restores its hover details');
+
+  await harness.act(() => harness.fireEvent(card, 'dragstart'));
+  await harness.act(() => harness.fireEvent(card, 'dragleave', {
+    relatedTarget: harness.document.body,
+  }));
+  await harness.act(() => harness.fireEvent(card, 'dragend'));
+  assert.equal(tooltip.classList.contains('open'), false,
+    'ending a drag away from the card leaves its details hidden');
+  await harness.act(() => harness.fireEvent(card, 'mouseenter'));
+  assert.ok(tooltip.classList.contains('open'), 'normal hover details resume on the next entry');
+
   await harness.act(() => harness.fireEvent(card, 'mouseleave'));
   assert.equal(tooltip.classList.contains('open'), false, 'leaving the card closes the tooltip');
   await harness.act(() => harness.fireEvent(card, 'focusin'));
