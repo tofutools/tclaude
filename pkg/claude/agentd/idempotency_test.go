@@ -101,6 +101,8 @@ func TestIdempotency5xxIsReplayedWithoutRerunningMutation(t *testing.T) {
 
 func TestIdempotencyConcurrentRetryWaitsForOriginal(t *testing.T) {
 	setupTestDB(t)
+	_, err := db.Open()
+	require.NoError(t, err)
 	key := uuid.NewString()
 	started := make(chan struct{})
 	release := make(chan struct{})
@@ -112,7 +114,10 @@ func TestIdempotencyConcurrentRetryWaitsForOriginal(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte("created"))
 	})
-	middleware := idempotencyRequestsWithOwner(handler, "daemon-a")
+	retryWaiting := make(chan struct{})
+	middleware := idempotencyRequestsWithOwnerAndWaitHook(handler, "daemon-a", func() {
+		close(retryWaiting)
+	})
 
 	first := httptest.NewRecorder()
 	firstDone := make(chan struct{})
@@ -132,7 +137,11 @@ func TestIdempotencyConcurrentRetryWaitsForOriginal(t *testing.T) {
 		middleware.ServeHTTP(second, idempotencyRequest(t, key, "payload"))
 		close(secondDone)
 	}()
-	time.Sleep(75 * time.Millisecond)
+	select {
+	case <-retryWaiting:
+	case <-time.After(2 * time.Second):
+		t.Fatal("retry did not reach the pending-request wait path")
+	}
 	assert.Equal(t, int32(1), calls.Load(), "retry must not execute the handler")
 	close(release)
 
