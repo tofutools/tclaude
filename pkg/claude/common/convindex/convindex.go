@@ -130,8 +130,17 @@ func FormatConvTitle(customTitle, summary, firstPrompt string) string {
 // GetConvTitleAndPrompt returns both the title (CustomTitle or Summary) and the first prompt.
 // Returns formatted string like "[title]: prompt" or just "prompt" if no title.
 func GetConvTitleAndPrompt(convID, cwd string) string {
+	return GetConvTitleAndPromptWithFallback(convID, cwd, "")
+}
+
+// GetConvTitleAndPromptWithFallback is GetConvTitleAndPrompt with a fallback
+// for the title part. The fallback is used only when the conversation has no
+// custom title, and it outranks a generated summary. Session listings use
+// this for an agent's spawn-time name while its harness-native title write is
+// still pending (notably for freshly spawned Codex agents).
+func GetConvTitleAndPromptWithFallback(convID, cwd, fallbackTitle string) string {
 	if convID == "" || cwd == "" {
-		return ""
+		return FormatTitleAndPrompt(fallbackTitle, "")
 	}
 
 	// Try DB first (exact match, then prefix)
@@ -140,10 +149,11 @@ func GetConvTitleAndPrompt(convID, cwd string) string {
 		row, _ = db.FindConvIndexByPrefix(convID)
 	}
 	if row != nil {
-		title := ""
-		if row.CustomTitle != "" {
-			title = row.CustomTitle
-		} else if row.Summary != "" {
+		title := row.CustomTitle
+		if title == "" {
+			title = fallbackTitle
+		}
+		if title == "" {
 			title = row.Summary
 		}
 		return FormatTitleAndPrompt(title, row.FirstPrompt)
@@ -151,7 +161,7 @@ func GetConvTitleAndPrompt(convID, cwd string) string {
 
 	// Fallback: parse .jsonl file directly for unindexed conversations
 	projectPath := GetClaudeProjectPath(cwd)
-	return cleanTitle(parseFirstPromptFromJSONL(projectPath, convID))
+	return FormatTitleAndPrompt(fallbackTitle, parseFirstPromptFromJSONL(projectPath, convID))
 }
 
 // cleanTitle removes XML-like tags and normalizes whitespace for display.
