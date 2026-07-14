@@ -425,6 +425,102 @@ test('params dialog edits identifiers, typed defaults, descriptions, and require
   assert.equal(model.template.params.ticket, undefined);
 });
 
+test('params dialog rejects invalid edited number and boolean defaults without applying', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ ProcessEditModel }, { openProcessParamsDialog }] = await Promise.all([
+    harness.importDashboardModule('js/process-edit-model.js'),
+    harness.importDashboardModule('js/process-params-dialog.js'),
+  ]);
+  const cases = [
+    ['empty number', 'retries', '', /finite number/],
+    ['non-finite number', 'retries', 'Infinity', /finite number/],
+    ['invalid boolean', 'enabled', 'TRUE', /exactly "true" or "false"/],
+  ];
+  for (const [label, paramName, value, expectedError] of cases) {
+    const loaded = view();
+    loaded.template.params = {
+      retries: { type: 'number', default: 2 },
+      enabled: { type: 'boolean', default: true },
+    };
+    const original = structuredClone(loaded.template.params);
+    const model = new ProcessEditModel(loaded);
+    let mutations = 0;
+    const dispose = openProcessParamsDialog({ model, onMutated: () => { mutations += 1; } });
+    const overlay = harness.document.querySelector('.process-param-modal');
+    const input = overlay.querySelector(`[data-process-param="${paramName}"] .process-param-default`);
+    input.value = value;
+    harness.fireEvent(input, 'input');
+    harness.fireEvent(overlay.querySelector('.modal-buttons .primary'), 'click');
+
+    assert.equal(harness.document.querySelector('.process-param-modal'), overlay, `${label}: dialog remains open`);
+    const alert = overlay.querySelector('[role="alert"]');
+    assert.match(alert.textContent, expectedError, `${label}: accessible validation feedback`);
+    assert.deepEqual(model.template.params, original, `${label}: model is unchanged`);
+    assert.equal(model.undoStack.length, 0, `${label}: no undo entry is created`);
+    assert.equal(model.dirty, false, `${label}: editor remains clean`);
+    assert.equal(mutations, 0, `${label}: mutation callback is not emitted`);
+    dispose(null);
+  }
+});
+
+test('params dialog default presence round-trip preserves an untouched custom object losslessly', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ ProcessEditModel }, { openProcessParamsDialog }] = await Promise.all([
+    harness.importDashboardModule('js/process-edit-model.js'),
+    harness.importDashboardModule('js/process-params-dialog.js'),
+  ]);
+  const loaded = view();
+  loaded.template.params = {
+    config: { type: 'custom-kind', default: { nested: { enabled: true }, retries: 2 } },
+  };
+  const original = structuredClone(loaded.template.params.config.default);
+  const model = new ProcessEditModel(loaded);
+  const dispose = openProcessParamsDialog({ model });
+  const overlay = harness.document.querySelector('.process-param-modal');
+  const enabled = overlay.querySelector('.process-param-default-enabled');
+  enabled.checked = false;
+  harness.fireEvent(enabled, 'change');
+  enabled.checked = true;
+  harness.fireEvent(enabled, 'change');
+
+  assert.equal(dispose.isDirty(), false, 'presence off then on restores the original draft state');
+  harness.fireEvent(overlay.querySelector('.modal-buttons .primary'), 'click');
+  assert.deepEqual(model.template.params.config.default, original);
+  assert.equal(model.undoStack.length, 0, 'lossless presence round-trip creates no model edit');
+  assert.equal(model.dirty, false);
+});
+
+test('params dialog restores focus near removed rows and to Add after the final row', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ ProcessEditModel }, { openProcessParamsDialog }] = await Promise.all([
+    harness.importDashboardModule('js/process-edit-model.js'),
+    harness.importDashboardModule('js/process-params-dialog.js'),
+  ]);
+  const cases = [
+    ['middle', ['alpha', 'beta', 'gamma'], 'beta', 'gamma'],
+    ['last', ['alpha', 'beta', 'gamma'], 'gamma', 'beta'],
+    ['only', ['alpha'], 'alpha', null],
+  ];
+  for (const [label, names, removed, focusedName] of cases) {
+    const loaded = view();
+    loaded.template.params = Object.fromEntries(names.map((name) => [name, { type: 'string' }]));
+    const model = new ProcessEditModel(loaded);
+    const dispose = openProcessParamsDialog({ model });
+    const overlay = harness.document.querySelector('.process-param-modal');
+    const remove = overlay.querySelector(`[data-process-param="${removed}"] .process-action-danger`);
+    remove.focus();
+    harness.fireEvent(remove, 'click');
+
+    const expected = focusedName
+      ? overlay.querySelector(`[data-process-param="${focusedName}"] .process-param-name`)
+      : overlay.querySelector('.process-param-toolbar button');
+    assert.equal(harness.document.activeElement, expected, `${label}: focus moves to the predictable nearby control`);
+    assert.equal(overlay.querySelector('[role="dialog"]').contains(harness.document.activeElement), true,
+      `${label}: focus remains inside the dialog`);
+    dispose(null);
+  }
+});
+
 test('params dialog reports every raw staged field and structural edit as dirty', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ ProcessEditModel }, { openProcessParamsDialog }] = await Promise.all([

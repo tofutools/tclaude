@@ -28,12 +28,17 @@ function defaultText(value) {
 }
 
 function parseDefault(value, type) {
-  if (type === 'boolean' && (value === 'true' || value === 'false')) return value === 'true';
-  if (type === 'number' && value.trim() !== '') {
-    const number = Number(value);
-    if (Number.isFinite(number)) return number;
+  if (type === 'boolean') {
+    if (value === 'true' || value === 'false') return { value: value === 'true' };
+    return { error: 'must be exactly "true" or "false".' };
   }
-  return value;
+  if (type === 'number') {
+    if (value.trim() === '') return { error: 'must be a finite number.' };
+    const number = Number(value);
+    if (Number.isFinite(number)) return { value: number };
+    return { error: 'must be a finite number.' };
+  }
+  return { value };
 }
 
 function nextParamName(rows) {
@@ -129,13 +134,19 @@ export function openProcessParamsDialog({
       const defaultValue = h('input', { class: 'process-param-default', type: 'text', spellcheck: 'false', placeholder: 'No default', 'aria-label': `Parameter ${row.name || index + 1} default` });
       defaultValue.value = row.defaultValue;
       defaultValue.disabled = !row.hasDefault;
-      defaultEnabled.addEventListener('change', () => { row.hasDefault = defaultEnabled.checked; row.defaultChanged = true; defaultValue.disabled = !row.hasDefault; });
-      defaultValue.addEventListener('input', () => { row.defaultValue = defaultValue.value; row.defaultChanged = true; });
+      defaultEnabled.addEventListener('change', () => { row.hasDefault = defaultEnabled.checked; defaultValue.disabled = !row.hasDefault; });
+      defaultValue.addEventListener('input', () => { row.defaultValue = defaultValue.value; row.defaultChanged = true; error.textContent = ''; });
       const required = h('input', { class: 'process-param-required', type: 'checkbox', 'aria-label': `Parameter ${row.name || index + 1} required` });
       required.checked = row.required;
       required.addEventListener('change', () => { row.required = required.checked; row.requiredChanged = true; });
       const remove = h('button', { class: 'process-action process-action-danger', type: 'button', text: 'remove', 'aria-label': `Remove parameter ${row.name || index + 1}` });
-      remove.addEventListener('click', () => { rows.splice(index, 1); render(); });
+      remove.addEventListener('click', () => {
+        rows.splice(index, 1);
+        render();
+        const nextIndex = Math.min(index, rows.length - 1);
+        if (nextIndex >= 0) list.querySelectorAll('.process-param-name')[nextIndex]?.focus();
+        else addButton.focus();
+      });
       list.append(h('div', { class: 'process-param-row', 'data-process-param': row.name },
         h('label', {}, h('span', { text: 'Name' }), name),
         h('label', {}, h('span', { text: 'Type' }), type),
@@ -170,8 +181,13 @@ export function openProcessParamsDialog({
       if (row.requiredChanged) {
         if (row.required) param.required = true; else delete param.required;
       }
-      if (row.hasDefault) param.default = row.defaultChanged ? parseDefault(row.defaultValue, row.type) : row.param.default;
-      else delete param.default;
+      if (row.hasDefault) {
+        if (row.defaultChanged || row.param.default === undefined) {
+          const parsed = parseDefault(row.defaultValue, row.type);
+          if (parsed.error) { error.textContent = `Default for "${row.name}" ${parsed.error}`; return; }
+          param.default = parsed.value;
+        } else param.default = row.param.default;
+      } else delete param.default;
       params[row.name] = param;
     }
     const changed = model.setParams(params);
