@@ -264,6 +264,10 @@ func RebuildConvBranchHistoryScan(convID string, obs []BranchObservation) error 
 // earliest sighting. An empty convID or branch (the hook fires for
 // plenty of tool calls outside a git repo) is a no-op, not an error.
 func AppendConvBranchHistoryHook(convID, branch, repoDir string) error {
+	return appendConvBranchHistoryHookAt(convID, branch, repoDir, time.Now())
+}
+
+func appendConvBranchHistoryHookAt(convID, branch, repoDir string, observedAt time.Time) error {
 	if convID == "" || branch == "" {
 		return nil
 	}
@@ -271,7 +275,7 @@ func AppendConvBranchHistoryHook(convID, branch, repoDir string) error {
 	if err != nil {
 		return err
 	}
-	now := fmtBranchTime(time.Now())
+	now := fmtBranchTime(observedAt)
 	_, err = conn.Exec(`INSERT INTO conv_branch_history
 		(conv_id, repo_dir, branch, source, first_seen, last_seen)
 		VALUES (?, ?, ?, 'hook', ?, ?)

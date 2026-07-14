@@ -488,14 +488,15 @@ func TestNotifyState(t *testing.T) {
 	require.NoError(t, err, "GetNotifyTime")
 	assert.False(t, found, "expected no record")
 
-	// Set
-	require.NoError(t, SetNotifyTime("sess-1"), "SetNotifyTime")
+	// Set at a controlled instant.
+	want := time.Date(2026, 1, 2, 3, 4, 5, 6, time.UTC)
+	require.NoError(t, setNotifyTimeAt("sess-1", want), "setNotifyTimeAt")
 
 	// Get
 	ts, found, err := GetNotifyTime("sess-1")
 	require.NoError(t, err, "GetNotifyTime")
 	assert.True(t, found, "expected record")
-	assert.LessOrEqual(t, time.Since(ts), 5*time.Second, "notified_at too old: %v", ts)
+	assert.Equal(t, want, ts)
 }
 
 func TestLegacyImport(t *testing.T) {

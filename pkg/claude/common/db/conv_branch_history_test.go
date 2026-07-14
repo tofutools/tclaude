@@ -205,7 +205,8 @@ func TestConvBranchHistory_HookAndScanCoexist(t *testing.T) {
 func TestConvBranchHistory_HookAppendKeyedByRepoDir(t *testing.T) {
 	setupTestDB(t)
 
-	require.NoError(t, AppendConvBranchHistoryHook("c1", "feat", "/wt-a"))
+	firstSeen := time.Date(2026, 5, 17, 9, 0, 0, 0, time.UTC)
+	require.NoError(t, appendConvBranchHistoryHookAt("c1", "feat", "/wt-a", firstSeen))
 	before := rowFor(t, "c1", "/wt-a", "feat")
 
 	// A no-op for an empty branch or conv.
@@ -214,12 +215,12 @@ func TestConvBranchHistory_HookAppendKeyedByRepoDir(t *testing.T) {
 	require.Len(t, mustList(t, "c1"), 1, "empty branch/conv appends nothing")
 
 	// A repeat of the same (repo_dir, branch) bumps last_seen in place.
-	time.Sleep(2 * time.Millisecond)
-	require.NoError(t, AppendConvBranchHistoryHook("c1", "feat", "/wt-a"))
+	later := firstSeen.Add(time.Minute)
+	require.NoError(t, appendConvBranchHistoryHookAt("c1", "feat", "/wt-a", later))
 	require.Len(t, mustList(t, "c1"), 1, "a same-pair repeat is one row")
 	after := rowFor(t, "c1", "/wt-a", "feat")
 	assert.True(t, after.FirstSeen.Equal(before.FirstSeen), "first_seen is pinned")
-	assert.False(t, after.LastSeen.Before(before.LastSeen), "last_seen advances")
+	assert.True(t, after.LastSeen.Equal(later), "last_seen advances to the controlled observation time")
 
 	// The same branch in a different repo is a distinct row.
 	require.NoError(t, AppendConvBranchHistoryHook("c1", "feat", "/wt-b"))
