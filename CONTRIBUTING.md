@@ -16,6 +16,47 @@ go test ./...
 golangci-lint run ./...
 ```
 
+### Deterministic timing in tests
+
+Make correctness conditions causal. Use a channel, barrier, callback, wait
+group, or observable state to prove that work reached the relevant point before
+allowing it to continue. Do not sleep to “give a goroutine time,” and do not
+prove that an action was suppressed by observing nothing for a few
+milliseconds. For example, a queued-writer test should wait until the writer is
+actually contending on the lock through an explicit hook or channel barrier,
+then assert state before releasing it.
+
+Use the narrowest timing mechanism that matches the boundary:
+
+1. Prefer causal handshakes or observable state when ordering is the contract.
+2. Use Go's `testing/synctest` when all relevant goroutines, channels, timers,
+   tickers, and contexts can live and durably quiesce inside one bubble.
+3. Inject a clock, timer, or sleeper when production behavior is genuinely
+   time-driven and the system cannot fit in a synctest bubble.
+4. At real filesystem, subprocess, tmux, network, or other OS boundaries, poll
+   production-observable state with a generous failure deadline and useful
+   diagnostics, or add a controlled helper-process handshake.
+5. Assert real elapsed time only when wall-clock performance is itself the
+   contract.
+
+`testing/synctest` does not virtualize external I/O, and `synctest.Wait` does not
+treat mutex contention or syscalls as durable blocking. Use explicit hooks or
+channel barriers for mutex/OS-lock contention. Real subprocesses, fsnotify
+watcher descriptors, and database or daemon goroutines created outside the
+bubble usually need a handshake, injected-time seam, or observable-state
+polling instead. Pure debounce or state-machine logic fed by bubbled channels
+can still be a good synctest candidate. Do not distort production boundaries
+merely to force them into a bubble.
+
+A generous deadline that only prevents a hung test is a liveness guard, not a
+correctness assertion, and is acceptable. Keep it well outside normal
+operation, make timeout failures diagnostic, and never replace a flake by
+broadly increasing sleeps or retrying the whole test. A deadline created inside
+a synctest bubble advances in fake time and tests controlled behavior; it is not
+a wall-clock hang guard. Rely on the outer `go test -timeout` watchdog for a
+stuck bubble. Preserve shared test harnesses and parallelism; deterministic
+conversions should keep total suite time flat or make it faster.
+
 ## Dashboard frontend
 
 ### Vendored dependencies
