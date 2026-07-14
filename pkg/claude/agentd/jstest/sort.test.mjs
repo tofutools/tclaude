@@ -21,7 +21,7 @@ import assert from 'node:assert/strict';
 import {
   cycleSort, sortHead, applySort, loadSortState,
   persistTableSort,
-  MEMBER_COLS,
+  MEMBER_COLS, MEMBER_ACCESSORS,
   RETIRED_COLS, RETIRED_ACCESSORS,
   CONVERSATIONS_COLS, CONVERSATIONS_ACCESSORS,
   PENDING_COLS, PENDING_ACCESSORS,
@@ -120,6 +120,33 @@ test("member headers carry wizard-mode labels for class, quest and lore", () => 
   assert.match(wizard, /data-sort-col="role" title="Sort by Class"/);
   assert.match(wizard, /data-sort-col="task" title="Sort by Quest"/);
   assert.match(wizard, /data-sort-col="descr" title="Sort by Lore"/);
+});
+
+test("member Age sorts by instant across precision and zone differences", () => {
+  loadSortState();
+  const rows = [
+    { id: 'newest', created_at: '2026-06-18T12:00:00.004000001Z' },
+    { id: 'unknown', created_at: 'not-a-time' },
+    { id: 'invalid-calendar', created_at: '2026-02-30T12:00:00Z' },
+    { id: 'whole', created_at: '2026-06-18T12:00:00Z' },
+    { id: 'offset', created_at: '2026-06-18T14:00:00.002+02:00' },
+    { id: 'nanosecond', created_at: '2026-06-18T12:00:00.004Z' },
+    { id: 'oldest', created_at: '2026-06-18T11:59:59.999999999Z' },
+    { id: 'blank', created_at: '' },
+  ];
+
+  cycleSort('members', 'age'); // ascending
+  assert.deepEqual(applySort('members', rows, MEMBER_ACCESSORS).map(r => r.id), [
+    'oldest', 'whole', 'offset', 'nanosecond', 'newest',
+    'unknown', 'invalid-calendar', 'blank',
+  ]);
+
+  cycleSort('members', 'age'); // descending; unknown values still last
+  assert.deepEqual(applySort('members', rows, MEMBER_ACCESSORS).map(r => r.id), [
+    'newest', 'nanosecond', 'offset', 'whole', 'oldest',
+    'unknown', 'invalid-calendar', 'blank',
+  ]);
+  loadSortState();
 });
 
 // --- Conversations -----------------------------------------------------

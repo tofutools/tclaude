@@ -123,13 +123,21 @@ func (rc *snapshotRowCache) titleFor(convID string) string {
 	return agent.CachedTitleFromParts(rc.convIndex[convID], rc.agents[convID].PendingName)
 }
 
-// createdFor returns a conv's immutable creation timestamp from the batch, or
-// "" when unknown — the cache-only twin of agent.CachedCreated.
+// createdFor returns a conv's Age timestamp from the batch, or "" when unknown.
+//
+// It returns the earliest valid instant from the actor's immutable birth time
+// (agents.created_at) and conv_index.Created. Actor birth normally wins, is
+// available before the harness writes its first .jsonl event, and remains stable
+// across /clear and reincarnation. Conversation creation wins only for
+// legacy/backfilled actors whose row was stamped after the conversation already
+// existed. The UTC RFC3339Nano result mirrors agent.MemberCreated; sorters parse
+// it and compare instants.
 func (rc *snapshotRowCache) createdFor(convID string) string {
+	convCreated := ""
 	if row := rc.convIndex[convID]; row != nil {
-		return row.Created
+		convCreated = row.Created
 	}
-	return ""
+	return db.EarliestAgeTimestamp(rc.agents[convID].CreatedAt, convCreated)
 }
 
 // viewFor assembles (and memoizes) a conv's full row bundle from the batch. A

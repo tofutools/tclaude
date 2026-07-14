@@ -199,13 +199,80 @@ func ListAgentWorkspacesByConv(convIDs []string) (map[string]AgentWorkspace, err
 }
 
 // ConvAgent is the actor identity of one conversation generation — the stable
-// agent_id plus the actor's spawn-time pending name — resolved through
-// agent_conversations. It carries exactly the two actor facts the dashboard
-// row needs (the id for task-ref / tag / presented-PR lookups, and the pending
-// name as a title fallback) without a per-conv AgentIDForConv + GetAgent pair.
+// agent_id plus the actor's spawn-time pending name and birth timestamp —
+// resolved through agent_conversations. It carries exactly the actor facts the
+// dashboard row needs (the id for task-ref / tag / presented-PR lookups, the
+// pending name as a title fallback, and created_at as the member Age source)
+// without a per-conv AgentIDForConv + GetAgent pair.
 type ConvAgent struct {
 	AgentID     string
 	PendingName string
+	// CreatedAt is the actor's immutable birth timestamp (agents.created_at),
+	// stamped at spawn/enrollment BEFORE the harness writes its first .jsonl
+	// event. It is the dashboard member Age source: available the instant the
+	// agent row exists, so a freshly-spawned agent shows a real Age immediately
+	// rather than blank until the .jsonl is parsed into conv_index. Canonicalised
+	// to UTC RFC3339Nano so it agrees byte-for-byte with the CLI listing's
+	// agent.MemberCreated. Consumers compare Age values as instants, not strings.
+	CreatedAt string
+}
+
+// CanonicalAgeTimestamp normalises a stored timestamp string to UTC
+// RFC3339Nano, preserving all available sub-second precision. The dashboard
+// and CLI use the same representation, but ordering never relies on its text:
+// server and browser Age sorters parse it and compare the resulting instants.
+// Empty stays empty; an unparseable value is returned unchanged rather than
+// blanked so callers can degrade it to an unknown sort key without losing the
+// stored diagnostic value.
+func CanonicalAgeTimestamp(s string) string {
+	if s == "" {
+		return ""
+	}
+	if t := parseTimeOrZero(s); !t.IsZero() {
+		return t.UTC().Format(time.RFC3339Nano)
+	}
+	return s
+}
+
+// CanonicalAgeTimestampFromTime formats an actor birth time.Time (from
+// agents.created_at) into the same UTC RFC3339Nano representation
+// CanonicalAgeTimestamp produces, so the CLI listing's value is byte-identical
+// to the dashboard's. A zero time yields "" (unknown Age).
+func CanonicalAgeTimestampFromTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339Nano)
+}
+
+// EarliestAgeTimestamp returns the earliest valid instant in values, emitted as
+// canonical UTC RFC3339Nano. An actor's created_at normally wins because it
+// predates later conversation generations, while an older conv_index.Created
+// repairs legacy/backfilled actors whose row was stamped at migration or lazy
+// enrollment time. If no value parses, the first non-empty value is preserved
+// for diagnostics; Age sorters treat it as unknown.
+func EarliestAgeTimestamp(values ...string) string {
+	var earliest time.Time
+	fallback := ""
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		if fallback == "" {
+			fallback = value
+		}
+		parsed := parseTimeOrZero(value)
+		if parsed.IsZero() {
+			continue
+		}
+		if earliest.IsZero() || parsed.Before(earliest) {
+			earliest = parsed
+		}
+	}
+	if earliest.IsZero() {
+		return fallback
+	}
+	return CanonicalAgeTimestampFromTime(earliest)
 }
 
 // PendingNamesByAgent bulk-loads the non-empty spawn-time display-name
@@ -261,7 +328,7 @@ func AgentsByConv(convIDs []string) (map[string]ConvAgent, error) {
 	}
 	for _, chunk := range chunkStrings(convIDs, batchChunkSize) {
 		clause, args := inClause(chunk)
-		rows, err := d.Query(`SELECT ac.conv_id, a.agent_id, a.pending_name
+		rows, err := d.Query(`SELECT ac.conv_id, a.agent_id, a.pending_name, a.created_at
 			FROM agent_conversations ac
 			JOIN agents a ON a.agent_id = ac.agent_id
 			WHERE ac.conv_id `+clause, args...)
@@ -271,10 +338,15 @@ func AgentsByConv(convIDs []string) (map[string]ConvAgent, error) {
 		for rows.Next() {
 			var convID string
 			var ca ConvAgent
-			if err := rows.Scan(&convID, &ca.AgentID, &ca.PendingName); err != nil {
+			var createdAt string
+			if err := rows.Scan(&convID, &ca.AgentID, &ca.PendingName, &createdAt); err != nil {
 				_ = rows.Close()
 				return nil, err
 			}
+			// Canonicalise to UTC RFC3339Nano (keeping full sub-second precision)
+			// so the value agrees byte-for-byte with the CLI path
+			// (agent.MemberCreated). Age consumers compare parsed instants.
+			ca.CreatedAt = CanonicalAgeTimestamp(createdAt)
 			out[convID] = ca
 		}
 		err = rows.Err()

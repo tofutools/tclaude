@@ -84,6 +84,56 @@ func TestDashboardSnapshot_BatchRowBundleConsistent(t *testing.T) {
 	assert.Equal(t, "worker-agent", worker.Title)
 }
 
+// Scenario: a freshly-spawned agent whose .jsonl has NOT been parsed into
+// conv_index yet — the several-seconds window right after spawn. Its actor row
+// (agents.created_at) exists the instant enrollment ran, before the harness
+// wrote its first event. The member Age must resolve from that birth timestamp
+// immediately, not stay blank until conv_index materialises. Before the
+// createdFor fix, the snapshot read conv_index.Created only, so this member's
+// Age was empty for the whole gap; this pins the actor-created-at primary.
+func TestDashboardSnapshot_AgeFromActorBeforeConvIndex(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+
+	const freshConv = "cccccccc-1111-2222-3333-444444444444"
+
+	f.HaveGroup("crew")
+	// HaveMember enrolls the actor (agents.created_at stamped) but writes NO
+	// conv_index row — exactly the not-yet-indexed state of a just-spawned agent.
+	f.HaveMember("crew", freshConv)
+
+	// Precondition: the actor exists with a birth timestamp, and conv_index does
+	// not — the gap this fix closes.
+	actor, err := db.GetAgentByConv(freshConv)
+	require.NoError(t, err)
+	require.NotNil(t, actor, "actor enrolled")
+	require.False(t, actor.CreatedAt.IsZero(), "actor has a birth timestamp")
+	convRow, err := db.GetConvIndex(freshConv)
+	require.NoError(t, err)
+	require.Nil(t, convRow, "conv_index not yet populated")
+
+	snap := fetchSnapshotOnly(t, agentd.BuildDashboardHandlerForTest())
+
+	var crew *dashGroup
+	for i := range snap.Groups {
+		if snap.Groups[i].Name == "crew" {
+			crew = &snap.Groups[i]
+		}
+	}
+	require.NotNil(t, crew, "crew group present")
+	var member *dashMember
+	for i := range crew.Members {
+		if crew.Members[i].ConvID == freshConv {
+			member = &crew.Members[i]
+		}
+	}
+	require.NotNil(t, member, "fresh conv is a crew member")
+	assert.NotEmpty(t, member.CreatedAt, "Age resolves from agents.created_at before conv_index exists")
+	assert.Equal(t, db.CanonicalAgeTimestampFromTime(actor.CreatedAt), member.CreatedAt,
+		"Age is the actor's birth timestamp in the canonical fixed-width Age layout")
+}
+
 // Scenario: a retired actor that still holds a permission grant. TCL-369 loads
 // the retired/superseded sets BEFORE building agent rows so addAgent skips a
 // retired conv up front instead of resolving its full row and discarding it in
