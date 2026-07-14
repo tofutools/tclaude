@@ -28,6 +28,7 @@ import {
   PALETTE_PRIMITIVES, PALETTE_SNIPPETS, templateIDEditable,
 } from './process-edit-model.js';
 import { openNodeDialog } from './process-node-dialog.js';
+import { openProcessParamsDialog } from './process-params-dialog.js';
 import { LiveValidation } from './process-validation.js';
 import {
   NO_EXTERNAL_CHANGE, keepExternalChange, reconcileExternalChange,
@@ -140,6 +141,8 @@ export class ProcessTemplateEditor {
     this.undoButton = h('button', { class: 'process-action', type: 'button', title: 'Undo (Ctrl+Z)', text: '↶ undo' });
     this.redoButton = h('button', { class: 'process-action', type: 'button', title: 'Redo (Ctrl+Shift+Z)', text: '↷ redo' });
     this.settingsButton = h('button', { class: 'process-action', type: 'button', title: 'Edit template name and description', text: 'template settings…' });
+    this.paramsButton = h('button', { class: 'process-action', type: 'button', title: 'Declare template parameters', text: 'params…' });
+    this.instantiateButton = h('button', { class: 'process-action', type: 'button', title: 'Instantiate this exact saved version', text: 'instantiate…' });
     this.paletteButton = h('button', { class: 'process-action', type: 'button', title: 'Toggle the node palette', text: '⬒ palette' });
     this.saveButton = h('button', { class: 'process-action primary', type: 'button', title: 'Save a new version', text: 'Save' });
 
@@ -149,7 +152,7 @@ export class ProcessTemplateEditor {
       this.dirtyBadge,
       this.statusLine,
       h('span', { class: 'spacer' }),
-      this.settingsButton, this.undoButton, this.redoButton, this.paletteButton, this.saveButton,
+      this.settingsButton, this.paramsButton, this.undoButton, this.redoButton, this.paletteButton, this.instantiateButton, this.saveButton,
     );
 
     this.externalMessage = h('span', { class: 'process-editor-external-message', text: 'Template changed externally (new version)' });
@@ -198,11 +201,13 @@ export class ProcessTemplateEditor {
   bindEditorEvents() {
     const signal = this.abort.signal;
     this.saveButton.addEventListener('click', () => this.save(), { signal });
+    this.instantiateButton.addEventListener('click', () => this.requestInstantiate(), { signal });
     this.externalReloadButton.addEventListener('click', () => this.reloadExternalChange(), { signal });
     this.externalKeepButton.addEventListener('click', () => this.keepExternalChange(), { signal });
     this.undoButton.addEventListener('click', () => this.applyHistory('undo'), { signal });
     this.redoButton.addEventListener('click', () => this.applyHistory('redo'), { signal });
     this.settingsButton.addEventListener('click', () => this.setSelection({ type: 'template' }), { signal });
+    this.paramsButton.addEventListener('click', () => this.openParamsSettings(), { signal });
     this.paletteButton.addEventListener('click', () => {
       this.palette.hidden = !this.palette.hidden;
     }, { signal });
@@ -313,6 +318,8 @@ export class ProcessTemplateEditor {
     this.undoButton.disabled = externalPending || !model.canUndo;
     this.redoButton.disabled = externalPending || !model.canRedo;
     if (this.settingsButton) this.settingsButton.disabled = externalPending;
+    if (this.paramsButton) this.paramsButton.disabled = externalPending || this.savePending;
+    if (this.instantiateButton) this.instantiateButton.disabled = externalPending || this.savePending;
     if (this.paletteButton) this.paletteButton.disabled = externalPending;
     // A blank editor has not completed a save, even if a force retry adopted
     // an existing CAS head. Keep its retry path armed after a failed or
@@ -609,6 +616,49 @@ export class ProcessTemplateEditor {
     if (!node) return;
     this.setSelection({ type: 'node', id: node.id });
     this.openNodeSettings(node.id);
+  }
+
+  async openParamsSettings() {
+    if (externalInteractionPending(this) || this.savePending) return false;
+    const current = this.modalDispose;
+    if (current) {
+      const closed = current.requestClose ? await current.requestClose() : (current(null), true);
+      if (!closed || this.abort?.signal.aborted) return false;
+    }
+    const dispose = openProcessParamsDialog({
+      model: this.model,
+      onMutated: () => this.refresh(),
+      onClosed: () => { if (this.modalDispose === dispose) this.modalDispose = null; },
+    });
+    this.modalDispose = dispose;
+    return true;
+  }
+
+  async requestInstantiate() {
+    if (externalInteractionPending(this) || this.savePending) return false;
+    if (this.blank || this.dirty || !this.model.currentRef) {
+      const choice = await this.choiceModal({
+        title: 'Save before instantiating',
+        body: 'Runs can only pin a saved, content-addressed template version. Save these changes first; unsaved editor state is never instantiated.',
+        choices: [{ key: 'save', label: 'Save first', primary: true }],
+      });
+      if (choice !== 'save' || this.abort.signal.aborted) return false;
+      const saved = await this.save();
+      // Edits made while the save was in flight deliberately leave the model
+      // dirty; requiring another click is what makes unsaved instantiation
+      // impossible by construction.
+      if (!saved || this.dirty || !this.model.currentRef) {
+        if (saved && this.dirty) this.status('The editor changed while saving. Save the latest changes before instantiating.', true);
+        return false;
+      }
+    }
+    if (typeof this.options.onInstantiate !== 'function') return false;
+    this.options.onInstantiate({
+      id: this.model.template.id,
+      ref: this.model.currentRef,
+      template: structuredClone(this.model.template),
+    });
+    return true;
   }
 
   // openNodeSettings opens the shared node dialog (TCL-298). The TCL-296

@@ -914,6 +914,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/process/templates/{id}", processRoute(handleProcessTemplate))
 	mux.HandleFunc("POST /v1/process/validate", processRoute(handleProcessValidate))
 	mux.HandleFunc("GET /v1/process/runs", processRoute(handleProcessRuns))
+	mux.HandleFunc("POST /v1/process/runs", processRoute(handleProcessRunCreate))
 	mux.HandleFunc("GET /v1/process/runs/{id}", processRoute(handleProcessRun))
 	mux.HandleFunc("GET /v1/process/runs/{id}/view", processRoute(handleProcessRunView))
 	mux.HandleFunc("POST /v1/process/runs/{id}/nodes/{node}/report", processRoute(handleProcessReport))

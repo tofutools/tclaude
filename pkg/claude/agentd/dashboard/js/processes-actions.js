@@ -114,6 +114,54 @@ export function createProcessesActions({
     state.setCanvas({ kind: 'editor', id, blank, key: `${id}:${blank}:${Date.now()}` });
     state.setNotice(blank ? 'Blank template scaffold ready.' : `Opening ${id}.`);
   }
+  async function openInstantiation({ id, ref, template = null } = {}) {
+    if (!id || !ref) return false;
+    const key = `${ref}:${Date.now()}`;
+    state.setInstantiation({ key, id, ref, template, phase: template ? 'ready' : 'loading', error: '' });
+    if (template) return true;
+    try {
+      const body = await processJSON(`/v1/process/templates/${encodeURIComponent(id)}?version=${encodeURIComponent(ref)}`, fetchImpl);
+      if (state.instantiation.value?.key !== key) return false;
+      if (body.currentRef !== ref) throw new Error('the requested exact template version was not returned');
+      state.setInstantiation({ key, id, ref, template: body.template, phase: 'ready', error: '' });
+      return true;
+    } catch (error) {
+      if (state.instantiation.value?.key === key) state.setInstantiation({ key, id, ref, template: null, phase: 'error', error: error.message });
+      return false;
+    }
+  }
+  function closeInstantiation() {
+    if (state.mutation.value.busy) return false;
+    state.setInstantiation(null);
+    return true;
+  }
+  async function submitInstantiation(params) {
+    const spec = state.instantiation.value;
+    if (!spec?.ref || spec.phase !== 'ready' || !state.beginMutation()) return false;
+    try {
+      const response = await fetchImpl('/v1/process/runs', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+        body: JSON.stringify({ templateRef: spec.ref, params }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.message || body.error || `${response.status} ${response.statusText}`);
+      if (!body.run?.id || body.run.templateRef !== spec.ref) throw new Error('run creation returned an invalid response');
+      state.setInstantiation(null);
+      state.setSubtab('runs');
+      openViewer(body.run.id);
+      state.setNotice(`Created run ${body.run.id}.`);
+      notify(`Created process run ${body.run.id}`);
+      void load('runs', { quiet: true });
+      dispatchNavigated();
+      return true;
+    } catch (error) {
+      state.setNotice(`Run creation failed: ${error.message}`);
+      notify(`process run creation failed: ${error.message}`, true);
+      return false;
+    } finally {
+      state.endMutation();
+    }
+  }
   function openViewer(id) { state.setCanvas({ kind: 'viewer', id, key: id }); state.setNotice(`Opening run ${id}.`); }
   async function closeCanvas() {
     if (!(await canLeaveEditor())) return false;
@@ -159,5 +207,8 @@ export function createProcessesActions({
   }
 
   function refreshActive() { return load(state.subtab.value); }
-  return Object.freeze({ load, observeTemplateHeads, activateSubtab, openEditor, openViewer, closeCanvas, openRunInList, submitWorklistAction, refreshActive });
+  return Object.freeze({
+    load, observeTemplateHeads, activateSubtab, openEditor, openInstantiation, closeInstantiation,
+    submitInstantiation, openViewer, closeCanvas, openRunInList, submitWorklistAction, refreshActive,
+  });
 }

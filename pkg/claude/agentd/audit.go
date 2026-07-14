@@ -175,6 +175,11 @@ var auditRoutes = []auditRoute{
 	// real coordination action against an existing team, so it is audited too.
 	{method: http.MethodPost, segs: []string{"templates", "{name}", "reinforce"}, verb: "template.reinforce", describe: describeTemplateInstantiate},
 
+	// Process run creation is a durable engine command that may launch
+	// performers. Keep the describer nil: the body contains runtime params that
+	// may be secrets, and actor/source/status/path are sufficient attribution.
+	{method: http.MethodPost, segs: []string{"process", "runs"}, verb: "process.run.create"},
+
 	// Remote-access administration (dashboard, cert-admin gated). Issuing a
 	// client cert / adding SAN hosts / (re)running setup are security-
 	// relevant admin actions worth a trail. Describers capture only safe
@@ -197,6 +202,9 @@ var auditRoutes = []auditRoute{
 func auditRequests(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		route, vars, source, ok := matchAuditRoute(r.Method, r.URL.Path)
+		if ok {
+			source = auditRequestSource(r, source)
+		}
 		var body []byte
 		if ok && route.describe != nil {
 			body = bufferAuditBody(r)
@@ -207,6 +215,23 @@ func auditRequests(h http.Handler) http.Handler {
 			recordAuditRow(r, route, vars, body, rec.code, source)
 		}
 	})
+}
+
+// auditRequestSource distinguishes authenticated browser requests that use
+// the Processes tab's shared /v1 surface from Unix-socket CLI requests. The
+// dashboard deliberately consumes the public process API instead of exposing
+// a duplicate /api contract, so the path prefix alone identifies only the
+// route shape. Re-running the dashboard's cookie + origin predicate makes the
+// attribution unspoofable while leaving agent and human CLI peers classified
+// through their socket context.
+func auditRequestSource(r *http.Request, source string) string {
+	if source != db.AuditSourceCLI || !strings.HasPrefix(r.URL.Path, "/v1/process/") {
+		return source
+	}
+	if ok, _, _, _ := dashboardAuthResult(r); ok {
+		return db.AuditSourceDashboard
+	}
+	return source
 }
 
 // isMutatingMethod reports whether a method is a state-changing verb we

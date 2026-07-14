@@ -696,6 +696,9 @@ func TestCreateRunConflictIsSerialized(t *testing.T) {
 		if err == nil {
 			wins++
 		} else {
+			if !errors.Is(err, store.ErrRunExists) {
+				t.Errorf("conflict error = %v, want ErrRunExists", err)
+			}
 			failures++
 		}
 	}

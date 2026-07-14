@@ -1,24 +1,21 @@
 package processcmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	processengine "github.com/tofutools/tclaude/pkg/claude/process/engine"
 	"github.com/tofutools/tclaude/pkg/claude/process/evidence"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	"github.com/tofutools/tclaude/pkg/common"
 )
-
-var runIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
 
 type runParams struct {
 	Template      string   `pos:"true" help:"Template YAML path, or stored template ref id@sha256:<hash>"`
@@ -59,36 +56,30 @@ func runRun(cmd *cobra.Command, p *runParams, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	tmpl := loaded.Template
 	params, err := parseParams(p.Param)
 	if err != nil {
 		return err
 	}
-	params, err = applyParamDefaults(tmpl, params)
-	if err != nil {
-		return err
-	}
+	now := processNow()
 	templateRef := loaded.Ref
 	if templateRef == "" {
-		record, err := fs.PutTemplateVersion(cmd.Context(), tmpl)
+		if err := processengine.ValidateInstantiation(loaded.Template, processengine.InstantiateRequest{
+			RunID: p.RunID, Params: params, Now: now,
+		}); err != nil {
+			return err
+		}
+		record, err := fs.PutTemplateVersion(cmd.Context(), loaded.Template)
 		if err != nil {
 			return err
 		}
 		templateRef = record.Ref
 	}
-	runID := strings.TrimSpace(p.RunID)
-	if runID == "" {
-		runID = defaultRunID(tmpl.ID)
-	}
-	if !runIDPattern.MatchString(runID) {
-		return fmt.Errorf("run id must match %s", runIDPattern.String())
-	}
-	initial := initialState(runID, templateRef, tmpl)
-	run, err := fs.CreateRun(cmd.Context(), store.RunRecord{
-		ID:          runID,
+	run, err := processengine.Instantiate(cmd.Context(), fs, processengine.InstantiateRequest{
 		TemplateRef: templateRef,
+		RunID:       p.RunID,
 		Params:      params,
-	}, initial)
+		Now:         now,
+	})
 	if err != nil {
 		return err
 	}
@@ -163,75 +154,4 @@ func parseParams(values []string) (map[string]string, error) {
 		params[key] = val
 	}
 	return params, nil
-}
-
-func applyParamDefaults(tmpl *model.Template, params map[string]string) (map[string]string, error) {
-	next := make(map[string]string, len(params)+len(tmpl.Params))
-	for key := range params {
-		if _, ok := tmpl.Params[key]; !ok {
-			return nil, fmt.Errorf("unknown template param %q", key)
-		}
-		next[key] = params[key]
-	}
-	for key, param := range tmpl.Params {
-		required := param.Required != nil && *param.Required
-		if _, ok := next[key]; ok {
-			continue
-		}
-		if param.Default != nil {
-			value, err := defaultParamString(param.Default)
-			if err != nil {
-				return nil, fmt.Errorf("default for template param %q: %w", key, err)
-			}
-			next[key] = value
-			continue
-		}
-		if required {
-			return nil, fmt.Errorf("missing required template param %q", key)
-		}
-	}
-	return next, nil
-}
-
-func defaultParamString(value any) (string, error) {
-	switch v := value.(type) {
-	case string:
-		return v, nil
-	case bool:
-		if v {
-			return "true", nil
-		}
-		return "false", nil
-	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
-		return fmt.Sprint(v), nil
-	default:
-		data, err := json.Marshal(v)
-		if err != nil {
-			return "", err
-		}
-		return string(data), nil
-	}
-}
-
-func initialState(runID, templateRef string, tmpl *model.Template) state.State {
-	nodes := make([]state.NodeInit, 0, len(tmpl.Nodes))
-	for nodeID, node := range tmpl.Nodes {
-		status := state.NodeStatusPending
-		if nodeID == tmpl.Start {
-			status = state.NodeStatusReady
-		}
-		nodes = append(nodes, state.NodeInit{ID: nodeID, Type: node.Type, Status: status})
-	}
-	st := state.New(runID, templateRef, templateRef, nodes)
-	st.Status = state.RunStatusRunning
-	return st
-}
-
-func defaultRunID(templateID string) string {
-	base := strings.TrimSpace(templateID)
-	if base == "" {
-		base = "run"
-	}
-	stamp := processNow().UTC().Format("20060102-150405")
-	return base + "-" + stamp
 }

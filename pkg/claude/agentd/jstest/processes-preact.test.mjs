@@ -63,6 +63,173 @@ test('Processes actions preserve API routes, single-flight loads, comment gate, 
   assert.equal(discardPrompts, 1);
 });
 
+test('instantiate actions load an exact ref, POST string params, and navigate to its viewer', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const ref = `release@sha256:${'a'.repeat(64)}`;
+  const requests = [];
+  const actions = createProcessesActions({ state, notify() {}, dispatchNavigated() {}, fetchImpl: async (path, options = {}) => {
+    requests.push({ path, options });
+    if (path.startsWith('/v1/process/templates/release?version=')) return { ok: true, json: async () => ({
+      currentRef: ref, template: { id: 'release', params: { issue: { type: 'string', required: true } } },
+    }) };
+    if (path === '/v1/process/runs' && options.method === 'POST') return { ok: true, json: async () => ({
+      run: { id: 'release-1', templateRef: ref, createdAt: '2026-07-14T00:00:00Z', updatedAt: '2026-07-14T00:00:00Z' },
+    }) };
+    if (path === '/v1/process/runs') return { ok: true, json: async () => ({ runs: [] }) };
+    throw new Error(`unexpected ${path}`);
+  } });
+  assert.equal(await actions.openInstantiation({ id: 'release', ref }), true);
+  assert.equal(state.instantiation.value.ref, ref);
+  assert.equal(state.instantiation.value.phase, 'ready');
+  assert.equal(await actions.submitInstantiation({ issue: 'TCL-300', retries: '2', approved: 'true' }), true);
+  const post = requests.find((request) => request.path === '/v1/process/runs' && request.options.method === 'POST');
+  assert.deepEqual(JSON.parse(post.options.body), { templateRef: ref, params: { issue: 'TCL-300', retries: '2', approved: 'true' } });
+  assert.equal(state.subtab.value, 'runs');
+  assert.deepEqual(state.canvas.value, { kind: 'viewer', id: 'release-1', key: 'release-1' });
+  assert.equal(state.instantiation.value, null);
+});
+
+test('list instantiation loading transition initializes every declared default exactly once', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { ProcessesApp }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-island.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const ref = `defaults@sha256:${'c'.repeat(64)}`;
+  state.setInstantiation({ key: 'list-defaults', id: 'defaults', ref, phase: 'loading', error: '', template: null });
+  let submitted = null;
+  const actions = {
+    refreshActive() {}, load() {}, observeTemplateHeads() {}, activateSubtab() {}, openEditor() {}, closeCanvas() {},
+    closeInstantiation() { state.setInstantiation(null); }, submitInstantiation(params) { submitted = params; },
+  };
+  const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
+  assert.match(mounted.container.querySelector('.process-instantiate-dialog').textContent, /Loading exact template version/);
+  await harness.act(() => state.setInstantiation({
+    key: 'list-defaults', id: 'defaults', ref, phase: 'ready', error: '',
+    template: { id: 'defaults', params: {
+      issue: { type: 'string', default: 'TCL-300' },
+      retries: { type: 'number', default: 2 },
+      approved: { type: 'boolean', default: true },
+    } },
+  }));
+  await new Promise(resolve => queueMicrotask(resolve));
+  const dialog = mounted.container.querySelector('.process-instantiate-dialog');
+  assert.equal(dialog.querySelector('[data-process-param-input="issue"]').value, 'TCL-300');
+  assert.equal(dialog.querySelector('[data-process-param-input="retries"]').value, '2');
+  assert.equal(dialog.querySelector('[data-process-param-input="approved"]').hasAttribute('checked'), true);
+  harness.fireEvent(dialog, 'submit');
+  assert.deepEqual(submitted, { approved: 'true', issue: 'TCL-300', retries: '2' });
+  const issue = dialog.querySelector('[data-process-param-input="issue"]');
+  issue.value = 'user edit'; harness.fireEvent(issue, 'input'); await harness.act(() => Promise.resolve());
+  await harness.act(() => state.setInstantiation({
+    ...state.instantiation.value,
+    template: { id: 'defaults', params: {
+      issue: { type: 'string', default: 'replacement default' },
+      retries: { type: 'number', default: 9 },
+      approved: { type: 'boolean', default: false },
+    } },
+  }));
+  assert.equal(dialog.querySelector('[data-process-param-input="issue"]').value, 'user edit', 'same-ref refresh preserves edits');
+  await mounted.unmount();
+});
+
+test('instantiate dialog renders typed/defaulted/required inputs and canonical values', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { ProcessesApp }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-island.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const ref = `typed@sha256:${'b'.repeat(64)}`;
+  state.setInstantiation({
+    key: 'typed', id: 'typed', ref, phase: 'ready', error: '',
+    template: { id: 'typed', name: 'Typed run', params: {
+      issue: { type: 'string', description: 'Issue id', required: true },
+      retries: { type: 'number', default: 2 },
+      approved: { type: 'boolean', default: true },
+      legacy: { type: 'custom-kind', default: 'raw' },
+    } },
+  });
+  let submitted = null;
+  const actions = {
+    refreshActive() {}, load() {}, observeTemplateHeads() {}, activateSubtab() {}, openEditor() {}, closeCanvas() {},
+    closeInstantiation() {}, submitInstantiation(params) { submitted = params; },
+  };
+  const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
+  const dialog = harness.document.querySelector('.process-instantiate-dialog');
+  assert.ok(dialog);
+  const issue = dialog.querySelector('[data-process-param-input="issue"]');
+  const retries = dialog.querySelector('[data-process-param-input="retries"]');
+  const approved = dialog.querySelector('[data-process-param-input="approved"]');
+  const legacy = dialog.querySelector('[data-process-param-input="legacy"]');
+  assert.equal(issue.type, 'text'); assert.equal(issue.hasAttribute('required'), true);
+  assert.equal(retries.type, 'number'); assert.equal(retries.value, '2');
+  assert.equal(approved.type, 'checkbox'); assert.equal(approved.hasAttribute('checked'), true);
+  assert.equal(legacy.type, 'text'); assert.equal(legacy.value, 'raw');
+  assert.match(dialog.querySelector('[data-process-param="issue"]').textContent, /Issue id/);
+  issue.value = 'TCL-300'; harness.fireEvent(issue, 'input'); await harness.act(() => Promise.resolve());
+  retries.value = '9007199254740993'; harness.fireEvent(retries, 'input'); await harness.act(() => Promise.resolve());
+  approved.checked = false; harness.fireEvent(approved, 'change'); await harness.act(() => Promise.resolve());
+  harness.fireEvent(dialog, 'submit');
+  assert.deepEqual(submitted, { approved: 'false', issue: 'TCL-300', legacy: 'raw', retries: '9007199254740993' });
+  await mounted.unmount();
+});
+
+test('instantiate dialog owns focus, traps Tab, restores the invoker, and cannot dismiss while busy', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { ProcessesApp }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-island.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const ref = `focus@sha256:${'d'.repeat(64)}`;
+  const spec = (key, params = { issue: { type: 'string', required: true } }) => ({
+    key, id: 'focus', ref, phase: 'ready', error: '', template: { id: 'focus', params },
+  });
+  const actions = {
+    refreshActive() {}, load() {}, observeTemplateHeads() {}, activateSubtab() {}, openEditor() {}, closeCanvas() {},
+    closeInstantiation() { if (!state.mutation.value.busy) state.setInstantiation(null); }, submitInstantiation() {},
+  };
+  const invoker = harness.document.body.appendChild(harness.document.createElement('button'));
+  invoker.textContent = 'instantiate focus'; invoker.focus();
+  state.setInstantiation(spec('focus-1'));
+  const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
+  await new Promise(resolve => queueMicrotask(resolve));
+  let overlay = mounted.container.querySelector('.process-instantiate-modal');
+  let first = overlay.querySelector('[data-process-param-input="issue"]');
+  let create = overlay.querySelector('button[type="submit"]');
+  assert.equal(harness.document.activeElement, first, 'the first declared param receives initial focus');
+  create.focus(); await harness.act(() => harness.fireEvent(create, 'keydown', { key: 'Tab' }));
+  assert.equal(harness.document.activeElement, first, 'Tab wraps to the first dialog control');
+  await harness.act(() => harness.fireEvent(first, 'keydown', { key: 'Tab', shiftKey: true }));
+  assert.equal(harness.document.activeElement, create, 'Shift+Tab wraps to the last dialog control');
+  await harness.act(() => harness.fireEvent(create, 'keydown', { key: 'Escape' }));
+  assert.equal(state.instantiation.value, null);
+  assert.equal(harness.document.activeElement, invoker, 'Escape restores focus to the invoker');
+
+  invoker.focus(); await harness.act(() => state.setInstantiation(spec('focus-empty', {})));
+  await new Promise(resolve => queueMicrotask(resolve));
+  overlay = mounted.container.querySelector('.process-instantiate-modal');
+  create = overlay.querySelector('button[type="submit"]');
+  assert.equal(harness.document.activeElement, create, 'Create run receives initial focus when there are no params');
+  await harness.act(() => harness.fireEvent(overlay, 'click'));
+  assert.equal(state.instantiation.value, null, 'backdrop closes when idle');
+  assert.equal(harness.document.activeElement, invoker, 'backdrop close restores focus');
+
+  invoker.focus(); state.beginMutation(); await harness.act(() => state.setInstantiation(spec('focus-busy')));
+  await new Promise(resolve => queueMicrotask(resolve));
+  overlay = mounted.container.querySelector('.process-instantiate-modal');
+  first = overlay.querySelector('[data-process-param-input="issue"]');
+  await harness.act(() => harness.fireEvent(first, 'keydown', { key: 'Escape' }));
+  assert.ok(state.instantiation.value, 'busy Escape cannot dismiss');
+  await harness.act(() => harness.fireEvent(overlay, 'click'));
+  assert.ok(state.instantiation.value, 'busy backdrop cannot dismiss');
+  state.endMutation(); state.setInstantiation(null);
+  await mounted.unmount(); invoker.remove();
+});
+
 test('a successful Worklist action supersedes an older poll with an authoritative refresh', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([

@@ -278,6 +278,10 @@ var permissionRegistry = []PermSlug{
 		Description: "Create and edit process templates through tclaude agent process-templates save. Does not execute or instantiate a process. Not default-granted; requires an explicit grant or one-shot human approval.",
 	},
 	{
+		Slug:        PermProcessRunsCreate,
+		Description: "Instantiate an exact process-template version as a durable engine-hosted run. May launch performers when the process engine advances it, so it is separate from template authoring and is not default-granted.",
+	},
+	{
 		Slug:          PermHumanNotify,
 		OwnerImplied:  true,
 		AutoGrantable: true,

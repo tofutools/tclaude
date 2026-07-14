@@ -22,6 +22,7 @@ func DefaultRoot() string {
 
 var (
 	ErrNotFound               = errors.New("process store record not found")
+	ErrRunExists              = errors.New("process run already exists")
 	ErrTemplateConflict       = errors.New("process template content conflict")
 	ErrTemplateSourceConflict = errors.New("process template source conflict")
 	ErrContentMismatch        = errors.New("process store content does not match its ref")

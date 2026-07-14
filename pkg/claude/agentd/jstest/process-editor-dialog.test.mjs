@@ -380,6 +380,78 @@ test('opening another node settings dialog cannot replace a rejected dirty draft
   editor.modalDispose(null);
 });
 
+test('params dialog edits identifiers, typed defaults, descriptions, and required state atomically', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ ProcessEditModel }, { openProcessParamsDialog }] = await Promise.all([
+    harness.importDashboardModule('js/process-edit-model.js'),
+    harness.importDashboardModule('js/process-params-dialog.js'),
+  ]);
+  const loaded = view();
+  loaded.template.params = {
+    issue: { type: 'string', description: 'Issue id', required: true },
+    retries: { type: 'number', default: 2 },
+    legacy: { type: 'custom-kind', default: { keep: true }, doc: 'preserved', required: false },
+  };
+  const model = new ProcessEditModel(loaded);
+  let mutations = 0;
+  openProcessParamsDialog({ model, onMutated: () => { mutations += 1; } });
+  const overlay = harness.document.querySelector('.process-param-modal');
+  assert.equal(overlay.querySelectorAll('.process-param-row').length, 3);
+  assert.equal(overlay.querySelector('[data-process-param="issue"] .process-param-required').checked, true);
+  assert.equal(overlay.querySelector('[data-process-param="retries"] .process-param-default').value, '2');
+  assert.equal(overlay.querySelector('[data-process-param="legacy"] .process-param-type').value, 'custom-kind', 'unknown types remain editable');
+
+  const issue = overlay.querySelector('[data-process-param="issue"]');
+  const name = issue.querySelector('.process-param-name');
+  name.value = 'ticket'; harness.fireEvent(name, 'input');
+  const description = issue.querySelector('.process-param-description');
+  description.value = 'Tracker ticket'; harness.fireEvent(description, 'input');
+  const retries = overlay.querySelector('[data-process-param="retries"]');
+  const defaultValue = retries.querySelector('.process-param-default');
+  defaultValue.value = '3'; harness.fireEvent(defaultValue, 'input');
+  harness.fireEvent(overlay.querySelector('.modal-buttons .primary'), 'click');
+
+  assert.equal(mutations, 1);
+  assert.equal(harness.document.querySelector('.process-param-modal'), null);
+  assert.equal(model.template.params.ticket.description, 'Tracker ticket');
+  assert.equal(model.template.params.ticket.required, true);
+  assert.equal(model.template.params.retries.default, 3, 'number defaults retain their declared type');
+  assert.deepEqual(model.template.params.legacy.default, { keep: true }, 'untouched free-form defaults are lossless');
+  assert.equal(model.template.params.legacy.doc, 'preserved');
+  assert.equal(model.template.params.legacy.required, false, 'untouched explicit false metadata is preserved');
+  assert.equal(model.undoStack.length, 1, 'the complete param edit is one transaction');
+  assert.equal(model.undo(), true);
+  assert.ok(model.template.params.issue);
+  assert.equal(model.template.params.ticket, undefined);
+});
+
+test('dirty editor instantiate requires a successful clean save before emitting an exact ref', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { ProcessTemplateEditor } = await harness.importDashboardModule('js/process-editor.js');
+  const emitted = [];
+  const base = () => ({
+    blank: false, dirty: true, savePending: false,
+    abort: new AbortController(),
+    model: { dirty: true, currentRef: 'release@sha256:old', template: { id: 'release' } },
+    options: { onInstantiate: (value) => emitted.push(value) },
+    choiceModal: async (copy) => { assert.match(copy.title, /Save before instantiating/); return 'save'; },
+    status() {},
+  });
+
+  const clean = base();
+  clean.save = async () => { clean.dirty = false; clean.model.dirty = false; clean.model.currentRef = 'release@sha256:saved'; return true; };
+  assert.equal(await ProcessTemplateEditor.prototype.requestInstantiate.call(clean), true);
+  assert.equal(emitted[0].ref, 'release@sha256:saved');
+
+  const changedInFlight = base();
+  let status = '';
+  changedInFlight.save = async () => true;
+  changedInFlight.status = (message) => { status = message; };
+  assert.equal(await ProcessTemplateEditor.prototype.requestInstantiate.call(changedInFlight), false);
+  assert.match(status, /changed while saving/);
+  assert.equal(emitted.length, 1, 'dirty state is never instantiated');
+});
+
 test('Cancel, backdrop, and close affordance discard only after confirmation', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ ProcessEditModel }, { openNodeDialog }] = await Promise.all([

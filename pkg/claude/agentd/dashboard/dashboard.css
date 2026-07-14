@@ -11569,6 +11569,7 @@ body.wizard .process-fit-button { box-shadow: 0 2px 12px rgba(75, 48, 119, 0.5);
 .process-editor-header {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
   padding: 8px 12px;
   border-bottom: 1px solid #21262d;
@@ -11684,6 +11685,72 @@ body.wizard .process-fit-button { box-shadow: 0 2px 12px rgba(75, 48, 119, 0.5);
 .process-action-danger { color: #f85149; }
 .process-action-danger:hover { border-color: #f85149; }
 .process-editor-modal .modal-buttons button { min-width: 0; }
+.process-param-dialog {
+  width: min(920px, 96vw);
+  max-width: 920px;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  color: #c9d1d9;
+  background: #161b22;
+  border: 1px solid #30363d;
+}
+.process-param-list { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; min-height: 80px; }
+.process-param-empty { padding: 20px; text-align: center; color: #8b949e; border: 1px dashed #30363d; border-radius: 8px; }
+.process-param-row {
+  display: grid;
+  grid-template-columns: minmax(105px, .8fr) minmax(90px, .6fr) minmax(150px, 1.35fr) minmax(150px, 1fr) auto auto;
+  align-items: end;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  background: #0d1117;
+}
+.process-param-row label:not(.process-param-check) { display: flex; flex-direction: column; gap: 4px; color: #8b949e; font-size: 11px; }
+.process-param-row input[type="text"] {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  color: #e6edf3;
+  background: #161b22;
+}
+.process-param-default-control { display: flex; align-items: center; gap: 6px; }
+.process-param-default-control .process-param-default-enabled { flex: none; }
+.process-param-check { display: flex; align-items: center; gap: 5px; min-height: 31px; color: #c9d1d9; font-size: 12px; white-space: nowrap; }
+.process-param-toolbar { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.process-param-error { min-height: 18px; color: #f85149; font-size: 12px; text-align: right; }
+.process-instantiate-dialog {
+  width: min(560px, 94vw);
+  max-width: 560px;
+  max-height: 86vh;
+  overflow-y: auto;
+  color: #c9d1d9;
+  background: #161b22;
+  border: 1px solid #30363d;
+}
+.process-instantiate-fields { display: flex; flex-direction: column; gap: 10px; margin: 14px 0; }
+.process-instantiate-field { padding: 9px 10px; border: 1px solid #30363d; border-radius: 8px; background: #0d1117; }
+.process-instantiate-field > label:not(.process-instantiate-boolean) { display: flex; flex-direction: column; gap: 5px; font-size: 12px; font-weight: 650; color: #e6edf3; }
+.process-instantiate-field input[type="text"],
+.process-instantiate-field input[type="number"] {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 7px 8px;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  color: #e6edf3;
+  background: #161b22;
+}
+.process-instantiate-boolean { display: flex; align-items: center; gap: 8px; color: #e6edf3; font-weight: 650; }
+.process-instantiate-field .process-secondary { margin-top: 4px; }
+@media (max-width: 780px) {
+  .process-param-row { grid-template-columns: 1fr 1fr; }
+  .process-param-description-field, .process-param-default-field { grid-column: 1 / -1; }
+}
 /* Live-validation issues panel (TCL-299): collapsible, floats over the canvas
    bottom-left. Every control explicitly dark-themed (never UA-white). */
 .process-issues-panel {
@@ -11766,6 +11833,18 @@ body.wizard .process-palette-card { background: #2c2042; border-color: #4a3d6b; 
 body.wizard .process-palette-card:hover { border-color: #d4af37; }
 body.wizard .process-editor-band { stroke: #d4af37; }
 body.wizard .process-template-id-locked { color: #a99bc0; }
+body.wizard .process-param-dialog,
+body.wizard .process-instantiate-dialog { background: #211832; border-color: #6d5695; color: #f3e6c0; }
+body.wizard .process-param-row,
+body.wizard .process-instantiate-field { background: #181226; border-color: #4a3d6b; }
+body.wizard .process-param-row input[type="text"],
+body.wizard .process-instantiate-field input[type="text"],
+body.wizard .process-instantiate-field input[type="number"] { background: #2c2042; border-color: #6d5695; color: #f3e6c0; }
+body.wizard .process-param-row input:focus,
+body.wizard .process-instantiate-field input:focus { border-color: #d4af37; outline: none; }
+body.wizard .process-param-check,
+body.wizard .process-instantiate-boolean,
+body.wizard .process-instantiate-field > label:not(.process-instantiate-boolean) { color: #f3e6c0; }
 
 /* === Node edit dialog / detail card (process-node-dialog.js, TCL-298) ======
    One component, two modes: the editor's modal and the viewer's read-only

@@ -48,6 +48,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		// restore always retains the current identity.
 		"this.savedTemplateID = this.template.id || ''",
 		"this.template.id = id",
+		"setParams(params)",
 	)
 	externalChange := read("js/process-external-change.js")
 	mustContain("process-external-change.js", externalChange,
@@ -115,6 +116,11 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"if (requestSeq !== this.saveSeq) return",
 		"this.saveSeq += 1",
 		"this.model.setTemplateMeta({ name:",
+		"text: 'params…'",
+		"text: 'instantiate…'",
+		"Save before instantiating",
+		"unsaved editor state is never instantiated",
+		"ref: this.model.currentRef",
 		// Rewire affordance on mid-graph node deletion.
 		"'Delete + rewire through'",
 		// Hand-drawn self-loops are blocked at the gesture with a message.
@@ -178,11 +184,29 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 	mustContain("processes-island.js", processes,
 		// The editor loads lazily after the feature-gated tab opens.
 		"await import('./process-editor.js')",
-		"loadEditor(mountRef.current, { id: spec.id, blank: spec.blank, config: { confirmDiscard } })",
+		"onInstantiate: actions?.openInstantiation",
 		"editor?.destroy?.()",
 		"document.addEventListener('tclaude:snapshot', poll)",
 		"void actions.load('worklist', { quiet: true })",
 		"void actions.observeTemplateHeads()",
+		"function InstantiateDialog(",
+		"useDialogFocus({",
+		"initialParamValues(params)",
+		"initializedRef.current === spec.ref",
+		"data-process-param-input",
+		"type === 'boolean'",
+		"actions.submitInstantiation(resolved)",
+	)
+	if strings.Contains(processes, "String(Number(value))") {
+		t.Error("processes-island.js must preserve number-param strings without JS precision round-tripping")
+	}
+	params := read("js/process-params-dialog.js")
+	mustContain("process-params-dialog.js", params,
+		"export function openProcessParamsDialog(",
+		"model.setParams(params)",
+		"process-param-default-enabled",
+		"row.param.default",
+		"Renamed or deleted references are reported by live validation.",
 	)
 	actions := read("js/processes-actions.js")
 	mustContain("processes-actions.js", actions,
@@ -192,6 +216,12 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"generation.editor.observeExternalHead?.(head)",
 		"name === 'templates' && (requestBusy(lifecycle) || headObservationPending)",
 		"'/v1/process/template-heads'",
+		"async function openInstantiation(",
+		"body.currentRef !== ref",
+		"async function submitInstantiation(params)",
+		"fetchImpl('/v1/process/runs'",
+		"body: JSON.stringify({ templateRef: spec.ref, params })",
+		"openViewer(body.run.id)",
 	)
 
 	css := read("dashboard.css")
@@ -213,6 +243,10 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		".process-issues-panel",
 		".process-issue:hover, .process-issue:focus-visible",
 		"body.wizard .process-issues-panel",
+		".process-param-dialog",
+		".process-instantiate-dialog",
+		"body.wizard .process-param-dialog",
+		"body.wizard .process-instantiate-dialog",
 	)
 
 	// The graph core and validation loop stay out of every eager entry module:

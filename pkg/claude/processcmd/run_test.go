@@ -2,6 +2,7 @@ package processcmd
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,23 +14,9 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 )
 
-func TestApplyParamDefaultsRejectsDuplicatesAndStoresDefaults(t *testing.T) {
+func TestParseParamsRejectsDuplicates(t *testing.T) {
 	if _, err := parseParams([]string{"ticket=A", "ticket=B"}); err == nil || !strings.Contains(err.Error(), "duplicate") {
 		t.Fatalf("expected duplicate param error, got %v", err)
-	}
-
-	required := true
-	params, err := applyParamDefaults(&model.Template{
-		Params: map[string]model.Param{
-			"ticket": {Type: "string", Required: &required, Default: "TCL-271"},
-			"tries":  {Type: "number", Default: 2},
-		},
-	}, map[string]string{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if params["ticket"] != "TCL-271" || params["tries"] != "2" {
-		t.Fatalf("params = %#v", params)
 	}
 }
 
@@ -87,6 +74,49 @@ nodes:
 	}
 	if run.Params["ticket"] != "TCL-271" {
 		t.Fatalf("run params = %#v", run.Params)
+	}
+}
+
+func TestRunInvalidParamsDoNotPublishLocalTemplate(t *testing.T) {
+	templatePath := writeTemplate(t, `apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: atomic-local
+params:
+  ticket:
+    type: string
+    required: true
+start: end
+nodes:
+  end:
+    type: end
+`)
+	for name, params := range map[string][]string{
+		"missing required": nil,
+		"unknown":          {"ticket=TCL-300", "secret=must-not-publish"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cmd := &cobra.Command{}
+			cmd.SetContext(t.Context())
+			root := filepath.Join(t.TempDir(), "store")
+			err := runRun(cmd, &runParams{Template: templatePath, StoreRoot: root, RunID: "atomic-run", Param: params}, &bytes.Buffer{})
+			if err == nil {
+				t.Fatal("runRun succeeded, want invalid params error")
+			}
+			fs, openErr := store.NewFS(root)
+			if openErr != nil {
+				t.Fatal(openErr)
+			}
+			records, listErr := fs.ListTemplates(t.Context())
+			if listErr != nil {
+				t.Fatal(listErr)
+			}
+			if len(records) != 0 {
+				t.Fatalf("failed run published template versions: %#v", records)
+			}
+			if _, headErr := fs.GetTemplateHead(t.Context(), "atomic-local"); !errors.Is(headErr, store.ErrNotFound) {
+				t.Fatalf("GetTemplateHead error = %v, want ErrNotFound", headErr)
+			}
+		})
 	}
 }
 
