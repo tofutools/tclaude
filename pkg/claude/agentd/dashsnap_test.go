@@ -740,7 +740,7 @@ func baseStates() []dashsnap.State {
 		{
 			Key:      "processes-templates",
 			Title:    "Processes — templates",
-			Caption:  "Feature-gated Processes tab with a populated versioned template list and dark-themed actions.",
+			Caption:  "Feature-gated Processes tab with a populated versioned template list, dark-themed actions, and the library-scoped Edit-with-agent entry point.",
 			JS:       processTabJS("templates", `[data-process-template="release-train"]`),
 			SettleMS: 900,
 		},
@@ -1005,6 +1005,15 @@ func baseStates() []dashsnap.State {
 			Title:    "Process editor — dirty",
 			Caption:  "After adding a task node and pinning a move: the ● modified badge lights, Save arms, and undo becomes available.",
 			JS:       processEditorStateJS(`ed.model.addNode('task', {x: 470, y: 120, name: 'Review'}); ed.model.moveNode('begin', 140, 260); ed.refresh({fit: true});`),
+			SettleMS: 1100,
+		},
+		{
+			Key:     "process-editor-scribe-dirty-guard",
+			Title:   "Process editor — scribe dirty guard",
+			Caption: "Edit-with-agent on a dirty editor requires an explicit Save first or Discard local edits choice; Cancel remains available and no external authoring starts behind the dialog.",
+			JS: processEditorStateJS(`ed.model.addNode('task', {x: 470, y: 120, name: 'Local draft'}); ed.refresh({fit: true});
+  void ed.requestScribe(); await Promise.resolve();
+  if (!document.querySelector('.process-editor-modal')) throw new Error('scribe dirty guard did not open');`),
 			SettleMS: 1100,
 		},
 		{

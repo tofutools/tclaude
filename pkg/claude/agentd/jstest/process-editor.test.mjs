@@ -91,6 +91,119 @@ test('validate now delegates without leaving a persistent progress status', () =
   assert.deepEqual(statuses, [], 'the issues panel owns completion and failure feedback');
 });
 
+test('process scribe handoff anchors a clean saved editor exactly', async () => {
+  const emitted = [];
+  const fake = {
+    blank: false, dirty: false, savePending: false,
+    model: { template: { id: 'release-flow' }, currentRef: `release-flow@sha256:${'a'.repeat(64)}`, sourceHash: 'b'.repeat(64) },
+    options: { onScribe: async (anchor) => { emitted.push(anchor); return { conv_id: 'scribe' }; } },
+  };
+  assert.equal(await ProcessTemplateEditor.prototype.requestScribe.call(fake), true);
+  assert.deepEqual(emitted, [{
+    kind: 'template', id: 'release-flow', currentRef: `release-flow@sha256:${'a'.repeat(64)}`,
+    sourceHash: 'b'.repeat(64), isNew: false,
+  }]);
+});
+
+test('dirty process scribe handoff requires an explicit successful resolution', async () => {
+  const emitted = [];
+  const base = () => ({
+    blank: false, dirty: true, savePending: false,
+    model: { template: { id: 'release-flow' }, currentRef: 'old-ref', sourceHash: 'old-hash' },
+    options: { onScribe: async (anchor) => { emitted.push(anchor); return {}; } },
+  });
+  const cancelled = { ...base(), choiceModal: async () => null };
+  assert.equal(await ProcessTemplateEditor.prototype.requestScribe.call(cancelled), false);
+  assert.deepEqual(emitted, []);
+
+  const saved = { ...base(), choiceModal: async (copy) => {
+    assert.match(copy.title, /Resolve unsaved edits/);
+    assert.deepEqual(copy.choices.map(choice => choice.key), ['discard', 'save']);
+    return 'save';
+  } };
+  saved.save = async () => {
+    saved.dirty = false;
+    saved.model.currentRef = `release-flow@sha256:${'c'.repeat(64)}`;
+    saved.model.sourceHash = 'd'.repeat(64);
+    return true;
+  };
+  assert.equal(await ProcessTemplateEditor.prototype.requestScribe.call(saved), true);
+  assert.equal(emitted.length, 1);
+  assert.equal(emitted[0].currentRef, `release-flow@sha256:${'c'.repeat(64)}`, 'handoff uses the generation produced by Save first');
+
+  const discarded = {
+    blank: true, dirty: true, savePending: false,
+    model: { template: { id: 'new-process' }, sourceHash: '', config: {} },
+    options: { onScribe: async (anchor) => { emitted.push(anchor); return {}; } },
+    choiceModal: async () => 'discard', validation: null, refresh() {}, status() {},
+  };
+  assert.equal(await ProcessTemplateEditor.prototype.requestScribe.call(discarded), true);
+  assert.deepEqual(emitted.at(-1), {
+    kind: 'template', id: 'new-process', currentRef: '', sourceHash: '', isNew: true,
+  }, 'explicit discard resets a new draft before handing off its creation identity');
+});
+
+test('existing-template scribe discard fails closed when the editor changes during reload', async () => {
+  const previousFetch = globalThis.fetch;
+  const reload = deferred(); const emitted = [];
+  globalThis.fetch = async () => reload.promise;
+  try {
+    const editor = externalReloadEditor({ dirty: true });
+    editor.choiceModal = async () => 'discard';
+    editor.options.onScribe = async (anchor) => { emitted.push(anchor); return {}; };
+    const original = editor.model;
+    const pending = ProcessTemplateEditor.prototype.requestScribe.call(editor);
+    await Promise.resolve();
+    assert.equal(editor.externalReloadPending, true, 'editor interactions are locked while canonical state loads');
+    original.setTemplateMeta({ description: 'new edit while reload was pending' });
+    reload.resolve({
+      ok: true, status: 200, statusText: 'OK',
+      json: async () => ({
+        template: { id: 'alpha', name: 'Canonical', start: 'a', nodes: { a: { type: 'start' } } },
+        edges: [], layout: {}, sourceHash: 'source-new', semanticHash: 'semantic-new', currentRef: 'alpha@sha256:new',
+      }),
+    });
+    assert.equal(await pending, false);
+    assert.equal(editor.model, original, 'revision advance preserves the newer local draft');
+    assert.deepEqual(emitted, [], 'no external scribe starts from a stale discard decision');
+    assert.match(editor.lastStatus.message, /cancelled because the editor changed/);
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+  }
+});
+
+test('destroy during existing-template scribe discard prevents model swap and handoff', async () => {
+  const previousFetch = globalThis.fetch;
+  const reload = deferred(); const emitted = [];
+  globalThis.fetch = async () => reload.promise;
+  try {
+    const editor = externalReloadEditor({ dirty: true });
+    editor.choiceModal = async () => 'discard';
+    editor.options.onScribe = async (anchor) => { emitted.push(anchor); return {}; };
+    editor.saveSeq = 0;
+    editor.graph = { destroy() {} };
+    editor.closeInline = () => {};
+    editor.mount = { __processEditor: editor, classList: { remove() {} }, replaceChildren() {} };
+    const original = editor.model;
+    const pending = ProcessTemplateEditor.prototype.requestScribe.call(editor);
+    ProcessTemplateEditor.prototype.destroy.call(editor);
+    reload.resolve({
+      ok: true, status: 200, statusText: 'OK',
+      json: async () => ({
+        template: { id: 'alpha', name: 'Canonical', start: 'a', nodes: { a: { type: 'start' } } },
+        edges: [], layout: {}, sourceHash: 'source-new', semanticHash: 'semantic-new', currentRef: 'alpha@sha256:new',
+      }),
+    });
+    assert.equal(await pending, false);
+    assert.equal(editor.model, original);
+    assert.deepEqual(emitted, []);
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+  }
+});
+
 function withFakeDocument(run) {
   const previous = globalThis.document;
   globalThis.document = {

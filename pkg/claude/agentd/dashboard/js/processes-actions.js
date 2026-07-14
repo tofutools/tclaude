@@ -1,5 +1,8 @@
 import { buildWorklistAction, isDestructiveAction, mintUUID, retainedActionKey } from './process-worklist-core.js';
 import { templateHeadSignature } from './process-external-change.js';
+import {
+  PROCESS_SCRIBE_NAME, PROCESS_SCRIBE_SLUGS, processScribeBrief, processScribeHandoff,
+} from './process-scribe.js';
 
 export async function processJSON(path, fetchImpl = fetch) {
   const response = await fetchImpl(path, { credentials: 'same-origin' });
@@ -115,6 +118,33 @@ export function createProcessesActions({
     state.setCanvas({ kind: 'editor', id, blank, key: `${id}:${blank}:${Date.now()}` });
     state.setNotice(blank ? 'Blank template scaffold ready.' : `Opening ${id}.`);
   }
+  async function summonScribe(anchor = { kind: 'library' }) {
+    try {
+      const handoff = processScribeHandoff(anchor);
+      const response = await fetchImpl('/api/scribe', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: PROCESS_SCRIBE_NAME, slugs: PROCESS_SCRIBE_SLUGS,
+          exclusive: true, scope: handoff.scope, brief: processScribeBrief(handoff),
+        }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
+      const name = result.name || PROCESS_SCRIBE_NAME;
+      if (result.focus_mode === 'browser' && result.focus_ws) {
+        const { openTermModal } = await import('./modal-term.js');
+        openTermModal({ wsPath: result.focus_ws, label: name, hideConv: result.conv_id || null });
+      }
+      state.setNotice(`${result.reused ? 'Reopened' : 'Summoned'} process scribe ${name}.`);
+      notify(`${result.reused ? 'reopened' : 'summoned'} process scribe ${name}`);
+      return result;
+    } catch (error) {
+      const message = error?.message || String(error);
+      state.setNotice(`Process scribe unavailable: ${message}`);
+      notify(`Could not open a process scribe: ${message}. Check the agent daemon and Scribe defaults, then retry.`, true);
+      return null;
+    }
+  }
   async function openInstantiation({ id, ref, template = null } = {}) {
     if (!id || !ref) return false;
     const key = `${ref}:${Date.now()}`;
@@ -210,7 +240,7 @@ export function createProcessesActions({
 
   function refreshActive() { return load(state.subtab.value); }
   return Object.freeze({
-    load, observeTemplateHeads, activateSubtab, openEditor, openInstantiation, closeInstantiation,
+    load, observeTemplateHeads, activateSubtab, openEditor, summonScribe, openInstantiation, closeInstantiation,
     submitInstantiation, openViewer, closeCanvas, openRunInList, submitWorklistAction, refreshActive,
   });
 }

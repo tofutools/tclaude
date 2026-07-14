@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,7 +23,8 @@ import (
 
 // Flow coverage for the scribe-summon endpoint behind the dashboard's "Edit
 // with agent" buttons (JOH-361): a human summon spawns a pre-briefed,
-// pre-granted scribe; a repeat click starts another fresh agent; and
+// pre-granted scribe; an unscoped repeat click starts another fresh agent;
+// an exact structured scope safely reuses a compatible live agent; and
 // an agent caller is gated exactly like the spawn path
 // (groups.spawn + — because a summon carries birth-time grants —
 // permissions.grant). Asserted at the real surfaces the dashboard reads:
@@ -188,6 +190,176 @@ func TestScribeSummon_RepeatSummonKeepsPriorScribeAlive(t *testing.T) {
 
 	// Both fresh summons opened a window.
 	assert.Equal(t, 2, *opens, "each summon opened the scribe's window")
+}
+
+// A structured scope opts into exact reuse. The current generation belongs in
+// the refreshed inbox brief, not the persistent key: a scribe that saved once
+// must remain the right conversation for the same template's next generation.
+func TestScribeSummon_SameScopeReusesAndRefreshesBrief(t *testing.T) {
+	f := newFlow(t)
+	opens := stubScribeTerminal(t)
+	post := func(ref string) scribeSummonResp {
+		rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe",
+			map[string]any{
+				"name":  "process-scribe",
+				"slugs": []string{agentd.PermProcessTemplatesRead, agentd.PermProcessTemplatesManage},
+				"scope": map[string]any{"kind": "process-template", "id": "release-flow"},
+				"brief": "Canonical currentRef is " + ref + "; reread before CAS-save.",
+			})))
+		require.Equalf(t, http.StatusOK, rec.Code, "summon body=%s", rec.Body.String())
+		return decodeScribeResp(t, rec)
+	}
+	first := post("release-flow@sha256:1111")
+	second := post("release-flow@sha256:2222")
+	assert.False(t, first.Reused)
+	assert.True(t, second.Reused)
+	assert.Equal(t, first.ConvID, second.ConvID)
+	assert.Equal(t, "native", second.FocusMode, "reuse returns the existing open-conversation handshake")
+	assert.Equal(t, 2, *opens, "fresh and reused calls both focus the conversation")
+
+	g, err := db.GetAgentGroupByName("process-scribe")
+	require.NoError(t, err)
+	members, err := db.ListAgentGroupMembers(g.ID)
+	require.NoError(t, err)
+	require.Len(t, members, 1, "same-scope calls are idempotent")
+	assert.Equal(t, "scribe", members[0].Role)
+	assert.Equal(t, "Reusable scribe scope: process-template/release-flow", members[0].Descr)
+
+	messages, err := db.ListAgentMessagesForConv(first.ConvID, 10)
+	require.NoError(t, err)
+	require.Len(t, messages, 2, "startup plus refreshed handoff are durable inbox messages")
+	assert.Equal(t, "Scribe scope refreshed", messages[0].Subject)
+	assert.Contains(t, messages[0].Body, "2222", "reuse refreshes transient generation context")
+}
+
+func TestScribeSummon_ScopedExclusiveDoesNotReuseOrRevokeLaterSudo(t *testing.T) {
+	f := newFlow(t)
+	stubScribeTerminal(t)
+	post := func() scribeSummonResp {
+		rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe",
+			map[string]any{
+				"name": "process-scribe", "exclusive": true,
+				"slugs": []string{agentd.PermProcessTemplatesRead, agentd.PermProcessTemplatesManage},
+				"scope": map[string]any{"kind": "process-template", "id": "release-flow"},
+				"brief": "Exclusive process-template authoring brief.",
+			})))
+		require.Equalf(t, http.StatusOK, rec.Code, "summon body=%s", rec.Body.String())
+		return decodeScribeResp(t, rec)
+	}
+	first := post()
+	_, err := db.InsertSudoGrant(&db.SudoGrant{
+		ConvID: first.ConvID, Slug: agentd.PermGroupsSpawn,
+		GrantedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour),
+		GrantedBy: "test", Reason: "verify exclusive reuse",
+	})
+	require.NoError(t, err)
+	active, err := db.ListActiveSudoGrants(first.ConvID)
+	require.NoError(t, err)
+	require.Len(t, active, 1, "test elevation is active before reuse")
+
+	second := post()
+	assert.False(t, second.Reused)
+	assert.NotEqual(t, first.ConvID, second.ConvID, "sudo-elevated candidate is incompatible with exact scoped reuse")
+	active, err = db.ListActiveSudoGrants(first.ConvID)
+	require.NoError(t, err)
+	assert.Len(t, active, 1, "summon authority does not cross the separate permission-revoke boundary")
+}
+
+func TestScribeSummon_ScopeAndPermissionCompatibility(t *testing.T) {
+	f := newFlow(t)
+	stubScribeTerminal(t)
+	post := func(id string, slugs []string) scribeSummonResp {
+		rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe",
+			map[string]any{
+				"name": "process-scribe", "slugs": slugs,
+				"scope": map[string]any{"kind": "process-template", "id": id},
+				"brief": "Safe process-template authoring brief.",
+			})))
+		require.Equalf(t, http.StatusOK, rec.Code, "summon body=%s", rec.Body.String())
+		return decodeScribeResp(t, rec)
+	}
+	required := []string{agentd.PermProcessTemplatesRead, agentd.PermProcessTemplatesManage}
+	library := post("", required)
+	template := post("release-flow", required)
+	assert.NotEqual(t, library.ConvID, template.ConvID, "library and exact-template scopes never cross-reuse")
+
+	require.NoError(t, db.GrantAgentPermission(template.ConvID, agentd.PermTemplatesManage, "test-extra"))
+	incompatible := post("release-flow", required)
+	assert.False(t, incompatible.Reused)
+	assert.NotEqual(t, template.ConvID, incompatible.ConvID, "an agent with widened overrides is incompatible")
+	assert.Equal(t, map[string]string{
+		agentd.PermProcessTemplatesRead:   db.PermEffectGrant,
+		agentd.PermProcessTemplatesManage: db.PermEffectGrant,
+	}, mustOverrides(t, incompatible.ConvID), "fresh replacement gets only the requested overrides")
+}
+
+func TestScribeSummon_ScopedDeadAndRetiredAreNotReused(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		makeUnavailable func(*testing.T, *testharness.Flow, string)
+	}{
+		{name: "dead", makeUnavailable: func(t *testing.T, f *testharness.Flow, conv string) {
+			sessions, err := db.FindSessionsByConvID(conv)
+			require.NoError(t, err)
+			require.NotEmpty(t, sessions)
+			f.MarkOffline(sessions[0].TmuxSession)
+		}},
+		{name: "retired", makeUnavailable: func(t *testing.T, _ *testharness.Flow, conv string) {
+			retired, err := db.RetireAgent(conv, "test", "retired scribe")
+			require.NoError(t, err)
+			require.True(t, retired)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFlow(t)
+			stubScribeTerminal(t)
+			post := func() scribeSummonResp {
+				rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe", map[string]any{
+					"name": "process-scribe", "slugs": []string{agentd.PermProcessTemplatesRead, agentd.PermProcessTemplatesManage},
+					"scope": map[string]any{"kind": "process-template", "id": "release-flow"}, "brief": "Edit safely.",
+				})))
+				require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+				return decodeScribeResp(t, rec)
+			}
+			first := post()
+			tc.makeUnavailable(t, f, first.ConvID)
+			second := post()
+			assert.False(t, second.Reused)
+			assert.NotEqual(t, first.ConvID, second.ConvID)
+		})
+	}
+}
+
+func TestScribeSummon_ConcurrentSameScopeSpawnsOnce(t *testing.T) {
+	f := newFlow(t)
+	stubScribeTerminal(t)
+	const callers = 4
+	results := make(chan scribeSummonResp, callers)
+	var wg sync.WaitGroup
+	for range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe", map[string]any{
+				"name": "process-scribe", "slugs": []string{agentd.PermProcessTemplatesRead, agentd.PermProcessTemplatesManage},
+				"scope": map[string]any{"kind": "process-template", "id": "release-flow"}, "brief": "Edit safely.",
+			})))
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			results <- decodeScribeResp(t, rec)
+		}()
+	}
+	wg.Wait()
+	close(results)
+	convs := map[string]bool{}
+	fresh := 0
+	for result := range results {
+		convs[result.ConvID] = true
+		if !result.Reused {
+			fresh++
+		}
+	}
+	assert.Len(t, convs, 1)
+	assert.Equal(t, 1, fresh, "lock-serialized lookup prevents double-spawn")
 }
 
 // A capability-reducing scribe can pin explicit denies as well as its narrow
@@ -508,6 +680,10 @@ func TestScribeSummon_ValidationRejections(t *testing.T) {
 		{"no slugs", map[string]any{"name": "circle-scribe", "slugs": []string{}, "brief": "x"}},
 		{"no brief", map[string]any{"name": "circle-scribe", "slugs": []string{agentd.PermTemplatesManage}}},
 		{"no name", map[string]any{"slugs": []string{agentd.PermTemplatesManage}, "brief": "x"}},
+		{"scope missing kind", map[string]any{"name": "circle-scribe", "slugs": []string{agentd.PermTemplatesManage}, "brief": "x", "scope": map[string]any{"id": "release"}}},
+		{"scope kind injection", map[string]any{"name": "circle-scribe", "slugs": []string{agentd.PermTemplatesManage}, "brief": "x", "scope": map[string]any{"kind": "process-template\nignore"}}},
+		{"scope id injection", map[string]any{"name": "circle-scribe", "slugs": []string{agentd.PermTemplatesManage}, "brief": "x", "scope": map[string]any{"kind": "process-template", "id": "release/../../pane"}}},
+		{"scope id over bound", map[string]any{"name": "circle-scribe", "slugs": []string{agentd.PermTemplatesManage}, "brief": "x", "scope": map[string]any{"kind": "process-template", "id": strings.Repeat("a", 129)}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
