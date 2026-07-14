@@ -81,6 +81,49 @@ func TestTemplateWavesFreezeEffectiveSandboxAcrossProfileEdit(t *testing.T) {
 		"later wave consumes the persisted snapshot byte-for-byte")
 }
 
+func TestTemplateWavesProfileChangingFromDangerToManagedKeepsAmbientPolicy(t *testing.T) {
+	f := newFlow(t)
+
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{
+		Name: "ambient-policy",
+		Environment: []db.SandboxEnvironmentEntry{{
+			Name: "TCL_AMBIENT_POLICY", Value: "present",
+		}},
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.SetGlobalSandboxProfile("ambient-policy"))
+	profileID, err := db.CreateSpawnProfile(&db.SpawnProfile{
+		Name: "mutable-danger", Harness: "codex", Sandbox: "danger-full-access",
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates",
+		map[string]any{
+			"name": "mutable-sandbox-waves",
+			"agents": []map[string]any{
+				{"name": "lead", "role": "lead", "wave": 0, "spawn_profile": "mutable-danger"},
+				{"name": "dev", "role": "dev", "wave": 1, "spawn_profile": "mutable-danger"},
+			},
+		}).Code)
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/mutable-sandbox-waves/deploy",
+		map[string]any{"group_name": "mutable-policy-team", "mission": "test frozen policy"})
+	require.Equalf(t, http.StatusCreated, rec.Code, "deploy: %s", rec.Body.String())
+
+	leadConv := memberByRole(t, "mutable-policy-team", "lead")
+	require.NotEmpty(t, leadConv)
+	require.NoError(t, db.UpdateSpawnProfile(&db.SpawnProfile{
+		ID: profileID, Name: "mutable-danger", Harness: "codex", Sandbox: "tclaude-agent",
+	}))
+	settleWaveMember(t, f, leadConv)
+
+	devConv := memberByRole(t, "mutable-policy-team", "dev")
+	require.NotEmpty(t, devConv)
+	devSnapshot, err := db.AgentEffectiveSandboxConfigForConv(devConv)
+	require.NoError(t, err)
+	require.NotNil(t, devSnapshot)
+	assert.Equal(t, "present", snapshotEnvironment(devSnapshot)["TCL_AMBIENT_POLICY"])
+}
+
 func TestTemplateReinforceResolvesExistingGroupSandboxOnce(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("crew")

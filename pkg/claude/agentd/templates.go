@@ -2371,6 +2371,40 @@ func applyAgentProfileOverrides(agents []db.GroupTemplateAgent, overrides map[st
 	return out
 }
 
+// templateRosterExplicitlyDisablesSandboxProfiles reports whether every member
+// pins Codex danger-full-access in its immutable per-agent fields (legacy
+// direct overrides, then the template-local profile_inline tier). The
+// instantiator normally freezes one global/group policy snapshot
+// for the whole roster before spawning any wave. An all-explicit-danger roster
+// never applies that snapshot, so containment-checking it would reject agent
+// callers for capabilities none of their children receive.
+//
+// Do not resolve role or spawn-profile references here. Delayed waves resolve
+// those mutable registries when they launch; using their value at deploy time
+// to discard the frozen policy would let a later edit switch a queued member to
+// managed sandboxing while leaving it with an empty policy snapshot.
+func templateRosterExplicitlyDisablesSandboxProfiles(agents []db.GroupTemplateAgent) bool {
+	if len(agents) == 0 {
+		return false
+	}
+	for _, a := range agents {
+		harnessName := strings.TrimSpace(a.Harness)
+		sandboxMode := strings.TrimSpace(a.Sandbox)
+		if a.ProfileInline != nil {
+			if harnessName == "" {
+				harnessName = strings.TrimSpace(a.ProfileInline.Harness)
+			}
+			if sandboxMode == "" {
+				sandboxMode = strings.TrimSpace(a.ProfileInline.Sandbox)
+			}
+		}
+		if !sandboxProfilesDisabled(harnessName, sandboxMode) {
+			return false
+		}
+	}
+	return true
+}
+
 // runInstantiation is the shared core behind both `templates instantiate`
 // and `task-force deploy` (JOH-245): it composes the group context (the
 // assignment folded under spec.contextHeader), creates the group, records
@@ -2417,6 +2451,10 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
+	// Fold deploy-time profile selections before resolving the shared sandbox
+	// policy: they can select danger-full-access for otherwise-unconfigured
+	// members and therefore decide whether any policy tier applies at all.
+	roster := applyAgentProfileOverrides(tmpl.Agents, spec.agentProfiles)
 
 	// Freeze the target policy once for the whole template run. A create-new
 	// group has no group assignment yet, so it composes the global tier only;
@@ -2427,7 +2465,11 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 	if reinforce {
 		sandboxGroupID = spec.intoExisting.ID
 	}
-	effectiveSandbox, policyErr := db.ResolveEffectiveSandboxSnapshot(sandboxGroupID, "")
+	effectiveSandbox := sandboxpolicy.EmptySnapshot()
+	var policyErr error
+	if !templateRosterExplicitlyDisablesSandboxProfiles(roster) {
+		effectiveSandbox, policyErr = db.ResolveEffectiveSandboxSnapshot(sandboxGroupID, "")
+	}
 	if policyErr != nil {
 		cleanupDirWriteProofMarkers(spec.proofToken, spec.proofDirs)
 		writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", policyErr.Error())
@@ -2550,7 +2592,6 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 	// Fold the deploy form's per-member profile selections into the roster before
 	// partitioning — so wave 0 AND the persisted choreography for later waves both
 	// carry them. Only members that carried no profile of their own are touched.
-	roster := applyAgentProfileOverrides(tmpl.Agents, spec.agentProfiles)
 	waves := partitionWaves(roster)
 	assignment := normalizeAssignment(spec.assignment)
 	// A zero-agent template creates the group (and materializes rhythms) but

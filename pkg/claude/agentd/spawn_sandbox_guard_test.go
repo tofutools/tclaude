@@ -42,3 +42,10 @@ func TestSandboxProfileCapabilityFailureIgnoresMissingAllowRulesButRejectsMissin
 	require.NotNil(t, failure)
 	require.Contains(t, failure.Msg, "cannot be enforced")
 }
+
+func TestSandboxProfilesDisabledOnlyForCodexDangerFullAccess(t *testing.T) {
+	require.True(t, sandboxProfilesDisabled(harness.CodexName, harness.SandboxDangerFull))
+	require.False(t, sandboxProfilesDisabled(harness.CodexName, harness.SandboxManagedProfile))
+	require.False(t, sandboxProfilesDisabled(harness.CodexName, harness.SandboxReadOnly))
+	require.False(t, sandboxProfilesDisabled(harness.DefaultName, harness.ClaudeSandboxOff))
+}
