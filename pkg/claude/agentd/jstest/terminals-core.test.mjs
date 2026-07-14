@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { departedAgentSelectors } from '../dashboard/js/terminals-core.js';
+import {
+  createAgentRosterReconciler, departedAgentSelectors,
+} from '../dashboard/js/terminals-core.js';
 
 test('departed agent selectors include stable and conversation identities', () => {
   const before = [
@@ -31,4 +33,28 @@ test('selector extraction ignores empty, duplicate, and malformed identities', (
     { agent_id: 'agt_gone', conv_id: 42 },
   ];
   assert.deepEqual(departedAgentSelectors(before, []), ['agt_gone']);
+});
+
+test('degraded rosters neither close panes nor replace the authoritative baseline', () => {
+  const reconcile = createAgentRosterReconciler();
+  const original = [{ agent_id: 'agt_retired', conv_id: 'conv-retired' }];
+
+  assert.deepEqual(reconcile(original, true), [], 'first authoritative roster is the baseline');
+  assert.deepEqual(reconcile([], false), [], 'a degraded empty roster is ignored');
+  assert.deepEqual(
+    new Set(reconcile([], true)),
+    new Set(['agt_retired', 'conv-retired']),
+    'the later authoritative poll still observes the retirement',
+  );
+});
+
+test('malformed authoritative input does not replace the roster baseline', () => {
+  const reconcile = createAgentRosterReconciler();
+  const original = [{ agent_id: 'agt_retired', conv_id: 'conv-retired' }];
+  reconcile(original, true);
+  assert.deepEqual(reconcile(null, true), []);
+  assert.deepEqual(
+    new Set(reconcile([], true)),
+    new Set(['agt_retired', 'conv-retired']),
+  );
 });

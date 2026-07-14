@@ -206,6 +206,10 @@ export async function refresh() {
     // stale rows remain visible. Do not mistake that fallback for a served
     // offset: Retry must keep targeting the page the user requested.
     if (jobsActive && jobsResult.ok) jobs.syncServedOffset(data.paging.jobs.offset);
+    // Reconcile BEFORE lastSnapshot is replaced or any renderer can throw.
+    // The terminal module keeps its own last-authoritative roster baseline, so
+    // a degraded snapshot cannot close panes or consume a later retirement.
+    reconcileTerminalsForAgentRoster(data.agents, data.agent_roster_authoritative);
     setLastSnapshot(data);
     syncDashDefaultProfile(data.spawn_profile_default);
     // Refresh the proactive-grant blocklist hint from the snapshot
@@ -260,11 +264,6 @@ export async function refresh() {
     // the 📝 chip in each group header is hidden unless body.show-group-description
     // is present, brought back only by an explicit opt-in. Plain class toggle.
     document.body.classList.toggle('show-group-description', !!data.show_group_description);
-    // Close every per-agent terminal whose owner just left the authoritative
-    // active roster. This snapshot transition catches retirement no matter
-    // which dashboard / CLI / agent initiated it; the mux leaves group shells
-    // untouched and performs the reliable detach for live-session panes.
-    reconcileTerminalsForAgentRoster(prevSnap.agents, data.agents);
     // The leading ● is rendered by CSS (#status::before) so it can
     // pick up the green "live" colour without us round-tripping HTML
     // through showStatus.

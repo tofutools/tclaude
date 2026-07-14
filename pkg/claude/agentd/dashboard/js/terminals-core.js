@@ -52,6 +52,21 @@ export function departedAgentSelectors(previousAgents, nextAgents) {
   return [...before].filter(selector => !after.has(selector));
 }
 
+// createAgentRosterReconciler keeps the last AUTHORITATIVE active roster and
+// returns selectors that departed on the next authoritative observation.
+// Degraded snapshots are ignored without replacing the baseline, so a
+// transient server-side roster read failure neither closes panes spuriously
+// nor consumes a real retirement that becomes visible on the following poll.
+export function createAgentRosterReconciler() {
+  let previous = null;
+  return (nextAgents, authoritative) => {
+    if (!authoritative || !Array.isArray(nextAgents)) return [];
+    const departed = previous === null ? [] : departedAgentSelectors(previous, nextAgents);
+    previous = nextAgents;
+    return departed;
+  };
+}
+
 // normalizeSeed accepts a seed only if its ws is a same-origin absolute path
 // (leading "/"), so neither a crafted hash nor a caller can point the socket at
 // an arbitrary host. Returns the seed or null.

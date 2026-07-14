@@ -780,6 +780,11 @@ type snapshotPayload struct {
 	SandboxProfiles       []string         `json:"sandbox_profiles"`
 	SandboxProfileDefault string           `json:"sandbox_profile_default"`
 	Agents                []dashboardAgent `json:"agents"`
+	// AgentRosterAuthoritative is false when the active-actor query failed and
+	// Agents may therefore be only the partial set recovered from group/grant
+	// rows. Clients that react to roster departures must ignore such a snapshot
+	// rather than treating a transient DB read failure as mass retirement.
+	AgentRosterAuthoritative bool `json:"agent_roster_authoritative"`
 	// Ungrouped: every active agent that is NOT a member of any group,
 	// online or offline alike. Surfaces fresh-spawned agents, loose
 	// convs and freshly-promoted offline conversations so the
@@ -1823,7 +1828,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// conv that was an agent yesterday keeps showing after its tmux pane closed,
 	// instead of silently vanishing. Plain conversations that were never
 	// promoted are not here — they surface in out.Conversations.
-	activeAgents, _ := db.ListActiveAgents()
+	activeAgents, activeAgentsErr := db.ListActiveAgents()
 
 	// Active sudo grants across every agent. One DB scan; bucketed per conv-id
 	// below for O(1) per-agent Active rendering plus the top-level Sudo[] tab.
@@ -1941,13 +1946,14 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			Slop:    cfg.ActivityBotsSlop(),
 			Wizard:  cfg.ActivityBotsWizard(),
 		},
-		HScrollFollow:          cfg.HScrollFollow(),
-		GroupQuickOptions:      cfg.GroupQuickOptions(),
-		DefaultTerminal:        cfg.DefaultTerminal(),
-		DefaultDirectoryPicker: cfg.DefaultDirectoryPicker(),
-		ShowAgentHideButton:    cfg.ShowAgentHideButton(),
-		ShowGroupDescription:   cfg.ShowGroupDescription(),
-		ProcessesEnabled:       cfg.ProcessesEnabled(),
+		HScrollFollow:            cfg.HScrollFollow(),
+		GroupQuickOptions:        cfg.GroupQuickOptions(),
+		DefaultTerminal:          cfg.DefaultTerminal(),
+		DefaultDirectoryPicker:   cfg.DefaultDirectoryPicker(),
+		ShowAgentHideButton:      cfg.ShowAgentHideButton(),
+		ShowGroupDescription:     cfg.ShowGroupDescription(),
+		ProcessesEnabled:         cfg.ProcessesEnabled(),
+		AgentRosterAuthoritative: activeAgentsErr == nil,
 		Permissions: snapshotPermissionsView{
 			Defaults:  defaults,
 			Grants:    map[string][]string{},

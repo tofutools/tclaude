@@ -14,6 +14,7 @@ func TestRetiredAgentClosesAllOwnedTerminalPanes(t *testing.T) {
 	core := readDashboardJS(t, "terminals-core.js")
 	for _, needle := range []string{
 		"export function departedAgentSelectors(",
+		"export function createAgentRosterReconciler(",
 		"function closeForAgents(",
 		"const agent = p.seed && p.seed.agent",
 		"closeForAgents,",
@@ -30,7 +31,10 @@ func TestRetiredAgentClosesAllOwnedTerminalPanes(t *testing.T) {
 	}
 
 	refresh := readDashboardJS(t, "refresh.js")
-	if !strings.Contains(refresh, "reconcileTerminalsForAgentRoster(prevSnap.agents, data.agents)") {
+	if !strings.Contains(refresh, "reconcileTerminalsForAgentRoster(data.agents, data.agent_roster_authoritative)") {
 		t.Error("refresh.js must reconcile terminal panes against every accepted active-agent snapshot")
+	}
+	if strings.Index(refresh, "reconcileTerminalsForAgentRoster(") > strings.Index(refresh, "setLastSnapshot(data)") {
+		t.Error("refresh.js must reconcile before replacing lastSnapshot so a later renderer failure cannot consume the transition")
 	}
 }
