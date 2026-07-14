@@ -29,6 +29,20 @@ func runTmuxCommand(args ...string) error {
 // command (real tmux in production, TmuxSim in flows). Killing the process on
 // timeout preserves that boundary and, critically, lets cmd.Wait reap it.
 func runCommandWithTimeout(cmd *exec.Cmd, timeout time.Duration) error {
+	return runCommandWithTimeoutTimer(cmd, timeout, func(timeout time.Duration) (<-chan time.Time, func()) {
+		timer := time.NewTimer(timeout)
+		return timer.C, func() { _ = timer.Stop() }
+	})
+}
+
+// runCommandWithTimeoutTimer exposes only timer construction to tests. Keeping
+// command startup, process killing, and reaping on the production path lets a
+// test trigger the timeout after its helper process has proved it is running.
+func runCommandWithTimeoutTimer(
+	cmd *exec.Cmd,
+	timeout time.Duration,
+	startTimer func(time.Duration) (<-chan time.Time, func()),
+) error {
 	var stderr bytes.Buffer
 	if cmd.Stderr == nil {
 		cmd.Stderr = &stderr
@@ -41,12 +55,12 @@ func runCommandWithTimeout(cmd *exec.Cmd, timeout time.Duration) error {
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
+	timedOut, stopTimer := startTimer(timeout)
+	defer stopTimer()
 	select {
 	case err := <-done:
 		return tmuxCommandError(err, stderr.String())
-	case <-timer.C:
+	case <-timedOut:
 		if cmd.Process != nil {
 			_ = cmd.Process.Kill()
 		}
