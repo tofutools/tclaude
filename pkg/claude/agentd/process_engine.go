@@ -39,34 +39,82 @@ func startProcessEngine(stop <-chan struct{}) <-chan struct{} {
 }
 
 func startProcessEngineAtInterval(stop <-chan struct{}, interval time.Duration) <-chan struct{} {
+	return startProcessEngineSupervisor(stop, interval, nil, nil)
+}
+
+func startProcessEngineSupervisor(
+	stop <-chan struct{},
+	interval time.Duration,
+	manualPulses <-chan struct{},
+	observed chan<- bool,
+) <-chan struct{} {
 	supervisorDone := make(chan struct{})
 	go func() {
 		defer close(supervisorDone)
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		pulses := make(chan time.Time, 1)
-		pulses <- time.Now()
 		var (
-			host   *processengine.Host
-			cancel context.CancelFunc
-			done   <-chan struct{}
+			ticker  *time.Ticker
+			tickerC <-chan time.Time
 		)
+		if interval > 0 {
+			ticker = time.NewTicker(interval)
+			tickerC = ticker.C
+			defer ticker.Stop()
+		}
+		pulses := make(chan struct{}, 1)
+		pulses <- struct{}{}
+		var (
+			host                        *processengine.Host
+			cancel                      context.CancelFunc
+			done                        <-chan struct{}
+			reportDisabledWhenTickStops bool
+		)
+		stopActiveTick := func() {
+			if cancel != nil {
+				cancel()
+			}
+			if done != nil {
+				<-done
+			}
+			cancel = nil
+			done = nil
+		}
+		defer stopActiveTick()
+		reportObserved := func(enabled bool) bool {
+			if observed == nil {
+				return true
+			}
+			select {
+			case observed <- enabled:
+				return true
+			case <-stop:
+				return false
+			}
+		}
 		for {
 			select {
 			case <-stop:
-				if cancel != nil {
-					cancel()
-				}
-				if done != nil {
-					<-done
-				}
 				return
 			case <-done:
 				cancel = nil
 				done = nil
-			case now := <-ticker.C:
+				if reportDisabledWhenTickStops {
+					reportDisabledWhenTickStops = false
+					if !reportObserved(false) {
+						return
+					}
+				}
+			case <-tickerC:
 				select {
-				case pulses <- now:
+				case pulses <- struct{}{}:
+				default:
+				}
+			case _, ok := <-manualPulses:
+				if !ok {
+					manualPulses = nil
+					continue
+				}
+				select {
+				case pulses <- struct{}{}:
 				default:
 				}
 			case <-pulses:
@@ -75,16 +123,30 @@ func startProcessEngineAtInterval(stop <-chan struct{}, interval time.Duration) 
 				if !enabled {
 					if cancel != nil {
 						cancel()
+						// Production keeps supervising asynchronously while the
+						// canceled tick exits. Tests receive the disabled barrier
+						// only after the same done path observes quiescence.
+						reportDisabledWhenTickStops = observed != nil
+						continue
+					}
+					if !reportObserved(false) {
+						return
 					}
 					continue
 				}
 				if done != nil {
+					if !reportObserved(true) {
+						return
+					}
 					continue
 				}
 				if host == nil {
 					created, createErr := newProcessEngineHost(processStoreRoot())
 					if createErr != nil {
 						slog.Warn("process engine: initialize failed", "error", createErr)
+						if !reportObserved(true) {
+							return
+						}
 						continue
 					}
 					host = created
@@ -111,6 +173,9 @@ func startProcessEngineAtInterval(stop <-chan struct{}, interval time.Duration) 
 						}
 					}
 				}()
+				if !reportObserved(true) {
+					return
+				}
 			}
 		}
 	}()
@@ -414,7 +479,12 @@ func NewProcessEngineHostForTest(root string) (*processengine.Host, error) {
 }
 
 // StartProcessEngineForTest starts the dynamic feature supervisor with a
-// test-scale interval and returns a channel closed after shutdown completes.
-func StartProcessEngineForTest(stop <-chan struct{}, interval time.Duration) <-chan struct{} {
-	return startProcessEngineAtInterval(stop, interval)
+// caller-driven pulse source. Each observation reports the feature state after
+// that pulse has been applied; a false observation also means any active tick
+// has been canceled and joined.
+func StartProcessEngineForTest(stop <-chan struct{}) (chan<- struct{}, <-chan bool, <-chan struct{}) {
+	pulses := make(chan struct{})
+	observed := make(chan bool)
+	done := startProcessEngineSupervisor(stop, 0, pulses, observed)
+	return pulses, observed, done
 }
