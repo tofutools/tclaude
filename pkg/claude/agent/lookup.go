@@ -496,19 +496,19 @@ func FreshCreated(convID string) string {
 
 // MemberCreated returns convID's Age timestamp for a group-member listing.
 //
-// It prefers the actor's immutable birth time (agents.created_at), stamped at
-// spawn/enrollment before the harness writes its first .jsonl event — so a
-// freshly-spawned agent has an Age immediately, and the value is the actor's
-// stable age across conv rotations. It falls back to FreshCreated (the
-// conversation's first-.jsonl-event time) for a conv that is not an actor. Both
-// are emitted in the fixed-width UTC Age layout (db.CanonicalAgeTimestamp*) — full
-// sub-second precision preserved, never truncated — so the value is byte-identical
-// to the dashboard snapshot's createdFor and the lexical Age sort stays valid.
+// It returns the earliest valid instant from the actor's immutable birth time
+// (agents.created_at) and the conversation's first-.jsonl-event time. Actor birth
+// normally wins and is available before the harness writes its first event, so
+// freshly-spawned agents have an Age immediately and keep it across rotations.
+// Conversation creation wins only for legacy/backfilled actors whose row was
+// stamped after they already existed. The UTC RFC3339Nano result is
+// byte-identical to the dashboard snapshot's createdFor.
 func MemberCreated(convID string) string {
+	actorCreated := ""
 	if a, _ := db.GetAgentByConv(convID); a != nil && !a.CreatedAt.IsZero() {
-		return db.CanonicalAgeTimestampFromTime(a.CreatedAt)
+		actorCreated = db.CanonicalAgeTimestampFromTime(a.CreatedAt)
 	}
-	return db.CanonicalAgeTimestamp(FreshCreated(convID))
+	return db.EarliestAgeTimestamp(actorCreated, FreshCreated(convID))
 }
 
 // pendingName returns the intended display name recorded for convID's actor at

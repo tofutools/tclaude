@@ -90,9 +90,9 @@ function sortHead(tableKey, cols, wizard = false) {
   return `<thead><tr>${cells.join('')}</tr></thead>`;
 }
 
-// cmpSortValues orders two non-empty accessor outputs: booleans and
-// numbers compare naturally, everything else as case-insensitive
-// strings (ISO timestamps included — lexical order is chronological).
+// cmpSortValues orders two non-empty accessor outputs: booleans, numbers and
+// bigint timestamp keys compare naturally, everything else as
+// case-insensitive strings.
 function cmpSortValues(a, b) {
   if (typeof a === 'boolean' || typeof b === 'boolean') {
     return (a === b) ? 0 : (a ? -1 : 1);
@@ -100,7 +100,45 @@ function cmpSortValues(a, b) {
   if (typeof a === 'number' && typeof b === 'number') {
     return a - b;
   }
+  if (typeof a === 'bigint' && typeof b === 'bigint') {
+    return a < b ? -1 : (a > b ? 1 : 0);
+  }
   return String(a).toLowerCase().localeCompare(String(b).toLowerCase());
+}
+
+// timestampSortValue parses an RFC3339 timestamp into epoch nanoseconds. Date
+// alone is only millisecond-precise, so keep the fractional component separate
+// and combine it with the validated whole-second instant as a bigint. Invalid
+// or blank timestamps return null and therefore follow applySortState's normal
+// blank-last behavior. Timestamp columns must compare these time keys rather
+// than their variable-precision/offset text representations.
+const RFC3339_SORT_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})$/;
+function timestampSortValue(iso) {
+  if (!iso) return null;
+  const match = RFC3339_SORT_RE.exec(String(iso));
+  if (!match) return null;
+
+  const [year, month, day, hour, minute, second] = match.slice(1, 7).map(Number);
+  const local = new Date(0);
+  local.setUTCFullYear(year, month - 1, day);
+  local.setUTCHours(hour, minute, second, 0);
+  // Date normalises invalid calendar values (e.g. February 30) instead of
+  // rejecting them, so round-trip every component before accepting the key.
+  if (local.getUTCFullYear() !== year || local.getUTCMonth() !== month - 1 ||
+      local.getUTCDate() !== day || local.getUTCHours() !== hour ||
+      local.getUTCMinutes() !== minute || local.getUTCSeconds() !== second) return null;
+
+  let offsetMinutes = 0;
+  const zone = match[8];
+  if (zone !== 'Z') {
+    const zoneHour = Number(zone.slice(1, 3));
+    const zoneMinute = Number(zone.slice(4, 6));
+    if (zoneHour > 23 || zoneMinute > 59) return null;
+    offsetMinutes = (zoneHour * 60 + zoneMinute) * (zone[0] === '+' ? 1 : -1);
+  }
+  const wholeSecondMillis = local.getTime() - offsetMinutes * 60_000;
+  const nanos = BigInt((match[7] || '').padEnd(9, '0'));
+  return BigInt(wholeSecondMillis) * 1_000_000n + nanos;
 }
 
 // applySort returns a sorted copy of `rows` for the given table.
@@ -162,11 +200,9 @@ const MEMBER_ACCESSORS = {
   title:  m => m.title,
   state:  m => (m.state || {}).status,
   last:   m => (m.state || {}).last_hook,
-  // age sorts on the raw creation timestamp (ISO → lexical = chrono):
-  // ascending = oldest first, descending = newest first. The default
-  // listing already arrives newest-first from the server, which this
-  // column surfaces.
-  age:    m => m.created_at,
+  // Parse Age as an instant rather than comparing its RFC3339 text. This keeps
+  // mixed fractional precision and zone offsets chronologically correct.
+  age:    m => timestampSortValue(m.created_at),
   cwd:    m => m.current_dir || (m.state || {}).cwd,
   branch: m => m.branch,
   role:   m => m.role,

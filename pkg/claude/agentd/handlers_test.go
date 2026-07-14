@@ -10,6 +10,36 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
+func TestSortMembersByAge_UsesChronologicalInstants(t *testing.T) {
+	type row struct {
+		convID    string
+		createdAt string
+	}
+	rows := []row{
+		{convID: "whole-z", createdAt: "2026-06-18T12:00:00Z"},
+		{convID: "invalid-z", createdAt: "not-a-time"},
+		{convID: "new", createdAt: "2026-06-18T12:00:00.004000001Z"},
+		{convID: "equal-a", createdAt: "2026-06-18T14:00:00+02:00"},
+		{convID: "blank-a", createdAt: ""},
+		{convID: "offset", createdAt: "2026-06-18T14:00:00.002+02:00"},
+		{convID: "nano", createdAt: "2026-06-18T12:00:00.004Z"},
+		{convID: "old", createdAt: "2026-06-18T11:59:59.999999999Z"},
+	}
+
+	sortMembersByAge(rows,
+		func(r row) string { return r.createdAt },
+		func(r row) string { return r.convID })
+
+	got := make([]string, len(rows))
+	for i := range rows {
+		got[i] = rows[i].convID
+	}
+	assert.Equal(t, []string{
+		"new", "nano", "offset", "equal-a", "whole-z", "old",
+		"blank-a", "invalid-z",
+	}, got, "newest instants first; equal and unknown values use conv-id ties")
+}
+
 // TestPickWithLiveness exercises the conv-id → session-row picker that
 // backs handleWhoamiContext. The bug we're guarding against: rows
 // arrive ordered by updated_at DESC from FindSessionsByConvID, so

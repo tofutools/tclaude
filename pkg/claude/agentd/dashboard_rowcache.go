@@ -125,25 +125,19 @@ func (rc *snapshotRowCache) titleFor(convID string) string {
 
 // createdFor returns a conv's Age timestamp from the batch, or "" when unknown.
 //
-// Primary source is the actor's immutable birth time (agents.created_at),
-// stamped at spawn/enrollment BEFORE the harness writes its first .jsonl event.
-// It is available the instant the agent row exists, so a freshly-spawned agent
-// shows a real Age immediately rather than blank for the seconds until the
-// .jsonl is parsed into conv_index — and it is the actor's stable age across
-// conv rotations (/clear, reincarnate), not just the current generation's.
-//
-// Fallback is conv_index.Created (the first .jsonl event's time) for a conv that
-// is not an actor. Both are emitted in the fixed-width UTC Age layout (the actor
-// value is already canonical from AgentsByConv; the conv_index fallback is
-// canonicalised here) so the lexical Age sort stays chronological across sources.
+// It returns the earliest valid instant from the actor's immutable birth time
+// (agents.created_at) and conv_index.Created. Actor birth normally wins, is
+// available before the harness writes its first .jsonl event, and remains stable
+// across /clear and reincarnation. Conversation creation wins only for
+// legacy/backfilled actors whose row was stamped after the conversation already
+// existed. The UTC RFC3339Nano result mirrors agent.MemberCreated; sorters parse
+// it and compare instants.
 func (rc *snapshotRowCache) createdFor(convID string) string {
-	if ca := rc.agents[convID].CreatedAt; ca != "" {
-		return ca
-	}
+	convCreated := ""
 	if row := rc.convIndex[convID]; row != nil {
-		return db.CanonicalAgeTimestamp(row.Created)
+		convCreated = row.Created
 	}
-	return ""
+	return db.EarliestAgeTimestamp(rc.agents[convID].CreatedAt, convCreated)
 }
 
 // viewFor assembles (and memoizes) a conv's full row bundle from the batch. A

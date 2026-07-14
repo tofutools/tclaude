@@ -7,27 +7,16 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestCanonicalAgeTimestamp_FixedWidthLexicalOrder is the regression guard for
-// the Age-column sort hazard: the member Age is sorted LEXICALLY (server
-// sortMembersByAge, client sort.js), so the timestamp format must make lexical
-// order equal chronological order. time.RFC3339Nano omits trailing-zero
-// fractions, so a whole-second instant sorts as if OLDER than a same-second
-// sub-second one ('.' < 'Z') — the inversion this canonical layout removes by
-// padding every value to a constant width while preserving full precision.
-func TestCanonicalAgeTimestamp_FixedWidthLexicalOrder(t *testing.T) {
+// TestCanonicalAgeTimestamp_PreservesPrecision pins the wire representation,
+// which is deliberately ordinary UTC RFC3339Nano. Age consumers compare parsed
+// instants rather than relying on the strings to have a sortable fixed width.
+func TestCanonicalAgeTimestamp_PreservesPrecision(t *testing.T) {
 	whole := CanonicalAgeTimestamp("2026-06-18T12:00:00Z")
 	frac := CanonicalAgeTimestamp("2026-06-18T12:00:00.5Z")
 
-	// Constant width regardless of sub-second precision.
-	assert.Equal(t, len(whole), len(frac), "canonical Age values are fixed-width")
-
-	// Same wall-clock second: the fractional instant is chronologically newer and
-	// MUST sort greater lexically — the property the newest-first Age sort relies
-	// on. With bare RFC3339Nano ("…00Z" vs "…00.5Z") this assertion would fail.
-	assert.Greater(t, frac, whole, "sub-second sorts after whole-second in the same second")
-
-	// Full sub-second precision is preserved, never truncated to seconds.
-	assert.Equal(t, "2026-06-18T12:00:00.500000000Z", frac)
+	assert.Equal(t, "2026-06-18T12:00:00Z", whole)
+	assert.Equal(t, "2026-06-18T12:00:00.5Z", frac,
+		"full sub-second precision is preserved, never truncated to seconds")
 }
 
 // TestCanonicalAgeTimestamp_ZoneAndEdgeCases pins the zone canonicalisation
@@ -36,7 +25,7 @@ func TestCanonicalAgeTimestamp_FixedWidthLexicalOrder(t *testing.T) {
 func TestCanonicalAgeTimestamp_ZoneAndEdgeCases(t *testing.T) {
 	// A non-UTC offset is normalised to UTC so values from different sources sort
 	// in one zone.
-	assert.Equal(t, "2026-06-18T10:00:00.000000000Z",
+	assert.Equal(t, "2026-06-18T10:00:00Z",
 		CanonicalAgeTimestamp("2026-06-18T12:00:00+02:00"))
 
 	assert.Equal(t, "", CanonicalAgeTimestamp(""), "empty stays empty")
@@ -45,8 +34,8 @@ func TestCanonicalAgeTimestamp_ZoneAndEdgeCases(t *testing.T) {
 }
 
 // TestCanonicalAgeTimestampFromTime pins that the time.Time formatter (the CLI
-// actor path) produces exactly what CanonicalAgeTimestamp produces for the same
-// instant, so the dashboard and CLI Age values are byte-identical.
+// actor path) produces exactly what CanonicalAgeTimestamp produces for the
+// same instant, so the dashboard and CLI Age values are byte-identical.
 func TestCanonicalAgeTimestampFromTime(t *testing.T) {
 	assert.Equal(t, "", CanonicalAgeTimestampFromTime(time.Time{}), "zero time yields empty Age")
 
@@ -55,4 +44,23 @@ func TestCanonicalAgeTimestampFromTime(t *testing.T) {
 		CanonicalAgeTimestamp(instant.Format(time.RFC3339Nano)),
 		CanonicalAgeTimestampFromTime(instant),
 		"string and time.Time canonicalisers agree byte-for-byte")
+}
+
+func TestEarliestAgeTimestamp(t *testing.T) {
+	assert.Equal(t, "2020-01-02T10:00:00.25Z", EarliestAgeTimestamp(
+		"2026-07-14T12:00:00Z", // actor row stamped by a later backfill
+		"2020-01-02T12:00:00.25+02:00",
+	), "older conversation creation repairs a late actor enrollment time")
+
+	assert.Equal(t, "2020-01-02T10:00:00Z", EarliestAgeTimestamp(
+		"2020-01-02T10:00:00Z", // stable actor birth
+		"2026-07-14T12:00:00Z", // later reincarnated conversation
+	), "actor birth remains the Age across later conversation generations")
+
+	assert.Equal(t, "2020-01-02T10:00:00Z",
+		EarliestAgeTimestamp("bad-actor-time", "2020-01-02T10:00:00Z"),
+		"a valid source wins over an unparseable one")
+	assert.Equal(t, "bad-actor-time", EarliestAgeTimestamp("bad-actor-time", ""),
+		"the first non-empty invalid value is preserved for diagnostics")
+	assert.Empty(t, EarliestAgeTimestamp("", ""))
 }

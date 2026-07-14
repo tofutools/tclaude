@@ -3310,10 +3310,10 @@ type memberJSON struct {
 	AgentID string `json:"agent_id,omitempty"`
 	ConvID  string `json:"conv_id"`
 	Title   string `json:"title"`
-	// CreatedAt is the actor's birth timestamp (agents.created_at), or the
-	// conversation's first-.jsonl-event time (conv_index.Created) for a conv
-	// that is not an actor — see agent.MemberCreated. Emitted in the fixed-width
-	// UTC Age layout, empty when unknown. The dashboard renders it as a relative
+	// CreatedAt is the earliest known existence timestamp: actor birth
+	// (agents.created_at) or, for a late-enrolled legacy actor, the older
+	// conv_index.Created — see agent.MemberCreated. Emitted as UTC RFC3339Nano,
+	// empty when unknown. The dashboard renders it as a relative
 	// "Age", and it is the default sort key (newest first).
 	CreatedAt string `json:"created_at,omitempty"`
 	Role      string `json:"role,omitempty"`
@@ -3326,24 +3326,25 @@ type memberJSON struct {
 }
 
 // sortMembersByAge orders a group-member listing newest-first by the Age
-// timestamp (actor birth time, or conv_index fallback — see agent.MemberCreated).
-// The values are the fixed-width UTC Age layout, whose constant width makes the
-// string compare here lexically = chronologically. It is the default ordering for
+// timestamp (earliest known actor/conversation existence — see
+// agent.MemberCreated).
+// Values are parsed as RFC3339 instants before comparison; their textual
+// precision or zone never controls ordering. It is the default ordering for
 // every group listing, shared by the CLI (`tclaude agent groups members`, which
-// renders the JSON below) and the browser dashboard, whose Age column shows this
-// and whose client-side column sort treats it as the "natural" order it falls
-// back to when no column is active. Blank/unknown times sort last so a
-// freshly-spawned, not-yet-indexed agent never crowds the top; conv_id breaks
-// ties so the order is deterministic — the previous joined_at order left
-// owner-only rows, appended from a map, in random iteration order.
+// renders the JSON below) and the browser dashboard. Blank or unparseable times
+// sort last; conv_id breaks equal-time ties so the order is deterministic — the
+// previous joined_at order left owner-only rows, appended from a map, in random
+// iteration order.
 func sortMembersByAge[T any](items []T, created func(T) string, convID func(T) string) {
 	sort.SliceStable(items, func(i, j int) bool {
-		ci, cj := created(items[i]), created(items[j])
-		if (ci == "") != (cj == "") {
-			return ci != "" // known creation times before unknown
+		ti, errI := time.Parse(time.RFC3339Nano, created(items[i]))
+		tj, errJ := time.Parse(time.RFC3339Nano, created(items[j]))
+		knownI, knownJ := errI == nil, errJ == nil
+		if knownI != knownJ {
+			return knownI // known creation times before unknown
 		}
-		if ci != cj {
-			return ci > cj // newest first
+		if knownI && !ti.Equal(tj) {
+			return ti.After(tj) // newest first
 		}
 		return convID(items[i]) < convID(items[j])
 	})

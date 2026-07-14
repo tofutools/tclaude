@@ -212,48 +212,67 @@ type ConvAgent struct {
 	// event. It is the dashboard member Age source: available the instant the
 	// agent row exists, so a freshly-spawned agent shows a real Age immediately
 	// rather than blank until the .jsonl is parsed into conv_index. Canonicalised
-	// to the fixed-width UTC Age layout (see CanonicalAgeTimestamp) so it sorts
-	// lexically and agrees byte-for-byte with the CLI listing's agent.MemberCreated.
+	// to UTC RFC3339Nano so it agrees byte-for-byte with the CLI listing's
+	// agent.MemberCreated. Consumers compare Age values as instants, not strings.
 	CreatedAt string
 }
 
-// ageTimestampLayout is a FIXED-WIDTH RFC3339 layout — always exactly nine
-// fractional digits, UTC 'Z'. It is the canonical form for every group-member
-// "Age" timestamp, and its constant width is load-bearing: the Age column is
-// sorted LEXICALLY (server sortMembersByAge, client sort.js localeCompare), and
-// lexical order equals chronological order only when all values share one width.
-// time.RFC3339Nano OMITS trailing-zero fractions, so a whole-second instant
-// ("…05Z") renders shorter than a sub-second one ("…05.5Z") and — since '.' <
-// 'Z' — sorts as if OLDER, inverting same-second rows. A fixed nine-digit
-// fraction removes that hazard while preserving full sub-second precision (it
-// pads, never truncates), so no resolution is lost versus the stored value.
-const ageTimestampLayout = "2006-01-02T15:04:05.000000000Z07:00"
-
-// CanonicalAgeTimestamp normalises a stored timestamp string to the fixed-width
-// UTC Age layout. agents.created_at is written with time.Now().Format, i.e. in
-// the daemon's LOCAL zone; conv_index.Created is RFC3339 seconds — canonicalising
-// both here gives one zone and one width so the Age sort is valid across the two
-// sources and the dashboard row agrees byte-for-byte with the CLI listing.
-// Empty stays empty; an unparseable value is returned unchanged rather than blanked.
+// CanonicalAgeTimestamp normalises a stored timestamp string to UTC
+// RFC3339Nano, preserving all available sub-second precision. The dashboard
+// and CLI use the same representation, but ordering never relies on its text:
+// server and browser Age sorters parse it and compare the resulting instants.
+// Empty stays empty; an unparseable value is returned unchanged rather than
+// blanked so callers can degrade it to an unknown sort key without losing the
+// stored diagnostic value.
 func CanonicalAgeTimestamp(s string) string {
 	if s == "" {
 		return ""
 	}
 	if t := parseTimeOrZero(s); !t.IsZero() {
-		return t.UTC().Format(ageTimestampLayout)
+		return t.UTC().Format(time.RFC3339Nano)
 	}
 	return s
 }
 
 // CanonicalAgeTimestampFromTime formats an actor birth time.Time (from
-// agents.created_at) into the same fixed-width UTC Age layout CanonicalAgeTimestamp
-// produces, so the CLI listing's value is byte-identical to the dashboard's. A
-// zero time yields "" (unknown Age).
+// agents.created_at) into the same UTC RFC3339Nano representation
+// CanonicalAgeTimestamp produces, so the CLI listing's value is byte-identical
+// to the dashboard's. A zero time yields "" (unknown Age).
 func CanonicalAgeTimestampFromTime(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
-	return t.UTC().Format(ageTimestampLayout)
+	return t.UTC().Format(time.RFC3339Nano)
+}
+
+// EarliestAgeTimestamp returns the earliest valid instant in values, emitted as
+// canonical UTC RFC3339Nano. An actor's created_at normally wins because it
+// predates later conversation generations, while an older conv_index.Created
+// repairs legacy/backfilled actors whose row was stamped at migration or lazy
+// enrollment time. If no value parses, the first non-empty value is preserved
+// for diagnostics; Age sorters treat it as unknown.
+func EarliestAgeTimestamp(values ...string) string {
+	var earliest time.Time
+	fallback := ""
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		if fallback == "" {
+			fallback = value
+		}
+		parsed := parseTimeOrZero(value)
+		if parsed.IsZero() {
+			continue
+		}
+		if earliest.IsZero() || parsed.Before(earliest) {
+			earliest = parsed
+		}
+	}
+	if earliest.IsZero() {
+		return fallback
+	}
+	return CanonicalAgeTimestampFromTime(earliest)
 }
 
 // PendingNamesByAgent bulk-loads the non-empty spawn-time display-name
@@ -324,9 +343,9 @@ func AgentsByConv(convIDs []string) (map[string]ConvAgent, error) {
 				_ = rows.Close()
 				return nil, err
 			}
-			// Canonicalise to the fixed-width UTC Age layout (keeping full sub-second
-			// precision) so the Age lexical sort is valid across sources and the value
-			// agrees byte-for-byte with the CLI path (agent.MemberCreated).
+			// Canonicalise to UTC RFC3339Nano (keeping full sub-second precision)
+			// so the value agrees byte-for-byte with the CLI path
+			// (agent.MemberCreated). Age consumers compare parsed instants.
 			ca.CreatedAt = CanonicalAgeTimestamp(createdAt)
 			out[convID] = ca
 		}
