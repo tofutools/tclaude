@@ -123,9 +123,22 @@ func (rc *snapshotRowCache) titleFor(convID string) string {
 	return agent.CachedTitleFromParts(rc.convIndex[convID], rc.agents[convID].PendingName)
 }
 
-// createdFor returns a conv's immutable creation timestamp from the batch, or
-// "" when unknown — the cache-only twin of agent.CachedCreated.
+// createdFor returns a conv's Age timestamp from the batch, or "" when unknown.
+//
+// Primary source is the actor's immutable birth time (agents.created_at),
+// stamped at spawn/enrollment BEFORE the harness writes its first .jsonl event.
+// It is available the instant the agent row exists, so a freshly-spawned agent
+// shows a real Age immediately rather than blank for the seconds until the
+// .jsonl is parsed into conv_index — and it is the actor's stable age across
+// conv rotations (/clear, reincarnate), not just the current generation's.
+//
+// Fallback is conv_index.Created (the first .jsonl event's time) for a conv that
+// is not an actor. Both are compared lexically by the Age sort; actor rows carry
+// full RFC3339Nano precision (never truncated), non-actor rows RFC3339 seconds.
 func (rc *snapshotRowCache) createdFor(convID string) string {
+	if ca := rc.agents[convID].CreatedAt; ca != "" {
+		return ca
+	}
 	if row := rc.convIndex[convID]; row != nil {
 		return row.Created
 	}

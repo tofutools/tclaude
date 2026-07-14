@@ -199,13 +199,38 @@ func ListAgentWorkspacesByConv(convIDs []string) (map[string]AgentWorkspace, err
 }
 
 // ConvAgent is the actor identity of one conversation generation — the stable
-// agent_id plus the actor's spawn-time pending name — resolved through
-// agent_conversations. It carries exactly the two actor facts the dashboard
-// row needs (the id for task-ref / tag / presented-PR lookups, and the pending
-// name as a title fallback) without a per-conv AgentIDForConv + GetAgent pair.
+// agent_id plus the actor's spawn-time pending name and birth timestamp —
+// resolved through agent_conversations. It carries exactly the actor facts the
+// dashboard row needs (the id for task-ref / tag / presented-PR lookups, the
+// pending name as a title fallback, and created_at as the member Age source)
+// without a per-conv AgentIDForConv + GetAgent pair.
 type ConvAgent struct {
 	AgentID     string
 	PendingName string
+	// CreatedAt is the actor's immutable birth timestamp (agents.created_at),
+	// stamped at spawn/enrollment BEFORE the harness writes its first .jsonl
+	// event. It is the dashboard member Age source: available the instant the
+	// agent row exists, so a freshly-spawned agent shows a real Age immediately
+	// rather than blank until the .jsonl is parsed into conv_index. Normalised to
+	// UTC RFC3339Nano (canonical zone, full precision preserved) so it sorts
+	// lexically and agrees byte-for-byte with the CLI listing's agent.MemberCreated.
+	CreatedAt string
+}
+
+// normalizeCreatedAtUTC canonicalises a stored created_at string to UTC
+// RFC3339Nano, preserving sub-second precision. agents.created_at is written
+// with time.Now().Format(RFC3339Nano), i.e. in the daemon's LOCAL zone; leaving
+// that offset in place would make the Age lexical sort mix zones and make the
+// dashboard row disagree with the CLI listing (which formats via time.Time.UTC).
+// An unparseable value is returned unchanged rather than blanked.
+func normalizeCreatedAtUTC(s string) string {
+	if s == "" {
+		return ""
+	}
+	if t := parseTimeOrZero(s); !t.IsZero() {
+		return t.UTC().Format(time.RFC3339Nano)
+	}
+	return s
 }
 
 // PendingNamesByAgent bulk-loads the non-empty spawn-time display-name
@@ -261,7 +286,7 @@ func AgentsByConv(convIDs []string) (map[string]ConvAgent, error) {
 	}
 	for _, chunk := range chunkStrings(convIDs, batchChunkSize) {
 		clause, args := inClause(chunk)
-		rows, err := d.Query(`SELECT ac.conv_id, a.agent_id, a.pending_name
+		rows, err := d.Query(`SELECT ac.conv_id, a.agent_id, a.pending_name, a.created_at
 			FROM agent_conversations ac
 			JOIN agents a ON a.agent_id = ac.agent_id
 			WHERE ac.conv_id `+clause, args...)
@@ -271,10 +296,16 @@ func AgentsByConv(convIDs []string) (map[string]ConvAgent, error) {
 		for rows.Next() {
 			var convID string
 			var ca ConvAgent
-			if err := rows.Scan(&convID, &ca.AgentID, &ca.PendingName); err != nil {
+			var createdAt string
+			if err := rows.Scan(&convID, &ca.AgentID, &ca.PendingName, &createdAt); err != nil {
 				_ = rows.Close()
 				return nil, err
 			}
+			// Canonicalise the zone to UTC (keeping full sub-second precision) so
+			// the Age lexical sort is valid and the value agrees byte-for-byte with
+			// the CLI path (agent.MemberCreated). agents.created_at is written with
+			// time.Now(), whose local offset would otherwise break both.
+			ca.CreatedAt = normalizeCreatedAtUTC(createdAt)
 			out[convID] = ca
 		}
 		err = rows.Err()
