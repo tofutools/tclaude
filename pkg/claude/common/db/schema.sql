@@ -723,3 +723,18 @@ CREATE TABLE dashboard_session_grace (
 CREATE INDEX idx_dashboard_session_grace_expiry
 			ON dashboard_session_grace(expires_at);
 
+CREATE TABLE agentd_idempotency (
+			request_key TEXT PRIMARY KEY,
+			fingerprint TEXT NOT NULL,
+			owner_id TEXT NOT NULL,
+			state TEXT NOT NULL CHECK(state IN ('pending', 'completed')),
+			status INTEGER NOT NULL DEFAULT 0,
+			headers_json TEXT NOT NULL DEFAULT '',
+			response_body BLOB,
+			created_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL
+		);
+
+CREATE INDEX idx_agentd_idempotency_expiry
+			ON agentd_idempotency(expires_at);
+

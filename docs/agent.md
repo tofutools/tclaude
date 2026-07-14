@@ -30,6 +30,17 @@ neither is refused. See [Identity](#identity).
 > talking to an old daemon silently drops `--profile` launch fields because the
 > old daemon does not understand the profile reference.
 
+Brief daemon restarts are tolerated by the CLI. Connection failures retry after
+1, 2, 4, 8, and 16 seconds; read requests that receive HTTP 5xx retry twice,
+after 1 and 2 seconds. Retry notices are written to stderr, and other HTTP
+errors fail immediately. Mutating requests carry a stable request ID across
+retries. Agentd stores pending and completed request outcomes in SQLite,
+replaying a completed response without rerunning the mutation. If a replaced
+daemon left a request pending, the CLI reports that its outcome is unknown
+instead of risking a duplicate mutation. A client talking to an older daemon
+that does not advertise this ledger still retries reads, but sends mutations
+only once.
+
 ## What you can do
 
 - **Talk between conversations.** Send messages, replies, and

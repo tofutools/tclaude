@@ -917,7 +917,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/process/runs/{id}/nodes/{node}/report", processRoute(handleProcessReport))
 	mux.HandleFunc("GET /v1/process/worklist", processRoute(handleProcessWorklist))
 	mux.HandleFunc("POST /v1/process/worklist/{itemId}/action", processRoute(handleProcessWorklistAction))
-	return logRequest(auditRequests(mux))
+	return idempotencyRequests(logRequest(auditRequests(mux)))
 }
 
 func logRequest(h http.Handler) http.Handler {

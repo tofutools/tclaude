@@ -3,7 +3,9 @@ package agent
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -12,8 +14,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 )
 
@@ -109,11 +113,69 @@ const daemonRequiredMsg = "tclaude agentd is not running.\n" +
 // sandboxed agents bypass the daemon's auth gating if the socket
 // happens to be down.
 func RequireDaemonOrExit(stderr io.Writer) int {
-	if DaemonAvailable() {
+	if waitForDaemon(stderr, DaemonAvailable, defaultRetryPolicy()) {
 		return rcOK
 	}
 	fmt.Fprintln(stderr, "Error: "+daemonRequiredMsg)
 	return rcIOFailure
+}
+
+var (
+	connectionRetryBackoffs = []time.Duration{
+		time.Second,
+		2 * time.Second,
+		4 * time.Second,
+		8 * time.Second,
+		16 * time.Second,
+	}
+	serverRetryBackoffs = []time.Duration{
+		time.Second,
+		2 * time.Second,
+	}
+)
+
+type daemonRetryPolicy struct {
+	connectionBackoffs []time.Duration
+	serverBackoffs     []time.Duration
+	sleep              func(context.Context, time.Duration) error
+	retryMutations     bool
+}
+
+func defaultRetryPolicy() daemonRetryPolicy {
+	return daemonRetryPolicy{
+		connectionBackoffs: connectionRetryBackoffs,
+		serverBackoffs:     serverRetryBackoffs,
+		sleep:              sleepContext,
+		retryMutations:     true,
+	}
+}
+
+func sleepContext(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func waitForDaemon(stderr io.Writer, available func() bool, policy daemonRetryPolicy) bool {
+	if available() {
+		return true
+	}
+	for i, delay := range policy.connectionBackoffs {
+		fmt.Fprintf(stderr, "agentd is unavailable; retrying in %s (%d/%d)\n",
+			delay, i+1, len(policy.connectionBackoffs))
+		if err := policy.sleep(context.Background(), delay); err != nil {
+			return false
+		}
+		if available() {
+			return true
+		}
+	}
+	return false
 }
 
 // DaemonError represents a non-2xx response from the daemon. Callers can
@@ -192,6 +254,9 @@ type DaemonOpts struct {
 	// 10s. Ignored when AskHuman is set (that path picks its own
 	// generous timeout).
 	Timeout time.Duration
+	// RetryOutput receives retry notices. Nil writes to os.Stderr. This is
+	// primarily useful to callers that already expose an injectable stderr.
+	RetryOutput io.Writer
 }
 
 // DaemonGet performs a GET against the daemon and decodes the JSON body
@@ -219,8 +284,10 @@ func DaemonPatch(path string, in, out any) error {
 // humanTokenEnvVar — the `agent` package cannot import `agentd` (import
 // cycle), so the strings are duplicated here. Keep them in sync.
 const (
-	HumanTokenHeader = "X-Tclaude-Human-Token"
-	HumanTokenEnvVar = "TCLAUDE_HUMAN_TOKEN"
+	HumanTokenHeader     = "X-Tclaude-Human-Token"
+	HumanTokenEnvVar     = "TCLAUDE_HUMAN_TOKEN"
+	IdempotencyKeyHeader = "Idempotency-Key"
+	RequestDigestHeader  = "X-Tclaude-Request-Digest"
 )
 
 // attachHumanToken adds the operator-token header to a daemon request
@@ -278,13 +345,20 @@ func daemonReq(method, path string, in, out any, opts DaemonOpts) error {
 	if opts.TargetConv != "" {
 		req.Header.Set("X-Tclaude-Target-Conv", opts.TargetConv)
 	}
-	resp, err := client.Do(req)
+	policy, err := retryPolicyForRequest(client, req, retryOutput(opts.RetryOutput))
+	if err != nil {
+		return err
+	}
+	resp, err := doDaemonRequest(client, req, retryOutput(opts.RetryOutput), policy)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	raw, _ := io.ReadAll(resp.Body)
+	raw, readErr := daemonResponseBytes(resp)
+	if readErr != nil {
+		return fmt.Errorf("read response body: %w", readErr)
+	}
 	if resp.StatusCode >= 400 {
 		var e struct {
 			Error string `json:"error"`
@@ -327,12 +401,12 @@ func daemonGetRaw(path string) ([]byte, http.Header, error) {
 		return nil, nil, err
 	}
 	attachHumanToken(req)
-	resp, err := httpClientWithTimeout(daemonRawTimeout).Do(req)
+	resp, err := doDaemonRequest(httpClientWithTimeout(daemonRawTimeout), req, os.Stderr, defaultRetryPolicy())
 	if err != nil {
 		return nil, nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	raw, readErr := io.ReadAll(resp.Body)
+	raw, readErr := daemonResponseBytes(resp)
 	if readErr != nil {
 		return nil, nil, fmt.Errorf("read response body: %w", readErr)
 	}
@@ -369,12 +443,16 @@ func DaemonPostRawWithOptions(path, contentType string, body []byte, headers htt
 		req.Header.Set("X-Tclaude-Ask-Human", opts.AskHuman.String())
 		client = httpClientWithTimeout(max(daemonRawTimeout, opts.AskHuman+30*time.Second))
 	}
-	resp, err := client.Do(req)
+	policy, err := retryPolicyForRequest(client, req, retryOutput(opts.RetryOutput))
+	if err != nil {
+		return err
+	}
+	resp, err := doDaemonRequest(client, req, retryOutput(opts.RetryOutput), policy)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	raw, readErr := io.ReadAll(resp.Body)
+	raw, readErr := daemonResponseBytes(resp)
 	if readErr != nil {
 		return fmt.Errorf("read response body: %w", readErr)
 	}
@@ -385,6 +463,212 @@ func DaemonPostRawWithOptions(path, contentType string, body []byte, headers htt
 		return json.Unmarshal(raw, out)
 	}
 	return nil
+}
+
+func retryOutput(out io.Writer) io.Writer {
+	if out != nil {
+		return out
+	}
+	return os.Stderr
+}
+
+// doDaemonRequest retries transient failures at the single shared agentd
+// transport boundary. Connection failures get the full ~30 second backoff;
+// HTTP 5xx replies get two retries. The budgets are independent so an agentd
+// restart can move from 5xx shutdown responses to connection failures and
+// still recover once the replacement daemon starts accepting requests.
+func doDaemonRequest(client *http.Client, req *http.Request, stderr io.Writer, policy daemonRetryPolicy) (*http.Response, error) {
+	if err := attachIdempotencyKey(req); err != nil {
+		return nil, err
+	}
+	mutation := isMutatingRequest(req)
+	canRetryConnection := !mutation || policy.retryMutations
+	canRetry5xx := !mutation
+	connectionRetries := 0
+	serverRetries := 0
+	for {
+		attempt, err := replayableRequest(req)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := client.Do(attempt)
+		if err != nil {
+			if !canRetryConnection || !isConnectionFailure(err) || connectionRetries >= len(policy.connectionBackoffs) {
+				return nil, err
+			}
+			delay := policy.connectionBackoffs[connectionRetries]
+			connectionRetries++
+			fmt.Fprintf(stderr, "agentd connection failed: %v; retrying in %s (%d/%d)\n",
+				err, delay, connectionRetries, len(policy.connectionBackoffs))
+			if err := policy.sleep(req.Context(), delay); err != nil {
+				return nil, err
+			}
+			continue
+		}
+
+		raw, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if readErr != nil {
+			if !canRetryConnection || !isConnectionFailure(readErr) || connectionRetries >= len(policy.connectionBackoffs) {
+				return nil, fmt.Errorf("read agentd response: %w", readErr)
+			}
+			delay := policy.connectionBackoffs[connectionRetries]
+			connectionRetries++
+			fmt.Fprintf(stderr, "agentd connection failed while reading response: %v; retrying in %s (%d/%d)\n",
+				readErr, delay, connectionRetries, len(policy.connectionBackoffs))
+			if err := policy.sleep(req.Context(), delay); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		resp.Body = newBufferedDaemonBody(raw)
+		resp.ContentLength = int64(len(raw))
+
+		if resp.StatusCode < http.StatusInternalServerError || !canRetry5xx || serverRetries >= len(policy.serverBackoffs) {
+			return resp, nil
+		}
+		delay := policy.serverBackoffs[serverRetries]
+		serverRetries++
+		fmt.Fprintf(stderr, "agentd returned HTTP %d; retrying in %s (%d/%d)\n",
+			resp.StatusCode, delay, serverRetries, len(policy.serverBackoffs))
+		if err := policy.sleep(req.Context(), delay); err != nil {
+			return nil, err
+		}
+	}
+}
+
+func retryPolicyForRequest(client *http.Client, req *http.Request, stderr io.Writer) (daemonRetryPolicy, error) {
+	policy := defaultRetryPolicy()
+	if !isMutatingRequest(req) {
+		return policy, nil
+	}
+	supported, err := daemonSupportsIdempotency(client, stderr)
+	if err != nil {
+		return policy, err
+	}
+	policy.retryMutations = supported
+	return policy, nil
+}
+
+func daemonSupportsIdempotency(client *http.Client, stderr io.Writer) (bool, error) {
+	req, err := http.NewRequest(http.MethodGet, "http://_/v1/info", nil)
+	if err != nil {
+		return false, err
+	}
+	attachHumanToken(req)
+	resp, err := doDaemonRequest(client, req, stderr, defaultRetryPolicy())
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, readErr := daemonResponseBytes(resp)
+	if readErr != nil {
+		return false, fmt.Errorf("read agentd capabilities: %w", readErr)
+	}
+	if resp.StatusCode >= 400 {
+		return false, decodeDaemonError(resp.StatusCode, raw)
+	}
+	var info struct {
+		Idempotency string `json:"idempotency"`
+	}
+	if err := json.Unmarshal(raw, &info); err != nil {
+		return false, fmt.Errorf("decode agentd capabilities: %w", err)
+	}
+	return info.Idempotency == "v1", nil
+}
+
+type bufferedDaemonBody struct {
+	*bytes.Reader
+	data []byte
+}
+
+func newBufferedDaemonBody(data []byte) *bufferedDaemonBody {
+	return &bufferedDaemonBody{Reader: bytes.NewReader(data), data: data}
+}
+
+func (b *bufferedDaemonBody) Close() error { return nil }
+
+// daemonResponseBytes transfers the retry loop's already-buffered response to
+// callers without copying large raw downloads a second time.
+func daemonResponseBytes(resp *http.Response) ([]byte, error) {
+	if body, ok := resp.Body.(*bufferedDaemonBody); ok {
+		return body.data, nil
+	}
+	return io.ReadAll(resp.Body)
+}
+
+func isMutatingRequest(req *http.Request) bool {
+	switch req.Method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return true
+	default:
+		return false
+	}
+}
+
+func attachIdempotencyKey(req *http.Request) error {
+	if isMutatingRequest(req) {
+		if req.Header.Get(IdempotencyKeyHeader) == "" {
+			req.Header.Set(IdempotencyKeyHeader, uuid.NewString())
+		}
+		if req.Header.Get(RequestDigestHeader) != "" {
+			return nil
+		}
+		h := sha256.New()
+		_, _ = io.WriteString(h, req.Method+"\x00"+req.URL.RequestURI()+"\x00")
+		if req.Body != nil {
+			if req.GetBody == nil {
+				return fmt.Errorf("agentd request body cannot be fingerprinted")
+			}
+			body, err := req.GetBody()
+			if err != nil {
+				return fmt.Errorf("fingerprint agentd request body: %w", err)
+			}
+			_, copyErr := io.Copy(h, body)
+			_ = body.Close()
+			if copyErr != nil {
+				return fmt.Errorf("fingerprint agentd request body: %w", copyErr)
+			}
+		}
+		req.Header.Set(RequestDigestHeader, fmt.Sprintf("%x", h.Sum(nil)))
+	}
+	return nil
+}
+
+func replayableRequest(req *http.Request) (*http.Request, error) {
+	attempt := req.Clone(req.Context())
+	if req.Body == nil {
+		return attempt, nil
+	}
+	if req.GetBody == nil {
+		return nil, fmt.Errorf("agentd request body cannot be replayed")
+	}
+	body, err := req.GetBody()
+	if err != nil {
+		return nil, fmt.Errorf("replay agentd request body: %w", err)
+	}
+	attempt.Body = body
+	return attempt, nil
+}
+
+func isConnectionFailure(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.ECONNABORTED) || errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, syscall.ENOENT) {
+		return true
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		switch opErr.Op {
+		case "dial", "read", "write":
+			return true
+		}
+	}
+	return false
 }
 
 // decodeDaemonError builds a *DaemonError from a failed response,
