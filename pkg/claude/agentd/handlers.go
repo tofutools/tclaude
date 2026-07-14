@@ -1332,6 +1332,9 @@ var (
 	// that lease so a live worker cannot wait past claim expiry and later
 	// duplicate an injection performed by the worker that reclaimed it.
 	paneInjectLockTimeout = time.Minute
+	// Test seam invoked after immediate acquisition fails, before the timed
+	// polling loop. Production leaves it nil.
+	paneInjectLockContendedHook func()
 )
 
 var errPaneInjectLockTimeout = errors.New("pane injection lock timeout")
@@ -1355,6 +1358,9 @@ func paneInjectLock(tmuxTarget string) *sync.Mutex {
 func acquirePaneInjectLock(mu *sync.Mutex) error {
 	if mu.TryLock() {
 		return nil
+	}
+	if paneInjectLockContendedHook != nil {
+		paneInjectLockContendedHook()
 	}
 	timer := time.NewTimer(paneInjectLockTimeout)
 	defer timer.Stop()
