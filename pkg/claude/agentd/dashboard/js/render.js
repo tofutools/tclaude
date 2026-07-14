@@ -17,6 +17,7 @@ import {
 } from './sort.js';
 import { visibleMemberCols, memberColHidden } from './member-columns.js';
 import { groupActivityHTML } from './group-activity.js';
+import { groupActivityPlacement } from './group-tree-activity.js';
 import { isWizardActive } from './slop.js';
 import { dashPrefs } from './prefs.js';
 import { listPagerHTML } from './list-paging.js';
@@ -649,6 +650,14 @@ function groupActivityChip(members) {
   return groupActivityHTML(members, st.regular, st.slop, st.wizard);
 }
 
+// realGroupIsOpen is the shared disclosure read for tree placement and the
+// emitted <details open> attribute. Pending spawns auto-open a group unless the
+// operator has explicitly folded it, preserving the existing rendering rule.
+function realGroupIsOpen(g) {
+  const openPref = dashPrefs.getItem('tclaude.dash.group.' + g.name);
+  return openPref === '1' || ((g.pending || []).length > 0 && openPref !== '0');
+}
+
 // groupProcessChip renders a group's advisory process state (JOH-242) as a
 // compact "◆ phase 2/5: review" chip plus an advance control, both in the
 // group summary. The chip's title tooltip carries the ordered phase map (the
@@ -866,6 +875,10 @@ function renderGroups(groups) {
       roots.push(g);
     }
   }
+  // Activity follows the same tree edges but reacts to disclosure: folded
+  // headers absorb their hidden subtrees; open headers leave descendants on
+  // the now-visible child headers.
+  const activityByGroup = groupActivityPlacement(groups, realGroupIsOpen);
   const rendered = new Set(); // cycle guard: render each group at most once
   const renderNode = (g) => {
     if (g.virtual) return g.conversations ? renderVirtualConversationsGroup(g)
@@ -879,7 +892,8 @@ function renderGroups(groups) {
     const childrenHTML = kids.length
       ? `<div class="group-subgroups">${kids.map(renderNode).join('')}</div>`
       : '';
-    return renderRealGroup(g, childrenHTML);
+    const open = realGroupIsOpen(g);
+    return renderRealGroup(g, childrenHTML, activityByGroup.get(g.name) || [], open);
   };
   let html = roots.map(renderNode).join('');
   // Orphan rescue: a group reachable only through a cycle (e.g. corrupt data
@@ -896,9 +910,11 @@ function renderGroups(groups) {
 
 // renderRealGroup renders one non-virtual group's <details> block.
 // childrenHTML is the already-rendered subgroup tree (empty string when the
-// group has no children); it is inserted in the group body BELOW the header
-// action buttons and ABOVE the direct member list, per the tree layout.
-function renderRealGroup(g, childrenHTML) {
+// group has no children); activityMembers is either the direct roster (open)
+// or the deduped hidden subtree (folded). The subgroup HTML is inserted in the
+// group body BELOW the header action buttons and ABOVE the direct member list,
+// per the tree layout.
+function renderRealGroup(g, childrenHTML, activityMembers, isOpen) {
     const members = g.members || [];
     const pending = g.pending || [];
     // Offline visibility: per-group override falls back to the
@@ -909,8 +925,6 @@ function renderRealGroup(g, childrenHTML) {
     // Restore expanded state across the 2s polling re-renders by
     // keying on group name. Persisted in localStorage so it
     // survives a full page reload too.
-    const openPref = dashPrefs.getItem('tclaude.dash.group.' + g.name);
-    const isOpen = openPref === '1' || (pending.length > 0 && openPref !== '0');
     // Quick-options pin: a per-group, per-browser opt-out of the
     // body.group-quick-fold accordion. A pinned group carries .quick-pinned
     // on its <details>, which the fold CSS excludes, so its chips stay
@@ -959,7 +973,7 @@ function renderRealGroup(g, childrenHTML) {
     <details data-group-key="${esc(g.name)}" data-dnd-target-group="${esc(g.name)}"${detailsClassAttr}${isOpen ? ' open' : ''}>
       <summary draggable="true" data-group-reorder="${esc(g.name)}" title="Drag this header to reorder the group">
         <strong class="group-name" data-group-name="${esc(g.name)}">${esc(g.name)}</strong>
-        ${groupActivityChip(members)}
+        ${groupActivityChip(activityMembers)}
         ${groupProcessChip(g)}
         ${groupWavesChip(g)}
         ${groupPendingChip(g)}

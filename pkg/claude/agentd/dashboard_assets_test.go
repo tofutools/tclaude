@@ -194,7 +194,7 @@ func TestDashboardJS_PendingSpawnsRenderInTargetGroups(t *testing.T) {
 		"list.unshift(virtualPendingGroup(distributed.fallback));",
 		"function renderGroupPendingBlock(g)",
 		"groupPendingChip(g)",
-		"const isOpen = openPref === '1' || (pending.length > 0 && openPref !== '0');",
+		"return openPref === '1' || ((g.pending || []).length > 0 && openPref !== '0');",
 		".group-pending-block",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {

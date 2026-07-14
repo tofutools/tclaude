@@ -106,7 +106,9 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	// path so a refactor that moves it onto the spurious `toggle` handler
 	// (bindDetailsPersistence) is conspicuous. (A string guard can't prove
 	// the negative; this pins the intended placement.)
-	must("recordGroupInteraction(details.getAttribute('data-group-key'))",
+	must("noteGroupDisclosureIntent(key);",
+		"genuine fold/unfold marks the disclosure as intentional on the click path")
+	must("recordGroupInteraction(key)",
 		"genuine fold/unfold records the last-interacted group on the click path")
 
 	// The theme toggle (regular ↔ slop) reuses slop.js's toggleSlop,

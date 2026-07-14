@@ -121,6 +121,12 @@ Every group, expandable to its members. Each member row shows the status
 dot, role / description, working directory, git branch or
 worktree, effective permissions, and an **owner** badge where applicable.
 
+Group headers carry status-bot counts for their direct members. In a nested
+group tree, folding a group rolls every hidden descendant into that header's
+bot counts; unfolding it moves descendant activity back down to the visible
+child headers. Agents enrolled in more than one group within the folded subtree
+are counted once in the rollup.
+
 The **status dot** is the agent's power control: click an online (green)
 dot to turn the agent off — a confirm offers **Soft exit** (inject
 `/exit`) or **Force kill** (`tmux kill-session`) — and click an offline

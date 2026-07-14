@@ -235,7 +235,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           <option value="sprites">Pixel sprites</option>
           <option value="off">Off</option>
         </${ConfigSelect}>
-        <span class="cfg-hint">Each group header (and the top bar) shows a little row of robot icons — one per <em>status</em> present among its members, deduped: a bot <strong>dancing</strong> when an agent is working, standing still when idle, raising a ❓ when one awaits input, and so on. Especially handy on a <em>folded</em> group, where the per-agent rows are hidden — one glance tells you if anything's happening inside. <strong>Emoji bots</strong> are lightweight emoji+CSS; <strong>Pixel sprites</strong> are animated pixel-art robots; <strong>Off</strong> hides them. This is the plain dashboard's style (default <em>Emoji bots</em>). Stored as <code>dashboard.activity_bots.regular</code>.</span>
+        <span class="cfg-hint">Each group header (and the top bar) shows a little row of robot icons — one per <em>status</em> present among its members, deduped: a bot <strong>dancing</strong> when an agent is working, standing still when idle, raising a ❓ when one awaits input, and so on. A <em>folded</em> group rolls up every agent hidden in its nested groups; unfold it and those bots move down to the visible child headers. <strong>Emoji bots</strong> are lightweight emoji+CSS; <strong>Pixel sprites</strong> are animated pixel-art robots; <strong>Off</strong> hides them. This is the plain dashboard's style (default <em>Emoji bots</em>). Stored as <code>dashboard.activity_bots.regular</code>.</span>
       </div>
       <div class="cfg-field">
         <span class="cfg-label">Activity bots — slop mode 🎰</span>
