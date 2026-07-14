@@ -26,6 +26,8 @@ func TestDashboardTerminalTheme_Wiring(t *testing.T) {
 		"tclaude.dash.terminals.arcanePalette",
 		"prefs.getItem(ARCANE_PALETTE_PREF) !== '0'",
 		"prefs.setItem(ARCANE_PALETTE_PREF, enabled ? '1' : '0')",
+		"new Channel(PALETTE_CHANNEL)",
+		"syncChannel.postMessage({ type: 'arcane-palette'",
 		"tclaude:terminal-palette",
 	} {
 		if !strings.Contains(theme, needle) {
@@ -56,12 +58,22 @@ func TestDashboardTerminalTheme_Wiring(t *testing.T) {
 	popout := read("js/terminals.js")
 	for _, needle := range []string{
 		"import { initDashPrefs } from './prefs.js'",
+		"import { initTerminalThemeSync } from './terminal-theme.js'",
 		"document.body.classList.toggle('wizard', seed.wizard === true)",
+		"if (prefsReady) consumeHash()",
 		"initDashPrefs().then(",
+		"initTerminalThemeSync()",
 	} {
 		if !strings.Contains(popout, needle) {
 			t.Errorf("standalone terminal pop-out missing %q", needle)
 		}
+	}
+
+	dashboard := read("js/dashboard.js")
+	if await := strings.Index(dashboard, "await initDashPrefs()"); await < 0 {
+		t.Error("dashboard must hydrate preferences before terminal theme sync")
+	} else if sync := strings.Index(dashboard, "initTerminalThemeSync()"); sync < await {
+		t.Error("dashboard starts terminal theme sync before preferences are hydrated")
 	}
 
 	css := read("mux.css")

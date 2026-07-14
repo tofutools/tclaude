@@ -16,6 +16,7 @@
 
 import { mountMux, normalizeSeed } from './terminals-core.js';
 import { initDashPrefs } from './prefs.js';
+import { initTerminalThemeSync } from './terminal-theme.js';
 
 const solo = new URLSearchParams(location.search).has('solo');
 if (solo) document.body.classList.add('solo');
@@ -86,14 +87,14 @@ window.addEventListener('tclaude:auth-expired', (event) => {
     + '#open=' + encodeURIComponent(JSON.stringify(soloSeed));
 });
 
-window.addEventListener('hashchange', consumeHash);
-// The standalone pop-out is a separate page, so it must hydrate the same
-// server-backed preference cache the dashboard boot hydrates. Mounting first
-// keeps terminal startup immediate; once the GET lands, the theme event
-// repaints an already-open pane if the persisted choice was disabled.
-consumeHash();
+let prefsReady = false;
+window.addEventListener('hashchange', () => { if (prefsReady) consumeHash(); });
+// The standalone pop-out is a separate document, so hydrate its server-backed
+// preference cache BEFORE opening the terminal or enabling its checkbox. This
+// prevents a fast click from being overwritten by the in-flight initial GET.
+// The same-origin sync bridge then keeps this window and the dashboard live.
 initDashPrefs().then(() => {
-  document.dispatchEvent(new CustomEvent('tclaude:terminal-palette', {
-    detail: { hydrated: true },
-  }));
+  prefsReady = true;
+  initTerminalThemeSync();
+  consumeHash();
 });

@@ -9,6 +9,10 @@
 import { dashPrefs } from './prefs.js';
 
 export const ARCANE_PALETTE_PREF = 'tclaude.dash.terminals.arcanePalette';
+const PALETTE_CHANNEL = 'tclaude.dashboard.terminalPalette';
+
+let syncChannel = null;
+let syncStarted = false;
 
 export const TERMINAL_THEME = Object.freeze({
   background: '#0d1117', foreground: '#c9d1d9', cursor: '#c9d1d9',
@@ -55,12 +59,41 @@ export function terminalThemeFor(wizard, enabled = arcanePaletteEnabled()) {
   return wizard && enabled ? ARCANE_TERMINAL_THEME : TERMINAL_THEME;
 }
 
+function dispatchPaletteChange(target, detail) {
+  target.dispatchEvent(new CustomEvent('tclaude:terminal-palette', { detail }));
+}
+
+// initTerminalThemeSync starts the same-origin bridge between the dashboard and
+// standalone terminal pop-outs. It must run only AFTER initDashPrefs hydrates
+// this document's cache; otherwise an arriving cross-window choice could be
+// overwritten by the initial GET. BroadcastChannel is progressive enhancement:
+// persistence still works without it, but already-open windows then repaint on
+// their next load rather than immediately.
+export function initTerminalThemeSync(
+  prefs = dashPrefs,
+  target = document,
+  Channel = globalThis.BroadcastChannel,
+) {
+  if (syncStarted) return;
+  syncStarted = true;
+  if (typeof Channel !== 'function') return;
+  syncChannel = new Channel(PALETTE_CHANNEL);
+  syncChannel.addEventListener('message', (event) => {
+    const message = event && event.data;
+    if (!message || message.type !== 'arcane-palette' || typeof message.enabled !== 'boolean') return;
+    // setItem (rather than syncItem) deliberately queues a redundant persisted
+    // write in this window. That makes the received choice durable even if the
+    // sending window closes before its own debounced request reaches agentd.
+    prefs.setItem(ARCANE_PALETTE_PREF, message.enabled ? '1' : '0');
+    dispatchPaletteChange(target, { enabled: message.enabled, remote: true });
+  });
+}
+
 // setArcanePaletteEnabled updates the synchronous dashPrefs mirror first, then
 // broadcasts so every mounted mux and the fallback singleton modal repaint in
 // the same turn. The debounced server write follows through prefs.js.
 export function setArcanePaletteEnabled(enabled, prefs = dashPrefs, target = document) {
   prefs.setItem(ARCANE_PALETTE_PREF, enabled ? '1' : '0');
-  target.dispatchEvent(new CustomEvent('tclaude:terminal-palette', {
-    detail: { enabled: !!enabled },
-  }));
+  dispatchPaletteChange(target, { enabled: !!enabled });
+  if (syncChannel) syncChannel.postMessage({ type: 'arcane-palette', enabled: !!enabled });
 }

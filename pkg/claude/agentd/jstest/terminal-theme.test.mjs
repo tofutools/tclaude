@@ -5,6 +5,8 @@ import {
   ARCANE_TERMINAL_THEME,
   TERMINAL_THEME,
   arcanePaletteEnabled,
+  initTerminalThemeSync,
+  setArcanePaletteEnabled,
   terminalThemeFor,
 } from '../dashboard/js/terminal-theme.js';
 
@@ -30,4 +32,33 @@ test('arcane palette preserves semantic ANSI families', () => {
     const bright = `bright${colour[0].toUpperCase()}${colour.slice(1)}`;
     assert.ok(ARCANE_TERMINAL_THEME[bright], `missing ${bright}`);
   }
+});
+
+test('palette changes synchronize across same-origin terminal documents', () => {
+  const writes = [];
+  const events = [];
+  const localPrefs = {
+    getItem: () => null,
+    setItem: (key, value) => writes.push([key, value]),
+  };
+  const target = { dispatchEvent: event => events.push(event.detail) };
+  class FakeChannel {
+    constructor(name) { this.name = name; this.posts = []; FakeChannel.instance = this; }
+    addEventListener(type, listener) { if (type === 'message') this.onmessage = listener; }
+    postMessage(message) { this.posts.push(message); }
+  }
+
+  initTerminalThemeSync(localPrefs, target, FakeChannel);
+  setArcanePaletteEnabled(false, localPrefs, target);
+  assert.deepEqual(writes, [[ARCANE_PALETTE_PREF, '0']]);
+  assert.deepEqual(FakeChannel.instance.posts, [{ type: 'arcane-palette', enabled: false }]);
+  assert.deepEqual(events.at(-1), { enabled: false });
+
+  // Simulate a choice arriving from the dashboard/pop-out peer. The receiver
+  // persists it too and emits only locally, so no broadcast loop is possible.
+  // init is intentionally singleton per document; the listener retains the
+  // prefs passed during initialization, matching production module lifetime.
+  FakeChannel.instance.onmessage({ data: { type: 'arcane-palette', enabled: true } });
+  assert.deepEqual(writes.at(-1), [ARCANE_PALETTE_PREF, '1']);
+  assert.deepEqual(events.at(-1), { enabled: true, remote: true });
 });
