@@ -319,6 +319,94 @@ func TestProcessRunCreateAskHumanPersistsOnlyRedactedParams(t *testing.T) {
 	}
 }
 
+func TestProcessRunCreateAskHumanInvalidOversizedIdentitiesStayBoundedAcrossResolutions(t *testing.T) {
+	f, _ := processEngineFlow(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	dashboard := agentd.BuildDashboardHandlerForTest()
+	const (
+		conv           = "process-run-bounded-approval-caller"
+		templateSecret = "sentinel-template-identity-secret"
+		runSecret      = "sentinel-run-identity-secret"
+		paramName      = "sentinel-param-name"
+		paramSecret    = "sentinel-param-value-secret"
+	)
+	validRef := "approval-preview@sha256:" + strings.Repeat("a", 64)
+	oversizedTemplateRef := strings.Repeat("a", 1<<20) + templateSecret + "@sha256:" + strings.Repeat("a", 64)
+	oversizedRunID := strings.Repeat("a", 1<<20) + runSecret
+	bodies := [][]byte{
+		[]byte(fmt.Sprintf(`{"templateRef":%q,"runId":"release-timeout-1","params":{%q:%q}}`, oversizedTemplateRef, paramName, paramSecret)),
+		[]byte(fmt.Sprintf(`{"templateRef":%q,"runId":%q,"params":{%q:%q}}`, validRef, oversizedRunID, paramName, paramSecret)),
+		[]byte(fmt.Sprintf(`{"templateRef":%q,"runId":"release-denied-1","params":{%q:%q}}`, oversizedTemplateRef, paramName, paramSecret)),
+		[]byte(fmt.Sprintf(`{"templateRef":%q,"runId":%q,"params":{%q:%q}}`, validRef, oversizedRunID, paramName, paramSecret)),
+	}
+
+	serve := func(body []byte, timeout string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/v1/process/runs", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Tclaude-Ask-Human", timeout)
+		return testharness.Serve(f.Mux, agentd.AsAgentPeer(req, conv))
+	}
+	for _, body := range bodies[:2] {
+		rec := serve(body, "1ms")
+		require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	}
+	for _, body := range bodies[2:] {
+		result := make(chan *httptest.ResponseRecorder, 1)
+		go func(body []byte) { result <- serve(body, "5s") }(body)
+
+		pendingID := ""
+		require.Eventually(t, func() bool {
+			rec := testharness.Serve(dashboard, testharness.JSONRequest(t, http.MethodGet, "/api/snapshot", nil))
+			if rec.Code != http.StatusOK {
+				return false
+			}
+			var snap accessReqSnapshot
+			if err := json.Unmarshal(rec.Body.Bytes(), &snap); err != nil {
+				return false
+			}
+			for _, request := range snap.AccessRequests {
+				if request.Status == db.AccessRequestStatusPending && request.Perm == agentd.PermProcessRunsCreate {
+					pendingID = request.ID
+					return true
+				}
+			}
+			return false
+		}, 2*time.Second, 10*time.Millisecond, "process-run approval did not become pending")
+
+		decision := testharness.Serve(dashboard, testharness.JSONRequest(t, http.MethodPost,
+			"/api/access-requests/"+pendingID+"/decision", map[string]any{"decision": "deny"}))
+		require.Equal(t, http.StatusOK, decision.Code, decision.Body.String())
+		select {
+		case rec := <-result:
+			require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+		case <-time.After(2 * time.Second):
+			t.Fatal("denied process-run request did not return")
+		}
+	}
+
+	rows, err := db.ListRecentHandledAccessRequests(10)
+	require.NoError(t, err)
+	require.Len(t, rows, len(bodies))
+	statuses := map[string]int{}
+	for _, row := range rows {
+		statuses[row.Status]++
+		assert.Equal(t, agentd.PermProcessRunsCreate, row.Perm)
+		assert.Equal(t, http.MethodPost, row.Method)
+		assert.Equal(t, "/v1/process/runs", row.Path)
+		assert.LessOrEqual(t, len(row.BodyPreview), 64*1024)
+		assert.Equal(t, `{"templateRef":"[unavailable]","params":"[redacted: preview unavailable]"}`, row.BodyPreview)
+		encoded, marshalErr := json.Marshal(row)
+		require.NoError(t, marshalErr)
+		assert.Less(t, len(encoded), 4096, "whole persisted access-request row must stay small")
+		for _, forbidden := range []string{templateSecret, runSecret, paramName, paramSecret} {
+			assert.NotContains(t, string(encoded), forbidden,
+				"whole persisted access-request row must exclude invalid identity text")
+		}
+	}
+	assert.Equal(t, 2, statuses["timed out"])
+	assert.Equal(t, 2, statuses["declined"])
+}
+
 func TestProcessRunCreateAskHumanApprovalPreservesBodyReadError(t *testing.T) {
 	f, root := processEngineFlow(t)
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:1"))

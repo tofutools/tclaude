@@ -3,6 +3,7 @@ package agentd
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -515,7 +517,17 @@ func snapshotApprovalRequestBody(r *http.Request, perm string) string {
 	return snapshotRequestBody(r)
 }
 
-const processRunApprovalPreviewUnavailable = `{"templateRef":"[unavailable]","params":"[redacted: preview unavailable]"}`
+const (
+	processRunApprovalPreviewUnavailable = `{"templateRef":"[unavailable]","params":"[redacted: preview unavailable]"}`
+	// Process identities become filesystem path segments. Keep previews within
+	// the portable component limit even though the request body's aggregate
+	// limit is much larger.
+	maxProcessRunApprovalIdentityBytes = 255
+	maxApprovalBodyPreview             = 64 * 1024
+	maxApprovalRestoreBody             = 2 * 1024 * 1024
+)
+
+var processRunApprovalIdentityPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
 
 type replayReadCloser struct {
 	prefix      *bytes.Reader
@@ -584,20 +596,57 @@ func snapshotProcessRunCreateApprovalBody(r *http.Request) string {
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return processRunApprovalPreviewUnavailable
 	}
+	templateRef, runID, ok := boundedProcessRunApprovalIdentities(submitted.TemplateRef, submitted.RunID)
+	if !ok {
+		return processRunApprovalPreviewUnavailable
+	}
 	preview := struct {
 		TemplateRef string `json:"templateRef"`
 		RunID       string `json:"runId,omitempty"`
 		Params      string `json:"params"`
 	}{
-		TemplateRef: submitted.TemplateRef,
-		RunID:       submitted.RunID,
+		TemplateRef: templateRef,
+		RunID:       runID,
 		Params:      fmt.Sprintf("[redacted: %d parameter(s)]", len(submitted.Params)),
 	}
 	encoded, err := json.MarshalIndent(preview, "", "  ")
-	if err != nil {
+	if err != nil || len(encoded) > maxApprovalBodyPreview {
 		return processRunApprovalPreviewUnavailable
 	}
 	return string(encoded)
+}
+
+// boundedProcessRunApprovalIdentities returns only identities the downstream
+// handler can treat as safe. An exact template ref consists of one ordinary
+// process identifier plus its lowercase SHA-256 suffix; an optional run id
+// uses the same identifier grammar. Trimming mirrors handleProcessRunCreate,
+// while the preview-only byte limits prevent otherwise-valid megabyte strings
+// from reaching the durable access-request history.
+func boundedProcessRunApprovalIdentities(templateRef, runID string) (string, string, bool) {
+	templateRef = strings.TrimSpace(templateRef)
+	runID = strings.TrimSpace(runID)
+	templateID, hash, ok := strings.Cut(templateRef, "@sha256:")
+	if !ok || len(templateID) == 0 || len(templateID) > maxProcessRunApprovalIdentityBytes ||
+		!processRunApprovalIdentityPattern.MatchString(templateID) || !isLowerHexSHA256(hash) {
+		return "", "", false
+	}
+	if runID != "" && (len(runID) > maxProcessRunApprovalIdentityBytes ||
+		!processRunApprovalIdentityPattern.MatchString(runID)) {
+		return "", "", false
+	}
+	return templateRef, runID, true
+}
+
+func isLowerHexSHA256(value string) bool {
+	if len(value) != sha256.Size*2 {
+		return false
+	}
+	for _, ch := range value {
+		if (ch < '0' || ch > '9') && (ch < 'a' || ch > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // snapshotRequestBody reads the request body, builds a bounded preview
@@ -606,12 +655,12 @@ func snapshotProcessRunCreateApprovalBody(r *http.Request) string {
 // handler still receives its full request. Returns the preview ("" if no
 // body).
 //
-// The preview is capped at maxBodyPreview and marked "…[truncated]" when
+// The preview is capped at maxApprovalBodyPreview and marked "…[truncated]" when
 // it overflows — that only affects what the human is shown. The RESTORED
-// body is preserved up to maxRestoreBody (well above the largest legit
+// body is preserved up to maxApprovalRestoreBody (well above the largest legit
 // mutating body — a 256 KiB clipboard payload is ≈1.5 MiB on the wire),
 // so the popup never silently shortens what the handler decodes. A body
-// past maxRestoreBody is restored truncated, but the handler's own
+// past maxApprovalRestoreBody is restored truncated, but the handler's own
 // MaxBytesReader then rejects it with the same 400 it would return with no
 // popup — never a silent mis-decode. (Restoring only the 64 KiB preview,
 // as this did before, truncated a large clipboard body AFTER the human had
@@ -633,11 +682,7 @@ func snapshotRequestBody(r *http.Request) string {
 	if r.Body == nil {
 		return ""
 	}
-	const (
-		maxBodyPreview = 64 * 1024       // rendered in the popup
-		maxRestoreBody = 2 * 1024 * 1024 // preserved for the handler
-	)
-	buf, err := io.ReadAll(io.LimitReader(r.Body, maxRestoreBody))
+	buf, err := io.ReadAll(io.LimitReader(r.Body, maxApprovalRestoreBody))
 	_ = r.Body.Close()
 	if err != nil {
 		r.Body = io.NopCloser(bytes.NewReader(nil))
@@ -652,8 +697,8 @@ func snapshotRequestBody(r *http.Request) string {
 	// Build the preview from the leading bytes only.
 	preview := buf
 	truncated := false
-	if len(preview) > maxBodyPreview {
-		preview = preview[:maxBodyPreview]
+	if len(preview) > maxApprovalBodyPreview {
+		preview = preview[:maxApprovalBodyPreview]
 		truncated = true
 	}
 	// Prettify JSON if it parses; otherwise show raw.

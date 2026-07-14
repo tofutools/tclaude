@@ -3,6 +3,7 @@ package agentd
 import (
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -42,13 +43,14 @@ func (r *errorThenTailReadCloser) Close() error {
 }
 
 func TestSnapshotApprovalRequestBodyProcessRunRedactsParamsAndPreservesBody(t *testing.T) {
-	const body = `{"templateRef":"deploy@sha256:abc","runId":"release-42","params":{"secret_name":"secret-value","token":"another-secret"}}`
+	templateRef := "deploy@sha256:" + strings.Repeat("a", 64)
+	body := fmt.Sprintf(`{"templateRef":%q,"runId":"release-42","params":{"secret_name":"secret-value","token":"another-secret"}}`, templateRef)
 	req, err := http.NewRequest(http.MethodPost, "/v1/process/runs", strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
 	preview := snapshotApprovalRequestBody(req, PermProcessRunsCreate)
-	for _, safe := range []string{"deploy@sha256:abc", "release-42", "[redacted: 2 parameter(s)]"} {
+	for _, safe := range []string{templateRef, "release-42", "[redacted: 2 parameter(s)]"} {
 		if !strings.Contains(preview, safe) {
 			t.Fatalf("preview %q does not contain safe context %q", preview, safe)
 		}
@@ -64,6 +66,66 @@ func TestSnapshotApprovalRequestBodyProcessRunRedactsParamsAndPreservesBody(t *t
 	}
 	if string(got) != body {
 		t.Fatalf("restored body changed: got %q want %q", got, body)
+	}
+}
+
+func TestSnapshotApprovalRequestBodyProcessRunRejectsInvalidAndOversizedIdentities(t *testing.T) {
+	validRef := "deploy@sha256:" + strings.Repeat("a", 64)
+	secret := "sentinel-identity-secret"
+	tests := []struct {
+		name        string
+		templateRef string
+		runID       string
+	}{
+		{name: "template ref syntax", templateRef: secret, runID: "release-42"},
+		{name: "template hash case", templateRef: "deploy@sha256:" + strings.Repeat("A", 64), runID: "release-42"},
+		{name: "run id syntax", templateRef: validRef, runID: "release-42/" + secret},
+		{name: "template id oversized", templateRef: strings.Repeat("a", maxProcessRunApprovalIdentityBytes) + secret + "@sha256:" + strings.Repeat("a", 64), runID: "release-42"},
+		{name: "run id oversized", templateRef: validRef, runID: strings.Repeat("a", maxProcessRunApprovalIdentityBytes) + secret},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body := fmt.Sprintf(`{"templateRef":%q,"runId":%q,"params":{"secret_name":"secret-value"}}`, tc.templateRef, tc.runID)
+			req, err := http.NewRequest(http.MethodPost, "/v1/process/runs", strings.NewReader(body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			preview := snapshotApprovalRequestBody(req, PermProcessRunsCreate)
+			if preview != processRunApprovalPreviewUnavailable {
+				t.Fatalf("preview = %q, want fail-closed marker", preview)
+			}
+			if len(preview) > maxApprovalBodyPreview {
+				t.Fatalf("preview length = %d, want at most %d", len(preview), maxApprovalBodyPreview)
+			}
+			for _, forbidden := range []string{secret, "secret_name", "secret-value"} {
+				if strings.Contains(preview, forbidden) {
+					t.Fatalf("fail-closed preview contains submitted material %q: %q", forbidden, preview)
+				}
+			}
+			got, readErr := io.ReadAll(req.Body)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if string(got) != body {
+				t.Fatalf("restored body changed: got length %d want %d", len(got), len(body))
+			}
+		})
+	}
+}
+
+func TestSnapshotApprovalRequestBodyProcessRunNormalizesValidIdentityWhitespace(t *testing.T) {
+	templateRef := "deploy@sha256:" + strings.Repeat("a", 64)
+	body := fmt.Sprintf(`{"templateRef":%q,"runId":%q}`, " \n"+templateRef+"\t", " release-42 ")
+	req, err := http.NewRequest(http.MethodPost, "/v1/process/runs", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview := snapshotApprovalRequestBody(req, PermProcessRunsCreate)
+	if !strings.Contains(preview, templateRef) || !strings.Contains(preview, `"release-42"`) {
+		t.Fatalf("preview lacks normalized safe identities: %q", preview)
+	}
+	if strings.Contains(preview, `\n`) || strings.Contains(preview, `\t`) || strings.Contains(preview, `" release-42 "`) {
+		t.Fatalf("preview retained identity whitespace: %q", preview)
 	}
 }
 
@@ -166,6 +228,25 @@ func TestSnapshotRequestBodyAttachmentLeavesBinaryStreamUntouched(t *testing.T) 
 	}
 	if string(got) != binary {
 		t.Fatalf("binary stream changed: got %q want %q", got, binary)
+	}
+}
+
+func TestSnapshotApprovalRequestBodyLeavesGenericClipboardPreviewBehaviorUnchanged(t *testing.T) {
+	const body = `{"text":"clipboard preview remains generic"}`
+	req, err := http.NewRequest(http.MethodPost, "/v1/clipboard", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview := snapshotApprovalRequestBody(req, PermHumanClipboard)
+	if !strings.Contains(preview, "clipboard preview remains generic") {
+		t.Fatalf("generic preview = %q", preview)
+	}
+	got, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != body {
+		t.Fatalf("restored generic body changed: got %q want %q", got, body)
 	}
 }
 
