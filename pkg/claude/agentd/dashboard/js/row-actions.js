@@ -27,7 +27,7 @@ import { openHumanReplyModal } from './modal-human-reply.js';
 import { openGroupContextModal, openGroupCloneModal, openFromGroupModal } from './modal-templates.js';
 import { openLinkModal, openLinksManageModal } from './modal-link-wt.js';
 import {
-  openCloneAgentDialog, openNestGroupDialog, openReincarnateAgentDialog,
+  openCloneAgentDialog, openNestGroupDialog, openReincarnateAgentDialog, openTaskLinkDialog,
 } from './action-dialog-controller.js';
 import { openExportModal } from './modal-export.js';
 import { openTermModal } from './modal-term.js';
@@ -46,7 +46,7 @@ import { wizWord } from './slop.js';
 // render.js); TDZ-safe.
 import {
   refresh, toast, confirmModal, addMemberModal, deleteAgentModal,
-  editMemberModal, taskLinkModal, shutdownScope, powerOnScope, openCleanupModal, openWindowModal,
+  editMemberModal, shutdownScope, powerOnScope, openCleanupModal, openWindowModal,
   openWorktreeCleanup,
   resumeAgentReq, retireAgentInteractive, shutdownConfirm, stopAgentReq, termDirModal,
   openDeleteGroupModal,
@@ -1060,30 +1060,17 @@ function bindRowActions() {
           // Operator-only edit of an existing agent's task-reference URL and
           // optional display label. Empty cells expose attach; populated cells
           // keep the label as a normal link and reveal an edit pencil on
-          // hover/focus. Empty URL clears the task ref. A blank display label
-          // asks the daemon to derive one (Linear key, GitHub number, host).
+          // hover/focus. This row control is a thin event-to-action adapter:
+          // the Preact-owned task-link dialog holds all draft/validation/busy
+          // state and routes the POST/clear through its action module.
           const oldURL = btn.getAttribute('data-current') || '';
           const oldTaskLabel = btn.getAttribute('data-current-task-label') || '';
-          const result = await taskLinkModal({
+          openTaskLinkDialog({
+            conv: agent,
             agentLabel: label,
             url: oldURL,
             taskLabel: oldTaskLabel,
           });
-          if (result === null) return;
-          if (result === 'noop') { toast('no changes'); return; }
-          const r = await fetch(`/api/agents/${encodeURIComponent(agent)}/task`, {
-            method: 'POST', credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(result.url
-              ? { url: result.url, label: result.taskLabel }
-              : { clear: true }),
-          });
-          if (!r.ok) {
-            toast(`task link update failed: ${await r.text()}`, true);
-            return;
-          }
-          toast(result.url ? `task link updated: ${label}` : `task link cleared: ${label}`);
-          refresh();
           return;
         }
         case 'rename-group': {
