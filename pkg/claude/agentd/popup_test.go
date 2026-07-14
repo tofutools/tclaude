@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"encoding/base64"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -11,6 +12,34 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
+
+type errorThenTailReadCloser struct {
+	prefix     []byte
+	tail       io.Reader
+	readErr    error
+	closeErr   error
+	closeCalls int
+}
+
+func (r *errorThenTailReadCloser) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if len(r.prefix) > 0 {
+		n := copy(p, r.prefix)
+		r.prefix = r.prefix[n:]
+		if len(r.prefix) == 0 {
+			return n, r.readErr
+		}
+		return n, nil
+	}
+	return r.tail.Read(p)
+}
+
+func (r *errorThenTailReadCloser) Close() error {
+	r.closeCalls++
+	return r.closeErr
+}
 
 func TestSnapshotApprovalRequestBodyProcessRunRedactsParamsAndPreservesBody(t *testing.T) {
 	const body = `{"templateRef":"deploy@sha256:abc","runId":"release-42","params":{"secret_name":"secret-value","token":"another-secret"}}`
@@ -67,6 +96,55 @@ func TestSnapshotApprovalRequestBodyProcessRunMalformedAndOversizedFailClosed(t 
 				t.Fatalf("restored body length = %d, want %d", len(got), len(tc.body))
 			}
 		})
+	}
+}
+
+func TestSnapshotApprovalRequestBodyProcessRunReplaysReadErrorBeforeUnreadTail(t *testing.T) {
+	const (
+		prefix = `{"templateRef":"deploy@sha256:abc","runId":"release-42",`
+		tail   = `"params":{"secret_name":"sentinel-secret"}}`
+	)
+	readErr := errors.New("injected request body read error")
+	closeErr := errors.New("injected request body close error")
+	source := &errorThenTailReadCloser{
+		prefix:   []byte(prefix),
+		tail:     strings.NewReader(tail),
+		readErr:  readErr,
+		closeErr: closeErr,
+	}
+	req, err := http.NewRequest(http.MethodPost, "/v1/process/runs", source)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	preview := snapshotApprovalRequestBody(req, PermProcessRunsCreate)
+	if preview != processRunApprovalPreviewUnavailable {
+		t.Fatalf("preview = %q, want fail-closed marker", preview)
+	}
+	if strings.Contains(preview, "secret_name") || strings.Contains(preview, "sentinel-secret") {
+		t.Fatalf("fail-closed preview contains submitted parameter material: %q", preview)
+	}
+
+	buf := make([]byte, len(prefix)+len(tail))
+	n, err := req.Body.Read(buf)
+	if n != len(prefix) || string(buf[:n]) != prefix {
+		t.Fatalf("first replay read = (%q, %d), want prefix (%q, %d)", buf[:n], n, prefix, len(prefix))
+	}
+	if !errors.Is(err, readErr) {
+		t.Fatalf("first replay error = %v, want %v", err, readErr)
+	}
+	rest, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatalf("continued replay read: %v", err)
+	}
+	if string(rest) != tail {
+		t.Fatalf("continued replay read = %q, want %q", rest, tail)
+	}
+	if err := req.Body.Close(); !errors.Is(err, closeErr) {
+		t.Fatalf("replay close error = %v, want %v", err, closeErr)
+	}
+	if source.closeCalls != 1 {
+		t.Fatalf("source close calls = %d, want 1", source.closeCalls)
 	}
 }
 

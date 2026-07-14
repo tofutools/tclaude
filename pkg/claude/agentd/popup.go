@@ -518,8 +518,35 @@ func snapshotApprovalRequestBody(r *http.Request, perm string) string {
 const processRunApprovalPreviewUnavailable = `{"templateRef":"[unavailable]","params":"[redacted: preview unavailable]"}`
 
 type replayReadCloser struct {
-	io.Reader
-	io.Closer
+	prefix      *bytes.Reader
+	boundaryErr error
+	tail        io.Reader
+	closer      io.Closer
+}
+
+func (r *replayReadCloser) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if r.prefix.Len() > 0 {
+		n, _ := r.prefix.Read(p)
+		if r.prefix.Len() == 0 && r.boundaryErr != nil {
+			err := r.boundaryErr
+			r.boundaryErr = nil
+			return n, err
+		}
+		return n, nil
+	}
+	if r.boundaryErr != nil {
+		err := r.boundaryErr
+		r.boundaryErr = nil
+		return 0, err
+	}
+	return r.tail.Read(p)
+}
+
+func (r *replayReadCloser) Close() error {
+	return r.closer.Close()
 }
 
 // snapshotProcessRunCreateApprovalBody reads at most the handler's accepted
@@ -535,8 +562,10 @@ func snapshotProcessRunCreateApprovalBody(r *http.Request) string {
 	original := r.Body
 	buf, readErr := io.ReadAll(io.LimitReader(original, maxProcessEditBody+1))
 	r.Body = &replayReadCloser{
-		Reader: io.MultiReader(bytes.NewReader(buf), original),
-		Closer: original,
+		prefix:      bytes.NewReader(buf),
+		boundaryErr: readErr,
+		tail:        original,
+		closer:      original,
 	}
 	if readErr != nil || len(buf) > maxProcessEditBody {
 		return processRunApprovalPreviewUnavailable

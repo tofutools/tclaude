@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -34,6 +35,29 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/remoteaccess"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
+
+type processRunReadErrorBody struct {
+	prefix  []byte
+	tail    io.Reader
+	readErr error
+}
+
+func (r *processRunReadErrorBody) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if len(r.prefix) > 0 {
+		n := copy(p, r.prefix)
+		r.prefix = r.prefix[n:]
+		if len(r.prefix) == 0 {
+			return n, r.readErr
+		}
+		return n, nil
+	}
+	return r.tail.Read(p)
+}
+
+func (*processRunReadErrorBody) Close() error { return nil }
 
 func TestProcessEngineRoutes404WhenFeatureOff(t *testing.T) {
 	f := newFlow(t)
@@ -293,6 +317,39 @@ func TestProcessRunCreateAskHumanPersistsOnlyRedactedParams(t *testing.T) {
 	for _, forbidden := range []string{"sentinel-param-name", secret, `"ordinary"`, `"value"`} {
 		assert.NotContains(t, string(encoded), forbidden, "whole persisted access-request row must exclude parameter names and values")
 	}
+}
+
+func TestProcessRunCreateAskHumanApprovalPreservesBodyReadError(t *testing.T) {
+	f, root := processEngineFlow(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:1"))
+	t.Cleanup(agentd.StubApprovalForTest(true))
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "approval-read-error", Start: "done",
+		Params: map[string]model.Param{"secret": {Type: "string"}},
+		Nodes:  map[string]model.Node{"done": {Type: model.NodeTypeEnd}},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	require.NoError(t, err)
+
+	const runID = "approval-read-error-run"
+	body := fmt.Sprintf(`{"templateRef":%q,"runId":%q,"params":{"secret":"valid-after-error"}}`, record.Ref, runID)
+	split := strings.Index(body, `"params":`) + len(`"params":`)
+	require.Greater(t, split, len(`"params":`))
+	source := &processRunReadErrorBody{
+		prefix:  []byte(body[:split]),
+		tail:    strings.NewReader(body[split:]),
+		readErr: errors.New("injected request body read error"),
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/process/runs", source)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Tclaude-Ask-Human", "1s")
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(req, "process-run-read-error-caller"))
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), "valid-after-error")
+	_, err = fs.GetRun(t.Context(), runID)
+	require.ErrorIs(t, err, store.ErrNotFound)
 }
 
 func TestProcessRunCreateDashboardAuditAttribution(t *testing.T) {
