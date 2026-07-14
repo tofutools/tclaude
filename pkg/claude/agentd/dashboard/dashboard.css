@@ -5078,8 +5078,57 @@ body.hide-processes #tab-processes { display: none; }
 .process-description, .process-secondary { color: #8b949e; font-size: 12px; }
 .process-status { display: inline-block; padding: 2px 7px; border-radius: 10px; background: #21262d; color: #c9d1d9; }
 .process-placeholder { padding: 30px; text-align: center; border: 1px dashed #30363d; border-radius: 8px; color: #8b949e; }
-.process-canvas-view { min-height: 62vh; }
-.process-canvas-mount { min-height: 55vh; margin-top: 10px; border: 1px dashed #30363d; border-radius: 8px; padding: 20px; color: #8b949e; }
+.process-canvas-view { min-height: 0; }
+.process-canvas-mount { min-height: 0; margin-top: 10px; border: 1px dashed #30363d; border-radius: 8px; padding: 20px; color: #8b949e; }
+
+/* The template editor is a viewport-bounded app shell, like Messages and
+   Terminals. Flexing body -> main -> tab from the real rendered chrome avoids
+   duplicating header/nav/subnav/toolbar heights in calc(100vh - ...) rules.
+   The editor's canvas view is its only vertical scroll boundary: tall windows
+   give the graph every remaining pixel, while short windows scroll the fixed
+   usable editor minimum without sending content behind the fixed footer. */
+body:has(#tab-processes.active #process-editor-view) {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+body:has(#tab-processes.active #process-editor-view) > header,
+body:has(#tab-processes.active #process-editor-view) > #slop-marquee,
+body:has(#tab-processes.active #process-editor-view) > nav {
+  flex: none;
+}
+body:has(#tab-processes.active #process-editor-view) main,
+body:has(#tab-processes.active #process-editor-view) #tab-processes.active,
+body:has(#tab-processes.active #process-editor-view) #processes-root {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+body:has(#tab-processes.active #process-editor-view) .processes-island {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+}
+body:has(#tab-processes.active #process-editor-view) .process-subnav {
+  margin-bottom: 0;
+}
+body:has(#tab-processes.active #process-editor-view) .process-canvas-view {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+body:has(#tab-processes.active #process-editor-view) [data-process-close-view] {
+  justify-self: start;
+}
+body:has(#tab-processes.active #process-editor-view) .process-canvas-mount {
+  margin-top: 0;
+}
 
 /* Worklist sub-view (TCL-297). View chips filter one item list; the amber
    ⚠ degraded strip names unreadable runs (never silently dropped); rows carry
@@ -11560,12 +11609,15 @@ body.wizard .process-fit-button { box-shadow: 0 2px 12px rgba(75, 48, 119, 0.5);
    strip, inline label editor, rubber-band edge preview. Every control is
    explicitly dark-themed (never UA-white). */
 #process-editor-canvas.process-editor-mount {
+  --process-editor-min-height: 440px;
+  height: 100%;
+  min-height: var(--process-editor-min-height);
   padding: 0;
   border-style: solid;
   color: #c9d1d9;
   overflow: hidden;
 }
-.process-editor { display: flex; flex-direction: column; min-height: 62vh; }
+.process-editor { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .process-editor-header {
   display: flex;
   align-items: center;
@@ -11620,7 +11672,7 @@ body.wizard .process-fit-button { box-shadow: 0 2px 12px rgba(75, 48, 119, 0.5);
   border-right: 1px solid #21262d;
   background: #10151c;
   overflow-y: auto;
-  max-height: 68vh;
+  min-height: 0;
 }
 .process-palette-section {
   color: #8b949e;
@@ -11646,7 +11698,7 @@ body.wizard .process-fit-button { box-shadow: 0 2px 12px rgba(75, 48, 119, 0.5);
 .process-palette-card-label { color: #e6edf3; font-size: 13px; font-weight: 600; }
 .process-palette-card-hint { color: #8b949e; font-size: 11px; }
 .process-palette-help { color: #8b949e; font-size: 11px; margin: 10px 0 0; }
-.process-editor-stage { position: relative; flex: 1; min-width: 0; min-height: 55vh; display: flex; }
+.process-editor-stage { position: relative; flex: 1; min-width: 0; min-height: 0; display: flex; }
 .process-editor-canvas-host { flex: 1; min-width: 0; display: flex; }
 .process-editor-canvas-host .process-graph { flex: 1; border-radius: 0; border: none; }
 .process-editor-inline-input {
