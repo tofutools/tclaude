@@ -58,8 +58,8 @@ func TestTaskRefViewFor(t *testing.T) {
 		t.Errorf("unexpected view %+v", v)
 	}
 	v = taskRefViewFor(db.AgentTaskRef{URL: "https://x.io/t", Label: "custom"})
-	if v.TaskLabel != "custom" {
-		t.Errorf("explicit label should carry, got %q", v.TaskLabel)
+	if v.TaskLabel != "custom" || v.TaskLabelOverride != "custom" {
+		t.Errorf("explicit label should carry as display + editable override, got %+v", v)
 	}
 }
 

@@ -264,6 +264,7 @@ func handleDashboardHideAPI(w http.ResponseWriter, r *http.Request) {
 //	POST   /api/agents/{conv}/resume       → wake (resume tmux pane)
 //	POST   /api/agents/{conv}/clone        → fork a sibling (cookie-auth twin)
 //	POST   /api/agents/{conv}/reincarnate  → spawn successor + soft-exit original
+//	POST   /api/agents/{conv}/task         → set/clear task-reference link
 //
 // Behaviour:
 //   - Runs conv.DeleteAgentAllGenerations (unlinks .jsonl, drops conv_index
@@ -356,6 +357,13 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			dashboardSetAgentTags(w, r, convSelector)
+			return
+		case "task":
+			if r.Method != http.MethodPost {
+				http.Error(w, "POST only", http.StatusMethodNotAllowed)
+				return
+			}
+			dashboardSetAgentTask(w, r, convSelector)
 			return
 		case "remote-control":
 			if r.Method != http.MethodPost {
@@ -1436,6 +1444,23 @@ func dashboardSetAgentTags(w http.ResponseWriter, r *http.Request, convSelector 
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"conv": res.ConvID, "tags": tags})
+}
+
+// dashboardSetAgentTask is the cookie-authenticated human twin of POST
+// /v1/agent/{conv}/task. It backs the Task column's edit dialog and accepts
+// the same body shape: {"url":"https://…"} sets, while {"clear":true}
+// clears. Resolving the selector first lets dashboard rows use stable agent_id
+// handles; delegating to handleAgentTask keeps validation, label derivation,
+// persistence, and response shape shared with the CLI/API path. The dashboard
+// cookie is the operator-consent layer, so the synthetic peer is classified as
+// human and does not depend on the target agent's self.task permission.
+func dashboardSetAgentTask(w http.ResponseWriter, r *http.Request, convSelector string) {
+	res, _, err := agent.ResolveSelector(convSelector)
+	if err != nil {
+		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
+		return
+	}
+	handleAgentTask(w, asDashboardHumanPeer(r), res.ConvID)
 }
 
 // notificationsStateJSON is the shared GET/POST response shape for the

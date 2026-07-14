@@ -838,10 +838,28 @@ a.branch-link:hover { color: #58a6ff; text-decoration: underline; }
 .pr-link.pr-state-merged  { color: #a371f7; }
 .pr-link.pr-state-closed  { color: #f85149; }
 .pr-link.pr-state-unknown { color: #8b949e; }
-/* Task column: the agent's task-reference link (Linear/GitHub/ticket).
-   Same restrained blue-on-hover treatment as .branch-link. The
-   inert .task-ref (non-http(s), rendered as a span) keeps the label
-   colour without the link affordance. */
+/* Task column: an existing label remains a conventional link; its pencil
+   opens the URL + display-name editor. Empty cells offer ＋ attach. */
+.task-cell { white-space: nowrap; }
+.task-edit {
+  display: inline-block; cursor: pointer; border-radius: 3px;
+}
+.task-edit:focus-visible { outline: 1px solid #58a6ff; outline-offset: 2px; }
+.task-attach {
+  font-family: ui-monospace, monospace; font-size: 11px; color: #6e7681;
+}
+.task-attach:hover { color: #58a6ff; text-decoration: underline; }
+.task-value { display: inline-block; position: relative; }
+.task-edit-icon {
+  position: absolute; left: calc(100% + 4px); top: 50%;
+  transform: translateY(-50%); color: #6e7681; font-size: 12px;
+  text-decoration: none; opacity: 0; pointer-events: none;
+  transition: opacity 0.1s ease, color 0.1s ease;
+}
+.task-cell:hover .task-edit-icon,
+.task-cell:focus-within .task-edit-icon,
+.task-edit-icon:focus { opacity: 1; pointer-events: auto; }
+.task-edit-icon:hover { color: #58a6ff; }
 .task-ref {
   display: inline-block; max-width: 220px; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom;
@@ -849,6 +867,21 @@ a.branch-link:hover { color: #58a6ff; text-decoration: underline; }
 }
 a.task-link { text-decoration: none; }
 a.task-link:hover { color: #58a6ff; text-decoration: underline; }
+.task-link-hint { color: #7d8590; font-size: 11px; line-height: 1.4; }
+
+/* Wizard Task/Quest treatment: parchment link text, a quill edit glyph, and
+   quest vocabulary for the empty-cell action. */
+body.wizard a.task-link { color: #b39ddb; }
+body.wizard a.task-link:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(169, 123, 214, 0.7); }
+body.wizard .task-attach {
+  color: #b39ddb;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 0.3px;
+}
+body.wizard .task-attach:hover { color: #f3e6c0; }
+body.wizard .task-edit-icon { font-size: 0; color: #b39ddb; }
+body.wizard .task-edit-icon::before { content: "✒"; font-size: 12px; }
+body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(217, 180, 90, 0.7); }
 /* loc-pair stacks an init/now value pair in one CWD or Branch cell,
    shown only when the agent's launch location differs from where it
    is working now — keeps the column narrow instead of adding a 2nd. */
@@ -8407,6 +8440,51 @@ body.wizard #edit-member-modal #edit-member-save:disabled {
   opacity: 0.7;
 }
 body.wizard #edit-member-modal #edit-member-save:disabled::before { content: none; }
+
+/* ─── Wizard task-link modal — "Bind a quest link" ────────────────
+   Mirrors the Enchant-familiar dialog while keeping this two-field editor
+   compact: violet void, parchment copy, gold focus, and a gilded bind lever. */
+body.wizard #task-link-modal .modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #task-link-modal .modal h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #task-link-modal .modal-meta {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
+}
+body.wizard #task-link-modal .field label,
+body.wizard #task-link-modal .task-link-hint { color: #b39ddb; }
+body.wizard #task-link-modal .field input {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.6); color: #e7d9f5;
+}
+body.wizard #task-link-modal .field input:focus { border-color: #d9b45a; }
+body.wizard #task-link-modal .field input::placeholder { color: #7a6ba0; }
+body.wizard #task-link-modal .cron-create-error { color: #f0b7a6; }
+body.wizard #task-link-modal #task-link-cancel {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #task-link-modal #task-link-cancel:hover { background: #3a2a63; }
+body.wizard #task-link-modal #task-link-save {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  color: #f3e6c0; border: 2px solid #d9b45a; border-radius: 6px;
+  padding: 6px 16px; box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
+  letter-spacing: 1px; font-weight: 700; transition: transform 0.08s ease;
+}
+body.wizard #task-link-modal #task-link-save:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
+}
+body.wizard #task-link-modal #task-link-save:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
+}
 
 /* ─── Wizard profile vocabulary — "Familiar patterns" ───────────────
    In 🧙 wizard mode we Summon Familiars, so a saved spawn profile is

@@ -46,7 +46,7 @@ import { wizWord } from './slop.js';
 // render.js); TDZ-safe.
 import {
   refresh, toast, confirmModal, addMemberModal, deleteAgentModal,
-  editMemberModal, shutdownScope, powerOnScope, openCleanupModal, openWindowModal,
+  editMemberModal, taskLinkModal, shutdownScope, powerOnScope, openCleanupModal, openWindowModal,
   openWorktreeCleanup,
   resumeAgentReq, retireAgentInteractive, shutdownConfirm, stopAgentReq, termDirModal,
   openDeleteGroupModal,
@@ -1054,6 +1054,36 @@ function bindRowActions() {
               return 'saved';
             },
           });
+          return;
+        }
+        case 'edit-task': {
+          // Operator-only edit of an existing agent's task-reference URL and
+          // optional display label. Empty cells expose attach; populated cells
+          // keep the label as a normal link and reveal an edit pencil on
+          // hover/focus. Empty URL clears the task ref. A blank display label
+          // asks the daemon to derive one (Linear key, GitHub number, host).
+          const oldURL = btn.getAttribute('data-current') || '';
+          const oldTaskLabel = btn.getAttribute('data-current-task-label') || '';
+          const result = await taskLinkModal({
+            agentLabel: label,
+            url: oldURL,
+            taskLabel: oldTaskLabel,
+          });
+          if (result === null) return;
+          if (result === 'noop') { toast('no changes'); return; }
+          const r = await fetch(`/api/agents/${encodeURIComponent(agent)}/task`, {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(result.url
+              ? { url: result.url, label: result.taskLabel }
+              : { clear: true }),
+          });
+          if (!r.ok) {
+            toast(`task link update failed: ${await r.text()}`, true);
+            return;
+          }
+          toast(result.url ? `task link updated: ${label}` : `task link cleared: ${label}`);
+          refresh();
           return;
         }
         case 'rename-group': {
