@@ -3731,7 +3731,8 @@ body.wizard .group-pending-title-wizard { display: inline; }
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
-.spawn-field-help-trigger:focus + .spawn-field-description,
+.spawn-field-help-trigger:focus-visible + .spawn-field-description,
+.spawn-field-help-trigger[aria-expanded="true"] + .spawn-field-description,
 .spawn-field-description:focus {
   z-index: 30; bottom: calc(100% + 4px); left: 0; right: 0;
   width: auto; height: auto; max-height: min(180px, 30vh); overflow: auto;
