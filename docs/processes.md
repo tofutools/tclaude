@@ -346,6 +346,58 @@ and integrity; artifact filenames are their content hashes. Together they are
 enough to explain retries, human approvals, escalation decisions, crash
 recovery, and the terminal result without consulting SQLite or a live daemon.
 
+## Run viewer API
+
+With Processes enabled, `GET /v1/process/runs/{id}` returns the persisted run
+and state, verification results, and an additive read-only viewer report:
+
+```json
+{
+  "run": { "id": "change-1", "templateRef": "...", "template": {} },
+  "state": {},
+  "verification": { "effectiveStatus": "running" },
+  "report": {
+    "schemaVersion": 1,
+    "nodes": {
+      "implement.do": {
+        "summary": {
+          "attemptCount": 2,
+          "retryCount": 1,
+          "failureCount": 1,
+          "completedStages": 0,
+          "totalStages": 0
+        },
+        "timeline": []
+      }
+    },
+    "traversedEdges": []
+  }
+}
+```
+
+The report projects persisted metadata and evidence references only. Timeline
+entries never embed raw evidence, performer prompts, or command payloads.
+Obligations and blocked nodes include only their recorded wait/contact state;
+missing legacy timestamps and schedules remain absent rather than being
+reconstructed. A conversation reference contains only the durable agent ID
+recorded on the process command. The dashboard separately decides whether that
+agent currently has an online conversation.
+
+`run.template` is always the exact template matching `templateRef`. A legacy
+run that did not embed its template resolves that exact content-addressed
+version from the template store; the API never substitutes the current
+template head. If the pinned version is unavailable or mismatched,
+verification reports the run as inconsistent, `run.template` is absent, and
+the report does not claim traversed graph edges.
+
+A confirmed existing run whose checkpoint or evidence cannot be decoded still
+returns HTTP 200 so inspection can show its inconsistent alarm. That degraded
+response has a minimal run record, `state: null`, no template, an empty
+schema-v1 report, and stable sanitized verification diagnostics. A genuinely
+missing run remains 404, while a process-store infrastructure failure remains
+500. Reading this endpoint never rewrites run metadata, state, manifests, or
+evidence logs.
+
 ## Notes
 
 - `advance` runs `verify` first and refuses dirty or inconsistent runs.

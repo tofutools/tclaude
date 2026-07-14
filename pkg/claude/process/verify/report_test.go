@@ -177,6 +177,14 @@ func TestStoreRunRejectsTamperedEmbeddedTemplate(t *testing.T) {
 	if !hasDiagnostic(report, verify.LayerLoad, "embedded_template_mismatch") || report.EffectiveStatus != state.RunStatusInconsistent {
 		t.Fatalf("tampered embedded template report = %#v", report)
 	}
+	tampered, err := fixture.Store.LoadRun(t.Context(), fixture.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, resolved := verify.SnapshotWithPinnedTemplate(t.Context(), fixture.Store, tampered)
+	if resolved != nil {
+		t.Fatal("a mismatched embedded template must not be returned for graph rendering")
+	}
 }
 
 func TestStoreRunLegacyRecordFallsBackToTemplateLibrary(t *testing.T) {
@@ -197,6 +205,21 @@ func TestStoreRunLegacyRecordFallsBackToTemplateLibrary(t *testing.T) {
 	report := verify.StoreRun(t.Context(), fixture.Store, fixture.RunID)
 	if report.HasErrors() {
 		t.Fatalf("legacy template fallback diagnostics = %#v", report.Diagnostics)
+	}
+	legacy, err := fixture.Store.LoadRun(t.Context(), fixture.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, resolved := verify.SnapshotWithPinnedTemplate(t.Context(), fixture.Store, legacy)
+	if resolved == nil {
+		t.Fatal("legacy run did not resolve its exact pinned template")
+	}
+	hash, err := model.SemanticHash(resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := model.TemplateRef(resolved.ID, hash); got != legacy.Run.TemplateRef {
+		t.Fatalf("resolved ref = %q, want %q", got, legacy.Run.TemplateRef)
 	}
 }
 
