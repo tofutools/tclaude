@@ -3075,12 +3075,19 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	var preMsgID int64
 	// briefingInlined records whether the launch-enrollment prompt baked the
 	// whole briefing inline (short enough to fit) rather than pointing at the
-	// inbox copy. When it did, the inbox copy is marked read after launch — the
-	// agent already has the text, so it shouldn't linger as unread clutter.
+	// inbox copy. When it did, the inbox copy is inserted already delivered and
+	// read — the agent has the text, so it must never enter the nudge queue.
 	var briefingInlined bool
 	if launchEnroll {
 		preConvID = convops.GenerateUUID()
-		mid, fail := enrollSpawnedConv(g, p, preConvID)
+		// Decide the briefing's launch state before inserting its inbox copy.
+		// An inlined copy must be born delivered + read in the same INSERT;
+		// inserting it unread and fixing it up after launch leaves a window where
+		// the online-message flush can claim and inject a redundant nudge.
+		spawnContextBody := buildSpawnContextBody(groupName, p.GroupContext, p.InitialMessage, p.Attachments)
+		inlineCap := spawnInlineMaxChars()
+		briefingInlined = spawnContextBody != "" && spawnBriefingFitsLaunch(spawnContextBody, inlineCap)
+		mid, fail := enrollSpawnedConv(g, p, preConvID, briefingInlined)
 		if fail != nil {
 			return nil, fail
 		}
@@ -3103,17 +3110,11 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		// SAME assembly enrollSpawnedConv stored in the inbox, recomputed here
 		// (a cheap pure function of the same inputs) so the inlined copy is
 		// byte-identical to the inbox row — no shared mutable state to drift.
-		spawnContextBody := buildSpawnContextBody(groupName, p.GroupContext, p.InitialMessage, p.Attachments)
-		inlineCap := spawnInlineMaxChars()
-		// Capture the inline decision from the SAME inputs (and cap) the prompt
-		// build uses, so the post-launch read-marking matches what actually went
-		// into the launch turn. spawnBriefingFitsLaunch is ALSO true for an empty
-		// briefing — its welcome-skip meaning, where a "wait" welcome rides the
-		// seed — but an empty briefing is never inlined, so AND in a non-empty
-		// check to make briefingInlined mean strictly "a briefing exists and rode
-		// inline". (markBriefingConsumed also no-ops on msgID 0, so this is
-		// belt-and-braces — but it keeps the flag honest at the call site.)
-		briefingInlined = spawnContextBody != "" && spawnBriefingFitsLaunch(spawnContextBody, inlineCap)
+		// The inline decision above uses the SAME body and cap the prompt build
+		// receives, so the inbox state matches what actually went into the launch
+		// turn. The non-empty check keeps briefingInlined strict: an empty
+		// briefing fits the launch prompt's clean "wait" welcome but has no inbox
+		// row to consume.
 		spawnArgs.InitialPrompt = buildSpawnLaunchPrompt(p.Name, p.Role, p.Descr, groupName,
 			preMsgID, p.InitialMessage != "", spawnContextBody, p.WorktreePath, p.WorktreeBranch,
 			resolveSpawnerTitle(p.SpawnedByConv, p.SpawnedByAgent), inlineCap)
@@ -3575,11 +3576,6 @@ func requeuePendingSpawn(label string, ps *db.PendingSpawn) {
 // its startup gates and took its first turn. That preserves JOH-205's
 // no-send-keys-before-connection property through the non-blocking refactor.
 func finishSpawnEnrollment(g *db.AgentGroup, p spawnParams, convID string) *spawnFailure {
-	spawnContextMsgID, fail := enrollSpawnedConv(g, p, convID)
-	if fail != nil {
-		return fail
-	}
-
 	// Decide whether the welcome was already delivered as the launch seed.
 	// A seed-needing harness (Codex) whose briefing fits the launch prompt
 	// (short/empty) got the FULL welcome inline at launch, so re-injecting it
@@ -3609,6 +3605,11 @@ func finishSpawnEnrollment(g *db.AgentGroup, p spawnParams, convID string) *spaw
 	groupName := spawnGroupName(g)
 	contextBody := buildSpawnContextBody(groupName, p.GroupContext, p.InitialMessage, p.Attachments)
 	welcomeInSeed := h.NeedsSpawnSeed() && spawnBriefingFitsLaunch(contextBody, spawnInlineMaxChars())
+	briefingInlined := contextBody != "" && welcomeInSeed
+	spawnContextMsgID, fail := enrollSpawnedConv(g, p, convID, briefingInlined)
+	if fail != nil {
+		return fail
+	}
 
 	// Post-spawn injection: rename the new pane to the agent's name and
 	// drop a [system: ...] welcome describing the agent's identity. It
@@ -3629,8 +3630,9 @@ func finishSpawnEnrollment(g *db.AgentGroup, p spawnParams, convID string) *spaw
 // to the group, record its pending display name, and drop its startup briefing
 // (group context + task brief) into its inbox as a single "Startup context"
 // agent_messages row. It returns that message's id (0 when there was no
-// briefing) so the caller can reference it in the welcome and mark it delivered
-// once the welcome lands.
+// briefing) so the caller can reference it in the welcome. An inlined briefing
+// is inserted already delivered and read so it can never race the nudge
+// dispatcher; a pointer briefing is marked delivered once its welcome lands.
 //
 // It is the shared enrollment step of both spawn paths:
 //   - the legacy inject-after-connect path (finishSpawnEnrollment) calls it
@@ -3644,7 +3646,7 @@ func finishSpawnEnrollment(g *db.AgentGroup, p spawnParams, convID string) *spaw
 // already (about to be) spawned and grouped. The pending name is stored even
 // when it isn't a valid rename title, so the dashboard can show the intended
 // name during the brief window before the title materialises.
-func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string) (int64, *spawnFailure) {
+func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingInlined bool) (int64, *spawnFailure) {
 	// Stable agent-identity (JOH-26): a spawn is the birth of a new actor. Mint
 	// its agent_id BEFORE the group-add so created_via is the precise "spawn"
 	// rather than the "group" tag AddAgentGroupMember's own EnsureAgentForConv
@@ -3790,14 +3792,25 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string) (int64, *
 		// companion (JOH-321 F2) so a reply routes to the current generation,
 		// falling back to the recorded conv when the companion is empty.
 		replyToConv := liveConvForActor(p.ReplyToConv, p.ReplyToAgent)
-		mid, msgErr := db.InsertAgentMessage(&db.AgentMessage{
+		briefing := &db.AgentMessage{
 			GroupID:      spawnGroupID(g),
 			FromConv:     replyToConv,
 			ToConv:       convID,
 			Subject:      "Startup context",
 			Body:         spawnContext,
 			ToRecipients: []string{convID},
-		})
+		}
+		if briefingInlined {
+			// The launch prompt already carries the full briefing, so its durable
+			// inbox copy is archival from birth. Stamp both fields in the INSERT
+			// itself: a follow-up UPDATE would leave a race where the online or
+			// health flush can claim this unread row and inject a duplicate nudge.
+			consumedAt := time.Now()
+			briefing.CreatedAt = consumedAt
+			briefing.DeliveredAt = consumedAt
+			briefing.ReadAt = consumedAt
+		}
+		mid, msgErr := db.InsertAgentMessage(briefing)
 		if msgErr != nil {
 			// Best-effort: the agent has already spawned and joined the
 			// group. A failed insert just means no briefing — logged,
@@ -3890,33 +3903,30 @@ func spawnInlineMaxChars() int {
 }
 
 // markBriefingConsumed records that a spawned agent's startup-briefing inbox
-// message has reached the agent. It always stamps delivered_at — the welcome
-// (inline or pointer) has landed, so the inbox copy is no longer pending
-// delivery.
+// message has reached the agent. A pointer briefing is stamped delivered once
+// its welcome lands, so the inbox copy is no longer pending first delivery.
 //
 // When the briefing was INLINED into the launch prompt (inlined true), the
-// agent received its full text on its very first turn, so there is nothing left
-// for it to `inbox read`: the copy is also stamped read_at, so it doesn't
-// linger as unread clutter in the dashboard Messages tab. A briefing that
-// stayed a pointer (inlined false — a legacy CC injection, or a Codex briefing
-// too long to inline) is left unread, because the agent still has to open it
-// from the inbox.
+// inbox row was already inserted with delivered_at and read_at set atomically.
+// This function deliberately does no follow-up writes for that case: inserting
+// unread and fixing it up here would let the nudge dispatcher claim the row in
+// between. A briefing that stayed a pointer (inlined false — a legacy CC
+// injection, or a Codex briefing too long to inline) is left unread, because
+// the agent still has to open it from the inbox.
 //
-// A msgID of 0 or less (no briefing was inserted) is a no-op. Both writes are
-// best-effort and only log on failure — the spawn has already succeeded.
+// A msgID of 0 or less (no briefing was inserted) is a no-op. The pointer-case
+// delivery write is best-effort and only logs on failure — the spawn has
+// already succeeded.
 func markBriefingConsumed(convID string, msgID int64, inlined bool) {
 	if msgID <= 0 {
+		return
+	}
+	if inlined {
 		return
 	}
 	if err := db.MarkAgentMessageDelivered(msgID); err != nil {
 		slog.Warn("spawn: failed to mark startup context delivered",
 			"conv", convID, "msg_id", msgID, "error", err)
-	}
-	if inlined {
-		if err := db.MarkAgentMessageRead(msgID); err != nil {
-			slog.Warn("spawn: failed to mark inlined startup context read",
-				"conv", convID, "msg_id", msgID, "error", err)
-		}
 	}
 }
 
