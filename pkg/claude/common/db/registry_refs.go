@@ -19,7 +19,21 @@ func registryIDByName(tx *sql.Tx, table, name string) (sql.NullInt64, error) {
 		return sql.NullInt64{}, fmt.Errorf("unsupported registry %q", table)
 	}
 	var id int64
-	err := tx.QueryRow("SELECT id FROM "+table+" WHERE name = ?", name).Scan(&id)
+	query := "SELECT id FROM " + table + " WHERE name = ?"
+	if table == "spawn_profiles" {
+		query = `SELECT p.id FROM spawn_profiles p
+			LEFT JOIN spawn_profile_aliases a ON a.profile_id = p.id
+			WHERE p.name = ? OR a.alias = ? LIMIT 1`
+		err := tx.QueryRow(query, name, name).Scan(&id)
+		if err == sql.ErrNoRows {
+			return sql.NullInt64{}, nil
+		}
+		if err != nil {
+			return sql.NullInt64{}, err
+		}
+		return sql.NullInt64{Int64: id, Valid: true}, nil
+	}
+	err := tx.QueryRow(query, name).Scan(&id)
 	if err == sql.ErrNoRows {
 		return sql.NullInt64{}, nil
 	}

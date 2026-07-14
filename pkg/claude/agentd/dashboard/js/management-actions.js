@@ -855,8 +855,9 @@ export function createManagementActions({
     await load('profiles');
     const imported = result?.imported || [];
     const skipped = result?.skipped || [];
+    const warnings = result?.warnings || [];
     notify(
-      `${imported.length} profile${imported.length === 1 ? '' : 's'} imported${skipped.length ? `, ${skipped.length} skipped` : ''}`,
+      `${imported.length} profile${imported.length === 1 ? '' : 's'} imported${skipped.length ? `, ${skipped.length} skipped` : ''}${warnings.length ? ` — ${warnings.join('; ')}` : ''}`,
     );
     return result;
   }

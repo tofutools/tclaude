@@ -136,7 +136,7 @@ func buildRoleFromJSON(body roleJSON) (*db.Role, *spawnFailure) {
 	// template-agent launch validation applies.
 	profRef := strings.TrimSpace(body.SpawnProfile)
 	if profRef != "" {
-		p, err := db.GetSpawnProfile(profRef)
+		p, err := db.ResolveSpawnProfile(profRef)
 		if err != nil {
 			return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
 		}
@@ -144,6 +144,7 @@ func buildRoleFromJSON(body roleJSON) (*db.Role, *spawnFailure) {
 			return nil, &spawnFailure{http.StatusBadRequest, "invalid_profile",
 				fmt.Sprintf("no spawn profile named %q", profRef)}
 		}
+		profRef = p.Name
 	}
 
 	perms := []string{}

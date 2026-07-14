@@ -3,6 +3,8 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -10,7 +12,7 @@ import (
 // UpdateSpawnProfile when another profile already owns the name. The name is
 // the human-facing handle and the route key (/v1/spawn-profiles/{name}), so it
 // carries a UNIQUE constraint.
-var ErrSpawnProfileNameTaken = errors.New("a spawn profile with that name already exists")
+var ErrSpawnProfileNameTaken = errors.New("a spawn profile with that name or alias already exists")
 
 // SpawnProfile is a row in spawn_profiles — a named, reusable bundle of the
 // dashboard's spawn-agent dialog (JOH-210). Pressing Spawn in a group with a
@@ -26,6 +28,9 @@ var ErrSpawnProfileNameTaken = errors.New("a spawn profile with that name alread
 type SpawnProfile struct {
 	ID   int64
 	Name string // the profile handle (UNIQUE)
+	// Aliases are alternate handles for this same row. They share one namespace
+	// with every primary profile name and alias.
+	Aliases []string
 
 	// Launch fields — overlap clcommon.SpawnArgs. "" = unset.
 	Harness  string
@@ -111,8 +116,13 @@ func CreateSpawnProfile(p *SpawnProfile) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	tx, err := d.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
 	now := time.Now().Format(time.RFC3339Nano)
-	res, err := d.Exec(
+	res, err := tx.Exec(
 		`INSERT INTO spawn_profiles
 		   (name, harness, model, effort, sandbox, approval, ask_user_question_timeout,
 		    auto_review, trust_dir,
@@ -129,12 +139,22 @@ func CreateSpawnProfile(p *SpawnProfile) (int64, error) {
 		boolPtrToNull(p.IsOwner), marshalPermissionOverrides(p.PermissionOverrides),
 		now, now)
 	if err != nil {
-		if isUniqueViolation(err) {
+		if isSpawnProfileHandleViolation(err) {
 			return 0, ErrSpawnProfileNameTaken
 		}
 		return 0, err
 	}
-	return res.LastInsertId()
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	if err := replaceSpawnProfileAliases(tx, id, p.Aliases); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 // UpdateSpawnProfile rewrites an existing profile identified by p.ID. Renaming
@@ -150,6 +170,13 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	// Remove this profile's existing aliases before changing its primary name.
+	// This permits an atomic promotion such as `primary` + alias `reviewer` →
+	// primary `reviewer` + alias `primary`, while aliases owned by other rows
+	// remain protected by the database triggers.
+	if _, err := tx.Exec(`DELETE FROM spawn_profile_aliases WHERE profile_id = ?`, p.ID); err != nil {
+		return err
+	}
 	res, err := tx.Exec(
 		`UPDATE spawn_profiles SET
 		   name = ?, harness = ?, model = ?, effort = ?, sandbox = ?, approval = ?,
@@ -169,7 +196,7 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 		boolPtrToNull(p.IsOwner), marshalPermissionOverrides(p.PermissionOverrides),
 		time.Now().Format(time.RFC3339Nano), p.ID)
 	if err != nil {
-		if isUniqueViolation(err) {
+		if isSpawnProfileHandleViolation(err) {
 			return ErrSpawnProfileNameTaken
 		}
 		return err
@@ -180,6 +207,9 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 	}
 	if n == 0 {
 		return sql.ErrNoRows
+	}
+	if err := replaceSpawnProfileAliases(tx, p.ID, p.Aliases); err != nil {
+		return err
 	}
 	// Names are API/export snapshots; the durable *_id columns are the actual
 	// references. Refresh every snapshot in the same transaction so all UIs
@@ -217,7 +247,33 @@ func GetSpawnProfile(name string) (*SpawnProfile, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := loadSpawnProfileAliases(d, p); err != nil {
+		return nil, err
+	}
 	return p, nil
+}
+
+// ResolveSpawnProfile resolves either a primary name or one of its aliases.
+// GetSpawnProfile intentionally remains primary-name-only for management and
+// import code that must distinguish an alias collision from an exact row.
+func ResolveSpawnProfile(handle string) (*SpawnProfile, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	var id int64
+	err = d.QueryRow(`SELECT p.id
+		FROM spawn_profiles p
+		LEFT JOIN spawn_profile_aliases a ON a.profile_id = p.id
+		WHERE p.name = ? OR a.alias = ?
+		LIMIT 1`, handle, handle).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return getSpawnProfileByIDDB(d, id)
 }
 
 // GetSpawnProfileByID returns the profile with the stable row id. Registry
@@ -228,11 +284,18 @@ func GetSpawnProfileByID(id int64) (*SpawnProfile, error) {
 	if err != nil {
 		return nil, err
 	}
+	return getSpawnProfileByIDDB(d, id)
+}
+
+func getSpawnProfileByIDDB(d *sql.DB, id int64) (*SpawnProfile, error) {
 	p, err := scanSpawnProfile(d.QueryRow(spawnProfileSelect+` WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
+		return nil, err
+	}
+	if err := loadSpawnProfileAliases(d, p); err != nil {
 		return nil, err
 	}
 	return p, nil
@@ -259,7 +322,18 @@ func ListSpawnProfiles() ([]*SpawnProfile, error) {
 		}
 		out = append(out, p)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for _, p := range out {
+		if err := loadSpawnProfileAliases(d, p); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
 
 // DeleteSpawnProfile removes a profile by name. Returns the rows affected — 0
@@ -309,6 +383,53 @@ func DeleteSpawnProfile(name string) (int64, error) {
 		return 0, err
 	}
 	return n, nil
+}
+
+type spawnProfileAliasTx interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+func replaceSpawnProfileAliases(tx spawnProfileAliasTx, profileID int64, aliases []string) error {
+	if _, err := tx.Exec(`DELETE FROM spawn_profile_aliases WHERE profile_id = ?`, profileID); err != nil {
+		return err
+	}
+	seen := map[string]bool{}
+	for _, alias := range aliases {
+		alias = strings.TrimSpace(alias)
+		if alias == "" || seen[alias] {
+			continue
+		}
+		seen[alias] = true
+		if _, err := tx.Exec(`INSERT INTO spawn_profile_aliases (alias, profile_id) VALUES (?, ?)`, alias, profileID); err != nil {
+			if isSpawnProfileHandleViolation(err) {
+				return ErrSpawnProfileNameTaken
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+func loadSpawnProfileAliases(d *sql.DB, p *SpawnProfile) error {
+	rows, err := d.Query(`SELECT alias FROM spawn_profile_aliases WHERE profile_id = ? ORDER BY alias`, p.ID)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	p.Aliases = []string{}
+	for rows.Next() {
+		var alias string
+		if err := rows.Scan(&alias); err != nil {
+			return err
+		}
+		p.Aliases = append(p.Aliases, alias)
+	}
+	sort.Strings(p.Aliases)
+	return rows.Err()
+}
+
+func isSpawnProfileHandleViolation(err error) bool {
+	return isUniqueViolation(err) || (err != nil && strings.Contains(err.Error(), "spawn profile handle already exists"))
 }
 
 const spawnProfileSelect = `SELECT id, name, harness, model, effort, sandbox, approval,

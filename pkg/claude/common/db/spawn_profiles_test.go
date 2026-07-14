@@ -151,3 +151,65 @@ func TestSpawnProfile_ListAndDelete(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), n, "deleting a missing profile reports zero rows")
 }
+
+func TestSpawnProfile_AliasesResolveAndShareNamespace(t *testing.T) {
+	setupTestDB(t)
+
+	id, err := CreateSpawnProfile(&SpawnProfile{
+		Name:    "gpt5.6-sol-high",
+		Aliases: []string{"codex-reviewer", "cold-reviewer"},
+	})
+	require.NoError(t, err)
+
+	got, err := ResolveSpawnProfile("codex-reviewer")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, id, got.ID)
+	assert.Equal(t, "gpt5.6-sol-high", got.Name)
+	assert.Equal(t, []string{"codex-reviewer", "cold-reviewer"}, got.Aliases)
+
+	exact, err := GetSpawnProfile("codex-reviewer")
+	require.NoError(t, err)
+	assert.Nil(t, exact, "management lookup distinguishes aliases from primary names")
+
+	_, err = CreateSpawnProfile(&SpawnProfile{Name: "codex-reviewer"})
+	require.ErrorIs(t, err, ErrSpawnProfileNameTaken)
+	_, err = CreateSpawnProfile(&SpawnProfile{Name: "other", Aliases: []string{"gpt5.6-sol-high"}})
+	require.ErrorIs(t, err, ErrSpawnProfileNameTaken)
+}
+
+func TestSpawnProfile_UpdateAndDeleteAliases(t *testing.T) {
+	setupTestDB(t)
+	id, err := CreateSpawnProfile(&SpawnProfile{Name: "primary", Aliases: []string{"old-alias"}})
+	require.NoError(t, err)
+
+	require.NoError(t, UpdateSpawnProfile(&SpawnProfile{ID: id, Name: "renamed", Aliases: []string{"new-alias"}}))
+	old, err := ResolveSpawnProfile("old-alias")
+	require.NoError(t, err)
+	assert.Nil(t, old)
+	updated, err := ResolveSpawnProfile("new-alias")
+	require.NoError(t, err)
+	require.NotNil(t, updated)
+	assert.Equal(t, "renamed", updated.Name)
+
+	n, err := DeleteSpawnProfile("renamed")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
+	deleted, err := ResolveSpawnProfile("new-alias")
+	require.NoError(t, err)
+	assert.Nil(t, deleted)
+}
+
+func TestSpawnProfile_UpdateCanPromoteOwnAlias(t *testing.T) {
+	setupTestDB(t)
+	id, err := CreateSpawnProfile(&SpawnProfile{Name: "primary", Aliases: []string{"reviewer"}})
+	require.NoError(t, err)
+
+	require.NoError(t, UpdateSpawnProfile(&SpawnProfile{
+		ID: id, Name: "reviewer", Aliases: []string{"primary"},
+	}))
+	got, err := ResolveSpawnProfile("primary")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "reviewer", got.Name)
+}

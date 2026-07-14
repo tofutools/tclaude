@@ -74,6 +74,10 @@ process-owned, ungrouped agent and records the deterministic process command id
 on its stable agent metadata. On restart, that metadata is used to rediscover
 the live attempt rather than spawning it again.
 
+`performer.profile` may use either a profile's primary name or an alias. This
+supports semantic handles such as `codex-reviewer` even when the underlying
+model-oriented profile name changes.
+
 Process agents currently start in the agentd daemon's working directory. The
 template and saved spawn profile do not yet provide a per-slot cwd/worktree
 override.

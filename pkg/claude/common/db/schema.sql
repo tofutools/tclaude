@@ -436,6 +436,20 @@ CREATE TABLE spawn_profiles (
 			updated_at                    TEXT NOT NULL
 		, remote_control INTEGER, is_owner INTEGER, permission_overrides TEXT NOT NULL DEFAULT '', ask_user_question_timeout TEXT NOT NULL DEFAULT '');
 
+CREATE TRIGGER spawn_profile_name_not_alias_insert
+		BEFORE INSERT ON spawn_profiles
+		WHEN EXISTS (SELECT 1 FROM spawn_profile_aliases WHERE alias = NEW.name)
+		BEGIN
+			SELECT RAISE(ABORT, 'spawn profile handle already exists');
+		END;
+
+CREATE TRIGGER spawn_profile_name_not_alias_update
+		BEFORE UPDATE OF name ON spawn_profiles
+		WHEN EXISTS (SELECT 1 FROM spawn_profile_aliases WHERE alias = NEW.name)
+		BEGIN
+			SELECT RAISE(ABORT, 'spawn profile handle already exists');
+		END;
+
 CREATE TABLE ask_threads (
 			term_key   TEXT NOT NULL,
 			cwd        TEXT NOT NULL,
@@ -737,4 +751,26 @@ CREATE TABLE agentd_idempotency (
 
 CREATE INDEX idx_agentd_idempotency_expiry
 			ON agentd_idempotency(expires_at);
+
+CREATE TABLE spawn_profile_aliases (
+			alias TEXT PRIMARY KEY,
+			profile_id INTEGER NOT NULL REFERENCES spawn_profiles(id) ON DELETE CASCADE
+		);
+
+CREATE INDEX idx_spawn_profile_aliases_profile
+			ON spawn_profile_aliases(profile_id);
+
+CREATE TRIGGER spawn_profile_alias_not_name_insert
+		BEFORE INSERT ON spawn_profile_aliases
+		WHEN EXISTS (SELECT 1 FROM spawn_profiles WHERE name = NEW.alias)
+		BEGIN
+			SELECT RAISE(ABORT, 'spawn profile handle already exists');
+		END;
+
+CREATE TRIGGER spawn_profile_alias_not_name_update
+		BEFORE UPDATE OF alias ON spawn_profile_aliases
+		WHEN EXISTS (SELECT 1 FROM spawn_profiles WHERE name = NEW.alias)
+		BEGIN
+			SELECT RAISE(ABORT, 'spawn profile handle already exists');
+		END;
 

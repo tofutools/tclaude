@@ -262,6 +262,7 @@ func TestPrintProfileHuman(t *testing.T) {
 	var buf bytes.Buffer
 	printProfileHuman(&buf, profileJSON{
 		Name:                "team",
+		Aliases:             []string{"codex-reviewer", "cold-reviewer"},
 		Descr:               "the team default",
 		Harness:             "codex",
 		Model:               "gpt-5-codex",
@@ -275,6 +276,7 @@ func TestPrintProfileHuman(t *testing.T) {
 	})
 	out := buf.String()
 	assert.Contains(t, out, "Profile: team")
+	assert.Contains(t, out, "aliases: codex-reviewer, cold-reviewer")
 	assert.Contains(t, out, "the team default")
 	assert.Contains(t, out, "harness=codex")
 	assert.Contains(t, out, "model=gpt-5-codex")
@@ -298,13 +300,14 @@ func TestPrintProfileHuman_Sparse(t *testing.T) {
 // `edit` accept — the file-based input the mutating verbs share.
 func TestLoadProfileFile_RoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "p.json")
-	body := `{"name":"team","harness":"codex","model":"gpt-5-codex","effort":"high",` +
+	body := `{"name":"team","aliases":["codex-reviewer"],"harness":"codex","model":"gpt-5-codex","effort":"high",` +
 		`"is_owner":true,"permission_overrides":{"human.notify":"grant"}}`
 	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
 
 	prof, rc := loadProfileFile(path, nil, new(bytes.Buffer))
 	require.Equal(t, rcOK, rc)
 	require.NotNil(t, prof)
+	assert.Equal(t, []string{"codex-reviewer"}, prof.Aliases)
 	assert.Equal(t, "team", prof.Name)
 	assert.Equal(t, "codex", prof.Harness)
 	assert.Equal(t, "gpt-5-codex", prof.Model)

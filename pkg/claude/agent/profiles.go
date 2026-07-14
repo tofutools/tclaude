@@ -37,7 +37,8 @@ import (
 // for field, so `show --json` round-trips exactly what the dashboard editor
 // posts. Every field is optional: a blank text field / absent toggle is unset.
 type profileJSON struct {
-	Name string `json:"name"`
+	Name    string   `json:"name"`
+	Aliases []string `json:"aliases,omitempty"`
 
 	// Launch fields.
 	Harness  string `json:"harness,omitempty"`
@@ -83,7 +84,7 @@ func profilesCmd() *cobra.Command {
 		Long: "List, inspect, create, edit and delete spawn profiles. A spawn profile is a named, reusable bundle of " +
 			"the spawn-agent dialog's fields — a launch shape (harness/model/effort/sandbox/approval + toggles), " +
 			"identity (name/role/descr/initial message) and birth-time access (owner + permission overrides). Pass a " +
-			"profile name to `tclaude agent spawn --profile <name>` to pre-fill those fields; explicit spawn flags " +
+			"profile name or alias to `tclaude agent spawn --profile <handle>` to pre-fill those fields; explicit spawn flags " +
 			"override the profile, and the profile overrides the group / global / harness defaults.\n\n" +
 			"The CLI twin of the dashboard's Profiles editor. Reads (ls / show) are open; writes (create / edit / rm) " +
 			"are gated daemon-side on profiles.manage (effectively human-only). Mirrors `roles`.",
@@ -215,7 +216,7 @@ func profilesLsCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
 		Use:         "ls",
 		Short:       "List spawn profiles in the library",
-		Long:        "Returns every spawn profile with its launch shape (harness/model/effort) and one-line description.",
+		Long:        "Returns every spawn profile with its aliases, launch shape (harness/model/effort), and one-line description.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
 			os.Exit(runProfilesLs(os.Stdout, os.Stderr))
@@ -237,11 +238,11 @@ func runProfilesLs(stdout, stderr io.Writer) int {
 		return rcOK
 	}
 	sort.Slice(profiles, func(i, j int) bool { return profiles[i].Name < profiles[j].Name })
-	fmt.Fprintf(stdout, "%-16s  %-8s  %-12s  %-7s  %s\n", "NAME", "HARNESS", "MODEL", "EFFORT", "DESCR")
-	fmt.Fprintln(stdout, strings.Repeat("─", 80))
+	fmt.Fprintf(stdout, "%-16s  %-22s  %-8s  %-12s  %-7s  %s\n", "NAME", "ALIASES", "HARNESS", "MODEL", "EFFORT", "DESCR")
+	fmt.Fprintln(stdout, strings.Repeat("─", 106))
 	for _, p := range profiles {
-		fmt.Fprintf(stdout, "%-16s  %-8s  %-12s  %-7s  %s\n",
-			truncate(p.Name, 16), truncate(dash(p.Harness), 8), truncate(dash(p.Model), 12),
+		fmt.Fprintf(stdout, "%-16s  %-22s  %-8s  %-12s  %-7s  %s\n",
+			truncate(p.Name, 16), truncate(dash(strings.Join(p.Aliases, ", ")), 22), truncate(dash(p.Harness), 8), truncate(dash(p.Model), 12),
 			truncate(dash(p.Effort), 7), truncate(p.Descr, 30))
 	}
 	return rcOK
@@ -328,7 +329,7 @@ func profilesCreateCmd() *cobra.Command {
 		Use:   "create --file <path>",
 		Short: "Create a spawn profile from a JSON file",
 		Long: "Reads a spawn-profile definition as JSON from --file (or --file - for stdin) and creates it. The JSON " +
-			"shape is what 'profiles show <name> --json' emits: {name, harness, model, effort, sandbox, approval, " +
+			"shape is what 'profiles show <name> --json' emits: {name, aliases, harness, model, effort, sandbox, approval, " +
 			"agent_name, role, descr, initial_message, is_owner, permission_overrides, …}. A profile carries multi-line " +
 			"and permission state, so it is supplied as a file rather than via flags. Gated on profiles.manage.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -474,6 +475,9 @@ func runProfilesRm(p *profilesRmParams, stdout, stderr io.Writer) int {
 // in) so it is unit-tested without a daemon. Only set fields are shown.
 func printProfileHuman(w io.Writer, p profileJSON) {
 	fmt.Fprintf(w, "Profile: %s\n", p.Name)
+	if len(p.Aliases) > 0 {
+		fmt.Fprintf(w, "  aliases: %s\n", strings.Join(p.Aliases, ", "))
+	}
 	if p.Descr != "" {
 		fmt.Fprintf(w, "  descr:   %s\n", p.Descr)
 	}

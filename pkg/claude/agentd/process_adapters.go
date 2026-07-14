@@ -79,7 +79,7 @@ func (a processAgentAdapter) Dispatch(_ context.Context, request processexec.Req
 // before command claim and again immediately before spawn. The second lookup
 // intentionally revalidates profile edits/deletion that race the claim.
 func processAgentSpawnParams(request processexec.Request) (spawnParams, error) {
-	profile, err := db.GetSpawnProfile(strings.TrimSpace(request.Performer.Profile))
+	profile, err := db.ResolveSpawnProfile(strings.TrimSpace(request.Performer.Profile))
 	if err != nil {
 		return spawnParams{}, err
 	}

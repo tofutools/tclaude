@@ -4267,6 +4267,7 @@ body.wizard .directory-picker-modal .modal-buttons { border-top-color: rgba(122,
 }
 .template-card .tc-head { display: flex; align-items: baseline; gap: 10px; }
 .template-card .tc-name { font-size: 14px; font-weight: 600; color: #d4d4d4; }
+.template-card .tc-aliases { color: #8ea8c3; font-size: 12px; }
 .template-card .tc-descr { color: #7d8590; font-size: 12px; }
 .template-card .tc-count { color: #6e7681; font-size: 11px; }
 .template-card .tc-actions { margin-left: auto; display: flex; gap: 6px; }

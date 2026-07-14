@@ -256,6 +256,11 @@ tclaude agent profiles default show   # the global default spawn profile (if any
 tclaude agent groups ls               # PROFILE column = each group's default profile
 ```
 
+Profiles may expose semantic aliases. `tclaude agent profiles ls` shows them,
+and `agent spawn --profile` accepts either the primary name or an alias. Prefer
+an intent-revealing alias such as `codex-reviewer` when team guidance names one;
+the resolved launch echo discloses both the canonical profile and alias used.
+
 The spawn output now **echoes the resolved launch shape and where each value
 came from**, so you can catch a surprise at a glance:
 

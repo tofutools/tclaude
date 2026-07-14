@@ -6,7 +6,7 @@ import { esc } from './helpers.js';
 import { lastSnapshot } from './dashboard.js';
 import { managementController } from './management-controller.js';
 import { openTermModal } from './modal-term.js';
-import { cachedProfiles, profileSummary } from './profiles.js';
+import { cachedProfiles, profileSummary, findProfileByHandle } from './profiles.js';
 import { toast } from './refresh.js';
 import { wizWord } from './slop.js';
 
@@ -136,7 +136,7 @@ function agentInheritsDeployDefault(agent) {
 
 function templateAgentIsOwner(agent) {
   let owner = false;
-  const profile = agent.spawn_profile && cachedProfiles().find((item) => item.name === agent.spawn_profile);
+  const profile = agent.spawn_profile && findProfileByHandle(cachedProfiles(), agent.spawn_profile);
   if (profile && typeof profile.is_owner === 'boolean') owner = profile.is_owner;
   if (agent.profile_inline && typeof agent.profile_inline.is_owner === 'boolean') owner = agent.profile_inline.is_owner;
   return owner || !!agent.is_owner;
@@ -159,7 +159,7 @@ export function templateRosterRowsHTML(template, prefix, defaultProfile) {
   if (!agents.length) return `<span class="tp-empty">${wizWord('this template has no agents', 'this circle names no familiars')}</span>`;
   const shown = prefix?.trim() || wizWord('‹group›', '‹party›');
   const defaultName = defaultProfile?.trim() || '';
-  const defaultValue = defaultName && cachedProfiles().find((item) => item.name === defaultName);
+  const defaultValue = defaultName && findProfileByHandle(cachedProfiles(), defaultName);
   return agents.map((agent) => {
     const adoptsDefault = !!defaultValue && !agent.spawn_profile && agentInheritsDeployDefault(agent);
     const inline = agent.profile_inline || null;

@@ -244,6 +244,14 @@ initial message, dialog toggles, owner default, and per-slug permission
 overrides. It deliberately does **not** carry a working directory or worktree:
 those stay per-spawn.
 
+A profile may also have multiple **aliases**: alternate handles such as
+`codex-reviewer` for a canonically named `gpt5.6-sol-high` profile. Aliases
+resolve anywhere a spawn profile is accepted, including `agent spawn
+--profile`, defaults, roles, templates, process agent performers, Ask, and
+Scribe. The palette keeps one card per real profile and shows its aliases next
+to the primary name; selectors offer each alias separately as
+`alias → primary-name`.
+
 Open the manager from the Groups tab cog (**⚙ → ⧉ profiles…**). The manager can
 create/edit/delete profiles and now also **⇪ export** / **⤒ import** portable
 profile bundles. Export opens a checklist of saved profiles so you can uncheck

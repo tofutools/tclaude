@@ -27,13 +27,39 @@ func profileReq(t *testing.T, f *testharness.Flow, method, path string, body any
 // spawnProfileJSON is unexported); the *bool toggles let the test assert the
 // unset (null/absent) tri-state round-trips.
 type wireProfile struct {
-	Name         string `json:"name"`
-	Harness      string `json:"harness"`
-	Model        string `json:"model"`
-	Effort       string `json:"effort"`
-	Sandbox      string `json:"sandbox"`
-	AutoReview   *bool  `json:"auto_review"`
-	SyncWorktree *bool  `json:"sync_worktree"`
+	Name         string   `json:"name"`
+	Aliases      []string `json:"aliases"`
+	Harness      string   `json:"harness"`
+	Model        string   `json:"model"`
+	Effort       string   `json:"effort"`
+	Sandbox      string   `json:"sandbox"`
+	AutoReview   *bool    `json:"auto_review"`
+	SyncWorktree *bool    `json:"sync_worktree"`
+}
+
+func TestSpawnProfiles_AliasCRUDAndResolution(t *testing.T) {
+	f := newFlow(t)
+	rec := profileReq(t, f, http.MethodPost, "/v1/spawn-profiles", map[string]any{
+		"name": "gpt5.6-sol-high", "aliases": []string{"codex-reviewer", "cold-reviewer"},
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "create body=%s", rec.Body.String())
+
+	rec = profileReq(t, f, http.MethodGet, "/v1/spawn-profiles/codex-reviewer", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got wireProfile
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	assert.Equal(t, "gpt5.6-sol-high", got.Name)
+	assert.Equal(t, []string{"codex-reviewer", "cold-reviewer"}, got.Aliases)
+
+	rec = profileReq(t, f, http.MethodPost, "/v1/spawn-profiles", map[string]any{"name": "codex-reviewer"})
+	assert.Equal(t, http.StatusConflict, rec.Code, "an alias reserves the shared handle namespace")
+
+	rec = profileReq(t, f, http.MethodPatch, "/v1/spawn-profiles/codex-reviewer", map[string]any{
+		"name": "gpt5.6-sol-high", "aliases": []string{"reviewer"},
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "patch through alias body=%s", rec.Body.String())
+	assert.Equal(t, http.StatusNotFound, profileReq(t, f, http.MethodGet, "/v1/spawn-profiles/codex-reviewer", nil).Code)
+	assert.Equal(t, http.StatusNoContent, profileReq(t, f, http.MethodDelete, "/v1/spawn-profiles/reviewer", nil).Code)
 }
 
 // Scenario: create → get → list → patch (rename + remodel) → delete → 404.

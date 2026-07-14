@@ -1790,9 +1790,11 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// profile > global default profile > Claude. Field candidates are validated
 	// against this resolved harness below.
 	var namedProfile *db.SpawnProfile
+	namedProfileHandle := ""
 	if name := strings.TrimSpace(body.Profile); name != "" {
 		var profileErr error
-		namedProfile, profileErr = db.GetSpawnProfile(name)
+		namedProfileHandle = name
+		namedProfile, profileErr = db.ResolveSpawnProfile(name)
 		if profileErr != nil || namedProfile == nil {
 			writeError(w, http.StatusBadRequest, "invalid_profile", fmt.Sprintf("spawn profile %q does not exist", name))
 			return
@@ -1800,8 +1802,12 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	}
 	groupProfile := groupDefaultProfile(g)
 	globalProfile := globalDefaultProfile()
+	namedProfileSource := profileSource(namedProfile, agent.ProvCLIProfileSource)
+	if namedProfile != nil && namedProfileHandle != namedProfile.Name {
+		namedProfileSource = fmt.Sprintf(`profile %q via alias %q`, namedProfile.Name, namedProfileHandle)
+	}
 	profileTiers := []launchProfileTier{
-		{profile: namedProfile, source: profileSource(namedProfile, agent.ProvCLIProfileSource)},
+		{profile: namedProfile, source: namedProfileSource},
 		{profile: groupProfile, source: profileSource(groupProfile, agent.ProvGroupProfileSource)},
 		{profile: globalProfile, source: profileSource(globalProfile, agent.ProvGlobalProfileSource)},
 	}
@@ -2608,7 +2614,7 @@ func groupDefaultProfile(g *db.AgentGroup) *db.SpawnProfile {
 	if g == nil || g.DefaultProfile == "" {
 		return nil
 	}
-	prof, err := db.GetSpawnProfile(g.DefaultProfile)
+	prof, err := db.ResolveSpawnProfile(g.DefaultProfile)
 	if err != nil {
 		slog.Warn("spawn: failed to load group default profile",
 			"group", g.Name, "profile", g.DefaultProfile, "error", err)
@@ -2665,7 +2671,7 @@ func globalDefaultProfile() *db.SpawnProfile {
 	if !ok || name == "" {
 		return nil
 	}
-	prof, err := db.GetSpawnProfile(name)
+	prof, err := db.ResolveSpawnProfile(name)
 	if err != nil {
 		slog.Warn("spawn: failed to load global default profile", "profile", name, "error", err)
 		return nil

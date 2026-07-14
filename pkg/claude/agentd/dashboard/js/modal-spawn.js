@@ -5,7 +5,7 @@
 
 import { $, $$, esc, shortId, syncSelectTitle, populateModelSelect, setModelSelectValue, syncCustomModelRow, MODEL_CUSTOM_VALUE, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, pickDirectory } from './helpers.js';
 import { dashPrefs } from './prefs.js';
-import { loadProfiles, getProfile, getDashDefaultProfile } from './profiles.js';
+import { loadProfiles, getProfile, getDashDefaultProfile, findProfileByHandle, profileChoices } from './profiles.js';
 import { openProfileEditor } from './modal-profiles.js';
 import { groupDefaultContext } from './modal-templates.js';
 import {
@@ -845,8 +845,8 @@ function openSpawnPermsEditor() {
 function populateSpawnProfileOptions(profiles, selected) {
   const sel = $('#agent-spawn-load-profile');
   sel.innerHTML = `<option value="">— none (blank form) —</option>`
-    + profiles.map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
-  sel.value = (selected && profiles.some(p => p.name === selected)) ? selected : '';
+    + profileChoices(profiles).map(choice => `<option value="${esc(choice.value)}">${esc(choice.label)}</option>`).join('');
+  sel.value = (selected && findProfileByHandle(profiles, selected)) ? selected : '';
   syncSelectTitle(sel);
 }
 
@@ -877,8 +877,9 @@ async function initSpawnProfileSelector(groupName, override) {
   if (!$('#agent-spawn-modal').classList.contains('show')) return;
   if ($('#agent-spawn-group').value !== groupName) return;
   populateSpawnProfileOptions(profiles, prefill);
-  if (prefill && profiles.some(p => p.name === prefill)) {
-    applyProfileToSpawnForm(profiles.find(p => p.name === prefill));
+  const picked = findProfileByHandle(profiles, prefill);
+  if (picked) {
+    applyProfileToSpawnForm(picked);
   }
   // A dropped role carries no profile field, so set it directly and last, after
   // any profile above has populated (and possibly set) the Role field.

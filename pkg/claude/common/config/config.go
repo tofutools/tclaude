@@ -608,7 +608,8 @@ type AskConfig struct {
 	// Profile names a spawn profile (groups-tab profile) whose
 	// harness/model/effort a FRESH ask adopts — the harness-independent way
 	// to run `tclaude ask` on Codex as well as Claude (JOH-252). It is
-	// resolved live at ask time (db.GetSpawnProfile); a deleted/renamed
+	// resolved live at ask time (db.ResolveSpawnProfile), by primary name or
+	// alias; a deleted/renamed
 	// profile self-heals to the no-profile path (the Model/Effort below, then
 	// the fast defaults). Only the profile's harness/model/effort are read —
 	// its agent-name/role/sandbox/… fields are irrelevant to a one-shot ask
@@ -702,7 +703,8 @@ func (c *Config) ResolvedAskProfile() (model, effort string) {
 type ScribeConfig struct {
 	// Profile names a spawn profile (Groups-tab profile) whose launch shape a
 	// fresh dashboard-summoned scribe adopts. Resolved live at summon time
-	// (db.GetSpawnProfile, via the scribe group's stamped default profile); a
+	// (db.ResolveSpawnProfile, via the scribe group's stamped default profile);
+	// primary names and aliases are accepted, and a
 	// deleted/renamed profile self-heals to the no-profile default. "" means
 	// no profile: the harness default (Claude Code).
 	Profile string `json:"profile,omitempty"`

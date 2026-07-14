@@ -158,7 +158,7 @@ export function effectiveTemplateOwner(agent, profiles) {
   let owner = false;
   const referenced =
     agent.spawn_profile &&
-    profiles.find((profile) => profile.name === agent.spawn_profile);
+    profiles.find((profile) => profile.name === agent.spawn_profile || (profile.aliases || []).includes(agent.spawn_profile));
   if (referenced && typeof referenced.is_owner === 'boolean')
     owner = referenced.is_owner;
   if (

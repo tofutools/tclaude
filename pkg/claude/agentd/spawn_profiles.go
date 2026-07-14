@@ -46,7 +46,8 @@ import (
 // *bool so an absent/null field round-trips as unset (nil), distinct from an
 // explicit false. CreatedAt / UpdatedAt are response-only (ignored on input).
 type spawnProfileJSON struct {
-	Name string `json:"name"`
+	Name    string   `json:"name"`
+	Aliases []string `json:"aliases,omitempty"`
 
 	// Launch fields — overlap clcommon.SpawnArgs.
 	Harness  string `json:"harness,omitempty"`
@@ -91,6 +92,7 @@ type spawnProfileJSON struct {
 func profileToJSON(p *db.SpawnProfile) spawnProfileJSON {
 	out := spawnProfileJSON{
 		Name:                       p.Name,
+		Aliases:                    append([]string{}, p.Aliases...),
 		Harness:                    p.Harness,
 		Model:                      p.Model,
 		Effort:                     p.Effort,
@@ -152,6 +154,22 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 	name := strings.TrimSpace(body.Name)
 	if err := validateGroupName(name); err != nil {
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg", "profile name: " + err.Error()}
+	}
+	aliases := make([]string, 0, len(body.Aliases))
+	seenAliases := map[string]bool{}
+	for _, raw := range body.Aliases {
+		alias := strings.TrimSpace(raw)
+		if err := validateGroupName(alias); err != nil {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg", "profile alias: " + err.Error()}
+		}
+		if alias == name {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg", fmt.Sprintf("profile alias %q duplicates the primary name", alias)}
+		}
+		if seenAliases[alias] {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg", fmt.Sprintf("profile alias %q appears more than once", alias)}
+		}
+		seenAliases[alias] = true
+		aliases = append(aliases, alias)
 	}
 
 	// Resolve the profile's harness — empty means Claude (the default), an
@@ -240,6 +258,7 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 
 	return &db.SpawnProfile{
 		Name:                       name,
+		Aliases:                    aliases,
 		Harness:                    hName,
 		Model:                      model,
 		Effort:                     effort,
@@ -300,6 +319,7 @@ func buildInlineProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawn
 	// A placeholder name satisfies buildProfileFromJSON's name rule; the stored
 	// inline profile is name-less by definition.
 	body.Name = "inline"
+	body.Aliases = nil
 	p, fail := buildProfileFromJSON(body)
 	if fail != nil {
 		return nil, fail
@@ -382,7 +402,7 @@ func handleGlobalDefaultSpawnProfile(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_arg", "profile name is required")
 			return
 		}
-		prof, err := db.GetSpawnProfile(name)
+		prof, err := db.ResolveSpawnProfile(name)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
@@ -391,11 +411,11 @@ func handleGlobalDefaultSpawnProfile(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "not_found", "no such profile")
 			return
 		}
-		if err := db.SetDashboardProfileRef(dashboardDefaultProfilePrefKey, dashboardDefaultProfileIDPrefKey, name, prof.ID); err != nil {
+		if err := db.SetDashboardProfileRef(dashboardDefaultProfilePrefKey, dashboardDefaultProfileIDPrefKey, prof.Name, prof.ID); err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"name": name})
+		writeJSON(w, http.StatusOK, map[string]any{"name": prof.Name})
 	case http.MethodDelete:
 		if _, ok := requirePermission(w, r, PermProfilesManage); !ok {
 			return
@@ -456,7 +476,7 @@ func handleSpawnProfileFromAgent(w http.ResponseWriter, r *http.Request) {
 
 const (
 	profileExportFormat  = "tclaude-spawn-profiles"
-	profileExportVersion = 1
+	profileExportVersion = 2
 )
 
 type profileExportEnvelope struct {
@@ -474,11 +494,12 @@ type profileImportInspectResult struct {
 }
 
 type profileImportPreview struct {
-	Name        string `json:"name"`
-	Exists      bool   `json:"exists"`
-	Valid       bool   `json:"valid"`
-	Error       string `json:"error,omitempty"`
-	DefaultName string `json:"default_name,omitempty"`
+	Name        string   `json:"name"`
+	Aliases     []string `json:"aliases,omitempty"`
+	Exists      bool     `json:"exists"`
+	Valid       bool     `json:"valid"`
+	Error       string   `json:"error,omitempty"`
+	DefaultName string   `json:"default_name,omitempty"`
 }
 
 type profileImportDecision struct {
@@ -537,16 +558,23 @@ func validateProfileEnvelope(env profileExportEnvelope) *spawnFailure {
 			"this export is format_version %d, but this tclaude supports up to %d — upgrade tclaude to import it",
 			env.FormatVersion, profileExportVersion)}
 	}
-	seen := map[string]bool{}
+	seen := map[string]string{}
 	for i, p := range env.Profiles {
 		name := strings.TrimSpace(p.Name)
 		if name == "" {
 			return &spawnFailure{http.StatusBadRequest, "invalid_arg", fmt.Sprintf("profile #%d has no name", i+1)}
 		}
-		if seen[name] {
+		if owner := seen[name]; owner != "" {
 			return &spawnFailure{http.StatusBadRequest, "invalid_arg", fmt.Sprintf("profile %q appears more than once in the export", name)}
 		}
-		seen[name] = true
+		seen[name] = name
+		for _, rawAlias := range p.Aliases {
+			alias := strings.TrimSpace(rawAlias)
+			if owner := seen[alias]; owner != "" {
+				return &spawnFailure{http.StatusBadRequest, "invalid_arg", fmt.Sprintf("profile handle %q is used by both %q and %q in the export", alias, owner, name)}
+			}
+			seen[alias] = name
+		}
 	}
 	return nil
 }
@@ -590,8 +618,9 @@ func handleSpawnProfilesExport(w http.ResponseWriter, r *http.Request) {
 			out = append(out, stripProfileExportLocalFields(profileToJSON(p)))
 		}
 	} else {
+		seenProfileIDs := map[int64]bool{}
 		for _, name := range names {
-			p, err := db.GetSpawnProfile(name)
+			p, err := db.ResolveSpawnProfile(name)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "io", err.Error())
 				return
@@ -600,6 +629,10 @@ func handleSpawnProfilesExport(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusNotFound, "not_found", fmt.Sprintf("no such profile %q", name))
 				return
 			}
+			if seenProfileIDs[p.ID] {
+				continue
+			}
+			seenProfileIDs[p.ID] = true
 			out = append(out, stripProfileExportLocalFields(profileToJSON(p)))
 		}
 	}
@@ -621,7 +654,7 @@ func nextProfileImportName(name string) string {
 		if i > 1 {
 			candidate = fmt.Sprintf("%s-copy-%d", base, i)
 		}
-		existing, err := db.GetSpawnProfile(candidate)
+		existing, err := db.ResolveSpawnProfile(candidate)
 		if err != nil {
 			return candidate
 		}
@@ -656,9 +689,24 @@ func inspectProfileEnvelope(env profileExportEnvelope) (profileImportInspectResu
 		if existing != nil {
 			prev.DefaultName = nextProfileImportName(name)
 		}
-		if _, fail := buildProfileFromJSON(pj); fail != nil {
+		allowedID := int64(0)
+		if existing != nil {
+			allowedID = existing.ID
+		}
+		built, fail := buildProfileFromJSON(pj)
+		if fail != nil {
 			prev.Valid = false
 			prev.Error = fail.Msg
+		} else {
+			prev.Aliases = append([]string{}, built.Aliases...)
+		}
+		if fail == nil {
+			if conflict, conflictErr := profileHandleConflict(built, allowedID); conflictErr != nil {
+				return profileImportInspectResult{}, &spawnFailure{http.StatusInternalServerError, "io", conflictErr.Error()}
+			} else if conflict != "" {
+				prev.Valid = false
+				prev.Error = conflict
+			}
 		}
 		res.Profiles = append(res.Profiles, prev)
 	}
@@ -727,7 +775,7 @@ func importProfiles(env profileExportEnvelope, decisions []profileImportDecision
 	}
 
 	result := profileImportResult{Imported: []profileImportApplied{}, Skipped: []string{}, Warnings: []string{}}
-	plannedNames := map[string]string{}
+	plannedHandles := map[string]string{}
 	type importPlan struct {
 		source  string
 		target  string
@@ -764,14 +812,24 @@ func importProfiles(env profileExportEnvelope, decisions []profileImportDecision
 		default:
 			return profileImportResult{}, &spawnFailure{http.StatusBadRequest, "invalid_arg", fmt.Sprintf("profile %q: unsupported import action %q", source, action)}
 		}
-		if prior, dup := plannedNames[target]; dup {
-			return profileImportResult{}, &spawnFailure{http.StatusBadRequest, "invalid_arg", fmt.Sprintf("profiles %q and %q both import as %q", prior, source, target)}
-		}
-		plannedNames[target] = source
 		pj = stripProfileExportLocalFields(pj)
 		pj.Name = target
-		if _, fail := buildProfileFromJSON(pj); fail != nil {
+		if action == "rename" && len(pj.Aliases) > 0 {
+			// Rename creates a second profile rather than renaming the local row.
+			// Unique aliases stay with their existing owner and cannot be copied.
+			pj.Aliases = nil
+			result.Warnings = append(result.Warnings, fmt.Sprintf(
+				"profile %q: aliases were omitted from renamed copy %q", source, target))
+		}
+		built, fail := buildProfileFromJSON(pj)
+		if fail != nil {
 			return profileImportResult{}, fail
+		}
+		for _, handle := range append([]string{built.Name}, built.Aliases...) {
+			if prior := plannedHandles[handle]; prior != "" {
+				return profileImportResult{}, &spawnFailure{http.StatusBadRequest, "invalid_arg", fmt.Sprintf("profiles %q and %q both import handle %q", prior, source, handle)}
+			}
+			plannedHandles[handle] = source
 		}
 		plans = append(plans, importPlan{source: source, target: target, action: action, profile: pj})
 	}
@@ -784,6 +842,27 @@ func importProfiles(env profileExportEnvelope, decisions []profileImportDecision
 		if existing != nil && (plan.action == "create" || plan.action == "rename") {
 			return profileImportResult{}, &spawnFailure{http.StatusConflict, "exists", fmt.Sprintf(
 				"a spawn profile named %q already exists — choose overwrite or rename", plan.target)}
+		}
+		resolved, err := db.ResolveSpawnProfile(plan.target)
+		if err != nil {
+			return profileImportResult{}, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+		}
+		if resolved != nil && existing == nil {
+			return profileImportResult{}, &spawnFailure{http.StatusConflict, "exists", fmt.Sprintf(
+				"profile name %q is already an alias of %q — choose another name", plan.target, resolved.Name)}
+		}
+		built, fail := buildProfileFromJSON(plan.profile)
+		if fail != nil {
+			return profileImportResult{}, fail
+		}
+		allowedID := int64(0)
+		if existing != nil && plan.action == "overwrite" {
+			allowedID = existing.ID
+		}
+		if conflict, conflictErr := profileHandleConflict(built, allowedID); conflictErr != nil {
+			return profileImportResult{}, &spawnFailure{http.StatusInternalServerError, "io", conflictErr.Error()}
+		} else if conflict != "" {
+			return profileImportResult{}, &spawnFailure{http.StatusConflict, "exists", conflict}
 		}
 	}
 
@@ -817,6 +896,19 @@ func importProfiles(env profileExportEnvelope, decisions []profileImportDecision
 		result.Imported = append(result.Imported, profileImportApplied{Source: plan.source, Name: plan.target})
 	}
 	return result, nil
+}
+
+func profileHandleConflict(p *db.SpawnProfile, allowedProfileID int64) (string, error) {
+	for _, handle := range append([]string{p.Name}, p.Aliases...) {
+		owner, err := db.ResolveSpawnProfile(handle)
+		if err != nil {
+			return "", err
+		}
+		if owner != nil && owner.ID != allowedProfileID {
+			return fmt.Sprintf("profile handle %q is already owned by %q", handle, owner.Name), nil
+		}
+	}
+	return "", nil
 }
 
 // seedProfileFromConv traces a live conv's observable launch config + granted
@@ -865,7 +957,7 @@ func handleSpawnProfileByName(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		p, err := db.GetSpawnProfile(name)
+		p, err := db.ResolveSpawnProfile(name)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
@@ -879,7 +971,7 @@ func handleSpawnProfileByName(w http.ResponseWriter, r *http.Request) {
 		if _, ok := requirePermission(w, r, PermProfilesManage); !ok {
 			return
 		}
-		existing, err := db.GetSpawnProfile(name)
+		existing, err := db.ResolveSpawnProfile(name)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
@@ -911,7 +1003,16 @@ func handleSpawnProfileByName(w http.ResponseWriter, r *http.Request) {
 		if _, ok := requirePermission(w, r, PermProfilesManage); !ok {
 			return
 		}
-		n, err := db.DeleteSpawnProfile(name)
+		existing, err := db.ResolveSpawnProfile(name)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		if existing == nil {
+			writeError(w, http.StatusNotFound, "not_found", "no such profile")
+			return
+		}
+		n, err := db.DeleteSpawnProfile(existing.Name)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
