@@ -36,6 +36,7 @@ var nodeTestInputs embed.FS
 //   - Locally a node-less contributor skips this test, so they are not blocked.
 func TestDashboardJS(t *testing.T) {
 	ci := os.Getenv("CI") != ""
+	nodeCacheKey := os.Getenv("TCLAUDE_NODE_TEST_CACHE_KEY")
 	recordNodeInputs(t)
 
 	node, err := exec.LookPath("node")
@@ -45,6 +46,10 @@ func TestDashboardJS(t *testing.T) {
 				"(the Test job is expected to run actions/setup-node)")
 		}
 		t.Skip("node not on PATH — skipping JS unit tests (install node to run them)")
+	}
+	if ci && nodeCacheKey == "" {
+		t.Fatal("TCLAUDE_NODE_TEST_CACHE_KEY is empty in CI — the external Node runtime " +
+			"must participate in Go's test-cache key")
 	}
 	if version, versionErr := exec.Command(node, "--version").Output(); versionErr == nil {
 		t.Logf("Node runtime: %s (%s)", node, bytes.TrimSpace(version))
