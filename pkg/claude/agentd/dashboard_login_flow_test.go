@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -56,16 +57,22 @@ func TestDashboardLogin_UnauthedServesSignInPage(t *testing.T) {
 	assert.Contains(t, body, `action="/dashboard/login"`,
 		"plain sign-in page posts to the bare login path")
 
-	// The 🎰 slop theme survives the re-auth round-trip: the form action
-	// carries ?slop=1 so the post-login redirect lands back on it.
+	// The 🎰 slop theme survives the re-auth round-trip inside the validated
+	// return target, so the post-login redirect lands back on it.
 	rec = serveLogin(dash, httptest.NewRequest(http.MethodGet, "/?slop=1", nil))
-	assert.Contains(t, rec.Body.String(), `action="/dashboard/login?slop=1"`,
+	assert.Contains(t, rec.Body.String(), `action="/dashboard/login?return_to=%2F%3Fslop%3D1"`,
 		"slop theme must thread into the login form action")
 
 	// The 🧙 wizard theme threads through the same way (?wizard=1).
 	rec = serveLogin(dash, httptest.NewRequest(http.MethodGet, "/?wizard=1", nil))
-	assert.Contains(t, rec.Body.String(), `action="/dashboard/login?wizard=1"`,
+	assert.Contains(t, rec.Body.String(), `action="/dashboard/login?return_to=%2F%3Fwizard%3D1"`,
 		"wizard theme must thread into the login form action")
+
+	// A routed app location becomes a same-origin return target rather than
+	// being flattened to / after login.
+	rec = serveLogin(dash, httptest.NewRequest(http.MethodGet, "/access/sudo?wizard=1", nil))
+	assert.Contains(t, rec.Body.String(),
+		`action="/dashboard/login?return_to=%2Faccess%2Fsudo%3Fwizard%3D1"`)
 }
 
 // Scenario: the operator pastes a valid operator token. The login
@@ -93,6 +100,42 @@ func TestDashboardLogin_ValidOperatorTokenSignsIn(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, "cookie GET / body=%s", rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "<!DOCTYPE html",
 		"the login-minted cookie must serve the dashboard HTML")
+}
+
+func TestDashboardLogin_RestoresValidatedReturnTarget(t *testing.T) {
+	const base = "http://127.0.0.1:0"
+	t.Cleanup(agentd.SetPopupBaseURLForTest(base))
+	t.Cleanup(agentd.SetOperatorTokenForTest("tclo_the_real_one"))
+
+	dash := http.NewServeMux()
+	agentd.RegisterDashboardRoutesForTest(dash)
+
+	req := loginPOST(base, "tclo_the_real_one")
+	req.URL.RawQuery = url.Values{"return_to": {"/access/sudo?wizard=1"}}.Encode()
+	rec := serveLogin(dash, req)
+	require.Equal(t, http.StatusSeeOther, rec.Code)
+	assert.Equal(t, "/access/sudo?wizard=1", rec.Header().Get("Location"))
+
+	// Absolute/cross-host targets fail closed to the dashboard root.
+	req = loginPOST(base, "tclo_the_real_one")
+	req.URL.RawQuery = url.Values{"return_to": {"https://evil.example/steal"}}.Encode()
+	rec = serveLogin(dash, req)
+	require.Equal(t, http.StatusSeeOther, rec.Code)
+	assert.Equal(t, "/", rec.Header().Get("Location"))
+
+	// Dot-segments are normalized before the path allowlist is applied. A
+	// target that appears to start in the SPA but resolves outside it fails
+	// closed instead of redirecting to the resolved non-dashboard route.
+	for _, target := range []string{
+		"/access/../../v1/process/worklist/1/action",
+		"/access/%2e%2e/%2e%2e/v1/process/worklist/1/action",
+	} {
+		req = loginPOST(base, "tclo_the_real_one")
+		req.URL.RawQuery = url.Values{"return_to": {target}}.Encode()
+		rec = serveLogin(dash, req)
+		require.Equal(t, http.StatusSeeOther, rec.Code)
+		assert.Equal(t, "/", rec.Header().Get("Location"), "target=%q", target)
+	}
 }
 
 // Scenario: a wrong operator token is refused — no cookie, sign-in page

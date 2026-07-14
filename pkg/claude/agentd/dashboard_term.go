@@ -356,7 +356,7 @@ func hangupProcessGroup(proc *os.Process) {
 // detaches on the tmux level. Pass "" when there is no associated session
 // (then teardown falls back to the process-group SIGHUP alone).
 func runPTYOverWS(w http.ResponseWriter, r *http.Request, shellCommand, tmuxSession string) {
-	conn, err := termWSUpgrader.Upgrade(w, r, nil)
+	conn, err := upgradeTerminalWebSocket(w, r)
 	if err != nil {
 		return
 	}
@@ -440,4 +440,12 @@ func runPTYOverWS(w http.ResponseWriter, r *http.Request, shellCommand, tmuxSess
 	}()
 
 	wg.Wait()
+}
+
+// upgradeTerminalWebSocket carries response headers already written by the
+// dashboard auth gate into Gorilla's hijacked 101 response. This is
+// load-bearing for restart grace: Set-Cookie rotates an old session to the new
+// process token during the WebSocket handshake.
+func upgradeTerminalWebSocket(w http.ResponseWriter, r *http.Request) (*websocket.Conn, error) {
+	return termWSUpgrader.Upgrade(w, r, w.Header().Clone())
 }

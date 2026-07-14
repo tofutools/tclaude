@@ -3,6 +3,7 @@ package agentd
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"path"
 	"sort"
 	"strings"
 	"time"
@@ -74,16 +76,25 @@ func init() {
 	_ = mime.AddExtensionType(".map", "application/json")
 }
 
-// dashboardSessionToken is generated once per agentd process and gates
-// every /api/* request. It's set as an HttpOnly + SameSite=Strict
-// cookie on the first GET of /, and checked on subsequent /api/*
-// fetches. Same threat model as the popup: defense-in-depth against
-// drive-by browser tabs and scraped-URL replay; a same-user process
-// with /proc access can still snoop, which we accept as the
-// inherent same-user trust boundary on this machine.
+// dashboardSessionToken is generated once per agentd process and gates every
+// /api/* request. On a clean shutdown its SHA-256 digest (never the replayable
+// cookie value) is kept briefly in SQLite. The next daemon accepts that old
+// cookie only during dashboardSessionGracePeriod and immediately replaces it
+// with this process's fresh token, so a connected browser crosses a restart
+// without turning the session cookie into a durable credential.
 //
 // Empty until initDashboardToken runs in startPopupServer.
 var dashboardSessionToken string
+
+const dashboardSessionGracePeriod = 30 * time.Minute
+
+// dashboardGraceSessionHashes is restored once at startup and then read-only.
+// Values are absolute expiries so a long-running daemon never accepts a grace
+// cookie past its bounded handoff window even if its in-memory map remains.
+var dashboardGraceSessionHashes = map[string]time.Time{}
+
+// dashboardSessionNow is indirected for focused expiry tests.
+var dashboardSessionNow = time.Now
 
 const dashboardCookieName = "tclaude_dashboard_session"
 
@@ -102,6 +113,59 @@ func initDashboardToken() {
 	dashboardSessionToken = hex.EncodeToString(b[:])
 }
 
+func dashboardTokenHash(token string) string {
+	digest := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(digest[:])
+}
+
+// restoreDashboardGraceSessions loads the still-valid cookie digests left by
+// earlier clean shutdowns. The DB helper prunes expired rows as part of the
+// read. Failure is non-fatal at the call site: the dashboard remains secure
+// and simply falls back to the login flow after a restart.
+func restoreDashboardGraceSessions() error {
+	now := dashboardSessionNow()
+	rows, err := db.ListDashboardSessionGrace(now)
+	if err != nil {
+		return err
+	}
+	restored := make(map[string]time.Time, len(rows))
+	for _, row := range rows {
+		restored[row.TokenHash] = row.ExpiresAt
+	}
+	dashboardGraceSessionHashes = restored
+	return nil
+}
+
+// preserveDashboardSessionForRestart records only a digest of the current
+// cookie. Multiple quick restarts retain multiple unexpired digests, allowing
+// a browser that did not reconnect between restarts to catch up on the next
+// successful load.
+func preserveDashboardSessionForRestart() error {
+	if dashboardSessionToken == "" {
+		return nil
+	}
+	now := dashboardSessionNow()
+	return db.PreserveDashboardSessionGrace(
+		dashboardTokenHash(dashboardSessionToken), now.Add(dashboardSessionGracePeriod), now)
+}
+
+// dashboardSessionCookieMatch reports whether value is the current cookie or
+// a still-valid restart handoff. refresh is true only for the latter: callers
+// that write a response must replace it with the fresh process token.
+func dashboardSessionCookieMatch(value string) (valid, refresh bool) {
+	if dashboardSessionToken == "" || value == "" {
+		return false, false
+	}
+	if subtle.ConstantTimeCompare([]byte(value), []byte(dashboardSessionToken)) == 1 {
+		return true, false
+	}
+	expiresAt, ok := dashboardGraceSessionHashes[dashboardTokenHash(value)]
+	if !ok || !dashboardSessionNow().Before(expiresAt) {
+		return false, false
+	}
+	return true, true
+}
+
 // registerDashboardRoutes wires the dashboard onto the popup-server
 // mux. We share the listener since both views are loopback-only and
 // the human only ever wants one process serving them.
@@ -109,6 +173,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/", handleDashboardRoot)
 	mux.HandleFunc("/terminals", handleDashboardTerminals)
 	mux.HandleFunc("/dashboard/login", handleDashboardLogin)
+	mux.HandleFunc("/api/auth/session", handleDashboardAuthSession)
 	mux.HandleFunc("/api/snapshot", withGzip(withPerfTiming("/api/snapshot", handleDashboardSnapshot)))
 	mux.HandleFunc("/api/perf", withGzip(handleDashboardPerf))
 	mux.HandleFunc("/api/perf/reset", handleDashboardPerfReset)
@@ -248,9 +313,8 @@ func handleDashboardRoot(w http.ResponseWriter, r *http.Request) {
 			// browser that lost the race after a daemon restart).
 			// Don't dead-end on plain text — render the sign-in page
 			// so the human can re-authenticate in place.
-			renderDashboardLoginPage(w, http.StatusForbidden,
-				"That dashboard link has expired or was already used.",
-				dashboardThemeParamKV(r))
+			renderDashboardLoginPage(w, r, http.StatusForbidden,
+				"That dashboard link has expired or was already used.")
 			return
 		}
 		setDashboardSessionCookie(w)
@@ -271,7 +335,15 @@ func handleDashboardRoot(w http.ResponseWriter, r *http.Request) {
 
 	// Already authenticated: an existing valid cookie (refresh / new
 	// tab in the same browser) just gets the page.
-	if c, err := r.Cookie(dashboardCookieName); err == nil && c.Value == dashboardSessionToken {
+	if c, err := r.Cookie(dashboardCookieName); err == nil {
+		valid, refresh := dashboardSessionCookieMatch(c.Value)
+		if !valid {
+			renderDashboardLoginPage(w, r, http.StatusForbidden, "")
+			return
+		}
+		if refresh {
+			setDashboardSessionCookie(w)
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
 		_, _ = w.Write(dashboardIndexHTML)
@@ -284,7 +356,44 @@ func handleDashboardRoot(w http.ResponseWriter, r *http.Request) {
 	// at `tclaude agent dashboard` (the zero-friction, no-secret path)
 	// and also offers an operator-token field so they can sign in from
 	// the browser without switching back to a terminal.
-	renderDashboardLoginPage(w, http.StatusForbidden, "", dashboardThemeParamKV(r))
+	renderDashboardLoginPage(w, r, http.StatusForbidden, "")
+}
+
+// dashboardLoginReturnTarget returns the same-origin dashboard location to
+// restore after an operator-token login. A return_to supplied by the auth
+// fetch wrapper wins; otherwise the current app URL becomes the target. Only
+// known SPA paths and the standalone terminals page are accepted, so this can
+// never become an open redirect. One-shot auth parameters are stripped.
+func dashboardLoginReturnTarget(r *http.Request) string {
+	raw := r.URL.Query().Get("return_to")
+	if raw == "" {
+		u := *r.URL
+		u.Scheme, u.Host = "", ""
+		raw = u.String()
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.IsAbs() || u.Host != "" || !strings.HasPrefix(raw, "/") ||
+		strings.HasPrefix(raw, "//") || strings.Contains(u.Path, `\`) {
+		return "/"
+	}
+	u.Path = path.Clean(u.Path)
+	u.RawPath = ""
+	if !isDashboardAppPath(u.Path) && u.Path != "/terminals" {
+		return "/"
+	}
+	q := u.Query()
+	q.Del("init_token")
+	q.Del("return_to")
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+func dashboardLoginFormQuery(r *http.Request) string {
+	target := dashboardLoginReturnTarget(r)
+	if target == "/" {
+		return ""
+	}
+	return "?" + url.Values{"return_to": []string{target}}.Encode()
 }
 
 // dashboardThemeParamKV returns the active cosmetic-theme URL param as a
@@ -374,27 +483,38 @@ func handleDashboardLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "dashboard token not initialised", http.StatusServiceUnavailable)
 		return
 	}
-	themeKV := dashboardThemeParamKV(r)
 	if !checkLoginOrigin(r) {
-		renderDashboardLoginPage(w, http.StatusForbidden,
-			"Request blocked: it didn't come from the dashboard page.", themeKV)
+		renderDashboardLoginPage(w, r, http.StatusForbidden,
+			"Request blocked: it didn't come from the dashboard page.")
 		return
 	}
 	if !operatorTokenMatches(r.FormValue("token")) {
 		// Uniform message for "blank", "wrong", and "no token was ever
 		// minted" — never disclose which, and never echo the input back.
-		renderDashboardLoginPage(w, http.StatusForbidden,
-			"That operator token wasn't accepted. Copy it from the agentd startup banner (it begins with `tclo_`).", themeKV)
+		renderDashboardLoginPage(w, r, http.StatusForbidden,
+			"That operator token wasn't accepted. Copy it from the agentd startup banner (it begins with `tclo_`).")
 		return
 	}
 	setDashboardSessionCookie(w)
-	// 303 to the bare path: a refresh now rides the cookie, and the
-	// posted token never lingers in history or an access log.
-	redirectTarget := "/"
-	if themeKV != "" {
-		redirectTarget += "?" + themeKV
+	// A refresh now rides the cookie, and the posted token never lingers in
+	// history or an access log. Restore the app/terminal location that was open
+	// when authentication expired.
+	http.Redirect(w, r, dashboardLoginReturnTarget(r), http.StatusSeeOther)
+}
+
+// handleDashboardAuthSession is the lightweight preflight for browser
+// transports that cannot inspect a failed authentication response themselves
+// (notably WebSocket). The normal cookie + Origin gate performs grace-cookie
+// rotation or emits the fetch wrapper's login-required signal.
+func handleDashboardAuthSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET only", http.StatusMethodNotAllowed)
+		return
 	}
-	http.Redirect(w, r, redirectTarget, http.StatusSeeOther)
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // originMatchesBase reports whether an Origin or Referer header value
@@ -575,29 +695,41 @@ func checkDashboardAuth(w http.ResponseWriter, r *http.Request) bool {
 	if dashboardPreAuthed(r) {
 		return true
 	}
-	ok, code, msg := dashboardAuthResult(r)
+	ok, loginRequired, code, msg := dashboardAuthResult(r)
 	if !ok {
+		if loginRequired {
+			w.Header().Set("X-Tclaude-Login-Required", "1")
+		}
 		http.Error(w, msg, code)
 		return false
+	}
+	if c, err := r.Cookie(dashboardCookieName); err == nil {
+		if _, refresh := dashboardSessionCookieMatch(c.Value); refresh {
+			setDashboardSessionCookie(w)
+		}
 	}
 	return true
 }
 
 // dashboardAuthResult is the pure predicate behind checkDashboardAuth:
 // it runs the cookie + Origin/Referer checks and returns whether the
-// request is an authenticated dashboard caller, plus the HTTP code +
-// message to use on failure. Factored out so the audit middleware can
+// request is an authenticated dashboard caller, whether the browser must
+// log in again, and the HTTP code + message to use on failure. Factored out
+// so the audit middleware can
 // ask "is this the authenticated operator?" without writing a response —
 // attribution keys on a *valid session*, never on the response status (a
 // post-auth policy 403, e.g. a blocklisted sudo grant, is still the
 // operator and must not be downgraded to "unauthenticated"). See JOH-268.
-func dashboardAuthResult(r *http.Request) (ok bool, code int, msg string) {
+func dashboardAuthResult(r *http.Request) (ok bool, loginRequired bool, code int, msg string) {
 	if dashboardSessionToken == "" {
-		return false, http.StatusServiceUnavailable, "dashboard not initialised"
+		return false, false, http.StatusServiceUnavailable, "dashboard not initialised"
 	}
 	c, err := r.Cookie(dashboardCookieName)
-	if err != nil || c.Value != dashboardSessionToken {
-		return false, http.StatusForbidden, "missing or invalid dashboard cookie; load / first"
+	if err != nil {
+		return false, true, http.StatusForbidden, "missing or invalid dashboard cookie; load / first"
+	}
+	if valid, _ := dashboardSessionCookieMatch(c.Value); !valid {
+		return false, true, http.StatusForbidden, "missing or invalid dashboard cookie; load / first"
 	}
 	// Non-loopback bind: host-relative same-origin (mirror the remote
 	// listener), since the browser reaches us through a hostname/proxy the
@@ -605,14 +737,14 @@ func dashboardAuthResult(r *http.Request) (ok bool, code int, msg string) {
 	// stay the primary gate.
 	if !isLoopbackHost(dashboardBindHost) {
 		if !dashboardHostRelativeOrigin(r) {
-			return false, http.StatusForbidden, "Origin/Referer host mismatch"
+			return false, false, http.StatusForbidden, "Origin/Referer host mismatch"
 		}
-		return true, http.StatusOK, ""
+		return true, false, http.StatusOK, ""
 	}
 	origin := r.Header.Get("Origin")
 	referer := r.Header.Get("Referer")
 	if origin == "" && referer == "" {
-		return false, http.StatusForbidden, "missing Origin and Referer"
+		return false, false, http.StatusForbidden, "missing Origin and Referer"
 	}
 	// popupBaseURL is always bound in production when these routes are
 	// registered; it is empty only in tests that register the mux without
@@ -620,13 +752,13 @@ func dashboardAuthResult(r *http.Request) (ok bool, code int, msg string) {
 	// origin pin is disabled (mirrors checkLoginOrigin's early return).
 	if popupBaseURL != "" {
 		if origin != "" && !originMatchesBase(origin, popupBaseURL) {
-			return false, http.StatusForbidden, "Origin mismatch"
+			return false, false, http.StatusForbidden, "Origin mismatch"
 		}
 		if origin == "" && !originMatchesBase(referer, popupBaseURL) {
-			return false, http.StatusForbidden, "Referer mismatch"
+			return false, false, http.StatusForbidden, "Referer mismatch"
 		}
 	}
-	return true, http.StatusOK, ""
+	return true, false, http.StatusOK, ""
 }
 
 // snapshotPayload is the wire shape for /api/snapshot. One round-trip

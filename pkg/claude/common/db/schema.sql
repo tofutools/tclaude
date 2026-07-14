@@ -714,3 +714,12 @@ CREATE TABLE human_message_attachments (
 			storage_path TEXT NOT NULL
 		);
 
+CREATE TABLE dashboard_session_grace (
+			token_hash TEXT PRIMARY KEY,
+			expires_at INTEGER NOT NULL,
+			created_at TEXT NOT NULL
+		);
+
+CREATE INDEX idx_dashboard_session_grace_expiry
+			ON dashboard_session_grace(expires_at);
+

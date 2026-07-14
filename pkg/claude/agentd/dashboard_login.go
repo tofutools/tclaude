@@ -24,10 +24,8 @@ import (
 //     from a remote/forwarded browser where dropping to the CLI is
 //     awkward. See handleDashboardLogin for the security rationale.
 //
-// The two %s placeholders are the optional error banner (already
-// HTML-escaped, or empty) and the form action's query suffix (a fixed
-// "", "?slop=1" or "?wizard=1", never user input). Everything else is
-// static, so there is no other injection surface on this page.
+// The two %s placeholders are the optional error banner and the form action's
+// HTML-escaped query suffix. Everything else is static.
 const dashboardLoginPageTemplate = `<!doctype html>
 <html lang="en">
 <head>
@@ -93,20 +91,14 @@ terminal — use the <code>tclaude agent dashboard</code> command above instead.
 // status. errMsg, when non-empty, is HTML-escaped and shown in a banner
 // above the explanation; pass "" for the plain (first-visit) page.
 //
-// themeKV carries the active cosmetic theme ("slop=1" / "wizard=1", or "")
-// across the login POST so the 🎰 / 🧙 re-skin survives the re-authentication
-// round-trip. It is one of a fixed set of internal constants (from
-// dashboardThemeParamKV), never user input, so splicing it into the form
-// action is injection-safe.
-func renderDashboardLoginPage(w http.ResponseWriter, status int, errMsg string, themeKV string) {
+// The form carries a validated same-origin return target so deep app locations
+// and standalone terminal popouts resume after re-authentication.
+func renderDashboardLoginPage(w http.ResponseWriter, r *http.Request, status int, errMsg string) {
 	banner := ""
 	if errMsg != "" {
 		banner = `<p class="err">` + html.EscapeString(errMsg) + "</p>\n"
 	}
-	formQuery := ""
-	if themeKV != "" {
-		formQuery = "?" + themeKV
-	}
+	formQuery := html.EscapeString(dashboardLoginFormQuery(r))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)

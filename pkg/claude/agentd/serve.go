@@ -201,6 +201,12 @@ func runServe(p *serveParams) error {
 	if err := openDatabaseReportingMigrations(); err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
+	if err := restoreDashboardGraceSessions(); err != nil {
+		// Restart handoff is convenience, not an availability or auth
+		// prerequisite. Fail closed to the existing sign-in path if the private
+		// grace store cannot be read.
+		slog.Warn("dashboard session: could not restore restart grace cookies", "error", err)
+	}
 
 	listeners, createdSocketPaths, err := listenUnixSockets(socketPaths)
 	if err != nil {
@@ -541,6 +547,11 @@ func runServe(p *serveParams) error {
 	}
 
 	// Graceful shutdown.
+	if err := preserveDashboardSessionForRestart(); err != nil {
+		// The live daemon remains secure; the only loss is that browsers will
+		// need to sign in again after this restart.
+		slog.Warn("dashboard session: could not preserve restart grace cookie", "error", err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(ctx)
