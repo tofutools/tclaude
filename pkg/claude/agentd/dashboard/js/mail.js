@@ -76,7 +76,11 @@ import { initMailResize } from './mail-resize.js';
 import { lastSnapshot } from './dashboard.js';
 import { confirmModal, toast } from './refresh.js';
 import { fetchListFull } from './list-paging.js';
-import { createMailState, HUMAN_MAILBOX_ID as HUMAN_ID, messageDeleteEndpoint } from './mail-state.js';
+import { suppressNextMessagesAttention } from './mail-bridge.js';
+import {
+  adjacentAttentionPages, createMailState, HUMAN_MAILBOX_ID as HUMAN_ID,
+  messageDeleteEndpoint, nextMessagesAttention, prepareMessagesAttention,
+} from './mail-state.js';
 
 const ALL_ID = 'all';
 // The synthetic "access requests" folder — in-flight human-approval requests
@@ -999,7 +1003,10 @@ function markOpenedHumanRead(id) {
 async function openMailbox(id) {
   if (!id) return;
   const navBtn = $('nav [data-tab="messages"]');
-  if (navBtn) navBtn.click();
+  if (navBtn) {
+    suppressNextMessagesAttention();
+    navBtn.click();
+  }
   await loadMailboxes();
   const selected = await selectMailbox(id);
   if (!selected) return;
@@ -1145,12 +1152,84 @@ function renderAccessRequests(list, pending) {
 function focusAccessRequest(id) {
   accessHighlightId = id || null;
   const navBtn = $('nav [data-tab="messages"]');
-  if (navBtn) navBtn.click();
+  if (navBtn) {
+    suppressNextMessagesAttention();
+    navBtn.click();
+  }
   selectMailbox(ACCESS_ID);
   if (id) {
     mail.selectedMsgId = id;
     paintMail();
   }
+}
+
+// clearAttentionSearch guarantees that the badge target cannot remain hidden
+// behind a stale Messages filter. This is deliberately narrower than
+// setMessageQuery: the attention jump owns the immediate folder/page load and
+// must not also leave a debounced request racing it.
+function clearAttentionSearch() {
+  prepareMessagesAttention(mail);
+  dashPrefs.removeItem('tclaude.dash.filter.messages');
+  if (mail.searchTimer) {
+    clearTimeout(mail.searchTimer);
+    mail.searchTimer = null;
+  }
+}
+
+// focusNextAttention opens the oldest outstanding item advertised by the
+// Messages badge. Access requests are already snapshot-ordered oldest-first;
+// human notifications are newest-first and paged, so nextMessagesAttention
+// returns the target's full-snapshot index for a direct page jump.
+async function focusNextAttention(snapshot) {
+  if (mail.busy) return false;
+  const target = nextMessagesAttention(snapshot);
+  if (!target) return false;
+
+  clearAttentionSearch();
+  if (target.kind === 'access') {
+    accessHighlightId = target.id;
+    const selected = await selectMailbox(ACCESS_ID);
+    if (!selected || mail.selected !== ACCESS_ID) return false;
+    mail.selectedMsgId = target.id;
+    paintMail();
+    return true;
+  }
+
+  const selected = await selectMailbox(HUMAN_ID);
+  if (!selected || mail.selected !== HUMAN_ID) return false;
+  const targetPage = Math.floor(target.index / mail.pageSize) + 1;
+  if (mail.page !== targetPage) {
+    mail.page = targetPage;
+    await loadMessages();
+  }
+  if (mail.selected !== HUMAN_ID) return false;
+  if (!mail.messages.some((message) => message.id === target.id)) {
+    // A mutation between snapshot and mailbox fetch can move the target across
+    // one page boundary: insertions push it later, while deletions pull it
+    // earlier. Probe both neighbours before leaving the operator at the
+    // estimated page.
+    const estimatedPage = mail.page;
+    for (const candidatePage of adjacentAttentionPages(estimatedPage, pageCount())) {
+      mail.page = candidatePage;
+      await loadMessages();
+      if (mail.messages.some((message) => message.id === target.id)) break;
+    }
+    if (!mail.messages.some((message) => message.id === target.id)) {
+      mail.page = estimatedPage;
+      await loadMessages();
+      paintMail();
+      return false;
+    }
+  }
+  selectMessage(target.id);
+  // Avoid reopening the same notification on a rapid second click before the
+  // next 2s snapshot reconciles the badge.
+  const source = snapshot?.messages?.[target.index];
+  if (source && source.id === target.id && !source.read) {
+    source.read = true;
+    snapshot.messages_unread = Math.max(0, Number(snapshot.messages_unread || 0) - 1);
+  }
+  return true;
 }
 
 function highlightedAccessRequest() { return accessHighlightId; }
@@ -1401,7 +1480,7 @@ function initMail() {
 export const mailController = Object.freeze({
   state: mailState,
   renderMailTab, initMail, renderAccessRequests,
-  focusAccessRequest, openMailbox, senderOnline, setBoxQuery, setMessageQuery,
+  focusAccessRequest, openMailbox, senderOnline, focusNextAttention, setBoxQuery, setMessageQuery,
   setShowRetired, setShowEmpty, setShowPrevGens,
   mailboxView, mailboxLabel, mailboxTitleAttr, selectMailbox,
   toggleGroupExpand, toggleAgentsExpand, toggleBoxSelection, clearBoxSelection,

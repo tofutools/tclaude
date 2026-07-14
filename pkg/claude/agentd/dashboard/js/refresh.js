@@ -11,7 +11,7 @@ import { recordGroupInteraction } from './last-group.js';
 import {
   renderDashDefaultProfile, renderDashSandboxProfile,
 } from './render.js';
-import { renderMailTab, renderAccessRequests } from './mail-bridge.js';
+import { focusNextMessagesAttention, renderMailTab, renderAccessRequests } from './mail-bridge.js';
 import { renderGroupsTab, renderLinksTab } from './tabs.js';
 import { renderTemplatesTab } from './modal-templates.js';
 import { applyProcessesTabVisibility } from './processes.js';
@@ -339,6 +339,12 @@ function bindTabs() {
         s.classList.toggle('active', s.id === 'tab-' + b.dataset.tab);
       });
       const changed = dashboardState.setActiveTab(b.dataset.tab);
+      // A badge on Messages means there is operator work waiting. Put that
+      // work under the cursor instead of merely restoring the last-opened
+      // mailbox. The Messages controller applies access-before-notification
+      // priority and oldest-first ordering; explicit mailbox deep links
+      // suppress this one-shot shortcut in mail-bridge.js.
+      if (b.dataset.tab === 'messages') focusNextMessagesAttention(lastSnapshot);
       if (!changed) {
         document.dispatchEvent(new CustomEvent('tclaude:tab-reselected', { detail: { tab: b.dataset.tab } }));
       }
