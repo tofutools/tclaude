@@ -90,6 +90,14 @@ var (
 	maxHumanMessageAttachmentTotalCount         = 1000
 )
 
+// humanMessageAttachmentStartUploadTimer is a test seam around the upload's
+// real timeout. The returned function preserves time.Timer.Stop semantics at
+// the only level the handler needs: best-effort cancellation after io.Copy.
+var humanMessageAttachmentStartUploadTimer = func(timeout time.Duration, onTimeout func()) func() {
+	timer := time.AfterFunc(timeout, onTimeout)
+	return func() { _ = timer.Stop() }
+}
+
 // handleNotifyHuman serves POST /v1/notify-human — the daemon side of
 // `tclaude agent notify-human`. It gates via requireNotifyHumanPermission,
 // then persists the message to the human_messages table, where the
@@ -213,7 +221,7 @@ func handleNotifyHumanAttachment(w http.ResponseWriter, r *http.Request) {
 	path := f.Name()
 	var written int64
 	var timedOut atomic.Bool
-	timer := time.AfterFunc(humanMessageAttachmentUploadTimeout, func() {
+	stopUploadTimer := humanMessageAttachmentStartUploadTimer(humanMessageAttachmentUploadTimeout, func() {
 		timedOut.Store(true)
 		_ = r.Body.Close()
 	})
@@ -223,7 +231,7 @@ func handleNotifyHumanAttachment(w http.ResponseWriter, r *http.Request) {
 			err = f.Sync()
 		}
 	}
-	_ = timer.Stop()
+	stopUploadTimer()
 	closeErr := f.Close()
 	if err == nil {
 		err = closeErr

@@ -136,8 +136,15 @@ func TestNotifyHuman_StalledAttachmentTimesOutWithoutBlockingCleanup(t *testing.
 	const conv = "stal-1111-2222-3333-4444"
 	f.HaveConvWithTitle(conv, "stall-maker")
 	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermHumanNotify, "test"))
-	t.Cleanup(agentd.SetHumanMessageAttachmentUploadTimeoutForTest(40 * time.Millisecond))
+	timeoutReady := make(chan func(), 1)
+	t.Cleanup(agentd.SetHumanMessageAttachmentUploadTimerForTest(
+		func(_ time.Duration, onTimeout func()) func() {
+			timeoutReady <- onTimeout
+			return func() {}
+		},
+	))
 	body := &blockingUploadBody{started: make(chan struct{}), closed: make(chan struct{})}
+	t.Cleanup(func() { _ = body.Close() })
 	metadata, err := json.Marshal(map[string]string{"body": "artifact ready", "name": "stalled.bin"})
 	require.NoError(t, err)
 	req, err := http.NewRequest(http.MethodPost, "/v1/notify-human/attachment", body)
@@ -152,6 +159,7 @@ func TestNotifyHuman_StalledAttachmentTimesOutWithoutBlockingCleanup(t *testing.
 	case <-time.After(time.Second):
 		t.Fatal("upload never began reading its request body")
 	}
+	timeoutUpload := <-timeoutReady
 
 	cleanupDone := make(chan struct{})
 	go func() {
@@ -160,9 +168,15 @@ func TestNotifyHuman_StalledAttachmentTimesOutWithoutBlockingCleanup(t *testing.
 	}()
 	select {
 	case <-cleanupDone:
-	case <-time.After(20 * time.Millisecond):
+	case <-time.After(time.Second):
 		t.Fatal("attachment cleanup blocked behind the stalled body read")
 	}
+	select {
+	case <-body.closed:
+		t.Fatal("body read was released before attachment cleanup completed")
+	default:
+	}
+	timeoutUpload()
 	select {
 	case rec := <-result:
 		require.Equal(t, http.StatusRequestTimeout, rec.Code, rec.Body.String())

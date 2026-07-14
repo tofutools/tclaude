@@ -418,11 +418,13 @@ func SetHumanMessageAttachmentQuotasForTest(perSenderBytes, totalBytes int64, pe
 	}
 }
 
-// SetHumanMessageAttachmentUploadTimeoutForTest shrinks the stalled-body deadline.
-func SetHumanMessageAttachmentUploadTimeoutForTest(timeout time.Duration) func() {
-	old := humanMessageAttachmentUploadTimeout
-	humanMessageAttachmentUploadTimeout = timeout
-	return func() { humanMessageAttachmentUploadTimeout = old }
+// SetHumanMessageAttachmentUploadTimerForTest controls when a stalled upload
+// times out without waiting for a real timer. start receives the production
+// timeout and callback and returns the callback used to stop the timer.
+func SetHumanMessageAttachmentUploadTimerForTest(start func(time.Duration, func()) func()) func() {
+	old := humanMessageAttachmentStartUploadTimer
+	humanMessageAttachmentStartUploadTimer = start
+	return func() { humanMessageAttachmentStartUploadTimer = old }
 }
 
 // SetClipboardWriterForTest swaps the platform clipboard-write seam so a
