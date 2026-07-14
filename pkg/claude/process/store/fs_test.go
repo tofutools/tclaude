@@ -218,8 +218,12 @@ func TestTemplateAuthorshipFailureRollsBackSourceOnlyEdit(t *testing.T) {
 
 func TestTemplateAuthorshipCrashIntentRecoversBeforeFirstCreateIsVisible(t *testing.T) {
 	ctx := t.Context()
-	root := t.TempDir()
-	fs := newStoreAt(t, root)
+	physicalRoot := t.TempDir()
+	rootAlias := filepath.Join(t.TempDir(), "store-alias")
+	require.NoError(t, os.Symlink(physicalRoot, rootAlias))
+	fs := newStoreAt(t, rootAlias)
+	root := canonicalStoreTestRoot(t, rootAlias)
+	require.NotEqual(t, rootAlias, root, "exercise the same path-alias class as macOS /var -> /private/var")
 	tmpl := storetest.Template()
 	semanticHash, err := model.SemanticHash(tmpl)
 	require.NoError(t, err)
@@ -254,6 +258,7 @@ func TestTemplateAuthorshipCrashIntentRestoresSourceBeforeRead(t *testing.T) {
 	ctx := t.Context()
 	root := t.TempDir()
 	fs := newStoreAt(t, root)
+	root = canonicalStoreTestRoot(t, root)
 	tmpl := storetest.Template()
 	first, err := fs.PutTemplateEditorSourceAttributed(ctx, tmpl, "", "agent:agt_first")
 	require.NoError(t, err)
@@ -322,6 +327,16 @@ func writeCrashedTemplateSaveIntent(t *testing.T, root, id, semanticHash string,
 	intentPath := filepath.Join(root, "templates", id, ".attributed-save-intent.json")
 	require.NoError(t, os.MkdirAll(filepath.Dir(intentPath), 0o755))
 	require.NoError(t, os.WriteFile(intentPath, append(intent, '\n'), 0o600))
+}
+
+func canonicalStoreTestRoot(t *testing.T, root string) string {
+	t.Helper()
+	// NewFS canonicalizes its root before any production intent path is built.
+	// Handcrafted crash fixtures must do the same; using an unresolved alias in
+	// an intent models corrupt/untrusted metadata, which recovery rejects.
+	resolved, err := filepath.EvalSymlinks(root)
+	require.NoError(t, err)
+	return resolved
 }
 
 func TestTemplateEditorSourceCASRejectsConcurrentLayoutSave(t *testing.T) {
