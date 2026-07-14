@@ -3,7 +3,6 @@ package store
 import (
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -53,19 +52,14 @@ func TestTemplateAuthoringSnapshotSerializesSourceAndAuthorship(t *testing.T) {
 	<-hookEntered // source is read and the per-template lock is still held
 
 	tmpl.Layout.Nodes[tmpl.Start] = model.LayoutNode{X: 30, Y: 40}
-	writerStarted := make(chan struct{})
+	writerContended := make(chan struct{})
+	fs.templateLockContendedHook = func() { close(writerContended) }
 	writerDone := make(chan error, 1)
 	go func() {
-		close(writerStarted)
 		_, writerErr := fs.PutTemplateEditorSourceAttributed(ctx, tmpl, firstParsed.SourceHash, "agent:agt_second")
 		writerDone <- writerErr
 	}()
-	<-writerStarted
-	select {
-	case writerErr := <-writerDone:
-		t.Fatalf("writer interleaved with locked snapshot: %v", writerErr)
-	case <-time.After(100 * time.Millisecond):
-	}
+	<-writerContended
 	close(releaseSnapshot)
 
 	result := <-snapshotDone
@@ -77,6 +71,7 @@ func TestTemplateAuthoringSnapshotSerializesSourceAndAuthorship(t *testing.T) {
 	assert.Equal(t, state.ActorRef("agent:agt_first"), result.snapshot.Authorship[0].Actor)
 	require.NoError(t, <-writerDone)
 
+	fs.templateLockContendedHook = nil
 	fs.templateAuthoringSnapshotHook = nil
 	after, err := fs.GetTemplateAuthoringSnapshot(ctx, first.Ref)
 	require.NoError(t, err)
@@ -123,19 +118,14 @@ func TestTemplateAuthoringCommitIsExactWithQueuedLayoutWriter(t *testing.T) {
 	}()
 	<-aCommitted // A's exact result is fixed, but its write lock remains held.
 
-	bStarted := make(chan struct{})
+	bContended := make(chan struct{})
+	fs.templateLockContendedHook = func() { close(bContended) }
 	bDone := make(chan commitResult, 1)
 	go func() {
-		close(bStarted)
 		commit, commitErr := fs.PutTemplateEditorSourceAttributed(ctx, writerB, hashA, "agent:agt_b")
 		bDone <- commitResult{commit: commit, err: commitErr}
 	}()
-	<-bStarted
-	select {
-	case result := <-bDone:
-		t.Fatalf("queued writer B interleaved before A returned: %+v", result)
-	case <-time.After(100 * time.Millisecond):
-	}
+	<-bContended
 	close(releaseA)
 
 	resultA := <-aDone
@@ -147,6 +137,7 @@ func TestTemplateAuthoringCommitIsExactWithQueuedLayoutWriter(t *testing.T) {
 	assert.Equal(t, hashB, resultB.commit.SourceHash)
 	assert.Equal(t, state.ActorRef("agent:agt_b"), resultB.commit.Actor)
 
+	fs.templateLockContendedHook = nil
 	fs.templateAuthoringCommitHook = nil
 	staleEdit := authoringCommitTestTemplate(40)
 	_, err = fs.PutTemplateEditorSourceAttributed(ctx, staleEdit, resultA.commit.SourceHash, "agent:agt_a")
