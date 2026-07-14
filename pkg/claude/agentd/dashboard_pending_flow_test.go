@@ -12,6 +12,8 @@ import (
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
+const testPendingAgentID = "agt_11111111111111111111111111111111"
+
 // Flow coverage for JOH-205 inc4 Part A — the dashboard surfaces PENDING
 // spawns (the pending_spawns table) and offers a label-keyed focus button.
 //
@@ -50,7 +52,7 @@ func havePendingSpawn(t *testing.T, f *testharness.Flow, label, tmux, cwd string
 		ID: label, TmuxSession: tmux, Cwd: cwd, Status: "running", Harness: "codex",
 	}), "clear conv-id on pending session row")
 	require.NoError(t, db.InsertPendingSpawn(&db.PendingSpawn{
-		Label: label, GroupID: groupID, Role: role, Name: name, Descr: "a gated spawn",
+		Label: label, AgentID: testPendingAgentID, GroupID: groupID, Role: role, Name: name, Descr: "a gated spawn",
 	}), "insert pending spawn")
 }
 
@@ -76,6 +78,7 @@ func TestDashboardSnapshot_SurfacesPendingSpawns(t *testing.T) {
 
 	alive := findDashPending(snap, "spwn-pend1")
 	require.NotNil(t, alive, "alive pending spawn missing from pending[]; have %+v", snap.Pending)
+	assert.Equal(t, testPendingAgentID, alive.AgentID, "reserved stable identity is visible before enrollment")
 	assert.Equal(t, "alpha", alive.Group, "group resolved from group_id")
 	assert.Equal(t, "reviewer", alive.Role)
 	assert.Equal(t, "pending-reviewer", alive.Name)

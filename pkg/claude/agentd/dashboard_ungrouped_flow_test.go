@@ -76,6 +76,7 @@ type dashReplaced struct {
 // dashPending mirrors agentd.dashboardPending — a not-yet-enrolled
 // dashboard spawn surfaced on the snapshot's pending[] list (JOH-205).
 type dashPending struct {
+	AgentID   string `json:"agent_id,omitempty"`
 	Label     string `json:"label"`
 	Group     string `json:"group,omitempty"`
 	Role      string `json:"role,omitempty"`
