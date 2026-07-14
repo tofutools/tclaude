@@ -105,6 +105,13 @@ func TestDashboardHTML_DockPalette(t *testing.T) {
 	must(`key: 'profiles'`, "the profiles section exists")
 	must(`key: 'templates'`, "the templates section exists")
 	must(`key: 'roles'`, "the roles section exists")
+	// Category icons label the section once. Repeating one on every card was
+	// visual noise, and profiles' old cog was easily confused with the real
+	// per-card actions cog at the opposite edge.
+	must(`icon: () => wizWord('👤', '🐾')`, "agent profiles use distinct plain and wizard category icons rather than a settings cog")
+	must(`icon: () => wizWord('🧩', '🔮')`, "group templates use a summoning-themed icon in wizard mode")
+	must(`document.addEventListener('tclaude:wizard', renderDock)`, "theme changes repaint section labels and icons immediately")
+	mustNot(`class="dock-card-icon"`, "cards do not repeat their category icon on every row")
 	// Cards carry their payload for the drag wiring (dock-dnd.js reads these off
 	// dragstart; see TestDashboardHTML_DockDnd for the 2/4 drag behaviour).
 	must("data-dock-kind=${section.key}", "cards carry their kind for the DnD wiring")

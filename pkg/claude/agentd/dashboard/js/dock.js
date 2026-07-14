@@ -17,8 +17,8 @@
 // Design intent (operator, 2026-07-04): this dock is a FOUNDATION, not a
 // one-off — future editors and agent-work-graph attach points are meant to
 // grow from it. So the three sections are instances of ONE data-driven
-// idiom (a section = title + item list + card renderer; a card = key, icon,
-// name, chips, actions) rather than three hand-rolled blocks — a fourth
+// idiom (a section = title + category icon + item list + card renderer; a card
+// = key, name, chips, actions) rather than three hand-rolled blocks — a fourth
 // item kind slots in by adding one SECTIONS entry.
 //
 // Data rides the 2s poll: the daemon carries the profile / template / role
@@ -81,7 +81,7 @@ function summaryChips(summary, max = 4) {
 // the renderer + the delegated click handler are already generic.
 //
 //   key         stable section id (data-key + the snapshot field name)
-//   icon        per-card leading glyph
+//   icon()      theme-aware category glyph shown once in the section heading
 //   title()     the section heading (both vocab modes via wizWord)
 //   empty()     the quiet "(none yet)" line when the list is empty
 //   items(snap) the item array off the live snapshot
@@ -100,7 +100,10 @@ function summaryChips(summary, max = 4) {
 export const dockSections = Object.freeze([
   {
     key: 'profiles',
-    icon: '⚙',
+    // A person silhouette reads as an agent/profile, while the old cog was
+    // indistinguishable from the real per-card actions cog. Category icons
+    // live in headings only; repeating them on every row adds no information.
+    icon: () => wizWord('👤', '🐾'),
     // Full section name (JOH-390 item 5): the operator wants the profiles
     // heading spelled out — "Agent profiles" / "Familiar patterns" — rather
     // than the bare "Profiles" / "Patterns". Roles keeps its short heading.
@@ -130,7 +133,7 @@ export const dockSections = Object.freeze([
   },
   {
     key: 'templates',
-    icon: '🧩',
+    icon: () => wizWord('🧩', '🔮'),
     // Spelled out like the profiles heading (operator follow-up to JOH-390
     // item 5): these are the GROUP templates, and "Summoning circles" is
     // already the full arcane name.
@@ -155,7 +158,7 @@ export const dockSections = Object.freeze([
   },
   {
     key: 'roles',
-    icon: '🎭',
+    icon: () => wizWord('🎭', '🎭'),
     title: () => wizWord('Roles', 'Classes'),
     empty: () => wizWord('no roles yet', 'no classes yet'),
     items: (snap) => (snap && snap.roles) || [],
@@ -401,6 +404,9 @@ export function bindDock() {
   // header and nav or the nav strip wraps — neither resizes the header.
   window.addEventListener('scroll', syncDockTop, { passive: true });
   window.addEventListener('resize', syncDockTop);
+  // Section labels and category icons both have wizard-mode variants. Repaint
+  // immediately when the theme flips instead of waiting for the next poll.
+  document.addEventListener('tclaude:wizard', renderDock);
   if ('ResizeObserver' in window) {
     const ro = new ResizeObserver(syncDockTop);
     for (const sel of ['header', '#slop-marquee', 'nav']) {

@@ -11227,7 +11227,6 @@ body:not(.dock-open) .dock-toggle-chevron { transform: rotate(180deg); }
 .dock-card:hover { border-color: #3d444d; background: #1a2029; }
 .dock-card:active { cursor: grabbing; }
 .dock-grip { flex: 0 0 auto; color: #545d68; font-size: 12px; cursor: grab; user-select: none; }
-.dock-card-icon { flex: 0 0 auto; font-size: 13px; }
 .dock-card-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .dock-card-name {
   font-size: 12px; color: #d4d4d4; font-weight: 500;
