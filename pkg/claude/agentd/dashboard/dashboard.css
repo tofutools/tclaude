@@ -3729,13 +3729,13 @@ body.wizard .group-pending-title-wizard { display: inline; }
 }
 .spawn-field-description {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
-  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
 }
 .spawn-field-help-trigger[aria-expanded="true"] + .spawn-field-description,
 .spawn-field-description:focus {
   z-index: 30; bottom: calc(100% + 4px); left: 0; right: 0;
   width: auto; height: auto; max-height: min(180px, 30vh); overflow: auto;
-  margin: 0; padding: 8px 10px; clip: auto; white-space: normal;
+  margin: 0; padding: 8px 10px; clip-path: none; white-space: normal;
   color: #c9d1d9; background: #0d1117; border: 1px solid #30363d;
   border-radius: 5px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
   font-size: 11px; line-height: 1.45; overflow-wrap: anywhere;
