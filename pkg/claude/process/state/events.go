@@ -555,6 +555,9 @@ func applyEvent(st *State, event Event) error {
 		if strings.TrimSpace(event.Reason) == "" || strings.TrimSpace(event.Owner) == "" {
 			return fmt.Errorf("node_blocked requires reason and owner")
 		}
+		if kind, ok := ContactKindForOwner(event.Owner); !ok || kind != WaitKindHuman {
+			return fmt.Errorf("node_blocked requires a human/role owner")
+		}
 		if event.At.IsZero() {
 			return fmt.Errorf("node_blocked requires timestamp")
 		}

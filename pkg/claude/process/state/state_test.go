@@ -400,6 +400,24 @@ func TestNodeBlockedPersistsFirstEntryTimeAcrossReplay(t *testing.T) {
 	}
 }
 
+func TestNodeBlockedAcceptsHumanAndRoleOwners(t *testing.T) {
+	for _, owner := range []string{"human:operator", "role:oncall"} {
+		t.Run(owner, func(t *testing.T) {
+			st := stateWithNodes(map[string]NodeState{"work": {Status: NodeStatusFailed, Attempt: 1}})
+			blocked, err := Apply(st, Event{
+				Type: EventNodeBlocked, Seq: 1, At: testTime, NodeID: "work", Attempt: 1,
+				Reason: "retry budget exhausted", Owner: owner,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if blocked.Nodes["work"].Status != NodeStatusBlocked || blocked.Nodes["work"].BlockedOwner != owner {
+				t.Fatalf("supported block owner was not persisted: %#v", blocked.Nodes["work"])
+			}
+		})
+	}
+}
+
 func TestCommandIssuedOnlyStartAttemptClaimsActiveAttempt(t *testing.T) {
 	st, err := ApplyAll(State{}, []Event{
 		initEvent(),
@@ -626,6 +644,9 @@ func TestReducerErrors(t *testing.T) {
 		{name: "block without reason", st: base, event: Event{Type: EventNodeBlocked, Seq: 11, NodeID: "implement", Owner: "human:johan"}, want: "requires reason and owner"},
 		{name: "block without owner", st: base, event: Event{Type: EventNodeBlocked, Seq: 11, NodeID: "implement", Reason: "blocked"}, want: "requires reason and owner"},
 		{name: "block without timestamp", st: base, event: Event{Type: EventNodeBlocked, Seq: 11, NodeID: "implement", Reason: "blocked", Owner: "human:johan"}, want: "requires timestamp"},
+		{name: "block with agent owner", st: base, event: Event{Type: EventNodeBlocked, Seq: 11, At: testTime, NodeID: "implement", Reason: "blocked", Owner: "agent:agt_worker"}, want: "requires a human/role owner"},
+		{name: "block with program owner", st: base, event: Event{Type: EventNodeBlocked, Seq: 11, At: testTime, NodeID: "implement", Reason: "blocked", Owner: "program:deploy"}, want: "requires a human/role owner"},
+		{name: "block with system owner", st: base, event: Event{Type: EventNodeBlocked, Seq: 11, At: testTime, NodeID: "implement", Reason: "blocked", Owner: "system:deploy"}, want: "requires a human/role owner"},
 		{name: "block contact with unsupported owner", st: unsupportedBlockContact, event: Event{Type: EventContactScheduled, Seq: 11, Contact: &ContactState{CommandID: "cmd_block", Kind: WaitKindAgent, Assignee: "agent:agt_worker", Cadence: "5m0s", Budget: 3, EscalationTarget: "human:operator"}}, want: "requires a human/role owner"},
 		{name: "block resolution without timestamp", st: base, event: Event{Type: EventBlockResolutionRecorded, Seq: 11, Resolution: &BlockResolution{NodeID: "implement", BlockedAttempt: 1, Decision: BlockDecisionRetry, Actor: "human:johan", Reason: "retry", EvidenceRef: "decision:retry"}}, want: "requires timestamp"},
 		{name: "unknown wait", st: base, event: Event{Type: EventWaitSatisfied, Seq: 11, WaitID: "missing"}, want: "not declared"},
