@@ -15,6 +15,7 @@
 // before this module (same arrangement as the dashboard).
 
 import { mountMux, normalizeSeed } from './terminals-core.js';
+import { initDashPrefs } from './prefs.js';
 
 const solo = new URLSearchParams(location.search).has('solo');
 if (solo) document.body.classList.add('solo');
@@ -47,6 +48,12 @@ function consumeHash() {
   // explicit auth-recovery event below.
   if (location.hash) history.replaceState(null, '', location.pathname + location.search);
   if (!seed) return;
+  // A pop-out inherits the dashboard theme it left. The palette preference is
+  // still read independently from the shared SQLite-backed dashboard prefs.
+  document.body.classList.toggle('wizard', seed.wizard === true);
+  document.dispatchEvent(new CustomEvent('tclaude:wizard', {
+    detail: { active: seed.wizard === true },
+  }));
   if (solo) soloSeed = seed;
   mux.openPane(seed);
   if (seed.hideConv) armDetachBeacon(seed.hideConv);
@@ -80,4 +87,13 @@ window.addEventListener('tclaude:auth-expired', (event) => {
 });
 
 window.addEventListener('hashchange', consumeHash);
+// The standalone pop-out is a separate page, so it must hydrate the same
+// server-backed preference cache the dashboard boot hydrates. Mounting first
+// keeps terminal startup immediate; once the GET lands, the theme event
+// repaints an already-open pane if the persisted choice was disabled.
 consumeHash();
+initDashPrefs().then(() => {
+  document.dispatchEvent(new CustomEvent('tclaude:terminal-palette', {
+    detail: { hydrated: true },
+  }));
+});

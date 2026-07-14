@@ -20,11 +20,9 @@
 // page stays free of dashboard.css / helpers.js.
 
 import { attachTerminalInteractions } from './terminal-interactions.js';
-
-const THEME = {
-  background: '#0d1117', foreground: '#c9d1d9', cursor: '#c9d1d9',
-  selectionBackground: 'rgba(255,255,255,0.2)',
-};
+import {
+  arcanePaletteEnabled, setArcanePaletteEnabled, terminalThemeFor,
+} from './terminal-theme.js';
 
 function seedKey(seed) {
   return seed.key || seed.ws;
@@ -94,6 +92,31 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
   let activeKey = null;
   let seq = 0;
   let unloadGuardArmed = false;
+
+  function wizardActive() {
+    return document.body.classList.contains('wizard');
+  }
+
+  // The persisted palette choice is global, even though its compact checkbox
+  // appears in each pane header beside Copy / ⧉ tab. Repaint every xterm and
+  // mirror every checkbox together so switching panes never shows stale state.
+  function syncTerminalTheme() {
+    const wizard = wizardActive();
+    const enabled = arcanePaletteEnabled();
+    const theme = terminalThemeFor(wizard, enabled);
+    for (const p of panes.values()) {
+      p.term.options.theme = theme;
+      p.wrap.classList.toggle('arcane-palette', wizard && enabled);
+      if (p.paletteToggle) p.paletteToggle.hidden = !wizard;
+      if (p.paletteCheckbox) p.paletteCheckbox.checked = enabled;
+    }
+  }
+
+  // Wizard mode can flip while panes are live, and another pane's checkbox can
+  // change the shared preference. Both are repaint-only: no PTY reconnect and
+  // no terminal-buffer mutation.
+  document.addEventListener('tclaude:wizard', syncTerminalTheme);
+  document.addEventListener('tclaude:terminal-palette', syncTerminalTheme);
 
   // Browsers reserve Ctrl/Cmd+W, so a page cannot reliably turn that shortcut
   // into "close this pane". beforeunload is the supported protection against
@@ -277,6 +300,19 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
     copyBtn.textContent = 'Copy';
     header.append(copyBtn);
 
+    const paletteToggle = document.createElement('label');
+    paletteToggle.className = 'mux-palette-toggle';
+    paletteToggle.title = 'Recolour terminal defaults with the persisted wizard palette; explicit application RGB colours are unchanged';
+    paletteToggle.hidden = !wizardActive();
+    const paletteCheckbox = document.createElement('input');
+    paletteCheckbox.type = 'checkbox';
+    paletteCheckbox.checked = arcanePaletteEnabled();
+    paletteCheckbox.setAttribute('aria-label', 'Arcane terminal palette');
+    const paletteLabel = document.createElement('span');
+    paletteLabel.textContent = 'Arcane palette';
+    paletteToggle.append(paletteCheckbox, paletteLabel);
+    header.append(paletteToggle);
+
     // Pop-out is meaningless in a solo tab (it IS the popped-out view).
     let popBtn = null;
     if (!solo) {
@@ -296,7 +332,7 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
     const term = new Terminal({
       cursorBlink: true, fontSize: 13,
       fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
-      theme: THEME, allowProposedApi: true,
+      theme: terminalThemeFor(wizardActive()), allowProposedApi: true,
       // xterm uses Option (not Shift) to force browser selection on macOS,
       // and ignores Option unless this is explicitly enabled.
       macOptionClickForcesSelection: true,
@@ -305,7 +341,11 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
     term.loadAddon(fitAddon);
     term.open(host);
 
-    const p = { key, label, seed, term, fitAddon, ws: null, wrap, statusEl, reconnectBtn, copyBtn, tab: null, ro: null, interactions: null };
+    const p = {
+      key, label, seed, term, fitAddon, ws: null, wrap, statusEl,
+      reconnectBtn, copyBtn, paletteToggle, paletteCheckbox,
+      tab: null, ro: null, interactions: null,
+    };
 
     p.interactions = attachTerminalInteractions({
       term, host, copyButton: copyBtn, setStatus: (text) => setStatus(p, text),
@@ -354,8 +394,10 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
 
     if (popBtn) popBtn.addEventListener('click', () => popOut(key));
     reconnectBtn.addEventListener('click', () => connect(p));
+    paletteCheckbox.addEventListener('change', () => setArcanePaletteEnabled(paletteCheckbox.checked));
 
     panes.set(key, p);
+    syncTerminalTheme();
     updateChrome();
     activate(key);
     connect(p);
@@ -402,7 +444,10 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
     if (!p) return;
     // Carry hideConv through so the popped-out tab remains a detachable
     // live-session client (it re-serializes the seed via the URL hash).
-    const seed = { ws: p.seed.ws, label: p.label, key: p.seed.key, hideConv: p.seed.hideConv };
+    const seed = {
+      ws: p.seed.ws, label: p.label, key: p.seed.key,
+      hideConv: p.seed.hideConv, wizard: wizardActive(),
+    };
     const payload = encodeURIComponent(JSON.stringify(seed));
     // Open a BLANK tab synchronously, inside the click gesture, so a pop-up
     // blocker can't eat it — but DON'T navigate it to the terminal yet. A

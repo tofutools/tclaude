@@ -25,6 +25,7 @@ import { $ } from './helpers.js';
 import { confirmModal } from './refresh.js';
 import { openTerminalPane } from './terminals-tab.js';
 import { attachTerminalInteractions } from './terminal-interactions.js';
+import { terminalThemeFor } from './terminal-theme.js';
 
 let term = null;
 let fitAddon = null;
@@ -86,10 +87,7 @@ export function openTermModal({ wsPath, label, hideConv: hc }) {
       cursorBlink: true,
       fontSize: 13,
       fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
-      theme: {
-        background: '#0d1117', foreground: '#c9d1d9', cursor: '#c9d1d9',
-        selectionBackground: 'rgba(255,255,255,0.2)',
-      },
+      theme: terminalThemeFor(document.body.classList.contains('wizard')),
       allowProposedApi: true,
       // xterm uses Option (not Shift) to force browser selection on macOS,
       // and ignores Option unless this is explicitly enabled.
@@ -114,6 +112,11 @@ export function openTermModal({ wsPath, label, hideConv: hc }) {
     });
     term.onResize(() => sendResize());
     new ResizeObserver(() => fitAddon.fit()).observe($('#term-session-xterm'));
+    const syncTheme = () => {
+      term.options.theme = terminalThemeFor(document.body.classList.contains('wizard'));
+    };
+    document.addEventListener('tclaude:wizard', syncTheme);
+    document.addEventListener('tclaude:terminal-palette', syncTheme);
   }
   // term is a reused singleton: clear the previous session's scrollback so
   // reopening the modal for a different agent never flashes stale output
