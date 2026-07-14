@@ -241,11 +241,42 @@ function profileSummary(p) {
   return parts.join(' · ');
 }
 
+// profileDetailChips enumerates every set profile field for the dock's expanded
+// hover/focus view. Unlike profileSummary, it does not hide explicit defaults
+// and it expands permission overrides individually. Potentially large freeform
+// startup text is represented by presence/size rather than copied into a chip.
+function profileDetailChips(p) {
+  const parts = [];
+  const text = (label, value) => { if (value) parts.push(`${label} ${String(value).replace(/\s+/g, ' ').trim()}`); };
+  const toggle = (label, value) => { if (value != null) parts.push(`${label} ${value ? 'on' : 'off'}`); };
+  text('harness', p.harness);
+  text('model', p.model);
+  text('effort', p.effort);
+  text('sandbox', p.sandbox);
+  text('approval', p.approval);
+  text('ask-timeout', p.ask_user_question_timeout);
+  toggle('auto-review', p.auto_review);
+  toggle('trust-dir', p.trust_dir);
+  toggle('remote-control', p.remote_control);
+  text('name', p.agent_name);
+  text('role', p.role);
+  text('descr', p.descr);
+  if (p.initial_message) parts.push(`initial message · ${p.initial_message.length} chars`);
+  toggle('sync-wt', p.sync_worktree);
+  toggle('focus', p.auto_focus);
+  toggle('group-ctx', p.include_group_default_context);
+  toggle('owner', p.is_owner);
+  for (const [slug, effect] of Object.entries(p.permission_overrides || {}).sort(([a], [b]) => a.localeCompare(b))) {
+    parts.push(`perm ${slug} ${effect}`);
+  }
+  return parts;
+}
+
 export {
   loadProfiles, cachedProfiles, invalidateProfiles, getProfile,
   findProfileByHandle, profileChoices, profileAliasesLabel,
   createProfile, updateProfile, deleteProfile,
   exportProfiles, inspectProfileImport, importProfiles,
   getDashDefaultProfile, setDashDefaultProfile, syncDashDefaultProfile,
-  DASH_DEFAULT_PROFILE_KEY, profileSummary,
+  DASH_DEFAULT_PROFILE_KEY, profileSummary, profileDetailChips,
 };

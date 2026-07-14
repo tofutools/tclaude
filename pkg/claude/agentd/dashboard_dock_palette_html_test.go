@@ -109,6 +109,20 @@ func TestDashboardHTML_DockPalette(t *testing.T) {
 	// dragstart; see TestDashboardHTML_DockDnd for the 2/4 drag behaviour).
 	must("data-dock-kind=${section.key}", "cards carry their kind for the DnD wiring")
 	must("data-dock-name=${name}", "cards carry their name for the DnD wiring")
+	// Profile cards keep their compact truncated chips in place while a floating
+	// tooltip shows the complete wrapped list on mouse hover or keyboard focus.
+	// The tooltip flips upward near the dock foot instead of being clipped.
+	must("fullChips: (p) => [", "profiles provide an untruncated chip list")
+	must("profileDetailChips(p).map", "tooltips enumerate the complete stored profile shape")
+	must(`role="region"`, "the card renders complete profile details as an accessible region")
+	must(`tabIndex="0"`, "overflowing profile details can receive focus and scroll from the keyboard")
+	must("detailsDescriptionID", "the action button and focusable region describe every full-detail chip")
+	must("onMouseEnter=${hasDetails ? showDetails : null}", "hover reveals the complete tooltip")
+	must("onFocusIn=${hasDetails ? showDetails : null}", "keyboard focus reveals the complete tooltip")
+	must("window.addEventListener('resize', positionDetails)", "open details follow viewport geometry changes")
+	must("clipHost?.addEventListener('scroll', positionDetails", "open details follow dock scrolling")
+	must(".dock-card-details.open", "the complete details float without resizing the card")
+	must(".dock-card-details.opens-up", "details can flip upward near the dock foot")
 
 	// The dock reads its data off the live snapshot (the profile + role
 	// registries now ride the poll, templates already did) — see

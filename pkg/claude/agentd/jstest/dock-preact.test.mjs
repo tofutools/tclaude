@@ -94,6 +94,98 @@ test('Dock keeps keyed cards, disclosure and an open menu stable across snapshot
   host.remove();
 });
 
+test('Profile cards show complete details in a non-reflowing tooltip', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDockState }, { Dock }] = await Promise.all([
+    harness.importDashboardModule('js/dock-state.js'),
+    harness.importDashboardModule('js/dock-island.js'),
+  ]);
+  const state = createDockState();
+  state.publish({ profiles: [
+    { name: 'review', model: 'sonnet' },
+    { name: 'foo bar', model: 'sonnet' },
+    { name: 'foo_20bar', model: 'sonnet' },
+  ] });
+  const rich = section([]);
+  rich.chips = () => [
+    { text: 'aka codex-reviewer', more: false },
+    { text: '+3', more: true },
+  ];
+  rich.fullChips = () => [
+    { text: 'aka codex-reviewer', more: false },
+    { text: 'aka cold-reviewer', more: false },
+    { text: 'sonnet', more: false },
+    { text: 'effort high', more: false },
+    { text: 'sandbox on', more: false },
+  ];
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const mounted = await harness.mount(harness.html`
+    <${Dock}
+      host=${host}
+      state=${state}
+      sections=${[rich]}
+      isSectionOpen=${() => true}
+      setSectionOpen=${() => {}}
+    />
+  `, host);
+
+  const card = host.querySelector('[data-dock-name="review"]');
+  const compact = card.querySelector('.dock-chips-compact');
+  const tooltip = getByRole(card, 'region', { name: 'Full details for review' });
+  const full = tooltip.querySelector('.dock-chips-full');
+  const cog = getByRole(card, 'button', { name: 'Actions for review' });
+  assert.ok(card.classList.contains('dock-card-has-details'));
+  assert.equal(card.getAttribute('title'), 'review', 'long canonical names remain available outside the clipped label');
+  assert.equal(tooltip.classList.contains('open'), false, 'details start hidden without changing card layout');
+  const description = tooltip.querySelector('.dock-card-details-description');
+  assert.equal(cog.getAttribute('aria-describedby'), description.id);
+  assert.equal(tooltip.getAttribute('aria-describedby'), description.id);
+  assert.equal(description.textContent.trim(),
+    'aka codex-reviewer, aka cold-reviewer, sonnet, effort high, sandbox on');
+  assert.equal(tooltip.getAttribute('tabIndex'), '0', 'overflowed details can be keyboard-scrolled');
+  assert.equal(tooltip.querySelector('.dock-card-details-name').textContent, 'review');
+  const detailIDs = [...host.querySelectorAll('.dock-card-details')].map((details) => details.id);
+  assert.equal(new Set(detailIDs).size, detailIDs.length, 'valid profile names cannot collide in ARIA ids');
+  assert.deepEqual([...compact.querySelectorAll('.dock-chip')].map((chip) => chip.textContent), [
+    'aka codex-reviewer', '+3',
+  ]);
+  assert.deepEqual([...full.querySelectorAll('.dock-chip')].map((chip) => chip.textContent), [
+    'aka codex-reviewer', 'aka cold-reviewer', 'sonnet', 'effort high', 'sandbox on',
+  ]);
+  assert.equal(full.getAttribute('aria-label'), 'All aliases and settings');
+  assert.equal(full.querySelector('.dock-chip-more'), null, 'the tooltip list is never truncated');
+
+  host.getBoundingClientRect = () => ({ top: 0, bottom: 100 });
+  card.getBoundingClientRect = () => ({ top: 80, bottom: 100 });
+  tooltip.getBoundingClientRect = () => ({ height: 60 });
+  await harness.act(() => harness.fireEvent(card, 'mouseenter'));
+  assert.ok(tooltip.classList.contains('open'), 'hover opens the tooltip');
+  assert.ok(tooltip.classList.contains('opens-up'), 'a tooltip near the dock foot flips upward');
+  assert.deepEqual([...compact.querySelectorAll('.dock-chip')].map((chip) => chip.textContent), [
+    'aka codex-reviewer', '+3',
+  ], 'the compact card stays unchanged while its tooltip is open');
+
+  card.getBoundingClientRect = () => ({ top: 10, bottom: 30, left: 20, width: 220 });
+  await harness.act(() => harness.fireEvent(host, 'scroll'));
+  assert.equal(tooltip.classList.contains('opens-up'), false, 'an open tooltip follows dock scrolling');
+  assert.equal(tooltip.style.top, '30px');
+
+  await harness.act(() => harness.fireEvent(card, 'mouseleave'));
+  assert.equal(tooltip.classList.contains('open'), false, 'leaving the card closes the tooltip');
+  await harness.act(() => harness.fireEvent(card, 'focusin'));
+  assert.ok(tooltip.classList.contains('open'), 'keyboard focus opens the same details region');
+  await harness.act(() => harness.fireEvent(card, 'focusout', {
+    relatedTarget: harness.document.body,
+  }));
+  assert.equal(tooltip.classList.contains('open'), false, 'focus leaving the card closes the details region');
+  await harness.act(() => harness.fireEvent(card, 'mouseenter'));
+  await harness.act(() => harness.fireEvent(cog, 'click'));
+  assert.equal(tooltip.classList.contains('open'), false, 'the actions menu takes precedence over the tooltip');
+
+  await mounted.unmount();
+  host.remove();
+});
+
 test('Dock removes its document listeners when the island unmounts', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createDockState }, { Dock }] = await Promise.all([
