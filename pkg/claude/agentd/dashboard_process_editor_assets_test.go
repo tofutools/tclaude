@@ -49,6 +49,17 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"this.savedTemplateID = this.template.id || ''",
 		"this.template.id = id",
 	)
+	externalChange := read("js/process-external-change.js")
+	mustContain("process-external-change.js", externalChange,
+		"export function reconcileExternalChange(",
+		"export function keepExternalChange(",
+		"prior.kind === 'kept' && prior.ref === current",
+	)
+	for _, banned := range []string{"document.", "fetch(", "setTimeout(", "setInterval("} {
+		if strings.Contains(externalChange, banned) {
+			t.Errorf("process-external-change.js must stay pure; found %q", banned)
+		}
+	}
 	if strings.Contains(editModel, "document.") || strings.Contains(editModel, "fetch(") {
 		t.Error("process-edit-model.js must stay pure (no DOM, no fetch) so Node tests cover the shipped file")
 	}
@@ -66,6 +77,14 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"resolveConflict",
 		"'Reload their version (discard mine)'",
 		"'Save as new version anyway'",
+		// Read-time awareness stays in the persistent imperative editor and
+		// reloads in place; no dirty buffer is replaced without confirmation.
+		"Template changed externally (new version)",
+		"text: 'Keep editing'",
+		"observeExternalRef(currentRef)",
+		"reloadExternalChange()",
+		"this.options.confirmDiscard?.()",
+		"this.refresh();",
 		// IDs are creation-time store keys. Existing templates render only the
 		// title, and a blank template swaps its id input out after first save.
 		"const showIDInput = templateIDEditable(this.blank, model.sourceHash)",
@@ -153,11 +172,20 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"await import('./process-editor.js')",
 		"loadEditor(mountRef.current, { id: spec.id, blank: spec.blank, config: { confirmDiscard } })",
 		"editor?.destroy?.()",
+		"document.addEventListener('tclaude:snapshot', poll)",
+		"view.subtab === 'templates' || view.subtab === 'worklist'",
+	)
+	actions := read("js/processes-actions.js")
+	mustContain("processes-actions.js", actions,
+		"editor?.observeExternalRef?.(head)",
+		"template.id === editorID",
 	)
 
 	css := read("dashboard.css")
 	mustContain("dashboard.css", css,
 		".process-editor-header",
+		".process-editor-external",
+		"body.wizard .process-editor-external",
 		".process-editor-palette",
 		".process-palette-card",
 		".process-editor-inline-input",

@@ -42,6 +42,14 @@ test('Processes actions preserve API routes, stale loads, comment gate, and reta
   const post = requests.find((request) => request.options.method === 'POST'); assert.equal(post.path, '/v1/process/worklist/i%2F1/action');
   assert.equal(JSON.parse(post.options.body).action, 'approve');
 
+  let observedRef = '';
+  state.setEditor({
+    model: { template: { id: 'fresh' }, dirty: false },
+    observeExternalRef(ref) { observedRef = ref; },
+  });
+  await actions.load('templates', { quiet: true });
+  assert.equal(observedRef, '', 'a list row without a latest ref is ignored');
+
   let discardPrompts = 0;
   state.setEditor({ dirty: true, model: { dirty: false } });
   const guarded = createProcessesActions({
@@ -50,6 +58,48 @@ test('Processes actions preserve API routes, stale loads, comment gate, and reta
   });
   assert.equal(await guarded.closeCanvas(), false, 'a staged dialog draft participates in editor navigation guards');
   assert.equal(discardPrompts, 1);
+});
+
+test('template list refresh publishes the matching head to the persistent editor', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const observed = [];
+  state.setEditor({
+    model: { template: { id: 'release' }, dirty: false },
+    observeExternalRef(ref) { observed.push(ref); },
+  });
+  const actions = createProcessesActions({
+    state,
+    fetchImpl: async () => ({ ok: true, json: async () => ({ templates: [
+      { id: 'other', latestVersion: { ref: 'other@sha256:x' } },
+      { id: 'release', name: 'Renamed release', latestVersion: { ref: 'release@sha256:new' } },
+    ] }) }),
+  });
+  await actions.load('templates', { quiet: true });
+  assert.deepEqual(observed, ['release@sha256:new']);
+  assert.equal(state.view.value.templates[1].name, 'Renamed release', 'the same refresh updates keyed list data');
+});
+
+test('snapshot cadence refreshes templates and worklist without adding an island timer', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { ProcessesApp }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-island.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const loaded = [];
+  const actions = { refreshActive() {}, load(name, options) { loaded.push([name, options]); }, activateSubtab() {}, openEditor() {}, openViewer() {}, closeCanvas() {} };
+  const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
+  harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:snapshot'));
+  assert.deepEqual(loaded, [['templates', { quiet: true }]]);
+  loaded.length = 0;
+  state.setSubtab('worklist');
+  await harness.act(() => Promise.resolve());
+  harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:snapshot'));
+  assert.deepEqual(loaded, [['worklist', { quiet: true }]]);
+  await mounted.unmount();
 });
 
 test('imperative editor boundary mounts once, survives parent updates, updates by spec, and disposes', async (t) => {

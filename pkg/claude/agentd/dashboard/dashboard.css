@@ -11536,6 +11536,18 @@ body.wizard .process-fit-button { box-shadow: 0 2px 12px rgba(75, 48, 119, 0.5);
 .process-editor-dirty { color: #e3a341; font-size: 12px; white-space: nowrap; }
 .process-editor-status { color: #8b949e; font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
 .process-editor-status.is-error { color: #f85149; }
+.process-editor-external {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #6e5b22;
+  background: #2d260f;
+  color: #f0d77b;
+}
+.process-editor-external[hidden] { display: none; }
+.process-editor-external.is-dirty { border-color: #9e6a03; background: #33270d; }
+.process-editor-external-message { font-size: 13px; font-weight: 650; }
 .process-editor-id-input,
 .process-inspector-input,
 .process-inspector-select {
@@ -11693,6 +11705,7 @@ body.wizard .process-issue:hover, body.wizard .process-issue:focus-visible { bac
 body.wizard .process-issue-target { color: #d4af37; }
 body.wizard .process-editor-header,
 body.wizard .process-editor-inspector { background: #211832; border-color: #4a3d6b; }
+body.wizard .process-editor-external { background: #342641; border-color: #8b6b38; color: #f3d58b; }
 body.wizard .process-editor-palette { background: #181226; border-color: #4a3d6b; }
 body.wizard .process-editor .process-action,
 body.wizard .process-editor .process-inspector-input {

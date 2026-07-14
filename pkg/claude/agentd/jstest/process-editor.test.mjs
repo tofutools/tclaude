@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ProcessTemplateEditor, isProcessEditorFormControl } from '../dashboard/js/process-editor.js';
+import { ProcessEditModel } from '../dashboard/js/process-edit-model.js';
 
 test('Delete dispatches against the current visible editor selection', () => {
   const selected = { type: 'node', id: 'highlighted' };
@@ -338,6 +339,77 @@ test('destroy while conflict reload is pending prevents model swap and refresh',
     assert.equal(editor.model, originalModel, 'stale reload cannot replace the destroyed editor model');
     assert.equal(refreshes, 0, 'stale reload cannot refresh destroyed editor DOM');
     assert.equal(editor.lastStatus, undefined, 'stale reload emits no completion status');
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+  }
+});
+
+function externalReloadEditor({ dirty = false, confirmDiscard = async () => true } = {}) {
+  const model = new ProcessEditModel({
+    template: { id: 'alpha', name: 'Loaded', start: 'a', nodes: { a: { type: 'start' }, gone: { type: 'task' } } },
+    edges: [{ from: '', outcome: 'start', to: 'a' }], layout: {},
+    sourceHash: 'source-old', semanticHash: 'semantic-old', currentRef: 'alpha@sha256:old',
+  });
+  if (dirty) model.setTemplateMeta({ name: 'Local draft' });
+  const editor = {
+    model, blank: false, selection: { type: 'node', id: 'gone' },
+    externalChange: { kind: dirty ? 'dirty' : 'clean', ref: 'alpha@sha256:new' },
+    externalReloadPending: false, externalReloadSeq: 0, savePending: false,
+    abort: new AbortController(), options: { confirmDiscard }, modalDispose: null,
+    validation: null,
+    renderExternalChange() {},
+    retainLiveSelection() { return ProcessTemplateEditor.prototype.retainLiveSelection.call(this); },
+    refresh(options) { this.refreshOptions = options; },
+    status(message, isError) { this.lastStatus = { message, isError }; },
+  };
+  Object.defineProperty(editor, 'dirty', { get() { return this.model.dirty || !!this.modalDispose?.isDirty?.(); } });
+  return editor;
+}
+
+test('dirty external Reload never fetches or replaces the model when discard is denied', async () => {
+  const previousFetch = globalThis.fetch;
+  let fetches = 0; let prompts = 0;
+  globalThis.fetch = async () => { fetches += 1; throw new Error('must not fetch'); };
+  try {
+    const editor = externalReloadEditor({ dirty: true, confirmDiscard: async () => { prompts += 1; return false; } });
+    const original = editor.model;
+    assert.equal(await ProcessTemplateEditor.prototype.reloadExternalChange.call(editor), false);
+    assert.equal(prompts, 1);
+    assert.equal(fetches, 0);
+    assert.equal(editor.model, original);
+    assert.deepEqual(editor.externalChange, { kind: 'dirty', ref: 'alpha@sha256:new' });
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+  }
+});
+
+test('confirmed external Reload swaps in the new head without fitting the viewport', async () => {
+  const previousFetch = globalThis.fetch;
+  let prompts = 0; let modalClosed = 0;
+  globalThis.fetch = async () => ({
+    ok: true, status: 200, statusText: 'OK',
+    json: async () => ({
+      template: { id: 'alpha', name: 'External', start: 'a', nodes: { a: { type: 'start' } } },
+      edges: [{ from: '', outcome: 'start', to: 'a' }], layout: {},
+      sourceHash: 'source-new', semanticHash: 'semantic-new', currentRef: 'alpha@sha256:new',
+    }),
+  });
+  try {
+    const editor = externalReloadEditor({ dirty: true, confirmDiscard: async () => { prompts += 1; return true; } });
+    const dispose = () => { modalClosed += 1; editor.modalDispose = null; };
+    dispose.isDirty = () => false;
+    editor.modalDispose = dispose;
+    assert.equal(await ProcessTemplateEditor.prototype.reloadExternalChange.call(editor), true);
+    assert.equal(prompts, 1);
+    assert.equal(modalClosed, 1);
+    assert.equal(editor.model.template.name, 'External');
+    assert.equal(editor.model.currentRef, 'alpha@sha256:new');
+    assert.equal(editor.selection, null, 'selection whose target vanished is dropped');
+    assert.equal(editor.refreshOptions, undefined, 'no fit request preserves the graph pan/zoom');
+    assert.equal(editor.externalChange.kind, 'none');
+    assert.match(editor.lastStatus.message, /Reloaded external version/);
   } finally {
     if (previousFetch === undefined) delete globalThis.fetch;
     else globalThis.fetch = previousFetch;

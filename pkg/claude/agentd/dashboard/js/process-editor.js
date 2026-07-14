@@ -30,6 +30,9 @@ import {
 import { openNodeDialog } from './process-node-dialog.js';
 import { LiveValidation } from './process-validation.js';
 import {
+  NO_EXTERNAL_CHANGE, keepExternalChange, reconcileExternalChange,
+} from './process-external-change.js';
+import {
   makeSelection, selectionContains, selectionItems, toggleSelection,
 } from './process-selection.js';
 
@@ -83,6 +86,9 @@ export class ProcessTemplateEditor {
     this.band = null;
     this.savePending = false;
     this.saveSeq = 0;
+    this.externalReloadPending = false;
+    this.externalReloadSeq = 0;
+    this.externalChange = NO_EXTERNAL_CHANGE;
     this.abort = new AbortController();
     this.buildDOM();
     this.graph = new ProcessGraph(this.stageHost, this.model.graph(), {
@@ -141,6 +147,13 @@ export class ProcessTemplateEditor {
       this.settingsButton, this.undoButton, this.redoButton, this.paletteButton, this.saveButton,
     );
 
+    this.externalMessage = h('span', { class: 'process-editor-external-message', text: 'Template changed externally (new version)' });
+    this.externalReloadButton = h('button', { class: 'process-action primary', type: 'button', text: 'Reload' });
+    this.externalKeepButton = h('button', { class: 'process-action', type: 'button', text: 'Keep editing' });
+    this.externalBanner = h('div', {
+      class: 'process-editor-external', role: 'status', hidden: '',
+    }, this.externalMessage, h('span', { class: 'spacer' }), this.externalReloadButton, this.externalKeepButton);
+
     this.palette = this.buildPalette();
     this.stageHost = h('div', { class: 'process-editor-canvas-host' });
     this.inlineInput = h('input', {
@@ -150,7 +163,7 @@ export class ProcessTemplateEditor {
     const body = h('div', { class: 'process-editor-body' }, this.palette, this.stage);
 
     this.inspector = h('div', { class: 'process-editor-inspector' });
-    this.root = h('div', { class: 'process-editor' }, header, body, this.inspector);
+    this.root = h('div', { class: 'process-editor' }, header, this.externalBanner, body, this.inspector);
     this.mount.replaceChildren(this.root);
     this.mount.classList.add('process-editor-mount');
   }
@@ -180,6 +193,8 @@ export class ProcessTemplateEditor {
   bindEditorEvents() {
     const signal = this.abort.signal;
     this.saveButton.addEventListener('click', () => this.save(), { signal });
+    this.externalReloadButton.addEventListener('click', () => this.reloadExternalChange(), { signal });
+    this.externalKeepButton.addEventListener('click', () => this.keepExternalChange(), { signal });
     this.undoButton.addEventListener('click', () => this.applyHistory('undo'), { signal });
     this.redoButton.addEventListener('click', () => this.applyHistory('redo'), { signal });
     this.settingsButton.addEventListener('click', () => this.setSelection({ type: 'template' }), { signal });
@@ -231,7 +246,9 @@ export class ProcessTemplateEditor {
     // callbacks. Fetch is not tied to the event-listener AbortController, so
     // the request generation is the authoritative stale-response guard.
     this.saveSeq += 1;
+    this.externalReloadSeq += 1;
     this.savePending = false;
+    this.externalReloadPending = false;
     this.abort.abort();
     this.closeInline(false);
     this.validation?.destroy();
@@ -267,6 +284,11 @@ export class ProcessTemplateEditor {
 
   updateChrome() {
     const { model } = this;
+    if (this.externalChange?.ref) {
+      this.externalChange = reconcileExternalChange(this.externalChange, {
+        loadedRef: model.currentRef, currentRef: this.externalChange.ref, dirty: this.dirty,
+      });
+    }
     this.titleLabel.textContent = model.template.name
       ? `${model.template.name} (${model.template.id})`
       : model.template.id || 'untitled';
@@ -286,7 +308,72 @@ export class ProcessTemplateEditor {
     // an existing CAS head. Keep its retry path armed after a failed or
     // cancelled retry; only a successfully loaded/saved clean editor is done.
     this.saveButton.disabled = this.savePending || (!model.dirty && !this.blank);
+    this.renderExternalChange?.();
     this.renderInspector();
+  }
+
+  renderExternalChange() {
+    if (!this.externalBanner) return;
+    const visible = this.externalChange.kind === 'clean' || this.externalChange.kind === 'dirty';
+    this.externalBanner.hidden = !visible;
+    this.externalBanner.classList.toggle('is-dirty', this.externalChange.kind === 'dirty');
+    this.externalKeepButton.hidden = this.externalChange.kind !== 'dirty';
+    this.externalReloadButton.disabled = this.externalReloadPending || this.savePending;
+    this.externalKeepButton.disabled = this.externalReloadPending || this.savePending;
+  }
+
+  observeExternalRef(currentRef) {
+    this.externalChange = reconcileExternalChange(this.externalChange, {
+      loadedRef: this.model.currentRef, currentRef, dirty: this.dirty,
+    });
+    this.renderExternalChange();
+    return this.externalChange;
+  }
+
+  keepExternalChange() {
+    this.externalChange = keepExternalChange(this.externalChange);
+    this.renderExternalChange();
+  }
+
+  retainLiveSelection() {
+    if (this.selection?.type === 'template') return;
+    this.selection = makeSelection(selectionItems(this.selection).filter((item) => item.type === 'node'
+      ? this.model.node(item.id) : this.model.findEdge(item.from, item.outcome)));
+  }
+
+  async reloadExternalChange() {
+    const targetRef = this.externalChange.ref;
+    if (!targetRef || this.externalReloadPending || this.savePending) return false;
+    if (this.dirty && !(await (this.options.confirmDiscard?.() ?? false))) return false;
+    if (this.abort.signal.aborted || this.externalChange.ref !== targetRef || this.savePending) return false;
+    // A dirty node-dialog draft belongs to the old model. The shared discard
+    // confirmation above approved its loss, so close it before swapping models.
+    this.modalDispose?.(null);
+    const requestSeq = ++this.externalReloadSeq;
+    this.externalReloadPending = true;
+    this.renderExternalChange();
+    try {
+      const view = await fetchEditView(this.model.template.id);
+      if (requestSeq !== this.externalReloadSeq || this.abort.signal.aborted) return false;
+      this.model = new ProcessEditModel(view, this.model.config);
+      this.blank = false;
+      this.retainLiveSelection();
+      // ProcessGraph#setGraph keeps its current pan/zoom when fit is false;
+      // refresh replays any still-live semantic selection and focused node.
+      this.externalChange = NO_EXTERNAL_CHANGE;
+      this.refresh();
+      this.validation?.applyDiagnostics(view.diagnostics || []);
+      this.status(`Reloaded external version ${shortHash(view.semanticHash)}.`);
+      return true;
+    } catch (error) {
+      if (requestSeq === this.externalReloadSeq && !this.abort.signal.aborted) this.status(`Reload failed: ${error.message}`, true);
+      return false;
+    } finally {
+      if (requestSeq === this.externalReloadSeq) {
+        this.externalReloadPending = false;
+        this.renderExternalChange();
+      }
+    }
   }
 
   status(message, isError = false) {

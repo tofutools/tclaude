@@ -34,9 +34,18 @@ export function createProcessesActions({
         }
         if (!quiet) state.setNotice(`${state.view.value.actionable} actionable item${state.view.value.actionable === 1 ? '' : 's'}`);
         if (!items.length && state.runs.value === null) void load('runs', { quiet: true });
+      } else if (name === 'templates') {
+        const editor = state.currentEditor();
+        const editorID = editor?.model?.template?.id;
+        const head = (body.templates || []).find((template) => template.id === editorID)?.latestVersion?.ref;
+        if (head) editor?.observeExternalRef?.(head);
+        if (!quiet) {
+          const rows = body.templates || [];
+          state.setNotice(`${rows.length} template${rows.length === 1 ? '' : 's'}`);
+        }
       } else if (!quiet) {
         const rows = body[name] || [];
-        state.setNotice(`${rows.length} ${name === 'templates' ? `template${rows.length === 1 ? '' : 's'}` : `run${rows.length === 1 ? '' : 's'}`}`);
+        state.setNotice(`${rows.length} run${rows.length === 1 ? '' : 's'}`);
       }
       return true;
     } catch (error) {
