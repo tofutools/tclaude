@@ -18,6 +18,7 @@ import { mountMux, normalizeSeed } from './terminals-core.js';
 
 const solo = new URLSearchParams(location.search).has('solo');
 if (solo) document.body.classList.add('solo');
+let soloSeed = null;
 
 // A non-solo /terminals (someone navigated here by hand) still works as a
 // multiplexer — nothing wires it anymore, but the core handles both shapes.
@@ -40,11 +41,13 @@ function decodeOpenHash() {
 
 function consumeHash() {
   const seed = normalizeSeed(decodeOpenHash());
-  // Clear the hash either way so a manual reload doesn't re-open a stale seed,
-  // and so the NEXT open — even an identical one — still changes the hash and
-  // fires hashchange. The core dedupes by key, so a repeat is harmless.
+  // Clear the hash so an ordinary manual reload cannot race this page's detach
+  // beacon against a newly reconnected pane, and so a later identical open
+  // still fires hashchange. Keep the parsed solo seed in memory solely for the
+  // explicit auth-recovery event below.
   if (location.hash) history.replaceState(null, '', location.pathname + location.search);
   if (!seed) return;
+  if (solo) soloSeed = seed;
   mux.openPane(seed);
   if (seed.hideConv) armDetachBeacon(seed.hideConv);
 }
@@ -66,6 +69,15 @@ function armDetachBeacon(conv) {
     try { navigator.sendBeacon('/api/hide/' + encodeURIComponent(conv)); } catch (_) { /* best-effort */ }
   });
 }
+
+// auth-session.js gives the page one synchronous chance to refine its
+// post-login return target. A solo popout's seed no longer lives in the URL, so
+// reconstruct it here without changing ordinary reload behavior.
+window.addEventListener('tclaude:auth-expired', (event) => {
+  if (!solo || !soloSeed || !event.detail) return;
+  event.detail.returnTo = location.pathname + location.search
+    + '#open=' + encodeURIComponent(JSON.stringify(soloSeed));
+});
 
 window.addEventListener('hashchange', consumeHash);
 consumeHash();

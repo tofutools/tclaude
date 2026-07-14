@@ -3,9 +3,11 @@ package agentd
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -17,15 +19,50 @@ func withDashboardRestartAuthTest(t *testing.T, now time.Time) {
 	prevGrace := dashboardGraceSessionHashes
 	prevNow := dashboardSessionNow
 	prevURL := popupBaseURL
+	prevBind := dashboardBindHost
 	t.Cleanup(func() {
 		dashboardSessionToken = prevToken
 		dashboardGraceSessionHashes = prevGrace
 		dashboardSessionNow = prevNow
 		popupBaseURL = prevURL
+		dashboardBindHost = prevBind
 	})
 	dashboardSessionNow = func() time.Time { return now }
 	dashboardGraceSessionHashes = map[string]time.Time{}
 	popupBaseURL = "http://127.0.0.1:4567"
+	dashboardBindHost = defaultDashboardBind
+}
+
+func TestDashboardGraceCookieRotatesOnWebSocketUpgrade(t *testing.T) {
+	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	withDashboardRestartAuthTest(t, now)
+	dashboardSessionToken = "current-cookie"
+	dashboardGraceSessionHashes[dashboardTokenHash("pre-restart-cookie")] = now.Add(time.Minute)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !checkDashboardAuth(w, r) {
+			return
+		}
+		conn, err := upgradeTerminalWebSocket(w, r)
+		if err == nil {
+			_ = conn.Close()
+		}
+	}))
+	t.Cleanup(srv.Close)
+	popupBaseURL = srv.URL
+
+	headers := http.Header{}
+	headers.Set("Origin", srv.URL)
+	headers.Set("Cookie", (&http.Cookie{
+		Name: dashboardCookieName, Value: "pre-restart-cookie",
+	}).String())
+	conn, resp, err := websocket.DefaultDialer.Dial(
+		"ws"+strings.TrimPrefix(srv.URL, "http"), headers)
+	require.NoError(t, err)
+	_ = conn.Close()
+	require.NotNil(t, resp)
+	require.Len(t, resp.Cookies(), 1, "101 response must carry the rotated cookie")
+	assert.Equal(t, "current-cookie", resp.Cookies()[0].Value)
 }
 
 func TestDashboardSessionSurvivesCleanRestartAndRotatesCookie(t *testing.T) {

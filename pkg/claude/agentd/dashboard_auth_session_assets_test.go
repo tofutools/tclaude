@@ -18,9 +18,36 @@ func TestDashboardAuthSessionWrapperLoadsBeforeApp(t *testing.T) {
 	}
 
 	source := string(mustReadFS(dashboardAssetsFS, "js/auth-session.js"))
-	for _, want := range []string{"X-Tclaude-Login-Required", "window.location.reload()"} {
+	for _, want := range []string{
+		"X-Tclaude-Login-Required",
+		"tclaude:auth-expired",
+		"window.location.replace",
+		"return_to=",
+	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("auth-session wrapper missing %q", want)
+		}
+	}
+
+	terminalsHTML := string(terminalsPageHTML)
+	termApp := `<script type="module" src="/static/js/terminals.js"></script>`
+	if wrapperAt, appAt := strings.Index(terminalsHTML, wrapper), strings.Index(terminalsHTML, termApp); wrapperAt < 0 || appAt < 0 || wrapperAt >= appAt {
+		t.Fatal("standalone terminals must load auth-session before its module graph")
+	}
+	termCore := string(mustReadFS(dashboardAssetsFS, "js/terminals-core.js"))
+	for _, want := range []string{"/api/auth/session", "tclaude:auth-expired"} {
+		if !strings.Contains(termCore, want) {
+			t.Fatalf("terminal transport missing auth recovery wiring %q", want)
+		}
+	}
+	termEntry := string(mustReadFS(dashboardAssetsFS, "js/terminals.js"))
+	for _, want := range []string{
+		"if (location.hash) history.replaceState",
+		"event.detail.returnTo",
+		"#open=",
+	} {
+		if !strings.Contains(termEntry, want) {
+			t.Fatalf("solo terminal popout auth recovery missing %q", want)
 		}
 	}
 }

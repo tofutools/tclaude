@@ -172,6 +172,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/", handleDashboardRoot)
 	mux.HandleFunc("/terminals", handleDashboardTerminals)
 	mux.HandleFunc("/dashboard/login", handleDashboardLogin)
+	mux.HandleFunc("/api/auth/session", handleDashboardAuthSession)
 	mux.HandleFunc("/api/snapshot", withGzip(withPerfTiming("/api/snapshot", handleDashboardSnapshot)))
 	mux.HandleFunc("/api/perf", withGzip(handleDashboardPerf))
 	mux.HandleFunc("/api/perf/reset", handleDashboardPerfReset)
@@ -311,9 +312,8 @@ func handleDashboardRoot(w http.ResponseWriter, r *http.Request) {
 			// browser that lost the race after a daemon restart).
 			// Don't dead-end on plain text — render the sign-in page
 			// so the human can re-authenticate in place.
-			renderDashboardLoginPage(w, http.StatusForbidden,
-				"That dashboard link has expired or was already used.",
-				dashboardThemeParamKV(r))
+			renderDashboardLoginPage(w, r, http.StatusForbidden,
+				"That dashboard link has expired or was already used.")
 			return
 		}
 		setDashboardSessionCookie(w)
@@ -337,7 +337,7 @@ func handleDashboardRoot(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(dashboardCookieName); err == nil {
 		valid, refresh := dashboardSessionCookieMatch(c.Value)
 		if !valid {
-			renderDashboardLoginPage(w, http.StatusForbidden, "", dashboardThemeParamKV(r))
+			renderDashboardLoginPage(w, r, http.StatusForbidden, "")
 			return
 		}
 		if refresh {
@@ -355,7 +355,42 @@ func handleDashboardRoot(w http.ResponseWriter, r *http.Request) {
 	// at `tclaude agent dashboard` (the zero-friction, no-secret path)
 	// and also offers an operator-token field so they can sign in from
 	// the browser without switching back to a terminal.
-	renderDashboardLoginPage(w, http.StatusForbidden, "", dashboardThemeParamKV(r))
+	renderDashboardLoginPage(w, r, http.StatusForbidden, "")
+}
+
+// dashboardLoginReturnTarget returns the same-origin dashboard location to
+// restore after an operator-token login. A return_to supplied by the auth
+// fetch wrapper wins; otherwise the current app URL becomes the target. Only
+// known SPA paths and the standalone terminals page are accepted, so this can
+// never become an open redirect. One-shot auth parameters are stripped.
+func dashboardLoginReturnTarget(r *http.Request) string {
+	raw := r.URL.Query().Get("return_to")
+	if raw == "" {
+		u := *r.URL
+		u.Scheme, u.Host = "", ""
+		raw = u.String()
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.IsAbs() || u.Host != "" || !strings.HasPrefix(raw, "/") ||
+		strings.HasPrefix(raw, "//") || strings.Contains(u.Path, `\`) {
+		return "/"
+	}
+	if !isDashboardAppPath(u.Path) && u.Path != "/terminals" {
+		return "/"
+	}
+	q := u.Query()
+	q.Del("init_token")
+	q.Del("return_to")
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+func dashboardLoginFormQuery(r *http.Request) string {
+	target := dashboardLoginReturnTarget(r)
+	if target == "/" {
+		return ""
+	}
+	return "?" + url.Values{"return_to": []string{target}}.Encode()
 }
 
 // dashboardThemeParamKV returns the active cosmetic-theme URL param as a
@@ -445,27 +480,38 @@ func handleDashboardLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "dashboard token not initialised", http.StatusServiceUnavailable)
 		return
 	}
-	themeKV := dashboardThemeParamKV(r)
 	if !checkLoginOrigin(r) {
-		renderDashboardLoginPage(w, http.StatusForbidden,
-			"Request blocked: it didn't come from the dashboard page.", themeKV)
+		renderDashboardLoginPage(w, r, http.StatusForbidden,
+			"Request blocked: it didn't come from the dashboard page.")
 		return
 	}
 	if !operatorTokenMatches(r.FormValue("token")) {
 		// Uniform message for "blank", "wrong", and "no token was ever
 		// minted" — never disclose which, and never echo the input back.
-		renderDashboardLoginPage(w, http.StatusForbidden,
-			"That operator token wasn't accepted. Copy it from the agentd startup banner (it begins with `tclo_`).", themeKV)
+		renderDashboardLoginPage(w, r, http.StatusForbidden,
+			"That operator token wasn't accepted. Copy it from the agentd startup banner (it begins with `tclo_`).")
 		return
 	}
 	setDashboardSessionCookie(w)
-	// 303 to the bare path: a refresh now rides the cookie, and the
-	// posted token never lingers in history or an access log.
-	redirectTarget := "/"
-	if themeKV != "" {
-		redirectTarget += "?" + themeKV
+	// A refresh now rides the cookie, and the posted token never lingers in
+	// history or an access log. Restore the app/terminal location that was open
+	// when authentication expired.
+	http.Redirect(w, r, dashboardLoginReturnTarget(r), http.StatusSeeOther)
+}
+
+// handleDashboardAuthSession is the lightweight preflight for browser
+// transports that cannot inspect a failed authentication response themselves
+// (notably WebSocket). The normal cookie + Origin gate performs grace-cookie
+// rotation or emits the fetch wrapper's login-required signal.
+func handleDashboardAuthSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET only", http.StatusMethodNotAllowed)
+		return
 	}
-	http.Redirect(w, r, redirectTarget, http.StatusSeeOther)
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // originMatchesBase reports whether an Origin or Referer header value

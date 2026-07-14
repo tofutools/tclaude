@@ -10,10 +10,14 @@
     const response = await nativeFetch(...args);
     if (!reloading && response.headers.get('X-Tclaude-Login-Required') === '1') {
       reloading = true;
-      // Reload the current app/deep-link URL. Its unauthenticated GET is the
-      // canonical server-rendered login page, and preserving the path keeps the
-      // operator's intended dashboard location available after signing in.
-      window.location.reload();
+      // Let terminal views disarm beforeunload prompts, then move to the
+      // canonical login page with a validated same-origin return target. The
+      // hash matters for standalone terminal popouts: it carries the pane seed.
+      const detail = {
+        returnTo: window.location.pathname + window.location.search + window.location.hash,
+      };
+      window.dispatchEvent(new CustomEvent('tclaude:auth-expired', { detail }));
+      window.location.replace('/?return_to=' + encodeURIComponent(detail.returnTo));
     }
     return response;
   };

@@ -79,6 +79,11 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
     window[shouldArm ? 'addEventListener' : 'removeEventListener']('beforeunload', confirmTerminalUnload);
   }
 
+  // Authentication expiry is an intentional navigation to the sign-in page,
+  // not an accidental attempt to abandon a live terminal. Do not interpose the
+  // browser's generic beforeunload confirmation on that recovery path.
+  window.addEventListener('tclaude:auth-expired', () => updateUnloadGuard(0));
+
   function setStatus(p, text) { if (p.statusEl) p.statusEl.textContent = text; }
 
   function updateChrome() {
@@ -149,14 +154,29 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
       .catch((e) => { console.warn('terminal detach (hide) request error:', e); });
   }
 
-  function connect(p) {
+  async function connect(p) {
     closeSocket(p);
+    setStatus(p, 'authenticating…');
+    if (p.reconnectBtn) p.reconnectBtn.style.display = 'none';
+    try {
+      const auth = await fetch('/api/auth/session', { credentials: 'same-origin', cache: 'no-store' });
+      if (!auth.ok) {
+        setStatus(p, 'authentication required');
+        if (p.reconnectBtn) p.reconnectBtn.style.display = '';
+        return;
+      }
+    } catch (_) {
+      setStatus(p, 'disconnected');
+      if (p.reconnectBtn) p.reconnectBtn.style.display = '';
+      return;
+    }
+    // The pane may have been closed while the auth preflight was in flight.
+    if (!panes.has(p.key)) return;
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(proto + '//' + location.host + p.seed.ws);
     ws.binaryType = 'arraybuffer';
     p.ws = ws;
     setStatus(p, 'connecting…');
-    if (p.reconnectBtn) p.reconnectBtn.style.display = 'none';
     ws.onopen = () => {
       setStatus(p, 'connected');
       if (activeKey === p.key) fit(p);
