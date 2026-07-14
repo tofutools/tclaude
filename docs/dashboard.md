@@ -662,8 +662,12 @@ ordinary terminal clicks available to the running program. Pasting a PNG, JPEG,
 or WebP clipboard image uploads it to a bounded temporary directory on the
 agentd host and pastes that host-side path into Claude Code or Codex as an image
 attachment. This also works through remote dashboard access—the image bytes
-come from the browser rather than agentd's OS clipboard. Plain-text paste is
-unchanged.
+come from the browser rather than agentd's OS clipboard. Browser paste
+shortcuts (**Ctrl-V**, **Ctrl-Shift-V**, **⌘-V**, and **⌘-Shift-V**) stay
+in the browser on every platform rather than being forwarded to the remote TUI.
+Text continues through xterm's ordinary paste event, while images take the
+upload path above; Codex never tries to read the agentd host's desktop clipboard
+for a web-terminal paste.
 
 The **Window focus** field also holds a **set the `tclaude:<id>` window/tab
 title** toggle (`focus.window_title`, on by default). tclaude normally stamps

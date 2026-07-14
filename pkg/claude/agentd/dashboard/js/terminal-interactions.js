@@ -33,6 +33,24 @@ export function terminalKeyInput(event) {
   return null;
 }
 
+// Keep paste shortcuts in the browser. On Windows/Linux xterm otherwise turns
+// Ctrl+V into the literal SYN byte before Chrome dispatches its paste event.
+// Codex interprets that byte as "read an image from the OS clipboard", which
+// means a remote web terminal tries agentd's X11 clipboard instead of the
+// browser clipboard. Returning false from xterm's custom key handler skips its
+// terminal input path without canceling the browser default; the subsequent
+// paste event then carries either text to xterm or image bytes to onPaste.
+//
+// Shift is allowed for browsers/platforms that use Ctrl/Cmd+Shift+V for plain-
+// text paste. Alt is deliberately excluded so AltGr and terminal chords remain
+// available to the application.
+export function isBrowserPasteShortcut(event) {
+  if (!event || event.type !== 'keydown' || event.altKey) return false;
+  const pasteKey = event.code === 'KeyV' ||
+    (typeof event.key === 'string' && event.key.toLowerCase() === 'v');
+  return pasteKey && Boolean(event.ctrlKey || event.metaKey);
+}
+
 // OSC 52 payloads have the form "selection;base64-data". tmux emits one when
 // copy-mode creates a paste buffer while set-clipboard is external/on (external
 // is the default). xterm exposes the payload without the OSC identifier.
@@ -368,6 +386,9 @@ export function attachTerminalInteractions({ term, host, copyButton, setStatus, 
 
   term.attachCustomKeyEventHandler((event) => {
     if (event.type !== 'keydown') return true;
+    // Do not call preventDefault: Chrome still needs to dispatch the paste
+    // event to xterm's textarea (and our capture listener above it).
+    if (isBrowserPasteShortcut(event)) return false;
     const input = terminalKeyInput(event);
     if (input !== null) {
       event.preventDefault();
