@@ -153,12 +153,12 @@ func TestDashboardAuthResult_HostRelativeWhenNonLoopback(t *testing.T) {
 
 	// Same-host Origin → accepted.
 	req.Header.Set("Origin", "http://box.example:8080")
-	ok, _, msg := dashboardAuthResult(req)
+	ok, _, _, msg := dashboardAuthResult(req)
 	assert.True(t, ok, "same-host origin must pass host-relative check; msg=%s", msg)
 
 	// Cross-host Origin → refused even with a valid cookie.
 	req.Header.Set("Origin", "http://evil.example:8080")
-	ok, code, _ := dashboardAuthResult(req)
+	ok, _, code, _ := dashboardAuthResult(req)
 	assert.False(t, ok, "cross-host origin must be refused")
 	assert.Equal(t, 403, code)
 }

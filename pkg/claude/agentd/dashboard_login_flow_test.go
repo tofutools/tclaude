@@ -122,6 +122,20 @@ func TestDashboardLogin_RestoresValidatedReturnTarget(t *testing.T) {
 	rec = serveLogin(dash, req)
 	require.Equal(t, http.StatusSeeOther, rec.Code)
 	assert.Equal(t, "/", rec.Header().Get("Location"))
+
+	// Dot-segments are normalized before the path allowlist is applied. A
+	// target that appears to start in the SPA but resolves outside it fails
+	// closed instead of redirecting to the resolved non-dashboard route.
+	for _, target := range []string{
+		"/access/../../v1/process/worklist/1/action",
+		"/access/%2e%2e/%2e%2e/v1/process/worklist/1/action",
+	} {
+		req = loginPOST(base, "tclo_the_real_one")
+		req.URL.RawQuery = url.Values{"return_to": {target}}.Encode()
+		rec = serveLogin(dash, req)
+		require.Equal(t, http.StatusSeeOther, rec.Code)
+		assert.Equal(t, "/", rec.Header().Get("Location"), "target=%q", target)
+	}
 }
 
 // Scenario: a wrong operator token is refused — no cookie, sign-in page

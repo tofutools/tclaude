@@ -13,6 +13,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"path"
 	"sort"
 	"strings"
 	"time"
@@ -375,6 +376,8 @@ func dashboardLoginReturnTarget(r *http.Request) string {
 		strings.HasPrefix(raw, "//") || strings.Contains(u.Path, `\`) {
 		return "/"
 	}
+	u.Path = path.Clean(u.Path)
+	u.RawPath = ""
 	if !isDashboardAppPath(u.Path) && u.Path != "/terminals" {
 		return "/"
 	}
@@ -692,9 +695,9 @@ func checkDashboardAuth(w http.ResponseWriter, r *http.Request) bool {
 	if dashboardPreAuthed(r) {
 		return true
 	}
-	ok, code, msg := dashboardAuthResult(r)
+	ok, loginRequired, code, msg := dashboardAuthResult(r)
 	if !ok {
-		if msg == "missing or invalid dashboard cookie; load / first" {
+		if loginRequired {
 			w.Header().Set("X-Tclaude-Login-Required", "1")
 		}
 		http.Error(w, msg, code)
@@ -710,22 +713,23 @@ func checkDashboardAuth(w http.ResponseWriter, r *http.Request) bool {
 
 // dashboardAuthResult is the pure predicate behind checkDashboardAuth:
 // it runs the cookie + Origin/Referer checks and returns whether the
-// request is an authenticated dashboard caller, plus the HTTP code +
-// message to use on failure. Factored out so the audit middleware can
+// request is an authenticated dashboard caller, whether the browser must
+// log in again, and the HTTP code + message to use on failure. Factored out
+// so the audit middleware can
 // ask "is this the authenticated operator?" without writing a response —
 // attribution keys on a *valid session*, never on the response status (a
 // post-auth policy 403, e.g. a blocklisted sudo grant, is still the
 // operator and must not be downgraded to "unauthenticated"). See JOH-268.
-func dashboardAuthResult(r *http.Request) (ok bool, code int, msg string) {
+func dashboardAuthResult(r *http.Request) (ok bool, loginRequired bool, code int, msg string) {
 	if dashboardSessionToken == "" {
-		return false, http.StatusServiceUnavailable, "dashboard not initialised"
+		return false, false, http.StatusServiceUnavailable, "dashboard not initialised"
 	}
 	c, err := r.Cookie(dashboardCookieName)
 	if err != nil {
-		return false, http.StatusForbidden, "missing or invalid dashboard cookie; load / first"
+		return false, true, http.StatusForbidden, "missing or invalid dashboard cookie; load / first"
 	}
 	if valid, _ := dashboardSessionCookieMatch(c.Value); !valid {
-		return false, http.StatusForbidden, "missing or invalid dashboard cookie; load / first"
+		return false, true, http.StatusForbidden, "missing or invalid dashboard cookie; load / first"
 	}
 	// Non-loopback bind: host-relative same-origin (mirror the remote
 	// listener), since the browser reaches us through a hostname/proxy the
@@ -733,14 +737,14 @@ func dashboardAuthResult(r *http.Request) (ok bool, code int, msg string) {
 	// stay the primary gate.
 	if !isLoopbackHost(dashboardBindHost) {
 		if !dashboardHostRelativeOrigin(r) {
-			return false, http.StatusForbidden, "Origin/Referer host mismatch"
+			return false, false, http.StatusForbidden, "Origin/Referer host mismatch"
 		}
-		return true, http.StatusOK, ""
+		return true, false, http.StatusOK, ""
 	}
 	origin := r.Header.Get("Origin")
 	referer := r.Header.Get("Referer")
 	if origin == "" && referer == "" {
-		return false, http.StatusForbidden, "missing Origin and Referer"
+		return false, false, http.StatusForbidden, "missing Origin and Referer"
 	}
 	// popupBaseURL is always bound in production when these routes are
 	// registered; it is empty only in tests that register the mux without
@@ -748,13 +752,13 @@ func dashboardAuthResult(r *http.Request) (ok bool, code int, msg string) {
 	// origin pin is disabled (mirrors checkLoginOrigin's early return).
 	if popupBaseURL != "" {
 		if origin != "" && !originMatchesBase(origin, popupBaseURL) {
-			return false, http.StatusForbidden, "Origin mismatch"
+			return false, false, http.StatusForbidden, "Origin mismatch"
 		}
 		if origin == "" && !originMatchesBase(referer, popupBaseURL) {
-			return false, http.StatusForbidden, "Referer mismatch"
+			return false, false, http.StatusForbidden, "Referer mismatch"
 		}
 	}
-	return true, http.StatusOK, ""
+	return true, false, http.StatusOK, ""
 }
 
 // snapshotPayload is the wire shape for /api/snapshot. One round-trip

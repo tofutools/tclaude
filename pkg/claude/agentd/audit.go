@@ -387,7 +387,7 @@ func recordAuditRow(r *http.Request, route *auditRoute, vars map[string]string, 
 // (fail-closed callers — still logged so a denied probe leaves a trail).
 func auditActor(r *http.Request, source string) (kind, conv, label string) {
 	if source == db.AuditSourceDashboard {
-		if ok, _, _ := dashboardAuthResult(r); !ok {
+		if ok, _, _, _ := dashboardAuthResult(r); !ok {
 			return db.AuditActorUnknown, "", "unauthenticated"
 		}
 		return db.AuditActorHuman, "", "operator"
