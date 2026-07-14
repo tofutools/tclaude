@@ -5,7 +5,7 @@ import { createPreactHarness, getByRole } from './preact-harness.mjs';
 function section(calls) {
   return {
     key: 'profiles',
-    icon: '⚙',
+    icon: () => '⚙',
     title: () => 'Agent profiles',
     empty: () => 'no profiles yet',
     items: (snapshot) => snapshot?.profiles || [],
@@ -48,6 +48,8 @@ test('Dock keeps keyed cards, disclosure and an open menu stable across snapshot
   assert.equal(card.hasAttribute('draggable'), true);
   assert.equal(card.dataset.dockKind, 'profiles');
   assert.equal(card.dataset.dockName, 'review');
+  assert.equal(details.querySelector('.dock-section-icon').textContent, '⚙', 'the category icon stays in the section heading');
+  assert.equal(card.querySelector('.dock-card-icon'), null, 'cards do not repeat the category icon on every row');
 
   await harness.act(() => harness.fireEvent(cog, 'click'));
   const menu = getByRole(card, 'menu', { name: 'review' });

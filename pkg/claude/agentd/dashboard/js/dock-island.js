@@ -167,7 +167,6 @@ function DockCard({ section, item, openMenu, setOpenMenu, clipHost, layoutVersio
       } : null}
     >
       <span class="dock-grip" aria-hidden="true" title=${hasDetails ? null : gripTitle}>⠿</span>
-      <span class="dock-card-icon" aria-hidden="true">${section.icon}</span>
       <span class="dock-card-body">
         <span class="dock-card-name">${name}</span>
         <${DockChips} chips=${compactChips} markup=${compactMarkup} />
@@ -269,7 +268,7 @@ function DockSection({
       <summary class="dock-section-head">
         <span class="dock-section-title">
           <span class="dock-section-chevron" aria-hidden="true">▸</span>
-          <span class="dock-section-icon" aria-hidden="true">${section.icon}</span>
+          <span class="dock-section-icon" aria-hidden="true">${section.icon()}</span>
           ${section.title()}
           <span class="dock-section-count">${items.length}</span>
         </span>
