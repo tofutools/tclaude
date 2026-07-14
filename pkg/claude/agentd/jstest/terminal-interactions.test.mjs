@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   attachTerminalInteractions, beginGestureClipboardWrite, decodeOSC52,
-  shouldArmTmuxClipboard, terminalKeyInput,
+  isBrowserPasteShortcut, shouldArmTmuxClipboard, terminalKeyInput,
 } from '../dashboard/js/terminal-interactions.js';
 
 function key(overrides = {}) {
@@ -27,6 +27,25 @@ test('additional modifiers on Shift+Enter remain xterm-owned', () => {
   for (const modifier of ['altKey', 'ctrlKey', 'metaKey']) {
     assert.equal(terminalKeyInput(key({ shiftKey: true, [modifier]: true })), null, modifier);
   }
+});
+
+test('both Ctrl and Meta paste shortcuts stay browser-owned on every platform', () => {
+  for (const shortcut of [
+    key({ key: 'v', code: 'KeyV', ctrlKey: true }),
+    key({ key: 'V', code: 'KeyV', ctrlKey: true, shiftKey: true }),
+    key({ key: 'v', code: 'KeyV', metaKey: true }),
+    key({ key: 'V', code: 'KeyV', metaKey: true, shiftKey: true }),
+  ]) {
+    assert.equal(isBrowserPasteShortcut(shortcut), true);
+  }
+});
+
+test('unrelated and Alt-modified V chords remain terminal-owned', () => {
+  assert.equal(isBrowserPasteShortcut(key({ key: 'v', code: 'KeyV' })), false);
+  assert.equal(isBrowserPasteShortcut(
+    key({ key: 'v', code: 'KeyV', ctrlKey: true, altKey: true })), false);
+  assert.equal(isBrowserPasteShortcut(
+    key({ type: 'keyup', key: 'v', code: 'KeyV', ctrlKey: true })), false);
 });
 
 test('Shift+Enter remains xterm-owned while an IME composition is active', () => {
@@ -134,6 +153,7 @@ function terminalHarness(ownerDocument) {
   host.ownerDocument = ownerDocument;
   host.title = '';
   let osc52 = null;
+  let keyHandler = null;
   const term = {
     options: {},
     modes: { mouseTrackingMode: 'drag' },
@@ -145,13 +165,34 @@ function terminalHarness(ownerDocument) {
       },
     },
     onSelectionChange() { return { dispose() {} }; },
-    attachCustomKeyEventHandler() {},
+    attachCustomKeyEventHandler(handler) { keyHandler = handler; },
     hasSelection() { return false; },
     getSelection() { return ''; },
     focus() {},
   };
-  return { host, term, osc52: (payload) => osc52(payload) };
+  return {
+    host, term,
+    key: (event) => keyHandler(event),
+    osc52: (payload) => osc52(payload),
+  };
 }
+
+test('terminal wiring reserves Ctrl+V without canceling the browser paste event', () => {
+  const doc = new FakeEventTarget();
+  const harness = terminalHarness(doc);
+  const interactions = attachTerminalInteractions({ term: harness.term, host: harness.host });
+  try {
+    let prevented = false;
+    const event = key({
+      key: 'v', code: 'KeyV', ctrlKey: true,
+      preventDefault() { prevented = true; },
+    });
+    assert.equal(harness.key(event), false, 'xterm must not forward Ctrl+V to the PTY');
+    assert.equal(prevented, false, 'the browser must still dispatch its paste event');
+  } finally {
+    interactions.dispose();
+  }
+});
 
 function drag(harness, ownerDocument) {
   const plain = { button: 0, detail: 1, altKey: false, shiftKey: false, ctrlKey: false, metaKey: false };
