@@ -1,14 +1,27 @@
 package jstest
 
 import (
+	"bytes"
 	"crypto/sha256"
+	"embed"
 	"errors"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	// agentd embeds the production dashboard tree. Keeping that package in this
+	// test binary's dependency graph makes dashboard contents part of the build
+	// ID, so Go's test cache is invalidated by content, not only file metadata.
+	_ "github.com/tofutools/tclaude/pkg/claude/agentd"
 )
+
+// nodeTestInputs makes every suite, harness module, and nested vendor runtime
+// part of the test binary's content-addressed build ID.
+//
+//go:embed *.mjs vendor
+var nodeTestInputs embed.FS
 
 // Dashboard pure-module and Preact component suites run with Node's
 // built-in test runner. Preact suites use the committed test-only LinkeDOM
@@ -22,7 +35,7 @@ import (
 //     the JS suites.
 //   - Locally a node-less contributor skips this test, so they are not blocked.
 func TestDashboardJS(t *testing.T) {
-	recordDashboardInputs(t)
+	recordNodeInputs(t)
 
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -43,9 +56,14 @@ func TestDashboardJS(t *testing.T) {
 	if len(files) == 0 {
 		t.Fatal("no *.test.mjs files found")
 	}
-	// Keep Node's file-level fan-out serial so this package can overlap agentd
-	// without competing for runner CPUs and stretching both suites' critical path.
-	args := append([]string{"--test", "--test-concurrency=1"}, files...)
+	args := []string{"--test"}
+	if help, helpErr := exec.Command(node, "--help").Output(); helpErr == nil &&
+		bytes.Contains(help, []byte("--test-concurrency")) {
+		// Keep file-level fan-out serial so this package can overlap agentd
+		// without competing for runner CPUs and stretching both suites.
+		args = append(args, "--test-concurrency=1")
+	}
+	args = append(args, files...)
 	out, err := exec.Command(node, args...).CombinedOutput()
 	if err != nil {
 		// A non-zero Node exit means the suite ran and failed. Preserve its output
@@ -63,37 +81,61 @@ func TestDashboardJS(t *testing.T) {
 	t.Logf("node %v:\n%s", args, out)
 }
 
-// recordDashboardInputs makes production dashboard assets explicit inputs to
-// Go's test cache. The cache observes files opened by this process, not files
-// that the Node child opens, so without this read a dashboard-only edit could
-// incorrectly reuse a cached successful Node run.
-func recordDashboardInputs(t *testing.T) {
+// recordNodeInputs hashes the runtime input set for diagnostics. nodeTestInputs
+// and the agentd import above make those bytes content-addressed build inputs;
+// the direct dashboard reads also expose their paths in Go's test-cache trace.
+func recordNodeInputs(t *testing.T) {
 	t.Helper()
 
 	hash := sha256.New()
 	fileCount := 0
-	err := filepath.WalkDir("../dashboard", func(path string, entry fs.DirEntry, walkErr error) error {
+	recordData := func(path string, data []byte) {
+		_, _ = hash.Write([]byte(path))
+		_, _ = hash.Write([]byte{0})
+		_, _ = hash.Write(data)
+		fileCount++
+	}
+	recordFile := func(path string) error {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		recordData(path, data)
+		return nil
+	}
+	recordTree := func(root string) error {
+		return filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() {
+				return nil
+			}
+			return recordFile(path)
+		})
+	}
+
+	if err := recordTree("../dashboard"); err != nil {
+		t.Fatalf("recording dashboard test inputs: %v", err)
+	}
+	if err := fs.WalkDir(nodeTestInputs, ".", func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		if entry.IsDir() {
 			return nil
 		}
-		data, err := os.ReadFile(path)
+		data, err := nodeTestInputs.ReadFile(path)
 		if err != nil {
 			return err
 		}
-		_, _ = hash.Write([]byte(path))
-		_, _ = hash.Write([]byte{0})
-		_, _ = hash.Write(data)
-		fileCount++
+		recordData(path, data)
 		return nil
-	})
-	if err != nil {
-		t.Fatalf("recording dashboard test inputs: %v", err)
+	}); err != nil {
+		t.Fatalf("recording embedded Node test inputs: %v", err)
 	}
 	if fileCount == 0 {
-		t.Fatal("no dashboard test inputs found")
+		t.Fatal("no Node test inputs found")
 	}
-	t.Logf("dashboard test inputs: %d files, sha256 %x", fileCount, hash.Sum(nil))
+	t.Logf("Node test inputs: %d files, sha256 %x", fileCount, hash.Sum(nil))
 }
