@@ -249,7 +249,10 @@ A profile may also have multiple **aliases**: alternate handles such as
 resolve anywhere a spawn profile is accepted, including `agent spawn
 --profile`, defaults, roles, templates, process agent performers, Ask, and
 Scribe. The palette keeps one card per real profile and shows its aliases next
-to the primary name; selectors offer each alias separately as
+to the primary name. Cards stay compact with a truncated chip list; hover the
+card, or keyboard-focus its action button, to open a tooltip with the complete
+wrapped list of aliases and set profile fields. Selectors offer each alias
+separately as
 `alias → primary-name`.
 
 Open the manager from the Groups tab cog (**⚙ → ⧉ profiles…**). The manager can

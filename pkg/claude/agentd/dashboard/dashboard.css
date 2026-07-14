@@ -11216,6 +11216,7 @@ body:not(.dock-open) .dock-toggle-chevron { transform: rotate(180deg); }
    data-dock-kind/name on the element carry the payload the DnD tickets wire.
    No draggable attr yet — this ticket is the shell. */
 .dock-card {
+  position: relative;
   display: flex; align-items: center; gap: 6px;
   padding: 6px 8px; margin-bottom: 4px;
   background: #161b22;
@@ -11233,6 +11234,28 @@ body:not(.dock-open) .dock-toggle-chevron { transform: rotate(180deg); }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .dock-chips { display: flex; flex-wrap: wrap; gap: 3px; }
+.dock-chips-full .dock-chip { white-space: normal; overflow-wrap: anywhere; }
+.dock-card-details {
+  visibility: hidden; opacity: 0; pointer-events: none;
+  position: fixed; z-index: 55;
+  display: flex; flex-direction: column; gap: 6px;
+  box-sizing: border-box; padding: 8px;
+  overflow-y: auto; overscroll-behavior: contain;
+  background: #0d1117; border: 1px solid #3d444d; border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(1, 4, 9, 0.85);
+  transition: opacity .08s ease;
+}
+.dock-card-details.open { visibility: visible; opacity: 1; pointer-events: auto; }
+.dock-card-details.opens-up { transform-origin: bottom center; }
+.dock-card-details:focus-visible { outline: 2px solid #58a6ff; outline-offset: -2px; }
+.dock-card-details-description {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+.dock-card-details-name {
+  color: #d4d4d4; font-size: 12px; font-weight: 600;
+  overflow-wrap: anywhere;
+}
 .dock-chip {
   font-size: 10px; color: #8b949e;
   background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
@@ -11315,6 +11338,13 @@ body.wizard #agent-dock .dock-card:hover { border-color: #7c5cc4; background: #2
 body.wizard #agent-dock .dock-card-name { color: #e6dcff; }
 body.wizard #agent-dock .dock-grip { color: #6b5a94; }
 body.wizard #agent-dock .dock-chip { background: #241a3a; border-color: #3a2f57; color: #b39ddb; }
+body.wizard #agent-dock .dock-card-details {
+  background: linear-gradient(180deg, #191225 0%, #140e1e 100%);
+  border-color: #4a3d6b;
+  box-shadow: 0 8px 28px rgba(20, 14, 30, 0.9);
+}
+body.wizard #agent-dock .dock-card-details-name { color: #e6dcff; }
+body.wizard #agent-dock .dock-card-details:focus-visible { outline-color: #b39ddb; }
 body.wizard #agent-dock .tc-count { color: #b39ddb; }
 body.wizard #agent-dock .dock-toggle { background: #17131f; border-color: #4a3d6b; }
 body.wizard #agent-dock .dock-toggle:hover { border-color: #7c5cc4; color: #d7c9ff; }

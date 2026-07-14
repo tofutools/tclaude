@@ -1,17 +1,20 @@
 import { h, render } from 'preact';
-import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import {
+  useCallback, useEffect, useId, useLayoutEffect, useRef, useState,
+} from 'preact/hooks';
 import htm from 'htm';
 import { trustedHTMLToVNodes } from './html-vnodes.js';
 import { wizWord } from './slop.js';
 
 const html = htm.bind(h);
 
-function DockChips({ section, item }) {
-  const chips = section.chips?.(item) || [];
-  const markup = section.chipsHTML?.(item) || '';
+function DockChips({ chips = [], markup = '', full = false }) {
   if (!chips.length && !markup) return null;
   return html`
-    <span class="dock-chips">
+    <span
+      class=${`dock-chips ${full ? 'dock-chips-full' : 'dock-chips-compact'}`}
+      aria-label=${full ? 'All aliases and settings' : null}
+    >
       ${chips.map((chip) => html`
         <span
           key=${chip.text}
@@ -25,12 +28,23 @@ function DockChips({ section, item }) {
 
 function DockCard({ section, item, openMenu, setOpenMenu, clipHost, layoutVersion }) {
   const name = section.name(item);
+  const compactChips = section.chips?.(item) || [];
+  const compactMarkup = section.chipsHTML?.(item) || '';
+  const fullChips = section.fullChips?.(item) || [];
+  const hasDetails = fullChips.length > 0;
   const menuKey = `${section.key}:${name}`;
   const menuOpen = openMenu === menuKey;
   const menuRef = useRef(null);
   const cogRef = useRef(null);
+  const cardRef = useRef(null);
+  const detailsRef = useRef(null);
   const [opensUp, setOpensUp] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [detailsOpenUp, setDetailsOpenUp] = useState(false);
+  const [detailsPosition, setDetailsPosition] = useState(null);
   const draggable = section.drag ? 'true' : 'false';
+  const detailsID = `${useId()}-dock-details`;
+  const detailsDescriptionID = `${detailsID}-description`;
   const gripTitle = section.drag
     ? wizWord('drag onto a group to spawn', 'drag onto a party to summon')
     : wizWord('drag onto a group (coming soon)', 'drag onto a party (coming soon)');
@@ -46,6 +60,51 @@ function DockCard({ section, item, openMenu, setOpenMenu, clipHost, layoutVersio
     setOpensUp(menuRect.bottom > clip.bottom && menuRect.height < cogTop - clip.top);
   }, [menuOpen, clipHost, layoutVersion]);
 
+  const positionDetails = useCallback(() => {
+    if (!cardRef.current || !detailsRef.current) return;
+    const clip = clipHost?.getBoundingClientRect() || { top: 0, bottom: window.innerHeight };
+    const cardRect = cardRef.current.getBoundingClientRect();
+    const detailsRect = detailsRef.current.getBoundingClientRect();
+    const detailsHeight = detailsRef.current.scrollHeight || detailsRect.height;
+    const roomBelow = clip.bottom - cardRect.bottom;
+    const roomAbove = cardRect.top - clip.top;
+    const openUp = detailsHeight > roomBelow && roomAbove > roomBelow;
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || clip.bottom;
+    setDetailsOpenUp(openUp);
+    setDetailsPosition({
+      left: cardRect.left,
+      width: cardRect.width,
+      top: openUp ? 'auto' : cardRect.bottom,
+      bottom: openUp ? viewportHeight - cardRect.top : 'auto',
+      maxHeight: Math.max(0, openUp ? roomAbove : roomBelow),
+    });
+  }, [clipHost]);
+
+  useLayoutEffect(() => {
+    if (detailsOpen) positionDetails();
+  }, [detailsOpen, fullChips.length, layoutVersion, positionDetails]);
+
+  useEffect(() => {
+    if (!detailsOpen) return undefined;
+    clipHost?.addEventListener('scroll', positionDetails, { passive: true });
+    window.addEventListener('scroll', positionDetails);
+    window.addEventListener('resize', positionDetails);
+    return () => {
+      clipHost?.removeEventListener('scroll', positionDetails);
+      window.removeEventListener('scroll', positionDetails);
+      window.removeEventListener('resize', positionDetails);
+    };
+  }, [clipHost, detailsOpen, positionDetails]);
+
+  const showDetails = () => {
+    positionDetails();
+    setDetailsOpen(true);
+  };
+
+  const hideHoveredDetails = () => {
+    if (!cardRef.current?.contains(document.activeElement)) setDetailsOpen(false);
+  };
+
   const run = (event, action) => {
     event.preventDefault();
     setOpenMenu(null);
@@ -56,18 +115,25 @@ function DockCard({ section, item, openMenu, setOpenMenu, clipHost, layoutVersio
 
   return html`
     <div
-      class="dock-card"
+      ref=${cardRef}
+      class=${`dock-card${hasDetails ? ' dock-card-has-details' : ''}`}
       draggable=${draggable}
       data-key=${name}
       data-dock-kind=${section.key}
       data-dock-name=${name}
-      title=${section.key === 'profiles' && item.aliases?.length ? `${name} — aka ${item.aliases.join(', ')}` : name}
+      title=${name}
+      onMouseEnter=${hasDetails ? showDetails : null}
+      onMouseLeave=${hasDetails ? hideHoveredDetails : null}
+      onFocusIn=${hasDetails ? showDetails : null}
+      onFocusOut=${hasDetails ? (event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setDetailsOpen(false);
+      } : null}
     >
       <span class="dock-grip" aria-hidden="true" title=${gripTitle}>⠿</span>
       <span class="dock-card-icon" aria-hidden="true">${section.icon}</span>
       <span class="dock-card-body">
         <span class="dock-card-name">${name}</span>
-        <${DockChips} section=${section} item=${item} />
+        <${DockChips} chips=${compactChips} markup=${compactMarkup} />
       </span>
       <span class="dock-card-actions">
         <button
@@ -79,6 +145,7 @@ function DockCard({ section, item, openMenu, setOpenMenu, clipHost, layoutVersio
           data-dock-name=${name}
           aria-haspopup="menu"
           aria-expanded=${menuOpen ? 'true' : 'false'}
+          aria-describedby=${hasDetails ? detailsDescriptionID : null}
           title="More actions"
           aria-label=${`Actions for ${name}`}
           onClick=${(event) => {
@@ -121,6 +188,25 @@ function DockCard({ section, item, openMenu, setOpenMenu, clipHost, layoutVersio
           >${wizWord('Delete', 'Dispel')}</button>
         </div>
       </span>
+      ${hasDetails ? html`
+        <div
+          ref=${detailsRef}
+          id=${detailsID}
+          role="region"
+          aria-label=${`Full details for ${name}`}
+          aria-describedby=${detailsDescriptionID}
+          tabIndex="0"
+          draggable="false"
+          style=${detailsPosition}
+          class=${`dock-card-details${detailsOpen && !menuOpen ? ' open' : ''}${detailsOpenUp ? ' opens-up' : ''}`}
+        >
+          <span id=${detailsDescriptionID} class="dock-card-details-description">
+            ${fullChips.map((chip) => chip.text).join(', ')}
+          </span>
+          <span class="dock-card-details-name">${name}</span>
+          <${DockChips} chips=${fullChips} full />
+        </div>
+      ` : null}
     </div>
   `;
 }

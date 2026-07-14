@@ -32,6 +32,19 @@ test('profile choices expose aliases as distinct handles tied to one profile', a
     { value: 'cold-reviewer', label: 'cold-reviewer → gpt5.6-sol-high' },
   ]);
   assert.equal(profiles.findProfileByHandle(list, 'codex-reviewer').name, 'gpt5.6-sol-high');
+  assert.deepEqual(profiles.profileDetailChips({
+    harness: 'claude', model: 'sonnet', effort: 'high', sandbox: 'inherit', approval: 'plan',
+    ask_user_question_timeout: '5m', auto_review: false, trust_dir: true, remote_control: false,
+    agent_name: 'worker', role: 'reviewer', descr: 'cold\nreview', initial_message: 'check this',
+    sync_worktree: true, auto_focus: false, include_group_default_context: true, is_owner: false,
+    permission_overrides: { 'human.notify': 'grant', 'groups.spawn': 'deny' },
+  }), [
+    'harness claude', 'model sonnet', 'effort high', 'sandbox inherit', 'approval plan',
+    'ask-timeout 5m', 'auto-review off', 'trust-dir on', 'remote-control off',
+    'name worker', 'role reviewer', 'descr cold review', 'initial message · 10 chars',
+    'sync-wt on', 'focus off', 'group-ctx on', 'owner off',
+    'perm groups.spawn deny', 'perm human.notify grant',
+  ]);
 });
 
 test('profile clone payload leaves unique aliases with the source', async (t) => {

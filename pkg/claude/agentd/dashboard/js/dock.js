@@ -45,7 +45,7 @@ import { syncFullBleedBars } from './hscroll.js';
 // abort the whole ES-module graph at link time (node --check can't catch that,
 // it's single-file only).
 import { refresh } from './refresh.js';
-import { profileSummary, createProfile } from './profiles.js';
+import { profileSummary, profileDetailChips, createProfile } from './profiles.js';
 import { openProfileEditor, openProfilesManageModal, removeProfile } from './modal-profiles.js';
 import { roleSummary, createRole } from './roles.js';
 import { openRoleEditor, openRolesManageModal, removeRole } from './modal-roles.js';
@@ -62,7 +62,7 @@ const DOCK_OPEN_KEY = 'tclaude.dash.dock.open';
 // summaryChips turns a profileSummary/roleSummary "·"-joined string into a
 // few compact chip spans — the profile/role twin of the template's
 // roster-shape badges. Capped so a rich profile doesn't blow out the narrow
-// dock; the tooltip on the card name carries the full picture.
+// dock; profile cards expose the full list on hover/focus.
 function summaryChips(summary, max = 4) {
   const parts = String(summary || '')
     .split('·')
@@ -112,6 +112,10 @@ export const dockSections = Object.freeze([
       ...(p.aliases || []).slice(0, 2).map((alias) => ({ text: `aka ${alias}`, more: false })),
       ...summaryChips(profileSummary(p), Math.max(1, 4 - Math.min((p.aliases || []).length, 2))),
       ...((p.aliases || []).length > 2 ? [{ text: `+${p.aliases.length - 2} aliases`, more: true }] : []),
+    ],
+    fullChips: (p) => [
+      ...(p.aliases || []).map((alias) => ({ text: `aka ${alias}`, more: false })),
+      ...profileDetailChips(p).map((text) => ({ text, more: false })),
     ],
     drag: true,
     onManageItem: (p) => openProfileEditor(p),
