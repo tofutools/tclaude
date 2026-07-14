@@ -26,13 +26,18 @@ var codexApprovalPaneStartCommands = func() ([]byte, error) {
 }
 
 type codexApprovalMonitor struct {
-	watcher *fsnotify.Watcher
-	dir     string
-	stop    <-chan struct{}
-	done    chan struct{}
+	watcher   *fsnotify.Watcher
+	dir       string
+	stop      <-chan struct{}
+	processed chan string
+	done      chan struct{}
 }
 
 func startCodexApprovalMonitor(stop <-chan struct{}) *codexApprovalMonitor {
+	return startCodexApprovalMonitorWithProcessing(stop, nil)
+}
+
+func startCodexApprovalMonitorWithProcessing(stop <-chan struct{}, processed chan string) *codexApprovalMonitor {
 	dir, err := harness.CodexConfigDir()
 	if err != nil {
 		slog.Warn("codex-approval-monitor: cannot resolve Codex config directory", "error", err)
@@ -52,7 +57,13 @@ func startCodexApprovalMonitor(stop <-chan struct{}) *codexApprovalMonitor {
 		slog.Warn("codex-approval-monitor: failed to watch Codex config directory", "path", dir, "error", err)
 		return nil
 	}
-	m := &codexApprovalMonitor{watcher: w, dir: dir, stop: stop, done: make(chan struct{})}
+	m := &codexApprovalMonitor{
+		watcher:   w,
+		dir:       dir,
+		stop:      stop,
+		processed: processed,
+		done:      make(chan struct{}),
+	}
 	go m.loop()
 	slog.Info("codex-approval-monitor: watching managed launch profiles", "root", dir)
 	return m
@@ -96,6 +107,12 @@ func (m *codexApprovalMonitor) loop() {
 			delete(ids, fire.path)
 			delete(timers, fire.path)
 			m.reconcile(fire.path)
+			if m.processed != nil {
+				select {
+				case m.processed <- fire.path:
+				default:
+				}
+			}
 		case event, ok := <-m.watcher.Events:
 			if !ok {
 				return

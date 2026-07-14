@@ -68,19 +68,20 @@ func TestCodexApprovalMonitor_RefusesInvalidTOML(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
-	if agentd.StartCodexApprovalMonitorForTest(t, 15*time.Millisecond) == nil {
+	monitor := agentd.StartCodexApprovalMonitorForTest(t, 15*time.Millisecond)
+	if monitor == nil {
 		t.Skip("fsnotify watcher unavailable in this environment")
 	}
 
 	_, profilePath, err := harness.EnsureCodexAgentLaunchProfile(nil, "9999999999999999")
 	require.NoError(t, err)
+	// Drain the profile's initial Create before writing invalid content, so the
+	// next completion for this path belongs to the invalid Write below.
+	agentd.WaitForCodexApprovalProcessingForTest(t, monitor, profilePath)
 	require.NoError(t, os.WriteFile(profilePath, []byte("invalid = [\n"), 0o600))
+	agentd.WaitForCodexApprovalProcessingForTest(t, monitor, profilePath)
 
 	configPath := filepath.Join(home, ".codex", "config.toml")
-	require.Never(t, func() bool {
-		_, statErr := os.Stat(configPath)
-		return statErr == nil
-	}, 300*time.Millisecond, 20*time.Millisecond)
 	assert.NoFileExists(t, configPath)
 }
 

@@ -19,8 +19,9 @@ import (
 // conv_index SQLite cache — so these are subsystem integration tests,
 // not daemon-mux flow tests: input is real .jsonl writes via a CCSim,
 // the assertion is the production read surface db.GetConvIndex, and no
-// explicit `conv ls` ever runs. Events are async, so every assertion
-// polls via require.Eventually rather than sleeping.
+// explicit `conv ls` ever runs. Live events are async, so their assertions
+// poll via require.Eventually; startup assertions use the scan-complete
+// barrier exposed by the monitor.
 
 // requireMonitor starts the monitor against the test HOME and skips
 // (rather than fails) when fsnotify is unavailable — startConvMonitor
@@ -28,9 +29,11 @@ import (
 // environment limitation, not a regression.
 func requireMonitor(t *testing.T, debounce time.Duration) {
 	t.Helper()
-	if agentd.StartConvMonitorForTest(t, debounce) == nil {
+	m := agentd.StartConvMonitorForTest(t, debounce)
+	if m == nil {
 		t.Skip("fsnotify watcher unavailable in this environment")
 	}
+	agentd.WaitForConvMonitorStartupForTest(t, m)
 }
 
 // Scenario: a conversation that already existed before the monitor
@@ -139,14 +142,13 @@ func TestConvMonitor_StartupScanSkipsUnchangedConv(t *testing.T) {
 
 	requireMonitor(t, 15*time.Millisecond)
 
-	// The condition would become true only if the guard FAILED — at
-	// which point ScanAndUpsertFile would have replaced the sentinel
-	// with CCSim's actual summary ("session <convID>"). Never-assert
-	// for a window long enough for the startup scan to complete.
-	require.Never(t, func() bool {
-		row, _ := db.GetConvIndex(convID)
-		return row == nil || row.Summary != "freshness-guard-sentinel"
-	}, 500*time.Millisecond, 20*time.Millisecond,
+	// requireMonitor returned only after the single-threaded startup scan
+	// completed, so the sentinel can now be checked directly: a failed guard
+	// would already have replaced it with CCSim's actual summary.
+	row, err := db.GetConvIndex(convID)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	require.Equal(t, "freshness-guard-sentinel", row.Summary,
 		"startup scan must NOT reparse a .jsonl whose mtime+size match the cached row")
 }
 

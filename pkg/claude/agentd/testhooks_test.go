@@ -818,6 +818,23 @@ func StartConvMonitorForTest(t *testing.T, debounce time.Duration) *convMonitor 
 	return m
 }
 
+// WaitForConvMonitorStartupForTest waits until the monitor's startup scan has
+// returned. The scan and live event handling share one goroutine, so this is a
+// causal barrier: once it closes, every startup reindex/skip decision is done.
+func WaitForConvMonitorStartupForTest(t *testing.T, m *convMonitor) {
+	t.Helper()
+	if m == nil {
+		return
+	}
+	select {
+	case <-m.startupDone:
+	case <-m.done:
+		t.Fatal("conv monitor stopped before completing its startup scan")
+	case <-time.After(10 * time.Second):
+		t.Fatal("conv monitor did not complete its startup scan")
+	}
+}
+
 // StartCodexApprovalMonitorForTest starts the managed-profile approval
 // monitor against the current test CODEX_HOME and stops it synchronously.
 func StartCodexApprovalMonitorForTest(t *testing.T, debounce time.Duration) *codexApprovalMonitor {
@@ -825,13 +842,37 @@ func StartCodexApprovalMonitorForTest(t *testing.T, debounce time.Duration) *cod
 	prevDebounce := codexApprovalMonitorDebounce
 	codexApprovalMonitorDebounce = debounce
 	stop := make(chan struct{})
-	m := startCodexApprovalMonitor(stop)
+	m := startCodexApprovalMonitorWithProcessing(stop, make(chan string, 32))
 	t.Cleanup(func() {
 		close(stop)
 		m.wait()
 		codexApprovalMonitorDebounce = prevDebounce
 	})
 	return m
+}
+
+// WaitForCodexApprovalProcessingForTest waits until the real fsnotify event for
+// path has passed through debounce and reconcile. Tests can then assert a
+// negative result without using a short wall-clock observation window.
+func WaitForCodexApprovalProcessingForTest(t *testing.T, m *codexApprovalMonitor, path string) {
+	t.Helper()
+	if m == nil {
+		return
+	}
+	timer := time.NewTimer(10 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case processed := <-m.processed:
+			if processed == path {
+				return
+			}
+		case <-m.done:
+			t.Fatalf("Codex approval monitor stopped before processing %s", path)
+		case <-timer.C:
+			t.Fatalf("Codex approval monitor did not process %s", path)
+		}
+	}
 }
 
 // ResetPerfForTest clears the in-memory poll-timing rings (perf.go) so a

@@ -46,6 +46,7 @@ type convMonitor struct {
 	watcher     *fsnotify.Watcher
 	projectsDir string
 	stop        <-chan struct{}
+	startupDone chan struct{}
 	done        chan struct{}
 }
 
@@ -86,6 +87,7 @@ func startConvMonitor(stop <-chan struct{}) *convMonitor {
 		watcher:     w,
 		projectsDir: projectsDir,
 		stop:        stop,
+		startupDone: make(chan struct{}),
 		done:        make(chan struct{}),
 	}
 
@@ -183,6 +185,7 @@ func (m *convMonitor) loop() {
 	// the watcher and are processed once the scan returns (idempotent,
 	// so a file covered by both the scan and a queued event is fine).
 	m.startupScan(known)
+	close(m.startupDone)
 
 	for {
 		select {
