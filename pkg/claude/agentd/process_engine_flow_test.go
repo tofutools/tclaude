@@ -30,6 +30,7 @@ import (
 	processverify "github.com/tofutools/tclaude/pkg/claude/process/verify"
 	"github.com/tofutools/tclaude/pkg/claude/process/worklist"
 	"github.com/tofutools/tclaude/pkg/claude/processcmd"
+	"github.com/tofutools/tclaude/pkg/claude/remoteaccess"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -201,6 +202,73 @@ func TestProcessRunCreateDashboardAuditAttribution(t *testing.T) {
 	assert.Equal(t, http.StatusCreated, row.Status)
 	assert.Empty(t, row.Detail, "nil describer must not buffer runtime params")
 	assert.NotContains(t, row.Detail, secret)
+}
+
+func TestProcessRunCreateRemoteDashboardAuditAttribution(t *testing.T) {
+	_, root := processEngineFlow(t)
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "remote-dashboard-audit-run", Start: "done",
+		Params: map[string]model.Param{"secret": {Type: "string"}},
+		Nodes:  map[string]model.Node{"done": {Type: model.NodeTypeEnd}},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	require.NoError(t, err)
+	_, err = remoteaccess.Setup(remoteaccess.SetupOptions{
+		Bind:        "0.0.0.0:8443",
+		Passphrase:  "pp-pp-pp-pp",
+		ClientName:  "phone",
+		P12Password: "p12pw",
+	})
+	require.NoError(t, err)
+	material, err := remoteaccess.Load()
+	require.NoError(t, err)
+
+	handler := agentd.BuildRemoteDashboardHandlerForTest(material)
+	session := &http.Cookie{
+		Name:  remoteSessionCookieName,
+		Value: remoteaccess.SignCookie(material.CookieKey(), "human", time.Hour),
+	}
+	post := func(secret string) *httptest.ResponseRecorder {
+		req := testharness.JSONRequest(t, http.MethodPost, "/v1/process/runs", map[string]any{
+			"templateRef": record.Ref,
+			"runId":       "remote-dashboard-audit-created",
+			"params":      map[string]string{"secret": secret},
+		})
+		req.AddCookie(session)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+
+	const successSecret = "remote-dashboard-success-secret"
+	created := post(successSecret)
+	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+	const failureSecret = "remote-dashboard-failure-secret"
+	conflict := post(failureSecret)
+	require.Equal(t, http.StatusConflict, conflict.Code, conflict.Body.String())
+
+	rows, err := db.ListAuditLog(db.AuditLogFilter{Verb: "process.run.create"})
+	require.NoError(t, err)
+	require.Len(t, rows, 2, "each authenticated remote command attempt is audited exactly once")
+	statuses := map[int]bool{}
+	for _, row := range rows {
+		statuses[row.Status] = true
+		assert.Equal(t, db.AuditActorHuman, row.ActorKind)
+		assert.Empty(t, row.ActorConv)
+		assert.Equal(t, "operator", row.ActorLabel)
+		assert.Equal(t, db.AuditSourceDashboard, row.Source)
+		assert.Equal(t, http.MethodPost, row.Method)
+		assert.Equal(t, "/v1/process/runs", row.Path)
+		assert.Empty(t, row.Detail, "nil describer must not buffer runtime params")
+		encoded, marshalErr := json.Marshal(row)
+		require.NoError(t, marshalErr)
+		assert.NotContains(t, string(encoded), successSecret)
+		assert.NotContains(t, string(encoded), failureSecret)
+	}
+	assert.True(t, statuses[http.StatusCreated], "successful attempt missing from audit")
+	assert.True(t, statuses[http.StatusConflict], "handler failure missing from audit")
 }
 
 func TestProcessRunCreateStrictSanitizedBoundary(t *testing.T) {

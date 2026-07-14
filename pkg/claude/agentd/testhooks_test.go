@@ -29,9 +29,7 @@ func BuildHandlerForTest() http.Handler {
 // direct handler call exercises the cookie gate + the shared dashboard routes.
 func BuildRemoteDashboardHandlerForTest(m *remoteaccess.Material) http.Handler {
 	initDashboardToken()
-	mux := http.NewServeMux()
-	registerDashboardRoutes(mux)
-	return remoteAuthMiddleware(m, mux)
+	return buildRemoteDashboardHandler(m)
 }
 
 // RunAuditLogCleanupForTest runs one audit-log retention sweep

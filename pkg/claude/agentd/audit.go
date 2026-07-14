@@ -221,10 +221,13 @@ func auditRequests(h http.Handler) http.Handler {
 // the Processes tab's shared /v1 surface from Unix-socket CLI requests. The
 // dashboard deliberately consumes the public process API instead of exposing
 // a duplicate /api contract, so the path prefix alone identifies only the
-// route shape. Re-running the dashboard's cookie + origin predicate makes the
-// attribution unspoofable while leaving agent and human CLI peers classified
-// through their socket context.
+// route shape. Remote requests carry the authentication boundary's unforgeable
+// pre-auth marker; loopback requests re-run the cookie + origin predicate.
+// Agent and human CLI peers remain classified through their socket context.
 func auditRequestSource(r *http.Request, source string) string {
+	if dashboardPreAuthed(r) {
+		return db.AuditSourceDashboard
+	}
 	if source != db.AuditSourceCLI || !strings.HasPrefix(r.URL.Path, "/v1/process/") {
 		return source
 	}
@@ -401,17 +404,21 @@ func recordAuditRow(r *http.Request, route *auditRoute, vars map[string]string, 
 }
 
 // auditActor resolves the request's actor. A dashboard request is the
-// human operator IFF it carries a valid dashboard session — we re-run
-// the auth predicate here rather than keying on the response status, so a
-// post-auth policy refusal (e.g. a blocklisted sudo grant the operator
-// did clear the cookie gate for, returning 403) stays attributed to the
-// operator, while an unauthenticated / cross-origin probe is recorded as
-// "unauthenticated" instead of masquerading as the human. CLI requests
+// human operator IFF it carries a valid dashboard session — either the remote
+// boundary's pre-auth marker or a loopback session that passes the auth
+// predicate. We never key on the response status, so a post-auth policy refusal
+// (e.g. a blocklisted sudo grant the operator did clear the cookie gate for,
+// returning 403) stays attributed to the operator, while an unauthenticated /
+// cross-origin probe is recorded as "unauthenticated" instead of masquerading
+// as the human. CLI requests
 // route through the same classify() the permission gates use: human
 // (operator token), agent (resolved conv-id + title), or unknown
 // (fail-closed callers — still logged so a denied probe leaves a trail).
 func auditActor(r *http.Request, source string) (kind, conv, label string) {
 	if source == db.AuditSourceDashboard {
+		if dashboardPreAuthed(r) {
+			return db.AuditActorHuman, "", "operator"
+		}
 		if ok, _, _, _ := dashboardAuthResult(r); !ok {
 			return db.AuditActorUnknown, "", "unauthenticated"
 		}
