@@ -1019,7 +1019,7 @@ func baseStates() []dashsnap.State {
 		{
 			Key:     "process-editor-validation",
 			Title:   "Process editor — live validation",
-			Caption: "Live validation (TCL-299): an orphaned task carries the ✕ error badge with an ×3 count, the extra 'later' start edge gets a ⚠ dead-edge badge at its label, and the open issues panel lists every diagnostic (errors first); the first issue was clicked, selecting + centering the orphan node.",
+			Caption: "Live validation (TCL-299/397): an orphaned task carries the ✕ error badge with an ×3 count, the extra 'later' start edge gets a ⚠ dead-edge badge at its label, and keyboard focus exposes the node-local diagnostic detail while the issues panel lists every finding.",
 			// The edits go through the editor's real refresh() choke point, so the
 			// badges come from a genuine debounce → POST /v1/process/validate →
 			// decorate round against the daemon, not injected fixtures.
@@ -1037,7 +1037,8 @@ func baseStates() []dashsnap.State {
   }
   if (!vReady()) throw new Error('validation badges/panel did not render');
   ed.validation.panel.open = true;
-  document.querySelector('.process-issues-list .process-issue').click();`),
+		document.querySelector('.process-issues-list .process-issue').click();
+		document.querySelector('.process-node[data-node-id="task"]').focus();`),
 			SettleMS: 2500,
 		},
 		{

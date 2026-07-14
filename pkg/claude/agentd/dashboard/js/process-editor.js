@@ -93,12 +93,14 @@ export class ProcessTemplateEditor {
       onEdgeClick: (e) => this.onEdgeClick(e),
       onCanvasClick: () => this.setSelection(null),
       onMarqueeSelect: (e) => this.setSelection(e.selection),
+      onNodeDragStart: (e) => this.setSelection(e.selection),
       onNodeDrag: (e) => this.onNodeDrag(e),
       onPortDragStart: (e) => this.onPortDragStart(e),
       onPortDragMove: (e) => this.onPortDragMove(e),
       onPortDragEnd: (e) => this.onPortDragEnd(e),
       onCanvasDrop: (e) => this.onCanvasDrop(e),
       marqueeSelect: true,
+      wheelPan: true,
     });
     // Live validation (TCL-299): debounced POST /v1/process/validate on every
     // model mutation, inline badges + issues panel. Constructed after the
@@ -235,10 +237,17 @@ export class ProcessTemplateEditor {
     this.validation?.destroy();
     this.validation = null;
     this.graph.destroy();
+    // Parent teardown follows an already-approved navigation/unmount. It is
+    // the one forced-close path; user-driven modal replacement goes through
+    // requestClose below so a dirty node draft cannot disappear silently.
     this.modalDispose?.(null);
     delete this.mount.__processEditor;
     this.mount.classList.remove('process-editor-mount');
     this.mount.replaceChildren();
+  }
+
+  get dirty() {
+    return this.model.dirty || !!this.modalDispose?.isDirty?.();
   }
 
   // ---- chrome ------------------------------------------------------------
@@ -450,9 +459,16 @@ export class ProcessTemplateEditor {
   // openNodeSettings opens the shared node dialog (TCL-298). The TCL-296
   // editability seam decides the mode: a node the view may not edit renders
   // the exact same component read-only — the viewer's detail card.
-  openNodeSettings(nodeId) {
-    if (!this.model.node(nodeId)) return;
-    this.modalDispose?.(null);
+  async openNodeSettings(nodeId) {
+    if (!this.model.node(nodeId)) return false;
+    const current = this.modalDispose;
+    if (current) {
+      const closed = current.requestClose
+        ? await current.requestClose()
+        : (current(null), true);
+      if (!closed || this.abort?.signal.aborted) return false;
+    }
+    if (!this.model.node(nodeId)) return false;
     const mode = this.model.config.nodeEditable(nodeId) ? 'edit' : 'view';
     const dispose = openNodeDialog({
       model: this.model,
@@ -462,8 +478,10 @@ export class ProcessTemplateEditor {
       onClosed: () => {
         if (this.modalDispose === dispose) this.modalDispose = null;
       },
+      confirmDiscard: this.options.confirmDiscard,
     });
     this.modalDispose = dispose;
+    return true;
   }
 
   onEdgeClick({ edge, event }) {
@@ -842,13 +860,19 @@ export class ProcessTemplateEditor {
   // choiceModal: a promise-based dialog on the shared .modal-overlay styling,
   // owned per-editor (the global #confirm-modal singleton only offers two
   // fixed buttons). Escape / backdrop resolve null.
-  choiceModal({ title, body, choices }) {
+  async choiceModal({ title, body, choices }) {
+    const current = this.modalDispose;
+    if (current) {
+      const closed = current.requestClose
+        ? await current.requestClose()
+        : (current(null), true);
+      if (!closed || this.abort?.signal.aborted) return null;
+    }
     return new Promise((resolve) => {
       // Fully dispose any previous dialog (resolving its promise null) so its
       // capture-phase document keydown listener never outlives its overlay —
       // the confirm-modal singleton double-listener disease, avoided by
       // construction.
-      this.modalDispose?.(null);
       const buttons = choices.map((choice) => h('button', {
         class: `${choice.primary ? 'primary ' : ''}${choice.danger ? 'confirm-danger ' : ''}process-editor-modal-btn`,
         type: 'button', text: choice.label,

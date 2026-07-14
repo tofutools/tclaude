@@ -60,8 +60,15 @@ func TestDashboardProcessNodeDialogAssets(t *testing.T) {
 		"process-choice-outcomes",
 		"setChoiceOutcome",
 		"choiceRouting: false",
-		// Dialogs mutate the client edit model only, through the undo gate.
-		"model.updateNode(nodeId, mutate)",
+		// Dialog edits are private until explicit Save, which commits exactly
+		// once through the edit model's undo gate.
+		"const original = structuredClone(model.node(nodeId))",
+		"model.updateNode(nodeId, (node) => replaceNode(node, draft))",
+		"confirmDiscard = async () => false",
+		"process-node-save",
+		"process-node-cancel",
+		"bindDialogFocus",
+		"dispose.requestClose = requestCancel",
 	)
 	if strings.Contains(dialog, "innerHTML") {
 		t.Error("process-node-dialog.js must not use innerHTML; template content is untrusted at render time")
@@ -103,6 +110,7 @@ func TestDashboardProcessNodeDialogAssets(t *testing.T) {
 		".process-node-close",
 		"body.wizard .process-node-section",
 		"body.wizard .process-node-close",
+		"body.wizard .process-node-dialog-actions",
 	)
 
 	// The dialog modules stay out of every eager entry module: only the

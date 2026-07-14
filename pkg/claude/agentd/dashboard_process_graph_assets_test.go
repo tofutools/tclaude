@@ -39,6 +39,10 @@ func TestDashboardProcessGraphAssets(t *testing.T) {
 		"export class ProcessGraph",
 		"export function createProcessGraph(",
 		"export function normalizeWheelDelta(",
+		"export function isGraphTypingTarget(",
+		"this.onSpaceKey(event)",
+		"this.options.wheelPan && !event.ctrlKey",
+		"onNodeDragStart",
 		"onPortDragStart",
 		"onCanvasDrop",
 		"onCanvasClick",
@@ -61,6 +65,7 @@ func TestDashboardProcessGraphAssets(t *testing.T) {
 		// TCL-299 badge surface: severity class on the overlay anchor, badge
 		// glyph on edges, and viewport centering for issue navigation.
 		"overlay-${overlay.severity}",
+		"process-overlay-tooltip",
 		"process-edge-badge-${edge.badgeSeverity || 'error'}",
 		"centerOn(x, y)")
 	if strings.Contains(graph, "data-morph-owned") {

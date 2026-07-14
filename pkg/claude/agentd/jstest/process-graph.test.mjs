@@ -1,12 +1,76 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ProcessGraph, normalizeWheelDelta } from '../dashboard/js/process-graph.js';
+import { ProcessGraph, isGraphTypingTarget, normalizeWheelDelta } from '../dashboard/js/process-graph.js';
 
 test('wheel delta modes normalize to useful pixel-scale zoom input', () => {
   assert.equal(normalizeWheelDelta(120, 0, 900), 120);
   assert.equal(normalizeWheelDelta(3, 1, 900), 72);
   assert.equal(normalizeWheelDelta(1, 2, 900), 900);
   assert.equal(normalizeWheelDelta(Number.NaN, 0, 900), 0);
+});
+
+test('editor wheel pans while Ctrl-wheel pinches, and viewer wheel still zooms', () => {
+  const graph = (options) => ({
+    options, view: { x: 10, y: 20, k: 1 },
+    svg: { getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }) },
+    applyView() {},
+  });
+  const event = (overrides = {}) => ({
+    deltaX: 7, deltaY: 11, deltaMode: 0, clientX: 200, clientY: 150,
+    preventDefault() {}, ...overrides,
+  });
+
+  const editor = graph({ wheelPan: true });
+  ProcessGraph.prototype.onWheel.call(editor, event());
+  assert.deepEqual(editor.view, { x: 3, y: 9, k: 1 }, 'two-finger wheel delta pans the editor canvas');
+  ProcessGraph.prototype.onWheel.call(editor, event({ deltaX: 0, deltaY: -20, ctrlKey: true }));
+  assert.ok(editor.view.k > 1, 'browser pinch/Ctrl-wheel keeps cursor-centered zoom');
+
+  const viewer = graph({});
+  ProcessGraph.prototype.onWheel.call(viewer, event({ deltaX: 0 }));
+  assert.ok(viewer.view.k < 1, 'the shared read-only viewer retains wheel zoom');
+});
+
+test('Space arms panning only outside editable controls and never steals an owned gesture', () => {
+  const toggles = [];
+  const fake = {
+    pointer: null, spaceHeld: false,
+    root: {
+      contains: () => false, matches: () => true,
+      classList: { toggle(name, value) { toggles.push([name, value]); } },
+    },
+    setSpaceHeld: ProcessGraph.prototype.setSpaceHeld,
+  };
+  const plain = { closest: () => null };
+  let prevented = 0;
+  ProcessGraph.prototype.onSpaceKey.call(fake, {
+    key: ' ', type: 'keydown', target: plain, preventDefault() { prevented += 1; },
+  });
+  assert.equal(fake.spaceHeld, true);
+  ProcessGraph.prototype.onSpaceKey.call(fake, { key: ' ', type: 'keyup', target: plain });
+  assert.equal(fake.spaceHeld, false);
+
+  const editable = { closest: (selector) => selector.includes('contenteditable') ? editable : null };
+  assert.equal(isGraphTypingTarget(editable), true);
+  ProcessGraph.prototype.onSpaceKey.call(fake, { key: ' ', type: 'keydown', target: editable });
+  assert.equal(fake.spaceHeld, false, 'typing a space in a field does not arm graph panning');
+  fake.pointer = { id: 1, mode: 'node' };
+  ProcessGraph.prototype.onSpaceKey.call(fake, { key: ' ', type: 'keydown', target: plain });
+  assert.equal(fake.spaceHeld, false, 'an active pointer gesture keeps ownership');
+  assert.equal(prevented, 1, 'Space is consumed only when the graph owns the shortcut');
+  assert.deepEqual(toggles, [['is-space-pan', true], ['is-space-pan', false]]);
+
+  fake.pointer = null;
+  const button = { closest: (selector) => selector.includes('button') ? button : null };
+  ProcessGraph.prototype.onSpaceKey.call(fake, { key: ' ', type: 'keydown', target: button });
+  assert.equal(fake.spaceHeld, false, 'buttons and keyboard-focused graph nodes retain Space activation');
+
+  const summary = { closest: (selector) => selector.includes('summary') ? summary : null };
+  assert.equal(isGraphTypingTarget(summary), true);
+  ProcessGraph.prototype.onSpaceKey.call(fake, { key: ' ', type: 'keydown', target: summary });
+  assert.equal(fake.spaceHeld, false,
+    'a focused Issues summary retains native Space activation while the graph is hovered');
+  assert.equal(prevented, 1);
 });
 
 // onPointerCancel is exercised on a hand-rolled `this` (no DOM needed): a
@@ -119,6 +183,94 @@ test('middle pointerdown pans even when it starts over a node', () => {
   assert.equal(fake.pointer.mode, 'pan');
 });
 
+test('Space-primary drag pans over a node and a second pointer cannot replace it', () => {
+  const fake = {
+    root: { focus() {} }, options: { marqueeSelect: true }, selected: null, spaceHeld: true,
+    view: { x: 5, y: 6, k: 1 }, svg: { setPointerCapture() {} },
+    eventTarget() { return { node: { dataset: { nodeId: 'a' } }, edge: null, port: null }; },
+    clientToGraph() { return { x: 0, y: 0 }; },
+  };
+  ProcessGraph.prototype.onPointerDown.call(fake, {
+    button: 0, pointerId: 9, clientX: 10, clientY: 20, preventDefault() {},
+  });
+  assert.equal(fake.pointer.mode, 'pan');
+  ProcessGraph.prototype.onPointerDown.call(fake, {
+    button: 0, pointerId: 10, clientX: 30, clientY: 40,
+    preventDefault() { throw new Error('owned gestures ignore later pointers'); },
+  });
+  assert.equal(fake.pointer.id, 9);
+});
+
+test('an unmoved pan gesture never falls through to select its underlying node', () => {
+  let selected = 0;
+  const fake = {
+    pointer: { id: 9, mode: 'pan', nodeID: 'a' },
+    dragMoved: false,
+    options: { onSelect: () => { selected += 1; } },
+    svg: { releasePointerCapture() {} },
+    clientToGraph: () => ({ x: 0, y: 0 }),
+  };
+  ProcessGraph.prototype.onPointerUp.call(fake, {
+    pointerId: 9, clientX: 0, clientY: 0,
+  });
+  assert.equal(fake.suppressClick, true);
+  assert.equal(fake.pendingClickTarget, null);
+  ProcessGraph.prototype.onClick.call(fake, {
+    target: { closest: () => null }, preventDefault() {},
+  });
+  assert.equal(selected, 0);
+});
+
+test('an unmoved empty-canvas pan still clears selection in the viewer', () => {
+  const selections = [];
+  let canvasClicks = 0;
+  const fake = {
+    pointer: { id: 8, mode: 'pan', nodeID: null, edgeID: null, port: null },
+    dragMoved: false,
+    options: { onCanvasClick: () => { canvasClicks += 1; } },
+    svg: { releasePointerCapture() {} },
+    clientToGraph: () => ({ x: 0, y: 0 }),
+    select: (value) => selections.push(value),
+  };
+  ProcessGraph.prototype.onPointerUp.call(fake, {
+    pointerId: 8, clientX: 0, clientY: 0,
+  });
+  assert.equal(fake.suppressClick, false);
+  ProcessGraph.prototype.onClick.call(fake, { target: { closest: () => null } });
+  assert.deepEqual(selections, [null]);
+  assert.equal(canvasClicks, 1);
+});
+
+test('dragging an unselected node selects it once when movement crosses the threshold', () => {
+  const previousCSS = globalThis.CSS;
+  globalThis.CSS = { escape: (value) => value };
+  try {
+    const starts = [];
+    const fake = {
+      pointer: {
+        id: 4, mode: 'node', nodeID: 'work', nodeIDs: ['work'],
+        startClientX: 0, startClientY: 0, startPoint: { x: 0, y: 0 }, selectionStarted: false,
+      },
+      selected: null, dragMoved: false,
+      options: { onNodeDragStart: (value) => starts.push(value), onNodeDrag() {} },
+      nodeLayer: { querySelector: () => null }, portLayer: { querySelector: () => null },
+      layout: { nodes: [] },
+      clientToGraph: () => ({ x: 5, y: 0 }),
+      select(value) { this.selected = value; },
+      renderTransientEdges() {}, updatePortHover() {},
+    };
+    const moved = { pointerId: 4, clientX: 5, clientY: 0 };
+    ProcessGraph.prototype.onPointerMove.call(fake, moved);
+    ProcessGraph.prototype.onPointerMove.call(fake, { ...moved, clientX: 8 });
+    assert.deepEqual(fake.selected, { type: 'node', id: 'work' });
+    assert.equal(starts.length, 1, 'selection is synchronized only at actual drag start');
+    assert.equal(starts[0].nodeId, 'work');
+  } finally {
+    if (previousCSS === undefined) delete globalThis.CSS;
+    else globalThis.CSS = previousCSS;
+  }
+});
+
 test('touch and pen pan empty canvas but still drag nodes', () => {
   for (const pointerType of ['touch', 'pen']) {
     const fake = {
@@ -135,6 +287,7 @@ test('touch and pen pan empty canvas but still drag nodes', () => {
     };
     ProcessGraph.prototype.onPointerDown.call(fake, event);
     assert.equal(fake.pointer.mode, 'pan', `${pointerType} pans empty canvas`);
+    fake.pointer = null;
     event.overNode = true;
     ProcessGraph.prototype.onPointerDown.call(fake, event);
     assert.equal(fake.pointer.mode, 'node', `${pointerType} still drags nodes`);

@@ -393,7 +393,9 @@ const processesDescriptor = createIslandDescriptor({
     const [{ mountProcessesIsland }, { processesState }, { createProcessesActions }] =
       await Promise.all([islandModule, stateModule, actionsModule]);
     const actions = createProcessesActions({ state: processesState, ...dependencies });
-    return { state: processesState, mount: (registerCleanup) => mountProcessesIsland({ host, state: processesState, actions, registerCleanup }) };
+    return { state: processesState, mount: (registerCleanup) => mountProcessesIsland({
+      host, state: processesState, actions, confirmDiscard: dependencies.confirmDiscard, registerCleanup,
+    }) };
   },
 });
 

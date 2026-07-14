@@ -41,6 +41,15 @@ test('Processes actions preserve API routes, stale loads, comment gate, and reta
   state.setDraft(item.id, 'ok'); assert.equal(await actions.submitWorklistAction(item.id, 'approve'), true);
   const post = requests.find((request) => request.options.method === 'POST'); assert.equal(post.path, '/v1/process/worklist/i%2F1/action');
   assert.equal(JSON.parse(post.options.body).action, 'approve');
+
+  let discardPrompts = 0;
+  state.setEditor({ dirty: true, model: { dirty: false } });
+  const guarded = createProcessesActions({
+    state, fetchImpl,
+    confirmDiscard: async () => { discardPrompts += 1; return false; },
+  });
+  assert.equal(await guarded.closeCanvas(), false, 'a staged dialog draft participates in editor navigation guards');
+  assert.equal(discardPrompts, 1);
 });
 
 test('imperative editor boundary mounts once, survives parent updates, updates by spec, and disposes', async (t) => {
@@ -49,15 +58,22 @@ test('imperative editor boundary mounts once, survives parent updates, updates b
     harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-island.js'),
   ]);
   const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
-  let mounts = 0; let destroys = 0;
-  const openEditor = async () => { mounts += 1; return { model: { dirty: false }, destroy() { destroys += 1; } }; };
+  let mounts = 0; let destroys = 0; let received = null;
+  const confirmDiscard = async () => true;
+  const openEditor = async (_mount, options) => {
+    mounts += 1; received = options;
+    return { model: { dirty: false }, destroy() { destroys += 1; } };
+  };
   const first = { id: 'a', blank: false, key: 'a:1' };
-  const mounted = await harness.mount(harness.html`<${ProcessEditorBoundary} spec=${first} state=${state} openEditor=${openEditor} />`);
+  const mounted = await harness.mount(harness.html`<${ProcessEditorBoundary} spec=${first} state=${state} confirmDiscard=${confirmDiscard} openEditor=${openEditor} />`);
   assert.equal(mounts, 1);
+  assert.equal(received.id, 'a');
+  assert.equal(received.blank, false);
+  assert.equal(received.config.confirmDiscard, confirmDiscard, 'the shared discard dialog reaches node editor transactions');
   state.setNotice('unrelated');
-  await mounted.rerender(harness.html`<${ProcessEditorBoundary} spec=${first} state=${state} openEditor=${openEditor} />`);
+  await mounted.rerender(harness.html`<${ProcessEditorBoundary} spec=${first} state=${state} confirmDiscard=${confirmDiscard} openEditor=${openEditor} />`);
   assert.equal(mounts, 1, 'unrelated parent state does not recreate graph');
-  await mounted.rerender(harness.html`<${ProcessEditorBoundary} spec=${{ id: 'b', blank: false, key: 'b:1' }} state=${state} openEditor=${openEditor} />`);
+  await mounted.rerender(harness.html`<${ProcessEditorBoundary} spec=${{ id: 'b', blank: false, key: 'b:1' }} state=${state} confirmDiscard=${confirmDiscard} openEditor=${openEditor} />`);
   assert.equal(mounts, 2); assert.equal(destroys, 1);
   await mounted.unmount(); assert.equal(destroys, 2);
 });

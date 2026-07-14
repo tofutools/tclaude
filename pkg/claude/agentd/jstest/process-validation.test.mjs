@@ -197,6 +197,10 @@ test('decorateGraph sets node overlays and edge badges (never color-only)', () =
   assert.equal(work.overlay.glyph, severityGlyph('error'), 'error outranks warning on a shared anchor');
   assert.equal(work.overlay.severity, 'error');
   assert.equal(work.overlay.badge, '×2');
+  assert.deepEqual(work.overlay.issues, [
+    'a: m',
+    'b: m',
+  ], 'the marker carries exact node-local diagnostic detail');
   const start = graph.nodes.find((node) => node.id === 'start');
   assert.equal(start.overlay, undefined, 'clean nodes stay undecorated');
   const edge = graph.edges.find((candidate) => candidate.id === graphEdgeID('start', 'fail'));

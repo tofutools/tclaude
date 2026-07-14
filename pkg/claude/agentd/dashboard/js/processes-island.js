@@ -81,22 +81,23 @@ function Worklist({ current, actions }) {
     </${RequestBody}></div></div>`;
 }
 
-export function ProcessEditorBoundary({ spec, state, openEditor = async (mount, value) => {
-  const { openTemplateEditor } = await import('./process-editor.js');
-  return openTemplateEditor(mount, value);
-} }) {
+export function ProcessEditorBoundary({ spec, state, confirmDiscard, openEditor = null }) {
   const mountRef = useRef(null);
   const [error, setError] = useState('');
   useEffect(() => {
     let disposed = false; let editor = null;
     setError('');
-    openEditor(mountRef.current, { id: spec.id, blank: spec.blank }).then((value) => { editor = value; if (disposed) editor?.destroy?.(); else state.setEditor(editor); }).catch((error) => { if (!disposed) { setError(error.message); state.setNotice(`Could not open editor: ${error.message}`); } });
+    const loadEditor = openEditor || (async (mount, value) => {
+      const { openTemplateEditor } = await import('./process-editor.js');
+      return openTemplateEditor(mount, value);
+    });
+    loadEditor(mountRef.current, { id: spec.id, blank: spec.blank, config: { confirmDiscard } }).then((value) => { editor = value; if (disposed) editor?.destroy?.(); else state.setEditor(editor); }).catch((error) => { if (!disposed) { setError(error.message); state.setNotice(`Could not open editor: ${error.message}`); } });
     return () => { disposed = true; state.setEditor(null); editor?.destroy?.(); };
   }, [spec.key]);
   return html`<div id="process-editor-canvas" ref=${mountRef} class="process-canvas-mount" data-process-mount="editor">${error && html`<div class="process-placeholder" role="alert">Could not open editor: ${error}</div>`}</div>`;
 }
 
-export function ProcessesApp({ state, actions }) {
+export function ProcessesApp({ state, actions, confirmDiscard }) {
   const current = { ...state.view.value, state };
   useEffect(() => { if (current.active) void actions.refreshActive(); }, [current.active]);
   useEffect(() => { const poll = () => { if (state.view.value.active) void actions.load('worklist', { quiet: true }); }; document.addEventListener('tclaude:snapshot', poll); return () => document.removeEventListener('tclaude:snapshot', poll); }, []);
@@ -105,12 +106,12 @@ export function ProcessesApp({ state, actions }) {
   const subtabKey = (event) => { if (event.key === ' ' || event.key === 'Spacebar') { event.preventDefault(); event.currentTarget.click(); } };
   const spec = current.canvas;
   return html`<div class="processes-island"><div class="process-subnav" role="tablist" aria-label="Process views">${['templates', 'runs', 'worklist'].map((name) => html`<a key=${name} class=${`process-subtab${current.subtab === name ? ' active' : ''}`} data-process-subtab=${name} href=${`/processes/${name}`} role="tab" aria-selected=${current.subtab === name} onClick=${(event) => navigate(event, name)} onKeyDown=${subtabKey}>${name[0].toUpperCase() + name.slice(1)}${name === 'worklist' && html`<span id="process-worklist-badge" class="tab-badge warn" hidden=${current.actionable === 0}>${current.actionable}</span>`}</a>`)}<span class="spacer"></span><span id="process-notice" class="process-notice" role="status">${current.notice}</span></div>
-    ${spec ? html`<div id=${spec.kind === 'editor' ? 'process-editor-view' : 'process-viewer-view'} class="process-canvas-view"><button class="process-action" data-process-close-view type="button" onClick=${actions.closeCanvas}>← ${current.subtab}</button>${spec.kind === 'editor' ? html`<${ProcessEditorBoundary} spec=${spec} state=${state} />` : html`<div id="process-viewer-canvas" class="process-canvas-mount" data-process-mount="viewer"><h3>Run: ${spec.id}</h3><p>Live viewer mount point. The viewer ticket takes over this canvas.</p></div>`}</div>` : current.subtab === 'templates' ? html`<${Templates} current=${current} actions=${actions} />` : current.subtab === 'runs' ? html`<${Runs} current=${current} actions=${actions} />` : html`<${Worklist} current=${current} actions=${actions} />`}
+    ${spec ? html`<div id=${spec.kind === 'editor' ? 'process-editor-view' : 'process-viewer-view'} class="process-canvas-view"><button class="process-action" data-process-close-view type="button" onClick=${actions.closeCanvas}>← ${current.subtab}</button>${spec.kind === 'editor' ? html`<${ProcessEditorBoundary} spec=${spec} state=${state} confirmDiscard=${confirmDiscard} />` : html`<div id="process-viewer-canvas" class="process-canvas-mount" data-process-mount="viewer"><h3>Run: ${spec.id}</h3><p>Live viewer mount point. The viewer ticket takes over this canvas.</p></div>`}</div>` : current.subtab === 'templates' ? html`<${Templates} current=${current} actions=${actions} />` : current.subtab === 'runs' ? html`<${Runs} current=${current} actions=${actions} />` : html`<${Worklist} current=${current} actions=${actions} />`}
   </div>`;
 }
 
-export function mountProcessesIsland({ host, state, actions, registerCleanup }) {
-  render(html`<${ProcessesApp} state=${state} actions=${actions} />`, host);
+export function mountProcessesIsland({ host, state, actions, confirmDiscard, registerCleanup }) {
+  render(html`<${ProcessesApp} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} />`, host);
   // Rendering null unmounts ProcessEditorBoundary, the sole owner of editor /
   // graph disposal. Do not destroy through state here as well.
   registerCleanup(() => render(null, host));
