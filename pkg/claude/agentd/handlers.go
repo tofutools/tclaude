@@ -3310,10 +3310,11 @@ type memberJSON struct {
 	AgentID string `json:"agent_id,omitempty"`
 	ConvID  string `json:"conv_id"`
 	Title   string `json:"title"`
-	// CreatedAt is the conversation's creation timestamp (RFC3339 — the
-	// first .jsonl event's time), empty when unknown. The dashboard
-	// renders it as a relative "Age", and it is the default sort key
-	// (newest first).
+	// CreatedAt is the actor's birth timestamp (agents.created_at), or the
+	// conversation's first-.jsonl-event time (conv_index.Created) for a conv
+	// that is not an actor — see agent.MemberCreated. Emitted in the fixed-width
+	// UTC Age layout, empty when unknown. The dashboard renders it as a relative
+	// "Age", and it is the default sort key (newest first).
 	CreatedAt string `json:"created_at,omitempty"`
 	Role      string `json:"role,omitempty"`
 	Descr     string `json:"descr,omitempty"`
@@ -3324,17 +3325,17 @@ type memberJSON struct {
 	Owner  bool `json:"owner,omitempty"`
 }
 
-// sortMembersByAge orders a group-member listing newest-first by
-// conversation creation time (RFC3339 strings, which sort lexically =
-// chronologically) — the default ordering for every group listing,
-// shared by the CLI (`tclaude agent groups members`, which renders the
-// JSON below) and the browser dashboard, whose Age column shows this and
-// whose client-side column sort treats it as the "natural" order it
-// falls back to when no column is active. Blank/unknown creation times
-// sort last so a freshly-spawned, not-yet-indexed agent never crowds the
-// top; conv_id breaks ties so the order is deterministic — the previous
-// joined_at order left owner-only rows, appended from a map, in random
-// iteration order.
+// sortMembersByAge orders a group-member listing newest-first by the Age
+// timestamp (actor birth time, or conv_index fallback — see agent.MemberCreated).
+// The values are the fixed-width UTC Age layout, whose constant width makes the
+// string compare here lexically = chronologically. It is the default ordering for
+// every group listing, shared by the CLI (`tclaude agent groups members`, which
+// renders the JSON below) and the browser dashboard, whose Age column shows this
+// and whose client-side column sort treats it as the "natural" order it falls
+// back to when no column is active. Blank/unknown times sort last so a
+// freshly-spawned, not-yet-indexed agent never crowds the top; conv_id breaks
+// ties so the order is deterministic — the previous joined_at order left
+// owner-only rows, appended from a map, in random iteration order.
 func sortMembersByAge[T any](items []T, created func(T) string, convID func(T) string) {
 	sort.SliceStable(items, func(i, j int) bool {
 		ci, cj := created(items[i]), created(items[j])

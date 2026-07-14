@@ -211,26 +211,49 @@ type ConvAgent struct {
 	// stamped at spawn/enrollment BEFORE the harness writes its first .jsonl
 	// event. It is the dashboard member Age source: available the instant the
 	// agent row exists, so a freshly-spawned agent shows a real Age immediately
-	// rather than blank until the .jsonl is parsed into conv_index. Normalised to
-	// UTC RFC3339Nano (canonical zone, full precision preserved) so it sorts
+	// rather than blank until the .jsonl is parsed into conv_index. Canonicalised
+	// to the fixed-width UTC Age layout (see CanonicalAgeTimestamp) so it sorts
 	// lexically and agrees byte-for-byte with the CLI listing's agent.MemberCreated.
 	CreatedAt string
 }
 
-// normalizeCreatedAtUTC canonicalises a stored created_at string to UTC
-// RFC3339Nano, preserving sub-second precision. agents.created_at is written
-// with time.Now().Format(RFC3339Nano), i.e. in the daemon's LOCAL zone; leaving
-// that offset in place would make the Age lexical sort mix zones and make the
-// dashboard row disagree with the CLI listing (which formats via time.Time.UTC).
-// An unparseable value is returned unchanged rather than blanked.
-func normalizeCreatedAtUTC(s string) string {
+// ageTimestampLayout is a FIXED-WIDTH RFC3339 layout — always exactly nine
+// fractional digits, UTC 'Z'. It is the canonical form for every group-member
+// "Age" timestamp, and its constant width is load-bearing: the Age column is
+// sorted LEXICALLY (server sortMembersByAge, client sort.js localeCompare), and
+// lexical order equals chronological order only when all values share one width.
+// time.RFC3339Nano OMITS trailing-zero fractions, so a whole-second instant
+// ("…05Z") renders shorter than a sub-second one ("…05.5Z") and — since '.' <
+// 'Z' — sorts as if OLDER, inverting same-second rows. A fixed nine-digit
+// fraction removes that hazard while preserving full sub-second precision (it
+// pads, never truncates), so no resolution is lost versus the stored value.
+const ageTimestampLayout = "2006-01-02T15:04:05.000000000Z07:00"
+
+// CanonicalAgeTimestamp normalises a stored timestamp string to the fixed-width
+// UTC Age layout. agents.created_at is written with time.Now().Format, i.e. in
+// the daemon's LOCAL zone; conv_index.Created is RFC3339 seconds — canonicalising
+// both here gives one zone and one width so the Age sort is valid across the two
+// sources and the dashboard row agrees byte-for-byte with the CLI listing.
+// Empty stays empty; an unparseable value is returned unchanged rather than blanked.
+func CanonicalAgeTimestamp(s string) string {
 	if s == "" {
 		return ""
 	}
 	if t := parseTimeOrZero(s); !t.IsZero() {
-		return t.UTC().Format(time.RFC3339Nano)
+		return t.UTC().Format(ageTimestampLayout)
 	}
 	return s
+}
+
+// CanonicalAgeTimestampFromTime formats an actor birth time.Time (from
+// agents.created_at) into the same fixed-width UTC Age layout CanonicalAgeTimestamp
+// produces, so the CLI listing's value is byte-identical to the dashboard's. A
+// zero time yields "" (unknown Age).
+func CanonicalAgeTimestampFromTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(ageTimestampLayout)
 }
 
 // PendingNamesByAgent bulk-loads the non-empty spawn-time display-name
@@ -301,11 +324,10 @@ func AgentsByConv(convIDs []string) (map[string]ConvAgent, error) {
 				_ = rows.Close()
 				return nil, err
 			}
-			// Canonicalise the zone to UTC (keeping full sub-second precision) so
-			// the Age lexical sort is valid and the value agrees byte-for-byte with
-			// the CLI path (agent.MemberCreated). agents.created_at is written with
-			// time.Now(), whose local offset would otherwise break both.
-			ca.CreatedAt = normalizeCreatedAtUTC(createdAt)
+			// Canonicalise to the fixed-width UTC Age layout (keeping full sub-second
+			// precision) so the Age lexical sort is valid across sources and the value
+			// agrees byte-for-byte with the CLI path (agent.MemberCreated).
+			ca.CreatedAt = CanonicalAgeTimestamp(createdAt)
 			out[convID] = ca
 		}
 		err = rows.Err()

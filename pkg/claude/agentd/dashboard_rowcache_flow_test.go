@@ -2,7 +2,6 @@ package agentd_test
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -131,8 +130,8 @@ func TestDashboardSnapshot_AgeFromActorBeforeConvIndex(t *testing.T) {
 	}
 	require.NotNil(t, member, "fresh conv is a crew member")
 	assert.NotEmpty(t, member.CreatedAt, "Age resolves from agents.created_at before conv_index exists")
-	assert.Equal(t, actor.CreatedAt.UTC().Format(time.RFC3339Nano), member.CreatedAt,
-		"Age is the actor's birth timestamp, full precision")
+	assert.Equal(t, db.CanonicalAgeTimestampFromTime(actor.CreatedAt), member.CreatedAt,
+		"Age is the actor's birth timestamp in the canonical fixed-width Age layout")
 }
 
 // Scenario: a retired actor that still holds a permission grant. TCL-369 loads

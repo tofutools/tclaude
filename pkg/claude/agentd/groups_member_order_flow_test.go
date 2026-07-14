@@ -82,9 +82,9 @@ func TestGroupMembers_DefaultSortByAgeNewestFirst(t *testing.T) {
 		v1Created[m.ConvID] = m.CreatedAt
 	}
 	assert.Equal(t, wantConvs, gotV1, "/v1 members should default to newest-first by actor birth time")
-	assert.Equal(t, "2026-06-18T15:00:00Z", v1Created[convNew],
-		"/v1 must surface each member's actor birth timestamp")
-	assert.Equal(t, "2026-06-18T13:00:00Z", v1Created[convOwner],
+	assert.Equal(t, db.CanonicalAgeTimestamp("2026-06-18T15:00:00Z"), v1Created[convNew],
+		"/v1 must surface each member's actor birth timestamp (canonical Age layout)")
+	assert.Equal(t, db.CanonicalAgeTimestamp("2026-06-18T13:00:00Z"), v1Created[convOwner],
 		"/v1 owner-only rows must carry created_at too")
 
 	// Surface 2: the dashboard snapshot's per-group members (a separate
@@ -107,9 +107,9 @@ func TestGroupMembers_DefaultSortByAgeNewestFirst(t *testing.T) {
 	}
 	require.True(t, found, "group alpha missing from dashboard snapshot")
 	assert.Equal(t, wantConvs, gotDash, "dashboard snapshot members should default to newest-first by actor birth time")
-	assert.Equal(t, "2026-06-18T15:00:00Z", createdByConv[convNew],
-		"dashboard must surface each member's actor birth timestamp for the Age column")
-	assert.Equal(t, "2026-06-18T13:00:00Z", createdByConv[convOwner],
+	assert.Equal(t, db.CanonicalAgeTimestamp("2026-06-18T15:00:00Z"), createdByConv[convNew],
+		"dashboard must surface each member's actor birth timestamp for the Age column (canonical Age layout)")
+	assert.Equal(t, db.CanonicalAgeTimestamp("2026-06-18T13:00:00Z"), createdByConv[convOwner],
 		"owner-only rows must carry created_at too")
 }
 

@@ -1290,9 +1290,11 @@ type dashboardMember struct {
 	AgentID string `json:"agent_id,omitempty"`
 	ConvID  string `json:"conv_id"`
 	Title   string `json:"title"`
-	// CreatedAt is the conversation's creation timestamp (RFC3339 — the
-	// first .jsonl event's time), empty when unknown. Rendered as a
-	// relative "Age" column and the default sort key (newest first).
+	// CreatedAt is the actor's birth timestamp (agents.created_at), or the
+	// conversation's first-.jsonl-event time (conv_index.Created) for a conv
+	// that is not an actor — see snapshotRowCache.createdFor. Emitted in the
+	// fixed-width UTC Age layout, empty when unknown. Rendered as a relative
+	// "Age" column and the default sort key (newest first).
 	CreatedAt string `json:"created_at,omitempty"`
 	Role      string `json:"role,omitempty"`
 	Descr     string `json:"descr,omitempty"`

@@ -133,14 +133,15 @@ func (rc *snapshotRowCache) titleFor(convID string) string {
 // conv rotations (/clear, reincarnate), not just the current generation's.
 //
 // Fallback is conv_index.Created (the first .jsonl event's time) for a conv that
-// is not an actor. Both are compared lexically by the Age sort; actor rows carry
-// full RFC3339Nano precision (never truncated), non-actor rows RFC3339 seconds.
+// is not an actor. Both are emitted in the fixed-width UTC Age layout (the actor
+// value is already canonical from AgentsByConv; the conv_index fallback is
+// canonicalised here) so the lexical Age sort stays chronological across sources.
 func (rc *snapshotRowCache) createdFor(convID string) string {
 	if ca := rc.agents[convID].CreatedAt; ca != "" {
 		return ca
 	}
 	if row := rc.convIndex[convID]; row != nil {
-		return row.Created
+		return db.CanonicalAgeTimestamp(row.Created)
 	}
 	return ""
 }
