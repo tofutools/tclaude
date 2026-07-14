@@ -1241,7 +1241,6 @@ func TestLoadRunViewSerializesWithAppend(t *testing.T) {
 		close(readLocked)
 		<-releaseRead
 	})
-	defer restore()
 
 	viewResult := make(chan store.Snapshot, 1)
 	viewErr := make(chan error, 1)
@@ -1268,7 +1267,6 @@ func TestLoadRunViewSerializesWithAppend(t *testing.T) {
 	require.NoError(t, <-appendDone)
 
 	restore()
-	restore = func() {}
 	after, err := fs.LoadRunView(ctx, runID)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), after.State.LastLogSeq)
