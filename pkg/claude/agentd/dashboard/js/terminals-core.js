@@ -30,6 +30,43 @@ function seedKey(seed) {
   return seed.key || seed.ws;
 }
 
+// departedAgentSelectors returns every stable agent-id / conversation-id that
+// belonged to the previous active roster but not the next one. Keeping this as
+// a roster transition (instead of treating every selector absent from one
+// snapshot as retired) makes the first dashboard snapshot a harmless baseline.
+// Both identities are included because pane seeds prefer agent_id but retain a
+// conv-id fallback for older / partially migrated rows.
+export function departedAgentSelectors(previousAgents, nextAgents) {
+  if (!Array.isArray(previousAgents) || !Array.isArray(nextAgents)) return [];
+  const selectors = (agents) => {
+    const out = new Set();
+    for (const agent of agents) {
+      if (!agent || typeof agent !== 'object') continue;
+      if (typeof agent.agent_id === 'string' && agent.agent_id) out.add(agent.agent_id);
+      if (typeof agent.conv_id === 'string' && agent.conv_id) out.add(agent.conv_id);
+    }
+    return out;
+  };
+  const before = selectors(previousAgents);
+  const after = selectors(nextAgents);
+  return [...before].filter(selector => !after.has(selector));
+}
+
+// createAgentRosterReconciler keeps the last AUTHORITATIVE active roster and
+// returns selectors that departed on the next authoritative observation.
+// Degraded snapshots are ignored without replacing the baseline, so a
+// transient server-side roster read failure neither closes panes spuriously
+// nor consumes a real retirement that becomes visible on the following poll.
+export function createAgentRosterReconciler() {
+  let previous = null;
+  return (nextAgents, authoritative) => {
+    if (!authoritative || !Array.isArray(nextAgents)) return [];
+    const departed = previous === null ? [] : departedAgentSelectors(previous, nextAgents);
+    previous = nextAgents;
+    return departed;
+  };
+}
+
 // normalizeSeed accepts a seed only if its ws is a same-origin absolute path
 // (leading "/"), so neither a crafted hash nor a caller can point the socket at
 // an arbitrary host. Returns the seed or null.
@@ -402,6 +439,21 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
     }
   }
 
+  // closeForAgents closes every per-agent pane (both a live-session "web
+  // window" and a throwaway "web term") whose seed.agent matches one of the
+  // selectors. Unlike closeForHide, this is not reacting to a detach that has
+  // already happened, so closePane keeps its normal reliable detach for live
+  // sessions. Group terminals have no seed.agent and are intentionally left
+  // alone.
+  function closeForAgents(selectors) {
+    const set = new Set(selectors || []);
+    if (!set.size) return;
+    for (const [key, p] of [...panes]) {
+      const agent = p.seed && p.seed.agent;
+      if (agent && set.has(agent)) closePane(key);
+    }
+  }
+
   // findPaneKey returns the key of the FIRST open pane belonging to an agent in
   // `selectors` (matched on seed.agent — set for BOTH web-term and web-window
   // panes), or null. Lets a caller jump to an already-open in-browser terminal
@@ -420,6 +472,7 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
     openPane,
     closePane,
     closeForHide,
+    closeForAgents,
     findPaneKey,
     activatePane: activate,
     count: () => panes.size,

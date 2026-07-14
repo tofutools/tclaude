@@ -23,7 +23,9 @@ import { renderDock } from './dock.js';
 // row-actions rename-rollback). All deliberate, benign cycles (see
 // render.js): TDZ-safe — no top-level code reads a cyclic import.
 import { renameEditing } from './row-actions.js';
-import { closeTerminalsForWindowOp, openWebWindowPane } from './terminals-tab.js';
+import {
+  closeTerminalsForWindowOp, openWebWindowPane, reconcileTerminalsForAgentRoster,
+} from './terminals-tab.js';
 import { lastSnapshot, setLastSnapshot, webTerminalDefault } from './dashboard.js';
 import { setVegasRegularMode, isWizardActive, wizWord } from './slop.js';
 import { setHScrollFollow } from './hscroll.js';
@@ -204,6 +206,10 @@ export async function refresh() {
     // stale rows remain visible. Do not mistake that fallback for a served
     // offset: Retry must keep targeting the page the user requested.
     if (jobsActive && jobsResult.ok) jobs.syncServedOffset(data.paging.jobs.offset);
+    // Reconcile BEFORE lastSnapshot is replaced or any renderer can throw.
+    // The terminal module keeps its own last-authoritative roster baseline, so
+    // a degraded snapshot cannot close panes or consume a later retirement.
+    reconcileTerminalsForAgentRoster(data.agents, data.agent_roster_authoritative);
     setLastSnapshot(data);
     syncDashDefaultProfile(data.spawn_profile_default);
     // Refresh the proactive-grant blocklist hint from the snapshot

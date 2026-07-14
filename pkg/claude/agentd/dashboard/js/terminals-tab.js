@@ -16,10 +16,11 @@
 // only owns the tab's visibility + the entry point callers use.
 
 import { $, $$ } from './helpers.js';
-import { mountMux, normalizeSeed } from './terminals-core.js';
+import { createAgentRosterReconciler, mountMux, normalizeSeed } from './terminals-core.js';
 import { dashboardState } from './snapshot-store.js';
 
 let mux = null;
+const reconcileAgentRoster = createAgentRosterReconciler();
 
 // initTerminalsTab mounts the multiplexer onto the #tab-terminals section.
 // Called once at boot from dashboard.js.
@@ -192,4 +193,15 @@ export function closeTerminalsForWindowOp(agents) {
     }
   }
   if (sels.length) closeTerminalsForConvs(sels);
+}
+
+// reconcileTerminalsForAgentRoster closes all per-agent panes whose owner left
+// the active roster between two accepted dashboard snapshots. Retirement is an
+// actor-level roster transition, so this catches retires initiated from any
+// browser, the CLI, or another agent instead of depending on one UI action
+// path. A deletion has the same safe cleanup result. Reincarnation keeps the
+// stable agent_id present, so panes keyed by that canonical selector survive.
+export function reconcileTerminalsForAgentRoster(nextAgents, authoritative) {
+  const departed = reconcileAgentRoster(nextAgents, authoritative);
+  if (departed.length && mux) mux.closeForAgents(departed);
 }
