@@ -1794,12 +1794,14 @@ async function openDeleteRetiredPreview() {
   setTimeout(() => submitBtn.focus(), 0);
 }
 
-// openWorktreeCleanup drives the group cog's "🧹 cleanup worktrees…"
-// command — the repo-wide worktree janitor. Unlike openRetirePreview
+// openWorktreeCleanup drives both the group cog's "🧹 cleanup
+// worktrees…" command and the all-groups command-palette / global-cleanup
+// entry points. Pass a group name for one group, or omit it to scan the union
+// of every group's repos. Unlike openRetirePreview
 // (which reads the cohort from lastSnapshot), this LOADS its candidates
-// from the daemon: GET /api/groups/{group}/worktrees resolves the
-// group's default dir (∪ its agents' history dirs) to repo root(s) and
-// lists every linked worktree of those repos, each classified
+// from the daemon: GET /api/groups/{group}/worktrees resolves one group's
+// dirs, while GET /api/worktrees/cleanup resolves all groups. Each lists
+// every linked worktree of the discovered repos, classified
 // (main / live / agent / orphan) and dirty-flagged, with a smart-default
 // `checked` flag — orphans pre-ticked, resume-bound and dirty ones left
 // for the human to review.
@@ -1813,7 +1815,7 @@ async function openDeleteRetiredPreview() {
 // every path (skips the main repo + any live-agent worktree) and removes
 // the rest — force, plus the branch when the toggle is on. Cancel / Esc /
 // backdrop is a no-op.
-async function openWorktreeCleanup(group) {
+async function openWorktreeCleanup(group = '') {
   const overlay = $('#worktree-cleanup-modal');
   const titleEl = $('#worktree-cleanup-title');
   const hintEl = $('#worktree-cleanup-hint');
@@ -1832,6 +1834,7 @@ async function openWorktreeCleanup(group) {
   let candidates = [];
   let repoRoots = [];
   let submitting = false;
+  const allGroups = !group;
   // Paths the human has manually toggled — preserved across a live rescan
   // so a re-scan refreshes untouched rows to the fresh server default
   // without clobbering an explicit choice.
@@ -1840,7 +1843,9 @@ async function openWorktreeCleanup(group) {
   errEl.textContent = '';
   searchEl.value = '';
   branchesCb.checked = true;
-  titleEl.innerHTML = themeWords(`Clean up worktrees in group "${group}"`, `Clean up worktrees in party "${group}"`);
+  titleEl.innerHTML = allGroups
+    ? themeWords('Clean up worktrees across all groups', 'Prune stray branches across all parties')
+    : themeWords(`Clean up worktrees in group "${group}"`, `Clean up worktrees in party "${group}"`);
   countEl.textContent = '';
   catsEl.innerHTML = '';
   submitBtn.disabled = true;
@@ -1878,8 +1883,12 @@ async function openWorktreeCleanup(group) {
 
   function renderHint() {
     const n = removable().length;
-    const regularWhere = repoRoots.length ? repoRoots.join(', ') : "this group's repo";
-    const wizardWhere = repoRoots.length ? repoRoots.join(', ') : "this party's repo";
+    const regularWhere = repoRoots.length
+      ? (allGroups && repoRoots.length > 1 ? `${repoRoots.length} group repos` : repoRoots.join(', '))
+      : (allGroups ? 'repos used by any group' : "this group's repo");
+    const wizardWhere = repoRoots.length
+      ? (allGroups && repoRoots.length > 1 ? `${repoRoots.length} party groves` : repoRoots.join(', '))
+      : (allGroups ? 'groves used by any party' : "this party's repo");
     hintEl.innerHTML = n === 0
       ? themeWords(`No removable worktrees found in ${regularWhere}.`, `No removable worktrees found in ${wizardWhere}.`)
       : themeWords(
@@ -1999,7 +2008,10 @@ async function openWorktreeCleanup(group) {
     const prev = new Map(candidates.map(c => [c.path, c.checked]));
     let r;
     try {
-      r = await fetch(`/api/groups/${encodeURIComponent(group)}/worktrees`, { credentials: 'same-origin' });
+      const url = allGroups
+        ? '/api/worktrees/cleanup'
+        : `/api/groups/${encodeURIComponent(group)}/worktrees`;
+      r = await fetch(url, { credentials: 'same-origin' });
     } catch (e) {
       errEl.textContent = `scan failed: ${(e && e.message) || e}`;
       listEl.innerHTML = '<div class="cleanup-empty">scan failed</div>';
@@ -3727,6 +3739,13 @@ export async function openCleanupModal(opts) {
       'Delete associated git worktrees <span class="opt-note">— removes the worktree directory; ' +
       'the branch and its commits are kept. The main repo and worktrees shared with another ' +
       'agent are always skipped.</span></label>';
+    const allWorktreesAction =
+      '<div class="cleanup-related"><button type="button" id="cleanup-worktrees-all">' +
+      themeWords('🧹 Review worktrees across all groups…', '🍂 Prune stray branches across all parties…') +
+      '</button><span class="opt-note">' +
+      themeWords('— opens a safe preview of stale worktrees in every group repo',
+        '— opens a safe preview of withered branches in every party grove') +
+      '</span></div>';
     const shutdownOpt =
       '<label id="cleanup-opt-shutdown-row"><input type="checkbox" id="cleanup-opt-shutdown" checked /> ' +
       'Also shut down running sessions <span class="opt-note">— retire tier only; soft-exits ' +
@@ -3734,7 +3753,7 @@ export async function openCleanupModal(opts) {
       'kept and reinstatable either way.</span></label>';
     optsEl.innerHTML =
       '<div class="cleanup-tier">' + radios + '</div>' +
-      ownersOpt + onlineOpt + shutdownOpt + wtOpt;
+      ownersOpt + onlineOpt + shutdownOpt + wtOpt + allWorktreesAction;
     syncTierLocks();
   }
   // syncTierLocks enables each sub-option only for the tier it
@@ -4031,6 +4050,7 @@ export async function openCleanupModal(opts) {
     searchInput.removeEventListener('input', onSearch);
     catsEl.removeEventListener('change', onCatChange);
     optsEl.removeEventListener('change', onOptChange);
+    optsEl.removeEventListener('click', onOptClick);
     listEl.removeEventListener('change', onListChange);
     // After a completed cleanup (phase === 'result') the dashboard needs the
     // post-cleanup snapshot. Refresh on close so the result view remains stable
@@ -4078,6 +4098,11 @@ export async function openCleanupModal(opts) {
     renderList();
     recompute();
   }
+  function onOptClick(e) {
+    if (!e.target.closest('#cleanup-worktrees-all')) return;
+    close();
+    openWorktreeCleanup();
+  }
   function onListChange(e) {
     const cb = e.target.closest('input[type=checkbox]');
     if (!cb) return;
@@ -4115,6 +4140,7 @@ export async function openCleanupModal(opts) {
   searchInput.addEventListener('input', onSearch);
   catsEl.addEventListener('change', onCatChange);
   optsEl.addEventListener('change', onOptChange);
+  optsEl.addEventListener('click', onOptClick);
   listEl.addEventListener('change', onListChange);
   overlay.classList.add('show');
 }

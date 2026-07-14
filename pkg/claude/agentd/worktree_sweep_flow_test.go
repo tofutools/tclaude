@@ -17,9 +17,10 @@ import (
 
 // worktree_sweep_flow_test.go exercises the repo-wide worktree janitor
 // (worktree_sweep.go) end to end through the dashboard mux, with the git
-// seam faked so no real repos are needed. Two surfaces:
+// seam faked so no real repos are needed. Three surfaces:
 //
 //	GET  /api/groups/{name}/worktrees   — discovery + classification
+//	GET  /api/worktrees/cleanup         — discovery across all groups
 //	POST /api/worktrees/cleanup         — explicit-path removal + prune
 //
 // The fake models one repo "/repo" with eight worktrees: the main repo, a
@@ -52,7 +53,9 @@ type sweepWorktreeWire struct {
 }
 
 type sweepDiscoverWire struct {
+	Scope     string              `json:"scope"`
 	Group     string              `json:"group"`
+	Groups    []string            `json:"groups"`
 	RepoRoots []string            `json:"repo_roots"`
 	Worktrees []sweepWorktreeWire `json:"worktrees"`
 }
@@ -268,6 +271,17 @@ func discoverWorktrees(t *testing.T, mux http.Handler, group string) sweepDiscov
 	return out
 }
 
+func discoverAllWorktrees(t *testing.T, mux http.Handler) sweepDiscoverWire {
+	t.Helper()
+	r, err := http.NewRequest(http.MethodGet, "/api/worktrees/cleanup", nil)
+	require.NoError(t, err)
+	rec := testharness.Serve(mux, r)
+	require.Equal(t, http.StatusOK, rec.Code, "GET all worktrees body=%s", rec.Body.String())
+	var out sweepDiscoverWire
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	return out
+}
+
 func byPath(wts []sweepWorktreeWire) map[string]sweepWorktreeWire {
 	m := map[string]sweepWorktreeWire{}
 	for _, wt := range wts {
@@ -286,6 +300,7 @@ func TestWorktreeSweep_DiscoverClassifies(t *testing.T) {
 	mux := agentd.BuildDashboardHandlerForTest()
 	out := discoverWorktrees(t, mux, "squad")
 
+	assert.Equal(t, "group", out.Scope)
 	require.Len(t, out.Worktrees, 8, "all eight worktrees discovered")
 	m := byPath(out.Worktrees)
 
@@ -343,6 +358,28 @@ func TestWorktreeSweep_DiscoverClassifies(t *testing.T) {
 	}
 	assert.Equal(t, 1, retired, "exactly one bound agent is retired")
 	assert.Equal(t, 1, active, "exactly one bound agent is still active")
+}
+
+// Scenario: the global discovery endpoint scans the union of every group's
+// repos. Two groups pointing into the same repo produce one candidate set, not
+// duplicate worktree rows (or duplicate repo labels).
+func TestWorktreeSweep_DiscoverAllGroupsDeduplicatesSharedRepos(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	repoFixture(t, f)
+	f.HaveGroup("another-squad")
+	_, err := db.SetAgentGroupDefaultCwd("another-squad", "/repo-wt-agent")
+	require.NoError(t, err, "set second group's shared repo cwd")
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	out := discoverAllWorktrees(t, mux)
+
+	assert.Equal(t, "all", out.Scope)
+	assert.Equal(t, []string{"another-squad", "squad"}, out.Groups)
+	assert.Equal(t, []string{"/repo"}, out.RepoRoots, "shared repo is reported once")
+	require.Len(t, out.Worktrees, 8, "shared worktrees are not duplicated across groups")
+	assert.Equal(t, "/repo", byPath(out.Worktrees)["/repo-wt-orphan"].RepoRoot,
+		"linked worktrees identify their main repo")
 }
 
 // Scenario: the explicit-path cleanup removes the picked orphans (with
