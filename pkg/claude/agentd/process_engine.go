@@ -254,7 +254,7 @@ func handleProcessRunView(w http.ResponseWriter, r *http.Request) {
 	}
 	snapshot, err := fs.LoadRunView(r.Context(), runID)
 	if err != nil {
-		_, exists, lookupErr := confirmedProcessRun(r.Context(), fs, runID)
+		exists, lookupErr := fs.HasRunView(runID)
 		if lookupErr != nil {
 			writeError(w, http.StatusInternalServerError, "process_view", "process run view is unavailable")
 			return
@@ -270,7 +270,11 @@ func handleProcessRunView(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "process_view", "process run view is unavailable")
 		return
 	}
-	verification, tmpl := processverify.SnapshotWithExactPinnedTemplate(r.Context(), fs, snapshot)
+	verification, tmpl, err := processverify.SnapshotWithExactPinnedTemplate(r.Context(), fs, snapshot)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "process_view", "process run view is unavailable")
+		return
+	}
 	writeProcessJSON(w, http.StatusOK, processview.Build(snapshot, tmpl, verification))
 }
 
@@ -280,19 +284,6 @@ func degradableProcessViewError(err error) bool {
 	}
 	var readErr *evidence.ReadError
 	return errors.As(err, &readErr)
-}
-
-func confirmedProcessRun(ctx context.Context, fs *store.FS, runID string) (store.RunRecord, bool, error) {
-	runs, err := fs.ListRuns(ctx)
-	if err != nil {
-		return store.RunRecord{}, false, err
-	}
-	for _, run := range runs {
-		if run.ID == runID {
-			return run, true, nil
-		}
-	}
-	return store.RunRecord{}, false, nil
 }
 
 // processRunLoadFailure deliberately omits the wrapped load error. Decode

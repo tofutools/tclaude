@@ -22,10 +22,11 @@ import (
 const SchemaVersion = 1
 
 var (
-	safeIDPattern          = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,127}$`)
+	safeIDPattern          = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
 	safeCodePattern        = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
-	safeTemplateRefPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,127}@sha256:[0-9a-f]{64}$`)
+	safeTemplateRefPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*@sha256:[0-9a-f]{64}$`)
 	safeArtifactRefPattern = regexp.MustCompile(`^artifact:sha256:[0-9a-f]{64}$`)
+	stableAgentIDPattern   = regexp.MustCompile(`^agt_[0-9a-f]{32}$`)
 )
 
 // Envelope is the complete safe viewer contract. It must never grow fields
@@ -401,6 +402,9 @@ func latestObligation(st *state.State, nodeID string) *Obligation {
 	if selected == nil {
 		return nil
 	}
+	if !selected.Kind.IsValid() || !selected.Status.IsValid() {
+		return nil
+	}
 	result := &Obligation{
 		Kind: selected.Kind, Assignee: safeProvenance(selected.Assignee), Status: selected.Status,
 		Attempt: selected.Attempt, WaitingSince: selected.CreatedAt, DueAt: selected.DueAt,
@@ -706,7 +710,7 @@ func safeDiagnosticPath(path string) string {
 
 func stableAgentID(raw string) string {
 	value := strings.TrimPrefix(strings.TrimSpace(raw), "agent:")
-	if !strings.HasPrefix(value, "agt_") || !state.ValidateActorRef(state.ActorRef("agent:"+value)) {
+	if !stableAgentIDPattern.MatchString(value) {
 		return ""
 	}
 	return value

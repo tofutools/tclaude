@@ -884,21 +884,29 @@ func (s *FS) GetTemplateExact(ctx context.Context, ref string) (*model.Template,
 	if err != nil {
 		return nil, err
 	}
-	unlock, err := s.lockTemplate(ctx, id)
+	unlock, err := s.lockTemplateView(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
-	intentPath, err := s.templateSaveIntentPath(id)
+	data, err := s.getTemplateExactBody(id, hash)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, ErrNotFound
+	}
 	if err != nil {
 		return nil, err
 	}
-	if _, err := os.Lstat(intentPath); err == nil {
-		return nil, ErrTemplateSavePending
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("inspect attributed process template save intent: %w", err)
+	var tmpl model.Template
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&tmpl); err != nil {
+		return nil, fmt.Errorf("%w: exact template content cannot be decoded", ErrContentMismatch)
 	}
-	return s.getTemplateUnlocked(ctx, id, hash, ref)
+	semanticHash, err := model.SemanticHash(&tmpl)
+	if err != nil || semanticHash != hash {
+		return nil, fmt.Errorf("%w: exact template content does not match its ref", ErrContentMismatch)
+	}
+	return &tmpl, nil
 }
 
 func (s *FS) getTemplateUnlocked(ctx context.Context, id, hash, ref string) (*model.Template, error) {
@@ -1272,17 +1280,7 @@ func (s *FS) LoadRunView(ctx context.Context, runID string) (Snapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return Snapshot{}, err
 	}
-	info, err := os.Lstat(s.runDir(runID))
-	if errors.Is(err, os.ErrNotExist) {
-		return Snapshot{}, ErrNotFound
-	}
-	if err != nil {
-		return Snapshot{}, fmt.Errorf("inspect run path: %w", err)
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return Snapshot{}, ErrUnsafeRunPath
-	}
-	unlock, err := s.lockRun(ctx, runID)
+	unlock, err := s.lockRunView(ctx, runID)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -1290,7 +1288,7 @@ func (s *FS) LoadRunView(ctx context.Context, runID string) (Snapshot, error) {
 	if s.viewerReadHook != nil {
 		s.viewerReadHook()
 	}
-	return s.loadRunSnapshot(ctx, runID)
+	return s.loadRunViewSnapshotAt(ctx.Err, runID)
 }
 
 // loadRunSnapshot performs no locking. Callers that require a coherent view

@@ -86,6 +86,25 @@ func TestProcessRunViewResolvesLegacyPinnedTemplateAndDoesNotMutateHistory(t *te
 	assert.Equal(t, before, after, "viewer GET must preserve file count, checksums, sizes, and mtimes for run.json, state, manifest, and logs")
 }
 
+func TestProcessRunViewPreservesStoreValidLongIdentifiers(t *testing.T) {
+	f, root := processEngineFlow(t)
+	longTemplateID := "viewer-" + strings.Repeat("t", 170)
+	longNodeID := "node-" + strings.Repeat("n", 170)
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: longTemplateID, Start: longNodeID,
+		Nodes: map[string]model.Node{longNodeID: {Type: model.NodeTypeEnd}},
+	}
+	createEngineRun(t, root, "viewer-long-identifiers", tmpl, false)
+	rec := processEngineGet(t, f, "/v1/process/runs/viewer-long-identifiers/view")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var response processRunViewResponse
+	testharness.DecodeJSON(t, rec, &response)
+	require.NotNil(t, response.Graph)
+	assert.Contains(t, response.Run.TemplateRef, longTemplateID+"@sha256:")
+	require.Len(t, response.Graph.Nodes, 1)
+	assert.Equal(t, longNodeID, response.Graph.Nodes[0].ID)
+}
+
 func TestProcessRunViewRejectsUnavailableOrMismatchedPinnedTemplates(t *testing.T) {
 	t.Run("pending attributed save is not recovered", func(t *testing.T) {
 		f, root := processEngineFlow(t)
@@ -177,6 +196,21 @@ func TestProcessRunViewRejectsUnavailableOrMismatchedPinnedTemplates(t *testing.
 }
 
 func TestProcessRunViewDegradesOnlyConfirmedExistingRuns(t *testing.T) {
+	t.Run("mismatched run record id is confirmed by directory", func(t *testing.T) {
+		f, root := processEngineFlow(t)
+		fsStore := createEngineRun(t, root, "viewer-id-mismatch", viewerFlowTemplate("viewer-id-mismatch"), false)
+		snapshot, err := fsStore.LoadRun(t.Context(), "viewer-id-mismatch")
+		require.NoError(t, err)
+		snapshot.Run.ID = "MISMATCHED_RECORD_SECRET"
+		data, err := json.Marshal(snapshot.Run)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(root, "runs", "viewer-id-mismatch", "run.json"), data, 0o644))
+		rec := processEngineGet(t, f, "/v1/process/runs/viewer-id-mismatch/view")
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		assert.Contains(t, rec.Body.String(), "snapshot_unreadable")
+		assert.NotContains(t, rec.Body.String(), "MISMATCHED_RECORD_SECRET")
+	})
+
 	t.Run("corrupt state", func(t *testing.T) {
 		f, root := processEngineFlow(t)
 		createEngineRun(t, root, "viewer-corrupt", viewerFlowTemplate("viewer-corrupt"), false)
@@ -246,6 +280,38 @@ func TestProcessRunViewDegradesOnlyConfirmedExistingRuns(t *testing.T) {
 		rec := processEngineGet(t, f, "/v1/process/runs/viewer-io/view")
 		assert.Equal(t, http.StatusInternalServerError, rec.Code)
 		assert.NotContains(t, rec.Body.String(), root)
+	})
+
+	t.Run("run component symlink is rejected", func(t *testing.T) {
+		f, root := processEngineFlow(t)
+		createEngineRun(t, root, "viewer-component-link", viewerFlowTemplate("viewer-component-link"), false)
+		target := filepath.Join(t.TempDir(), "TARGET_PATH_SECRET")
+		require.NoError(t, os.WriteFile(target, []byte("TARGET_CONTENT_SECRET"), 0o644))
+		statePath := filepath.Join(root, "runs", "viewer-component-link", "state.json")
+		require.NoError(t, os.Remove(statePath))
+		require.NoError(t, os.Symlink(target, statePath))
+		rec := processEngineGet(t, f, "/v1/process/runs/viewer-component-link/view")
+		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+		assert.NotContains(t, rec.Body.String(), target)
+		assert.NotContains(t, rec.Body.String(), "TARGET_CONTENT_SECRET")
+	})
+
+	t.Run("legacy template component symlink is infrastructure failure", func(t *testing.T) {
+		f, root := processEngineFlow(t)
+		fsStore := createEngineRun(t, root, "viewer-template-link", viewerFlowTemplate("viewer-template-link"), false)
+		snapshot, err := fsStore.LoadRun(t.Context(), "viewer-template-link")
+		require.NoError(t, err)
+		snapshot.Run.Template = nil
+		writeRunRecord(t, root, snapshot.Run)
+		templatePath := pinnedTemplateBodyPath(t, root, snapshot.Run.TemplateRef)
+		target := filepath.Join(t.TempDir(), "TEMPLATE_TARGET_SECRET")
+		require.NoError(t, os.WriteFile(target, []byte(`{"secret":"TEMPLATE_CONTENT_SECRET"}`), 0o644))
+		require.NoError(t, os.Remove(templatePath))
+		require.NoError(t, os.Symlink(target, templatePath))
+		rec := processEngineGet(t, f, "/v1/process/runs/viewer-template-link/view")
+		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+		assert.NotContains(t, rec.Body.String(), target)
+		assert.NotContains(t, rec.Body.String(), "TEMPLATE_CONTENT_SECRET")
 	})
 
 	t.Run("run symlink is rejected", func(t *testing.T) {

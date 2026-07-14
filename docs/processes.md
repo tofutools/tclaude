@@ -399,8 +399,9 @@ response has a minimal safe run projection, `graph: null`, an empty schema-v1
 report, and stable sanitized verification diagnostics. A genuinely missing run
 remains 404. Permission, device, symlink, and transient process-store failures
 remain sanitized 500 responses. Reading this endpoint takes the same run lock
-as append and never rewrites template authoring state, run metadata, state,
-manifests, or evidence logs.
+as append, opens consumed run/template components without following symlinks,
+requires regular persisted files, and never rewrites template authoring state,
+run metadata, state, manifests, or evidence logs.
 
 ## Notes
 

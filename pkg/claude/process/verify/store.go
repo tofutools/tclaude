@@ -68,7 +68,7 @@ type ExactTemplateSource interface {
 // SnapshotWithExactPinnedTemplate verifies snapshot and returns only the exact
 // immutable template matching TemplateRef. Legacy lookup never substitutes a
 // mutable head and never runs attributed-save recovery.
-func SnapshotWithExactPinnedTemplate(ctx context.Context, src ExactTemplateSource, snapshot store.Snapshot) (Report, *model.Template) {
+func SnapshotWithExactPinnedTemplate(ctx context.Context, src ExactTemplateSource, snapshot store.Snapshot) (Report, *model.Template, error) {
 	tmpl := snapshot.Run.Template
 	if tmpl != nil {
 		semanticHash, hashErr := model.SemanticHash(tmpl)
@@ -81,12 +81,16 @@ func SnapshotWithExactPinnedTemplate(ctx context.Context, src ExactTemplateSourc
 			})
 			sortReportDiagnostics(report.Diagnostics)
 			report.EffectiveStatus = state.RunStatusInconsistent
-			return report, nil
+			return report, nil, nil
 		}
-		return SnapshotWithTemplate(snapshot, tmpl), tmpl
+		return SnapshotWithTemplate(snapshot, tmpl), tmpl, nil
 	}
 	resolved, err := src.GetTemplateExact(ctx, snapshot.Run.TemplateRef)
 	if err != nil {
+		dataFailure := errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrTemplateSavePending) || errors.Is(err, store.ErrContentMismatch)
+		if !dataFailure {
+			return Report{}, nil, err
+		}
 		report := Snapshot(snapshot)
 		code := "template_unavailable"
 		message := "the exact pinned template is unavailable"
@@ -99,7 +103,7 @@ func SnapshotWithExactPinnedTemplate(ctx context.Context, src ExactTemplateSourc
 		})
 		sortReportDiagnostics(report.Diagnostics)
 		report.EffectiveStatus = state.RunStatusInconsistent
-		return report, nil
+		return report, nil, nil
 	}
 	semanticHash, hashErr := model.SemanticHash(resolved)
 	if wantRef := model.TemplateRef(resolved.ID, semanticHash); hashErr != nil || strings.TrimSpace(wantRef) == "" || wantRef != snapshot.Run.TemplateRef {
@@ -110,7 +114,7 @@ func SnapshotWithExactPinnedTemplate(ctx context.Context, src ExactTemplateSourc
 		})
 		sortReportDiagnostics(report.Diagnostics)
 		report.EffectiveStatus = state.RunStatusInconsistent
-		return report, nil
+		return report, nil, nil
 	}
-	return SnapshotWithTemplate(snapshot, resolved), resolved
+	return SnapshotWithTemplate(snapshot, resolved), resolved, nil
 }
