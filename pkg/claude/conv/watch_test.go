@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -444,122 +445,99 @@ func TestFsDebounceLoop_DeleteSentImmediately(t *testing.T) {
 }
 
 func TestFsDebounceLoop_WritesAreDebounced(t *testing.T) {
-	projectsDir := t.TempDir()
-	projectDir := filepath.Join(projectsDir, "-Users-test-project")
-	require.NoError(t, os.MkdirAll(projectDir, 0755))
+	synctest.Test(t, func(t *testing.T) {
+		projectsDir := "/projects"
+		filePath := filepath.Join(projectsDir, "-Users-test-project", "a1b2c3d4-e5f6-7890-abcd-ef1234567890.jsonl")
+		events := make(chan fsnotify.Event, 2)
+		errors := make(chan error)
+		outCh := make(chan fsFileChangeMsg, 1)
+		closeCh := make(chan struct{})
+		go fsDebounceEvents(events, errors, nil, projectsDir, outCh, closeCh)
 
-	convID := "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-	filePath := filepath.Join(projectDir, convID+".jsonl")
-	require.NoError(t, os.WriteFile(filePath, []byte(`{"type":"user"}`), 0644))
+		events <- fsnotify.Event{Name: filePath, Op: fsnotify.Write}
+		synctest.Wait()
+		assertNoFSChange(t, outCh, "immediately after first write")
 
-	outCh := make(chan fsFileChangeMsg, 16)
-	closeCh := make(chan struct{})
-	defer close(closeCh)
+		// A later write resets the full debounce interval.
+		time.Sleep(20 * time.Second)
+		events <- fsnotify.Event{Name: filePath, Op: fsnotify.Write}
+		synctest.Wait()
+		time.Sleep(fsDebounceDelay - time.Nanosecond)
+		synctest.Wait()
+		assertNoFSChange(t, outCh, "one nanosecond before reset debounce deadline")
 
-	w, err := newTestWatcher(projectDir)
-	require.NoError(t, err, "failed to create watcher")
-	defer w.Close()
-
-	go fsDebounceLoop(w, projectsDir, outCh, closeCh)
-
-	// Write to the existing file — should NOT be sent immediately (debounced)
-	require.NoError(t, os.WriteFile(filePath, []byte(`{"type":"user","timestamp":"2026-01-01"}`), 0644))
-
-	select {
-	case <-outCh:
-		// On macOS, fsnotify may report the pre-existing file write as CREATE
-		// (since WriteFile does truncate+write). This is acceptable.
-		t.Log("received event (may be initial create, which is expected on some platforms)")
-	case <-time.After(500 * time.Millisecond):
-		// Expected path for a pure write to a known file
-	}
+		time.Sleep(time.Nanosecond)
+		synctest.Wait()
+		select {
+		case msg := <-outCh:
+			assert.Equal(t, filePath, msg.FilePath)
+			assert.False(t, msg.Removed)
+		default:
+			t.Fatal("debounced write was not emitted at the exact deadline")
+		}
+		close(closeCh)
+		synctest.Wait()
+	})
 }
 
 func TestFsDebounceLoop_IgnoresNonJsonl(t *testing.T) {
-	projectsDir := t.TempDir()
-	projectDir := filepath.Join(projectsDir, "-Users-test-project")
-	require.NoError(t, os.MkdirAll(projectDir, 0755))
+	synctest.Test(t, func(t *testing.T) {
+		projectsDir := "/projects"
+		events := make(chan fsnotify.Event, 1)
+		errors := make(chan error)
+		outCh := make(chan fsFileChangeMsg, 1)
+		closeCh := make(chan struct{})
+		go fsDebounceEvents(events, errors, nil, projectsDir, outCh, closeCh)
 
-	outCh := make(chan fsFileChangeMsg, 16)
-	closeCh := make(chan struct{})
-	defer close(closeCh)
-
-	w, err := newTestWatcher(projectDir)
-	require.NoError(t, err, "failed to create watcher")
-	defer w.Close()
-
-	go fsDebounceLoop(w, projectsDir, outCh, closeCh)
-
-	require.NoError(t, os.WriteFile(filepath.Join(projectDir, "notes.txt"), []byte("hello"), 0644))
-
-	select {
-	case msg := <-outCh:
-		t.Errorf("should not have received event for non-.jsonl file, got %s", msg.FilePath)
-	case <-time.After(500 * time.Millisecond):
-		// Expected
-	}
+		events <- fsnotify.Event{Name: filepath.Join(projectsDir, "-Users-test-project", "notes.txt"), Op: fsnotify.Create}
+		synctest.Wait()
+		assertNoFSChange(t, outCh, "after non-jsonl event was consumed")
+		close(closeCh)
+		synctest.Wait()
+	})
 }
 
 func TestFsDebounceLoop_IgnoresWrongDepth(t *testing.T) {
-	projectsDir := t.TempDir()
-	projectDir := filepath.Join(projectsDir, "-Users-test-project")
-	deepDir := filepath.Join(projectDir, "subdir")
-	require.NoError(t, os.MkdirAll(deepDir, 0755))
+	synctest.Test(t, func(t *testing.T) {
+		projectsDir := "/projects"
+		events := make(chan fsnotify.Event, 1)
+		errors := make(chan error)
+		outCh := make(chan fsFileChangeMsg, 1)
+		closeCh := make(chan struct{})
+		go fsDebounceEvents(events, errors, nil, projectsDir, outCh, closeCh)
 
-	outCh := make(chan fsFileChangeMsg, 16)
-	closeCh := make(chan struct{})
-	defer close(closeCh)
-
-	w, err := fsnotify.NewWatcher()
-	require.NoError(t, err)
-	defer w.Close()
-	// Watch both the project dir and the deep subdir
-	_ = w.Add(projectDir)
-	_ = w.Add(deepDir)
-
-	go fsDebounceLoop(w, projectsDir, outCh, closeCh)
-
-	// Create a .jsonl file at the wrong depth (too deep)
-	convID := "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-	require.NoError(t, os.WriteFile(filepath.Join(deepDir, convID+".jsonl"), []byte(`{}`), 0644))
-
-	select {
-	case msg := <-outCh:
-		t.Errorf("should not have received event for wrong depth, got %s", msg.FilePath)
-	case <-time.After(500 * time.Millisecond):
-		// Expected
-	}
+		filePath := filepath.Join(projectsDir, "-Users-test-project", "subdir", "a1b2c3d4-e5f6-7890-abcd-ef1234567890.jsonl")
+		events <- fsnotify.Event{Name: filePath, Op: fsnotify.Create}
+		synctest.Wait()
+		assertNoFSChange(t, outCh, "after wrong-depth event was consumed")
+		close(closeCh)
+		synctest.Wait()
+	})
 }
 
-func TestFsDebounceLoop_IgnoresShortUUID(t *testing.T) {
-	projectsDir := t.TempDir()
-	projectDir := filepath.Join(projectsDir, "-Users-test-project")
-	require.NoError(t, os.MkdirAll(projectDir, 0755))
+func TestFsDebounceLoop_ForwardsShortUUIDToValidationLayer(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		projectsDir := "/projects"
+		filePath := filepath.Join(projectsDir, "-Users-test-project", "short.jsonl")
+		events := make(chan fsnotify.Event, 1)
+		errors := make(chan error)
+		outCh := make(chan fsFileChangeMsg, 1)
+		closeCh := make(chan struct{})
+		go fsDebounceEvents(events, errors, nil, projectsDir, outCh, closeCh)
 
-	outCh := make(chan fsFileChangeMsg, 16)
-	closeCh := make(chan struct{})
-	defer close(closeCh)
-
-	w, err := newTestWatcher(projectDir)
-	require.NoError(t, err)
-	defer w.Close()
-
-	go fsDebounceLoop(w, projectsDir, outCh, closeCh)
-
-	// .jsonl file with non-UUID name (wrong length) — still passes through the
-	// debounce loop (which only checks .jsonl + depth), but handleFSChange
-	// will reject it based on convID length.
-	require.NoError(t, os.WriteFile(filepath.Join(projectDir, "short.jsonl"), []byte(`{}`), 0644))
-
-	// The debounce loop lets any .jsonl at the right depth through —
-	// the UUID validation happens in handleFSChange. So we expect an event here.
-	select {
-	case msg := <-outCh:
-		// Verify handleFSChange would reject this
-		assert.NotEmpty(t, msg.FilePath, "got empty path")
-	case <-time.After(2 * time.Second):
-		// Also acceptable — some platforms may not report this
-	}
+		// UUID validation belongs to handleFSChange, so the debounce loop must
+		// still forward a right-depth .jsonl create immediately.
+		events <- fsnotify.Event{Name: filePath, Op: fsnotify.Create}
+		synctest.Wait()
+		select {
+		case msg := <-outCh:
+			assert.Equal(t, filePath, msg.FilePath)
+		default:
+			t.Fatal("right-depth .jsonl create was not forwarded")
+		}
+		close(closeCh)
+		synctest.Wait()
+	})
 }
 
 func TestFsDebounceLoop_AutoWatchesNewSubdir(t *testing.T) {
@@ -580,8 +558,12 @@ func TestFsDebounceLoop_AutoWatchesNewSubdir(t *testing.T) {
 	projectDir := filepath.Join(projectsDir, "-Users-new-project")
 	require.NoError(t, os.MkdirAll(projectDir, 0755))
 
-	// Give fsnotify time to process the dir creation and w.Add it
-	time.Sleep(200 * time.Millisecond)
+	// Watcher.Add is synchronous once the loop consumes the directory event.
+	// Poll the externally observable watch list instead of guessing how long
+	// the OS event will take to arrive.
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.Contains(c, w.WatchList(), projectDir, "watch list after project directory create")
+	}, 5*time.Second, 10*time.Millisecond)
 
 	// Now create a .jsonl file inside the new subdir
 	convID := "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
@@ -597,31 +579,25 @@ func TestFsDebounceLoop_AutoWatchesNewSubdir(t *testing.T) {
 }
 
 func TestFsDebounceLoop_CloseChStopsLoop(t *testing.T) {
-	projectsDir := t.TempDir()
-	projectDir := filepath.Join(projectsDir, "-Users-test")
-	require.NoError(t, os.MkdirAll(projectDir, 0755))
+	synctest.Test(t, func(t *testing.T) {
+		events := make(chan fsnotify.Event)
+		errors := make(chan error)
+		outCh := make(chan fsFileChangeMsg)
+		closeCh := make(chan struct{})
+		done := make(chan struct{})
+		go func() {
+			fsDebounceEvents(events, errors, nil, "/projects", outCh, closeCh)
+			close(done)
+		}()
 
-	outCh := make(chan fsFileChangeMsg, 16)
-	closeCh := make(chan struct{})
-
-	w, err := newTestWatcher(projectDir)
-	require.NoError(t, err)
-	defer w.Close()
-
-	done := make(chan struct{})
-	go func() {
-		fsDebounceLoop(w, projectsDir, outCh, closeCh)
-		close(done)
-	}()
-
-	close(closeCh)
-
-	select {
-	case <-done:
-		// Expected — goroutine exited
-	case <-time.After(2 * time.Second):
-		t.Fatal("fsDebounceLoop did not exit after closeCh was closed")
-	}
+		close(closeCh)
+		synctest.Wait()
+		select {
+		case <-done:
+		default:
+			t.Fatal("fsDebounceLoop did not exit after closeCh was closed")
+		}
+	})
 }
 
 // --- helpers ---
@@ -639,4 +615,13 @@ func newTestWatcher(dir string) (*fsnotify.Watcher, error) {
 		return nil, err
 	}
 	return w, nil
+}
+
+func assertNoFSChange(t *testing.T, outCh <-chan fsFileChangeMsg, context string) {
+	t.Helper()
+	select {
+	case msg := <-outCh:
+		t.Fatalf("unexpected filesystem change %q %s", msg.FilePath, context)
+	default:
+	}
 }

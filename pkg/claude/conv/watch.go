@@ -1171,12 +1171,33 @@ func (m *watchModel) startFSWatcher() tea.Cmd {
 //   - Writes to existing files are debounced per-file: only forwarded after
 //     fsDebounceDelay of inactivity, since active conversations write constantly.
 func fsDebounceLoop(w *fsnotify.Watcher, projectsDir string, outCh chan<- fsFileChangeMsg, closeCh <-chan struct{}) {
-	timers := make(map[string]*time.Timer)
+	fsDebounceEvents(w.Events, w.Errors, w.Add, projectsDir, outCh, closeCh)
+}
+
+type pendingFSEvent struct {
+	path  string
+	timer *time.Timer
+}
+
+// fsDebounceEvents owns the in-process debounce state machine. Keeping the
+// fsnotify channels and Add boundary as arguments lets tests drive the
+// contained timer behavior with synthetic channels while fsDebounceLoop keeps
+// the real OS watcher integration.
+func fsDebounceEvents(
+	events <-chan fsnotify.Event,
+	errors <-chan error,
+	addWatch func(string) error,
+	projectsDir string,
+	outCh chan<- fsFileChangeMsg,
+	closeCh <-chan struct{},
+) {
+	timers := make(map[string]*pendingFSEvent)
+	timerFired := make(chan *pendingFSEvent)
 	known := make(map[string]bool) // tracks files we've already seen
 
 	defer func() {
-		for _, t := range timers {
-			t.Stop()
+		for _, pending := range timers {
+			pending.timer.Stop()
 		}
 	}()
 
@@ -1184,7 +1205,7 @@ func fsDebounceLoop(w *fsnotify.Watcher, projectsDir string, outCh chan<- fsFile
 		select {
 		case <-closeCh:
 			return
-		case event, ok := <-w.Events:
+		case event, ok := <-events:
 			if !ok {
 				return
 			}
@@ -1195,7 +1216,9 @@ func fsDebounceLoop(w *fsnotify.Watcher, projectsDir string, outCh chan<- fsFile
 			// after startup; in global mode it watches all new projects.
 			if event.Op&fsnotify.Create != 0 && filepath.Dir(path) == projectsDir {
 				if info, err := os.Stat(path); err == nil && info.IsDir() {
-					_ = w.Add(path)
+					if addWatch != nil {
+						_ = addWatch(path)
+					}
 					continue // directory event, not a .jsonl file
 				}
 			}
@@ -1214,8 +1237,8 @@ func fsDebounceLoop(w *fsnotify.Watcher, projectsDir string, outCh chan<- fsFile
 			isCreate := event.Op&fsnotify.Create != 0
 
 			if removed {
-				if t, ok := timers[path]; ok {
-					t.Stop()
+				if pending, ok := timers[path]; ok {
+					pending.timer.Stop()
 					delete(timers, path)
 				}
 				delete(known, path)
@@ -1230,8 +1253,8 @@ func fsDebounceLoop(w *fsnotify.Watcher, projectsDir string, outCh chan<- fsFile
 			if isCreate && !known[path] {
 				// New file — send immediately
 				known[path] = true
-				if t, ok := timers[path]; ok {
-					t.Stop()
+				if pending, ok := timers[path]; ok {
+					pending.timer.Stop()
 					delete(timers, path)
 				}
 				select {
@@ -1244,19 +1267,36 @@ func fsDebounceLoop(w *fsnotify.Watcher, projectsDir string, outCh chan<- fsFile
 
 			// Write to existing file — debounce
 			known[path] = true
-			if t, ok := timers[path]; ok {
-				t.Stop()
+			if pending, ok := timers[path]; ok {
+				pending.timer.Stop()
 			}
-			timers[path] = time.AfterFunc(fsDebounceDelay, func() {
+			pending := &pendingFSEvent{path: path}
+			pending.timer = time.AfterFunc(fsDebounceDelay, func() {
 				select {
-				case outCh <- fsFileChangeMsg{FilePath: path, Removed: false}:
+				case timerFired <- pending:
 				case <-closeCh:
 				}
-				delete(timers, path)
 			})
+			timers[path] = pending
 
-		case <-w.Errors:
+		case pending := <-timerFired:
+			// A stopped timer may already have queued its callback. Only the
+			// latest generation for this path is allowed to emit.
+			if timers[pending.path] != pending {
+				continue
+			}
+			delete(timers, pending.path)
+			select {
+			case outCh <- fsFileChangeMsg{FilePath: pending.path, Removed: false}:
+			case <-closeCh:
+				return
+			}
+
+		case _, ok := <-errors:
 			// Ignore errors, keep listening
+			if !ok {
+				errors = nil
+			}
 		}
 	}
 }
