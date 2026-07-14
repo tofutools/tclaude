@@ -23,16 +23,6 @@ func StoreRun(ctx context.Context, src RunSource, runID string) Report {
 	if err != nil {
 		return LoadError(runID, err)
 	}
-	report, _ := SnapshotWithPinnedTemplate(ctx, src, snapshot)
-	return report
-}
-
-// SnapshotWithPinnedTemplate verifies snapshot and returns the exact template
-// whose semantic identity matches snapshot.Run.TemplateRef. Legacy records
-// may resolve that exact ref from src; this function never substitutes a
-// mutable template head. A nil returned template means callers must not render
-// a healthy graph from the run record.
-func SnapshotWithPinnedTemplate(ctx context.Context, src store.Templates, snapshot store.Snapshot) (Report, *model.Template) {
 	tmpl := snapshot.Run.Template
 	if tmpl != nil {
 		semanticHash, hashErr := model.SemanticHash(tmpl)
@@ -48,25 +38,64 @@ func SnapshotWithPinnedTemplate(ctx context.Context, src store.Templates, snapsh
 			})
 			sortReportDiagnostics(report.Diagnostics)
 			report.EffectiveStatus = state.RunStatusInconsistent
+			return report
+		}
+		return SnapshotWithTemplate(snapshot, tmpl)
+	}
+	tmpl, err = src.GetTemplate(ctx, snapshot.Run.TemplateRef)
+	if err != nil {
+		report := Snapshot(snapshot)
+		report.Diagnostics = append(report.Diagnostics, Diagnostic{
+			Layer:    LayerLoad,
+			Severity: model.SeverityError,
+			Code:     "template_unavailable",
+			Path:     "run.templateRef",
+			Message:  fmt.Sprintf("could not load pinned template %q: %v; template-aware invariants were not checked", snapshot.Run.TemplateRef, err),
+		})
+		sortReportDiagnostics(report.Diagnostics)
+		report.EffectiveStatus = state.RunStatusInconsistent
+		return report
+	}
+	return SnapshotWithTemplate(snapshot, tmpl)
+}
+
+// ExactTemplateSource is the non-recovering immutable-template read used by
+// the viewer boundary. It deliberately excludes authoring/head operations.
+type ExactTemplateSource interface {
+	GetTemplateExact(ctx context.Context, ref string) (*model.Template, error)
+}
+
+// SnapshotWithExactPinnedTemplate verifies snapshot and returns only the exact
+// immutable template matching TemplateRef. Legacy lookup never substitutes a
+// mutable head and never runs attributed-save recovery.
+func SnapshotWithExactPinnedTemplate(ctx context.Context, src ExactTemplateSource, snapshot store.Snapshot) (Report, *model.Template) {
+	tmpl := snapshot.Run.Template
+	if tmpl != nil {
+		semanticHash, hashErr := model.SemanticHash(tmpl)
+		wantRef := model.TemplateRef(tmpl.ID, semanticHash)
+		if hashErr != nil || strings.TrimSpace(wantRef) == "" || wantRef != snapshot.Run.TemplateRef {
+			report := Snapshot(snapshot)
+			report.Diagnostics = append(report.Diagnostics, Diagnostic{
+				Layer: LayerLoad, Severity: model.SeverityError, Code: "embedded_template_mismatch", Path: "run.template",
+				Message: "embedded run template does not match its pinned ref",
+			})
+			sortReportDiagnostics(report.Diagnostics)
+			report.EffectiveStatus = state.RunStatusInconsistent
 			return report, nil
 		}
 		return SnapshotWithTemplate(snapshot, tmpl), tmpl
 	}
-	resolved, err := src.GetTemplate(ctx, snapshot.Run.TemplateRef)
+	resolved, err := src.GetTemplateExact(ctx, snapshot.Run.TemplateRef)
 	if err != nil {
 		report := Snapshot(snapshot)
 		code := "template_unavailable"
-		message := fmt.Sprintf("could not load exact pinned template %q; template-aware invariants were not checked", snapshot.Run.TemplateRef)
+		message := "the exact pinned template is unavailable"
 		if errors.Is(err, store.ErrContentMismatch) {
 			code = "pinned_template_mismatch"
-			message = fmt.Sprintf("stored template content does not match pinned ref %q; template-aware invariants were not checked", snapshot.Run.TemplateRef)
+			message = "stored template content does not match its pinned ref"
 		}
 		report.Diagnostics = append(report.Diagnostics, Diagnostic{
-			Layer:    LayerLoad,
-			Severity: model.SeverityError,
-			Code:     code,
-			Path:     "run.templateRef",
-			Message:  message,
+			Layer: LayerLoad, Severity: model.SeverityError, Code: code, Path: "run.templateRef", Message: message,
 		})
 		sortReportDiagnostics(report.Diagnostics)
 		report.EffectiveStatus = state.RunStatusInconsistent
@@ -77,7 +106,7 @@ func SnapshotWithPinnedTemplate(ctx context.Context, src store.Templates, snapsh
 		report := Snapshot(snapshot)
 		report.Diagnostics = append(report.Diagnostics, Diagnostic{
 			Layer: LayerLoad, Severity: model.SeverityError, Code: "pinned_template_mismatch", Path: "run.templateRef",
-			Message: fmt.Sprintf("stored template content does not match pinned ref %q; template-aware invariants were not checked", snapshot.Run.TemplateRef),
+			Message: "stored template content does not match its pinned ref",
 		})
 		sortReportDiagnostics(report.Diagnostics)
 		report.EffectiveStatus = state.RunStatusInconsistent

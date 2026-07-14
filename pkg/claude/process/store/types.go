@@ -27,7 +27,36 @@ var (
 	ErrContentMismatch        = errors.New("process store content does not match its ref")
 	ErrLeaseHeld              = errors.New("process run lease is held")
 	ErrRunInconsistent        = errors.New("process run state is inconsistent with evidence")
+	ErrTemplateSavePending    = errors.New("process template has an unfinished attributed save")
+	ErrUnsafeRunPath          = errors.New("process run path is not a regular directory")
 )
+
+// DecodeError identifies persisted JSON that was read successfully but could
+// not be decoded. Viewer callers may distinguish corrupt history from
+// permission, device, and transient filesystem failures without parsing text.
+type DecodeError struct {
+	Component string
+	Err       error
+}
+
+func (e *DecodeError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return fmt.Sprintf("decode process %s: %v", e.Component, e.Err)
+}
+
+func (e *DecodeError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+func IsDecodeError(err error) bool {
+	var decodeErr *DecodeError
+	return errors.As(err, &decodeErr)
+}
 
 type ConflictError struct {
 	RunID       string

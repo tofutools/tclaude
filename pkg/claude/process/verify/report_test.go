@@ -181,7 +181,7 @@ func TestStoreRunRejectsTamperedEmbeddedTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, resolved := verify.SnapshotWithPinnedTemplate(t.Context(), fixture.Store, tampered)
+	_, resolved := verify.SnapshotWithExactPinnedTemplate(t.Context(), fixture.Store, tampered)
 	if resolved != nil {
 		t.Fatal("a mismatched embedded template must not be returned for graph rendering")
 	}
@@ -210,7 +210,7 @@ func TestStoreRunLegacyRecordFallsBackToTemplateLibrary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, resolved := verify.SnapshotWithPinnedTemplate(t.Context(), fixture.Store, legacy)
+	_, resolved := verify.SnapshotWithExactPinnedTemplate(t.Context(), fixture.Store, legacy)
 	if resolved == nil {
 		t.Fatal("legacy run did not resolve its exact pinned template")
 	}

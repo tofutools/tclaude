@@ -2,6 +2,7 @@ package view_test
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,167 +12,128 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
+	processverify "github.com/tofutools/tclaude/pkg/claude/process/verify"
 	processview "github.com/tofutools/tclaude/pkg/claude/process/view"
 )
 
-func TestBuildProjectsPersistedRunDataWithoutRawCommandContent(t *testing.T) {
+func TestBuildViewerEnvelopeDoesNotLeakPersistedContent(t *testing.T) {
 	t.Parallel()
-	t0 := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
-	tmpl := &model.Template{
-		ID: "viewer", Start: "work",
-		Nodes: map[string]model.Node{
-			"work":   {Type: model.NodeTypeTask, Next: model.Next{"pass": "check"}},
-			"check":  {Type: model.NodeTypeTask, Next: model.Next{"fail": "failed", "pass": "done"}},
-			"done":   {Type: model.NodeTypeEnd},
-			"failed": {Type: model.NodeTypeEnd},
-		},
-	}
-	st := state.New("run-view", "viewer@sha256:pinned", "viewer@sha256:pinned", []state.NodeInit{
-		{ID: "parent", Type: model.NodeTypeTask, Status: state.NodeStatusBlocked},
-		{ID: "work", Type: model.NodeTypeTask, Status: state.NodeStatusCompleted},
-		{ID: "check", Type: model.NodeTypeTask, Status: state.NodeStatusBlocked},
-		{ID: "done", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
-		{ID: "failed", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
-	})
-	parent := st.Nodes["parent"]
-	parent.Children = []string{"work", "check"}
-	st.Nodes["parent"] = parent
-	check := st.Nodes["check"]
-	check.Attempt = 2
-	check.BlockedReason = "tests failed"
-	check.BlockedOwner = "human:operator"
-	check.BlockedAttempt = 2
-	check.BlockedAt = t0.Add(8 * time.Minute)
-	st.Nodes["check"] = check
-
-	st.OutstandingCommands = map[string]state.OutstandingCommand{
-		"cmd_work": {
-			ID: "cmd_work", NodeID: "work", Attempt: 1, Kind: state.CommandKindStartAttempt,
-			Status: state.CommandStatusObserved, ExternalRef: "agt_live123", CreatedAt: t0,
-		},
-		"cmd_check": {
-			ID: "cmd_check", NodeID: "check", Attempt: 2, Kind: state.CommandKindStartAttempt,
-			Status: state.CommandStatusIssued, ExternalRef: "agent:agt_retry456", CreatedAt: t0.Add(6 * time.Minute),
-		},
-		"cmd_block": {
-			ID: "cmd_block", NodeID: "check", Attempt: 2, Kind: state.CommandKindBlockNode,
-			Status: state.CommandStatusObserved, CreatedAt: t0.Add(8 * time.Minute),
-		},
-	}
-	st.Obligations = map[string]state.ObligationRecord{
-		"old": {
-			ID: "old", NodeID: "work", Attempt: 1, CommandID: "cmd_old", Kind: state.WaitKindAgent,
-			Assignee: "agent:agt_old", Status: state.WaitStatusSatisfied, CreatedAt: t0.Add(-time.Hour),
-		},
-		"active": {
-			ID: "active", NodeID: "work", Attempt: 1, CommandID: "cmd_work", Kind: state.WaitKindAgent,
-			Assignee: "agent:agt_live123", Status: state.WaitStatusPending, CreatedAt: t0,
-			DueAt: t0.Add(5 * time.Minute), Summary: "Agent work for work",
-			AvailableActions: []string{"pass", "fail"},
-		},
-	}
-	st.Contacts = map[string]state.ContactState{
-		"cmd_work": {
-			CommandID: "cmd_work", Kind: state.WaitKindAgent, Assignee: "agent:agt_live123",
-			Cadence: "5m0s", Budget: 3, Used: 1, LastContactedAt: t0.Add(2 * time.Minute),
-			NextContactAt: t0.Add(7 * time.Minute), EscalationTarget: "human:operator",
-		},
-		"cmd_block": {
-			CommandID: "cmd_block", Kind: state.WaitKindHuman, Assignee: "human:operator",
-			Cadence: "30m0s", Budget: 5, Used: 2, LastContactedAt: t0.Add(9 * time.Minute),
-			NextContactAt: t0.Add(39 * time.Minute), EscalationTarget: "human:operator",
-			Paused: true, PauseReason: "operator is responding",
-		},
-	}
-
-	secret := "SECRET RAW COMMAND PROMPT"
-	logs := []evidence.NodeLog{
-		{NodeID: "check", Entries: []evidence.LogEntry{
-			entry(8, t0.Add(8*time.Minute), "check", evidence.EntryKindAttempt, &state.Event{Type: state.EventNodeAttemptSettled, NodeID: "check", Attempt: 2, Outcome: "fail", EvidenceRef: "artifact:failure"}),
-			entry(6, t0.Add(6*time.Minute), "check", evidence.EntryKindAttempt, &state.Event{Type: state.EventNodeAttemptStarted, NodeID: "check", Attempt: 2, Actor: "agent:agt_retry456"}),
-			entry(4, t0.Add(4*time.Minute), "check", evidence.EntryKindAttempt, &state.Event{Type: state.EventNodeAttemptStarted, NodeID: "check", Attempt: 1, Actor: "agent:agt_first"}),
-			entry(5, t0.Add(5*time.Minute), "check", evidence.EntryKindAttempt, &state.Event{Type: state.EventNodeAttemptSettled, NodeID: "check", Attempt: 1, Outcome: "retry"}),
-		}},
-		{NodeID: "work", Entries: []evidence.LogEntry{
-			entry(3, t0.Add(3*time.Minute), "work", evidence.EntryKindAttempt, &state.Event{Type: state.EventNodeAttemptSettled, NodeID: "work", Attempt: 1, Outcome: "pass", EvidenceRef: "artifact:work"}),
-			entry(2, t0.Add(2*time.Minute), "work", evidence.EntryKindGate, &state.Event{
-				Type: state.EventCommandIssued, NodeID: "work", Attempt: 1,
-				Command: &state.OutstandingCommand{Payload: json.RawMessage(`{"prompt":"` + secret + `"}`), Feedback: secret},
-				Reason:  secret, Feedback: secret,
-			}),
-			entry(1, t0.Add(time.Minute), "work", evidence.EntryKindAttempt, &state.Event{Type: state.EventNodeAttemptStarted, NodeID: "work", Attempt: 1, Actor: "agent:agt_live123"}),
-			entry(9, t0.Add(9*time.Minute), "other", evidence.EntryKindAttempt, &state.Event{Type: state.EventNodeAttemptSettled, NodeID: "other", Outcome: "pass"}),
-		}},
-	}
-
-	report := processview.Build(store.Snapshot{State: &st, NodeLogs: logs}, tmpl)
-	assert.Equal(t, processview.SchemaVersion, report.SchemaVersion)
-	require.Len(t, report.Nodes["work"].Timeline, 3)
-	assert.Equal(t, []int64{1, 2, 3}, timelineSeqs(report.Nodes["work"].Timeline))
-	assert.Equal(t, "agt_live123", report.Nodes["work"].Conversation.AgentID)
-	require.NotNil(t, report.Nodes["work"].Obligation)
-	assert.Equal(t, "active", report.Nodes["work"].Obligation.ID)
-	assert.Equal(t, 1, report.Nodes["work"].Obligation.Contact.BudgetUsed)
-
-	assert.Equal(t, processview.NodeSummary{
-		AttemptCount: 3, RetryCount: 1, FailureCount: 1, CompletedStages: 1, TotalStages: 2,
-	}, report.Nodes["parent"].Summary)
-	require.NotNil(t, report.Nodes["check"].Blocked)
-	assert.Equal(t, "operator is responding", report.Nodes["check"].Blocked.Contact.PauseReason)
-	assert.Equal(t, "agt_retry456", report.Nodes["check"].Conversation.AgentID)
-
-	require.Equal(t, []processview.TraversedEdge{
-		{From: "check", Outcome: "fail", To: "failed", Count: 1, LastAt: t0.Add(8 * time.Minute)},
-		{From: "work", Outcome: "pass", To: "check", Count: 1, LastAt: t0.Add(3 * time.Minute)},
-	}, report.TraversedEdges)
-	timelineJSON, err := json.Marshal(report.Nodes["work"].Timeline)
-	require.NoError(t, err)
-	assert.NotContains(t, string(timelineJSON), secret)
-	assert.NotContains(t, string(timelineJSON), "payload")
-	assert.NotContains(t, string(timelineJSON), "feedback")
-}
-
-func TestBuildPreservesLegacyBlockedTimestampAbsenceAndOmitsInferredEdges(t *testing.T) {
-	t.Parallel()
-	st := state.New("legacy", "legacy@sha256:pinned", "legacy@sha256:pinned", []state.NodeInit{{ID: "work", Status: state.NodeStatusBlocked}})
-	node := st.Nodes["work"]
-	node.BlockedReason = "legacy block"
-	node.BlockedOwner = "human:operator"
-	node.BlockedAtUnavailable = true
-	st.Nodes["work"] = node
-	tmpl := &model.Template{Start: "work", Nodes: map[string]model.Node{
-		"work": {Type: model.NodeTypeTask, Next: model.Next{"next": "done"}},
+	secret := "DO_NOT_LEAK_7d3d"
+	ref := "viewer@sha256:" + strings.Repeat("a", 64)
+	tmpl := &model.Template{ID: "viewer", Name: secret, Start: "work", Params: map[string]model.Param{"token": {Default: secret}}, Nodes: map[string]model.Node{
+		"work": {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: secret, Run: "/private/" + secret, Args: []string{secret}}, Next: model.Next{"pass": "done"}},
 		"done": {Type: model.NodeTypeEnd},
 	}}
+	st := state.New("run-view", ref, ref, []state.NodeInit{{ID: "work", Type: model.NodeTypeTask, Status: state.NodeStatusRunning}, {ID: "done", Type: model.NodeTypeEnd}})
+	node := st.Nodes["work"]
+	node.ActiveAttempt = &state.AttemptState{Attempt: 1}
+	st.Nodes["work"] = node
+	st.OutstandingCommands = map[string]state.OutstandingCommand{
+		"start": {ID: "start", NodeID: "work", Attempt: 1, Kind: state.CommandKindStartAttempt, Status: state.CommandStatusIssued, ExternalRef: "agent:agt_live123", Payload: json.RawMessage(`{"secret":"` + secret + `"}`), Feedback: secret, CreatedAt: time.Unix(1, 0)},
+	}
 	logs := []evidence.NodeLog{{NodeID: "work", Entries: []evidence.LogEntry{
-		entry(1, time.Time{}, "work", evidence.EntryKindAttempt, &state.Event{Type: state.EventNodeAttemptSettled, NodeID: "work", Outcome: "pass"}),
+		entry(1, "work", &state.Event{Type: state.EventNodeAttemptStarted, NodeID: "work", Attempt: 1, Actor: state.ActorRef("program:/private/" + secret + "@exit0"), Reason: secret, EvidenceRef: "/private/" + secret}),
 	}}}
-	report := processview.Build(store.Snapshot{State: &st, NodeLogs: logs}, tmpl)
-	require.NotNil(t, report.Nodes["work"].Blocked)
-	assert.True(t, report.Nodes["work"].Blocked.BlockedAtUnavailable)
-	assert.True(t, report.Nodes["work"].Blocked.BlockedAt.IsZero())
-	assert.Empty(t, report.TraversedEdges, "pass must not be guessed to mean an authored next edge")
-}
+	verification := processverify.Report{RunID: "run-view", EffectiveStatus: state.RunStatusDirty, Dirty: true, Diagnostics: []processverify.Diagnostic{{Layer: processverify.LayerLoad, Severity: model.SeverityError, Code: "unsafe_" + secret, Path: secret, Message: secret}}}
 
-func TestNewReportHasStableEmptyCollections(t *testing.T) {
-	t.Parallel()
-	report := processview.Build(store.Snapshot{}, nil)
-	data, err := json.Marshal(report)
+	envelope := processview.Build(store.Snapshot{Run: store.RunRecord{ID: "run-view", TemplateRef: ref, Params: map[string]string{"token": secret}}, State: &st, NodeLogs: logs}, tmpl, verification)
+	data, err := json.Marshal(envelope)
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"schemaVersion":1,"nodes":{},"traversedEdges":[]}`, string(data))
+	assert.NotContains(t, string(data), secret)
+	assert.NotContains(t, string(data), "/private/")
+	assert.NotContains(t, string(data), "payload")
+	assert.NotContains(t, string(data), "feedback")
+	assert.Equal(t, "program", envelope.Report.Nodes["work"].Timeline[0].Actor.Kind)
+	assert.Equal(t, "agt_live123", envelope.Report.Nodes["work"].Conversation.AgentID)
+	assert.Equal(t, "verification_error", envelope.Verification.Diagnostics[0].Code)
+	assert.Empty(t, envelope.Verification.Diagnostics[0].Path)
 }
 
-func entry(seq int64, at time.Time, scopeID string, kind evidence.EntryKind, event *state.Event) evidence.LogEntry {
-	return evidence.LogEntry{
-		SchemaVersion: evidence.LogEntrySchemaVersion, Seq: seq, At: at,
-		Scope: evidence.Scope{Kind: evidence.ScopeNode, ID: scopeID}, Kind: kind, Event: event,
+func TestBuildUsesPersistedAmbiguityStateOnly(t *testing.T) {
+	t.Parallel()
+	t0 := time.Unix(100, 0)
+	st := state.New("run", "ref", "ref", []state.NodeInit{{ID: "parent", Status: state.NodeStatusBlocked}, {ID: "older", Status: state.NodeStatusRunning}, {ID: "newer", Status: state.NodeStatusRunning}})
+	parent := st.Nodes["parent"]
+	parent.Children = []string{"older", "newer"}
+	parent.BlockedAttempt = 1
+	parent.BlockedOwner = "human:operator"
+	st.Nodes["parent"] = parent
+	older := st.Nodes["older"]
+	older.ActiveAttempt = &state.AttemptState{Attempt: 9}
+	st.Nodes["older"] = older
+	newer := st.Nodes["newer"]
+	newer.ActiveAttempt = &state.AttemptState{Attempt: 1}
+	st.Nodes["newer"] = newer
+	st.OutstandingCommands = map[string]state.OutstandingCommand{
+		"old-child":     {ID: "old-child", NodeID: "older", Attempt: 9, Kind: state.CommandKindStartAttempt, Status: state.CommandStatusObserved, ExternalRef: "agent:agt_old", CreatedAt: t0},
+		"new-child":     {ID: "new-child", NodeID: "newer", Attempt: 1, Kind: state.CommandKindStartAttempt, Status: state.CommandStatusIssued, ExternalRef: "agent:agt_new", CreatedAt: t0.Add(time.Minute)},
+		"z-old-contact": {ID: "z-old-contact", NodeID: "parent", Attempt: 1, Kind: state.CommandKindBlockNode, Status: state.CommandStatusObserved, CreatedAt: t0},
+		"a-new-contact": {ID: "a-new-contact", NodeID: "parent", Attempt: 1, Kind: state.CommandKindBlockNode, Status: state.CommandStatusIssued, CreatedAt: t0.Add(time.Minute)},
 	}
+	st.Contacts = map[string]state.ContactState{
+		"z-old-contact": {CommandID: "z-old-contact", Budget: 9},
+		"a-new-contact": {CommandID: "a-new-contact", Budget: 2},
+	}
+	tmpl := &model.Template{Nodes: map[string]model.Node{"parent": {Type: model.NodeTypeTask}, "older": {Type: model.NodeTypeTask}, "newer": {Type: model.NodeTypeTask}}}
+	envelope := processview.Build(store.Snapshot{State: &st}, tmpl, processverify.Report{})
+	assert.Equal(t, "agt_new", envelope.Report.Nodes["parent"].Conversation.AgentID)
+	require.NotNil(t, envelope.Report.Nodes["parent"].Blocked.Contact)
+	assert.Equal(t, 2, envelope.Report.Nodes["parent"].Blocked.Contact.BudgetMax)
+
+	// The newest current command being unbound is authoritative; no historical fallback.
+	cmd := st.OutstandingCommands["new-child"]
+	cmd.ExternalRef = ""
+	st.OutstandingCommands["new-child"] = cmd
+	envelope = processview.Build(store.Snapshot{State: &st}, tmpl, processverify.Report{})
+	assert.Nil(t, envelope.Report.Nodes["parent"].Conversation)
+
+	// A resolved block is a tombstone, not a current blockage.
+	parent.Status = state.NodeStatusReady
+	st.Nodes["parent"] = parent
+	envelope = processview.Build(store.Snapshot{State: &st}, tmpl, processverify.Report{})
+	assert.Nil(t, envelope.Report.Nodes["parent"].Blocked)
 }
 
-func timelineSeqs(entries []processview.TimelineEntry) []int64 {
-	seqs := make([]int64, len(entries))
-	for i := range entries {
-		seqs[i] = entries[i].Seq
+func TestBuildTraversedEdgesMatchPlannerSemantics(t *testing.T) {
+	t.Parallel()
+	tmpl := &model.Template{Nodes: map[string]model.Node{
+		"retry":     {Next: model.Next{"pass": "done", "failure": "failed"}},
+		"ok":        {Next: model.Next{"done": "done"}},
+		"lone":      {Next: model.Next{"custom": "done"}},
+		"decision":  {Type: model.NodeTypeDecision, Next: model.Next{"approve": "done"}},
+		"ambiguous": {Next: model.Next{"one": "done", "two": "failed"}},
+		"done":      {Type: model.NodeTypeEnd}, "failed": {Type: model.NodeTypeEnd},
+	}}
+	logs := []evidence.NodeLog{
+		{NodeID: "retry", Entries: []evidence.LogEntry{
+			entryStatus(1, "retry", "fail", state.NodeStatusReady),
+			entryStatus(2, "retry", "error", state.NodeStatusFailed),
+		}},
+		{NodeID: "ok", Entries: []evidence.LogEntry{entryStatus(3, "ok", "OK", state.NodeStatusCompleted)}},
+		{NodeID: "lone", Entries: []evidence.LogEntry{entryStatus(4, "lone", "passed", state.NodeStatusCompleted)}},
+		{NodeID: "decision", Entries: []evidence.LogEntry{entry(5, "decision", &state.Event{Type: state.EventDecisionRecorded, NodeID: "decision", ChosenEdge: " APPROVE "})}},
+		{NodeID: "ambiguous", Entries: []evidence.LogEntry{entryStatus(6, "ambiguous", "pass", state.NodeStatusCompleted)}},
 	}
-	return seqs
+	envelope := processview.Build(store.Snapshot{State: &state.State{Nodes: map[string]state.NodeState{}}, NodeLogs: logs}, tmpl, processverify.Report{})
+	assert.Equal(t, []processview.TraversedEdge{
+		{From: "decision", Outcome: "approve", To: "done", Count: 1},
+		{From: "lone", Outcome: "custom", To: "done", Count: 1},
+		{From: "ok", Outcome: "done", To: "done", Count: 1},
+		{From: "retry", Outcome: "failure", To: "failed", Count: 1},
+	}, envelope.Report.TraversedEdges)
+}
+
+func TestNewEnvelopeHasStableEmptyCollections(t *testing.T) {
+	t.Parallel()
+	data, err := json.Marshal(processview.NewEnvelope("run", processverify.Report{}))
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"run":{"id":"run","effectiveStatus":"inconsistent"},"graph":null,"verification":{"effectiveStatus":"inconsistent","dirty":false,"diagnostics":[]},"report":{"schemaVersion":1,"nodes":{},"traversedEdges":[]}}`, string(data))
+}
+
+func entry(seq int64, nodeID string, event *state.Event) evidence.LogEntry {
+	return evidence.LogEntry{SchemaVersion: evidence.LogEntrySchemaVersion, Seq: seq, Scope: evidence.Scope{Kind: evidence.ScopeNode, ID: nodeID}, Kind: evidence.EntryKindAttempt, Event: event}
+}
+
+func entryStatus(seq int64, nodeID, outcome string, status state.NodeStatus) evidence.LogEntry {
+	return entry(seq, nodeID, &state.Event{Type: state.EventNodeAttemptSettled, NodeID: nodeID, Outcome: outcome, NodeStatus: status})
 }

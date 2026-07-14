@@ -231,37 +231,55 @@ func handleProcessRun(w http.ResponseWriter, r *http.Request) {
 	}
 	snapshot, err := fs.LoadRun(r.Context(), runID)
 	if err != nil {
-		run, exists, lookupErr := confirmedProcessRun(r.Context(), fs, runID)
+		if errors.Is(err, store.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "process_run", err.Error())
+		return
+	}
+	writeProcessJSON(w, http.StatusOK, map[string]any{
+		"run":          snapshot.Run,
+		"state":        snapshot.State,
+		"verification": processverify.Snapshot(snapshot),
+	})
+}
+
+func handleProcessRunView(w http.ResponseWriter, r *http.Request) {
+	runID := r.PathValue("id")
+	fs, err := store.NewFS(processStoreRoot())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "process_view", "process run view is unavailable")
+		return
+	}
+	snapshot, err := fs.LoadRunView(r.Context(), runID)
+	if err != nil {
+		_, exists, lookupErr := confirmedProcessRun(r.Context(), fs, runID)
 		if lookupErr != nil {
-			writeError(w, http.StatusInternalServerError, "process_store", lookupErr.Error())
+			writeError(w, http.StatusInternalServerError, "process_view", "process run view is unavailable")
 			return
 		}
 		if !exists && errors.Is(err, store.ErrNotFound) {
 			http.NotFound(w, r)
 			return
 		}
-		if exists {
-			run.Template = nil
-			writeProcessJSON(w, http.StatusOK, map[string]any{
-				"run":          run,
-				"state":        nil,
-				"verification": processRunLoadFailure(runID, err),
-				"report":       processview.NewReport(),
-			})
+		if exists && degradableProcessViewError(err) {
+			writeProcessJSON(w, http.StatusOK, processview.NewEnvelope(runID, processRunLoadFailure(runID, err)))
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "process_run", err.Error())
+		writeError(w, http.StatusInternalServerError, "process_view", "process run view is unavailable")
 		return
 	}
-	verification, tmpl := processverify.SnapshotWithPinnedTemplate(r.Context(), fs, snapshot)
-	run := snapshot.Run
-	run.Template = tmpl
-	writeProcessJSON(w, http.StatusOK, map[string]any{
-		"run":          run,
-		"state":        snapshot.State,
-		"verification": verification,
-		"report":       processview.Build(snapshot, tmpl),
-	})
+	verification, tmpl := processverify.SnapshotWithExactPinnedTemplate(r.Context(), fs, snapshot)
+	writeProcessJSON(w, http.StatusOK, processview.Build(snapshot, tmpl, verification))
+}
+
+func degradableProcessViewError(err error) bool {
+	if store.IsDecodeError(err) || errors.Is(err, store.ErrNotFound) {
+		return true
+	}
+	var readErr *evidence.ReadError
+	return errors.As(err, &readErr)
 }
 
 func confirmedProcessRun(ctx context.Context, fs *store.FS, runID string) (store.RunRecord, bool, error) {

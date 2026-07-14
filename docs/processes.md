@@ -348,14 +348,15 @@ recovery, and the terminal result without consulting SQLite or a live daemon.
 
 ## Run viewer API
 
-With Processes enabled, `GET /v1/process/runs/{id}` returns the persisted run
-and state, verification results, and an additive read-only viewer report:
+With Processes enabled, `GET /v1/process/runs/{id}/view` returns a dedicated,
+read-only viewer projection. The existing `GET /v1/process/runs/{id}` contract
+continues to return the persisted run, state, and verification result unchanged.
 
 ```json
 {
-  "run": { "id": "change-1", "templateRef": "...", "template": {} },
-  "state": {},
-  "verification": { "effectiveStatus": "running" },
+  "run": { "id": "change-1", "templateRef": "...", "effectiveStatus": "running" },
+  "graph": { "nodes": [], "edges": [] },
+  "verification": { "effectiveStatus": "running", "dirty": false, "diagnostics": [] },
   "report": {
     "schemaVersion": 1,
     "nodes": {
@@ -375,28 +376,31 @@ and state, verification results, and an additive read-only viewer report:
 }
 ```
 
-The report projects persisted metadata and evidence references only. Timeline
-entries never embed raw evidence, performer prompts, or command payloads.
+The viewer uses explicit DTOs and never serializes the stored template, state,
+events, run params, performer prompts/commands, or command payloads. The report
+projects narrow persisted metadata and content-addressed artifact references
+only.
 Obligations and blocked nodes include only their recorded wait/contact state;
 missing legacy timestamps and schedules remain absent rather than being
 reconstructed. A conversation reference contains only the durable agent ID
 recorded on the process command. The dashboard separately decides whether that
 agent currently has an online conversation.
 
-`run.template` is always the exact template matching `templateRef`. A legacy
-run that did not embed its template resolves that exact content-addressed
-version from the template store; the API never substitutes the current
-template head. If the pinned version is unavailable or mismatched,
-verification reports the run as inconsistent, `run.template` is absent, and
-the report does not claim traversed graph edges.
+The graph is derived only from the exact template matching `templateRef`. A
+legacy run that did not embed its template resolves that content-addressed
+version without recovering an unfinished authoring save or substituting the
+current template head. If the pinned version is unavailable or mismatched,
+verification reports the run as inconsistent, `graph` is null, and the report
+does not claim traversed graph edges.
 
 A confirmed existing run whose checkpoint or evidence cannot be decoded still
 returns HTTP 200 so inspection can show its inconsistent alarm. That degraded
-response has a minimal run record, `state: null`, no template, an empty
-schema-v1 report, and stable sanitized verification diagnostics. A genuinely
-missing run remains 404, while a process-store infrastructure failure remains
-500. Reading this endpoint never rewrites run metadata, state, manifests, or
-evidence logs.
+response has a minimal safe run projection, `graph: null`, an empty schema-v1
+report, and stable sanitized verification diagnostics. A genuinely missing run
+remains 404. Permission, device, symlink, and transient process-store failures
+remain sanitized 500 responses. Reading this endpoint takes the same run lock
+as append and never rewrites template authoring state, run metadata, state,
+manifests, or evidence logs.
 
 ## Notes
 

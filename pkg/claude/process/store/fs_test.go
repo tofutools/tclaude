@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"io"
@@ -413,6 +414,30 @@ func TestTemplateAuthorshipCrashIntentRestoresSourceBeforeRead(t *testing.T) {
 	assert.Equal(t, before, after)
 	_, err = os.Stat(filepath.Join(root, "templates", tmpl.ID, ".attributed-save-intent.json"))
 	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestGetTemplateExactDoesNotRecoverPendingAttributedSave(t *testing.T) {
+	ctx := t.Context()
+	root := t.TempDir()
+	fs := newStoreAt(t, root)
+	tmpl := storetest.Template()
+	record, err := fs.PutTemplateEditorSourceAttributed(ctx, tmpl, "", "agent:agt_first")
+	require.NoError(t, err)
+	semanticHash, err := model.SemanticHash(tmpl)
+	require.NoError(t, err)
+	versionDir := filepath.Join(root, "templates", tmpl.ID, "sha256-"+semanticHash)
+	paths := []string{
+		filepath.Join(root, "templates", tmpl.ID, "head"),
+		filepath.Join(versionDir, "template.yaml"),
+		filepath.Join(versionDir, "template.json"),
+		filepath.Join(versionDir, "authorship.jsonl"),
+	}
+	writeCrashedTemplateSaveIntent(t, root, tmpl.ID, semanticHash, paths)
+	before := directoryFingerprint(t, filepath.Join(root, "templates", tmpl.ID))
+
+	_, err = fs.GetTemplateExact(ctx, record.Ref)
+	require.ErrorIs(t, err, store.ErrTemplateSavePending)
+	assert.Equal(t, before, directoryFingerprint(t, filepath.Join(root, "templates", tmpl.ID)))
 }
 
 func TestTemplateAuthorshipUnreadableCrashIntentFailsClosed(t *testing.T) {
@@ -1207,6 +1232,49 @@ func TestConcurrentAppendHammer(t *testing.T) {
 	}
 }
 
+func TestLoadRunViewSerializesWithAppend(t *testing.T) {
+	ctx := t.Context()
+	fs, runID := initializedRun(t)
+	readLocked := make(chan struct{})
+	releaseRead := make(chan struct{})
+	restore := fs.SetViewerReadHookForTest(func() {
+		close(readLocked)
+		<-releaseRead
+	})
+	defer restore()
+
+	viewResult := make(chan store.Snapshot, 1)
+	viewErr := make(chan error, 1)
+	go func() {
+		snapshot, err := fs.LoadRunView(ctx, runID)
+		viewResult <- snapshot
+		viewErr <- err
+	}()
+	<-readLocked
+
+	appendDone := make(chan error, 1)
+	go func() {
+		_, err := fs.Append(ctx, runID, 0, []evidence.LogEntry{storetest.AdminLogEntry(runID, "implement", 0)})
+		appendDone <- err
+	}()
+	select {
+	case err := <-appendDone:
+		t.Fatalf("append completed while viewer held the run lock: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releaseRead)
+	require.NoError(t, <-viewErr)
+	assert.Equal(t, int64(0), (<-viewResult).State.LastLogSeq)
+	require.NoError(t, <-appendDone)
+
+	restore()
+	restore = func() {}
+	after, err := fs.LoadRunView(ctx, runID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), after.State.LastLogSeq)
+	require.Len(t, after.Manifest, 1)
+}
+
 func initializedRun(t *testing.T) (*store.FS, string) {
 	t.Helper()
 	return initializedRunAt(t, t.TempDir())
@@ -1248,6 +1316,30 @@ func splitTemplateRef(ref string) (string, string, error) {
 		return "", "", errors.New("invalid template ref")
 	}
 	return id, hash, nil
+}
+
+func directoryFingerprint(t *testing.T, root string) map[string][32]byte {
+	t.Helper()
+	result := map[string][32]byte{}
+	require.NoError(t, filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		result[rel] = sha256.Sum256(data)
+		return nil
+	}))
+	return result
 }
 
 func hasDiagnostic(diagnostics evidence.Diagnostics, code string) bool {

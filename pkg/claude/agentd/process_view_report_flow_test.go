@@ -18,17 +18,11 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
-	processverify "github.com/tofutools/tclaude/pkg/claude/process/verify"
 	processview "github.com/tofutools/tclaude/pkg/claude/process/view"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
-type processRunViewResponse struct {
-	Run          store.RunRecord      `json:"run"`
-	State        *state.State         `json:"state"`
-	Verification processverify.Report `json:"verification"`
-	Report       processview.Report   `json:"report"`
-}
+type processRunViewResponse = processview.Envelope
 
 func TestProcessRunViewResolvesLegacyPinnedTemplateAndDoesNotMutateHistory(t *testing.T) {
 	f, root := processEngineFlow(t)
@@ -51,6 +45,7 @@ func TestProcessRunViewResolvesLegacyPinnedTemplateAndDoesNotMutateHistory(t *te
 	snapshot, err := fsStore.LoadRun(t.Context(), "viewer-legacy")
 	require.NoError(t, err)
 	snapshot.Run.Template = nil // pre-embedded-template legacy record
+	snapshot.Run.Params = map[string]string{"token": "VIEWER_SECRET_PARAM"}
 	runData, err := json.MarshalIndent(snapshot.Run, "", "  ")
 	require.NoError(t, err)
 	runData = append(runData, '\n')
@@ -67,16 +62,20 @@ func TestProcessRunViewResolvesLegacyPinnedTemplateAndDoesNotMutateHistory(t *te
 	}))
 	before := fingerprintTree(t, runDir)
 
-	rec := processEngineGet(t, f, "/v1/process/runs/viewer-legacy")
+	legacy := processEngineGet(t, f, "/v1/process/runs/viewer-legacy")
+	require.Equal(t, http.StatusOK, legacy.Code, legacy.Body.String())
+	assert.NotContains(t, legacy.Body.String(), `"report"`, "legacy endpoint contract remains unchanged")
+	assert.Contains(t, legacy.Body.String(), `"state"`)
+
+	rec := processEngineGet(t, f, "/v1/process/runs/viewer-legacy/view")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var response processRunViewResponse
 	testharness.DecodeJSON(t, rec, &response)
-	require.NotNil(t, response.Run.Template, "legacy runs must resolve the exact pinned template")
-	hash, err := model.SemanticHash(response.Run.Template)
-	require.NoError(t, err)
-	assert.Equal(t, response.Run.TemplateRef, model.TemplateRef(response.Run.Template.ID, hash))
+	assert.NotContains(t, rec.Body.String(), "VIEWER_SECRET_PARAM")
+	assert.NotContains(t, rec.Body.String(), `"params"`)
+	require.NotNil(t, response.Graph, "legacy runs must resolve the exact pinned template")
+	assert.Equal(t, snapshot.Run.TemplateRef, response.Run.TemplateRef)
 	assert.Equal(t, state.RunStatusRunning, response.Verification.EffectiveStatus)
-	require.NotNil(t, response.State)
 	assert.Equal(t, processview.SchemaVersion, response.Report.SchemaVersion)
 	assert.Equal(t, 1, response.Report.Nodes["work"].Summary.AttemptCount)
 	require.Equal(t, []processview.TraversedEdge{{
@@ -88,6 +87,32 @@ func TestProcessRunViewResolvesLegacyPinnedTemplateAndDoesNotMutateHistory(t *te
 }
 
 func TestProcessRunViewRejectsUnavailableOrMismatchedPinnedTemplates(t *testing.T) {
+	t.Run("pending attributed save is not recovered", func(t *testing.T) {
+		f, root := processEngineFlow(t)
+		fsStore := createEngineRun(t, root, "viewer-template-pending", viewerFlowTemplate("viewer-template-pending"), false)
+		snapshot, err := fsStore.LoadRun(t.Context(), "viewer-template-pending")
+		require.NoError(t, err)
+		snapshot.Run.Template = nil
+		writeRunRecord(t, root, snapshot.Run)
+		id, _, ok := strings.Cut(snapshot.Run.TemplateRef, "@sha256:")
+		require.True(t, ok)
+		intentPath := filepath.Join(root, "templates", id, ".attributed-save-intent.json")
+		require.NoError(t, os.WriteFile(intentPath, []byte(`{"secret":"PENDING_INTENT_SECRET"}`), 0o600))
+		templateDir := filepath.Join(root, "templates", id)
+		runDir := filepath.Join(root, "runs", snapshot.Run.ID)
+		beforeTemplate, beforeRun := fingerprintTree(t, templateDir), fingerprintTree(t, runDir)
+
+		rec := processEngineGet(t, f, "/v1/process/runs/viewer-template-pending/view")
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var response processRunViewResponse
+		testharness.DecodeJSON(t, rec, &response)
+		assert.Nil(t, response.Graph)
+		assert.True(t, hasProcessDiagnostic(response.Verification, "template_unavailable"))
+		assert.NotContains(t, rec.Body.String(), "PENDING_INTENT_SECRET")
+		assert.Equal(t, beforeTemplate, fingerprintTree(t, templateDir))
+		assert.Equal(t, beforeRun, fingerprintTree(t, runDir))
+	})
+
 	t.Run("legacy pinned version unavailable", func(t *testing.T) {
 		f, root := processEngineFlow(t)
 		fsStore := createEngineRun(t, root, "viewer-template-missing", viewerFlowTemplate("viewer-template-missing"), false)
@@ -97,11 +122,11 @@ func TestProcessRunViewRejectsUnavailableOrMismatchedPinnedTemplates(t *testing.
 		writeRunRecord(t, root, snapshot.Run)
 		removePinnedTemplateBody(t, root, snapshot.Run.TemplateRef)
 
-		rec := processEngineGet(t, f, "/v1/process/runs/viewer-template-missing")
+		rec := processEngineGet(t, f, "/v1/process/runs/viewer-template-missing/view")
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		var response processRunViewResponse
 		testharness.DecodeJSON(t, rec, &response)
-		assert.Nil(t, response.Run.Template)
+		assert.Nil(t, response.Graph)
 		assert.Equal(t, state.RunStatusInconsistent, response.Verification.EffectiveStatus)
 		assert.True(t, hasProcessDiagnostic(response.Verification, "template_unavailable"))
 		assert.Empty(t, response.Report.TraversedEdges)
@@ -116,11 +141,11 @@ func TestProcessRunViewRejectsUnavailableOrMismatchedPinnedTemplates(t *testing.
 		snapshot.Run.Template.Name = "tampered"
 		writeRunRecord(t, root, snapshot.Run)
 
-		rec := processEngineGet(t, f, "/v1/process/runs/viewer-template-mismatch")
+		rec := processEngineGet(t, f, "/v1/process/runs/viewer-template-mismatch/view")
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		var response processRunViewResponse
 		testharness.DecodeJSON(t, rec, &response)
-		assert.Nil(t, response.Run.Template)
+		assert.Nil(t, response.Graph)
 		assert.Equal(t, state.RunStatusInconsistent, response.Verification.EffectiveStatus)
 		assert.True(t, hasProcessDiagnostic(response.Verification, "embedded_template_mismatch"))
 		assert.Empty(t, response.Report.TraversedEdges)
@@ -140,11 +165,11 @@ func TestProcessRunViewRejectsUnavailableOrMismatchedPinnedTemplates(t *testing.
 		require.NoError(t, err)
 		require.NoError(t, os.WriteFile(pinnedTemplateBodyPath(t, root, snapshot.Run.TemplateRef), data, 0o644))
 
-		rec := processEngineGet(t, f, "/v1/process/runs/viewer-pinned-mismatch")
+		rec := processEngineGet(t, f, "/v1/process/runs/viewer-pinned-mismatch/view")
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		var response processRunViewResponse
 		testharness.DecodeJSON(t, rec, &response)
-		assert.Nil(t, response.Run.Template)
+		assert.Nil(t, response.Graph)
 		assert.Equal(t, state.RunStatusInconsistent, response.Verification.EffectiveStatus)
 		assert.True(t, hasProcessDiagnostic(response.Verification, "pinned_template_mismatch"))
 		assert.Empty(t, response.Report.TraversedEdges)
@@ -158,13 +183,12 @@ func TestProcessRunViewDegradesOnlyConfirmedExistingRuns(t *testing.T) {
 		secret := "SECRET-CORRUPT-BYTES"
 		require.NoError(t, os.WriteFile(filepath.Join(root, "runs", "viewer-corrupt", "state.json"), []byte(`{"broken":"`+secret), 0o644))
 
-		rec := processEngineGet(t, f, "/v1/process/runs/viewer-corrupt")
+		rec := processEngineGet(t, f, "/v1/process/runs/viewer-corrupt/view")
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		var response processRunViewResponse
 		testharness.DecodeJSON(t, rec, &response)
 		assert.Equal(t, "viewer-corrupt", response.Run.ID)
-		assert.Nil(t, response.Run.Template)
-		assert.Nil(t, response.State)
+		assert.Nil(t, response.Graph)
 		assert.Equal(t, state.RunStatusInconsistent, response.Verification.EffectiveStatus)
 		require.Len(t, response.Verification.Diagnostics, 1)
 		assert.Equal(t, "snapshot_unreadable", response.Verification.Diagnostics[0].Code)
@@ -189,7 +213,7 @@ func TestProcessRunViewDegradesOnlyConfirmedExistingRuns(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, os.WriteFile(logPath, []byte(strings.TrimSuffix(string(data), "\n")), 0o644))
 
-		rec := processEngineGet(t, f, "/v1/process/runs/viewer-torn")
+		rec := processEngineGet(t, f, "/v1/process/runs/viewer-torn/view")
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		var response processRunViewResponse
 		testharness.DecodeJSON(t, rec, &response)
@@ -200,7 +224,7 @@ func TestProcessRunViewDegradesOnlyConfirmedExistingRuns(t *testing.T) {
 
 	t.Run("missing run", func(t *testing.T) {
 		f, _ := processEngineFlow(t)
-		rec := processEngineGet(t, f, "/v1/process/runs/not-present")
+		rec := processEngineGet(t, f, "/v1/process/runs/not-present/view")
 		assert.Equal(t, http.StatusNotFound, rec.Code)
 	})
 
@@ -208,8 +232,32 @@ func TestProcessRunViewDegradesOnlyConfirmedExistingRuns(t *testing.T) {
 		f, root := processEngineFlow(t)
 		require.NoError(t, os.MkdirAll(root, 0o755))
 		require.NoError(t, os.WriteFile(filepath.Join(root, "runs"), []byte("not a directory"), 0o644))
-		rec := processEngineGet(t, f, "/v1/process/runs/unknown")
+		rec := processEngineGet(t, f, "/v1/process/runs/unknown/view")
 		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+		assert.NotContains(t, rec.Body.String(), root)
+	})
+
+	t.Run("run component io failure", func(t *testing.T) {
+		f, root := processEngineFlow(t)
+		createEngineRun(t, root, "viewer-io", viewerFlowTemplate("viewer-io"), false)
+		statePath := filepath.Join(root, "runs", "viewer-io", "state.json")
+		require.NoError(t, os.Remove(statePath))
+		require.NoError(t, os.Mkdir(statePath, 0o755))
+		rec := processEngineGet(t, f, "/v1/process/runs/viewer-io/view")
+		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+		assert.NotContains(t, rec.Body.String(), root)
+	})
+
+	t.Run("run symlink is rejected", func(t *testing.T) {
+		f, root := processEngineFlow(t)
+		target := filepath.Join(t.TempDir(), "target")
+		require.NoError(t, os.MkdirAll(target, 0o755))
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "runs"), 0o755))
+		require.NoError(t, os.Symlink(target, filepath.Join(root, "runs", "viewer-link")))
+		rec := processEngineGet(t, f, "/v1/process/runs/viewer-link/view")
+		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+		assert.NotContains(t, rec.Body.String(), root)
+		assert.NotContains(t, rec.Body.String(), target)
 	})
 }
 
@@ -281,7 +329,7 @@ func pinnedTemplateBodyPath(t *testing.T, root, ref string) string {
 	return filepath.Join(root, "templates", id, "sha256-"+hash, "template.json")
 }
 
-func hasProcessDiagnostic(report processverify.Report, code string) bool {
+func hasProcessDiagnostic(report processview.Verification, code string) bool {
 	for _, diagnostic := range report.Diagnostics {
 		if diagnostic.Code == code {
 			return true
