@@ -909,10 +909,17 @@ func (s *FS) GetTemplateExact(ctx context.Context, ref string) (*model.Template,
 	}
 	id, hash, err := parseTemplateRef(ref)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: invalid exact template ref", ErrContentMismatch)
 	}
 	if err := safeSegment(id); err != nil {
-		return nil, fmt.Errorf("invalid template id: %w", err)
+		return nil, fmt.Errorf("%w: invalid exact template id", ErrContentMismatch)
+	}
+	exists, err := s.hasTemplateExactView(id, hash)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, ErrNotFound
 	}
 	unlock, err := s.lockTemplateView(ctx, id)
 	if err != nil {

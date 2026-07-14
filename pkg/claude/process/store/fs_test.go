@@ -1291,7 +1291,7 @@ func TestLoadRunViewRejectsIDsBeforeLockSideEffects(t *testing.T) {
 	assert.ErrorIs(t, statErr, os.ErrNotExist, "missing viewer reads must not persist lock files")
 
 	_, err = fs.GetTemplateExact(t.Context(), "../outside@sha256:"+strings.Repeat("a", 64))
-	require.Error(t, err)
+	require.ErrorIs(t, err, store.ErrContentMismatch)
 	_, statErr = os.Stat(filepath.Join(root, ".locks", "template-..", "outside.lock"))
 	assert.ErrorIs(t, statErr, os.ErrNotExist)
 }

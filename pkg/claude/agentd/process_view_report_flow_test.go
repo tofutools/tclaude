@@ -193,6 +193,27 @@ func TestProcessRunViewRejectsUnavailableOrMismatchedPinnedTemplates(t *testing.
 		assert.True(t, hasProcessDiagnostic(response.Verification, "pinned_template_mismatch"))
 		assert.Empty(t, response.Report.TraversedEdges)
 	})
+
+	t.Run("legacy unsafe pinned ref is persisted mismatch", func(t *testing.T) {
+		f, root := processEngineFlow(t)
+		fsStore := createEngineRun(t, root, "viewer-unsafe-template-ref", viewerFlowTemplate("viewer-unsafe-template-ref"), false)
+		snapshot, err := fsStore.LoadRun(t.Context(), "viewer-unsafe-template-ref")
+		require.NoError(t, err)
+		snapshot.Run.Template = nil
+		snapshot.Run.TemplateRef = "../outside@sha256:" + strings.Repeat("a", 64)
+		writeRunRecord(t, root, snapshot.Run)
+
+		rec := processEngineGet(t, f, "/v1/process/runs/viewer-unsafe-template-ref/view")
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var response processRunViewResponse
+		testharness.DecodeJSON(t, rec, &response)
+		assert.Nil(t, response.Graph)
+		assert.Equal(t, state.RunStatusInconsistent, response.Verification.EffectiveStatus)
+		assert.True(t, hasProcessDiagnostic(response.Verification, "pinned_template_mismatch"))
+		assert.Empty(t, response.Report.TraversedEdges)
+		_, statErr := os.Stat(filepath.Join(root, "outside.lock"))
+		assert.ErrorIs(t, statErr, os.ErrNotExist)
+	})
 }
 
 func TestProcessRunViewDegradesOnlyConfirmedExistingRuns(t *testing.T) {

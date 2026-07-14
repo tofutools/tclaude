@@ -164,6 +164,60 @@ func (s *FS) HasRunView(runID string) (bool, error) {
 	return true, nil
 }
 
+// hasTemplateExactView confirms that an exact template has a descriptor-safe
+// persisted identity before the operational template lock creates any map or
+// lock-file state. A regular pending intent counts as existing so the locked
+// read can preserve ErrTemplateSavePending behavior.
+func (s *FS) hasTemplateExactView(id, hash string) (bool, error) {
+	if err := safeSegment(id); err != nil {
+		return false, err
+	}
+	if !isHexSHA256(hash) {
+		return false, fmt.Errorf("invalid template hash %q", hash)
+	}
+	root, err := openViewDir(s.root)
+	if err != nil {
+		return false, err
+	}
+	defer root.Close()
+	templates, err := openViewDirAt(root, "templates")
+	if errors.Is(err, unix.ENOENT) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	defer templates.Close()
+	idDir, err := openViewDirAt(templates, id)
+	if errors.Is(err, unix.ENOENT) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	defer idDir.Close()
+
+	var intentStat unix.Stat_t
+	if err := unix.Fstatat(int(idDir.Fd()), ".attributed-save-intent.json", &intentStat, unix.AT_SYMLINK_NOFOLLOW); err == nil {
+		if intentStat.Mode&unix.S_IFMT != unix.S_IFREG {
+			return false, ErrUnsafeRunPath
+		}
+		return true, nil
+	} else if !errors.Is(err, unix.ENOENT) {
+		return false, err
+	}
+
+	version, err := openViewDirAt(idDir, "sha256-"+hash)
+	if errors.Is(err, unix.ENOENT) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	defer version.Close()
+	return hasViewRegularAt(version, "template.json")
+}
+
 // loadRunViewSnapshotAt reads the complete viewer snapshot descriptor-relative
 // to a no-follow run directory. Append holds the same run lock, and every
 // consumed component is opened with O_NOFOLLOW before its type is checked.
@@ -454,6 +508,29 @@ func readViewRegularAt(budget *viewBudget, parent *os.File, name string, missing
 	}
 	budget.bytes += int64(len(data))
 	return data, budget.ctx.Err()
+}
+
+func hasViewRegularAt(parent *os.File, name string) (bool, error) {
+	fd, err := unix.Openat(int(parent.Fd()), name, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+	if errors.Is(err, unix.ENOENT) {
+		return false, nil
+	}
+	if err != nil {
+		if errors.Is(err, unix.ELOOP) {
+			return false, ErrUnsafeRunPath
+		}
+		return false, err
+	}
+	file := os.NewFile(uintptr(fd), name)
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return false, err
+	}
+	if !info.Mode().IsRegular() {
+		return false, ErrUnsafeRunPath
+	}
+	return true, nil
 }
 
 // getTemplateExactBody reads immutable template content without following any
