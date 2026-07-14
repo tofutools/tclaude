@@ -208,6 +208,44 @@ type ConvAgent struct {
 	PendingName string
 }
 
+// PendingNamesByAgent bulk-loads the non-empty spawn-time display-name
+// fallback for the requested stable actors, keyed by agent_id. Stable-keyed
+// surfaces use this instead of walking back through a conversation generation:
+// the actor name remains resolvable after a /clear or reincarnation rotates the
+// current conv-id.
+func PendingNamesByAgent(agentIDs []string) (map[string]string, error) {
+	out := make(map[string]string, len(agentIDs))
+	if len(agentIDs) == 0 {
+		return out, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	for _, chunk := range chunkStrings(agentIDs, batchChunkSize) {
+		clause, args := inClause(chunk)
+		rows, err := d.Query(`SELECT agent_id, pending_name FROM agents
+			WHERE pending_name != '' AND agent_id `+clause, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var agentID, pendingName string
+			if err := rows.Scan(&agentID, &pendingName); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			out[agentID] = pendingName
+		}
+		err = rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
 // AgentsByConv bulk-resolves each conv-id to its owning actor (agent_id +
 // pending_name) via the agent_conversations JOIN, keyed by conv-id. A conv that
 // is not (yet) an agent has no entry — the same "" agent_id signal

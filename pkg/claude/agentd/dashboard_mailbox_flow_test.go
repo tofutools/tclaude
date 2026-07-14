@@ -845,6 +845,35 @@ func TestDashboardMailbox_PendingNameTitlesUnindexedAgent(t *testing.T) {
 	assert.Equal(t, "codex-worker", search.Messages[0].ToTitle)
 }
 
+// Human notifications written before the sender-title path learned the
+// pending-name fallback have from_agent but an empty from_title. The mailbox
+// resolves that stable actor to its SQLite spawn name so existing rows do not
+// remain stuck displaying an agt_… handle.
+func TestDashboardMailbox_HumanNotificationResolvesBlankTitleByAgent(t *testing.T) {
+	f := newFlow(t)
+	const codexConv = "mbox-code-1111-2222-333333333307"
+	f.HaveGroup("codex-team")
+	f.HaveMember("codex-team", codexConv)
+	f.HavePendingName(codexConv, "codex-reviewer")
+	_, err := db.InsertHumanMessage(&db.HumanMessage{
+		FromConv: codexConv,
+		Subject:  "review complete",
+		Body:     "all checks pass",
+	})
+	require.NoError(t, err)
+	dash := dashHandlerForTest(t)
+
+	page := getMailboxPage(t, dash, "human", "", 0, 0)
+	require.Len(t, page.Messages, 1)
+	assert.NotEmpty(t, page.Messages[0].FromAgent)
+	assert.Equal(t, "codex-reviewer", page.Messages[0].FromTitle)
+
+	search := getMailboxPage(t, dash, "human", "codex-reviewer", 0, 0)
+	require.Equal(t, 1, search.Total)
+	require.Len(t, search.Messages, 1)
+	assert.Equal(t, "review complete", search.Messages[0].Subject)
+}
+
 // Scenario: the human folder paginates + searches in Go over its
 // snapshot, with the same page/total contract as the agent folders.
 func TestDashboardMailbox_HumanFolderPaginatesAndSearches(t *testing.T) {
