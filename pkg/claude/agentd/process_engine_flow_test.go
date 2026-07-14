@@ -128,6 +128,65 @@ func TestProcessRunCreatePinsExactRefAppliesDefaultsAndInterpolates(t *testing.T
 	assert.Equal(t, "Implement TCL-300 in 2 passes", request.Performer.Prompt)
 }
 
+// Scenario: the first dashboard request commits its run, but the browser never
+// receives the response. Retrying the still-open dialog carries the same
+// cryptographically strong run id and must recover that one durable operation.
+func TestProcessRunCreateLostResponseRetryRecoversOneRun(t *testing.T) {
+	f, root := processEngineFlow(t)
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "lost-response", Start: "done",
+		Params: map[string]model.Param{
+			"issue": {Type: "string"},
+			"tries": {Type: "number", Default: 2},
+		},
+		Nodes: map[string]model.Node{"done": {Type: model.NodeTypeEnd}},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	require.NoError(t, err)
+	const runID = "lost-response-11111111-2222-4333-8444-555555555555"
+	request := func(params map[string]string) *httptest.ResponseRecorder {
+		return testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/process/runs", map[string]any{
+			"templateRef": record.Ref, "runId": runID, "params": params,
+		})))
+	}
+
+	// Deliberately discard the first response body: from the client's point of
+	// view the request failed ambiguously after the filesystem commit.
+	first := request(map[string]string{"issue": "TCL-300"})
+	require.Equal(t, http.StatusCreated, first.Code, first.Body.String())
+	committed, err := fs.GetRun(t.Context(), runID)
+	require.NoError(t, err)
+
+	retry := request(map[string]string{"issue": "TCL-300", "tries": "2"})
+	require.Equal(t, http.StatusCreated, retry.Code, retry.Body.String())
+	var replayed struct {
+		Run struct {
+			ID          string    `json:"id"`
+			TemplateRef string    `json:"templateRef"`
+			CreatedAt   time.Time `json:"createdAt"`
+		} `json:"run"`
+	}
+	testharness.DecodeJSON(t, retry, &replayed)
+	assert.Equal(t, committed.ID, replayed.Run.ID)
+	assert.Equal(t, committed.TemplateRef, replayed.Run.TemplateRef)
+	assert.Equal(t, committed.CreatedAt, replayed.Run.CreatedAt)
+
+	runs, err := fs.ListRuns(t.Context())
+	require.NoError(t, err)
+	require.Len(t, runs, 1, "lost-response retry must not suffix a second run")
+	assert.Equal(t, map[string]string{"issue": "TCL-300", "tries": "2"}, runs[0].Params)
+
+	conflict := request(map[string]string{"issue": "TCL-301"})
+	assert.Equal(t, http.StatusConflict, conflict.Code, conflict.Body.String())
+	assert.Contains(t, conflict.Body.String(), "requested process run id already exists")
+	runs, err = fs.ListRuns(t.Context())
+	require.NoError(t, err)
+	require.Len(t, runs, 1, "same attempt id with a different payload must not mutate or duplicate the run")
+	assert.Equal(t, "TCL-300", runs[0].Params["issue"])
+}
+
 func TestProcessRunCreateUsesDedicatedPermission(t *testing.T) {
 	f, root := processEngineFlow(t)
 	fs, err := store.NewFS(root)

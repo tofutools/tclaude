@@ -71,13 +71,14 @@ test('instantiate actions load an exact ref, POST string params, and navigate to
   const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
   const ref = `release@sha256:${'a'.repeat(64)}`;
   const requests = [];
-  const actions = createProcessesActions({ state, notify() {}, dispatchNavigated() {}, fetchImpl: async (path, options = {}) => {
+  const attemptID = '11111111-2222-4333-8444-555555555555';
+  const actions = createProcessesActions({ state, notify() {}, dispatchNavigated() {}, mintAttemptID: () => attemptID, fetchImpl: async (path, options = {}) => {
     requests.push({ path, options });
     if (path.startsWith('/v1/process/templates/release?version=')) return { ok: true, json: async () => ({
       currentRef: ref, template: { id: 'release', params: { issue: { type: 'string', required: true } } },
     }) };
     if (path === '/v1/process/runs' && options.method === 'POST') return { ok: true, json: async () => ({
-      run: { id: 'release-1', templateRef: ref, createdAt: '2026-07-14T00:00:00Z', updatedAt: '2026-07-14T00:00:00Z' },
+      run: { id: `release-${attemptID}`, templateRef: ref, createdAt: '2026-07-14T00:00:00Z', updatedAt: '2026-07-14T00:00:00Z' },
     }) };
     if (path === '/v1/process/runs') return { ok: true, json: async () => ({ runs: [] }) };
     throw new Error(`unexpected ${path}`);
@@ -87,10 +88,59 @@ test('instantiate actions load an exact ref, POST string params, and navigate to
   assert.equal(state.instantiation.value.phase, 'ready');
   assert.equal(await actions.submitInstantiation({ issue: 'TCL-300', retries: '2', approved: 'true' }), true);
   const post = requests.find((request) => request.path === '/v1/process/runs' && request.options.method === 'POST');
-  assert.deepEqual(JSON.parse(post.options.body), { templateRef: ref, params: { issue: 'TCL-300', retries: '2', approved: 'true' } });
+  assert.deepEqual(JSON.parse(post.options.body), {
+    templateRef: ref, runId: `release-${attemptID}`, params: { issue: 'TCL-300', retries: '2', approved: 'true' },
+  });
   assert.equal(state.subtab.value, 'runs');
-  assert.deepEqual(state.canvas.value, { kind: 'viewer', id: 'release-1', key: 'release-1' });
+  assert.deepEqual(state.canvas.value, { kind: 'viewer', id: `release-${attemptID}`, key: `release-${attemptID}` });
   assert.equal(state.instantiation.value, null);
+});
+
+test('instantiate retry keeps one strong attempt id and recovers a committed run after its response is lost', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const ref = `retry@sha256:${'e'.repeat(64)}`;
+  const attemptID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+  let minted = 0;
+  let durableRun = null;
+  let durableCreates = 0;
+  const posted = [];
+  const actions = createProcessesActions({
+    state,
+    notify() {},
+    dispatchNavigated() {},
+    mintAttemptID() { minted++; return attemptID; },
+    fetchImpl: async (path, options = {}) => {
+      if (path === '/v1/process/runs' && options.method === 'POST') {
+        const request = JSON.parse(options.body);
+        posted.push(request);
+        if (!durableRun) {
+          durableCreates++;
+          durableRun = { id: request.runId, templateRef: request.templateRef, createdAt: '2026-07-14T00:00:00Z', updatedAt: '2026-07-14T00:00:00Z' };
+          throw new TypeError('response lost after commit');
+        }
+        assert.equal(request.runId, durableRun.id, 'retry must address the committed logical attempt');
+        return { ok: true, json: async () => ({ run: durableRun }) };
+      }
+      if (path === '/v1/process/runs') return { ok: true, json: async () => ({ runs: [durableRun] }) };
+      throw new Error(`unexpected ${path}`);
+    },
+  });
+
+  assert.equal(await actions.openInstantiation({
+    id: 'retry', ref, template: { id: 'retry', params: { issue: { type: 'string', required: true } } },
+  }), true);
+  assert.equal(await actions.submitInstantiation({ issue: 'TCL-300' }), false, 'lost response remains retryable');
+  assert.equal(state.instantiation.value.runId, `retry-${attemptID}`);
+  assert.equal(await actions.submitInstantiation({ issue: 'TCL-300' }), true, 'retry recovers committed run');
+  assert.equal(minted, 1, 'one open instantiation mints one logical-attempt id');
+  assert.equal(durableCreates, 1, 'backend simulation commits only one durable run');
+  assert.equal(posted.length, 2);
+  assert.equal(posted[0].runId, posted[1].runId);
+  assert.deepEqual(state.canvas.value, { kind: 'viewer', id: durableRun.id, key: durableRun.id });
 });
 
 test('list instantiation loading transition initializes every declared default exactly once', async (t) => {

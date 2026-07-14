@@ -224,10 +224,12 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"name === 'templates' && (requestBusy(lifecycle) || headObservationPending)",
 		"'/v1/process/template-heads'",
 		"async function openInstantiation(",
+		"mintAttemptID = mintUUID",
+		"const runId = `${id}-${mintAttemptID()}`",
 		"body.currentRef !== ref",
 		"async function submitInstantiation(params)",
 		"fetchImpl('/v1/process/runs'",
-		"body: JSON.stringify({ templateRef: spec.ref, params })",
+		"body: JSON.stringify({ templateRef: spec.ref, runId: spec.runId, params })",
 		"openViewer(body.run.id)",
 	)
 

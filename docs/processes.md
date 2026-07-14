@@ -472,8 +472,14 @@ unsaved browser state. Saved editor drafts that still have validation errors
 remain editable but cannot be instantiated. Declared string, number, and
 boolean params render with matching controls. Runtime values remain strings,
 matching `tclaude process run --param key=value`; defaults and required checks
-use the same shared creation code for both surfaces. When no run id is supplied, same-second
-creations retry with a numeric suffix instead of colliding.
+use the same shared creation code for both surfaces. The dashboard retains one
+cryptographically strong run id for an open instantiation, so retrying after a
+lost response recovers the original durable run instead of launching a second
+one. The REST endpoint replays an existing explicit id only when its exact
+template ref and resolved params match; reusing it for different inputs is a
+conflict. This does not change the CLI's duplicate explicit-id error. When no
+run id is supplied, same-second creations retry with a numeric suffix instead
+of colliding.
 
 With Processes enabled, the engine-hosted create endpoint is:
 

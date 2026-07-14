@@ -121,3 +121,57 @@ func TestInstantiateGeneratedIDsRetrySameTimestampCollisions(t *testing.T) {
 		t.Fatalf("generated ids = %q, %q", first.ID, second.ID)
 	}
 }
+
+func TestInstantiateReplayExistingRequiresIdenticalResolvedInputs(t *testing.T) {
+	fs, err := store.NewFS(filepath.Join(t.TempDir(), "store"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "retry-safe", Start: "done",
+		Params: map[string]model.Param{
+			"issue": {Type: "string"},
+			"tries": {Type: "number", Default: 2},
+		},
+		Nodes: map[string]model.Node{"done": {Type: model.NodeTypeEnd}},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := InstantiateRequest{
+		TemplateRef: record.Ref, RunID: "retry-safe-attempt", Params: map[string]string{"issue": "TCL-300"},
+		ReplayExisting: true,
+	}
+	first, err := Instantiate(t.Context(), fs, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay := request
+	replay.Params = map[string]string{"issue": "TCL-300", "tries": "2"}
+	second, err := Instantiate(t.Context(), fs, replay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID != second.ID || !first.CreatedAt.Equal(second.CreatedAt) {
+		t.Fatalf("replay created a different run: first=%#v second=%#v", first, second)
+	}
+
+	conflict := request
+	conflict.Params = map[string]string{"issue": "TCL-301"}
+	if _, err := Instantiate(t.Context(), fs, conflict); !errors.Is(err, store.ErrRunExists) {
+		t.Fatalf("different-payload replay error = %v, want ErrRunExists", err)
+	}
+	withoutReplay := request
+	withoutReplay.ReplayExisting = false
+	if _, err := Instantiate(t.Context(), fs, withoutReplay); !errors.Is(err, store.ErrRunExists) {
+		t.Fatalf("ordinary explicit-id duplicate error = %v, want ErrRunExists", err)
+	}
+	runs, err := fs.ListRuns(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 || runs[0].Params["issue"] != "TCL-300" {
+		t.Fatalf("durable runs after retries = %#v", runs)
+	}
+}

@@ -1,4 +1,4 @@
-import { buildWorklistAction, isDestructiveAction, retainedActionKey } from './process-worklist-core.js';
+import { buildWorklistAction, isDestructiveAction, mintUUID, retainedActionKey } from './process-worklist-core.js';
 import { templateHeadSignature } from './process-external-change.js';
 
 export async function processJSON(path, fetchImpl = fetch) {
@@ -15,6 +15,7 @@ export function createProcessesActions({
   confirmDiscard = async () => true,
   notify = () => {},
   dispatchNavigated = () => document.dispatchEvent(new CustomEvent('tclaude:navigated')),
+  mintAttemptID = mintUUID,
 } = {}) {
   const actionKeys = new Map();
   let listedHeadsSignature = null;
@@ -117,16 +118,17 @@ export function createProcessesActions({
   async function openInstantiation({ id, ref, template = null } = {}) {
     if (!id || !ref) return false;
     const key = `${ref}:${Date.now()}`;
-    state.setInstantiation({ key, id, ref, template, phase: template ? 'ready' : 'loading', error: '' });
+    const runId = `${id}-${mintAttemptID()}`;
+    state.setInstantiation({ key, id, ref, runId, template, phase: template ? 'ready' : 'loading', error: '' });
     if (template) return true;
     try {
       const body = await processJSON(`/v1/process/templates/${encodeURIComponent(id)}?version=${encodeURIComponent(ref)}`, fetchImpl);
       if (state.instantiation.value?.key !== key) return false;
       if (body.currentRef !== ref) throw new Error('the requested exact template version was not returned');
-      state.setInstantiation({ key, id, ref, template: body.template, phase: 'ready', error: '' });
+      state.setInstantiation({ key, id, ref, runId, template: body.template, phase: 'ready', error: '' });
       return true;
     } catch (error) {
-      if (state.instantiation.value?.key === key) state.setInstantiation({ key, id, ref, template: null, phase: 'error', error: error.message });
+      if (state.instantiation.value?.key === key) state.setInstantiation({ key, id, ref, runId, template: null, phase: 'error', error: error.message });
       return false;
     }
   }
@@ -137,11 +139,11 @@ export function createProcessesActions({
   }
   async function submitInstantiation(params) {
     const spec = state.instantiation.value;
-    if (!spec?.ref || spec.phase !== 'ready' || !state.beginMutation()) return false;
+    if (!spec?.ref || !spec.runId || spec.phase !== 'ready' || !state.beginMutation()) return false;
     try {
       const response = await fetchImpl('/v1/process/runs', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
-        body: JSON.stringify({ templateRef: spec.ref, params }),
+        body: JSON.stringify({ templateRef: spec.ref, runId: spec.runId, params }),
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.message || body.error || `${response.status} ${response.statusText}`);

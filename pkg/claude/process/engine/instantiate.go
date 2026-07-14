@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"strings"
 	"time"
@@ -45,6 +46,11 @@ type InstantiateRequest struct {
 	RunID       string
 	Params      map[string]string
 	Now         time.Time
+	// ReplayExisting makes an explicit RunID an idempotency boundary: an
+	// existing run is returned only when its pinned template and resolved
+	// params are identical. Generated IDs still suffix collisions, and the
+	// zero value preserves the CLI's duplicate-ID error semantics.
+	ReplayExisting bool
 }
 
 // Instantiate creates the durable run snapshot that the engine host discovers
@@ -78,6 +84,12 @@ func Instantiate(ctx context.Context, st store.Store, request InstantiateRequest
 		}, initialState(candidate, templateRef, tmpl))
 		if err == nil {
 			return created, nil
+		}
+		if request.ReplayExisting && !generatedID && errors.Is(err, store.ErrRunExists) {
+			existing, loadErr := st.GetRun(ctx, candidate)
+			if loadErr == nil && existing.TemplateRef == templateRef && maps.Equal(existing.Params, params) {
+				return existing, nil
+			}
 		}
 		if !generatedID || !errors.Is(err, store.ErrRunExists) {
 			return store.RunRecord{}, err
