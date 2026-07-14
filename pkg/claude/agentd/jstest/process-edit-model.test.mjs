@@ -1,6 +1,6 @@
 // Unit tests for the process editor's pure edit model
 // (dashboard/js/process-edit-model.js), run with Node's built-in test runner.
-// The Go wrapper TestPaletteScore_JS globs jstest/*.test.mjs, so this runs
+// The Go wrapper TestDashboardJS globs the package's *.test.mjs, so this runs
 // under `go test ./...` and skips when node is absent. No DOM needed: the
 // module is deliberately pure so the exact file shipped to the browser is
 // exercised here — undo/redo bounds, edge invariants, delete-with-rewire,

@@ -51,7 +51,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest] # ubuntu-24.04-arm, windows-latest, windows-11-arm
+        os: [ubuntu-latest, macos-latest]
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -70,7 +70,9 @@ jobs:
       # -race is OFF by default, gated behind the RUN_RACE repo variable (see ci.yml
       # for the full rationale). ubuntu+macOS only, so enabling it is race-detector-safe.
       - name: Run tests
-        run: go test ${{ vars.RUN_RACE == 'true' && '-race' || '' }} -p 2 ./...
+        run: |
+          export TCLAUDE_NODE_TEST_CACHE_KEY="$(node -p 'process.execPath + ":" + process.version')"
+          go test ${{ vars.RUN_RACE == 'true' && '-race' || '' }} -p 2 ./...
 
   # Version generation only computes the next number (read-only); it runs in
   # parallel with test/lint/build. The git tag is pushed later, by the release
@@ -119,12 +121,6 @@ jobs:
           - os: macos-latest
             goos: darwin
             goarch: arm64
-          #- os: windows-latest
-          #  goos: windows
-          #  goarch: amd64
-          #- os: windows-11-arm
-          #  goos: windows
-          #  goarch: arm64
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -186,13 +182,8 @@ jobs:
           cd dist
           for dir in */; do
             name="${dir%/}"
-            # if [[ "$name" == *"windows"* ]]; then
-            #   zip -r "${name}.zip" "$dir"
-            # else
             tar -czvf "${name}.tar.gz" "$dir"
-            # fi
           done
-          # sha256sum *.tar.gz *.zip > checksums.txt
           sha256sum *.tar.gz > checksums.txt
 
       - name: Create Release
@@ -201,7 +192,6 @@ jobs:
           tag_name: ${{ needs.version.outputs.new_version }}
           files: |
             dist/*.tar.gz
-            # dist/*.zip
             dist/checksums.txt
           generate_release_notes: true
         env:

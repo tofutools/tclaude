@@ -5,9 +5,8 @@ before:
     - go mod tidy
 
 builds:
-  # Linux/Windows: pure Go, no cgo. fyne.io/systray uses D-Bus
-  # (StatusNotifierItem) on Linux and syscall on Windows, so the
-  # tray icon works without a C toolchain.
+  # Linux: pure Go, no cgo. fyne.io/systray uses D-Bus
+  # (StatusNotifierItem), so the tray icon works without a C toolchain.
   - id: tclaude-no-cgo
     main: .
     binary: tclaude
@@ -15,7 +14,6 @@ builds:
       - CGO_ENABLED=0
     goos:
       - linux
-      - windows
     goarch:
       - amd64
       - arm64
@@ -41,9 +39,6 @@ archives:
       {{- .Version }}_
       {{- .Os }}_
       {{- .Arch }}
-    format_overrides:
-      - goos: windows
-        format: zip
 
 checksum:
   name_template: 'checksums.txt'

@@ -2,31 +2,34 @@ package agentd
 
 import (
 	"bytes"
-	"errors"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
 )
 
-func processGraphNode(t *testing.T) string {
+func dashboardTestNode(t *testing.T, suite string) string {
 	t.Helper()
+	ci := os.Getenv("CI") != ""
+	nodeCacheKey := os.Getenv("TCLAUDE_NODE_TEST_CACHE_KEY")
 	node, err := exec.LookPath("node")
-	if err == nil {
-		return node
+	if err != nil {
+		if ci {
+			t.Fatalf("node not on PATH in CI — %s JS tests did not run", suite)
+		}
+		t.Skipf("node not on PATH — skipping %s JS tests", suite)
 	}
-	if os.Getenv("CI") != "" {
-		t.Fatal("node not on PATH in CI — process graph JS tests did not run")
+	if ci && nodeCacheKey == "" {
+		t.Fatal("TCLAUDE_NODE_TEST_CACHE_KEY is empty in CI — the external Node runtime " +
+			"must participate in Go's test-cache key")
 	}
-	t.Skip("node not on PATH — skipping process graph JS tests")
-	return ""
+	return node
 }
 
 // Syntax-check each shipped module as an ES module, exactly matching the
 // dashboard's native-module loading mode. --input-type applies to stdin, so the
 // source is streamed rather than passed as a CommonJS-classified .js path.
 func TestProcessGraph_JSSyntax(t *testing.T) {
-	node := processGraphNode(t)
+	node := dashboardTestNode(t, "process graph")
 	for _, file := range []string{
 		"dashboard/js/process-layout.js",
 		"dashboard/js/process-selection.js",
@@ -42,20 +45,4 @@ func TestProcessGraph_JSSyntax(t *testing.T) {
 			t.Fatalf("node --input-type=module --check %s: %v\n%s", file, err, out)
 		}
 	}
-}
-
-func TestProcessGraph_LayoutJS(t *testing.T) {
-	node := processGraphNode(t)
-	file := filepath.Join("jstest", "process-layout.test.mjs")
-	out, err := exec.Command(node, "--test", file).CombinedOutput()
-	if err != nil {
-		if _, ok := errors.AsType[*exec.ExitError](err); ok {
-			t.Fatalf("process layout JS unit tests failed: %v\n%s", err, out)
-		}
-		if os.Getenv("CI") != "" {
-			t.Fatalf("node not runnable in CI: %v", err)
-		}
-		t.Skipf("unable to run node: %v", err)
-	}
-	t.Logf("node --test %s:\n%s", file, out)
 }
