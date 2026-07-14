@@ -563,6 +563,50 @@ func (e *Executor) DeferredRequest(ctx context.Context, runID, commandID string)
 	return performerRequest(snapshot.Run, command), adapter, nil
 }
 
+// ContactRequest reconstructs the request used by the shared contact
+// scheduler. Performer commands retain their authored performer; block
+// commands synthesize the same uniform performer shape from the typed owner so
+// adapters and per-kind defaults remain shared rather than special-cased by
+// the engine host.
+func (e *Executor) ContactRequest(ctx context.Context, runID, commandID string) (Request, Adapter, error) {
+	command, err := e.outstandingCommand(ctx, runID, commandID)
+	if err != nil {
+		return Request{}, nil, err
+	}
+	snapshot, err := e.Store.LoadRun(ctx, runID)
+	if err != nil {
+		return Request{}, nil, err
+	}
+	if command.Performer == nil {
+		if command.Kind != plan.CommandKindBlockNode {
+			return Request{}, nil, fmt.Errorf("process command %q has no contact performer", commandID)
+		}
+		kind, ok := state.ContactKindForOwner(command.Owner)
+		if !ok {
+			return Request{}, nil, fmt.Errorf("blocked owner %q has no contact kind", command.Owner)
+		}
+		performerKind := model.PerformerProgram
+		switch kind {
+		case state.WaitKindHuman:
+			performerKind = model.PerformerHuman
+		case state.WaitKindAgent:
+			performerKind = model.PerformerAgent
+		case state.WaitKindProgram:
+		default:
+			return Request{}, nil, fmt.Errorf("blocked owner %q has unsupported contact kind %q", command.Owner, kind)
+		}
+		command.Performer = &model.Performer{
+			Kind: performerKind, Profile: strings.TrimSpace(command.Owner),
+			Assignee: strings.TrimSpace(command.Owner), Prompt: command.Reason, Ask: command.Reason,
+		}
+	}
+	adapter := e.Adapters[command.Performer.Kind]
+	if adapter == nil {
+		return performerRequest(snapshot.Run, command), nil, nil
+	}
+	return performerRequest(snapshot.Run, command), adapter, nil
+}
+
 // RetryOutstanding re-invokes an issued performer command only when the host
 // has positive knowledge that the previous attempt stopped before its side
 // effect (currently the RateLimitError contract). Generic crash recovery must
@@ -909,7 +953,7 @@ func observationEntries(command plan.Command, observation Observation, snapshot 
 			}, observation.EvidenceRef, at))
 		}
 	}
-	if contact, ok := snapshot.State.Contacts[command.ID]; ok {
+	if contact, ok := snapshot.State.Contacts[command.ID]; ok && command.Kind != plan.CommandKindBlockNode {
 		contact.Paused = true
 		contact.PauseReason = "performer observed"
 		contact.NextContactAt = time.Time{}
@@ -1073,6 +1117,11 @@ func observationEntries(command plan.Command, observation Observation, snapshot 
 				return entries, nil
 			}
 		}
+		contact, err := BlockedContactState(command, at)
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, commandEntry(command, state.Event{Type: state.EventContactScheduled, Contact: &contact}, "", at))
 		entries = append(entries, commandEntry(command, state.Event{
 			Type:    state.EventNodeBlocked,
 			Attempt: command.Attempt,
@@ -1129,6 +1178,21 @@ func observationEntries(command plan.Command, observation Observation, snapshot 
 		return nil, fmt.Errorf("unsupported process command kind %q", command.Kind)
 	}
 	return entries, nil
+}
+
+// BlockedContactState materializes the shared contact schedule owned by a
+// deterministic block command. It is exported so manual advancement records
+// the identical durable shape as the autonomous executor.
+func BlockedContactState(command plan.Command, at time.Time) (state.ContactState, error) {
+	kind, cadence, budget, escalation, err := ContactScheduleForOwner(command.Owner)
+	if err != nil {
+		return state.ContactState{}, fmt.Errorf("schedule blocked owner contact for command %q: %w", command.ID, err)
+	}
+	return state.ContactState{
+		CommandID: command.ID, Kind: kind, Assignee: strings.TrimSpace(command.Owner),
+		Cadence: cadence.String(), Budget: budget, EscalationTarget: escalation,
+		NextContactAt: at.Add(cadence),
+	}, nil
 }
 
 // nodeParentID resolves a stage child's recorded parent node id.

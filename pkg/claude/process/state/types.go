@@ -7,10 +7,10 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 )
 
-// StateSchemaVersion 5 adds poison-block generation binding and durable block
-// resolution records. Older binaries must see ErrNewerSchemaVersion instead
-// of a DisallowUnknownFields decode error.
-const StateSchemaVersion = 5
+// StateSchemaVersion 6 adds durable blocked-at timestamps and contact schedules
+// for newly blocked nodes. Older binaries must see ErrNewerSchemaVersion
+// instead of a DisallowUnknownFields decode error.
+const StateSchemaVersion = 6
 
 type RunStatus string
 
@@ -171,6 +171,14 @@ type NodeState struct {
 
 	BlockedReason string `json:"blockedReason,omitempty"`
 	BlockedOwner  string `json:"blockedOwner,omitempty"`
+	// BlockedAt is retained after resolution so derived history can distinguish
+	// when the block began from when it was resolved. Pre-v6 checkpoints have a
+	// zero value and remain readable without fabricating history.
+	BlockedAt time.Time `json:"blockedAt,omitzero"`
+	// BlockedAtUnavailable is set only when promoting a pre-v6 blocked
+	// generation. It preserves honest legacy history after a later node causes
+	// the run-wide schema version to advance.
+	BlockedAtUnavailable bool `json:"blockedAtUnavailable,omitempty"`
 	// BlockedAttempt remains after resolution as a generation tombstone so a
 	// delayed poison command cannot silently re-block a deliberately released
 	// node. BlockResolution is mirrored onto the child and expanded parent.

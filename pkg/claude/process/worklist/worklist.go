@@ -55,16 +55,16 @@ type Item struct {
 	Status   state.WaitStatus `json:"status"`
 	// CreatedAt/DueAt come straight off the durable records; ChangedAt is the
 	// item's last state change (resolution when resolved, else creation) and
-	// drives the dashboard's bounded "Recently changed" view. All omitzero:
-	// blocked items carry no timestamps until TCL-303 persists them.
-	CreatedAt time.Time `json:"createdAt,omitzero"`
-	DueAt     time.Time `json:"dueAt,omitzero"`
-	ChangedAt time.Time `json:"changedAt,omitzero"`
-	Nudge            *Nudge           `json:"nudge,omitempty"`
-	Summary          string           `json:"summary"`
-	AvailableActions []string         `json:"availableActions,omitempty"`
-	Links            Links            `json:"links"`
-	Target           ActionTarget     `json:"-"`
+	// drives the dashboard's bounded "Recently changed" view. All omitzero so
+	// pre-v6 blocked records remain honest instead of fabricating history.
+	CreatedAt        time.Time    `json:"createdAt,omitzero"`
+	DueAt            time.Time    `json:"dueAt,omitzero"`
+	ChangedAt        time.Time    `json:"changedAt,omitzero"`
+	Nudge            *Nudge       `json:"nudge,omitempty"`
+	Summary          string       `json:"summary"`
+	AvailableActions []string     `json:"availableActions,omitempty"`
+	Links            Links        `json:"links"`
+	Target           ActionTarget `json:"-"`
 }
 
 type Filter struct {
@@ -194,7 +194,8 @@ func blockedItems(snapshot store.Snapshot) []Item {
 		status := state.WaitStatusPending
 		assignee, summary := node.BlockedOwner, node.BlockedReason
 		refs := nodeEvidenceRefs(node)
-		var changedAt time.Time // pending blocked: no blocked-at persisted yet (TCL-303)
+		createdAt := node.BlockedAt
+		changedAt := createdAt
 		if node.BlockResolution != nil && node.Status != state.NodeStatusBlocked {
 			status = state.WaitStatusSatisfied
 			assignee = string(node.BlockResolution.Actor)
@@ -202,16 +203,43 @@ func blockedItems(snapshot store.Snapshot) []Item {
 			refs = appendEvidenceRef(refs, node.BlockResolution.EvidenceRef)
 			changedAt = node.BlockResolution.Timestamp
 		}
-		items = append(items, Item{
+		item := Item{
 			ID:  stableID(snapshot.Run.ID, nodeID, "blocked", attempt),
 			Run: snapshot.Run.ID, Node: nodeID, Attempt: attempt,
-			Kind: KindBlocked, Assignee: assignee, Status: status, Summary: summary, ChangedAt: changedAt,
+			Kind: KindBlocked, Assignee: assignee, Status: status, Summary: summary,
+			CreatedAt: createdAt, ChangedAt: changedAt,
 			AvailableActions: []string{string(state.BlockDecisionRetry), string(state.BlockDecisionSkip), string(state.BlockDecisionCancel)},
 			Links:            Links{RunID: snapshot.Run.ID, NodeID: nodeID, EvidenceRefs: refs},
 			Target:           ActionTarget{Blocked: true},
-		})
+		}
+		if contact, ok := blockedContact(snapshot.State, nodeID, attempt); ok {
+			item.DueAt = contact.NextContactAt
+			item.Nudge = &Nudge{
+				LastContactAt: contact.LastContactedAt, NextContactAt: contact.NextContactAt,
+				BudgetUsed: contact.Used, BudgetMax: contact.Budget,
+				EscalationTarget: contact.EscalationTarget, Paused: contact.Paused,
+			}
+		}
+		items = append(items, item)
 	}
 	return items
+}
+
+func blockedContact(st *state.State, nodeID string, attempt int) (state.ContactState, bool) {
+	commandIDs := make([]string, 0, len(st.Contacts))
+	for commandID := range st.Contacts {
+		commandIDs = append(commandIDs, commandID)
+	}
+	slices.Sort(commandIDs)
+	for _, commandID := range commandIDs {
+		contact := st.Contacts[commandID]
+		command, ok := st.OutstandingCommands[commandID]
+		serviceableStatus := command.Status == state.CommandStatusIssued || command.Status == state.CommandStatusObserved
+		if ok && command.Kind == state.CommandKindBlockNode && serviceableStatus && command.NodeID == nodeID && command.Attempt == attempt {
+			return contact, true
+		}
+	}
+	return state.ContactState{}, false
 }
 
 func stableID(runID, nodeID, slot string, attempt int) string {

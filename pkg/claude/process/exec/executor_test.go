@@ -61,6 +61,31 @@ func TestObligationActionNormalizationIsSharedAndCaseInsensitive(t *testing.T) {
 	}
 }
 
+func TestBlockedOwnerContactScheduleUsesPerKindDefaults(t *testing.T) {
+	tests := []struct {
+		owner   string
+		kind    state.WaitKind
+		cadence time.Duration
+		budget  int
+	}{
+		{owner: "human:operator", kind: state.WaitKindHuman, cadence: DefaultHumanContactCadence, budget: DefaultHumanContactBudget},
+		{owner: "role:oncall", kind: state.WaitKindHuman, cadence: DefaultHumanContactCadence, budget: DefaultHumanContactBudget},
+		{owner: "agent:agt_worker", kind: state.WaitKindAgent, cadence: DefaultAgentContactCadence, budget: DefaultAgentContactBudget},
+		{owner: "system:deploy", kind: state.WaitKindProgram, cadence: DefaultAgentContactCadence, budget: DefaultAgentContactBudget},
+	}
+	for _, tt := range tests {
+		t.Run(tt.owner, func(t *testing.T) {
+			kind, cadence, budget, escalation, err := ContactScheduleForOwner(tt.owner)
+			if err != nil || kind != tt.kind || cadence != tt.cadence || budget != tt.budget || escalation != "human:operator" {
+				t.Fatalf("schedule = %q %s %d %q, err=%v", kind, cadence, budget, escalation, err)
+			}
+		})
+	}
+	if _, _, _, _, err := ContactScheduleForOwner("operator"); err == nil {
+		t.Fatal("untyped owner must not silently become a human contact")
+	}
+}
+
 func TestCustomChoiceOutcomesAreClosedAndRouteToBinaryVerdicts(t *testing.T) {
 	performer := model.Performer{
 		Kind: model.PerformerHuman, Choices: []string{"Ship", "Hold"},

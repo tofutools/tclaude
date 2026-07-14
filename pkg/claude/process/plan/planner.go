@@ -521,16 +521,24 @@ func poisonCommands(st *state.State, nodeID string, node state.NodeState, transi
 	if node.Status == state.NodeStatusBlocked {
 		return nil
 	}
-	block := newCommand(CommandKindBlockNode, st.RunID, nodeID, "block", fmt.Sprintf("attempt-%d", node.Attempt))
-	block.NodeID = nodeID
-	block.TargetNodeID = node.Parent
-	block.Attempt = node.Attempt
-	block.Reason = transition.Reason
-	block.Owner = transition.Owner
+	block := BlockCommand(st.RunID, nodeID, node.Parent, node.Attempt, transition.Reason, transition.Owner)
 	if commandOutstanding(st, block.ID) {
 		return nil
 	}
 	return []Command{block}
+}
+
+// BlockCommand constructs the deterministic command that owns both the block
+// transition and its ContactState. The manual-advance path uses the same
+// constructor so engine and operator-created poison blocks cannot diverge.
+func BlockCommand(runID, nodeID, parentID string, attempt int, reason, owner string) Command {
+	block := newCommand(CommandKindBlockNode, runID, nodeID, "block", fmt.Sprintf("attempt-%d", attempt))
+	block.NodeID = nodeID
+	block.TargetNodeID = parentID
+	block.Attempt = attempt
+	block.Reason = reason
+	block.Owner = owner
+	return block
 }
 
 // StageSpecFor finds the template-derived spec for a stage child id.

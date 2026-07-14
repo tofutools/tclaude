@@ -237,7 +237,9 @@ Rules that make compound runs trustworthy:
   budget (or the target work stage's attempt budget) is spent, the gate blocks
   itself and its parent with a reason and owner; the run keeps running and a
   human through `process unblock` or the authored escalation decision resolves
-  it.
+  it. New blocks record when the wait began and use the same kind-scoped
+  `ContactState` schedule as performer obligations to nudge the typed block
+  owner; resolving the block stops that schedule without erasing its history.
 - **A poisoned fail-edge decision is a resolution surface, not failure
   routing.** When a blocked compound node's authored `fail` edge targets a
   human decision node, the engine readies that decision while leaving the

@@ -9,8 +9,10 @@ import (
 )
 
 // DefaultBlockedOwner is who owns a poisoned (budget-exhausted) node until a
-// decision node or repair flow reassigns it. Deliberately a plain default for
-// now; making it configurable is a later, explicit decision.
+// decision node or repair flow reassigns it. The current authored model has no
+// blocked-owner override, so every planner-created block is human-owned today;
+// the contact scheduler still derives policy from the typed owner so adding an
+// agent or system owner later does not require a second scheduling path.
 const DefaultBlockedOwner = "human:operator"
 
 // StageTransitionKind enumerates what follows a settled stage child. Both the

@@ -257,6 +257,7 @@ func TestReducerSequences(t *testing.T) {
 				{
 					Type:   EventNodeBlocked,
 					Seq:    2,
+					At:     testTime,
 					NodeID: "implement",
 					Reason: "needs credentials",
 					Owner:  "human:johan",
@@ -354,7 +355,13 @@ func TestSuccessfulReducerEventsPreserveInvariants(t *testing.T) {
 		},
 		{
 			initEvent(),
-			{Type: EventNodeBlocked, Seq: 2, NodeID: "implement", Reason: "needs credentials", Owner: "human:johan"},
+			{Type: EventCommandIssued, Seq: 2, At: testTime, Command: &OutstandingCommand{ID: "cmd_block", NodeID: "implement", Attempt: 1, Kind: CommandKindBlockNode}},
+			{Type: EventCommandObserved, Seq: 3, At: testTime, CommandID: "cmd_block"},
+			{Type: EventContactScheduled, Seq: 4, At: testTime, Contact: &ContactState{
+				CommandID: "cmd_block", Kind: WaitKindHuman, Assignee: "human:johan", Cadence: "30m0s", Budget: 5,
+				EscalationTarget: "human:operator", NextContactAt: testTime.Add(30 * time.Minute),
+			}},
+			{Type: EventNodeBlocked, Seq: 5, At: testTime, NodeID: "implement", Attempt: 1, Reason: "needs credentials", Owner: "human:johan"},
 		},
 	} {
 		st := State{}
@@ -368,6 +375,28 @@ func TestSuccessfulReducerEventsPreserveInvariants(t *testing.T) {
 			}
 			st = next
 		}
+	}
+}
+
+func TestNodeBlockedPersistsFirstEntryTimeAcrossReplay(t *testing.T) {
+	st := stateWithNodes(map[string]NodeState{"work": {Status: NodeStatusFailed, Attempt: 2}})
+	firstAt := testTime
+	blocked, err := Apply(st, Event{
+		Type: EventNodeBlocked, Seq: 1, At: firstAt, NodeID: "work", Attempt: 2,
+		Reason: "budget exhausted", Owner: "human:operator",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := Apply(blocked, Event{
+		Type: EventNodeBlocked, Seq: 2, At: firstAt.Add(time.Hour), NodeID: "work", Attempt: 2,
+		Reason: "budget exhausted", Owner: "human:operator",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !replayed.Nodes["work"].BlockedAt.Equal(firstAt) {
+		t.Fatalf("idempotent replay changed blockedAt: %s", replayed.Nodes["work"].BlockedAt)
 	}
 }
 
@@ -473,6 +502,7 @@ func TestReducerDoesNotMutateInput(t *testing.T) {
 	_, err = Apply(st, Event{
 		Type:   EventNodeBlocked,
 		Seq:    2,
+		At:     testTime,
 		NodeID: "implement",
 		Reason: "blocked",
 		Owner:  "human:johan",
@@ -591,6 +621,7 @@ func TestReducerErrors(t *testing.T) {
 		{name: "decision chosen edge verdict mismatch", st: base, event: Event{Type: EventDecisionRecorded, Seq: 11, NodeID: "decide", ChosenEdge: "approve", Decision: &DecisionRecord{Actor: "human:johan", Verdict: "reject"}}, want: "must match verdict"},
 		{name: "block without reason", st: base, event: Event{Type: EventNodeBlocked, Seq: 11, NodeID: "implement", Owner: "human:johan"}, want: "requires reason and owner"},
 		{name: "block without owner", st: base, event: Event{Type: EventNodeBlocked, Seq: 11, NodeID: "implement", Reason: "blocked"}, want: "requires reason and owner"},
+		{name: "block without timestamp", st: base, event: Event{Type: EventNodeBlocked, Seq: 11, NodeID: "implement", Reason: "blocked", Owner: "human:johan"}, want: "requires timestamp"},
 		{name: "block resolution without timestamp", st: base, event: Event{Type: EventBlockResolutionRecorded, Seq: 11, Resolution: &BlockResolution{NodeID: "implement", BlockedAttempt: 1, Decision: BlockDecisionRetry, Actor: "human:johan", Reason: "retry", EvidenceRef: "decision:retry"}}, want: "requires timestamp"},
 		{name: "unknown wait", st: base, event: Event{Type: EventWaitSatisfied, Seq: 11, WaitID: "missing"}, want: "not declared"},
 		{name: "invalid wait kind", st: base, event: Event{Type: EventWaitCreated, Seq: 11, Wait: &WaitRecord{ID: "wait", NodeID: "wait-human", Kind: "bogus"}}, want: "invalid wait kind"},
@@ -828,15 +859,39 @@ func TestInvariantsPassForValidState(t *testing.T) {
 			}},
 		},
 		"blocked": {
-			Status:        NodeStatusBlocked,
-			BlockedReason: "needs review",
-			BlockedOwner:  "human:johan",
+			Status:         NodeStatusBlocked,
+			BlockedReason:  "needs review",
+			BlockedOwner:   "human:johan",
+			BlockedAt:      testTime,
+			BlockedAttempt: 1,
+			BlockedNodeID:  "blocked",
 		},
 	})
 	st.Waits["wait_1"] = WaitRecord{ID: "wait_1", NodeID: "wait", Kind: WaitKindHuman, Status: WaitStatusPending}
+	st.OutstandingCommands["cmd_block"] = OutstandingCommand{ID: "cmd_block", NodeID: "blocked", Attempt: 1, Kind: CommandKindBlockNode, Status: CommandStatusObserved}
+	st.Contacts = map[string]ContactState{"cmd_block": {
+		CommandID: "cmd_block", Kind: WaitKindHuman, Assignee: "human:johan", Cadence: "30m0s", Budget: 5,
+		EscalationTarget: "human:operator", NextContactAt: testTime.Add(30 * time.Minute),
+	}}
 
 	if diagnostics := CheckInvariants(&st); diagnostics.HasErrors() {
 		t.Fatalf("unexpected invariant errors: %#v", diagnostics)
+	}
+
+	mismatched := Clone(st)
+	contact := mismatched.Contacts["cmd_block"]
+	contact.Assignee = "human:someone-else"
+	mismatched.Contacts["cmd_block"] = contact
+	if diagnostics := CheckInvariants(&mismatched); !hasDiagnostic(diagnostics, "blocked_contact_owner_mismatch") {
+		t.Fatalf("mismatched blocked contact owner diagnostics = %#v", diagnostics)
+	}
+
+	closed := Clone(st)
+	command := closed.OutstandingCommands["cmd_block"]
+	command.Status = CommandStatusCanceled
+	closed.OutstandingCommands["cmd_block"] = command
+	if diagnostics := CheckInvariants(&closed); !hasDiagnostic(diagnostics, "blocked_node_contact_count") {
+		t.Fatalf("closed blocked contact command diagnostics = %#v", diagnostics)
 	}
 }
 
@@ -899,6 +954,98 @@ func TestJSONRoundTripStrictUnknownAndSchemaVersion(t *testing.T) {
 	_, err = Decode([]byte(`{"stateSchemaVersion":1,"status":"running","originalTemplateRef":"a","currentTemplateRef":"a","nodes":{},"lastLogSeq":0,"logChecksum":""} {}`))
 	if err == nil || !strings.Contains(err.Error(), "multiple JSON values") {
 		t.Fatalf("expected multiple JSON values error, got %v", err)
+	}
+}
+
+func TestBlockedStateSchemaCompatibility(t *testing.T) {
+	legacy := []byte(`{"stateSchemaVersion":5,"runId":"legacy","status":"running","originalTemplateRef":"demo@sha256:x","currentTemplateRef":"demo@sha256:x","nodes":{"work":{"status":"blocked","attempt":1,"blockedReason":"legacy poison","blockedOwner":"human:operator","blockedAttempt":1,"blockedNodeId":"work"}},"lastLogSeq":3,"logChecksum":""}`)
+	st, err := Decode(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.StateSchemaVersion != 5 || !st.Nodes["work"].BlockedAt.IsZero() {
+		t.Fatalf("legacy decode = %#v", st.Nodes["work"])
+	}
+	if diagnostics := CheckInvariants(st); diagnostics.HasErrors() {
+		t.Fatalf("legacy v5 block must remain verifiable: %#v", diagnostics)
+	}
+
+	current := strings.Replace(string(legacy), `"stateSchemaVersion":5`, `"stateSchemaVersion":6`, 1)
+	v6, err := Decode([]byte(current))
+	if err != nil {
+		t.Fatal(err)
+	}
+	diagnostics := CheckInvariants(v6)
+	if !hasDiagnostic(diagnostics, "blocked_node_without_timestamp") || !hasDiagnostic(diagnostics, "blocked_node_contact_count") {
+		t.Fatalf("malformed v6 block diagnostics = %#v", diagnostics)
+	}
+}
+
+func TestLegacyBlockedStateCanUpdateContactAndResolveWithoutSchemaPromotion(t *testing.T) {
+	legacy := []byte(`{"stateSchemaVersion":5,"runId":"legacy","status":"running","originalTemplateRef":"demo@sha256:x","currentTemplateRef":"demo@sha256:x","nodes":{"work":{"status":"blocked","attempt":1,"blockedReason":"legacy poison","blockedOwner":"human:operator","blockedAttempt":1,"blockedNodeId":"work"}},"lastLogSeq":3,"logChecksum":""}`)
+	st, err := Decode(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.OutstandingCommands["cmd_legacy_block"] = OutstandingCommand{
+		ID: "cmd_legacy_block", NodeID: "work", Attempt: 1,
+		Kind: CommandKindBlockNode, Status: CommandStatusObserved,
+	}
+	updated, err := Apply(*st, Event{Type: EventContactScheduled, Seq: 4, At: testTime, Contact: &ContactState{
+		CommandID: "cmd_legacy_block", Kind: WaitKindHuman, Assignee: "human:operator",
+		Cadence: "30m0s", Budget: 5, EscalationTarget: "human:operator", NextContactAt: testTime.Add(30 * time.Minute),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.StateSchemaVersion != 5 {
+		t.Fatalf("legacy contact update promoted schema to %d", updated.StateSchemaVersion)
+	}
+	resolution := BlockResolution{
+		NodeID: "work", BlockedAttempt: 1, Decision: BlockDecisionRetry,
+		Actor: "human:operator", Reason: "legacy block cleared", EvidenceRef: "decision:legacy", Timestamp: testTime.Add(time.Hour),
+	}
+	resolved, err := ApplyAll(updated, []Event{
+		{Type: EventBlockResolutionRecorded, Seq: 5, At: resolution.Timestamp, Resolution: &resolution},
+		{Type: EventNodeUnblocked, Seq: 6, At: resolution.Timestamp, NodeID: "work", NodeStatus: NodeStatusReady, Resolution: &resolution},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.StateSchemaVersion != 5 || !resolved.Nodes["work"].BlockedAt.IsZero() {
+		t.Fatalf("legacy resolution fabricated v6 state: version=%d node=%#v", resolved.StateSchemaVersion, resolved.Nodes["work"])
+	}
+	contact := resolved.Contacts["cmd_legacy_block"]
+	if !contact.Paused || !contact.NextContactAt.IsZero() {
+		t.Fatalf("legacy block contact remained active: %#v", contact)
+	}
+	if diagnostics := CheckInvariants(&resolved); diagnostics.HasErrors() {
+		t.Fatalf("resolved legacy block must remain verifiable: %#v", diagnostics)
+	}
+
+	resolved.Nodes["fresh"] = NodeState{Status: NodeStatusFailed, Attempt: 1}
+	resolved.OutstandingCommands["cmd_fresh_block"] = OutstandingCommand{
+		ID: "cmd_fresh_block", NodeID: "fresh", Attempt: 1,
+		Kind: CommandKindBlockNode, Status: CommandStatusObserved,
+	}
+	mixed, err := ApplyAll(resolved, []Event{
+		{Type: EventContactScheduled, Seq: 7, At: resolution.Timestamp, Contact: &ContactState{
+			CommandID: "cmd_fresh_block", Kind: WaitKindHuman, Assignee: "human:operator",
+			Cadence: "30m0s", Budget: 5, EscalationTarget: "human:operator", NextContactAt: resolution.Timestamp.Add(30 * time.Minute),
+		}},
+		{Type: EventNodeBlocked, Seq: 8, At: resolution.Timestamp, NodeID: "fresh", Attempt: 1, Reason: "fresh poison", Owner: "human:operator"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mixed.StateSchemaVersion != StateSchemaVersion || !mixed.Nodes["work"].BlockedAtUnavailable {
+		t.Fatalf("mixed-generation promotion lost legacy provenance: version=%d legacy=%#v", mixed.StateSchemaVersion, mixed.Nodes["work"])
+	}
+	if mixed.Nodes["fresh"].BlockedAtUnavailable || mixed.Nodes["fresh"].BlockedAt.IsZero() {
+		t.Fatalf("fresh block was marked legacy: %#v", mixed.Nodes["fresh"])
+	}
+	if diagnostics := CheckInvariants(&mixed); diagnostics.HasErrors() {
+		t.Fatalf("mixed legacy and v6 block generations must verify: %#v", diagnostics)
 	}
 }
 
@@ -1026,7 +1173,7 @@ func baseWithAttempt(attempt int) State {
 
 func unblockedDecision(t *testing.T, st State) State {
 	t.Helper()
-	blocked, err := Apply(st, Event{Type: EventNodeBlocked, Seq: 10, NodeID: "decide", Reason: "recheck", Owner: "human:johan"})
+	blocked, err := Apply(st, Event{Type: EventNodeBlocked, Seq: 10, At: testTime, NodeID: "decide", Reason: "recheck", Owner: "human:johan"})
 	if err != nil {
 		t.Fatal(err)
 	}

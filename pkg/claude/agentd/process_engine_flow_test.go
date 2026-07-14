@@ -827,8 +827,23 @@ func TestProcessWorklistBlockedActionUsesUnblockFunnel(t *testing.T) {
 	assert.Equal(t, "implement.test.tests", item.Node)
 	assert.Contains(t, item.Summary, "exhausted its budget")
 	assert.Equal(t, "human:operator", item.Assignee)
+	assert.False(t, item.CreatedAt.IsZero())
+	assert.Equal(t, item.CreatedAt, item.ChangedAt)
+	require.NotNil(t, item.Nudge)
+	assert.Equal(t, processexec.DefaultHumanContactBudget, item.Nudge.BudgetMax)
+	assert.False(t, item.Nudge.NextContactAt.IsZero())
 	blockedSnapshot, err := fs.LoadRun(t.Context(), "worklist-blocked-run")
 	require.NoError(t, err)
+	assert.Equal(t, item.CreatedAt, blockedSnapshot.State.Nodes["implement.test.tests"].BlockedAt)
+	runRec := processEngineGet(t, f, "/v1/process/runs/worklist-blocked-run")
+	require.Equal(t, http.StatusOK, runRec.Code, runRec.Body.String())
+	var runView struct {
+		State *state.State `json:"state"`
+	}
+	testharness.DecodeJSON(t, runRec, &runView)
+	require.NotNil(t, runView.State)
+	assert.Equal(t, item.CreatedAt, runView.State.Nodes["implement.test.tests"].BlockedAt,
+		"the live viewer payload is the durable state shape")
 	var foreignAgentConv string
 	for commandID := range blockedSnapshot.State.OutstandingCommands {
 		agentRow, lookupErr := db.AgentForProcessCommand(commandID)
@@ -854,6 +869,15 @@ func TestProcessWorklistBlockedActionUsesUnblockFunnel(t *testing.T) {
 	require.NotNil(t, resolved.State.Nodes["implement.test.tests"].BlockResolution)
 	assert.Equal(t, state.BlockDecisionRetry, resolved.State.Nodes["implement.test.tests"].BlockResolution.Decision)
 	assert.Equal(t, state.ActorRef("human:operator"), resolved.State.Nodes["implement.test.tests"].BlockResolution.Actor)
+	for commandID, command := range resolved.State.OutstandingCommands {
+		if command.Kind != state.CommandKindBlockNode || command.NodeID != "implement.test.tests" {
+			continue
+		}
+		contact := resolved.State.Contacts[commandID]
+		assert.True(t, contact.Paused)
+		assert.Equal(t, "block resolved", contact.PauseReason)
+		assert.True(t, contact.NextContactAt.IsZero())
+	}
 
 	rec = humanReq(t, f, http.MethodPost, "/v1/process/worklist/"+item.ID+"/action", body)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -903,6 +927,65 @@ func TestProcessEngineNudgeBudgetEscalatesAndResetsOnRecovery(t *testing.T) {
 	assert.Zero(t, contact.Used)
 	assert.True(t, contact.EscalatedAt.IsZero())
 	assert.Equal(t, now.Add(time.Second), contact.NextContactAt)
+}
+
+func TestProcessEngineServicesAndStopsBlockedOwnerContact(t *testing.T) {
+	_, root := processEngineFlow(t)
+	doPerformer := model.Performer{Kind: model.PerformerProgram, Run: "true"}
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "blocked-contact", Start: "work",
+		Nodes: map[string]model.Node{
+			"work": {
+				Type: model.NodeTypeTask, Performer: &doPerformer,
+				Checks: []model.Step{{ID: "tests", Performer: model.Performer{Kind: model.PerformerProgram, Run: "false"}}},
+				Next:   model.Next{"pass": "end"},
+			},
+			"end": {Type: model.NodeTypeEnd},
+		},
+	}
+	fs := createEngineRun(t, root, "blocked-contact-run", tmpl, true)
+	adapter := &deferredContactAdapter{}
+	host := processengine.New(fs, "agentd:blocked-contact", map[model.PerformerKind]processexec.Adapter{
+		model.PerformerProgram: processexec.ProgramAdapter{DefaultTimeout: 5 * time.Second},
+		model.PerformerHuman:   adapter,
+	})
+	now := time.Date(2026, 7, 10, 8, 0, 0, 0, time.UTC)
+	host.Now = func() time.Time { return now }
+	host.Executor.Now = func() time.Time { return now }
+	_, err := agentd.RunProcessEngineTickForTest(t.Context(), host)
+	require.NoError(t, err)
+
+	snapshot, err := fs.LoadRun(t.Context(), "blocked-contact-run")
+	require.NoError(t, err)
+	blocked := snapshot.State.Nodes["work.test.tests"]
+	require.Equal(t, state.NodeStatusBlocked, blocked.Status)
+	assert.Equal(t, now, blocked.BlockedAt)
+	contact := blockContactForNode(t, snapshot.State, "work.test.tests")
+	assert.Equal(t, now.Add(processexec.DefaultHumanContactCadence), contact.NextContactAt)
+
+	now = now.Add(processexec.DefaultHumanContactCadence + time.Second)
+	_, err = agentd.RunProcessEngineTickForTest(t.Context(), host)
+	require.NoError(t, err)
+	assert.Equal(t, 1, adapter.nudges)
+
+	request, err := processexec.BindBlockResolution(snapshot, processexec.BlockResolutionRequest{
+		RunID: "blocked-contact-run", NodeID: "work.test.tests", BlockedAttempt: 1,
+		Decision: state.BlockDecisionRetry, Actor: "human:operator", Reason: "transient", EvidenceRef: "decision:block-contact",
+	})
+	require.NoError(t, err)
+	_, err = host.Executor.ResolveBlocked(t.Context(), request)
+	require.NoError(t, err)
+	resolved, err := fs.LoadRun(t.Context(), "blocked-contact-run")
+	require.NoError(t, err)
+	contact = blockContactForNode(t, resolved.State, "work.test.tests")
+	assert.True(t, contact.Paused)
+	assert.Equal(t, "block resolved", contact.PauseReason)
+	assert.True(t, contact.NextContactAt.IsZero())
+
+	now = now.Add(time.Hour)
+	_, err = agentd.RunProcessEngineTickForTest(t.Context(), host)
+	require.NoError(t, err)
+	assert.Equal(t, 1, adapter.nudges, "resolved block contact must never fire again")
 }
 
 func TestProcessEngineHumanPreemptionPausesAgentAutomation(t *testing.T) {
@@ -997,6 +1080,19 @@ func firstContact(st *state.State) state.ContactState {
 	for _, contact := range st.Contacts {
 		return contact
 	}
+	return state.ContactState{}
+}
+
+func blockContactForNode(t *testing.T, st *state.State, nodeID string) state.ContactState {
+	t.Helper()
+	for commandID, command := range st.OutstandingCommands {
+		if command.Kind == state.CommandKindBlockNode && command.NodeID == nodeID {
+			contact, ok := st.Contacts[commandID]
+			require.True(t, ok, "block command %s has no contact", commandID)
+			return contact
+		}
+	}
+	t.Fatalf("node %s has no block command", nodeID)
 	return state.ContactState{}
 }
 
