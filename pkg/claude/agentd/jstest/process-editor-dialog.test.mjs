@@ -37,10 +37,143 @@ function taskView() {
   };
 }
 
+function deletionView() {
+  return {
+    template: {
+      id: 'deletion', start: 'begin',
+      nodes: {
+        begin: { type: 'start' },
+        work: { type: 'task' },
+        done: { type: 'end', result: 'success' },
+      },
+    },
+    edges: [
+      { from: '', outcome: 'start', to: 'begin' },
+      { from: 'begin', outcome: 'pass', to: 'work' },
+      { from: 'work', outcome: 'pass', to: 'done' },
+    ],
+    layout: { nodes: {} }, sourceHash: 'source', semanticHash: 'semantic',
+  };
+}
+
+function deletionEditor(ProcessTemplateEditor, ProcessEditModel, selection) {
+  const editor = {
+    model: new ProcessEditModel(deletionView()), selection,
+    modalDispose: null, abort: new AbortController(),
+    externalDecisionPending: false, externalReloadPending: false,
+    refresh() {}, status() {},
+    setSelection(value) { this.selection = value; },
+    choiceModal(options) {
+      return ProcessTemplateEditor.prototype.choiceModal.call(this, options);
+    },
+    mutate(operation) {
+      return ProcessTemplateEditor.prototype.mutate.call(this, operation);
+    },
+    deleteSelection() {
+      this.pendingDeletion = ProcessTemplateEditor.prototype.deleteSelection.call(this);
+      return this.pendingDeletion;
+    },
+  };
+  return editor;
+}
+
+function pressDelete(harness, ProcessTemplateEditor, editor) {
+  const event = harness.fireEvent(harness.document.body, 'keydown', { key: 'Delete' });
+  ProcessTemplateEditor.prototype.onEditorKeyDown.call(editor, event);
+  assert.equal(event.defaultPrevented, true);
+}
+
+function pressFocusedEnter(harness) {
+  const focused = harness.document.activeElement;
+  const keydown = harness.fireEvent(focused, 'keydown', { key: 'Enter' });
+  // Browsers synthesize a click for Enter on a focused button; LinkeDOM does
+  // not emulate that default action, so complete it explicitly after proving
+  // which real DOM button owns focus.
+  if (!keydown.defaultPrevented) harness.fireEvent(focused, 'click');
+  harness.fireEvent(focused, 'keyup', { key: 'Enter' });
+}
+
 async function settle() {
   await Promise.resolve();
   await Promise.resolve();
 }
+
+test('Delete then Enter confirms a simple selection deletion from the focused destructive action', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ ProcessEditModel }, { ProcessTemplateEditor }] = await Promise.all([
+    harness.importDashboardModule('js/process-edit-model.js'),
+    harness.importDashboardModule('js/process-editor.js'),
+  ]);
+  const editor = deletionEditor(ProcessTemplateEditor, ProcessEditModel, { type: 'node', id: 'done' });
+
+  pressDelete(harness, ProcessTemplateEditor, editor);
+  const overlay = harness.document.querySelector('.process-editor-modal');
+  const destructive = harness.getByRole(overlay, 'button', { name: 'Delete selection' });
+  assert.equal(harness.document.activeElement, destructive);
+  assert.notEqual(harness.document.activeElement.textContent, 'Cancel');
+
+  pressFocusedEnter(harness);
+  await editor.pendingDeletion;
+  assert.equal(editor.model.node('done'), undefined);
+  assert.equal(editor.selection, null);
+  assert.equal(harness.document.querySelector('.process-editor-modal'), null);
+});
+
+test('Delete then Enter keeps the primary rewire choice for a mid-graph node', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ ProcessEditModel }, { ProcessTemplateEditor }] = await Promise.all([
+    harness.importDashboardModule('js/process-edit-model.js'),
+    harness.importDashboardModule('js/process-editor.js'),
+  ]);
+  const editor = deletionEditor(ProcessTemplateEditor, ProcessEditModel, { type: 'node', id: 'work' });
+
+  pressDelete(harness, ProcessTemplateEditor, editor);
+  const overlay = harness.document.querySelector('.process-editor-modal');
+  const rewire = harness.getByRole(overlay, 'button', { name: 'Delete + rewire through' });
+  assert.equal(harness.document.activeElement, rewire);
+  assert.match(rewire.className, /\bprimary\b/);
+
+  pressFocusedEnter(harness);
+  await editor.pendingDeletion;
+  assert.equal(editor.model.node('work'), undefined);
+  assert.deepEqual(editor.model.findEdge('begin', 'pass'), { from: 'begin', outcome: 'pass', to: 'done' });
+  assert.equal(editor.selection, null);
+});
+
+test('selection deletion Escape, Cancel, and backdrop remain non-destructive', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ ProcessEditModel }, { ProcessTemplateEditor }] = await Promise.all([
+    harness.importDashboardModule('js/process-edit-model.js'),
+    harness.importDashboardModule('js/process-editor.js'),
+  ]);
+  for (const gesture of ['Escape', 'Cancel', 'backdrop']) {
+    const selection = { type: 'node', id: 'done' };
+    const editor = deletionEditor(ProcessTemplateEditor, ProcessEditModel, selection);
+    pressDelete(harness, ProcessTemplateEditor, editor);
+    const overlay = harness.document.querySelector('.process-editor-modal');
+    if (gesture === 'Escape') harness.fireEvent(harness.document.activeElement, 'keydown', { key: 'Escape' });
+    else if (gesture === 'Cancel') harness.fireEvent(harness.getByRole(overlay, 'button', { name: 'Cancel' }), 'click');
+    else harness.fireEvent(overlay, 'click');
+    await editor.pendingDeletion;
+    assert.ok(editor.model.node('done'), `${gesture} keeps the selected node`);
+    assert.equal(editor.model.dirty, false, `${gesture} does not create an edit`);
+    assert.deepEqual(editor.selection, selection, `${gesture} keeps the selection`);
+  }
+});
+
+test('choice dialogs without an explicit or primary focus keep the existing Cancel default', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { ProcessTemplateEditor } = await harness.importDashboardModule('js/process-editor.js');
+  const editor = { modalDispose: null, abort: new AbortController() };
+  const pending = ProcessTemplateEditor.prototype.choiceModal.call(editor, {
+    title: 'Unrelated choice', body: 'No action is designated as the default.',
+    choices: [{ key: 'continue', label: 'Continue' }],
+  });
+  const overlay = harness.document.querySelector('.process-editor-modal');
+  assert.equal(harness.document.activeElement, harness.getByRole(overlay, 'button', { name: 'Cancel' }));
+  harness.fireEvent(harness.document.activeElement, 'click');
+  assert.equal(await pending, null);
+});
 
 test('node marker detail is visible on hover/focus and part of the node accessible name', async (t) => {
   const harness = await createPreactHarness(t);
