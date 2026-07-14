@@ -3,6 +3,7 @@ package agentd
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
@@ -74,16 +75,25 @@ func init() {
 	_ = mime.AddExtensionType(".map", "application/json")
 }
 
-// dashboardSessionToken is generated once per agentd process and gates
-// every /api/* request. It's set as an HttpOnly + SameSite=Strict
-// cookie on the first GET of /, and checked on subsequent /api/*
-// fetches. Same threat model as the popup: defense-in-depth against
-// drive-by browser tabs and scraped-URL replay; a same-user process
-// with /proc access can still snoop, which we accept as the
-// inherent same-user trust boundary on this machine.
+// dashboardSessionToken is generated once per agentd process and gates every
+// /api/* request. On a clean shutdown its SHA-256 digest (never the replayable
+// cookie value) is kept briefly in SQLite. The next daemon accepts that old
+// cookie only during dashboardSessionGracePeriod and immediately replaces it
+// with this process's fresh token, so a connected browser crosses a restart
+// without turning the session cookie into a durable credential.
 //
 // Empty until initDashboardToken runs in startPopupServer.
 var dashboardSessionToken string
+
+const dashboardSessionGracePeriod = 30 * time.Minute
+
+// dashboardGraceSessionHashes is restored once at startup and then read-only.
+// Values are absolute expiries so a long-running daemon never accepts a grace
+// cookie past its bounded handoff window even if its in-memory map remains.
+var dashboardGraceSessionHashes = map[string]time.Time{}
+
+// dashboardSessionNow is indirected for focused expiry tests.
+var dashboardSessionNow = time.Now
 
 const dashboardCookieName = "tclaude_dashboard_session"
 
@@ -100,6 +110,59 @@ func initDashboardToken() {
 		return
 	}
 	dashboardSessionToken = hex.EncodeToString(b[:])
+}
+
+func dashboardTokenHash(token string) string {
+	digest := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(digest[:])
+}
+
+// restoreDashboardGraceSessions loads the still-valid cookie digests left by
+// earlier clean shutdowns. The DB helper prunes expired rows as part of the
+// read. Failure is non-fatal at the call site: the dashboard remains secure
+// and simply falls back to the login flow after a restart.
+func restoreDashboardGraceSessions() error {
+	now := dashboardSessionNow()
+	rows, err := db.ListDashboardSessionGrace(now)
+	if err != nil {
+		return err
+	}
+	restored := make(map[string]time.Time, len(rows))
+	for _, row := range rows {
+		restored[row.TokenHash] = row.ExpiresAt
+	}
+	dashboardGraceSessionHashes = restored
+	return nil
+}
+
+// preserveDashboardSessionForRestart records only a digest of the current
+// cookie. Multiple quick restarts retain multiple unexpired digests, allowing
+// a browser that did not reconnect between restarts to catch up on the next
+// successful load.
+func preserveDashboardSessionForRestart() error {
+	if dashboardSessionToken == "" {
+		return nil
+	}
+	now := dashboardSessionNow()
+	return db.PreserveDashboardSessionGrace(
+		dashboardTokenHash(dashboardSessionToken), now.Add(dashboardSessionGracePeriod), now)
+}
+
+// dashboardSessionCookieMatch reports whether value is the current cookie or
+// a still-valid restart handoff. refresh is true only for the latter: callers
+// that write a response must replace it with the fresh process token.
+func dashboardSessionCookieMatch(value string) (valid, refresh bool) {
+	if dashboardSessionToken == "" || value == "" {
+		return false, false
+	}
+	if subtle.ConstantTimeCompare([]byte(value), []byte(dashboardSessionToken)) == 1 {
+		return true, false
+	}
+	expiresAt, ok := dashboardGraceSessionHashes[dashboardTokenHash(value)]
+	if !ok || !dashboardSessionNow().Before(expiresAt) {
+		return false, false
+	}
+	return true, true
 }
 
 // registerDashboardRoutes wires the dashboard onto the popup-server
@@ -271,7 +334,15 @@ func handleDashboardRoot(w http.ResponseWriter, r *http.Request) {
 
 	// Already authenticated: an existing valid cookie (refresh / new
 	// tab in the same browser) just gets the page.
-	if c, err := r.Cookie(dashboardCookieName); err == nil && c.Value == dashboardSessionToken {
+	if c, err := r.Cookie(dashboardCookieName); err == nil {
+		valid, refresh := dashboardSessionCookieMatch(c.Value)
+		if !valid {
+			renderDashboardLoginPage(w, http.StatusForbidden, "", dashboardThemeParamKV(r))
+			return
+		}
+		if refresh {
+			setDashboardSessionCookie(w)
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
 		_, _ = w.Write(dashboardIndexHTML)
@@ -577,8 +648,16 @@ func checkDashboardAuth(w http.ResponseWriter, r *http.Request) bool {
 	}
 	ok, code, msg := dashboardAuthResult(r)
 	if !ok {
+		if msg == "missing or invalid dashboard cookie; load / first" {
+			w.Header().Set("X-Tclaude-Login-Required", "1")
+		}
 		http.Error(w, msg, code)
 		return false
+	}
+	if c, err := r.Cookie(dashboardCookieName); err == nil {
+		if _, refresh := dashboardSessionCookieMatch(c.Value); refresh {
+			setDashboardSessionCookie(w)
+		}
 	}
 	return true
 }
@@ -596,7 +675,10 @@ func dashboardAuthResult(r *http.Request) (ok bool, code int, msg string) {
 		return false, http.StatusServiceUnavailable, "dashboard not initialised"
 	}
 	c, err := r.Cookie(dashboardCookieName)
-	if err != nil || c.Value != dashboardSessionToken {
+	if err != nil {
+		return false, http.StatusForbidden, "missing or invalid dashboard cookie; load / first"
+	}
+	if valid, _ := dashboardSessionCookieMatch(c.Value); !valid {
 		return false, http.StatusForbidden, "missing or invalid dashboard cookie; load / first"
 	}
 	// Non-loopback bind: host-relative same-origin (mirror the remote
