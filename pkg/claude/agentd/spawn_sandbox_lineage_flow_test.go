@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -171,6 +172,57 @@ func TestSpawnSandboxLineage_TemplateInstantiateRejected(t *testing.T) {
 	require.Len(t, res.Agents, 1)
 	assert.Contains(t, res.Agents[0].Error, "may not spawn")
 	assert.Equal(t, 0, memberCount(t, "weak-cast"), "refused template child was not enrolled")
+}
+
+func TestSpawnSandboxLineage_AllDangerTemplateOmitsAmbientPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		agent map[string]any
+	}{
+		{name: "direct fields", agent: map[string]any{
+			"name": "worker", "harness": harness.CodexName, "sandbox": harness.SandboxDangerFull,
+		}},
+		{name: "inline profile", agent: map[string]any{
+			"name": "worker", "profile_inline": map[string]any{
+				"harness": harness.CodexName, "sandbox": harness.SandboxDangerFull,
+			},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFlow(t)
+			f.HaveGroup("alpha")
+			const parent = "parent-full-aaaa-bbbb-cccc-111111111111"
+			haveSpawnCapableSandboxParent(t, f, "alpha", parent, harness.CodexName, harness.SandboxDangerFull)
+			require.NoError(t, db.GrantAgentPermission(parent, agentd.PermTemplatesUse, "test"))
+			parentAgentID, err := db.AgentIDForConv(parent)
+			require.NoError(t, err)
+			empty := sandboxpolicy.EmptySnapshot()
+			require.NoError(t, db.SetAgentEffectiveSandboxConfig(parentAgentID, &empty))
+
+			root := t.TempDir()
+			_, err = db.CreateSandboxProfile(&db.SandboxProfile{
+				Name: "ambient-policy", Filesystem: []db.SandboxFilesystemGrant{{Path: root, Access: "read"}},
+			})
+			require.NoError(t, err)
+			require.NoError(t, db.SetGlobalSandboxProfile("ambient-policy"))
+
+			require.Equalf(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates",
+				map[string]any{"name": "all-danger", "agents": []map[string]any{tc.agent}}).Code, "create template")
+			rec := agentReqProof(t, f, parent, http.MethodPost, "/v1/templates/all-danger/instantiate",
+				map[string]any{"group_name": "danger-cast", "cwd": t.TempDir()})
+			require.Equalf(t, http.StatusCreated, rec.Code, "instantiate: %s", rec.Body.String())
+			var res instantiateResult
+			testharness.DecodeJSON(t, rec, &res)
+			require.Equal(t, 1, res.Spawned)
+			require.Len(t, res.Agents, 1)
+
+			childSnapshot, err := db.AgentEffectiveSandboxConfigForConv(res.Agents[0].ConvID)
+			require.NoError(t, err)
+			require.NotNil(t, childSnapshot)
+			assert.Empty(t, childSnapshot.Applied)
+			assert.Empty(t, childSnapshot.Effective.Filesystem)
+		})
+	}
 }
 
 func TestSpawnSandboxLineage_StagedTemplateWaveRejected(t *testing.T) {
