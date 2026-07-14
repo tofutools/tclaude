@@ -1,7 +1,9 @@
 package jstest
 
 import (
+	"crypto/sha256"
 	"errors"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +22,8 @@ import (
 //     the JS suites.
 //   - Locally a node-less contributor skips this test, so they are not blocked.
 func TestDashboardJS(t *testing.T) {
+	recordDashboardInputs(t)
+
 	node, err := exec.LookPath("node")
 	if err != nil {
 		if os.Getenv("CI") != "" {
@@ -57,4 +61,39 @@ func TestDashboardJS(t *testing.T) {
 		t.Skip("unable to run node — skipping JS unit tests (install node to run them)", err)
 	}
 	t.Logf("node %v:\n%s", args, out)
+}
+
+// recordDashboardInputs makes production dashboard assets explicit inputs to
+// Go's test cache. The cache observes files opened by this process, not files
+// that the Node child opens, so without this read a dashboard-only edit could
+// incorrectly reuse a cached successful Node run.
+func recordDashboardInputs(t *testing.T) {
+	t.Helper()
+
+	hash := sha256.New()
+	fileCount := 0
+	err := filepath.WalkDir("../dashboard", func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		_, _ = hash.Write([]byte(path))
+		_, _ = hash.Write([]byte{0})
+		_, _ = hash.Write(data)
+		fileCount++
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("recording dashboard test inputs: %v", err)
+	}
+	if fileCount == 0 {
+		t.Fatal("no dashboard test inputs found")
+	}
+	t.Logf("dashboard test inputs: %d files, sha256 %x", fileCount, hash.Sum(nil))
 }

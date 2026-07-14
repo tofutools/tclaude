@@ -1,6 +1,6 @@
 // nav-history-core.test.mjs — pure-logic unit tests for the dashboard
 // back/forward navigation core (TCL-317 / TCL-333). Run with Node's built-in
-// test runner via the Go wrapper (TestPaletteScore_JS globs jstest/*.test.mjs),
+// test runner via the Go wrapper (TestDashboardJS globs this package's suites),
 // so it executes under the repo's single `go test ./...` entry point — no
 // bundler, no npm install. To run just this suite directly:
 //

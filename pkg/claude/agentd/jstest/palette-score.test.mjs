@@ -2,7 +2,7 @@
 // (dashboard/js/palette-score.js), run with Node's BUILT-IN test runner —
 // `node --test`, asserting via `node:assert`. No bundler, no framework, no
 // package.json, no node_modules: the test imports the same raw ES module
-// the browser loads. A Go wrapper (palette_score_js_test.go) runs this
+// the browser loads. The Go wrapper (dashboard_node_test.go) runs this
 // under `go test ./...` and skips when node is absent.
 //
 // This file lives OUTSIDE dashboard/ on purpose, so `//go:embed dashboard`

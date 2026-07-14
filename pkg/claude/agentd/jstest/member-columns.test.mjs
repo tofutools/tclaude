@@ -2,7 +2,7 @@
 // (dashboard/js/member-columns.js), run with Node's BUILT-IN test runner
 // (`node --test`, asserting via `node:assert`). No bundler: the test imports
 // the same raw ES module the browser loads. The Go wrapper
-// `palette_score_node_test.go` (TestPaletteScore_JS) globs `jstest/*.test.mjs`,
+// `dashboard_node_test.go` (TestDashboardJS) globs the package's `*.test.mjs`,
 // so this suite runs under `go test ./...` with no new wrapper and skips when
 // node is absent. Lives OUTSIDE dashboard/ so `//go:embed dashboard` doesn't
 // ship the test inside the agentd binary.
