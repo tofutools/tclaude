@@ -83,6 +83,7 @@ test('issue navigation starts at the expected end and wraps', () => {
     mapped: { entries: ['first', 'middle', 'last'] }, issueCursor: -1,
     panel: { open: false }, list: { querySelector: () => button },
     focusEntry: (entry) => focused.push(entry),
+    focusIssueAt: LiveValidation.prototype.focusIssueAt,
   };
   assert.equal(LiveValidation.prototype.focusIssue.call(fake, -1), true);
   assert.equal(fake.issueCursor, 2);
@@ -90,6 +91,37 @@ test('issue navigation starts at the expected end and wraps', () => {
   LiveValidation.prototype.focusIssue.call(fake, 1);
   assert.equal(fake.issueCursor, 0);
   assert.deepEqual(focused, ['last', 'first']);
+});
+
+test('clicking an issue seeds subsequent next and previous navigation', () => {
+  const previous = globalThis.document;
+  let click;
+  const element = () => ({
+    append() {},
+    addEventListener(type, handler) { if (type === 'click') click = handler; },
+    querySelector() { return { focus() {} }; },
+  });
+  globalThis.document = { createElement: element };
+  try {
+    const focused = [];
+    const fake = {
+      editor: { stage: { append() {} } },
+      mapped: { entries: ['first', 'middle', 'last'] },
+      issueCursor: -1,
+      focusEntry: (entry) => focused.push(entry),
+      focusIssueAt: LiveValidation.prototype.focusIssueAt,
+    };
+    LiveValidation.prototype.buildPanel.call(fake);
+    click({ target: { closest: () => ({ dataset: { issueIndex: '1' } }) } });
+    assert.equal(fake.issueCursor, 1);
+    LiveValidation.prototype.focusIssue.call(fake, 1);
+    LiveValidation.prototype.focusIssue.call(fake, -1);
+    assert.equal(fake.issueCursor, 1);
+    assert.deepEqual(focused, ['middle', 'last', 'middle']);
+  } finally {
+    if (previous === undefined) delete globalThis.document;
+    else globalThis.document = previous;
+  }
 });
 
 test('out-of-order responses are discarded (sequence guard)', async () => {

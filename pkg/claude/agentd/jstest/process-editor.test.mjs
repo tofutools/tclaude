@@ -78,6 +78,19 @@ test('command context reflects selection, editability, dirty state, and validati
   assert.match(locked.saveReason, /no unsaved changes/i);
 });
 
+test('validate now delegates without leaving a persistent progress status', () => {
+  let accepted = true;
+  const statuses = [];
+  const fake = {
+    validation: { validateNow: () => accepted },
+    status: (message) => statuses.push(message),
+  };
+  assert.equal(ProcessTemplateEditor.prototype.validateNow.call(fake), true);
+  accepted = false;
+  assert.equal(ProcessTemplateEditor.prototype.validateNow.call(fake), false);
+  assert.deepEqual(statuses, [], 'the issues panel owns completion and failure feedback');
+});
+
 function withFakeDocument(run) {
   const previous = globalThis.document;
   globalThis.document = {

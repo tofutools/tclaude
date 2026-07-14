@@ -905,9 +905,9 @@ export class ProcessTemplateEditor {
   }
 
   validateNow() {
-    if (!this.validation?.validateNow()) return false;
-    this.status('Validating current draft…');
-    return true;
+    // The issues panel owns validation progress/results. A persistent editor
+    // status here would outlive both successful and skipped/failed rounds.
+    return this.validation?.validateNow() || false;
   }
 
   focusIssue(delta) {

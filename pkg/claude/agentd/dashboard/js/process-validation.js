@@ -271,8 +271,7 @@ export class LiveValidation {
     this.panel.addEventListener('click', (event) => {
       const button = event.target.closest?.('button[data-issue-index]');
       if (!button) return;
-      const entry = this.mapped?.entries[Number(button.dataset.issueIndex)];
-      if (entry) this.focusEntry(entry);
+      this.focusIssueAt(Number(button.dataset.issueIndex), { focusButton: false });
     });
     this.editor.stage.append(this.panel);
   }
@@ -297,12 +296,19 @@ export class LiveValidation {
   focusIssue(delta = 1) {
     const entries = this.mapped?.entries || [];
     if (!entries.length) return false;
-    this.issueCursor = this.issueCursor < 0
+    const index = this.issueCursor < 0
       ? (delta < 0 ? entries.length - 1 : 0)
       : (this.issueCursor + delta + entries.length) % entries.length;
+    return this.focusIssueAt(index);
+  }
+
+  focusIssueAt(index, { focusButton = true } = {}) {
+    const entries = this.mapped?.entries || [];
+    if (!Number.isInteger(index) || index < 0 || index >= entries.length) return false;
+    this.issueCursor = index;
     this.panel.open = true;
-    this.focusEntry(entries[this.issueCursor]);
-    this.list.querySelector(`button[data-issue-index="${this.issueCursor}"]`)?.focus();
+    this.focusEntry(entries[index]);
+    if (focusButton) this.list.querySelector(`button[data-issue-index="${index}"]`)?.focus();
     return true;
   }
 
