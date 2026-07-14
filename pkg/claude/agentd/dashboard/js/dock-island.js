@@ -38,8 +38,10 @@ function DockCard({ section, item, openMenu, setOpenMenu, clipHost, layoutVersio
   const cogRef = useRef(null);
   const cardRef = useRef(null);
   const detailsRef = useRef(null);
+  const hoveringRef = useRef(false);
   const [opensUp, setOpensUp] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const [detailsPosition, setDetailsPosition] = useState(null);
   const draggable = section.drag ? 'true' : 'false';
   const detailsID = `${useId()}-dock-details`;
@@ -98,12 +100,23 @@ function DockCard({ section, item, openMenu, setOpenMenu, clipHost, layoutVersio
   }, [clipHost, detailsOpen, positionDetails]);
 
   const showDetails = () => {
+    if (dragging) return;
     positionDetails();
     setDetailsOpen(true);
   };
 
   const hideHoveredDetails = () => {
     if (!cardRef.current?.contains(document.activeElement)) setDetailsOpen(false);
+  };
+
+  const enterCard = () => {
+    hoveringRef.current = true;
+    showDetails();
+  };
+
+  const leaveCard = () => {
+    hoveringRef.current = false;
+    hideHoveredDetails();
   };
 
   const run = (event, action) => {
@@ -123,11 +136,34 @@ function DockCard({ section, item, openMenu, setOpenMenu, clipHost, layoutVersio
       data-dock-kind=${section.key}
       data-dock-name=${name}
       title=${hasDetails ? null : name}
-      onMouseEnter=${hasDetails ? showDetails : null}
-      onMouseLeave=${hasDetails ? hideHoveredDetails : null}
+      onMouseEnter=${hasDetails ? enterCard : null}
+      onMouseLeave=${hasDetails ? leaveCard : null}
       onFocusIn=${hasDetails ? showDetails : null}
       onFocusOut=${hasDetails ? (event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) setDetailsOpen(false);
+      } : null}
+      onDragStart=${section.drag ? () => {
+        setDragging(true);
+        setDetailsOpen(false);
+      } : null}
+      onDragEnter=${section.drag ? () => { hoveringRef.current = true; } : null}
+      onDragLeave=${section.drag ? (event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) hoveringRef.current = false;
+      } : null}
+      onDragEnd=${section.drag ? (event) => {
+        setDragging(false);
+        const hasPointerCoordinates = Number.isFinite(event.clientX)
+          && Number.isFinite(event.clientY)
+          && (event.clientX !== 0 || event.clientY !== 0);
+        const hit = hasPointerCoordinates && document.elementFromPoint
+          ? document.elementFromPoint(event.clientX, event.clientY)
+          : null;
+        const endedOverCard = hit ? event.currentTarget.contains(hit) : hoveringRef.current;
+        hoveringRef.current = endedOverCard;
+        if (endedOverCard && hasDetails) {
+          positionDetails();
+          setDetailsOpen(true);
+        }
       } : null}
     >
       <span class="dock-grip" aria-hidden="true" title=${hasDetails ? null : gripTitle}>⠿</span>
@@ -199,7 +235,7 @@ function DockCard({ section, item, openMenu, setOpenMenu, clipHost, layoutVersio
           tabIndex="0"
           draggable="false"
           style=${detailsPosition}
-          class=${`dock-card-details${detailsOpen && !menuOpen ? ' open' : ''}`}
+          class=${`dock-card-details${detailsOpen && !menuOpen && !dragging ? ' open' : ''}`}
         >
           <span id=${detailsDescriptionID} class="dock-card-details-description">
             ${fullChips.map((chip) => chip.text).join(', ')}

@@ -253,7 +253,8 @@ to the primary name. Cards stay compact with a truncated chip list; hover the
 card, or keyboard-focus its action button, to open a tooltip to its left with
 the complete wrapped list of aliases and set profile fields. Profile cards
 suppress native browser tooltips so the rich details remain the only hover
-surface. Selectors offer each alias separately as
+surface, and hide the rich details while the card is being dragged. Selectors
+offer each alias separately as
 `alias → primary-name`.
 
 Open the manager from the Groups tab cog (**⚙ → ⧉ profiles…**). The manager can
