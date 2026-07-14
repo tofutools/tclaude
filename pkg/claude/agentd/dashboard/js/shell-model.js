@@ -5,6 +5,7 @@ import {
   styledWizardBotsHTML,
   themedSummaryText,
 } from './group-activity.js';
+import { scribeGroupVisible } from './scribe-groups.js';
 
 const USAGE_BAR_WIDTH = 8;
 
@@ -113,11 +114,27 @@ export function footerMetaView(snapshot) {
   };
 }
 
-export function globalActivityView(snapshot, wizard = false) {
+// activityMembersForVisibility preserves the top bar's status overview while
+// respecting the Groups tab's view policy. A hidden group still contributes
+// live agents (the header is global, not a mirror of the current tab), but its
+// dormant members stay out of the offline count. This deliberately ignores
+// disclosure/collapse state: a folded, otherwise-visible group still belongs
+// in the overview.
+function activityMembersForVisibility(members, visible) {
+  const list = members || [];
+  return visible ? list : list.filter((member) => member?.online);
+}
+
+export function globalActivityView(snapshot, wizard = false, visibility = {}) {
   if (!snapshot) return { markup: '', title: '' };
   const groups = snapshot.groups || [];
-  const lists = groups.map((group) => group.members || []);
-  lists.push(snapshot.ungrouped || []);
+  const showOfflineScribes = visibility.scribe ?? false;
+  const showUngrouped = visibility.ungrouped ?? true;
+  const lists = groups.map((group) => activityMembersForVisibility(
+    group.members,
+    scribeGroupVisible(group, showOfflineScribes),
+  ));
+  lists.push(activityMembersForVisibility(snapshot.ungrouped, showUngrouped));
   const summary = aggregateActivity(lists);
   const styles = snapshot.activity_bots || {};
   const regularStyle = styles.regular || 'emoji';
@@ -132,13 +149,13 @@ export function globalActivityView(snapshot, wizard = false) {
 
   const theme = wizard ? 'wizard' : '';
   const lines = [];
-  for (const group of groups) {
-    const groupSummary = activitySummary(group.members || []);
+  for (const [index, group] of groups.entries()) {
+    const groupSummary = activitySummary(lists[index]);
     if (groupSummary.present.length && groupSummary.level !== 'offline') {
       lines.push(`${group.name}: ${themedSummaryText(groupSummary, theme)}`);
     }
   }
-  const ungrouped = activitySummary(snapshot.ungrouped || []);
+  const ungrouped = activitySummary(lists[groups.length]);
   if (ungrouped.present.length && ungrouped.level !== 'offline') {
     lines.push(`Ungrouped: ${themedSummaryText(ungrouped, theme)}`);
   }

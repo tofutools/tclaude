@@ -33,13 +33,15 @@ func TestDashboardAssets_GroupActivityWired(t *testing.T) {
 		"groupActivityChip(members)", // dropped into <summary>
 		"function activityStyles(",   // reads the per-mode styles
 		// shell-model.js derives the global view from the accepted snapshot.
-		"export function globalActivityView(snapshot, wizard = false)",
+		"export function globalActivityView(snapshot, wizard = false, visibility = {})",
 		"const groups = snapshot.groups || []",
+		"scribeGroupVisible(group, showOfflineScribes)",
 		"const styles = snapshot.activity_bots || {}",
 		// shell-island.js subscribes to the Signal and gives the activity VNodes
 		// stable Preact ownership under an explicit HTML host.
 		"const snapshot = state.snapshot.value",
-		"const view = globalActivityView(snapshot, wizard)",
+		"const visibility = groupsState?.visibility.value",
+		"const view = globalActivityView(snapshot, wizard, visibility)",
 		"trustedHTMLToVNodes(view.markup)",
 		`id="shell-activity-root"`,
 		`id="global-activity"`,
