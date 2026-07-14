@@ -1,6 +1,10 @@
 package state
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -931,6 +935,16 @@ func applyEvent(st *State, event Event) error {
 			if !typed || kind != WaitKindHuman || contact.Kind != WaitKindHuman {
 				return fmt.Errorf("blocked contact command %q requires a human/role owner", contact.CommandID)
 			}
+			payloadOwner, err := blockCommandPayloadOwner(command)
+			if err != nil {
+				return fmt.Errorf("blocked contact command %q: %w", contact.CommandID, err)
+			}
+			if kind, ok := ContactKindForOwner(payloadOwner); !ok || kind != WaitKindHuman {
+				return fmt.Errorf("blocked contact command %q payload owner %q is unsupported; only human/role owners are supported", contact.CommandID, payloadOwner)
+			}
+			if strings.TrimSpace(contact.Assignee) != payloadOwner {
+				return fmt.Errorf("blocked contact command %q assignee %q does not match payload owner %q", contact.CommandID, contact.Assignee, payloadOwner)
+			}
 		}
 		if contact.Used < 0 || contact.Used > contact.Budget {
 			return fmt.Errorf("contact command %q budget usage %d/%d is invalid", contact.CommandID, contact.Used, contact.Budget)
@@ -1026,6 +1040,31 @@ func promoteSchema(st *State, version int) {
 	if st.StateSchemaVersion < version {
 		st.StateSchemaVersion = version
 	}
+}
+
+func blockCommandPayloadOwner(command OutstandingCommand) (string, error) {
+	if len(command.Payload) == 0 || strings.TrimSpace(command.PayloadHash) == "" {
+		return "", fmt.Errorf("requires a durable hashed command payload")
+	}
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, command.Payload); err != nil {
+		return "", fmt.Errorf("decode durable command payload: %w", err)
+	}
+	sum := sha256.Sum256(compact.Bytes())
+	if hex.EncodeToString(sum[:]) != command.PayloadHash {
+		return "", fmt.Errorf("durable command payload hash does not match")
+	}
+	var payload struct {
+		Owner string `json:"owner"`
+	}
+	if err := json.Unmarshal(compact.Bytes(), &payload); err != nil {
+		return "", fmt.Errorf("decode durable command owner: %w", err)
+	}
+	owner := strings.TrimSpace(payload.Owner)
+	if owner == "" {
+		return "", fmt.Errorf("durable command payload requires owner")
+	}
+	return owner, nil
 }
 
 // requirePriorStagesCompleted enforces the stage chain on activation: a stage

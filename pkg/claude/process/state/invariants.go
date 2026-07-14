@@ -709,6 +709,17 @@ func BlockedNodesHaveContactSchedules(st *State) Diagnostics {
 			}
 			matches++
 			path := "contacts." + commandID
+			payloadOwner, payloadErr := blockCommandPayloadOwner(command)
+			if payloadErr != nil {
+				diagnostics = append(diagnostics, diagError("blocked_contact_payload_owner", path+".assignee", fmt.Sprintf("blocked contact for node %q has invalid command owner payload: %v", nodeID, payloadErr)))
+			} else {
+				if kind, ok := ContactKindForOwner(payloadOwner); !ok || kind != WaitKindHuman {
+					diagnostics = append(diagnostics, diagError("unsupported_blocked_contact_payload_owner", path+".assignee", fmt.Sprintf("blocked contact for node %q has unsupported command payload owner %q", nodeID, payloadOwner)))
+				}
+				if strings.TrimSpace(contact.Assignee) != payloadOwner {
+					diagnostics = append(diagnostics, diagError("blocked_contact_payload_owner_mismatch", path+".assignee", fmt.Sprintf("blocked contact for node %q owner %q does not match command payload owner %q", nodeID, contact.Assignee, payloadOwner)))
+				}
+			}
 			if node.Status == NodeStatusBlocked && strings.TrimSpace(contact.Assignee) != strings.TrimSpace(node.BlockedOwner) {
 				diagnostics = append(diagnostics, diagError("blocked_contact_owner_mismatch", path+".assignee", fmt.Sprintf("blocked contact for node %q owner %q does not match node owner %q", nodeID, contact.Assignee, node.BlockedOwner)))
 			}

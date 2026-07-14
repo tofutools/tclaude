@@ -293,7 +293,7 @@ func TestResolvedBlockMirrorAndAuditInvariants(t *testing.T) {
 		Type: EventBlockResolutionRecorded, Actor: resolution.Actor, Reason: resolution.Reason,
 		EvidenceRef: resolution.EvidenceRef, Timestamp: resolution.Timestamp, Resolution: &resolution,
 	})
-	valid.OutstandingCommands["cmd_block"] = OutstandingCommand{ID: "cmd_block", NodeID: resolution.NodeID, Attempt: 1, Kind: CommandKindBlockNode, Status: CommandStatusObserved}
+	valid.OutstandingCommands["cmd_block"] = *blockCommandForTest("cmd_block", resolution.NodeID, 1, "human:operator", CommandStatusObserved)
 	valid.Contacts["cmd_block"] = ContactState{
 		CommandID: "cmd_block", Kind: WaitKindHuman, Assignee: "human:operator", Cadence: "30m0s", Budget: 5,
 		EscalationTarget: "human:operator", Paused: true, PauseReason: "block resolved",

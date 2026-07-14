@@ -1,6 +1,9 @@
 package state
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -11,6 +14,25 @@ import (
 )
 
 var testTime = time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
+
+func blockCommandForTest(id, nodeID string, attempt int, owner string, status CommandStatus) *OutstandingCommand {
+	payload, err := json.Marshal(struct {
+		ID      string      `json:"id"`
+		Kind    CommandKind `json:"kind"`
+		RunID   string      `json:"runId"`
+		NodeID  string      `json:"nodeId"`
+		Attempt int         `json:"attempt"`
+		Owner   string      `json:"owner"`
+	}{ID: id, Kind: CommandKindBlockNode, RunID: "run", NodeID: nodeID, Attempt: attempt, Owner: owner})
+	if err != nil {
+		panic(err)
+	}
+	sum := sha256.Sum256(payload)
+	return &OutstandingCommand{
+		ID: id, NodeID: nodeID, Attempt: attempt, Kind: CommandKindBlockNode, Status: status,
+		Payload: payload, PayloadHash: hex.EncodeToString(sum[:]),
+	}
+}
 
 func TestReducerSequences(t *testing.T) {
 	tests := []struct {
@@ -355,7 +377,7 @@ func TestSuccessfulReducerEventsPreserveInvariants(t *testing.T) {
 		},
 		{
 			initEvent(),
-			{Type: EventCommandIssued, Seq: 2, At: testTime, Command: &OutstandingCommand{ID: "cmd_block", NodeID: "implement", Attempt: 1, Kind: CommandKindBlockNode}},
+			{Type: EventCommandIssued, Seq: 2, At: testTime, Command: blockCommandForTest("cmd_block", "implement", 1, "human:johan", CommandStatusIssued)},
 			{Type: EventCommandObserved, Seq: 3, At: testTime, CommandID: "cmd_block"},
 			{Type: EventContactScheduled, Seq: 4, At: testTime, Contact: &ContactState{
 				CommandID: "cmd_block", Kind: WaitKindHuman, Assignee: "human:johan", Cadence: "30m0s", Budget: 5,
@@ -612,9 +634,11 @@ func TestReducerErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	unsupportedBlockContact := Clone(base)
-	unsupportedBlockContact.OutstandingCommands["cmd_block"] = OutstandingCommand{
-		ID: "cmd_block", NodeID: "implement", Attempt: 1, Kind: CommandKindBlockNode, Status: CommandStatusObserved,
-	}
+	unsupportedBlockContact.OutstandingCommands["cmd_block"] = *blockCommandForTest("cmd_block", "implement", 1, "human:operator", CommandStatusObserved)
+	unsupportedPayloadOwner := Clone(base)
+	unsupportedPayloadOwner.OutstandingCommands["cmd_block"] = *blockCommandForTest("cmd_block", "implement", 1, "agent:agt_worker", CommandStatusObserved)
+	mismatchedPayloadOwner := Clone(base)
+	mismatchedPayloadOwner.OutstandingCommands["cmd_block"] = *blockCommandForTest("cmd_block", "implement", 1, "human:operator", CommandStatusObserved)
 
 	tests := []struct {
 		name  string
@@ -648,6 +672,8 @@ func TestReducerErrors(t *testing.T) {
 		{name: "block with program owner", st: base, event: Event{Type: EventNodeBlocked, Seq: 11, At: testTime, NodeID: "implement", Reason: "blocked", Owner: "program:deploy"}, want: "requires a human/role owner"},
 		{name: "block with system owner", st: base, event: Event{Type: EventNodeBlocked, Seq: 11, At: testTime, NodeID: "implement", Reason: "blocked", Owner: "system:deploy"}, want: "requires a human/role owner"},
 		{name: "block contact with unsupported owner", st: unsupportedBlockContact, event: Event{Type: EventContactScheduled, Seq: 11, Contact: &ContactState{CommandID: "cmd_block", Kind: WaitKindAgent, Assignee: "agent:agt_worker", Cadence: "5m0s", Budget: 3, EscalationTarget: "human:operator"}}, want: "requires a human/role owner"},
+		{name: "block contact with unsupported payload owner", st: unsupportedPayloadOwner, event: Event{Type: EventContactScheduled, Seq: 11, Contact: &ContactState{CommandID: "cmd_block", Kind: WaitKindHuman, Assignee: "human:operator", Cadence: "30m0s", Budget: 5, EscalationTarget: "human:operator"}}, want: "payload owner \"agent:agt_worker\" is unsupported"},
+		{name: "block contact assignee mismatches payload owner", st: mismatchedPayloadOwner, event: Event{Type: EventContactScheduled, Seq: 11, Contact: &ContactState{CommandID: "cmd_block", Kind: WaitKindHuman, Assignee: "human:someone-else", Cadence: "30m0s", Budget: 5, EscalationTarget: "human:operator"}}, want: "does not match payload owner \"human:operator\""},
 		{name: "block resolution without timestamp", st: base, event: Event{Type: EventBlockResolutionRecorded, Seq: 11, Resolution: &BlockResolution{NodeID: "implement", BlockedAttempt: 1, Decision: BlockDecisionRetry, Actor: "human:johan", Reason: "retry", EvidenceRef: "decision:retry"}}, want: "requires timestamp"},
 		{name: "unknown wait", st: base, event: Event{Type: EventWaitSatisfied, Seq: 11, WaitID: "missing"}, want: "not declared"},
 		{name: "invalid wait kind", st: base, event: Event{Type: EventWaitCreated, Seq: 11, Wait: &WaitRecord{ID: "wait", NodeID: "wait-human", Kind: "bogus"}}, want: "invalid wait kind"},
@@ -894,7 +920,7 @@ func TestInvariantsPassForValidState(t *testing.T) {
 		},
 	})
 	st.Waits["wait_1"] = WaitRecord{ID: "wait_1", NodeID: "wait", Kind: WaitKindHuman, Status: WaitStatusPending}
-	st.OutstandingCommands["cmd_block"] = OutstandingCommand{ID: "cmd_block", NodeID: "blocked", Attempt: 1, Kind: CommandKindBlockNode, Status: CommandStatusObserved}
+	st.OutstandingCommands["cmd_block"] = *blockCommandForTest("cmd_block", "blocked", 1, "human:johan", CommandStatusObserved)
 	st.Contacts = map[string]ContactState{"cmd_block": {
 		CommandID: "cmd_block", Kind: WaitKindHuman, Assignee: "human:johan", Cadence: "30m0s", Budget: 5,
 		EscalationTarget: "human:operator", NextContactAt: testTime.Add(30 * time.Minute),
@@ -918,6 +944,24 @@ func TestInvariantsPassForValidState(t *testing.T) {
 	closed.OutstandingCommands["cmd_block"] = command
 	if diagnostics := CheckInvariants(&closed); !hasDiagnostic(diagnostics, "blocked_node_contact_count") {
 		t.Fatalf("closed blocked contact command diagnostics = %#v", diagnostics)
+	}
+
+	unsupportedPayload := Clone(st)
+	unsupportedPayload.OutstandingCommands["cmd_block"] = *blockCommandForTest("cmd_block", "blocked", 1, "agent:agt_worker", CommandStatusObserved)
+	if diagnostics := CheckInvariants(&unsupportedPayload); !hasDiagnostic(diagnostics, "unsupported_blocked_contact_payload_owner") {
+		t.Fatalf("unsupported blocked command payload owner diagnostics = %#v", diagnostics)
+	}
+
+	roleOwned := Clone(st)
+	roleNode := roleOwned.Nodes["blocked"]
+	roleNode.BlockedOwner = "role:oncall"
+	roleOwned.Nodes["blocked"] = roleNode
+	roleOwned.OutstandingCommands["cmd_block"] = *blockCommandForTest("cmd_block", "blocked", 1, "role:oncall", CommandStatusObserved)
+	roleContact := roleOwned.Contacts["cmd_block"]
+	roleContact.Assignee = "role:oncall"
+	roleOwned.Contacts["cmd_block"] = roleContact
+	if diagnostics := CheckInvariants(&roleOwned); diagnostics.HasErrors() {
+		t.Fatalf("role-owned blocked contact must verify: %#v", diagnostics)
 	}
 }
 
@@ -1013,10 +1057,7 @@ func TestLegacyBlockedStateCanUpdateContactAndResolveWithoutSchemaPromotion(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	st.OutstandingCommands["cmd_legacy_block"] = OutstandingCommand{
-		ID: "cmd_legacy_block", NodeID: "work", Attempt: 1,
-		Kind: CommandKindBlockNode, Status: CommandStatusObserved,
-	}
+	st.OutstandingCommands["cmd_legacy_block"] = *blockCommandForTest("cmd_legacy_block", "work", 1, "human:operator", CommandStatusObserved)
 	updated, err := Apply(*st, Event{Type: EventContactScheduled, Seq: 4, At: testTime, Contact: &ContactState{
 		CommandID: "cmd_legacy_block", Kind: WaitKindHuman, Assignee: "human:operator",
 		Cadence: "30m0s", Budget: 5, EscalationTarget: "human:operator", NextContactAt: testTime.Add(30 * time.Minute),
@@ -1050,10 +1091,7 @@ func TestLegacyBlockedStateCanUpdateContactAndResolveWithoutSchemaPromotion(t *t
 	}
 
 	resolved.Nodes["fresh"] = NodeState{Status: NodeStatusFailed, Attempt: 1}
-	resolved.OutstandingCommands["cmd_fresh_block"] = OutstandingCommand{
-		ID: "cmd_fresh_block", NodeID: "fresh", Attempt: 1,
-		Kind: CommandKindBlockNode, Status: CommandStatusObserved,
-	}
+	resolved.OutstandingCommands["cmd_fresh_block"] = *blockCommandForTest("cmd_fresh_block", "fresh", 1, "human:operator", CommandStatusObserved)
 	mixed, err := ApplyAll(resolved, []Event{
 		{Type: EventContactScheduled, Seq: 7, At: resolution.Timestamp, Contact: &ContactState{
 			CommandID: "cmd_fresh_block", Kind: WaitKindHuman, Assignee: "human:operator",
