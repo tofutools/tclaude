@@ -1196,7 +1196,7 @@ func (s *FS) CreateRun(ctx context.Context, run RunRecord, initial state.State) 
 	}
 	runPath := filepath.Join(dir, "run.json")
 	if _, err := os.Stat(runPath); err == nil {
-		return RunRecord{}, fmt.Errorf("run %q already exists", run.ID)
+		return RunRecord{}, fmt.Errorf("%w: %q", ErrRunExists, run.ID)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return RunRecord{}, fmt.Errorf("stat run: %w", err)
 	}

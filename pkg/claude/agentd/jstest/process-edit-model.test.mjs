@@ -239,6 +239,20 @@ test('regression: no-op setTemplateMeta neither dirties nor burns an undo slot',
   assert.equal(model.dirty, true);
 });
 
+test('template params are one undoable mutation and no-op apply stays clean', () => {
+  const model = new ProcessEditModel(view());
+  assert.deepEqual(model.template.params, {}, 'older templates normalize to an empty param map');
+  assert.equal(model.setParams({ issue: { type: 'string', description: 'Issue id', required: true } }), true);
+  assert.equal(model.template.params.issue.required, true);
+  assert.equal(model.dirty, true);
+  assert.equal(model.undoStack.length, 1);
+  assert.equal(model.undo(), true);
+  assert.deepEqual(model.template.params, {});
+  assert.equal(model.dirty, false);
+  assert.equal(model.setParams({}), false);
+  assert.equal(model.canUndo, false);
+});
+
 test('template metadata edits are undoable and preserve the immutable id', () => {
   const model = new ProcessEditModel(view());
   model.setTemplateMeta({

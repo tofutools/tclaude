@@ -108,6 +108,8 @@ func TestMatchAuditRoute(t *testing.T) {
 		// Template instantiate (both surfaces share the route).
 		{"cli template instantiate", http.MethodPost, "/v1/templates/crew-tpl/instantiate", true, "template.instantiate", db.AuditSourceCLI, map[string]string{"name": "crew-tpl"}},
 		{"dashboard template instantiate", http.MethodPost, "/api/templates/crew-tpl/instantiate", true, "template.instantiate", db.AuditSourceDashboard, map[string]string{"name": "crew-tpl"}},
+		{"process run create", http.MethodPost, "/v1/process/runs", true, "process.run.create", db.AuditSourceCLI, nil},
+		{"dashboard process run create", http.MethodPost, "/api/process/runs", true, "process.run.create", db.AuditSourceDashboard, nil},
 
 		// Security / daemon admin (dashboard).
 		{"remote-access add-client", http.MethodPost, "/api/remote-access/add-client", true, "remote-access.add-client", db.AuditSourceDashboard, nil},
@@ -136,6 +138,9 @@ func TestMatchAuditRoute(t *testing.T) {
 			}
 			if source != tc.wantSource {
 				t.Errorf("source = %q, want %q", source, tc.wantSource)
+			}
+			if strings.Contains(tc.name, "process run create") && route.describe != nil {
+				t.Error("process run create must keep a nil describer so params are never buffered")
 			}
 			for k, want := range tc.wantVar {
 				if vars[k] != want {

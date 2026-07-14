@@ -76,17 +76,11 @@ func startRemoteServer(bind string) (*http.Server, error) {
 		return nil, fmt.Errorf("bind %s: %w", bind, err)
 	}
 
-	// A fresh mux carrying the full dashboard route set; the auth middleware
-	// wraps it so EVERY route (even one whose handler forgot to call
-	// checkDashboardAuth) is gated at the boundary, not per-handler.
-	dashMux := http.NewServeMux()
-	registerDashboardRoutes(dashMux)
-
 	// The listener (tls.Listen) already terminates TLS, so srv.Serve over it
 	// is correct and srv.TLSConfig is intentionally NOT set (it would be
 	// unused — ServeTLS is the path that reads it).
 	srv := &http.Server{
-		Handler:           remoteAuthMiddleware(m, dashMux),
+		Handler:           buildRemoteDashboardHandler(m),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go func() {
@@ -96,6 +90,18 @@ func startRemoteServer(bind string) (*http.Server, error) {
 	}()
 	setRemoteListenerRunning(bind)
 	return srv, nil
+}
+
+// buildRemoteDashboardHandler mounts the shared dashboard routes behind the
+// remote authentication boundary, then audits authenticated command attempts.
+// Keeping auditRequests inside remoteAuthMiddleware gives audit attribution the
+// unforgeable dashboardPreAuthed marker and avoids recording rejected login or
+// session probes as operator actions. The remote mux itself is otherwise raw,
+// so each accepted command produces exactly one audit row.
+func buildRemoteDashboardHandler(m *remoteaccess.Material) http.Handler {
+	dashMux := http.NewServeMux()
+	registerDashboardRoutes(dashMux)
+	return remoteAuthMiddleware(m, auditRequests(dashMux))
 }
 
 // Running-listener state — recorded when startRemoteServer succeeds so the

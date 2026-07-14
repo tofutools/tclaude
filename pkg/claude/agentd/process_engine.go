@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -257,6 +259,89 @@ func handleProcessRuns(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeProcessJSON(w, http.StatusOK, map[string]any{"runs": views})
+}
+
+type processRunCreateRequest struct {
+	TemplateRef string            `json:"templateRef"`
+	RunID       string            `json:"runId,omitempty"`
+	Params      map[string]string `json:"params,omitempty"`
+}
+
+type processRunCreatedView struct {
+	ID          string    `json:"id"`
+	TemplateRef string    `json:"templateRef"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+}
+
+// handleProcessRunCreate instantiates one exact, immutable template version
+// into the same filesystem store watched by the daemon's engine host. The
+// shared engine.Instantiate helper is also used by `tclaude process run`, so
+// defaults, required params, ids, initial state, and pinned run records cannot
+// drift between the CLI and dashboard paths.
+func handleProcessRunCreate(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requirePermission(w, r, PermProcessRunsCreate); !ok {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxProcessEditBody)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	var body processRunCreateRequest
+	if err := decoder.Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "json", "request body must be one JSON object containing only templateRef, runId, and string-valued params")
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "json", "request body must contain exactly one JSON object")
+		return
+	}
+	body.TemplateRef = strings.TrimSpace(body.TemplateRef)
+	body.RunID = strings.TrimSpace(body.RunID)
+	if body.TemplateRef == "" {
+		writeError(w, http.StatusUnprocessableEntity, "process_run_invalid", "templateRef is required")
+		return
+	}
+	fs, err := store.NewFS(processStoreRoot())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "process_store", "process store is unavailable")
+		return
+	}
+	if _, err := fs.GetTemplateExact(r.Context(), body.TemplateRef); err != nil {
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			http.NotFound(w, r)
+		default:
+			writeError(w, http.StatusUnprocessableEntity, "process_run_invalid", "templateRef must identify an available exact content-addressed template version")
+		}
+		return
+	}
+	run, err := processengine.Instantiate(r.Context(), fs, processengine.InstantiateRequest{
+		TemplateRef:    body.TemplateRef,
+		RunID:          body.RunID,
+		Params:         body.Params,
+		ReplayExisting: body.RunID != "",
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			http.NotFound(w, r)
+		case errors.Is(err, store.ErrRunExists):
+			writeError(w, http.StatusConflict, "process_run_exists", "the requested process run id already exists")
+		case processengine.IsInstantiateInputError(err):
+			writeError(w, http.StatusUnprocessableEntity, "process_run_invalid", "template, runId, or params are invalid")
+		default:
+			writeError(w, http.StatusInternalServerError, "process_run_create", "process run could not be created")
+		}
+		return
+	}
+	// The audit route intentionally never buffers this request body because
+	// params may contain secrets. Hand the middleware only the safe durable run
+	// id after creation (or idempotent replay) succeeds.
+	setAuditTargetLabel(r, run.ID)
+	w.Header().Set("Location", "/v1/process/runs/"+url.PathEscape(run.ID)+"/view")
+	writeProcessJSON(w, http.StatusCreated, map[string]any{"run": processRunCreatedView{
+		ID: run.ID, TemplateRef: run.TemplateRef, CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt,
+	}})
 }
 
 func currentProcessActivity(st *state.State) string {

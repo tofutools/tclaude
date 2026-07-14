@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -53,6 +54,22 @@ type auditCtx struct {
 	vars   map[string]string
 	body   []byte
 	fields *auditFields
+}
+
+// auditResult carries safe handler-produced attribution back to the audit
+// middleware after a command succeeds. It deliberately cannot carry request
+// bodies: routes such as process run creation contain runtime params that may
+// be secrets and must remain unbuffered by the audit layer.
+type auditResult struct {
+	targetLabel string
+}
+
+type auditResultContextKey struct{}
+
+func setAuditTargetLabel(r *http.Request, label string) {
+	if result, ok := r.Context().Value(auditResultContextKey{}).(*auditResult); ok {
+		result.targetLabel = auditClip(label, 120)
+	}
 }
 
 // describer refines auditFields from the request body. nil means the
@@ -175,6 +192,11 @@ var auditRoutes = []auditRoute{
 	// real coordination action against an existing team, so it is audited too.
 	{method: http.MethodPost, segs: []string{"templates", "{name}", "reinforce"}, verb: "template.reinforce", describe: describeTemplateInstantiate},
 
+	// Process run creation is a durable engine command that may launch
+	// performers. Keep the describer nil: the body contains runtime params that
+	// may be secrets, and actor/source/status/path are sufficient attribution.
+	{method: http.MethodPost, segs: []string{"process", "runs"}, verb: "process.run.create"},
+
 	// Remote-access administration (dashboard, cert-admin gated). Issuing a
 	// client cert / adding SAN hosts / (re)running setup are security-
 	// relevant admin actions worth a trail. Describers capture only safe
@@ -197,6 +219,12 @@ var auditRoutes = []auditRoute{
 func auditRequests(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		route, vars, source, ok := matchAuditRoute(r.Method, r.URL.Path)
+		var result *auditResult
+		if ok {
+			source = auditRequestSource(r, source)
+			result = &auditResult{}
+			r = r.WithContext(context.WithValue(r.Context(), auditResultContextKey{}, result))
+		}
 		var body []byte
 		if ok && route.describe != nil {
 			body = bufferAuditBody(r)
@@ -204,9 +232,29 @@ func auditRequests(h http.Handler) http.Handler {
 		rec := &statusRec{ResponseWriter: w, code: 200}
 		h.ServeHTTP(rec, r)
 		if ok {
-			recordAuditRow(r, route, vars, body, rec.code, source)
+			recordAuditRow(r, route, vars, body, result, rec.code, source)
 		}
 	})
+}
+
+// auditRequestSource distinguishes authenticated browser requests that use
+// the Processes tab's shared /v1 surface from Unix-socket CLI requests. The
+// dashboard deliberately consumes the public process API instead of exposing
+// a duplicate /api contract, so the path prefix alone identifies only the
+// route shape. Remote requests carry the authentication boundary's unforgeable
+// pre-auth marker; loopback requests re-run the cookie + origin predicate.
+// Agent and human CLI peers remain classified through their socket context.
+func auditRequestSource(r *http.Request, source string) string {
+	if dashboardPreAuthed(r) {
+		return db.AuditSourceDashboard
+	}
+	if source != db.AuditSourceCLI || !strings.HasPrefix(r.URL.Path, "/v1/process/") {
+		return source
+	}
+	if ok, _, _, _ := dashboardAuthResult(r); ok {
+		return db.AuditSourceDashboard
+	}
+	return source
 }
 
 // isMutatingMethod reports whether a method is a state-changing verb we
@@ -336,7 +384,7 @@ func bufferAuditBody(r *http.Request) []byte {
 // recordAuditRow assembles and writes one audit_log row. Best-effort: a
 // logging failure is warned and swallowed — it must never fail the
 // command, which has already completed by the time this runs.
-func recordAuditRow(r *http.Request, route *auditRoute, vars map[string]string, body []byte, status int, source string) {
+func recordAuditRow(r *http.Request, route *auditRoute, vars map[string]string, body []byte, result *auditResult, status int, source string) {
 	fields := auditFields{
 		Verb:      route.verb,
 		GroupName: vars["name"],
@@ -351,6 +399,9 @@ func recordAuditRow(r *http.Request, route *auditRoute, vars map[string]string, 
 	}
 	if route.describe != nil {
 		route.describe(&auditCtx{vars: vars, body: body, fields: &fields})
+	}
+	if status < http.StatusBadRequest && result != nil && result.targetLabel != "" {
+		fields.TargetLabel = result.targetLabel
 	}
 	if fields.Verb == "" {
 		return // unclassifiable — nothing useful to record
@@ -376,17 +427,21 @@ func recordAuditRow(r *http.Request, route *auditRoute, vars map[string]string, 
 }
 
 // auditActor resolves the request's actor. A dashboard request is the
-// human operator IFF it carries a valid dashboard session — we re-run
-// the auth predicate here rather than keying on the response status, so a
-// post-auth policy refusal (e.g. a blocklisted sudo grant the operator
-// did clear the cookie gate for, returning 403) stays attributed to the
-// operator, while an unauthenticated / cross-origin probe is recorded as
-// "unauthenticated" instead of masquerading as the human. CLI requests
+// human operator IFF it carries a valid dashboard session — either the remote
+// boundary's pre-auth marker or a loopback session that passes the auth
+// predicate. We never key on the response status, so a post-auth policy refusal
+// (e.g. a blocklisted sudo grant the operator did clear the cookie gate for,
+// returning 403) stays attributed to the operator, while an unauthenticated /
+// cross-origin probe is recorded as "unauthenticated" instead of masquerading
+// as the human. CLI requests
 // route through the same classify() the permission gates use: human
 // (operator token), agent (resolved conv-id + title), or unknown
 // (fail-closed callers — still logged so a denied probe leaves a trail).
 func auditActor(r *http.Request, source string) (kind, conv, label string) {
 	if source == db.AuditSourceDashboard {
+		if dashboardPreAuthed(r) {
+			return db.AuditActorHuman, "", "operator"
+		}
 		if ok, _, _, _ := dashboardAuthResult(r); !ok {
 			return db.AuditActorUnknown, "", "unauthenticated"
 		}

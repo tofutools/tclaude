@@ -313,6 +313,7 @@ const (
 	PermProcessAdvance         = "process.advance"
 	PermProcessTemplatesRead   = "process.templates.read"
 	PermProcessTemplatesManage = "process.templates.manage"
+	PermProcessRunsCreate      = "process.runs.create"
 	PermHumanNotify            = "human.notify"
 	PermHumanClipboard         = "human.clipboard"
 	// PermSettingsDefaultModel gates writing the user-level default
@@ -466,11 +467,11 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ow
 		// block on the decision. Timeout = deny, so a doomed agent can
 		// never get stuck waiting forever.
 		if timeout := parseAskHumanHeader(r); timeout > 0 && popupBaseURL != "" {
-			// Snapshot the body now so the popup can show what's being
-			// approved. snapshotRequestBody replaces r.Body with a
-			// fresh reader so the downstream handler still gets the
-			// same bytes after we approve.
-			bodyPreview := snapshotRequestBody(r)
+			// Snapshot a safe description now so the popup can show what's
+			// being approved. The preview helper replaces r.Body with a
+			// fresh reader so the downstream handler still gets the same
+			// bytes after approval; sensitive routes provide redacted previews.
+			bodyPreview := snapshotApprovalRequestBody(r, perm)
 			targetGroup, targetConvID, targetConvTitle := extractApprovalTargets(r, bodyPreview)
 			// For a clipboard write, show the human the exact text about to
 			// be copied under a clear label — the JSON envelope would render

@@ -63,6 +63,301 @@ test('Processes actions preserve API routes, single-flight loads, comment gate, 
   assert.equal(discardPrompts, 1);
 });
 
+test('instantiate actions load an exact ref, POST string params, and navigate to its viewer', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const ref = `release@sha256:${'a'.repeat(64)}`;
+  const requests = [];
+  const attemptID = '11111111-2222-4333-8444-555555555555';
+  const actions = createProcessesActions({ state, notify() {}, dispatchNavigated() {}, mintAttemptID: () => attemptID, fetchImpl: async (path, options = {}) => {
+    requests.push({ path, options });
+    if (path.startsWith('/v1/process/templates/release?version=')) return { ok: true, json: async () => ({
+      currentRef: ref, template: { id: 'release', params: { issue: { type: 'string', required: true } } },
+    }) };
+    if (path === '/v1/process/runs' && options.method === 'POST') return { ok: true, json: async () => ({
+      run: { id: `release-${attemptID}`, templateRef: ref, createdAt: '2026-07-14T00:00:00Z', updatedAt: '2026-07-14T00:00:00Z' },
+    }) };
+    if (path === '/v1/process/runs') return { ok: true, json: async () => ({ runs: [] }) };
+    throw new Error(`unexpected ${path}`);
+  } });
+  assert.equal(await actions.openInstantiation({ id: 'release', ref }), true);
+  assert.equal(state.instantiation.value.ref, ref);
+  assert.equal(state.instantiation.value.phase, 'ready');
+  assert.equal(await actions.submitInstantiation({ issue: 'TCL-300', retries: '2', approved: 'true' }), true);
+  const post = requests.find((request) => request.path === '/v1/process/runs' && request.options.method === 'POST');
+  assert.deepEqual(JSON.parse(post.options.body), {
+    templateRef: ref, runId: `release-${attemptID}`, params: { issue: 'TCL-300', retries: '2', approved: 'true' },
+  });
+  assert.equal(state.subtab.value, 'runs');
+  assert.deepEqual(state.canvas.value, { kind: 'viewer', id: `release-${attemptID}`, key: `release-${attemptID}` });
+  assert.equal(state.instantiation.value, null);
+});
+
+test('successful instantiation moves focus from the removed invoker into the new viewer', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { createProcessesActions }, { ProcessesApp }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
+    harness.importDashboardModule('js/processes-island.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const ref = `focus-success@sha256:${'f'.repeat(64)}`;
+  const runID = 'focus-success-run';
+  const actions = createProcessesActions({
+    state, notify() {}, dispatchNavigated() {}, mintAttemptID: () => 'focus-success-attempt',
+    fetchImpl: async (path, options = {}) => {
+      if (path === '/v1/process/templates') return { ok: true, json: async () => ({ templates: [{
+        id: 'focus-success', latestVersion: { ref, sourceHash: 'focus-success-source' },
+      }] }) };
+      if (path.startsWith('/v1/process/templates/focus-success?version=')) return { ok: true, json: async () => ({
+        currentRef: ref, template: { id: 'focus-success', params: {} },
+      }) };
+      if (path === '/v1/process/runs' && options.method === 'POST') return { ok: true, json: async () => ({
+        run: { id: runID, templateRef: ref, createdAt: '2026-07-14T00:00:00Z', updatedAt: '2026-07-14T00:00:00Z' },
+      }) };
+      if (path === '/v1/process/runs') return { ok: true, json: async () => ({ runs: [] }) };
+      throw new Error(`unexpected ${path}`);
+    },
+  });
+  await actions.load('templates');
+  const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
+  await harness.act(() => Promise.resolve());
+  const invoker = mounted.container.querySelector('[data-process-action="instantiate"]');
+  invoker.focus();
+  await harness.act(() => harness.fireEvent(invoker, 'click'));
+  for (let i = 0; i < 10 && state.instantiation.value?.phase !== 'ready'; i++) await harness.act(() => Promise.resolve());
+  assert.equal(state.instantiation.value?.phase, 'ready');
+  const form = mounted.container.querySelector('.process-instantiate-dialog');
+  assert.ok(form);
+  await harness.act(() => harness.fireEvent(form, 'submit'));
+  for (let i = 0; i < 10; i++) await harness.act(() => Promise.resolve());
+  const back = mounted.container.querySelector('#process-viewer-view [data-process-close-view]');
+  assert.ok(back);
+  assert.equal(mounted.container.contains(invoker), false, 'viewer navigation removes the template-list invoker');
+  assert.equal(harness.document.activeElement, back, 'focus lands on the viewer back control instead of body');
+  await mounted.unmount();
+});
+
+test('instantiate retry keeps one strong attempt id and recovers a committed run after its response is lost', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const ref = `retry@sha256:${'e'.repeat(64)}`;
+  const attemptID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+  let minted = 0;
+  let durableRun = null;
+  let durableCreates = 0;
+  const posted = [];
+  const actions = createProcessesActions({
+    state,
+    notify() {},
+    dispatchNavigated() {},
+    mintAttemptID() { minted++; return attemptID; },
+    fetchImpl: async (path, options = {}) => {
+      if (path === '/v1/process/runs' && options.method === 'POST') {
+        const request = JSON.parse(options.body);
+        posted.push(request);
+        if (!durableRun) {
+          durableCreates++;
+          durableRun = { id: request.runId, templateRef: request.templateRef, createdAt: '2026-07-14T00:00:00Z', updatedAt: '2026-07-14T00:00:00Z' };
+          throw new TypeError('response lost after commit');
+        }
+        assert.equal(request.runId, durableRun.id, 'retry must address the committed logical attempt');
+        return { ok: true, json: async () => ({ run: durableRun }) };
+      }
+      if (path === '/v1/process/runs') return { ok: true, json: async () => ({ runs: [durableRun] }) };
+      throw new Error(`unexpected ${path}`);
+    },
+  });
+
+  assert.equal(await actions.openInstantiation({
+    id: 'retry', ref, template: { id: 'retry', params: { issue: { type: 'string', required: true } } },
+  }), true);
+  assert.equal(await actions.submitInstantiation({ issue: 'TCL-300' }), false, 'lost response remains retryable');
+  assert.equal(state.instantiation.value.runId, `retry-${attemptID}`);
+  assert.equal(await actions.submitInstantiation({ issue: 'TCL-300' }), true, 'retry recovers committed run');
+  assert.equal(minted, 1, 'one open instantiation mints one logical-attempt id');
+  assert.equal(durableCreates, 1, 'backend simulation commits only one durable run');
+  assert.equal(posted.length, 2);
+  assert.equal(posted[0].runId, posted[1].runId);
+  assert.deepEqual(state.canvas.value, { kind: 'viewer', id: durableRun.id, key: durableRun.id });
+});
+
+test('list instantiation loading transition initializes every declared default exactly once', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { ProcessesApp }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-island.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const ref = `defaults@sha256:${'c'.repeat(64)}`;
+  state.setInstantiation({ key: 'list-defaults', id: 'defaults', ref, phase: 'loading', error: '', template: null });
+  let submitted = null;
+  const actions = {
+    refreshActive() {}, load() {}, observeTemplateHeads() {}, activateSubtab() {}, openEditor() {}, closeCanvas() {},
+    closeInstantiation() { state.setInstantiation(null); }, submitInstantiation(params) { submitted = params; },
+  };
+  const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
+  assert.match(mounted.container.querySelector('.process-instantiate-dialog').textContent, /Loading exact template version/);
+  await harness.act(() => state.setInstantiation({
+    key: 'list-defaults', id: 'defaults', ref, phase: 'ready', error: '',
+    template: { id: 'defaults', params: {
+      issue: { type: 'string', default: 'TCL-300' },
+      retries: { type: 'number', default: 2 },
+      approved: { type: 'boolean', default: true },
+    } },
+  }));
+  await new Promise(resolve => queueMicrotask(resolve));
+  const dialog = mounted.container.querySelector('.process-instantiate-dialog');
+  assert.equal(dialog.querySelector('[data-process-param-input="issue"]').value, 'TCL-300');
+  assert.equal(dialog.querySelector('[data-process-param-input="retries"]').value, '2');
+  assert.equal(dialog.querySelector('[data-process-param-input="approved"]').getAttribute('value'), 'true');
+  harness.fireEvent(dialog, 'submit');
+  assert.deepEqual(submitted, { approved: 'true', issue: 'TCL-300', retries: '2' });
+  const issue = dialog.querySelector('[data-process-param-input="issue"]');
+  issue.value = 'user edit'; harness.fireEvent(issue, 'input'); await harness.act(() => Promise.resolve());
+  await harness.act(() => state.setInstantiation({
+    ...state.instantiation.value,
+    template: { id: 'defaults', params: {
+      issue: { type: 'string', default: 'replacement default' },
+      retries: { type: 'number', default: 9 },
+      approved: { type: 'boolean', default: false },
+    } },
+  }));
+  assert.equal(dialog.querySelector('[data-process-param-input="issue"]').value, 'user edit', 'same-ref refresh preserves edits');
+  await mounted.unmount();
+});
+
+test('instantiate dialog renders typed/defaulted/required inputs and canonical values', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { ProcessesApp }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-island.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const ref = `typed@sha256:${'b'.repeat(64)}`;
+  state.setInstantiation({
+    key: 'typed', id: 'typed', ref, phase: 'ready', error: '',
+    template: { id: 'typed', name: 'Typed run', params: {
+      issue: { type: 'string', description: 'Issue id', required: true },
+      retries: { type: 'number', default: 2 },
+      approved: { type: 'boolean', default: true },
+      legacy: { type: 'custom-kind', default: 'raw' },
+    } },
+  });
+  let submitted = null;
+  const actions = {
+    refreshActive() {}, load() {}, observeTemplateHeads() {}, activateSubtab() {}, openEditor() {}, closeCanvas() {},
+    closeInstantiation() {}, submitInstantiation(params) { submitted = params; },
+  };
+  const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
+  const dialog = harness.document.querySelector('.process-instantiate-dialog');
+  assert.ok(dialog);
+  const issue = dialog.querySelector('[data-process-param-input="issue"]');
+  const retries = dialog.querySelector('[data-process-param-input="retries"]');
+  const approved = dialog.querySelector('[data-process-param-input="approved"]');
+  const legacy = dialog.querySelector('[data-process-param-input="legacy"]');
+  assert.equal(issue.type, 'text'); assert.equal(issue.hasAttribute('required'), true);
+  assert.equal(retries.type, 'number'); assert.equal(retries.value, '2');
+  assert.equal(approved.tagName, 'SELECT'); assert.equal(approved.getAttribute('value'), 'true');
+  assert.equal(legacy.type, 'text'); assert.equal(legacy.value, 'raw');
+  assert.match(dialog.querySelector('[data-process-param="issue"]').textContent, /Issue id/);
+  issue.value = 'TCL-300'; harness.fireEvent(issue, 'input'); await harness.act(() => Promise.resolve());
+  retries.value = '9007199254740993'; harness.fireEvent(retries, 'input'); await harness.act(() => Promise.resolve());
+  for (const option of approved.options) option.selected = option.value === 'false';
+  harness.fireEvent(approved, 'change'); await harness.act(() => Promise.resolve());
+  harness.fireEvent(dialog, 'submit');
+  assert.deepEqual(submitted, { approved: 'false', issue: 'TCL-300', legacy: 'raw', retries: '9007199254740993' });
+  await mounted.unmount();
+});
+
+test('optional booleans stay omitted while explicit and defaulted false values are submitted', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { ProcessesApp }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-island.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  state.setInstantiation({
+    key: 'boolean-omission', id: 'boolean-omission', ref: `boolean-omission@sha256:${'9'.repeat(64)}`, phase: 'ready', error: '',
+    template: { id: 'boolean-omission', params: {
+      defaultFalse: { type: 'boolean', default: false },
+      optional: { type: 'boolean' },
+    } },
+  });
+  const submissions = [];
+  const actions = {
+    refreshActive() {}, load() {}, observeTemplateHeads() {}, activateSubtab() {}, openEditor() {}, closeCanvas() {},
+    closeInstantiation() {}, submitInstantiation(params) { submissions.push(params); },
+  };
+  const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
+  const dialog = mounted.container.querySelector('.process-instantiate-dialog');
+  const defaultFalse = dialog.querySelector('[data-process-param-input="defaultFalse"]');
+  const optional = dialog.querySelector('[data-process-param-input="optional"]');
+  assert.equal(defaultFalse.getAttribute('value'), 'false', 'a declared false default remains selected');
+  assert.equal(optional.getAttribute('value'), '', 'an optional boolean without a default begins unset');
+  harness.fireEvent(dialog, 'submit');
+  assert.deepEqual(submissions.at(-1), { defaultFalse: 'false' }, 'untouched optional boolean is omitted');
+  for (const option of optional.options) option.selected = option.value === 'false';
+  harness.fireEvent(optional, 'change'); await harness.act(() => Promise.resolve());
+  harness.fireEvent(dialog, 'submit');
+  assert.deepEqual(submissions.at(-1), { defaultFalse: 'false', optional: 'false' }, 'explicit false is retained');
+  await mounted.unmount();
+});
+
+test('instantiate dialog owns focus, traps Tab, restores the invoker, and cannot dismiss while busy', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { ProcessesApp }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-island.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const ref = `focus@sha256:${'d'.repeat(64)}`;
+  const spec = (key, params = { issue: { type: 'string', required: true } }) => ({
+    key, id: 'focus', ref, phase: 'ready', error: '', template: { id: 'focus', params },
+  });
+  const actions = {
+    refreshActive() {}, load() {}, observeTemplateHeads() {}, activateSubtab() {}, openEditor() {}, closeCanvas() {},
+    closeInstantiation() { if (!state.mutation.value.busy) state.setInstantiation(null); }, submitInstantiation() {},
+  };
+  const invoker = harness.document.body.appendChild(harness.document.createElement('button'));
+  invoker.textContent = 'instantiate focus'; invoker.focus();
+  state.setInstantiation(spec('focus-1'));
+  const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
+  await new Promise(resolve => queueMicrotask(resolve));
+  let overlay = mounted.container.querySelector('.process-instantiate-modal');
+  let first = overlay.querySelector('[data-process-param-input="issue"]');
+  let create = overlay.querySelector('button[type="submit"]');
+  assert.equal(harness.document.activeElement, first, 'the first declared param receives initial focus');
+  create.focus(); await harness.act(() => harness.fireEvent(create, 'keydown', { key: 'Tab' }));
+  assert.equal(harness.document.activeElement, first, 'Tab wraps to the first dialog control');
+  await harness.act(() => harness.fireEvent(first, 'keydown', { key: 'Tab', shiftKey: true }));
+  assert.equal(harness.document.activeElement, create, 'Shift+Tab wraps to the last dialog control');
+  await harness.act(() => harness.fireEvent(create, 'keydown', { key: 'Escape' }));
+  assert.equal(state.instantiation.value, null);
+  assert.equal(harness.document.activeElement, invoker, 'Escape restores focus to the invoker');
+
+  invoker.focus(); await harness.act(() => state.setInstantiation(spec('focus-empty', {})));
+  await new Promise(resolve => queueMicrotask(resolve));
+  overlay = mounted.container.querySelector('.process-instantiate-modal');
+  create = overlay.querySelector('button[type="submit"]');
+  assert.equal(harness.document.activeElement, create, 'Create run receives initial focus when there are no params');
+  await harness.act(() => harness.fireEvent(overlay, 'click'));
+  assert.equal(state.instantiation.value, null, 'backdrop closes when idle');
+  assert.equal(harness.document.activeElement, invoker, 'backdrop close restores focus');
+
+  invoker.focus(); state.beginMutation(); await harness.act(() => state.setInstantiation(spec('focus-busy')));
+  await new Promise(resolve => queueMicrotask(resolve));
+  overlay = mounted.container.querySelector('.process-instantiate-modal');
+  first = overlay.querySelector('[data-process-param-input="issue"]');
+  await harness.act(() => harness.fireEvent(first, 'keydown', { key: 'Escape' }));
+  assert.ok(state.instantiation.value, 'busy Escape cannot dismiss');
+  await harness.act(() => harness.fireEvent(overlay, 'click'));
+  assert.ok(state.instantiation.value, 'busy backdrop cannot dismiss');
+  state.endMutation(); state.setInstantiation(null);
+  await mounted.unmount(); invoker.remove();
+});
+
 test('a successful Worklist action supersedes an older poll with an authoritative refresh', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([

@@ -464,3 +464,38 @@ rather than surfacing at runtime. Because these fields are not templatable, a
 `{{ params.x }}` reference is likewise an authoring-time error.
 Absolute `wait.until` deadlines are trimmed and parsed as RFC3339 timestamps at
 authoring time, matching the executor's timer contract.
+
+The dashboard template editor can declare params and instantiate any clean,
+saved version. Instantiation always sends the exact `id@sha256:<hash>` currently
+shown; a dirty editor requires a successful save first, so a run never captures
+unsaved browser state. Saved editor drafts that still have validation errors
+remain editable but cannot be instantiated. Declared string, number, and
+boolean params render with matching controls. Runtime values remain strings,
+matching `tclaude process run --param key=value`; defaults and required checks
+use the same shared creation code for both surfaces. The dashboard retains one
+cryptographically strong run id for an open instantiation, so retrying after a
+lost response recovers the original durable run instead of launching a second
+one. The REST endpoint replays an existing explicit id only when its exact
+template ref and resolved params match; reusing it for different inputs is a
+conflict. This does not change the CLI's duplicate explicit-id error. When no
+run id is supplied, same-second creations retry with a numeric suffix instead
+of colliding.
+
+With Processes enabled, the engine-hosted create endpoint is:
+
+```http
+POST /v1/process/runs
+Content-Type: application/json
+
+{"templateRef":"release@sha256:<64 hex>","params":{"issue":"TCL-300"},"runId":"optional"}
+```
+
+Success returns `201`, a minimal run identity (`id`, `templateRef`, `createdAt`,
+`updatedAt`), and a `Location: /v1/process/runs/{id}/view` header. The route
+does not expose the pinned template or params in its response and does not opt
+the run into program execution. Agent callers need the non-default
+`process.runs.create` permission. This is deliberately separate from
+`process.templates.manage`: permission to author a template does not confer
+permission to instantiate performers. The dashboard operator passes as the
+human caller. Successful and denied creation attempts are audited as
+`process.run.create`; audit rows never buffer or record the runtime params map.

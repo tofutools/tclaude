@@ -47,6 +47,7 @@ export function blankEditView(id) {
       kind: 'ProcessTemplate',
       id: id || 'new-process',
       name: '',
+      params: {},
       start: 'start',
       nodes: {
         start: { type: 'start' },
@@ -76,6 +77,7 @@ export class ProcessEditModel {
     const v = view || blankEditView();
     this.template = clone(v.template) || {};
     if (!this.template.nodes) this.template.nodes = {};
+    if (!this.template.params) this.template.params = {};
     this.edges = clone(v.edges) || [];
     this.layout = clone(v.layout) || {};
     if (!this.layout.nodes) this.layout.nodes = {};
@@ -457,6 +459,14 @@ export class ProcessEditModel {
       if (doc) this.template.doc = doc;
       else delete this.template.doc;
     }
+  }
+
+  setParams(params) {
+    const next = clone(params) || {};
+    if (JSON.stringify(next) === JSON.stringify(this.template.params || {})) return false;
+    this.begin();
+    this.template.params = next;
+    return true;
   }
 
   // insertSnippet clones a preconfigured compound (nodes + internal edges) at a

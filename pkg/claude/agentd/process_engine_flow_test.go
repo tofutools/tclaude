@@ -5,11 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -28,12 +32,40 @@ import (
 	processverify "github.com/tofutools/tclaude/pkg/claude/process/verify"
 	"github.com/tofutools/tclaude/pkg/claude/process/worklist"
 	"github.com/tofutools/tclaude/pkg/claude/processcmd"
+	"github.com/tofutools/tclaude/pkg/claude/remoteaccess"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
+
+type processRunReadErrorBody struct {
+	prefix  []byte
+	tail    io.Reader
+	readErr error
+}
+
+func (r *processRunReadErrorBody) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if len(r.prefix) > 0 {
+		n := copy(p, r.prefix)
+		r.prefix = r.prefix[n:]
+		if len(r.prefix) == 0 {
+			return n, r.readErr
+		}
+		return n, nil
+	}
+	return r.tail.Read(p)
+}
+
+func (*processRunReadErrorBody) Close() error { return nil }
 
 func TestProcessEngineRoutes404WhenFeatureOff(t *testing.T) {
 	f := newFlow(t)
 	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/process/runs", nil)))
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+	rec = testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/process/runs", map[string]any{
+		"templateRef": "off@sha256:" + strings.Repeat("0", 64),
+	})))
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 	rec = testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/process/worklist", nil)))
 	assert.Equal(t, http.StatusNotFound, rec.Code)
@@ -41,6 +73,454 @@ func TestProcessEngineRoutes404WhenFeatureOff(t *testing.T) {
 		"action": "approve", "comment": "reviewed", "idempotencyKey": "off-1",
 	})))
 	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestProcessRunCreatePinsExactRefAppliesDefaultsAndInterpolates(t *testing.T) {
+	f, root := processEngineFlow(t)
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	required := true
+	v1 := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "rest-instantiate", Start: "work",
+		Params: map[string]model.Param{
+			"issue": {Type: "string", Required: &required, Description: "Issue id"},
+			"tries": {Type: "number", Default: 2},
+		},
+		Nodes: map[string]model.Node{
+			"work": {
+				Type:      model.NodeTypeTask,
+				Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "Implement {{ params.issue }} in {{ params.tries }} passes"},
+				Next:      model.Next{"pass": "done"},
+			},
+			"done": {Type: model.NodeTypeEnd, Result: "success"},
+		},
+	}
+	v1Record, err := fs.PutTemplate(t.Context(), v1)
+	require.NoError(t, err)
+	v2 := *v1
+	v2.Nodes = maps.Clone(v1.Nodes)
+	work := v2.Nodes["work"]
+	work.Performer = &model.Performer{Kind: model.PerformerAgent, Prompt: "WRONG HEAD {{ params.issue }}"}
+	v2.Nodes["work"] = work
+	v2Record, err := fs.PutTemplate(t.Context(), &v2)
+	require.NoError(t, err)
+	require.NotEqual(t, v1Record.Ref, v2Record.Ref)
+
+	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/process/runs", map[string]any{
+		"templateRef": v1Record.Ref,
+		"runId":       "rest-exact-run",
+		"params":      map[string]string{"issue": "TCL-300"},
+	})))
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	assert.Equal(t, "/v1/process/runs/rest-exact-run/view", rec.Header().Get("Location"))
+	var created struct {
+		Run struct {
+			ID          string    `json:"id"`
+			TemplateRef string    `json:"templateRef"`
+			CreatedAt   time.Time `json:"createdAt"`
+			UpdatedAt   time.Time `json:"updatedAt"`
+		} `json:"run"`
+	}
+	testharness.DecodeJSON(t, rec, &created)
+	assert.Equal(t, "rest-exact-run", created.Run.ID)
+	assert.Equal(t, v1Record.Ref, created.Run.TemplateRef)
+	assert.NotZero(t, created.Run.CreatedAt)
+	assert.NotZero(t, created.Run.UpdatedAt)
+	var envelope map[string]map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope))
+	createdKeys := make([]string, 0, len(envelope["run"]))
+	for key := range envelope["run"] {
+		createdKeys = append(createdKeys, key)
+	}
+	assert.ElementsMatch(t, []string{"id", "templateRef", "createdAt", "updatedAt"}, createdKeys)
+
+	run, err := fs.GetRun(t.Context(), "rest-exact-run")
+	require.NoError(t, err)
+	assert.Equal(t, v1Record.Ref, run.TemplateRef)
+	assert.Equal(t, map[string]string{"issue": "TCL-300", "tries": "2"}, run.Params)
+	assert.False(t, run.AllowPrograms, "the REST surface must not opt runs into local program execution")
+	require.NotNil(t, run.Template)
+	assert.Equal(t, v1.Nodes["work"].Performer.Prompt, run.Template.Nodes["work"].Performer.Prompt)
+
+	adapter := &captureInstantiateAdapter{}
+	host := processengine.New(fs, "agentd:instantiate-flow", map[model.PerformerKind]processexec.Adapter{
+		model.PerformerAgent: adapter,
+	})
+	results, err := agentd.RunProcessEngineTickForTest(t.Context(), host)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	request := adapter.request()
+	assert.Equal(t, "Implement TCL-300 in 2 passes", request.Performer.Prompt)
+}
+
+// Scenario: the first dashboard request commits its run, but the browser never
+// receives the response. Retrying the still-open dialog carries the same
+// cryptographically strong run id and must recover that one durable operation.
+func TestProcessRunCreateLostResponseRetryRecoversOneRun(t *testing.T) {
+	f, root := processEngineFlow(t)
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "lost-response", Start: "done",
+		Params: map[string]model.Param{
+			"issue": {Type: "string"},
+			"tries": {Type: "number", Default: 2},
+		},
+		Nodes: map[string]model.Node{"done": {Type: model.NodeTypeEnd}},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	require.NoError(t, err)
+	const runID = "lost-response-11111111-2222-4333-8444-555555555555"
+	request := func(params map[string]string) *httptest.ResponseRecorder {
+		return testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/process/runs", map[string]any{
+			"templateRef": record.Ref, "runId": runID, "params": params,
+		})))
+	}
+
+	// Deliberately discard the first response body: from the client's point of
+	// view the request failed ambiguously after the filesystem commit.
+	first := request(map[string]string{"issue": "TCL-300"})
+	require.Equal(t, http.StatusCreated, first.Code, first.Body.String())
+	committed, err := fs.GetRun(t.Context(), runID)
+	require.NoError(t, err)
+
+	retry := request(map[string]string{"issue": "TCL-300", "tries": "2"})
+	require.Equal(t, http.StatusCreated, retry.Code, retry.Body.String())
+	var replayed struct {
+		Run struct {
+			ID          string    `json:"id"`
+			TemplateRef string    `json:"templateRef"`
+			CreatedAt   time.Time `json:"createdAt"`
+		} `json:"run"`
+	}
+	testharness.DecodeJSON(t, retry, &replayed)
+	assert.Equal(t, committed.ID, replayed.Run.ID)
+	assert.Equal(t, committed.TemplateRef, replayed.Run.TemplateRef)
+	assert.Equal(t, committed.CreatedAt, replayed.Run.CreatedAt)
+
+	runs, err := fs.ListRuns(t.Context())
+	require.NoError(t, err)
+	require.Len(t, runs, 1, "lost-response retry must not suffix a second run")
+	assert.Equal(t, map[string]string{"issue": "TCL-300", "tries": "2"}, runs[0].Params)
+
+	conflict := request(map[string]string{"issue": "TCL-301"})
+	assert.Equal(t, http.StatusConflict, conflict.Code, conflict.Body.String())
+	assert.Contains(t, conflict.Body.String(), "requested process run id already exists")
+	runs, err = fs.ListRuns(t.Context())
+	require.NoError(t, err)
+	require.Len(t, runs, 1, "same attempt id with a different payload must not mutate or duplicate the run")
+	assert.Equal(t, "TCL-300", runs[0].Params["issue"])
+
+	auditRows, err := db.ListAuditLog(db.AuditLogFilter{Verb: "process.run.create"})
+	require.NoError(t, err)
+	require.Len(t, auditRows, 3)
+	successes := 0
+	for _, row := range auditRows {
+		if row.Status == http.StatusCreated {
+			successes++
+			assert.Equal(t, runID, row.TargetLabel, "created and replayed successes identify the durable run")
+		} else {
+			assert.Empty(t, row.TargetLabel, "failed attempts must not claim a created run")
+		}
+	}
+	assert.Equal(t, 2, successes, "initial creation and idempotent replay are both attributed")
+}
+
+func TestProcessRunCreateUsesDedicatedPermission(t *testing.T) {
+	f, root := processEngineFlow(t)
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "permission-run", Start: "done",
+		Params: map[string]model.Param{"secret": {Type: "string"}},
+		Nodes:  map[string]model.Node{"done": {Type: model.NodeTypeEnd}},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	require.NoError(t, err)
+	assert.True(t, agentd.IsKnownPermSlug(agentd.PermProcessRunsCreate))
+	const conv = "process-run-caller-aaaa-bbbb"
+	const secret = "audit-must-not-record-this-param"
+	body := map[string]any{"templateRef": record.Ref, "runId": "permission-created", "params": map[string]string{"secret": secret}}
+
+	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermProcessTemplatesManage, "test"))
+	denied := agentReq(t, f, conv, http.MethodPost, "/v1/process/runs", body)
+	assert.Equal(t, http.StatusForbidden, denied.Code, denied.Body.String())
+	assert.Contains(t, denied.Body.String(), agentd.PermProcessRunsCreate)
+	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermProcessRunsCreate, "test"))
+	created := agentReq(t, f, conv, http.MethodPost, "/v1/process/runs", body)
+	assert.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+
+	rows, err := db.ListAuditLog(db.AuditLogFilter{Verb: "process.run.create"})
+	require.NoError(t, err)
+	require.Len(t, rows, 2, "both denied and successful durable command attempts are audited")
+	statuses := map[int]bool{}
+	for _, row := range rows {
+		statuses[row.Status] = true
+		assert.Equal(t, http.MethodPost, row.Method)
+		assert.Equal(t, "/v1/process/runs", row.Path)
+		assert.Equal(t, db.AuditSourceCLI, row.Source)
+		assert.Empty(t, row.Detail, "nil describer must not buffer runtime params")
+		if row.Status == http.StatusCreated {
+			assert.Equal(t, "permission-created", row.TargetLabel)
+		} else {
+			assert.Empty(t, row.TargetLabel)
+		}
+		encoded, marshalErr := json.Marshal(row)
+		require.NoError(t, marshalErr)
+		assert.NotContains(t, string(encoded), secret)
+	}
+	assert.True(t, statuses[http.StatusForbidden], "denied attempt missing from audit")
+	assert.True(t, statuses[http.StatusCreated], "successful attempt missing from audit")
+}
+
+func TestProcessRunCreateAskHumanPersistsOnlyRedactedParams(t *testing.T) {
+	f, root := processEngineFlow(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "approval-preview", Start: "done",
+		Params: map[string]model.Param{
+			"sentinel-param-name": {Type: "string"},
+			"ordinary":            {Type: "string"},
+		},
+		Nodes: map[string]model.Node{"done": {Type: model.NodeTypeEnd}},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	require.NoError(t, err)
+
+	const (
+		conv   = "process-run-approval-caller"
+		runID  = "approval-preview-run"
+		secret = "sentinel-secret-must-never-persist"
+	)
+	body := []byte(fmt.Sprintf(`{"templateRef":%q,"runId":%q,"params":{"sentinel-param-name":%q,"ordinary":"value"}}`, record.Ref, runID, secret))
+	req := httptest.NewRequest(http.MethodPost, "/v1/process/runs", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Tclaude-Ask-Human", "1ms")
+	denied := testharness.Serve(f.Mux, agentd.AsAgentPeer(req, conv))
+	require.Equal(t, http.StatusForbidden, denied.Code, denied.Body.String())
+
+	rows, err := db.ListRecentHandledAccessRequests(10)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	row := rows[0]
+	assert.Equal(t, agentd.PermProcessRunsCreate, row.Perm)
+	assert.Equal(t, http.MethodPost, row.Method)
+	assert.Equal(t, "/v1/process/runs", row.Path)
+	assert.Equal(t, "timed out", row.Status)
+	assert.Contains(t, row.BodyPreview, record.Ref)
+	assert.Contains(t, row.BodyPreview, runID)
+	assert.Contains(t, row.BodyPreview, "[redacted: 2 parameter(s)]")
+	encoded, marshalErr := json.Marshal(row)
+	require.NoError(t, marshalErr)
+	for _, forbidden := range []string{"sentinel-param-name", secret, `"ordinary"`, `"value"`} {
+		assert.NotContains(t, string(encoded), forbidden, "whole persisted access-request row must exclude parameter names and values")
+	}
+}
+
+func TestProcessRunCreateAskHumanApprovalPreservesBodyReadError(t *testing.T) {
+	f, root := processEngineFlow(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:1"))
+	t.Cleanup(agentd.StubApprovalForTest(true))
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "approval-read-error", Start: "done",
+		Params: map[string]model.Param{"secret": {Type: "string"}},
+		Nodes:  map[string]model.Node{"done": {Type: model.NodeTypeEnd}},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	require.NoError(t, err)
+
+	const runID = "approval-read-error-run"
+	body := fmt.Sprintf(`{"templateRef":%q,"runId":%q,"params":{"secret":"valid-after-error"}}`, record.Ref, runID)
+	split := strings.Index(body, `"params":`) + len(`"params":`)
+	require.Greater(t, split, len(`"params":`))
+	source := &processRunReadErrorBody{
+		prefix:  []byte(body[:split]),
+		tail:    strings.NewReader(body[split:]),
+		readErr: errors.New("injected request body read error"),
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/process/runs", source)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Tclaude-Ask-Human", "1s")
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(req, "process-run-read-error-caller"))
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), "valid-after-error")
+	_, err = fs.GetRun(t.Context(), runID)
+	require.ErrorIs(t, err, store.ErrNotFound)
+}
+
+func TestProcessRunCreateDashboardAuditAttribution(t *testing.T) {
+	_, root := processEngineFlow(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "dashboard-audit-run", Start: "done",
+		Params: map[string]model.Param{"secret": {Type: "string"}},
+		Nodes:  map[string]model.Node{"done": {Type: model.NodeTypeEnd}},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	require.NoError(t, err)
+	const secret = "dashboard-audit-must-not-record-this-param"
+
+	dashboard := agentd.BuildDashboardHandlerForTest()
+	created := testharness.Serve(dashboard, testharness.JSONRequest(t, http.MethodPost, "/v1/process/runs", map[string]any{
+		"templateRef": record.Ref,
+		"runId":       "dashboard-audit-created",
+		"params":      map[string]string{"secret": secret},
+	}))
+	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+
+	rows, err := db.ListAuditLog(db.AuditLogFilter{Verb: "process.run.create"})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	row := rows[0]
+	assert.Equal(t, db.AuditActorHuman, row.ActorKind)
+	assert.Equal(t, "operator", row.ActorLabel)
+	assert.Equal(t, db.AuditSourceDashboard, row.Source)
+	assert.Equal(t, http.MethodPost, row.Method)
+	assert.Equal(t, "/v1/process/runs", row.Path)
+	assert.Equal(t, http.StatusCreated, row.Status)
+	assert.Equal(t, "dashboard-audit-created", row.TargetLabel)
+	assert.Empty(t, row.Detail, "nil describer must not buffer runtime params")
+	encoded, err := json.Marshal(row)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), secret)
+}
+
+func TestProcessRunCreateRemoteDashboardAuditAttribution(t *testing.T) {
+	_, root := processEngineFlow(t)
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "remote-dashboard-audit-run", Start: "done",
+		Params: map[string]model.Param{"secret": {Type: "string"}},
+		Nodes:  map[string]model.Node{"done": {Type: model.NodeTypeEnd}},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	require.NoError(t, err)
+	_, err = remoteaccess.Setup(remoteaccess.SetupOptions{
+		Bind:        "0.0.0.0:8443",
+		Passphrase:  "pp-pp-pp-pp",
+		ClientName:  "phone",
+		P12Password: "p12pw",
+	})
+	require.NoError(t, err)
+	material, err := remoteaccess.Load()
+	require.NoError(t, err)
+
+	handler := agentd.BuildRemoteDashboardHandlerForTest(material)
+	session := &http.Cookie{
+		Name:  remoteSessionCookieName,
+		Value: remoteaccess.SignCookie(material.CookieKey(), "human", time.Hour),
+	}
+	post := func(secret string) *httptest.ResponseRecorder {
+		req := testharness.JSONRequest(t, http.MethodPost, "/v1/process/runs", map[string]any{
+			"templateRef": record.Ref,
+			"runId":       "remote-dashboard-audit-created",
+			"params":      map[string]string{"secret": secret},
+		})
+		req.AddCookie(session)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+
+	const successSecret = "remote-dashboard-success-secret"
+	created := post(successSecret)
+	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+	const failureSecret = "remote-dashboard-failure-secret"
+	conflict := post(failureSecret)
+	require.Equal(t, http.StatusConflict, conflict.Code, conflict.Body.String())
+
+	rows, err := db.ListAuditLog(db.AuditLogFilter{Verb: "process.run.create"})
+	require.NoError(t, err)
+	require.Len(t, rows, 2, "each authenticated remote command attempt is audited exactly once")
+	statuses := map[int]bool{}
+	for _, row := range rows {
+		statuses[row.Status] = true
+		assert.Equal(t, db.AuditActorHuman, row.ActorKind)
+		assert.Empty(t, row.ActorConv)
+		assert.Equal(t, "operator", row.ActorLabel)
+		assert.Equal(t, db.AuditSourceDashboard, row.Source)
+		assert.Equal(t, http.MethodPost, row.Method)
+		assert.Equal(t, "/v1/process/runs", row.Path)
+		assert.Empty(t, row.Detail, "nil describer must not buffer runtime params")
+		if row.Status == http.StatusCreated {
+			assert.Equal(t, "remote-dashboard-audit-created", row.TargetLabel)
+		} else {
+			assert.Empty(t, row.TargetLabel)
+		}
+		encoded, marshalErr := json.Marshal(row)
+		require.NoError(t, marshalErr)
+		assert.NotContains(t, string(encoded), successSecret)
+		assert.NotContains(t, string(encoded), failureSecret)
+	}
+	assert.True(t, statuses[http.StatusCreated], "successful attempt missing from audit")
+	assert.True(t, statuses[http.StatusConflict], "handler failure missing from audit")
+}
+
+func TestProcessRunCreateStrictSanitizedBoundary(t *testing.T) {
+	f, _ := processEngineFlow(t)
+	serveRaw := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/v1/process/runs", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		return testharness.Serve(f.Mux, agentd.AsHumanPeer(req))
+	}
+	for name, body := range map[string]string{
+		"unknown field":    `{"templateRef":"x","superSecretField":true}`,
+		"non-string param": `{"templateRef":"x","params":{"tries":2}}`,
+		"trailing json":    `{"templateRef":"x"}{"templateRef":"y"}`,
+		"oversized":        `{"templateRef":"` + strings.Repeat("x", (4<<20)+1) + `"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := serveRaw(body)
+			assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+			assert.NotContains(t, rec.Body.String(), "superSecretField")
+		})
+	}
+	secret := "../../home/operator/private-template"
+	invalid := serveRaw(`{"templateRef":"` + secret + `"}`)
+	assert.Equal(t, http.StatusUnprocessableEntity, invalid.Code, invalid.Body.String())
+	assert.NotContains(t, invalid.Body.String(), secret)
+	assert.Contains(t, invalid.Body.String(), "exact content-addressed")
+	missing := serveRaw(`{"templateRef":"missing@sha256:` + strings.Repeat("a", 64) + `"}`)
+	assert.Equal(t, http.StatusNotFound, missing.Code, missing.Body.String())
+}
+
+func TestProcessRunCreateRejectsInvalidEditorSavedVersionWithoutRun(t *testing.T) {
+	f, root := processEngineFlow(t)
+	tmpl := processRESTTemplate("invalid-run-source", "advisory editor draft", 10)
+	edges := model.NormalizeEdges(tmpl)
+	for i := range edges {
+		if edges[i].From == "begin" {
+			edges[i].To = "missing"
+		}
+	}
+	save := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/invalid-run-source", processEditResponse{
+		Template: semanticProcessTemplate(tmpl), Edges: edges, Layout: tmpl.Layout,
+	})
+	require.Equal(t, http.StatusCreated, save.Code, save.Body.String())
+	var saved struct {
+		Ref         string            `json:"ref"`
+		Diagnostics []processEditDiag `json:"diagnostics"`
+	}
+	testharness.DecodeJSON(t, save, &saved)
+	require.NotEmpty(t, saved.Ref)
+	require.NotEmpty(t, saved.Diagnostics, "editor saves keep validation errors as an advisory draft")
+
+	create := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/process/runs", map[string]any{
+		"templateRef": saved.Ref, "runId": "invalid-editor-run",
+	})))
+	assert.Equal(t, http.StatusUnprocessableEntity, create.Code, create.Body.String())
+	assert.Contains(t, create.Body.String(), "template, runId, or params are invalid")
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	_, err = fs.GetRun(t.Context(), "invalid-editor-run")
+	assert.ErrorIs(t, err, store.ErrNotFound)
 }
 
 func TestProcessEngineDynamicallyFollowsFeatureFlag(t *testing.T) {
@@ -1767,6 +2247,26 @@ func (a *errorAdapter) Validate(processexec.Request) error { return nil }
 
 func (a *errorAdapter) Perform(context.Context, processexec.Request) (processexec.Observation, error) {
 	return processexec.Observation{}, errors.New("performer result lost")
+}
+
+type captureInstantiateAdapter struct {
+	mu       sync.Mutex
+	captured processexec.Request
+}
+
+func (a *captureInstantiateAdapter) Validate(processexec.Request) error { return nil }
+
+func (a *captureInstantiateAdapter) Perform(_ context.Context, request processexec.Request) (processexec.Observation, error) {
+	a.mu.Lock()
+	a.captured = request
+	a.mu.Unlock()
+	return processexec.Observation{Actor: "agent:agt_instantiate", Verdict: "pass", EvidenceRef: "artifact:instantiate-flow"}, nil
+}
+
+func (a *captureInstantiateAdapter) request() processexec.Request {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.captured
 }
 
 type countingProcessStore struct {

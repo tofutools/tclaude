@@ -251,13 +251,19 @@ func seedProcessDashSnap(t *testing.T, f *testharness.Flow) {
 	// obligations, and the tick must not see (and advance to completion) the
 	// hand-crafted release-42 run created below.
 	seedProcessWorklistDashSnap(t, root)
+	required := true
 	tmpl := &model.Template{
 		APIVersion:  model.APIVersion,
 		Kind:        model.Kind,
 		ID:          "release-train",
 		Name:        "Release train",
 		Description: "Plan, implement, review, and ship a dashboard release.",
-		Start:       "begin",
+		Params: map[string]model.Param{
+			"issue":       {Type: "string", Description: "Tracker issue to implement", Required: &required},
+			"retries":     {Type: "number", Description: "Maximum implementation passes", Default: 2},
+			"shipPreview": {Type: "boolean", Description: "Publish a preview before release", Default: true},
+		},
+		Start: "begin",
 		Nodes: map[string]model.Node{
 			"begin": {Type: model.NodeTypeStart, Next: model.Next{"pass": "ship"}},
 			"ship":  {Type: model.NodeTypeEnd, Result: "success"},
@@ -949,6 +955,22 @@ func baseStates() []dashsnap.State {
   nameInput.value = 'Release train — renamed';
   nameInput.focus();
   nameInput.select();`),
+			SettleMS: 1100,
+		},
+		{
+			Key:     "process-editor-params",
+			Title:   "Process editor — template params",
+			Caption: "TCL-300 params editor: parameter names, free-form types, descriptions, explicit defaults, and required state in one atomic editor transaction.",
+			JS: processEditorStateJS(`await ed.openParamsSettings();
+  if (!document.querySelector('.process-param-dialog [data-process-param="issue"]')) throw new Error('params dialog did not open');`),
+			SettleMS: 1100,
+		},
+		{
+			Key:     "process-instantiate-dialog",
+			Title:   "Process template — instantiate exact version",
+			Caption: "TCL-300 instantiate dialog: exact content-addressed ref plus required string, defaulted number, and defaulted boolean inputs.",
+			JS: processEditorStateJS(`await ed.requestInstantiate();
+  if (!document.querySelector('.process-instantiate-dialog [data-process-param-input="issue"]')) throw new Error('instantiate dialog did not open');`),
 			SettleMS: 1100,
 		},
 		{
