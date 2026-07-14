@@ -55,6 +55,49 @@ func TestTemplatePutGetIsContentAddressed(t *testing.T) {
 	}
 }
 
+func TestListTemplateHeadsReadsOnlyPublishedHeadIdentity(t *testing.T) {
+	ctx := t.Context()
+	root := t.TempDir()
+	fs := newStoreAt(t, root)
+
+	alpha := storetest.Template()
+	alpha.ID = "alpha"
+	alphaRecord, err := fs.PutTemplate(ctx, alpha)
+	require.NoError(t, err)
+	beta := storetest.Template()
+	beta.ID = "beta"
+	betaRecord, err := fs.PutTemplate(ctx, beta)
+	require.NoError(t, err)
+
+	heads, err := fs.ListTemplateHeads(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, []store.TemplateHead{
+		{ID: "alpha", Ref: alphaRecord.Ref},
+		{ID: "beta", Ref: betaRecord.Ref},
+	}, heads)
+
+	alpha.Description = "new head"
+	alphaNext, err := fs.PutTemplate(ctx, alpha)
+	require.NoError(t, err)
+	heads, err = fs.ListTemplateHeads(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, alphaNext.Ref, heads[0].Ref)
+	assert.Equal(t, betaRecord.Ref, heads[1].Ref)
+
+	// Missing legacy pointers stay visible as an id-only change signal. A
+	// normal head read materializes the fallback, so later polls are bounded.
+	require.NoError(t, os.Remove(filepath.Join(root, "templates", "beta", "head")))
+	heads, err = fs.ListTemplateHeads(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, store.TemplateHead{ID: "beta"}, heads[1])
+	legacy, err := fs.GetTemplateHead(ctx, "beta")
+	require.NoError(t, err)
+	assert.Equal(t, betaRecord.Ref, legacy.Ref)
+	heads, err = fs.ListTemplateHeads(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, betaRecord.Ref, heads[1].Ref)
+}
+
 func TestTemplateSourcePreservesAndUpdatesEditorLayoutWithoutChangingRef(t *testing.T) {
 	ctx := t.Context()
 	fs := newStore(t)

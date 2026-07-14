@@ -103,8 +103,8 @@ export function ProcessesApp({ state, actions, confirmDiscard }) {
   useEffect(() => { const poll = () => {
     const view = state.view.value;
     if (!view.active) return;
-    if ((view.subtab === 'templates' || view.subtab === 'worklist')
-        && view.requests[view.subtab].phase !== 'loading') void actions.load(view.subtab, { quiet: true });
+    void actions.load('worklist', { quiet: true });
+    if (view.subtab === 'templates' || view.canvas?.kind === 'editor') void actions.observeTemplateHeads();
   }; document.addEventListener('tclaude:snapshot', poll); return () => document.removeEventListener('tclaude:snapshot', poll); }, []);
   useEffect(() => { const reselected = (event) => { if (event.detail?.tab === 'processes' && state.view.value.active) void actions.refreshActive(); }; document.addEventListener('tclaude:tab-reselected', reselected); return () => document.removeEventListener('tclaude:tab-reselected', reselected); }, []);
   const navigate = async (event, name) => { if (isModifiedClick(event)) return; event.preventDefault(); await actions.activateSubtab(name); };

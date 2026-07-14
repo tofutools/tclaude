@@ -642,6 +642,48 @@ func (s *FS) GetTemplateHead(ctx context.Context, id string) (TemplateRecord, er
 	return s.getTemplateHeadUnlocked(ctx, id)
 }
 
+// ListTemplateHeads returns one small, sorted head identity per template
+// directory. It reads only the atomically published head pointer and never
+// scans immutable version directories; callers can therefore use it as a
+// bounded change signal before deciding whether ListTemplates is necessary.
+// A blank Ref identifies a legacy or in-progress directory without a head.
+func (s *FS) ListTemplateHeads(ctx context.Context) ([]TemplateHead, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	templatesDir := filepath.Join(s.root, "templates")
+	entries, err := os.ReadDir(templatesDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read templates dir: %w", err)
+	}
+	heads := make([]TemplateHead, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() || safeSegment(entry.Name()) != nil {
+			continue
+		}
+		id := entry.Name()
+		data, readErr := os.ReadFile(filepath.Join(templatesDir, id, "head"))
+		if errors.Is(readErr, os.ErrNotExist) {
+			heads = append(heads, TemplateHead{ID: id})
+			continue
+		}
+		if readErr != nil {
+			return nil, fmt.Errorf("read template head %q: %w", id, readErr)
+		}
+		ref := strings.TrimSpace(string(data))
+		refID, _, parseErr := parseTemplateRef(ref)
+		if parseErr != nil || refID != id {
+			return nil, fmt.Errorf("%w: template head %q", ErrContentMismatch, ref)
+		}
+		heads = append(heads, TemplateHead{ID: id, Ref: ref})
+	}
+	slices.SortFunc(heads, func(a, b TemplateHead) int { return strings.Compare(a.ID, b.ID) })
+	return heads, nil
+}
+
 func (s *FS) getTemplateHeadUnlocked(ctx context.Context, id string) (TemplateRecord, error) {
 	if err := safeSegment(id); err != nil {
 		return TemplateRecord{}, fmt.Errorf("invalid template id: %w", err)
@@ -678,6 +720,11 @@ func (s *FS) getTemplateHeadUnlocked(ctx context.Context, id string) (TemplateRe
 		}
 		return strings.Compare(b.SemanticHash, a.SemanticHash)
 	})
+	// Materialize the legacy mtime-derived choice so future head observations
+	// stay bounded to the pointer file instead of rescanning all versions.
+	if err := s.writeTemplateHead(records[0]); err != nil {
+		return TemplateRecord{}, err
+	}
 	return records[0], nil
 }
 

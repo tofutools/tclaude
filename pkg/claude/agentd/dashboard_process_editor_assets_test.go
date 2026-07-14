@@ -53,6 +53,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 	mustContain("process-external-change.js", externalChange,
 		"export function reconcileExternalChange(",
 		"export function keepExternalChange(",
+		"export function templateHeadSignature(",
 		"prior.kind === 'kept' && prior.ref === current",
 	)
 	for _, banned := range []string{"document.", "fetch(", "setTimeout(", "setInterval("} {
@@ -84,11 +85,13 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"observeExternalRef(currentRef)",
 		"reloadExternalChange()",
 		"this.options.confirmDiscard?.()",
+		"guardedModel.rev !== guardedRev",
+		"this.savePending || this.externalReloadPending",
 		"this.refresh();",
 		// IDs are creation-time store keys. Existing templates render only the
 		// title, and a blank template swaps its id input out after first save.
 		"const showIDInput = templateIDEditable(this.blank, model.sourceHash)",
-		"const idEditable = showIDInput && !this.savePending",
+		"const idEditable = showIDInput && !this.savePending && !this.externalReloadPending",
 		"this.idInput.disabled = !idEditable",
 		"this.identity.replaceChildren(showIDInput ? this.idInput : this.titleLabel)",
 		"this.model.setTemplateID(this.idInput.value.trim())",
@@ -103,7 +106,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"this.graph.select(null)",
 		"if (this.selection?.type !== 'template')",
 		"this.saveButton.disabled = this.savePending ||",
-		"if (this.savePending) return false",
+		"if (this.savePending || this.externalReloadPending) return false",
 		"if (requestSeq !== this.saveSeq) return",
 		"this.saveSeq += 1",
 		"this.model.setTemplateMeta({ name:",
@@ -173,12 +176,14 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"loadEditor(mountRef.current, { id: spec.id, blank: spec.blank, config: { confirmDiscard } })",
 		"editor?.destroy?.()",
 		"document.addEventListener('tclaude:snapshot', poll)",
-		"view.subtab === 'templates' || view.subtab === 'worklist'",
+		"void actions.load('worklist', { quiet: true })",
+		"void actions.observeTemplateHeads()",
 	)
 	actions := read("js/processes-actions.js")
 	mustContain("processes-actions.js", actions,
-		"editor?.observeExternalRef?.(head)",
-		"template.id === editorID",
+		"publishMatchingHead(generation, heads)",
+		"generation.model.currentRef !== generation.ref",
+		"'/v1/process/template-heads'",
 	)
 
 	css := read("dashboard.css")

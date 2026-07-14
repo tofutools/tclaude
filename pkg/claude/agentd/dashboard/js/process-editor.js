@@ -160,10 +160,10 @@ export class ProcessTemplateEditor {
       class: 'process-editor-inline-input', type: 'text', spellcheck: 'false', hidden: '',
     });
     this.stage = h('div', { class: 'process-editor-stage' }, this.stageHost, this.inlineInput);
-    const body = h('div', { class: 'process-editor-body' }, this.palette, this.stage);
+    this.body = h('div', { class: 'process-editor-body' }, this.palette, this.stage);
 
     this.inspector = h('div', { class: 'process-editor-inspector' });
-    this.root = h('div', { class: 'process-editor' }, header, this.externalBanner, body, this.inspector);
+    this.root = h('div', { class: 'process-editor' }, header, this.externalBanner, this.body, this.inspector);
     this.mount.replaceChildren(this.root);
     this.mount.classList.add('process-editor-mount');
   }
@@ -203,7 +203,7 @@ export class ProcessTemplateEditor {
     }, { signal });
     if (this.blank) {
       this.idInput.addEventListener('change', () => {
-        if (this.savePending) {
+        if (this.savePending || this.externalReloadPending) {
           this.idInput.value = this.model.template.id || '';
           return;
         }
@@ -296,18 +296,20 @@ export class ProcessTemplateEditor {
     // head. It stays locked even if the retry fails or re-conflicts: `blank`
     // alone is not enough to decide that the id is still editable.
     const showIDInput = templateIDEditable(this.blank, model.sourceHash);
-    const idEditable = showIDInput && !this.savePending;
+    const idEditable = showIDInput && !this.savePending && !this.externalReloadPending;
     this.idInput.disabled = !idEditable;
     this.identity.replaceChildren(showIDInput ? this.idInput : this.titleLabel);
     this.versionBadge.textContent = model.semanticHash ? `v ${shortHash(model.semanticHash)}` : 'unsaved';
     this.versionBadge.title = model.semanticHash || 'This template has never been saved';
     this.dirtyBadge.hidden = !model.dirty;
-    this.undoButton.disabled = !model.canUndo;
-    this.redoButton.disabled = !model.canRedo;
+    this.undoButton.disabled = this.externalReloadPending || !model.canUndo;
+    this.redoButton.disabled = this.externalReloadPending || !model.canRedo;
+    if (this.settingsButton) this.settingsButton.disabled = this.externalReloadPending;
+    if (this.paletteButton) this.paletteButton.disabled = this.externalReloadPending;
     // A blank editor has not completed a save, even if a force retry adopted
     // an existing CAS head. Keep its retry path armed after a failed or
     // cancelled retry; only a successfully loaded/saved clean editor is done.
-    this.saveButton.disabled = this.savePending || (!model.dirty && !this.blank);
+    this.saveButton.disabled = this.savePending || this.externalReloadPending || (!model.dirty && !this.blank);
     this.renderExternalChange?.();
     this.renderInspector();
   }
@@ -320,6 +322,9 @@ export class ProcessTemplateEditor {
     this.externalKeepButton.hidden = this.externalChange.kind !== 'dirty';
     this.externalReloadButton.disabled = this.externalReloadPending || this.savePending;
     this.externalKeepButton.disabled = this.externalReloadPending || this.savePending;
+    if (this.body) this.body.inert = this.externalReloadPending;
+    if (this.inspector) this.inspector.inert = this.externalReloadPending;
+    this.root?.classList.toggle('is-reloading', this.externalReloadPending);
   }
 
   observeExternalRef(currentRef) {
@@ -348,13 +353,28 @@ export class ProcessTemplateEditor {
     if (this.abort.signal.aborted || this.externalChange.ref !== targetRef || this.savePending) return false;
     // A dirty node-dialog draft belongs to the old model. The shared discard
     // confirmation above approved its loss, so close it before swapping models.
-    this.modalDispose?.(null);
+    const oldModal = this.modalDispose;
+    oldModal?.(null);
+    if (this.modalDispose === oldModal) this.modalDispose = null;
+    this.closeInline?.(false);
+    this.pendingMove = null;
+    this.removeBand?.();
+    const guardedModel = this.model;
+    const guardedRev = guardedModel.rev;
+    const guardedModal = this.modalDispose;
+    const guardedInline = this.inlineCommit;
     const requestSeq = ++this.externalReloadSeq;
     this.externalReloadPending = true;
-    this.renderExternalChange();
+    this.updateChrome?.();
     try {
-      const view = await fetchEditView(this.model.template.id);
+      const view = await fetchEditView(guardedModel.template.id);
       if (requestSeq !== this.externalReloadSeq || this.abort.signal.aborted) return false;
+      if (this.model !== guardedModel || guardedModel.rev !== guardedRev || this.savePending
+          || this.modalDispose !== guardedModal || this.inlineCommit !== guardedInline
+          || this.pendingMove || this.band) {
+        this.status('Reload cancelled because the editor changed while the new version was loading.');
+        return false;
+      }
       this.model = new ProcessEditModel(view, this.model.config);
       this.blank = false;
       this.retainLiveSelection();
@@ -371,7 +391,7 @@ export class ProcessTemplateEditor {
     } finally {
       if (requestSeq === this.externalReloadSeq) {
         this.externalReloadPending = false;
-        this.renderExternalChange();
+        this.updateChrome?.();
       }
     }
   }
@@ -547,6 +567,7 @@ export class ProcessTemplateEditor {
   // editability seam decides the mode: a node the view may not edit renders
   // the exact same component read-only — the viewer's detail card.
   async openNodeSettings(nodeId) {
+    if (this.externalReloadPending) return false;
     if (!this.model.node(nodeId)) return false;
     const current = this.modalDispose;
     if (current) {
@@ -701,6 +722,10 @@ export class ProcessTemplateEditor {
   // rejection (duplicate outcome, read-only node, …). Returns the mutation's
   // result, or undefined when rejected.
   mutate(operation, { fit = false } = {}) {
+    if (this.externalReloadPending) {
+      this.status('Wait for the external reload to finish before editing.');
+      return undefined;
+    }
     let result;
     try {
       result = operation();
@@ -714,6 +739,7 @@ export class ProcessTemplateEditor {
   }
 
   applyHistory(direction) {
+    if (this.externalReloadPending) return false;
     const moved = direction === 'undo' ? this.model.undo() : this.model.redo();
     if (!moved) return;
     // Template settings remain valid across metadata history. Graph selections
@@ -733,6 +759,7 @@ export class ProcessTemplateEditor {
   }
 
   async deleteSelection() {
+    if (this.externalReloadPending) return false;
     const items = selectionItems(this.selection).filter((item) => item.type === 'node'
       ? this.model.node(item.id) : this.model.findEdge(item.from, item.outcome));
     if (!items.length) return;
@@ -753,7 +780,7 @@ export class ProcessTemplateEditor {
         : 'This removes the current highlighted selection. You can undo this change afterward.',
       choices,
     });
-    if (!choice) return;
+    if (!choice || this.externalReloadPending) return false;
     this.mutate(() => this.model.deleteItems(items, { rewire: choice === 'rewire' }));
     this.setSelection(null);
   }
@@ -791,6 +818,7 @@ export class ProcessTemplateEditor {
   }
 
   openInline(x, y, value, commit) {
+    if (this.externalReloadPending) return false;
     this.closeInline(false);
     const input = this.inlineInput;
     const position = this.stagePosition(x, y);
@@ -843,7 +871,7 @@ export class ProcessTemplateEditor {
       this.status('Template id is required before saving.', true);
       return false;
     }
-    if (this.savePending) return false;
+    if (this.savePending || this.externalReloadPending) return false;
     const requestSeq = ++this.saveSeq;
     this.savePending = true;
     this.updateChrome();

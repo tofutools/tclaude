@@ -148,6 +148,23 @@ func handleProcessTemplates(w http.ResponseWriter, r *http.Request) {
 	writeProcessJSON(w, http.StatusOK, map[string]any{"templates": views})
 }
 
+func handleProcessTemplateHeads(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requirePermission(w, r, PermProcessTemplatesRead); !ok {
+		return
+	}
+	fs, err := store.NewFS(processStoreRoot())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "process_store", err.Error())
+		return
+	}
+	heads, err := fs.ListTemplateHeads(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "process_template_heads", err.Error())
+		return
+	}
+	writeProcessJSON(w, http.StatusOK, map[string]any{"heads": heads})
+}
+
 func handleProcessTemplate(w http.ResponseWriter, r *http.Request) {
 	fs, err := store.NewFS(processStoreRoot())
 	if err != nil {

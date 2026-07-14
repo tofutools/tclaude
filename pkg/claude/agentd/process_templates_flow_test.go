@@ -26,6 +26,7 @@ func TestProcessTemplateRoutes404WhenFeatureOff(t *testing.T) {
 		path   string
 	}{
 		{http.MethodGet, "/v1/process/templates"},
+		{http.MethodGet, "/v1/process/template-heads"},
 		{http.MethodGet, "/v1/process/templates/example"},
 		{http.MethodPost, "/v1/process/templates/example"},
 		{http.MethodPost, "/v1/process/validate"},
@@ -85,6 +86,14 @@ func TestProcessTemplateRESTListGetSaveAndConflict(t *testing.T) {
 	assert.Len(t, list.Templates[0].Versions, 2)
 	assert.Equal(t, latestRecord.Ref, list.Templates[0].LatestVersion.Ref)
 	assert.NotEmpty(t, list.Templates[0].LatestVersion.SourceHash)
+
+	headsRec := processTemplateRequest(t, f, http.MethodGet, "/v1/process/template-heads", nil)
+	require.Equal(t, http.StatusOK, headsRec.Code, headsRec.Body.String())
+	var heads struct {
+		Heads []store.TemplateHead `json:"heads"`
+	}
+	testharness.DecodeJSON(t, headsRec, &heads)
+	assert.Equal(t, []store.TemplateHead{{ID: "release", Ref: latestRecord.Ref}}, heads.Heads)
 
 	getRec := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates/release", nil)
 	require.Equal(t, http.StatusOK, getRec.Code, getRec.Body.String())
@@ -466,6 +475,8 @@ func TestDashboardProcessRESTRequiresDashboardAuth(t *testing.T) {
 	mux := http.NewServeMux()
 	agentd.RegisterDashboardRoutesForTest(mux)
 	rec := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodGet, "/v1/process/templates", nil))
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+	rec = testharness.Serve(mux, testharness.JSONRequest(t, http.MethodGet, "/v1/process/template-heads", nil))
 	assert.Equal(t, http.StatusForbidden, rec.Code)
 	rec = testharness.Serve(mux, testharness.JSONRequest(t, http.MethodGet, "/v1/process/worklist", nil))
 	assert.Equal(t, http.StatusForbidden, rec.Code)

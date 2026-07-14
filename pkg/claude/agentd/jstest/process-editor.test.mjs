@@ -415,3 +415,83 @@ test('confirmed external Reload swaps in the new head without fitting the viewpo
     else globalThis.fetch = previousFetch;
   }
 });
+
+test('external Reload and Save are mutually exclusive while the GET is pending', async () => {
+  const previousFetch = globalThis.fetch;
+  const reload = deferred(); let fetches = 0;
+  globalThis.fetch = async () => { fetches += 1; return reload.promise; };
+  try {
+    const editor = externalReloadEditor();
+    const pending = ProcessTemplateEditor.prototype.reloadExternalChange.call(editor);
+    assert.equal(editor.externalReloadPending, true);
+    assert.equal(await ProcessTemplateEditor.prototype.save.call(editor), false);
+    assert.equal(fetches, 1, 'Save cannot issue a POST behind the pending Reload GET');
+    reload.resolve({
+      ok: true, status: 200, statusText: 'OK',
+      json: async () => ({
+        template: { id: 'alpha', name: 'External', start: 'a', nodes: { a: { type: 'start' } } },
+        edges: [], layout: {}, sourceHash: 'source-new', semanticHash: 'semantic-new', currentRef: 'alpha@sha256:new',
+      }),
+    });
+    assert.equal(await pending, true);
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+  }
+});
+
+test('an edit made during external Reload cancels the swap and preserves the draft/banner', async () => {
+  const previousFetch = globalThis.fetch;
+  const reload = deferred(); const started = deferred();
+  globalThis.fetch = async () => { started.resolve(); return reload.promise; };
+  try {
+    const editor = externalReloadEditor({ dirty: true });
+    const original = editor.model;
+    const pending = ProcessTemplateEditor.prototype.reloadExternalChange.call(editor);
+    await started.promise;
+    original.setTemplateMeta({ description: 'new local edit during reload' });
+    reload.resolve({
+      ok: true, status: 200, statusText: 'OK',
+      json: async () => ({
+        template: { id: 'alpha', name: 'External', start: 'a', nodes: { a: { type: 'start' } } },
+        edges: [], layout: {}, sourceHash: 'source-new', semanticHash: 'semantic-new', currentRef: 'alpha@sha256:new',
+      }),
+    });
+    assert.equal(await pending, false);
+    assert.equal(editor.model, original, 'revision advance fails closed instead of swapping the model');
+    assert.equal(editor.model.template.description, 'new local edit during reload');
+    assert.deepEqual(editor.externalChange, { kind: 'dirty', ref: 'alpha@sha256:new' });
+    assert.match(editor.lastStatus.message, /Reload cancelled/);
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+  }
+});
+
+test('a new dialog draft during external Reload cancels the swap', async () => {
+  const previousFetch = globalThis.fetch;
+  const reload = deferred();
+  globalThis.fetch = async () => reload.promise;
+  try {
+    const editor = externalReloadEditor();
+    const original = editor.model;
+    const pending = ProcessTemplateEditor.prototype.reloadExternalChange.call(editor);
+    const draft = () => { editor.modalDispose = null; };
+    draft.isDirty = () => true;
+    editor.modalDispose = draft;
+    reload.resolve({
+      ok: true, status: 200, statusText: 'OK',
+      json: async () => ({
+        template: { id: 'alpha', name: 'External', start: 'a', nodes: { a: { type: 'start' } } },
+        edges: [], layout: {}, sourceHash: 'source-new', semanticHash: 'semantic-new', currentRef: 'alpha@sha256:new',
+      }),
+    });
+    assert.equal(await pending, false);
+    assert.equal(editor.model, original);
+    assert.equal(editor.modalDispose, draft, 'the new dialog draft remains owned by the old model');
+    assert.deepEqual(editor.externalChange, { kind: 'clean', ref: 'alpha@sha256:new' });
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+  }
+});

@@ -1,11 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  NO_EXTERNAL_CHANGE, keepExternalChange, reconcileExternalChange,
+  NO_EXTERNAL_CHANGE, keepExternalChange, reconcileExternalChange, templateHeadSignature,
 } from '../dashboard/js/process-external-change.js';
 
 const observe = (previous, loadedRef, currentRef, dirty = false) => reconcileExternalChange(previous, {
   loadedRef, currentRef, dirty,
+});
+
+test('template head signatures are stable across ordering and include set changes', () => {
+  const a = templateHeadSignature([{ id: 'beta', ref: 'b@sha256:2' }, { id: 'alpha', ref: 'a@sha256:1' }]);
+  const b = templateHeadSignature([{ id: 'alpha', ref: 'a@sha256:1' }, { id: 'beta', ref: 'b@sha256:2' }]);
+  assert.equal(a, b);
+  assert.notEqual(a, templateHeadSignature([{ id: 'alpha', ref: 'a@sha256:1' }]));
+  assert.notEqual(a, templateHeadSignature([{ id: 'alpha', ref: 'a@sha256:3' }, { id: 'beta', ref: 'b@sha256:2' }]));
 });
 
 test('external ref comparison ignores blanks and the loaded head', () => {

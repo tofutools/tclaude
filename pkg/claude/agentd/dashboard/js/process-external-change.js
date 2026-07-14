@@ -19,3 +19,9 @@ export function keepExternalChange(change) {
   const ref = String(change?.ref || '');
   return ref ? { kind: 'kept', ref } : NO_EXTERNAL_CHANGE;
 }
+
+export function templateHeadSignature(heads) {
+  return JSON.stringify((heads || []).map((head) => ({
+    id: String(head?.id || ''), ref: String(head?.ref || ''),
+  })).filter((head) => head.id).sort((a, b) => a.id.localeCompare(b.id, 'en')));
+}
