@@ -62,23 +62,27 @@ func (e *Executor) Drive(ctx context.Context, runID string) (store.Snapshot, err
 		if err != nil {
 			return store.Snapshot{}, err
 		}
+		if !plan.AllowsExecution(snapshot.State.Status) {
+			return snapshot, nil
+		}
+		// Recover durable internal work before asking the current binary to
+		// generate new command identities. This ordering matters across key
+		// format changes: an issued command must finish under its serialized
+		// identity instead of racing a newly planned twin. Recover one command
+		// per round so lifecycle and planner state are reloaded after every
+		// reducer transition.
+		internal := issuedInternalCommandIDs(snapshot.State)
+		if len(internal) > 0 {
+			if _, err := e.ResumeOutstanding(ctx, runID, internal[0]); err != nil {
+				return store.Snapshot{}, err
+			}
+			continue
+		}
 		commands, err := plan.Plan(snapshot.State, tmpl)
 		if err != nil {
 			return store.Snapshot{}, err
 		}
 		if len(commands) == 0 {
-			if !plan.AllowsExecution(snapshot.State.Status) {
-				return snapshot, nil
-			}
-			internal := issuedInternalCommandIDs(snapshot.State)
-			if len(internal) > 0 {
-				for _, commandID := range internal {
-					if _, err := e.ResumeOutstanding(ctx, runID, commandID); err != nil {
-						return store.Snapshot{}, err
-					}
-				}
-				continue
-			}
 			return snapshot, nil
 		}
 		progressed := false
@@ -1214,7 +1218,7 @@ func expansionMatchesCommand(st *state.State, node state.NodeState, command plan
 
 func commandDueAt(command plan.Command, at time.Time) (time.Time, error) {
 	if strings.TrimSpace(command.Until) != "" {
-		dueAt, err := time.Parse(time.RFC3339, strings.TrimSpace(command.Until))
+		dueAt, err := model.ParseRFC3339(command.Until)
 		if err != nil {
 			return time.Time{}, fmt.Errorf("timer command %q has invalid until %q: %w", command.ID, command.Until, err)
 		}
