@@ -240,7 +240,7 @@ func handleProcessTemplateSave(w http.ResponseWriter, r *http.Request, fs *store
 		writeError(w, http.StatusForbidden, "auth", err.Error())
 		return
 	}
-	record, err := fs.PutTemplateEditorSourceAttributed(r.Context(), parsed.Template, body.SourceHash, actor)
+	commit, err := fs.PutTemplateEditorSourceAttributed(r.Context(), parsed.Template, body.SourceHash, actor)
 	var conflict *store.TemplateSourceConflictError
 	if errors.As(err, &conflict) {
 		writeProcessJSON(w, http.StatusConflict, map[string]any{
@@ -255,16 +255,12 @@ func handleProcessTemplateSave(w http.ResponseWriter, r *http.Request, fs *store
 		writeError(w, http.StatusInternalServerError, "process_template_store", err.Error())
 		return
 	}
-	view, err := loadProcessTemplateEditView(r, fs, record.Ref)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "process_template", err.Error())
-		return
-	}
 	writeProcessJSON(w, http.StatusCreated, map[string]any{
-		"ref":          record.Ref,
-		"semanticHash": view.SemanticHash,
-		"sourceHash":   view.SourceHash,
-		"actor":        actor,
+		"ref":          commit.Ref,
+		"semanticHash": commit.SemanticHash,
+		"sourceHash":   commit.SourceHash,
+		"actor":        commit.Actor,
+		"authoredAt":   commit.AuthoredAt,
 		"diagnostics":  diagnosticsForEditor(parsed.Diagnostics, parsed.Template),
 	})
 }

@@ -32,6 +32,7 @@ type FS struct {
 	root                          string
 	now                           func() time.Time
 	templateAuthoringSnapshotHook func()
+	templateAuthoringCommitHook   func(TemplateAuthoringCommit)
 }
 
 var processLocks sync.Map
@@ -121,22 +122,24 @@ func (s *FS) putTemplate(ctx context.Context, tmpl *model.Template, moveHead boo
 // current head under the same cross-process filesystem lock as the write and
 // head-pointer update, so two editors cannot silently lose layout changes.
 func (s *FS) PutTemplateEditorSource(ctx context.Context, tmpl *model.Template, expectedSourceHash string) (TemplateRecord, error) {
-	return s.putTemplateEditorSource(ctx, tmpl, expectedSourceHash, "")
+	commit, err := s.putTemplateEditorSource(ctx, tmpl, expectedSourceHash, "")
+	return commit.TemplateRecord, err
 }
 
 // PutTemplateEditorSourceAttributed is PutTemplateEditorSource with a durable,
 // append-preserving actor record. It is used by authenticated authoring
 // surfaces; file-backed/manual store writes continue to have no invented
 // actor. Repeated layout-only saves retain one event per source hash even when
-// their semantic ref is identical.
+// their semantic ref is identical. The returned commit is captured from the
+// stored bytes before this method releases the template lock.
 func (s *FS) PutTemplateEditorSourceAttributed(
 	ctx context.Context,
 	tmpl *model.Template,
 	expectedSourceHash string,
 	actor state.ActorRef,
-) (TemplateRecord, error) {
+) (TemplateAuthoringCommit, error) {
 	if !state.ValidateActorRef(actor) {
-		return TemplateRecord{}, fmt.Errorf("invalid process template authoring actor %q", actor)
+		return TemplateAuthoringCommit{}, fmt.Errorf("invalid process template authoring actor %q", actor)
 	}
 	return s.putTemplateEditorSource(ctx, tmpl, expectedSourceHash, actor)
 }
@@ -146,35 +149,35 @@ func (s *FS) putTemplateEditorSource(
 	tmpl *model.Template,
 	expectedSourceHash string,
 	actor state.ActorRef,
-) (TemplateRecord, error) {
+) (TemplateAuthoringCommit, error) {
 	if tmpl == nil {
-		return TemplateRecord{}, fmt.Errorf("nil process template")
+		return TemplateAuthoringCommit{}, fmt.Errorf("nil process template")
 	}
 	unlock, err := s.lockTemplate(ctx, tmpl.ID)
 	if err != nil {
-		return TemplateRecord{}, err
+		return TemplateAuthoringCommit{}, err
 	}
 	defer unlock()
 	if err := s.recoverAttributedTemplateSaveUnlocked(ctx, tmpl.ID); err != nil {
-		return TemplateRecord{}, err
+		return TemplateAuthoringCommit{}, err
 	}
 	head, headErr := s.getTemplateHeadUnlocked(ctx, tmpl.ID)
 	currentHash := ""
 	if headErr == nil {
 		id, hash, err := parseTemplateRef(head.Ref)
 		if err != nil {
-			return TemplateRecord{}, err
+			return TemplateAuthoringCommit{}, err
 		}
 		source, err := s.getTemplateSourceUnlocked(ctx, id, hash, head.Ref)
 		if err != nil {
-			return TemplateRecord{}, err
+			return TemplateAuthoringCommit{}, err
 		}
 		currentHash = sourceHash(source)
 	} else if !errors.Is(headErr, ErrNotFound) {
-		return TemplateRecord{}, headErr
+		return TemplateAuthoringCommit{}, headErr
 	}
 	if expectedSourceHash != currentHash {
-		return TemplateRecord{}, &TemplateSourceConflictError{
+		return TemplateAuthoringCommit{}, &TemplateSourceConflictError{
 			CurrentRef: head.Ref, CurrentSourceHash: currentHash,
 		}
 	}
@@ -182,36 +185,44 @@ func (s *FS) putTemplateEditorSource(
 	if actor != "" {
 		intent, err = s.newTemplateSaveIntent(tmpl)
 		if err != nil {
-			return TemplateRecord{}, err
+			return TemplateAuthoringCommit{}, err
 		}
 		if err := s.writeTemplateSaveIntent(intent); err != nil {
-			return TemplateRecord{}, err
+			return TemplateAuthoringCommit{}, err
 		}
 	}
-	rollback := func(cause error) (TemplateRecord, error) {
+	rollback := func(cause error) (TemplateAuthoringCommit, error) {
 		if intent == nil {
-			return TemplateRecord{}, cause
+			return TemplateAuthoringCommit{}, cause
 		}
 		if rollbackErr := s.rollbackTemplateSaveIntent(intent); rollbackErr != nil {
 			cause = errors.Join(cause, fmt.Errorf("rollback attributed process template save: %w", rollbackErr))
 		}
-		return TemplateRecord{}, cause
+		return TemplateAuthoringCommit{}, cause
 	}
 	record, err := s.putTemplateUnlocked(ctx, tmpl, true)
 	if err != nil {
 		return rollback(err)
 	}
+	committedID, committedHash, err := parseTemplateRef(record.Ref)
+	if err != nil {
+		return rollback(err)
+	}
+	committedSource, err := s.getTemplateSourceUnlocked(ctx, committedID, committedHash, record.Ref)
+	if err != nil {
+		return rollback(err)
+	}
+	commit := TemplateAuthoringCommit{
+		TemplateRecord: record,
+		SourceHash:     sourceHash(committedSource),
+	}
 	if actor != "" {
-		source, err := model.CanonicalYAML(tmpl)
-		if err != nil {
-			return rollback(err)
-		}
-		event := TemplateAuthorship{
-			Ref: record.Ref, SourceHash: sourceHash(source), Actor: actor, AuthoredAt: s.now().UTC(),
-		}
+		event := TemplateAuthorship{Ref: record.Ref, SourceHash: commit.SourceHash, Actor: actor, AuthoredAt: s.now().UTC()}
 		if err := s.appendTemplateAuthorship(ctx, record, event); err != nil {
 			return rollback(err)
 		}
+		commit.Actor = event.Actor
+		commit.AuthoredAt = event.AuthoredAt
 	}
 	if err := s.writeTemplateHead(record); err != nil {
 		return rollback(err)
@@ -224,7 +235,10 @@ func (s *FS) putTemplateEditorSource(
 			return rollback(err)
 		}
 	}
-	return record, nil
+	if s.templateAuthoringCommitHook != nil {
+		s.templateAuthoringCommitHook(commit)
+	}
+	return commit, nil
 }
 
 const templateSaveIntentVersion = 1

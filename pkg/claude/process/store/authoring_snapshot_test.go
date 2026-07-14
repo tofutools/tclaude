@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -84,4 +85,88 @@ func TestTemplateAuthoringSnapshotSerializesSourceAndAuthorship(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, parsedAfter.SourceHash, after.Authorship[1].SourceHash)
 	assert.Equal(t, state.ActorRef("agent:agt_second"), after.Authorship[1].Actor)
+}
+
+func TestTemplateAuthoringCommitIsExactWithQueuedLayoutWriter(t *testing.T) {
+	ctx := t.Context()
+	fs, err := NewFS(t.TempDir())
+	require.NoError(t, err)
+	base := authoringCommitTestTemplate(10)
+	baseCommit, err := fs.PutTemplateEditorSourceAttributed(ctx, base, "", "agent:agt_base")
+	require.NoError(t, err)
+
+	writerA := authoringCommitTestTemplate(20)
+	sourceA, err := model.CanonicalYAML(writerA)
+	require.NoError(t, err)
+	hashA := sourceHash(sourceA)
+	writerB := authoringCommitTestTemplate(30)
+	sourceB, err := model.CanonicalYAML(writerB)
+	require.NoError(t, err)
+	hashB := sourceHash(sourceB)
+
+	aCommitted := make(chan struct{})
+	releaseA := make(chan struct{})
+	fs.templateAuthoringCommitHook = func(commit TemplateAuthoringCommit) {
+		if commit.Actor == state.ActorRef("agent:agt_a") {
+			close(aCommitted)
+			<-releaseA
+		}
+	}
+	type commitResult struct {
+		commit TemplateAuthoringCommit
+		err    error
+	}
+	aDone := make(chan commitResult, 1)
+	go func() {
+		commit, commitErr := fs.PutTemplateEditorSourceAttributed(ctx, writerA, baseCommit.SourceHash, "agent:agt_a")
+		aDone <- commitResult{commit: commit, err: commitErr}
+	}()
+	<-aCommitted // A's exact result is fixed, but its write lock remains held.
+
+	bStarted := make(chan struct{})
+	bDone := make(chan commitResult, 1)
+	go func() {
+		close(bStarted)
+		commit, commitErr := fs.PutTemplateEditorSourceAttributed(ctx, writerB, hashA, "agent:agt_b")
+		bDone <- commitResult{commit: commit, err: commitErr}
+	}()
+	<-bStarted
+	select {
+	case result := <-bDone:
+		t.Fatalf("queued writer B interleaved before A returned: %+v", result)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releaseA)
+
+	resultA := <-aDone
+	require.NoError(t, resultA.err)
+	resultB := <-bDone
+	require.NoError(t, resultB.err)
+	assert.Equal(t, hashA, resultA.commit.SourceHash)
+	assert.Equal(t, state.ActorRef("agent:agt_a"), resultA.commit.Actor)
+	assert.Equal(t, hashB, resultB.commit.SourceHash)
+	assert.Equal(t, state.ActorRef("agent:agt_b"), resultB.commit.Actor)
+
+	fs.templateAuthoringCommitHook = nil
+	staleEdit := authoringCommitTestTemplate(40)
+	_, err = fs.PutTemplateEditorSourceAttributed(ctx, staleEdit, resultA.commit.SourceHash, "agent:agt_a")
+	var conflict *TemplateSourceConflictError
+	require.True(t, errors.As(err, &conflict), "stale A client must conflict after B commits: %v", err)
+	assert.Equal(t, resultB.commit.SourceHash, conflict.CurrentSourceHash)
+}
+
+func authoringCommitTestTemplate(x float64) *model.Template {
+	return &model.Template{
+		APIVersion: model.APIVersion,
+		Kind:       model.Kind,
+		ID:         "commit-consistency",
+		Start:      "begin",
+		Nodes: map[string]model.Node{
+			"begin": {Type: model.NodeTypeStart, Next: model.Next{"pass": "done"}},
+			"done":  {Type: model.NodeTypeEnd, Result: "success"},
+		},
+		Layout: &model.Layout{Nodes: map[string]model.LayoutNode{
+			"begin": {X: x, Y: 20},
+		}},
+	}
 }

@@ -131,6 +131,16 @@ type TemplateAuthoringSnapshot struct {
 	Authorship []TemplateAuthorship
 }
 
+// TemplateAuthoringCommit is the immutable result of one CAS save, captured
+// before releasing the template lock. TemplateRecord is embedded so existing
+// record consumers retain direct access to Ref and SemanticHash.
+type TemplateAuthoringCommit struct {
+	TemplateRecord
+	SourceHash string         `json:"sourceHash"`
+	Actor      state.ActorRef `json:"actor,omitempty"`
+	AuthoredAt time.Time      `json:"authoredAt,omitempty"`
+}
+
 type RunRecord struct {
 	ID          string `json:"id"`
 	TemplateRef string `json:"templateRef"`

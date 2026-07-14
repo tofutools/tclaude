@@ -282,14 +282,16 @@ func TestProcessTemplateAgentSourceWorkflowPermissionsCASAndAttribution(t *testi
 	})
 	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
 	var saved struct {
-		Ref        string `json:"ref"`
-		SourceHash string `json:"sourceHash"`
-		Actor      string `json:"actor"`
+		Ref        string    `json:"ref"`
+		SourceHash string    `json:"sourceHash"`
+		Actor      string    `json:"actor"`
+		AuthoredAt time.Time `json:"authoredAt"`
 	}
 	testharness.DecodeJSON(t, created, &saved)
 	assert.NotEmpty(t, saved.Ref)
 	assert.NotEmpty(t, saved.SourceHash)
 	assert.Regexp(t, `^agent:agt_`, saved.Actor)
+	assert.False(t, saved.AuthoredAt.IsZero())
 
 	// The dashboard/human REST view sees the exact same store record, including
 	// append-preserving actor attribution; there is no agent-only template store.
