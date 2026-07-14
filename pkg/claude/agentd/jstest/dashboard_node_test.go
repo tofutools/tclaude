@@ -39,9 +39,9 @@ func TestDashboardJS(t *testing.T) {
 	if len(files) == 0 {
 		t.Fatal("no *.test.mjs files found")
 	}
-	// Bound Node's file-level fan-out so this package can overlap agentd without
-	// consuming every runner CPU and stretching both suites' critical path.
-	args := append([]string{"--test", "--test-concurrency=2"}, files...)
+	// Keep Node's file-level fan-out serial so this package can overlap agentd
+	// without competing for runner CPUs and stretching both suites' critical path.
+	args := append([]string{"--test", "--test-concurrency=1"}, files...)
 	out, err := exec.Command(node, args...).CombinedOutput()
 	if err != nil {
 		// A non-zero Node exit means the suite ran and failed. Preserve its output
