@@ -10,6 +10,41 @@ test('Messages delete routing distinguishes the human and agent stores', async (
   assert.equal(messageDeleteEndpoint('all'), '/api/mailbox/delete');
 });
 
+test('Messages attention prioritizes the oldest pending access request, then the oldest unread notification', async (t) => {
+  const harness = await createPreactHarness(t);
+  const {
+    adjacentAttentionPages, nextMessagesAttention, prepareMessagesAttention,
+  } = await harness.importDashboardModule('js/mail-state.js');
+  const messages = [
+    { id: 30, read: false },
+    { id: 20, read: true },
+    { id: 10, read: false },
+  ];
+  const accessRequests = [
+    { id: 'oldest', status: 'pending' },
+    { id: 'handled', status: 'approved' },
+    { id: 'newer', status: 'pending' },
+  ];
+
+  assert.deepEqual(nextMessagesAttention({
+    messages, access_requests: accessRequests,
+  }), { kind: 'access', id: 'oldest' });
+  assert.deepEqual(nextMessagesAttention({ messages, access_requests: [accessRequests[1]] }), {
+    kind: 'notification', id: 10, index: 2,
+  });
+  assert.equal(nextMessagesAttention({
+    messages: messages.map((message) => ({ ...message, read: true })), access_requests: [],
+  }), null);
+
+  const jumpState = { messageQuery: 'old filter', selectedMsgs: new Set([10, 30]) };
+  prepareMessagesAttention(jumpState);
+  assert.equal(jumpState.messageQuery, '');
+  assert.deepEqual([...jumpState.selectedMsgs], []);
+  assert.deepEqual(adjacentAttentionPages(3, 5), [4, 2]);
+  assert.deepEqual(adjacentAttentionPages(1, 5), [2]);
+  assert.deepEqual(adjacentAttentionPages(5, 5), [4]);
+});
+
 test('Messages state publishes atomic snapshots and does not leak mutable selections', async (t) => {
   const harness = await createPreactHarness(t);
   const { createMailState } = await harness.importDashboardModule('js/mail-state.js');

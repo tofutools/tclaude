@@ -562,8 +562,11 @@ shows the sender, group, subject, and body; the nav tab carries an
 unread-count badge. **✓ mark all read** clears the badge; **🧹 clear read**
 deletes every already-read message. It is the human's side of the
 human-notify channel — an explicit nudge surface kept separate from the busy
-terminal. An agent can add `--attach <path>` (repeatable) to publish a generated
-file, directory, or set of files. The message reader shows a download card;
+terminal. When the badge shows waiting work, selecting **Messages** opens the
+oldest pending access request, or the oldest unread notification when no access
+request is pending. An agent can add `--attach <path>` (repeatable) to publish
+a generated file, directory, or set of files. The message reader shows a
+download card;
 directories and multiple paths arrive as a zip. The daemon copies the bytes
 into its private data directory, so remote dashboards download through an
 authenticated route rather than receiving access to the agent's filesystem.

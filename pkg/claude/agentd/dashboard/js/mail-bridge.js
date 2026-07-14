@@ -3,6 +3,7 @@
 // Preact asset remains isolated to #messages-root.
 let controller = null;
 const pending = [];
+let suppressAttentionOnce = false;
 
 export function registerMailController(next) {
   if (!next || typeof next !== 'object') throw new TypeError('Messages controller is required');
@@ -28,4 +29,23 @@ export function openMailbox(id) {
 export function focusAccessRequest(id) {
   if (controller) return controller.focusAccessRequest?.(id);
   pending.push((next) => next.focusAccessRequest?.(id));
+}
+
+// Explicit Messages deep links (an agent/group mailbox or a particular access
+// request) click the same nav anchor as a human. They suppress the generic
+// badge target for that one synchronous click so the requested destination is
+// not raced by the attention shortcut.
+export function suppressNextMessagesAttention() {
+  suppressAttentionOnce = true;
+  queueMicrotask(() => { suppressAttentionOnce = false; });
+}
+
+// Called by the eager tab binder after every ordinary Messages-tab click.
+// Failed/lazy Messages islands simply make this a no-op.
+export function focusNextMessagesAttention(snapshot) {
+  if (suppressAttentionOnce) {
+    suppressAttentionOnce = false;
+    return undefined;
+  }
+  return controller?.focusNextAttention?.(snapshot);
 }
