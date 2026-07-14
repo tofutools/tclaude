@@ -10,15 +10,19 @@ import (
 // selects and available to assistive technology without persistent help rows.
 func TestDashboardHTML_SpawnSandboxHelpUsesNativeTooltips(t *testing.T) {
 	for needle, why := range map[string]string{
-		`id="agent-spawn-sandbox-hint" class="spawn-field-description" aria-live="polite"`: "sandbox mode help remains an accessible live description",
+		`class="spawn-field-help-trigger" aria-label="Show Sandbox help"`:                           "sandbox mode has an explicit keyboard/touch disclosure",
+		`id="agent-spawn-sandbox-hint" class="spawn-field-description" role="tooltip" tabindex="0"`: "sandbox mode help is focusable and scrollable",
 		`for="agent-spawn-sandbox"`: "sandbox selector retains an explicit label",
-		`id="agent-spawn-sandbox" title="" aria-describedby="agent-spawn-sandbox-hint"`:               "sandbox selector receives its selected mode's native title",
-		`aria-describedby="agent-spawn-sandbox-profile-preview"`:                                      "sandbox profile selector retains its accessible description",
-		`id="agent-spawn-sandbox-profile-preview" class="spawn-field-description" aria-live="polite"`: "sandbox profile preview remains an accessible live description",
-		`if (option) option.title = text`:                                                             "selected options carry the native tooltip copy",
-		`syncSelectTitle(selectEl)`:                                                                   "sandbox mode uses the shared select title helper",
-		`syncSelectTitle(select);`:                                                                    "composed policy uses the shared select title helper",
-		`.spawn-field-description {`:                                                                  "accessible descriptions are visually hidden",
+		`id="agent-spawn-sandbox" title="" aria-describedby="agent-spawn-sandbox-hint"`:                        "sandbox selector receives its selected mode's native title",
+		`aria-describedby="agent-spawn-sandbox-profile-preview"`:                                               "sandbox profile selector retains its accessible description",
+		`aria-label="Show Sandbox profile help"`:                                                               "sandbox profile has an explicit keyboard/touch disclosure",
+		`id="agent-spawn-sandbox-profile-preview" class="spawn-field-description" role="tooltip" tabindex="0"`: "sandbox profile preview is focusable and scrollable",
+		`if (option) option.title = text`:                                                                      "selected options carry the native tooltip copy",
+		`syncSelectTitle(selectEl)`:                                                                            "sandbox mode uses the shared select title helper",
+		`syncSelectTitle(select);`:                                                                             "composed policy uses the shared select title helper",
+		`.spawn-field-description {`:                                                                           "accessible descriptions are visually hidden",
+		`.spawn-field-help-trigger:focus + .spawn-field-description,`:                                          "only the explicit help control opens the visible overlay",
+		`max-height: min(180px, 30vh); overflow: auto;`:                                                        "long focused help remains scrollable",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard missing %q (%s)", needle, why)

@@ -1314,20 +1314,23 @@
     </label>
     <div class="cron-create-row" id="agent-spawn-sandbox-row" style="display:none" title="Launch containment for the new agent. The modes are per-harness. Codex: tclaude-agent (recommended) runs under tclaude's managed permission profile — workspace-write containment PLUS agentd-socket access so the agent can still coordinate via `tclaude agent`; the raw --sandbox modes (workspace-write / read-only) drop that socket access; danger-full-access turns the sandbox OFF. Claude Code: inherit (recommended) leaves your settings.json sandbox config as-is; on forces the OS sandbox on for this session (keeping the agentd socket reachable); off forces it off. Hover the selector for details about the selected mode.">
       <label class="cron-create-label" for="agent-spawn-sandbox">Sandbox</label>
-      <div class="cron-create-target">
+      <div class="cron-create-target spawn-field-with-help">
         <select id="agent-spawn-sandbox" title="" aria-describedby="agent-spawn-sandbox-hint"></select>
-        <!-- The selected mode's help is copied to the select's native title;
-             this hidden live copy remains its accessible description. -->
-        <span id="agent-spawn-sandbox-hint" class="spawn-field-description" aria-live="polite"></span>
+        <button type="button" class="spawn-field-help-trigger" aria-label="Show Sandbox help" title="Show Sandbox help">?</button>
+        <!-- The selected mode's help is the select's native title and its
+             accessible description. The explicit ? reveals this copy on
+             focus/tap and lets keyboard users enter and scroll long text. -->
+        <span id="agent-spawn-sandbox-hint" class="spawn-field-description" role="tooltip" tabindex="0" aria-live="polite"></span>
       </div>
     </div>
     <div class="cron-create-row" id="agent-spawn-sandbox-profile-row" title="Optional explicit sandbox profile. Composes after the global and group sandbox profiles. Only the human dashboard may select this escalation-bearing policy.">
       <label class="cron-create-label" for="agent-spawn-sandbox-profile">Sandbox profile</label>
-      <div class="cron-create-target">
+      <div class="cron-create-target spawn-field-with-help">
         <select id="agent-spawn-sandbox-profile" title="" aria-describedby="agent-spawn-sandbox-profile-preview"><option value="">— global + group defaults only —</option></select>
-        <!-- The composed-policy preview uses the same native-title and hidden
-             accessible-description behavior as the Sandbox help above. -->
-        <span id="agent-spawn-sandbox-profile-preview" class="spawn-field-description" aria-live="polite"></span>
+        <button type="button" class="spawn-field-help-trigger" aria-label="Show Sandbox profile help" title="Show Sandbox profile help">?</button>
+        <!-- The composed-policy preview uses the same native-title and
+             explicit focus/tap disclosure behavior as the Sandbox help. -->
+        <span id="agent-spawn-sandbox-profile-preview" class="spawn-field-description" role="tooltip" tabindex="0" aria-live="polite"></span>
       </div>
     </div>
     <label class="cron-create-row" id="agent-spawn-approval-row" style="display:none" title="Permission mode for the new agent (Claude Code). inherit (recommended) leaves your settings.json permission rules + the agentd approval popup as-is. The explicit modes map to `claude --permission-mode`: plan (read-only), acceptEdits, default (prompt for everything), auto (classifier auto-decides), dontAsk (auto-deny anything not pre-allowed), bypassPermissions (skip all checks). Because the agent runs detached, several modes can block on a prompt no one answers — the live hint below flags those.">

@@ -3714,12 +3714,33 @@ body.wizard .group-pending-title-wizard { display: inline; }
   font-size: 10px; background: #161b22; padding: 1px 4px; border-radius: 3px;
 }
 /* Sandbox dropdown help uses the same native title tooltip as the other
-   spawn-dialog selects. Keep a visually-hidden copy as aria-describedby text
-   so removing the custom hover overlay does not remove the accessible help. */
+   spawn-dialog selects. A dedicated help button reveals the long copy for
+   keyboard/touch users without making select hover or focus open an overlay. */
+.cron-create-target.spawn-field-with-help {
+  position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 24px;
+  align-items: stretch; gap: 6px;
+}
+.spawn-field-help-trigger {
+  padding: 0; border: 1px solid #30363d; border-radius: 4px;
+  color: #8b949e; background: #161b22; cursor: help; font-weight: 600;
+}
+.spawn-field-help-trigger:hover, .spawn-field-help-trigger:focus {
+  color: #c9d1d9; border-color: #58a6ff;
+}
 .spawn-field-description {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
+.spawn-field-help-trigger:focus + .spawn-field-description,
+.spawn-field-description:focus {
+  z-index: 30; bottom: calc(100% + 4px); left: 0; right: 0;
+  width: auto; height: auto; max-height: min(180px, 30vh); overflow: auto;
+  margin: 0; padding: 8px 10px; clip: auto; white-space: normal;
+  color: #c9d1d9; background: #0d1117; border: 1px solid #30363d;
+  border-radius: 5px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+  font-size: 11px; line-height: 1.45; overflow-wrap: anywhere;
+}
+.spawn-field-description:focus { outline: 2px solid #58a6ff; outline-offset: 1px; }
 /* Spawn-dialog attachments: a control row (Attach button + paste hint) above a
    list of pending files, each with an optional image thumbnail and a remove
    button. The files are uploaded on submit and surfaced in the agent's brief. */
