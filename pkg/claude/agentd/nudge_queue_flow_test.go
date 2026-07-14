@@ -74,12 +74,9 @@ func TestNudgeQueue_SenderReturnsImmediately_WithDepth(t *testing.T) {
 // and the async dispatcher remain production code.
 func TestNudgeQueue_HungLivenessProbeDoesNotWedgeTarget(t *testing.T) {
 	f := newFlow(t)
-	// The shrunk deadline still has to absorb a healthy probe's fork/exec
-	// under CI load: at 25ms a loaded runner made the NON-hung tmux stub
-	// itself miss the deadline, failing delivery into retry backoff and
-	// flaking the test. One second keeps the hang/deadline contrast while
-	// leaving ~100x headroom over a normal subprocess spawn.
 	t.Cleanup(agentd.SetTmuxCommandTimeoutForTest(time.Second))
+	timeoutArmed, fireTimeout, restoreTimeout := agentd.ControlNextTmuxCommandTimeoutForTest()
+	t.Cleanup(restoreTimeout)
 	f.HaveGroup("team")
 	const sender = "nq05-send-bbbb-cccc-000000000001"
 	const recipient = "nq05-recv-bbbb-cccc-000000000002"
@@ -97,19 +94,22 @@ func TestNudgeQueue_HungLivenessProbeDoesNotWedgeTarget(t *testing.T) {
 	// live daemon's worker before ClaimAgentMessageNudge.
 	f.World.Tmux.HangNextCommand("has-session", 30*time.Second)
 	r1 := mustSend(t, f, sender, map[string]any{"to": recipient, "body": "one"})
-	require.Eventually(t, func() bool {
-		return f.World.Tmux.CommandCount("has-session") >= 1
-	}, 5*time.Second, time.Millisecond, "first worker reaches the hung liveness probe")
+	select {
+	case timeout := <-timeoutArmed:
+		assert.Equal(t, time.Second, timeout)
+	case <-time.After(10 * time.Second):
+		t.Fatal("hung liveness probe did not start and arm its timeout")
+	}
 
 	// Arrive while the first pass is still in flight. The dispatcher marks the
 	// target `again`; once the timed-out probe returns, that pass must release
 	// and the re-armed pass must drain both rows without a daemon restart.
 	r2 := mustSend(t, f, sender, map[string]any{"to": recipient, "body": "two"})
 	assert.Equal(t, 2, r2.Pending, "both messages are unclaimed while the probe is hung")
-	drainStarted := time.Now()
+	fireTimeout()
 	agentd.WaitForBackgroundForTest()
-	assert.Less(t, time.Since(drainStarted), 10*time.Second,
-		"the command deadline must recover well before the simulated tmux hang ends")
+	assert.GreaterOrEqual(t, f.World.Tmux.CommandCount("has-session"), 2,
+		"the timeout releases the first pass and the re-armed pass probes again")
 
 	for _, id := range []int64{r1.ID, r2.ID} {
 		m, err := db.GetAgentMessage(id)

@@ -3,6 +3,7 @@ package agentd
 import (
 	"context"
 	"net/http"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -177,6 +178,35 @@ func SetTmuxCommandTimeoutForTest(d time.Duration) func() {
 	prev := tmuxCommandTimeout
 	tmuxCommandTimeout = d
 	return func() { tmuxCommandTimeout = prev }
+}
+
+// ControlNextTmuxCommandTimeoutForTest replaces only the next tmux command's
+// real timer with a caller-fired timeout. The timer is armed after the child
+// process starts, so receiving from armed is a causal subprocess-start barrier;
+// firing it then exercises production kill, reap, and timeout handling without
+// sleeping until the deadline. Later commands retain the production timer.
+func ControlNextTmuxCommandTimeoutForTest() (armed <-chan time.Duration, fire func(), restore func()) {
+	armedCh := make(chan time.Duration, 1)
+	firedCh := make(chan time.Time, 1)
+	previous := startTmuxCommandTimer
+	var claimed atomic.Bool
+	startTmuxCommandTimer = func(timeout time.Duration) (<-chan time.Time, func()) {
+		if claimed.CompareAndSwap(false, true) {
+			armedCh <- timeout
+			return firedCh, func() {}
+		}
+		return previous(timeout)
+	}
+	fireTimeout := func() {
+		select {
+		case firedCh <- time.Time{}:
+		default:
+		}
+	}
+	return armedCh, fireTimeout, func() {
+		fireTimeout()
+		startTmuxCommandTimer = previous
+	}
 }
 
 // SetNudgeRetryTimingForTest overrides durable retry backoff timings for a
