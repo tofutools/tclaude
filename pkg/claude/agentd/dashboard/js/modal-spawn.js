@@ -1508,6 +1508,26 @@ function bindAgentSpawnModal() {
     }
     if (!event.target.closest('.spawn-field-description')) closeHelp();
   });
+  // Keyboard focus opens through the same aria-expanded state as click/tap so
+  // the announced and visible states cannot disagree. Preserve the owning
+  // trigger while focus moves into the scrollable description; close when the
+  // user tabs on to another field.
+  spawnModal.addEventListener('focusin', (event) => {
+    const trigger = event.target.closest('.spawn-field-help-trigger');
+    if (trigger && trigger.matches(':focus-visible')) {
+      closeHelp(trigger);
+      trigger.setAttribute('aria-expanded', 'true');
+      return;
+    }
+    const description = event.target.closest('.spawn-field-description');
+    if (description) {
+      const owner = helpTriggers().find((candidate) => candidate.getAttribute('aria-controls') === description.id);
+      closeHelp(owner);
+      if (owner) owner.setAttribute('aria-expanded', 'true');
+      return;
+    }
+    if (!trigger) closeHelp();
+  });
   // The spawn modal is opened per-group from each group's
   // "+ spawn agent" button (data-act="spawn-agent"); it has no
   // global open button. Switching the group <select> re-prefills
