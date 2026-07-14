@@ -1969,7 +1969,17 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 
-	effectiveSandbox, policyErr := db.ResolveEffectiveSandboxSnapshot(g.ID, body.SandboxProfile)
+	// danger-full-access is Codex's explicit raw no-sandbox launch. It cannot
+	// carry the managed permission profile that represents tclaude filesystem
+	// policy, so omit every sandbox-profile tier (global, group, and explicit)
+	// instead of resolving a policy that must fail capability validation later.
+	// The dashboard mirrors this by hiding and clearing its explicit selector;
+	// this server-side rule also covers CLI callers and older dashboard tabs.
+	effectiveSandbox := sandboxpolicy.EmptySnapshot()
+	var policyErr error
+	if !sandboxProfilesDisabled(h.Name, sandboxMode) {
+		effectiveSandbox, policyErr = db.ResolveEffectiveSandboxSnapshot(g.ID, body.SandboxProfile)
+	}
 	if errors.Is(policyErr, db.ErrSandboxProfileNotFound) {
 		writeError(w, http.StatusBadRequest, "invalid_sandbox_profile",
 			fmt.Sprintf("sandbox profile %q does not exist", body.SandboxProfile))
@@ -2950,6 +2960,14 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// sandboxed. A value invalid for the harness is a typed failure.
 	if fail := applyDefaultProfile(g, &p); fail != nil {
 		return nil, fail
+	}
+	// Keep non-HTTP launch paths consistent with handleGroupSpawn. In
+	// particular, template/wave callers can arrive with a previously resolved
+	// global/group policy even though this agent explicitly selects Codex's raw
+	// no-sandbox mode.
+	if sandboxProfilesDisabled(p.Harness, p.SandboxMode) {
+		empty := sandboxpolicy.EmptySnapshot()
+		p.EffectiveSandbox = &empty
 	}
 	if spawnUsesPinnedGitCommonDir(p.Harness, p.SandboxMode) && !p.CodexGitCommonDirPinned {
 		gitCommonDir, err := spawnGitCommonDir(p.Harness, p.SandboxMode, p.Cwd)

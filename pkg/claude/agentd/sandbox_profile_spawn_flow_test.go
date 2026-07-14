@@ -362,3 +362,27 @@ func TestSandboxProfileUnsupportedFilesystemFailsTypedBeforeSpawn(t *testing.T) 
 	assert.Contains(t, string(resp.Raw), "unsupported_sandbox_profile_filesystem")
 	assert.NotContains(t, string(resp.Raw), "timeout")
 }
+
+func TestDangerFullAccessOmitsAssignedAndExplicitSandboxProfiles(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	root := t.TempDir()
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{
+		Name: "filesystem", Filesystem: []db.SandboxFilesystemGrant{{Path: root, Access: "read"}},
+	})
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupSandboxProfile("crew", "filesystem")
+	require.NoError(t, err)
+
+	resp := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name": "worker", "harness": "codex", "sandbox": "danger-full-access", "sandbox_profile": "filesystem",
+	})
+	require.Equalf(t, http.StatusOK, resp.Code, "spawn body=%s", resp.Raw)
+
+	snapshot, err := db.AgentEffectiveSandboxConfigForConv(resp.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, snapshot)
+	assert.Empty(t, snapshot.Applied)
+	assert.Empty(t, snapshot.Effective.Filesystem)
+	assert.Empty(t, snapshot.Effective.Environment)
+}

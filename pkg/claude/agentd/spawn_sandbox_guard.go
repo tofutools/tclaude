@@ -64,6 +64,17 @@ func sandboxProfileCapabilityFailure(harnessName, sandboxMode string, snapshot *
 	}
 }
 
+// sandboxProfilesDisabled reports launch modes whose explicit contract is to
+// run without tclaude's sandbox policy. A Codex danger-full-access launch uses
+// the raw --sandbox opt-out, which cannot be combined with the managed
+// permission profile that renders filesystem rules. Treating the policy as
+// absent also keeps environment-only profiles from being applied under a UI
+// choice that says the sandbox profile is disabled.
+func sandboxProfilesDisabled(harnessName, sandboxMode string) bool {
+	return harnessOrDefault(harnessName) == harness.CodexName &&
+		strings.TrimSpace(sandboxMode) == harness.SandboxDangerFull
+}
+
 func filesystemHasDeny(filesystem []sandboxpolicy.FilesystemGrant) bool {
 	for _, grant := range filesystem {
 		if grant.Access == sandboxpolicy.AccessDeny {

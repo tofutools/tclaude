@@ -227,6 +227,7 @@ function applySpawnHarness(harnessName) {
   // mode list + recommended default + live hint), so they're driven off a single
   // spec table; see SPAWN_LAUNCH_SETTINGS for what each row is and why it hides.
   for (const s of SPAWN_LAUNCH_SETTINGS) applySpawnLaunchSetting(h, s);
+  applySpawnSandboxProfileAvailability();
 
   // Codex-only: the opt-in "pre-trust this dir" checkbox (JOH-205). It edits
   // the user's ~/.codex/config.toml, so it is OFF by default and never
@@ -269,6 +270,35 @@ function applySpawnSandboxHint(h) {
   const option = selectEl.selectedOptions && selectEl.selectedOptions[0];
   if (option) option.title = text;
   syncSelectTitle(selectEl);
+}
+
+// Codex danger-full-access is the raw no-sandbox opt-out. Sandbox profiles
+// depend on tclaude's managed permission profile for their filesystem rules,
+// so this launch mode deliberately applies none of the global, group, or
+// explicit policy tiers. Hide and clear the explicit selector to make that
+// omission visible and to prevent a stale selection riding in the request.
+function sandboxProfilesDisabledForSpawn() {
+  return $('#agent-spawn-harness').value === 'codex'
+    && $('#agent-spawn-sandbox').value === 'danger-full-access';
+}
+
+function applySpawnSandboxProfileAvailability() {
+  const row = $('#agent-spawn-sandbox-profile-row');
+  const select = $('#agent-spawn-sandbox-profile');
+  const preview = $('#agent-spawn-sandbox-profile-preview');
+  if (!row || !select || !preview) return;
+  const disabled = sandboxProfilesDisabledForSpawn();
+  const changed = row.dataset.disabledForSandbox === 'true' !== disabled;
+  row.dataset.disabledForSandbox = disabled ? 'true' : 'false';
+  row.style.display = disabled ? 'none' : '';
+  if (disabled) {
+    select.value = '';
+    preview.textContent = '';
+    select.title = '';
+  }
+  // Invalidate any preview request that captured the old explicit selection,
+  // and refresh the ambient preview when the field becomes applicable again.
+  if (changed) void refreshSpawnSandboxProfileUI($('#agent-spawn-group').value);
 }
 
 // applySpawnApprovalHint sets the live help line under the Permission-mode
@@ -690,6 +720,7 @@ function applyProfileToSpawnForm(p) {
   // whichever of these the harness offers (SPAWN_LAUNCH_SETTINGS), leaving a
   // field the profile didn't set at the harness default applySpawnHarness gave it.
   for (const s of SPAWN_LAUNCH_SETTINGS) applyProfileLaunchSetting(p, s);
+  applySpawnSandboxProfileAvailability();
 
   // trust_dir is a *bool — apply only when the profile set it (null = unset).
   // The row is Codex-only and hidden otherwise; setting the checkbox while
@@ -1398,7 +1429,7 @@ async function submitAgentSpawn() {
     if (harness) body.harness = harness;
     if (sandbox) body.sandbox = sandbox;
     const sandboxProfile = $('#agent-spawn-sandbox-profile').value;
-    if (sandboxProfile) body.sandbox_profile = sandboxProfile;
+    if (!sandboxProfilesDisabledForSpawn() && sandboxProfile) body.sandbox_profile = sandboxProfile;
     // Permission mode (Claude Code) — the daemon resolves a blank/inherit to no
     // override, so send it only when a concrete mode was chosen.
     if (approval) body.approval = approval;
@@ -1573,6 +1604,7 @@ function bindAgentSpawnModal() {
   // agentd-reachability caveat changes per mode).
   $('#agent-spawn-sandbox').addEventListener('change', () => {
     applySpawnSandboxHint(spawnHarnessByName($('#agent-spawn-harness').value));
+    applySpawnSandboxProfileAvailability();
   });
   // Picking a different permission mode refreshes its live hint (the
   // detached-agent safety caveat changes per mode).

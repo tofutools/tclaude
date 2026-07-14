@@ -286,6 +286,9 @@ environment values. Values are ordinary non-secret configuration — do not put
 credentials in a sandbox profile — and changes take effect only when an agent
 is spawned or relaunched. The daemon remains authoritative for canonical path,
 protected-root, reserved-variable, containment, and harness capability checks.
+Selecting Codex `danger-full-access` hides and clears the explicit selector and
+omits all sandbox-profile tiers for that launch: the raw no-sandbox mode cannot
+represent the managed profile's filesystem policy.
 
 Filesystem paths do not have to exist when a profile is saved. The editor
 marks missing paths and offers an explicit **Create missing directories**
