@@ -1168,16 +1168,20 @@ func baseStates() []dashsnap.State {
 			Key:     "task-link-editor",
 			Title:   "Task link editor",
 			Caption: "The operator's Task/Quest editor: an existing short link stays navigable, its hover/focus pencil opens the prefilled URL + optional display-name dialog, and wizard mode applies the quill/violet/parchment treatment.",
-			JS: showGroups + expandGroups + `document.body.classList.remove('dock-open');` + `
+			JS: showGroups + expandGroups + `document.body.classList.remove('dock-open');` + `return (async function(){
   var edit = document.querySelector('.task-edit-icon[data-current]');
   if (!edit) throw new Error('task-link-editor: populated task edit control missing');
   edit.click();
+  // The task-link dialog is now Preact-owned, so its markup lands on the next
+  // render rather than synchronously with the click.
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
   var modal = document.querySelector('#task-link-modal.show');
   var url = document.querySelector('#task-link-url');
   var label = document.querySelector('#task-link-label');
   if (!modal || !url || !label) throw new Error('task-link-editor: dialog missing');
   if (!url.value.startsWith('http')) throw new Error('task-link-editor: URL was not prefilled');
-  if (!label.value) throw new Error('task-link-editor: explicit label was not prefilled');`,
+  if (!label.value) throw new Error('task-link-editor: explicit label was not prefilled');
+})();`,
 			SettleMS: 250,
 		},
 		{
