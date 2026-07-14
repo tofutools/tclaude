@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -12,6 +13,8 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/process/evidence"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
@@ -101,6 +104,224 @@ func TestTemplateSourcePreservesAndUpdatesEditorLayoutWithoutChangingRef(t *test
 	if pinned.Layout != nil {
 		t.Fatalf("run-pinned semantic template unexpectedly contains layout: %#v", pinned.Layout)
 	}
+}
+
+func TestTemplateAuthorshipAppendsAcrossSourceOnlyEdits(t *testing.T) {
+	ctx := t.Context()
+	fs := newStore(t)
+	now := time.Date(2026, 7, 14, 8, 30, 0, 0, time.UTC)
+	restore := fs.SetNowForTest(func() time.Time { return now })
+	t.Cleanup(restore)
+
+	tmpl := storetest.Template()
+	tmpl.Layout = &model.Layout{Nodes: map[string]model.LayoutNode{
+		tmpl.Start: {X: 10, Y: 20},
+	}}
+	first, err := fs.PutTemplateEditorSourceAttributed(ctx, tmpl, "", "agent:agt_first")
+	require.NoError(t, err)
+	firstSource, err := fs.GetTemplateSource(ctx, first.Ref)
+	require.NoError(t, err)
+	firstParsed, err := model.Parse(firstSource)
+	require.NoError(t, err)
+
+	now = now.Add(time.Minute)
+	tmpl.Layout.Nodes[tmpl.Start] = model.LayoutNode{X: 50, Y: 60}
+	second, err := fs.PutTemplateEditorSourceAttributed(ctx, tmpl, firstParsed.SourceHash, "agent:agt_second")
+	require.NoError(t, err)
+	require.Equal(t, first.Ref, second.Ref, "layout-only edits retain semantic identity")
+	secondSource, err := fs.GetTemplateSource(ctx, second.Ref)
+	require.NoError(t, err)
+	secondParsed, err := model.Parse(secondSource)
+	require.NoError(t, err)
+
+	authorship, err := fs.ListTemplateAuthorship(ctx, first.Ref)
+	require.NoError(t, err)
+	require.Len(t, authorship, 2)
+	assert.Equal(t, first.Ref, authorship[0].Ref)
+	assert.Equal(t, firstParsed.SourceHash, authorship[0].SourceHash)
+	assert.Equal(t, state.ActorRef("agent:agt_first"), authorship[0].Actor)
+	assert.Equal(t, time.Date(2026, 7, 14, 8, 30, 0, 0, time.UTC), authorship[0].AuthoredAt)
+	assert.Equal(t, secondParsed.SourceHash, authorship[1].SourceHash)
+	assert.Equal(t, state.ActorRef("agent:agt_second"), authorship[1].Actor)
+	assert.NotEqual(t, authorship[0].SourceHash, authorship[1].SourceHash)
+}
+
+func TestTemplateAuthorshipIsOptionalForLegacyAndValidatesActor(t *testing.T) {
+	ctx := t.Context()
+	fs := newStore(t)
+	record, err := fs.PutTemplate(ctx, storetest.Template())
+	require.NoError(t, err)
+
+	authorship, err := fs.ListTemplateAuthorship(ctx, record.Ref)
+	require.NoError(t, err)
+	assert.Empty(t, authorship)
+
+	_, err = fs.PutTemplateEditorSourceAttributed(ctx, storetest.Template(), "", "not-an-actor")
+	require.ErrorContains(t, err, "invalid process template authoring actor")
+}
+
+func TestTemplateAuthorshipFailureRollsBackFirstCreate(t *testing.T) {
+	ctx := t.Context()
+	root := t.TempDir()
+	fs := newStoreAt(t, root)
+	tmpl := storetest.Template()
+	semanticHash, err := model.SemanticHash(tmpl)
+	require.NoError(t, err)
+	versionDir := filepath.Join(root, "templates", tmpl.ID, "sha256-"+semanticHash)
+	require.NoError(t, os.MkdirAll(versionDir, 0o755))
+	authorshipPath := filepath.Join(versionDir, "authorship.jsonl")
+	require.NoError(t, os.WriteFile(authorshipPath, []byte("not-json\n"), 0o644))
+
+	_, err = fs.PutTemplateEditorSourceAttributed(ctx, tmpl, "", "agent:agt_writer")
+	require.ErrorContains(t, err, "decode process template authorship")
+	_, err = fs.GetTemplateHead(ctx, tmpl.ID)
+	require.ErrorIs(t, err, store.ErrNotFound, "a failed first save must not become the no-head fallback")
+	for _, name := range []string{"template.yaml", "template.json"} {
+		_, statErr := os.Stat(filepath.Join(versionDir, name))
+		require.ErrorIs(t, statErr, os.ErrNotExist, name)
+	}
+	corrupt, err := os.ReadFile(authorshipPath)
+	require.NoError(t, err)
+	assert.Equal(t, "not-json\n", string(corrupt), "rollback preserves the pre-save state")
+}
+
+func TestTemplateAuthorshipFailureRollsBackSourceOnlyEdit(t *testing.T) {
+	ctx := t.Context()
+	root := t.TempDir()
+	fs := newStoreAt(t, root)
+	tmpl := storetest.Template()
+	first, err := fs.PutTemplateEditorSourceAttributed(ctx, tmpl, "", "agent:agt_first")
+	require.NoError(t, err)
+	beforeSource, err := fs.GetTemplateSource(ctx, first.Ref)
+	require.NoError(t, err)
+	before, err := model.Parse(beforeSource)
+	require.NoError(t, err)
+
+	semanticHash, err := model.SemanticHash(tmpl)
+	require.NoError(t, err)
+	versionDir := filepath.Join(root, "templates", tmpl.ID, "sha256-"+semanticHash)
+	authorshipPath := filepath.Join(versionDir, "authorship.jsonl")
+	require.NoError(t, os.WriteFile(authorshipPath, []byte("not-json\n"), 0o644))
+	tmpl.Layout = &model.Layout{Nodes: map[string]model.LayoutNode{
+		tmpl.Start: {X: 90, Y: 100},
+	}}
+
+	_, err = fs.PutTemplateEditorSourceAttributed(ctx, tmpl, before.SourceHash, "agent:agt_second")
+	require.ErrorContains(t, err, "decode process template authorship")
+	afterSource, err := fs.GetTemplateSource(ctx, first.Ref)
+	require.NoError(t, err)
+	assert.Equal(t, beforeSource, afterSource, "failed attributed save must not change editor source")
+	head, err := fs.GetTemplateHead(ctx, tmpl.ID)
+	require.NoError(t, err)
+	assert.Equal(t, first.Ref, head.Ref)
+}
+
+func TestTemplateAuthorshipCrashIntentRecoversBeforeFirstCreateIsVisible(t *testing.T) {
+	ctx := t.Context()
+	root := t.TempDir()
+	fs := newStoreAt(t, root)
+	tmpl := storetest.Template()
+	semanticHash, err := model.SemanticHash(tmpl)
+	require.NoError(t, err)
+	versionDir := filepath.Join(root, "templates", tmpl.ID, "sha256-"+semanticHash)
+	paths := []string{
+		filepath.Join(root, "templates", tmpl.ID, "head"),
+		filepath.Join(versionDir, "template.yaml"),
+		filepath.Join(versionDir, "template.json"),
+		filepath.Join(versionDir, "authorship.jsonl"),
+	}
+	writeCrashedTemplateSaveIntent(t, root, tmpl.ID, semanticHash, paths)
+	require.NoError(t, os.MkdirAll(versionDir, 0o755))
+	source, err := model.CanonicalYAML(tmpl)
+	require.NoError(t, err)
+	semantic, err := model.CanonicalSemanticJSON(tmpl)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(paths[1], source, 0o644))
+	require.NoError(t, os.WriteFile(paths[2], semantic, 0o644))
+
+	records, err := fs.ListTemplates(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, records, "list must recover the intent before exposing a commit marker")
+	_, err = fs.GetTemplateHead(ctx, tmpl.ID)
+	require.ErrorIs(t, err, store.ErrNotFound)
+	for _, path := range append(paths, filepath.Join(root, "templates", tmpl.ID, ".attributed-save-intent.json")) {
+		_, statErr := os.Stat(path)
+		require.ErrorIs(t, statErr, os.ErrNotExist, path)
+	}
+}
+
+func TestTemplateAuthorshipCrashIntentRestoresSourceBeforeRead(t *testing.T) {
+	ctx := t.Context()
+	root := t.TempDir()
+	fs := newStoreAt(t, root)
+	tmpl := storetest.Template()
+	first, err := fs.PutTemplateEditorSourceAttributed(ctx, tmpl, "", "agent:agt_first")
+	require.NoError(t, err)
+	before, err := fs.GetTemplateSource(ctx, first.Ref)
+	require.NoError(t, err)
+	semanticHash, err := model.SemanticHash(tmpl)
+	require.NoError(t, err)
+	versionDir := filepath.Join(root, "templates", tmpl.ID, "sha256-"+semanticHash)
+	paths := []string{
+		filepath.Join(root, "templates", tmpl.ID, "head"),
+		filepath.Join(versionDir, "template.yaml"),
+		filepath.Join(versionDir, "template.json"),
+		filepath.Join(versionDir, "authorship.jsonl"),
+	}
+	writeCrashedTemplateSaveIntent(t, root, tmpl.ID, semanticHash, paths)
+	tmpl.Layout = &model.Layout{Nodes: map[string]model.LayoutNode{
+		tmpl.Start: {X: 120, Y: 140},
+	}}
+	partial, err := model.CanonicalYAML(tmpl)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(paths[1], partial, 0o644))
+
+	after, err := fs.GetTemplateSource(ctx, first.Ref)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+	_, err = os.Stat(filepath.Join(root, "templates", tmpl.ID, ".attributed-save-intent.json"))
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestTemplateAuthorshipUnreadableCrashIntentFailsClosed(t *testing.T) {
+	ctx := t.Context()
+	root := t.TempDir()
+	fs := newStoreAt(t, root)
+	tmpl := storetest.Template()
+	record, err := fs.PutTemplateEditorSourceAttributed(ctx, tmpl, "", "agent:agt_first")
+	require.NoError(t, err)
+	intentPath := filepath.Join(root, "templates", tmpl.ID, ".attributed-save-intent.json")
+	require.NoError(t, os.WriteFile(intentPath, []byte("not-json\n"), 0o600))
+
+	_, err = fs.GetTemplateSource(ctx, record.Ref)
+	require.ErrorContains(t, err, "decode attributed process template save intent")
+	_, statErr := os.Stat(intentPath)
+	require.NoError(t, statErr, "unrecoverable intent must remain for a later recovery attempt")
+}
+
+func writeCrashedTemplateSaveIntent(t *testing.T, root, id, semanticHash string, paths []string) {
+	t.Helper()
+	files := make([]map[string]any, 0, len(paths))
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if errors.Is(err, os.ErrNotExist) {
+			files = append(files, map[string]any{"path": path, "exists": false})
+			continue
+		}
+		require.NoError(t, err)
+		info, err := os.Stat(path)
+		require.NoError(t, err)
+		files = append(files, map[string]any{
+			"path": path, "data": data, "mode": info.Mode().Perm(), "modTime": info.ModTime(), "exists": true,
+		})
+	}
+	intent, err := json.Marshal(map[string]any{
+		"version": 1, "id": id, "semanticHash": semanticHash, "files": files,
+	})
+	require.NoError(t, err)
+	intentPath := filepath.Join(root, "templates", id, ".attributed-save-intent.json")
+	require.NoError(t, os.MkdirAll(filepath.Dir(intentPath), 0o755))
+	require.NoError(t, os.WriteFile(intentPath, append(intent, '\n'), 0o600))
 }
 
 func TestTemplateEditorSourceCASRejectsConcurrentLayoutSave(t *testing.T) {

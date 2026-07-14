@@ -113,6 +113,17 @@ type TemplateRecord struct {
 	StoredAt     time.Time `json:"storedAt"`
 }
 
+// TemplateAuthorship is one append-only authoring event for a process-template
+// semantic version. SourceHash distinguishes layout/source-only edits that
+// deliberately share one content-addressed Ref; keeping every event means
+// attribution does not collapse into mutable last-writer metadata.
+type TemplateAuthorship struct {
+	Ref        string         `json:"ref"`
+	SourceHash string         `json:"sourceHash"`
+	Actor      state.ActorRef `json:"actor"`
+	AuthoredAt time.Time      `json:"authoredAt"`
+}
+
 type RunRecord struct {
 	ID          string `json:"id"`
 	TemplateRef string `json:"templateRef"`

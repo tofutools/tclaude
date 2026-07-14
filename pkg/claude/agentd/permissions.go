@@ -270,6 +270,14 @@ var permissionRegistry = []PermSlug{
 		Description:  "Advance a group's advisory process to the next (or a named) phase — records the transition and nudges the entering roles (JOH-242). The process is advisory (nothing is enforced). Group owners can advance their own group's process without this slug; other agents need it. Reads (the current phase) are open.",
 	},
 	{
+		Slug:        PermProcessTemplatesRead,
+		Description: "List, show, and validate process templates through tclaude agent process-templates. Read-only and installed as a default alongside the bundled process-template scribe skill; an explicit per-agent deny still wins.",
+	},
+	{
+		Slug:        PermProcessTemplatesManage,
+		Description: "Create and edit process templates through tclaude agent process-templates save. Does not execute or instantiate a process. Not default-granted; requires an explicit grant or one-shot human approval.",
+	},
+	{
 		Slug:          PermHumanNotify,
 		OwnerImplied:  true,
 		AutoGrantable: true,
