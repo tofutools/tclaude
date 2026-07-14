@@ -47,6 +47,7 @@ export function createActionDialogActions({
       if (!group) { notify('no group', true); return; }
       state.openNest({ group });
     },
+    openTaskLink: state.openTaskLink,
     close: state.close,
     nestModel(group) {
       const groups = getSnapshot()?.groups || [];
@@ -119,6 +120,25 @@ export function createActionDialogActions({
       });
       state.close();
       notify(parent ? `${group}: nested under ${parent}` : `${group}: moved to top level`);
+      await refresh();
+    },
+    // Persist the two independent pieces of an agent's task reference — the full
+    // http(s) URL and its optional display label. A blank label is sent blank so
+    // the daemon stays the single source of truth for Linear/GitHub/hostname
+    // derivation; a blank URL clears the reference. `changed` is false when the
+    // submit is a no-op, in which case nothing is POSTed.
+    async setTaskLink({ conv, label, url, taskLabel, changed }) {
+      if (!changed) {
+        state.close();
+        notify('no changes');
+        return;
+      }
+      await requestJSON(fetchImpl, `/api/agents/${encodeURIComponent(conv)}/task`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(url ? { url, label: taskLabel } : { clear: true }),
+      });
+      state.close();
+      notify(url ? `task link updated: ${label}` : `task link cleared: ${label}`);
       await refresh();
     },
   });
