@@ -3,7 +3,7 @@
 // file shipped to the browser (jstest/process-edit-model.test.mjs).
 //
 // The model mirrors the REST edit view from GET /v1/process/templates/{id}:
-//   { template, edges[], layout, sourceHash, semanticHash }
+//   { template, edges[], layout, sourceHash, semanticHash, currentRef }
 // Semantics (template + edges) and authoring metadata (layout) stay separate,
 // matching the server: layout never contributes to semanticHash, and edges are
 // the normalized truth — node.next is never touched client-side; the server
@@ -60,6 +60,7 @@ export function blankEditView(id) {
     layout: { nodes: { start: { x: 120, y: 90 }, end: { x: 120, y: 320 } } },
     sourceHash: '',
     semanticHash: '',
+    currentRef: '',
   };
 }
 
@@ -80,6 +81,7 @@ export class ProcessEditModel {
     if (!this.layout.nodes) this.layout.nodes = {};
     this.sourceHash = v.sourceHash || '';
     this.semanticHash = v.semanticHash || '';
+    this.currentRef = v.currentRef || '';
     this.savedTemplateID = this.template.id || '';
     this.diagnostics = clone(v.diagnostics) || [];
     this.config = {
@@ -534,12 +536,13 @@ export class ProcessEditModel {
   // markSaved baselines dirty at savedAtRev -- the rev captured when the save
   // payload was built. Edits made while the POST was in flight keep the model
   // dirty because their revs are minted after savedAtRev.
-  markSaved({ sourceHash, semanticHash, diagnostics } = {}, savedAtRev = this.rev) {
+  markSaved({ ref, sourceHash, semanticHash, diagnostics } = {}, savedAtRev = this.rev) {
     if (sourceHash) {
       this.sourceHash = sourceHash;
       this.savedTemplateID = this.template.id || '';
     }
     if (semanticHash) this.semanticHash = semanticHash;
+    if (ref) this.currentRef = ref;
     if (diagnostics) this.diagnostics = diagnostics;
     this.savedRev = savedAtRev;
   }

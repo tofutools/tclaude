@@ -859,6 +859,7 @@ func TestDashboardAssets_ProcessesTabWired(t *testing.T) {
 		`id="process-viewer-canvas"`,
 		`data-process-mount="viewer"`,
 		"templates: '/v1/process/templates'",
+		"'/v1/process/template-heads'",
 		"runs: '/v1/process/runs'",
 		"applyProcessesTabVisibility(data)",
 		`body.hide-processes nav [data-tab="processes"]`,
@@ -906,6 +907,7 @@ func TestDashboardAssets_ProcessWorklistWired(t *testing.T) {
 		"/v1/process/worklist/${encodeURIComponent(item.id)}/action",
 		// Live refresh rides the snapshot poll's custom event.
 		"document.addEventListener('tclaude:snapshot'",
+		"void actions.load('worklist', { quiet: true })",
 		// Rows are keyed by item id for Preact identity preservation.
 		"data-key=${item.id}",
 		// Agent obligations render without action buttons.

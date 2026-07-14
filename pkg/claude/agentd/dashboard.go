@@ -183,6 +183,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	// The Processes tab consumes the same versioned REST surface as other
 	// clients. Dashboard auth wraps it before the dynamic feature gate.
 	mux.HandleFunc("GET /v1/process/templates", dashboardProcessRoute(handleProcessTemplates))
+	mux.HandleFunc("GET /v1/process/template-heads", dashboardProcessRoute(handleProcessTemplateHeads))
 	mux.HandleFunc("GET /v1/process/templates/{id}", dashboardProcessRoute(handleProcessTemplate))
 	mux.HandleFunc("POST /v1/process/templates/{id}", dashboardProcessRoute(handleProcessTemplate))
 	mux.HandleFunc("POST /v1/process/validate", dashboardProcessRoute(handleProcessValidate))

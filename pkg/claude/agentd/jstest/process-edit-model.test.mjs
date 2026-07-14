@@ -35,6 +35,7 @@ function view() {
     layout: { nodes: { begin: { x: 100, y: 40 } } },
     sourceHash: 'hash-source-1',
     semanticHash: 'hash-semantic-1',
+    currentRef: 'release@sha256:source-1',
   };
 }
 
@@ -195,6 +196,15 @@ test('markSaved re-baselines dirty across undo/redo', () => {
   assert.equal(model.dirty, true, 'undoing past the save point is dirty again');
   model.redo();
   assert.equal(model.dirty, false);
+});
+
+test('markSaved adopts the saved immutable ref for read-time head comparison', () => {
+  const model = new ProcessEditModel(view());
+  assert.equal(model.currentRef, 'release@sha256:source-1');
+  model.markSaved({
+    ref: 'release@sha256:source-2', sourceHash: 'source-2', semanticHash: 'semantic-2',
+  });
+  assert.equal(model.currentRef, 'release@sha256:source-2');
 });
 
 test('regression: save -> undo -> divergent edit stays dirty (rev serials are never reused)', () => {

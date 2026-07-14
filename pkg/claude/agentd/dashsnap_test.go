@@ -959,6 +959,33 @@ func baseStates() []dashsnap.State {
 			SettleMS: 1100,
 		},
 		{
+			Key:     "process-editor-external-clean",
+			Title:   "Process editor — clean external change",
+			Caption: "TCL-307: a clean editor keeps its graph and viewport intact while an external head advertises a non-destructive Reload action, in both dashboard skins.",
+			JS: processEditorStateJS(`var external = ed.model.saveBody();
+  external.template.description = 'dashsnap external clean ' + Date.now();
+  var response = await fetch('/v1/process/templates/release-train', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(external)});
+  var saved = await response.json();
+  if (!response.ok || !saved.ref) throw new Error('external clean save failed: ' + JSON.stringify(saved));
+  ed.observeExternalHead(saved);
+  if (ed.externalChange.kind !== 'clean') throw new Error('clean external banner state missing');`),
+			SettleMS: 1100,
+		},
+		{
+			Key:     "process-editor-external-dirty",
+			Title:   "Process editor — dirty external change",
+			Caption: "TCL-307: a dirty editor is never overwritten; its external-change banner offers confirmed Reload versus Keep editing, in both dashboard skins.",
+			JS: processEditorStateJS(`var external = ed.model.saveBody();
+  external.template.description = 'dashsnap external dirty ' + Date.now();
+  var response = await fetch('/v1/process/templates/release-train', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(external)});
+  var saved = await response.json();
+  if (!response.ok || !saved.ref) throw new Error('external dirty save failed: ' + JSON.stringify(saved));
+  ed.model.addNode('task', {x: 470, y: 120, name: 'Local draft'}); ed.refresh({fit: true});
+  ed.observeExternalHead(saved);
+  if (ed.externalChange.kind !== 'dirty' || ed.externalKeepButton.hidden) throw new Error('dirty external banner actions missing');`),
+			SettleMS: 1100,
+		},
+		{
 			Key:     "process-editor-wizard",
 			Title:   "Process editor — wizard skin",
 			Caption: "The same editor (palette + selection + dirty) under the wizard skin: violet chrome, gold accents, explicitly themed cards and controls.",

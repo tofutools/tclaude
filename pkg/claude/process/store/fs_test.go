@@ -55,6 +55,89 @@ func TestTemplatePutGetIsContentAddressed(t *testing.T) {
 	}
 }
 
+func TestListTemplateHeadsObservesPublishedGenerationAndMigratesLegacyPointer(t *testing.T) {
+	ctx := t.Context()
+	root := t.TempDir()
+	fs := newStoreAt(t, root)
+
+	alpha := storetest.Template()
+	alpha.ID = "alpha"
+	alphaRecord, err := fs.PutTemplate(ctx, alpha)
+	require.NoError(t, err)
+	alphaSource, err := fs.GetTemplateSource(ctx, alphaRecord.Ref)
+	require.NoError(t, err)
+	alphaParsed, err := model.Parse(alphaSource)
+	require.NoError(t, err)
+	beta := storetest.Template()
+	beta.ID = "beta"
+	betaRecord, err := fs.PutTemplate(ctx, beta)
+	require.NoError(t, err)
+	betaSource, err := fs.GetTemplateSource(ctx, betaRecord.Ref)
+	require.NoError(t, err)
+	betaParsed, err := model.Parse(betaSource)
+	require.NoError(t, err)
+
+	heads, err := fs.ListTemplateHeads(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, []store.TemplateHead{
+		{ID: "alpha", Ref: alphaRecord.Ref, SourceHash: alphaParsed.SourceHash},
+		{ID: "beta", Ref: betaRecord.Ref, SourceHash: betaParsed.SourceHash},
+	}, heads)
+
+	alpha.Description = "new head"
+	alphaNext, err := fs.PutTemplate(ctx, alpha)
+	require.NoError(t, err)
+	heads, err = fs.ListTemplateHeads(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, alphaNext.Ref, heads[0].Ref)
+	assert.NotEqual(t, alphaParsed.SourceHash, heads[0].SourceHash)
+	assert.Equal(t, betaRecord.Ref, heads[1].Ref)
+	assert.Equal(t, betaParsed.SourceHash, heads[1].SourceHash)
+
+	// A ref-only legacy pointer is resolved under the lock and rewritten once
+	// with its authoritative source generation.
+	headPath := filepath.Join(root, "templates", "beta", "head")
+	require.NoError(t, os.WriteFile(headPath, []byte(betaRecord.Ref+"\n"), 0o444))
+	heads, err = fs.ListTemplateHeads(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, store.TemplateHead{ID: "beta", Ref: betaRecord.Ref, SourceHash: betaParsed.SourceHash}, heads[1])
+	migrated, err := os.ReadFile(headPath)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"version":1,"ref":"`+betaRecord.Ref+`","sourceHash":"`+betaParsed.SourceHash+`"}`, string(migrated))
+
+	// A failed first create can leave directories, but never a committed head
+	// generation that churns the dashboard signature.
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "templates", "orphan", "sha256-dead"), 0o755))
+	heads, err = fs.ListTemplateHeads(ctx)
+	require.NoError(t, err)
+	assert.Len(t, heads, 2)
+	heads, err = fs.ListTemplateHeads(ctx)
+	require.NoError(t, err)
+	assert.Len(t, heads, 2, "an unchanged orphan never becomes a published generation")
+}
+
+func TestListTemplateHeadsDetectsSourceOnlyGeneration(t *testing.T) {
+	ctx := t.Context()
+	fs := newStore(t)
+	tmpl := storetest.Template()
+	tmpl.Layout = &model.Layout{Nodes: map[string]model.LayoutNode{tmpl.Start: {X: 10, Y: 20}}}
+	first, err := fs.PutTemplateEditorSource(ctx, tmpl, "")
+	require.NoError(t, err)
+	before, err := fs.ListTemplateHeads(ctx)
+	require.NoError(t, err)
+	require.Len(t, before, 1)
+
+	tmpl.Layout.Nodes[tmpl.Start] = model.LayoutNode{X: 90, Y: 100}
+	second, err := fs.PutTemplateEditorSource(ctx, tmpl, before[0].SourceHash)
+	require.NoError(t, err)
+	after, err := fs.ListTemplateHeads(ctx)
+	require.NoError(t, err)
+	require.Len(t, after, 1)
+	assert.Equal(t, first.Ref, second.Ref, "layout-only authoring keeps semantic identity")
+	assert.Equal(t, before[0].Ref, after[0].Ref)
+	assert.NotEqual(t, before[0].SourceHash, after[0].SourceHash, "head generation follows the CAS authority")
+}
+
 func TestTemplateSourcePreservesAndUpdatesEditorLayoutWithoutChangingRef(t *testing.T) {
 	ctx := t.Context()
 	fs := newStore(t)
@@ -243,6 +326,9 @@ func TestTemplateAuthorshipCrashIntentRecoversBeforeFirstCreateIsVisible(t *test
 	require.NoError(t, os.WriteFile(paths[1], source, 0o644))
 	require.NoError(t, os.WriteFile(paths[2], semantic, 0o644))
 
+	heads, err := fs.ListTemplateHeads(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, heads, "head observation must recover and skip a failed-first-create orphan")
 	records, err := fs.ListTemplates(ctx)
 	require.NoError(t, err)
 	assert.Empty(t, records, "list must recover the intent before exposing a commit marker")
@@ -252,6 +338,47 @@ func TestTemplateAuthorshipCrashIntentRecoversBeforeFirstCreateIsVisible(t *test
 		_, statErr := os.Stat(path)
 		require.ErrorIs(t, statErr, os.ErrNotExist, path)
 	}
+}
+
+func TestListTemplateHeadsRecoversTransientMovedGeneration(t *testing.T) {
+	ctx := t.Context()
+	root := t.TempDir()
+	fs := newStoreAt(t, root)
+	root = canonicalStoreTestRoot(t, root)
+	tmpl := storetest.Template()
+	first, err := fs.PutTemplateEditorSourceAttributed(ctx, tmpl, "", "agent:agt_first")
+	require.NoError(t, err)
+	before, err := fs.ListTemplateHeads(ctx)
+	require.NoError(t, err)
+	require.Len(t, before, 1)
+
+	semanticHash, err := model.SemanticHash(tmpl)
+	require.NoError(t, err)
+	versionDir := filepath.Join(root, "templates", tmpl.ID, "sha256-"+semanticHash)
+	paths := []string{
+		filepath.Join(root, "templates", tmpl.ID, "head"),
+		filepath.Join(versionDir, "template.yaml"),
+		filepath.Join(versionDir, "template.json"),
+		filepath.Join(versionDir, "authorship.jsonl"),
+	}
+	writeCrashedTemplateSaveIntent(t, root, tmpl.ID, semanticHash, paths)
+	tmpl.Layout = &model.Layout{Nodes: map[string]model.LayoutNode{tmpl.Start: {X: 123, Y: 456}}}
+	partialSource, err := model.CanonicalYAML(tmpl)
+	require.NoError(t, err)
+	partialParsed, err := model.Parse(partialSource)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(paths[1], partialSource, 0o644))
+	transientHead, err := json.Marshal(map[string]any{
+		"version": 1, "ref": first.Ref, "sourceHash": partialParsed.SourceHash,
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(paths[0], append(transientHead, '\n'), 0o644))
+
+	after, err := fs.ListTemplateHeads(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, before, after, "observation recovers the intent before publishing a transient generation")
+	_, statErr := os.Stat(filepath.Join(root, "templates", tmpl.ID, ".attributed-save-intent.json"))
+	require.ErrorIs(t, statErr, os.ErrNotExist)
 }
 
 func TestTemplateAuthorshipCrashIntentRestoresSourceBeforeRead(t *testing.T) {
@@ -436,6 +563,21 @@ func TestPutTemplateVersionFreezesLegacyHeadBeforePublishing(t *testing.T) {
 	}
 	if head.Ref != latestRecord.Ref {
 		t.Fatalf("legacy fallback head = %s, want %s", head.Ref, latestRecord.Ref)
+	}
+	migrated, err := os.ReadFile(headPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pointer struct {
+		Version    int    `json:"version"`
+		Ref        string `json:"ref"`
+		SourceHash string `json:"sourceHash"`
+	}
+	if err := json.Unmarshal(migrated, &pointer); err != nil {
+		t.Fatal(err)
+	}
+	if pointer.Version != 1 || pointer.Ref != latestRecord.Ref || pointer.SourceHash == "" {
+		t.Fatalf("legacy fallback was not materialized as a bounded generation pointer: %#v", pointer)
 	}
 }
 

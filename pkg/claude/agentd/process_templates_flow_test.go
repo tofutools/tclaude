@@ -26,6 +26,7 @@ func TestProcessTemplateRoutes404WhenFeatureOff(t *testing.T) {
 		path   string
 	}{
 		{http.MethodGet, "/v1/process/templates"},
+		{http.MethodGet, "/v1/process/template-heads"},
 		{http.MethodGet, "/v1/process/templates/example"},
 		{http.MethodPost, "/v1/process/templates/example"},
 		{http.MethodPost, "/v1/process/validate"},
@@ -85,6 +86,17 @@ func TestProcessTemplateRESTListGetSaveAndConflict(t *testing.T) {
 	assert.Len(t, list.Templates[0].Versions, 2)
 	assert.Equal(t, latestRecord.Ref, list.Templates[0].LatestVersion.Ref)
 	assert.NotEmpty(t, list.Templates[0].LatestVersion.SourceHash)
+
+	headsRec := processTemplateRequest(t, f, http.MethodGet, "/v1/process/template-heads", nil)
+	require.Equal(t, http.StatusOK, headsRec.Code, headsRec.Body.String())
+	var heads struct {
+		Heads []store.TemplateHead `json:"heads"`
+	}
+	testharness.DecodeJSON(t, headsRec, &heads)
+	require.Len(t, heads.Heads, 1)
+	assert.Equal(t, latestRecord.Ref, heads.Heads[0].Ref)
+	assert.Equal(t, "release", heads.Heads[0].ID)
+	assert.Equal(t, list.Templates[0].LatestVersion.SourceHash, heads.Heads[0].SourceHash)
 
 	getRec := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates/release", nil)
 	require.Equal(t, http.StatusOK, getRec.Code, getRec.Body.String())
@@ -195,6 +207,14 @@ func TestProcessTemplateSavePersistsLayoutOnlyEditAtSameRef(t *testing.T) {
 	var edit processEditResponse
 	testharness.DecodeJSON(t, getRec, &edit)
 	baseHash := edit.SourceHash
+	beforeHeadsRec := processTemplateRequest(t, f, http.MethodGet, "/v1/process/template-heads", nil)
+	require.Equal(t, http.StatusOK, beforeHeadsRec.Code, beforeHeadsRec.Body.String())
+	var beforeHeads struct {
+		Heads []store.TemplateHead `json:"heads"`
+	}
+	testharness.DecodeJSON(t, beforeHeadsRec, &beforeHeads)
+	require.Len(t, beforeHeads.Heads, 1)
+	assert.Equal(t, baseHash, beforeHeads.Heads[0].SourceHash)
 	edit.Layout.Nodes["begin"] = model.LayoutNode{X: 444, Y: 222}
 
 	saveRec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/layout-only", edit)
@@ -206,6 +226,15 @@ func TestProcessTemplateSavePersistsLayoutOnlyEditAtSameRef(t *testing.T) {
 	testharness.DecodeJSON(t, saveRec, &saved)
 	assert.Equal(t, record.Ref, saved.Ref, "layout does not alter semantic identity")
 	assert.NotEqual(t, baseHash, saved.SourceHash, "source hash includes layout")
+	afterHeadsRec := processTemplateRequest(t, f, http.MethodGet, "/v1/process/template-heads", nil)
+	require.Equal(t, http.StatusOK, afterHeadsRec.Code, afterHeadsRec.Body.String())
+	var afterHeads struct {
+		Heads []store.TemplateHead `json:"heads"`
+	}
+	testharness.DecodeJSON(t, afterHeadsRec, &afterHeads)
+	require.Len(t, afterHeads.Heads, 1)
+	assert.Equal(t, record.Ref, afterHeads.Heads[0].Ref)
+	assert.Equal(t, saved.SourceHash, afterHeads.Heads[0].SourceHash)
 
 	reopenRec := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates/layout-only", nil)
 	require.Equal(t, http.StatusOK, reopenRec.Code, reopenRec.Body.String())
@@ -466,6 +495,8 @@ func TestDashboardProcessRESTRequiresDashboardAuth(t *testing.T) {
 	mux := http.NewServeMux()
 	agentd.RegisterDashboardRoutesForTest(mux)
 	rec := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodGet, "/v1/process/templates", nil))
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+	rec = testharness.Serve(mux, testharness.JSONRequest(t, http.MethodGet, "/v1/process/template-heads", nil))
 	assert.Equal(t, http.StatusForbidden, rec.Code)
 	rec = testharness.Serve(mux, testharness.JSONRequest(t, http.MethodGet, "/v1/process/worklist", nil))
 	assert.Equal(t, http.StatusForbidden, rec.Code)

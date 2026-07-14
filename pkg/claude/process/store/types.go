@@ -56,6 +56,7 @@ type Templates interface {
 	GetTemplate(ctx context.Context, ref string) (*model.Template, error)
 	GetTemplateSource(ctx context.Context, ref string) ([]byte, error)
 	GetTemplateHead(ctx context.Context, id string) (TemplateRecord, error)
+	ListTemplateHeads(ctx context.Context) ([]TemplateHead, error)
 	ListTemplates(ctx context.Context) ([]TemplateRecord, error)
 }
 
@@ -111,6 +112,15 @@ type TemplateRecord struct {
 	Ref          string    `json:"ref"`
 	SemanticHash string    `json:"semanticHash"`
 	StoredAt     time.Time `json:"storedAt"`
+}
+
+// TemplateHead is the bounded observation shape for editor heads. Ref tracks
+// semantic identity; SourceHash also advances for layout/source-only saves
+// that retain the same Ref.
+type TemplateHead struct {
+	ID         string `json:"id"`
+	Ref        string `json:"ref"`
+	SourceHash string `json:"sourceHash"`
 }
 
 // TemplateAuthorship is one append-only authoring event for a process-template
