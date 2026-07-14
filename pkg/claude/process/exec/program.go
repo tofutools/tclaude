@@ -20,7 +20,11 @@ const (
 )
 
 type ProgramAdapter struct {
-	DefaultTimeout  time.Duration
+	DefaultTimeout time.Duration
+	// TimeoutContext defaults to context.WithTimeout. Tests may replace it to
+	// drive timeout behavior after an external process has completed a startup
+	// handshake, without relying on a scheduler-sensitive wall-clock deadline.
+	TimeoutContext  func(context.Context, time.Duration) (context.Context, context.CancelFunc)
 	OutputTailBytes int
 	Now             func() time.Time
 }
@@ -68,7 +72,11 @@ func (a ProgramAdapter) Perform(ctx context.Context, request Request) (Observati
 		return Observation{}, err
 	}
 	timeout, _ := a.timeout(request.Performer.Timeout)
-	runCtx, cancel := context.WithTimeout(ctx, timeout)
+	timeoutContext := a.TimeoutContext
+	if timeoutContext == nil {
+		timeoutContext = context.WithTimeout
+	}
+	runCtx, cancel := timeoutContext(ctx, timeout)
 	defer cancel()
 
 	now := a.Now
@@ -97,7 +105,7 @@ func (a ProgramAdapter) Perform(ctx context.Context, request Request) (Observati
 	if command.ProcessState != nil {
 		exitCode = command.ProcessState.ExitCode()
 	}
-	timedOut := errors.Is(runCtx.Err(), context.DeadlineExceeded)
+	timedOut := errors.Is(context.Cause(runCtx), context.DeadlineExceeded)
 	evidence := ProgramEvidence{
 		SchemaVersion:  1,
 		CommandID:      request.Command.ID,
