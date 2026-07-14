@@ -42,7 +42,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest] # ubuntu-24.04-arm, windows-latest, windows-11-arm
+        os: [ubuntu-latest, macos-latest]
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -66,8 +66,6 @@ jobs:
       # resources (tmux sim, SQLite) and the interleaved output is hard to read on a
       # failure. Two-at-a-time keeps output legible without serializing the whole run.
       # (No tests use t.Parallel(), so -parallel is irrelevant here.)
-      # Make the external Node runtime part of jstest's Go test-cache key without
-      # disabling useful result caching for every other package.
       #
       # The Go race detector is OFF by default and gated behind the RUN_RACE
       # repository variable (Settings -> Secrets and variables -> Actions ->
@@ -75,8 +73,9 @@ jobs:
       # change. It roughly triples the test step's wall-clock, which is why it
       # is opt-in. The suite is race-clean as of this writing, so flipping the
       # variable is safe. -race needs CGO, which the ubuntu/macOS runners have
-      # on by default (this matrix is ubuntu+macOS only — the detector does not
-      # support windows/arm64, so do not add -race to a matrix that includes it).
+      # on by default.
+      # Make the external Node runtime part of jstest's Go test-cache key without
+      # disabling useful result caching for every other package.
       - name: Run tests
         run: |
           export TCLAUDE_NODE_TEST_CACHE_KEY="$(node -p 'process.execPath + ":" + process.version')"
