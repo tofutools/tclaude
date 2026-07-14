@@ -54,7 +54,7 @@ func TestProcessEngineDynamicallyFollowsFeatureFlag(t *testing.T) {
 		Kind: model.PerformerProgram, Run: "/bin/sh", Args: []string{"-c", `touch "$1"`, "process-test", firstOutput},
 	}), true)
 	stop := make(chan struct{})
-	done := agentd.StartProcessEngineForTest(stop, 5*time.Millisecond)
+	pulses, observed, done := agentd.StartProcessEngineForTest(stop)
 	t.Cleanup(func() {
 		select {
 		case <-done:
@@ -64,26 +64,49 @@ func TestProcessEngineDynamicallyFollowsFeatureFlag(t *testing.T) {
 		}
 	})
 
-	time.Sleep(30 * time.Millisecond)
+	observeProcessEngineState(t, observed, false)
 	_, err := os.Stat(firstOutput)
 	assert.ErrorIs(t, err, os.ErrNotExist, "disabled engine must not pick up runs")
 	require.NoError(t, os.WriteFile(config.ConfigPath(), []byte(`{"features":{"processes":true}}`), 0o644))
+	pulseProcessEngine(t, pulses, observed, true)
 	require.Eventually(t, func() bool {
 		_, statErr := os.Stat(firstOutput)
 		return statErr == nil
 	}, 2*time.Second, 10*time.Millisecond)
 
 	require.NoError(t, os.WriteFile(config.ConfigPath(), []byte(`{"features":{"processes":false}}`), 0o644))
-	time.Sleep(30 * time.Millisecond)
+	pulseProcessEngine(t, pulses, observed, false)
 	secondOutput := filepath.Join(t.TempDir(), "disabled-output")
 	createEngineRun(t, root, "dynamic-disabled", programTemplate("dynamic-disabled", model.Performer{
 		Kind: model.PerformerProgram, Run: "/bin/sh", Args: []string{"-c", `touch "$1"`, "process-test", secondOutput},
 	}), true)
-	time.Sleep(50 * time.Millisecond)
+	// Process one complete supervisor cycle with the second run present. The
+	// false observation proves the cycle was consumed while disabled.
+	pulseProcessEngine(t, pulses, observed, false)
 	_, err = os.Stat(secondOutput)
 	assert.ErrorIs(t, err, os.ErrNotExist, "turning the flag off must stop new work")
 	close(stop)
 	<-done
+}
+
+func pulseProcessEngine(t *testing.T, pulses chan<- struct{}, observed <-chan bool, want bool) {
+	t.Helper()
+	select {
+	case pulses <- struct{}{}:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out sending process engine supervisor pulse")
+	}
+	observeProcessEngineState(t, observed, want)
+}
+
+func observeProcessEngineState(t *testing.T, observed <-chan bool, want bool) {
+	t.Helper()
+	select {
+	case got := <-observed:
+		assert.Equal(t, want, got, "process engine observed unexpected feature state")
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for process engine to observe enabled=%v", want)
+	}
 }
 
 func TestProcessEngineDrivesProgramRunEndToEnd(t *testing.T) {
