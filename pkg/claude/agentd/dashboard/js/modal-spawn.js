@@ -3,7 +3,7 @@
 // Extracted from dashboard.js in the Stage 2 module split. The spawn and
 // spawn modal embeds the worktree picker from modal-link-wt.
 
-import { $, esc, shortId, syncSelectTitle, populateModelSelect, setModelSelectValue, syncCustomModelRow, MODEL_CUSTOM_VALUE, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, pickDirectory } from './helpers.js';
+import { $, $$, esc, shortId, syncSelectTitle, populateModelSelect, setModelSelectValue, syncCustomModelRow, MODEL_CUSTOM_VALUE, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, pickDirectory } from './helpers.js';
 import { dashPrefs } from './prefs.js';
 import { loadProfiles, getProfile, getDashDefaultProfile } from './profiles.js';
 import { openProfileEditor } from './modal-profiles.js';
@@ -257,8 +257,8 @@ function applySpawnHarness(harnessName) {
 }
 
 // applySpawnSandboxHint puts the selected mode's catalog description in the
-// Sandbox selector's hover/focus tooltip. The same node is its live accessible
-// description, without making every spawn dialog reserve a help line.
+// Sandbox selector's native title tooltip, matching every other select in the
+// dialog. The hidden live node remains its accessible description.
 function applySpawnSandboxHint(h) {
   const selectEl = $('#agent-spawn-sandbox');
   const hintEl = $('#agent-spawn-sandbox-hint');
@@ -266,6 +266,9 @@ function applySpawnSandboxHint(h) {
   const help = (h && h.sandbox_mode_help) || {};
   const text = help[selectEl.value] || '';
   hintEl.textContent = text;
+  const option = selectEl.selectedOptions && selectEl.selectedOptions[0];
+  if (option) option.title = text;
+  syncSelectTitle(selectEl);
 }
 
 // applySpawnApprovalHint sets the live help line under the Permission-mode
@@ -1246,6 +1249,8 @@ function openAgentSpawnModal(opts) {
 }
 
 function closeAgentSpawnModal() {
+  $$('.spawn-field-help-trigger', $('#agent-spawn-modal'))
+    .forEach((trigger) => trigger.setAttribute('aria-expanded', 'false'));
   $('#agent-spawn-modal').classList.remove('show');
   // Drop any pending attachments + revoke their preview URLs so a cancelled
   // dialog doesn't leak object URLs or carry files into the next open.
@@ -1484,6 +1489,45 @@ async function submitAgentSpawn() {
 }
 
 function bindAgentSpawnModal() {
+  const spawnModal = $('#agent-spawn-modal');
+  const helpTriggers = () => $$('.spawn-field-help-trigger', spawnModal);
+  const closeHelp = (except = null) => helpTriggers().forEach((trigger) => {
+    if (trigger !== except) trigger.setAttribute('aria-expanded', 'false');
+  });
+  // Pointer/touch activation needs an explicit state: Safari deliberately does
+  // not focus buttons on click, so a :focus-only disclosure would be inert
+  // there. Keyboard focus still previews via CSS; click/tap pins the same copy
+  // until the trigger is activated again or the user clicks elsewhere.
+  spawnModal.addEventListener('click', (event) => {
+    const trigger = event.target.closest('.spawn-field-help-trigger');
+    if (trigger) {
+      const open = trigger.getAttribute('aria-expanded') !== 'true';
+      closeHelp(trigger);
+      trigger.setAttribute('aria-expanded', String(open));
+      return;
+    }
+    if (!event.target.closest('.spawn-field-description')) closeHelp();
+  });
+  // Keyboard focus opens through the same aria-expanded state as click/tap so
+  // the announced and visible states cannot disagree. Preserve the owning
+  // trigger while focus moves into the scrollable description; close when the
+  // user tabs on to another field.
+  spawnModal.addEventListener('focusin', (event) => {
+    const trigger = event.target.closest('.spawn-field-help-trigger');
+    if (trigger && trigger.matches(':focus-visible')) {
+      closeHelp(trigger);
+      trigger.setAttribute('aria-expanded', 'true');
+      return;
+    }
+    const description = event.target.closest('.spawn-field-description');
+    if (description) {
+      const owner = helpTriggers().find((candidate) => candidate.getAttribute('aria-controls') === description.id);
+      closeHelp(owner);
+      if (owner) owner.setAttribute('aria-expanded', 'true');
+      return;
+    }
+    if (!trigger) closeHelp();
+  });
   // The spawn modal is opened per-group from each group's
   // "+ spawn agent" button (data-act="spawn-agent"); it has no
   // global open button. Switching the group <select> re-prefills
