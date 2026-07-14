@@ -29,8 +29,9 @@ const artifactRefPrefix = "artifact:sha256:"
 var safeSegmentPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
 
 type FS struct {
-	root string
-	now  func() time.Time
+	root                          string
+	now                           func() time.Time
+	templateAuthoringSnapshotHook func()
 }
 
 var processLocks sync.Map
@@ -477,6 +478,10 @@ func (s *FS) ListTemplateAuthorship(ctx context.Context, ref string) ([]Template
 	if err := s.recoverAttributedTemplateSaveUnlocked(ctx, id); err != nil {
 		return nil, err
 	}
+	return s.listTemplateAuthorshipUnlocked(id, hash, ref)
+}
+
+func (s *FS) listTemplateAuthorshipUnlocked(id, hash, ref string) ([]TemplateAuthorship, error) {
 	dir, err := s.templateDir(id, hash)
 	if err != nil {
 		return nil, err
@@ -747,6 +752,40 @@ func (s *FS) GetTemplateSource(ctx context.Context, ref string) ([]byte, error) 
 		return nil, err
 	}
 	return s.getTemplateSourceUnlocked(ctx, id, hash, ref)
+}
+
+// GetTemplateAuthoringSnapshot returns source and provenance from one recovered
+// per-template lock. Callers rendering attribution must use this instead of
+// composing GetTemplateSource and ListTemplateAuthorship, which would permit a
+// layout-only save to land between the two reads.
+func (s *FS) GetTemplateAuthoringSnapshot(ctx context.Context, ref string) (TemplateAuthoringSnapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return TemplateAuthoringSnapshot{}, err
+	}
+	id, hash, err := parseTemplateRef(ref)
+	if err != nil {
+		return TemplateAuthoringSnapshot{}, err
+	}
+	unlock, err := s.lockTemplate(ctx, id)
+	if err != nil {
+		return TemplateAuthoringSnapshot{}, err
+	}
+	defer unlock()
+	if err := s.recoverAttributedTemplateSaveUnlocked(ctx, id); err != nil {
+		return TemplateAuthoringSnapshot{}, err
+	}
+	source, err := s.getTemplateSourceUnlocked(ctx, id, hash, ref)
+	if err != nil {
+		return TemplateAuthoringSnapshot{}, err
+	}
+	if s.templateAuthoringSnapshotHook != nil {
+		s.templateAuthoringSnapshotHook()
+	}
+	authorship, err := s.listTemplateAuthorshipUnlocked(id, hash, ref)
+	if err != nil {
+		return TemplateAuthoringSnapshot{}, err
+	}
+	return TemplateAuthoringSnapshot{Source: source, Authorship: authorship}, nil
 }
 
 func (s *FS) getTemplateSourceUnlocked(ctx context.Context, id, hash, ref string) ([]byte, error) {

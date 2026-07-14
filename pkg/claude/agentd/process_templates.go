@@ -403,20 +403,16 @@ func assembleProcessEditModel(body *processTemplateEditView) error {
 }
 
 func loadProcessTemplateEditView(r *http.Request, fs *store.FS, ref string) (*processTemplateEditView, error) {
-	source, err := fs.GetTemplateSource(r.Context(), ref)
+	snapshot, err := fs.GetTemplateAuthoringSnapshot(r.Context(), ref)
 	if err != nil {
 		return nil, err
 	}
-	parsed, err := model.Parse(source)
+	parsed, err := model.Parse(snapshot.Source)
 	if err != nil {
 		return nil, err
 	}
 	semantic := *parsed.Template
 	semantic.Layout = nil
-	authorship, err := fs.ListTemplateAuthorship(r.Context(), ref)
-	if err != nil {
-		return nil, err
-	}
 	return &processTemplateEditView{
 		Template:     &semantic,
 		Edges:        parsed.Edges,
@@ -424,9 +420,9 @@ func loadProcessTemplateEditView(r *http.Request, fs *store.FS, ref string) (*pr
 		SourceHash:   parsed.SourceHash,
 		SemanticHash: parsed.SemanticHash,
 		CurrentRef:   ref,
-		Source:       string(source),
+		Source:       string(snapshot.Source),
 		Diagnostics:  diagnosticsForEditor(parsed.Diagnostics, parsed.Template),
-		Authorship:   authorship,
+		Authorship:   snapshot.Authorship,
 	}, nil
 }
 
@@ -485,20 +481,16 @@ func compareTemplateRecordsNewest(a, b store.TemplateRecord) int {
 }
 
 func processVersionView(r *http.Request, fs *store.FS, record store.TemplateRecord) (processTemplateVersionView, error) {
-	source, err := fs.GetTemplateSource(r.Context(), record.Ref)
+	snapshot, err := fs.GetTemplateAuthoringSnapshot(r.Context(), record.Ref)
 	if err != nil {
 		return processTemplateVersionView{}, err
 	}
 	view := processTemplateVersionView{
 		Ref: record.Ref, SemanticHash: record.SemanticHash,
-		SourceHash: processSourceHash(source), StoredAt: record.StoredAt,
+		SourceHash: processSourceHash(snapshot.Source), StoredAt: record.StoredAt,
 	}
-	authorship, err := fs.ListTemplateAuthorship(r.Context(), record.Ref)
-	if err != nil {
-		return processTemplateVersionView{}, err
-	}
-	if len(authorship) > 0 {
-		latest := authorship[len(authorship)-1]
+	if len(snapshot.Authorship) > 0 {
+		latest := snapshot.Authorship[len(snapshot.Authorship)-1]
 		view.Actor = latest.Actor
 		view.AuthoredAt = &latest.AuthoredAt
 	}

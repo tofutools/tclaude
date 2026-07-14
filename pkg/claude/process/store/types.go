@@ -124,6 +124,13 @@ type TemplateAuthorship struct {
 	AuthoredAt time.Time      `json:"authoredAt"`
 }
 
+// TemplateAuthoringSnapshot is one lock-consistent view of a version's
+// layout-bearing source and its append-only authoring provenance.
+type TemplateAuthoringSnapshot struct {
+	Source     []byte
+	Authorship []TemplateAuthorship
+}
+
 type RunRecord struct {
 	ID          string `json:"id"`
 	TemplateRef string `json:"templateRef"`
