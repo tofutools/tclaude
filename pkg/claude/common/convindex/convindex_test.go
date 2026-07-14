@@ -115,4 +115,11 @@ func TestGetConvTitleAndPromptWithFallback(t *testing.T) {
 	if got, want := GetConvTitleAndPromptWithFallback(unindexed, "/repo", "fresh-worker"), "[fresh-worker]"; got != want {
 		t.Fatalf("unindexed fallback title = %q, want %q", got, want)
 	}
+
+	// Pending names are stored even when they fail the rename charset gate.
+	// ANSI/OSC and raw control characters must not reach the terminal view.
+	unsafeName := "fresh\x1b[2J\x1b]0;owned\x07-worker\t\x00"
+	if got, want := GetConvTitleAndPromptWithFallback(unindexed, "/repo", unsafeName), "[fresh-worker]"; got != want {
+		t.Fatalf("unsafe fallback title = %q, want %q", got, want)
+	}
 }

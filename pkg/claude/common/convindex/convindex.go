@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
@@ -171,8 +173,26 @@ func cleanTitle(title string) string {
 		return ""
 	}
 
-	// Remove XML-like tags and their content (system-injected metadata)
-	result := stripXMLTags(title)
+	// Remove XML-like tags and their content (system-injected metadata), then
+	// strip ANSI/OSC terminal sequences. Spawn-time agent names can reach this
+	// path even when they fail the rename charset gate, so title cleanup is a
+	// terminal-safety boundary rather than cosmetic whitespace normalization.
+	result := ansi.Strip(stripXMLTags(title))
+	var safe strings.Builder
+	safe.Grow(len(result))
+	for _, r := range result {
+		switch {
+		case r == '\n' || r == '\r':
+			safe.WriteRune(r) // normalized to a visible marker below
+		case r == '\t':
+			safe.WriteByte(' ')
+		case unicode.IsControl(r):
+			continue
+		default:
+			safe.WriteRune(r)
+		}
+	}
+	result = safe.String()
 
 	// Replace newlines and carriage returns with visible marker
 	result = strings.ReplaceAll(result, "\r\n", " ↵ ")
