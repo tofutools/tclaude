@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
@@ -103,23 +104,53 @@ func TestPaneInjectLock_PerTargetIdentity(t *testing.T) {
 }
 
 func TestInjectTextAndSubmit_TimesOutWaitingForPaneLock(t *testing.T) {
-	const target = "pane-held:0.0"
-	mu := paneInjectLock(target)
-	mu.Lock()
-	t.Cleanup(mu.Unlock)
+	synctest.Test(t, func(t *testing.T) {
+		const target = "pane-held:0.0"
+		mu := paneInjectLock(target)
+		mu.Lock()
+		t.Cleanup(mu.Unlock)
 
-	previous := paneInjectLockTimeout
-	paneInjectLockTimeout = 10 * time.Millisecond
-	t.Cleanup(func() { paneInjectLockTimeout = previous })
+		previous := paneInjectLockTimeout
+		paneInjectLockTimeout = 10 * time.Millisecond
+		t.Cleanup(func() { paneInjectLockTimeout = previous })
 
-	started := time.Now()
-	err := injectTextAndSubmit(target, "must-not-send")
-	if !errors.Is(err, errPaneInjectLockTimeout) {
-		t.Fatalf("expected pane lock timeout, got %v", err)
-	}
-	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
-		t.Fatalf("pane lock wait was not bounded: %s", elapsed)
-	}
+		started := time.Now()
+		err := injectTextAndSubmit(target, "must-not-send")
+		if !errors.Is(err, errPaneInjectLockTimeout) {
+			t.Fatalf("expected pane lock timeout, got %v", err)
+		}
+		if elapsed := time.Since(started); elapsed != paneInjectLockTimeout {
+			t.Fatalf("pane lock wait = %s, want %s", elapsed, paneInjectLockTimeout)
+		}
+	})
+}
+
+func TestAcquirePaneInjectLock_WaitsForRelease(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var mu sync.Mutex
+		mu.Lock()
+
+		previous := paneInjectLockTimeout
+		paneInjectLockTimeout = time.Second
+		t.Cleanup(func() { paneInjectLockTimeout = previous })
+
+		done := make(chan error, 1)
+		go func() {
+			done <- acquirePaneInjectLock(&mu)
+		}()
+		synctest.Wait()
+		select {
+		case err := <-done:
+			t.Fatalf("lock acquisition returned before release: %v", err)
+		default:
+		}
+
+		mu.Unlock()
+		if err := <-done; err != nil {
+			t.Fatalf("acquire released pane lock: %v", err)
+		}
+		mu.Unlock()
+	})
 }
 
 // barrierTmux invokes onText on each non-Enter send-keys (the single
