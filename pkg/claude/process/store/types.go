@@ -113,6 +113,34 @@ type TemplateRecord struct {
 	StoredAt     time.Time `json:"storedAt"`
 }
 
+// TemplateAuthorship is one append-only authoring event for a process-template
+// semantic version. SourceHash distinguishes layout/source-only edits that
+// deliberately share one content-addressed Ref; keeping every event means
+// attribution does not collapse into mutable last-writer metadata.
+type TemplateAuthorship struct {
+	Ref        string         `json:"ref"`
+	SourceHash string         `json:"sourceHash"`
+	Actor      state.ActorRef `json:"actor"`
+	AuthoredAt time.Time      `json:"authoredAt"`
+}
+
+// TemplateAuthoringSnapshot is one lock-consistent view of a version's
+// layout-bearing source and its append-only authoring provenance.
+type TemplateAuthoringSnapshot struct {
+	Source     []byte
+	Authorship []TemplateAuthorship
+}
+
+// TemplateAuthoringCommit is the immutable result of one CAS save, captured
+// before releasing the template lock. TemplateRecord is embedded so existing
+// record consumers retain direct access to Ref and SemanticHash.
+type TemplateAuthoringCommit struct {
+	TemplateRecord
+	SourceHash string         `json:"sourceHash"`
+	Actor      state.ActorRef `json:"actor,omitempty"`
+	AuthoredAt time.Time      `json:"authoredAt,omitempty"`
+}
+
 type RunRecord struct {
 	ID          string `json:"id"`
 	TemplateRef string `json:"templateRef"`

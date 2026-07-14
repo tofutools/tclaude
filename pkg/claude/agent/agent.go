@@ -54,6 +54,7 @@ func Cmd() *cobra.Command {
 			sandboxProfilesCmd(),
 			taskForceCmd(),
 			processCmd(),
+			processTemplatesCmd(),
 			dashboardCmd(),
 		},
 	}.ToCobra()

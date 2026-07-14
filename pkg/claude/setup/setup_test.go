@@ -77,7 +77,7 @@ func assertBundledPermsGranted(t *testing.T) {
 	cfg, err := config.Load()
 	require.NoError(t, err)
 	require.NotNil(t, cfg.Agent)
-	for _, slug := range selfPermsForBundledSkills {
+	for _, slug := range defaultPermsForBundledSkills {
 		assert.Contains(t, cfg.Agent.DefaultPermissions, slug)
 	}
 }
@@ -89,7 +89,7 @@ func assertBundledPermsNotGranted(t *testing.T) {
 	if cfg.Agent == nil {
 		return
 	}
-	for _, slug := range selfPermsForBundledSkills {
+	for _, slug := range defaultPermsForBundledSkills {
 		assert.NotContains(t, cfg.Agent.DefaultPermissions, slug)
 	}
 }
@@ -125,6 +125,11 @@ func TestInstallExtras_PermsOnly(t *testing.T) {
 
 	assertNoSkills(t, home)
 	assertBundledPermsGranted(t)
+}
+
+func TestBundledPermissionDefaultsGrantProcessTemplateReadOnly(t *testing.T) {
+	assert.Contains(t, defaultPermsForBundledSkills, "process.templates.read")
+	assert.NotContains(t, defaultPermsForBundledSkills, "process.templates.manage")
 }
 
 // --install-all installs every optional extra.
@@ -169,7 +174,7 @@ func TestInstallExtras_Idempotent(t *testing.T) {
 	cfg, err := config.Load()
 	require.NoError(t, err)
 	require.NotNil(t, cfg.Agent)
-	for _, slug := range selfPermsForBundledSkills {
+	for _, slug := range defaultPermsForBundledSkills {
 		count := 0
 		for _, p := range cfg.Agent.DefaultPermissions {
 			if p == slug {

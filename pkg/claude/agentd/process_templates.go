@@ -14,16 +14,19 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
+	"github.com/tofutools/tclaude/pkg/claude/process/state"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 )
 
 const maxProcessEditBody = 4 << 20
 
 type processTemplateVersionView struct {
-	Ref          string    `json:"ref"`
-	SemanticHash string    `json:"semanticHash"`
-	SourceHash   string    `json:"sourceHash"`
-	StoredAt     time.Time `json:"storedAt"`
+	Ref          string         `json:"ref"`
+	SemanticHash string         `json:"semanticHash"`
+	SourceHash   string         `json:"sourceHash"`
+	StoredAt     time.Time      `json:"storedAt"`
+	Actor        state.ActorRef `json:"actor,omitempty"`
+	AuthoredAt   *time.Time     `json:"authoredAt,omitempty"`
 }
 
 type processTemplateListView struct {
@@ -40,13 +43,15 @@ type processTemplateListView struct {
 // and deliberately does not contribute to SemanticHash. Edges are normalized
 // out of nodes[*].next so a graph editor need not reverse-engineer that shape.
 type processTemplateEditView struct {
-	Template      *model.Template   `json:"template"`
-	Edges         []model.Edge      `json:"edges,omitempty"`
-	Layout        *model.Layout     `json:"layout,omitempty"`
-	SourceHash    string            `json:"sourceHash,omitempty"`
-	SemanticHash  string            `json:"semanticHash,omitempty"`
-	Source        string            `json:"source,omitempty"`
-	Diagnostics   []processEditDiag `json:"diagnostics,omitempty"`
+	Template      *model.Template            `json:"template"`
+	Edges         []model.Edge               `json:"edges,omitempty"`
+	Layout        *model.Layout              `json:"layout,omitempty"`
+	SourceHash    string                     `json:"sourceHash,omitempty"`
+	SemanticHash  string                     `json:"semanticHash,omitempty"`
+	CurrentRef    string                     `json:"currentRef,omitempty"`
+	Source        string                     `json:"source,omitempty"`
+	Diagnostics   []processEditDiag          `json:"diagnostics,omitempty"`
+	Authorship    []store.TemplateAuthorship `json:"authorship,omitempty"`
 	layoutPresent bool
 }
 
@@ -58,7 +63,15 @@ type processEditDiag struct {
 	Message  string         `json:"message"`
 }
 
+type processEditModelError struct{ err error }
+
+func (e *processEditModelError) Error() string { return e.err.Error() }
+func (e *processEditModelError) Unwrap() error { return e.err }
+
 func handleProcessTemplates(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requirePermission(w, r, PermProcessTemplatesRead); !ok {
+		return
+	}
 	fs, err := store.NewFS(processStoreRoot())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "process_store", err.Error())
@@ -153,6 +166,9 @@ func handleProcessTemplate(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleProcessTemplateGet(w http.ResponseWriter, r *http.Request, fs *store.FS) {
+	if _, ok := requirePermission(w, r, PermProcessTemplatesRead); !ok {
+		return
+	}
 	record, err := resolveProcessTemplateVersion(r, fs, r.PathValue("id"), r.URL.Query().Get("version"))
 	if errors.Is(err, store.ErrNotFound) {
 		http.NotFound(w, r)
@@ -171,7 +187,8 @@ func handleProcessTemplateGet(w http.ResponseWriter, r *http.Request, fs *store.
 }
 
 func handleProcessTemplateSave(w http.ResponseWriter, r *http.Request, fs *store.FS) {
-	if _, ok := requirePermission(w, r, PermTemplatesManage); !ok {
+	caller, ok := requirePermission(w, r, PermProcessTemplatesManage)
+	if !ok {
 		return
 	}
 	body, err := decodeProcessEditView(w, r)
@@ -179,14 +196,32 @@ func handleProcessTemplateSave(w http.ResponseWriter, r *http.Request, fs *store
 		writeError(w, http.StatusBadRequest, "json", err.Error())
 		return
 	}
-	if body.Template == nil {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "template is required")
+	if body.Template == nil && strings.TrimSpace(body.Source) == "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "template or source is required")
 		return
 	}
 	id := r.PathValue("id")
-	if body.Template.ID == "" {
+	if body.Template != nil && body.Template.ID == "" {
+		// Preserve the dashboard edit-wire convenience: the path supplies an
+		// omitted id before canonicalization/validation. Raw YAML is a complete
+		// document and must carry its own id.
 		body.Template.ID = id
 	}
+	rawSource := body.Template == nil
+	parsed, err := parseProcessEditView(body)
+	if err != nil {
+		writeProcessEditParseError(w, err)
+		return
+	}
+	if rawSource && parsed.Diagnostics.HasErrors() {
+		writeProcessJSON(w, http.StatusUnprocessableEntity, map[string]any{
+			"error":       "process template has validation errors; run process-templates validate and fix them before saving",
+			"code":        "process_template_invalid",
+			"diagnostics": diagnosticsForEditor(parsed.Diagnostics, parsed.Template),
+		})
+		return
+	}
+	body.Template = parsed.Template
 	if body.Template.ID != id {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "template.id must match the path id")
 		return
@@ -195,27 +230,17 @@ func handleProcessTemplateSave(w http.ResponseWriter, r *http.Request, fs *store
 		writeError(w, http.StatusUnprocessableEntity, "process_template_invalid_id", err.Error())
 		return
 	}
-	if err := assembleProcessEditModel(body); err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "process_template_edit_model", err.Error())
-		return
-	}
-
-	canonical, err := model.CanonicalYAML(body.Template)
-	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "process_template_unserializable", err.Error())
-		return
-	}
-	parsed, err := model.Parse(canonical)
-	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "process_template_unserializable", err.Error())
-		return
-	}
 	// Validation findings are deliberately advisory for editor saves. The
 	// draft remains serializable and content-addressed, so persisting it lets a
 	// human fix multi-step graph edits without the server discarding their work.
 	// Only malformed JSON, a model CanonicalYAML cannot represent, or a template
 	// identity the content-addressed store cannot safely key is blocked.
-	record, err := fs.PutTemplateEditorSource(r.Context(), parsed.Template, body.SourceHash)
+	actor, err := processTemplateAuthor(caller)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "auth", err.Error())
+		return
+	}
+	commit, err := fs.PutTemplateEditorSourceAttributed(r.Context(), parsed.Template, body.SourceHash, actor)
 	var conflict *store.TemplateSourceConflictError
 	if errors.As(err, &conflict) {
 		writeProcessJSON(w, http.StatusConflict, map[string]any{
@@ -230,44 +255,78 @@ func handleProcessTemplateSave(w http.ResponseWriter, r *http.Request, fs *store
 		writeError(w, http.StatusInternalServerError, "process_template_store", err.Error())
 		return
 	}
-	view, err := loadProcessTemplateEditView(r, fs, record.Ref)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "process_template", err.Error())
-		return
-	}
 	writeProcessJSON(w, http.StatusCreated, map[string]any{
-		"ref":          record.Ref,
-		"semanticHash": view.SemanticHash,
-		"sourceHash":   view.SourceHash,
+		"ref":          commit.Ref,
+		"semanticHash": commit.SemanticHash,
+		"sourceHash":   commit.SourceHash,
+		"actor":        commit.Actor,
+		"authoredAt":   commit.AuthoredAt,
 		"diagnostics":  diagnosticsForEditor(parsed.Diagnostics, parsed.Template),
 	})
 }
 
 func handleProcessValidate(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requirePermission(w, r, PermProcessTemplatesRead); !ok {
+		return
+	}
 	body, err := decodeProcessEditView(w, r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "json", err.Error())
 		return
 	}
-	if body.Template == nil {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "template is required")
+	if body.Template == nil && strings.TrimSpace(body.Source) == "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "template or source is required")
 		return
 	}
-	if err := assembleProcessEditModel(body); err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "process_template_edit_model", err.Error())
+	parsed, err := parseProcessEditView(body)
+	if err != nil {
+		writeProcessEditParseError(w, err)
 		return
+	}
+	writeProcessJSON(w, http.StatusOK, map[string]any{
+		"sourceHash": parsed.SourceHash, "semanticHash": parsed.SemanticHash,
+		"diagnostics": diagnosticsForEditor(parsed.Diagnostics, parsed.Template),
+	})
+}
+
+func parseProcessEditView(body *processTemplateEditView) (*model.ParsedTemplate, error) {
+	if body == nil {
+		return nil, fmt.Errorf("template is required")
+	}
+	if body.Template == nil {
+		if strings.TrimSpace(body.Source) == "" {
+			return nil, fmt.Errorf("template or source is required")
+		}
+		return model.Parse([]byte(body.Source))
+	}
+	if err := assembleProcessEditModel(body); err != nil {
+		return nil, &processEditModelError{err: err}
 	}
 	canonical, err := model.CanonicalYAML(body.Template)
 	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "process_template_unserializable", err.Error())
+		return nil, err
+	}
+	return model.Parse(canonical)
+}
+
+func writeProcessEditParseError(w http.ResponseWriter, err error) {
+	var editErr *processEditModelError
+	if errors.As(err, &editErr) {
+		writeError(w, http.StatusUnprocessableEntity, "process_template_edit_model", editErr.Error())
 		return
 	}
-	parsed, err := model.Parse(canonical)
-	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "process_template_unserializable", err.Error())
-		return
+	writeError(w, http.StatusUnprocessableEntity, "process_template_unserializable", err.Error())
+}
+
+func processTemplateAuthor(callerConv string) (state.ActorRef, error) {
+	if callerConv == "" {
+		return state.ActorRef("human:operator"), nil
 	}
-	writeProcessJSON(w, http.StatusOK, map[string]any{"diagnostics": diagnosticsForEditor(parsed.Diagnostics, parsed.Template)})
+	agentID := peerAgentID(callerConv)
+	if agentID == "" {
+		return "", fmt.Errorf("caller has no stable agent identity")
+	}
+	return state.ActorRef("agent:" + agentID), nil
 }
 
 func decodeProcessEditView(w http.ResponseWriter, r *http.Request) (*processTemplateEditView, error) {
@@ -340,11 +399,11 @@ func assembleProcessEditModel(body *processTemplateEditView) error {
 }
 
 func loadProcessTemplateEditView(r *http.Request, fs *store.FS, ref string) (*processTemplateEditView, error) {
-	source, err := fs.GetTemplateSource(r.Context(), ref)
+	snapshot, err := fs.GetTemplateAuthoringSnapshot(r.Context(), ref)
 	if err != nil {
 		return nil, err
 	}
-	parsed, err := model.Parse(source)
+	parsed, err := model.Parse(snapshot.Source)
 	if err != nil {
 		return nil, err
 	}
@@ -356,8 +415,10 @@ func loadProcessTemplateEditView(r *http.Request, fs *store.FS, ref string) (*pr
 		Layout:       parsed.Template.Layout,
 		SourceHash:   parsed.SourceHash,
 		SemanticHash: parsed.SemanticHash,
-		Source:       string(source),
+		CurrentRef:   ref,
+		Source:       string(snapshot.Source),
 		Diagnostics:  diagnosticsForEditor(parsed.Diagnostics, parsed.Template),
+		Authorship:   snapshot.Authorship,
 	}, nil
 }
 
@@ -416,14 +477,20 @@ func compareTemplateRecordsNewest(a, b store.TemplateRecord) int {
 }
 
 func processVersionView(r *http.Request, fs *store.FS, record store.TemplateRecord) (processTemplateVersionView, error) {
-	source, err := fs.GetTemplateSource(r.Context(), record.Ref)
+	snapshot, err := fs.GetTemplateAuthoringSnapshot(r.Context(), record.Ref)
 	if err != nil {
 		return processTemplateVersionView{}, err
 	}
-	return processTemplateVersionView{
+	view := processTemplateVersionView{
 		Ref: record.Ref, SemanticHash: record.SemanticHash,
-		SourceHash: processSourceHash(source), StoredAt: record.StoredAt,
-	}, nil
+		SourceHash: processSourceHash(snapshot.Source), StoredAt: record.StoredAt,
+	}
+	if len(snapshot.Authorship) > 0 {
+		latest := snapshot.Authorship[len(snapshot.Authorship)-1]
+		view.Actor = latest.Actor
+		view.AuthoredAt = &latest.AuthoredAt
+	}
+	return view, nil
 }
 
 func processSourceHash(source []byte) string {

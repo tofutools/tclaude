@@ -35,6 +35,11 @@ func TestProcessTemplateRoutes404WhenFeatureOff(t *testing.T) {
 	}
 }
 
+func TestProcessTemplatePermissionSlugsAreRegistered(t *testing.T) {
+	assert.True(t, agentd.IsKnownPermSlug(agentd.PermProcessTemplatesRead))
+	assert.True(t, agentd.IsKnownPermSlug(agentd.PermProcessTemplatesManage))
+}
+
 func TestProcessTemplateRESTListGetSaveAndConflict(t *testing.T) {
 	f, root := processEngineFlow(t)
 	fs, err := store.NewFS(root)
@@ -241,7 +246,7 @@ func TestProcessTemplateSaveCanRevertHeadToExistingSemanticVersion(t *testing.T)
 	assert.Equal(t, float64(10), reopened.Layout.Nodes["begin"].X)
 }
 
-func TestProcessTemplateSaveRequiresTemplatesManageForAgent(t *testing.T) {
+func TestProcessTemplateSaveRequiresProcessTemplatesManageForAgent(t *testing.T) {
 	f, _ := processEngineFlow(t)
 	const intruder = "proc-intruder-aaaa-bbbb"
 	tmpl := processRESTTemplate("agent-owned", "agent draft", 10)
@@ -250,9 +255,99 @@ func TestProcessTemplateSaveRequiresTemplatesManageForAgent(t *testing.T) {
 	}
 	rec := agentReq(t, f, intruder, http.MethodPost, "/v1/process/templates/agent-owned", body)
 	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
-	require.NoError(t, db.GrantAgentPermission(intruder, agentd.PermTemplatesManage, "test"))
+	assert.Contains(t, rec.Body.String(), agentd.PermProcessTemplatesManage)
+	require.NoError(t, db.GrantAgentPermission(intruder, agentd.PermProcessTemplatesManage, "test"))
 	rec = agentReq(t, f, intruder, http.MethodPost, "/v1/process/templates/agent-owned", body)
 	assert.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+}
+
+func TestProcessTemplateAgentSourceWorkflowPermissionsCASAndAttribution(t *testing.T) {
+	f, _ := processEngineFlow(t)
+	const scribe = "proc-scribe-aaaa-bbbb"
+
+	tmpl := processRESTTemplate("agent-source", "created conversationally", 10)
+	tmpl.Layout = nil // new templates omit editor-owned layout
+	source, err := model.CanonicalYAML(tmpl)
+	require.NoError(t, err)
+
+	// Read and manage are deliberately independent. Holding manage lets the
+	// scribe save, but does not silently confer discovery/validation access.
+	require.NoError(t, db.GrantAgentPermission(scribe, agentd.PermProcessTemplatesManage, "test"))
+	readDenied := agentReq(t, f, scribe, http.MethodGet, "/v1/process/templates", nil)
+	assert.Equal(t, http.StatusForbidden, readDenied.Code, readDenied.Body.String())
+	assert.Contains(t, readDenied.Body.String(), agentd.PermProcessTemplatesRead)
+
+	created := agentReq(t, f, scribe, http.MethodPost, "/v1/process/templates/agent-source", map[string]any{
+		"source": string(source),
+	})
+	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+	var saved struct {
+		Ref        string    `json:"ref"`
+		SourceHash string    `json:"sourceHash"`
+		Actor      string    `json:"actor"`
+		AuthoredAt time.Time `json:"authoredAt"`
+	}
+	testharness.DecodeJSON(t, created, &saved)
+	assert.NotEmpty(t, saved.Ref)
+	assert.NotEmpty(t, saved.SourceHash)
+	assert.Regexp(t, `^agent:agt_`, saved.Actor)
+	assert.False(t, saved.AuthoredAt.IsZero())
+
+	// The dashboard/human REST view sees the exact same store record, including
+	// append-preserving actor attribution; there is no agent-only template store.
+	listRec := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates", nil)
+	require.Equal(t, http.StatusOK, listRec.Code, listRec.Body.String())
+	assert.Contains(t, listRec.Body.String(), `"id":"agent-source"`)
+	assert.Contains(t, listRec.Body.String(), saved.Actor)
+	getRec := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates/agent-source", nil)
+	require.Equal(t, http.StatusOK, getRec.Code, getRec.Body.String())
+	var shown struct {
+		CurrentRef string                     `json:"currentRef"`
+		SourceHash string                     `json:"sourceHash"`
+		Authorship []store.TemplateAuthorship `json:"authorship"`
+	}
+	testharness.DecodeJSON(t, getRec, &shown)
+	assert.Equal(t, saved.Ref, shown.CurrentRef)
+	assert.Equal(t, saved.SourceHash, shown.SourceHash)
+	require.Len(t, shown.Authorship, 1)
+	assert.Equal(t, saved.Actor, string(shown.Authorship[0].Actor))
+
+	// A complete scribe grant includes read for show/validate, but stale CAS is
+	// still refused with the documented 409 shape.
+	require.NoError(t, db.GrantAgentPermission(scribe, agentd.PermProcessTemplatesRead, "test"))
+	validateRec := agentReq(t, f, scribe, http.MethodPost, "/v1/process/validate", map[string]any{
+		"source": string(source),
+	})
+	require.Equal(t, http.StatusOK, validateRec.Code, validateRec.Body.String())
+	stale := agentReq(t, f, scribe, http.MethodPost, "/v1/process/templates/agent-source", map[string]any{
+		"source": string(source), "sourceHash": "stale-source-hash",
+	})
+	require.Equal(t, http.StatusConflict, stale.Code, stale.Body.String())
+	assert.Contains(t, stale.Body.String(), `"code":"process_template_conflict"`)
+	assert.Contains(t, stale.Body.String(), `"currentSourceHash":"`+saved.SourceHash+`"`)
+	assert.Contains(t, stale.Body.String(), `"currentRef":"`+saved.Ref+`"`)
+}
+
+func TestProcessTemplateRawSourceValidationPreservesYAMLDiagnostics(t *testing.T) {
+	f, _ := processEngineFlow(t)
+	source := "apiVersion: tclaude.dev/v1alpha1\nkind: ProcessTemplate\nid: raw\nunknown: true\nstart: done\nnodes:\n  done:\n    type: end\n"
+	rec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/validate", map[string]any{
+		"source": source,
+	})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"code":"unknown_field"`)
+
+	// The dashboard edit model still allows advisory draft saves, but the raw
+	// YAML scribe path refuses validation errors so a skipped validate cannot
+	// silently canonicalize away unknown fields.
+	save := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/raw", map[string]any{
+		"source": source,
+	})
+	require.Equal(t, http.StatusUnprocessableEntity, save.Code, save.Body.String())
+	assert.Contains(t, save.Body.String(), `"code":"process_template_invalid"`)
+	list := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates", nil)
+	require.Equal(t, http.StatusOK, list.Code, list.Body.String())
+	assert.NotContains(t, list.Body.String(), `"id":"raw"`)
 }
 
 func TestProcessValidateReturnsEditorScopedAdvisoryDiagnostics(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"gopkg.in/yaml.v3"
 )
 
@@ -71,6 +72,41 @@ func TestBundledSkillsDocumentSpawnResolution(t *testing.T) {
 	circles, err := skillsFS.ReadFile("skills/agent-circles/SKILL.md")
 	require.NoError(t, err)
 	assert.Contains(t, string(circles), "carries its own `harness`")
+}
+
+func TestProcessTemplateSkillPinsSafeAuthoringContract(t *testing.T) {
+	data, err := skillsFS.ReadFile("skills/process-templates/SKILL.md")
+	require.NoError(t, err)
+	body := string(data)
+
+	for _, required := range []string{
+		"process.templates.read",
+		"process.templates.manage",
+		"--expect-source-hash",
+		"process_template_conflict",
+		"never blind-overwrite",
+		"apiVersion: tclaude.dev/v1alpha1",
+		"kind: ProcessTemplate",
+		"explicit `type` on every node",
+		"uniform `performer` blocks",
+		"top-level `start`",
+		"inline `next`",
+		"For a new template, omit `layout`",
+		"preserve the entire existing `layout`",
+		"Saving still executes nothing",
+		"stable actor identity",
+	} {
+		assert.Contains(t, body, required)
+	}
+
+	start := strings.Index(body, "```yaml\n")
+	require.NotEqual(t, -1, start, "skill carries a generation-from-scratch example")
+	start += len("```yaml\n")
+	end := strings.Index(body[start:], "\n```")
+	require.NotEqual(t, -1, end)
+	parsed, err := model.Parse([]byte(body[start : start+end]))
+	require.NoError(t, err)
+	assert.False(t, parsed.Diagnostics.HasErrors(), "skill example diagnostics: %v", parsed.Diagnostics)
 }
 
 func skillFrontmatter(data []byte) (string, error) {

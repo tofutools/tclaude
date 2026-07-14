@@ -95,7 +95,7 @@ The `--install-*` flags add extras **on top of** the baseline — they don't rep
 | Flag | Adds | When you want it |
 |------|------|------------------|
 | `--install-agent-skills` | Materialises the bundled `agent-*` skills into `~/.claude/skills/` for Claude Code and both `~/.agents/skills/` and `$CODEX_HOME/skills` (default `~/.codex/skills`) for Codex CLI so agents know about the coordination commands. | Using [Agent Coordination](agent.md) |
-| `--install-default-agent-permissions` | Grants the `self.*` permission slugs those skills exercise (`self.rename`, `self.compact`, `self.reincarnate`, `self.clone`, `self.schedule`, `self.remote-control`, `self.task`, `self.pr`, `self.tags`) as agent defaults. | Using [Agent Coordination](agent.md) |
+| `--install-default-agent-permissions` | Grants the low-risk permission slugs those skills exercise (`self.rename`, `self.compact`, `self.reincarnate`, `self.clone`, `self.schedule`, `self.remote-control`, `self.task`, `self.pr`, `self.tags`, `process.templates.read`) as agent defaults. Mutating `process.templates.manage` remains opt-in. | Using [Agent Coordination](agent.md) |
 | `--install-sandbox-hardening` | Adds the `sandbox.*` / `permissions.deny` entries that deny agents direct access to agentd's state. Append-only and idempotent. | Only if you run agents inside the [Claude Code sandbox](sandbox-hardening.md) |
 | `--install-resume-threshold-override` | Writes a `claude_resume.threshold_minutes` override to `~/.tclaude/config.json` that suppresses Claude Code's interactive "Resume from summary" prompt for tclaude-spawned panes. Skip-if-set; never overwrites a value you configured. | If detached/scripted resumes hang on the resume chooser |
 | `--install-all` | Every extra above. | You want it all |

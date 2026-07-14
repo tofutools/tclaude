@@ -1,0 +1,4 @@
+interface:
+  display_name: "Process Template Scribe"
+  short_description: "Create and safely CAS-edit process-template YAML"
+  default_prompt: "Use $process-templates to create or safely edit a tclaude process template through agentd."

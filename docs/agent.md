@@ -1006,6 +1006,25 @@ tclaude agent process advance [--group <name>] [--to <phase>]   # next phase, or
 The process is **advisory** — advancing records the transition and nudges the
 roles active in the phase it enters, but enforces nothing.
 
+### process-templates
+
+Author process-template YAML through the same agentd REST handlers and
+content-addressed store used by the dashboard editor:
+
+```bash
+tclaude agent process-templates ls
+tclaude agent process-templates show <id>
+tclaude agent process-templates validate --file <template.yaml>
+tclaude agent process-templates save --file <template.yaml> [--expect-source-hash <hash>] [--ask-human 30s]
+```
+
+`ls`, `show`, and `validate` require `process.templates.read` (included by the
+optional default-permission installer). `save` independently requires the
+non-default `process.templates.manage`. Existing-template saves use the
+`sourceHash` emitted in `show`; a stale hash is a conflict that must be resolved
+by re-showing and merging, never by blind overwrite. Saving records the socket
+peer's stable actor identity and has no execution or instantiation side effect.
+
 ### groups rebrief
 
 Re-deliver a deployed force's **current** work pattern to its live members, with
@@ -1071,6 +1090,7 @@ gate group, messaging, template, and permission administration.
 | `permissions.*` | `permissions.grant`, `permissions.revoke` |
 | `message.*`   | `message.direct` |
 | `templates.*` | `templates.manage`, `templates.instantiate` |
+| `process.templates.*` | `process.templates.read`, `process.templates.manage` |
 | `human.*`     | `human.notify`, `human.clipboard` |
 
 Run `tclaude agent permissions slugs` for the live registry with
@@ -1157,6 +1177,9 @@ for Claude Code, plus both `~/.agents/skills/` and `$CODEX_HOME/skills`
   circles" / task forces): the JSON wire shape, the safe
   show-json → edit → edit-file round-trip, the scribe grant bundle, and
   the wizard-mode vocabulary. See [templates](#templates).
+- **`process-templates`** — generate and safely CAS-edit process-template YAML
+  through agentd, including the full node/performer shape, conflict etiquette,
+  and preservation of editor-owned layout.
 - **`human-notify`** — send the human a notification via
   `tclaude agent notify-human`; it lands in the dashboard
   [Messages tab](dashboard.md#messages). Add repeatable `--attach <path>` flags

@@ -29,8 +29,10 @@ const artifactRefPrefix = "artifact:sha256:"
 var safeSegmentPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
 
 type FS struct {
-	root string
-	now  func() time.Time
+	root                          string
+	now                           func() time.Time
+	templateAuthoringSnapshotHook func()
+	templateAuthoringCommitHook   func(TemplateAuthoringCommit)
 }
 
 var processLocks sync.Map
@@ -81,6 +83,9 @@ func (s *FS) putTemplate(ctx context.Context, tmpl *model.Template, moveHead boo
 		return TemplateRecord{}, err
 	}
 	defer unlock()
+	if err := s.recoverAttributedTemplateSaveUnlocked(ctx, tmpl.ID); err != nil {
+		return TemplateRecord{}, err
+	}
 	var preservedHead TemplateRecord
 	if !moveHead {
 		preservedHead, err = s.getTemplateHeadUnlocked(ctx, tmpl.ID)
@@ -117,38 +122,443 @@ func (s *FS) putTemplate(ctx context.Context, tmpl *model.Template, moveHead boo
 // current head under the same cross-process filesystem lock as the write and
 // head-pointer update, so two editors cannot silently lose layout changes.
 func (s *FS) PutTemplateEditorSource(ctx context.Context, tmpl *model.Template, expectedSourceHash string) (TemplateRecord, error) {
+	commit, err := s.putTemplateEditorSource(ctx, tmpl, expectedSourceHash, "")
+	return commit.TemplateRecord, err
+}
+
+// PutTemplateEditorSourceAttributed is PutTemplateEditorSource with a durable,
+// append-preserving actor record. It is used by authenticated authoring
+// surfaces; file-backed/manual store writes continue to have no invented
+// actor. Repeated layout-only saves retain one event per source hash even when
+// their semantic ref is identical. The returned commit is captured from the
+// stored bytes before this method releases the template lock.
+func (s *FS) PutTemplateEditorSourceAttributed(
+	ctx context.Context,
+	tmpl *model.Template,
+	expectedSourceHash string,
+	actor state.ActorRef,
+) (TemplateAuthoringCommit, error) {
+	if !state.ValidateActorRef(actor) {
+		return TemplateAuthoringCommit{}, fmt.Errorf("invalid process template authoring actor %q", actor)
+	}
+	return s.putTemplateEditorSource(ctx, tmpl, expectedSourceHash, actor)
+}
+
+func (s *FS) putTemplateEditorSource(
+	ctx context.Context,
+	tmpl *model.Template,
+	expectedSourceHash string,
+	actor state.ActorRef,
+) (TemplateAuthoringCommit, error) {
 	if tmpl == nil {
-		return TemplateRecord{}, fmt.Errorf("nil process template")
+		return TemplateAuthoringCommit{}, fmt.Errorf("nil process template")
 	}
 	unlock, err := s.lockTemplate(ctx, tmpl.ID)
 	if err != nil {
-		return TemplateRecord{}, err
+		return TemplateAuthoringCommit{}, err
 	}
 	defer unlock()
+	if err := s.recoverAttributedTemplateSaveUnlocked(ctx, tmpl.ID); err != nil {
+		return TemplateAuthoringCommit{}, err
+	}
 	head, headErr := s.getTemplateHeadUnlocked(ctx, tmpl.ID)
 	currentHash := ""
 	if headErr == nil {
-		source, err := s.GetTemplateSource(ctx, head.Ref)
+		id, hash, err := parseTemplateRef(head.Ref)
 		if err != nil {
-			return TemplateRecord{}, err
+			return TemplateAuthoringCommit{}, err
+		}
+		source, err := s.getTemplateSourceUnlocked(ctx, id, hash, head.Ref)
+		if err != nil {
+			return TemplateAuthoringCommit{}, err
 		}
 		currentHash = sourceHash(source)
 	} else if !errors.Is(headErr, ErrNotFound) {
-		return TemplateRecord{}, headErr
+		return TemplateAuthoringCommit{}, headErr
 	}
 	if expectedSourceHash != currentHash {
-		return TemplateRecord{}, &TemplateSourceConflictError{
+		return TemplateAuthoringCommit{}, &TemplateSourceConflictError{
 			CurrentRef: head.Ref, CurrentSourceHash: currentHash,
 		}
 	}
+	var intent *templateSaveIntent
+	if actor != "" {
+		intent, err = s.newTemplateSaveIntent(tmpl)
+		if err != nil {
+			return TemplateAuthoringCommit{}, err
+		}
+		if err := s.writeTemplateSaveIntent(intent); err != nil {
+			return TemplateAuthoringCommit{}, err
+		}
+	}
+	rollback := func(cause error) (TemplateAuthoringCommit, error) {
+		if intent == nil {
+			return TemplateAuthoringCommit{}, cause
+		}
+		if rollbackErr := s.rollbackTemplateSaveIntent(intent); rollbackErr != nil {
+			cause = errors.Join(cause, fmt.Errorf("rollback attributed process template save: %w", rollbackErr))
+		}
+		return TemplateAuthoringCommit{}, cause
+	}
 	record, err := s.putTemplateUnlocked(ctx, tmpl, true)
 	if err != nil {
-		return TemplateRecord{}, err
+		return rollback(err)
+	}
+	committedID, committedHash, err := parseTemplateRef(record.Ref)
+	if err != nil {
+		return rollback(err)
+	}
+	committedSource, err := s.getTemplateSourceUnlocked(ctx, committedID, committedHash, record.Ref)
+	if err != nil {
+		return rollback(err)
+	}
+	commit := TemplateAuthoringCommit{
+		TemplateRecord: record,
+		SourceHash:     sourceHash(committedSource),
+	}
+	if actor != "" {
+		event := TemplateAuthorship{Ref: record.Ref, SourceHash: commit.SourceHash, Actor: actor, AuthoredAt: s.now().UTC()}
+		if err := s.appendTemplateAuthorship(ctx, record, event); err != nil {
+			return rollback(err)
+		}
+		commit.Actor = event.Actor
+		commit.AuthoredAt = event.AuthoredAt
 	}
 	if err := s.writeTemplateHead(record); err != nil {
-		return TemplateRecord{}, err
+		return rollback(err)
 	}
-	return record, nil
+	if intent != nil {
+		if err := syncTemplateSaveIntentDirs(intent); err != nil {
+			return rollback(err)
+		}
+		if err := s.finishTemplateSaveIntent(intent.ID); err != nil {
+			return rollback(err)
+		}
+	}
+	if s.templateAuthoringCommitHook != nil {
+		s.templateAuthoringCommitHook(commit)
+	}
+	return commit, nil
+}
+
+const templateSaveIntentVersion = 1
+
+// An attributed editor save updates up to four filesystem records. Its durable
+// intent is written and synced before those mutations. A process crash leaves
+// the intent behind, and every template read/list/write path recovers it under
+// the same per-template lock before exposing state. If recovery cannot finish,
+// reads fail closed rather than publishing content without its actor event.
+type templateSaveIntent struct {
+	Version      int                        `json:"version"`
+	ID           string                     `json:"id"`
+	SemanticHash string                     `json:"semanticHash"`
+	Files        []templateSaveFileSnapshot `json:"files"`
+}
+
+type templateSaveFileSnapshot struct {
+	Path    string      `json:"path"`
+	Data    []byte      `json:"data,omitempty"`
+	Mode    os.FileMode `json:"mode,omitempty"`
+	ModTime time.Time   `json:"modTime,omitempty"`
+	Exists  bool        `json:"exists"`
+}
+
+func (s *FS) newTemplateSaveIntent(tmpl *model.Template) (*templateSaveIntent, error) {
+	semanticHash, err := model.SemanticHash(tmpl)
+	if err != nil {
+		return nil, err
+	}
+	dir, err := s.templateDir(tmpl.ID, semanticHash)
+	if err != nil {
+		return nil, err
+	}
+	paths := []string{
+		filepath.Join(s.root, "templates", tmpl.ID, "head"),
+		filepath.Join(dir, "template.yaml"),
+		filepath.Join(dir, "template.json"),
+		filepath.Join(dir, "authorship.jsonl"),
+	}
+	snapshots := make([]templateSaveFileSnapshot, 0, len(paths))
+	for _, path := range paths {
+		snapshot, err := snapshotTemplateSaveFile(path)
+		if err != nil {
+			return nil, err
+		}
+		snapshots = append(snapshots, snapshot)
+	}
+	return &templateSaveIntent{
+		Version: templateSaveIntentVersion, ID: tmpl.ID, SemanticHash: semanticHash, Files: snapshots,
+	}, nil
+}
+
+func snapshotTemplateSaveFile(path string) (templateSaveFileSnapshot, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return templateSaveFileSnapshot{Path: path}, nil
+	}
+	if err != nil {
+		return templateSaveFileSnapshot{}, fmt.Errorf("snapshot process template save file %q: %w", path, err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return templateSaveFileSnapshot{}, fmt.Errorf("stat process template save file %q: %w", path, err)
+	}
+	return templateSaveFileSnapshot{
+		Path: path, Data: data, Mode: info.Mode().Perm(), ModTime: info.ModTime(), Exists: true,
+	}, nil
+}
+
+func (s *FS) templateSaveIntentPath(id string) (string, error) {
+	if err := safeSegment(id); err != nil {
+		return "", fmt.Errorf("invalid template id: %w", err)
+	}
+	return filepath.Join(s.root, "templates", id, ".attributed-save-intent.json"), nil
+}
+
+func (s *FS) writeTemplateSaveIntent(intent *templateSaveIntent) error {
+	path, err := s.templateSaveIntentPath(intent.ID)
+	if err != nil {
+		return err
+	}
+	data, err := json.Marshal(intent)
+	if err != nil {
+		return fmt.Errorf("encode attributed process template save intent: %w", err)
+	}
+	if err := writeFileAtomic(path, append(data, '\n'), 0o600); err != nil {
+		return fmt.Errorf("write attributed process template save intent: %w", err)
+	}
+	// writeFileAtomic intentionally treats directory-sync failure as best-effort
+	// for general store files. The intent is the transaction's recovery anchor,
+	// so authoring must not mutate anything until its directory entry is known
+	// durable.
+	if err := syncDir(filepath.Dir(path)); err != nil {
+		return fmt.Errorf("sync attributed process template save intent: %w", err)
+	}
+	return nil
+}
+
+func (s *FS) rollbackTemplateSaveIntent(intent *templateSaveIntent) error {
+	if err := s.validateTemplateSaveIntent(intent); err != nil {
+		return err
+	}
+	if err := restoreTemplateSaveFiles(intent.Files); err != nil {
+		// Keep the durable marker: later reads must retry recovery or fail
+		// closed instead of treating a partial save as committed.
+		return err
+	}
+	if err := syncTemplateSaveIntentDirs(intent); err != nil {
+		return err
+	}
+	return s.finishTemplateSaveIntent(intent.ID)
+}
+
+func syncTemplateSaveIntentDirs(intent *templateSaveIntent) error {
+	seen := make(map[string]struct{}, len(intent.Files))
+	for _, snapshot := range intent.Files {
+		dir := filepath.Dir(snapshot.Path)
+		if _, ok := seen[dir]; ok {
+			continue
+		}
+		seen[dir] = struct{}{}
+		if err := syncDir(dir); err != nil {
+			return fmt.Errorf("sync attributed process template save directory %q: %w", dir, err)
+		}
+	}
+	return nil
+}
+
+func (s *FS) finishTemplateSaveIntent(id string) error {
+	path, err := s.templateSaveIntentPath(id)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove attributed process template save intent: %w", err)
+	}
+	if err := syncDir(filepath.Dir(path)); err != nil {
+		return fmt.Errorf("sync attributed process template save intent removal: %w", err)
+	}
+	return nil
+}
+
+func (s *FS) recoverAttributedTemplateSaveUnlocked(ctx context.Context, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	path, err := s.templateSaveIntentPath(id)
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read attributed process template save intent: %w", err)
+	}
+	var intent templateSaveIntent
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&intent); err != nil {
+		return fmt.Errorf("decode attributed process template save intent: %w", err)
+	}
+	if intent.ID != id {
+		return fmt.Errorf("%w: attributed save intent id %q does not match %q", ErrContentMismatch, intent.ID, id)
+	}
+	if err := s.rollbackTemplateSaveIntent(&intent); err != nil {
+		return fmt.Errorf("recover attributed process template save: %w", err)
+	}
+	return nil
+}
+
+func (s *FS) validateTemplateSaveIntent(intent *templateSaveIntent) error {
+	if intent == nil || intent.Version != templateSaveIntentVersion {
+		return fmt.Errorf("%w: unsupported attributed save intent", ErrContentMismatch)
+	}
+	dir, err := s.templateDir(intent.ID, intent.SemanticHash)
+	if err != nil {
+		return err
+	}
+	want := []string{
+		filepath.Join(s.root, "templates", intent.ID, "head"),
+		filepath.Join(dir, "template.yaml"),
+		filepath.Join(dir, "template.json"),
+		filepath.Join(dir, "authorship.jsonl"),
+	}
+	if len(intent.Files) != len(want) {
+		return fmt.Errorf("%w: attributed save intent has %d files", ErrContentMismatch, len(intent.Files))
+	}
+	for i := range want {
+		if intent.Files[i].Path != want[i] {
+			return fmt.Errorf("%w: attributed save intent path %q", ErrContentMismatch, intent.Files[i].Path)
+		}
+	}
+	return nil
+}
+
+func restoreTemplateSaveFiles(snapshots []templateSaveFileSnapshot) error {
+	var errs []error
+	for i := len(snapshots) - 1; i >= 0; i-- {
+		snapshot := snapshots[i]
+		if !snapshot.Exists {
+			if err := os.Remove(snapshot.Path); err != nil {
+				if !errors.Is(err, os.ErrNotExist) {
+					errs = append(errs, fmt.Errorf("remove %q: %w", snapshot.Path, err))
+				}
+			} else if err := syncDir(filepath.Dir(snapshot.Path)); err != nil {
+				errs = append(errs, fmt.Errorf("sync removal of %q: %w", snapshot.Path, err))
+			}
+			continue
+		}
+		if err := writeFileAtomic(snapshot.Path, snapshot.Data, snapshot.Mode); err != nil {
+			errs = append(errs, fmt.Errorf("restore %q: %w", snapshot.Path, err))
+			continue
+		}
+		if err := os.Chtimes(snapshot.Path, snapshot.ModTime, snapshot.ModTime); err != nil {
+			errs = append(errs, fmt.Errorf("restore timestamps for %q: %w", snapshot.Path, err))
+			continue
+		}
+		if err := syncTemplateSaveFile(snapshot.Path); err != nil {
+			errs = append(errs, fmt.Errorf("sync restored process template save file %q: %w", snapshot.Path, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func syncTemplateSaveFile(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return f.Sync()
+}
+
+// ListTemplateAuthorship returns authoring events in append order. Legacy
+// versions have no authorship sidecar and therefore return an empty slice.
+func (s *FS) ListTemplateAuthorship(ctx context.Context, ref string) ([]TemplateAuthorship, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	id, hash, err := parseTemplateRef(ref)
+	if err != nil {
+		return nil, err
+	}
+	unlock, err := s.lockTemplate(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	if err := s.recoverAttributedTemplateSaveUnlocked(ctx, id); err != nil {
+		return nil, err
+	}
+	return s.listTemplateAuthorshipUnlocked(id, hash, ref)
+}
+
+func (s *FS) listTemplateAuthorshipUnlocked(id, hash, ref string) ([]TemplateAuthorship, error) {
+	dir, err := s.templateDir(id, hash)
+	if err != nil {
+		return nil, err
+	}
+	return readTemplateAuthorship(filepath.Join(dir, "authorship.jsonl"), ref)
+}
+
+func (s *FS) appendTemplateAuthorship(ctx context.Context, record TemplateRecord, event TemplateAuthorship) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	dir, err := s.templateDir(record.ID, record.SemanticHash)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(dir, "authorship.jsonl")
+	existing, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read process template authorship: %w", err)
+	}
+	if err == nil {
+		if _, err := decodeTemplateAuthorship(existing, record.Ref); err != nil {
+			return err
+		}
+	}
+	line, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("encode process template authorship: %w", err)
+	}
+	data := append(append([]byte(nil), existing...), line...)
+	data = append(data, '\n')
+	if err := writeFileAtomic(path, data, 0o644); err != nil {
+		return fmt.Errorf("write process template authorship: %w", err)
+	}
+	return nil
+}
+
+func readTemplateAuthorship(path, ref string) ([]TemplateAuthorship, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return []TemplateAuthorship{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read process template authorship: %w", err)
+	}
+	return decodeTemplateAuthorship(data, ref)
+}
+
+func decodeTemplateAuthorship(data []byte, ref string) ([]TemplateAuthorship, error) {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	events := []TemplateAuthorship{}
+	for {
+		var event TemplateAuthorship
+		if err := dec.Decode(&event); errors.Is(err, io.EOF) {
+			return events, nil
+		} else if err != nil {
+			return nil, fmt.Errorf("decode process template authorship: %w", err)
+		}
+		if event.Ref != ref || event.SourceHash == "" || !state.ValidateActorRef(event.Actor) || event.AuthoredAt.IsZero() {
+			return nil, fmt.Errorf("%w: invalid authorship event for %q", ErrContentMismatch, ref)
+		}
+		events = append(events, event)
+	}
 }
 
 func (s *FS) putTemplateUnlocked(ctx context.Context, tmpl *model.Template, updateEditorSource bool) (TemplateRecord, error) {
@@ -221,6 +631,14 @@ func (s *FS) GetTemplateHead(ctx context.Context, id string) (TemplateRecord, er
 	if err := ctx.Err(); err != nil {
 		return TemplateRecord{}, err
 	}
+	unlock, err := s.lockTemplate(ctx, id)
+	if err != nil {
+		return TemplateRecord{}, err
+	}
+	defer unlock()
+	if err := s.recoverAttributedTemplateSaveUnlocked(ctx, id); err != nil {
+		return TemplateRecord{}, err
+	}
 	return s.getTemplateHeadUnlocked(ctx, id)
 }
 
@@ -264,17 +682,7 @@ func (s *FS) getTemplateHeadUnlocked(ctx context.Context, id string) (TemplateRe
 }
 
 func templateRecordsForID(ctx context.Context, s *FS, id string) ([]TemplateRecord, error) {
-	records, err := s.ListTemplates(ctx)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]TemplateRecord, 0)
-	for _, record := range records {
-		if record.ID == id {
-			out = append(out, record)
-		}
-	}
-	return out, nil
+	return s.listTemplateRecordsForIDUnlocked(ctx, id)
 }
 
 func (s *FS) writeTemplateHead(record TemplateRecord) error {
@@ -293,6 +701,21 @@ func (s *FS) GetTemplate(ctx context.Context, ref string) (*model.Template, erro
 	}
 	id, hash, err := parseTemplateRef(ref)
 	if err != nil {
+		return nil, err
+	}
+	unlock, err := s.lockTemplate(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	if err := s.recoverAttributedTemplateSaveUnlocked(ctx, id); err != nil {
+		return nil, err
+	}
+	return s.getTemplateUnlocked(ctx, id, hash, ref)
+}
+
+func (s *FS) getTemplateUnlocked(ctx context.Context, id, hash, ref string) (*model.Template, error) {
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	dir, err := s.templateDir(id, hash)
@@ -334,6 +757,55 @@ func (s *FS) GetTemplateSource(ctx context.Context, ref string) ([]byte, error) 
 	if err != nil {
 		return nil, err
 	}
+	unlock, err := s.lockTemplate(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	if err := s.recoverAttributedTemplateSaveUnlocked(ctx, id); err != nil {
+		return nil, err
+	}
+	return s.getTemplateSourceUnlocked(ctx, id, hash, ref)
+}
+
+// GetTemplateAuthoringSnapshot returns source and provenance from one recovered
+// per-template lock. Callers rendering attribution must use this instead of
+// composing GetTemplateSource and ListTemplateAuthorship, which would permit a
+// layout-only save to land between the two reads.
+func (s *FS) GetTemplateAuthoringSnapshot(ctx context.Context, ref string) (TemplateAuthoringSnapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return TemplateAuthoringSnapshot{}, err
+	}
+	id, hash, err := parseTemplateRef(ref)
+	if err != nil {
+		return TemplateAuthoringSnapshot{}, err
+	}
+	unlock, err := s.lockTemplate(ctx, id)
+	if err != nil {
+		return TemplateAuthoringSnapshot{}, err
+	}
+	defer unlock()
+	if err := s.recoverAttributedTemplateSaveUnlocked(ctx, id); err != nil {
+		return TemplateAuthoringSnapshot{}, err
+	}
+	source, err := s.getTemplateSourceUnlocked(ctx, id, hash, ref)
+	if err != nil {
+		return TemplateAuthoringSnapshot{}, err
+	}
+	if s.templateAuthoringSnapshotHook != nil {
+		s.templateAuthoringSnapshotHook()
+	}
+	authorship, err := s.listTemplateAuthorshipUnlocked(id, hash, ref)
+	if err != nil {
+		return TemplateAuthoringSnapshot{}, err
+	}
+	return TemplateAuthoringSnapshot{Source: source, Authorship: authorship}, nil
+}
+
+func (s *FS) getTemplateSourceUnlocked(ctx context.Context, id, hash, ref string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	dir, err := s.templateDir(id, hash)
 	if err != nil {
 		return nil, err
@@ -345,7 +817,7 @@ func (s *FS) GetTemplateSource(ctx context.Context, ref string) ([]byte, error) 
 	if !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("read template source: %w", err)
 	}
-	tmpl, err := s.GetTemplate(ctx, ref)
+	tmpl, err := s.getTemplateUnlocked(ctx, id, hash, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -370,31 +842,23 @@ func (s *FS) ListTemplates(ctx context.Context) ([]TemplateRecord, error) {
 			continue
 		}
 		id := idEntry.Name()
-		hashEntries, err := os.ReadDir(filepath.Join(templatesDir, id))
+		if err := safeSegment(id); err != nil {
+			continue
+		}
+		unlock, err := s.lockTemplate(ctx, id)
 		if err != nil {
-			return nil, fmt.Errorf("read template hashes for %q: %w", id, err)
+			return nil, err
 		}
-		for _, hashEntry := range hashEntries {
-			if !hashEntry.IsDir() {
-				continue
-			}
-			hash, ok := strings.CutPrefix(hashEntry.Name(), "sha256-")
-			if !ok || !isHexSHA256(hash) {
-				continue
-			}
-			bodyPath := filepath.Join(templatesDir, id, hashEntry.Name(), "template.json")
-			if _, err := os.Stat(bodyPath); errors.Is(err, os.ErrNotExist) {
-				continue
-			} else if err != nil {
-				return nil, fmt.Errorf("stat template %q: %w", model.TemplateRef(id, hash), err)
-			}
-			records = append(records, TemplateRecord{
-				ID:           id,
-				Ref:          model.TemplateRef(id, hash),
-				SemanticHash: hash,
-				StoredAt:     fileModTime(bodyPath),
-			})
+		if err := s.recoverAttributedTemplateSaveUnlocked(ctx, id); err != nil {
+			unlock()
+			return nil, fmt.Errorf("recover attributed save for template %q: %w", id, err)
 		}
+		idRecords, err := s.listTemplateRecordsForIDUnlocked(ctx, id)
+		unlock()
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, idRecords...)
 	}
 	slices.SortFunc(records, func(a, b TemplateRecord) int {
 		if a.ID != b.ID {
@@ -402,6 +866,40 @@ func (s *FS) ListTemplates(ctx context.Context) ([]TemplateRecord, error) {
 		}
 		return strings.Compare(a.Ref, b.Ref)
 	})
+	return records, nil
+}
+
+func (s *FS) listTemplateRecordsForIDUnlocked(ctx context.Context, id string) ([]TemplateRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	templateDir := filepath.Join(s.root, "templates", id)
+	hashEntries, err := os.ReadDir(templateDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read template hashes for %q: %w", id, err)
+	}
+	var records []TemplateRecord
+	for _, hashEntry := range hashEntries {
+		if !hashEntry.IsDir() {
+			continue
+		}
+		hash, ok := strings.CutPrefix(hashEntry.Name(), "sha256-")
+		if !ok || !isHexSHA256(hash) {
+			continue
+		}
+		bodyPath := filepath.Join(templateDir, hashEntry.Name(), "template.json")
+		if _, err := os.Stat(bodyPath); errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err != nil {
+			return nil, fmt.Errorf("stat template %q: %w", model.TemplateRef(id, hash), err)
+		}
+		records = append(records, TemplateRecord{
+			ID: id, Ref: model.TemplateRef(id, hash), SemanticHash: hash, StoredAt: fileModTime(bodyPath),
+		})
+	}
 	return records, nil
 }
 
