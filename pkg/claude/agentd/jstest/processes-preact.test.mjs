@@ -96,6 +96,50 @@ test('instantiate actions load an exact ref, POST string params, and navigate to
   assert.equal(state.instantiation.value, null);
 });
 
+test('successful instantiation moves focus from the removed invoker into the new viewer', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { createProcessesActions }, { ProcessesApp }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
+    harness.importDashboardModule('js/processes-island.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const ref = `focus-success@sha256:${'f'.repeat(64)}`;
+  const runID = 'focus-success-run';
+  const actions = createProcessesActions({
+    state, notify() {}, dispatchNavigated() {}, mintAttemptID: () => 'focus-success-attempt',
+    fetchImpl: async (path, options = {}) => {
+      if (path === '/v1/process/templates') return { ok: true, json: async () => ({ templates: [{
+        id: 'focus-success', latestVersion: { ref, sourceHash: 'focus-success-source' },
+      }] }) };
+      if (path.startsWith('/v1/process/templates/focus-success?version=')) return { ok: true, json: async () => ({
+        currentRef: ref, template: { id: 'focus-success', params: {} },
+      }) };
+      if (path === '/v1/process/runs' && options.method === 'POST') return { ok: true, json: async () => ({
+        run: { id: runID, templateRef: ref, createdAt: '2026-07-14T00:00:00Z', updatedAt: '2026-07-14T00:00:00Z' },
+      }) };
+      if (path === '/v1/process/runs') return { ok: true, json: async () => ({ runs: [] }) };
+      throw new Error(`unexpected ${path}`);
+    },
+  });
+  await actions.load('templates');
+  const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
+  await harness.act(() => Promise.resolve());
+  const invoker = mounted.container.querySelector('[data-process-action="instantiate"]');
+  invoker.focus();
+  await harness.act(() => harness.fireEvent(invoker, 'click'));
+  for (let i = 0; i < 10 && state.instantiation.value?.phase !== 'ready'; i++) await harness.act(() => Promise.resolve());
+  assert.equal(state.instantiation.value?.phase, 'ready');
+  const form = mounted.container.querySelector('.process-instantiate-dialog');
+  assert.ok(form);
+  await harness.act(() => harness.fireEvent(form, 'submit'));
+  for (let i = 0; i < 10; i++) await harness.act(() => Promise.resolve());
+  const back = mounted.container.querySelector('#process-viewer-view [data-process-close-view]');
+  assert.ok(back);
+  assert.equal(mounted.container.contains(invoker), false, 'viewer navigation removes the template-list invoker');
+  assert.equal(harness.document.activeElement, back, 'focus lands on the viewer back control instead of body');
+  await mounted.unmount();
+});
+
 test('instantiate retry keeps one strong attempt id and recovers a committed run after its response is lost', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([
@@ -170,7 +214,7 @@ test('list instantiation loading transition initializes every declared default e
   const dialog = mounted.container.querySelector('.process-instantiate-dialog');
   assert.equal(dialog.querySelector('[data-process-param-input="issue"]').value, 'TCL-300');
   assert.equal(dialog.querySelector('[data-process-param-input="retries"]').value, '2');
-  assert.equal(dialog.querySelector('[data-process-param-input="approved"]').hasAttribute('checked'), true);
+  assert.equal(dialog.querySelector('[data-process-param-input="approved"]').getAttribute('value'), 'true');
   harness.fireEvent(dialog, 'submit');
   assert.deepEqual(submitted, { approved: 'true', issue: 'TCL-300', retries: '2' });
   const issue = dialog.querySelector('[data-process-param-input="issue"]');
@@ -217,14 +261,48 @@ test('instantiate dialog renders typed/defaulted/required inputs and canonical v
   const legacy = dialog.querySelector('[data-process-param-input="legacy"]');
   assert.equal(issue.type, 'text'); assert.equal(issue.hasAttribute('required'), true);
   assert.equal(retries.type, 'number'); assert.equal(retries.value, '2');
-  assert.equal(approved.type, 'checkbox'); assert.equal(approved.hasAttribute('checked'), true);
+  assert.equal(approved.tagName, 'SELECT'); assert.equal(approved.getAttribute('value'), 'true');
   assert.equal(legacy.type, 'text'); assert.equal(legacy.value, 'raw');
   assert.match(dialog.querySelector('[data-process-param="issue"]').textContent, /Issue id/);
   issue.value = 'TCL-300'; harness.fireEvent(issue, 'input'); await harness.act(() => Promise.resolve());
   retries.value = '9007199254740993'; harness.fireEvent(retries, 'input'); await harness.act(() => Promise.resolve());
-  approved.checked = false; harness.fireEvent(approved, 'change'); await harness.act(() => Promise.resolve());
+  for (const option of approved.options) option.selected = option.value === 'false';
+  harness.fireEvent(approved, 'change'); await harness.act(() => Promise.resolve());
   harness.fireEvent(dialog, 'submit');
   assert.deepEqual(submitted, { approved: 'false', issue: 'TCL-300', legacy: 'raw', retries: '9007199254740993' });
+  await mounted.unmount();
+});
+
+test('optional booleans stay omitted while explicit and defaulted false values are submitted', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { ProcessesApp }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-island.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  state.setInstantiation({
+    key: 'boolean-omission', id: 'boolean-omission', ref: `boolean-omission@sha256:${'9'.repeat(64)}`, phase: 'ready', error: '',
+    template: { id: 'boolean-omission', params: {
+      defaultFalse: { type: 'boolean', default: false },
+      optional: { type: 'boolean' },
+    } },
+  });
+  const submissions = [];
+  const actions = {
+    refreshActive() {}, load() {}, observeTemplateHeads() {}, activateSubtab() {}, openEditor() {}, closeCanvas() {},
+    closeInstantiation() {}, submitInstantiation(params) { submissions.push(params); },
+  };
+  const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
+  const dialog = mounted.container.querySelector('.process-instantiate-dialog');
+  const defaultFalse = dialog.querySelector('[data-process-param-input="defaultFalse"]');
+  const optional = dialog.querySelector('[data-process-param-input="optional"]');
+  assert.equal(defaultFalse.getAttribute('value'), 'false', 'a declared false default remains selected');
+  assert.equal(optional.getAttribute('value'), '', 'an optional boolean without a default begins unset');
+  harness.fireEvent(dialog, 'submit');
+  assert.deepEqual(submissions.at(-1), { defaultFalse: 'false' }, 'untouched optional boolean is omitted');
+  for (const option of optional.options) option.selected = option.value === 'false';
+  harness.fireEvent(optional, 'change'); await harness.act(() => Promise.resolve());
+  harness.fireEvent(dialog, 'submit');
+  assert.deepEqual(submissions.at(-1), { defaultFalse: 'false', optional: 'false' }, 'explicit false is retained');
   await mounted.unmount();
 });
 

@@ -334,6 +334,10 @@ func handleProcessRunCreate(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	// The audit route intentionally never buffers this request body because
+	// params may contain secrets. Hand the middleware only the safe durable run
+	// id after creation (or idempotent replay) succeeds.
+	setAuditTargetLabel(r, run.ID)
 	w.Header().Set("Location", "/v1/process/runs/"+url.PathEscape(run.ID)+"/view")
 	writeProcessJSON(w, http.StatusCreated, map[string]any{"run": processRunCreatedView{
 		ID: run.ID, TemplateRef: run.TemplateRef, CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt,

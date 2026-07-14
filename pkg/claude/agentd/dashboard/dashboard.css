@@ -11736,7 +11736,8 @@ body.wizard .process-fit-button { box-shadow: 0 2px 12px rgba(75, 48, 119, 0.5);
 .process-instantiate-field { padding: 9px 10px; border: 1px solid #30363d; border-radius: 8px; background: #0d1117; }
 .process-instantiate-field > label:not(.process-instantiate-boolean) { display: flex; flex-direction: column; gap: 5px; font-size: 12px; font-weight: 650; color: #e6edf3; }
 .process-instantiate-field input[type="text"],
-.process-instantiate-field input[type="number"] {
+.process-instantiate-field input[type="number"],
+.process-instantiate-field select {
   box-sizing: border-box;
   width: 100%;
   padding: 7px 8px;
@@ -11745,7 +11746,6 @@ body.wizard .process-fit-button { box-shadow: 0 2px 12px rgba(75, 48, 119, 0.5);
   color: #e6edf3;
   background: #161b22;
 }
-.process-instantiate-boolean { display: flex; align-items: center; gap: 8px; color: #e6edf3; font-weight: 650; }
 .process-instantiate-field .process-secondary { margin-top: 4px; }
 @media (max-width: 780px) {
   .process-param-row { grid-template-columns: 1fr 1fr; }
@@ -11839,11 +11839,12 @@ body.wizard .process-param-row,
 body.wizard .process-instantiate-field { background: #181226; border-color: #4a3d6b; }
 body.wizard .process-param-row input[type="text"],
 body.wizard .process-instantiate-field input[type="text"],
-body.wizard .process-instantiate-field input[type="number"] { background: #2c2042; border-color: #6d5695; color: #f3e6c0; }
+body.wizard .process-instantiate-field input[type="number"],
+body.wizard .process-instantiate-field select { background: #2c2042; border-color: #6d5695; color: #f3e6c0; }
 body.wizard .process-param-row input:focus,
-body.wizard .process-instantiate-field input:focus { border-color: #d4af37; outline: none; }
+body.wizard .process-instantiate-field input:focus,
+body.wizard .process-instantiate-field select:focus { border-color: #d4af37; outline: none; }
 body.wizard .process-param-check,
-body.wizard .process-instantiate-boolean,
 body.wizard .process-instantiate-field > label:not(.process-instantiate-boolean) { color: #f3e6c0; }
 
 /* === Node edit dialog / detail card (process-node-dialog.js, TCL-298) ======

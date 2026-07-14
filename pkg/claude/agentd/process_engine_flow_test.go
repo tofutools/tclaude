@@ -185,6 +185,20 @@ func TestProcessRunCreateLostResponseRetryRecoversOneRun(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, runs, 1, "same attempt id with a different payload must not mutate or duplicate the run")
 	assert.Equal(t, "TCL-300", runs[0].Params["issue"])
+
+	auditRows, err := db.ListAuditLog(db.AuditLogFilter{Verb: "process.run.create"})
+	require.NoError(t, err)
+	require.Len(t, auditRows, 3)
+	successes := 0
+	for _, row := range auditRows {
+		if row.Status == http.StatusCreated {
+			successes++
+			assert.Equal(t, runID, row.TargetLabel, "created and replayed successes identify the durable run")
+		} else {
+			assert.Empty(t, row.TargetLabel, "failed attempts must not claim a created run")
+		}
+	}
+	assert.Equal(t, 2, successes, "initial creation and idempotent replay are both attributed")
 }
 
 func TestProcessRunCreateUsesDedicatedPermission(t *testing.T) {
@@ -221,7 +235,14 @@ func TestProcessRunCreateUsesDedicatedPermission(t *testing.T) {
 		assert.Equal(t, "/v1/process/runs", row.Path)
 		assert.Equal(t, db.AuditSourceCLI, row.Source)
 		assert.Empty(t, row.Detail, "nil describer must not buffer runtime params")
-		assert.NotContains(t, row.Detail, secret)
+		if row.Status == http.StatusCreated {
+			assert.Equal(t, "permission-created", row.TargetLabel)
+		} else {
+			assert.Empty(t, row.TargetLabel)
+		}
+		encoded, marshalErr := json.Marshal(row)
+		require.NoError(t, marshalErr)
+		assert.NotContains(t, string(encoded), secret)
 	}
 	assert.True(t, statuses[http.StatusForbidden], "denied attempt missing from audit")
 	assert.True(t, statuses[http.StatusCreated], "successful attempt missing from audit")
@@ -259,8 +280,11 @@ func TestProcessRunCreateDashboardAuditAttribution(t *testing.T) {
 	assert.Equal(t, http.MethodPost, row.Method)
 	assert.Equal(t, "/v1/process/runs", row.Path)
 	assert.Equal(t, http.StatusCreated, row.Status)
+	assert.Equal(t, "dashboard-audit-created", row.TargetLabel)
 	assert.Empty(t, row.Detail, "nil describer must not buffer runtime params")
-	assert.NotContains(t, row.Detail, secret)
+	encoded, err := json.Marshal(row)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), secret)
 }
 
 func TestProcessRunCreateRemoteDashboardAuditAttribution(t *testing.T) {
@@ -321,6 +345,11 @@ func TestProcessRunCreateRemoteDashboardAuditAttribution(t *testing.T) {
 		assert.Equal(t, http.MethodPost, row.Method)
 		assert.Equal(t, "/v1/process/runs", row.Path)
 		assert.Empty(t, row.Detail, "nil describer must not buffer runtime params")
+		if row.Status == http.StatusCreated {
+			assert.Equal(t, "remote-dashboard-audit-created", row.TargetLabel)
+		} else {
+			assert.Empty(t, row.TargetLabel)
+		}
 		encoded, marshalErr := json.Marshal(row)
 		require.NoError(t, marshalErr)
 		assert.NotContains(t, string(encoded), successSecret)

@@ -110,7 +110,7 @@ function paramDefaultText(value) {
 
 function initialParamValues(params) {
   return Object.fromEntries(params.map(([name, param]) => [name,
-    param.default !== undefined ? paramDefaultText(param.default) : (param.type === 'boolean' ? 'false' : ''),
+    param.default !== undefined ? paramDefaultText(param.default) : '',
   ]));
 }
 
@@ -140,7 +140,7 @@ function InstantiateDialog({ spec, busy, actions }) {
     for (const [name, param] of params) {
       const value = values[name] ?? '';
       if (param.type === 'number' && value !== '') resolved[name] = value;
-      else if (param.type === 'boolean') resolved[name] = value === 'true' ? 'true' : 'false';
+      else if (param.type === 'boolean' && (value === 'true' || value === 'false')) resolved[name] = value;
       else if (value !== '' || param.required === true || param.default !== undefined) resolved[name] = value;
     }
     void actions.submitInstantiation(resolved);
@@ -151,7 +151,7 @@ function InstantiateDialog({ spec, busy, actions }) {
     ${spec.phase === 'loading' ? html`<p class="muted">Loading exact template version…</p>` : spec.phase === 'error' ? html`<div class="island-error" role="alert">Could not load template: ${spec.error}</div>` : params.length ? html`<div class="process-instantiate-fields">${params.map(([name, param], index) => {
       const label = param.name || name; const required = param.required === true; const type = param.type || 'string';
       const input = type === 'boolean'
-        ? html`<label class="process-instantiate-boolean"><input ref=${index === 0 ? firstParamRef : undefined} data-process-param-input=${name} type="checkbox" checked=${values[name] === 'true'} onChange=${(event) => change(name, event.currentTarget.checked ? 'true' : 'false')} /> <span>${label}${required ? ' *' : ''}</span></label>`
+        ? html`<label><span>${label}${required ? ' *' : ''}</span><select ref=${index === 0 ? firstParamRef : undefined} data-process-param-input=${name} required=${required && param.default === undefined} value=${values[name] ?? ''} onChange=${(event) => change(name, event.currentTarget.value ?? [...event.currentTarget.options].find((option) => option.selected)?.value ?? '')}><option value="">Not set</option><option value="true">true</option><option value="false">false</option></select></label>`
         : html`<label><span>${label}${required ? ' *' : ''}</span><input ref=${index === 0 ? firstParamRef : undefined} data-process-param-input=${name} type=${type === 'number' ? 'number' : 'text'} step=${type === 'number' ? 'any' : undefined} required=${required && param.default === undefined} value=${values[name] ?? ''} onInput=${(event) => change(name, event.currentTarget.value)} /></label>`;
       return html`<div key=${name} class="process-instantiate-field" data-process-param=${name}>${input}<div class="process-secondary">${param.description || name}${type !== 'string' ? ` · ${type}` : ''}</div></div>`;
     })}</div>` : html`<p class="process-placeholder-inline">This template declares no parameters.</p>`}
@@ -172,8 +172,12 @@ export function ProcessesApp({ state, actions, confirmDiscard }) {
   const navigate = async (event, name) => { if (isModifiedClick(event)) return; event.preventDefault(); await actions.activateSubtab(name); };
   const subtabKey = (event) => { if (event.key === ' ' || event.key === 'Spacebar') { event.preventDefault(); event.currentTarget.click(); } };
   const spec = current.canvas;
+  const viewerBackRef = useRef(null);
+  useLayoutEffect(() => {
+    if (spec?.kind === 'viewer') viewerBackRef.current?.focus({ preventScroll: true });
+  }, [spec?.key]);
   return html`<div class="processes-island"><div class="process-subnav" role="tablist" aria-label="Process views">${['templates', 'runs', 'worklist'].map((name) => html`<a key=${name} class=${`process-subtab${current.subtab === name ? ' active' : ''}`} data-process-subtab=${name} href=${`/processes/${name}`} role="tab" aria-selected=${current.subtab === name} onClick=${(event) => navigate(event, name)} onKeyDown=${subtabKey}>${name[0].toUpperCase() + name.slice(1)}${name === 'worklist' && html`<span id="process-worklist-badge" class="tab-badge warn" hidden=${current.actionable === 0}>${current.actionable}</span>`}</a>`)}<span class="spacer"></span><span id="process-notice" class="process-notice" role="status">${current.notice}</span></div>
-    ${spec ? html`<div id=${spec.kind === 'editor' ? 'process-editor-view' : 'process-viewer-view'} class="process-canvas-view"><button class="process-action" data-process-close-view type="button" onClick=${actions.closeCanvas}>← ${current.subtab}</button>${spec.kind === 'editor' ? html`<${ProcessEditorBoundary} spec=${spec} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} />` : html`<div id="process-viewer-canvas" class="process-canvas-mount" data-process-mount="viewer"><h3>Run: ${spec.id}</h3><p>Live viewer mount point. The viewer ticket takes over this canvas.</p></div>`}</div>` : current.subtab === 'templates' ? html`<${Templates} current=${current} actions=${actions} />` : current.subtab === 'runs' ? html`<${Runs} current=${current} actions=${actions} />` : html`<${Worklist} current=${current} actions=${actions} />`}
+    ${spec ? html`<div id=${spec.kind === 'editor' ? 'process-editor-view' : 'process-viewer-view'} class="process-canvas-view"><button ref=${spec.kind === 'viewer' ? viewerBackRef : undefined} class="process-action" data-process-close-view type="button" onClick=${actions.closeCanvas}>← ${current.subtab}</button>${spec.kind === 'editor' ? html`<${ProcessEditorBoundary} spec=${spec} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} />` : html`<div id="process-viewer-canvas" class="process-canvas-mount" data-process-mount="viewer"><h3>Run: ${spec.id}</h3><p>Live viewer mount point. The viewer ticket takes over this canvas.</p></div>`}</div>` : current.subtab === 'templates' ? html`<${Templates} current=${current} actions=${actions} />` : current.subtab === 'runs' ? html`<${Runs} current=${current} actions=${actions} />` : html`<${Worklist} current=${current} actions=${actions} />`}
     ${current.instantiation && html`<${InstantiateDialog} key=${current.instantiation.key} spec=${current.instantiation} busy=${current.mutation.busy} actions=${actions} />`}
   </div>`;
 }

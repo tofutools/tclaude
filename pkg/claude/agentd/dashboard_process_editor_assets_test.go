@@ -196,6 +196,8 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"data-process-param-input",
 		"type === 'boolean'",
 		"actions.submitInstantiation(resolved)",
+		"<option value=\"\">Not set</option>",
+		"viewerBackRef.current?.focus({ preventScroll: true })",
 	)
 	if strings.Contains(processes, "String(Number(value))") {
 		t.Error("processes-island.js must preserve number-param strings without JS precision round-tripping")

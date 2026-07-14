@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -53,6 +54,22 @@ type auditCtx struct {
 	vars   map[string]string
 	body   []byte
 	fields *auditFields
+}
+
+// auditResult carries safe handler-produced attribution back to the audit
+// middleware after a command succeeds. It deliberately cannot carry request
+// bodies: routes such as process run creation contain runtime params that may
+// be secrets and must remain unbuffered by the audit layer.
+type auditResult struct {
+	targetLabel string
+}
+
+type auditResultContextKey struct{}
+
+func setAuditTargetLabel(r *http.Request, label string) {
+	if result, ok := r.Context().Value(auditResultContextKey{}).(*auditResult); ok {
+		result.targetLabel = auditClip(label, 120)
+	}
 }
 
 // describer refines auditFields from the request body. nil means the
@@ -202,8 +219,11 @@ var auditRoutes = []auditRoute{
 func auditRequests(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		route, vars, source, ok := matchAuditRoute(r.Method, r.URL.Path)
+		var result *auditResult
 		if ok {
 			source = auditRequestSource(r, source)
+			result = &auditResult{}
+			r = r.WithContext(context.WithValue(r.Context(), auditResultContextKey{}, result))
 		}
 		var body []byte
 		if ok && route.describe != nil {
@@ -212,7 +232,7 @@ func auditRequests(h http.Handler) http.Handler {
 		rec := &statusRec{ResponseWriter: w, code: 200}
 		h.ServeHTTP(rec, r)
 		if ok {
-			recordAuditRow(r, route, vars, body, rec.code, source)
+			recordAuditRow(r, route, vars, body, result, rec.code, source)
 		}
 	})
 }
@@ -364,7 +384,7 @@ func bufferAuditBody(r *http.Request) []byte {
 // recordAuditRow assembles and writes one audit_log row. Best-effort: a
 // logging failure is warned and swallowed — it must never fail the
 // command, which has already completed by the time this runs.
-func recordAuditRow(r *http.Request, route *auditRoute, vars map[string]string, body []byte, status int, source string) {
+func recordAuditRow(r *http.Request, route *auditRoute, vars map[string]string, body []byte, result *auditResult, status int, source string) {
 	fields := auditFields{
 		Verb:      route.verb,
 		GroupName: vars["name"],
@@ -379,6 +399,9 @@ func recordAuditRow(r *http.Request, route *auditRoute, vars map[string]string, 
 	}
 	if route.describe != nil {
 		route.describe(&auditCtx{vars: vars, body: body, fields: &fields})
+	}
+	if status < http.StatusBadRequest && result != nil && result.targetLabel != "" {
+		fields.TargetLabel = result.targetLabel
 	}
 	if fields.Verb == "" {
 		return // unclassifiable — nothing useful to record
