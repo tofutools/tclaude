@@ -30,6 +30,7 @@ type Host struct {
 	LeaseTTL          time.Duration
 	MaxConcurrentRuns int
 	Now               func() time.Time
+	heartbeatTimer    func(time.Duration) (<-chan time.Time, func())
 	tickMu            sync.Mutex
 }
 
@@ -67,7 +68,21 @@ func New(st store.Store, holder string, adapters map[model.PerformerKind]process
 		LeaseTTL:          DefaultLeaseTTL,
 		MaxConcurrentRuns: DefaultMaxConcurrentRuns,
 		Now:               time.Now,
+		heartbeatTimer:    startHeartbeatTimer,
 	}
+}
+
+func startHeartbeatTimer(interval time.Duration) (<-chan time.Time, func()) {
+	ticker := time.NewTicker(interval)
+	return ticker.C, ticker.Stop
+}
+
+// SetHeartbeatTimerForTest controls heartbeat ticks without changing the
+// production lease-renewal path. Install it before the host starts running.
+func (h *Host) SetHeartbeatTimerForTest(start func(time.Duration) (<-chan time.Time, func())) func() {
+	previous := h.heartbeatTimer
+	h.heartbeatTimer = start
+	return func() { h.heartbeatTimer = previous }
 }
 
 type limitedDeferredAdapter struct {
@@ -674,13 +689,17 @@ func (h *Host) heartbeat(parent context.Context, runID string, ttl time.Duration
 	}
 	go func() {
 		defer close(done)
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
+		startTimer := h.heartbeatTimer
+		if startTimer == nil {
+			startTimer = startHeartbeatTimer
+		}
+		ticks, stopTimer := startTimer(interval)
+		defer stopTimer()
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-ticker.C:
+			case <-ticks:
 				if _, err := h.Store.AcquireRunLease(ctx, runID, h.Holder, ttl); err != nil {
 					select {
 					case errs <- fmt.Errorf("process run %q lease heartbeat lost: %w", runID, err):

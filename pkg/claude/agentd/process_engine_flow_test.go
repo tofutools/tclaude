@@ -1116,34 +1116,105 @@ func TestProcessEngineLeaseContentionAllowsOnlyOneScheduler(t *testing.T) {
 	_, root := processEngineFlow(t)
 	adapter := newBlockingAdapter()
 	fs := createEngineRun(t, root, "lease-run", programTemplate("lease", model.Performer{Kind: model.PerformerProgram, Run: "/fake"}), true)
-	first := processengine.New(fs, "agentd:first", map[model.PerformerKind]processexec.Adapter{model.PerformerProgram: adapter})
+	baseTime := time.Date(2026, time.July, 14, 12, 0, 0, 0, time.UTC)
+	var clockMu sync.Mutex
+	controlledNow := baseTime
+	setNow := func(next time.Time) {
+		clockMu.Lock()
+		controlledNow = next
+		clockMu.Unlock()
+	}
+	_ = fs.SetNowForTest(func() time.Time {
+		clockMu.Lock()
+		defer clockMu.Unlock()
+		return controlledNow
+	})
+	observedStore := newHeartbeatObservingStore(fs, "agentd:first")
+	first := processengine.New(observedStore, "agentd:first", map[model.PerformerKind]processexec.Adapter{model.PerformerProgram: adapter})
 	first.LeaseTTL = 150 * time.Millisecond
-	second := processengine.New(fs, "agentd:second", map[model.PerformerKind]processexec.Adapter{model.PerformerProgram: adapter})
+	heartbeatStarted := make(chan time.Duration, 1)
+	heartbeatTicks := make(chan time.Time)
+	_ = first.SetHeartbeatTimerForTest(func(interval time.Duration) (<-chan time.Time, func()) {
+		heartbeatStarted <- interval
+		return heartbeatTicks, func() {}
+	})
+	second := processengine.New(observedStore, "agentd:second", map[model.PerformerKind]processexec.Adapter{model.PerformerProgram: adapter})
 	second.LeaseTTL = 150 * time.Millisecond
+	var releaseOnce sync.Once
+	releaseFirst := func() { releaseOnce.Do(func() { close(adapter.release) }) }
 
-	firstDone := make(chan []processengine.RunResult, 1)
+	firstDone := make(chan struct{})
+	var firstResults []processengine.RunResult
+	secondDone := make(chan struct{})
+	var secondResults []processengine.RunResult
+	var secondErr error
+	secondStarted := false
 	go func() {
-		results, _ := agentd.RunProcessEngineTickForTest(t.Context(), first)
-		firstDone <- results
+		firstResults, _ = agentd.RunProcessEngineTickForTest(t.Context(), first)
+		close(firstDone)
 	}()
+	t.Cleanup(func() {
+		releaseFirst()
+		select {
+		case <-firstDone:
+		case <-time.After(2 * time.Second):
+			t.Error("first scheduler did not stop during cleanup")
+		}
+		if secondStarted {
+			select {
+			case <-secondDone:
+			case <-time.After(2 * time.Second):
+				t.Error("second scheduler did not stop during cleanup")
+			}
+		}
+	})
 	select {
 	case <-adapter.started:
 	case <-time.After(2 * time.Second):
 		t.Fatal("first scheduler never reached performer")
 	}
-	// Wait past the original TTL: contention must still hold because the
-	// first host heartbeats at TTL/3 while its performer is running.
-	time.Sleep(2 * first.LeaseTTL)
-	results, err := agentd.RunProcessEngineTickForTest(t.Context(), second)
-	require.NoError(t, err)
-	require.Len(t, results, 1)
-	assert.True(t, results[0].LeaseContended, "result: %+v", results[0])
-	assert.Contains(t, results[0].Error, store.ErrLeaseHeld.Error())
-	close(adapter.release)
 	select {
-	case results = <-firstDone:
-		require.Len(t, results, 1)
-		assert.Empty(t, results[0].Error)
+	case interval := <-heartbeatStarted:
+		assert.Equal(t, first.LeaseTTL/3, interval)
+	case <-time.After(2 * time.Second):
+		t.Fatal("first scheduler did not start its heartbeat timer")
+	}
+	// Renew halfway through the original lease, then move just beyond its
+	// original expiry. The second scheduler must still see the renewed lease.
+	setNow(baseTime.Add(first.LeaseTTL / 2))
+	select {
+	case heartbeatTicks <- baseTime.Add(first.LeaseTTL / 2):
+	case <-time.After(2 * time.Second):
+		t.Fatal("first scheduler did not accept the controlled heartbeat tick")
+	}
+	var renewed store.LeaseRecord
+	select {
+	case renewed = <-observedStore.renewed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first scheduler did not renew its lease")
+	}
+	assert.Equal(t, baseTime.Add(first.LeaseTTL/2), renewed.UpdatedAt)
+	assert.Equal(t, baseTime.Add(first.LeaseTTL+first.LeaseTTL/2), renewed.ExpiresAt)
+	setNow(baseTime.Add(first.LeaseTTL + time.Nanosecond))
+	secondStarted = true
+	go func() {
+		secondResults, secondErr = agentd.RunProcessEngineTickForTest(t.Context(), second)
+		close(secondDone)
+	}()
+	select {
+	case <-secondDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("second scheduler did not return; it may have acquired the renewed lease")
+	}
+	require.NoError(t, secondErr)
+	require.Len(t, secondResults, 1)
+	assert.True(t, secondResults[0].LeaseContended, "result: %+v", secondResults[0])
+	assert.Contains(t, secondResults[0].Error, store.ErrLeaseHeld.Error())
+	releaseFirst()
+	select {
+	case <-firstDone:
+		require.Len(t, firstResults, 1)
+		assert.Empty(t, firstResults[0].Error)
 	case <-time.After(2 * time.Second):
 		t.Fatal("first scheduler did not finish")
 	}
@@ -1680,6 +1751,33 @@ type countingProcessStore struct {
 	mu     sync.Mutex
 	loads  int
 	leases int
+}
+
+type heartbeatObservingStore struct {
+	store.Store
+	holder  string
+	renewed chan store.LeaseRecord
+	mu      sync.Mutex
+	claims  int
+}
+
+func newHeartbeatObservingStore(st store.Store, holder string) *heartbeatObservingStore {
+	return &heartbeatObservingStore{Store: st, holder: holder, renewed: make(chan store.LeaseRecord, 1)}
+}
+
+func (s *heartbeatObservingStore) AcquireRunLease(ctx context.Context, runID, holder string, ttl time.Duration) (store.LeaseRecord, error) {
+	lease, err := s.Store.AcquireRunLease(ctx, runID, holder, ttl)
+	if err != nil || holder != s.holder {
+		return lease, err
+	}
+	s.mu.Lock()
+	s.claims++
+	isRenewal := s.claims == 2
+	s.mu.Unlock()
+	if isRenewal {
+		s.renewed <- lease
+	}
+	return lease, nil
 }
 
 func (s *countingProcessStore) LoadRun(ctx context.Context, runID string) (store.Snapshot, error) {
