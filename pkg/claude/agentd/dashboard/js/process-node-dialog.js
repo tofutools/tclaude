@@ -25,7 +25,10 @@ import {
   setCaptures, setWaitField, setNodeText, formatLines,
 } from './process-node-form.js';
 import { bindDialogFocus } from './dialog-focus-core.js';
+import { makeModalResizable } from './helpers.js';
 import { isTopmostOverlay } from './overlay-stack.js';
+
+const NODE_DIALOG_SIZE_PREF = 'tclaude.dash.modalSize.process-node-editor';
 
 function h(tag, attrs = {}, ...children) {
   const el = document.createElement(tag);
@@ -322,6 +325,7 @@ export function openNodeDialog({
   let confirming = false;
   const invalidControls = new Set();
   let releaseDialogFocus = () => {};
+  let releaseResize = () => {};
   const isDirty = () => mode === 'edit'
     && (invalidControls.size > 0 || JSON.stringify(draft) !== JSON.stringify(original));
   const dispose = () => {
@@ -329,6 +333,7 @@ export function openNodeDialog({
     disposed = true;
     overlay.remove();
     document.removeEventListener('keydown', onKey, true);
+    releaseResize();
     releaseDialogFocus();
     onClosed?.();
   };
@@ -477,6 +482,12 @@ export function openNodeDialog({
   overlay.addEventListener('click', (event) => { if (event.target === overlay) void requestCancel(); });
   document.addEventListener('keydown', onKey, true);
   document.body.append(overlay);
+  // Node forms range from a two-field start node to a compound task with
+  // several performers. Keep a fixed, viewport-safe floor and let the body
+  // scroll instead of asking the shared helper to pin the minimum to the
+  // current form's full natural height. The helper still owns the standard
+  // resize gesture plus dashPrefs restore/persistence.
+  releaseResize = makeModalResizable(dialog, NODE_DIALOG_SIZE_PREF, { fitContent: false }) || (() => {});
   releaseDialogFocus = bindDialogFocus({
     dialog,
     initialFocus: () => overlay.querySelector('.process-node-input:not(:disabled)') || cancelButton,

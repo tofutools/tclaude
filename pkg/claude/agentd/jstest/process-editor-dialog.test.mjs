@@ -356,6 +356,88 @@ test('node dialog traps Tab and restores its invoker on forced teardown', async 
   assert.equal(harness.document.activeElement, invoker, 'forced parent teardown restores the invoker');
 });
 
+test('node dialog restores and persists its own resize without bypassing dirty focus lifecycle', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ ProcessEditModel }, { openNodeDialog }, { dashPrefs }] = await Promise.all([
+    harness.importDashboardModule('js/process-edit-model.js'),
+    harness.importDashboardModule('js/process-node-dialog.js'),
+    harness.importDashboardModule('js/prefs.js'),
+  ]);
+  const key = 'tclaude.dash.modalSize.process-node-editor';
+  dashPrefs.setItem(key, JSON.stringify({ w: 920, h: 640 }));
+
+  const invoker = harness.document.body.appendChild(harness.document.createElement('button'));
+  invoker.focus();
+  const decisions = [];
+  const dispose = openNodeDialog({
+    model: new ProcessEditModel(taskView()), nodeId: 'work',
+    confirmDiscard: () => new Promise((resolve) => decisions.push(resolve)),
+  });
+  await settle();
+  const overlay = harness.document.querySelector('.process-node-modal');
+  const dialog = overlay.querySelector('.process-node-dialog');
+  assert.equal(dialog.style.width, '920px', 'the node-dialog-specific width is restored');
+  assert.equal(dialog.style.height, '640px', 'the node-dialog-specific height is restored');
+
+  const planToggle = dialog.querySelector('.process-node-toggle');
+  planToggle.checked = true;
+  harness.fireEvent(planToggle, 'change');
+  assert.equal(overlay.querySelector('.process-node-dialog'), dialog,
+    'dynamic stage fields rerender inside the same resizable card');
+  assert.equal(dialog.style.width, '920px');
+  assert.equal(dialog.style.height, '640px');
+  assert.ok([...dialog.querySelectorAll('.process-node-field-label')].some((label) => label.textContent === 'approval'),
+    'the resized form exposes the newly enabled stage fields');
+
+  let measuredWidth = 920;
+  let measuredHeight = 640;
+  Object.defineProperties(dialog, {
+    offsetWidth: { configurable: true, get: () => measuredWidth },
+    offsetHeight: { configurable: true, get: () => measuredHeight },
+  });
+  const textarea = dialog.querySelector('.process-node-textarea');
+  harness.fireEvent(textarea, 'pointerdown');
+  measuredWidth = 940;
+  measuredHeight = 660;
+  harness.fireEvent(textarea, 'pointerup');
+  assert.deepEqual(JSON.parse(dashPrefs.getItem(key)), { w: 920, h: 640 },
+    'a descendant textarea resize is not persisted as a dialog resize');
+
+  measuredWidth = 920;
+  measuredHeight = 640;
+  harness.fireEvent(dialog, 'pointerdown');
+  measuredWidth = 1000;
+  measuredHeight = 720;
+  harness.fireEvent(dialog, 'pointerup');
+  assert.deepEqual(JSON.parse(dashPrefs.getItem(key)), { w: 1000, h: 720 },
+    'a genuine pointer resize persists through dashPrefs');
+
+  const label = overlay.querySelector('.process-node-input');
+  label.value = 'Still guarded after resize';
+  harness.fireEvent(label, 'change');
+  harness.fireEvent(harness.document.activeElement, 'keydown', { key: 'Escape' });
+  assert.equal(decisions.length, 1, 'resize wiring leaves dirty Escape behind confirmation');
+  decisions.shift()(false);
+  await settle();
+  assert.equal(harness.document.querySelector('.process-node-modal'), overlay,
+    'rejecting discard keeps the resized draft open');
+
+  harness.fireEvent(overlay.querySelector('.process-node-cancel'), 'click');
+  decisions.shift()(true);
+  await settle();
+  assert.equal(harness.document.querySelector('.process-node-modal'), null);
+  assert.equal(harness.document.activeElement, invoker, 'confirmed close still restores the invoker');
+
+  // The helper cleanup is part of dialog disposal: detached pointer events
+  // cannot mutate the preference after ownership ends.
+  harness.fireEvent(dialog, 'pointerdown');
+  measuredWidth = 1010;
+  measuredHeight = 730;
+  harness.fireEvent(dialog, 'pointerup');
+  assert.deepEqual(JSON.parse(dashPrefs.getItem(key)), { w: 1000, h: 720 });
+  dashPrefs.removeItem(key);
+});
+
 test('opening another node settings dialog cannot replace a rejected dirty draft', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ ProcessEditModel }, { ProcessTemplateEditor }] = await Promise.all([
