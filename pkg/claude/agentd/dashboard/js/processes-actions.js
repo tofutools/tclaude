@@ -48,7 +48,8 @@ export function createProcessesActions({
 
   async function canLeaveEditor() {
     const editor = state.currentEditor();
-    return !editor?.model?.dirty || confirmDiscard();
+    const dirty = editor?.dirty ?? editor?.model?.dirty;
+    return !dirty || confirmDiscard();
   }
   async function activateSubtab(name, { navigate = true } = {}) {
     if (!(await canLeaveEditor())) return false;

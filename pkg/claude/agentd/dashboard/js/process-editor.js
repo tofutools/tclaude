@@ -93,12 +93,14 @@ export class ProcessTemplateEditor {
       onEdgeClick: (e) => this.onEdgeClick(e),
       onCanvasClick: () => this.setSelection(null),
       onMarqueeSelect: (e) => this.setSelection(e.selection),
+      onNodeDragStart: (e) => this.setSelection(e.selection),
       onNodeDrag: (e) => this.onNodeDrag(e),
       onPortDragStart: (e) => this.onPortDragStart(e),
       onPortDragMove: (e) => this.onPortDragMove(e),
       onPortDragEnd: (e) => this.onPortDragEnd(e),
       onCanvasDrop: (e) => this.onCanvasDrop(e),
       marqueeSelect: true,
+      wheelPan: true,
     });
     // Live validation (TCL-299): debounced POST /v1/process/validate on every
     // model mutation, inline badges + issues panel. Constructed after the
@@ -239,6 +241,10 @@ export class ProcessTemplateEditor {
     delete this.mount.__processEditor;
     this.mount.classList.remove('process-editor-mount');
     this.mount.replaceChildren();
+  }
+
+  get dirty() {
+    return this.model.dirty || !!this.modalDispose?.isDirty?.();
   }
 
   // ---- chrome ------------------------------------------------------------
@@ -462,6 +468,7 @@ export class ProcessTemplateEditor {
       onClosed: () => {
         if (this.modalDispose === dispose) this.modalDispose = null;
       },
+      confirmDiscard: this.options.confirmDiscard,
     });
     this.modalDispose = dispose;
   }

@@ -35,6 +35,11 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+export function isGraphTypingTarget(target) {
+  if (!target || typeof target.closest !== 'function') return false;
+  return !!target.closest('input, textarea, select, button, a[href], [role="button"], [contenteditable]:not([contenteditable="false"])');
+}
+
 export function normalizeWheelDelta(deltaY, deltaMode = 0, pagePixels = 800) {
   if (!Number.isFinite(deltaY)) return 0;
   if (deltaMode === 1) return deltaY * 24; // DOM_DELTA_LINE (Firefox wheels)
@@ -67,7 +72,26 @@ function overlayText(overlay) {
   if (overlay.retry != null || overlay.retries != null) bits.push(`retry ${overlay.retry ?? overlay.retries}`);
   if (overlay.badge) bits.push(String(overlay.badge));
   if (overlay.severity) bits.push(`has ${overlay.severity}`);
+  if (Array.isArray(overlay.issues) && overlay.issues.length) bits.push(overlay.issues.join('; '));
   return bits.join(', ');
+}
+
+function tooltipLines(issues, maxChars = 48) {
+  const lines = [];
+  for (const issue of issues || []) {
+    const words = String(issue).trim().split(/\s+/).filter(Boolean);
+    let line = '';
+    for (const word of words) {
+      if (!line) line = word;
+      else if (`${line} ${word}`.length <= maxChars) line += ` ${word}`;
+      else {
+        lines.push(line);
+        line = word;
+      }
+    }
+    if (line) lines.push(line);
+  }
+  return lines;
 }
 
 function wrapLabel(label, maxChars) {
@@ -180,6 +204,25 @@ function renderOverlay(parent, node) {
     transform: `translate(${x} ${y})`,
     'aria-hidden': 'true',
   });
+  const issues = Array.isArray(overlay?.issues) ? overlay.issues.filter(Boolean) : [];
+  if (issues.length) {
+    const title = svgElement('title');
+    title.textContent = issues.join('\n');
+    group.append(title);
+    const lines = tooltipLines(issues);
+    const width = 330;
+    const height = 18 + lines.length * 15;
+    const tooltip = svgElement('g', { class: 'process-overlay-tooltip', transform: `translate(${-width - 16} 16)` });
+    tooltip.append(svgElement('rect', { x: 0, y: 0, width, height, rx: 6 }));
+    const text = svgElement('text', { x: 9, y: 16 });
+    lines.forEach((line, index) => {
+      const tspan = svgElement('tspan', { x: 9, y: 16 + index * 15 });
+      tspan.textContent = line;
+      text.append(tspan);
+    });
+    tooltip.append(text);
+    group.append(tooltip);
+  }
   group.append(svgElement('circle', { class: 'process-overlay-ring', cx: 0, cy: 0, r: 11 }));
   if (overlay?.glyph) {
     const glyph = svgElement('text', { class: 'process-overlay-glyph', x: 0, y: 4, 'text-anchor': 'middle' });
@@ -261,6 +304,7 @@ export class ProcessGraph {
     this.dragMoved = false;
     this.suppressClick = false;
     this.keyboardPort = null;
+    this.spaceHeld = false;
     this.destroyed = false;
     this.abort = new AbortController();
 
@@ -418,6 +462,9 @@ export class ProcessGraph {
     this.svg.addEventListener('click', (event) => this.onClick(event), { signal });
     this.svg.addEventListener('dblclick', (event) => this.onDoubleClick(event), { signal });
     this.svg.addEventListener('keydown', (event) => this.onKeyDown(event), { signal });
+    document.addEventListener('keydown', (event) => this.onSpaceKey(event), { signal });
+    document.addEventListener('keyup', (event) => this.onSpaceKey(event), { signal });
+    window.addEventListener('blur', () => this.setSpaceHeld(false), { signal });
     this.root.addEventListener('dragover', (event) => event.preventDefault(), { signal });
     this.root.addEventListener('drop', (event) => {
       event.preventDefault();
@@ -446,6 +493,7 @@ export class ProcessGraph {
   }
 
   onPointerDown(event) {
+    if (this.pointer) return;
     const middle = event.button === 1;
     if (event.button !== 0 && !middle) return;
     // Resolve the target before focus: focusing the graph blurs an inspector
@@ -461,7 +509,7 @@ export class ProcessGraph {
     const point = this.clientToGraph(event.clientX, event.clientY);
     // Touch/pen have no middle button. Preserve their empty-canvas navigation
     // while still letting a primary pointer drag nodes and ports normally.
-    const directPan = middle || (!target.node && !target.port
+    const directPan = middle || (this.spaceHeld && event.button === 0) || (!target.node && !target.port
       && (event.pointerType === 'touch' || event.pointerType === 'pen'));
     const mode = directPan ? 'pan'
       : target.port ? 'port'
@@ -478,6 +526,7 @@ export class ProcessGraph {
       id: event.pointerId, mode, startClientX: event.clientX, startClientY: event.clientY,
       startPoint: point, startView: { ...this.view }, nodeID, nodeIDs,
       edgeID: target.edge?.dataset.edgeId, port: target.port?.dataset.port,
+      selectionStarted: false,
     };
     this.dragMoved = false;
     this.svg.setPointerCapture?.(event.pointerId);
@@ -496,7 +545,16 @@ export class ProcessGraph {
     if (!this.pointer || this.pointer.id !== event.pointerId) return;
     const dx = event.clientX - this.pointer.startClientX;
     const dy = event.clientY - this.pointer.startClientY;
-    if (Math.hypot(dx, dy) > 3) this.dragMoved = true;
+    if (Math.hypot(dx, dy) > 3 && !this.dragMoved) {
+      this.dragMoved = true;
+      if (this.pointer.mode === 'node'
+        && !selectionContains(this.selected, { type: 'node', id: this.pointer.nodeID })) {
+        const selection = { type: 'node', id: this.pointer.nodeID };
+        this.pointer.selectionStarted = true;
+        this.select(selection);
+        hook(this.options, 'onNodeDragStart')({ nodeId: this.pointer.nodeID, selection, event });
+      }
+    }
     const point = this.clientToGraph(event.clientX, event.clientY);
     if (this.pointer.mode === 'pan') {
       this.view.x = this.pointer.startView.x + dx;
@@ -565,8 +623,13 @@ export class ProcessGraph {
         hook(this.options, 'onMarqueeSelect')({ selection, items, event });
       }
     }
-    this.suppressClick = this.dragMoved;
-    this.pendingClickTarget = this.dragMoved ? null : {
+    // A pan gesture over an item is navigation even if the pointer did not
+    // move. Do not let its synthetic click select the item underneath it, but
+    // preserve ordinary empty-canvas clicks so the viewer can clear selection.
+    const panOverItem = pointer.mode === 'pan'
+      && !!(pointer.nodeID || pointer.edgeID || pointer.port);
+    this.suppressClick = this.dragMoved || panOverItem;
+    this.pendingClickTarget = this.suppressClick ? null : {
       mode: pointer.mode, nodeID: pointer.nodeID || null,
       edgeID: pointer.edgeID || null, port: pointer.port || null,
     };
@@ -724,9 +787,38 @@ export class ProcessGraph {
     this.onClick(event);
   }
 
+  onSpaceKey(event) {
+    if (event.key !== ' ' && event.code !== 'Space') return;
+    if (event.type === 'keyup') {
+      this.setSpaceHeld(false);
+      return;
+    }
+    if (event.defaultPrevented || event.repeat || this.pointer || isGraphTypingTarget(event.target)) return;
+    const ownsKey = this.root.contains(event.target) || this.root.matches(':hover');
+    if (!ownsKey) return;
+    event.preventDefault();
+    this.setSpaceHeld(true);
+  }
+
+  setSpaceHeld(held) {
+    this.spaceHeld = !!held;
+    this.root.classList.toggle('is-space-pan', this.spaceHeld);
+  }
+
   onWheel(event) {
     event.preventDefault();
     const rect = this.svg.getBoundingClientRect();
+    if (this.options.wheelPan && !event.ctrlKey) {
+      const deltaX = normalizeWheelDelta(event.deltaX, event.deltaMode, rect.width);
+      const deltaY = normalizeWheelDelta(event.deltaY, event.deltaMode, rect.height);
+      if (event.shiftKey && !deltaX) this.view.x -= deltaY;
+      else {
+        this.view.x -= deltaX;
+        this.view.y -= deltaY;
+      }
+      this.applyView();
+      return;
+    }
     const cursorX = event.clientX - rect.left;
     const cursorY = event.clientY - rect.top;
     const oldZoom = this.view.k;

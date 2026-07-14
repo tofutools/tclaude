@@ -1,7 +1,7 @@
 // process-node-dialog.js -- the structured node editing surface (TCL-298):
 // logical zoom into a node opens its stages as a dialog. ONE component, two
-// modes: mode 'edit' mutates the client edit model (through
-// ProcessEditModel.updateNode's undo gate — dialogs never talk REST), and
+// modes: mode 'edit' stages changes in a private node draft, then Save commits
+// that draft through ProcessEditModel.updateNode's single undo gate, and
 // mode 'view' renders the exact same markup as a read-only detail card for
 // the live viewer (design §8b) — the same controls, disabled, so the §9
 // unlock phase flips a flag rather than growing a second component.
@@ -40,8 +40,8 @@ function h(tag, attrs = {}, ...children) {
 
 // buildNodeDetail renders the shared node card: header, per-type sections,
 // and the edges summary. `commit(mutate)` routes every edit through the edit
-// model's updateNode gate and re-renders; in view mode commit is absent and
-// every control renders disabled.
+// dialog draft and re-renders; in view mode commit is absent and every control
+// renders disabled.
 export function buildNodeDetail(model, nodeId, { mode = 'edit', commit = null, onClose = null } = {}) {
   const node = model.node(nodeId);
   const readOnly = mode !== 'edit' || !commit;
@@ -268,13 +268,24 @@ export function buildNodeDetail(model, nodeId, { mode = 'edit', commit = null, o
 // global confirm singleton (which only offers two fixed buttons and must not
 // be double-booked). Returns a dispose function (resolving dialog close) so
 // the editor can slot it into its single-modal discipline.
-export function openNodeDialog({ model, nodeId, mode = 'edit', onMutated = null, onClosed = null }) {
+export function openNodeDialog({
+  model, nodeId, mode = 'edit', onMutated = null, onClosed = null,
+  confirmDiscard = async () => false,
+}) {
   const body = h('div', { class: 'process-node-dialog-body' });
+  const cancelButton = h('button', { class: 'process-node-cancel', type: 'button', text: mode === 'edit' ? 'Cancel' : 'Close' });
+  const saveButton = mode === 'edit'
+    ? h('button', { class: 'primary process-node-save', type: 'button', text: 'Save' }) : null;
+  const actions = h('div', { class: 'modal-buttons process-node-dialog-actions' }, cancelButton, saveButton);
   const overlay = h('div', { class: 'modal-overlay show process-node-modal' },
-    h('div', { class: 'modal process-node-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': `Node ${nodeId}` }, body));
+    h('div', { class: 'modal process-node-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': `Node ${nodeId}` }, body, actions));
   const status = h('p', { class: 'process-node-status', role: 'status' });
 
+  const original = structuredClone(model.node(nodeId));
+  let draft = structuredClone(original);
   let disposed = false;
+  let confirming = false;
+  const isDirty = () => mode === 'edit' && JSON.stringify(draft) !== JSON.stringify(original);
   const dispose = () => {
     if (disposed) return;
     disposed = true;
@@ -282,22 +293,81 @@ export function openNodeDialog({ model, nodeId, mode = 'edit', onMutated = null,
     document.removeEventListener('keydown', onKey, true);
     onClosed?.();
   };
+  dispose.isDirty = isDirty;
+
+  const draftModel = {
+    node: (id) => id === nodeId ? draft : model.node(id),
+    outgoingEdges: (id) => model.outgoingEdges(id),
+  };
+
+  const flushActiveControl = () => {
+    const active = document.activeElement;
+    if (!active || !body.contains(active) || !active.matches?.('input, textarea, select')) return;
+    active.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+
+  const requestCancel = async () => {
+    flushActiveControl();
+    if (disposed || confirming) return false;
+    if (!isDirty()) {
+      dispose();
+      return true;
+    }
+    confirming = true;
+    const discard = await confirmDiscard();
+    confirming = false;
+    if (discard && !disposed) dispose();
+    else if (!disposed) (saveButton || cancelButton).focus();
+    return !!discard;
+  };
+
+  const replaceNode = (target, source) => {
+    for (const key of Object.keys(target)) delete target[key];
+    Object.assign(target, structuredClone(source));
+  };
+
+  const save = () => {
+    flushActiveControl();
+    if (disposed || mode !== 'edit') return false;
+    try {
+      const changed = model.updateNode(nodeId, (node) => replaceNode(node, draft));
+      if (changed) onMutated?.();
+      dispose();
+      return true;
+    } catch (error) {
+      status.textContent = error.message;
+      status.classList.add('is-error');
+      return false;
+    }
+  };
+
   const onKey = (event) => {
+    // The shared discard confirmation owns the keyboard while it is open. A
+    // document-capture shortcut must neither save behind it nor close this
+    // dialog in response to keys from another overlay.
+    if (confirming || !overlay.contains(event.target)) return;
+    if (mode === 'edit' && event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      save();
+      return;
+    }
     if (event.key !== 'Escape') return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    dispose();
+    void requestCancel();
   };
 
-  // commit routes one mutation through the model's updateNode gate, then
-  // re-renders the card from the (possibly normalized) model state. A
-  // rejected mutation surfaces in the dialog's status line and leaves the
-  // model untouched — updateNode mutates a draft, so there is no half-applied
-  // state to unwind.
+  // commit routes one mutation through the private draft, then re-renders the
+  // card. A rejected mutation surfaces in the status line and leaves both the
+  // draft and edit model untouched. Save is the only model mutation path.
   const commit = (mutate) => {
     let changed = false;
     try {
-      changed = model.updateNode(nodeId, mutate);
+      const next = structuredClone(draft);
+      mutate(next);
+      changed = JSON.stringify(next) !== JSON.stringify(draft);
+      if (changed) draft = next;
     } catch (error) {
       status.textContent = error.message;
       status.classList.add('is-error');
@@ -305,9 +375,8 @@ export function openNodeDialog({ model, nodeId, mode = 'edit', onMutated = null,
     }
     status.textContent = '';
     status.classList.remove('is-error');
-    if (changed) onMutated?.();
     render();
-    return true;
+    return changed;
   };
 
   // Re-rendering replaces every control, so restore the scroll position and
@@ -321,8 +390,8 @@ export function openNodeDialog({ model, nodeId, mode = 'edit', onMutated = null,
     const active = document.activeElement;
     const focusIndex = active && body.contains(active) ? focusables().indexOf(active) : -1;
     const scrollTop = body.scrollTop;
-    const detail = buildNodeDetail(model, nodeId, {
-      mode, onClose: dispose,
+    const detail = buildNodeDetail(draftModel, nodeId, {
+      mode, onClose: requestCancel,
       commit: mode === 'edit' ? commit : null,
     });
     body.replaceChildren(detail, status);
@@ -331,9 +400,19 @@ export function openNodeDialog({ model, nodeId, mode = 'edit', onMutated = null,
   };
 
   render();
-  overlay.addEventListener('click', (event) => { if (event.target === overlay) dispose(); });
+  // A text input's blur/change re-renders the scroll body. Claim pointer
+  // dismissal before that blur can replace the header close button; keyboard
+  // activation still follows the button's ordinary click handler.
+  body.addEventListener('pointerdown', (event) => {
+    if (!event.target.closest?.('.process-node-close')) return;
+    event.preventDefault();
+    void requestCancel();
+  });
+  cancelButton.addEventListener('click', () => { void requestCancel(); });
+  saveButton?.addEventListener('click', save);
+  overlay.addEventListener('click', (event) => { if (event.target === overlay) void requestCancel(); });
   document.addEventListener('keydown', onKey, true);
   document.body.append(overlay);
-  overlay.querySelector('.process-node-close')?.focus();
+  (overlay.querySelector('.process-node-input:not(:disabled)') || cancelButton).focus();
   return dispose;
 }

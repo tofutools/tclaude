@@ -11373,6 +11373,8 @@ body.wizard #agent-dock .dock-card-menu-item.danger:hover {
 }
 .process-graph:focus-visible { box-shadow: 0 0 0 2px var(--pg-focus); }
 .process-graph-svg { width: 100%; height: 100%; min-height: inherit; display: block; cursor: grab; }
+.process-graph.is-space-pan .process-graph-svg { cursor: grab; }
+.process-graph.is-space-pan .process-node { cursor: grab; }
 .process-graph-svg:active { cursor: grabbing; }
 .process-marquee {
   fill: var(--pg-accent);
@@ -11431,6 +11433,7 @@ body.wizard #agent-dock .dock-card-menu-item.danger:hover {
 .process-arrowhead-back { fill: var(--pg-return); }
 .process-edge-label text { fill: currentColor; font-size: 11px; font-weight: 650; paint-order: stroke; stroke: var(--pg-bg); stroke-width: 5; stroke-linejoin: round; }
 .process-overlay-anchor { pointer-events: none; }
+.process-overlay-anchor.has-overlay { pointer-events: all; cursor: help; }
 .process-overlay-anchor:not(.has-overlay) { opacity: 0.38; }
 .process-overlay-ring {
   fill: var(--pg-node); stroke: var(--pg-muted); stroke-width: 1.5; stroke-dasharray: 2 2; vector-effect: non-scaling-stroke;
@@ -11439,6 +11442,14 @@ body.wizard #agent-dock .dock-card-menu-item.danger:hover {
 .process-overlay-glyph { fill: var(--pg-text); font-size: 11px; font-weight: 800; }
 .process-overlay-detail, .process-overlay-badge, .process-overlay-status { fill: var(--pg-text); font-size: 10px; font-weight: 700; }
 .process-overlay-badge { fill: var(--pg-return); }
+.process-overlay-tooltip { display: none; pointer-events: none; }
+.process-overlay-anchor:hover .process-overlay-tooltip,
+.process-node:focus .process-overlay-tooltip,
+.process-node:focus-visible .process-overlay-tooltip { display: block; }
+.process-overlay-tooltip rect {
+  fill: var(--pg-panel); stroke: var(--pg-border); stroke-width: 1; vector-effect: non-scaling-stroke;
+}
+.process-overlay-tooltip text { fill: var(--pg-text); font-size: 11px; font-weight: 550; }
 /* Validation severities on the badge anchor: glyph-coded in the renderer,
    color-coded here (both, never color-only). */
 .process-overlay-anchor.overlay-error .process-overlay-ring { stroke: var(--pg-error); fill: var(--pg-bg); }
@@ -11703,6 +11714,8 @@ body.wizard .process-template-id-locked { color: #a99bc0; }
   padding: 14px 16px;
 }
 .process-node-dialog-body { overflow-y: auto; min-height: 0; }
+.process-node-dialog-actions { margin-top: 10px; }
+.process-node-dialog-actions button { min-width: 84px; }
 .process-node-detail { display: flex; flex-direction: column; gap: 10px; }
 .process-node-detail-head {
   display: flex;
@@ -11817,6 +11830,14 @@ body.wizard .process-node-input,
 body.wizard .process-node-textarea,
 body.wizard .process-node-select,
 body.wizard .process-node-close { background: #2c2042; border-color: #4a3d6b; color: #efe6ff; }
+body.wizard .process-node-dialog-actions button {
+  background: #2c2042; border-color: #4a3d6b; color: #efe6ff;
+}
+body.wizard .process-node-dialog-actions button:hover { border-color: #d4af37; }
+body.wizard .process-node-dialog-actions .primary {
+  background: #6d4aa2; border-color: #d4af37; color: #fff8dc;
+}
+body.wizard .process-node-dialog-actions button:disabled { opacity: .45; cursor: default; }
 body.wizard .process-node-input:focus,
 body.wizard .process-node-textarea:focus,
 body.wizard .process-node-select:focus { border-color: #d4af37; }

@@ -96,6 +96,8 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"onPortDragStart:",
 		"onCanvasDrop:",
 		"onMarqueeSelect:",
+		"onNodeDragStart:",
+		"wheelPan: true",
 		"marqueeSelect: true",
 		"This removes the current highlighted selection.",
 	)
@@ -149,7 +151,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 	mustContain("processes-island.js", processes,
 		// The editor loads lazily after the feature-gated tab opens.
 		"await import('./process-editor.js')",
-		"openTemplateEditor(mount, value)",
+		"loadEditor(mountRef.current, { id: spec.id, blank: spec.blank, config: { confirmDiscard } })",
 		"editor?.destroy?.()",
 	)
 
