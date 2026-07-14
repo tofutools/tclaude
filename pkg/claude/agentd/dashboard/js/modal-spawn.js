@@ -257,8 +257,8 @@ function applySpawnHarness(harnessName) {
 }
 
 // applySpawnSandboxHint puts the selected mode's catalog description in the
-// Sandbox selector's hover/focus tooltip. The same node is its live accessible
-// description, without making every spawn dialog reserve a help line.
+// Sandbox selector's native title tooltip, matching every other select in the
+// dialog. The hidden live node remains its accessible description.
 function applySpawnSandboxHint(h) {
   const selectEl = $('#agent-spawn-sandbox');
   const hintEl = $('#agent-spawn-sandbox-hint');
@@ -266,6 +266,9 @@ function applySpawnSandboxHint(h) {
   const help = (h && h.sandbox_mode_help) || {};
   const text = help[selectEl.value] || '';
   hintEl.textContent = text;
+  const option = selectEl.selectedOptions && selectEl.selectedOptions[0];
+  if (option) option.title = text;
+  syncSelectTitle(selectEl);
 }
 
 // applySpawnApprovalHint sets the live help line under the Permission-mode

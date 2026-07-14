@@ -1,7 +1,7 @@
 // Sandbox-profile compatibility and spawn-dialog integration. The management
 // list/editor/import/export DOM is Preact-owned by management-island.js; this
 // module retains the independent launch-policy preview and scribe boundary.
-import { $, esc } from './helpers.js';
+import { $, esc, syncSelectTitle } from './helpers.js';
 import { toast } from './refresh.js';
 import { openTermModal } from './modal-term.js';
 import { createSandboxDraftQueue } from './sandbox-draft-queue.js';
@@ -72,7 +72,12 @@ function composePreview(applied, byName = {}) {
 async function refreshSpawnSandboxProfileUI(groupName = '') {
   const select = $('#agent-spawn-sandbox-profile'); const preview = $('#agent-spawn-sandbox-profile-preview');
   if (!select || !preview) return;
-  const setPreview = (text) => { preview.textContent = text; };
+  const setPreview = (text) => {
+    preview.textContent = text;
+    const option = select.selectedOptions && select.selectedOptions[0];
+    if (option) option.title = text;
+    syncSelectTitle(select);
+  };
   const generation = ++spawnPreviewGeneration; const selected = select.value;
   try {
     await loadSandboxProfiles(); if (generation !== spawnPreviewGeneration) return;

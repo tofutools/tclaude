@@ -6,20 +6,19 @@ import (
 )
 
 // The Sandbox and Sandbox profile explanations can be long, especially the
-// composed-policy preview. Keep them available on hover, focus/tap, and to
-// assistive technology without rendering persistent help rows in the dialog.
-func TestDashboardHTML_SpawnSandboxHelpUsesTooltips(t *testing.T) {
+// composed-policy preview. Keep them on the same native tooltip path as other
+// selects and available to assistive technology without persistent help rows.
+func TestDashboardHTML_SpawnSandboxHelpUsesNativeTooltips(t *testing.T) {
 	for needle, why := range map[string]string{
-		`id="agent-spawn-sandbox-hint" class="spawn-field-tooltip-copy" role="tooltip" tabindex="0" title=""`: "sandbox mode help is a focusable tooltip without an inherited native title",
+		`id="agent-spawn-sandbox-hint" class="spawn-field-description" aria-live="polite"`: "sandbox mode help remains an accessible live description",
 		`for="agent-spawn-sandbox"`: "sandbox selector retains an explicit label",
-		`id="agent-spawn-sandbox" title="" aria-describedby="agent-spawn-sandbox-hint"`:                                  "custom sandbox tooltip suppresses inherited native title",
-		`aria-describedby="agent-spawn-sandbox-profile-preview"`:                                                         "sandbox profile tooltip has an accessible description",
-		`id="agent-spawn-sandbox-profile-preview" class="spawn-field-tooltip-copy" role="tooltip" tabindex="0" title=""`: "sandbox profile preview is a focusable tooltip without an inherited native title",
-		`hintEl.textContent = text`:                                        "selected sandbox mode updates its tooltip",
-		`const setPreview = (text) => { preview.textContent = text; }`:     "composed policy updates the profile tooltip",
-		`.cron-create-target > select:hover + .spawn-field-tooltip-copy {`: "mouse hover reveals dropdown help",
-		`.cron-create-target > select:focus + .spawn-field-tooltip-copy,`:  "keyboard focus and touch reveal dropdown help",
-		`max-height: min(180px, 30vh); overflow: auto;`:                    "long policy previews remain scrollable",
+		`id="agent-spawn-sandbox" title="" aria-describedby="agent-spawn-sandbox-hint"`:               "sandbox selector receives its selected mode's native title",
+		`aria-describedby="agent-spawn-sandbox-profile-preview"`:                                      "sandbox profile selector retains its accessible description",
+		`id="agent-spawn-sandbox-profile-preview" class="spawn-field-description" aria-live="polite"`: "sandbox profile preview remains an accessible live description",
+		`if (option) option.title = text`:                                                             "selected options carry the native tooltip copy",
+		`syncSelectTitle(selectEl)`:                                                                   "sandbox mode uses the shared select title helper",
+		`syncSelectTitle(select);`:                                                                    "composed policy uses the shared select title helper",
+		`.spawn-field-description {`:                                                                  "accessible descriptions are visually hidden",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard missing %q (%s)", needle, why)
@@ -29,6 +28,8 @@ func TestDashboardHTML_SpawnSandboxHelpUsesTooltips(t *testing.T) {
 	for _, visibleHint := range []string{
 		`id="agent-spawn-sandbox-hint" class="spawn-field-hint"`,
 		`id="agent-spawn-sandbox-profile-preview" class="spawn-field-hint"`,
+		`class="spawn-field-tooltip-copy"`,
+		`.cron-create-target > select:hover + .spawn-field-tooltip-copy`,
 	} {
 		if strings.Contains(dashboardAssets, visibleHint) {
 			t.Errorf("spawn dialog still renders persistent sandbox help: %q", visibleHint)
