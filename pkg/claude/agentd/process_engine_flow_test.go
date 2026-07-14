@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -246,6 +247,52 @@ func TestProcessRunCreateUsesDedicatedPermission(t *testing.T) {
 	}
 	assert.True(t, statuses[http.StatusForbidden], "denied attempt missing from audit")
 	assert.True(t, statuses[http.StatusCreated], "successful attempt missing from audit")
+}
+
+func TestProcessRunCreateAskHumanPersistsOnlyRedactedParams(t *testing.T) {
+	f, root := processEngineFlow(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "approval-preview", Start: "done",
+		Params: map[string]model.Param{
+			"sentinel-param-name": {Type: "string"},
+			"ordinary":            {Type: "string"},
+		},
+		Nodes: map[string]model.Node{"done": {Type: model.NodeTypeEnd}},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	require.NoError(t, err)
+
+	const (
+		conv   = "process-run-approval-caller"
+		runID  = "approval-preview-run"
+		secret = "sentinel-secret-must-never-persist"
+	)
+	body := []byte(fmt.Sprintf(`{"templateRef":%q,"runId":%q,"params":{"sentinel-param-name":%q,"ordinary":"value"}}`, record.Ref, runID, secret))
+	req := httptest.NewRequest(http.MethodPost, "/v1/process/runs", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Tclaude-Ask-Human", "1ms")
+	denied := testharness.Serve(f.Mux, agentd.AsAgentPeer(req, conv))
+	require.Equal(t, http.StatusForbidden, denied.Code, denied.Body.String())
+
+	rows, err := db.ListRecentHandledAccessRequests(10)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	row := rows[0]
+	assert.Equal(t, agentd.PermProcessRunsCreate, row.Perm)
+	assert.Equal(t, http.MethodPost, row.Method)
+	assert.Equal(t, "/v1/process/runs", row.Path)
+	assert.Equal(t, "timed out", row.Status)
+	assert.Contains(t, row.BodyPreview, record.Ref)
+	assert.Contains(t, row.BodyPreview, runID)
+	assert.Contains(t, row.BodyPreview, "[redacted: 2 parameter(s)]")
+	encoded, marshalErr := json.Marshal(row)
+	require.NoError(t, marshalErr)
+	for _, forbidden := range []string{"sentinel-param-name", secret, `"ordinary"`, `"value"`} {
+		assert.NotContains(t, string(encoded), forbidden, "whole persisted access-request row must exclude parameter names and values")
+	}
 }
 
 func TestProcessRunCreateDashboardAuditAttribution(t *testing.T) {

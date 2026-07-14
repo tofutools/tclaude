@@ -12,6 +12,64 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
 
+func TestSnapshotApprovalRequestBodyProcessRunRedactsParamsAndPreservesBody(t *testing.T) {
+	const body = `{"templateRef":"deploy@sha256:abc","runId":"release-42","params":{"secret_name":"secret-value","token":"another-secret"}}`
+	req, err := http.NewRequest(http.MethodPost, "/v1/process/runs", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview := snapshotApprovalRequestBody(req, PermProcessRunsCreate)
+	for _, safe := range []string{"deploy@sha256:abc", "release-42", "[redacted: 2 parameter(s)]"} {
+		if !strings.Contains(preview, safe) {
+			t.Fatalf("preview %q does not contain safe context %q", preview, safe)
+		}
+	}
+	for _, secret := range []string{"secret_name", "secret-value", "token", "another-secret"} {
+		if strings.Contains(preview, secret) {
+			t.Fatalf("preview %q contains runtime parameter material %q", preview, secret)
+		}
+	}
+	got, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != body {
+		t.Fatalf("restored body changed: got %q want %q", got, body)
+	}
+}
+
+func TestSnapshotApprovalRequestBodyProcessRunMalformedAndOversizedFailClosed(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "malformed", body: `{"templateRef":"safe","params":{"secret_name":"sentinel-secret"`},
+		{name: "oversized", body: `{"templateRef":"safe","params":{"secret_name":"` + strings.Repeat("x", maxProcessEditBody) + `sentinel-secret"}}`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodPost, "/v1/process/runs", strings.NewReader(tc.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			preview := snapshotApprovalRequestBody(req, PermProcessRunsCreate)
+			if preview != processRunApprovalPreviewUnavailable {
+				t.Fatalf("preview = %q, want fail-closed marker", preview)
+			}
+			if strings.Contains(preview, "secret_name") || strings.Contains(preview, "sentinel-secret") {
+				t.Fatalf("fail-closed preview contains submitted parameter material: %q", preview)
+			}
+			got, err := io.ReadAll(req.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tc.body {
+				t.Fatalf("restored body length = %d, want %d", len(got), len(tc.body))
+			}
+		})
+	}
+}
+
 func TestSnapshotRequestBodyAttachmentLeavesBinaryStreamUntouched(t *testing.T) {
 	const binary = "a large-ish binary body \x00 that must survive"
 	req, err := http.NewRequest(http.MethodPost, "/v1/notify-human/attachment", strings.NewReader(binary))

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -501,6 +502,73 @@ func recordApprovalDecision(req *approvalRequest, outcome approvalOutcome) {
 	}); err != nil {
 		slog.Warn("audit: failed to record approval decision", "verb", verb, "err", err)
 	}
+}
+
+// snapshotApprovalRequestBody builds the human-facing preview for a permission
+// request. Most endpoints retain the generic body snapshot. Process-run
+// creation is deliberately narrower: runtime params may contain secrets, so
+// its preview exposes only safe run identity and a redacted parameter count.
+func snapshotApprovalRequestBody(r *http.Request, perm string) string {
+	if perm == PermProcessRunsCreate && r.Method == http.MethodPost && r.URL.Path == "/v1/process/runs" {
+		return snapshotProcessRunCreateApprovalBody(r)
+	}
+	return snapshotRequestBody(r)
+}
+
+const processRunApprovalPreviewUnavailable = `{"templateRef":"[unavailable]","params":"[redacted: preview unavailable]"}`
+
+type replayReadCloser struct {
+	io.Reader
+	io.Closer
+}
+
+// snapshotProcessRunCreateApprovalBody reads at most the handler's accepted
+// body size, then reconstructs the request stream from the bytes already read
+// plus the unread tail. Approval therefore cannot consume, truncate, or alter
+// the body that handleProcessRunCreate later validates. Invalid, unreadable,
+// or oversized input fails closed to a constant preview that contains none of
+// the submitted JSON.
+func snapshotProcessRunCreateApprovalBody(r *http.Request) string {
+	if r.Body == nil {
+		return processRunApprovalPreviewUnavailable
+	}
+	original := r.Body
+	buf, readErr := io.ReadAll(io.LimitReader(original, maxProcessEditBody+1))
+	r.Body = &replayReadCloser{
+		Reader: io.MultiReader(bytes.NewReader(buf), original),
+		Closer: original,
+	}
+	if readErr != nil || len(buf) > maxProcessEditBody {
+		return processRunApprovalPreviewUnavailable
+	}
+
+	var submitted struct {
+		TemplateRef string                     `json:"templateRef"`
+		RunID       string                     `json:"runId,omitempty"`
+		Params      map[string]json.RawMessage `json:"params,omitempty"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(buf))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&submitted); err != nil {
+		return processRunApprovalPreviewUnavailable
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return processRunApprovalPreviewUnavailable
+	}
+	preview := struct {
+		TemplateRef string `json:"templateRef"`
+		RunID       string `json:"runId,omitempty"`
+		Params      string `json:"params"`
+	}{
+		TemplateRef: submitted.TemplateRef,
+		RunID:       submitted.RunID,
+		Params:      fmt.Sprintf("[redacted: %d parameter(s)]", len(submitted.Params)),
+	}
+	encoded, err := json.MarshalIndent(preview, "", "  ")
+	if err != nil {
+		return processRunApprovalPreviewUnavailable
+	}
+	return string(encoded)
 }
 
 // snapshotRequestBody reads the request body, builds a bounded preview
