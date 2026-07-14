@@ -308,23 +308,42 @@ func TestCodexSim_CommandDelayIsAsync(t *testing.T) {
 	home := t.TempDir()
 	cx := NewCodexSim(t, home, "/work")
 	_ = cx.Start()
-	cx.SetCommandDelay("slow", 150*time.Millisecond)
+	started, release, done := cx.SetCommandBarrier("")
+	t.Cleanup(release)
 
-	cx.Receive("slow input")
+	// Empty submissions are discarded and must not consume the next-command
+	// barrier, even though an empty prefix otherwise matches every command.
 	cx.Receive("Enter")
-	// Returns before the delayed handler writes the turn.
+	cx.Receive("slow input")
+	returned := make(chan struct{})
+	go func() {
+		cx.Receive("Enter")
+		close(returned)
+	}()
+	// The handler reaches its barrier, and Receive itself must return while the
+	// handler remains causally held immediately before dispatch.
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("delayed command did not reach its dispatch barrier")
+	}
+	select {
+	case <-returned:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Receive did not return while the delayed handler was blocked")
+	}
 	if envs := readRollout(t, cx.RolloutPath); len(envs) != 1 {
 		t.Fatalf("turn landed synchronously despite delay: %d lines", len(envs))
 	}
-	// Eventually the user turn appears.
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if len(readRollout(t, cx.RolloutPath)) > 1 {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
+	release()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("delayed command did not finish after barrier release")
 	}
-	t.Fatal("delayed turn never landed")
+	if envs := readRollout(t, cx.RolloutPath); len(envs) <= 1 {
+		t.Fatalf("delayed turn did not land after release: %d lines", len(envs))
+	}
 }
 
 func TestCodexSim_RolloutPathIsDateIndexed(t *testing.T) {

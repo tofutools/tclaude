@@ -120,6 +120,8 @@ type codexHandlerEntry struct {
 type codexDelayEntry struct {
 	prefix string
 	d      time.Duration
+	wait   func()
+	done   func()
 }
 
 // NewCodexSim picks a fresh session id, computes the date-indexed
@@ -201,16 +203,23 @@ func (c *CodexSim) Receive(text string) {
 	}
 	line := c.buf.String()
 	c.buf.Reset()
-	delay := c.delayForLocked(line)
-	c.mu.Unlock()
-
 	if line == "" {
+		c.mu.Unlock()
 		return
 	}
-	if delay > 0 {
+	delay := c.delayForLocked(line)
+	c.mu.Unlock()
+	if delay.d > 0 || delay.wait != nil {
 		go func() {
-			time.Sleep(delay)
+			if delay.wait != nil {
+				delay.wait()
+			} else {
+				time.Sleep(delay.d)
+			}
 			c.dispatch(line)
+			if delay.done != nil {
+				delay.done()
+			}
 		}()
 		return
 	}
@@ -284,6 +293,27 @@ func (c *CodexSim) SetCommandDelay(prefix string, d time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.delays = append([]codexDelayEntry{{prefix: prefix, d: d}}, c.delays...)
+}
+
+// SetCommandBarrier holds the next matching submitted command immediately
+// before dispatch. It is a deterministic, one-shot alternative to
+// SetCommandDelay for tests that need to prove asynchronous ordering.
+func (c *CodexSim) SetCommandBarrier(prefix string) (started <-chan struct{}, release func(), done <-chan struct{}) {
+	startedCh := make(chan struct{})
+	releaseCh := make(chan struct{})
+	doneCh := make(chan struct{})
+	c.mu.Lock()
+	c.delays = append([]codexDelayEntry{{
+		prefix: prefix,
+		wait: func() {
+			close(startedCh)
+			<-releaseCh
+		},
+		done: func() { close(doneCh) },
+	}}, c.delays...)
+	c.mu.Unlock()
+	var once sync.Once
+	return startedCh, func() { once.Do(func() { close(releaseCh) }) }, doneCh
 }
 
 // WriteUserInput writes the USER side of one turn: a task_started
@@ -558,13 +588,16 @@ func (c *CodexSim) dispatch(line string) {
 	}
 }
 
-func (c *CodexSim) delayForLocked(line string) time.Duration {
-	for _, d := range c.delays {
+func (c *CodexSim) delayForLocked(line string) codexDelayEntry {
+	for i, d := range c.delays {
 		if d.prefix == "" || strings.HasPrefix(line, d.prefix) {
-			return d.d
+			if d.wait != nil {
+				c.delays = append(c.delays[:i], c.delays[i+1:]...)
+			}
+			return d
 		}
 	}
-	return 0
+	return codexDelayEntry{}
 }
 
 // lastTurnID is updated by turnContextPayload so CompleteTask can close
