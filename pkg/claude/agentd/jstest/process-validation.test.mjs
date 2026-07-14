@@ -191,6 +191,7 @@ test('decorateGraph sets node overlays and edge badges (never color-only)', () =
     { scope: 'node', targetId: 'work', severity: 'error', code: 'a', message: 'm' },
     { scope: 'node', targetId: 'work', severity: 'warning', code: 'b', message: 'm' },
     { scope: 'edge', targetId: 'start:fail', severity: 'warning', code: 'c', message: 'm' },
+    { scope: 'edge', targetId: 'start:fail', severity: 'warning', code: 'd', message: 'm2' },
   ], model);
   const graph = decorateGraph(model.graph(), mapped);
   const work = graph.nodes.find((node) => node.id === 'work');
@@ -206,6 +207,8 @@ test('decorateGraph sets node overlays and edge badges (never color-only)', () =
   const edge = graph.edges.find((candidate) => candidate.id === graphEdgeID('start', 'fail'));
   assert.equal(edge.badge, severityGlyph('warning'));
   assert.equal(edge.badgeSeverity, 'warning');
+  assert.deepEqual(edge.issues, ['c: m', 'd: m2'],
+    'the edge marker carries all exact edge-local diagnostic detail');
 });
 
 test('decorateGraph preserves foreign overlay fields and badges', () => {

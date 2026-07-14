@@ -11451,7 +11451,10 @@ body.wizard #agent-dock .dock-card-menu-item.danger:hover {
 .process-overlay-tooltip { display: none; pointer-events: none; }
 .process-overlay-anchor:hover .process-overlay-tooltip,
 .process-node:focus .process-overlay-tooltip,
-.process-node:focus-visible .process-overlay-tooltip { display: block; }
+.process-node:focus-visible .process-overlay-tooltip,
+.process-edge:hover .process-overlay-tooltip,
+.process-edge:focus .process-overlay-tooltip,
+.process-edge:focus-visible .process-overlay-tooltip { display: block; }
 .process-overlay-tooltip rect {
   fill: var(--pg-panel); stroke: var(--pg-border); stroke-width: 1; vector-effect: non-scaling-stroke;
 }
