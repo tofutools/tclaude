@@ -31,6 +31,7 @@ var safeSegmentPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
 type FS struct {
 	root                          string
 	now                           func() time.Time
+	templateLockContendedHook     func()
 	templateAuthoringSnapshotHook func()
 	templateAuthoringCommitHook   func(TemplateAuthoringCommit)
 }
@@ -1814,7 +1815,7 @@ func (s *FS) lockRun(ctx context.Context, runID string) (func(), error) {
 	}
 	lockValue, _ := processLocks.LoadOrStore(s.root+"\x00"+runID, newLocalRunLock())
 	localLock := lockValue.(*localRunLock)
-	if err := localLock.Lock(ctx); err != nil {
+	if err := localLock.Lock(ctx, nil); err != nil {
 		return func() {}, err
 	}
 	lockDir := filepath.Join(s.root, ".locks")
@@ -1847,7 +1848,7 @@ func (s *FS) lockTemplate(ctx context.Context, id string) (func(), error) {
 	}
 	lockValue, _ := processLocks.LoadOrStore(s.root+"\x00template\x00"+id, newLocalRunLock())
 	localLock := lockValue.(*localRunLock)
-	if err := localLock.Lock(ctx); err != nil {
+	if err := localLock.Lock(ctx, s.templateLockContendedHook); err != nil {
 		return func() {}, err
 	}
 	lockDir := filepath.Join(s.root, ".locks")
@@ -1884,7 +1885,17 @@ func newLocalRunLock() *localRunLock {
 	return lock
 }
 
-func (l *localRunLock) Lock(ctx context.Context) error {
+func (l *localRunLock) Lock(ctx context.Context, contended func()) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-l.ch:
+		return nil
+	default:
+	}
+	if contended != nil {
+		contended()
+	}
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
