@@ -262,6 +262,23 @@ func TestProcessRunViewDegradesOnlyConfirmedExistingRuns(t *testing.T) {
 		assert.Equal(t, http.StatusNotFound, rec.Code)
 	})
 
+	t.Run("encoded unsafe id has no lock side effect", func(t *testing.T) {
+		f, root := processEngineFlow(t)
+		rec := processEngineGet(t, f, "/v1/process/runs/%2e%2e%2foutside/view")
+		assert.NotEqual(t, http.StatusOK, rec.Code)
+		_, err := os.Stat(filepath.Join(root, "outside.lock"))
+		assert.ErrorIs(t, err, os.ErrNotExist)
+	})
+
+	t.Run("oversized regular component is sanitized", func(t *testing.T) {
+		f, root := processEngineFlow(t)
+		createEngineRun(t, root, "viewer-oversized", viewerFlowTemplate("viewer-oversized"), false)
+		require.NoError(t, os.Truncate(filepath.Join(root, "runs", "viewer-oversized", "state.json"), (16<<20)+1))
+		rec := processEngineGet(t, f, "/v1/process/runs/viewer-oversized/view")
+		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+		assert.NotContains(t, rec.Body.String(), root)
+	})
+
 	t.Run("store infrastructure failure", func(t *testing.T) {
 		f, root := processEngineFlow(t)
 		require.NoError(t, os.MkdirAll(root, 0o755))

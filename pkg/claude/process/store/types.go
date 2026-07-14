@@ -29,6 +29,7 @@ var (
 	ErrRunInconsistent        = errors.New("process run state is inconsistent with evidence")
 	ErrTemplateSavePending    = errors.New("process template has an unfinished attributed save")
 	ErrUnsafeRunPath          = errors.New("process run path is not a regular directory")
+	ErrViewerResourceLimit    = errors.New("process viewer resource limit exceeded")
 )
 
 // DecodeError identifies persisted JSON that was read successfully but could

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1271,6 +1272,236 @@ func TestLoadRunViewSerializesWithAppend(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), after.State.LastLogSeq)
 	require.Len(t, after.Manifest, 1)
+}
+
+func TestLoadRunViewRejectsIDsBeforeLockSideEffects(t *testing.T) {
+	root := t.TempDir()
+	fs := newStoreAt(t, root)
+	outside := filepath.Join(root, "outside.lock")
+	_, err := fs.LoadRunView(t.Context(), "../outside")
+	require.Error(t, err)
+	_, statErr := os.Stat(outside)
+	assert.ErrorIs(t, statErr, os.ErrNotExist)
+	_, statErr = os.Stat(filepath.Join(root, ".locks", "..", "outside.lock"))
+	assert.ErrorIs(t, statErr, os.ErrNotExist)
+
+	_, err = fs.LoadRunView(t.Context(), "safe-missing")
+	require.ErrorIs(t, err, store.ErrNotFound)
+	_, statErr = os.Stat(filepath.Join(root, ".locks", "safe-missing.lock"))
+	assert.ErrorIs(t, statErr, os.ErrNotExist, "missing viewer reads must not persist lock files")
+
+	_, err = fs.GetTemplateExact(t.Context(), "../outside@sha256:"+strings.Repeat("a", 64))
+	require.Error(t, err)
+	_, statErr = os.Stat(filepath.Join(root, ".locks", "template-..", "outside.lock"))
+	assert.ErrorIs(t, statErr, os.ErrNotExist)
+}
+
+func TestLoadRunViewResourceBudgets(t *testing.T) {
+	t.Run("oversized and growing file", func(t *testing.T) {
+		root := t.TempDir()
+		fs, runID := initializedRunAt(t, root)
+		statePath := filepath.Join(root, "runs", runID, "state.json")
+		snapshot, err := fs.LoadRun(t.Context(), runID)
+		require.NoError(t, err)
+		stateData, err := state.Encode(snapshot.State)
+		require.NoError(t, err)
+		maxFile := int64(len(stateData) + 64)
+		if info, statErr := os.Stat(filepath.Join(root, "runs", runID, "run.json")); statErr == nil && info.Size() > maxFile {
+			maxFile = info.Size() + 64
+		}
+		restoreLimits := fs.SetViewerResourceLimitsForTest(maxFile, maxFile*10, 100, 100)
+		defer restoreLimits()
+		require.NoError(t, os.Truncate(statePath, maxFile+1))
+		_, err = fs.LoadRunView(t.Context(), runID)
+		require.ErrorIs(t, err, store.ErrViewerResourceLimit)
+
+		// Restore valid state, then grow it after stat/first read. limit+1 must
+		// catch the race without allocating the grown size.
+		require.NoError(t, os.WriteFile(statePath, stateData, 0o644))
+		var once sync.Once
+		restoreHooks := fs.SetViewerIOHooksForTest(func(name string, _ int64) {
+			if name == "state.json" {
+				once.Do(func() { require.NoError(t, os.Truncate(statePath, maxFile+1)) })
+			}
+		}, nil)
+		defer restoreHooks()
+		_, err = fs.LoadRunView(t.Context(), runID)
+		require.ErrorIs(t, err, store.ErrViewerResourceLimit)
+	})
+
+	t.Run("cumulative bytes records and directory entries", func(t *testing.T) {
+		root := t.TempDir()
+		fs, runID := initializedRunAt(t, root)
+		runDir := filepath.Join(root, "runs", runID)
+		nodesDir := filepath.Join(runDir, "nodes")
+		for _, id := range []string{"a", "b", "c"} {
+			require.NoError(t, os.MkdirAll(filepath.Join(nodesDir, id), 0o755))
+		}
+		restore := fs.SetViewerResourceLimitsForTest(1<<20, 1<<20, 100, 2)
+		_, err := fs.LoadRunView(t.Context(), runID)
+		restore()
+		require.ErrorIs(t, err, store.ErrViewerResourceLimit)
+		for _, id := range []string{"a", "b"} {
+			require.NoError(t, os.WriteFile(filepath.Join(nodesDir, id, "log.jsonl"), []byte(strings.Repeat(" \n", 32)), 0o644))
+		}
+
+		entry := storetest.AdminLogEntry(runID, "implement", 0)
+		_, err = fs.Append(t.Context(), runID, 0, []evidence.LogEntry{entry})
+		require.NoError(t, err)
+		restore = fs.SetViewerResourceLimitsForTest(1<<20, 1<<20, 1, 100)
+		_, err = fs.LoadRunView(t.Context(), runID)
+		restore()
+		require.ErrorIs(t, err, store.ErrViewerResourceLimit)
+
+		var total int64
+		for _, path := range []string{
+			filepath.Join(runDir, "run.json"), filepath.Join(runDir, "state.json"),
+			filepath.Join(runDir, "manifest.jsonl"), filepath.Join(runDir, "nodes", "a", "log.jsonl"),
+			filepath.Join(runDir, "nodes", "b", "log.jsonl"), filepath.Join(runDir, "nodes", "implement", "log.jsonl"),
+		} {
+			info, statErr := os.Stat(path)
+			require.NoError(t, statErr)
+			total += info.Size()
+		}
+		restore = fs.SetViewerResourceLimitsForTest(1<<20, total-1, 100, 100)
+		_, err = fs.LoadRunView(t.Context(), runID)
+		restore()
+		require.ErrorIs(t, err, store.ErrViewerResourceLimit)
+	})
+}
+
+func TestLoadRunViewCancellationReleasesWriterLock(t *testing.T) {
+	assertWriterAcquires := func(t *testing.T, fs *store.FS, runID string) {
+		t.Helper()
+		appendDone := make(chan error, 1)
+		go func() {
+			_, err := fs.Append(t.Context(), runID, 0, []evidence.LogEntry{storetest.AdminLogEntry(runID, "implement", 0)})
+			appendDone <- err
+		}()
+		select {
+		case err := <-appendDone:
+			require.NoError(t, err)
+		case <-time.After(time.Second):
+			t.Fatal("append could not acquire lock after viewer cancellation")
+		}
+	}
+
+	t.Run("during read", func(t *testing.T) {
+		fs, runID := initializedRun(t)
+		ctx, cancel := context.WithCancel(t.Context())
+		var once sync.Once
+		restore := fs.SetViewerIOHooksForTest(func(name string, _ int64) {
+			if name == "state.json" {
+				once.Do(cancel)
+			}
+		}, nil)
+		defer restore()
+		_, err := fs.LoadRunView(ctx, runID)
+		require.ErrorIs(t, err, context.Canceled)
+		assertWriterAcquires(t, fs, runID)
+	})
+
+	t.Run("during decode", func(t *testing.T) {
+		fs, runID := initializedRun(t)
+		ctx, cancel := context.WithCancel(t.Context())
+		decodeStarted := make(chan struct{})
+		decodeFinished := make(chan struct{})
+		var active atomic.Int32
+		var startOnce sync.Once
+		restore := fs.SetViewerIOHooksForTest(nil, func(component string) {
+			if component == "state" {
+				active.Add(1)
+				defer active.Add(-1)
+				startOnce.Do(func() { close(decodeStarted) })
+				<-ctx.Done()
+				close(decodeFinished)
+			}
+		})
+		defer restore()
+		loadDone := make(chan error, 1)
+		go func() { _, err := fs.LoadRunView(ctx, runID); loadDone <- err }()
+		<-decodeStarted
+		cancel()
+		select {
+		case err := <-loadDone:
+			require.ErrorIs(t, err, context.Canceled)
+		case <-time.After(time.Second):
+			t.Fatal("canceled viewer decode did not promptly release")
+		}
+		select {
+		case <-decodeFinished:
+		default:
+			t.Fatal("viewer returned while decode work was still active")
+		}
+		assert.Zero(t, active.Load(), "no decode work may outlive LoadRunView")
+		assertWriterAcquires(t, fs, runID)
+	})
+}
+
+func TestViewerDescriptorBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*testing.T, string, *store.FS, string)
+	}{
+		{"node directory symlink", func(t *testing.T, root string, _ *store.FS, runID string) {
+			target := t.TempDir()
+			nodes := filepath.Join(root, "runs", runID, "nodes")
+			require.NoError(t, os.MkdirAll(nodes, 0o755))
+			require.NoError(t, os.Symlink(target, filepath.Join(nodes, "linked")))
+		}},
+		{"node log symlink", func(t *testing.T, root string, fs *store.FS, runID string) {
+			_, err := fs.Append(t.Context(), runID, 0, []evidence.LogEntry{storetest.AdminLogEntry(runID, "implement", 0)})
+			require.NoError(t, err)
+			path := filepath.Join(root, "runs", runID, "nodes", "implement", "log.jsonl")
+			require.NoError(t, os.Remove(path))
+			target := filepath.Join(t.TempDir(), "target")
+			require.NoError(t, os.WriteFile(target, []byte("TARGET_SECRET"), 0o644))
+			require.NoError(t, os.Symlink(target, path))
+		}},
+		{"run log directory symlink", func(t *testing.T, root string, _ *store.FS, runID string) {
+			require.NoError(t, os.Symlink(t.TempDir(), filepath.Join(root, "runs", runID, "run")))
+		}},
+		{"run log symlink", func(t *testing.T, root string, _ *store.FS, runID string) {
+			runLogDir := filepath.Join(root, "runs", runID, "run")
+			require.NoError(t, os.MkdirAll(runLogDir, 0o755))
+			target := filepath.Join(t.TempDir(), "target")
+			require.NoError(t, os.WriteFile(target, []byte("TARGET_SECRET"), 0o644))
+			require.NoError(t, os.Symlink(target, filepath.Join(runLogDir, "log.jsonl")))
+		}},
+		{"viewer lock symlink", func(t *testing.T, root string, _ *store.FS, runID string) {
+			path := filepath.Join(root, ".locks", runID+".lock")
+			require.NoError(t, os.Remove(path))
+			target := filepath.Join(t.TempDir(), "lock-target")
+			require.NoError(t, os.WriteFile(target, nil, 0o600))
+			require.NoError(t, os.Symlink(target, path))
+		}},
+		{"state non-regular object", func(t *testing.T, root string, _ *store.FS, runID string) {
+			path := filepath.Join(root, "runs", runID, "state.json")
+			require.NoError(t, os.Remove(path))
+			require.NoError(t, os.Mkdir(path, 0o755))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			fs, runID := initializedRunAt(t, root)
+			tc.mutate(t, root, fs, runID)
+			_, err := fs.LoadRunView(t.Context(), runID)
+			require.ErrorIs(t, err, store.ErrUnsafeRunPath)
+		})
+	}
+
+	t.Run("template intent symlink", func(t *testing.T) {
+		root := t.TempDir()
+		fs := newStoreAt(t, root)
+		record, err := fs.PutTemplate(t.Context(), storetest.Template())
+		require.NoError(t, err)
+		intent := filepath.Join(root, "templates", "demo", ".attributed-save-intent.json")
+		target := filepath.Join(t.TempDir(), "intent-target")
+		require.NoError(t, os.WriteFile(target, []byte("TARGET_SECRET"), 0o600))
+		require.NoError(t, os.Symlink(target, intent))
+		_, err = fs.GetTemplateExact(t.Context(), record.Ref)
+		require.ErrorIs(t, err, store.ErrUnsafeRunPath)
+	})
 }
 
 func initializedRun(t *testing.T) (*store.FS, string) {

@@ -403,6 +403,16 @@ as append, opens consumed run/template components without following symlinks,
 requires regular persisted files, and never rewrites template authoring state,
 run metadata, state, manifests, or evidence logs.
 
+The schema-v1 full-history projection is deliberately bounded: each consumed
+file may be at most 16 MiB; the persisted run snapshot may consume at most
+64 MiB, 100,000 evidence records, and 4,096 node-directory entries. The exact
+pinned template is read under its own 16-MiB file ceiling, so one successful
+endpoint read consumes at most 80 MiB of persisted input. Requests that exceed
+a limit or are canceled fail without holding the append lock indefinitely; the
+HTTP response remains a sanitized 500 rather than returning a partial graph.
+Decode work is synchronous and cooperatively checks cancellation, so it cannot
+outlive the viewer request and accumulate after the coherent lock is released.
+
 ## Notes
 
 - `advance` runs `verify` first and refuses dirty or inconsistent runs.

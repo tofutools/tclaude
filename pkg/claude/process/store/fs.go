@@ -35,6 +35,12 @@ type FS struct {
 	templateAuthoringSnapshotHook func()
 	templateAuthoringCommitHook   func(TemplateAuthoringCommit)
 	viewerReadHook                func()
+	viewerReadChunkHook           func(string, int64)
+	viewerDecodeHook              func(string)
+	viewerMaxFileBytes            int64
+	viewerMaxTotalBytes           int64
+	viewerMaxRecords              int
+	viewerMaxDirectoryEntries     int
 }
 
 var processLocks sync.Map
@@ -72,6 +78,27 @@ func (s *FS) SetViewerReadHookForTest(hook func()) func() {
 	previous := s.viewerReadHook
 	s.viewerReadHook = hook
 	return func() { s.viewerReadHook = previous }
+}
+
+// SetViewerResourceLimitsForTest installs smaller deterministic limits and
+// read/decode hooks for boundary and cancellation tests.
+func (s *FS) SetViewerResourceLimitsForTest(maxFile, maxTotal int64, maxRecords, maxEntries int) func() {
+	oldFile, oldTotal := s.viewerMaxFileBytes, s.viewerMaxTotalBytes
+	oldRecords, oldEntries := s.viewerMaxRecords, s.viewerMaxDirectoryEntries
+	s.viewerMaxFileBytes, s.viewerMaxTotalBytes = maxFile, maxTotal
+	s.viewerMaxRecords, s.viewerMaxDirectoryEntries = maxRecords, maxEntries
+	return func() {
+		s.viewerMaxFileBytes, s.viewerMaxTotalBytes = oldFile, oldTotal
+		s.viewerMaxRecords, s.viewerMaxDirectoryEntries = oldRecords, oldEntries
+	}
+}
+
+// SetViewerIOHooksForTest installs deterministic read/decode synchronization
+// points for viewer cancellation tests.
+func (s *FS) SetViewerIOHooksForTest(read func(string, int64), decode func(string)) func() {
+	oldRead, oldDecode := s.viewerReadChunkHook, s.viewerDecodeHook
+	s.viewerReadChunkHook, s.viewerDecodeHook = read, decode
+	return func() { s.viewerReadChunkHook, s.viewerDecodeHook = oldRead, oldDecode }
 }
 
 func (s *FS) PutTemplate(ctx context.Context, tmpl *model.Template) (TemplateRecord, error) {
@@ -884,12 +911,15 @@ func (s *FS) GetTemplateExact(ctx context.Context, ref string) (*model.Template,
 	if err != nil {
 		return nil, err
 	}
+	if err := safeSegment(id); err != nil {
+		return nil, fmt.Errorf("invalid template id: %w", err)
+	}
 	unlock, err := s.lockTemplateView(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
-	data, err := s.getTemplateExactBody(id, hash)
+	data, err := s.getTemplateExactBody(ctx, id, hash)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, ErrNotFound
 	}
@@ -897,12 +927,21 @@ func (s *FS) GetTemplateExact(ctx context.Context, ref string) (*model.Template,
 		return nil, err
 	}
 	var tmpl model.Template
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&tmpl); err != nil {
+	if err := runViewDecode(ctx, s.viewerDecodeHook, "template", func() error {
+		return decodeViewJSON(ctx, data, &tmpl, true)
+	}); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("%w: exact template content cannot be decoded", ErrContentMismatch)
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	semanticHash, err := model.SemanticHash(&tmpl)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
 	if err != nil || semanticHash != hash {
 		return nil, fmt.Errorf("%w: exact template content does not match its ref", ErrContentMismatch)
 	}
@@ -1280,6 +1319,16 @@ func (s *FS) LoadRunView(ctx context.Context, runID string) (Snapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return Snapshot{}, err
 	}
+	if err := safeSegment(runID); err != nil {
+		return Snapshot{}, fmt.Errorf("invalid run id: %w", err)
+	}
+	exists, err := s.HasRunView(runID)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	if !exists {
+		return Snapshot{}, ErrNotFound
+	}
 	unlock, err := s.lockRunView(ctx, runID)
 	if err != nil {
 		return Snapshot{}, err
@@ -1288,7 +1337,7 @@ func (s *FS) LoadRunView(ctx context.Context, runID string) (Snapshot, error) {
 	if s.viewerReadHook != nil {
 		s.viewerReadHook()
 	}
-	return s.loadRunViewSnapshotAt(ctx.Err, runID)
+	return s.loadRunViewSnapshotAt(ctx, runID)
 }
 
 // loadRunSnapshot performs no locking. Callers that require a coherent view

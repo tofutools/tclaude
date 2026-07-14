@@ -3,6 +3,7 @@ package evidence
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -50,24 +51,46 @@ func AppendManifestEntry(w io.Writer, entry ManifestEntry) error {
 }
 
 func ReadNodeLog(nodeID string, r io.Reader) ([]LogEntry, error) {
-	lines, err := readJSONLLines(r)
+	return ReadNodeLogContext(context.Background(), nodeID, r)
+}
+
+// ReadNodeLogContext decodes a log while checking cancellation between lines
+// and records. Individual JSON records remain synchronously bounded by the
+// caller's input limit.
+func ReadNodeLogContext(ctx context.Context, nodeID string, r io.Reader) ([]LogEntry, error) {
+	lines, err := readJSONLLines(ctx, r)
 	if err != nil {
 		return nil, err
 	}
 	entries := make([]LogEntry, 0, len(lines))
 	for _, line := range lines {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		var header struct {
 			SchemaVersion int `json:"schemaVersion"`
 		}
 		if err := decodeLineVersion(line.Data, &header); err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
 			return nil, &ReadError{Kind: ReadErrorMalformed, Line: line.Number, Err: err}
 		}
 		if err := checkLogEntryVersion(header.SchemaVersion); err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
 			return nil, &ReadError{Kind: ReadErrorMalformed, Line: line.Number, Err: err}
 		}
 		var entry LogEntry
 		if err := strictDecodeLine(line.Data, &entry); err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
 			return nil, &ReadError{Kind: ReadErrorMalformed, Line: line.Number, Err: err}
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
 		entries = append(entries, entry)
 	}
@@ -75,24 +98,46 @@ func ReadNodeLog(nodeID string, r io.Reader) ([]LogEntry, error) {
 }
 
 func ReadManifest(r io.Reader) ([]ManifestEntry, error) {
-	lines, err := readJSONLLines(r)
+	return ReadManifestContext(context.Background(), r)
+}
+
+// ReadManifestContext decodes a manifest while checking cancellation between
+// lines and records. Individual JSON records remain synchronously bounded by
+// the caller's input limit.
+func ReadManifestContext(ctx context.Context, r io.Reader) ([]ManifestEntry, error) {
+	lines, err := readJSONLLines(ctx, r)
 	if err != nil {
 		return nil, err
 	}
 	entries := make([]ManifestEntry, 0, len(lines))
 	for _, line := range lines {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		var header struct {
 			SchemaVersion int `json:"schemaVersion"`
 		}
 		if err := decodeLineVersion(line.Data, &header); err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
 			return nil, &ReadError{Kind: ReadErrorMalformed, Line: line.Number, Err: err}
 		}
 		if err := checkManifestEntryVersion(header.SchemaVersion); err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
 			return nil, &ReadError{Kind: ReadErrorMalformed, Line: line.Number, Err: err}
 		}
 		var entry ManifestEntry
 		if err := strictDecodeLine(line.Data, &entry); err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
 			return nil, &ReadError{Kind: ReadErrorMalformed, Line: line.Number, Err: err}
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
 		entries = append(entries, entry)
 	}
@@ -104,11 +149,14 @@ type jsonlLine struct {
 	Data   []byte
 }
 
-func readJSONLLines(r io.Reader) ([]jsonlLine, error) {
-	reader := bufio.NewReader(r)
+func readJSONLLines(ctx context.Context, r io.Reader) ([]jsonlLine, error) {
+	reader := bufio.NewReader(&jsonlContextReader{ctx: ctx, reader: r})
 	var lines []jsonlLine
 	lineNumber := 0
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		line, err := reader.ReadBytes('\n')
 		if len(line) > 0 {
 			lineNumber++
@@ -132,6 +180,25 @@ func readJSONLLines(r io.Reader) ([]jsonlLine, error) {
 		}
 	}
 	return lines, nil
+}
+
+type jsonlContextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r *jsonlContextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	if len(p) > 32<<10 {
+		p = p[:32<<10]
+	}
+	n, err := r.reader.Read(p)
+	if ctxErr := r.ctx.Err(); ctxErr != nil {
+		return n, ctxErr
+	}
+	return n, err
 }
 
 func strictDecodeLine(data []byte, dst any) error {
