@@ -133,6 +133,13 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"wheelPan: true",
 		"marqueeSelect: true",
 		"This removes the current highlighted selection.",
+		"text: '⌘K commands'",
+		"requestCommandPalette()",
+		"commandContext()",
+		"addNodeType(payload.type, point)",
+		"duplicateSelection()",
+		"this.model.duplicateNodes(",
+		"this.validation?.focusIssue(delta)",
 	)
 	if strings.Contains(editor, "localStorage") || strings.Contains(read("js/process-edit-model.js"), "localStorage") {
 		t.Error("localStorage is banned; editor prefs belong in dashPrefs -> SQLite")
@@ -157,6 +164,23 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		// Badges are glyph-coded per severity, never color-only.
 		"severityGlyph",
 		"process-issues-panel",
+		"validateNow()",
+		"focusIssue(delta = 1)",
+	)
+	commands := read("js/process-command-registry.js")
+	mustContain("process-command-registry.js", commands,
+		"export function buildProcessNodeTypeCommands(",
+		"export function buildProcessEditorCommands(",
+		"editor.deleteSelection()",
+		"editor.save()",
+		"editor.requestInstantiate()",
+		"actions?.activateSubtab?.('templates')",
+		"actions?.activateSubtab?.('runs')",
+	)
+	nodeTypes := read("js/process-node-types.js")
+	mustContain("process-node-types.js", nodeTypes,
+		"export const PROCESS_NODE_TYPES",
+		"type: 'task'", "type: 'decision'", "type: 'wait'", "type: 'start'", "type: 'end'",
 	)
 	if strings.Contains(validation, "innerHTML") {
 		t.Error("process-validation.js must not use innerHTML; diagnostic text is untrusted at render time")
@@ -198,6 +222,8 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"actions.submitInstantiation(resolved)",
 		"<option value=\"\">Not set</option>",
 		"viewerBackRef.current?.focus({ preventScroll: true })",
+		"registerCommandProvider('process-editor'",
+		"buildProcessEditorCommands({ editor: state.currentEditor(), actions })",
 	)
 	if strings.Contains(processes, "String(Number(value))") {
 		t.Error("processes-island.js must preserve number-param strings without JS precision round-tripping")
@@ -258,6 +284,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		".process-instantiate-dialog",
 		"body.wizard .process-param-dialog",
 		"body.wizard .process-instantiate-dialog",
+		".palette-item.disabled",
 	)
 
 	// The graph core and validation loop stay out of every eager entry module:

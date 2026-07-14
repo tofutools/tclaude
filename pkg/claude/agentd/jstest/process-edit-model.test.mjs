@@ -435,6 +435,24 @@ test('snippet insert remaps colliding ids and internal edges together', () => {
   assert.equal(model.edges.some(edge => edge.from === 'implement-2'), false);
 });
 
+test('duplicateNodes copies semantics, internal edges, placement, and one undo step', () => {
+  const model = new ProcessEditModel(view());
+  const idMap = model.duplicateNodes(['begin', 'build'], {
+    positions: { begin: { x: 10, y: 20 }, build: { x: 50, y: 90 } },
+    offset: { x: 7, y: 11 },
+  });
+  assert.equal(idMap.get('begin'), 'begin-2');
+  assert.equal(idMap.get('build'), 'build-2');
+  assert.deepEqual(model.template.nodes['build-2'], model.template.nodes.build);
+  assert.deepEqual(model.layout.nodes['begin-2'], { x: 17, y: 31 });
+  assert.ok(model.edges.some((edge) => edge.from === 'begin-2' && edge.to === 'build-2' && edge.outcome === 'pass'));
+  assert.equal(model.edges.some((edge) => edge.from === 'build-2' && edge.to === 'ship'), false,
+    'edges crossing out of the selection are not duplicated');
+  assert.ok(model.undo());
+  assert.equal(model.template.nodes['begin-2'], undefined);
+  assert.equal(model.edges.some((edge) => edge.from === 'begin-2'), false);
+});
+
 test('palette data is well-formed: known primitive types, internally consistent snippets', () => {
   const types = new Set(['task', 'decision', 'wait', 'start', 'end']);
   for (const primitive of PALETTE_PRIMITIVES) assert.ok(types.has(primitive.type), primitive.type);

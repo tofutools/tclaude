@@ -6,7 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  ValidationScheduler, mapDiagnostics, decorateGraph, splitEdgeTarget, severityGlyph,
+  LiveValidation, ValidationScheduler, mapDiagnostics, decorateGraph, splitEdgeTarget, severityGlyph,
 } from '../dashboard/js/process-validation.js';
 import { ProcessEditModel, blankEditView, graphEdgeID } from '../dashboard/js/process-edit-model.js';
 
@@ -60,6 +60,68 @@ test('debounce collapses rapid schedules into one run', async () => {
   await tick();
   assert.deepEqual(runs, ['c'], 'only the last scheduled payload runs');
   assert.deepEqual(results, [[{ code: 'c' }]]);
+});
+
+test('flush replaces a pending debounce with one immediate validation round', async () => {
+  const timers = fakeTimers();
+  const runs = [];
+  const scheduler = new ValidationScheduler({
+    run: async (payload) => { runs.push(payload); return []; },
+    timers,
+  });
+  scheduler.schedule(() => 'debounced');
+  assert.equal(scheduler.flush(() => 'now'), true);
+  assert.equal(timers.count(), 0);
+  await tick();
+  assert.deepEqual(runs, ['now']);
+});
+
+test('issue navigation starts at the expected end and wraps', () => {
+  const focused = [];
+  const button = { focus() {} };
+  const fake = {
+    mapped: { entries: ['first', 'middle', 'last'] }, issueCursor: -1,
+    panel: { open: false }, list: { querySelector: () => button },
+    focusEntry: (entry) => focused.push(entry),
+    focusIssueAt: LiveValidation.prototype.focusIssueAt,
+  };
+  assert.equal(LiveValidation.prototype.focusIssue.call(fake, -1), true);
+  assert.equal(fake.issueCursor, 2);
+  assert.equal(fake.panel.open, true);
+  LiveValidation.prototype.focusIssue.call(fake, 1);
+  assert.equal(fake.issueCursor, 0);
+  assert.deepEqual(focused, ['last', 'first']);
+});
+
+test('clicking an issue seeds subsequent next and previous navigation', () => {
+  const previous = globalThis.document;
+  let click;
+  const element = () => ({
+    append() {},
+    addEventListener(type, handler) { if (type === 'click') click = handler; },
+    querySelector() { return { focus() {} }; },
+  });
+  globalThis.document = { createElement: element };
+  try {
+    const focused = [];
+    const fake = {
+      editor: { stage: { append() {} } },
+      mapped: { entries: ['first', 'middle', 'last'] },
+      issueCursor: -1,
+      focusEntry: (entry) => focused.push(entry),
+      focusIssueAt: LiveValidation.prototype.focusIssueAt,
+    };
+    LiveValidation.prototype.buildPanel.call(fake);
+    click({ target: { closest: () => ({ dataset: { issueIndex: '1' } }) } });
+    assert.equal(fake.issueCursor, 1);
+    LiveValidation.prototype.focusIssue.call(fake, 1);
+    LiveValidation.prototype.focusIssue.call(fake, -1);
+    assert.equal(fake.issueCursor, 1);
+    assert.deepEqual(focused, ['middle', 'last', 'middle']);
+  } finally {
+    if (previous === undefined) delete globalThis.document;
+    else globalThis.document = previous;
+  }
 });
 
 test('out-of-order responses are discarded (sequence guard)', async () => {

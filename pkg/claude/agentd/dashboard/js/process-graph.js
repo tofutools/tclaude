@@ -858,6 +858,31 @@ export class ProcessGraph {
     this.viewport.setAttribute('transform', `translate(${this.view.x} ${this.view.y}) scale(${this.view.k})`);
   }
 
+  setZoom(zoom, { clientX, clientY } = {}) {
+    const rect = this.svg.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return false;
+    const anchorX = Number.isFinite(clientX) ? clientX - rect.left : rect.width / 2;
+    const anchorY = Number.isFinite(clientY) ? clientY - rect.top : rect.height / 2;
+    const oldZoom = this.view.k;
+    const nextZoom = clamp(zoom, MIN_ZOOM, MAX_ZOOM);
+    const graphX = (anchorX - this.view.x) / oldZoom;
+    const graphY = (anchorY - this.view.y) / oldZoom;
+    this.view.k = nextZoom;
+    this.view.x = anchorX - graphX * nextZoom;
+    this.view.y = anchorY - graphY * nextZoom;
+    this.applyView();
+    return true;
+  }
+
+  zoomBy(factor) {
+    if (!Number.isFinite(factor) || factor <= 0) return false;
+    return this.setZoom(this.view.k * factor);
+  }
+
+  resetZoom() {
+    return this.setZoom(1);
+  }
+
   fitToView(padding = 44) {
     const rect = this.svg.getBoundingClientRect();
     const bounds = this.layout?.bounds;

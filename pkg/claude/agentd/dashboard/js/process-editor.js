@@ -36,6 +36,7 @@ import {
 import {
   makeSelection, selectionContains, selectionItems, toggleSelection,
 } from './process-selection.js';
+import { requestCommandPalette } from './command-registry.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 // Custom drag payload MIME (dock-dnd idiom): withholding text/plain keeps
@@ -143,6 +144,11 @@ export class ProcessTemplateEditor {
     this.settingsButton = h('button', { class: 'process-action', type: 'button', title: 'Edit template name and description', text: 'template settings…' });
     this.paramsButton = h('button', { class: 'process-action', type: 'button', title: 'Declare template parameters', text: 'params…' });
     this.instantiateButton = h('button', { class: 'process-action', type: 'button', title: 'Instantiate this exact saved version', text: 'instantiate…' });
+    this.commandsButton = h('button', {
+      class: 'process-action', type: 'button',
+      title: 'Process commands (Ctrl/Cmd-K)', 'aria-label': 'Open process commands (Ctrl/Cmd-K)',
+      text: '⌘K commands',
+    });
     this.paletteButton = h('button', { class: 'process-action', type: 'button', title: 'Toggle the node palette', text: '⬒ palette' });
     this.saveButton = h('button', { class: 'process-action primary', type: 'button', title: 'Save a new version', text: 'Save' });
 
@@ -152,7 +158,7 @@ export class ProcessTemplateEditor {
       this.dirtyBadge,
       this.statusLine,
       h('span', { class: 'spacer' }),
-      this.settingsButton, this.paramsButton, this.undoButton, this.redoButton, this.paletteButton, this.instantiateButton, this.saveButton,
+      this.settingsButton, this.paramsButton, this.undoButton, this.redoButton, this.paletteButton, this.commandsButton, this.instantiateButton, this.saveButton,
     );
 
     this.externalMessage = h('span', { class: 'process-editor-external-message', text: 'Template changed externally (new version)' });
@@ -202,6 +208,7 @@ export class ProcessTemplateEditor {
     const signal = this.abort.signal;
     this.saveButton.addEventListener('click', () => this.save(), { signal });
     this.instantiateButton.addEventListener('click', () => this.requestInstantiate(), { signal });
+    this.commandsButton.addEventListener('click', () => requestCommandPalette(), { signal });
     this.externalReloadButton.addEventListener('click', () => this.reloadExternalChange(), { signal });
     this.externalKeepButton.addEventListener('click', () => this.keepExternalChange(), { signal });
     this.undoButton.addEventListener('click', () => this.applyHistory('undo'), { signal });
@@ -802,17 +809,153 @@ export class ProcessTemplateEditor {
     let payload;
     try { payload = JSON.parse(raw); } catch { return; }
     if (payload.kind === 'primitive') {
-      const id = this.mutate(() => this.model.addNode(payload.type, { x: point.x, y: point.y }));
-      if (id) {
-        this.setSelection({ type: 'node', id });
-        this.status(`Added ${payload.type} node ${id}.`);
-      }
+      this.addNodeType(payload.type, point);
     } else if (payload.kind === 'snippet') {
       const snippet = PALETTE_SNIPPETS.find((candidate) => candidate.key === payload.key);
       if (!snippet) return;
       const idMap = this.mutate(() => this.model.insertSnippet(snippet, { x: point.x, y: point.y }));
       if (idMap) this.status(`Inserted snippet ${snippet.label} (${idMap.size} nodes).`);
     }
+  }
+
+  canvasCenterPoint() {
+    const rect = this.graph.svg.getBoundingClientRect();
+    return this.graph.clientToGraph(rect.left + rect.width / 2, rect.top + rect.height / 2);
+  }
+
+  addNodeType(type, point = this.canvasCenterPoint()) {
+    const id = this.mutate(() => this.model.addNode(type, { x: point.x, y: point.y }));
+    if (!id) return false;
+    this.setSelection({ type: 'node', id });
+    this.status(`Added ${type} node ${id}.`);
+    return id;
+  }
+
+  editSelection() {
+    if (this.selection?.type === 'template') {
+      this.setSelection({ type: 'template' });
+      queueMicrotask(() => this.inspector.querySelector('input:not(:disabled), textarea:not(:disabled)')?.focus());
+      return true;
+    }
+    const items = selectionItems(this.selection);
+    if (items.length !== 1) return false;
+    const item = items[0];
+    if (item.type === 'node') return this.openNodeSettings(item.id);
+    const laid = this.laidEdge(item.from, item.outcome);
+    const anchor = laid?.label || this.portPoint(item.from, 'out');
+    return this.openInline(anchor.x, anchor.y, item.outcome, (value) => {
+      this.renameEdgeOutcome(item.from, item.outcome, value);
+    });
+  }
+
+  duplicateSelection() {
+    const items = selectionItems(this.selection);
+    if (!items.length || items.some((item) => item.type !== 'node')) return false;
+    const positions = Object.fromEntries(items.map((item) => {
+      const node = this.graph.layout.nodes.find((candidate) => candidate.id === item.id);
+      return [item.id, node ? { x: node.x, y: node.y } : undefined];
+    }));
+    const idMap = this.mutate(() => this.model.duplicateNodes(items.map((item) => item.id), { positions }));
+    if (!idMap?.size) return false;
+    this.setSelection(makeSelection([...idMap.values()].map((id) => ({ type: 'node', id }))));
+    this.status(`Duplicated ${idMap.size} node${idMap.size === 1 ? '' : 's'}.`);
+    return idMap;
+  }
+
+  selectAll() {
+    const items = [
+      ...Object.keys(this.model.template.nodes).map((id) => ({ type: 'node', id })),
+      ...this.model.edges.filter((edge) => edge.from).map((edge) => ({ type: 'edge', from: edge.from, outcome: edge.outcome })),
+    ];
+    this.setSelection(makeSelection(items));
+    return items.length > 0;
+  }
+
+  clearSelection() {
+    if (!this.selection) return false;
+    this.setSelection(null);
+    return true;
+  }
+
+  fitGraph() {
+    this.graph.fitToView();
+    return true;
+  }
+
+  centerSelection() {
+    const points = selectionItems(this.selection).map((item) => {
+      if (item.type === 'node') return this.graph.layout.nodes.find((node) => node.id === item.id);
+      const edge = this.laidEdge(item.from, item.outcome);
+      return edge?.label || this.graph.layout.nodes.find((node) => node.id === item.from);
+    }).filter(Boolean);
+    if (!points.length) return false;
+    this.graph.centerOn(
+      points.reduce((sum, point) => sum + point.x, 0) / points.length,
+      points.reduce((sum, point) => sum + point.y, 0) / points.length,
+    );
+    return true;
+  }
+
+  zoomGraph(factor) {
+    return this.graph.zoomBy(factor);
+  }
+
+  resetZoom() {
+    return this.graph.resetZoom();
+  }
+
+  validateNow() {
+    // The issues panel owns validation progress/results. A persistent editor
+    // status here would outlive both successful and skipped/failed rounds.
+    return this.validation?.validateNow() || false;
+  }
+
+  focusIssue(delta) {
+    return this.validation?.focusIssue(delta) || false;
+  }
+
+  commandContext() {
+    const pending = externalInteractionPending(this);
+    const selected = selectionItems(this.selection).filter((item) => item.type === 'node'
+      ? !!this.model.node(item.id) : !!this.model.findEdge(item.from, item.outcome));
+    const templateSelected = this.selection?.type === 'template';
+    const hasSelection = templateSelected || selected.length > 0;
+    const one = selected.length === 1 ? selected[0] : null;
+    const oneEditable = one?.type === 'node'
+      ? this.model.config.nodeEditable(one.id)
+      : one?.type === 'edge' ? this.model.config.edgeEditable(this.model.findEdge(one.from, one.outcome)) : false;
+    const selectedNodes = selected.filter((item) => item.type === 'node');
+    const selectedNodeIDs = new Set(selectedNodes.map((item) => item.id));
+    const selectedEdgeKeys = new Set(selected.filter((item) => item.type === 'edge')
+      .map((item) => `${item.from}\u0000${item.outcome}`));
+    const affectedEdges = this.model.edges.filter((edge) => selectedNodeIDs.has(edge.from)
+      || selectedNodeIDs.has(edge.to) || selectedEdgeKeys.has(`${edge.from}\u0000${edge.outcome}`));
+    const deletionEditable = selected.every((item) => item.type === 'node'
+      ? this.model.config.nodeEditable(item.id) : this.model.config.edgeEditable(this.model.findEdge(item.from, item.outcome)))
+      && affectedEdges.every((edge) => this.model.config.edgeEditable(edge));
+    const busyReason = pending ? 'An external template reload is in progress.' : '';
+    const issueCount = this.validation?.mapped?.entries?.length || 0;
+    const id = (this.model.template.id || '').trim();
+    return {
+      hasGraph: Object.keys(this.model.template.nodes).length > 0,
+      hasSelection,
+      hasGraphSelection: selected.length > 0,
+      canCreate: !pending && this.model.config.canInsert,
+      createReason: busyReason || 'Adding nodes is not allowed in this view.',
+      canEdit: !pending && (templateSelected || (!!one && oneEditable)),
+      editReason: busyReason || (!hasSelection ? 'Select one item first.' : selected.length > 1 ? 'Edit one item at a time.' : 'The selected item is read-only.'),
+      canDuplicate: !pending && this.model.config.canInsert && selectedNodes.length > 0 && selectedNodes.length === selected.length,
+      duplicateReason: busyReason || (!hasSelection ? 'Select one or more nodes first.' : 'Only node selections can be duplicated.'),
+      canDelete: !pending && selected.length > 0 && deletionEditable,
+      deleteReason: busyReason || (!hasSelection ? 'Select graph items first.' : 'The selection includes read-only graph items.'),
+      canValidate: !pending && !!this.validation,
+      validateReason: busyReason || 'Validation is not available.',
+      issueCount,
+      canSave: !pending && !this.savePending && !!id && (this.model.dirty || this.blank),
+      saveReason: busyReason || (this.savePending ? 'A save is already in progress.' : !id ? 'Enter a template id first.' : 'There are no unsaved changes.'),
+      canInstantiate: !pending && !this.savePending && typeof this.options.onInstantiate === 'function',
+      instantiateReason: busyReason || (this.savePending ? 'Wait for the save to finish.' : 'Run creation is not available in this context.'),
+    };
   }
 
   // ---- edit ops ----------------------------------------------------------------

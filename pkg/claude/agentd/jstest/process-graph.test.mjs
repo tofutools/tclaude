@@ -34,6 +34,25 @@ test('wheel delta modes normalize to useful pixel-scale zoom input', () => {
   assert.equal(normalizeWheelDelta(Number.NaN, 0, 900), 0);
 });
 
+test('command zoom helpers preserve the viewport center and reset to 100%', () => {
+  const transforms = [];
+  const fake = {
+    view: { x: 100, y: 50, k: 2 },
+    svg: { getBoundingClientRect: () => ({ left: 20, top: 10, width: 800, height: 600 }) },
+    applyView() { transforms.push({ ...this.view }); },
+    setZoom: ProcessGraph.prototype.setZoom,
+  };
+  assert.equal(ProcessGraph.prototype.zoomBy.call(fake, 1.2), true);
+  assert.equal(fake.view.k, 2.4);
+  assert.deepEqual({
+    x: (400 - fake.view.x) / fake.view.k,
+    y: (300 - fake.view.y) / fake.view.k,
+  }, { x: 150, y: 125 }, 'the same graph point remains under the viewport center');
+  assert.equal(ProcessGraph.prototype.resetZoom.call(fake), true);
+  assert.equal(fake.view.k, 1);
+  assert.equal(transforms.length, 2);
+});
+
 test('editor wheel pans while Ctrl-wheel pinches, and viewer wheel still zooms', () => {
   const graph = (options) => ({
     options, view: { x: 10, y: 20, k: 1 },
