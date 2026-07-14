@@ -92,8 +92,9 @@ type CodexSim struct {
 	// DB writer.
 	GitBranch string
 
-	createdAt time.Time
-	home      string // HOME the rollout + state DB live under
+	createdAt   time.Time
+	nextEventAt time.Time // one-shot envelope timestamp when set by a test
+	home        string    // HOME the rollout + state DB live under
 
 	mu         sync.Mutex
 	title      string
@@ -268,6 +269,16 @@ func (c *CodexSim) SetTitle(title string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.title = title
+}
+
+// SetNextEventTime fixes the next non-metadata rollout envelope timestamp so
+// tests can establish deterministic ordering across files without sleeping.
+// Session metadata always uses the simulator's creation time, even when this
+// is configured before Start.
+func (c *CodexSim) SetNextEventTime(at time.Time) {
+	c.mu.Lock()
+	c.nextEventAt = at
+	c.mu.Unlock()
 }
 
 // CreatedUnix is the session's start time as unix seconds — the stamp a
@@ -632,9 +643,10 @@ func (c *CodexSim) turnContextPayload(turnID string) map[string]any {
 }
 
 func (c *CodexSim) writeSessionMetaLocked() error {
-	return c.appendLineLocked("session_meta", map[string]any{
+	timestamp := formatCodexTime(c.createdAt)
+	return c.appendLineAtLocked(timestamp, "session_meta", map[string]any{
 		"id":             c.ConvID,
-		"timestamp":      codexNow(),
+		"timestamp":      timestamp,
 		"cwd":            c.Cwd,
 		"originator":     "codex-tui",
 		"cli_version":    c.CliVersion,
@@ -656,8 +668,12 @@ func (c *CodexSim) appendLine(typ string, payload map[string]any) error {
 }
 
 func (c *CodexSim) appendLineLocked(typ string, payload map[string]any) error {
+	return c.appendLineAtLocked(c.codexNowLocked(), typ, payload)
+}
+
+func (c *CodexSim) appendLineAtLocked(timestamp, typ string, payload map[string]any) error {
 	b, err := json.Marshal(map[string]any{
-		"timestamp": codexNow(),
+		"timestamp": timestamp,
 		"type":      typ,
 		"payload":   payload,
 	})
@@ -771,8 +787,18 @@ func codexPreview(s string) string {
 	return s
 }
 
-// codexNow formats a timestamp the way Codex stamps rollout lines:
+// codexNowLocked formats a timestamp the way Codex stamps rollout lines:
 // UTC, millisecond precision, Z suffix (e.g. 2026-06-13T08:06:09.418Z).
-func codexNow() string {
-	return time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+func (c *CodexSim) codexNowLocked() string {
+	now := c.nextEventAt
+	if now.IsZero() {
+		now = time.Now()
+	} else {
+		c.nextEventAt = time.Time{}
+	}
+	return formatCodexTime(now)
+}
+
+func formatCodexTime(at time.Time) string {
+	return at.UTC().Format("2006-01-02T15:04:05.000Z")
 }

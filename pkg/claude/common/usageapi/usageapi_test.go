@@ -222,14 +222,15 @@ func TestLoadCacheWithTTL_RespectsLastAttemptAt(t *testing.T) {
 
 func TestStampLastAttempt_NoCacheFile_CreatesMinimalEntry(t *testing.T) {
 	setupTestCache(t)
+	now := time.Date(2026, time.July, 14, 12, 0, 0, 0, time.UTC)
 
-	stampLastAttempt(fmt.Errorf("test error"))
+	stampLastAttemptAt(fmt.Errorf("test error"), now)
 
 	// Should create a minimal cache entry with just LastAttemptAt
 	cached := loadCacheStale()
 	require.NotNil(t, cached, "expected minimal cache entry")
 	require.True(t, cached.FiveHour == nil && cached.SevenDay == nil, "expected no usage data in minimal entry")
-	require.LessOrEqual(t, time.Since(cached.LastAttemptAt), time.Second, "expected recent LastAttemptAt")
+	require.Equal(t, now, cached.LastAttemptAt)
 }
 
 func TestGetCached_BackoffEvenWithoutStaleCache(t *testing.T) {

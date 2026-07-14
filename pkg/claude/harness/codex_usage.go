@@ -73,6 +73,14 @@ const (
 	codexWindowToleranceDen = 20
 	codexFiveHourMinutes    = 300   // 5h
 	codexWeeklyMinutes      = 10080 // 7d
+
+	// Some supported filesystems expose mtimes at coarser precision than the
+	// millisecond timestamps inside Codex rollouts. Keep the newest-first
+	// optimization, but scan files in the same coarse-mtime bucket before
+	// concluding that none can contain a newer event. Two seconds covers the
+	// coarsest common timestamp granularity without widening the scan
+	// unboundedly.
+	codexRolloutMtimeSlack = 2 * time.Second
 )
 
 // withinWindow reports whether got is within ±5% of want.
@@ -117,13 +125,19 @@ func LatestCodexUsage(home string, since time.Time) (*CodexUsage, error) {
 		}
 		stats = append(stats, rolloutStat{path: p, mtime: fi.ModTime()})
 	}
-	sort.Slice(stats, func(i, j int) bool { return stats[i].mtime.After(stats[j].mtime) })
+	sort.Slice(stats, func(i, j int) bool {
+		if stats[i].mtime.Equal(stats[j].mtime) {
+			return stats[i].path < stats[j].path
+		}
+		return stats[i].mtime.After(stats[j].mtime)
+	})
 
 	var best *CodexUsage
 	for _, st := range stats {
-		// Newest-first: once we hold a snapshot, a file whose mtime is no later
-		// than that observation cannot contain a newer event, so stop.
-		if best != nil && !st.mtime.After(best.Observed) {
+		// Newest-first: once the remaining file mtimes are outside the coarse
+		// filesystem bucket around the best observation, none can contain a
+		// newer event. Files inside that bounded bucket must still be read.
+		if best != nil && best.Observed.After(st.mtime.Add(codexRolloutMtimeSlack)) {
 			break
 		}
 		u, err := CodexUsageFromRollout(st.path)
@@ -181,11 +195,16 @@ func LatestCodexUsageForConvs(home string, convIDs []string, since time.Time) (*
 		}
 		stats = append(stats, rolloutStat{path: p, mtime: fi.ModTime()})
 	}
-	sort.Slice(stats, func(i, j int) bool { return stats[i].mtime.After(stats[j].mtime) })
+	sort.Slice(stats, func(i, j int) bool {
+		if stats[i].mtime.Equal(stats[j].mtime) {
+			return stats[i].path < stats[j].path
+		}
+		return stats[i].mtime.After(stats[j].mtime)
+	})
 
 	var best *CodexUsage
 	for _, st := range stats {
-		if best != nil && !st.mtime.After(best.Observed) {
+		if best != nil && best.Observed.After(st.mtime.Add(codexRolloutMtimeSlack)) {
 			break
 		}
 		u, err := CodexUsageFromRollout(st.path)
