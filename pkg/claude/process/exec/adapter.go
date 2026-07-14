@@ -136,26 +136,18 @@ func ContactScheduleFor(performer model.Performer) (time.Duration, int, string, 
 	return parsed, performer.Contact.Budget, escalation, nil
 }
 
-// ContactScheduleForOwner applies the same kind-scoped defaults used by
-// performer slots to a typed blocked owner. The current planner emits only
-// human:operator, but the API remains uniform for agent and program/system
-// owners as the ownership model grows.
+// ContactScheduleForOwner applies the human performer defaults to a typed
+// blocked owner. Only human/role owners are accepted until agent and program
+// block contacts have complete delivery, recovery, and escalation semantics.
 func ContactScheduleForOwner(owner string) (state.WaitKind, time.Duration, int, string, error) {
 	kind, ok := state.ContactKindForOwner(owner)
 	if !ok {
 		return "", 0, 0, "", fmt.Errorf("blocked owner %q has no contact kind", owner)
 	}
-	performerKind := model.PerformerProgram
-	switch kind {
-	case state.WaitKindHuman:
-		performerKind = model.PerformerHuman
-	case state.WaitKindAgent:
-		performerKind = model.PerformerAgent
-	case state.WaitKindProgram:
-	default:
-		return "", 0, 0, "", fmt.Errorf("blocked owner %q has unsupported contact kind %q", owner, kind)
+	if kind != state.WaitKindHuman {
+		return "", 0, 0, "", fmt.Errorf("blocked owner %q has unsupported contact kind %q; only human/role blocked owners are supported", owner, kind)
 	}
-	cadence, budget, escalation, err := ContactScheduleFor(model.Performer{Kind: performerKind})
+	cadence, budget, escalation, err := ContactScheduleFor(model.Performer{Kind: model.PerformerHuman})
 	return kind, cadence, budget, escalation, err
 }
 

@@ -566,8 +566,8 @@ func (e *Executor) DeferredRequest(ctx context.Context, runID, commandID string)
 // ContactRequest reconstructs the request used by the shared contact
 // scheduler. Performer commands retain their authored performer; block
 // commands synthesize the same uniform performer shape from the typed owner so
-// adapters and per-kind defaults remain shared rather than special-cased by
-// the engine host.
+// the engine host can share the normal contact path. New block schedules are
+// currently restricted to human/role owners by ContactScheduleForOwner.
 func (e *Executor) ContactRequest(ctx context.Context, runID, commandID string) (Request, Adapter, error) {
 	command, err := e.outstandingCommand(ctx, runID, commandID)
 	if err != nil {
@@ -581,22 +581,11 @@ func (e *Executor) ContactRequest(ctx context.Context, runID, commandID string) 
 		if command.Kind != plan.CommandKindBlockNode {
 			return Request{}, nil, fmt.Errorf("process command %q has no contact performer", commandID)
 		}
-		kind, ok := state.ContactKindForOwner(command.Owner)
-		if !ok {
-			return Request{}, nil, fmt.Errorf("blocked owner %q has no contact kind", command.Owner)
-		}
-		performerKind := model.PerformerProgram
-		switch kind {
-		case state.WaitKindHuman:
-			performerKind = model.PerformerHuman
-		case state.WaitKindAgent:
-			performerKind = model.PerformerAgent
-		case state.WaitKindProgram:
-		default:
-			return Request{}, nil, fmt.Errorf("blocked owner %q has unsupported contact kind %q", command.Owner, kind)
+		if _, _, _, _, err := ContactScheduleForOwner(command.Owner); err != nil {
+			return Request{}, nil, err
 		}
 		command.Performer = &model.Performer{
-			Kind: performerKind, Profile: strings.TrimSpace(command.Owner),
+			Kind: model.PerformerHuman, Profile: strings.TrimSpace(command.Owner),
 			Assignee: strings.TrimSpace(command.Owner), Prompt: command.Reason, Ask: command.Reason,
 		}
 	}

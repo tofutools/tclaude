@@ -919,8 +919,15 @@ func applyEvent(st *State, event Event) error {
 		if contact.CommandID == "" || !contact.Kind.IsValid() || strings.TrimSpace(contact.Cadence) == "" || contact.Budget <= 0 || strings.TrimSpace(contact.EscalationTarget) == "" {
 			return fmt.Errorf("contact for command %q is incomplete", contact.CommandID)
 		}
-		if _, ok := st.OutstandingCommands[contact.CommandID]; !ok {
+		command, ok := st.OutstandingCommands[contact.CommandID]
+		if !ok {
 			return fmt.Errorf("contact command %q is not outstanding", contact.CommandID)
+		}
+		if command.Kind == CommandKindBlockNode {
+			kind, typed := ContactKindForOwner(contact.Assignee)
+			if !typed || kind != WaitKindHuman || contact.Kind != WaitKindHuman {
+				return fmt.Errorf("blocked contact command %q requires a human/role owner", contact.CommandID)
+			}
 		}
 		if contact.Used < 0 || contact.Used > contact.Budget {
 			return fmt.Errorf("contact command %q budget usage %d/%d is invalid", contact.CommandID, contact.Used, contact.Budget)

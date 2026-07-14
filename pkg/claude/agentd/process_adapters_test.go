@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	processexec "github.com/tofutools/tclaude/pkg/claude/process/exec"
+	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/plan"
 )
 
@@ -33,4 +34,46 @@ func TestProcessSpawnParams_ExplicitFalseBlocksGlobalTrue(t *testing.T) {
 	require.Nil(t, applyDefaultProfile(nil, &p))
 	assert.False(t, p.AutoReview)
 	assert.False(t, p.TrustDir)
+}
+
+func TestProcessHumanAdapterBlockedContactIsActionable(t *testing.T) {
+	setupTestDB(t)
+	request := processexec.Request{
+		Command: plan.Command{
+			ID: "cmd_0123456789abcdef01234567", Kind: plan.CommandKindBlockNode,
+			Reason: "tests exhausted their retry budget",
+		},
+		Input: processexec.Input{RunID: "release-42", NodeID: "implement.test.tests"},
+		Performer: model.Performer{
+			Kind: model.PerformerHuman, Assignee: "human:operator", Ask: "tests exhausted their retry budget",
+		},
+	}
+	adapter := processHumanAdapter{}
+	require.NoError(t, adapter.Contact(t.Context(), request, false))
+	require.NoError(t, adapter.Contact(t.Context(), request, true))
+
+	reminder, err := db.FindHumanMessageForProcessCommand(request.Command.ID, "Process blocked reminder")
+	require.NoError(t, err)
+	require.NotNil(t, reminder)
+	assert.Equal(t, "Process blocked reminder", reminder.Subject)
+	assert.Contains(t, reminder.Body, "Process release-42 node implement.test.tests is blocked: tests exhausted their retry budget")
+	assert.Contains(t, reminder.Body, "tclaude process unblock release-42 implement.test.tests")
+	assert.Contains(t, reminder.Body, "--decision <retry|skip|cancel>")
+
+	escalation, err := db.FindHumanMessageForProcessCommand(request.Command.ID, "Process blocked escalation")
+	require.NoError(t, err)
+	require.NotNil(t, escalation)
+	assert.Equal(t, "Process blocked escalation", escalation.Subject)
+	assert.Contains(t, escalation.Body, "tests exhausted their retry budget")
+	assert.Contains(t, escalation.Body, "tclaude process unblock release-42 implement.test.tests")
+	assert.Contains(t, escalation.Body, "--decision <retry|skip|cancel>")
+	assert.Contains(t, escalation.Body, "Escalation target: human:operator.")
+
+	performerRequest := request
+	performerRequest.Command = plan.Command{ID: "cmd_1123456789abcdef01234567", Kind: plan.CommandKindStartAttempt}
+	require.NoError(t, adapter.Contact(t.Context(), performerRequest, false))
+	performerReminder, err := db.FindHumanMessageForProcessCommand(performerRequest.Command.ID, "Process reminder")
+	require.NoError(t, err)
+	require.NotNil(t, performerReminder)
+	assert.Equal(t, "Waiting on process release-42 node implement.test.tests (command cmd_1123456789abcdef01234567).", performerReminder.Body)
 }

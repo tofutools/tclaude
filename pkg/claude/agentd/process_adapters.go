@@ -374,8 +374,17 @@ func (a processHumanAdapter) ReconcileDeferred(_ context.Context, request proces
 func (processHumanAdapter) Contact(_ context.Context, request processexec.Request, escalation bool) error {
 	subject := "Process reminder"
 	body := fmt.Sprintf("Waiting on process %s node %s (command %s).", request.Input.RunID, request.Input.NodeID, request.Command.ID)
+	if request.Command.Kind == state.CommandKindBlockNode {
+		subject = "Process blocked reminder"
+		body = fmt.Sprintf("Process %s node %s is blocked: %s\n\nResolve it with: tclaude process unblock %s %s --store-root <process-store-root> --decision <retry|skip|cancel> --reason <resolution-reason> --evidence <reference>",
+			request.Input.RunID, request.Input.NodeID, request.Command.Reason, request.Input.RunID, request.Input.NodeID)
+	}
 	if escalation {
-		subject = "Process obligation escalation"
+		if request.Command.Kind == state.CommandKindBlockNode {
+			subject = "Process blocked escalation"
+		} else {
+			subject = "Process obligation escalation"
+		}
 		_, _, target, err := processexec.ContactScheduleFor(request.Performer)
 		if err != nil {
 			return err

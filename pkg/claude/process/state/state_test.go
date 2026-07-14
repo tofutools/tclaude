@@ -593,6 +593,10 @@ func TestReducerErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	unsupportedBlockContact := Clone(base)
+	unsupportedBlockContact.OutstandingCommands["cmd_block"] = OutstandingCommand{
+		ID: "cmd_block", NodeID: "implement", Attempt: 1, Kind: CommandKindBlockNode, Status: CommandStatusObserved,
+	}
 
 	tests := []struct {
 		name  string
@@ -622,6 +626,7 @@ func TestReducerErrors(t *testing.T) {
 		{name: "block without reason", st: base, event: Event{Type: EventNodeBlocked, Seq: 11, NodeID: "implement", Owner: "human:johan"}, want: "requires reason and owner"},
 		{name: "block without owner", st: base, event: Event{Type: EventNodeBlocked, Seq: 11, NodeID: "implement", Reason: "blocked"}, want: "requires reason and owner"},
 		{name: "block without timestamp", st: base, event: Event{Type: EventNodeBlocked, Seq: 11, NodeID: "implement", Reason: "blocked", Owner: "human:johan"}, want: "requires timestamp"},
+		{name: "block contact with unsupported owner", st: unsupportedBlockContact, event: Event{Type: EventContactScheduled, Seq: 11, Contact: &ContactState{CommandID: "cmd_block", Kind: WaitKindAgent, Assignee: "agent:agt_worker", Cadence: "5m0s", Budget: 3, EscalationTarget: "human:operator"}}, want: "requires a human/role owner"},
 		{name: "block resolution without timestamp", st: base, event: Event{Type: EventBlockResolutionRecorded, Seq: 11, Resolution: &BlockResolution{NodeID: "implement", BlockedAttempt: 1, Decision: BlockDecisionRetry, Actor: "human:johan", Reason: "retry", EvidenceRef: "decision:retry"}}, want: "requires timestamp"},
 		{name: "unknown wait", st: base, event: Event{Type: EventWaitSatisfied, Seq: 11, WaitID: "missing"}, want: "not declared"},
 		{name: "invalid wait kind", st: base, event: Event{Type: EventWaitCreated, Seq: 11, Wait: &WaitRecord{ID: "wait", NodeID: "wait-human", Kind: "bogus"}}, want: "invalid wait kind"},

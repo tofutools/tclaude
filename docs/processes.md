@@ -238,8 +238,11 @@ Rules that make compound runs trustworthy:
   itself and its parent with a reason and owner; the run keeps running and a
   human through `process unblock` or the authored escalation decision resolves
   it. New blocks record when the wait began and use the same kind-scoped
-  `ContactState` schedule as performer obligations to nudge the typed block
-  owner; resolving the block stops that schedule without erasing its history.
+  `ContactState` schedule as performer obligations. Authored blocks currently
+  target `human:operator`; blocked-owner scheduling accepts human/role owners
+  only. Future agent or program/system ownership must add complete delivery,
+  recovery, and escalation behavior before it becomes authorable. Resolving
+  the block stops its schedule without erasing history.
 - **A poisoned fail-edge decision is a resolution surface, not failure
   routing.** When a blocked compound node's authored `fail` edge targets a
   human decision node, the engine readies that decision while leaving the

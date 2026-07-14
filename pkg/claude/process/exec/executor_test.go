@@ -61,7 +61,7 @@ func TestObligationActionNormalizationIsSharedAndCaseInsensitive(t *testing.T) {
 	}
 }
 
-func TestBlockedOwnerContactScheduleUsesPerKindDefaults(t *testing.T) {
+func TestBlockedOwnerContactScheduleSupportsHumanOwners(t *testing.T) {
 	tests := []struct {
 		owner   string
 		kind    state.WaitKind
@@ -70,8 +70,6 @@ func TestBlockedOwnerContactScheduleUsesPerKindDefaults(t *testing.T) {
 	}{
 		{owner: "human:operator", kind: state.WaitKindHuman, cadence: DefaultHumanContactCadence, budget: DefaultHumanContactBudget},
 		{owner: "role:oncall", kind: state.WaitKindHuman, cadence: DefaultHumanContactCadence, budget: DefaultHumanContactBudget},
-		{owner: "agent:agt_worker", kind: state.WaitKindAgent, cadence: DefaultAgentContactCadence, budget: DefaultAgentContactBudget},
-		{owner: "system:deploy", kind: state.WaitKindProgram, cadence: DefaultAgentContactCadence, budget: DefaultAgentContactBudget},
 	}
 	for _, tt := range tests {
 		t.Run(tt.owner, func(t *testing.T) {
@@ -83,6 +81,28 @@ func TestBlockedOwnerContactScheduleUsesPerKindDefaults(t *testing.T) {
 	}
 	if _, _, _, _, err := ContactScheduleForOwner("operator"); err == nil {
 		t.Fatal("untyped owner must not silently become a human contact")
+	}
+}
+
+func TestUnsupportedBlockedOwnersProduceNoBlockEntries(t *testing.T) {
+	for _, owner := range []string{"agent:agt_worker", "program:deploy", "system:deploy", "engine:scheduler"} {
+		t.Run(owner, func(t *testing.T) {
+			command := plan.BlockCommand("run", "work", "", 1, "retry budget exhausted", owner)
+			snapshot := store.Snapshot{
+				Run: store.RunRecord{ID: "run"},
+				State: &state.State{
+					RunID: "run", Nodes: map[string]state.NodeState{"work": {Status: state.NodeStatusFailed, Attempt: 1}},
+					OutstandingCommands: map[string]state.OutstandingCommand{}, Contacts: map[string]state.ContactState{},
+				},
+			}
+			entries, err := observationEntries(command, Observation{Verdict: "pass"}, snapshot, executorTestTime)
+			if err == nil || !strings.Contains(err.Error(), "only human/role blocked owners are supported") {
+				t.Fatalf("unsupported owner error = %v", err)
+			}
+			if len(entries) != 0 || snapshot.State.Nodes["work"].Status != state.NodeStatusFailed || len(snapshot.State.Contacts) != 0 {
+				t.Fatalf("unsupported owner produced block state: entries=%#v state=%#v", entries, snapshot.State)
+			}
+		})
 	}
 }
 
