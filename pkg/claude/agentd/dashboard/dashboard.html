@@ -604,31 +604,6 @@
     </div>
   </div>
 </div>
-<div class="modal-overlay" id="task-link-modal">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="task-link-title">
-    <h3 id="task-link-title"><span class="theme-copy-regular">Task link</span><span class="theme-copy-wizard">Bind a quest link</span></h3>
-    <div class="modal-meta" id="task-link-meta"></div>
-    <div class="field">
-      <label for="task-link-url"><span class="theme-copy-regular">URL</span><span class="theme-copy-wizard">Portal URL</span></label>
-      <input id="task-link-url" type="url" inputmode="url" maxlength="2048"
-             autocomplete="off" spellcheck="false" data-select-on-focus
-             placeholder="https://linear.app/… or https://github.com/…" />
-      <span class="task-link-hint"><span class="theme-copy-regular">Leave the URL empty to clear this agent's task link.</span><span class="theme-copy-wizard">Leave the portal empty to unbind this familiar's quest.</span></span>
-    </div>
-    <div class="field">
-      <label for="task-link-label"><span class="theme-copy-regular">Display name</span><span class="theme-copy-wizard">Quest name</span> <span class="muted">(optional)</span></label>
-      <input id="task-link-label" type="text" maxlength="200" autocomplete="off" spellcheck="false"
-             placeholder="Auto: Linear issue key, GitHub number, or hostname" />
-      <span class="task-link-hint"><span class="theme-copy-regular">Leave blank to derive a short label automatically while keeping the full URL available on hover.</span><span class="theme-copy-wizard">Leave blank and the grimoire will divine a short quest name while preserving the full portal on hover.</span></span>
-    </div>
-    <div class="cron-create-error" id="task-link-error"></div>
-    <div class="modal-buttons">
-      <button id="task-link-cancel"><span class="theme-copy-regular">Cancel</span><span class="theme-copy-wizard">Dispel</span></button>
-      <span class="spacer"></span>
-      <button id="task-link-save" class="primary"><span class="theme-copy-regular">Save</span><span class="theme-copy-wizard">✒ Bind quest!</span></button>
-    </div>
-  </div>
-</div>
 <div class="modal-overlay" id="add-member-modal">
   <div class="add-member-modal" role="dialog" aria-modal="true" aria-labelledby="add-member-title">
     <h3 id="add-member-title"><span class="theme-copy-regular">Add member to</span><span class="theme-copy-wizard">Invite familiar into party</span> <span class="muted" id="add-member-group"></span></h3>
