@@ -2,6 +2,7 @@ import { h, render } from 'preact';
 import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
 import { isWizardActive } from './slop.js';
+import { COMMAND_PALETTE_OPEN_EVENT } from './command-registry.js';
 
 const html = htm.bind(h);
 
@@ -12,11 +13,24 @@ export const WIZARD_PLACEHOLDER =
 export const WIZARD_EMPTY = 'No such incantation in this tome';
 export const PAGE_FALLBACK = 10;
 
+export function isCommandPaletteShortcutTarget(target) {
+  const element = target?.nodeType === 1 ? target : target?.parentElement;
+  if (!element) return false;
+  const tag = String(element.tagName || '').toUpperCase();
+  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag)) return true;
+  if (element.isContentEditable) return true;
+  return !!element.closest?.('[contenteditable]:not([contenteditable="false"]), [role="textbox"], .cm-editor, .monaco-editor');
+}
+
 export function PaletteLauncher({ state, documentRef = document }) {
   useEffect(() => {
     const onKeyDown = (event) => {
       if (event.repeat || !(event.ctrlKey || event.metaKey)) return;
       if ((event.key || '').toLowerCase() !== 'k') return;
+      // Ctrl/Cmd-K belongs to inputs and embedded editors while the palette is
+      // closed. Once open, its own input intentionally keeps the toggle-close
+      // behavior.
+      if (!state.open.value && isCommandPaletteShortcutTarget(event.target)) return;
       event.preventDefault();
       if (state.open.value) {
         state.close();
@@ -28,8 +42,17 @@ export function PaletteLauncher({ state, documentRef = document }) {
       if (documentRef.querySelector('.modal-overlay.show, .manage-overlay.show')) return;
       state.show();
     };
+    const onOpenRequest = () => {
+      if (state.open.value) return;
+      if (documentRef.querySelector('.modal-overlay.show, .manage-overlay.show')) return;
+      state.show();
+    };
     documentRef.addEventListener('keydown', onKeyDown);
-    return () => documentRef.removeEventListener('keydown', onKeyDown);
+    documentRef.addEventListener(COMMAND_PALETTE_OPEN_EVENT, onOpenRequest);
+    return () => {
+      documentRef.removeEventListener('keydown', onKeyDown);
+      documentRef.removeEventListener(COMMAND_PALETTE_OPEN_EVENT, onOpenRequest);
+    };
   }, [documentRef, state]);
 
   return html`
@@ -134,14 +157,15 @@ export function PaletteOverlay({
         <div id="palette-list" ref=${listRef} class="palette-list" role="listbox" aria-label="Commands">
           ${current.commands.length ? current.commands.map((command, index) => html`
             <div key=${`${command.label}\u0000${index}`}
-              class=${`palette-item${index === current.selected ? ' selected' : ''}`}
+              class=${`palette-item${index === current.selected ? ' selected' : ''}${command.enabled === false ? ' disabled' : ''}`}
               data-idx=${index} id=${`palette-opt-${index}`} role="option"
               aria-selected=${index === current.selected ? 'true' : 'false'}
+              aria-disabled=${command.enabled === false ? 'true' : 'false'}
               onMouseMove=${() => state.setSelected(index)}
               onClick=${() => { state.setSelected(index); runSelected(); }}>
               <span class="palette-ico">${command.icon || '•'}</span>
               <span class="palette-label">${command.label}</span>
-              ${command.hint ? html`<span class="palette-hint">${command.hint}</span>` : null}
+              ${command.enabled === false || command.hint ? html`<span class="palette-hint">${command.enabled === false ? command.disabledReason || 'Unavailable' : command.hint}</span>` : null}
             </div>
           `) : html`<div class="palette-empty">${wizard ? WIZARD_EMPTY : 'No matching commands'}</div>`}
         </div>

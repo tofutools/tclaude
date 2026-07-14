@@ -65,6 +65,12 @@ test('palette state rebuilds from the injected snapshot, ranks, navigates, and c
   state.setQuery('');
   state.runSelected();
   assert.deepEqual(errors, [['command failed: boom', true]]);
+
+  state.commands.value = [{ label: 'Unavailable', enabled: false, run: () => calls.push('bad') }];
+  state.open.value = true;
+  assert.equal(state.runSelected(), false, 'disabled commands do not execute');
+  assert.equal(state.open.value, true, 'disabled commands keep the chooser open so its reason remains visible');
+  assert.deepEqual(calls, [11]);
 });
 
 test('palette island preserves markup, keyboard/mouse behavior, theme copy, focus, and cleanup', async (t) => {
@@ -113,6 +119,17 @@ test('palette island preserves markup, keyboard/mouse behavior, theme copy, focu
   assert.equal(button.getAttribute('aria-haspopup'), 'dialog');
   assert.equal(overlay.className, 'modal-overlay palette-overlay');
   assert.equal(getByRole(overlay, 'dialog', { name: 'Command palette' }).getAttribute('aria-modal'), 'true');
+
+  const ownedInput = harness.document.body.appendChild(harness.document.createElement('input'));
+  ownedInput.type = 'text';
+  ownedInput.focus();
+  let ownedEvent;
+  await harness.act(() => {
+    ownedEvent = harness.fireEvent(ownedInput, 'keydown', { key: 'k', ctrlKey: true });
+  });
+  assert.equal(ownedEvent.defaultPrevented, false, 'an input keeps Ctrl/Cmd-K');
+  assert.equal(state.open.value, false, 'the global palette does not open over a typing field');
+  ownedInput.remove();
 
   button.focus();
   let openEvent;
@@ -176,7 +193,7 @@ test('palette island preserves markup, keyboard/mouse behavior, theme copy, focu
   assert.equal(state.open.value, false, 'island cleanup closes owned state');
   assert.equal(buttonHost.childElementCount, 0);
   assert.equal(modalHost.childElementCount, 0);
-  for (const type of ['keydown', 'tclaude:wizard']) {
+  for (const type of ['keydown', 'tclaude:wizard', 'tclaude:command-palette-open']) {
     const installed = listeners.find(([candidate]) => candidate === type);
     assert.ok(installed, `${type} listener installed`);
     assert.ok(removals.some(([candidate, listener]) =>

@@ -90,6 +90,7 @@ export function createPaletteState({ snapshot, commandBuilder, onError = () => {
   function runSelected({ beforeRun = () => {} } = {}) {
     const command = selectedCommand();
     if (!command) return false;
+    if (command.enabled === false) return false;
     close();
     beforeRun();
     try {

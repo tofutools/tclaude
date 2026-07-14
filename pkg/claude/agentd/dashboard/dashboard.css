@@ -2542,6 +2542,9 @@ details[data-group-key][open] > summary .group-sandbox-profile {
 .palette-item.selected { background: #1f6feb33; color: #fff; }
 .palette-item.selected .palette-ico,
 .palette-item.selected .palette-hint { color: #c9d1d9; }
+.palette-item.disabled { cursor: not-allowed; opacity: .58; }
+.palette-item.disabled .palette-hint { color: #d29922; }
+.palette-item.disabled.selected { background: #30363d66; color: #8b949e; }
 .palette-empty { padding: 16px; text-align: center; color: #7d8590; font-size: 13px; }
 .palette-foot {
   display: flex; gap: 14px; padding: 8px 14px;
@@ -7461,6 +7464,7 @@ body.wizard #command-palette-modal .palette-item.selected {
 }
 body.wizard #command-palette-modal .palette-item.selected .palette-ico,
 body.wizard #command-palette-modal .palette-item.selected .palette-hint { color: #e7d9f5; }
+body.wizard #command-palette-modal .palette-item.disabled .palette-hint { color: #d4af37; }
 
 /* No-match line + the foot legend go violet; the kbd chips get the
    tarnished-gold-on-violet treatment the header buttons use. */

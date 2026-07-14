@@ -88,6 +88,14 @@ export class ValidationScheduler {
     this.onResult(diagnostics);
   }
 
+  flush(buildPayload) {
+    if (this.destroyed) return false;
+    if (this.timer !== null) this.timers.clear(this.timer);
+    this.timer = null;
+    void this.fire(buildPayload);
+    return true;
+  }
+
   destroy() {
     this.destroyed = true;
     if (this.timer !== null) this.timers.clear(this.timer);
@@ -196,6 +204,7 @@ export class LiveValidation {
     this.diagnostics = editor.model.diagnostics || [];
     this.mapped = null;
     this.panelSignature = '';
+    this.issueCursor = -1;
     this.scheduler = new ValidationScheduler({
       run: (payload) => this.post(payload),
       onResult: (diagnostics) => this.applyDiagnostics(diagnostics),
@@ -210,6 +219,10 @@ export class LiveValidation {
 
   schedule() {
     this.scheduler.schedule(() => this.payload());
+  }
+
+  validateNow() {
+    return this.scheduler.flush(() => this.payload());
   }
 
   payload() {
@@ -281,6 +294,18 @@ export class LiveValidation {
     }
   }
 
+  focusIssue(delta = 1) {
+    const entries = this.mapped?.entries || [];
+    if (!entries.length) return false;
+    this.issueCursor = this.issueCursor < 0
+      ? (delta < 0 ? entries.length - 1 : 0)
+      : (this.issueCursor + delta + entries.length) % entries.length;
+    this.panel.open = true;
+    this.focusEntry(entries[this.issueCursor]);
+    this.list.querySelector(`button[data-issue-index="${this.issueCursor}"]`)?.focus();
+    return true;
+  }
+
   renderPanel() {
     const { entries, errorCount, warningCount } = this.mapped;
     this.panel.hidden = entries.length === 0;
@@ -289,6 +314,7 @@ export class LiveValidation {
     // only rebuild when the content actually changed.
     if (signature === this.panelSignature) return;
     this.panelSignature = signature;
+    this.issueCursor = Math.min(this.issueCursor, entries.length - 1);
     const bits = [];
     if (errorCount) bits.push(`${errorCount} error${errorCount === 1 ? '' : 's'}`);
     if (warningCount) bits.push(`${warningCount} warning${warningCount === 1 ? '' : 's'}`);

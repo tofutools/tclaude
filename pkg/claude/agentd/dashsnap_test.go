@@ -822,6 +822,33 @@ func baseStates() []dashsnap.State {
 			SettleMS: 1100,
 		},
 		{
+			Key:     "process-editor-commands",
+			Title:   "Process editor — contextual commands",
+			Caption: "TCL-435: the shared dashboard command palette contributes selection-aware graph operations, searchable plain copy, disabled reasons, and the documented editor launcher.",
+			JS: processEditorStateJS(`ed.setSelection({type: 'node', id: 'begin'});
+  ed.commandsButton.click();
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var input = document.querySelector('#palette-input');
+  if (!input || !document.querySelector('#command-palette-modal.show')) throw new Error('process command palette did not open');
+  input.value = 'selection'; input.dispatchEvent(new InputEvent('input', {bubbles:true}));
+  if (!document.querySelector('.palette-item[aria-disabled="false"]')) throw new Error('enabled selection command missing');`),
+			SettleMS: 1100,
+		},
+		{
+			Key:     "process-editor-commands-wizard",
+			Title:   "Process editor — contextual commands (wizard)",
+			Caption: "The same TCL-435 command registry under the wizard skin: arcane labels remain searchable by ordinary vocabulary and disabled context stays visibly explained.",
+			Wizard:  true,
+			JS: processEditorStateJS(`ed.setSelection(null);
+  ed.commandsButton.click();
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var input = document.querySelector('#palette-input');
+  if (!input || !document.querySelector('#command-palette-modal.show')) throw new Error('wizard process command palette did not open');
+  input.value = 'selection'; input.dispatchEvent(new InputEvent('input', {bubbles:true}));
+  if (!document.querySelector('.palette-item.disabled[aria-disabled="true"]')) throw new Error('wizard disabled selection reason missing');`),
+			SettleMS: 1100,
+		},
+		{
 			Key:      "process-editor-selected",
 			Title:    "Process editor — node selected",
 			Caption:  "A selected node: accent outline on the canvas and the inspector strip showing type, id, label input, and dark-themed action buttons.",

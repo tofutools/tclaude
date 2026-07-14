@@ -45,6 +45,13 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	// preventDefault. Pressing it again toggles closed.
 	must(`(event.key || '').toLowerCase() !== 'k'`, "the trigger is the K key")
 	must("event.ctrlKey || event.metaKey", "the trigger requires Ctrl or Cmd")
+	must("isCommandPaletteShortcutTarget(event.target)",
+		"the global trigger yields to inputs and embedded editors")
+	must("command.enabled === false", "disabled contextual commands do not execute")
+	must(`aria-disabled=${command.enabled === false ? 'true' : 'false'}`,
+		"disabled command context is exposed to assistive technology")
+	must("buildRegisteredCommands({ snapshot: snap })",
+		"feature commands extend the existing palette instead of creating another shortcut surface")
 
 	// The commands DELEGATE to operations that already exist — bulk
 	// window ops, per-agent jump/hide, the window-subset modal, and

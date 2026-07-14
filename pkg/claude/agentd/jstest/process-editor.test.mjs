@@ -31,6 +31,53 @@ test('Delete remains native while editing form fields', () => {
   assert.equal(deleted, false);
 });
 
+test('palette drop and contextual create command share addNodeType', () => {
+  const calls = [];
+  const fake = {
+    paletteDragPayload: null,
+    addNodeType: (...args) => calls.push(args),
+  };
+  ProcessTemplateEditor.prototype.onCanvasDrop.call(fake, {
+    point: { x: 12, y: 34 },
+    event: { dataTransfer: { getData: () => JSON.stringify({ kind: 'primitive', type: 'decision' }) } },
+  });
+  assert.deepEqual(calls, [['decision', { x: 12, y: 34 }]]);
+});
+
+test('command context reflects selection, editability, dirty state, and validation issues', () => {
+  const edge = { from: 'a', outcome: 'pass', to: 'b' };
+  const fake = {
+    selection: { type: 'node', id: 'a' },
+    externalDecisionPending: false, externalReloadPending: false, savePending: false, blank: false,
+    options: { onInstantiate() {} },
+    validation: { mapped: { entries: [{ code: 'issue' }] } },
+    model: {
+      template: { id: 'flow', nodes: { a: { type: 'task' }, b: { type: 'end' } } },
+      edges: [edge], dirty: true,
+      config: { canInsert: true, nodeEditable: (id) => id !== 'b', edgeEditable: () => true },
+      node(id) { return this.template.nodes[id]; },
+      findEdge(from, outcome) { return this.edges.find((item) => item.from === from && item.outcome === outcome); },
+    },
+  };
+  const current = ProcessTemplateEditor.prototype.commandContext.call(fake);
+  assert.equal(current.canCreate, true);
+  assert.equal(current.canEdit, true);
+  assert.equal(current.canDuplicate, true);
+  assert.equal(current.canDelete, true);
+  assert.equal(current.canSave, true);
+  assert.equal(current.canInstantiate, true);
+  assert.equal(current.issueCount, 1);
+
+  fake.selection = { type: 'node', id: 'b' };
+  fake.model.dirty = false;
+  const locked = ProcessTemplateEditor.prototype.commandContext.call(fake);
+  assert.equal(locked.canEdit, false);
+  assert.equal(locked.canDelete, false);
+  assert.match(locked.editReason, /read-only/);
+  assert.equal(locked.canSave, false);
+  assert.match(locked.saveReason, /no unsaved changes/i);
+});
+
 function withFakeDocument(run) {
   const previous = globalThis.document;
   globalThis.document = {

@@ -19,12 +19,16 @@
 // the same model over a run with completed nodes locked; nothing in here may
 // assume template-only editing beyond the defaults.
 
+import { PROCESS_NODE_TYPES } from './process-node-types.js';
+
 export const MAX_UNDO = 50;
 
 // The start-of-process marker is a pseudo edge with an empty `from` and the
 // reserved outcome "start" — exactly what model.NormalizeEdges emits and what
 // assembleProcessEditModel reads back into template.start on save.
 export const START_OUTCOME = 'start';
+
+export const PALETTE_PRIMITIVES = PROCESS_NODE_TYPES;
 
 const NODE_TYPES = new Set(['task', 'decision', 'wait', 'start', 'end']);
 
@@ -269,6 +273,35 @@ export class ProcessEditModel {
     this.begin();
     for (const { id, x, y } of unique.values()) this.layout.nodes[id] = { x, y };
     return true;
+  }
+
+  // duplicateNodes copies selected node definitions plus edges wholly inside
+  // that selection. Placement is injected by the editor from the laid-out
+  // graph, keeping this model DOM-free and making the operation one undo step.
+  duplicateNodes(ids, { positions = {}, offset = { x: 36, y: 36 } } = {}) {
+    this.assertCanInsert();
+    const sourceIDs = [...new Set(ids || [])].filter((id) => this.template.nodes[id]);
+    if (!sourceIDs.length) return new Map();
+    const idMap = new Map();
+    this.begin();
+    for (const sourceID of sourceIDs) {
+      const cloneID = this.uniqueNodeID(sourceID);
+      idMap.set(sourceID, cloneID);
+      this.template.nodes[cloneID] = clone(this.template.nodes[sourceID]);
+      const point = positions[sourceID] || this.layout.nodes[sourceID];
+      if (Number.isFinite(point?.x) && Number.isFinite(point?.y)) {
+        this.layout.nodes[cloneID] = {
+          x: point.x + (Number(offset?.x) || 0),
+          y: point.y + (Number(offset?.y) || 0),
+        };
+      }
+    }
+    for (const edge of [...this.edges]) {
+      const from = idMap.get(edge.from);
+      const to = idMap.get(edge.to);
+      if (from && to) this.edges.push({ from, outcome: edge.outcome, to });
+    }
+    return idMap;
   }
 
   // deleteItems is the atomic multi-selection counterpart to deleteNode /
@@ -562,14 +595,6 @@ export class ProcessEditModel {
 // preconfigured compounds seeded from the embedded pinned example templates
 // (docs/examples/code-change-with-review.yaml), trimmed to the fields the
 // graph editor can meaningfully own today.
-export const PALETTE_PRIMITIVES = [
-  { type: 'task', label: 'Task', hint: 'A unit of work with a performer' },
-  { type: 'decision', label: 'Decision', hint: 'Branch on an explicit outcome' },
-  { type: 'wait', label: 'Wait / timer', hint: 'Pause for a duration or signal' },
-  { type: 'start', label: 'Start', hint: 'Entry marker' },
-  { type: 'end', label: 'End', hint: 'Terminal node with a result' },
-];
-
 export const PALETTE_SNIPPETS = [
   {
     key: 'code-change-with-review',

@@ -56,6 +56,7 @@ import { setDockOpen } from './dock.js';
 import { scribeVisible } from './virtual-groups.js';
 import { scribeGroupVisible } from './scribe-groups.js';
 import { closeTerminalsForConvs, closeTerminalsForWindowOp, focusTerminalForConv, openWebWindowPane } from './terminals-tab.js';
+import { buildRegisteredCommands } from './command-registry.js';
 
 // wiz(regular, wizard) returns the arcane string in 🧙 mode, else the plain
 // one. buildCommands wraps every command's PRESENTED label + hint (and its
@@ -730,5 +731,9 @@ export function buildCommands(snapshot) {
     });
   }
 
+  // Feature-owned contextual commands join the same global surface. Providers
+  // are evaluated last and live, so opening the palette in the process editor
+  // sees its current selection without the shell owning editor state.
+  cmds.push(...buildRegisteredCommands({ snapshot: snap }));
   return cmds;
 }

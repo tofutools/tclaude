@@ -4,6 +4,8 @@ import htm from 'htm';
 import { useDialogFocus } from './dialog-focus.js';
 import { isModifiedClick, relTime } from './helpers.js';
 import { WORKLIST_VIEWS, actorLabel, dueBucket, fmtAge, fmtDue, groupWaitingOn, isActionable, kindMeta, nudgeLine } from './process-worklist-core.js';
+import { registerCommandProvider } from './command-registry.js';
+import { buildProcessEditorCommands } from './process-command-registry.js';
 
 const html = htm.bind(h);
 const WORKLIST_TITLES = {
@@ -183,6 +185,12 @@ export function ProcessesApp({ state, actions, confirmDiscard }) {
 }
 
 export function mountProcessesIsland({ host, state, actions, confirmDiscard, registerCleanup }) {
+  const unregisterCommands = registerCommandProvider('process-editor', () => {
+    const view = state.view.value;
+    if (!view.active || view.canvas?.kind !== 'editor') return [];
+    return buildProcessEditorCommands({ editor: state.currentEditor(), actions });
+  });
+  registerCleanup(unregisterCommands);
   render(html`<${ProcessesApp} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} />`, host);
   // Rendering null unmounts ProcessEditorBoundary, the sole owner of editor /
   // graph disposal. Do not destroy through state here as well.

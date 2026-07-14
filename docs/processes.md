@@ -481,6 +481,15 @@ conflict. This does not change the CLI's duplicate explicit-id error. When no
 run id is supplied, same-second creations retry with a numeric suffix instead
 of colliding.
 
+While the template editor is active, the dashboard command palette adds graph
+commands for creating nodes, editing the current selection, canvas navigation,
+validation, saving, instantiation, and process navigation. Open it with the
+visible **⌘K commands** button or `Ctrl-K` / `Cmd-K`, type either ordinary or
+wizard vocabulary, use the arrow keys to choose, and press Enter. Unavailable
+commands remain visible with a reason. The global shortcut deliberately does
+not fire while an input, textarea, select, contenteditable, or embedded editor
+owns the keystroke.
+
 With Processes enabled, the engine-hosted create endpoint is:
 
 ```http
