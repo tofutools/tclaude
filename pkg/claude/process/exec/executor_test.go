@@ -2,6 +2,8 @@ package processexec
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"strings"
@@ -39,6 +41,33 @@ func (a *fakeAdapter) Validate(Request) error { return nil }
 func (a *fakeAdapter) Perform(_ context.Context, request Request) (Observation, error) {
 	a.requests = append(a.requests, request)
 	return a.observation, nil
+}
+
+func TestCommandDueAtUsesStrictTrimmedRFC3339(t *testing.T) {
+	for _, value := range []string{
+		"2026-07-14T10:03:44Z",
+		"  2026-07-14T12:33:44+02:30  ",
+		"2026-07-14T10:03:44.123456789Z",
+	} {
+		t.Run("valid "+value, func(t *testing.T) {
+			dueAt, err := commandDueAt(plan.Command{ID: "cmd_timer", Until: value}, executorTestTime)
+			if err != nil || dueAt.IsZero() {
+				t.Fatalf("commandDueAt(%q) = %s, %v", value, dueAt, err)
+			}
+		})
+	}
+	for _, value := range []string{
+		"2026-07-14T1:03:44Z",
+		"2026-07-14T10:03:44,123Z",
+		"2026-07-14T10:03:44+24:00",
+		"2026-07-14T10:03:44+02:60",
+	} {
+		t.Run("invalid "+value, func(t *testing.T) {
+			if _, err := commandDueAt(plan.Command{ID: "cmd_timer", Until: value}, executorTestTime); err == nil {
+				t.Fatalf("commandDueAt(%q) unexpectedly succeeded", value)
+			}
+		})
+	}
 }
 
 func TestObligationActionNormalizationIsSharedAndCaseInsensitive(t *testing.T) {
@@ -408,6 +437,103 @@ func TestIssuedInternalCommandResumesFromDurablePayload(t *testing.T) {
 	}
 	if retried.LastLogSeq != finished.State.LastLogSeq {
 		t.Fatalf("retry appended state: first seq %d, retry seq %d", finished.State.LastLogSeq, retried.LastLogSeq)
+	}
+}
+
+func TestIssuedLegacyUnsafeKeyResumesFromDurablePayload(t *testing.T) {
+	fs, err := store.NewFS(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion,
+		Kind:       model.Kind,
+		ID:         "legacy-unsafe-key",
+		Start:      "wait",
+		Nodes: map[string]model.Node{
+			"wait": {
+				Type: model.NodeTypeWait,
+				Wait: &model.WaitConfig{Signal: "deploy/prod"},
+				Next: model.Next{"pass": "done"},
+			},
+			"done": {Type: model.NodeTypeEnd},
+		},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const runID = "run_legacy_unsafe"
+	initial := state.New(runID, record.Ref, record.Ref, []state.NodeInit{
+		{ID: "wait", Type: model.NodeTypeWait, Status: state.NodeStatusReady},
+		{ID: "done", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+	})
+	initial.Status = state.RunStatusRunning
+	if _, err := fs.CreateRun(t.Context(), store.RunRecord{ID: runID, TemplateRef: record.Ref}, initial); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := fs.LoadRun(t.Context(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commands, err := plan.Plan(snapshot.State, tmpl)
+	if err != nil || len(commands) != 1 || commands[0].Kind != plan.CommandKindWaitSignal {
+		t.Fatalf("current commands = %#v, err = %v", commands, err)
+	}
+	current := commands[0]
+
+	// Stage the exact command identity an older binary issued when unsafe key
+	// parts used only the first 12 SHA-256 hex characters. Recovery must trust
+	// this durable payload; it must not regenerate the command with keyPart v2.
+	legacyPartHash := sha256.Sum256([]byte("deploy/prod"))
+	legacyKey := runID + "/wait_signal/wait/signal/sha256-" + hex.EncodeToString(legacyPartHash[:])[:12]
+	legacyIDHash := sha256.Sum256([]byte(legacyKey))
+	legacy := current
+	legacy.ID = "cmd_" + hex.EncodeToString(legacyIDHash[:])[:24]
+	legacy.IdempotencyKey = legacyKey
+	legacy.WaitID = "slot_" + strings.TrimPrefix(legacy.ID, "cmd_")
+	if legacy.ID == current.ID || legacy.IdempotencyKey == current.IdempotencyKey || legacy.WaitID == current.WaitID {
+		t.Fatalf("legacy identity did not differ from current command: legacy=%#v current=%#v", legacy, current)
+	}
+
+	executor := New(fs, nil)
+	executor.Now = func() time.Time { return executorTestTime }
+	claimed, issued, err := executor.claim(t.Context(), snapshot, legacy)
+	if err != nil || !claimed {
+		t.Fatalf("claim legacy command = %v, err = %v", claimed, err)
+	}
+	if command := issued.OutstandingCommands[legacy.ID]; command.Status != state.CommandStatusIssued {
+		t.Fatalf("staged legacy command = %#v", command)
+	}
+
+	// Drive must recover the serialized legacy identity before planning with
+	// the current key format. Otherwise it can claim both command generations.
+	quiescent, err := executor.Drive(t.Context(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if command := quiescent.State.OutstandingCommands[legacy.ID]; command.Status != state.CommandStatusObserved || command.IdempotencyKey != legacyKey {
+		t.Fatalf("resumed legacy command = %#v", command)
+	}
+	if _, exists := quiescent.State.OutstandingCommands[current.ID]; exists {
+		t.Fatalf("recovery issued current-key twin %q", current.ID)
+	}
+	if wait, ok := quiescent.State.Waits[legacy.WaitID]; !ok || wait.CommandID != legacy.ID || wait.Status != state.WaitStatusPending {
+		t.Fatalf("legacy wait = %#v, exists = %v", wait, ok)
+	}
+	if quiescent.State.LastLogSeq <= issued.LastLogSeq || quiescent.State.Nodes["wait"].Status != state.NodeStatusWaitingSignal {
+		t.Fatalf("drive did not recover legacy command: before=%d after=%d state=%#v",
+			issued.LastLogSeq, quiescent.State.LastLogSeq, quiescent.State.Nodes["wait"])
+	}
+	if commands, err := plan.Plan(quiescent.State, tmpl); err != nil || len(commands) != 0 {
+		t.Fatalf("post-recovery plan = %#v, err = %v", commands, err)
+	}
+	settled, err := executor.Drive(t.Context(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settled.State.LastLogSeq != quiescent.State.LastLogSeq {
+		t.Fatalf("second drive was not quiescent: first=%d second=%d", quiescent.State.LastLogSeq, settled.State.LastLogSeq)
 	}
 }
 

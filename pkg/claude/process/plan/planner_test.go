@@ -12,6 +12,45 @@ import (
 
 var testTime = time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
 
+func TestKeyPartPreservesSafeValuesAndFullyHashesUnsafeValues(t *testing.T) {
+	safe := []struct {
+		value string
+		want  string
+	}{
+		{value: "run_1", want: "run_1"},
+		{value: "  attempt-2  ", want: "attempt-2"},
+		{value: " \n\t ", want: "_"},
+	}
+	for _, tt := range safe {
+		if got := keyPart(tt.value); got != tt.want {
+			t.Errorf("keyPart(%q) = %q, want %q", tt.value, got, tt.want)
+		}
+	}
+
+	unsafe := []struct {
+		value string
+		want  string
+	}{
+		{value: "deploy/prod", want: "sha256-1a7b4df2e228a8eea1973c5a3439a9c97e7f15c7f05a283fc21a7dcae03846a0"},
+		{value: "deploy\nprod", want: "sha256-215c971b89fa6c169a0d3a760f61a1bd75779099b6c94bf417f5026d5ce1b2df"},
+		{value: "deploy\tprod", want: "sha256-677ae07ad1aa651d1f5e855c646c14385bc393350df13f76153bfdd3127d6e91"},
+		{value: "deploy\rprod", want: "sha256-b880d07b958e92bb4679f2be648876f566ae5d7432fc904ac8fbf06403cd85f8"},
+	}
+	for _, tt := range unsafe {
+		first := keyPart(tt.value)
+		second := keyPart(tt.value)
+		if first != tt.want || second != tt.want {
+			t.Errorf("keyPart(%q) = %q then %q, want deterministic %q", tt.value, first, second, tt.want)
+		}
+	}
+	if got := keyPart("  deploy/prod  "); got != unsafe[0].want {
+		t.Errorf("unsafe trimming changed digest input: got %q, want %q", got, unsafe[0].want)
+	}
+	if left, right := keyPart("deploy/prod-a"), keyPart("deploy/prod-b"); left == right {
+		t.Fatalf("distinct adversarial key parts collided: %q", left)
+	}
+}
+
 func TestPlanGoldenCommands(t *testing.T) {
 	tests := []struct {
 		name string

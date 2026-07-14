@@ -142,5 +142,5 @@ func keyPart(value string) string {
 		return value
 	}
 	sum := sha256.Sum256([]byte(value))
-	return "sha256-" + hex.EncodeToString(sum[:])[:12]
+	return "sha256-" + hex.EncodeToString(sum[:])
 }

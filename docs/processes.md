@@ -382,11 +382,14 @@ Everywhere else a `{{ params.x }}` reference is used **literally** and is never
 interpolated. In particular `performer.profile`, `performer.timeout`,
 `retry.backoff`, and `wait.duration`/`until`/`signal` are config values, not
 templates; a param reference there raises an `inert_param_ref` warning at
-authoring time. References in prose fields (`name`/`description`/`doc`) are only
-checked for pointing at a declared param.
+authoring time. When an inert field has a syntax contract, its literal param
+reference also fails that validation. References in prose fields
+(`name`/`description`/`doc`) are only checked for pointing at a declared param.
 
 Duration-ish fields (`wait.duration`, `retry.backoff`, `performer.timeout`) are
 parsed with Go's `time.ParseDuration` at authoring time and must be positive, so
 `5m`/`1h30m`/`500ms` are valid but `banana`, `-5s`, and `0s` fail validation
 rather than surfacing at runtime. Because these fields are not templatable, a
 `{{ params.x }}` reference is likewise an authoring-time error.
+Absolute `wait.until` deadlines are trimmed and parsed as RFC3339 timestamps at
+authoring time, matching the executor's timer contract.

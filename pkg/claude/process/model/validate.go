@@ -120,6 +120,7 @@ func validateNodes(tmpl *Template) Diagnostics {
 				diagnostics = append(diagnostics, checkInertParamRef(path+".wait.duration", node.Wait.Duration)...)
 				diagnostics = append(diagnostics, validateDuration(path+".wait.duration", node.Wait.Duration)...)
 				diagnostics = append(diagnostics, checkInertParamRef(path+".wait.until", node.Wait.Until)...)
+				diagnostics = append(diagnostics, validateUntil(path+".wait.until", node.Wait.Until)...)
 				diagnostics = append(diagnostics, checkInertParamRef(path+".wait.signal", node.Wait.Signal)...)
 			}
 			if len(node.Next) == 0 {
@@ -433,6 +434,20 @@ func validateDuration(path, value string) Diagnostics {
 	if d <= 0 {
 		return Diagnostics{diagError("invalid_duration", path,
 			fmt.Sprintf("must be a positive duration; got %q", value))}
+	}
+	return nil
+}
+
+// validateUntil rejects absolute wait deadlines that the executor's timer
+// boundary cannot parse. Blank values are optional; nonblank values use the
+// same trimmed RFC3339 contract as commandDueAt.
+func validateUntil(path, value string) Diagnostics {
+	if isBlank(value) {
+		return nil
+	}
+	if _, err := ParseRFC3339(value); err != nil {
+		return Diagnostics{diagError("invalid_until", path,
+			fmt.Sprintf("must be an RFC3339 timestamp such as 2026-07-14T10:03:44Z; got %q", value))}
 	}
 	return nil
 }

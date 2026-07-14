@@ -96,6 +96,54 @@ nodes:
 	}
 }
 
+func TestWaitUntilValidationUsesTrimmedRFC3339(t *testing.T) {
+	parseUntil := func(t *testing.T, value string) Diagnostics {
+		t.Helper()
+		data := `
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: wait-until
+start: waiter
+nodes:
+  waiter:
+    type: wait
+    wait:
+      until: "` + value + `"
+    next: done
+  done: { type: end }
+`
+		parsed, err := Parse([]byte(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return parsed.Diagnostics
+	}
+
+	for _, value := range []string{
+		"2026-07-14T10:03:44Z",
+		"  2026-07-14T12:33:44+02:30  ",
+		"2026-07-14T10:03:44.123456789Z",
+	} {
+		t.Run("valid "+value, func(t *testing.T) {
+			assertNoDiagnostic(t, parseUntil(t, value), "invalid_until")
+		})
+	}
+	for _, value := range []string{
+		"2026-07-14",
+		"2026-07-14 10:03:44Z",
+		"2026-07-14T25:03:44Z",
+		"2026-07-14T1:03:44Z",
+		"2026-07-14T10:03:44,123Z",
+		"2026-07-14T10:03:44+24:00",
+		"2026-07-14T10:03:44+02:60",
+	} {
+		t.Run("invalid "+value, func(t *testing.T) {
+			diagnostics := parseUntil(t, value)
+			assertDiagnostic(t, diagnostics, SeverityError, "invalid_until", "nodes.waiter.wait.until")
+		})
+	}
+}
+
 // TestNonPositiveDurations pins that zero and negative durations are rejected
 // (F2) — they parse cleanly but are authoring nonsense.
 func TestNonPositiveDurations(t *testing.T) {
@@ -196,8 +244,8 @@ nodes:
 }
 
 // TestInertParamRefWarnings documents the templating surface: refs in inert
-// (non-templatable, non-duration) fields warn rather than silently doing
-// nothing, and do not by themselves make the template invalid.
+// fields warn rather than silently doing nothing. Fields with a runtime syntax
+// contract also retain their validation error because the reference is literal.
 func TestInertParamRefWarnings(t *testing.T) {
 	data := `
 apiVersion: tclaude.dev/v1alpha1
@@ -227,10 +275,9 @@ nodes:
 	if err != nil {
 		t.Fatal(err)
 	}
-	// profile/until/signal are inert but not duration fields, so the only
-	// diagnostics are inert warnings — no errors.
-	if parsed.Diagnostics.HasErrors() {
-		t.Fatalf("unexpected errors: %#v", parsed.Diagnostics.Errors())
+	// Until is both inert and invalid under its literal RFC3339 contract.
+	if !hasDiagnosticPath(parsed.Diagnostics, "invalid_until", "nodes.waiter.wait.until") {
+		t.Fatalf("expected invalid_until alongside inert warning, got %#v", parsed.Diagnostics)
 	}
 	wantPaths := []string{
 		"nodes.a.performer.profile",
