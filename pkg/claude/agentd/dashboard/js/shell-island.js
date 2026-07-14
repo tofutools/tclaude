@@ -51,10 +51,11 @@ function Usage({ state }) {
   `;
 }
 
-function GlobalActivity({ state }) {
+function GlobalActivity({ state, groupsState }) {
   const snapshot = state.snapshot.value;
+  const visibility = groupsState?.visibility.value;
   const [wizard, setWizard] = useState(() => document.body.classList.contains('wizard'));
-  const view = globalActivityView(snapshot, wizard);
+  const view = globalActivityView(snapshot, wizard, visibility);
   useEffect(() => {
     const update = () => setWizard(document.body.classList.contains('wizard'));
     document.addEventListener('tclaude:wizard', update);
@@ -149,9 +150,9 @@ function Confirm({ feedback }) {
   `;
 }
 
-export function mountShellIsland({ hosts, state, feedback, registerCleanup }) {
+export function mountShellIsland({ hosts, state, groupsState, feedback, registerCleanup }) {
   const roots = [
-    [hosts.activityHost, html`<${GlobalActivity} state=${state} />`],
+    [hosts.activityHost, html`<${GlobalActivity} state=${state} groupsState=${groupsState} />`],
     [hosts.usageHost, html`<${Usage} state=${state} />`],
     [hosts.statusHost, html`<${Status} feedback=${feedback} />`],
     [hosts.messagesBadgeHost, html`<${MessagesBadge} state=${state} />`],

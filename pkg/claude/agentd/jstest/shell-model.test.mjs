@@ -43,3 +43,74 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
   assert.doesNotMatch(activity.title, /2 working/);
   assert.match(activity.markup, /ga-regular/);
 });
+
+test('global activity omits offline agents only when their group view is hidden', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { globalActivityView } = await harness.importDashboardModule('js/shell-model.js');
+  const offline = (conv_id) => ({ conv_id, online: false, state: { status: 'idle' } });
+  const crashed = (conv_id) => ({
+    conv_id, online: false, state: { status: 'working', exit_reason: 'unexpected' },
+  });
+  const online = (conv_id) => ({ conv_id, online: true, state: { status: 'working' } });
+  const snapshot = {
+    groups: [
+      // Collapse state is intentionally irrelevant: this visible group's
+      // sleeping member remains part of the global count.
+      { name: 'folded', collapsed: true, members: [offline('visible-offline')] },
+      {
+        name: 'scribe', scribe: true, online: 0,
+        members: [offline('hidden-scribe'), crashed('hidden-crashed-scribe')],
+      },
+    ],
+    ungrouped: [
+      offline('hidden-ungrouped'), crashed('hidden-crashed-ungrouped'),
+      online('live-ungrouped'),
+    ],
+    activity_bots: { regular: 'emoji', slop: 'off', wizard: 'off' },
+  };
+
+  const hidden = globalActivityView(snapshot, false, { scribe: false, ungrouped: false });
+  assert.match(hidden.title, /1 working/,
+    'a live member remains globally visible even when its virtual group is hidden');
+  assert.doesNotMatch(hidden.title, /offline/,
+    'offline members from hidden real and virtual groups are excluded');
+  assert.doesNotMatch(hidden.title, /crashed/,
+    'unexpectedly exited members do not leak through tooltip detail lines');
+
+  const visible = globalActivityView(snapshot, false, { scribe: true, ungrouped: true });
+  // Clean offline is suppressed while a live status exists, so inspect the
+  // all-offline snapshot to assert the exact visible count.
+  const cleanGroups = snapshot.groups.map((group) => ({
+    ...group,
+    members: group.members.filter((member) => member.state.exit_reason !== 'unexpected'),
+  }));
+  const hiddenAllOffline = globalActivityView(
+    { ...snapshot, groups: cleanGroups, ungrouped: [offline('hidden-ungrouped')] },
+    false,
+    { scribe: false, ungrouped: false },
+  );
+  const allOffline = globalActivityView(
+    { ...snapshot, groups: cleanGroups, ungrouped: [offline('hidden-ungrouped')] },
+    false,
+    { scribe: true, ungrouped: true },
+  );
+  assert.match(hiddenAllOffline.title, /1 offline/,
+    'the collapsed but visible group remains in the count');
+  assert.match(allOffline.title, /3 offline/);
+  assert.match(visible.title, /1 working/);
+});
+
+test('an offline agent shared by hidden and visible groups remains counted', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { globalActivityView } = await harness.importDashboardModule('js/shell-model.js');
+  const shared = { conv_id: 'shared', online: false, state: { status: 'idle' } };
+  const activity = globalActivityView({
+    groups: [
+      { name: 'hidden scribe', scribe: true, online: 0, members: [shared] },
+      { name: 'visible group', members: [shared] },
+    ],
+    ungrouped: [],
+  }, false, { scribe: false, ungrouped: true });
+  assert.match(activity.title, /1 offline/);
+  assert.doesNotMatch(activity.title, /2 offline/);
+});

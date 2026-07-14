@@ -24,6 +24,7 @@ const shellDescriptor = createIslandDescriptor({
   load: async ({ hosts, dependencies }) => {
     const islandModule = import('./shell-island.js');
     const dashboardStateModule = import('./snapshot-store.js');
+    const groupsStateModule = import('./groups-state.js');
     const shellStateModule = import('./shell-state.js');
     const notifyIslandModule = import('./notify-island.js');
     const notifyStateModule = import('./notify-state.js');
@@ -34,12 +35,12 @@ const shellDescriptor = createIslandDescriptor({
     const paletteStateModule = import('./palette-state.js');
     const paletteCommandsModule = import('./palette.js');
     const [
-      { mountShellIsland }, { dashboardState }, { shellState },
+      { mountShellIsland }, { dashboardState }, { groupsState }, { shellState },
       { mountNotifyIsland }, { notifyState }, { createNotifyActions },
       { mountCreditsIsland }, { creditsState },
       { mountPaletteIsland }, { createPaletteState }, { buildCommands },
     ] = await Promise.all([
-      islandModule, dashboardStateModule, shellStateModule,
+      islandModule, dashboardStateModule, groupsStateModule, shellStateModule,
       notifyIslandModule, notifyStateModule, notifyActionsModule,
       creditsIslandModule, creditsStateModule,
       paletteIslandModule, paletteStateModule, paletteCommandsModule,
@@ -59,6 +60,7 @@ const shellDescriptor = createIslandDescriptor({
         mountShellIsland({
           hosts,
           state: dashboardState,
+          groupsState,
           feedback: shellState,
           dependencies,
           registerCleanup,
