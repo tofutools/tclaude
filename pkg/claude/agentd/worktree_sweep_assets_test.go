@@ -5,9 +5,10 @@ import (
 	"testing"
 )
 
-// The group cog's "🧹 cleanup worktrees…" command opens the repo-wide
-// worktree janitor modal (openWorktreeCleanup, refresh.js): it loads the
-// candidate set from GET /api/groups/{name}/worktrees, lets the human
+// The group cog's "🧹 cleanup worktrees…" command and the global
+// command-palette / cleanup-modal entries open the repo-wide worktree janitor
+// modal (openWorktreeCleanup, refresh.js): it loads the candidate set from the
+// per-group or all-groups GET, lets the human
 // edit the selection (per-row, category mass-toggle chips, select-all/
 // none, filter, live rescan), and POSTs the EXPLICIT ticked path list to
 // /api/worktrees/cleanup.
@@ -46,6 +47,8 @@ func TestDashboardHTML_WorktreeCleanupWired(t *testing.T) {
 	must("async function openWorktreeCleanup(", "refresh.js defines the driver")
 	must("openWorktreeCleanup,", "refresh.js exports the driver")
 	must("openWorktreeCleanup(group)", "row-actions / palette open the modal for the group")
+	must("run: () => openWorktreeCleanup()", "the palette opens the all-groups scope")
+	must(`id="cleanup-worktrees-all"`, "the global cleanup modal links to the all-groups scope")
 	must(`data-act="cleanup-worktrees-group"`, "the group cog has the cleanup-worktrees button")
 	must("case 'cleanup-worktrees-group'", "row-actions dispatches the cog button")
 
@@ -54,6 +57,8 @@ func TestDashboardHTML_WorktreeCleanupWired(t *testing.T) {
 	//    re-resolves), so what the human previewed is exactly what is removed.
 	must("/api/groups/${encodeURIComponent(group)}/worktrees",
 		"discovery loads the candidate set from the per-group endpoint")
+	must("? '/api/worktrees/cleanup'",
+		"all-groups discovery loads from the global endpoint")
 	must("/api/worktrees/cleanup", "submit posts to the cleanup endpoint")
 	must("delete_branches: branchesCb.checked",
 		"the delete-branches toggle is sent to the backend")

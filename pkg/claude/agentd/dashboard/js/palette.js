@@ -675,16 +675,30 @@ export function buildCommands(snapshot) {
     }
   }
 
-  // 8b) Per-group worktree cleanup — "Cleanup worktrees in <group>". The
+  // 8b) Worktree cleanup. The all-groups command scans the union of every
+  //     scannable group's repos; the per-group commands retain the narrower
+  //     scope. Both open the same explicit-selection preview.
+  const scannableGroups = groups.filter(g =>
+    (g.default_cwd && g.default_cwd.trim()) || (g.members && g.members.length));
+  if (scannableGroups.length) {
+    cmds.push({
+      icon: wiz('🧹', '🍂'), label: wiz('Cleanup worktrees across all groups', 'Prune stray branches across all parties'),
+      hint: wiz('scan every group repo for stale worktrees and remove the ones you pick',
+        'scan every party grove for withered branches and prune the ones you pick'),
+      keywords: 'cleanup worktree worktrees all groups global tidy remove stale orphan branch git '
+        + 'prune withered grove branches parties',
+      run: () => openWorktreeCleanup(),
+    });
+  }
+
+  // Per-group worktree cleanup — "Cleanup worktrees in <group>". The
   //     repo-wide janitor: scans the group's default dir (∪ its agents'
   //     history dirs) for stale git worktrees and opens a preview modal
   //     to pick which to remove. Offered whenever the group has somewhere
   //     to scan (a default dir or any members); the modal itself reports
   //     "nothing to clean up" when a scan comes back empty, so the gate is
   //     deliberately loose rather than firing a probe per group here.
-  for (const g of groups) {
-    const scannable = (g.default_cwd && g.default_cwd.trim()) || (g.members && g.members.length);
-    if (!scannable) continue;
+  for (const g of scannableGroups) {
     cmds.push({
       icon: wiz('🧹', '🍂'), label: wiz(`Cleanup worktrees in ${g.name}`, `Prune stray branches in ${g.name}`),
       hint: wiz("scan this group's repo for stale worktrees and remove the ones you pick",

@@ -4433,6 +4433,16 @@ body.wizard .directory-picker-modal .modal-buttons { border-top-color: rgba(122,
 }
 .cleanup-options label.disabled { opacity: 0.5; cursor: default; }
 .cleanup-options .opt-note { font-size: 11px; color: #7d8590; }
+.cleanup-related {
+  display: flex; gap: 7px; align-items: baseline; margin-top: 3px;
+  padding-top: 8px; border-top: 1px solid #30363d;
+}
+.cleanup-related button {
+  flex: 0 0 auto; background: #21262d; border: 1px solid #30363d;
+  border-radius: 4px; padding: 4px 8px; color: #c9d1d9;
+  font: inherit; cursor: pointer;
+}
+.cleanup-related button:hover { border-color: #58a6ff; color: #58a6ff; }
 .cleanup-tier {
   display: flex; flex-direction: column; gap: 4px;
   padding: 6px 8px; margin-bottom: 2px;
@@ -7606,6 +7616,10 @@ body.wizard #cleanup-modal .cleanup-empty { color: #b39ddb; }
    labels, violet notes. The native radios / checkboxes stay legible. */
 body.wizard #cleanup-modal .cleanup-options { color: #e7d9f5; }
 body.wizard #cleanup-modal .cleanup-options .opt-note { color: #b39ddb; }
+body.wizard #cleanup-modal .cleanup-related { border-top-color: rgba(122, 93, 176, 0.5); }
+body.wizard #cleanup-modal .cleanup-related button {
+  background: #241b3d; border-color: #d9b45a; color: #f3e6c0;
+}
 body.wizard #cleanup-modal .cleanup-tier {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5);
 }

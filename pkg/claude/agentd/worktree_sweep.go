@@ -19,11 +19,13 @@ import (
 // works in": the leftovers from retired/deleted agents and hand-made
 // feature branches that accumulate over a long-running project.
 //
-// Two dashboard-only endpoints (cookie + Origin pin, human-only — agents
+// Three dashboard-only endpoints (cookie + Origin pin, human-only — agents
 // have no path here):
 //
 //	GET  /api/groups/{name}/worktrees   — discover candidate worktrees,
 //	                                       classified + smart-ticked.
+//	GET  /api/worktrees/cleanup         — discover candidates across every
+//	                                       group's repos.
 //	POST /api/worktrees/cleanup         — remove a human-picked, explicit
 //	                                       list of worktree paths.
 //
@@ -102,14 +104,11 @@ func categoryRank(cat string) int {
 	}
 }
 
-// dashboardGroupWorktrees answers GET /api/groups/{name}/worktrees: the
-// candidate set for the worktree-cleanup modal. Pure read — it lists and
-// classifies, never removes. Always 200 on a reachable daemon; an empty
-// `worktrees` (no default_cwd, no git repo) is a normal result the modal
-// renders as "nothing to clean up".
-func dashboardGroupWorktrees(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	// 1. Candidate dirs: the group's default start dir plus every
-	//    member's recorded history dir (where it has been editing).
+// groupWorktreeDirs returns the group's default start dir plus every
+// member's recorded history dir (where it has been editing). Discovery
+// resolves these to repos and deduplicates them, so callers may freely
+// concatenate this result across groups.
+func groupWorktreeDirs(g *db.AgentGroup) []string {
 	var dirs []string
 	if d := strings.TrimSpace(g.DefaultCwd); d != "" {
 		dirs = append(dirs, d)
@@ -120,8 +119,55 @@ func dashboardGroupWorktrees(w http.ResponseWriter, r *http.Request, g *db.Agent
 			dirs = append(dirs, d)
 		}
 	}
+	return dirs
+}
 
-	// 2. Resolve each candidate dir to its git repo root, deduped.
+// dashboardGroupWorktrees answers GET /api/groups/{name}/worktrees: the
+// candidate set for the worktree-cleanup modal. Pure read — it lists and
+// classifies, never removes. Always 200 on a reachable daemon; an empty
+// `worktrees` (no default_cwd, no git repo) is a normal result the modal
+// renders as "nothing to clean up".
+func dashboardGroupWorktrees(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+	roots, out := discoverSweepWorktrees(groupWorktreeDirs(g))
+	writeJSON(w, http.StatusOK, map[string]any{
+		"scope":      "group",
+		"group":      g.Name,
+		"repo_roots": roots,
+		"worktrees":  out,
+	})
+}
+
+// dashboardAllGroupWorktrees answers GET /api/worktrees/cleanup. It combines
+// every group's discovery dirs before scanning, so groups that share a repo do
+// not duplicate rows or git calls. Ungrouped agents are intentionally outside
+// this scope: this is the all-GROUPS counterpart of the per-group command.
+func dashboardAllGroupWorktrees(w http.ResponseWriter) {
+	groups, err := db.ListAgentGroups()
+	if err != nil {
+		http.Error(w, "list groups: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	var dirs []string
+	names := make([]string, 0, len(groups))
+	for _, g := range groups {
+		names = append(names, g.Name)
+		dirs = append(dirs, groupWorktreeDirs(g)...)
+	}
+	roots, out := discoverSweepWorktrees(dirs)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"scope":      "all",
+		"groups":     names,
+		"repo_roots": roots,
+		"worktrees":  out,
+	})
+}
+
+// discoverSweepWorktrees resolves candidate directories to repos, lists each
+// distinct repo once, and classifies its linked worktrees. The returned roots
+// are the repos actually scanned (main worktree paths), not every member
+// worktree that happened to serve as a discovery anchor.
+func discoverSweepWorktrees(dirs []string) ([]string, []sweepWorktree) {
+	// 1. Resolve each candidate dir to its git worktree root, deduped.
 	repoRoots := map[string]bool{}
 	for _, d := range dirs {
 		if root, err := repoRootForPathFn(d); err == nil && root != "" {
@@ -129,12 +175,14 @@ func dashboardGroupWorktrees(w http.ResponseWriter, r *http.Request, g *db.Agent
 		}
 	}
 
-	// 3. List every worktree of each repo, deduped by path. `git worktree
+	// 2. List every worktree of each repo, deduped by path. `git worktree
 	//    list` is repo-global, so once a repo is listed (its sibling
 	//    worktree paths land in wtByPath) a later candidate root that is
 	//    one of those paths is skipped — N agents in N worktrees of the
 	//    same repo cost one scan, not N.
 	wtByPath := map[string]worktree.WorktreeInfo{}
+	repoByPath := map[string]string{}
+	scannedRepos := map[string]bool{}
 	for root := range repoRoots {
 		if _, done := wtByPath[root]; done {
 			continue
@@ -143,23 +191,32 @@ func dashboardGroupWorktrees(w http.ResponseWriter, r *http.Request, g *db.Agent
 		if err != nil {
 			continue
 		}
+		mainRoot := root
+		for _, wt := range wts {
+			if wt.IsMain {
+				mainRoot = wt.Path
+				break
+			}
+		}
+		scannedRepos[mainRoot] = true
 		for _, wt := range wts {
 			wtByPath[wt.Path] = wt
+			repoByPath[wt.Path] = mainRoot
 		}
 	}
 
-	// 4. Map worktree roots → the agents working there, across ALL
+	// 3. Map worktree roots → the agents working there, across ALL
 	//    sessions (an agent in another group still pins its worktree).
 	rootConvs := worktreeRootConvs()
 
-	// 5. Classify each worktree.
+	// 4. Classify each worktree.
 	out := make([]sweepWorktree, 0, len(wtByPath))
 	for path, wt := range wtByPath {
 		row := sweepWorktree{
 			Path:     path,
 			Name:     filepath.Base(path),
 			Branch:   wt.Branch,
-			RepoRoot: repoRootOf(wt, repoRoots),
+			RepoRoot: repoByPath[path],
 			IsMain:   wt.IsMain,
 		}
 		// Resolve the bound agents (title + liveness + retired state) for
@@ -224,32 +281,12 @@ func dashboardGroupWorktrees(w http.ResponseWriter, r *http.Request, g *db.Agent
 		return out[i].Path < out[j].Path
 	})
 
-	roots := make([]string, 0, len(repoRoots))
-	for r := range repoRoots {
+	roots := make([]string, 0, len(scannedRepos))
+	for r := range scannedRepos {
 		roots = append(roots, r)
 	}
 	sort.Strings(roots)
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"group":      g.Name,
-		"repo_roots": roots,
-		"worktrees":  out,
-	})
-}
-
-// repoRootOf returns the repo a worktree belongs to for display. The
-// main worktree IS its repo root; for a linked worktree we can't cheaply
-// know the main from the porcelain row alone, so fall back to the first
-// resolved repo root (the common case is a single repo). Best-effort
-// labelling only — never used for a removal decision.
-func repoRootOf(wt worktree.WorktreeInfo, repoRoots map[string]bool) string {
-	if wt.IsMain {
-		return wt.Path
-	}
-	for r := range repoRoots {
-		return r
-	}
-	return ""
+	return roots, out
 }
 
 // worktreeRootConvs maps each git worktree root to the conv-ids of
@@ -421,8 +458,12 @@ func handleDashboardWorktreeCleanup(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
 	}
+	if r.Method == http.MethodGet {
+		dashboardAllGroupWorktrees(w)
+		return
+	}
 	if r.Method != http.MethodPost {
-		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		http.Error(w, "GET or POST", http.StatusMethodNotAllowed)
 		return
 	}
 	var body struct {

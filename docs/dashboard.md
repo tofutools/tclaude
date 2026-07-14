@@ -919,6 +919,13 @@ Two entry points, both on the Groups tab:
   A target whose tier doesn't apply is reported *skipped*, never *failed*, so
   a mixed-category selection degrades gracefully.
 
+The command palette also offers **Cleanup worktrees across all groups**. It
+scans the union of every group's default directory and member worktree history,
+deduplicates groups that share a repo, and opens the same explicit-selection
+preview as each group header's **cleanup worktrees…** action. The global
+**🧹 clean up** modal links to this preview too, under its agent cleanup
+options.
+
 The modal lists the affected agents as an editable include/exclude checklist,
 with an "inactive ≥ N h" quick-filter for picking by staleness. Nothing is
 trusted blindly: **the daemon re-checks tmux liveness for every agent at
@@ -937,6 +944,12 @@ kept**. Two worktrees are always spared: the repo's **main** worktree, and any
 worktree another, surviving agent is still working in (a "shared" worktree).
 For a single delete the checkbox is greyed out and labelled when the worktree
 can't be removed; an already-deleted worktree is a silent no-op.
+
+The broader worktree preview also finds clean or dirty orphan worktrees and
+leftovers belonging to retired agents. Clean orphans and clean retired-agent
+worktrees are preselected; dirty, live-agent, and still-enrolled-agent rows are
+left for review. The main repo is never selectable, and every chosen path is
+revalidated against live agent state immediately before removal.
 
 Cleanup is **human-only** — these endpoints live on the loopback dashboard
 server behind the same cookie + Origin pinning as every other mutation; agents
