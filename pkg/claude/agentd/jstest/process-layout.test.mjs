@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  defaultFeedbackArc, edgeEndpoint, layoutProcessGraph, rerouteProcessLayout,
+  defaultFeedbackArc, edgeEndpoint, endpointTangent, layoutProcessGraph, rerouteProcessLayout,
+  terminalTangent,
 } from '../dashboard/js/process-layout.js';
 
 const linear = {
@@ -279,6 +280,77 @@ test('inverted and sideways geometry retains the shape-boundary fallback', () =>
   const sideways = edgeEndpoint(wait, { x: 320, y: 140 }, true);
   assert.ok(sideways.x > 138 && sideways.x < 139);
   assert.ok(sideways.y > 106 && sideways.y < 108);
+});
+
+test('rendered terminal tangents align snapped, side, diagonal, and back-edge arrowheads', () => {
+  const cases = layoutProcessGraph({
+    nodes: [
+      { id: 'snap-from', type: 'task', pinned: { x: 100, y: 100 } },
+      { id: 'snap-to', type: 'end', pinned: { x: 140, y: 300 } },
+      { id: 'side-from', type: 'task', pinned: { x: 420, y: 100 } },
+      { id: 'side-to', type: 'end', pinned: { x: 760, y: 130 } },
+      { id: 'diagonal-from', type: 'decision', pinned: { x: 390, y: 380 } },
+      { id: 'diagonal-to', type: 'wait', pinned: { x: 740, y: 500 } },
+    ],
+    edges: [
+      { id: 'snapped', from: 'snap-from', to: 'snap-to' },
+      { id: 'side', from: 'side-from', to: 'side-to' },
+      { id: 'diagonal', from: 'diagonal-from', to: 'diagonal-to' },
+      { id: 'back', from: 'side-to', to: 'side-from', back: true },
+    ],
+  });
+  const nodes = byID(cases);
+  const edges = new Map(cases.edges.map((edge) => [`${edge.from}->${edge.to}`, edge]));
+
+  assert.deepEqual(terminalTangent(edges.get('snap-from->snap-to').points), { x: 0, y: 1 },
+    'a top-port arrow retains its downward terminal tangent');
+  for (const [label, key] of [['side', 'side-from->side-to'], ['diagonal', 'diagonal-from->diagonal-to']]) {
+    const edge = edges.get(key);
+    const expected = endpointTangent(nodes.get(edge.to), edge.points.at(-1), false);
+    const actual = terminalTangent(edge.points);
+    assert.ok(Math.abs(actual.x - expected.x) < 1e-12 && Math.abs(actual.y - expected.y) < 1e-12,
+      `${label} arrow follows the target endpoint ray`);
+  }
+  assert.deepEqual(terminalTangent(edges.get('side-to->side-from').points), { x: -1, y: 0 },
+    'the right-hand return lane approaches its target laterally');
+});
+
+test('transient side routing keeps the rendered tangent coherent while dragging', () => {
+  const stable = layoutProcessGraph({
+    nodes: [
+      { id: 'from', type: 'task', pinned: { x: 100, y: 100 } },
+      { id: 'to', type: 'end', pinned: { x: 380, y: 130 } },
+    ],
+    edges: [{ from: 'from', to: 'to' }],
+  });
+  const moved = rerouteProcessLayout(stable, new Map([['to', { x: 460, y: 170 }]]));
+  const target = moved.nodes.find((node) => node.id === 'to');
+  const edge = moved.edges[0];
+  const actual = terminalTangent(edge.points);
+  const expected = endpointTangent(target, edge.points.at(-1), false);
+  assert.ok(Math.abs(actual.x - expected.x) < 1e-12 && Math.abs(actual.y - expected.y) < 1e-12);
+});
+
+test('parallel fallback edges keep distinct lanes without changing their terminal tangents', () => {
+  const result = layoutProcessGraph({
+    nodes: [
+      { id: 'from', type: 'task', pinned: { x: 100, y: 100 } },
+      { id: 'to', type: 'end', pinned: { x: 420, y: 130 } },
+    ],
+    edges: [
+      { from: 'from', to: 'to', outcome: 'yes' },
+      { from: 'from', to: 'to', outcome: 'no' },
+    ],
+  });
+  const target = result.nodes.find((node) => node.id === 'to');
+  assert.equal(new Set(result.edges.map((edge) => edge.path)).size, 2, 'parallel routes do not overlap');
+  assert.equal(new Set(result.edges.map((edge) => `${edge.label.x},${edge.label.y}`)).size, 2,
+    'parallel labels retain their lane separation');
+  for (const edge of result.edges) {
+    const actual = terminalTangent(edge.points);
+    const expected = endpointTangent(target, edge.points.at(-1), false);
+    assert.ok(Math.abs(actual.x - expected.x) < 1e-12 && Math.abs(actual.y - expected.y) < 1e-12);
+  }
 });
 
 test('same input produces byte-for-byte deterministic layout output', () => {

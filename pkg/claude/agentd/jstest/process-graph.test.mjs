@@ -1,6 +1,31 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ProcessGraph, isGraphTypingTarget, normalizeWheelDelta } from '../dashboard/js/process-graph.js';
+import { parseHTML } from './vendor/linkedom.mjs';
+
+test('edge renderer gives the exact routed path to the auto-oriented SVG marker', () => {
+  const previousDocument = globalThis.document;
+  globalThis.document = parseHTML('<!doctype html><html><body></body></html>').window.document;
+  try {
+    const edge = {
+      id: 'side', inputIndex: 0, from: 'source', to: 'target', back: false,
+      path: 'M 10 20 C 40 20, 70 30, 80 30',
+      label: { x: 45, y: 17 },
+    };
+    const rendered = ProcessGraph.prototype.renderEdge.call({
+      markerID: 'forward-marker', backMarkerID: 'back-marker',
+    }, edge);
+    const visible = rendered.querySelector('.process-edge-path');
+    const hit = rendered.querySelector('.process-edge-hit');
+    assert.equal(visible.getAttribute('d'), edge.path);
+    assert.equal(hit.getAttribute('d'), edge.path, 'the hit target tracks the identical route');
+    assert.equal(visible.getAttribute('marker-end'), 'url(#forward-marker)',
+      'the browser orients the marker from that rendered terminal tangent');
+  } finally {
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+  }
+});
 
 test('wheel delta modes normalize to useful pixel-scale zoom input', () => {
   assert.equal(normalizeWheelDelta(120, 0, 900), 120);

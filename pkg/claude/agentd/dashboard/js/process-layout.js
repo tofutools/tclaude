@@ -313,6 +313,41 @@ export function edgeEndpoint(node, toward, outgoing) {
   return boundaryPoint(node, toward, outgoing);
 }
 
+function isPortEndpoint(node, point, outgoing) {
+  return point.x === node.x
+    && point.y === node.y + (outgoing ? node.height / 2 : -node.height / 2);
+}
+
+// Boundary fallbacks must approach along the centre-to-boundary ray. SVG markers use
+// the rendered path's final tangent, so feeding every cubic a vertical final
+// control segment makes a side-routed arrow point down even though its endpoint
+// sits on the node's side. Port-snapped endpoints intentionally retain their
+// vertical tangent; every other shape uses that same endpoint ray.
+export function endpointTangent(node, point, outgoing) {
+  if (isPortEndpoint(node, point, outgoing)) return { x: 0, y: 1 };
+  const dx = point.x - node.x;
+  const dy = point.y - node.y;
+  const length = Math.hypot(dx, dy);
+  if (!length) return { x: 0, y: outgoing ? 1 : -1 };
+  const direction = outgoing ? 1 : -1;
+  return { x: direction * dx / length, y: direction * dy / length };
+}
+
+// The points arrays mirror SVG path command geometry: cubic routes contain
+// [start, control1, control2, end], while orthogonal routes contain each line
+// waypoint. Walking backwards also handles coincident controls safely.
+export function terminalTangent(points) {
+  const end = points?.at(-1);
+  if (!end) return { x: 0, y: 0 };
+  for (let index = points.length - 2; index >= 0; index -= 1) {
+    const dx = end.x - points[index].x;
+    const dy = end.y - points[index].y;
+    const length = Math.hypot(dx, dy);
+    if (length) return { x: dx / length, y: dy / length };
+  }
+  return { x: 0, y: 0 };
+}
+
 function pointKey(point) {
   return `${point.x}\u0000${point.y}`;
 }
@@ -515,8 +550,35 @@ function routeForward(edge, from, to, lane, nodes, edgeSep) {
   }
   const laneOffset = ((lane % 3) - 1) * edgeSep;
   const midY = (start.y + end.y) / 2 + laneOffset;
-  const path = `M ${start.x} ${start.y} C ${start.x} ${midY}, ${end.x} ${midY}, ${end.x} ${end.y}`;
-  return { path, points: [start, { x: start.x, y: midY }, { x: end.x, y: midY }, end], label: { x: (start.x + end.x) / 2, y: midY - 8 } };
+  const startSnapped = isPortEndpoint(from, start, true);
+  const endSnapped = isPortEndpoint(to, end, false);
+  if (startSnapped && endSnapped) {
+    const points = [start, { x: start.x, y: midY }, { x: end.x, y: midY }, end];
+    const path = `M ${start.x} ${start.y} C ${start.x} ${midY}, ${end.x} ${midY}, ${end.x} ${end.y}`;
+    return { path, points, label: { x: (start.x + end.x) / 2, y: midY - 8 } };
+  }
+
+  // A lane-offset midpoint keeps parallel fallback edges visually distinct.
+  // Two cubics let the route bend through that midpoint without sacrificing
+  // either endpoint tangent (a single cubic has only those two control slots).
+  const chordX = end.x - start.x;
+  const chordY = end.y - start.y;
+  const chordLength = Math.hypot(chordX, chordY) || 1;
+  const chord = { x: chordX / chordLength, y: chordY / chordLength };
+  const midpoint = {
+    x: (start.x + end.x) / 2 - chord.y * laneOffset,
+    y: (start.y + end.y) / 2 + chord.x * laneOffset,
+  };
+  const handle = Math.max(24, chordLength / 4);
+  const startTangent = endpointTangent(from, start, true);
+  const endTangent = endpointTangent(to, end, false);
+  const control1 = { x: start.x + startTangent.x * handle, y: start.y + startTangent.y * handle };
+  const midpointIn = { x: midpoint.x - chord.x * handle, y: midpoint.y - chord.y * handle };
+  const midpointOut = { x: midpoint.x + chord.x * handle, y: midpoint.y + chord.y * handle };
+  const control2 = { x: end.x - endTangent.x * handle, y: end.y - endTangent.y * handle };
+  const points = [start, control1, midpointIn, midpoint, midpointOut, control2, end];
+  const path = `M ${start.x} ${start.y} C ${control1.x} ${control1.y}, ${midpointIn.x} ${midpointIn.y}, ${midpoint.x} ${midpoint.y} C ${midpointOut.x} ${midpointOut.y}, ${control2.x} ${control2.y}, ${end.x} ${end.y}`;
+  return { path, points, label: { x: midpoint.x, y: midpoint.y - 8 } };
 }
 
 function routeBack(edge, from, to, lane, bounds) {
