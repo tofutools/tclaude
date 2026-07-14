@@ -533,10 +533,11 @@ func notifyHumanCallerTitle(callerConv string) string {
 	if callerConv == "" {
 		return ""
 	}
-	if row := agent.FreshConvRowResolved(callerConv); row != nil {
-		return agent.DisplayTitle(row)
+	title := agent.FreshTitle(callerConv)
+	if title == agent.UnknownTitle {
+		return ""
 	}
-	return ""
+	return title
 }
 
 // notifyHumanCallerGroup returns one group name the caller belongs to,
@@ -586,17 +587,42 @@ func buildHumanMessagesSnapshot() ([]dashboardHumanMessage, int) {
 		// dashboard JS calls .map() on it directly.
 		return []dashboardHumanMessage{}, 0
 	}
+	// A short-lived Codex sender can notify the human before its conversation
+	// index exists. Older send paths therefore snapshotted an empty from_title
+	// even though the actor's spawn-time pending_name was already durable in
+	// SQLite. Resolve only those blank snapshots by stable agent_id so existing
+	// messages heal too; a non-empty historical snapshot remains immutable.
+	missingTitleAgents := make([]string, 0)
+	seenAgents := make(map[string]struct{})
+	for _, m := range rows {
+		if m.FromTitle == "" && m.FromAgent != "" {
+			if _, seen := seenAgents[m.FromAgent]; !seen {
+				seenAgents[m.FromAgent] = struct{}{}
+				missingTitleAgents = append(missingTitleAgents, m.FromAgent)
+			}
+		}
+	}
+	pendingNames, err := db.PendingNamesByAgent(missingTitleAgents)
+	if err != nil {
+		slog.Warn("dashboard: resolve human message sender names failed", "error", err)
+		pendingNames = map[string]string{}
+	}
+
 	out := make([]dashboardHumanMessage, 0, len(rows))
 	unread := 0
 	for _, m := range rows {
 		if !m.IsRead() {
 			unread++
 		}
+		fromTitle := m.FromTitle
+		if fromTitle == "" {
+			fromTitle = pendingNames[m.FromAgent]
+		}
 		view := dashboardHumanMessage{
 			ID:        m.ID,
 			FromConv:  m.FromConv,
 			FromAgent: m.FromAgent,
-			FromTitle: m.FromTitle,
+			FromTitle: fromTitle,
 			Group:     m.GroupName,
 			Subject:   m.Subject,
 			Body:      m.Body,

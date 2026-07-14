@@ -779,6 +779,29 @@ func TestNotifyHuman_RaisesOSNotification(t *testing.T) {
 		"the notification's sender attribution matches the stored message")
 }
 
+// A freshly-started Codex agent can send before its conversation is indexed.
+// Its spawn-time pending_name is already durable on the stable actor and must
+// be snapshotted as the notification sender instead of leaving only agt_… for
+// the dashboard to render.
+func TestNotifyHuman_PendingNameTitlesUnindexedSender(t *testing.T) {
+	f := newFlow(t)
+	const conv = "notify-code-1111-2222-33334444"
+	f.HaveGroup("codex-team")
+	f.HaveMember("codex-team", conv)
+	f.HavePendingName(conv, "codex-reviewer")
+	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermHumanNotify, "test"))
+
+	r := testharness.JSONRequest(t, http.MethodPost, "/v1/notify-human",
+		map[string]any{"body": "review complete"})
+	r = agentd.AsAgentPeer(r, conv)
+	require.Equal(t, http.StatusOK, testharness.Serve(f.Mux, r).Code)
+
+	msgs, err := db.ListHumanMessages()
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	assert.Equal(t, "codex-reviewer", msgs[0].FromTitle)
+}
+
 // Scenario: a refused notify-human (not a slug-holder, not a group owner)
 // raises NO OS notification — the gate runs before any insert or dispatch,
 // so a denied sender can't even ring the desktop.
