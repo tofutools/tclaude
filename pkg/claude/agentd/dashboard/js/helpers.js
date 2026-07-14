@@ -316,10 +316,18 @@ function makeModalResizable(modalEl, key, opts = {}) {
   if (saved.w) modalEl.style.width = saved.w + 'px';
   if (saved.h) modalEl.style.height = saved.h + 'px';
   let downW = 0, downH = 0;
-  const onPointerDown = () => {
+  const onPointerDown = (event) => {
+    // Descendants may own independent resize handles (notably textareas).
+    // Their events bubble through the card, but only a gesture that starts on
+    // the card itself can be the modal's native bottom-right resize grip.
+    if (event.target !== modalEl) {
+      downW = 0; downH = 0;
+      return;
+    }
     downW = modalEl.offsetWidth; downH = modalEl.offsetHeight;
   };
   const onPointerUp = () => {
+    if (!downW && !downH) return;
     const w = modalEl.offsetWidth, h = modalEl.offsetHeight;
     if (w === downW && h === downH) return;     // a click, not a resize
     if (w === saved.w && h === saved.h) return; // already the stored size

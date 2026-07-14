@@ -11903,14 +11903,23 @@ body.wizard .process-instantiate-field > label:not(.process-instantiate-boolean)
    One component, two modes: the editor's modal and the viewer's read-only
    detail card share every rule below; .is-readonly only dims the controls. */
 .process-node-modal .process-node-dialog {
-  width: min(680px, 94vw);
-  max-width: 680px; /* the base .modal caps at 480px — the stage sections need more */
-  max-height: 86vh;
+  /* The fixed CSS floor (rather than makeModalResizable's natural-content
+     floor) keeps compound task forms shrinkable. Both floor and ceiling
+     follow the viewport, so a size saved on a large display remains usable
+     after reopening in a small window. */
+  width: min(680px, calc(100vw - 32px));
+  min-width: min(360px, calc(100vw - 32px));
+  max-width: min(1100px, calc(100vw - 32px));
+  min-height: min(300px, calc(100vh - 32px));
+  max-height: calc(100vh - 32px);
+  resize: both;
+  overflow: auto;
   display: flex;
   flex-direction: column;
   padding: 14px 16px;
+  container: process-node-dialog / inline-size;
 }
-.process-node-dialog-body { overflow-y: auto; min-height: 0; }
+.process-node-dialog-body { flex: 1 1 auto; overflow: auto; min-width: 0; min-height: 0; }
 .process-node-dialog-actions { margin-top: 10px; }
 .process-node-dialog-actions button { min-width: 84px; }
 .process-node-detail { display: flex; flex-direction: column; gap: 10px; }
@@ -11965,6 +11974,8 @@ body.wizard .process-instantiate-field > label:not(.process-instantiate-boolean)
 .process-node-input,
 .process-node-textarea,
 .process-node-select {
+  width: 100%;
+  min-width: 0;
   background: #161b22;
   color: #e6edf3;
   border: 1px solid #30363d;
@@ -11991,7 +12002,7 @@ body.wizard .process-instantiate-field > label:not(.process-instantiate-boolean)
 .process-node-security-note { margin: 0; color: #e3a341; font-size: 11px; }
 .process-node-contact {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
   gap: 6px;
 }
 .process-node-contact > .process-node-field-label { grid-column: 1 / -1; }
@@ -12005,8 +12016,8 @@ body.wizard .process-instantiate-field > label:not(.process-instantiate-boolean)
   gap: 6px;
   background: #10151c;
 }
-.process-node-check-head { display: flex; align-items: flex-end; gap: 6px; }
-.process-node-check-head .process-node-field { flex: 1; }
+.process-node-check-head { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px; }
+.process-node-check-head .process-node-field { flex: 1 1 180px; min-width: 0; }
 .process-node-check-head .spacer { flex: 0; }
 .process-node-add { align-self: flex-start; }
 .process-node-empty { margin: 0; color: #8b949e; font-size: 12px; }
@@ -12019,6 +12030,20 @@ body.wizard .process-instantiate-field > label:not(.process-instantiate-boolean)
 .process-node-status { margin: 6px 0 0; min-height: 16px; font-size: 12px; color: #8b949e; }
 .process-node-status.is-error { color: #f85149; }
 .process-node-missing { color: #f85149; }
+/* Extra width should buy useful editing space, not just longer text inputs.
+   The query follows the dialog's dragged inline size (not the viewport), so
+   task sections reflow live when the standard resize grip crosses the wide
+   threshold. Default/narrow dialogs retain the familiar single column. */
+@container process-node-dialog (min-width: 840px) {
+  .process-node-detail {
+    display: block;
+    column-count: 2;
+    column-gap: 10px;
+  }
+  .process-node-detail-head { column-span: all; margin-bottom: 10px; }
+  .process-node-section { break-inside: avoid; margin-bottom: 10px; }
+  .process-node-check { break-inside: avoid; }
+}
 /* Wizard skin: violet chrome, gold accents — explicitly themed so no control
    falls back to UA defaults. */
 body.wizard .process-node-section { background: #181226; border-color: #4a3d6b; }

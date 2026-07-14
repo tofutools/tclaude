@@ -1024,6 +1024,18 @@ func baseStates() []dashsnap.State {
 			SettleMS: 1200,
 		},
 		{
+			Key:     "process-node-dialog-resized",
+			Title:   "Process node dialog — resized workspace",
+			Caption: "TCL-419: the standard persisted resize affordance expands the compound task editor into a two-column workspace; the scroll body and fixed action row remain usable in both skins.",
+			JS: nodeDialogStateJS(`ed.openNodeSettings('implement');` + nodeDialogSelfCheck("agent") + `
+  var dialog = document.querySelector('.process-node-dialog');
+  if (getComputedStyle(dialog).resize !== 'both') throw new Error('node dialog resize affordance is not active');
+  dialog.style.width = '1000px'; dialog.style.height = '760px';
+  var detail = dialog.querySelector('.process-node-detail');
+  if (getComputedStyle(detail).columnCount !== '2') throw new Error('wide node form did not reflow into columns');`),
+			SettleMS: 1200,
+		},
+		{
 			Key:     "process-node-dialog-task-human",
 			Title:   "Process node dialog — task, human work performer",
 			Caption: "The same shared performer editor keyed to human: ask text, choices, assignee — scrolled to the work section. No per-kind component forks (uniform performer contract).",

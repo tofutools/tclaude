@@ -69,6 +69,10 @@ func TestDashboardProcessNodeDialogAssets(t *testing.T) {
 		"process-node-cancel",
 		"bindDialogFocus",
 		"dispose.requestClose = requestCancel",
+		// The node dialog gets its own DB-backed size and opts out of the
+		// natural-content floor so complex forms remain shrinkable/scrollable.
+		"makeModalResizable(dialog, NODE_DIALOG_SIZE_PREF, { fitContent: false })",
+		"tclaude.dash.modalSize.process-node-editor",
 	)
 	if strings.Contains(dialog, "innerHTML") {
 		t.Error("process-node-dialog.js must not use innerHTML; template content is untrusted at render time")
@@ -111,6 +115,16 @@ func TestDashboardProcessNodeDialogAssets(t *testing.T) {
 		"body.wizard .process-node-section",
 		"body.wizard .process-node-close",
 		"body.wizard .process-node-dialog-actions",
+		// Both axes resize within viewport-aware bounds. The body owns scroll,
+		// while wide dialogs turn extra width into a two-column form.
+		"resize: both;",
+		"max-width: min(1100px, calc(100vw - 32px));",
+		"max-height: calc(100vh - 32px);",
+		".process-node-dialog-body { flex: 1 1 auto; overflow: auto;",
+		"grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));",
+		"@container process-node-dialog (min-width: 840px)",
+		"column-count: 2;",
+		".process-node-section { break-inside: avoid;",
 	)
 
 	// The dialog modules stay out of every eager entry module: only the
