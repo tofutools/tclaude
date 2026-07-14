@@ -629,6 +629,15 @@ rules may suppress it. Browsers supply the confirmation text, so it may refer
 generically to unsaved changes rather than naming the open terminal. Closing
 the last pane removes the guard; an idle dashboard never prompts.
 
+In 🧙 wizard mode, the Terminals tab and its popped-out browser terminals use
+the same purple-and-gold portal chrome as the rest of the dashboard. Each pane
+header has an **Arcane palette** checkbox beside **Copy** and **⧉ tab**. It
+recolours xterm's background, cursor, selection, and standard ANSI palette; it
+does not rewrite explicit RGB colours chosen by terminal applications.
+Unchecking it restores the neutral terminal palette everywhere. The choice is
+shared by all web-terminal panes and persisted in the dashboard preferences, so
+new panes and later dashboard sessions inherit it.
+
 Web terminals support the same everyday interactions as native terminal
 windows. An unmodified drag handled by tmux copies the selected text into its
 paste buffer and, when the browser grants clipboard access, into the browser

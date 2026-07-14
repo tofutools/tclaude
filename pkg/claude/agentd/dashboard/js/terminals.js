@@ -15,6 +15,8 @@
 // before this module (same arrangement as the dashboard).
 
 import { mountMux, normalizeSeed } from './terminals-core.js';
+import { initDashPrefs } from './prefs.js';
+import { initTerminalThemeSync } from './terminal-theme.js';
 
 const solo = new URLSearchParams(location.search).has('solo');
 if (solo) document.body.classList.add('solo');
@@ -47,6 +49,12 @@ function consumeHash() {
   // explicit auth-recovery event below.
   if (location.hash) history.replaceState(null, '', location.pathname + location.search);
   if (!seed) return;
+  // A pop-out inherits the dashboard theme it left. The palette preference is
+  // still read independently from the shared SQLite-backed dashboard prefs.
+  document.body.classList.toggle('wizard', seed.wizard === true);
+  document.dispatchEvent(new CustomEvent('tclaude:wizard', {
+    detail: { active: seed.wizard === true },
+  }));
   if (solo) soloSeed = seed;
   mux.openPane(seed);
   if (seed.hideConv) armDetachBeacon(seed.hideConv);
@@ -79,5 +87,14 @@ window.addEventListener('tclaude:auth-expired', (event) => {
     + '#open=' + encodeURIComponent(JSON.stringify(soloSeed));
 });
 
-window.addEventListener('hashchange', consumeHash);
-consumeHash();
+let prefsReady = false;
+window.addEventListener('hashchange', () => { if (prefsReady) consumeHash(); });
+// The standalone pop-out is a separate document, so hydrate its server-backed
+// preference cache BEFORE opening the terminal or enabling its checkbox. This
+// prevents a fast click from being overwritten by the in-flight initial GET.
+// The same-origin sync bridge then keeps this window and the dashboard live.
+initDashPrefs().then(() => {
+  prefsReady = true;
+  initTerminalThemeSync();
+  consumeHash();
+});

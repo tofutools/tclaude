@@ -63,6 +63,7 @@ import { bindRemoteAdmin, loadRemoteAdmin } from './remote-admin.js';
 import { bindCostDisplayToggle } from './cost-display-toggle.js';
 import { focusAccessRequest } from './mail-bridge.js';
 import { dashPrefs, initDashPrefs } from './prefs.js';
+import { initTerminalThemeSync } from './terminal-theme.js';
 import { recordGroupInteraction } from './last-group.js';
 import { loadSortState } from './sort.js';
 import { bindDock } from './dock.js';
@@ -138,6 +139,10 @@ export function sudoBadge(activeSudo, fallbackConvID) {
 // synchronous for the benign import cycles documented above.)
 (async () => {
   await initDashPrefs();
+  // Start cross-window terminal-palette synchronization only after the local
+  // preference cache is authoritative. Popped-out terminals do the same in
+  // terminals.js, so toggling either surface repaints the other immediately.
+  initTerminalThemeSync();
   // Preact islands call this stable action boundary rather than
   // importing refresh.js. The interval below remains the sole poll owner.
   configureDashboardActions({ refresh });

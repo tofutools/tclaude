@@ -68,5 +68,55 @@
 .mux-btn:hover { background: #2d333b; border-color: #3d4451; }
 .mux-btn[data-has-selection="false"] { opacity: 0.65; }
 
+.mux-palette-toggle {
+  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+  color: #9aa4b2; font-size: 11px; cursor: pointer; user-select: none;
+}
+.mux-palette-toggle[hidden] { display: none; }
+.mux-palette-toggle input { margin: 0; accent-color: #8b6dd6; cursor: pointer; }
+
 .mux-pane-xterm { flex: 1; min-height: 0; padding: 6px; overflow: hidden; }
 .mux-pane-xterm .xterm { height: 100%; }
+
+/* Wizard multiplexer chrome. This lives in the shared widget sheet so a
+   terminal popped into its own browser tab keeps the same portal frame. The
+   xterm canvas palette itself is controlled independently by the persisted
+   "Arcane palette" checkbox in terminal-theme.js. */
+body.wizard .mux-tabs {
+  background: linear-gradient(180deg, #211832 0%, #171024 100%);
+  border-bottom-color: #7a5db0;
+  box-shadow: inset 0 -1px 0 rgba(217, 180, 90, 0.18);
+}
+body.wizard .mux-tab {
+  background: #171024; border-color: #4a3a6b; color: #a997ca;
+}
+body.wizard .mux-tab:hover { color: #f3e6c0; border-color: #7a5db0; }
+body.wizard .mux-tab.active {
+  background: linear-gradient(180deg, #34234f 0%, #24183c 100%);
+  color: #f3e6c0; border-color: #d9b45a;
+  box-shadow: 0 -2px 8px rgba(169, 123, 214, 0.28);
+}
+body.wizard .mux-tab-close:hover { color: #f0a868; }
+body.wizard .mux-pane-header {
+  background: linear-gradient(180deg, #211832 0%, #171024 100%);
+  border-bottom-color: #4a3a6b;
+  box-shadow: inset 0 -1px 0 rgba(217, 180, 90, 0.12);
+}
+body.wizard .mux-pane-title {
+  color: #f3e6c0;
+  text-shadow: 0 0 7px rgba(169, 123, 214, 0.45);
+}
+body.wizard .mux-pane-status,
+body.wizard .terminal-interaction-hint { color: #a997ca; }
+body.wizard .mux-btn {
+  background: #2a1c43; border-color: #7a5db0; color: #e7d9f5;
+}
+body.wizard .mux-btn:hover {
+  background: #3a2a63; border-color: #d9b45a; color: #f3e6c0;
+}
+body.wizard .mux-palette-toggle { color: #d8ccea; }
+body.wizard .mux-palette-toggle:hover { color: #f3e6c0; }
+body.wizard .mux-pane-xterm {
+  background: #171024;
+  box-shadow: inset 0 0 0 1px rgba(122, 93, 176, 0.24);
+}
