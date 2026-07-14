@@ -301,21 +301,22 @@ const CONVERSATIONS_ACCESSORS = {
 };
 
 // The virtual "Pending" sub-table (render.js) — dashboard spawns still
-// behind a startup gate. A pending spawn has no conv-id yet (it is keyed
-// on its label), so the id column stays the label. Leading online-dot and
-// trailing focus-action columns are non-sortable. The default server order
-// is newest-pending-first, which dropping the sort falls back to.
+// behind a startup gate. Its stable agent_id is reserved before launch even
+// though its harness conv-id does not exist yet, so the ID column matches the
+// enrolled-agent table. Legacy pending rows fall back to the spawn label.
+// Leading online-dot and trailing action columns are non-sortable. The default
+// server order is newest-pending-first, which dropping the sort falls back to.
 const PENDING_COLS = [
   { label: '' },
-  { label: 'label', col: 'label' },
-  { label: 'name', col: 'name' },
-  { label: 'group', col: 'group' },
-  { label: 'dir', col: 'dir' },
-  { label: 'age', col: 'age' },
+  { label: 'ID', col: 'id' },
+  { label: 'Name', col: 'name' },
+  { label: 'Group', col: 'group' },
+  { label: 'CWD', col: 'dir' },
+  { label: 'Age', col: 'age' },
   { label: '' },
 ];
 const PENDING_ACCESSORS = {
-  label: p => p.label,
+  id:    p => p.agent_id || p.label,
   name:  p => p.name || p.role,
   group: p => p.group,
   dir:   p => p.cwd,

@@ -1291,12 +1291,16 @@ type dashboardReplacedGen struct {
 
 // dashboardPending is the snapshot view of one not-yet-enrolled
 // dashboard spawn (a pending_spawns row). It carries what the dashboard
-// needs to render the pending agent and drive its focus button: the
-// spawn Label (which is the session-row id AND the focus key — a pending
-// agent has no conv-id), its intended group/role/name/descr, whether its
-// tmux pane is still alive, and where it is gated (Cwd). Leaner than
+// needs to render the pending agent and drive its focus button: its stable
+// AgentID, the spawn Label (which is the session-row id AND the focus key — a
+// pending agent has no conv-id), its intended group/role/name/descr, whether
+// its tmux pane is still alive, and where it is gated (Cwd). Leaner than
 // dashboardAgent — a pending spawn has no groups/permissions/sudo to show.
 type dashboardPending struct {
+	// AgentID is reserved before the harness launches, so the pending row can
+	// show the same stable identity as the enrolled-agent table before a
+	// harness conversation id exists. Empty only for legacy pending rows.
+	AgentID string `json:"agent_id,omitempty"`
 	// Label is the spawn label = the session-row id. The focus button
 	// keys on THIS (not a conv-id, which does not exist yet).
 	Label string `json:"label"`
@@ -2273,9 +2277,10 @@ func resolveRetiredByDisplay(retiredBy, retiredByAgent string) string {
 // collectPendingSnapshot turns the pending_spawns rows into the
 // dashboard's "Pending" list — dashboard spawns whose conv-id has not
 // materialised yet (a live tmux pane stuck behind a startup gate). Each
-// carries the spawn label (the focus key — there is no conv-id), the
-// resolved group name, the spawn descriptors, and — from the spawn's
-// session row — whether its pane is still alive and where it is gated.
+// carries the reserved stable agent id, the spawn label (the focus key —
+// there is no conv-id), the resolved group name, the spawn descriptors, and
+// — from the spawn's session row — whether its pane is still alive and where
+// it is gated.
 // Newest spawn first, so the agent the operator just clicked sits at the
 // top. aliveSessions is the snapshot-shaped alive set the caller
 // pre-fetched; this function never spawns its own tmux probe. Returns an
@@ -2289,6 +2294,7 @@ func collectPendingSnapshot(aliveSessions map[string]struct{}) []dashboardPendin
 	names := loadGroupNames()
 	for _, p := range pendings {
 		dp := dashboardPending{
+			AgentID:   p.AgentID,
 			Label:     p.Label,
 			Group:     names[p.GroupID],
 			Role:      p.Role,

@@ -150,13 +150,15 @@ test("applySort('conversations', …) orders by last-activity timestamp", () => 
 test('PENDING spec exposes its sortable columns, dot + focus action inert', () => {
   assert.equal(PENDING_COLS[0].col, undefined);
   assert.equal(PENDING_COLS[PENDING_COLS.length - 1].col, undefined);
-  assert.deepEqual(colKeys(PENDING_COLS), ['label', 'name', 'group', 'dir', 'age']);
+  assert.deepEqual(colKeys(PENDING_COLS), ['id', 'name', 'group', 'dir', 'age']);
+  assert.deepEqual(PENDING_COLS.map(c => c.label), ['', 'ID', 'Name', 'Group', 'CWD', 'Age', '']);
 });
 
 test('PENDING name accessor falls back from name to role', () => {
   assert.equal(PENDING_ACCESSORS.name({ name: 'alice', role: 'dev' }), 'alice');
   assert.equal(PENDING_ACCESSORS.name({ role: 'dev' }), 'dev');
-  assert.equal(PENDING_ACCESSORS.label({ label: 'lbl-1' }), 'lbl-1');
+  assert.equal(PENDING_ACCESSORS.id({ agent_id: 'agt_123', label: 'lbl-1' }), 'agt_123');
+  assert.equal(PENDING_ACCESSORS.id({ label: 'lbl-1' }), 'lbl-1');
   assert.equal(PENDING_ACCESSORS.group({ group: 'g' }), 'g');
   assert.equal(PENDING_ACCESSORS.dir({ cwd: '/tmp/x' }), '/tmp/x');
   assert.equal(PENDING_ACCESSORS.age({ created_at: '2026-06-04T00:00:00Z' }), '2026-06-04T00:00:00Z');

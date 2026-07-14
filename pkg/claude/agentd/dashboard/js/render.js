@@ -378,7 +378,7 @@ function pendingTableHTML(rows) {
             ${applySort('pending', rows, PENDING_ACCESSORS).map(p => `
               <tr data-key="${esc(p.label)}" class="dnd-draggable" draggable="true" data-dnd-pending="1" data-dnd-conv="${esc(p.label)}" data-dnd-label="${esc(p.label)}">
                 <td>${onlineDot(p.online)}</td>
-                <td class="id">${esc(p.label)}</td>
+                <td class="id" title="${esc(idTooltip(p.agent_id, p.agent_id ? '' : p.label))}">${esc(shortAgentId(p.agent_id, '') || p.label)}</td>
                 <td><span class="rowname">${esc(p.name || p.role || '(unnamed)')}</span></td>
                 <td>${esc(p.group || '(none)')}</td>
                 <td><span class="muted" title="${esc(p.cwd || '')}">${esc(p.cwd ? shortCwd(p.cwd) : '')}</span></td>

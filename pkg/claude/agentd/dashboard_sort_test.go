@@ -29,13 +29,14 @@ func TestDashboardHTML_SortableColumnsWired(t *testing.T) {
 	// Every primary table opts in by rendering a sortHead(...) header.
 	// The virtual sub-tables (Retired / Conversations / Pending / Replaced
 	// generations) are included: they're the "non-real" groups that gained
-	// the same clickable, agent-id-leading headers as real groups.
+	// the same clickable headers as real groups.
 	for _, table := range []string{
 		"members",
 		"retired", "conversations", "pending", "replaced",
 	} {
 		must("sortHead('"+table+"'", table+" table renders a sortable header")
 	}
+	must("shortAgentId(p.agent_id, '') || p.label", "pending ID cell leads with its reserved stable id and preserves the full legacy label")
 	must("LINK_COLS.map(", "Links island uses the shared Links column specification")
 	// Jobs is the Preact pilot: its component maps the same JOBS_COLS spec to
 	// interactive keyed headers instead of emitting legacy sortHead HTML.
