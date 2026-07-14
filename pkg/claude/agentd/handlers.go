@@ -35,6 +35,7 @@ func handleInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]string{
 		"popup_base_url": popupBaseURL,
+		"idempotency":    "v1",
 	})
 }
 
