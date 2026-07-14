@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -30,9 +32,9 @@ import (
 // profiles / the role library by passing different slugs + a different brief.
 //
 // Shape decisions:
-//   - Fresh agent on every summon: repeat clicks spawn another independently
-//     named scribe, so concurrent editing tasks do not share conversational
-//     context, permissions, or launch settings.
+//   - Fresh by default; callers may opt into exact structured-scope reuse.
+//     Reuse requires an alive active agent with the same persisted kind/id and
+//     exact permission overrides, and refreshes its transient brief via inbox.
 //   - Scribes of one kind share the base-name group. executeSpawn is group-bound
 //     (no group-less spawn primitive), while a random suffix on each agent name
 //     keeps simultaneous scribes individually addressable.
@@ -67,13 +69,31 @@ type scribeSummonRequest struct {
 	// Exclusive turns Slugs into the exact positive capability set: every
 	// other registered permission is denied at birth.
 	Exclusive bool `json:"exclusive,omitempty"`
+	// Scope opts this summon into reuse. Kind and ID are bounded identifiers,
+	// never free-form prose: an empty ID is the kind's library scope, while a
+	// non-empty ID is one exact resource. The canonical scope is persisted on
+	// the scribe's membership; refreshed ref/hash context remains in Brief.
+	Scope *scribeReuseScope `json:"scope,omitempty"`
 	// Brief is the pre-briefing delivered to the scribe's inbox — the concept
 	// pointer + scope anchor the human's chat starts from. Same charset/length
 	// rule as any spawn initial_message.
 	Brief string `json:"brief"`
 }
 
-// scribeOutcome is summonScribe's result: the fresh scribe's conv-id and the
+type scribeReuseScope struct {
+	Kind string `json:"kind"`
+	ID   string `json:"id,omitempty"`
+}
+
+const (
+	scribeScopeDescrPrefix = "Reusable scribe scope: "
+	maxScribeScopeKindLen  = 64
+	maxScribeScopeIDLen    = 128
+)
+
+var scribeScopePartPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
+
+// scribeOutcome is summonScribe's result: the fresh or reused scribe's conv-id and the
 // open-window handshake (native vs the in-browser terminal fallback),
 // mirroring the spawn/open-window responses.
 type scribeOutcome struct {
@@ -178,8 +198,13 @@ func handleScribeSummon(w http.ResponseWriter, r *http.Request) {
 				"control characters are not", agent.MaxInitialMessageBytes))
 		return
 	}
+	scopeKey, scopeErr := canonicalScribeScope(body.Scope)
+	if scopeErr != "" {
+		writeError(w, http.StatusBadRequest, "scope", scopeErr)
+		return
+	}
 
-	out, fail := summonScribe(name, overrides, brief, body.Exclusive)
+	out, reused, fail := summonScribe(name, overrides, brief, body.Exclusive, scopeKey)
 	if fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
@@ -188,9 +213,7 @@ func handleScribeSummon(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{
 		"name":    out.Name,
 		"conv_id": out.ConvID,
-		// Kept for wire compatibility with existing dashboard/API clients. A
-		// summon now always creates a fresh agent.
-		"reused": false,
+		"reused":  reused,
 	}
 	if aid := peerAgentID(out.ConvID); aid != "" {
 		resp["agent_id"] = aid
@@ -205,6 +228,27 @@ func handleScribeSummon(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// canonicalScribeScope validates and canonicalises the structured reuse key.
+// The slash separator is unambiguous because neither component may contain
+// one. Raw briefs/template bodies never enter the key, name, cwd, or pane path.
+func canonicalScribeScope(scope *scribeReuseScope) (string, string) {
+	if scope == nil {
+		return "", ""
+	}
+	kind := strings.TrimSpace(scope.Kind)
+	id := strings.TrimSpace(scope.ID)
+	if kind == "" {
+		return "", "scope.kind is required"
+	}
+	if len(kind) > maxScribeScopeKindLen || !scribeScopePartPattern.MatchString(kind) {
+		return "", fmt.Sprintf("scope.kind must match %s and be at most %d characters", scribeScopePartPattern, maxScribeScopeKindLen)
+	}
+	if len(id) > maxScribeScopeIDLen || (id != "" && !scribeScopePartPattern.MatchString(id)) {
+		return "", fmt.Sprintf("scope.id must be empty or match %s and be at most %d characters", scribeScopePartPattern, maxScribeScopeIDLen)
+	}
+	return kind + "/" + id, ""
 }
 
 // handleDashboardScribeAPI is the cookie-auth /api twin: the dashboard cookie +
@@ -222,22 +266,27 @@ func handleDashboardScribeAPI(w http.ResponseWriter, r *http.Request) {
 // Summons are rare human actions, so a global lock costs nothing.
 var scribeSummonMu sync.Mutex
 
-// summonScribe is the reusable core: ensure the scribe-kind group, then
-// spawn a fresh, uniquely named agent in the shared, pre-trusted scribe workdir
-// with the birth-time grants and auto-focus. Existing live scribes keep running.
-func summonScribe(name string, overrides map[string]string, brief string, exclusive bool) (*scribeOutcome, *spawnFailure) {
+// summonScribe is the reusable core: ensure the scribe-kind group, reuse one
+// exact compatible structured scope when requested, or spawn a fresh uniquely
+// named agent in the shared pre-trusted workdir with birth-time grants.
+func summonScribe(name string, overrides map[string]string, brief string, exclusive bool, scopeKey string) (*scribeOutcome, bool, *spawnFailure) {
 	scribeSummonMu.Lock()
 	defer scribeSummonMu.Unlock()
 
 	g, fail := ensureScribeGroup(name)
 	if fail != nil {
-		return nil, fail
+		return nil, false, fail
 	}
 
 	// Dead sessions are no longer doing useful parallel work. Preserve the old
 	// cleanup behavior by unlinking them, while every live scribe stays in the
 	// group and continues its independent editing task.
 	pruneDeadScribes(g)
+	if scopeKey != "" {
+		if reused, reuseFail := reuseScopedScribe(g, scopeKey, overrides, brief); reused != nil || reuseFail != nil {
+			return reused, reused != nil, reuseFail
+		}
+	}
 
 	// Adopt the operator's configured scribe launch profile (JOH-371) BEFORE we
 	// resolve the trust-seed harness and spawn. Both the trust seed
@@ -253,7 +302,7 @@ func summonScribe(name string, overrides map[string]string, brief string, exclus
 	// a folder-trust prompt (JOH-369).
 	cwd, fail := ensureScribeWorkdir()
 	if fail != nil {
-		return nil, fail
+		return nil, false, fail
 	}
 	seedScribeDirTrust(scribeSpawnHarness(g), cwd)
 
@@ -263,6 +312,8 @@ func summonScribe(name string, overrides map[string]string, brief string, exclus
 	// the conv-id materialises for the grants + the response.
 	p := spawnParams{
 		Name:                uniqueScribeName(name),
+		Role:                scribeScopeRole(scopeKey),
+		Descr:               scribeScopeDescr(scopeKey),
 		Cwd:                 cwd,
 		InitialMessage:      brief,
 		AutoFocus:           !exclusive,
@@ -270,12 +321,12 @@ func summonScribe(name string, overrides map[string]string, brief string, exclus
 	}
 	outcome, spawnFail := executeSpawn(g, p)
 	if spawnFail != nil {
-		return nil, spawnFail
+		return nil, false, spawnFail
 	}
 	if exclusive {
 		if err := enforceExclusiveScribeOverrides(outcome.ConvID, overrides); err != nil {
 			killScribeSession(outcome.ConvID)
-			return nil, &spawnFailure{http.StatusInternalServerError, "permission",
+			return nil, false, &spawnFailure{http.StatusInternalServerError, "permission",
 				"capability-reducing scribe stopped after permission override failure: " + err.Error()}
 		}
 	}
@@ -286,7 +337,69 @@ func summonScribe(name string, overrides map[string]string, brief string, exclus
 	if exclusive {
 		openScribeWindow(outcome.ConvID, out)
 	}
-	return out, nil
+	return out, false, nil
+}
+
+func scribeScopeRole(scopeKey string) string {
+	if scopeKey == "" {
+		return ""
+	}
+	return "scribe"
+}
+
+func scribeScopeDescr(scopeKey string) string {
+	if scopeKey == "" {
+		return ""
+	}
+	return scribeScopeDescrPrefix + scopeKey
+}
+
+// reuseScopedScribe returns the one alive, active, permission-compatible
+// scribe for scopeKey. The caller holds scribeSummonMu, making lookup plus
+// potential spawn idempotent across concurrent clicks.
+func reuseScopedScribe(g *db.AgentGroup, scopeKey string, overrides map[string]string, brief string) (*scribeOutcome, *spawnFailure) {
+	members, err := db.ListAgentGroupMembers(g.ID)
+	if err != nil {
+		return nil, &spawnFailure{http.StatusInternalServerError, "group", "list reusable scribes: " + err.Error()}
+	}
+	wantDescr := scribeScopeDescr(scopeKey)
+	for _, member := range members {
+		if member.Descr != wantDescr || pickAliveSession(member.ConvID) == nil {
+			continue
+		}
+		state, err := db.AgentState(member.ConvID)
+		if err != nil || state != db.AgentStateActive {
+			continue
+		}
+		current, err := db.ListAgentPermissionOverridesForConv(member.ConvID)
+		if err != nil || !maps.Equal(current, overrides) {
+			continue
+		}
+		// Sudo changes the effective capability set and wins over permanent
+		// denies. Treat an elevated candidate as incompatible instead of
+		// revoking another agent's grants: scribe callers hold grant authority,
+		// not the distinct permissions.revoke authority.
+		activeSudo, err := db.ListActiveSudoGrants(member.ConvID)
+		if err != nil || len(activeSudo) != 0 {
+			continue
+		}
+		_, err = db.InsertAgentMessage(&db.AgentMessage{
+			GroupID:      g.ID,
+			FromConv:     "",
+			ToConv:       member.ConvID,
+			Subject:      "Scribe scope refreshed",
+			Body:         brief,
+			ToRecipients: []string{member.ConvID},
+		})
+		if err != nil {
+			return nil, &spawnFailure{http.StatusInternalServerError, "brief", "refresh reusable scribe context: " + err.Error()}
+		}
+		enqueueDeliveryForConv(member.ConvID)
+		out := &scribeOutcome{Name: agent.FreshTitle(member.ConvID), ConvID: member.ConvID}
+		openScribeWindow(member.ConvID, out)
+		return out, nil
+	}
+	return nil, nil
 }
 
 // scribeWorkdir returns the ONE shared workdir all scribes spawn into,
@@ -349,7 +462,7 @@ func scribeSpawnHarness(g *db.AgentGroup) string {
 // "" clears the stamp (harness default). A name whose profile was
 // deleted/renamed is stamped as-is and self-heals to the default at resolution
 // time (groupDefaultProfile → nil), mirroring `tclaude ask`'s live self-heal.
-// Called on every summon, because every summon creates a fresh scribe.
+// Called on every fresh summon; a compatible reuse keeps its running profile.
 //
 // Best-effort: a config-load or DB-write failure logs and leaves the group's
 // existing default profile in place (worst case the scribe launches on the

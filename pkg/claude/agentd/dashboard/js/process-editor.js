@@ -149,6 +149,9 @@ export class ProcessTemplateEditor {
       title: 'Process commands (Ctrl/Cmd-K)', 'aria-label': 'Open process commands (Ctrl/Cmd-K)',
       text: '⌘K commands',
     });
+    this.scribeButton = h('button', { class: 'process-action process-scribe-action', type: 'button', title: 'Open an agent scoped to this exact process template' },
+      h('span', { class: 'process-scribe-plain', text: 'Edit with agent' }),
+      h('span', { class: 'process-scribe-wizard', text: 'Consult a process scribe' }));
     this.paletteButton = h('button', { class: 'process-action', type: 'button', title: 'Toggle the node palette', text: '⬒ palette' });
     this.saveButton = h('button', { class: 'process-action primary', type: 'button', title: 'Save a new version', text: 'Save' });
 
@@ -158,7 +161,7 @@ export class ProcessTemplateEditor {
       this.dirtyBadge,
       this.statusLine,
       h('span', { class: 'spacer' }),
-      this.settingsButton, this.paramsButton, this.undoButton, this.redoButton, this.paletteButton, this.commandsButton, this.instantiateButton, this.saveButton,
+      this.settingsButton, this.paramsButton, this.undoButton, this.redoButton, this.paletteButton, this.commandsButton, this.scribeButton, this.instantiateButton, this.saveButton,
     );
 
     this.externalMessage = h('span', { class: 'process-editor-external-message', text: 'Template changed externally (new version)' });
@@ -209,6 +212,7 @@ export class ProcessTemplateEditor {
     this.saveButton.addEventListener('click', () => this.save(), { signal });
     this.instantiateButton.addEventListener('click', () => this.requestInstantiate(), { signal });
     this.commandsButton.addEventListener('click', () => requestCommandPalette(), { signal });
+    this.scribeButton.addEventListener('click', () => this.requestScribe(), { signal });
     this.externalReloadButton.addEventListener('click', () => this.reloadExternalChange(), { signal });
     this.externalKeepButton.addEventListener('click', () => this.keepExternalChange(), { signal });
     this.undoButton.addEventListener('click', () => this.applyHistory('undo'), { signal });
@@ -327,6 +331,7 @@ export class ProcessTemplateEditor {
     if (this.settingsButton) this.settingsButton.disabled = externalPending;
     if (this.paramsButton) this.paramsButton.disabled = externalPending || this.savePending;
     if (this.instantiateButton) this.instantiateButton.disabled = externalPending || this.savePending;
+    if (this.scribeButton) this.scribeButton.disabled = externalPending || this.savePending;
     if (this.paletteButton) this.paletteButton.disabled = externalPending;
     // A blank editor has not completed a save, even if a force retry adopted
     // an existing CAS head. Keep its retry path armed after a failed or
@@ -1129,6 +1134,72 @@ export class ProcessTemplateEditor {
         this.updateChrome();
       }
     }
+  }
+
+  async requestScribe() {
+    if (!this.options.onScribe || this.savePending || externalInteractionPending(this)) return false;
+    const originalBlank = this.blank;
+    if (this.dirty) {
+      const choice = await this.choiceModal({
+        title: 'Resolve unsaved edits before handing off',
+        body: 'A process scribe edits canonical state outside this buffer. Save these edits first, discard them explicitly, or cancel the handoff.',
+        choices: [
+          { key: 'discard', label: 'Discard local edits', danger: true },
+          { key: 'save', label: 'Save changes first', primary: true },
+        ],
+      });
+      if (choice === 'save') {
+        if (!(await this.save()) || this.dirty) return false;
+      } else if (choice === 'discard') {
+        let view;
+        try {
+          const id = (this.model.template.id || '').trim();
+          if (originalBlank && !this.model.sourceHash) {
+            view = blankEditView(id);
+          } else {
+            const guardedModel = this.model;
+            const guardedRev = guardedModel.rev;
+            const guardedModal = this.modalDispose;
+            const guardedInline = this.inlineCommit;
+            const requestSeq = ++this.externalReloadSeq;
+            this.externalReloadPending = true;
+            this.updateChrome?.();
+            try {
+              view = await fetchEditView(id);
+              if (requestSeq !== this.externalReloadSeq || this.abort.signal.aborted) return false;
+              if (this.model !== guardedModel || guardedModel.rev !== guardedRev || this.savePending
+                  || this.modalDispose !== guardedModal || this.inlineCommit !== guardedInline
+                  || this.pendingMove || this.band) {
+                this.status('Scribe handoff cancelled because the editor changed while canonical state was loading.');
+                return false;
+              }
+            } finally {
+              if (requestSeq === this.externalReloadSeq) {
+                this.externalReloadPending = false;
+                this.updateChrome?.();
+              }
+            }
+          }
+          this.model = new ProcessEditModel(view, this.model.config);
+          this.blank = originalBlank && !view.sourceHash;
+          this.selection = null;
+          this.validation?.applyDiagnostics(view.diagnostics || []);
+          this.refresh({ fit: true });
+          this.status('Discarded local edits before opening the scribe.');
+        } catch (error) {
+          this.status(`Could not discard local edits safely: ${error.message}`, true);
+          return false;
+        }
+      } else {
+        return false;
+      }
+    }
+    const id = (this.model.template.id || '').trim();
+    return !!(await this.options.onScribe({
+      kind: 'template', id,
+      currentRef: this.model.currentRef || '', sourceHash: this.model.sourceHash || '',
+      isNew: this.blank && !this.model.sourceHash,
+    }));
   }
 
   async saveRequest(requestSeq) {

@@ -27,7 +27,7 @@ function RequestBody({ request, label, retry, children }) {
 function Templates({ current, actions }) {
   const rows = current.templates;
   return html`<div id="process-panel-templates" class="process-panel active" role="tabpanel" aria-label="Process templates">
-    <div class="filter-bar process-toolbar"><strong>Reusable process graphs</strong><span class="spacer"></span><button id="process-template-new" class="process-action primary" type="button" onClick=${() => actions.openEditor('new-process', true)}>+ new template</button></div>
+    <div class="filter-bar process-toolbar"><strong>Reusable process graphs</strong><span class="spacer"></span><button id="process-scribe-library" class="process-action" type="button" title="Open a scoped agent that can safely author process templates" onClick=${() => actions.summonScribe({ kind: 'library' })}><span class="process-scribe-plain">Edit with agent</span><span class="process-scribe-wizard">Consult a process scribe</span></button><button id="process-template-new" class="process-action primary" type="button" onClick=${() => actions.openEditor('new-process', true)}>+ new template</button></div>
     <div id="process-templates-list" class="process-list" aria-busy=${current.requests.templates.phase === 'loading'}>
       <${RequestBody} request=${current.requests.templates} label="templates" retry=${() => actions.load('templates')}>
         ${rows.length === 0 ? html`<div class="process-placeholder"><h3>No process templates yet</h3><p>Create a blank template to start shaping a repeatable graph.</p></div>` : html`<table><thead><tr><th>Template</th><th>Description</th><th>Latest</th><th>Versions</th><th></th></tr></thead><tbody>
@@ -96,7 +96,11 @@ export function ProcessEditorBoundary({ spec, state, actions, confirmDiscard, op
     });
     loadEditor(mountRef.current, {
       id: spec.id, blank: spec.blank,
-      config: { confirmDiscard, onInstantiate: actions?.openInstantiation ? (value) => actions.openInstantiation(value) : undefined },
+      config: {
+        confirmDiscard,
+        onInstantiate: actions?.openInstantiation ? (value) => actions.openInstantiation(value) : undefined,
+        onScribe: actions?.summonScribe ? (value) => actions.summonScribe(value) : undefined,
+      },
     }).then((value) => { editor = value; if (disposed) editor?.destroy?.(); else state.setEditor(editor); }).catch((error) => { if (!disposed) { setError(error.message); state.setNotice(`Could not open editor: ${error.message}`); } });
     return () => { disposed = true; state.setEditor(null); editor?.destroy?.(); };
   }, [spec.key]);

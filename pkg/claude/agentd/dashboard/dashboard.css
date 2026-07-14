@@ -5104,6 +5104,9 @@ body.hide-processes #tab-processes { display: none; }
 .process-panel { display: none; }
 .process-panel.active { display: block; }
 .process-toolbar { min-height: 34px; }
+.process-scribe-wizard { display: none; }
+body.wizard #tab-processes .process-scribe-plain { display: none; }
+body.wizard #tab-processes .process-scribe-wizard { display: inline; }
 .process-notice { color: #8b949e; font-size: 12px; }
 .process-list table { width: 100%; border-collapse: collapse; }
 .process-list th, .process-list td { padding: 9px 10px; border-bottom: 1px solid #21262d; text-align: left; vertical-align: top; }
@@ -11967,6 +11970,17 @@ body.wizard .process-palette-card { background: #2c2042; border-color: #4a3d6b; 
 body.wizard .process-palette-card:hover { border-color: #d4af37; }
 body.wizard .process-editor-band { stroke: #d4af37; }
 body.wizard .process-template-id-locked { color: #a99bc0; }
+body.wizard .process-editor-modal .modal {
+  background: #211832; border-color: #6d5695; color: #f3e6c0;
+}
+body.wizard .process-editor-modal .modal h3 { color: #f3e6c0; }
+body.wizard .process-editor-modal .modal p { color: #e7d9f5; }
+body.wizard .process-editor-modal .modal-buttons button:not(.confirm-danger) {
+  background: #2c2042; border-color: #6d5695; color: #f3e6c0;
+}
+body.wizard .process-editor-modal .modal-buttons button.primary {
+  background: #6d4aa2; border-color: #d4af37;
+}
 body.wizard .process-param-dialog,
 body.wizard .process-instantiate-dialog { background: #211832; border-color: #6d5695; color: #f3e6c0; }
 body.wizard .process-param-row,

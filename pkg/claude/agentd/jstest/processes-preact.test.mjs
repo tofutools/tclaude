@@ -63,6 +63,44 @@ test('Processes actions preserve API routes, single-flight loads, comment gate, 
   assert.equal(discardPrompts, 1);
 });
 
+test('process scribe actions send bounded structured scope, exact grants, and recover visibly', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const requests = []; const notices = [];
+  const actions = createProcessesActions({
+    state, notify: (...args) => notices.push(args),
+    fetchImpl: async (path, options) => {
+      requests.push({ path, options });
+      return { ok: true, json: async () => ({ name: 'process-scribe-12345678', conv_id: 'scribe-conv', reused: true, focus_mode: 'native' }) };
+    },
+  });
+  const hash = 'a'.repeat(64); const sourceHash = 'b'.repeat(64);
+  const result = await actions.summonScribe({
+    kind: 'template', id: 'release-flow', currentRef: `release-flow@sha256:${hash}`, sourceHash, isNew: false,
+  });
+  assert.equal(result.conv_id, 'scribe-conv');
+  const request = requests[0]; const body = JSON.parse(request.options.body);
+  assert.equal(request.path, '/api/scribe');
+  assert.equal(request.options.credentials, 'same-origin');
+  assert.deepEqual(body.scope, { kind: 'process-template', id: 'release-flow' });
+  assert.deepEqual(body.slugs, ['process.templates.read', 'process.templates.manage']);
+  assert.equal(body.exclusive, true, 'the two process-template grants are the complete effective capability set');
+  assert.match(body.brief, new RegExp(sourceHash));
+  assert.match(state.notice.value, /Reopened process scribe/);
+
+  const failed = createProcessesActions({
+    state, notify: (...args) => notices.push(args),
+    fetchImpl: async () => ({ ok: false, status: 503, statusText: 'Unavailable', json: async () => ({ message: 'spawn binary missing' }) }),
+  });
+  assert.equal(await failed.summonScribe({ kind: 'library' }), null);
+  assert.match(state.notice.value, /Process scribe unavailable: spawn binary missing/);
+  assert.match(notices.at(-1)[0], /Check the agent daemon and Scribe defaults, then retry/);
+  assert.equal(notices.at(-1)[1], true);
+});
+
 test('instantiate actions load an exact ref, POST string params, and navigate to its viewer', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([
@@ -596,22 +634,49 @@ test('imperative editor boundary mounts once, survives parent updates, updates b
   const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
   let mounts = 0; let destroys = 0; let received = null;
   const confirmDiscard = async () => true;
+  let summoned = null;
+  const summonScribe = async (value) => { summoned = value; return { ok: true }; };
+  const actions = { summonScribe };
   const openEditor = async (_mount, options) => {
     mounts += 1; received = options;
     return { model: { dirty: false }, destroy() { destroys += 1; } };
   };
   const first = { id: 'a', blank: false, key: 'a:1' };
-  const mounted = await harness.mount(harness.html`<${ProcessEditorBoundary} spec=${first} state=${state} confirmDiscard=${confirmDiscard} openEditor=${openEditor} />`);
+  const mounted = await harness.mount(harness.html`<${ProcessEditorBoundary} spec=${first} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} openEditor=${openEditor} />`);
   assert.equal(mounts, 1);
   assert.equal(received.id, 'a');
   assert.equal(received.blank, false);
   assert.equal(received.config.confirmDiscard, confirmDiscard, 'the shared discard dialog reaches node editor transactions');
+  assert.deepEqual(await received.config.onScribe({ kind: 'library' }), { ok: true });
+  assert.deepEqual(summoned, { kind: 'library' }, 'the scoped scribe action reaches the imperative editor');
   state.setNotice('unrelated');
-  await mounted.rerender(harness.html`<${ProcessEditorBoundary} spec=${first} state=${state} confirmDiscard=${confirmDiscard} openEditor=${openEditor} />`);
+  await mounted.rerender(harness.html`<${ProcessEditorBoundary} spec=${first} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} openEditor=${openEditor} />`);
   assert.equal(mounts, 1, 'unrelated parent state does not recreate graph');
-  await mounted.rerender(harness.html`<${ProcessEditorBoundary} spec=${{ id: 'b', blank: false, key: 'b:1' }} state=${state} confirmDiscard=${confirmDiscard} openEditor=${openEditor} />`);
+  await mounted.rerender(harness.html`<${ProcessEditorBoundary} spec=${{ id: 'b', blank: false, key: 'b:1' }} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} openEditor=${openEditor} />`);
   assert.equal(mounts, 2); assert.equal(destroys, 1);
   await mounted.unmount(); assert.equal(destroys, 2);
+});
+
+test('process template library renders both-skin scribe entry and sends library scope', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { ProcessesApp }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-island.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  state.templatesRequest.commitRequest(state.templatesRequest.beginRequest(), { templates: [] });
+  const scopes = [];
+  const actions = {
+    refreshActive() {}, load() {}, observeTemplateHeads() {}, activateSubtab() {}, openEditor() {}, closeCanvas() {},
+    summonScribe(scope) { scopes.push(scope); },
+  };
+  const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
+  const button = mounted.container.querySelector('#process-scribe-library');
+  assert.ok(button);
+  assert.match(button.querySelector('.process-scribe-plain').textContent, /Edit with agent/);
+  assert.match(button.querySelector('.process-scribe-wizard').textContent, /process scribe/);
+  harness.fireEvent(button, 'click');
+  assert.deepEqual(scopes, [{ kind: 'library' }]);
+  await mounted.unmount();
 });
 
 test('editor boundary exposes startup failures inside the canvas', async (t) => {
