@@ -29,11 +29,15 @@ func GetNotifyTime(sessionID string) (time.Time, bool, error) {
 
 // SetNotifyTime records the current time as the last notification time for a session.
 func SetNotifyTime(sessionID string) error {
+	return setNotifyTimeAt(sessionID, time.Now())
+}
+
+func setNotifyTimeAt(sessionID string, notifiedAt time.Time) error {
 	db, err := Open()
 	if err != nil {
 		return err
 	}
 	_, err = db.Exec(`INSERT OR REPLACE INTO notify_state (session_id, notified_at) VALUES (?, ?)`,
-		sessionID, time.Now().Format(time.RFC3339Nano))
+		sessionID, notifiedAt.Format(time.RFC3339Nano))
 	return err
 }

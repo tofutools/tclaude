@@ -45,6 +45,18 @@ func TestSessionHandle(t *testing.T) {
 		"with no tmux name the full id is the fallback handle")
 }
 
+func setSessionUpdatedAt(t *testing.T, id string, updatedAt time.Time) {
+	t.Helper()
+	d, err := db.Open()
+	require.NoError(t, err)
+	result, err := d.Exec(`UPDATE sessions SET updated_at = ? WHERE id = ?`,
+		updatedAt.Format(time.RFC3339Nano), id)
+	require.NoError(t, err)
+	rows, err := result.RowsAffected()
+	require.NoError(t, err)
+	require.Equal(t, int64(1), rows, "session %q must exist", id)
+}
+
 // The core regression: two conversations sharing an 8-char prefix keep two
 // distinct session rows, and short ids still resolve as CLI input.
 func TestSessionPK_FullUUID_NoPrefixCollision(t *testing.T) {
@@ -104,12 +116,12 @@ func TestFindSession_StaleTmuxName_PrefersLiveOwner(t *testing.T) {
 	require.NoError(t, SaveSessionState(&SessionState{
 		ID: stale, ConvID: stale, TmuxSession: "d0e9fa14", Status: StatusExited,
 	}))
-	// Force a distinct, later updated_at for the live row (SaveSession stamps
-	// updated_at = now on each write).
-	time.Sleep(5 * time.Millisecond)
 	require.NoError(t, SaveSessionState(&SessionState{
 		ID: live, ConvID: live, TmuxSession: "d0e9fa14", Status: StatusIdle,
 	}))
+	staleUpdatedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	setSessionUpdatedAt(t, stale, staleUpdatedAt)
+	setSessionUpdatedAt(t, live, staleUpdatedAt.Add(time.Minute))
 
 	got, err := findSession("d0e9fa14")
 	require.NoError(t, err)
@@ -277,13 +289,15 @@ func TestLiveSessionForConv_MultiRow_PrefersLiveOverFreshDead(t *testing.T) {
 	require.NoError(t, SaveSessionState(&SessionState{
 		ID: conv, ConvID: conv, TmuxSession: "livename", Status: StatusIdle,
 	}))
-	// ...then a DEAD sibling row written later, making it the freshest by
+	// ...then a DEAD sibling row made fresher by
 	// updated_at (FindSessionByConvID's ORDER BY updated_at DESC LIMIT 1 would
 	// return this one and report no live session).
-	time.Sleep(5 * time.Millisecond)
 	require.NoError(t, SaveSessionState(&SessionState{
 		ID: "spwn-stale", ConvID: conv, TmuxSession: "spwn-stale", Status: StatusExited,
 	}))
+	liveUpdatedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	setSessionUpdatedAt(t, conv, liveUpdatedAt)
+	setSessionUpdatedAt(t, "spwn-stale", liveUpdatedAt.Add(time.Minute))
 
 	got := LiveSessionForConv(conv)
 	require.NotNil(t, got, "the live row must be found even when a dead sibling row is more recently updated")
@@ -310,12 +324,14 @@ func TestFindSession_PrefersLiveOwnerOverExitedNamesake(t *testing.T) {
 	require.NoError(t, SaveSessionState(&SessionState{
 		ID: live, ConvID: live, TmuxSession: "d0e9fa14", Status: StatusIdle,
 	}))
-	// Stale exited row written later (newer updated_at): an old convID[:8] PK
+	// Stale exited row made newer by updated_at: an old convID[:8] PK
 	// that recorded the same tmux name before it exited.
-	time.Sleep(5 * time.Millisecond)
 	require.NoError(t, SaveSessionState(&SessionState{
 		ID: "d0e9fa14", ConvID: "d0e9fa14-2222-4222-8222-222222222222", TmuxSession: "d0e9fa14", Status: StatusExited,
 	}))
+	liveUpdatedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	setSessionUpdatedAt(t, live, liveUpdatedAt)
+	setSessionUpdatedAt(t, "d0e9fa14", liveUpdatedAt.Add(time.Minute))
 
 	got, err := findSession("d0e9fa14")
 	require.NoError(t, err)

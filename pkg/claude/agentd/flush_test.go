@@ -89,18 +89,17 @@ func TestFlush_DeliversUndeliveredOldestFirst(t *testing.T) {
 	setupTestDB(t)
 
 	g, _ := db.CreateAgentGroup("alpha", "")
+	createdAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	// Insert 3 undelivered messages addressed to "me".
 	id1, _ := db.InsertAgentMessage(&db.AgentMessage{
-		GroupID: g, FromConv: "peer", ToConv: "me", Body: "first",
+		GroupID: g, FromConv: "peer", ToConv: "me", Body: "first", CreatedAt: createdAt,
 	})
-	time.Sleep(2 * time.Millisecond)
 	id2, _ := db.InsertAgentMessage(&db.AgentMessage{
-		GroupID: g, FromConv: "peer", ToConv: "me", Body: "second",
+		GroupID: g, FromConv: "peer", ToConv: "me", Body: "second", CreatedAt: createdAt.Add(time.Minute),
 	})
-	time.Sleep(2 * time.Millisecond)
 	id3, _ := db.InsertAgentMessage(&db.AgentMessage{
-		GroupID: g, FromConv: "peer", ToConv: "me", Body: "third",
+		GroupID: g, FromConv: "peer", ToConv: "me", Body: "third", CreatedAt: createdAt.Add(2 * time.Minute),
 	})
 
 	// One already-delivered message — must not appear.
