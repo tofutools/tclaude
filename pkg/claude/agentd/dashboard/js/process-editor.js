@@ -820,7 +820,7 @@ export class ProcessTemplateEditor {
     const choices = midGraph.length ? [
       { key: 'rewire', label: 'Delete + rewire through', primary: true },
       { key: 'drop', label: 'Delete + drop edges', danger: true },
-    ] : [{ key: 'drop', label: 'Delete selection', danger: true }];
+    ] : [{ key: 'drop', label: 'Delete selection', danger: true, initialFocus: true }];
     const choice = await this.choiceModal({
       title: `Delete ${subject}?`,
       body: midGraph.length
@@ -1064,7 +1064,7 @@ export class ProcessTemplateEditor {
       document.addEventListener('keydown', onKey, true);
       this.modalDispose = done;
       document.body.append(overlay);
-      (buttons.find((_, index) => choices[index].primary) || cancel).focus();
+      (buttons.find((_, index) => choices[index].initialFocus || choices[index].primary) || cancel).focus();
     });
   }
 }
