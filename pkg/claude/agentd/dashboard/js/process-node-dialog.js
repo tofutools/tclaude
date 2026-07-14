@@ -74,13 +74,15 @@ export function buildNodeDetail(model, nodeId, { mode = 'edit', commit = null, o
   // Associate a commit with the control whose raw DOM value produced it.
   // The transactional wrapper uses this identity to retain rejected values
   // (for example a duplicate check id) until that same control is corrected.
-  const applyFromControl = (controlEl, apply, value) => {
+  const applyFromControl = (controlEl, apply, value, restore) => {
     if (!apply) return true;
     commit.activeControl = controlEl;
     try {
       const accepted = apply(value) !== false;
-      if (accepted) controlEl.removeAttribute('aria-invalid');
-      else controlEl.setAttribute('aria-invalid', 'true');
+      if (accepted || commit.lastFailure === 'blocked') {
+        controlEl.removeAttribute('aria-invalid');
+        if (!accepted) restore?.();
+      } else controlEl.setAttribute('aria-invalid', 'true');
       return accepted;
     } finally {
       commit.activeControl = null;
@@ -95,7 +97,7 @@ export function buildNodeDetail(model, nodeId, { mode = 'edit', commit = null, o
     }));
     input.value = value || '';
     if (apply && !readOnly) input.addEventListener('change', (event) => {
-      if (!applyFromControl(input, apply, input.value)) event.preventDefault();
+      if (!applyFromControl(input, apply, input.value, () => { input.value = value || ''; })) event.preventDefault();
     });
     const field = h('label', { class: 'field process-node-field' },
       h('span', { class: 'process-node-field-label', text: label }), input);
@@ -113,7 +115,11 @@ export function buildNodeDetail(model, nodeId, { mode = 'edit', commit = null, o
       value: option, text: option, selected: option === selectedValue ? '' : undefined,
     }));
     if (apply && !readOnly) select.addEventListener('change', (event) => {
-      if (!applyFromControl(select, apply, select.value)) event.preventDefault();
+      if (!applyFromControl(select, apply, select.value, () => {
+        for (const option of select.querySelectorAll('option')) {
+          option.selected = option.value === selectedValue;
+        }
+      })) event.preventDefault();
     });
     return h('label', { class: 'field process-node-field' },
       h('span', { class: 'process-node-field-label', text: label }), select);
@@ -175,7 +181,7 @@ export function buildNodeDetail(model, nodeId, { mode = 'edit', commit = null, o
     const checkbox = control(h('input', { type: 'checkbox', class: 'process-node-toggle' }));
     checkbox.checked = enabled;
     if (!readOnly) checkbox.addEventListener('change', (event) => {
-      if (!applyFromControl(checkbox, apply, checkbox.checked)) event.preventDefault();
+      if (!applyFromControl(checkbox, apply, checkbox.checked, () => { checkbox.checked = enabled; })) event.preventDefault();
     });
     return h('label', { class: 'process-node-stage-toggle' }, checkbox,
       h('span', { text: label }));
@@ -410,8 +416,10 @@ export function openNodeDialog({
   // draft and edit model untouched. Save is the only model mutation path.
   const commit = (mutate) => {
     const source = commit.activeControl;
+    commit.lastFailure = null;
     if (invalidControls.size && !invalidControls.has(source)) {
-      status.textContent = 'Correct the invalid field before making other changes.';
+      commit.lastFailure = 'blocked';
+      status.textContent = 'Correct the highlighted invalid field first; this change was not applied.';
       status.classList.add('is-error');
       return false;
     }
@@ -422,6 +430,7 @@ export function openNodeDialog({
       changed = JSON.stringify(next) !== JSON.stringify(draft);
       if (changed) draft = next;
     } catch (error) {
+      commit.lastFailure = 'invalid';
       if (source) invalidControls.add(source);
       status.textContent = error.message;
       status.classList.add('is-error');

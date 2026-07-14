@@ -153,6 +153,14 @@ test('rejected raw input stays dirty: Save remains open and Cancel confirms', as
   assert.match(overlay.querySelector('.process-node-status').textContent, /duplicate check id/);
   assert.equal(dispose.isDirty(), true, 'a rejected raw value still gates dismissal');
 
+  const label = overlay.querySelector('.process-node-detail > .process-node-section .process-node-input');
+  label.focus();
+  label.value = 'Renamed';
+  harness.fireEvent(label, 'change');
+  assert.equal(label.value, 'Work', 'a second edit is reverted immediately instead of disappearing on a later render');
+  assert.equal(label.hasAttribute('aria-invalid'), false, 'the unchanged field is not misrepresented as invalid');
+  assert.match(overlay.querySelector('.process-node-status').textContent, /change was not applied/);
+
   harness.fireEvent(overlay.querySelector('.process-node-cancel'), 'click');
   await settle();
   assert.equal(confirmations, 1);
@@ -161,8 +169,14 @@ test('rejected raw input stays dirty: Save remains open and Cancel confirms', as
   secondID.focus();
   secondID.value = 'verify';
   harness.fireEvent(secondID, 'change');
+  const correctedLabel = overlay.querySelector('.process-node-detail > .process-node-section .process-node-input');
+  assert.equal(correctedLabel.value, 'Work', 'correcting the invalid field rerenders only committed values');
+  correctedLabel.focus();
+  correctedLabel.value = 'Renamed';
+  harness.fireEvent(correctedLabel, 'change');
   harness.fireEvent(harness.document.querySelector('.process-node-save'), 'click');
   assert.equal(model.node('work').checks[1].id, 'verify');
+  assert.equal(model.node('work').name, 'Renamed');
   assert.equal(model.undoStack.length, 1);
   assert.equal(harness.document.querySelector('.process-node-modal'), null);
 });
