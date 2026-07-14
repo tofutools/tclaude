@@ -23,7 +23,9 @@ import { renderDock } from './dock.js';
 // row-actions rename-rollback). All deliberate, benign cycles (see
 // render.js): TDZ-safe — no top-level code reads a cyclic import.
 import { renameEditing } from './row-actions.js';
-import { closeTerminalsForWindowOp, openWebWindowPane } from './terminals-tab.js';
+import {
+  closeTerminalsForWindowOp, openWebWindowPane, reconcileTerminalsForAgentRoster,
+} from './terminals-tab.js';
 import { lastSnapshot, setLastSnapshot, webTerminalDefault } from './dashboard.js';
 import { setVegasRegularMode, isWizardActive, wizWord } from './slop.js';
 import { setHScrollFollow } from './hscroll.js';
@@ -258,6 +260,11 @@ export async function refresh() {
     // the 📝 chip in each group header is hidden unless body.show-group-description
     // is present, brought back only by an explicit opt-in. Plain class toggle.
     document.body.classList.toggle('show-group-description', !!data.show_group_description);
+    // Close every per-agent terminal whose owner just left the authoritative
+    // active roster. This snapshot transition catches retirement no matter
+    // which dashboard / CLI / agent initiated it; the mux leaves group shells
+    // untouched and performs the reliable detach for live-session panes.
+    reconcileTerminalsForAgentRoster(prevSnap.agents, data.agents);
     // The leading ● is rendered by CSS (#status::before) so it can
     // pick up the green "live" colour without us round-tripping HTML
     // through showStatus.
