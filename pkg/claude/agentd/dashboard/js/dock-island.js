@@ -40,7 +40,6 @@ function DockCard({ section, item, openMenu, setOpenMenu, clipHost, layoutVersio
   const detailsRef = useRef(null);
   const [opensUp, setOpensUp] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [detailsOpenUp, setDetailsOpenUp] = useState(false);
   const [detailsPosition, setDetailsPosition] = useState(null);
   const draggable = section.drag ? 'true' : 'false';
   const detailsID = `${useId()}-dock-details`;
@@ -66,23 +65,25 @@ function DockCard({ section, item, openMenu, setOpenMenu, clipHost, layoutVersio
     const cardRect = cardRef.current.getBoundingClientRect();
     const detailsRect = detailsRef.current.getBoundingClientRect();
     const detailsHeight = detailsRef.current.scrollHeight || detailsRect.height;
-    const roomBelow = clip.bottom - cardRect.bottom;
-    const roomAbove = cardRect.top - clip.top;
-    const openUp = detailsHeight > roomBelow && roomAbove > roomBelow;
-    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || clip.bottom;
-    setDetailsOpenUp(openUp);
+    const availableHeight = Math.max(0, clip.bottom - clip.top);
+    const visibleHeight = Math.min(detailsHeight, availableHeight);
+    const top = Math.min(
+      Math.max(cardRect.top, clip.top),
+      Math.max(clip.top, clip.bottom - visibleHeight),
+    );
+    const left = Math.max(8, cardRect.left - cardRect.width);
     setDetailsPosition({
-      left: cardRect.left,
-      width: cardRect.width,
-      top: openUp ? 'auto' : cardRect.bottom,
-      bottom: openUp ? viewportHeight - cardRect.top : 'auto',
-      maxHeight: Math.max(0, openUp ? roomAbove : roomBelow),
+      left,
+      width: Math.max(0, cardRect.left - left),
+      top,
+      bottom: 'auto',
+      maxHeight: availableHeight,
     });
   }, [clipHost]);
 
   useLayoutEffect(() => {
     if (detailsOpen) positionDetails();
-  }, [detailsOpen, fullChips.length, layoutVersion, positionDetails]);
+  }, [detailsOpen, detailsPosition?.width, fullChips.length, layoutVersion, positionDetails]);
 
   useEffect(() => {
     if (!detailsOpen) return undefined;
@@ -121,7 +122,7 @@ function DockCard({ section, item, openMenu, setOpenMenu, clipHost, layoutVersio
       data-key=${name}
       data-dock-kind=${section.key}
       data-dock-name=${name}
-      title=${name}
+      title=${hasDetails ? null : name}
       onMouseEnter=${hasDetails ? showDetails : null}
       onMouseLeave=${hasDetails ? hideHoveredDetails : null}
       onFocusIn=${hasDetails ? showDetails : null}
@@ -129,7 +130,7 @@ function DockCard({ section, item, openMenu, setOpenMenu, clipHost, layoutVersio
         if (!event.currentTarget.contains(event.relatedTarget)) setDetailsOpen(false);
       } : null}
     >
-      <span class="dock-grip" aria-hidden="true" title=${gripTitle}>⠿</span>
+      <span class="dock-grip" aria-hidden="true" title=${hasDetails ? null : gripTitle}>⠿</span>
       <span class="dock-card-icon" aria-hidden="true">${section.icon}</span>
       <span class="dock-card-body">
         <span class="dock-card-name">${name}</span>
@@ -146,7 +147,7 @@ function DockCard({ section, item, openMenu, setOpenMenu, clipHost, layoutVersio
           aria-haspopup="menu"
           aria-expanded=${menuOpen ? 'true' : 'false'}
           aria-describedby=${hasDetails ? detailsDescriptionID : null}
-          title="More actions"
+          title=${hasDetails ? null : 'More actions'}
           aria-label=${`Actions for ${name}`}
           onClick=${(event) => {
             event.preventDefault();
@@ -198,7 +199,7 @@ function DockCard({ section, item, openMenu, setOpenMenu, clipHost, layoutVersio
           tabIndex="0"
           draggable="false"
           style=${detailsPosition}
-          class=${`dock-card-details${detailsOpen && !menuOpen ? ' open' : ''}${detailsOpenUp ? ' opens-up' : ''}`}
+          class=${`dock-card-details${detailsOpen && !menuOpen ? ' open' : ''}`}
         >
           <span id=${detailsDescriptionID} class="dock-card-details-description">
             ${fullChips.map((chip) => chip.text).join(', ')}

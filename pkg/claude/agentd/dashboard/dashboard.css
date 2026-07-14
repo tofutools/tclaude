@@ -11246,7 +11246,6 @@ body:not(.dock-open) .dock-toggle-chevron { transform: rotate(180deg); }
   transition: opacity .08s ease;
 }
 .dock-card-details.open { visibility: visible; opacity: 1; pointer-events: auto; }
-.dock-card-details.opens-up { transform-origin: bottom center; }
 .dock-card-details:focus-visible { outline: 2px solid #58a6ff; outline-offset: -2px; }
 .dock-card-details-description {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;

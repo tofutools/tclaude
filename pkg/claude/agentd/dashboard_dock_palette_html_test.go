@@ -111,7 +111,8 @@ func TestDashboardHTML_DockPalette(t *testing.T) {
 	must("data-dock-name=${name}", "cards carry their name for the DnD wiring")
 	// Profile cards keep their compact truncated chips in place while a floating
 	// tooltip shows the complete wrapped list on mouse hover or keyboard focus.
-	// The tooltip flips upward near the dock foot instead of being clipped.
+	// It opens left of the card, leaving the item column unobstructed, and native
+	// titles are suppressed so the browser cannot add a second tooltip.
 	must("fullChips: (p) => [", "profiles provide an untruncated chip list")
 	must("profileDetailChips(p).map", "tooltips enumerate the complete stored profile shape")
 	must(`role="region"`, "the card renders complete profile details as an accessible region")
@@ -122,7 +123,12 @@ func TestDashboardHTML_DockPalette(t *testing.T) {
 	must("window.addEventListener('resize', positionDetails)", "open details follow viewport geometry changes")
 	must("clipHost?.addEventListener('scroll', positionDetails", "open details follow dock scrolling")
 	must(".dock-card-details.open", "the complete details float without resizing the card")
-	must(".dock-card-details.opens-up", "details can flip upward near the dock foot")
+	must("const left = Math.max(8, cardRect.left - cardRect.width)", "details open to the left of the hovered card")
+	must("width: Math.max(0, cardRect.left - left)", "details never overlap the profile-item column")
+	must("detailsPosition?.width", "details remeasure their height after a viewport-width change")
+	must("title=${hasDetails ? null : name}", "rich details replace the card's native title tooltip")
+	must("title=${hasDetails ? null : gripTitle}", "profile drag grips do not add a second native tooltip")
+	must("title=${hasDetails ? null : 'More actions'}", "profile action buttons do not add a second native tooltip")
 
 	// The dock reads its data off the live snapshot (the profile + role
 	// registries now ride the poll, templates already did) — see

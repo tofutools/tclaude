@@ -135,7 +135,11 @@ test('Profile cards show complete details in a non-reflowing tooltip', async (t)
   const full = tooltip.querySelector('.dock-chips-full');
   const cog = getByRole(card, 'button', { name: 'Actions for review' });
   assert.ok(card.classList.contains('dock-card-has-details'));
-  assert.equal(card.getAttribute('title'), 'review', 'long canonical names remain available outside the clipped label');
+  assert.equal(card.getAttribute('title') || null, null, 'the rich panel replaces the card native tooltip');
+  assert.equal(card.querySelector('.dock-grip').getAttribute('title') || null, null,
+    'the profile drag grip does not add a second native tooltip');
+  assert.equal(cog.getAttribute('title') || null, null,
+    'the profile action button does not add a second native tooltip');
   assert.equal(tooltip.classList.contains('open'), false, 'details start hidden without changing card layout');
   const description = tooltip.querySelector('.dock-card-details-description');
   assert.equal(cog.getAttribute('aria-describedby'), description.id);
@@ -156,19 +160,33 @@ test('Profile cards show complete details in a non-reflowing tooltip', async (t)
   assert.equal(full.querySelector('.dock-chip-more'), null, 'the tooltip list is never truncated');
 
   host.getBoundingClientRect = () => ({ top: 0, bottom: 100 });
-  card.getBoundingClientRect = () => ({ top: 80, bottom: 100 });
-  tooltip.getBoundingClientRect = () => ({ height: 60 });
+  card.getBoundingClientRect = () => ({ top: 80, bottom: 100, left: 300, width: 220 });
+  tooltip.getBoundingClientRect = () => ({
+    height: tooltip.style.width === '100px' ? 90 : 60,
+  });
   await harness.act(() => harness.fireEvent(card, 'mouseenter'));
   assert.ok(tooltip.classList.contains('open'), 'hover opens the tooltip');
-  assert.ok(tooltip.classList.contains('opens-up'), 'a tooltip near the dock foot flips upward');
+  assert.equal(tooltip.style.left, '80px');
+  assert.equal(tooltip.style.width, '220px');
+  assert.equal(tooltip.style.top, '40px', 'the left panel stays within the dock vertical bounds');
+  assert.equal(Number.parseFloat(tooltip.style.left) + Number.parseFloat(tooltip.style.width), 300,
+    'the details panel ends where the hovered card begins');
   assert.deepEqual([...compact.querySelectorAll('.dock-chip')].map((chip) => chip.textContent), [
     'aka codex-reviewer', '+3',
   ], 'the compact card stays unchanged while its tooltip is open');
 
-  card.getBoundingClientRect = () => ({ top: 10, bottom: 30, left: 20, width: 220 });
+  card.getBoundingClientRect = () => ({ top: 80, bottom: 100, left: 108, width: 220 });
+  await harness.act(() => harness.fireEvent(harness.window, 'resize'));
+  assert.equal(tooltip.style.left, '8px');
+  assert.equal(tooltip.style.width, '100px', 'a narrow viewport shrinks the panel before the card column');
+  assert.equal(tooltip.style.top, '10px', 'placement is remeasured after the narrower panel wraps taller');
+  assert.equal(Number.parseFloat(tooltip.style.left) + Number.parseFloat(tooltip.style.width), 108,
+    'the narrowed panel still ends where the hovered card begins');
+
+  card.getBoundingClientRect = () => ({ top: 10, bottom: 30, left: 280, width: 220 });
   await harness.act(() => harness.fireEvent(host, 'scroll'));
-  assert.equal(tooltip.classList.contains('opens-up'), false, 'an open tooltip follows dock scrolling');
-  assert.equal(tooltip.style.top, '30px');
+  assert.equal(tooltip.style.left, '60px', 'an open tooltip follows horizontal geometry changes');
+  assert.equal(tooltip.style.top, '10px', 'an open tooltip follows dock scrolling');
 
   await harness.act(() => harness.fireEvent(card, 'mouseleave'));
   assert.equal(tooltip.classList.contains('open'), false, 'leaving the card closes the tooltip');
