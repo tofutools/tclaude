@@ -425,6 +425,149 @@ test('params dialog edits identifiers, typed defaults, descriptions, and require
   assert.equal(model.template.params.ticket, undefined);
 });
 
+test('params dialog reports every raw staged field and structural edit as dirty', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ ProcessEditModel }, { openProcessParamsDialog }] = await Promise.all([
+    harness.importDashboardModule('js/process-edit-model.js'),
+    harness.importDashboardModule('js/process-params-dialog.js'),
+  ]);
+  const cases = [
+    ['add', (overlay) => harness.fireEvent(overlay.querySelector('.process-param-toolbar button'), 'click')],
+    ['remove', (overlay) => harness.fireEvent(overlay.querySelector('[data-process-param="issue"] .process-action-danger'), 'click')],
+    ['raw name', (overlay) => {
+      const control = overlay.querySelector('[data-process-param="issue"] .process-param-name');
+      control.value = 'issue ';
+      harness.fireEvent(control, 'input');
+    }],
+    ['raw type', (overlay) => {
+      const control = overlay.querySelector('[data-process-param="issue"] .process-param-type');
+      control.value = 'string ';
+      harness.fireEvent(control, 'input');
+    }],
+    ['description', (overlay) => {
+      const control = overlay.querySelector('[data-process-param="issue"] .process-param-description');
+      control.value = 'Changed';
+      harness.fireEvent(control, 'input');
+    }],
+    ['default enabled', (overlay) => {
+      const control = overlay.querySelector('[data-process-param="issue"] .process-param-default-enabled');
+      control.checked = true;
+      harness.fireEvent(control, 'change');
+    }],
+    ['default value', (overlay) => {
+      const control = overlay.querySelector('[data-process-param="retries"] .process-param-default');
+      control.value = '2 ';
+      harness.fireEvent(control, 'input');
+    }],
+    ['required', (overlay) => {
+      const control = overlay.querySelector('[data-process-param="issue"] .process-param-required');
+      control.checked = false;
+      harness.fireEvent(control, 'change');
+    }],
+  ];
+  for (const [label, mutate] of cases) {
+    const loaded = view();
+    loaded.template.params = {
+      issue: { type: 'string', description: 'Issue id', required: true },
+      retries: { type: 'number', default: 2 },
+    };
+    const model = new ProcessEditModel(loaded);
+    const dispose = openProcessParamsDialog({ model });
+    assert.equal(dispose.isDirty(), false, `${label} begins clean`);
+    mutate(harness.document.querySelector('.process-param-modal'));
+    assert.equal(dispose.isDirty(), true, `${label} dirties the staged dialog`);
+    assert.equal(model.dirty, false, `${label} remains atomic before Apply`);
+    dispose(null);
+  }
+});
+
+test('dirty params participate in navigation and rejected modal replacement guards', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ ProcessEditModel }, { ProcessTemplateEditor }, { createProcessesActions }] = await Promise.all([
+    harness.importDashboardModule('js/process-edit-model.js'),
+    harness.importDashboardModule('js/process-editor.js'),
+    harness.importDashboardModule('js/processes-actions.js'),
+  ]);
+  let confirmations = 0;
+  const editor = {
+    model: new ProcessEditModel(view()), modalDispose: null,
+    options: { confirmDiscard: async () => { confirmations += 1; return false; } },
+    abort: new AbortController(), refresh() {}, savePending: false,
+  };
+  Object.defineProperty(editor, 'dirty', {
+    get: () => Object.getOwnPropertyDescriptor(ProcessTemplateEditor.prototype, 'dirty').get.call(editor),
+  });
+  assert.equal(await ProcessTemplateEditor.prototype.openParamsSettings.call(editor), true);
+  const overlay = harness.document.querySelector('.process-param-modal');
+  harness.fireEvent(overlay.querySelector('.process-param-toolbar button'), 'click');
+  assert.equal(editor.dirty, true, 'the editor exposes its staged params as dirty');
+
+  const actions = createProcessesActions({
+    state: { currentEditor: () => editor },
+    confirmDiscard: editor.options.confirmDiscard,
+  });
+  assert.equal(await actions.closeCanvas(), false, 'outer navigation is rejected');
+  assert.equal(confirmations, 1);
+  assert.equal(harness.document.querySelector('.process-param-modal'), overlay, 'navigation rejection keeps the draft open');
+
+  assert.equal(await ProcessTemplateEditor.prototype.openNodeSettings.call(editor, 'work'), false,
+    'another editor modal cannot replace the rejected params draft');
+  assert.equal(confirmations, 2);
+  assert.equal(harness.document.querySelector('.process-param-modal'), overlay);
+  assert.equal(harness.document.querySelector('.process-node-modal'), null);
+  editor.modalDispose(null);
+});
+
+test('params dialog traps Tab and restores focus on every close path without prompting clean close', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ ProcessEditModel }, { openProcessParamsDialog }] = await Promise.all([
+    harness.importDashboardModule('js/process-edit-model.js'),
+    harness.importDashboardModule('js/process-params-dialog.js'),
+  ]);
+
+  let prompts = 0;
+  const cleanInvoker = harness.document.body.appendChild(harness.document.createElement('button'));
+  cleanInvoker.focus();
+  openProcessParamsDialog({
+    model: new ProcessEditModel(view()),
+    confirmDiscard: async () => { prompts += 1; return true; },
+  });
+  await settle();
+  harness.fireEvent(harness.document.querySelector('.process-param-modal .modal-buttons button'), 'click');
+  await settle();
+  assert.equal(prompts, 0, 'clean Cancel closes without confirmation');
+  assert.equal(harness.document.activeElement, cleanInvoker);
+
+  for (const gesture of ['cancel', 'escape', 'backdrop', 'forced']) {
+    const invoker = harness.document.body.appendChild(harness.document.createElement('button'));
+    invoker.focus();
+    let confirmations = 0;
+    const dispose = openProcessParamsDialog({
+      model: new ProcessEditModel(view()),
+      confirmDiscard: async () => { confirmations += 1; return true; },
+    });
+    await settle();
+    const overlay = harness.document.querySelector('.process-param-modal');
+    const add = overlay.querySelector('.process-param-toolbar button');
+    harness.fireEvent(add, 'click');
+    const first = overlay.querySelector('.process-param-name');
+    const apply = overlay.querySelector('.modal-buttons .primary');
+    apply.focus();
+    const tab = harness.fireEvent(apply, 'keydown', { key: 'Tab' });
+    assert.equal(tab.defaultPrevented, true, `${gesture}: Tab is contained`);
+    assert.equal(harness.document.activeElement, first, `${gesture}: Tab wraps to the first control`);
+
+    if (gesture === 'cancel') harness.fireEvent(overlay.querySelector('.modal-buttons button'), 'click');
+    else if (gesture === 'escape') harness.fireEvent(first, 'keydown', { key: 'Escape' });
+    else if (gesture === 'backdrop') harness.fireEvent(overlay, 'click');
+    else dispose(null);
+    await settle();
+    assert.equal(confirmations, gesture === 'forced' ? 0 : 1, `${gesture}: confirmation count`);
+    assert.equal(harness.document.querySelector('.process-param-modal'), null, `${gesture}: dialog closes`);
+    assert.equal(harness.document.activeElement, invoker, `${gesture}: invoker focus is restored`);
+  }
+});
+
 test('dirty editor instantiate requires a successful clean save before emitting an exact ref', async (t) => {
   const harness = await createPreactHarness(t);
   const { ProcessTemplateEditor } = await harness.importDashboardModule('js/process-editor.js');

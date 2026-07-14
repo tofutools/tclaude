@@ -2,6 +2,9 @@
 // {{ params.<id> }}; changing/deleting one intentionally does not rewrite
 // performer text, so the existing live-validation loop reports stale refs.
 
+import { bindDialogFocus } from './dialog-focus-core.js';
+import { isTopmostOverlay } from './overlay-stack.js';
+
 function h(tag, attrs = {}, ...children) {
   const el = document.createElement(tag);
   for (const [key, value] of Object.entries(attrs)) {
@@ -39,39 +42,73 @@ function nextParamName(rows) {
   for (let n = 2; ; n += 1) if (!names.has(`param${n}`)) return `param${n}`;
 }
 
-export function openProcessParamsDialog({ model, onMutated = () => {}, onClosed = () => {} } = {}) {
+export function openProcessParamsDialog({
+  model, onMutated = () => {}, onClosed = () => {},
+  confirmDiscard = async () => false,
+} = {}) {
   if (!model) throw new Error('process param editor requires a model');
   let rows = Object.entries(model.template.params || {}).sort(([a], [b]) => a.localeCompare(b, 'en'))
     .map(([name, param]) => ({
-      name, param: clone(param), type: param.type || 'string', description: param.description || '',
+      name, rawName: name, param: clone(param), type: param.type || 'string',
+      rawType: param.type || 'string', description: param.description || '',
       required: param.required === true, requiredChanged: false, hasDefault: param.default !== undefined,
       defaultValue: defaultText(param.default), defaultChanged: false,
     }));
+  const originalRows = JSON.stringify(rows);
   let closed = false;
+  let confirming = false;
+  let releaseDialogFocus = () => {};
   const error = h('div', { class: 'process-param-error', role: 'alert' });
   const list = h('div', { class: 'process-param-list' });
   const addButton = h('button', { class: 'process-action', type: 'button', text: '+ add param' });
   const applyButton = h('button', { class: 'primary', type: 'button', text: 'Apply' });
   const cancelButton = h('button', { type: 'button', text: 'Cancel' });
-  const overlay = h('div', { class: 'modal-overlay show process-param-modal' },
-    h('div', { class: 'modal process-param-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'process-param-title' },
-      h('h3', { id: 'process-param-title', text: 'Template parameters' }),
-      h('p', { class: 'muted', text: 'Declare values referenced as {{ params.name }}. Renamed or deleted references are reported by live validation.' }),
-      h('datalist', { id: 'process-param-types' }, h('option', { value: 'string' }), h('option', { value: 'number' }), h('option', { value: 'boolean' })),
-      list,
-      h('div', { class: 'process-param-toolbar' }, addButton, h('span', { class: 'spacer' }), error),
-      h('div', { class: 'modal-buttons' }, cancelButton, applyButton)));
+  const dialog = h('div', { class: 'modal process-param-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'process-param-title' },
+    h('h3', { id: 'process-param-title', text: 'Template parameters' }),
+    h('p', { class: 'muted', text: 'Declare values referenced as {{ params.name }}. Renamed or deleted references are reported by live validation.' }),
+    h('datalist', { id: 'process-param-types' }, h('option', { value: 'string' }), h('option', { value: 'number' }), h('option', { value: 'boolean' })),
+    list,
+    h('div', { class: 'process-param-toolbar' }, addButton, h('span', { class: 'spacer' }), error),
+    h('div', { class: 'modal-buttons' }, cancelButton, applyButton));
+  const overlay = h('div', { class: 'modal-overlay show process-param-modal' }, dialog);
 
-  const finish = (applied) => {
+  const isDirty = () => JSON.stringify(rows) !== originalRows;
+  const dispose = (applied) => {
     if (closed) return;
     closed = true;
     overlay.remove();
-    document.removeEventListener('keydown', onKey, true);
+    releaseDialogFocus();
     onClosed(applied);
   };
-  const onKey = (event) => {
-    if (event.key !== 'Escape') return;
-    event.preventDefault(); event.stopImmediatePropagation(); finish(false);
+
+  const suspendForConfirmation = (suspended) => {
+    overlay.inert = suspended;
+    overlay.toggleAttribute('inert', suspended);
+    if (suspended) overlay.setAttribute('aria-hidden', 'true');
+    else overlay.removeAttribute('aria-hidden');
+    dialog.setAttribute('aria-modal', suspended ? 'false' : 'true');
+  };
+
+  const requestClose = async () => {
+    if (closed || confirming) return false;
+    if (!isDirty()) {
+      dispose(false);
+      return true;
+    }
+    confirming = true;
+    suspendForConfirmation(true);
+    let discard = false;
+    try {
+      discard = await confirmDiscard();
+    } catch (caught) {
+      error.textContent = caught.message || 'Could not confirm discard.';
+    } finally {
+      confirming = false;
+      if (!closed) suspendForConfirmation(false);
+    }
+    if (discard && !closed) dispose(false);
+    else if (!closed) applyButton.focus();
+    return !!discard;
   };
 
   const render = () => {
@@ -79,11 +116,11 @@ export function openProcessParamsDialog({ model, onMutated = () => {}, onClosed 
     if (!rows.length) list.append(h('div', { class: 'process-param-empty', text: 'No parameters declared.' }));
     rows.forEach((row, index) => {
       const name = h('input', { class: 'process-param-name', type: 'text', spellcheck: 'false', 'aria-label': `Parameter ${index + 1} name` });
-      name.value = row.name;
-      name.addEventListener('input', () => { row.name = name.value.trim(); error.textContent = ''; });
+      name.value = row.rawName;
+      name.addEventListener('input', () => { row.rawName = name.value; row.name = name.value.trim(); error.textContent = ''; });
       const type = h('input', { class: 'process-param-type', type: 'text', spellcheck: 'false', list: 'process-param-types', 'aria-label': `Parameter ${row.name || index + 1} type` });
-      type.value = row.type;
-      type.addEventListener('input', () => { row.type = type.value.trim(); row.defaultChanged = true; });
+      type.value = row.rawType;
+      type.addEventListener('input', () => { row.rawType = type.value; row.type = type.value.trim(); row.defaultChanged = true; });
       const description = h('input', { class: 'process-param-description', type: 'text', spellcheck: 'true', placeholder: 'Description', 'aria-label': `Parameter ${row.name || index + 1} description` });
       description.value = row.description;
       description.addEventListener('input', () => { row.description = description.value; });
@@ -109,12 +146,17 @@ export function openProcessParamsDialog({ model, onMutated = () => {}, onClosed 
   };
 
   addButton.addEventListener('click', () => {
-    rows.push({ name: nextParamName(rows), param: {}, type: 'string', description: '', required: false, requiredChanged: false, hasDefault: false, defaultValue: '', defaultChanged: false });
+    const name = nextParamName(rows);
+    rows.push({
+      name, rawName: name, param: {}, type: 'string', rawType: 'string', description: '',
+      required: false, requiredChanged: false, hasDefault: false, defaultValue: '', defaultChanged: false,
+    });
     render();
     list.lastElementChild?.querySelector('.process-param-name')?.focus();
   });
-  cancelButton.addEventListener('click', () => finish(false));
+  cancelButton.addEventListener('click', () => { void requestClose(); });
   applyButton.addEventListener('click', () => {
+    if (closed || confirming) return;
     const names = rows.map((row) => row.name);
     if (names.some((name) => !name)) { error.textContent = 'Every parameter needs a name.'; return; }
     if (new Set(names).size !== names.length) { error.textContent = 'Parameter names must be unique.'; return; }
@@ -134,12 +176,18 @@ export function openProcessParamsDialog({ model, onMutated = () => {}, onClosed 
     }
     const changed = model.setParams(params);
     if (changed) onMutated();
-    finish(true);
+    dispose(true);
   });
-  overlay.addEventListener('click', (event) => { if (event.target === overlay) finish(false); });
-  document.addEventListener('keydown', onKey, true);
+  overlay.addEventListener('click', (event) => { if (event.target === overlay) void requestClose(); });
   document.body.append(overlay);
   render();
-  (list.querySelector('input') || addButton).focus();
-  return finish;
+  releaseDialogFocus = bindDialogFocus({
+    dialog,
+    initialFocus: () => list.querySelector('input') || addButton,
+    onEscape: () => { void requestClose(); },
+    shouldHandle: () => !confirming && isTopmostOverlay(overlay),
+  });
+  dispose.isDirty = isDirty;
+  dispose.requestClose = requestClose;
+  return dispose;
 }

@@ -203,10 +203,17 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 	params := read("js/process-params-dialog.js")
 	mustContain("process-params-dialog.js", params,
 		"export function openProcessParamsDialog(",
+		"bindDialogFocus({",
+		"dispose.isDirty = isDirty",
+		"dispose.requestClose = requestClose",
+		"confirmDiscard = async () => false",
 		"model.setParams(params)",
 		"process-param-default-enabled",
 		"row.param.default",
 		"Renamed or deleted references are reported by live validation.",
+	)
+	mustContain("process-editor.js", editor,
+		"confirmDiscard: this.options.confirmDiscard",
 	)
 	actions := read("js/processes-actions.js")
 	mustContain("processes-actions.js", actions,

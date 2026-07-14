@@ -629,6 +629,7 @@ export class ProcessTemplateEditor {
       model: this.model,
       onMutated: () => this.refresh(),
       onClosed: () => { if (this.modalDispose === dispose) this.modalDispose = null; },
+      confirmDiscard: this.options.confirmDiscard,
     });
     this.modalDispose = dispose;
     return true;
