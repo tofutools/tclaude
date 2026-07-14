@@ -67,6 +67,7 @@ func TestDashboardProcessGraphAssets(t *testing.T) {
 		"overlay-${overlay.severity}",
 		"process-overlay-tooltip",
 		"process-edge-badge-${edge.badgeSeverity || 'error'}",
+		"orient: 'auto-start-reverse'",
 		"centerOn(x, y)")
 	if strings.Contains(graph, "data-morph-owned") {
 		t.Error("process graph retains the deleted reconciler ownership marker")

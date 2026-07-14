@@ -1548,6 +1548,22 @@ func boundedMessagesJS() string {
 // Processes host does so; dashsnap dynamically imports the module and mounts it
 // in a fixed overlay solely to exercise the shared SVG vocabulary in both skins.
 func processGraphStates() []dashsnap.State {
+	terminalTangentsGraph := `{
+  nodes: [
+    {id:'top',type:'task',label:'Natural output',pinned:{x:180,y:100}},
+    {id:'below',type:'decision',label:'Natural input',pinned:{x:180,y:330}},
+    {id:'side-a',type:'task',label:'Side source',pinned:{x:470,y:120}},
+    {id:'side-b',type:'end',label:'Side target',pinned:{x:760,y:155}},
+    {id:'diag-a',type:'decision',label:'Diagonal source',pinned:{x:410,y:390}},
+    {id:'diag-b',type:'wait',label:'Diagonal target',pinned:{x:760,y:510}}
+  ],
+  edges: [
+    {from:'top',to:'below',outcome:'snapped'},
+    {from:'side-a',to:'side-b',outcome:'side fallback'},
+    {from:'diag-a',to:'diag-b',outcome:'diagonal fallback'},
+    {from:'side-b',to:'side-a',outcome:'back fallback',back:true}
+  ]
+}`
 	return []dashsnap.State{
 		{
 			Key:     "process-linear",
@@ -1644,21 +1660,9 @@ func processGraphStates() []dashsnap.State {
 		},
 		{
 			Key:     "process-port-endpoints",
-			Title:   "Process graph — snapped and fallback endpoints",
-			Caption: "Endpoint routing: the vertical edge lands on bottom/top port rings, while the strongly sideways edge and dashed back-edge retain silhouette-boundary routing.",
-			JS: processGraphStateJS("Port snapping and geometry fallbacks", `{
-  nodes: [
-    {id:'top',type:'task',label:'Natural output',pinned:{x:180,y:100}},
-    {id:'below',type:'decision',label:'Natural input',pinned:{x:180,y:330}},
-    {id:'side-a',type:'task',label:'Side source',pinned:{x:470,y:120}},
-    {id:'side-b',type:'end',label:'Side target',pinned:{x:760,y:155}}
-  ],
-  edges: [
-    {from:'top',to:'below',outcome:'snapped'},
-    {from:'side-a',to:'side-b',outcome:'side fallback'},
-    {from:'side-b',to:'side-a',outcome:'back fallback',back:true}
-  ]
-}`),
+			Title:   "Process graph — connector terminal tangents",
+			Caption: "Arrow geometry: vertical port-snapped, side-boundary, diagonal-boundary, and dashed return edges all point along their visibly rendered terminal segment.",
+			JS:      processGraphStateJS("Port snapping and geometry fallbacks", terminalTangentsGraph),
 		},
 	}
 }
