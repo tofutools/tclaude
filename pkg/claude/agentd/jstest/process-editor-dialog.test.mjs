@@ -175,20 +175,40 @@ test('choice dialogs without an explicit or primary focus keep the existing Canc
   assert.equal(await pending, null);
 });
 
-test('node marker detail is visible on hover/focus and part of the node accessible name', async (t) => {
+test('diagnostic markers use one custom tooltip and keep accessible node and edge detail', async (t) => {
   const harness = await createPreactHarness(t);
   const { ProcessGraph } = await harness.importDashboardModule('js/process-graph.js');
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
-  const issue = 'E_PERFORMER: Work performer is required';
+  const nodeIssue = 'E_PERFORMER: Work performer is required';
+  const edgeIssues = ['E_OUTCOME: pass is not declared', 'E_TARGET: done is unreachable'];
   const graph = new ProcessGraph(host, {
-    nodes: [{ id: 'work', type: 'task', overlay: { glyph: '!', severity: 'error', issues: [issue] } }],
-    edges: [],
+    nodes: [
+      { id: 'work', type: 'task', overlay: { glyph: '!', severity: 'error', issues: [nodeIssue] } },
+      { id: 'done', type: 'end' },
+    ],
+    edges: [{
+      id: 'work:pass', from: 'work', to: 'done', outcome: 'pass',
+      badge: '!', badgeSeverity: 'error', issues: edgeIssues,
+    }],
   }, { fitOnRender: false });
-  const node = host.querySelector('.process-node');
+  const node = host.querySelector('.process-node[data-node-id="work"]');
   assert.match(node.getAttribute('aria-label'), /E_PERFORMER: Work performer is required/);
   assert.equal(node.getAttribute('tabindex'), '0', 'keyboard focus reaches the described node');
-  assert.equal(host.querySelector('.process-overlay-anchor title').textContent, issue, 'native hover fallback has full detail');
-  assert.match(host.querySelector('.process-overlay-tooltip text').textContent, /Work performer is required/);
+  const nodeMarker = node.querySelector('.process-overlay-anchor');
+  assert.equal(nodeMarker.hasAttribute('title'), false, 'the custom node target has no title attribute');
+  assert.equal(nodeMarker.querySelector('title'), null, 'the custom node tooltip has no duplicate SVG title');
+  assert.match(nodeMarker.querySelector('.process-overlay-tooltip text').textContent, /Work performer is required/);
+
+  const edge = host.querySelector('.process-edge');
+  assert.match(edge.getAttribute('aria-label'), /E_OUTCOME: pass is not declared/);
+  assert.equal(edge.getAttribute('tabindex'), '0', 'keyboard focus reaches the described edge');
+  const edgeMarker = edge.querySelector('.process-edge-issue-marker');
+  assert.equal(edge.hasAttribute('title'), false, 'the focusable edge target has no title attribute');
+  assert.equal(edgeMarker.hasAttribute('title'), false, 'the custom edge target has no title attribute');
+  assert.equal(edgeMarker.querySelector('title'), null, 'the custom edge tooltip has no duplicate SVG title');
+  assert.match(edgeMarker.querySelector('.process-overlay-tooltip text').textContent, /pass is not declared/);
+  assert.match(edgeMarker.querySelector('.process-overlay-tooltip text').textContent, /done is unreachable/,
+    'the custom edge tooltip includes every diagnostic for its target');
   graph.destroy();
 });
 

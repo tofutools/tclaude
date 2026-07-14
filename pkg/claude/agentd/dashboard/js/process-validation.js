@@ -174,8 +174,13 @@ export function decorateGraph(graph, mapped) {
     const hit = mapped.edges.get(edge.id);
     if (!hit) continue;
     const severity = hit.error > 0 ? 'error' : 'warning';
+    const issues = mapped.entries
+      .filter((entry) => entry.scope === 'edge' && entry.edge
+        && graphEdgeID(entry.edge.from, entry.edge.outcome) === edge.id)
+      .map((entry) => `${entry.code}: ${entry.message}`);
     edge.badge = severityGlyph(severity);
     edge.badgeSeverity = severity;
+    edge.issues = issues;
   }
   return graph;
 }

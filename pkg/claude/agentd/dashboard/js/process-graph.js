@@ -94,6 +94,30 @@ function tooltipLines(issues, maxChars = 48) {
   return lines;
 }
 
+function issueTexts(issues) {
+  return Array.isArray(issues) ? issues.filter(Boolean).map(String) : [];
+}
+
+function renderIssueTooltip(parent, issues) {
+  const lines = tooltipLines(issues);
+  if (!lines.length) return;
+  const width = 330;
+  const height = 18 + lines.length * 15;
+  const tooltip = svgElement('g', {
+    class: 'process-overlay-tooltip',
+    transform: `translate(${-width - 16} 16)`,
+  });
+  tooltip.append(svgElement('rect', { x: 0, y: 0, width, height, rx: 6 }));
+  const text = svgElement('text', { x: 9, y: 16 });
+  lines.forEach((line, index) => {
+    const tspan = svgElement('tspan', { x: 9, y: 16 + index * 15 });
+    tspan.textContent = line;
+    text.append(tspan);
+  });
+  tooltip.append(text);
+  parent.append(tooltip);
+}
+
 function wrapLabel(label, maxChars) {
   const words = String(label || '').trim().split(/\s+/).filter(Boolean);
   if (!words.length) return [''];
@@ -204,25 +228,8 @@ function renderOverlay(parent, node) {
     transform: `translate(${x} ${y})`,
     'aria-hidden': 'true',
   });
-  const issues = Array.isArray(overlay?.issues) ? overlay.issues.filter(Boolean) : [];
-  if (issues.length) {
-    const title = svgElement('title');
-    title.textContent = issues.join('\n');
-    group.append(title);
-    const lines = tooltipLines(issues);
-    const width = 330;
-    const height = 18 + lines.length * 15;
-    const tooltip = svgElement('g', { class: 'process-overlay-tooltip', transform: `translate(${-width - 16} 16)` });
-    tooltip.append(svgElement('rect', { x: 0, y: 0, width, height, rx: 6 }));
-    const text = svgElement('text', { x: 9, y: 16 });
-    lines.forEach((line, index) => {
-      const tspan = svgElement('tspan', { x: 9, y: 16 + index * 15 });
-      tspan.textContent = line;
-      text.append(tspan);
-    });
-    tooltip.append(text);
-    group.append(tooltip);
-  }
+  const issues = issueTexts(overlay?.issues);
+  renderIssueTooltip(group, issues);
   group.append(svgElement('circle', { class: 'process-overlay-ring', cx: 0, cy: 0, r: 11 }));
   if (overlay?.glyph) {
     const glyph = svgElement('text', { class: 'process-overlay-glyph', x: 0, y: 4, 'text-anchor': 'middle' });
@@ -378,6 +385,7 @@ export class ProcessGraph {
 
   renderEdge(edge) {
     const key = `edge:${edge.id}`;
+    const issues = issueTexts(edge.issues);
     const group = svgElement('g', {
       class: `process-edge${edge.back ? ' process-edge-back' : ''}`,
       'data-key': key,
@@ -388,7 +396,7 @@ export class ProcessGraph {
       role: 'button',
       tabindex: '0',
       'aria-pressed': 'false',
-      'aria-label': `${edge.back ? 'Return edge' : 'Edge'} from ${edge.from} to ${edge.to}${edgeLabel(edge) ? `: ${edgeLabel(edge)}` : ''}`,
+      'aria-label': `${edge.back ? 'Return edge' : 'Edge'} from ${edge.from} to ${edge.to}${edgeLabel(edge) ? `: ${edgeLabel(edge)}` : ''}${issues.length ? `, ${issues.join('; ')}` : ''}`,
     });
     const visible = svgElement('path', {
       class: 'process-edge-path', d: edge.path, fill: 'none',
@@ -407,13 +415,19 @@ export class ProcessGraph {
     // Optional badge glyph at the label anchor (validation and future state
     // decorations). Severity is glyph-coded AND class-coded — never color-only.
     if (edge.badge) {
+      const marker = svgElement('g', {
+        class: 'process-edge-issue-marker',
+        transform: `translate(${edge.label.x} ${edge.label.y - 13})`,
+        'aria-hidden': 'true',
+      });
       const badge = svgElement('text', {
         class: `process-edge-badge process-edge-badge-${edge.badgeSeverity || 'error'}`,
-        x: edge.label.x, y: edge.label.y - 13,
-        'text-anchor': edge.back ? 'end' : 'middle', 'aria-hidden': 'true',
+        x: 0, y: 0, 'text-anchor': edge.back ? 'end' : 'middle',
       });
       badge.textContent = String(edge.badge);
-      group.append(badge);
+      marker.append(badge);
+      renderIssueTooltip(marker, issues);
+      group.append(marker);
     }
     return group;
   }
