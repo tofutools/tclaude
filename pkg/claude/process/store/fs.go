@@ -34,6 +34,13 @@ type FS struct {
 	templateLockContendedHook     func()
 	templateAuthoringSnapshotHook func()
 	templateAuthoringCommitHook   func(TemplateAuthoringCommit)
+	viewerReadHook                func()
+	viewerReadChunkHook           func(string, int64)
+	viewerDecodeHook              func(string)
+	viewerMaxFileBytes            int64
+	viewerMaxTotalBytes           int64
+	viewerMaxRecords              int
+	viewerMaxDirectoryEntries     int
 }
 
 var processLocks sync.Map
@@ -62,6 +69,36 @@ func (s *FS) SetNowForTest(now func() time.Time) func() {
 	previous := s.now
 	s.now = now
 	return func() { s.now = previous }
+}
+
+// SetViewerReadHookForTest installs a hook that runs after LoadRunView has
+// acquired the run lock and before it reads the snapshot. Tests use it to
+// prove Append and viewer reads cannot interleave.
+func (s *FS) SetViewerReadHookForTest(hook func()) func() {
+	previous := s.viewerReadHook
+	s.viewerReadHook = hook
+	return func() { s.viewerReadHook = previous }
+}
+
+// SetViewerResourceLimitsForTest installs smaller deterministic limits and
+// read/decode hooks for boundary and cancellation tests.
+func (s *FS) SetViewerResourceLimitsForTest(maxFile, maxTotal int64, maxRecords, maxEntries int) func() {
+	oldFile, oldTotal := s.viewerMaxFileBytes, s.viewerMaxTotalBytes
+	oldRecords, oldEntries := s.viewerMaxRecords, s.viewerMaxDirectoryEntries
+	s.viewerMaxFileBytes, s.viewerMaxTotalBytes = maxFile, maxTotal
+	s.viewerMaxRecords, s.viewerMaxDirectoryEntries = maxRecords, maxEntries
+	return func() {
+		s.viewerMaxFileBytes, s.viewerMaxTotalBytes = oldFile, oldTotal
+		s.viewerMaxRecords, s.viewerMaxDirectoryEntries = oldRecords, oldEntries
+	}
+}
+
+// SetViewerIOHooksForTest installs deterministic read/decode synchronization
+// points for viewer cancellation tests.
+func (s *FS) SetViewerIOHooksForTest(read func(string, int64), decode func(string)) func() {
+	oldRead, oldDecode := s.viewerReadChunkHook, s.viewerDecodeHook
+	s.viewerReadChunkHook, s.viewerDecodeHook = read, decode
+	return func() { s.viewerReadChunkHook, s.viewerDecodeHook = oldRead, oldDecode }
 }
 
 func (s *FS) PutTemplate(ctx context.Context, tmpl *model.Template) (TemplateRecord, error) {
@@ -862,6 +899,62 @@ func (s *FS) GetTemplate(ctx context.Context, ref string) (*model.Template, erro
 	return s.getTemplateUnlocked(ctx, id, hash, ref)
 }
 
+// GetTemplateExact reads one immutable semantic version without running
+// attributed-save recovery. Viewer reads must never roll back or complete an
+// authoring transaction as a side effect. An unfinished intent therefore
+// fails closed and remains untouched for an authoring caller to recover.
+func (s *FS) GetTemplateExact(ctx context.Context, ref string) (*model.Template, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	id, hash, err := parseTemplateRef(ref)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid exact template ref", ErrContentMismatch)
+	}
+	if err := safeSegment(id); err != nil {
+		return nil, fmt.Errorf("%w: invalid exact template id", ErrContentMismatch)
+	}
+	exists, err := s.hasTemplateExactView(id, hash)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, ErrNotFound
+	}
+	unlock, err := s.lockTemplateView(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	data, err := s.getTemplateExactBody(ctx, id, hash)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	var tmpl model.Template
+	if err := runViewDecode(ctx, s.viewerDecodeHook, "template", func() error {
+		return decodeViewJSON(ctx, data, &tmpl, true)
+	}); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("%w: exact template content cannot be decoded", ErrContentMismatch)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	semanticHash, err := model.SemanticHash(&tmpl)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
+	if err != nil || semanticHash != hash {
+		return nil, fmt.Errorf("%w: exact template content does not match its ref", ErrContentMismatch)
+	}
+	return &tmpl, nil
+}
+
 func (s *FS) getTemplateUnlocked(ctx context.Context, id, hash, ref string) (*model.Template, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -1222,6 +1315,42 @@ func (s *FS) LoadRun(ctx context.Context, runID string) (Snapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return Snapshot{}, err
 	}
+	return s.loadRunSnapshot(ctx, runID)
+}
+
+// LoadRunView returns one coherent, read-only run snapshot. Append uses the
+// same run lock, so evidence, manifest, and checkpoint cannot be observed from
+// different append generations. The lock file is operational metadata outside
+// the run history boundary.
+func (s *FS) LoadRunView(ctx context.Context, runID string) (Snapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return Snapshot{}, err
+	}
+	if err := safeSegment(runID); err != nil {
+		return Snapshot{}, fmt.Errorf("invalid run id: %w", err)
+	}
+	exists, err := s.HasRunView(runID)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	if !exists {
+		return Snapshot{}, ErrNotFound
+	}
+	unlock, err := s.lockRunView(ctx, runID)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	defer unlock()
+	if s.viewerReadHook != nil {
+		s.viewerReadHook()
+	}
+	return s.loadRunViewSnapshotAt(ctx, runID)
+}
+
+// loadRunSnapshot performs no locking. Callers that require a coherent view
+// serialize it externally; legacy LoadRun intentionally retains its existing
+// unlocked behavior.
+func (s *FS) loadRunSnapshot(ctx context.Context, runID string) (Snapshot, error) {
 	run, err := s.readRun(runID)
 	if err != nil {
 		return Snapshot{}, err
@@ -1651,7 +1780,7 @@ func (s *FS) readRun(runID string) (RunRecord, error) {
 	var run RunRecord
 	dec := json.NewDecoder(bytes.NewReader(data))
 	if err := dec.Decode(&run); err != nil {
-		return RunRecord{}, fmt.Errorf("decode run: %w", err)
+		return RunRecord{}, &DecodeError{Component: "run record", Err: err}
 	}
 	return run, nil
 }
@@ -1664,7 +1793,11 @@ func (s *FS) readState(runID string) (*state.State, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read state: %w", err)
 	}
-	return state.Decode(data)
+	st, err := state.Decode(data)
+	if err != nil {
+		return nil, &DecodeError{Component: "run state", Err: err}
+	}
+	return st, nil
 }
 
 func (s *FS) readAllLogs(ctx context.Context, runID string) ([]evidence.NodeLog, error) {

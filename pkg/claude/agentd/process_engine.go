@@ -18,11 +18,13 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	processengine "github.com/tofutools/tclaude/pkg/claude/process/engine"
+	"github.com/tofutools/tclaude/pkg/claude/process/evidence"
 	processexec "github.com/tofutools/tclaude/pkg/claude/process/exec"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	processverify "github.com/tofutools/tclaude/pkg/claude/process/verify"
+	processview "github.com/tofutools/tclaude/pkg/claude/process/view"
 )
 
 const processEngineTickInterval = time.Second
@@ -241,6 +243,76 @@ func handleProcessRun(w http.ResponseWriter, r *http.Request) {
 		"state":        snapshot.State,
 		"verification": processverify.Snapshot(snapshot),
 	})
+}
+
+func handleProcessRunView(w http.ResponseWriter, r *http.Request) {
+	runID := r.PathValue("id")
+	fs, err := store.NewFS(processStoreRoot())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "process_view", "process run view is unavailable")
+		return
+	}
+	snapshot, err := fs.LoadRunView(r.Context(), runID)
+	if err != nil {
+		exists, lookupErr := fs.HasRunView(runID)
+		if lookupErr != nil {
+			writeError(w, http.StatusInternalServerError, "process_view", "process run view is unavailable")
+			return
+		}
+		if !exists && errors.Is(err, store.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		if exists && degradableProcessViewError(err) {
+			writeProcessJSON(w, http.StatusOK, processview.NewEnvelope(runID, processRunLoadFailure(runID, err)))
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "process_view", "process run view is unavailable")
+		return
+	}
+	verification, tmpl, err := processverify.SnapshotWithExactPinnedTemplate(r.Context(), fs, snapshot)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "process_view", "process run view is unavailable")
+		return
+	}
+	writeProcessJSON(w, http.StatusOK, processview.Build(snapshot, tmpl, verification))
+}
+
+func degradableProcessViewError(err error) bool {
+	if store.IsDecodeError(err) || errors.Is(err, store.ErrNotFound) {
+		return true
+	}
+	var readErr *evidence.ReadError
+	return errors.As(err, &readErr)
+}
+
+// processRunLoadFailure deliberately omits the wrapped load error. Decode
+// errors may contain corrupt bytes and filesystem errors may contain private
+// absolute paths; the API needs a stable alarm code, not those internals.
+func processRunLoadFailure(runID string, err error) processverify.Report {
+	diagnostic := processverify.Diagnostic{
+		Layer:    processverify.LayerLoad,
+		Severity: model.SeverityError,
+		Code:     "snapshot_unreadable",
+		Message:  "run snapshot could not be read or decoded; advancement is halted pending verification and manual repair",
+	}
+	var readErr *evidence.ReadError
+	if errors.As(err, &readErr) {
+		diagnostic.Layer = processverify.LayerEvidence
+		switch readErr.Kind {
+		case evidence.ReadErrorTornTail:
+			diagnostic.Code = "read_torn_tail"
+			diagnostic.Message = "evidence log has a torn final record; advancement is halted pending verification and manual repair"
+		case evidence.ReadErrorMalformed:
+			diagnostic.Code = "read_malformed"
+			diagnostic.Message = "evidence log contains a malformed record; advancement is halted pending verification and manual repair"
+		}
+	}
+	return processverify.Report{
+		RunID:           runID,
+		EffectiveStatus: state.RunStatusInconsistent,
+		Diagnostics:     []processverify.Diagnostic{diagnostic},
+	}
 }
 
 type processReportRequest struct {

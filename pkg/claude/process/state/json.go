@@ -2,6 +2,7 @@ package state
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,32 +15,75 @@ var (
 )
 
 func Decode(data []byte) (*State, error) {
+	return DecodeContext(context.Background(), data)
+}
+
+// DecodeContext decodes persisted state synchronously and checks cancellation
+// before, during bounded reader refills, and after each JSON decode pass.
+func DecodeContext(ctx context.Context, data []byte) (*State, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	var header struct {
 		StateSchemaVersion int `json:"stateSchemaVersion"`
 	}
-	headerDec := json.NewDecoder(bytes.NewReader(data))
+	headerDec := json.NewDecoder(&decodeContextReader{ctx: ctx, reader: bytes.NewReader(data)})
 	if err := headerDec.Decode(&header); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		return nil, fmt.Errorf("decode process state schema version: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	if err := CheckSchemaVersion(header.StateSchemaVersion); err != nil {
 		return nil, err
 	}
 
 	var st State
-	dec := json.NewDecoder(bytes.NewReader(data))
+	dec := json.NewDecoder(&decodeContextReader{ctx: ctx, reader: bytes.NewReader(data)})
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&st); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		return nil, fmt.Errorf("decode process state: %w", err)
 	}
 	var extra any
 	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		if err != nil {
 			return nil, fmt.Errorf("decode process state: trailing JSON: %w", err)
 		}
 		return nil, fmt.Errorf("decode process state: multiple JSON values")
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	normalizeState(&st)
 	return &st, nil
+}
+
+type decodeContextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r *decodeContextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	if len(p) > 32<<10 {
+		p = p[:32<<10]
+	}
+	n, err := r.reader.Read(p)
+	if ctxErr := r.ctx.Err(); ctxErr != nil {
+		return n, ctxErr
+	}
+	return n, err
 }
 
 func Encode(st *State) ([]byte, error) {

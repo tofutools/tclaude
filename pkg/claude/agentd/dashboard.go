@@ -189,6 +189,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/process/validate", dashboardProcessRoute(handleProcessValidate))
 	mux.HandleFunc("GET /v1/process/runs", dashboardProcessRoute(handleProcessRuns))
 	mux.HandleFunc("GET /v1/process/runs/{id}", dashboardProcessRoute(handleProcessRun))
+	mux.HandleFunc("GET /v1/process/runs/{id}/view", dashboardProcessRoute(handleProcessRunView))
 	// The Worklist sub-view (TCL-297): the derived work-item list and the
 	// human action funnel. asDashboardHumanPeer stamps the caller as the
 	// operator, which is exactly the actor the action route records.

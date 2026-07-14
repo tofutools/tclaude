@@ -346,6 +346,73 @@ and integrity; artifact filenames are their content hashes. Together they are
 enough to explain retries, human approvals, escalation decisions, crash
 recovery, and the terminal result without consulting SQLite or a live daemon.
 
+## Run viewer API
+
+With Processes enabled, `GET /v1/process/runs/{id}/view` returns a dedicated,
+read-only viewer projection. The existing `GET /v1/process/runs/{id}` contract
+continues to return the persisted run, state, and verification result unchanged.
+
+```json
+{
+  "run": { "id": "change-1", "templateRef": "...", "effectiveStatus": "running" },
+  "graph": { "nodes": [], "edges": [] },
+  "verification": { "effectiveStatus": "running", "dirty": false, "diagnostics": [] },
+  "report": {
+    "schemaVersion": 1,
+    "nodes": {
+      "implement.do": {
+        "summary": {
+          "attemptCount": 2,
+          "retryCount": 1,
+          "failureCount": 1,
+          "completedStages": 0,
+          "totalStages": 0
+        },
+        "timeline": []
+      }
+    },
+    "traversedEdges": []
+  }
+}
+```
+
+The viewer uses explicit DTOs and never serializes the stored template, state,
+events, run params, performer prompts/commands, or command payloads. The report
+projects narrow persisted metadata and content-addressed artifact references
+only.
+Obligations and blocked nodes include only their recorded wait/contact state;
+missing legacy timestamps and schedules remain absent rather than being
+reconstructed. A conversation reference contains only the durable agent ID
+recorded on the process command. The dashboard separately decides whether that
+agent currently has an online conversation.
+
+The graph is derived only from the exact template matching `templateRef`. A
+legacy run that did not embed its template resolves that content-addressed
+version without recovering an unfinished authoring save or substituting the
+current template head. If the pinned version is unavailable or mismatched,
+verification reports the run as inconsistent, `graph` is null, and the report
+does not claim traversed graph edges.
+
+A confirmed existing run whose checkpoint or evidence cannot be decoded still
+returns HTTP 200 so inspection can show its inconsistent alarm. That degraded
+response has a minimal safe run projection, `graph: null`, an empty schema-v1
+report, and stable sanitized verification diagnostics. A genuinely missing run
+remains 404. Permission, device, symlink, and transient process-store failures
+remain sanitized 500 responses. Reading this endpoint takes the same run lock
+as append, opens consumed run/template components without following symlinks,
+requires regular persisted files, and never rewrites template authoring state,
+run metadata, state, manifests, or evidence logs.
+
+The schema-v1 full-history projection is deliberately bounded: each consumed
+file may be at most 16 MiB; the persisted run snapshot may consume at most
+64 MiB, 100,000 evidence records, and 4,096 node-directory entries. The exact
+pinned template is read under its own 16-MiB file ceiling, so one successful
+endpoint read consumes at most 80 MiB of persisted input. Requests that exceed
+a limit or are canceled fail without holding the append lock indefinitely; the
+HTTP response remains a sanitized 500 rather than returning a partial graph.
+Decode work is synchronous and cooperatively checks cancellation, so it cannot
+outlive the viewer request and accumulate after the coherent lock is released.
+
 ## Notes
 
 - `advance` runs `verify` first and refuses dirty or inconsistent runs.
