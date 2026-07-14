@@ -4,24 +4,30 @@
 
 export const NO_EXTERNAL_CHANGE = Object.freeze({ kind: 'none', ref: '' });
 
-export function reconcileExternalChange(previous, { loadedRef, currentRef, dirty } = {}) {
+export function reconcileExternalChange(previous, {
+  loadedRef, loadedSourceHash, currentRef, currentSourceHash, dirty,
+} = {}) {
   const prior = previous || NO_EXTERNAL_CHANGE;
   const loaded = String(loadedRef || '');
+  const loadedSource = String(loadedSourceHash || '');
   const current = String(currentRef || '');
-  if (!loaded || !current || loaded === current) return NO_EXTERNAL_CHANGE;
-  if (prior.kind === 'kept' && prior.ref === current) return prior;
+  const currentSource = String(currentSourceHash || '');
+  if (!loaded || !loadedSource || !current || !currentSource
+      || (loaded === current && loadedSource === currentSource)) return NO_EXTERNAL_CHANGE;
+  if (prior.kind === 'kept' && prior.ref === current && prior.sourceHash === currentSource) return prior;
   const kind = dirty ? 'dirty' : 'clean';
-  if (prior.kind === kind && prior.ref === current) return prior;
-  return { kind, ref: current };
+  if (prior.kind === kind && prior.ref === current && prior.sourceHash === currentSource) return prior;
+  return { kind, ref: current, sourceHash: currentSource };
 }
 
 export function keepExternalChange(change) {
   const ref = String(change?.ref || '');
-  return ref ? { kind: 'kept', ref } : NO_EXTERNAL_CHANGE;
+  const sourceHash = String(change?.sourceHash || '');
+  return ref && sourceHash ? { kind: 'kept', ref, sourceHash } : NO_EXTERNAL_CHANGE;
 }
 
 export function templateHeadSignature(heads) {
   return JSON.stringify((heads || []).map((head) => ({
-    id: String(head?.id || ''), ref: String(head?.ref || ''),
+    id: String(head?.id || ''), ref: String(head?.ref || ''), sourceHash: String(head?.sourceHash || ''),
   })).filter((head) => head.id).sort((a, b) => a.id.localeCompare(b.id, 'en')));
 }

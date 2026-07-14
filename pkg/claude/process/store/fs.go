@@ -92,14 +92,8 @@ func (s *FS) putTemplate(ctx context.Context, tmpl *model.Template, moveHead boo
 		if err != nil && !errors.Is(err, ErrNotFound) {
 			return TemplateRecord{}, err
 		}
-		if preservedHead.Ref != "" {
-			// Freeze a legacy mtime-derived fallback before publishing the new
-			// version. If this write fails, the new content remains unpublished
-			// and therefore cannot become the fallback head by accident.
-			if err := s.writeTemplateHead(preservedHead); err != nil {
-				return TemplateRecord{}, err
-			}
-		}
+		// getTemplateHeadUnlocked materializes a legacy fallback before the new
+		// version is published. If migration fails, the write fails closed.
 	}
 	record, err := s.putTemplateUnlocked(ctx, tmpl, false)
 	if err != nil {
@@ -108,7 +102,11 @@ func (s *FS) putTemplate(ctx context.Context, tmpl *model.Template, moveHead boo
 	if moveHead || preservedHead.Ref == "" {
 		// A first non-moving write still establishes a head. Later file-backed
 		// runs will preserve it through the pre-publication path above.
-		if err := s.writeTemplateHead(record); err != nil {
+		head, err := s.templateHeadForRecordUnlocked(ctx, record)
+		if err != nil {
+			return TemplateRecord{}, err
+		}
+		if err := s.writeTemplateHead(head); err != nil {
 			return TemplateRecord{}, err
 		}
 	}
@@ -224,7 +222,7 @@ func (s *FS) putTemplateEditorSource(
 		commit.Actor = event.Actor
 		commit.AuthoredAt = event.AuthoredAt
 	}
-	if err := s.writeTemplateHead(record); err != nil {
+	if err := s.writeTemplateHead(TemplateHead{ID: record.ID, Ref: record.Ref, SourceHash: commit.SourceHash}); err != nil {
 		return rollback(err)
 	}
 	if intent != nil {
@@ -642,11 +640,11 @@ func (s *FS) GetTemplateHead(ctx context.Context, id string) (TemplateRecord, er
 	return s.getTemplateHeadUnlocked(ctx, id)
 }
 
-// ListTemplateHeads returns one small, sorted head identity per template
-// directory. It reads only the atomically published head pointer and never
-// scans immutable version directories; callers can therefore use it as a
-// bounded change signal before deciding whether ListTemplates is necessary.
-// A blank Ref identifies a legacy or in-progress directory without a head.
+// ListTemplateHeads returns one small, sorted, committed authoring generation
+// per template. Each read takes the existing per-template lock and recovers a
+// crash intent before observing the pointer. Ref-only and pointer-less legacy
+// heads are resolved and materialized once; steady-state polling reads only the
+// bounded pointer file. Empty first-create/orphan directories are skipped.
 func (s *FS) ListTemplateHeads(ctx context.Context) ([]TemplateHead, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -665,51 +663,77 @@ func (s *FS) ListTemplateHeads(ctx context.Context) ([]TemplateHead, error) {
 			continue
 		}
 		id := entry.Name()
-		data, readErr := os.ReadFile(filepath.Join(templatesDir, id, "head"))
-		if errors.Is(readErr, os.ErrNotExist) {
-			heads = append(heads, TemplateHead{ID: id})
+		if err := safeSegment(id); err != nil {
 			continue
 		}
-		if readErr != nil {
-			return nil, fmt.Errorf("read template head %q: %w", id, readErr)
+		unlock, lockErr := s.lockTemplate(ctx, id)
+		if lockErr != nil {
+			return nil, lockErr
 		}
-		ref := strings.TrimSpace(string(data))
-		refID, _, parseErr := parseTemplateRef(ref)
-		if parseErr != nil || refID != id {
-			return nil, fmt.Errorf("%w: template head %q", ErrContentMismatch, ref)
+		if recoverErr := s.recoverAttributedTemplateSaveUnlocked(ctx, id); recoverErr != nil {
+			unlock()
+			return nil, fmt.Errorf("recover attributed save for template %q: %w", id, recoverErr)
 		}
-		heads = append(heads, TemplateHead{ID: id, Ref: ref})
+		head, _, headErr := s.getTemplateHeadStateUnlocked(ctx, id)
+		unlock()
+		if errors.Is(headErr, ErrNotFound) {
+			continue
+		}
+		if headErr != nil {
+			return nil, headErr
+		}
+		heads = append(heads, head)
 	}
 	slices.SortFunc(heads, func(a, b TemplateHead) int { return strings.Compare(a.ID, b.ID) })
 	return heads, nil
 }
 
 func (s *FS) getTemplateHeadUnlocked(ctx context.Context, id string) (TemplateRecord, error) {
+	_, record, err := s.getTemplateHeadStateUnlocked(ctx, id)
+	return record, err
+}
+
+const templateHeadPointerVersion = 1
+
+type templateHeadPointer struct {
+	Version    int    `json:"version"`
+	Ref        string `json:"ref"`
+	SourceHash string `json:"sourceHash"`
+}
+
+func (s *FS) getTemplateHeadStateUnlocked(ctx context.Context, id string) (TemplateHead, TemplateRecord, error) {
 	if err := safeSegment(id); err != nil {
-		return TemplateRecord{}, fmt.Errorf("invalid template id: %w", err)
+		return TemplateHead{}, TemplateRecord{}, fmt.Errorf("invalid template id: %w", err)
 	}
 	headPath := filepath.Join(s.root, "templates", id, "head")
 	if data, err := os.ReadFile(headPath); err == nil {
-		ref := strings.TrimSpace(string(data))
-		records, err := templateRecordsForID(ctx, s, id)
-		if err != nil {
-			return TemplateRecord{}, err
+		head, legacy, decodeErr := decodeTemplateHead(id, data)
+		if decodeErr != nil {
+			return TemplateHead{}, TemplateRecord{}, decodeErr
 		}
-		for _, record := range records {
-			if record.Ref == ref {
-				return record, nil
+		record, recordErr := s.templateRecordForRefUnlocked(head.Ref)
+		if recordErr != nil {
+			return TemplateHead{}, TemplateRecord{}, recordErr
+		}
+		if legacy {
+			head, recordErr = s.templateHeadForRecordUnlocked(ctx, record)
+			if recordErr != nil {
+				return TemplateHead{}, TemplateRecord{}, recordErr
+			}
+			if writeErr := s.writeTemplateHead(head); writeErr != nil {
+				return TemplateHead{}, TemplateRecord{}, writeErr
 			}
 		}
-		return TemplateRecord{}, fmt.Errorf("%w: template head %q", ErrContentMismatch, ref)
+		return head, record, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return TemplateRecord{}, fmt.Errorf("read template head: %w", err)
+		return TemplateHead{}, TemplateRecord{}, fmt.Errorf("read template head: %w", err)
 	}
 	records, err := templateRecordsForID(ctx, s, id)
 	if err != nil {
-		return TemplateRecord{}, err
+		return TemplateHead{}, TemplateRecord{}, err
 	}
 	if len(records) == 0 {
-		return TemplateRecord{}, ErrNotFound
+		return TemplateHead{}, TemplateRecord{}, ErrNotFound
 	}
 	slices.SortFunc(records, func(a, b TemplateRecord) int {
 		if !a.StoredAt.Equal(b.StoredAt) {
@@ -720,21 +744,97 @@ func (s *FS) getTemplateHeadUnlocked(ctx context.Context, id string) (TemplateRe
 		}
 		return strings.Compare(b.SemanticHash, a.SemanticHash)
 	})
-	// Materialize the legacy mtime-derived choice so future head observations
-	// stay bounded to the pointer file instead of rescanning all versions.
-	if err := s.writeTemplateHead(records[0]); err != nil {
-		return TemplateRecord{}, err
+	head, err := s.templateHeadForRecordUnlocked(ctx, records[0])
+	if err != nil {
+		return TemplateHead{}, TemplateRecord{}, err
 	}
-	return records[0], nil
+	// This is the intentional legacy migration point. The store already needs
+	// write access for its cross-process lock/recovery contract; migration fails
+	// closed rather than rescanning versions on every observation tick.
+	if err := s.writeTemplateHead(head); err != nil {
+		return TemplateHead{}, TemplateRecord{}, err
+	}
+	return head, records[0], nil
 }
 
 func templateRecordsForID(ctx context.Context, s *FS, id string) ([]TemplateRecord, error) {
 	return s.listTemplateRecordsForIDUnlocked(ctx, id)
 }
 
-func (s *FS) writeTemplateHead(record TemplateRecord) error {
-	path := filepath.Join(s.root, "templates", record.ID, "head")
-	return writeFileAtomic(path, []byte(record.Ref+"\n"), 0o644)
+func decodeTemplateHead(id string, data []byte) (TemplateHead, bool, error) {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 {
+		return TemplateHead{}, false, fmt.Errorf("%w: empty template head for %q", ErrContentMismatch, id)
+	}
+	if trimmed[0] != '{' {
+		ref := string(trimmed)
+		refID, _, err := parseTemplateRef(ref)
+		if err != nil || refID != id {
+			return TemplateHead{}, false, fmt.Errorf("%w: template head %q", ErrContentMismatch, ref)
+		}
+		return TemplateHead{ID: id, Ref: ref}, true, nil
+	}
+	var pointer templateHeadPointer
+	dec := json.NewDecoder(bytes.NewReader(trimmed))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&pointer); err != nil {
+		return TemplateHead{}, false, fmt.Errorf("decode template head %q: %w", id, err)
+	}
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return TemplateHead{}, false, fmt.Errorf("decode template head %q: trailing content", id)
+	}
+	refID, _, err := parseTemplateRef(pointer.Ref)
+	if pointer.Version != templateHeadPointerVersion || err != nil || refID != id || !isHexSHA256(pointer.SourceHash) {
+		return TemplateHead{}, false, fmt.Errorf("%w: invalid template head for %q", ErrContentMismatch, id)
+	}
+	return TemplateHead{ID: id, Ref: pointer.Ref, SourceHash: pointer.SourceHash}, false, nil
+}
+
+func (s *FS) templateRecordForRefUnlocked(ref string) (TemplateRecord, error) {
+	id, hash, err := parseTemplateRef(ref)
+	if err != nil {
+		return TemplateRecord{}, err
+	}
+	dir, err := s.templateDir(id, hash)
+	if err != nil {
+		return TemplateRecord{}, err
+	}
+	bodyPath := filepath.Join(dir, "template.json")
+	info, err := os.Stat(bodyPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return TemplateRecord{}, fmt.Errorf("%w: template head %q", ErrContentMismatch, ref)
+	}
+	if err != nil {
+		return TemplateRecord{}, fmt.Errorf("stat template head %q: %w", ref, err)
+	}
+	return TemplateRecord{ID: id, Ref: ref, SemanticHash: hash, StoredAt: info.ModTime()}, nil
+}
+
+func (s *FS) templateHeadForRecordUnlocked(ctx context.Context, record TemplateRecord) (TemplateHead, error) {
+	id, hash, err := parseTemplateRef(record.Ref)
+	if err != nil {
+		return TemplateHead{}, err
+	}
+	source, err := s.getTemplateSourceUnlocked(ctx, id, hash, record.Ref)
+	if err != nil {
+		return TemplateHead{}, err
+	}
+	return TemplateHead{ID: id, Ref: record.Ref, SourceHash: sourceHash(source)}, nil
+}
+
+func (s *FS) writeTemplateHead(head TemplateHead) error {
+	refID, _, err := parseTemplateRef(head.Ref)
+	if head.ID == "" || refID != head.ID || err != nil || !isHexSHA256(head.SourceHash) {
+		return fmt.Errorf("%w: invalid template head for %q", ErrContentMismatch, head.ID)
+	}
+	data, err := json.Marshal(templateHeadPointer{
+		Version: templateHeadPointerVersion, Ref: head.Ref, SourceHash: head.SourceHash,
+	})
+	if err != nil {
+		return fmt.Errorf("encode template head: %w", err)
+	}
+	path := filepath.Join(s.root, "templates", head.ID, "head")
+	return writeFileAtomic(path, append(data, '\n'), 0o644)
 }
 
 func sourceHash(source []byte) string {

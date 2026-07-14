@@ -23,16 +23,19 @@ export function createProcessesActions({
   const requestBusy = (lifecycle) => ['loading', 'refreshing'].includes(lifecycle.request.value.phase);
   const editorGeneration = () => {
     const editor = state.currentEditor();
-    return { editor, model: editor?.model, ref: editor?.model?.currentRef || '' };
+    return {
+      editor, model: editor?.model, ref: editor?.model?.currentRef || '', sourceHash: editor?.model?.sourceHash || '',
+    };
   };
   const publishMatchingHead = (generation, heads) => {
     if (!generation.editor || !generation.model || state.currentEditor() !== generation.editor
         || generation.editor.model !== generation.model
-        || generation.model.currentRef !== generation.ref) return false;
+        || generation.model.currentRef !== generation.ref
+        || generation.model.sourceHash !== generation.sourceHash) return false;
     const id = generation.model?.template?.id;
-    const head = (heads || []).find((candidate) => candidate.id === id)?.ref;
-    if (!head) return false;
-    generation.editor.observeExternalRef?.(head);
+    const head = (heads || []).find((candidate) => candidate.id === id);
+    if (!head?.ref || !head?.sourceHash) return false;
+    generation.editor.observeExternalHead?.(head);
     return true;
   };
 
@@ -40,7 +43,7 @@ export function createProcessesActions({
     const lifecycle = ({ templates: state.templatesRequest, runs: state.runsRequest, worklist: state.worklistRequest })[name];
     const path = ({ templates: '/v1/process/templates', runs: '/v1/process/runs', worklist: '/v1/process/worklist' })[name];
     if (!lifecycle || !path) return false;
-    if (requestBusy(lifecycle) || (name === 'templates' && headObservationPending)) return false;
+    if (name === 'templates' && (requestBusy(lifecycle) || headObservationPending)) return false;
     const generation = name === 'templates' ? editorGeneration() : null;
     const token = lifecycle.beginRequest();
     try {
@@ -57,7 +60,9 @@ export function createProcessesActions({
         if (!items.length && state.runs.value === null) void load('runs', { quiet: true });
       } else if (name === 'templates') {
         const rows = body.templates || [];
-        const heads = rows.map((template) => ({ id: template.id, ref: template.latestVersion?.ref || '' }));
+        const heads = rows.map((template) => ({
+          id: template.id, ref: template.latestVersion?.ref || '', sourceHash: template.latestVersion?.sourceHash || '',
+        }));
         listedHeadsSignature = templateHeadSignature(heads);
         publishMatchingHead(generation, heads);
         if (!quiet) {

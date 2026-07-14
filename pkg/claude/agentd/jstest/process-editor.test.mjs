@@ -354,11 +354,12 @@ function externalReloadEditor({ dirty = false, confirmDiscard = async () => true
   if (dirty) model.setTemplateMeta({ name: 'Local draft' });
   const editor = {
     model, blank: false, selection: { type: 'node', id: 'gone' },
-    externalChange: { kind: dirty ? 'dirty' : 'clean', ref: 'alpha@sha256:new' },
-    externalReloadPending: false, externalReloadSeq: 0, savePending: false,
-    abort: new AbortController(), options: { confirmDiscard }, modalDispose: null,
+    externalChange: { kind: dirty ? 'dirty' : 'clean', ref: 'alpha@sha256:new', sourceHash: 'source-new' },
+    externalDecisionPending: false, externalReloadPending: false, externalReloadSeq: 0, savePending: false,
+    abort: new AbortController(), options: { confirmDiscard }, modalDispose: null, inlineCommit: null,
     validation: null,
     renderExternalChange() {},
+    updateChrome() {},
     retainLiveSelection() { return ProcessTemplateEditor.prototype.retainLiveSelection.call(this); },
     refresh(options) { this.refreshOptions = options; },
     status(message, isError) { this.lastStatus = { message, isError }; },
@@ -378,7 +379,100 @@ test('dirty external Reload never fetches or replaces the model when discard is 
     assert.equal(prompts, 1);
     assert.equal(fetches, 0);
     assert.equal(editor.model, original);
-    assert.deepEqual(editor.externalChange, { kind: 'dirty', ref: 'alpha@sha256:new' });
+    assert.deepEqual(editor.externalChange, { kind: 'dirty', ref: 'alpha@sha256:new', sourceHash: 'source-new' });
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+  }
+});
+
+test('a model mutation while discard confirmation is pending cancels external Reload', async () => {
+  const previousFetch = globalThis.fetch;
+  const confirmation = deferred(); let fetches = 0;
+  globalThis.fetch = async () => { fetches += 1; throw new Error('stale confirmation must not fetch'); };
+  try {
+    const editor = externalReloadEditor({ dirty: true, confirmDiscard: () => confirmation.promise });
+    const original = editor.model;
+    const pending = ProcessTemplateEditor.prototype.reloadExternalChange.call(editor);
+    assert.equal(editor.externalDecisionPending, true);
+    assert.equal(ProcessTemplateEditor.prototype.mutate.call(editor, () => original.setTemplateMeta({ doc: 'blocked' })), undefined,
+      'normal editor mutations are locked while the decision is pending');
+    original.setTemplateMeta({ description: 'out-of-band local mutation' });
+    confirmation.resolve(true);
+    assert.equal(await pending, false);
+    assert.equal(fetches, 0);
+    assert.equal(editor.model, original);
+    assert.equal(editor.model.template.description, 'out-of-band local mutation');
+    assert.equal(editor.externalDecisionPending, false);
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+  }
+});
+
+test('a model swap or completed save while discard confirmation is pending cancels external Reload', async () => {
+  const previousFetch = globalThis.fetch;
+  let fetches = 0;
+  globalThis.fetch = async () => { fetches += 1; throw new Error('stale confirmation must not fetch'); };
+  try {
+    for (const scenario of ['model swap', 'completed save']) {
+      const confirmation = deferred();
+      const editor = externalReloadEditor({ dirty: true, confirmDiscard: () => confirmation.promise });
+      const original = editor.model;
+      const pending = ProcessTemplateEditor.prototype.reloadExternalChange.call(editor);
+      if (scenario === 'model swap') {
+        editor.model = externalReloadEditor().model;
+      } else {
+        original.markSaved({ ref: original.currentRef, sourceHash: 'source-saved', semanticHash: original.semanticHash });
+      }
+      confirmation.resolve(true);
+      assert.equal(await pending, false, scenario);
+      assert.equal(editor.externalDecisionPending, false, scenario);
+    }
+    assert.equal(fetches, 0);
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+  }
+});
+
+test('a replacement modal while discard confirmation is pending is never closed', async () => {
+  const previousFetch = globalThis.fetch;
+  const confirmation = deferred(); let fetches = 0; let originalClosed = 0; let replacementClosed = 0;
+  globalThis.fetch = async () => { fetches += 1; throw new Error('stale confirmation must not fetch'); };
+  try {
+    const editor = externalReloadEditor({ dirty: true, confirmDiscard: () => confirmation.promise });
+    const originalModal = () => { originalClosed += 1; };
+    originalModal.isDirty = () => true;
+    editor.modalDispose = originalModal;
+    const pending = ProcessTemplateEditor.prototype.reloadExternalChange.call(editor);
+    const replacement = () => { replacementClosed += 1; };
+    replacement.isDirty = () => true;
+    editor.modalDispose = replacement;
+    confirmation.resolve(true);
+    assert.equal(await pending, false);
+    assert.equal(fetches, 0);
+    assert.equal(originalClosed, 0);
+    assert.equal(replacementClosed, 0);
+    assert.equal(editor.modalDispose, replacement);
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+  }
+});
+
+test('a newer target head while discard confirmation is pending cancels the old Reload', async () => {
+  const previousFetch = globalThis.fetch;
+  const confirmation = deferred(); let fetches = 0;
+  globalThis.fetch = async () => { fetches += 1; throw new Error('stale confirmation must not fetch'); };
+  try {
+    const editor = externalReloadEditor({ dirty: true, confirmDiscard: () => confirmation.promise });
+    const pending = ProcessTemplateEditor.prototype.reloadExternalChange.call(editor);
+    editor.externalChange = { kind: 'dirty', ref: 'alpha@sha256:newer', sourceHash: 'source-newer' };
+    confirmation.resolve(true);
+    assert.equal(await pending, false);
+    assert.equal(fetches, 0);
+    assert.deepEqual(editor.externalChange, { kind: 'dirty', ref: 'alpha@sha256:newer', sourceHash: 'source-newer' });
   } finally {
     if (previousFetch === undefined) delete globalThis.fetch;
     else globalThis.fetch = previousFetch;
@@ -460,7 +554,7 @@ test('an edit made during external Reload cancels the swap and preserves the dra
     assert.equal(await pending, false);
     assert.equal(editor.model, original, 'revision advance fails closed instead of swapping the model');
     assert.equal(editor.model.template.description, 'new local edit during reload');
-    assert.deepEqual(editor.externalChange, { kind: 'dirty', ref: 'alpha@sha256:new' });
+    assert.deepEqual(editor.externalChange, { kind: 'dirty', ref: 'alpha@sha256:new', sourceHash: 'source-new' });
     assert.match(editor.lastStatus.message, /Reload cancelled/);
   } finally {
     if (previousFetch === undefined) delete globalThis.fetch;
@@ -489,7 +583,7 @@ test('a new dialog draft during external Reload cancels the swap', async () => {
     assert.equal(await pending, false);
     assert.equal(editor.model, original);
     assert.equal(editor.modalDispose, draft, 'the new dialog draft remains owned by the old model');
-    assert.deepEqual(editor.externalChange, { kind: 'clean', ref: 'alpha@sha256:new' });
+    assert.deepEqual(editor.externalChange, { kind: 'clean', ref: 'alpha@sha256:new', sourceHash: 'source-new' });
   } finally {
     if (previousFetch === undefined) delete globalThis.fetch;
     else globalThis.fetch = previousFetch;

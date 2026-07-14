@@ -54,7 +54,8 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"export function reconcileExternalChange(",
 		"export function keepExternalChange(",
 		"export function templateHeadSignature(",
-		"prior.kind === 'kept' && prior.ref === current",
+		"prior.kind === 'kept' && prior.ref === current && prior.sourceHash === currentSource",
+		"sourceHash: String(head?.sourceHash || '')",
 	)
 	for _, banned := range []string{"document.", "fetch(", "setTimeout(", "setInterval("} {
 		if strings.Contains(externalChange, banned) {
@@ -82,16 +83,20 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		// reloads in place; no dirty buffer is replaced without confirmation.
 		"Template changed externally (new version)",
 		"text: 'Keep editing'",
-		"observeExternalRef(currentRef)",
+		"observeExternalHead({ ref: currentRef, sourceHash: currentSourceHash } = {})",
 		"reloadExternalChange()",
 		"this.options.confirmDiscard?.()",
+		"this.externalDecisionPending = true",
+		"decision.model.sourceHash === decision.sourceHash",
+		"this.modalDispose === decision.modal",
+		"this.externalChange.sourceHash === decision.targetSourceHash",
 		"guardedModel.rev !== guardedRev",
-		"this.savePending || this.externalReloadPending",
+		"externalInteractionPending(this)",
 		"this.refresh();",
 		// IDs are creation-time store keys. Existing templates render only the
 		// title, and a blank template swaps its id input out after first save.
 		"const showIDInput = templateIDEditable(this.blank, model.sourceHash)",
-		"const idEditable = showIDInput && !this.savePending && !this.externalReloadPending",
+		"const idEditable = showIDInput && !this.savePending && !externalPending",
 		"this.idInput.disabled = !idEditable",
 		"this.identity.replaceChildren(showIDInput ? this.idInput : this.titleLabel)",
 		"this.model.setTemplateID(this.idInput.value.trim())",
@@ -106,7 +111,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"this.graph.select(null)",
 		"if (this.selection?.type !== 'template')",
 		"this.saveButton.disabled = this.savePending ||",
-		"if (this.savePending || this.externalReloadPending) return false",
+		"if (this.savePending || externalInteractionPending(this)) return false",
 		"if (requestSeq !== this.saveSeq) return",
 		"this.saveSeq += 1",
 		"this.model.setTemplateMeta({ name:",
@@ -183,6 +188,9 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 	mustContain("processes-actions.js", actions,
 		"publishMatchingHead(generation, heads)",
 		"generation.model.currentRef !== generation.ref",
+		"generation.model.sourceHash !== generation.sourceHash",
+		"generation.editor.observeExternalHead?.(head)",
+		"name === 'templates' && (requestBusy(lifecycle) || headObservationPending)",
 		"'/v1/process/template-heads'",
 	)
 

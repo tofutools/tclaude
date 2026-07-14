@@ -967,7 +967,7 @@ func baseStates() []dashsnap.State {
   var response = await fetch('/v1/process/templates/release-train', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(external)});
   var saved = await response.json();
   if (!response.ok || !saved.ref) throw new Error('external clean save failed: ' + JSON.stringify(saved));
-  ed.observeExternalRef(saved.ref);
+  ed.observeExternalHead(saved);
   if (ed.externalChange.kind !== 'clean') throw new Error('clean external banner state missing');`),
 			SettleMS: 1100,
 		},
@@ -981,7 +981,7 @@ func baseStates() []dashsnap.State {
   var saved = await response.json();
   if (!response.ok || !saved.ref) throw new Error('external dirty save failed: ' + JSON.stringify(saved));
   ed.model.addNode('task', {x: 470, y: 120, name: 'Local draft'}); ed.refresh({fit: true});
-  ed.observeExternalRef(saved.ref);
+  ed.observeExternalHead(saved);
   if (ed.externalChange.kind !== 'dirty' || ed.externalKeepButton.hidden) throw new Error('dirty external banner actions missing');`),
 			SettleMS: 1100,
 		},

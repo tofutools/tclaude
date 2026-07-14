@@ -114,12 +114,13 @@ type TemplateRecord struct {
 	StoredAt     time.Time `json:"storedAt"`
 }
 
-// TemplateHead is the bounded observation shape for editor heads. Unlike a
-// TemplateRecord it deliberately carries no version metadata: polling callers
-// only need to know whether the set of ids/refs changed.
+// TemplateHead is the bounded observation shape for editor heads. Ref tracks
+// semantic identity; SourceHash also advances for layout/source-only saves
+// that retain the same Ref.
 type TemplateHead struct {
-	ID  string `json:"id"`
-	Ref string `json:"ref"`
+	ID         string `json:"id"`
+	Ref        string `json:"ref"`
+	SourceHash string `json:"sourceHash"`
 }
 
 // TemplateAuthorship is one append-only authoring event for a process-template

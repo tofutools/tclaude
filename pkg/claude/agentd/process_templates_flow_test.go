@@ -93,7 +93,10 @@ func TestProcessTemplateRESTListGetSaveAndConflict(t *testing.T) {
 		Heads []store.TemplateHead `json:"heads"`
 	}
 	testharness.DecodeJSON(t, headsRec, &heads)
-	assert.Equal(t, []store.TemplateHead{{ID: "release", Ref: latestRecord.Ref}}, heads.Heads)
+	require.Len(t, heads.Heads, 1)
+	assert.Equal(t, latestRecord.Ref, heads.Heads[0].Ref)
+	assert.Equal(t, "release", heads.Heads[0].ID)
+	assert.Equal(t, list.Templates[0].LatestVersion.SourceHash, heads.Heads[0].SourceHash)
 
 	getRec := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates/release", nil)
 	require.Equal(t, http.StatusOK, getRec.Code, getRec.Body.String())
@@ -204,6 +207,14 @@ func TestProcessTemplateSavePersistsLayoutOnlyEditAtSameRef(t *testing.T) {
 	var edit processEditResponse
 	testharness.DecodeJSON(t, getRec, &edit)
 	baseHash := edit.SourceHash
+	beforeHeadsRec := processTemplateRequest(t, f, http.MethodGet, "/v1/process/template-heads", nil)
+	require.Equal(t, http.StatusOK, beforeHeadsRec.Code, beforeHeadsRec.Body.String())
+	var beforeHeads struct {
+		Heads []store.TemplateHead `json:"heads"`
+	}
+	testharness.DecodeJSON(t, beforeHeadsRec, &beforeHeads)
+	require.Len(t, beforeHeads.Heads, 1)
+	assert.Equal(t, baseHash, beforeHeads.Heads[0].SourceHash)
 	edit.Layout.Nodes["begin"] = model.LayoutNode{X: 444, Y: 222}
 
 	saveRec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/layout-only", edit)
@@ -215,6 +226,15 @@ func TestProcessTemplateSavePersistsLayoutOnlyEditAtSameRef(t *testing.T) {
 	testharness.DecodeJSON(t, saveRec, &saved)
 	assert.Equal(t, record.Ref, saved.Ref, "layout does not alter semantic identity")
 	assert.NotEqual(t, baseHash, saved.SourceHash, "source hash includes layout")
+	afterHeadsRec := processTemplateRequest(t, f, http.MethodGet, "/v1/process/template-heads", nil)
+	require.Equal(t, http.StatusOK, afterHeadsRec.Code, afterHeadsRec.Body.String())
+	var afterHeads struct {
+		Heads []store.TemplateHead `json:"heads"`
+	}
+	testharness.DecodeJSON(t, afterHeadsRec, &afterHeads)
+	require.Len(t, afterHeads.Heads, 1)
+	assert.Equal(t, record.Ref, afterHeads.Heads[0].Ref)
+	assert.Equal(t, saved.SourceHash, afterHeads.Heads[0].SourceHash)
 
 	reopenRec := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates/layout-only", nil)
 	require.Equal(t, http.StatusOK, reopenRec.Code, reopenRec.Body.String())
