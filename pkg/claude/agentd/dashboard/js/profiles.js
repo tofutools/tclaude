@@ -60,7 +60,34 @@ function invalidateProfiles() {
 // the (lazily loaded) list cache — the list already carries every field.
 async function getProfile(name) {
   const list = await loadProfiles();
-  return list.find(p => p.name === name) || null;
+  return findProfileByHandle(list, name);
+}
+
+// findProfileByHandle resolves the primary name or any alias without another
+// request. The server guarantees one shared namespace, so the first match is
+// unambiguous.
+function findProfileByHandle(profiles, handle) {
+  const name = String(handle || '').trim();
+  return (profiles || []).find(p => p.name === name || (p.aliases || []).includes(name)) || null;
+}
+
+// profileChoices flattens each stored profile into one canonical option and
+// one option per alias. Alias entries remain visibly tied to their canonical
+// profile instead of looking like duplicate profiles.
+function profileChoices(profiles) {
+  const out = [];
+  for (const profile of profiles || []) {
+    out.push({ value: profile.name, label: profile.name, profile, alias: false });
+    for (const alias of profile.aliases || []) {
+      out.push({ value: alias, label: `${alias} → ${profile.name}`, profile, alias: true });
+    }
+  }
+  return out;
+}
+
+function profileAliasesLabel(profile) {
+  const aliases = profile?.aliases || [];
+  return aliases.length ? `aka ${aliases.join(' · ')}` : '';
 }
 
 // createProfile POSTs a new profile. `body` is a spawnProfileJSON (name +
@@ -165,7 +192,10 @@ async function setDashDefaultProfile(name) {
     body: name ? JSON.stringify({ name }) : undefined,
   });
   if (!r.ok) throw new Error((await r.text()) || `HTTP ${r.status}`);
-  dashPrefs.syncItem(DASH_DEFAULT_PROFILE_KEY, name);
+  const response = await r.json().catch(() => ({}));
+  const canonical = response.name || '';
+  dashPrefs.syncItem(DASH_DEFAULT_PROFILE_KEY, canonical);
+  return canonical;
 }
 
 // syncDashDefaultProfile reconciles dashPrefs' synchronous UI cache from the
@@ -213,6 +243,7 @@ function profileSummary(p) {
 
 export {
   loadProfiles, cachedProfiles, invalidateProfiles, getProfile,
+  findProfileByHandle, profileChoices, profileAliasesLabel,
   createProfile, updateProfile, deleteProfile,
   exportProfiles, inspectProfileImport, importProfiles,
   getDashDefaultProfile, setDashDefaultProfile, syncDashDefaultProfile,

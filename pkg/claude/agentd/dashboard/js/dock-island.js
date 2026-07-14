@@ -61,7 +61,7 @@ function DockCard({ section, item, openMenu, setOpenMenu, clipHost, layoutVersio
       data-key=${name}
       data-dock-kind=${section.key}
       data-dock-name=${name}
-      title=${name}
+      title=${section.key === 'profiles' && item.aliases?.length ? `${name} — aka ${item.aliases.join(', ')}` : name}
     >
       <span class="dock-grip" aria-hidden="true" title=${gripTitle}>⠿</span>
       <span class="dock-card-icon" aria-hidden="true">${section.icon}</span>

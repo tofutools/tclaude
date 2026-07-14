@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { profileSummary, getDashDefaultProfile } from './profiles.js';
+import { profileSummary, getDashDefaultProfile, findProfileByHandle, profileChoices } from './profiles.js';
 import { pickDirectory } from './helpers.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { wizWord } from './slop.js';
@@ -1273,7 +1273,7 @@ function DeployRosterPreview({ template, prefix, profiles, defaultProfile }) {
         wizard="this circle names no familiars"
     /></span>`;
   const shown = prefix.trim() || '‹group›';
-  const fallback = profiles.find((profile) => profile.name === defaultProfile);
+  const fallback = findProfileByHandle(profiles, defaultProfile);
   return html`${template.agents.map((agent, index) => {
     const adopts =
       fallback && !agent.spawn_profile && agentInheritsDeployDefault(agent);
@@ -1314,8 +1314,7 @@ export function TemplateDeployDialog({
     current.templates[0];
   const dropGroup =
     groups.find((group) => group.name === descriptor.dropGroup) || null;
-  const availableProfile = (name) =>
-    current.profiles.some((profile) => profile.name === name) ? name : '';
+  const availableProfile = (name) => findProfileByHandle(current.profiles, name) ? name : '';
   const seededProfile = availableProfile(
     dropGroup?.default_profile || getDashDefaultProfile() || '',
   );
@@ -1937,9 +1936,7 @@ export function TemplateDeployDialog({
         ><span class="cron-create-label">Default profile</span
         ><select
           id="template-deploy-default-profile"
-          value=${current.profiles.some(
-            (profile) => profile.name === defaultProfile,
-          )
+          value=${findProfileByHandle(current.profiles, defaultProfile)
             ? defaultProfile
             : ''}
           onChange=${(event) => {
@@ -1948,10 +1945,10 @@ export function TemplateDeployDialog({
           }}
         >
           <option value="">(none — harness default)</option>
-          ${current.profiles.map(
-            (profile) =>
-              html`<option key=${profile.name} value=${profile.name}>
-                ${profile.name}
+          ${profileChoices(current.profiles).map(
+            (choice) =>
+              html`<option key=${choice.value} value=${choice.value}>
+                ${choice.label}
               </option>`,
           )}
         </select></label
@@ -2066,7 +2063,8 @@ function RoleInspect({ roleName, roles }) {
 }
 
 function profileOptions(agent, profiles) {
-  const names = profiles.map((profile) => profile.name);
+  const choices = profileChoices(profiles);
+  const names = choices.map((choice) => choice.value);
   const selected = agent.spawn_profile || '';
   const preferred = getDashDefaultProfile();
   const blank =
@@ -2075,7 +2073,7 @@ function profileOptions(agent, profiles) {
       : '(none)';
   return [
     ['', blank],
-    ...names.map((name) => [name, name]),
+    ...choices.map((choice) => [choice.value, choice.label]),
     ...(selected && !names.includes(selected)
       ? [[selected, `⚠ ${selected} (missing)`]]
       : []),
@@ -2084,7 +2082,7 @@ function profileOptions(agent, profiles) {
 
 function ProfileReadback({ agent, profiles }) {
   if (agent.spawn_profile) {
-    const profile = profiles.find((item) => item.name === agent.spawn_profile);
+    const profile = findProfileByHandle(profiles, agent.spawn_profile);
     if (!profile)
       return html`<span class="ta-profile-summary-missing"
         >⚠ no profile named “${agent.spawn_profile}” here — pick another or
@@ -2101,7 +2099,7 @@ function ProfileReadback({ agent, profiles }) {
   const profile =
     preferred &&
     agentInheritsDeployDefault(agent) &&
-    profiles.find((item) => item.name === preferred);
+    findProfileByHandle(profiles, preferred);
   return profile
     ? html`<span class="ta-profile-summary-default"
         >inherits default
@@ -2147,7 +2145,7 @@ function AgentRow({
   const custom = () => {
     const seed =
       agent.profile_inline ||
-      profiles.find((profile) => profile.name === agent.spawn_profile) ||
+      findProfileByHandle(profiles, agent.spawn_profile) ||
       null;
     actions.openProfileEditor(seed ? clone(seed) : null, {
       local: { onSave: (payload) => update({ profile_inline: payload }) },

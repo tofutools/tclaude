@@ -56,6 +56,11 @@ func completeSpawnProfileNames(_ *cobra.Command, _ []string, toComplete string) 
 		if strings.HasPrefix(p.Name, toComplete) {
 			out = append(out, p.Name)
 		}
+		for _, alias := range p.Aliases {
+			if strings.HasPrefix(alias, toComplete) {
+				out = append(out, alias)
+			}
+		}
 	}
 	return out
 }

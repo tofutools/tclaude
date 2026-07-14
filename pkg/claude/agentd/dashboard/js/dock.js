@@ -108,7 +108,11 @@ export const dockSections = Object.freeze([
     empty: () => wizWord('no profiles yet', 'no patterns yet'),
     items: (snap) => (snap && snap.profiles) || [],
     name: (p) => p.name,
-    chips: (p) => summaryChips(profileSummary(p)),
+    chips: (p) => [
+      ...(p.aliases || []).slice(0, 2).map((alias) => ({ text: `aka ${alias}`, more: false })),
+      ...summaryChips(profileSummary(p), Math.max(1, 4 - Math.min((p.aliases || []).length, 2))),
+      ...((p.aliases || []).length > 2 ? [{ text: `+${p.aliases.length - 2} aliases`, more: true }] : []),
+    ],
     drag: true,
     onManageItem: (p) => openProfileEditor(p),
     // Clone → the generic name dialog; the copy is the source profile re-POSTed

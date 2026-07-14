@@ -7,10 +7,12 @@ const catalog = [{ name: 'claude', display_name: 'Claude Code', models: ['sonnet
 test('management model preserves full-replace profile and role semantics', async (t) => {
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/management-model.js');
-  const original = { name: 'old', harness: 'codex', approval: 'never', auto_review: true, model: 'gpt-5' };
+  const original = { name: 'old', aliases: ['codex-reviewer'], harness: 'codex', approval: 'never', auto_review: true, model: 'gpt-5' };
   const draft = model.profileDraft(original, {}, catalog); draft.name = 'renamed'; draft.trust_dir = '1';
+  draft.aliases_text += ', cold-reviewer';
   const payload = model.profilePayload(draft, original, catalog);
   assert.equal(payload.name, 'renamed'); assert.equal(payload.approval, 'never'); assert.equal(payload.auto_review, true); assert.equal(payload.trust_dir, true);
+  assert.deepEqual(payload.aliases, ['codex-reviewer', 'cold-reviewer']);
   draft.harness = 'claude'; draft.approval = 'plan'; draft.sandbox = 'on';
   const switched = model.profilePayload(draft, original, catalog);
   assert.equal(switched.approval, 'plan'); assert.equal(switched.auto_review, undefined); assert.equal(switched.trust_dir, undefined);
@@ -18,6 +20,27 @@ test('management model preserves full-replace profile and role semantics', async
   assert.deepEqual(model.rolePayload(role, catalog).permissions, ['read']);
   const defaults = model.profileDraft(null, {}, catalog); assert.equal(defaults.sandbox, 'inherit'); assert.equal(defaults.approval, 'inherit'); assert.equal(defaults.ask_user_question_timeout, 'inherit');
   assert.deepEqual(model.harnessDefaults({ sandbox_modes: ['on'], approval_modes: ['plan'], ask_timeout_modes: ['60s'] }), { sandbox: 'on', approval: 'plan', ask_user_question_timeout: '60s' });
+});
+
+test('profile choices expose aliases as distinct handles tied to one profile', async (t) => {
+  const harness = await createPreactHarness(t);
+  const profiles = await harness.importDashboardModule('js/profiles.js');
+  const list = [{ name: 'gpt5.6-sol-high', aliases: ['codex-reviewer', 'cold-reviewer'] }];
+  assert.deepEqual(profiles.profileChoices(list).map(({ value, label }) => ({ value, label })), [
+    { value: 'gpt5.6-sol-high', label: 'gpt5.6-sol-high' },
+    { value: 'codex-reviewer', label: 'codex-reviewer → gpt5.6-sol-high' },
+    { value: 'cold-reviewer', label: 'cold-reviewer → gpt5.6-sol-high' },
+  ]);
+  assert.equal(profiles.findProfileByHandle(list, 'codex-reviewer').name, 'gpt5.6-sol-high');
+});
+
+test('profile clone payload leaves unique aliases with the source', async (t) => {
+  const harness = await createPreactHarness(t);
+  const clone = await harness.importDashboardModule('js/clone-payload.js');
+  assert.deepEqual(clone.clonePayload({
+    name: 'original', aliases: ['codex-reviewer'], model: 'sonnet',
+    created_at: 'old', updated_at: 'old',
+  }, 'copy'), { name: 'copy', model: 'sonnet' });
 });
 
 test('management actions reject stale loads and expose mutation failures', async (t) => {
@@ -38,14 +61,16 @@ test('management island renders keyed profile list and explicit editor state', a
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
     harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
   ]);
-  const state = createManagementState(); state.profilesRequest.commitRequest(state.profilesRequest.beginRequest(), [{ name: 'one', model: 'sonnet' }]); state.openManager('profiles');
+  const state = createManagementState(); state.profilesRequest.commitRequest(state.profilesRequest.beginRequest(), [{ name: 'one', aliases: ['reviewer'], model: 'sonnet' }]); state.openManager('profiles');
   const actions = { load() {}, openProfileEditor(seed = null, options = {}) { state.openDialog({ kind: 'profile-editor', seed, options, catalog }); }, openRoleEditor() {}, removeProfile() {}, removeRole() {}, openManager() {}, saveProfile() {} };
   const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
   mountManagementIsland({ host, state, actions, confirmDiscard: async () => false, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } });
   await harness.act(() => Promise.resolve());
   assert.equal(host.querySelectorAll('.profile-card').length, 1);
+  assert.match(host.querySelector('.tc-aliases').textContent, /aka reviewer/);
   host.querySelector('.profile-card button').click(); await harness.act(() => Promise.resolve());
   const input = host.querySelector('#profile-editor-name'); assert.equal(input.value, 'one'); assert.match(input.placeholder, /profile name/);
+  assert.equal(host.querySelector('#profile-editor-aliases').value, 'reviewer');
   const model = host.querySelector('#profile-editor-model'); assert.equal(model.tagName, 'SELECT'); assert.ok([...model.options].some((option) => option.value === 'sonnet'));
   const askTimeout = host.querySelector('#profile-editor-ask-timeout'); assert.equal([...askTimeout.options].find((option) => option.value === 'inherit').textContent.includes('recommended'), true);
   assert.match([...host.querySelectorAll('.cron-create-row input')].find((field) => field.placeholder?.includes('names the spawned agent')).placeholder, /names the spawned agent/);

@@ -2984,14 +2984,14 @@ func resolveGroupDefaultProfileName(raw string) (string, error) {
 	if name == "" {
 		return "", nil
 	}
-	p, err := db.GetSpawnProfile(name)
+	p, err := db.ResolveSpawnProfile(name)
 	if err != nil {
 		return "", err
 	}
 	if p == nil {
 		return "", fmt.Errorf("no spawn profile named %q", name)
 	}
-	return name, nil
+	return p.Name, nil
 }
 
 // normalizeGroupDescr prepares a group description for storage. The

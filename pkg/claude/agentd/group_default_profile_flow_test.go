@@ -62,6 +62,21 @@ func TestGroupDefaultProfile_AppliedToSpawn(t *testing.T) {
 	assert.Equal(t, "sonnet", got, "blank-model spawn must inherit the profile's model")
 }
 
+func TestGroupDefaultProfile_AliasCanonicalizesStableReference(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "gpt5.6-sol-high", "aliases": []string{"codex-reviewer"}, "model": "sonnet",
+	}).Code)
+	rec := setGroupProfile(t, f, "alpha", "codex-reviewer")
+	require.Equalf(t, http.StatusOK, rec.Code, "set alias default body=%s", rec.Body.String())
+
+	g, err := db.GetAgentGroupByName("alpha")
+	require.NoError(t, err)
+	require.NotNil(t, g)
+	assert.Equal(t, "gpt5.6-sol-high", g.DefaultProfile)
+}
+
 // Scenario: an explicit model in the spawn request wins over the group's
 // default profile. The profile only fills a BLANK field.
 func TestGroupDefaultProfile_ExplicitModelOverrides(t *testing.T) {

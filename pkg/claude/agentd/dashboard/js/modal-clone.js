@@ -4,7 +4,8 @@
 // Each dock card's ⚙ opens a small menu (Edit / Clone — see dock.js). "Clone"
 // lands here: a lightweight NEW-NAME dialog (the operator asked for exactly a
 // name selector, not a second full editor) that makes a full-fidelity copy of a
-// preset — a spawn PROFILE or a ROLE — under a fresh name. TEMPLATES clone via
+// preset — a spawn PROFILE or a ROLE — under a fresh name. Unique aliases stay
+// with the source profile; they cannot also identify the copy. TEMPLATES clone via
 // their own richer duplicate dialog (modal-templates.js openDuplicateModal), so
 // this shared dialog serves the two kinds that had no clone before.
 //
@@ -19,6 +20,7 @@
 // stays open on a clash.
 
 import { $ } from './helpers.js';
+import { clonePayload } from './clone-payload.js';
 import { wizWord } from './slop.js';
 import { toast, refresh, bindBackdropDiscard } from './refresh.js';
 
@@ -43,8 +45,8 @@ export function openCloneModal({ kind, kindWizard, source, create }) {
   $('#clone-modal-title').textContent =
     wizWord(`Clone ${kind}: ${source.name}`, `Mirror ${kindWizard}: ${source.name}`);
   $('#clone-modal-blurb').textContent = wizWord(
-    'A full copy under a new name — every setting is carried over; only the name changes.',
-    'An identical twin under a new name — every rune is carried over; only the name changes.');
+    'A full copy under a new name — every setting is carried over; unique aliases stay with the original.',
+    'An identical twin under a new name — every rune is carried over; unique true names stay with the original.');
   $('#clone-modal-submit').textContent = wizWord('Create copy', 'Mirror it');
   $('#clone-modal-name').value = `${source.name}-copy`;
   $('#clone-modal-error').textContent = '';
@@ -70,12 +72,7 @@ async function submitClone() {
   const name = $('#clone-modal-name').value.trim();
   if (!name) { errEl.textContent = 'name is required'; return; }
   if (name === source.name) { errEl.textContent = 'pick a different name for the copy'; return; }
-  // Full-fidelity clone: re-POST the source object with the name swapped.
-  // created_at/updated_at are response-only (the server ignores them on input);
-  // dropping them keeps the payload honest rather than re-emitting stale stamps.
-  const payload = { ...source, name };
-  delete payload.created_at;
-  delete payload.updated_at;
+  const payload = clonePayload(source, name);
   const btn = $('#clone-modal-submit');
   btn.disabled = true;
   try {

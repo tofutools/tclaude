@@ -36,6 +36,21 @@ func TestProcessSpawnParams_ExplicitFalseBlocksGlobalTrue(t *testing.T) {
 	assert.False(t, p.TrustDir)
 }
 
+func TestProcessAgentSpawnParams_ResolvesProfileAlias(t *testing.T) {
+	setupTestDB(t)
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{
+		Name: "gpt5.6-sol-high", Aliases: []string{"codex-reviewer"}, Harness: "codex", Model: "gpt-5.6-sol",
+	})
+	require.NoError(t, err)
+	p, err := processAgentSpawnParams(processexec.Request{
+		Command:   plan.Command{ID: "cmd_0123456789abcdef01234567"},
+		Input:     processexec.Input{RunID: "run", NodeID: "review"},
+		Performer: model.Performer{Kind: model.PerformerAgent, Profile: "codex-reviewer", Prompt: "Review the diff"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "gpt-5.6-sol", p.Model)
+}
+
 func TestProcessHumanAdapterBlockedContactIsActionable(t *testing.T) {
 	setupTestDB(t)
 	request := processexec.Request{

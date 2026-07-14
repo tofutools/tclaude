@@ -109,6 +109,28 @@ func TestSpawnProfilePrecedence_ExplicitProfileWins(t *testing.T) {
 	assert.Equal(t, "gpt-5.6-sol", got)
 }
 
+func TestSpawnProfilePrecedence_ExplicitProfileAliasWinsAndIsDisclosed(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "gpt5.6-sol-high", "aliases": []string{"codex-reviewer"},
+		"harness": "codex", "model": "gpt-5.6-sol", "effort": "high",
+	}).Code)
+	bridgeAgentClientToMux(t, f.Mux)
+	chdirTo(t, resolveSym(t, t.TempDir()))
+
+	stdout, stderr := new(bytes.Buffer), new(bytes.Buffer)
+	resp, rc := agent.RunSpawn(&agent.SpawnParams{
+		Group: "alpha", Name: "worker", Profile: "codex-reviewer",
+	}, stdout, stderr, new(bytes.Buffer))
+	require.Equal(t, 0, rc, "RunSpawn stderr=%s", stderr.String())
+	require.NotNil(t, resp)
+	assert.Contains(t, stdout.String(), `profile "gpt5.6-sol-high" via alias "codex-reviewer"`)
+	got, ok := f.World.SpawnModel(resp.ConvID)
+	require.True(t, ok)
+	assert.Equal(t, "gpt-5.6-sol", got)
+}
+
 // A group profile outranks the global profile.
 func TestSpawnProfilePrecedence_GroupDefaultWins(t *testing.T) {
 	f := newFlow(t)

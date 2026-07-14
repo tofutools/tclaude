@@ -298,10 +298,12 @@ func knownProfileNames() []string {
 	if err != nil {
 		return nil
 	}
-	out := make([]string, 0, len(profiles))
+	out := []string{}
 	for _, p := range profiles {
 		out = append(out, p.Name)
+		out = append(out, p.Aliases...)
 	}
+	sort.Strings(out)
 	return out
 }
 
@@ -756,7 +758,7 @@ func validateTemplateAgentLaunch(agentName string, a templateAgentJSON, inline *
 	profRef := strings.TrimSpace(a.SpawnProfile)
 	var refProfile *db.SpawnProfile
 	if profRef != "" {
-		p, err := db.GetSpawnProfile(profRef)
+		p, err := db.ResolveSpawnProfile(profRef)
 		if err != nil {
 			return templateAgentLaunch{}, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
 		}
@@ -766,6 +768,7 @@ func validateTemplateAgentLaunch(agentName string, a templateAgentJSON, inline *
 					"Create it first (`tclaude agent profiles create`, needs profiles.manage) or clear spawn_profile.",
 					agentName, profRef, availableHint("spawn profiles", knownProfileNames()))}
 		}
+		profRef = p.Name
 		refProfile = p
 	}
 	inlineHarness := strings.TrimSpace(a.Harness)
@@ -780,7 +783,7 @@ func validateTemplateAgentLaunch(agentName string, a templateAgentJSON, inline *
 		valHarness = strings.TrimSpace(role.Harness)
 		if valHarness == "" {
 			if ref := strings.TrimSpace(role.SpawnProfile); ref != "" {
-				rp, err := db.GetSpawnProfile(ref)
+				rp, err := db.ResolveSpawnProfile(ref)
 				if err != nil {
 					return templateAgentLaunch{}, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
 				}
@@ -923,7 +926,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd stri
 		if a.SpawnProfileID > 0 {
 			prof, err = db.GetSpawnProfileByID(a.SpawnProfileID)
 		} else {
-			prof, err = db.GetSpawnProfile(ref)
+			prof, err = db.ResolveSpawnProfile(ref)
 		}
 		if err != nil {
 			return templateAgentLaunch{}, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
@@ -942,7 +945,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd stri
 			if role.SpawnProfileID > 0 {
 				prof, err = db.GetSpawnProfileByID(role.SpawnProfileID)
 			} else {
-				prof, err = db.GetSpawnProfile(ref)
+				prof, err = db.ResolveSpawnProfile(ref)
 			}
 			if err != nil {
 				return templateAgentLaunch{}, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
@@ -1388,7 +1391,7 @@ func collectReferencedProfiles(t *db.GroupTemplate, roles []roleJSON) ([]spawnPr
 			return nil
 		}
 		seen[ref] = true
-		p, err := db.GetSpawnProfile(ref)
+		p, err := db.ResolveSpawnProfile(ref)
 		if err != nil {
 			return err
 		}
@@ -1504,7 +1507,7 @@ func sanitizeImportedTemplate(body templateJSON) (templateJSON, []string) {
 			label = fmt.Sprintf("#%d", i+1)
 		}
 		if ref := strings.TrimSpace(a.SpawnProfile); ref != "" {
-			p, err := db.GetSpawnProfile(ref)
+			p, err := db.ResolveSpawnProfile(ref)
 			if err == nil && p == nil {
 				warnings = append(warnings, fmt.Sprintf(
 					"agent %q: spawn profile %q does not exist here — dropped the reference; the agent will use the group/harness default",
@@ -1957,7 +1960,7 @@ func resolveTemplateAgentAccess(a db.GroupTemplateAgent, role *db.Role) (bool, [
 		if a.SpawnProfileID > 0 {
 			prof, err = db.GetSpawnProfileByID(a.SpawnProfileID)
 		} else {
-			prof, err = db.GetSpawnProfile(ref)
+			prof, err = db.ResolveSpawnProfile(ref)
 		}
 		if err != nil {
 			return false, nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}

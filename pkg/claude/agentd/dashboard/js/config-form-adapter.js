@@ -1,7 +1,7 @@
 import { $, $$ } from './helpers.js';
 import { lineDiff as configLineDiff } from './line-diff.js';
 import { dashboardState } from './snapshot-store.js';
-import { loadProfiles } from './profiles.js';
+import { loadProfiles, findProfileByHandle, profileChoices } from './profiles.js';
 
 let configLifecycle = {};
 const fallbackLists = new Map();
@@ -128,8 +128,8 @@ async function populateAskProfileSelect(selected) {
   let profiles = [];
   try { profiles = await loadProfiles(); } catch { profiles = []; }
   if (bindingEpoch !== configBindingEpoch || sel !== $('#ask-profile')) return;
-  replaceOptions(sel, [['', '(none — use Model/Effort below)'], ...profiles.map(profile => [profile.name, profile.name])]);
-  if (selectedName && !profiles.some(p => p.name === selectedName)) {
+  replaceOptions(sel, [['', '(none — use Model/Effort below)'], ...profileChoices(profiles).map(choice => [choice.value, choice.label])]);
+  if (selectedName && !findProfileByHandle(profiles, selectedName)) {
     const o = document.createElement('option');
     o.value = selectedName;
     o.textContent = `${selectedName} (missing)`;
@@ -202,8 +202,8 @@ async function populateScribeProfileSelect(selected) {
   let profiles = [];
   try { profiles = await loadProfiles(); } catch { profiles = []; }
   if (bindingEpoch !== configBindingEpoch || sel !== $('#scribe-profile')) return;
-  replaceOptions(sel, [['', '(default — harness default)'], ...profiles.map(profile => [profile.name, profile.name])]);
-  if (selectedName && !profiles.some(p => p.name === selectedName)) {
+  replaceOptions(sel, [['', '(default — harness default)'], ...profileChoices(profiles).map(choice => [choice.value, choice.label])]);
+  if (selectedName && !findProfileByHandle(profiles, selectedName)) {
     const o = document.createElement('option');
     o.value = selectedName;
     o.textContent = `${selectedName} (missing)`;

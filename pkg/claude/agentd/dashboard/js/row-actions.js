@@ -9,7 +9,7 @@ import { renderGroupsTab } from './tabs.js';
 import { featureState } from './feature-state-registry.js';
 import { mountTransientSiblingEditor } from './transient-editor.js';
 import { dashPrefs } from './prefs.js';
-import { loadProfiles, setDashDefaultProfile } from './profiles.js';
+import { loadProfiles, setDashDefaultProfile, findProfileByHandle, profileChoices } from './profiles.js';
 import { openProfileEditor } from './modal-profiles.js';
 // The 🛡 group chip's picker feeds off the sandbox-profile registry.
 // sandbox-profiles.js doesn't import row-actions.js, so this edge only
@@ -233,8 +233,8 @@ async function openProfilePicker(chipEl, current, onCommit, opts = {}) {
   // matching the editor it opens (New familiar pattern).
   select.add(new Option(newLabel, PROFILE_PICKER_NEW));
   select.add(new Option(noneLabel, ''));
-  for (const p of profiles) select.add(new Option(p.name, p.name));
-  if (current && !profiles.some(p => p.name === current)) {
+  for (const choice of profileChoices(profiles)) select.add(new Option(choice.label, choice.value));
+  if (current && !findProfileByHandle(profiles, current)) {
     select.add(new Option(`${current} (missing)`, current));
   }
   select.value = current;
@@ -1332,8 +1332,8 @@ function bindRowActions() {
           // awaits the shared validated API before updating the UI cache.
           const current = btn.getAttribute('data-profile') || '';
           await openProfilePicker(btn, current, async (name) => {
-            await setDashDefaultProfile(name);
-            toast(name ? `dashboard default profile → ${name}` : 'dashboard default profile cleared');
+            const canonical = await setDashDefaultProfile(name);
+            toast(canonical ? `dashboard default profile → ${canonical}` : 'dashboard default profile cleared');
             renderDashDefaultProfile();
             return true;
           });

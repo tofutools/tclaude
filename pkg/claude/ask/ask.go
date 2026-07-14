@@ -255,13 +255,13 @@ func printWhere(cwd string, w io.Writer) error {
 // Codex uses its own configured defaults.
 //
 // The returned values are raw strings still validated against the resolved
-// harness's catalog by runAsk. db.GetSpawnProfile is the only I/O; a load
+// harness's catalog by runAsk. db.ResolveSpawnProfile is the only I/O; a load
 // error degrades to the no-profile path rather than failing the ask.
 func resolveAskTarget(flagModel, flagEffort string, cfg *config.Config) (harnessName, model, effort string) {
 	harnessName = harness.DefaultName
 
 	if name := cfg.AskProfileName(); name != "" {
-		if prof, err := db.GetSpawnProfile(name); err == nil && prof != nil {
+		if prof, err := db.ResolveSpawnProfile(name); err == nil && prof != nil {
 			if prof.Harness != "" {
 				harnessName = prof.Harness
 			}
