@@ -40,6 +40,7 @@ import {
   shellConfirmDiscard as confirmDiscard,
 } from './shell-state.js';
 import { isTopmostOverlay } from './overlay-stack.js';
+import { disclosurePreference } from './group-tree-activity.js';
 
 // refreshSuspended() is the single source of truth for whether the
 // auto-refresh is allowed to re-render the DOM right now. refresh()
@@ -550,6 +551,14 @@ export function showAccessTab(subtab) {
 // so the reveal is deterministic regardless of the browser's :hover bookkeeping.
 // (The CSS keeps :hover too, for the instant smooth reveal during live movement.)
 export let hoveredGroupKey = null;
+const groupDisclosureIntents = new Set();
+
+// noteGroupDisclosureIntent marks the next native toggle for one group as a
+// real command rather than reconciliation noise. Title clicks call it here;
+// the command palette calls the exported boundary before assigning .open.
+export function noteGroupDisclosureIntent(key) {
+  if (key) groupDisclosureIntents.add(key);
+}
 
 // bindGroupQuickHover tracks the hovered group header on the stable
 // #groups-list container — bound once at init, delegated, because the
@@ -605,12 +614,16 @@ function bindGroupTitleToggle() {
       if (e.target.closest('[data-act]')) return;
       // Genuine keyboard fold/unfold — remember it as the last group touched
       // (drives the command palette's default spawn target).
-      recordGroupInteraction(details.getAttribute('data-group-key'));
+      const key = details.getAttribute('data-group-key');
+      noteGroupDisclosureIntent(key);
+      recordGroupInteraction(key);
       return;
     }
     if (e.target.closest('.group-name')) {
       // Genuine mouse fold/unfold of the group title — remember it.
-      recordGroupInteraction(details.getAttribute('data-group-key'));
+      const key = details.getAttribute('data-group-key');
+      noteGroupDisclosureIntent(key);
+      recordGroupInteraction(key);
       return; // the title — allow toggle
     }
     e.preventDefault();
@@ -626,11 +639,22 @@ function bindDetailsPersistence() {
     if (!(d instanceof HTMLDetailsElement)) return;
     const key = d.getAttribute('data-group-key');
     if (!key) return;
-    if (d.open) {
-      dashPrefs.setItem('tclaude.dash.group.' + key, '1');
-    } else {
+    const previous = dashPrefs.getItem('tclaude.dash.group.' + key);
+    const intentional = groupDisclosureIntents.delete(key);
+    const next = disclosurePreference(d.open, intentional, previous);
+    if (next === null) {
       dashPrefs.removeItem('tclaude.dash.group.' + key);
+    } else {
+      dashPrefs.setItem('tclaude.dash.group.' + key, next);
     }
+    // Folding changes which visible group header owns descendant activity.
+    // Recompute immediately instead of leaving the bot counts stale until the
+    // next two-second snapshot poll.
+    // Re-created <details> nodes can emit a no-op toggle during reconciliation;
+    // avoid turning that into a second render. A genuine disclosure change
+    // necessarily changes the persisted open preference.
+    const changed = next === null ? previous !== null : previous !== next;
+    if (changed) featureState('groups')?.rerender();
   }, true);
 }
 

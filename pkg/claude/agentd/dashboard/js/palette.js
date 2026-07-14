@@ -44,6 +44,7 @@ import {
   retireAgentInteractive, openRetirePreview, openRetireUngroupedPreview, openDeleteRetiredPreview,
   openWorktreeCleanup,
   shutdownScope, powerOnScope, shutdownConfirm, stopAgentReq, resumeAgentReq,
+  noteGroupDisclosureIntent,
 } from './refresh.js';
 import { openAgentSpawnModal } from './modal-spawn.js';
 import { openProfilesManageModal } from './modal-profiles.js';
@@ -168,7 +169,10 @@ function setGroupOpen(name, open) {
   // Record only once we know the fold will actually happen — symmetric with
   // the modal record sites, which stamp after their success point.
   recordGroupInteraction(name);
-  d.open = open; // fires toggle → bindDetailsPersistence persists the state
+  if (d.open !== open) {
+    noteGroupDisclosureIntent(name);
+    d.open = open; // fires toggle → bindDetailsPersistence persists the state
+  }
   const sum = d.querySelector('summary');
   if (sum) sum.scrollIntoView({ block: 'nearest' });
 }
@@ -176,7 +180,11 @@ function setGroupOpen(name, open) {
 function setAllGroupsOpen(open) {
   gotoGroupsTab();
   const all = $$('#tab-groups details[data-group-key]');
-  for (const d of all) d.open = open;
+  for (const d of all) {
+    if (d.open === open) continue;
+    noteGroupDisclosureIntent(d.getAttribute('data-group-key'));
+    d.open = open;
+  }
   const n = `${all.length} group${all.length === 1 ? '' : 's'}`;
   toast(open ? `expanded ${n}` : `collapsed ${n}`);
 }

@@ -29,8 +29,10 @@ func TestDashboardAssets_GroupActivityWired(t *testing.T) {
 		"export function styledWizardBotsHTML(", // wizard glyph/sprite/off switchboard
 		"export function styledBotsHTML(",
 		"export function aggregateActivity(",
+		"export function groupActivityPlacement(", // nested folded-group rollup
 		// render.js — still wired into each legacy group summary.
-		"groupActivityChip(members)", // dropped into <summary>
+		"groupActivityChip(activityMembers)", // leaf-most visible group summary
+		"groupActivityPlacement(groups, realGroupIsOpen)",
 		"function activityStyles(",   // reads the per-mode styles
 		// shell-model.js derives the global view from the accepted snapshot.
 		"export function globalActivityView(snapshot, wizard = false, visibility = {})",

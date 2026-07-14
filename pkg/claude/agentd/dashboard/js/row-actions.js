@@ -1086,11 +1086,13 @@ function bindRowActions() {
                 toast(`rename failed: ${await r.text()}`, true);
                 return 'revert';
               }
-              // Move the persisted "is open" flag onto the new key so the
-              // details stays in the state the user left it in.
-              const wasOpen = dashPrefs.getItem('tclaude.dash.group.' + oldName) === '1';
+              // Move either persisted disclosure state onto the new key so an
+              // explicitly folded default-open pending group stays folded too.
+              const disclosure = dashPrefs.getItem('tclaude.dash.group.' + oldName);
               dashPrefs.removeItem('tclaude.dash.group.' + oldName);
-              if (wasOpen) dashPrefs.setItem('tclaude.dash.group.' + newName, '1');
+              if (disclosure !== null) {
+                dashPrefs.setItem('tclaude.dash.group.' + newName, disclosure);
+              }
               toast(`renamed: ${oldName} → ${newName}`);
               return 'saved';
             },
