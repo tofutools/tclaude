@@ -5,7 +5,81 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
+
+func TestEnrollSpawnedConv_InlinedBriefingBornConsumed(t *testing.T) {
+	setupTestDB(t)
+	groupID, err := db.CreateAgentGroup("alpha", "")
+	require.NoError(t, err)
+	g, err := db.GetAgentGroupByName("alpha")
+	require.NoError(t, err)
+	require.NotNil(t, g)
+	require.Equal(t, groupID, g.ID)
+
+	msgID, fail := enrollSpawnedConv(g, spawnParams{
+		InitialMessage: "Investigate the flaky deploy and report back.",
+	}, "inlined-conv", true)
+	require.Nil(t, fail)
+	require.Positive(t, msgID)
+
+	msg, err := db.GetAgentMessage(msgID)
+	require.NoError(t, err)
+	require.NotNil(t, msg)
+	assert.False(t, msg.DeliveredAt.IsZero(),
+		"an inlined briefing must be inserted already delivered")
+	assert.False(t, msg.ReadAt.IsZero(),
+		"an inlined briefing must be inserted already read")
+	assert.Equal(t, msg.CreatedAt, msg.DeliveredAt,
+		"the archival state must not predate the message itself")
+	assert.Equal(t, msg.DeliveredAt, msg.ReadAt,
+		"both archival flags should be stamped by the same insert-time decision")
+
+	agentID, err := db.AgentIDForConv("inlined-conv")
+	require.NoError(t, err)
+	require.NotEmpty(t, agentID)
+	queued, err := db.ListUndeliveredForAgent(agentID)
+	require.NoError(t, err)
+	assert.Empty(t, queued,
+		"an inlined briefing must never be visible to the first-delivery nudge queue")
+	reminders, err := db.ListDeliveredUnreadAgentMessages()
+	require.NoError(t, err)
+	assert.Empty(t, reminders,
+		"an inlined briefing must never be visible to the unread-reminder sweep")
+}
+
+func TestEnrollSpawnedConv_PointerBriefingBornUnread(t *testing.T) {
+	setupTestDB(t)
+	_, err := db.CreateAgentGroup("alpha", "")
+	require.NoError(t, err)
+	g, err := db.GetAgentGroupByName("alpha")
+	require.NoError(t, err)
+	require.NotNil(t, g)
+
+	msgID, fail := enrollSpawnedConv(g, spawnParams{
+		InitialMessage: "Read this briefing from the inbox.",
+	}, "pointer-conv", false)
+	require.Nil(t, fail)
+	require.Positive(t, msgID)
+
+	msg, err := db.GetAgentMessage(msgID)
+	require.NoError(t, err)
+	require.NotNil(t, msg)
+	assert.True(t, msg.DeliveredAt.IsZero(),
+		"a pointer briefing is not delivered until its welcome lands")
+	assert.True(t, msg.ReadAt.IsZero(),
+		"a pointer briefing must stay unread until the recipient opens it")
+
+	agentID, err := db.AgentIDForConv("pointer-conv")
+	require.NoError(t, err)
+	require.NotEmpty(t, agentID)
+	queued, err := db.ListUndeliveredForAgent(agentID)
+	require.NoError(t, err)
+	require.Len(t, queued, 1,
+		"a pointer briefing must remain eligible for its first delivery")
+	assert.Equal(t, msgID, queued[0].ID)
+}
 
 // TestBuildSpawnWelcome_IncludesIdentityFields confirms the welcome
 // composition surfaces every identity field that's set, and skips
