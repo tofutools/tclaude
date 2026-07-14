@@ -33,6 +33,15 @@ const WIZARD_EMOJI = '🧙';
 const WIZARD_REST = "The Wizard's Tower";
 const WIZARD_TITLE = "The Wizard's Tower";
 
+// Chromium can retain the favicon attached to an existing tab across a hard
+// reload, especially when the dashboard reconnects after agentd was upgraded.
+// A page-instance token makes every freshly loaded dashboard's favicon URL
+// distinct, while the increment distinguishes repeated theme changes within
+// that page. Replacing the link node as well as its URL avoids Chromium's
+// decoded-favicon cache keeping the previous theme until the tab is closed.
+const FAVICON_PAGE_TOKEN = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+let faviconRevision = 0;
+
 // Captured once on first apply so a click can restore the page to its
 // pre-slop state. Reading from the DOM rather than hard-coding the
 // strings keeps slop.js in sync with whatever dashboard.html ships.
@@ -91,6 +100,15 @@ function currentTheme() {
   return 'regular';
 }
 
+function setFavicon(href, theme) {
+  const current = document.querySelector('link[rel="icon"]');
+  if (!current || !href) return;
+  const next = current.cloneNode();
+  faviconRevision++;
+  next.setAttribute('href', `${href}#tclaude-${theme}-${FAVICON_PAGE_TOKEN}-${faviconRevision}`);
+  current.replaceWith(next);
+}
+
 function renderState() {
   const theme = currentTheme();
   const isSlop = theme === 'slop';
@@ -98,8 +116,10 @@ function renderState() {
   document.title = isSlop ? SLOP_TITLE : isWizard ? WIZARD_TITLE : original.title;
   if (iconSpan) iconSpan.textContent = isSlop ? SLOP_EMOJI : isWizard ? WIZARD_EMOJI : original.emoji;
   if (restNode) restNode.nodeValue = ' ' + (isSlop ? SLOP_REST : isWizard ? WIZARD_REST : original.rest);
-  const link = document.querySelector('link[rel="icon"]');
-  if (link) link.setAttribute('href', isSlop ? SLOP_FAVICON : isWizard ? WIZARD_FAVICON : original.favicon);
+  setFavicon(
+    isSlop ? SLOP_FAVICON : isWizard ? WIZARD_FAVICON : original.favicon,
+    theme,
+  );
   // Broadcast the current slop state so feature modules can react without
   // importing slop.js internals — slop-audio.js listens here to suspend /
   // resume its FX AudioContext. (slop-fx and the marquee don't subscribe;
@@ -183,6 +203,10 @@ export function applySlopThemeIfRequested() {
   } else if (wantWizard) {
     document.body.classList.add('wizard');
     renderState();
+  } else {
+    // Refresh even the regular icon on startup. Chromium may otherwise keep a
+    // wizard/slop favicon associated with this tab through a hard reload.
+    setFavicon(original.favicon, 'regular');
   }
   // Canonicalise a hand-crafted ?slop=1&wizard=1 down to the single resolved
   // theme so the address bar doesn't linger with both params. The body class
