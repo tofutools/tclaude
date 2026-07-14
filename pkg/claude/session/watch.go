@@ -14,6 +14,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/convindex"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
 	"github.com/tofutools/tclaude/pkg/claude/common/tuistyle"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -65,8 +66,9 @@ var filterOptions = []struct {
 }
 
 type model struct {
-	allSessions       []*SessionState // all sessions before search filter
-	sessions          []*SessionState // sessions after search filter
+	allSessions       []*SessionState   // all sessions before search filter
+	sessions          []*SessionState   // sessions after search filter
+	pendingNames      map[string]string // convID -> agent spawn-time display name
 	cursor            int
 	width             int
 	height            int
@@ -299,6 +301,9 @@ func (m model) refreshSessions() model {
 	// Apply sorting
 	SortSessionsByKey(filtered, m.sort.Key, m.sort.Direction)
 	m.allSessions = filtered
+	if pending, err := db.PendingNamesByConv(); err == nil {
+		m.pendingNames = pending
+	}
 
 	// Apply search filter
 	m = m.applySearchFilter()
@@ -977,8 +982,10 @@ func (m model) View() tea.View {
 		// Get project path (full path, table will truncate from start)
 		project := state.Cwd
 
-		// Get title/prompt from conversation if available
-		title := convindex.GetConvTitleAndPrompt(state.ConvID, state.Cwd)
+		// Get title/prompt from the conversation, falling back to the agent's
+		// spawn-time name until the harness-native title write lands.
+		title := convindex.GetConvTitleAndPromptWithFallback(
+			state.ConvID, state.Cwd, m.pendingNames[state.ConvID])
 		if title == "" {
 			title = "-"
 		}

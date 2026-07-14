@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
@@ -130,8 +132,17 @@ func FormatConvTitle(customTitle, summary, firstPrompt string) string {
 // GetConvTitleAndPrompt returns both the title (CustomTitle or Summary) and the first prompt.
 // Returns formatted string like "[title]: prompt" or just "prompt" if no title.
 func GetConvTitleAndPrompt(convID, cwd string) string {
+	return GetConvTitleAndPromptWithFallback(convID, cwd, "")
+}
+
+// GetConvTitleAndPromptWithFallback is GetConvTitleAndPrompt with a fallback
+// for the title part. The fallback is used only when the conversation has no
+// custom title, and it outranks a generated summary. Session listings use
+// this for an agent's spawn-time name while its harness-native title write is
+// still pending (notably for freshly spawned Codex agents).
+func GetConvTitleAndPromptWithFallback(convID, cwd, fallbackTitle string) string {
 	if convID == "" || cwd == "" {
-		return ""
+		return FormatTitleAndPrompt(fallbackTitle, "")
 	}
 
 	// Try DB first (exact match, then prefix)
@@ -140,10 +151,11 @@ func GetConvTitleAndPrompt(convID, cwd string) string {
 		row, _ = db.FindConvIndexByPrefix(convID)
 	}
 	if row != nil {
-		title := ""
-		if row.CustomTitle != "" {
-			title = row.CustomTitle
-		} else if row.Summary != "" {
+		title := row.CustomTitle
+		if title == "" {
+			title = fallbackTitle
+		}
+		if title == "" {
 			title = row.Summary
 		}
 		return FormatTitleAndPrompt(title, row.FirstPrompt)
@@ -151,7 +163,7 @@ func GetConvTitleAndPrompt(convID, cwd string) string {
 
 	// Fallback: parse .jsonl file directly for unindexed conversations
 	projectPath := GetClaudeProjectPath(cwd)
-	return cleanTitle(parseFirstPromptFromJSONL(projectPath, convID))
+	return FormatTitleAndPrompt(fallbackTitle, parseFirstPromptFromJSONL(projectPath, convID))
 }
 
 // cleanTitle removes XML-like tags and normalizes whitespace for display.
@@ -161,8 +173,26 @@ func cleanTitle(title string) string {
 		return ""
 	}
 
-	// Remove XML-like tags and their content (system-injected metadata)
-	result := stripXMLTags(title)
+	// Remove XML-like tags and their content (system-injected metadata), then
+	// strip ANSI/OSC terminal sequences. Spawn-time agent names can reach this
+	// path even when they fail the rename charset gate, so title cleanup is a
+	// terminal-safety boundary rather than cosmetic whitespace normalization.
+	result := ansi.Strip(stripXMLTags(title))
+	var safe strings.Builder
+	safe.Grow(len(result))
+	for _, r := range result {
+		switch {
+		case r == '\n' || r == '\r':
+			safe.WriteRune(r) // normalized to a visible marker below
+		case r == '\t':
+			safe.WriteByte(' ')
+		case unicode.IsControl(r):
+			continue
+		default:
+			safe.WriteRune(r)
+		}
+	}
+	result = safe.String()
 
 	// Replace newlines and carriage returns with visible marker
 	result = strings.ReplaceAll(result, "\r\n", " ↵ ")

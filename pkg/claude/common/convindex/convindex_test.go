@@ -1,6 +1,11 @@
 package convindex
 
-import "testing"
+import (
+	"testing"
+	"time"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+)
 
 // FormatConvTitle is the single source of truth for the "[title]: prompt"
 // rendering shown by `conv ls`, `conv ls -w` and the web dashboard's
@@ -77,5 +82,44 @@ func TestFormatConvTitle(t *testing.T) {
 					tc.customTitle, tc.summary, tc.firstPrompt, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestGetConvTitleAndPromptWithFallback(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
+
+	const convID = "11111111-1111-1111-1111-111111111111"
+	if err := db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID:      convID,
+		FirstPrompt: "do the thing",
+		Summary:     "Generated summary",
+		IndexedAt:   time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := GetConvTitleAndPromptWithFallback(convID, "/repo", "codex-worker"), "[codex-worker]: do the thing"; got != want {
+		t.Fatalf("fallback title = %q, want %q", got, want)
+	}
+
+	if err := db.SetConvIndexCustomTitle(convID, "Renamed", "codex"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := GetConvTitleAndPromptWithFallback(convID, "/repo", "codex-worker"), "[Renamed]: do the thing"; got != want {
+		t.Fatalf("custom title = %q, want %q", got, want)
+	}
+
+	const unindexed = "22222222-2222-2222-2222-222222222222"
+	if got, want := GetConvTitleAndPromptWithFallback(unindexed, "/repo", "fresh-worker"), "[fresh-worker]"; got != want {
+		t.Fatalf("unindexed fallback title = %q, want %q", got, want)
+	}
+
+	// Pending names are stored even when they fail the rename charset gate.
+	// ANSI/OSC and raw control characters must not reach the terminal view.
+	unsafeName := "fresh\x1b[2J\x1b]0;owned\x07-worker\t\x00"
+	if got, want := GetConvTitleAndPromptWithFallback(unindexed, "/repo", unsafeName), "[fresh-worker]"; got != want {
+		t.Fatalf("unsafe fallback title = %q, want %q", got, want)
 	}
 }

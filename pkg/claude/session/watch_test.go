@@ -3,7 +3,11 @@ package session
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 func TestCompleteDirPath(t *testing.T) {
@@ -110,6 +114,33 @@ func TestExpandHomePrefix(t *testing.T) {
 		if got := expandHomePrefix(in); got != want {
 			t.Errorf("expandHomePrefix(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// A freshly spawned Codex agent can have no conv_index title row yet. The
+// dashboard and conv list already fall back to agents.pending_name; the live
+// sessions view must show the same name instead of "-".
+func TestWatchView_UsesPendingAgentName(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
+
+	const convID = "11111111-1111-1111-1111-111111111111"
+	m := initialModel(false, nil, nil)
+	m.width = 160
+	m.height = 40
+	m.allSessions = []*SessionState{{
+		ID:      "spwn-123456",
+		ConvID:  convID,
+		Cwd:     "/repo",
+		Status:  StatusIdle,
+		Updated: time.Now(),
+	}}
+	m.sessions = m.allSessions
+	m.pendingNames = map[string]string{convID: "codex-worker"}
+
+	if got := m.View().Content; !strings.Contains(got, "codex-worker") {
+		t.Fatalf("sessions view did not render the pending agent name:\n%s", got)
 	}
 }
 
