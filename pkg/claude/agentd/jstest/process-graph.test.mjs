@@ -64,6 +64,13 @@ test('Space arms panning only outside editable controls and never steals an owne
   const button = { closest: (selector) => selector.includes('button') ? button : null };
   ProcessGraph.prototype.onSpaceKey.call(fake, { key: ' ', type: 'keydown', target: button });
   assert.equal(fake.spaceHeld, false, 'buttons and keyboard-focused graph nodes retain Space activation');
+
+  const summary = { closest: (selector) => selector.includes('summary') ? summary : null };
+  assert.equal(isGraphTypingTarget(summary), true);
+  ProcessGraph.prototype.onSpaceKey.call(fake, { key: ' ', type: 'keydown', target: summary });
+  assert.equal(fake.spaceHeld, false,
+    'a focused Issues summary retains native Space activation while the graph is hovered');
+  assert.equal(prevented, 1);
 });
 
 // onPointerCancel is exercised on a hand-rolled `this` (no DOM needed): a

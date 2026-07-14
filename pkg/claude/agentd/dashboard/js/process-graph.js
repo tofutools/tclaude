@@ -37,7 +37,7 @@ function clamp(value, min, max) {
 
 export function isGraphTypingTarget(target) {
   if (!target || typeof target.closest !== 'function') return false;
-  return !!target.closest('input, textarea, select, button, a[href], [role="button"], [contenteditable]:not([contenteditable="false"])');
+  return !!target.closest('input, textarea, select, button, summary, a[href], [role="button"], [contenteditable]:not([contenteditable="false"])');
 }
 
 export function normalizeWheelDelta(deltaY, deltaMode = 0, pagePixels = 800) {

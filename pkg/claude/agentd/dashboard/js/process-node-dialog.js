@@ -24,6 +24,8 @@ import {
   addCheck, removeCheck, moveCheck, setCheckID,
   setCaptures, setWaitField, setNodeText, formatLines,
 } from './process-node-form.js';
+import { bindDialogFocus } from './dialog-focus-core.js';
+import { isTopmostOverlay } from './overlay-stack.js';
 
 function h(tag, attrs = {}, ...children) {
   const el = document.createElement(tag);
@@ -69,6 +71,22 @@ export function buildNodeDetail(model, nodeId, { mode = 'edit', commit = null, o
     return el;
   };
 
+  // Associate a commit with the control whose raw DOM value produced it.
+  // The transactional wrapper uses this identity to retain rejected values
+  // (for example a duplicate check id) until that same control is corrected.
+  const applyFromControl = (controlEl, apply, value) => {
+    if (!apply) return true;
+    commit.activeControl = controlEl;
+    try {
+      const accepted = apply(value) !== false;
+      if (accepted) controlEl.removeAttribute('aria-invalid');
+      else controlEl.setAttribute('aria-invalid', 'true');
+      return accepted;
+    } finally {
+      commit.activeControl = null;
+    }
+  };
+
   const textField = (label, value, apply, { multiline = false, hint = '', placeholder = '' } = {}) => {
     const input = control(h(multiline ? 'textarea' : 'input', {
       class: multiline ? 'process-node-textarea' : 'process-node-input',
@@ -76,7 +94,9 @@ export function buildNodeDetail(model, nodeId, { mode = 'edit', commit = null, o
       ...(multiline ? { rows: '3' } : { type: 'text' }),
     }));
     input.value = value || '';
-    if (apply && !readOnly) input.addEventListener('change', () => apply(input.value));
+    if (apply && !readOnly) input.addEventListener('change', (event) => {
+      if (!applyFromControl(input, apply, input.value)) event.preventDefault();
+    });
     const field = h('label', { class: 'field process-node-field' },
       h('span', { class: 'process-node-field-label', text: label }), input);
     if (hint) field.title = hint;
@@ -85,10 +105,16 @@ export function buildNodeDetail(model, nodeId, { mode = 'edit', commit = null, o
 
   const selectField = (label, options, value, apply, { blankLabel = null } = {}) => {
     const select = control(h('select', { class: 'process-node-select', 'aria-label': label }));
-    if (blankLabel !== null) select.append(h('option', { value: '', text: blankLabel }));
-    for (const option of options) select.append(h('option', { value: option, text: option }));
-    select.value = options.includes(value) ? value : (blankLabel !== null ? '' : options[0]);
-    if (apply && !readOnly) select.addEventListener('change', () => apply(select.value));
+    const selectedValue = options.includes(value) ? value : (blankLabel !== null ? '' : options[0]);
+    if (blankLabel !== null) select.append(h('option', {
+      value: '', text: blankLabel, selected: selectedValue === '' ? '' : undefined,
+    }));
+    for (const option of options) select.append(h('option', {
+      value: option, text: option, selected: option === selectedValue ? '' : undefined,
+    }));
+    if (apply && !readOnly) select.addEventListener('change', (event) => {
+      if (!applyFromControl(select, apply, select.value)) event.preventDefault();
+    });
     return h('label', { class: 'field process-node-field' },
       h('span', { class: 'process-node-field-label', text: label }), select);
   };
@@ -148,7 +174,9 @@ export function buildNodeDetail(model, nodeId, { mode = 'edit', commit = null, o
   const stageToggle = (label, enabled, apply) => {
     const checkbox = control(h('input', { type: 'checkbox', class: 'process-node-toggle' }));
     checkbox.checked = enabled;
-    if (!readOnly) checkbox.addEventListener('change', () => apply(checkbox.checked));
+    if (!readOnly) checkbox.addEventListener('change', (event) => {
+      if (!applyFromControl(checkbox, apply, checkbox.checked)) event.preventDefault();
+    });
     return h('label', { class: 'process-node-stage-toggle' }, checkbox,
       h('span', { text: label }));
   };
@@ -277,20 +305,25 @@ export function openNodeDialog({
   const saveButton = mode === 'edit'
     ? h('button', { class: 'primary process-node-save', type: 'button', text: 'Save' }) : null;
   const actions = h('div', { class: 'modal-buttons process-node-dialog-actions' }, cancelButton, saveButton);
+  const dialog = h('div', { class: 'modal process-node-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': `Node ${nodeId}` }, body, actions);
   const overlay = h('div', { class: 'modal-overlay show process-node-modal' },
-    h('div', { class: 'modal process-node-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': `Node ${nodeId}` }, body, actions));
+    dialog);
   const status = h('p', { class: 'process-node-status', role: 'status' });
 
   const original = structuredClone(model.node(nodeId));
   let draft = structuredClone(original);
   let disposed = false;
   let confirming = false;
-  const isDirty = () => mode === 'edit' && JSON.stringify(draft) !== JSON.stringify(original);
+  const invalidControls = new Set();
+  let releaseDialogFocus = () => {};
+  const isDirty = () => mode === 'edit'
+    && (invalidControls.size > 0 || JSON.stringify(draft) !== JSON.stringify(original));
   const dispose = () => {
     if (disposed) return;
     disposed = true;
     overlay.remove();
     document.removeEventListener('keydown', onKey, true);
+    releaseDialogFocus();
     onClosed?.();
   };
   dispose.isDirty = isDirty;
@@ -302,8 +335,18 @@ export function openNodeDialog({
 
   const flushActiveControl = () => {
     const active = document.activeElement;
-    if (!active || !body.contains(active) || !active.matches?.('input, textarea, select')) return;
-    active.dispatchEvent(new Event('change', { bubbles: true }));
+    if (active && body.contains(active) && active.matches?.('input, textarea, select')) {
+      active.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+    }
+    return invalidControls.size === 0;
+  };
+
+  const suspendForConfirmation = (suspended) => {
+    overlay.inert = suspended;
+    overlay.toggleAttribute('inert', suspended);
+    if (suspended) overlay.setAttribute('aria-hidden', 'true');
+    else overlay.removeAttribute('aria-hidden');
+    dialog.setAttribute('aria-modal', suspended ? 'false' : 'true');
   };
 
   const requestCancel = async () => {
@@ -314,8 +357,17 @@ export function openNodeDialog({
       return true;
     }
     confirming = true;
-    const discard = await confirmDiscard();
-    confirming = false;
+    suspendForConfirmation(true);
+    let discard = false;
+    try {
+      discard = await confirmDiscard();
+    } catch (error) {
+      status.textContent = error.message || 'Could not confirm discard.';
+      status.classList.add('is-error');
+    } finally {
+      confirming = false;
+      if (!disposed) suspendForConfirmation(false);
+    }
     if (discard && !disposed) dispose();
     else if (!disposed) (saveButton || cancelButton).focus();
     return !!discard;
@@ -327,7 +379,7 @@ export function openNodeDialog({
   };
 
   const save = () => {
-    flushActiveControl();
+    if (!flushActiveControl()) return false;
     if (disposed || mode !== 'edit') return false;
     try {
       const changed = model.updateNode(nodeId, (node) => replaceNode(node, draft));
@@ -350,18 +402,19 @@ export function openNodeDialog({
       event.preventDefault();
       event.stopImmediatePropagation();
       save();
-      return;
     }
-    if (event.key !== 'Escape') return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    void requestCancel();
   };
 
   // commit routes one mutation through the private draft, then re-renders the
   // card. A rejected mutation surfaces in the status line and leaves both the
   // draft and edit model untouched. Save is the only model mutation path.
   const commit = (mutate) => {
+    const source = commit.activeControl;
+    if (invalidControls.size && !invalidControls.has(source)) {
+      status.textContent = 'Correct the invalid field before making other changes.';
+      status.classList.add('is-error');
+      return false;
+    }
     let changed = false;
     try {
       const next = structuredClone(draft);
@@ -369,10 +422,12 @@ export function openNodeDialog({
       changed = JSON.stringify(next) !== JSON.stringify(draft);
       if (changed) draft = next;
     } catch (error) {
+      if (source) invalidControls.add(source);
       status.textContent = error.message;
       status.classList.add('is-error');
       return false;
     }
+    if (source) invalidControls.delete(source);
     status.textContent = '';
     status.classList.remove('is-error');
     render();
@@ -413,6 +468,12 @@ export function openNodeDialog({
   overlay.addEventListener('click', (event) => { if (event.target === overlay) void requestCancel(); });
   document.addEventListener('keydown', onKey, true);
   document.body.append(overlay);
-  (overlay.querySelector('.process-node-input:not(:disabled)') || cancelButton).focus();
+  releaseDialogFocus = bindDialogFocus({
+    dialog,
+    initialFocus: () => overlay.querySelector('.process-node-input:not(:disabled)') || cancelButton,
+    onEscape: () => { void requestCancel(); },
+    shouldHandle: () => !confirming && isTopmostOverlay(overlay),
+  });
+  dispose.requestClose = requestCancel;
   return dispose;
 }

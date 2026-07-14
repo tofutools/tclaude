@@ -67,6 +67,8 @@ func TestDashboardProcessNodeDialogAssets(t *testing.T) {
 		"confirmDiscard = async () => false",
 		"process-node-save",
 		"process-node-cancel",
+		"bindDialogFocus",
+		"dispose.requestClose = requestCancel",
 	)
 	if strings.Contains(dialog, "innerHTML") {
 		t.Error("process-node-dialog.js must not use innerHTML; template content is untrusted at render time")
