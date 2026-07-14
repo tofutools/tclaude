@@ -676,11 +676,15 @@ func parseBucket(b Bucket) CachedBucket {
 // subsequent calls respect the cacheTTL backoff even after a failed fetch.
 // Creates a minimal cache entry if none exists. Records the error message.
 func stampLastAttempt(err error) {
+	stampLastAttemptAt(err, time.Now())
+}
+
+func stampLastAttemptAt(err error, now time.Time) {
 	cached := loadCacheStale()
 	if cached == nil {
 		cached = &CachedUsage{}
 	}
-	cached.LastAttemptAt = time.Now()
+	cached.LastAttemptAt = now
 	if err != nil {
 		cached.LastError = err.Error()
 	}

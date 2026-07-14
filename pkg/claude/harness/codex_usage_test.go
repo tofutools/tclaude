@@ -120,31 +120,33 @@ func TestLatestCodexUsage_LastEventInRolloutWins(t *testing.T) {
 // sessions, and the account-wide readout reflects whichever ran last.
 func TestLatestCodexUsage_NewestRolloutAcrossFilesWins(t *testing.T) {
 	home := codexTestHome(t)
+	coarseTime := time.Date(2026, time.July, 14, 12, 0, 0, 0, time.UTC)
 
-	older := testharness.NewCodexSim(t, home, "/home/u/a")
+	older := testharness.NewCodexSimWithID(t, home, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "/home/u/a")
 	require.NoError(t, older.Start())
+	older.SetNextEventTime(coarseTime.Add(100 * time.Millisecond))
 	require.NoError(t, older.WriteTokenCountRateLimits(
 		testharness.CodexTokenUsage{TotalTokens: 100},
 		testharness.CodexTokenUsage{TotalTokens: 100},
 		&testharness.CodexRateLimitWindowSeed{UsedPercent: 11, WindowMinutes: 300, ResetsAt: futureReset(time.Hour)},
 		nil,
 	))
-	// Age the first rollout's observation behind the second's. The envelope
-	// timestamps are wall-clock, so a small sleep would also work; backdating
-	// the file's mtime + content is unnecessary because LatestCodexUsage
-	// compares by event timestamp, so just ensure ordering with a brief gap.
-	time.Sleep(10 * time.Millisecond)
-
-	newer := testharness.NewCodexSim(t, home, "/home/u/b")
+	newer := testharness.NewCodexSimWithID(t, home, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "/home/u/b")
 	require.NoError(t, newer.Start())
+	newer.SetNextEventTime(coarseTime.Add(900 * time.Millisecond))
 	require.NoError(t, newer.WriteTokenCountRateLimits(
 		testharness.CodexTokenUsage{TotalTokens: 100},
 		testharness.CodexTokenUsage{TotalTokens: 100},
 		&testharness.CodexRateLimitWindowSeed{UsedPercent: 88, WindowMinutes: 300, ResetsAt: futureReset(time.Hour)},
 		nil,
 	))
+	// Model a filesystem that stores both writes in the same coarse mtime
+	// bucket. The older path sorts first, so the scan must inspect the tied
+	// sibling rather than stopping after the first valid snapshot.
+	require.NoError(t, os.Chtimes(older.RolloutPath, coarseTime, coarseTime))
+	require.NoError(t, os.Chtimes(newer.RolloutPath, coarseTime, coarseTime))
 
-	u, err := harness.LatestCodexUsage(home, time.Now().Add(-time.Hour))
+	u, err := harness.LatestCodexUsage(home, coarseTime.Add(-time.Hour))
 	require.NoError(t, err)
 	require.NotNil(t, u)
 	require.NotNil(t, u.FiveHour)
@@ -153,19 +155,20 @@ func TestLatestCodexUsage_NewestRolloutAcrossFilesWins(t *testing.T) {
 
 func TestLatestCodexUsageForConvs_IgnoresNonTargetRollouts(t *testing.T) {
 	home := codexTestHome(t)
+	baseTime := time.Date(2026, time.July, 14, 12, 0, 0, 0, time.UTC)
 
 	target := testharness.NewCodexSim(t, home, "/home/u/live")
 	require.NoError(t, target.Start())
+	target.SetNextEventTime(baseTime)
 	require.NoError(t, target.WriteTokenCountRateLimits(
 		testharness.CodexTokenUsage{TotalTokens: 100},
 		testharness.CodexTokenUsage{TotalTokens: 100},
 		&testharness.CodexRateLimitWindowSeed{UsedPercent: 12, WindowMinutes: 300, ResetsAt: futureReset(time.Hour)},
 		nil,
 	))
-	time.Sleep(10 * time.Millisecond)
-
 	newerNonTarget := testharness.NewCodexSim(t, home, "/home/u/offline")
 	require.NoError(t, newerNonTarget.Start())
+	newerNonTarget.SetNextEventTime(baseTime.Add(time.Minute))
 	require.NoError(t, newerNonTarget.WriteTokenCountRateLimits(
 		testharness.CodexTokenUsage{TotalTokens: 100},
 		testharness.CodexTokenUsage{TotalTokens: 100},
@@ -173,7 +176,7 @@ func TestLatestCodexUsageForConvs_IgnoresNonTargetRollouts(t *testing.T) {
 		nil,
 	))
 
-	u, err := harness.LatestCodexUsageForConvs(home, []string{target.ConvID}, time.Now().Add(-time.Hour))
+	u, err := harness.LatestCodexUsageForConvs(home, []string{target.ConvID}, baseTime.Add(-time.Hour))
 	require.NoError(t, err)
 	require.NotNil(t, u)
 	require.NotNil(t, u.FiveHour)

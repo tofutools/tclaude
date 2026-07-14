@@ -127,6 +127,38 @@ func TestCodexSim_SessionMetaShape(t *testing.T) {
 	}
 }
 
+func TestCodexSim_NextEventTimeConfiguredBeforeStartSkipsSessionMeta(t *testing.T) {
+	home := t.TempDir()
+	cx := NewCodexSim(t, home, "/work")
+	next := time.Date(2026, time.July, 14, 12, 0, 0, 321_000_000, time.UTC)
+	cx.SetNextEventTime(next)
+
+	if err := cx.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := cx.WriteTokenCount(CodexTokenUsage{}, CodexTokenUsage{}); err != nil {
+		t.Fatalf("WriteTokenCount: %v", err)
+	}
+
+	envs := readRollout(t, cx.RolloutPath)
+	if len(envs) != 2 {
+		t.Fatalf("rollout lines = %d, want session metadata plus one event", len(envs))
+	}
+	metaTime, err := time.Parse("2006-01-02T15:04:05.000Z", envs[0].Timestamp)
+	if err != nil {
+		t.Fatalf("parse session metadata timestamp: %v", err)
+	}
+	if metaTime.Unix() != cx.CreatedUnix() {
+		t.Errorf("session metadata unix time = %d, want CreatedUnix %d", metaTime.Unix(), cx.CreatedUnix())
+	}
+	if got, _ := envs[0].Payload["timestamp"].(string); got != envs[0].Timestamp {
+		t.Errorf("session metadata payload timestamp = %q, want envelope timestamp %q", got, envs[0].Timestamp)
+	}
+	if got, want := envs[1].Timestamp, formatCodexTime(next); got != want {
+		t.Errorf("first event timestamp = %q, want %q", got, want)
+	}
+}
+
 func TestCodexSim_UserTurnLines(t *testing.T) {
 	home := t.TempDir()
 	cx := NewCodexSim(t, home, "/work")
