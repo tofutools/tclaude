@@ -24,3 +24,7 @@ export function openReincarnateAgentDialog(conv, label) {
 export function openNestGroupDialog({ group }) {
   requireController().openNest({ group });
 }
+
+export function openTaskLinkDialog({ conv, agentLabel, url, taskLabel }) {
+  requireController().openTaskLink({ conv, agentLabel, url, taskLabel });
+}

@@ -40,7 +40,6 @@ import {
   shellConfirmDiscard as confirmDiscard,
 } from './shell-state.js';
 import { isTopmostOverlay } from './overlay-stack.js';
-import { bindDialogFocus } from './dialog-focus-core.js';
 import { disclosurePreference } from './group-tree-activity.js';
 
 // refreshSuspended() is the single source of truth for whether the
@@ -3172,124 +3171,6 @@ function editMemberModal({label, title, role, descr, tags, owner, focusRole, foc
   });
 }
 
-// taskLinkModal edits the two independent pieces of a task reference: the
-// full http(s) URL and its optional short display label. A blank label is not
-// synthesized in the browser — it is sent blank so the daemon remains the
-// single source of truth for Linear/GitHub/hostname derivation. A blank URL
-// means clear. Resolves to null on cancel, "noop" when unchanged, or the
-// trimmed {url, taskLabel} pair to persist.
-let taskLinkModalOpen = false;
-
-function taskLinkModal({agentLabel, url, taskLabel}, {confirmDiscardFn = confirmDiscard} = {}) {
-  // The dialog uses one shared DOM form. A second instance would bind another
-  // set of listeners to the same inputs and could fan one Save out to two
-  // agents. Focus containment prevents this through normal keyboard use; this
-  // guard also closes the programmatic/repeated-click race.
-  if (taskLinkModalOpen) {
-    $('#task-link-url')?.focus();
-    return Promise.resolve(null);
-  }
-  taskLinkModalOpen = true;
-  return new Promise(resolve => {
-    const overlay = $('#task-link-modal');
-    const dialog = overlay.querySelector('.modal');
-    const meta = $('#task-link-meta');
-    const urlEl = $('#task-link-url');
-    const labelEl = $('#task-link-label');
-    const errEl = $('#task-link-error');
-    const saveBtn = $('#task-link-save');
-    const cancelBtn = $('#task-link-cancel');
-    const oldURL = (url || '').trim();
-    const oldLabel = (taskLabel || '').trim();
-    meta.textContent = agentLabel || '';
-    meta.style.display = agentLabel ? 'block' : 'none';
-    urlEl.value = oldURL;
-    labelEl.value = oldLabel;
-    errEl.textContent = '';
-    let active = true;
-    let dismissPending = false;
-    let releaseDialogFocus = () => {};
-
-    const cleanup = (result) => {
-      if (!active) return;
-      active = false;
-      taskLinkModalOpen = false;
-      overlay.classList.remove('show');
-      saveBtn.removeEventListener('click', onSave);
-      cancelBtn.removeEventListener('click', onCancel);
-      overlay.removeEventListener('click', onOverlay);
-      overlay.removeEventListener('mousedown', onMouseDown);
-      overlay.removeEventListener('keydown', onKey);
-      releaseDialogFocus();
-      resolve(result);
-    };
-    const onSave = () => {
-      const nextURL = urlEl.value.trim();
-      const nextLabel = labelEl.value.trim();
-      errEl.textContent = '';
-      if (!nextURL && nextLabel) {
-        errEl.textContent = 'Enter a URL, or clear the display name too.';
-        urlEl.focus();
-        return;
-      }
-      if (nextURL) {
-        let parsed;
-        try { parsed = new URL(nextURL); } catch (_) {}
-        if (!parsed || !['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname) {
-          errEl.textContent = 'Task URL must be a complete http:// or https:// URL.';
-          urlEl.focus();
-          return;
-        }
-      }
-      if (nextURL === oldURL && nextLabel === oldLabel) {
-        cleanup('noop');
-        return;
-      }
-      cleanup({url: nextURL, taskLabel: nextURL ? nextLabel : ''});
-    };
-    const onCancel = () => cleanup(null);
-    const isDirty = () =>
-      urlEl.value.trim() !== oldURL || labelEl.value.trim() !== oldLabel;
-    const tryDismiss = async () => {
-      if (!active || dismissPending) return;
-      dismissPending = true;
-      try {
-        if (isDirty() && !(await confirmDiscardFn())) return;
-        cleanup(null);
-      } finally {
-        dismissPending = false;
-      }
-    };
-    // Only a press+release both on the backdrop dismisses. Text selection or
-    // scrollbar drags that begin inside the dialog and end outside keep edits.
-    let pressedOnBackdrop = false;
-    const onMouseDown = (event) => { pressedOnBackdrop = event.target === overlay; };
-    const onOverlay = (event) => {
-      const backdropClick = event.target === overlay && pressedOnBackdrop;
-      pressedOnBackdrop = false;
-      if (backdropClick) void tryDismiss();
-    };
-    const onKey = (event) => {
-      const savesFromField = event.target === urlEl || event.target === labelEl;
-      if (event.key === 'Enter' && savesFromField && !event.isComposing) {
-        event.preventDefault(); onSave();
-      }
-    };
-    saveBtn.addEventListener('click', onSave);
-    cancelBtn.addEventListener('click', onCancel);
-    overlay.addEventListener('click', onOverlay);
-    overlay.addEventListener('mousedown', onMouseDown);
-    overlay.addEventListener('keydown', onKey);
-    overlay.classList.add('show');
-    releaseDialogFocus = bindDialogFocus({
-      dialog,
-      initialFocus: urlEl,
-      onEscape: () => { void tryDismiss(); },
-      shouldHandle: () => isTopmostOverlay(overlay),
-    });
-  });
-}
-
 // parseTagsField splits a comma-separated tags input into a de-duplicated,
 // order-preserving list of trimmed non-empty tags. The mirror of tagsAttr
 // (helpers.js), used both to prefill-compare and to build the replace-set
@@ -4352,6 +4233,6 @@ export {
   maybeHandleDanglingRetire, retireAgentInteractive, openRetirePreview, openRetireUngroupedPreview, openDeleteRetiredPreview, openWorktreeCleanup,
   openDeleteGroupModal,
   groupMembersByStatus, countGroupMembersByStatus, countUngroupedAgents,
-  termDirModal, editMemberModal, taskLinkModal, addMemberModal, deleteAgentModal,
+  termDirModal, editMemberModal, addMemberModal, deleteAgentModal,
   resumeAgentReq, stopAgentReq,
 };
