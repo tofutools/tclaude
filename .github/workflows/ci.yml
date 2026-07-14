@@ -52,11 +52,10 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # The dashboard's pure JS (command-palette ranking) is unit-tested with
-      # Node's built-in test runner, invoked from a Go wrapper
-      # (pkg/claude/agentd/palette_score_node_test.go) so it runs under the
-      # same `go test ./...` below. Pin node here so that wrapper actually
-      # runs in CI rather than silently skipping — see its CI guard.
+      # The dashboard's JS is unit-tested with Node's built-in test runner,
+      # invoked from pkg/claude/agentd/jstest/dashboard_node_test.go so it runs
+      # under the same `go test ./...` below. Pin node here so that wrapper
+      # actually runs in CI rather than silently skipping — see its CI guard.
       - name: Set up Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
@@ -67,6 +66,8 @@ jobs:
       # resources (tmux sim, SQLite) and the interleaved output is hard to read on a
       # failure. Two-at-a-time keeps output legible without serializing the whole run.
       # (No tests use t.Parallel(), so -parallel is irrelevant here.)
+      # Disable test-result reuse in CI: Go's cache cannot fingerprint the external
+      # Node executable, so every job must recheck that runtime and execute the JS.
       #
       # The Go race detector is OFF by default and gated behind the RUN_RACE
       # repository variable (Settings -> Secrets and variables -> Actions ->
@@ -77,4 +78,4 @@ jobs:
       # on by default (this matrix is ubuntu+macOS only — the detector does not
       # support windows/arm64, so do not add -race to a matrix that includes it).
       - name: Run tests
-        run: go test ${{ vars.RUN_RACE == 'true' && '-race' || '' }} -p 2 ./...
+        run: go test ${{ vars.RUN_RACE == 'true' && '-race' || '' }} -count=1 -p 2 ./...

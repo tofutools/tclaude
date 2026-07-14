@@ -35,15 +35,19 @@ var nodeTestInputs embed.FS
 //     the JS suites.
 //   - Locally a node-less contributor skips this test, so they are not blocked.
 func TestDashboardJS(t *testing.T) {
+	ci := os.Getenv("CI") != ""
 	recordNodeInputs(t)
 
 	node, err := exec.LookPath("node")
 	if err != nil {
-		if os.Getenv("CI") != "" {
+		if ci {
 			t.Fatal("node not on PATH in CI — JS unit tests did not run " +
 				"(the Test job is expected to run actions/setup-node)")
 		}
 		t.Skip("node not on PATH — skipping JS unit tests (install node to run them)")
+	}
+	if version, versionErr := exec.Command(node, "--version").Output(); versionErr == nil {
+		t.Logf("Node runtime: %s (%s)", node, bytes.TrimSpace(version))
 	}
 
 	// go test runs with this package directory as the working directory. Pass
@@ -72,7 +76,7 @@ func TestDashboardJS(t *testing.T) {
 		if _, ok := errors.AsType[*exec.ExitError](err); ok {
 			t.Fatalf("dashboard JS unit tests failed: %v\n%s", err, out)
 		}
-		if os.Getenv("CI") != "" {
+		if ci {
 			t.Fatal("node not runnable in CI — JS unit tests did not run "+
 				"(the Test job is expected to run actions/setup-node)", err)
 		}
