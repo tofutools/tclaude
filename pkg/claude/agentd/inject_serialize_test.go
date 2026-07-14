@@ -12,27 +12,30 @@ import (
 )
 
 // recordingTmux is a clcommon.Tmux fake that records the final argument
-// of every send-keys call in order, and sleeps on the non-Enter "text"
-// send-keys to widen the window in which two concurrent injectors could
-// interleave. The returned command runs `true`, a real no-op, so
+// of every send-keys call in order. It can hold the first text command at
+// a barrier so a test can start a competing injector while the first still
+// owns the pane lock. The returned command runs `true`, a real no-op, so
 // injectTextAndSubmit's Run() error checks pass.
 type recordingTmux struct {
-	mu        sync.Mutex
-	keys      []string
-	textDelay time.Duration
+	mu               sync.Mutex
+	keys             []string
+	firstTextSeen    bool
+	firstTextStarted chan struct{}
+	releaseFirstText chan struct{}
 }
 
 func (r *recordingTmux) Command(args ...string) *exec.Cmd {
 	last := args[len(args)-1]
 	r.mu.Lock()
 	r.keys = append(r.keys, last)
-	delay := r.textDelay
+	blockFirstText := last != "Enter" && !r.firstTextSeen
+	if blockFirstText {
+		r.firstTextSeen = true
+	}
 	r.mu.Unlock()
-	// The "text" send-keys is the one that, unserialized, lets a second
-	// injector slip its own text in before this sequence's Enter. Sleeping
-	// here makes that interleave deterministic when the lock is missing.
-	if delay > 0 && last != "Enter" {
-		time.Sleep(delay)
+	if blockFirstText && r.firstTextStarted != nil {
+		close(r.firstTextStarted)
+		<-r.releaseFirstText
 	}
 	return exec.Command("true")
 }
@@ -49,29 +52,71 @@ func (r *recordingTmux) snapshot() []string {
 
 // TestInjectTextAndSubmit_SerializesPerPane is the JOH-310 regression
 // guard: two injectors racing on the SAME pane must single-file, not
-// interleave their send-keys. Without the per-pane lock the overlapping
-// textDelay windows record both texts first (text, text, Enter×4),
-// proving the garbled-prompt hazard; with it, each injector's
-// [text, Enter, Enter] triple stays contiguous.
+// interleave their send-keys. The first injector is held after recording its
+// text command; only after the second is known to be waiting on the pane lock
+// is the first released. Each injector's [text, Enter, Enter] triple must stay
+// contiguous.
 func TestInjectTextAndSubmit_SerializesPerPane(t *testing.T) {
-	defer SetInjectSettleDelayForTest(0)()
-	rt := &recordingTmux{textDelay: 10 * time.Millisecond}
+	t.Cleanup(SetInjectSettleDelayForTest(0))
+	firstTextStarted := make(chan struct{})
+	releaseFirstText := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseFirst := func() { releaseOnce.Do(func() { close(releaseFirstText) }) }
+	rt := &recordingTmux{
+		firstTextStarted: firstTextStarted,
+		releaseFirstText: releaseFirstText,
+	}
 	prev := clcommon.Default
 	clcommon.Default = rt
-	t.Cleanup(func() { clcommon.Default = prev })
+	contended := make(chan struct{}, 1)
+	previousHook := paneInjectLockContendedHook
+	paneInjectLockContendedHook = func() { contended <- struct{}{} }
 
 	const target = "tclaude-joh310-same:0.0"
 	var wg sync.WaitGroup
-	for _, m := range []string{"MSG-A", "MSG-B"} {
+	t.Cleanup(func() {
+		// Release and join the injectors before restoring package globals so a
+		// failure cannot send the remaining fake commands through real tmux.
+		releaseFirst()
+		wg.Wait()
+		paneInjectLockContendedHook = previousHook
+		clcommon.Default = prev
+	})
+	start := func(message string) {
 		wg.Add(1)
 		go func(text string) {
 			defer wg.Done()
 			if err := injectTextAndSubmit(target, text); err != nil {
 				t.Errorf("injectTextAndSubmit(%q): %v", text, err)
 			}
-		}(m)
+		}(message)
 	}
-	wg.Wait()
+	start("MSG-A")
+	select {
+	case <-firstTextStarted:
+	case <-time.After(time.Second):
+		t.Fatal("first injector did not reach the text-command barrier")
+	}
+	start("MSG-B")
+	select {
+	case <-contended:
+	case <-time.After(time.Second):
+		t.Fatal("second injector did not contend on the pane lock")
+	}
+	if got := rt.snapshot(); len(got) != 1 || got[0] != "MSG-A" {
+		t.Fatalf("second injector emitted a command while the first held the pane lock: %v", got)
+	}
+	releaseFirst()
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("serialized injectors did not finish after releasing the barrier")
+	}
 
 	got := rt.snapshot()
 	// Each injectTextAndSubmit emits exactly [text, Enter, Enter].
