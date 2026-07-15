@@ -157,6 +157,12 @@ func SetWaitTimingsForTest(aliveTimeout, readyDelay time.Duration) func() {
 	}
 }
 
+func SetReincarnateSpawnTimeoutForTest(timeout time.Duration) func() {
+	previous := reincarnateSpawnTimeout
+	reincarnateSpawnTimeout = timeout
+	return func() { reincarnateSpawnTimeout = previous }
+}
+
 // SetInjectSettleDelayForTest shrinks injectTextAndSubmit's per-send-keys
 // settle gap for the duration of a test. The simulator processes
 // keystrokes synchronously, so the production 500 ms window is pure dead
@@ -352,14 +358,6 @@ func StubCountingApprovalForTest(decision bool) (func() int32, func()) {
 		return decision
 	}
 	return calls.Load, func() { RequestHumanApprovalImpl = prev }
-}
-
-// SetGroupCloneAfterProofForTest installs a one-shot observation seam between
-// an agent group-clone's proof snapshot and member loop.
-func SetGroupCloneAfterProofForTest(fn func()) func() {
-	prev := groupCloneAfterProofForTest
-	groupCloneAfterProofForTest = fn
-	return func() { groupCloneAfterProofForTest = prev }
 }
 
 // StubAlwaysAllowApprovalForTest swaps the popup with a stub that drives

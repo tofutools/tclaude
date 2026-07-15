@@ -34,10 +34,11 @@ You have three commands for managing your own context window:
 (`--group`) is gated on `agent.context-info`, OR being an owner of a
 group containing the target — same manager-pattern gate as the other
 cross-agent verbs (see "Manager pattern" below).
-`compact`, `reincarnate`, and `clone` are gated on `self.compact`,
-`self.reincarnate`, and `self.clone` respectively. All three are
-default-granted by `tclaude setup --install-default-agent-permissions`
-— see "Permission setup" below.
+`compact` and `clone` are gated on `self.compact` and `self.clone`.
+Self-reincarnation is intrinsic to every active agent and needs no slug. The
+gated self-lifecycle slugs are default-granted by
+`tclaude setup --install-default-agent-permissions` — see "Permission setup"
+below.
 
 `context-info` prints the conv id, the context percentage with an
 absolute token breakdown (`<in> in + <out> out = <total> of <window>
@@ -286,10 +287,11 @@ tclaude agentd serve   # in a non-sandboxed terminal
 
 ## Permission setup
 
-`compact`, `reincarnate`, and `clone` are opt-in. The fastest path is
+`compact` and `clone` are opt-in; self-reincarnation is always available to an
+active agent. The fastest path for the gated commands is
 `tclaude setup --install-default-agent-permissions`, which grants the
 self-lifecycle default slugs — currently `self.rename`, `self.compact`,
-`self.reincarnate`, `self.clone`, `self.schedule`, and
+`self.clone`, `self.schedule`, and
 `self.remote-control` — as defaults in one shot. (Kept separate from
 `--install-agent-skills` so upgrading the on-disk skills doesn't re-add
 slugs you deliberately revoked.)
@@ -301,7 +303,7 @@ Manual alternatives:
 ```json
 {
   "agent": {
-    "default_permissions": ["self.compact", "self.reincarnate"]
+    "default_permissions": ["self.compact", "self.clone"]
   }
 }
 ```
@@ -310,14 +312,14 @@ Manual alternatives:
 
 ```bash
 tclaude agent permissions grant default self.compact
-tclaude agent permissions grant default self.reincarnate
+tclaude agent permissions grant default self.clone
 ```
 
 **Option 2 — only for one specific conversation.**
 
 ```bash
 tclaude agent permissions grant <conv-id-or-title> self.compact
-tclaude agent permissions grant <conv-id-or-title> self.reincarnate
+tclaude agent permissions grant <conv-id-or-title> self.clone
 ```
 
 If you see `Error: caller is not granted permission "self.compact"`,

@@ -99,11 +99,10 @@ var (
 // over the (already resolved) dirs and returns its token. "" on the
 // crypto/rand failure path — callers turn that into a 500.
 func mintDirWriteChallenge(convID string, dirs []string, continuation *writeProofApprovalContinuation) string {
-	buf := make([]byte, 16)
-	if _, err := rand.Read(buf); err != nil {
+	token := newDirWriteProofToken()
+	if token == "" {
 		return ""
 	}
-	token := hex.EncodeToString(buf)
 
 	dirWriteChallengeMu.Lock()
 	defer dirWriteChallengeMu.Unlock()
@@ -134,6 +133,14 @@ func mintDirWriteChallenge(convID string, dirs []string, continuation *writeProo
 		continuation: continuation,
 	}
 	return token
+}
+
+func newDirWriteProofToken() string {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(buf)
 }
 
 // markWriteProofHumanApproval annotates a request after the human approves it.

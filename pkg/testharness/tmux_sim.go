@@ -277,13 +277,9 @@ func (t *TmuxSim) capturePane(args []string) *exec.Cmd {
 	return exec.Command(echoBin, "")
 }
 
-// displayMessage models `tmux display-message -p -t <target> '#{pane_pid}'`:
-// it echoes the target pane's launch-unique fake pid to stdout so the
-// caller's .Output() reads it back. A missing or no-longer-alive session
-// exits non-zero (falseBin) — exactly how real tmux fails the query when
-// the session is gone — which livePanePID reads as pid 0. Only #{pane_pid}
-// is modelled; any other format string would still get the pid (the only
-// field the daemon ever asks for).
+// displayMessage models the pane_pid and pane_current_path formats used by
+// production lifecycle code. A missing or no-longer-alive session exits
+// non-zero (falseBin), exactly like real tmux.
 func (t *TmuxSim) displayMessage(args []string) *exec.Cmd {
 	target := ""
 	for i := 0; i+1 < len(args); i++ {
@@ -297,6 +293,9 @@ func (t *TmuxSim) displayMessage(args []string) *exec.Cmd {
 	t.mu.Unlock()
 	if !ok || (s.pane != nil && !s.pane.IsAlive()) {
 		return exec.Command(falseBin)
+	}
+	if len(args) > 0 && args[len(args)-1] == "#{pane_current_path}" {
+		return exec.Command(echoBin, s.cwd)
 	}
 	return exec.Command(echoBin, strconv.Itoa(s.panePID))
 }

@@ -525,7 +525,6 @@ func TestScribeSummon_ConcurrentScribeGetsExplicitDenies(t *testing.T) {
 	assert.Equal(t, db.PermEffectDeny, overrides[agentd.PermGroupsSpawn])
 	assert.Equal(t, db.PermEffectDeny, overrides[agentd.PermTemplatesUse])
 	assert.Equal(t, db.PermEffectDeny, overrides[agentd.PermSelfClone])
-	assert.Equal(t, db.PermEffectDeny, overrides[agentd.PermSelfReincarnate])
 	assert.Equal(t, db.PermEffectDeny, overrides[agentd.PermPermissionsGrant])
 	assert.Equal(t, db.PermEffectDeny, overrides[agentd.PermPermissionsRevoke])
 	oldOverrides, err := db.ListAgentPermissionOverridesForConv(first.ConvID)

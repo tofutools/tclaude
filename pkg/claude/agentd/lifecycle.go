@@ -260,6 +260,33 @@ func livePanePID(tmuxSession string) int {
 	return pid
 }
 
+// livePaneCwd returns tmux's view of the live pane process's physical working
+// directory. Unlike sessions.cwd, this follows the cwd inode the predecessor
+// is actually running in, so retargeting a symlink used at the original launch
+// cannot redirect an inherited clone or reincarnation.
+func livePaneCwd(tmuxSession string) (string, error) {
+	out, err := clcommon.TmuxCommand("display-message", "-p", "-t", clcommon.ExactTarget(tmuxSession)+":", "#{pane_current_path}").Output()
+	if err != nil {
+		return "", fmt.Errorf("query live pane working directory: %w", err)
+	}
+	cwd := strings.TrimSpace(string(out))
+	if cwd == "" || !filepath.IsAbs(cwd) {
+		return "", fmt.Errorf("query live pane working directory: tmux returned %q", cwd)
+	}
+	physical, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return "", fmt.Errorf("resolve live pane working directory %s: %w", cwd, err)
+	}
+	info, err := os.Stat(physical)
+	if err != nil {
+		return "", fmt.Errorf("stat live pane working directory %s: %w", physical, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("live pane working directory is not a directory: %s", physical)
+	}
+	return physical, nil
+}
+
 // handleGroupResume starts a tclaude session for every member that
 // has a known conv-id but no live tmux session. Spawns the
 // subprocess detached (`tclaude session new -r <conv> -d --global`)
@@ -444,36 +471,6 @@ func writeEffectiveSandboxLoadError(w http.ResponseWriter, err error) {
 		return
 	}
 	writeError(w, http.StatusInternalServerError, "io", "load effective sandbox snapshot: "+err.Error())
-}
-
-// effectiveSandboxWriteDirsForConv loads and revalidates the immutable policy
-// a lifecycle relaunch will preserve, returning every custom write root that
-// must participate in the caller's write-proof challenge. Resolving this set
-// before the challenge keeps clone/reincarnate from turning a preserved
-// profile into an unproved writable proxy.
-func effectiveSandboxWriteDirsForConv(convID string) (*sandboxpolicy.Snapshot, []string, error) {
-	snapshot, err := db.AgentEffectiveSandboxConfigForConv(convID)
-	if err != nil || snapshot == nil {
-		return snapshot, nil, err
-	}
-	validated, err := ensureAgentDirectoriesForRelaunch(*snapshot)
-	if err != nil {
-		return nil, nil, &effectiveSandboxChangedError{err: err}
-	}
-	if _, err := sandboxpolicy.FilesystemForLaunch(validated.Effective); err != nil {
-		return nil, nil, &effectiveSandboxChangedError{err: err}
-	}
-	writeDirs := make([]string, 0, len(validated.Effective.Filesystem))
-	for _, grant := range validated.Effective.Filesystem {
-		if grant.Access == sandboxpolicy.AccessWrite {
-			proofDir, err := sandboxWriteProofDir(grant.Path)
-			if err != nil {
-				return nil, nil, err
-			}
-			writeDirs = appendUniqueDirs(writeDirs, proofDir)
-		}
-	}
-	return &validated, writeDirs, nil
 }
 
 // sandboxWriteProofDir returns the concrete directory that controls whether a

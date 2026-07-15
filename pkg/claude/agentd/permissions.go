@@ -64,10 +64,6 @@ var permissionRegistry = []PermSlug{
 		Description: "Compact own conversation via /compact (tclaude agent compact)",
 	},
 	{
-		Slug:        PermSelfReincarnate,
-		Description: "Replace this agent with a fresh successor that inherits its identity (tclaude agent reincarnate)",
-	},
-	{
 		Slug:        PermSelfClone,
 		Description: "Fork this agent into a sibling that inherits its identity; the original keeps running (tclaude agent clone)",
 	},

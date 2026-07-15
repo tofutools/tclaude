@@ -35,7 +35,7 @@ tclaude agentd serve   # in a non-sandboxed terminal
 Self-rename is opt-in. The fastest path is
 `tclaude setup --install-default-agent-permissions`, which grants
 `self.rename` (alongside the other self-lifecycle default slugs —
-`self.compact`, `self.reincarnate`, `self.clone`, `self.schedule`,
+`self.compact`, `self.clone`, `self.schedule`,
 `self.remote-control`) as defaults in one shot. Manual alternatives:
 
 **Option 1 — globally for every agent.** Either edit

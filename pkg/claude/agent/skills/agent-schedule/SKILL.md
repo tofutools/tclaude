@@ -40,7 +40,7 @@ for solo targets).
 
 `self.schedule` is seeded by `tclaude setup --install-default-agent-permissions`
 alongside the other self-lifecycle default slugs (`self.rename`,
-`self.compact`, `self.reincarnate`, `self.clone`, `self.remote-control`).
+`self.compact`, `self.clone`, `self.remote-control`). Self-reincarnation needs no slug.
 
 ## When to use
 

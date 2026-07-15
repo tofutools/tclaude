@@ -1213,8 +1213,8 @@ func dashboardReincarnateAgent(w http.ResponseWriter, r *http.Request, convSelec
 // Unlike the force path, this does NOT go through requireCrossAgentPermission:
 // self-mode only delivers an inbox message, which is an ungated
 // capability (the cookie-auth human could equally send it via
-// /api/message). The reincarnation itself stays gated — when the agent
-// runs `tclaude agent reincarnate` it still needs self.reincarnate.
+// /api/message). Self-reincarnation itself is intrinsic to every active agent;
+// cross-agent reincarnation remains gated on agent.reincarnate or ownership.
 func dashboardAskSelfReincarnate(w http.ResponseWriter, target, focusHint string) {
 	subject, instruction := buildSelfReincarnateInstruction(focusHint)
 	// The instruction rides the inbox like any agent_messages row, so it

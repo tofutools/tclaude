@@ -262,7 +262,7 @@ func TestExportFlow_OfflineOriginalStillExports(t *testing.T) {
 	assertCloneRetired(t, workerConv, 3*time.Second)
 }
 
-func TestExportFlow_CodexCopyLeavesProoflessRepositoryDerivationToChild(t *testing.T) {
+func TestExportFlow_CodexCopyUsesInheritedCwdWithoutCallerProof(t *testing.T) {
 	f := newFlow(t)
 	dash := agentd.BuildDashboardHandlerForTest()
 	const source = "f93c855a-72fe-4caa-8052-731c68ca753b"
@@ -275,10 +275,11 @@ func TestExportFlow_CodexCopyLeavesProoflessRepositoryDerivationToChild(t *testi
 	workerConv, _ := awaitExportClone(t, jobID, 5*time.Second)
 	got, ok := f.World.SpawnCodexGitCommonDir(workerConv)
 	require.True(t, ok)
-	assert.Empty(t, got, "proofless human export clone derives repository grants in the child")
+	assert.Empty(t, got,
+		"session-new should derive repository authority from the inherited physical cwd")
 	pinned, ok := f.World.SpawnCodexGitCommonDirPinned(workerConv)
 	require.True(t, ok)
-	assert.False(t, pinned, "proofless human export clone must not carry internal pinned paths")
+	assert.False(t, pinned)
 }
 
 // TestExportFlow_StandaloneCloneIsIsolated proves the DEFAULT clone is standalone

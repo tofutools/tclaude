@@ -771,7 +771,7 @@ func TestSpawnDirProof_CodexCloneCopyForwardsPinnedGitCommonDirOnResume(t *testi
 	assertNoDirWriteProofMarkers(t, commonDir)
 }
 
-func TestSpawnDirProof_CodexCloneInheritedCwdProvesNewRepositoryRoot(t *testing.T) {
+func TestSpawnDirProof_CodexCloneInheritedCwdNeedsNoProof(t *testing.T) {
 	prevCooldown := agentd.CloneCooldown
 	agentd.CloneCooldown = 0
 	t.Cleanup(func() { agentd.CloneCooldown = prevCooldown })
@@ -784,61 +784,60 @@ func TestSpawnDirProof_CodexCloneInheritedCwdProvesNewRepositoryRoot(t *testing.
 	f.HaveAliveCodexSession(caller, "spwn-grant-clone", "tmux-grant-clone", repo)
 	require.NoError(t, db.GrantAgentPermission(caller, agentd.PermSelfClone, "test"))
 
-	body := map[string]any{"no_copy_conv": true}
-	ch := decodeWriteProofChallenge(t,
-		agentReq(t, f, caller, http.MethodPost, "/v1/whoami/clone", body))
-	gitDir := filepath.Join(repo, ".git")
-	assert.ElementsMatch(t, []string{repo, repoParent, gitDir}, ch.WriteProof.Dirs)
-	answerChallenge(t, ch)
-	body["write_proof_token"] = ch.WriteProof.Token
-	rec := agentReq(t, f, caller, http.MethodPost, "/v1/whoami/clone", body)
-	require.Equalf(t, http.StatusOK, rec.Code, "proved inherited-cwd clone; body=%s", rec.Body.String())
+	rec := agentReq(t, f, caller, http.MethodPost, "/v1/whoami/clone",
+		map[string]any{"no_copy_conv": true})
+	require.Equalf(t, http.StatusOK, rec.Code, "inherited-cwd clone; body=%s", rec.Body.String())
 	var resp struct {
 		NewConv string `json:"new_conv"`
 	}
 	testharness.DecodeJSON(t, rec, &resp)
 	dirs, ok := f.World.SpawnGitWorktreeWriteDirs(resp.NewConv)
 	require.True(t, ok)
-	assert.Equal(t, []string{repoParent, gitDir}, dirs)
+	assert.Empty(t, dirs,
+		"an inherited clone should let session-new derive repository grants from the physical cwd")
 	dirProof, ok := f.World.SpawnDirWriteProof(resp.NewConv)
 	require.True(t, ok)
 	assert.Empty(t, dirProof)
 	cwdProof, ok := f.World.SpawnCwdWriteProof(resp.NewConv)
 	require.True(t, ok)
-	assert.Equal(t, ch.WriteProof.Token, cwdProof)
+	assert.Empty(t, cwdProof, "an inherited clone must not require a disk proof")
+	sessions, err := db.FindSessionsByConvID(resp.NewConv)
+	require.NoError(t, err)
+	require.NotEmpty(t, sessions)
+	assert.Equal(t, repo, sessions[0].Cwd)
+	assertNoDirWriteProofMarkers(t, repo)
+	assertNoDirWriteProofMarkers(t, repoParent)
 }
 
-func TestSpawnDirProof_CodexReincarnateProvesNewRepositoryRoot(t *testing.T) {
+func TestSpawnDirProof_CodexReincarnateNeedsNoProofOrSelfSlug(t *testing.T) {
 	f := newFlow(t)
 	const caller = "self-grant-reinc-aaaa-bbbb-111111111111"
 	f.HaveGroup("alpha")
 	f.HaveMember("alpha", caller)
 	repo, repoParent := initRepoOnMain(t)
 	f.HaveAliveCodexSession(caller, "spwn-grant-reinc", "tmux-grant-reinc", repo)
-	require.NoError(t, db.GrantAgentPermission(caller, agentd.PermSelfReincarnate, "test"))
-
-	body := map[string]any{"follow_up": "continue"}
-	ch := decodeWriteProofChallenge(t,
-		agentReq(t, f, caller, http.MethodPost, "/v1/whoami/reincarnate", body))
-	gitDir := filepath.Join(repo, ".git")
-	assert.ElementsMatch(t, []string{repo, repoParent, gitDir}, ch.WriteProof.Dirs)
-	answerChallenge(t, ch)
-	body["write_proof_token"] = ch.WriteProof.Token
-	rec := agentReq(t, f, caller, http.MethodPost, "/v1/whoami/reincarnate", body)
-	require.Equalf(t, http.StatusOK, rec.Code, "proved reincarnate; body=%s", rec.Body.String())
+	rec := agentReq(t, f, caller, http.MethodPost, "/v1/whoami/reincarnate",
+		map[string]any{"follow_up": "continue"})
+	require.Equalf(t, http.StatusOK, rec.Code, "proofless reincarnate; body=%s", rec.Body.String())
 	var resp struct {
 		NewConv string `json:"new_conv"`
 	}
 	testharness.DecodeJSON(t, rec, &resp)
 	dirs, ok := f.World.SpawnGitWorktreeWriteDirs(resp.NewConv)
 	require.True(t, ok)
-	assert.Equal(t, []string{repoParent, gitDir}, dirs)
+	assert.Empty(t, dirs)
 	dirProof, ok := f.World.SpawnDirWriteProof(resp.NewConv)
 	require.True(t, ok)
 	assert.Empty(t, dirProof)
 	cwdProof, ok := f.World.SpawnCwdWriteProof(resp.NewConv)
 	require.True(t, ok)
-	assert.Equal(t, ch.WriteProof.Token, cwdProof)
+	assert.Empty(t, cwdProof, "reincarnation must not require a disk proof")
+	sessions, err := db.FindSessionsByConvID(resp.NewConv)
+	require.NoError(t, err)
+	require.NotEmpty(t, sessions)
+	assert.Equal(t, repo, sessions[0].Cwd)
+	assertNoDirWriteProofMarkers(t, repo)
+	assertNoDirWriteProofMarkers(t, repoParent)
 }
 
 func TestSpawnDirProof_CodexResumeProvesNewRepositoryRoot(t *testing.T) {
@@ -918,8 +917,8 @@ func TestSpawnDirProof_CodexTemplateProvesAndPinsGitCommonDir(t *testing.T) {
 }
 
 // Scenario: an agent self-clones with a cwd override — the same dir-granting
-// power as a spawn, so the same proof handshake applies; a clone that
-// inherits the source's cwd still proves and child-binds that cwd.
+// power as a spawn, so the same proof handshake applies. A clone that
+// inherits the source's live physical cwd needs no requester disk proof.
 func TestSpawnDirProof_CloneCwdOverride(t *testing.T) {
 	// Two agent-initiated clones of the same source in one test — disable
 	// the cooldown so the second isn't refused for unrelated reasons.
@@ -937,21 +936,30 @@ func TestSpawnDirProof_CloneCwdOverride(t *testing.T) {
 	f.HaveMember("alpha", caller)
 	require.NoError(t, db.GrantAgentPermission(caller, agentd.PermSelfClone, "test"))
 
-	// Inherit-cwd clone: prove the cwd even though it is not overridden.
-	inheritBody := map[string]any{"no_copy_conv": true}
-	inheritChallenge := decodeWriteProofChallenge(t,
-		agentReq(t, f, caller, http.MethodPost, "/v1/whoami/clone", inheritBody))
-	assert.Equal(t, []string{sourceDir}, inheritChallenge.WriteProof.Dirs)
-	answerChallenge(t, inheritChallenge)
-	inheritBody["write_proof_token"] = inheritChallenge.WriteProof.Token
-	rec := agentReq(t, f, caller, http.MethodPost, "/v1/whoami/clone", inheritBody)
+	profileRoot, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	setEffectiveSandboxWriteRoot(t, caller, profileRoot)
+
+	// Inherit-cwd clone: lifecycle authorization is sufficient because neither
+	// the cwd nor the profile authority changes.
+	rec := agentReq(t, f, caller, http.MethodPost, "/v1/whoami/clone",
+		map[string]any{"no_copy_conv": true})
 	require.Equalf(t, http.StatusOK, rec.Code, "inherit-cwd clone; body=%s", rec.Body.String())
 
-	// Override clone: challenge, then the proved retry lands there.
+	// Override clone: prove only the changed cwd. The inherited profile root is
+	// target-authorized and must not appear in the caller's challenge.
 	dir := t.TempDir()
 	body := map[string]any{"no_copy_conv": true, "cwd": dir}
 	ch := decodeWriteProofChallenge(t,
 		agentReq(t, f, caller, http.MethodPost, "/v1/whoami/clone", body))
+	require.Len(t, ch.WriteProof.Dirs, 1)
+	wantChallengeDir, err := os.Stat(dir)
+	require.NoError(t, err)
+	gotChallengeDir, err := os.Stat(ch.WriteProof.Dirs[0])
+	require.NoError(t, err)
+	assert.True(t, os.SameFile(wantChallengeDir, gotChallengeDir),
+		"challenge must cover the requested cwd inode (got %s, want %s)", ch.WriteProof.Dirs[0], dir)
+	assert.NotContains(t, ch.WriteProof.Dirs, profileRoot)
 	answerChallenge(t, ch)
 	body["write_proof_token"] = ch.WriteProof.Token
 	rec = agentReq(t, f, caller, http.MethodPost, "/v1/whoami/clone", body)
@@ -962,15 +970,18 @@ func TestSpawnDirProof_CloneCwdOverride(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	require.NotEmpty(t, resp.NewConv)
-	resolvedDir, err := filepath.EvalSymlinks(dir)
-	require.NoError(t, err)
 	sess, err := db.FindSessionByConvID(resp.NewConv)
 	require.NoError(t, err)
 	require.NotNil(t, sess)
-	assert.Equal(t, resolvedDir, sess.Cwd, "clone must land in the verified resolved dir")
+	wantInfo, err := os.Stat(dir)
+	require.NoError(t, err)
+	gotInfo, err := os.Stat(sess.Cwd)
+	require.NoError(t, err)
+	assert.True(t, os.SameFile(wantInfo, gotInfo),
+		"clone must land on the verified directory inode (got %s, want %s)", sess.Cwd, dir)
 }
 
-func TestSpawnDirProof_LifecycleChallengesIncludeCustomWriteRoots(t *testing.T) {
+func TestSpawnDirProof_InheritedLifecycleAuthorityNeedsNoProof(t *testing.T) {
 	t.Run("clone", func(t *testing.T) {
 		prevCooldown := agentd.CloneCooldown
 		agentd.CloneCooldown = 0
@@ -987,9 +998,9 @@ func TestSpawnDirProof_LifecycleChallengesIncludeCustomWriteRoots(t *testing.T) 
 		require.NoError(t, db.GrantAgentPermission(caller, agentd.PermSelfClone, "test"))
 		setEffectiveSandboxWriteRoot(t, caller, writeRoot)
 
-		challenge := decodeWriteProofChallenge(t, agentReq(t, f, caller, http.MethodPost,
-			"/v1/whoami/clone", map[string]any{"no_copy_conv": true}))
-		assert.ElementsMatch(t, []string{cwd, writeRoot}, challenge.WriteProof.Dirs)
+		rec := agentReq(t, f, caller, http.MethodPost,
+			"/v1/whoami/clone", map[string]any{"no_copy_conv": true})
+		require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	})
 
 	t.Run("reincarnate", func(t *testing.T) {
@@ -1001,12 +1012,11 @@ func TestSpawnDirProof_LifecycleChallengesIncludeCustomWriteRoots(t *testing.T) 
 		require.NoError(t, err)
 		f.HaveConvWithTitle(caller, "profile-reincarnator")
 		f.HaveAliveSession(caller, "spwn-profile-reincarnate", "tclaude-profile-reincarnate", cwd)
-		require.NoError(t, db.GrantAgentPermission(caller, agentd.PermSelfReincarnate, "test"))
 		setEffectiveSandboxWriteRoot(t, caller, writeRoot)
 
-		challenge := decodeWriteProofChallenge(t, agentReq(t, f, caller, http.MethodPost,
-			"/v1/whoami/reincarnate", map[string]any{"follow_up": "continue the task"}))
-		assert.ElementsMatch(t, []string{cwd, writeRoot}, challenge.WriteProof.Dirs)
+		rec := agentReq(t, f, caller, http.MethodPost,
+			"/v1/whoami/reincarnate", map[string]any{"follow_up": "continue the task"})
+		require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	})
 
 	t.Run("resume", func(t *testing.T) {

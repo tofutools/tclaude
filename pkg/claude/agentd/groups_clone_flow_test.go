@@ -142,7 +142,7 @@ func TestGroupsClone_ResumeRefreshesFromClonedGroupNotSourceGroup(t *testing.T) 
 	assert.Equal(t, cloneGroup.ID, resumed.ResolutionGroupID)
 }
 
-func TestGroupsClone_CodexCopyLeavesProoflessRepositoryDerivationToChild(t *testing.T) {
+func TestGroupsClone_CodexCopyUsesInheritedCwdWithoutCallerProof(t *testing.T) {
 	f := newFlow(t)
 	const source = "92e452c0-eef5-4fa3-beb9-51f4f8722336"
 	repo, _ := initRepoOnMain(t)
@@ -165,10 +165,11 @@ func TestGroupsClone_CodexCopyLeavesProoflessRepositoryDerivationToChild(t *test
 
 	got, ok := f.World.SpawnCodexGitCommonDir(cloneConv)
 	require.True(t, ok)
-	assert.Empty(t, got, "proofless human group clone derives repository grants in the child")
+	assert.Empty(t, got,
+		"session-new should derive repository authority from the inherited physical cwd")
 	pinned, ok := f.World.SpawnCodexGitCommonDirPinned(cloneConv)
 	require.True(t, ok)
-	assert.False(t, pinned, "proofless human group clone must not carry internal pinned paths")
+	assert.False(t, pinned)
 }
 
 // Scenario: clone with an explicit name that doesn't collide.
@@ -414,33 +415,4 @@ func TestGroupsClone_OfflineMemberSkipped(t *testing.T) {
 	require.NotNil(t, newGroup, "new group should exist even with partial failure")
 	newMembers, _ := db.ListAgentGroupMembers(newGroup.ID)
 	assert.Len(t, newMembers, 1, "new group should have 1 member (the live clone)")
-}
-
-func TestGroupsClone_AgentCannotCloneMemberThatCameOnlineAfterProofSnapshot(t *testing.T) {
-	f := newFlow(t)
-	const caller = "group-clone-caller-aaaa-bbbb-111111111111"
-	const source = "group-clone-source-aaaa-bbbb-222222222222"
-	const tmuxSession = "tmux-group-clone-transition"
-	f.HaveEnrolledAgent(caller)
-	require.NoError(t, db.GrantAgentPermission(caller, agentd.PermGroupsClone, "test"))
-	f.HaveAliveSession(source, "spwn-group-clone-transition", tmuxSession, t.TempDir())
-	f.MarkOffline(tmuxSession)
-	f.HaveGroup("transition-team")
-	f.HaveMember("transition-team", source)
-
-	t.Cleanup(agentd.SetGroupCloneAfterProofForTest(func() {
-		f.World.Tmux.MarkAlive(tmuxSession)
-	}))
-	r := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost,
-		"/v1/groups/transition-team/clone", map[string]any{
-			"new_name": "transition-copy", "no_copy_conv": true,
-		}), caller)
-	rec := testharness.Serve(f.Mux, r)
-	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
-	var resp cloneGroupResp
-	testharness.DecodeJSON(t, rec, &resp)
-	require.Len(t, resp.Members, 1)
-	assert.Contains(t, resp.Members[0].Error, "when launch authority was proved")
-	assert.Empty(t, resp.Members[0].NewConv,
-		"member absent from the proof set must not turn into a clone launch")
 }
