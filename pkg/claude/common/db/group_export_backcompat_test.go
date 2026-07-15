@@ -201,15 +201,12 @@ func readActorMeta(t *testing.T, agentID string) actorMeta {
 	return m
 }
 
-// TestImportGroup_PreexistingActorMetadataPreserved pins JOH-289: when a plan's
-// ConvRemap resolves a source conv onto an actor that ALREADY exists locally,
-// the enrollment metadata replay must NOT clobber that actor's created_at /
-// created_via / retire triple / pending_name. Production collision detection
-// remaps every locally-present conv to a fresh id, so this state is only
-// reachable via the check/import TOCTOU — but the importer must stay
-// non-destructive if it ever does. A hand-built colliding plan is the only way
-// to exercise the guard, since the daemon never constructs one.
-func TestImportGroup_PreexistingActorMetadataPreserved(t *testing.T) {
+// TestImportGroup_PreexistingRetiredActorCollisionRollsBack pins the import
+// preflight/transaction TOCTOU boundary. Production preflight remaps every
+// locally-present conv, so finding one inside the IMMEDIATE import transaction
+// means the actor appeared after inspection. The import must abort instead of
+// attaching archive authority that could revive on reinstatement.
+func TestImportGroup_PreexistingRetiredActorCollisionRollsBack(t *testing.T) {
 	setupTestDB(t)
 
 	// A pre-existing local actor with its own metadata.
@@ -223,8 +220,7 @@ func TestImportGroup_PreexistingActorMetadataPreserved(t *testing.T) {
 		WHERE agent_id = ?`, localAgent)
 	require.NoError(t, err, "stamp local metadata")
 
-	// Import a plan whose member conv remaps ONTO conv-local, carrying an
-	// enrollment with conflicting metadata the pre-fix code wrote over the row.
+	// Import a stale plan whose member conv remaps ONTO conv-local.
 	_, err = ImportGroup(GroupImportPlan{
 		Export: &groupexport.Export{
 			FormatVersion: groupexport.FormatVersion,
@@ -241,7 +237,10 @@ func TestImportGroup_PreexistingActorMetadataPreserved(t *testing.T) {
 		TargetCwd:  "/tmp/imported",
 		ConvRemap:  map[string]string{"conv-src": "conv-local"},
 	})
-	require.NoError(t, err, "ImportGroup")
+	require.ErrorContains(t, err, "actor collision for conv conv-local")
+	imported, getErr := GetAgentGroupByName("imported-team")
+	require.NoError(t, getErr)
+	assert.Nil(t, imported, "collision rolls back the entire imported group")
 
 	got := readActorMeta(t, localAgent)
 	assert.Equal(t, "2020-01-01T00:00:00Z", got.createdAt, "created_at not clobbered")
@@ -252,9 +251,35 @@ func TestImportGroup_PreexistingActorMetadataPreserved(t *testing.T) {
 	assert.Equal(t, "local-pending", got.pendingName, "pending_name not clobbered")
 }
 
-// TestImportGroup_FreshActorMetadataRestored is the other half of JOH-289: an
-// enrollment for a conv THIS import freshly creates DOES get its archived facts
-// restored — the round-trip the guard must not break.
+func TestImportGroup_AllowsExactOEXCLClaimedIndexPath(t *testing.T) {
+	setupTestDB(t)
+	const conv = "44444444-dead-beef-cafe-000000000000"
+	const claimedPath = "/tmp/import-target/44444444-dead-beef-cafe-000000000000.jsonl"
+	require.NoError(t, UpsertConvIndex(&ConvIndexRow{
+		ConvID: conv, ProjectDir: "/tmp/import-target", FullPath: claimedPath,
+	}))
+
+	_, err := ImportGroup(GroupImportPlan{
+		Export: &groupexport.Export{
+			FormatVersion: groupexport.FormatVersion,
+			SourceGroup:   "claimed-index",
+			Members:       []groupexport.Member{{ConvID: conv, Role: "lead"}},
+		},
+		TargetName:               "claimed-index",
+		TargetCwd:                "/tmp/import-target",
+		ConvRemap:                map[string]string{conv: conv},
+		ClaimedConversationPaths: map[string]string{conv: claimedPath},
+	})
+	require.NoError(t, err, "an exact daemon-owned O_EXCL path is the import's own monitor row")
+	groups, err := ListGroupsForConv(conv)
+	require.NoError(t, err)
+	require.Len(t, groups, 1)
+	assert.Equal(t, "claimed-index", groups[0].Name)
+}
+
+// TestImportGroup_FreshActorMetadataRestored is the other half of the import
+// collision guard: an actor THIS import freshly creates still gets archived
+// facts restored, but a retired archive cannot retain executable authority.
 func TestImportGroup_FreshActorMetadataRestored(t *testing.T) {
 	setupTestDB(t)
 
@@ -264,10 +289,23 @@ func TestImportGroup_FreshActorMetadataRestored(t *testing.T) {
 			SourceGroup:   "src2",
 			Group:         groupexport.Group{Descr: "imported"},
 			Members:       []groupexport.Member{{ConvID: "conv-fresh", Role: "member", JoinedAt: "2026-01-01T00:00:00Z"}},
+			Owners:        []groupexport.Owner{{ConvID: "conv-fresh", GrantedAt: "2026-01-01T00:00:00Z", GrantedBy: "source"}},
+			Permissions: []groupexport.Permission{{
+				ConvID: "conv-fresh", Slug: "groups.spawn", Effect: PermEffectGrant,
+				GrantedAt: "2026-01-01T00:00:00Z", GrantedBy: "source",
+			}},
 			Enrollments: []groupexport.Enrollment{{
 				ConvID: "conv-fresh", EnrolledAt: "2022-03-03T00:00:00Z", EnrolledVia: "spawn",
 				RetiredAt: "2022-04-04T00:00:00Z", RetiredBy: "src-human",
 				RetireReason: "src-reason", PendingName: "src-pending",
+			}},
+			SudoGrants: []groupexport.SudoGrant{{
+				ConvID: "conv-fresh", Slug: "groups.spawn", GrantedAt: "2026-01-01T00:00:00Z",
+				ExpiresAt: "2099-01-01T00:00:00Z", GrantedBy: "source", Reason: "source grant",
+			}},
+			CronJobs: []groupexport.CronJob{{
+				ID: 1, Name: "source-cron", OwnerConv: "conv-fresh", TargetKind: CronTargetGroup,
+				IntervalSeconds: 60, Body: "must be disabled", Enabled: 1, CreatedAt: "2026-01-01T00:00:00Z",
 			}},
 		},
 		TargetName: "fresh-team",
@@ -286,4 +324,24 @@ func TestImportGroup_FreshActorMetadataRestored(t *testing.T) {
 	assert.Equal(t, "src-human", got.retiredBy, "archived retired_by restored")
 	assert.Equal(t, "src-reason", got.retireReason, "archived retire_reason restored")
 	assert.Equal(t, "src-pending", got.pendingName, "archived pending_name restored")
+	groups, err := ListGroupsForConv("conv-fresh")
+	require.NoError(t, err)
+	assert.Empty(t, groups, "retired imported actor keeps no membership authority")
+	group, err := GetAgentGroupByName("fresh-team")
+	require.NoError(t, err)
+	require.NotNil(t, group)
+	owners, err := ListAgentGroupOwners(group.ID)
+	require.NoError(t, err)
+	assert.Empty(t, owners, "retired imported actor keeps no ownership authority")
+	overrides, err := ListAgentPermissionOverridesForConv("conv-fresh")
+	require.NoError(t, err)
+	assert.Empty(t, overrides, "retired imported actor keeps no permanent authority")
+	activeSudo, err := ListActiveSudoGrants("conv-fresh")
+	require.NoError(t, err)
+	assert.Empty(t, activeSudo, "retired imported actor keeps no sudo authority")
+	jobs, err := ListAgentCronJobs()
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	assert.False(t, jobs[0].Enabled, "retired imported actor keeps no scheduled authority")
+	assert.Equal(t, CronDisabledReasonAgentRetired, jobs[0].DisabledReason)
 }

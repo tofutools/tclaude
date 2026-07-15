@@ -178,10 +178,15 @@ func handleScribeSummon(w http.ResponseWriter, r *http.Request) {
 	// A summon applies birth-time grants, so an agent caller (not the human)
 	// needs permissions.grant on top of groups.spawn — the same guard
 	// handleGroupSpawn puts on a spawn carrying permission_overrides.
-	if spawnerConvID != "" && resolvePermission(spawnerConvID, PermPermissionsGrant) != permAllow {
-		writeError(w, http.StatusForbidden, "permission",
-			"granting a scribe birth-time permissions requires the "+PermPermissionsGrant+" permission")
-		return
+	var permissionGrantSudoID int64
+	if spawnerConvID != "" {
+		resolution, sudoID := resolvePermissionWithSudoGrantID(spawnerConvID, PermPermissionsGrant)
+		if resolution != permAllow {
+			writeError(w, http.StatusForbidden, "permission",
+				"granting a scribe birth-time permissions requires the "+PermPermissionsGrant+" permission")
+			return
+		}
+		permissionGrantSudoID = sudoID
 	}
 
 	brief := strings.TrimSpace(body.Brief)
@@ -205,19 +210,19 @@ func handleScribeSummon(w http.ResponseWriter, r *http.Request) {
 	}
 	taskURL := strings.TrimSpace(body.TaskURL)
 	taskLabel := strings.TrimSpace(body.TaskLabel)
+	if err := validateTaskRefLabel(taskLabel); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_task_label", err.Error())
+		return
+	}
 	if taskURL != "" {
 		if err := validateTaskRefURL(taskURL); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_task_url", err.Error())
 			return
 		}
-		if err := validateTaskRefLabel(taskLabel); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_task_label", err.Error())
-			return
-		}
 	}
 
-	approvalID := newApprovalID()
-	granter := scribeApprovalGranter(r, spawnerConvID, approvalID)
+	correlationID := newApprovalID()
+	granter := scribeSummonGranter(r, spawnerConvID, permissionGrantSudoID, correlationID)
 	out, reused, fail := summonScribe(name, overrides, brief, body.Exclusive, scopeKey, taskURL, taskLabel, granter)
 	if fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
@@ -244,15 +249,19 @@ func handleScribeSummon(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// scribeApprovalGranter records the trusted actor class and one server-minted
-// approval id on every birth-time permission row. The id is audit correlation,
-// not an authorization token, and no caller-supplied value enters it.
-func scribeApprovalGranter(r *http.Request, spawnerConvID, approvalID string) string {
+// scribeSummonGranter records the trusted actor class, any sudo lineage for
+// permissions.grant, and one server-minted correlation id on every birth-time
+// permission row. The id is not an authorization token, and no caller-supplied
+// value enters it.
+func scribeSummonGranter(r *http.Request, spawnerConvID string, sudoGrantID int64, correlationID string) string {
 	actor := granterLabel(spawnerConvID)
+	if spawnerConvID != "" && sudoGrantID != 0 {
+		actor = fmt.Sprintf("%s:via-sudo:grant-id=%d", spawnerConvID, sudoGrantID)
+	}
 	if p := peerFromContext(r.Context()); p != nil && p.DashboardHuman {
 		actor = dashboardGranter
 	}
-	return actor + ":scribe-summon:approval-id=" + approvalID
+	return actor + ":scribe-summon:correlation-id=" + correlationID
 }
 
 // canonicalScribeScope validates and canonicalises the structured reuse key.
@@ -345,6 +354,7 @@ func summonScribe(name string, overrides map[string]string, brief string, exclus
 		InitialMessage:      brief,
 		AutoFocus:           !exclusive,
 		PermissionOverrides: overrides,
+		PermissionGranter:   granter,
 	}
 	outcome, spawnFail := executeSpawn(g, p)
 	if spawnFail != nil {

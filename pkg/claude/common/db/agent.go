@@ -165,6 +165,7 @@ func HasAgentGroupPermission(convID, slug string) (bool, error) {
 		FROM agent_group_permissions gp
 		JOIN agent_groups g ON g.id = gp.group_id AND g.archived_at = ''
 		JOIN agent_group_members gm ON gm.group_id = gp.group_id
+		JOIN agents a ON a.agent_id = gm.agent_id AND a.retired_at = ''
 		WHERE gm.agent_id = ? AND gp.slug = ?`, agentID, slug).Scan(&n)
 	return n > 0, err
 }
@@ -383,15 +384,22 @@ func SetAgentPermissionOverride(convID, slug, effect, grantedBy string) error {
 	if agentID == "" {
 		return fmt.Errorf("SetAgentPermissionOverride: no actor for conv %s", convID)
 	}
-	_, err = db.Exec(`INSERT INTO agent_permissions
+	res, err := db.Exec(`INSERT INTO agent_permissions
 		(agent_id, slug, effect, granted_at, granted_by)
-		VALUES (?, ?, ?, ?, ?)
+		SELECT ?, ?, ?, ?, ? FROM agents WHERE agent_id = ? AND retired_at = ''
 		ON CONFLICT(agent_id, slug) DO UPDATE SET
 			effect     = excluded.effect,
 			granted_at = excluded.granted_at,
 			granted_by = excluded.granted_by`,
-		agentID, slug, effect, time.Now().Format(time.RFC3339Nano), grantedBy)
-	return err
+		agentID, slug, effect, time.Now().Format(time.RFC3339Nano), grantedBy, agentID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("SetAgentPermissionOverride: agent %s is retired", agentID)
+	}
+	return nil
 }
 
 // RevokeAgentPermission removes a single (convID, slug). Idempotent.
@@ -460,11 +468,17 @@ func ApplyAgentPermissionOverrides(convID string, overrides map[string]string, g
 		}
 	}
 	now := time.Now().Format(time.RFC3339Nano)
-	for slug, effect := range overrides {
-		if preserveSameEffectProvenance {
-			if _, err := tx.Exec(`INSERT INTO agent_permissions
+	upsert := `INSERT INTO agent_permissions
+		(agent_id, slug, effect, granted_at, granted_by)
+		SELECT ?, ?, ?, ?, ? FROM agents WHERE agent_id = ? AND retired_at = ''
+		ON CONFLICT(agent_id, slug) DO UPDATE SET
+			effect = excluded.effect,
+			granted_at = excluded.granted_at,
+			granted_by = excluded.granted_by`
+	if preserveSameEffectProvenance {
+		upsert = `INSERT INTO agent_permissions
 			(agent_id, slug, effect, granted_at, granted_by)
-			VALUES (?, ?, ?, ?, ?)
+			SELECT ?, ?, ?, ?, ? FROM agents WHERE agent_id = ? AND retired_at = ''
 			ON CONFLICT(agent_id, slug) DO UPDATE SET
 				effect = excluded.effect,
 				granted_at = CASE
@@ -474,19 +488,16 @@ func ApplyAgentPermissionOverrides(convID string, overrides map[string]string, g
 				granted_by = CASE
 					WHEN agent_permissions.effect = excluded.effect THEN agent_permissions.granted_by
 					ELSE excluded.granted_by
-				END`, agentID, slug, effect, now, grantedBy); err != nil {
-				return err
-			}
-			continue
-		}
-		if _, err := tx.Exec(`INSERT INTO agent_permissions
-			(agent_id, slug, effect, granted_at, granted_by)
-			VALUES (?, ?, ?, ?, ?)
-			ON CONFLICT(agent_id, slug) DO UPDATE SET
-				effect = excluded.effect,
-				granted_at = excluded.granted_at,
-				granted_by = excluded.granted_by`, agentID, slug, effect, now, grantedBy); err != nil {
+				END`
+	}
+	for slug, effect := range overrides {
+		res, err := tx.Exec(upsert, agentID, slug, effect, now, grantedBy, agentID)
+		if err != nil {
 			return err
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			return fmt.Errorf("ApplyAgentPermissionOverrides: agent %s is retired", agentID)
 		}
 	}
 	return tx.Commit()
@@ -1296,12 +1307,19 @@ func AddAgentGroupMember(m *AgentGroupMember) error {
 	if agentID == "" {
 		return fmt.Errorf("AddAgentGroupMember: no actor for conv %s", m.ConvID)
 	}
-	_, err = db.Exec(`INSERT OR REPLACE INTO agent_group_members
+	res, err := db.Exec(`INSERT OR REPLACE INTO agent_group_members
 		(group_id, agent_id, role, descr, joined_at)
-		VALUES (?, ?, ?, ?, ?)`,
+		SELECT ?, ?, ?, ?, ? FROM agents WHERE agent_id = ? AND retired_at = ''`,
 		m.GroupID, agentID, m.Role, m.Descr,
-		m.JoinedAt.Format(time.RFC3339Nano))
-	return err
+		m.JoinedAt.Format(time.RFC3339Nano), agentID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("AddAgentGroupMember: agent %s is retired", agentID)
+	}
+	return nil
 }
 
 // UpdateAgentGroupMember patches non-nil fields on an existing member.
@@ -1970,11 +1988,24 @@ func AddAgentGroupOwner(groupID int64, convID, grantedBy string) error {
 	if agentID == "" {
 		return fmt.Errorf("AddAgentGroupOwner: no actor for conv %s", convID)
 	}
-	_, err = d.Exec(
+	res, err := d.Exec(
 		`INSERT OR IGNORE INTO agent_group_owners (group_id, agent_id, granted_at, granted_by)
-		 VALUES (?, ?, ?, ?)`,
-		groupID, agentID, time.Now().Format(time.RFC3339Nano), grantedBy)
-	return err
+		 SELECT ?, ?, ?, ? FROM agents WHERE agent_id = ? AND retired_at = ''`,
+		groupID, agentID, time.Now().Format(time.RFC3339Nano), grantedBy, agentID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		var active int
+		if err := d.QueryRow(`SELECT COUNT(*) FROM agents WHERE agent_id = ? AND retired_at = ''`, agentID).Scan(&active); err != nil {
+			return err
+		}
+		if active == 0 {
+			return fmt.Errorf("AddAgentGroupOwner: agent %s is retired", agentID)
+		}
+	}
+	return nil
 }
 
 // RemoveAgentGroupOwner clears an ownership row. Returns the number

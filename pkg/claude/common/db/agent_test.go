@@ -181,6 +181,79 @@ func TestAgentPermissions_ApplyOverridesPreservesProvenanceAndClearsAtomically(t
 	assert.Equal(t, PermEffectDeny, overrides["human.notify"], "validation failure leaves prior state intact")
 }
 
+func TestRetireAgentAuthorizationRejectsLateGrants(t *testing.T) {
+	setupTestDB(t)
+	const conv = "retire-auth-0000-0000-0000-000000000001"
+	groupID, err := CreateAgentGroup("retire-auth", "")
+	require.NoError(t, err)
+	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{GroupID: groupID, ConvID: conv}))
+	require.NoError(t, AddAgentGroupOwner(groupID, conv, "test"))
+	require.NoError(t, GrantAgentPermission(conv, "self.rename", "test"))
+	_, err = InsertSudoGrant(&SudoGrant{
+		ConvID: conv, Slug: "human.notify", GrantedAt: time.Now(),
+		ExpiresAt: time.Now().Add(time.Hour), GrantedBy: "test", Reason: "pre-retire",
+	})
+	require.NoError(t, err)
+	cronID, err := InsertAgentCronJob(&AgentCronJob{
+		Name: "retire-owned", OwnerConv: conv, TargetKind: CronTargetGroup,
+		GroupID: groupID, IntervalSeconds: 60, Body: "must stop", Enabled: true,
+	})
+	require.NoError(t, err)
+
+	out, err := RetireAgentAuthorizationByConv(conv, "human", "test retirement")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"retire-auth"}, out.GroupsLeft)
+	assert.Equal(t, []int64{groupID}, out.OwnerGroupIDs)
+	assert.Equal(t, int64(1), out.PermsRevoked)
+	assert.Equal(t, int64(1), out.SudoRevoked)
+	assert.Equal(t, int64(1), out.CronDisabled)
+	assert.True(t, out.Retired)
+	cron, err := GetAgentCronJob(cronID)
+	require.NoError(t, err)
+	require.NotNil(t, cron)
+	assert.False(t, cron.Enabled, "retirement disables owned cron authority")
+	assert.Equal(t, CronDisabledReasonAgentRetired, cron.DisabledReason)
+
+	err = GrantAgentPermission(conv, "groups.spawn", "late")
+	assert.ErrorContains(t, err, "is retired")
+	err = ApplyAgentPermissionOverrides(conv, map[string]string{"groups.spawn": PermEffectGrant}, "late", false, false)
+	assert.ErrorContains(t, err, "is retired")
+	_, err = InsertSudoGrant(&SudoGrant{
+		ConvID: conv, Slug: "groups.spawn", GrantedAt: time.Now(),
+		ExpiresAt: time.Now().Add(time.Hour), GrantedBy: "late", Reason: "post-retire",
+	})
+	assert.ErrorContains(t, err, "is retired")
+	err = AddAgentGroupMember(&AgentGroupMember{GroupID: groupID, ConvID: conv})
+	assert.ErrorContains(t, err, "is retired")
+	err = AddAgentGroupOwner(groupID, conv, "late")
+	assert.ErrorContains(t, err, "is retired")
+	_, err = InsertAgentCronJob(&AgentCronJob{
+		Name: "late-cron", OwnerConv: conv, TargetKind: CronTargetGroup,
+		GroupID: groupID, IntervalSeconds: 60, Body: "must not persist", Enabled: true,
+	})
+	assert.ErrorContains(t, err, "is retired")
+
+	reinstated, err := ReinstateAgent(conv)
+	require.NoError(t, err)
+	assert.True(t, reinstated)
+	overrides, err := ListAgentPermissionOverridesForConv(conv)
+	require.NoError(t, err)
+	assert.Empty(t, overrides, "late permanent grants never survive into reinstatement")
+	activeSudo, err := ListActiveSudoGrants(conv)
+	require.NoError(t, err)
+	assert.Empty(t, activeSudo, "late sudo grants never survive into reinstatement")
+	groups, err := ListGroupsForConv(conv)
+	require.NoError(t, err)
+	assert.Empty(t, groups, "late memberships never survive into reinstatement")
+	owners, err := ListAgentGroupOwners(groupID)
+	require.NoError(t, err)
+	assert.Empty(t, owners, "late ownership never survives into reinstatement")
+	cron, err = GetAgentCronJob(cronID)
+	require.NoError(t, err)
+	require.NotNil(t, cron)
+	assert.False(t, cron.Enabled, "reinstatement does not implicitly restore scheduled authority")
+}
+
 func TestAgentMessageInsertAndList(t *testing.T) {
 	setupTestDB(t)
 

@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -58,6 +59,33 @@ func decodeScribeResp(t *testing.T, rec *httptest.ResponseRecorder) scribeSummon
 	var resp scribeSummonResp
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp), "decode /v1/scribe body=%s", rec.Body.String())
 	return resp
+}
+
+type permissionAuditRow struct {
+	GrantedAt string
+	GrantedBy string
+}
+
+func permissionAuditRows(t *testing.T, conv string) map[string]permissionAuditRow {
+	t.Helper()
+	agentID, err := db.AgentIDForConv(conv)
+	require.NoError(t, err)
+	require.NotEmpty(t, agentID)
+	d, err := db.Open()
+	require.NoError(t, err)
+	rows, err := d.Query(`SELECT slug, granted_at, granted_by FROM agent_permissions
+		WHERE agent_id = ? ORDER BY slug`, agentID)
+	require.NoError(t, err)
+	defer rows.Close()
+	out := map[string]permissionAuditRow{}
+	for rows.Next() {
+		var slug string
+		var row permissionAuditRow
+		require.NoError(t, rows.Scan(&slug, &row.GrantedAt, &row.GrantedBy))
+		out[slug] = row
+	}
+	require.NoError(t, rows.Err())
+	return out
 }
 
 // Scenario: a human summons a uniquely named scribe. It comes up in the
@@ -211,12 +239,21 @@ func TestScribeSummon_SameScopeReusesAndRefreshesBrief(t *testing.T) {
 		return decodeScribeResp(t, rec)
 	}
 	first := post("release-flow@sha256:1111")
+	firstAudit := permissionAuditRows(t, first.ConvID)
+	require.Len(t, firstAudit, 2)
+	assert.Equal(t, firstAudit[agentd.PermProcessTemplatesRead].GrantedBy,
+		firstAudit[agentd.PermProcessTemplatesManage].GrantedBy,
+		"one generic summon correlates all birth-time permission rows")
+	assert.Regexp(t, `^<human>:scribe-summon:correlation-id=[0-9a-f]{32}$`,
+		firstAudit[agentd.PermProcessTemplatesManage].GrantedBy)
 	second := post("release-flow@sha256:2222")
 	assert.False(t, first.Reused)
 	assert.True(t, second.Reused)
 	assert.Equal(t, first.ConvID, second.ConvID)
 	assert.Equal(t, "native", second.FocusMode, "reuse returns the existing open-conversation handshake")
 	assert.Equal(t, 2, *opens, "fresh and reused calls both focus the conversation")
+	assert.Equal(t, firstAudit, permissionAuditRows(t, second.ConvID),
+		"reuse must preserve the original grant timestamps and approval correlation")
 
 	g, err := db.GetAgentGroupByName("process-scribe")
 	require.NoError(t, err)
@@ -274,7 +311,7 @@ func TestScribeSummon_ProcessScopePersistsTaskAndApprovalAudit(t *testing.T) {
 	require.Len(t, grants, 2)
 	assert.Equal(t, grants[agentd.PermProcessTemplatesRead], grants[agentd.PermProcessTemplatesManage],
 		"one explicit human approval correlates both required grants")
-	assert.Regexp(t, `^<human>:scribe-summon:approval-id=[0-9a-f]{32}$`, grants[agentd.PermProcessTemplatesManage])
+	assert.Regexp(t, `^<human>:scribe-summon:correlation-id=[0-9a-f]{32}$`, grants[agentd.PermProcessTemplatesManage])
 
 	// The same approved scribe authors the version attributed to its stable
 	// actor. Summon and save are authoring-only: no process run appears.
@@ -315,6 +352,11 @@ func TestScribeSummon_ProcessScopePersistsTaskAndApprovalAudit(t *testing.T) {
 	ref, err = db.GetAgentTaskRef(agentID)
 	require.NoError(t, err)
 	assert.Equal(t, secondTask, ref.URL)
+	reusedAudit := permissionAuditRows(t, second.ConvID)
+	assert.Equal(t, grants[agentd.PermProcessTemplatesRead],
+		reusedAudit[agentd.PermProcessTemplatesRead].GrantedBy)
+	assert.Equal(t, grants[agentd.PermProcessTemplatesManage],
+		reusedAudit[agentd.PermProcessTemplatesManage].GrantedBy)
 }
 
 func TestScribeSummon_ScopedExclusiveDoesNotReuseOrRevokeLaterSudo(t *testing.T) {
@@ -612,6 +654,23 @@ func TestScribeSummon_AgentGatedLikeSpawn(t *testing.T) {
 	assert.Equal(t, "grant",
 		mustOverrides(t, decodeScribeResp(t, rec).ConvID)[agentd.PermTemplatesManage],
 		"authorised agent's scribe carries the grant")
+
+	// (d) When permissions.grant is sudo-only, every child grant retains the
+	// exact sudo row lineage in addition to the server-minted summon id.
+	const elevated = "sudo-1111-2222-3333-4444"
+	f.HaveMember("callers", elevated)
+	require.NoError(t, db.GrantAgentPermission(elevated, agentd.PermGroupsSpawn, "test"))
+	sudoID, err := db.InsertSudoGrant(&db.SudoGrant{
+		ConvID: elevated, Slug: agentd.PermPermissionsGrant,
+		GrantedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour),
+		GrantedBy: "test", Reason: "scribe audit lineage coverage",
+	})
+	require.NoError(t, err)
+	rec = post(elevated)
+	require.Equalf(t, http.StatusOK, rec.Code, "sudo-authorised summon body=%s", rec.Body.String())
+	elevatedScribe := decodeScribeResp(t, rec)
+	assert.Regexp(t, fmt.Sprintf(`^%s:via-sudo:grant-id=%d:scribe-summon:correlation-id=[0-9a-f]{32}$`, elevated, sudoID),
+		permissionAuditRows(t, elevatedScribe.ConvID)[agentd.PermTemplatesManage].GrantedBy)
 }
 
 // Scenario: the JOH-369 fix. A summon spawns the scribe into the stable,
@@ -770,6 +829,7 @@ func TestScribeSummon_ValidationRejections(t *testing.T) {
 		{"scope id injection", map[string]any{"name": "circle-scribe", "slugs": []string{agentd.PermTemplatesManage}, "brief": "x", "scope": map[string]any{"kind": "process-template", "id": "release/../../pane"}}},
 		{"scope id over bound", map[string]any{"name": "circle-scribe", "slugs": []string{agentd.PermTemplatesManage}, "brief": "x", "scope": map[string]any{"kind": "process-template", "id": strings.Repeat("a", 129)}}},
 		{"task ref injection", map[string]any{"name": "circle-scribe", "slugs": []string{agentd.PermTemplatesManage}, "brief": "x", "task_ref_url": "javascript:alert(1)"}},
+		{"malformed task label without URL", map[string]any{"name": "circle-scribe", "slugs": []string{agentd.PermTemplatesManage}, "brief": "x", "task_ref_label": strings.Repeat("a", 201)}},
 		{"task label over bound", map[string]any{"name": "circle-scribe", "slugs": []string{agentd.PermTemplatesManage}, "brief": "x", "task_ref_url": "https://dashboard.example/processes", "task_ref_label": strings.Repeat("a", 201)}},
 	}
 	for _, tc := range cases {
@@ -778,6 +838,9 @@ func TestScribeSummon_ValidationRejections(t *testing.T) {
 			assert.Equalf(t, http.StatusBadRequest, rec.Code, "expected 400; body=%s", rec.Body.String())
 		})
 	}
+	g, err := db.GetAgentGroupByName("circle-scribe")
+	require.NoError(t, err)
+	assert.Nil(t, g, "invalid task inputs must be rejected before any scribe is spawned")
 }
 
 // summonCircleScribe posts a standard human summon for the "circle-scribe"

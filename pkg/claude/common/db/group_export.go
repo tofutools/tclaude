@@ -17,6 +17,12 @@ import (
 // group does not exist.
 var ErrGroupNotFound = errors.New("group not found")
 
+// ErrImportConversationCollision means an import plan became stale after its
+// daemon preflight: one of the final conversation ids now belongs to a local
+// actor or plain conv_index row. Callers should inspect again and retry so
+// archive authority is never attached across conversation identities.
+var ErrImportConversationCollision = errors.New("import conversation collision")
+
 // group_export.go is the DB half of per-group export / import. It owns
 // the raw SQL that reads every group- and conv-scoped table into a
 // groupexport.Export, and the single transaction that writes one back.
@@ -522,8 +528,12 @@ type GroupImportPlan struct {
 	Export     *groupexport.Export
 	TargetName string            // resolved group name (--as value, or the source name)
 	TargetCwd  string            // absolute --into path; every imported path column is set to this
-	ConvRemap  map[string]string // source member conv-id → final conv-id
-	ByConv     string            // caller conv-id for the audit log ("" = human)
+	ConvRemap  map[string]string // imported conv/succession id → final conv-id
+	// ClaimedConversationPaths proves the daemon exclusively created these
+	// exact destinations before this transaction. A live conv monitor may have
+	// indexed such a path already; no other indexed path is accepted.
+	ClaimedConversationPaths map[string]string // final conv-id → exact O_EXCL-created destination path
+	ByConv                   string            // caller conv-id for the audit log ("" = human)
 }
 
 // GroupImportResult summarises a completed import.
@@ -603,7 +613,7 @@ type importCtx struct {
 // actor route through here so that by the time enrollments() replays archived
 // metadata, createdActors is complete — see the importCtx.createdActors note.
 func (c *importCtx) ensureActor(conv, via string) (string, error) {
-	pre, err := agentIDForConvTx(c.tx, conv)
+	pre, err := c.checkConversationCollision(conv)
 	if err != nil {
 		return "", err
 	}
@@ -618,6 +628,39 @@ func (c *importCtx) ensureActor(conv, via string) (string, error) {
 		c.createdActors[agentID] = true
 	}
 	return agentID, nil
+}
+
+func (c *importCtx) checkConversationCollision(conv string) (string, error) {
+	pre, err := agentIDForConvTx(c.tx, conv)
+	if err != nil {
+		return "", err
+	}
+	if pre != "" && !c.createdActors[pre] {
+		// Production preflight remaps every actor already present locally. If
+		// one appears before this IMMEDIATE import transaction begins, attaching
+		// archive authority to that unrelated actor would cross identities (and
+		// could revive authority on a retired actor after reinstatement). Abort
+		// the whole import instead; the caller can inspect again and retry with a
+		// fresh remap.
+		return "", fmt.Errorf("%w: actor collision for conv %s", ErrImportConversationCollision, conv)
+	}
+	if pre == "" {
+		// conv_index is the SQLite source of truth for ordinary local
+		// conversations that have not enrolled as agents. Check it inside the
+		// same IMMEDIATE transaction that will mint the imported actor. Only the
+		// exact destination already claimed O_EXCL by this import may be its own
+		// live-monitor row; an indexed conversation under any other path aborts.
+		var indexedPath string
+		err := c.tx.QueryRow(`SELECT full_path FROM conv_index WHERE conv_id = ?`, conv).Scan(&indexedPath)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return "", fmt.Errorf("check conversation index for %s: %w", conv, err)
+		}
+		claimedPath, claimed := c.plan.ClaimedConversationPaths[conv]
+		if err == nil && (!claimed || indexedPath != claimedPath) {
+			return "", fmt.Errorf("%w: indexed conv %s", ErrImportConversationCollision, conv)
+		}
+	}
+	return pre, nil
 }
 
 // rc remaps a single conv-id through the plan (identity when absent).
@@ -660,7 +703,7 @@ func (c *importCtx) run() error {
 		c.members, c.owners, c.audit, c.permissions, c.enrollments,
 		c.workdirs, c.sudoGrants, c.headAliases, c.successions,
 		c.spawnHist, c.cloneHist, c.cronJobsAndRuns, c.messages,
-		c.transferLog, c.backfillAgentCompanions,
+		c.transferLog, c.backfillAgentCompanions, c.scrubRetiredActorAuthority,
 	} {
 		if err := step(); err != nil {
 			return err
@@ -669,8 +712,41 @@ func (c *importCtx) run() error {
 	return nil
 }
 
+// scrubRetiredActorAuthority preserves archived retirement metadata without
+// reviving any authority rows carried by an old/inconsistent export. Only
+// actors minted by this import are eligible; pre-existing actor collisions are
+// rejected by ensureActor before any row can attach. The whole scrub shares the
+// import transaction, so failure rolls back the group and every imported row.
+func (c *importCtx) scrubRetiredActorAuthority() error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	for agentID := range c.createdActors {
+		var retiredAt string
+		if err := c.tx.QueryRow(`SELECT retired_at FROM agents WHERE agent_id = ?`, agentID).Scan(&retiredAt); err != nil {
+			return fmt.Errorf("import: inspect actor retirement: %w", err)
+		}
+		if retiredAt == "" {
+			continue
+		}
+		for _, stmt := range []struct {
+			query string
+			args  []any
+		}{
+			{`DELETE FROM agent_group_owners WHERE agent_id = ?`, []any{agentID}},
+			{`DELETE FROM agent_group_members WHERE agent_id = ?`, []any{agentID}},
+			{`DELETE FROM agent_permissions WHERE agent_id = ?`, []any{agentID}},
+			{`UPDATE agent_sudo_grants SET revoked_at = ? WHERE agent_id = ? AND revoked_at = ''`, []any{now, agentID}},
+			{`UPDATE agent_cron_jobs SET enabled = 0, disabled_reason = ? WHERE owner_agent = ? AND enabled = 1`, []any{CronDisabledReasonAgentRetired, agentID}},
+		} {
+			if _, err := c.tx.Exec(stmt.query, stmt.args...); err != nil {
+				return fmt.Errorf("import: scrub retired actor authority: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
 // backfillAgentCompanions fills the v77 agent_id companion columns on the
-// just-imported rows, run last so every table is present and enrollments() has
+// just-imported rows, run after every carried table is present and enrollments() has
 // rebuilt agent_conversations (the resolution spine) under the import's remapped
 // conv-ids. Mirrors the v76 message-import derivation, generalised to every v77
 // companion. onlyEmpty=true keeps it additive — it never blanks a pre-existing
@@ -933,11 +1009,18 @@ func (c *importCtx) successions() error {
 	// could already have a succession row locally — INSERT OR IGNORE
 	// keeps the import all-or-nothing-safe without a hard failure.
 	for _, s := range c.exp.Successions {
+		oldConv, newConv := c.rc(s.OldConvID), c.rc(s.NewConvID)
+		if _, err := c.checkConversationCollision(oldConv); err != nil {
+			return fmt.Errorf("import: succession %s old endpoint: %w", s.OldConvID, err)
+		}
+		if _, err := c.checkConversationCollision(newConv); err != nil {
+			return fmt.Errorf("import: succession %s new endpoint: %w", s.NewConvID, err)
+		}
 		if _, err := c.tx.Exec(`
 			INSERT OR IGNORE INTO agent_conv_succession
 				(old_conv_id, new_conv_id, reason, succeeded_at)
 			VALUES (?, ?, ?, ?)`,
-			c.rc(s.OldConvID), c.rc(s.NewConvID), s.Reason, s.SucceededAt); err != nil {
+			oldConv, newConv, s.Reason, s.SucceededAt); err != nil {
 			return fmt.Errorf("import: succession %s: %w", s.OldConvID, err)
 		}
 	}

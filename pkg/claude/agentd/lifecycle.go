@@ -2519,6 +2519,11 @@ type spawnParams struct {
 	// (handleGroupSpawn) — every slug registered, every effect in {grant,deny}.
 	// nil/empty = inherit the group's default permissions.
 	PermissionOverrides map[string]string
+	// PermissionGranter overrides the ordinary spawn-actor audit label for
+	// birth-time permission rows. It is reserved for trusted server-minted
+	// correlation such as scribe summon approvals; ordinary spawn requests
+	// leave it empty and retain the existing granterLabel(SpawnedByConv) path.
+	PermissionGranter string
 	// Timeout bounds the conv-id poll; <= 0 falls back to 30s. On the
 	// synchronous path it is the hard deadline before a spawn fails; on the
 	// Async path the poll is capped at the shorter asyncSpawnInlineGrace
@@ -3776,8 +3781,12 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 				"conv", convID, "group", g.Name, "error", err)
 		}
 	}
+	permissionGranter := p.PermissionGranter
+	if permissionGranter == "" {
+		permissionGranter = granter
+	}
 	for slug, effect := range p.PermissionOverrides {
-		if err := db.SetAgentPermissionOverride(convID, slug, effect, granter); err != nil {
+		if err := db.SetAgentPermissionOverride(convID, slug, effect, permissionGranter); err != nil {
 			slog.Warn("spawn: failed to apply birth permission override",
 				"conv", convID, "slug", slug, "effect", effect, "error", err)
 		}

@@ -73,14 +73,18 @@ func InsertSudoGrant(g *SudoGrant) (int64, error) {
 	}
 	res, err := d.Exec(`INSERT INTO agent_sudo_grants
 		(agent_id, slug, granted_at, expires_at, granted_by, reason, revoked_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		SELECT ?, ?, ?, ?, ?, ?, ? FROM agents WHERE agent_id = ? AND retired_at = ''`,
 		agentID, g.Slug,
 		g.GrantedAt.Format(time.RFC3339Nano),
 		g.ExpiresAt.Format(time.RFC3339Nano),
 		g.GrantedBy, g.Reason,
-		formatTimeOrEmpty(g.RevokedAt))
+		formatTimeOrEmpty(g.RevokedAt), agentID)
 	if err != nil {
 		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return 0, fmt.Errorf("InsertSudoGrant: agent %s is retired", agentID)
 	}
 	return res.LastInsertId()
 }

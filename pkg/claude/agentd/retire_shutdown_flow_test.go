@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -111,6 +112,21 @@ func TestRetire_WithoutShutdownKeepsSessionAlive(t *testing.T) {
 	require.NotNil(t, row, "the retired agent must appear in retired[]")
 	assert.True(t, row.Online, "retire --no-shutdown must leave the session alive")
 	assert.True(t, f.World.Tmux.IsAlive(tmuxSes), "the tmux session must still be running")
+
+	// A deliberately still-running retired pane cannot retain authority through
+	// global defaults. Enrollment state gates every permission source first.
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	if cfg.Agent == nil {
+		cfg.Agent = &config.AgentConfig{}
+	}
+	cfg.Agent.DefaultPermissions = []string{agentd.PermGroupsSpawn}
+	require.NoError(t, config.Save(cfg))
+	denied := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe", map[string]any{
+		"name": "retired-scribe", "slugs": []string{agentd.PermTemplatesManage}, "brief": "must not run",
+	}), conv))
+	assert.Equal(t, http.StatusForbidden, denied.Code, denied.Body.String())
+	assert.Contains(t, denied.Body.String(), "retired agent")
 }
 
 // Revocation is the security boundary of retirement: if either permanent or
@@ -118,44 +134,39 @@ func TestRetire_WithoutShutdownKeepsSessionAlive(t *testing.T) {
 // return a success response that lets a caller claim its access is gone.
 func TestRetire_RevocationFailureDoesNotDemoteAgent(t *testing.T) {
 	tests := []struct {
-		name       string
-		prepare    func(*testing.T, string)
-		triggerSQL string
-		wantError  string
-		assertKept func(*testing.T, string)
+		name        string
+		triggerName string
+		triggerSQL  string
+		wantError   string
 	}{
 		{
-			name: "permanent permission",
-			prepare: func(t *testing.T, conv string) {
-				require.NoError(t, db.GrantAgentPermission(conv, agentd.PermProcessTemplatesManage, "test"))
-			},
+			name:        "owned cron job",
+			triggerName: "fail_cron_disable",
+			triggerSQL: `CREATE TRIGGER fail_cron_disable BEFORE UPDATE OF enabled ON agent_cron_jobs
+				WHEN OLD.enabled = 1 AND NEW.enabled = 0
+				BEGIN SELECT RAISE(FAIL, 'forced cron disable failure'); END`,
+			wantError: "disable cron jobs",
+		},
+		{
+			name:        "permanent permission",
+			triggerName: "fail_permission_revoke",
 			triggerSQL: `CREATE TRIGGER fail_permission_revoke BEFORE DELETE ON agent_permissions
 				BEGIN SELECT RAISE(FAIL, 'forced permission revoke failure'); END`,
 			wantError: "revoke permission grants",
-			assertKept: func(t *testing.T, conv string) {
-				overrides, err := db.ListAgentPermissionOverridesForConv(conv)
-				require.NoError(t, err)
-				assert.Equal(t, "grant", overrides[agentd.PermProcessTemplatesManage])
-			},
 		},
 		{
-			name: "sudo grant",
-			prepare: func(t *testing.T, conv string) {
-				_, err := db.InsertSudoGrant(&db.SudoGrant{
-					ConvID: conv, Slug: agentd.PermProcessTemplatesManage,
-					GrantedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour),
-					GrantedBy: "test", Reason: "retirement failure coverage",
-				})
-				require.NoError(t, err)
-			},
+			name:        "sudo grant",
+			triggerName: "fail_sudo_revoke",
 			triggerSQL: `CREATE TRIGGER fail_sudo_revoke BEFORE UPDATE OF revoked_at ON agent_sudo_grants
 				BEGIN SELECT RAISE(FAIL, 'forced sudo revoke failure'); END`,
 			wantError: "revoke sudo grants",
-			assertKept: func(t *testing.T, conv string) {
-				active, err := db.ListActiveSudoGrants(conv)
-				require.NoError(t, err)
-				assert.Len(t, active, 1)
-			},
+		},
+		{
+			name:        "retirement state",
+			triggerName: "fail_agent_retire",
+			triggerSQL: `CREATE TRIGGER fail_agent_retire BEFORE UPDATE OF retired_at ON agents
+				WHEN NEW.retired_at <> '' BEGIN SELECT RAISE(FAIL, 'forced retirement failure'); END`,
+			wantError: "retire",
 		},
 	}
 	for _, tt := range tests {
@@ -164,8 +175,21 @@ func TestRetire_RevocationFailureDoesNotDemoteAgent(t *testing.T) {
 			f := newFlow(t)
 			const conv = "revf-1111-2222-3333-4444"
 			f.HaveConvWithTitle(conv, "revocation-failure-worker")
-			f.HaveEnrolledAgent(conv)
-			tt.prepare(t, conv)
+			group := f.HaveGroup("retirement-rollback")
+			f.HaveMember(group.Name, conv)
+			require.NoError(t, db.AddAgentGroupOwner(group.ID, conv, "test"))
+			require.NoError(t, db.GrantAgentPermission(conv, agentd.PermProcessTemplatesManage, "test"))
+			_, err := db.InsertSudoGrant(&db.SudoGrant{
+				ConvID: conv, Slug: agentd.PermProcessTemplatesManage,
+				GrantedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour),
+				GrantedBy: "test", Reason: "retirement failure coverage",
+			})
+			require.NoError(t, err)
+			cronID, err := db.InsertAgentCronJob(&db.AgentCronJob{
+				Name: "retirement-rollback", OwnerConv: conv, TargetKind: db.CronTargetGroup,
+				GroupID: group.ID, IntervalSeconds: 60, Body: "must roll back", Enabled: true,
+			})
+			require.NoError(t, err)
 			d, err := db.Open()
 			require.NoError(t, err)
 			_, err = d.Exec(tt.triggerSQL)
@@ -178,9 +202,102 @@ func TestRetire_RevocationFailureDoesNotDemoteAgent(t *testing.T) {
 			live, err := db.IsLiveAgentConv(conv)
 			require.NoError(t, err)
 			assert.True(t, live, "revocation failure must leave the agent active for a safe retry")
-			tt.assertKept(t, conv)
+			overrides, err := db.ListAgentPermissionOverridesForConv(conv)
+			require.NoError(t, err)
+			assert.Equal(t, "grant", overrides[agentd.PermProcessTemplatesManage],
+				"either failure must roll back the permanent permission revoke")
+			active, err := db.ListActiveSudoGrants(conv)
+			require.NoError(t, err)
+			assert.Len(t, active, 1, "either failure must roll back the sudo revoke")
+			groups, err := db.ListGroupsForConv(conv)
+			require.NoError(t, err)
+			require.Len(t, groups, 1, "failure must roll back group membership")
+			assert.Equal(t, group.Name, groups[0].Name)
+			owner, err := db.IsAgentGroupOwner(group.ID, conv)
+			require.NoError(t, err)
+			assert.True(t, owner, "failure must roll back group ownership")
+			cron, err := db.GetAgentCronJob(cronID)
+			require.NoError(t, err)
+			require.NotNil(t, cron)
+			assert.True(t, cron.Enabled, "failure must roll back the owned cron disable")
+
+			_, err = d.Exec(`DROP TRIGGER ` + tt.triggerName)
+			require.NoError(t, err)
+			retry := testharness.Serve(agentd.BuildDashboardHandlerForTest(),
+				testharness.JSONRequest(t, http.MethodPost, "/api/agents/"+conv+"/retire?shutdown=1&delete_worktree=0", nil))
+			require.Equal(t, http.StatusOK, retry.Code, retry.Body.String())
+			var retryResp struct {
+				Outcome struct {
+					GroupsLeft   []string `json:"groups_left"`
+					PermsRevoked int64    `json:"perms_revoked"`
+					SudoRevoked  int64    `json:"sudo_revoked"`
+					CronDisabled int64    `json:"cron_disabled"`
+					Retired      bool     `json:"retired"`
+				} `json:"outcome"`
+			}
+			require.NoError(t, json.Unmarshal(retry.Body.Bytes(), &retryResp))
+			assert.Equal(t, []string{group.Name}, retryResp.Outcome.GroupsLeft)
+			assert.Equal(t, int64(1), retryResp.Outcome.PermsRevoked)
+			assert.Equal(t, int64(1), retryResp.Outcome.SudoRevoked)
+			assert.Equal(t, int64(1), retryResp.Outcome.CronDisabled)
+			assert.True(t, retryResp.Outcome.Retired, "retry response truthfully reports the demotion")
+			live, err = db.IsLiveAgentConv(conv)
+			require.NoError(t, err)
+			assert.False(t, live, "retry after the transient failure must retire the agent")
+			overrides, err = db.ListAgentPermissionOverridesForConv(conv)
+			require.NoError(t, err)
+			assert.Empty(t, overrides, "successful retry removes permanent overrides")
+			active, err = db.ListActiveSudoGrants(conv)
+			require.NoError(t, err)
+			assert.Empty(t, active, "successful retry revokes sudo grants")
+			groups, err = db.ListGroupsForConv(conv)
+			require.NoError(t, err)
+			assert.Empty(t, groups, "successful retry removes group membership")
+			owner, err = db.IsAgentGroupOwner(group.ID, conv)
+			require.NoError(t, err)
+			assert.False(t, owner, "successful retry removes group ownership")
+			cron, err = db.GetAgentCronJob(cronID)
+			require.NoError(t, err)
+			require.NotNil(t, cron)
+			assert.False(t, cron.Enabled, "successful retry disables owned cron authority")
+			assert.Equal(t, db.CronDisabledReasonAgentRetired, cron.DisabledReason)
 		})
 	}
+}
+
+func TestRetire_CachedDueCronCannotFireAfterCommit(t *testing.T) {
+	f := newFlow(t)
+	group := f.HaveGroup("cron-retire-race")
+	const owner = "crrr-owner-aaaa-bbbb-cccc"
+	const worker = "crrr-worker-aaaa-bbbb-cccc"
+	f.HaveConvWithTitle(owner, "cron owner")
+	f.HaveConvWithTitle(worker, "cron worker")
+	f.HaveMember(group.Name, owner)
+	f.HaveMember(group.Name, worker)
+	jobID, err := db.InsertAgentCronJob(&db.AgentCronJob{
+		Name: "cached-before-retire", OwnerConv: owner, TargetKind: db.CronTargetGroup,
+		GroupID: group.ID, IntervalSeconds: 60, Body: "must not arrive", Enabled: true,
+	})
+	require.NoError(t, err)
+
+	var retireCode int
+	var retireBody string
+	restore := agentd.SetCronAfterDueListForTest(func() {
+		rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(
+			testharness.JSONRequest(t, http.MethodPost, "/v1/agent/"+owner+"/retire?shutdown=0&delete_worktree=0", nil)))
+		retireCode = rec.Code
+		retireBody = rec.Body.String()
+	})
+	t.Cleanup(restore)
+	agentd.RunCronTickForTest(time.Now().Add(time.Hour))
+	require.Equal(t, http.StatusOK, retireCode, retireBody)
+
+	messages, err := db.ListAgentMessagesForConv(worker, 100)
+	require.NoError(t, err)
+	assert.Empty(t, messages, "cached due row is revalidated after retirement")
+	runs, err := db.ListAgentCronRunsForJob(jobID, 10)
+	require.NoError(t, err)
+	assert.Empty(t, runs, "skipped cached row records no false execution")
 }
 
 // Scenario: an absent shutdown param defaults to ON. Every retire

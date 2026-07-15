@@ -29,13 +29,15 @@ type retireConvOutcome struct {
 	GroupsLeft   []string `json:"groups_left"`
 	PermsRevoked int64    `json:"perms_revoked"`
 	SudoRevoked  int64    `json:"sudo_revoked"`
+	CronDisabled int64    `json:"cron_disabled"`
 	Retired      bool     `json:"retired"`
 }
 
 // retireAgentConv demotes convID from an agent to a plain
 // conversation: it unjoins every group (owner rows included), revokes
-// every permission and sudo grant, then flips the enrollment bit. The
-// conversation data — the .jsonl, the conv_index row, the worktree —
+// every permission and sudo grant in one transaction, then flips the
+// enrollment bit. The conversation data — the .jsonl, the conv_index row,
+// the worktree —
 // is left completely untouched; this is the non-destructive half of
 // cleanup. Safe on a conv that is already retired or was never an
 // agent: the group/grant revokes are no-ops and Retired comes back
@@ -45,32 +47,19 @@ type retireConvOutcome struct {
 // retire touched — the bulk cleanup uses them for its ownerless-group
 // warning; the /v1 handler ignores them.
 func retireAgentConv(convID, by, reason string) (retireConvOutcome, []int64, error) {
+	cronAuthorityMu.Lock()
+	defer cronAuthorityMu.Unlock()
 	var out retireConvOutcome
-	n, err := db.RevokeAllAgentPermissionsForConv(convID)
+	retired, err := db.RetireAgentAuthorizationByConv(convID, by, reason)
 	if err != nil {
-		return out, nil, fmt.Errorf("revoke permission grants: %w", err)
+		return out, nil, err
 	}
-	out.PermsRevoked = n
-	n, err = db.RevokeSudoGrantsByConv(convID)
-	if err != nil {
-		return out, nil, fmt.Errorf("revoke sudo grants: %w", err)
-	}
-	out.SudoRevoked = n
-	// Unjoin every group, owner rows included — a retired conv keeps
-	// no group ties. Revocation comes first so a revocation failure leaves
-	// the still-active agent's ownership path intact for a safe retry.
-	// unjoinConvFromAllGroups lives in dashboard_cleanup.go.
-	removed, _, ownerGroups, err := unjoinConvFromAllGroups(convID, true)
-	if err != nil {
-		return out, nil, fmt.Errorf("unjoin groups: %w", err)
-	}
-	out.GroupsLeft = removed
-	did, err := db.RetireAgent(convID, by, reason)
-	if err != nil {
-		return out, ownerGroups, fmt.Errorf("retire: %w", err)
-	}
-	out.Retired = did
-	return out, ownerGroups, nil
+	out.GroupsLeft = retired.GroupsLeft
+	out.PermsRevoked = retired.PermsRevoked
+	out.SudoRevoked = retired.SudoRevoked
+	out.CronDisabled = retired.CronDisabled
+	out.Retired = retired.Retired
+	return out, retired.OwnerGroupIDs, nil
 }
 
 // isDanglingAgentEntry reports whether convID names a known agent
