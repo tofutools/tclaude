@@ -33,32 +33,55 @@ async function mountTaskLink(t, descriptor, { confirmDiscard = async () => false
 
 test('task cells separate navigation from editing and retain raw edit values', async (t) => {
   const harness = await createPreactHarness(t);
-  const { taskCell } = await harness.importDashboardModule('js/helpers.js');
-
-  const empty = taskCell({ conv_id: 'conv-1', agent_id: 'agt_1', title: 'alice' });
-  assert.match(empty, /task-attach/);
-  assert.match(empty, /data-act="edit-task"/);
-  assert.match(empty, /✧ bind quest/);
-  assert.doesNotMatch(empty, /<a /);
-
-  const set = taskCell({
-    conv_id: 'conv-1', agent_id: 'agt_1', title: 'alice',
+  await harness.replaceDashboardModule('js/prefs.js', `
+    export const dashPrefs = {
+      getItem: (key) => key === 'tclaude.dash.group.tasks' ? '1' : null,
+      setItem: () => {}, removeItem: () => {},
+    };
+  `);
+  const [{ GroupsNativeList }, { GroupsInteractionProvider }] = await Promise.all([
+    harness.importDashboardModule('js/groups-list.js'),
+    harness.importDashboardModule('js/groups-interactions.js'),
+  ]);
+  const members = [{ conv_id: 'empty', agent_id: 'agt_empty', title: 'empty', online: true, state: {} }, {
+    conv_id: 'set', agent_id: 'agt_set', title: 'set', online: true, state: {},
     task_ref_url: 'https://example.com/work/42?x=1&y=2',
     task_ref_label: 'Release blocker',
     task_ref_label_override: 'Release blocker',
-  });
-  assert.match(set, /<a class="task-ref task-link"/);
-  assert.match(set, /Release blocker/);
-  assert.match(set, /href="https:\/\/example\.com\/work\/42\?x=1&amp;y=2"/);
-  assert.match(set, /class="task-edit task-edit-icon"/);
-  assert.match(set, /data-current-task-label="Release blocker"/);
-  assert.match(set, />✎<\/span>/);
+  }, {
+    conv_id: 'unsafe', agent_id: 'agt_unsafe', title: 'unsafe', online: true, state: {},
+    task_ref_url: 'javascript:alert(1)', task_ref_label: 'bad',
+  }];
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const mounted = await harness.mount(harness.html`<${GroupsInteractionProvider}>
+    <${GroupsNativeList}
+      groups=${[{ name: 'tasks', members, online: members.length }]}
+      snapshot=${{ activity_bots: {}, links: [], sudo: [] }}
+      actions=${{}}
+    />
+  <//>`, host);
+  const taskCell = (key) => host.querySelector(`tr[data-key="${key}"] .task-cell`);
 
-  const unsafe = taskCell({
-    conv_id: 'conv-1', task_ref_url: 'javascript:alert(1)', task_ref_label: 'bad',
-  });
-  assert.doesNotMatch(unsafe, /href=/, 'stored unsafe values remain inert');
-  assert.match(unsafe, /task-edit-icon/, 'an unsafe legacy value remains editable');
+  const empty = taskCell('empty');
+  assert.ok(empty.querySelector('.task-attach'));
+  assert.equal(empty.querySelector('.task-attach').dataset.act, 'edit-task');
+  assert.match(empty.textContent, /✧ bind quest/);
+  assert.equal(empty.querySelector('a'), null);
+
+  const set = taskCell('set');
+  const link = set.querySelector('a.task-ref.task-link');
+  assert.ok(link);
+  assert.match(set.textContent, /Release blocker/);
+  assert.equal(link.getAttribute('href'), 'https://example.com/work/42?x=1&y=2');
+  const edit = set.querySelector('.task-edit.task-edit-icon');
+  assert.ok(edit);
+  assert.equal(edit.dataset.currentTaskLabel, 'Release blocker');
+  assert.equal(edit.textContent, '✎');
+
+  const unsafe = taskCell('unsafe');
+  assert.equal(unsafe.querySelector('a'), null, 'stored unsafe values remain inert');
+  assert.ok(unsafe.querySelector('.task-edit-icon'), 'an unsafe legacy value remains editable');
+  await mounted.unmount();
 });
 
 test('task-link dialog prefills, selects the URL, and submits the changed pair', async (t) => {
