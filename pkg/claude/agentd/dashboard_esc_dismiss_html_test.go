@@ -51,14 +51,16 @@ func TestDashboardHTML_EscDismissWired(t *testing.T) {
 	// A representative slice of the form dialogs wired through
 	// bindBackdropDiscard — a sanity net that the coverage table is real.
 	// (One per bind*UI file so a whole file dropping its call is caught.)
-	must("bindBackdropDiscard('perm-edit-modal', closePermEditModal);", "the permission editor confirms before discarding")
+	must(`id="perm-edit-modal" dialogClass="perm-edit-modal"`, "the permission editor uses the shared Preact overlay")
+	must("onClose=${state.close} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}", "the Preact permission editor confirms before discarding")
 	must("dirty=${dirty} blocked=${saving} confirmDiscard=${confirmDiscard}", "the Preact template editor confirms before discarding")
 	must("if (!dirty || (await confirmDiscard())) onClose();", "Preact management editors confirm before discarding")
 	must(`id="role-editor-modal"`, "the role editor uses the shared Preact dismissal boundary")
 	must(`id="profile-editor-modal"`, "the profile editor uses the shared Preact dismissal boundary")
 	must("bindBackdropDiscard('agent-spawn-modal', closeAgentSpawnModal);", "the spawn dialog confirms before discarding")
 	must("bindBackdropDiscard('cron-create-modal', closeCronCreateModal);", "the cron-create dialog confirms before discarding")
-	must("bindBackdropDiscard('human-reply-modal', closeHumanReplyModal);", "the human-reply dialog confirms before discarding")
+	must(`id="human-reply-modal" labelledby="human-reply-title"`, "the human-reply dialog uses the shared Preact overlay")
+	must("onClose=${state.close} dirty=${!!body} blocked=${busy} confirmDiscard=${confirmDiscard}", "the Preact human-reply dialog confirms before discarding")
 	must("bindBackdropDiscard('operator-message-modal', close, () => !pending);", "the operator composer confirms before accidental dismissal")
 	must("dismissGuard.tryDismiss()", "the operator composer routes Cancel through the same discard confirmation")
 	must("bindBackdropDiscard('group-create-modal', closeGroupCreateModal);", "the group-create dialog confirms before discarding")

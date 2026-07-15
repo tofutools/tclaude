@@ -8,6 +8,7 @@ import {
   permissionSeed, senderOnline, sudoByConv, sudoSlugRows,
 } from './message-access-dialog-model.js';
 import { idTooltip, shortAgentId } from './helpers.js';
+import { wizWord } from './slop.js';
 
 const html = htm.bind(h);
 
@@ -29,7 +30,17 @@ function fieldSubmit(submit) {
   };
 }
 
+function useLiveTheme() {
+  const [, setRevision] = useState(0);
+  useEffect(() => {
+    const refreshThemeCopy = () => setRevision((value) => value + 1);
+    document.addEventListener('tclaude:wizard', refreshThemeCopy);
+    return () => document.removeEventListener('tclaude:wizard', refreshThemeCopy);
+  }, []);
+}
+
 export function TargetPicker({ prefix, value, onChange, snapshot, pickAgent }) {
+  useLiveTheme();
   const scope = value.scopeGroup || '';
   const groups = groupsForPicker(snapshot, scope);
   const members = scope ? groupMembers(snapshot, scope) : [];
@@ -60,16 +71,16 @@ export function TargetPicker({ prefix, value, onChange, snapshot, pickAgent }) {
       <select id=${`${prefix}-scoped-member`} value=${value.target}
         onChange=${(event) => onChange({ ...value, target: event.currentTarget.value })}>
         ${memberOptions.length
-          ? memberOptions.map((member) => html`<option key=${member.key} value=${member.key}>${member.title || member.conv_id}${member.online ? '' : ' (offline)'}</option>`)
-          : html`<option value=""><${Words} plain="(no members in this group)" wizard="(no familiars in this party)"/></option>`}
+          ? html`<${Fragment}><option value="">${wizWord('(pick a member)', '(pick a familiar)')}</option>${memberOptions.map((member) => html`<option key=${member.key} value=${member.key}>${member.title || member.conv_id}${member.online ? '' : ' (offline)'}</option>`)}</${Fragment}>`
+          : html`<option value="">${wizWord('(no members in this group)', '(no familiars in this party)')}</option>`}
       </select>
     </div>`}
     ${value.mode === 'group' && html`<div class="cron-target-input-row" id=${`${prefix}-target-group`}>
       <select id=${`${prefix}-group`} value=${value.groupName} disabled=${!!scope}
         onChange=${(event) => onChange({ ...value, groupName: event.currentTarget.value })}>
         ${groupOptions.length
-          ? groupOptions.map((name) => html`<option key=${name} value=${name}>${name}${!groups.includes(name) ? ' (missing)' : ''}</option>`)
-          : html`<option value=""><${Words} plain="(no groups — create one first)" wizard="(no parties — form one first)"/></option>`}
+          ? html`<${Fragment}><option value="">${wizWord('(pick a group)', '(pick a party)')}</option>${groupOptions.map((name) => html`<option key=${name} value=${name}>${name}${!groups.includes(name) ? ' (missing)' : ''}</option>`)}</${Fragment}>`
+          : html`<option value="">${wizWord('(no groups — create one first)', '(no parties — form one first)')}</option>`}
       </select>
     </div>`}
   </div>`;
@@ -123,6 +134,7 @@ function AgentPicker({ descriptor, state, snapshot, confirmDiscard }) {
 }
 
 function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard }) {
+  useLiveTheme();
   const initial = descriptor.prefill || {};
   const scopedGroup = initial.targetMode === 'group' && initial.groupName ? initial.groupName : '';
   const [from, setFrom] = useState(initial.from || '');
@@ -132,14 +144,19 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
   }));
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
+  const [role, setRole] = useState(initial.role || '');
   const [customized, setCustomized] = useState(false);
   const [selected, setSelected] = useState(() => new Set(groupMembers(snapshot, scopedGroup).map((member) => member.key)));
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
   const [error, setError] = useState('');
   const members = scopedGroup ? groupMembers(snapshot, scopedGroup) : [];
   const groupExists = !scopedGroup || (snapshot?.groups || []).some((group) => group.name === scopedGroup);
   const selectedMembers = customized ? members.filter((member) => selected.has(member.key)) : members;
-  const dirty = !!from || !!subject || !!body || customized || (!scopedGroup && (!!target.target || target.mode !== 'solo'));
+  const initialMode = initial.targetMode === 'group' ? 'group' : 'solo';
+  const dirty = from !== (initial.from || '') || !!subject || !!body || role !== (initial.role || '') || customized || (!scopedGroup && (
+    target.mode !== initialMode || target.target !== (initial.target || '') || target.groupName !== (initial.groupName || '')
+  ));
   const chooseFrom = async () => {
     const picked = await state.pickAgent({ title: 'Pick sender', identity: 'agent' });
     if (picked) setFrom(picked);
@@ -150,34 +167,36 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
     setSelected(next); setCustomized(true);
   };
   const submit = async () => {
-    if (busy) return;
+    if (busyRef.current) return;
     setError('');
-    if (!from.trim()) { setError('From is required — type a sender agent or use 🔍 to pick.'); return; }
-    if (!body) { setError('Body is required (the message text to send).'); return; }
+    if (!from.trim()) { setError(wizWord('From is required — type a sender agent or use 🔍 to pick.', 'From is required — name a sending familiar or use 🔍 to pick.')); return; }
+    if (!body) { setError(wizWord('Body is required (the message text to send).', 'Missive text is required.')); return; }
     let to = '', explicit = null;
     if (scopedGroup) {
       if (!groupExists) { setError(`Group “${scopedGroup}” no longer exists — choose a new launcher context.`); return; }
-      if (!selectedMembers.length) { setError('Pick at least one recipient — tick the members this message should reach.'); return; }
+      if (!selectedMembers.length) { setError(wizWord('Pick at least one recipient — tick the members this message should reach.', 'Pick at least one recipient — tick the familiars this missive should reach.')); return; }
       to = `group:${scopedGroup}`;
       if (customized) explicit = selectedMembers.map((member) => member.agent_id || member.conv_id);
     } else if (target.mode === 'group') {
-      if (!target.groupName) { setError('Pick a group from the dropdown (or create one first via the Groups tab).'); return; }
+      if (!target.groupName) { setError(wizWord('Pick a group from the dropdown (or create one first via the Groups tab).', 'Pick a party from the dropdown (or form one first via the Parties tab).')); return; }
       if (!(snapshot?.groups || []).some((group) => group.name === target.groupName)) {
         setError(`Group “${target.groupName}” no longer exists — it was not retargeted.`); return;
       }
       to = `group:${target.groupName}`;
     } else {
       to = target.target.trim();
-      if (!to) { setError('Target is required — type a title / conv-id or use 🔍 to pick.'); return; }
+      if (!to) { setError(wizWord('Target is required — type a title / conv-id or use 🔍 to pick.', 'Recipient is required — name a familiar or use 🔍 to pick.')); return; }
     }
+    busyRef.current = true;
     setBusy(true);
     try {
       const payload = { from: from.trim(), to, subject: subject.trim(), body };
       if (explicit) payload.members = explicit;
+      if (to.startsWith('group:') && role.trim()) payload.role = role.trim();
       await actions.sendMessage(payload);
       state.close();
     } catch (cause) { setError(errorText(cause)); }
-    finally { setBusy(false); }
+    finally { busyRef.current = false; setBusy(false); }
   };
   return html`<${Overlay} id="message-create-modal" labelledby="message-create-title"
     onClose=${state.close} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}>
@@ -208,10 +227,14 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
         ${member.online ? html`<span class="cleanup-badge online">online</span>` : null}
       </label></div>`) : html`<div class="cleanup-empty">no members in this group</div>`}</div>
     </div></div>`}
+    ${(scopedGroup || target.mode === 'group') && html`<label class="cron-create-row" id="message-create-role-row"><span class="cron-create-label"
+      title="Optional group role filter; blank or all reaches every selected member"><${Words} plain="Role filter" wizard="Class filter"/></span>
+      <input id="message-create-role" type="text" value=${role} placeholder="optional — blank / all = entire target (e.g. dev)"
+        autocomplete="off" spellcheck="false" onInput=${(event) => setRole(event.currentTarget.value)} /></label>`}
     <label class="cron-create-row"><span class="cron-create-label">Subject</span><input id="message-create-subject" type="text" maxlength="100"
       value=${subject} placeholder="optional, shows in inbox listings" autocomplete="off" spellcheck="false" onInput=${(event) => setSubject(event.currentTarget.value)} /></label>
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Body" wizard="Missive"/></span><textarea id="message-create-body" rows="4"
-      value=${body} placeholder="message text (required)" spellcheck="false" onInput=${(event) => setBody(event.currentTarget.value)} onKeyDown=${fieldSubmit(submit)}></textarea></label>
+      value=${body} placeholder=${wizWord('message text (required)', 'missive text (required)')} spellcheck="false" onInput=${(event) => setBody(event.currentTarget.value)} onKeyDown=${fieldSubmit(submit)}></textarea></label>
     <${ErrorLine} id="message-create-error" value=${error}/>
     <div class="modal-buttons"><button id="message-create-cancel" type="button" disabled=${busy} onClick=${state.close}><${Words} plain="Cancel" wizard="Dispel"/></button>
       <span class="spacer"></span><button id="message-create-submit" class="primary" type="button" disabled=${busy || (scopedGroup && (!groupExists || !selectedMembers.length))} onClick=${submit}>
@@ -223,20 +246,22 @@ function HumanReplyDialog({ descriptor, state, actions, snapshot, confirmDiscard
   const context = descriptor.context || {};
   const [body, setBody] = useState('');
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
   const [error, setError] = useState('');
   const [serverOffline, setServerOffline] = useState(false);
   useEffect(() => { setServerOffline(false); }, [snapshot]);
   const online = !serverOffline && senderOnline(snapshot, context.agent || '', context.conv || '');
   const label = context.label || context.conv || '(agent)';
   const submit = async () => {
-    if (busy) return;
+    if (busyRef.current) return;
     const clean = body.trim(); setError('');
     if (!clean) { setError('Reply is required — type your answer.'); return; }
     if (!online) { setError('The agent is offline — it has no live session to receive a reply.'); return; }
+    busyRef.current = true;
     setBusy(true);
     try { await actions.replyHuman({ id: Number(context.id), body: clean, label }); state.close(); }
     catch (cause) { if (cause?.code === 'offline') setServerOffline(true); setError(errorText(cause)); }
-    finally { setBusy(false); }
+    finally { busyRef.current = false; setBusy(false); }
   };
   return html`<${Overlay} id="human-reply-modal" labelledby="human-reply-title"
     onClose=${state.close} dirty=${!!body} blocked=${busy} confirmDiscard=${confirmDiscard}>
@@ -262,6 +287,7 @@ function SudoGrantDialog({ descriptor, state, actions, snapshot, confirmDiscard 
   const [duration, setDuration] = useState('');
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
   const [error, setError] = useState('');
   const rows = sudoSlugRows(snapshot);
   const dirty = conv !== (descriptor.conv || '') || selected.size > 0 || !!duration || !!reason;
@@ -269,14 +295,15 @@ function SudoGrantDialog({ descriptor, state, actions, snapshot, confirmDiscard 
     const next = new Set(current); if (checked) next.add(slug); else next.delete(slug); return next;
   });
   const submit = async () => {
-    if (busy) return;
+    if (busyRef.current) return;
     setError('');
     if (!conv.trim()) { setError('Conv is required.'); return; }
     if (!selected.size) { setError('Pick at least one slug.'); return; }
+    busyRef.current = true;
     setBusy(true);
     try { await actions.grantSudo({ conv: conv.trim(), slugs: [...selected], duration: duration.trim(), reason: reason.trim() }); state.close(); }
     catch (cause) { setError(errorText(cause)); }
-    finally { setBusy(false); }
+    finally { busyRef.current = false; setBusy(false); }
   };
   return html`<${Overlay} id="sudo-grant-modal" dialogClass="sudo-grant-modal" labelledby="sudo-grant-title"
     onClose=${state.close} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}>
@@ -308,6 +335,7 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
   const [selection, setSelection] = useState(() => ({ ...baseline }));
   const [filter, setFilter] = useState('');
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
   const [error, setError] = useState('');
   const rows = permissionRows(snapshot, descriptor, selection);
   const visible = rows.filter((row) => !filter.trim() || [row.slug, row.description, row.descr]
@@ -318,16 +346,21 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
   const groupMode = descriptor.mode === 'group';
   const setEffect = (slug, effect) => setSelection((current) => ({ ...current, [slug]: effect }));
   const submit = async () => {
-    if (busy) return;
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(true); setError('');
     const full = Object.fromEntries(rows.map((row) => [row.slug, currentEffect(row.slug)]));
     try { await actions.savePermissions(descriptor, full); state.close(); }
     catch (cause) { setError(errorText(cause)); }
-    finally { setBusy(false); }
+    finally { busyRef.current = false; setBusy(false); }
   };
+  const shortConv = String(descriptor.conv || '').slice(0, 8);
   const subtitle = groupMode ? `Group: ${descriptor.group} · every current member receives these grants immediately`
-    : descriptor.mode === 'agent' ? `Agent: ${descriptor.label || String(descriptor.conv || '').slice(0, 8)} · ${String(descriptor.conv || '').slice(0, 8)}`
+    : descriptor.mode === 'agent' ? `Agent: ${descriptor.label || shortConv} · ${shortConv}`
     : `New agent${descriptor.label ? ` “${descriptor.label}”` : ''}${descriptor.group ? ` → ${descriptor.group}` : ''} · applied when it spawns`;
+  const wizardSubtitle = groupMode ? `Party: ${descriptor.group} · every familiar receives these boons immediately`
+    : descriptor.mode === 'agent' ? `Familiar: ${descriptor.label || shortConv} · ${shortConv}`
+    : `New familiar${descriptor.label ? ` “${descriptor.label}”` : ''}${descriptor.group ? ` → ${descriptor.group}` : ''} · bestowed when summoned`;
   return html`<${Overlay} id="perm-edit-modal" dialogClass="perm-edit-modal" labelledby="perm-edit-title"
     onClose=${state.close} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}>
     <h3 id="perm-edit-title"><span class="perm-edit-title-regular">${groupMode ? 'Edit group permissions' : 'Edit permanent permissions'}</span>
@@ -337,7 +370,7 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
           wizard=${html`<strong>PARTY BOONS</strong> — bestow capabilities on every familiar in this party. A personal binding against one still wins.`}/>`
       : html`<${Words} plain=${html`<strong>PERMANENT</strong> — these per-agent overrides persist until changed. <strong>Grant</strong> adds a slug, <strong>Deny</strong> blocks inherited sources, and <strong>Default</strong> inherits them.`}
           wizard=${html`<strong>THE GRIMOIRE</strong> — these bindings follow this familiar until changed. <strong>Grant</strong> bestows a slug, <strong>Deny</strong> seals inherited boons away, and <strong>Default</strong> inherits them.`}/>`}</div>
-    <p class="perm-edit-subtitle" id="perm-edit-subtitle">${subtitle}</p>
+    <p class="perm-edit-subtitle" id="perm-edit-subtitle"><${Words} plain=${subtitle} wizard=${wizardSubtitle}/></p>
     ${rows.some((row) => row.ownedGroups?.length) && html`<div class="perm-edit-owner-note" id="perm-edit-owner-note">👑 Owner-implied permissions are shown with their owned-group source; an explicit Deny remains the final veto.</div>`}
     <div class="perm-edit-toolbar"><input id="perm-edit-filter" type="text" value=${filter} placeholder="Filter slugs…" autocomplete="off" spellcheck="false"
       onInput=${(event) => setFilter(event.currentTarget.value)} /><button type="button" id="perm-edit-reset" title="Set every slug back to Default (inherit)"
@@ -345,11 +378,11 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
     <div id="perm-edit-list" class="perm-edit-list">${visible.length ? visible.map((row) => html`<div class="perm-row" key=${row.slug} data-slug=${row.slug}>
       <div class="perm-row-info"><span class="perm-row-slug">${row.slug}${row.owner_implied ? html` <span class="owner-badge" title="Group ownership can confer this slug">👑 owner</span>` : null}</span>
         <span class="perm-row-desc" title=${row.description || row.descr || ''}>${row.description || row.descr || ''}</span></div>
-      <div class="perm-tristate"><button type="button" data-effect="default" class=${currentEffect(row.slug) === 'default' ? 'active' : ''} onClick=${() => setEffect(row.slug, 'default')}>${groupMode ? 'Not granted' : 'Default'}</button>
-        <button type="button" data-effect="grant" class=${currentEffect(row.slug) === 'grant' ? 'active' : ''} onClick=${() => setEffect(row.slug, 'grant')}>Grant</button>
+      <div class="perm-tristate"><button type="button" data-effect="default" class=${currentEffect(row.slug) === 'default' ? 'active' : ''} onClick=${() => setEffect(row.slug, 'default')}>${groupMode ? html`<${Words} plain="Not granted" wizard="Unbound"/>` : 'Default'}</button>
+        <button type="button" data-effect="grant" class=${currentEffect(row.slug) === 'grant' ? 'active' : ''} onClick=${() => setEffect(row.slug, 'grant')}>${groupMode ? html`<${Words} plain="Grant" wizard="Bestow"/>` : 'Grant'}</button>
         ${!groupMode && html`<button type="button" data-effect="deny" class=${currentEffect(row.slug) === 'deny' ? 'active' : ''} onClick=${() => setEffect(row.slug, 'deny')}>Deny</button>`}</div>
       <span class=${`perm-row-eff ${row.granted ? 'granted' : 'denied'}`}>${groupMode
-        ? (row.granted ? '✓ via group' : '— not via group')
+        ? html`<${Words} plain=${row.granted ? '✓ via group' : '— not via group'} wizard=${row.granted ? '✨ boon active' : '— no boon'}/>`
         : currentEffect(row.slug) === 'deny' ? '✗ denied (explicit veto)'
         : row.granted ? `✓ ${row.sources.join(' + ')}` : '✗ denied (no source)'}</span>
     </div>`) : html`<div class="empty" style="padding:10px">${rows.length ? 'No matching permission slugs.' : 'No permission slugs registered.'}</div>`}</div>
