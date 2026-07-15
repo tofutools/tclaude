@@ -5622,7 +5622,7 @@ body.slop .slop-machine.slop-transition-flash {
    The spawn-modal submit button is re-skinned in slop mode into a
    chunky pull-lever-styled button. The original button text is hidden
    (font-size: 0) and replaced by a ::before with the "🎰 PULL!"
-   glyph. modal-spawn.js adds .slop-pull-active on click so the yank
+   glyph. The spawn component adds .slop-pull-active on click so the yank
    keyframes fire; class self-removes after 700ms so a retry yanks
    again. The yank class is harmless in non-slop mode — no rule
    targets it without the body.slop scope. */

@@ -1,7 +1,5 @@
-// Sandbox-profile compatibility and spawn-dialog integration. The management
-// list/editor/import/export DOM is Preact-owned by management-island.js; this
-// module retains the independent launch-policy preview and scribe boundary.
-import { $, esc, syncSelectTitle } from './helpers.js';
+// Sandbox-profile loading and scribe integration. The management DOM is owned
+// by management-island.js; the spawn policy preview is plain model/actions code.
 import { toast } from './refresh.js';
 import { openTermModal } from './terminals-tab.js';
 import { createSandboxDraftQueue } from './sandbox-draft-queue.js';
@@ -10,8 +8,6 @@ import { managementController } from './management-controller.js';
 const API = '/api/sandbox-profiles';
 const SANDBOX_SCRIBE_NAME = 'sandbox-scribe';
 const SANDBOX_SCRIBE_SLUGS = ['sandbox-profiles.draft'];
-let profiles = [];
-let spawnPreviewGeneration = 0;
 
 async function api(path, options = {}) {
   const response = await fetch(path, { credentials: 'same-origin', ...options });
@@ -25,75 +21,8 @@ async function api(path, options = {}) {
 }
 
 async function loadSandboxProfiles() {
-  const list = await api(API); profiles = Array.isArray(list) ? list : []; return profiles;
-}
-
-function profileOptions(blankLabel = '— none —') {
-  return `<option value="">${esc(blankLabel)}</option>` + profiles.map((profile) => `<option value="${esc(profile.name)}">${esc(profile.name)}</option>`).join('');
-}
-
-function flattenProfilePreview(profile, byName, state) {
-  const filesystem = new Map(); const environment = new Map(); const owned = new Map(); let network = '';
-  state.onPath.add(profile.name);
-  for (const name of profile.includes || []) {
-    if (state.onPath.has(name)) { state.problems.add(name); continue; }
-    let flat = state.memo.get(name);
-    if (!flat) { const included = byName[name]; if (!included) { state.problems.add(name); continue; } flat = flattenProfilePreview(included, byName, state); state.memo.set(name, flat); }
-    for (const [path, access] of flat.filesystem) filesystem.set(path, access);
-    for (const name of flat.environment.keys()) { owned.delete(name); environment.set(name, true); }
-    for (const name of flat.owned.keys()) { environment.delete(name); owned.set(name, true); }
-    if (flat.network) network = flat.network;
-  }
-  state.onPath.delete(profile.name);
-  for (const grant of profile.filesystem || []) filesystem.set(grant.path, grant.access);
-  for (const entry of profile.environment || []) { owned.delete(entry.name); environment.set(entry.name, true); }
-  for (const name of profile.agent_directories || []) { environment.delete(name); owned.set(name, true); }
-  if (profile.network_access) network = profile.network_access;
-  return { filesystem, environment, owned, network };
-}
-
-function composePreview(applied, byName = {}) {
-  const filesystem = new Map(); const environment = new Map(); const owned = new Map(); let network = ''; const state = { memo: new Map(), onPath: new Set(), problems: new Set() };
-  for (const { scope, profile } of applied) {
-    const flat = flattenProfilePreview(profile, byName, state);
-    for (const [path, access] of flat.filesystem) {
-      const previous = filesystem.get(path); const rank = { read: 0, write: 1, deny: 2 };
-      if (!previous || rank[access] >= rank[previous.access]) filesystem.set(path, { access, scope });
-    }
-    for (const name of flat.environment.keys()) environment.set(name, scope);
-    for (const name of flat.owned.keys()) owned.set(name, scope);
-    if (flat.network) network = `${flat.network} (${scope})`;
-  }
-  const scopes = applied.map((item) => `${item.scope}:${item.profile.name}`).join(' → ') || 'no profiles applied';
-  const grants = [...filesystem].map(([path, value]) => `${value.access} ${path} (${value.scope})`).join(' · ');
-  const keys = [...environment].map(([name, scope]) => `${name} (${scope})`).join(', ');
-  const ownedKeys = [...owned].map(([name, scope]) => `${name} (${scope})`).join(', ');
-  const problems = state.problems.size ? ` · ⚠ unresolved includes: ${[...state.problems].sort().join(', ')}` : '';
-  return `${scopes}${grants ? ` · ${grants}` : ''}${keys ? ` · env: ${keys}` : ''}${ownedKeys ? ` · agent dirs: ${ownedKeys}` : ''}${network ? ` · network: ${network}` : ''}${problems}`;
-}
-
-async function refreshSpawnSandboxProfileUI(groupName = '') {
-  const select = $('#agent-spawn-sandbox-profile'); const preview = $('#agent-spawn-sandbox-profile-preview');
-  if (!select || !preview) return;
-  const setPreview = (text) => {
-    preview.textContent = text;
-    const option = select.selectedOptions && select.selectedOptions[0];
-    if (option) option.title = text;
-    syncSelectTitle(select);
-  };
-  const generation = ++spawnPreviewGeneration; const selected = select.value;
-  try {
-    await loadSandboxProfiles(); if (generation !== spawnPreviewGeneration) return;
-    select.innerHTML = profileOptions('— global + group defaults only —');
-    if (profiles.some((profile) => profile.name === selected)) select.value = selected;
-    const [global, group] = await Promise.all([api('/api/sandbox-profile-default'), groupName ? api(`/api/groups/${encodeURIComponent(groupName)}/sandbox-profile`) : Promise.resolve({ name: '' })]);
-    if (generation !== spawnPreviewGeneration) return;
-    const byName = Object.fromEntries(profiles.map((profile) => [profile.name, profile])); const applied = [];
-    if (global.name && byName[global.name]) applied.push({ scope: 'global', profile: byName[global.name] });
-    if (group.name && byName[group.name]) applied.push({ scope: 'group', profile: byName[group.name] });
-    if (select.value && byName[select.value]) applied.push({ scope: 'explicit', profile: byName[select.value] });
-    setPreview(composePreview(applied, byName));
-  } catch (error) { if (generation === spawnPreviewGeneration) setPreview(`Could not preview sandbox policy: ${error.message || String(error)}`); }
+  const list = await api(API);
+  return Array.isArray(list) ? list : [];
 }
 
 function sandboxScribeToken() {
@@ -149,8 +78,7 @@ async function summonSandboxScribe(seed, targetName = '', onCreate = null) {
 }
 
 function bindSandboxProfilesUI() {
-  $('#sandbox-profiles-manage-open').addEventListener('click', openSandboxProfilesManageModal);
-  $('#agent-spawn-sandbox-profile').addEventListener('change', () => refreshSpawnSandboxProfileUI($('#agent-spawn-group').value));
+  document.querySelector('#sandbox-profiles-manage-open')?.addEventListener('click', openSandboxProfilesManageModal);
 }
 
-export { bindSandboxProfilesUI, refreshSpawnSandboxProfileUI, loadSandboxProfiles, openSandboxProfilesManageModal, openSandboxProfileEditor, summonSandboxScribe };
+export { bindSandboxProfilesUI, loadSandboxProfiles, openSandboxProfilesManageModal, openSandboxProfileEditor, summonSandboxScribe };
