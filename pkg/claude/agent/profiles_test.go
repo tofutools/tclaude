@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,6 +58,47 @@ func TestRunProfilesDefaultShow_Unset(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	require.Equal(t, rcOK, runProfilesDefaultShow(&stdout, &stderr))
 	assert.Contains(t, stdout.String(), "no global default spawn profile")
+}
+
+func TestRunProfilesDisableAndEnable(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, func(method, path string) (int, string, string) {
+		switch method {
+		case http.MethodGet:
+			return 200, "", `{"name":"paused","model":"sonnet"}`
+		case http.MethodPatch:
+			return 200, "", `{"id":1,"name":"paused"}`
+		default:
+			return 405, "method", ""
+		}
+	})
+
+	var stdout, stderr bytes.Buffer
+	require.Equal(t, rcOK, runProfilesDisable(&profilesDisableParams{
+		Name: "paused", Reason: "provider maintenance",
+	}, &stdout, &stderr), "stderr=%s", stderr.String())
+	assert.Contains(t, stdout.String(), `Disabled profile "paused": provider maintenance`)
+	require.Len(t, calls, 2)
+	disabled, ok := calls[1].body.(*profileJSON)
+	require.True(t, ok)
+	assert.Equal(t, "provider maintenance", disabled.DisabledReason)
+	assert.Equal(t, "sonnet", disabled.Model, "disable preserves the complete profile")
+
+	calls = nil
+	stdout.Reset()
+	require.Equal(t, rcOK, runProfilesEnable(&profilesEnableParams{Name: "paused"}, &stdout, &stderr))
+	require.Len(t, calls, 2)
+	enabled, ok := calls[1].body.(*profileJSON)
+	require.True(t, ok)
+	assert.Empty(t, enabled.DisabledReason)
+	assert.Contains(t, stdout.String(), `Enabled profile "paused"`)
+}
+
+func TestRunProfilesDisableRequiresReason(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	rc := runProfilesDisable(&profilesDisableParams{Name: "paused"}, &stdout, &stderr)
+	assert.Equal(t, rcInvalidArg, rc)
+	assert.Contains(t, stderr.String(), "--reason is required")
 }
 
 // mergeProfileIntoSpawn is the CLI-side flatten of a spawn profile under the
@@ -262,6 +304,7 @@ func TestPrintProfileHuman(t *testing.T) {
 	var buf bytes.Buffer
 	printProfileHuman(&buf, profileJSON{
 		Name:                "team",
+		DisabledReason:      "provider quota exhausted",
 		Aliases:             []string{"codex-reviewer", "cold-reviewer"},
 		Descr:               "the team default",
 		Harness:             "codex",
@@ -276,6 +319,8 @@ func TestPrintProfileHuman(t *testing.T) {
 	})
 	out := buf.String()
 	assert.Contains(t, out, "Profile: team")
+	assert.Contains(t, out, "status:  disabled")
+	assert.Contains(t, out, "reason:  provider quota exhausted")
 	assert.Contains(t, out, "aliases: codex-reviewer, cold-reviewer")
 	assert.Contains(t, out, "the team default")
 	assert.Contains(t, out, "harness=codex")

@@ -796,6 +796,10 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		if prof, frc = fetchSpawnProfile(strings.TrimSpace(p.Profile), stderr); frc != rcOK {
 			return nil, frc
 		}
+		if strings.TrimSpace(prof.DisabledReason) != "" {
+			fmt.Fprintf(stderr, "Error: spawn profile %q is disabled: %s\n", prof.Name, prof.DisabledReason)
+			return nil, rcInvalidArg
+		}
 	}
 	// Fold the profile under the explicit flags (flag > profile > blank). The
 	// daemon then fills any still-blank launch field from the group's default

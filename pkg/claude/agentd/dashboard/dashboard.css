@@ -4151,6 +4151,9 @@ body.wizard .directory-picker-modal .modal-buttons { border-top-color: rgba(122,
 .ta-profile-summary:empty { display: none; }
 .ta-profile-summary-missing { color: #d29922; }
 .ta-profile-summary-empty { color: #6e7681; font-style: italic; }
+.profile-card-disabled { border-color: rgba(248, 81, 73, .55); background: rgba(248, 81, 73, .045); }
+.tc-disabled { color: #ff7b72; border: 1px solid rgba(248, 81, 73, .55); border-radius: 999px; padding: 1px 6px; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
+.tc-disabled-reason { color: #ffb3ad; white-space: pre-wrap; }
 /* "inherits default X" preview under a blank member's picker — muted + italic,
    the same "this value is inherited, not set here" cue as -empty. */
 .ta-profile-summary-default { color: #6e7681; font-style: italic; }

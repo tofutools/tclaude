@@ -109,6 +109,48 @@ func TestSpawnProfilePrecedence_ExplicitProfileWins(t *testing.T) {
 	assert.Equal(t, "gpt-5.6-sol", got)
 }
 
+func TestDisabledSpawnProfilesBlockEveryDefaultTier(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(*testing.T, *testharness.Flow)
+		body  map[string]any
+	}{
+		{
+			name:  "explicit",
+			setup: func(*testing.T, *testharness.Flow) {},
+			body:  map[string]any{"name": "worker", "profile": "paused"},
+		},
+		{
+			name: "group default",
+			setup: func(t *testing.T, f *testharness.Flow) {
+				require.Equal(t, http.StatusOK, setGroupProfile(t, f, "alpha", "paused").Code)
+			},
+			body: map[string]any{"name": "worker"},
+		},
+		{
+			name: "global default",
+			setup: func(t *testing.T, f *testharness.Flow) {
+				require.Equal(t, http.StatusOK, setGlobalProfile(t, f, "paused").Code)
+			},
+			body: map[string]any{"name": "worker"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFlow(t)
+			f.HaveGroup("alpha")
+			require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+				"name": "paused", "disabled_reason": "vendor outage until 18:00 UTC",
+			}).Code)
+			tc.setup(t, f)
+
+			spawn := f.AsHuman().SpawnWith("alpha", tc.body)
+			assert.Equal(t, http.StatusConflict, spawn.Code)
+			assert.Contains(t, string(spawn.Raw), "profile_disabled")
+			assert.Contains(t, string(spawn.Raw), `spawn profile \"paused\" is disabled: vendor outage until 18:00 UTC`)
+		})
+	}
+}
+
 func TestSpawnProfilePrecedence_ExplicitProfileAliasWinsAndIsDisclosed(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")

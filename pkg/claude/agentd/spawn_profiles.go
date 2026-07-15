@@ -48,6 +48,9 @@ import (
 type spawnProfileJSON struct {
 	Name    string   `json:"name"`
 	Aliases []string `json:"aliases,omitempty"`
+	// DisabledReason is empty when the profile is enabled. A non-empty reason
+	// preserves the profile for management/references while blocking its use.
+	DisabledReason string `json:"disabled_reason,omitempty"`
 
 	// Launch fields — overlap clcommon.SpawnArgs.
 	Harness  string `json:"harness,omitempty"`
@@ -93,6 +96,7 @@ func profileToJSON(p *db.SpawnProfile) spawnProfileJSON {
 	out := spawnProfileJSON{
 		Name:                       p.Name,
 		Aliases:                    append([]string{}, p.Aliases...),
+		DisabledReason:             p.DisabledReason,
 		Harness:                    p.Harness,
 		Model:                      p.Model,
 		Effort:                     p.Effort,
@@ -170,6 +174,11 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 		}
 		seenAliases[alias] = true
 		aliases = append(aliases, alias)
+	}
+	disabledReason := normalizeProfileDisabledReason(body.DisabledReason)
+	if len(disabledReason) > maxProfileDisabledReasonBytes {
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg", fmt.Sprintf(
+			"disabled_reason must be at most %d bytes", maxProfileDisabledReasonBytes)}
 	}
 
 	// Resolve the profile's harness — empty means Claude (the default), an
@@ -259,6 +268,7 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 	return &db.SpawnProfile{
 		Name:                       name,
 		Aliases:                    aliases,
+		DisabledReason:             disabledReason,
 		Harness:                    hName,
 		Model:                      model,
 		Effort:                     effort,
@@ -300,6 +310,10 @@ func buildInlineProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawn
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
 			"profile_inline: a template-local profile has no name — use spawn_profile to reference a registry profile by name"}
 	}
+	if strings.TrimSpace(body.DisabledReason) != "" {
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+			"profile_inline: disabled_reason is only valid on a saved spawn profile"}
+	}
 	switch {
 	case strings.TrimSpace(body.AgentName) != "":
 		return nil, reject("agent_name")
@@ -326,6 +340,25 @@ func buildInlineProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawn
 	}
 	p.Name = ""
 	return p, nil
+}
+
+const maxProfileDisabledReasonBytes = 1024
+
+func normalizeProfileDisabledReason(reason string) string {
+	reason = strings.ReplaceAll(reason, "\r\n", "\n")
+	reason = strings.ReplaceAll(reason, "\r", "\n")
+	return strings.TrimSpace(reason)
+}
+
+func disabledProfileFailure(p *db.SpawnProfile) *spawnFailure {
+	if p == nil || strings.TrimSpace(p.DisabledReason) == "" {
+		return nil
+	}
+	return &spawnFailure{
+		Status: http.StatusConflict,
+		Kind:   "profile_disabled",
+		Msg:    fmt.Sprintf("spawn profile %q is disabled: %s", p.Name, p.DisabledReason),
+	}
 }
 
 // handleSpawnProfiles dispatches the collection endpoint /v1/spawn-profiles:

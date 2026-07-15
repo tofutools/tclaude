@@ -31,6 +31,10 @@ type SpawnProfile struct {
 	// Aliases are alternate handles for this same row. They share one namespace
 	// with every primary profile name and alias.
 	Aliases []string
+	// DisabledReason is empty for an enabled profile. A non-empty reason keeps
+	// the profile visible and referenced but makes every spawn path that would
+	// use it fail loudly instead of silently falling through.
+	DisabledReason string
 
 	// Launch fields — overlap clcommon.SpawnArgs. "" = unset.
 	Harness  string
@@ -124,14 +128,14 @@ func CreateSpawnProfile(p *SpawnProfile) (int64, error) {
 	now := time.Now().Format(time.RFC3339Nano)
 	res, err := tx.Exec(
 		`INSERT INTO spawn_profiles
-		   (name, harness, model, effort, sandbox, approval, ask_user_question_timeout,
+		   (name, disabled_reason, harness, model, effort, sandbox, approval, ask_user_question_timeout,
 		    auto_review, trust_dir,
 		    agent_name, role, descr, initial_message,
 		    sync_worktree, auto_focus, include_group_default_context, remote_control,
 		    is_owner, permission_overrides,
 		    created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.Name, p.Harness, p.Model, p.Effort, p.Sandbox, p.Approval, p.AskUserQuestionTimeout,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.Name, p.DisabledReason, p.Harness, p.Model, p.Effort, p.Sandbox, p.Approval, p.AskUserQuestionTimeout,
 		boolPtrToNull(p.AutoReview), boolPtrToNull(p.TrustDir),
 		p.AgentName, p.Role, p.Descr, p.InitialMessage,
 		boolPtrToNull(p.SyncWorktree), boolPtrToNull(p.AutoFocus),
@@ -179,7 +183,7 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 	}
 	res, err := tx.Exec(
 		`UPDATE spawn_profiles SET
-		   name = ?, harness = ?, model = ?, effort = ?, sandbox = ?, approval = ?,
+		   name = ?, disabled_reason = ?, harness = ?, model = ?, effort = ?, sandbox = ?, approval = ?,
 		   ask_user_question_timeout = ?,
 		   auto_review = ?, trust_dir = ?,
 		   agent_name = ?, role = ?, descr = ?, initial_message = ?,
@@ -187,7 +191,7 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 		   is_owner = ?, permission_overrides = ?,
 		   updated_at = ?
 		 WHERE id = ?`,
-		p.Name, p.Harness, p.Model, p.Effort, p.Sandbox, p.Approval,
+		p.Name, p.DisabledReason, p.Harness, p.Model, p.Effort, p.Sandbox, p.Approval,
 		p.AskUserQuestionTimeout,
 		boolPtrToNull(p.AutoReview), boolPtrToNull(p.TrustDir),
 		p.AgentName, p.Role, p.Descr, p.InitialMessage,
@@ -432,7 +436,7 @@ func isSpawnProfileHandleViolation(err error) bool {
 	return isUniqueViolation(err) || (err != nil && strings.Contains(err.Error(), "spawn profile handle already exists"))
 }
 
-const spawnProfileSelect = `SELECT id, name, harness, model, effort, sandbox, approval,
+const spawnProfileSelect = `SELECT id, name, disabled_reason, harness, model, effort, sandbox, approval,
 	ask_user_question_timeout,
 	auto_review, trust_dir, agent_name, role, descr, initial_message,
 	sync_worktree, auto_focus, include_group_default_context, remote_control,
@@ -443,7 +447,7 @@ func scanSpawnProfile(s rowScanner) (*SpawnProfile, error) {
 	var p SpawnProfile
 	var autoReview, trustDir, syncWorktree, autoFocus, includeCtx, remoteControl, isOwner sql.NullInt64
 	var permOverrides, createdAt, updatedAt string
-	if err := s.Scan(&p.ID, &p.Name, &p.Harness, &p.Model, &p.Effort, &p.Sandbox, &p.Approval,
+	if err := s.Scan(&p.ID, &p.Name, &p.DisabledReason, &p.Harness, &p.Model, &p.Effort, &p.Sandbox, &p.Approval,
 		&p.AskUserQuestionTimeout,
 		&autoReview, &trustDir, &p.AgentName, &p.Role, &p.Descr, &p.InitialMessage,
 		&syncWorktree, &autoFocus, &includeCtx, &remoteControl,

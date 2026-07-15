@@ -434,7 +434,7 @@ CREATE TABLE spawn_profiles (
 			include_group_default_context INTEGER,
 			created_at                    TEXT NOT NULL,
 			updated_at                    TEXT NOT NULL
-		, remote_control INTEGER, is_owner INTEGER, permission_overrides TEXT NOT NULL DEFAULT '', ask_user_question_timeout TEXT NOT NULL DEFAULT '');
+		, remote_control INTEGER, is_owner INTEGER, permission_overrides TEXT NOT NULL DEFAULT '', ask_user_question_timeout TEXT NOT NULL DEFAULT '', disabled_reason TEXT NOT NULL DEFAULT '');
 
 CREATE TRIGGER spawn_profile_name_not_alias_insert
 		BEFORE INSERT ON spawn_profiles

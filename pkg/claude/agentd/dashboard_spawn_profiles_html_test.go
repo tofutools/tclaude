@@ -43,6 +43,7 @@ func TestDashboardHTML_SpawnProfilesUI(t *testing.T) {
 	present(`id="agent-spawn-save-profile"`, "spawn dialog Save-as-profile button")
 	present(`function applyProfileToSpawnForm(`, "spawn-form profile applier")
 	present(`function spawnFormAsProfileSeed(`, "spawn-form → profile seed for Save-as")
+	present(`body.profile = spawnProfile`, "dashboard spawns preserve the selected profile identity for server-side disable checks")
 
 	// The default-profile pickers offer a "new profile" entry that jumps to
 	// the editor (so an empty profile list isn't a dead end).
@@ -63,6 +64,9 @@ func TestDashboardHTML_SpawnProfilesUI(t *testing.T) {
 	present(`id="profile-import-preview"`, "the profile import preview")
 	present(`id="profile-editor-modal"`, "the profile editor modal")
 	present(`id="profile-editor-name"`, "the editor's profile-name field")
+	present(`id="profile-editor-disabled"`, "the editor can disable a profile without deleting it")
+	present(`id="profile-editor-disabled-reason"`, "the editor captures the reason shown on failed spawns")
+	present(`profile-card-disabled`, "disabled profiles stay visible and visibly marked in the manager")
 	present(`id=${profile ? 'profile-editor-harness'`, "the editor's harness selector")
 	present(`id="profile-editor-submit"`, "the editor's Save button")
 	present(`function ProfileExport(`, "profile export component")

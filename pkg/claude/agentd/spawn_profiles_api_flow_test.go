@@ -27,14 +27,36 @@ func profileReq(t *testing.T, f *testharness.Flow, method, path string, body any
 // spawnProfileJSON is unexported); the *bool toggles let the test assert the
 // unset (null/absent) tri-state round-trips.
 type wireProfile struct {
-	Name         string   `json:"name"`
-	Aliases      []string `json:"aliases"`
-	Harness      string   `json:"harness"`
-	Model        string   `json:"model"`
-	Effort       string   `json:"effort"`
-	Sandbox      string   `json:"sandbox"`
-	AutoReview   *bool    `json:"auto_review"`
-	SyncWorktree *bool    `json:"sync_worktree"`
+	Name           string   `json:"name"`
+	Aliases        []string `json:"aliases"`
+	DisabledReason string   `json:"disabled_reason"`
+	Harness        string   `json:"harness"`
+	Model          string   `json:"model"`
+	Effort         string   `json:"effort"`
+	Sandbox        string   `json:"sandbox"`
+	AutoReview     *bool    `json:"auto_review"`
+	SyncWorktree   *bool    `json:"sync_worktree"`
+}
+
+func TestSpawnProfiles_DisabledReasonRoundTrip(t *testing.T) {
+	f := newFlow(t)
+	rec := profileReq(t, f, http.MethodPost, "/v1/spawn-profiles", map[string]any{
+		"name": "paused", "disabled_reason": "Provider quota exhausted until Friday",
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "create body=%s", rec.Body.String())
+
+	rec = profileReq(t, f, http.MethodGet, "/v1/spawn-profiles/paused", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got wireProfile
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	assert.Equal(t, "Provider quota exhausted until Friday", got.DisabledReason)
+
+	rec = profileReq(t, f, http.MethodPatch, "/v1/spawn-profiles/paused", map[string]any{"name": "paused"})
+	require.Equalf(t, http.StatusOK, rec.Code, "enable body=%s", rec.Body.String())
+	rec = profileReq(t, f, http.MethodGet, "/v1/spawn-profiles/paused", nil)
+	got = wireProfile{}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	assert.Empty(t, got.DisabledReason)
 }
 
 func TestSpawnProfiles_AliasCRUDAndResolution(t *testing.T) {
