@@ -749,8 +749,8 @@ func TestDashboardHTML_WizardGrimoireCopy(t *testing.T) {
 	}
 
 	// Title copy: a pure-CSS span swap, "Edit permanent permissions" → "📕 The Grimoire".
-	must(`<span class="perm-edit-title-regular">Edit permanent permissions</span>`, "the default perm-editor title span")
-	must(`<span class="perm-edit-title-wizard">📕 The Grimoire</span>`, "the wizard perm-editor title span")
+	must(`<span class="perm-edit-title-regular">${groupMode ? 'Edit group permissions' : 'Edit permanent permissions'}</span>`, "the default perm-editor title span")
+	must(`<span class="perm-edit-title-wizard">${groupMode ? '✨ Party Boons' : '📕 The Grimoire'}</span>`, "the wizard perm-editor title span")
 	must("body.wizard #perm-edit-title .perm-edit-title-regular", "wizard hides the default title")
 	must("body.wizard #perm-edit-title .perm-edit-title-wizard", "wizard shows the Grimoire title")
 
@@ -784,8 +784,8 @@ func TestDashboardHTML_WizardPartyBoons(t *testing.T) {
 	must("groupMode ? '✨ Party Boons' : '📕 The Grimoire'", "the group editor receives its own wizard title")
 	must("<strong>PARTY BOONS</strong>", "the group editor explains boons rather than per-agent overrides")
 	must("every familiar receives these boons immediately", "the group editor subtitle uses party vocabulary")
-	must(`<span class="group-perms-word-wizard">Bestow</span>`, "Grant becomes Bestow")
-	must(`<span class="group-perms-word-wizard">Unbound</span>`, "Not granted becomes Unbound")
+	must(`plain="Grant" wizard="Bestow"`, "Grant becomes Bestow")
+	must(`plain="Not granted" wizard="Unbound"`, "Not granted becomes Unbound")
 	must("✨ boon active", "effective group grants read as active boons")
 	must("party boon${permissions.length === 1 ? '' : 's'} bound", "the saved toast confirms bound boons")
 }
@@ -1791,13 +1791,13 @@ func TestDashboardHTML_WizardCogNomenclature(t *testing.T) {
 	must(`Burns the conversation scroll (.jsonl) and erases every party membership`, "delete-agent warning uses wizard nouns")
 	must(`Open a scrying portal for this familiar.`, "terminal picker targets a familiar")
 	must(`Bestow a bounded sudo boon on a familiar.`, "sudo dialog targets a familiar")
-	must(`wizardSubtitle: `+"`"+`Familiar: ${label || shortId(conv)} · ${shortId(conv)}`+"`", "permission subtitle names the familiar")
-	must(`themeWords('Solo agent', 'Solo familiar')`, "shared target picker swaps agent noun")
-	must(`themeWords('Group (multicast)', 'Party (multicast)')`, "shared target picker swaps group noun")
+	must(`Familiar: ${descriptor.label || shortConv} · ${shortConv}`, "permission subtitle names the familiar")
+	must(`plain="Solo agent" wizard="Solo familiar"`, "shared target picker swaps agent noun")
+	must(`plain="Group (multicast)" wizard="Party (multicast)"`, "shared target picker swaps group noun")
 	must(`Send a missive to party`, "group message dialog names the party")
-	must(`wizWord('Send a message', 'Send a missive')`, "unscoped message dialog swaps its title")
+	must(`plain=${scopedGroup ? `+"`"+`Send a message to group “${scopedGroup}”`+"`"+` : 'Send a message'}`, "unscoped message dialog owns both title shapes")
 	must(`if ($('#cron-create-modal').classList.contains('show')) renderCronTitle();`, "open cron dialog follows live theme flips")
-	must(`if (!$('#message-create-modal').classList.contains('show')) return;`, "open message dialog follows live theme flips")
+	must(`document.addEventListener('tclaude:wizard', refreshThemeCopy)`, "open message dialog follows live theme flips")
 	must(`const wizardWhere = scope === 'group' ? `+"`"+`party "${groupName}"`+"`"+` : 'the tower';`, "window dialog uses party in wizard hints")
 	mustNot(`aria-label="Reveal or veil this party's familiars — focus or unfocus this group's agent windows"`, "group window button must not expose a mixed-theme accessible name")
 }
@@ -1820,9 +1820,9 @@ func TestDashboardHTML_WizardCogDialogThemes(t *testing.T) {
 	must("body.wizard #message-create-modal .cron-create-row textarea", "missive fields are re-skinned")
 	must("body.wizard #message-create-modal .cleanup-list", "party recipient list is re-skinned")
 	must("body.wizard #message-create-modal #message-create-submit {", "send-missive lever is re-skinned")
-	must(`<span class="theme-copy-wizard">✒ Send missive</span>`, "submit button uses wizard copy")
-	must(`<span class="theme-copy-wizard">Dispel</span>`, "missive cancel button uses wizard copy")
-	must(`$('#message-create-body').placeholder = wizWord('message text (required)', 'missive text (required)')`, "missive placeholder follows live theme flips")
+	must(`wizard=${busy ? 'Sending…' : '✒ Send missive'}`, "submit button uses wizard copy")
+	must(`<${Words} plain="Cancel" wizard="Dispel"/>`, "missive cancel button uses wizard copy")
+	must(`placeholder=${wizWord('message text (required)', 'missive text (required)')}`, "missive placeholder follows live theme flips")
 	must(`'Missive text is required.'`, "missive validation stays in wizard voice")
 
 	// Party worktree cleanup dialog, including dynamic category/submit copy.
@@ -1841,6 +1841,8 @@ func TestDashboardHTML_WizardCogDialogThemes(t *testing.T) {
 	must("body.wizard #add-member-modal .add-member-foot kbd", "invite keyboard hints are re-skinned")
 	must(`<span class="theme-copy-wizard">Include slumbering / archived</span>`, "invite footer uses wizard copy")
 	must(`(Try ticking "Include slumbering / archived" for a wider pool.)`, "invite empty state matches its wizard checkbox")
+	must("body.wizard #cron-pick-target-modal .add-member-modal {", "the shared Preact chooser has readable wizard chrome")
+	must("body.wizard #cron-pick-target-modal .add-member-row .rowname", "the shared chooser keeps agent/familiar names readable in wizard mode")
 
 	if strings.Contains(dashboardAssets, "body.wizard .add-member-modal {") {
 		t.Error("wizard invite re-skin is unscoped — will repaint the sudo/cron target pickers")
