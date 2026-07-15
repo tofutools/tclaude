@@ -543,6 +543,10 @@ export class ProcessTemplateEditor {
         this.status('Reload cancelled because the editor changed while the new version was loading.');
         return false;
       }
+      if (!sameTemplateGeneration({ ref: targetRef, sourceHash: targetSourceHash }, this.externalChange)) {
+        this.status('Reload cancelled because a newer external version is now available.');
+        return false;
+      }
       if (!sameTemplateGeneration({ ref: targetRef, sourceHash: targetSourceHash }, view)) {
         this.status('The fetched version no longer matches the polled head. Waiting for the next refresh before applying.');
         return false;

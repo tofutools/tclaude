@@ -831,6 +831,32 @@ test('an edit made during external Reload cancels the swap and preserves the dra
   }
 });
 
+test('a newer polled head during external Reload cancels the older response', async () => {
+  const previousFetch = globalThis.fetch;
+  const reload = deferred();
+  globalThis.fetch = async () => reload.promise;
+  try {
+    const editor = externalReloadEditor();
+    const original = editor.model;
+    const pending = ProcessTemplateEditor.prototype.reloadExternalChange.call(editor);
+    editor.externalChange = { kind: 'clean', ref: 'alpha@sha256:newer', sourceHash: 'source-newer' };
+    reload.resolve({
+      ok: true, status: 200, statusText: 'OK',
+      json: async () => ({
+        template: { id: 'alpha', name: 'Old response', start: 'a', nodes: { a: { type: 'start' } } },
+        edges: [], layout: {}, sourceHash: 'source-new', semanticHash: 'semantic-new', currentRef: 'alpha@sha256:new',
+      }),
+    });
+    assert.equal(await pending, false);
+    assert.equal(editor.model, original, 'the older exact response cannot replace the editor model');
+    assert.deepEqual(editor.externalChange, { kind: 'clean', ref: 'alpha@sha256:newer', sourceHash: 'source-newer' });
+    assert.match(editor.lastStatus.message, /newer external version/);
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+  }
+});
+
 test('a new dialog draft during external Reload cancels the swap', async () => {
   const previousFetch = globalThis.fetch;
   const reload = deferred();
