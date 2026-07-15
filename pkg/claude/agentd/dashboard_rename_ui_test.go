@@ -10,8 +10,8 @@ import (
 // /api/agents/{conv}/rename:
 //   - the per-agent edit panel (the "edit" button → editMemberModal),
 //     which gained a Title field and an "auto" self-rename checkbox;
-//   - the click-to-edit agent-name cell (the .rowname-text span →
-//     the rename-name handler → the shared inlineEdit primitive).
+//   - the click-to-edit agent-name cell (the .rowname-text span → a keyed
+//     native InlineEditor owned by the Groups interaction provider).
 //
 // The change is entirely in the embedded dashboard JS/HTML, so no
 // server path a flow test can reach proves the WIRING. This guards
@@ -42,15 +42,16 @@ func TestDashboardRenameUI_FoldedIntoEditAndNameCell(t *testing.T) {
 
 	// Change 1 — rename folded into the per-agent edit panel: the edit
 	// modal gained a Title input and an "auto" self-rename checkbox.
-	present(`data-act="edit-member"`, "the per-agent edit button is still wired")
+	present(`act="edit-member"`, "the per-agent edit button is still wired")
 	present(`id="edit-member-title-input"`, "the edit panel has a Title field")
 	present(`id="edit-member-auto"`, "the edit panel has the auto self-rename checkbox")
 
-	// Change 2 — the agent-name cell is click-to-edit, routed through
-	// the shared inlineEdit primitive.
-	present(`data-act="rename-name"`, "the agent-name cell is click-to-edit")
-	present(`class="rowname-text"`, "the agent name renders as a click-to-edit span")
-	present("function inlineEdit(", "the shared inline-edit primitive exists")
+	// Change 2 — the agent-name cell is click-to-edit, routed through the keyed
+	// native editor; row DnD is disabled only while that editor is active.
+	present(`'data-act': 'rename-name'`, "the agent-name cell is click-to-edit")
+	present(`class: 'rowname-text'`, "the agent name renders as a click-to-edit span")
+	present("<${InlineEditor}", "the shared native inline-editor component is used")
+	present("draggable=${interactions.editorKey !== editorKey}", "name editing preserves the DnD boundary")
 
 	// Both new surfaces POST to the one rename endpoint — the edit
 	// panel's Save and the inline name handler issue this exact fetch.

@@ -7,7 +7,7 @@
 // in the hidden subtree.
 //
 // Kept pure and DOM-free so the disclosure rule can be tested independently of
-// render.js. Members are deduped by conv_id, matching aggregateActivity's
+// groups-list.js. Members are deduped by conv_id, matching aggregateActivity's
 // global-dashboard semantics: one agent may belong to several nested groups but
 // must not inflate a rolled-up count. Fixtures/legacy rows without a conv_id
 // remain distinct.
@@ -51,7 +51,7 @@ export function groupActivityAtDisclosure(members, childSubtreeMembers, open) {
 
 // groupActivityPlacement computes the roster represented by every real group
 // header in the current rendered tree. Only groups present in this render can
-// parent another group; that mirrors render.js's filter/dangling-parent rule.
+// parent another group; that mirrors groups-view-model.js's dangling-parent rule.
 // Virtual groups stay outside the nested tree. The cycle/orphan guards mirror
 // the renderer too, so corrupt linkage cannot recurse forever or erase a row.
 export function groupActivityPlacement(groups, isOpen) {

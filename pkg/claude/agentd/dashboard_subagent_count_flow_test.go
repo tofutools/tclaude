@@ -19,7 +19,7 @@ import (
 //	Stop            (main turn ends; count ≥ 1 ⇒ status main_agent_idle)
 //	SubagentStop    (count 1 → 0; status falls back to idle)
 //
-// The dashboard's "+n" badge (render.js — memberRowHTML) is driven purely
+// The dashboard's "+n" badge (groups-member-table.js — ActivityBadges) is driven purely
 // by state.subagent_count and is NOT gated on the agent being "busy". The
 // concern this pins: after the parent's Stop, the snapshot must still
 // report subagent_count=1 (so "+1" shows) and a NON-idle status
