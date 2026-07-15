@@ -1826,9 +1826,9 @@ func TestDashboardHTML_WizardCogDialogThemes(t *testing.T) {
 	must("body.wizard #worktree-cleanup-modal .cleanup-toolbar button.active", "worktree category chips are re-skinned")
 	must("body.wizard #worktree-cleanup-modal .cleanup-list", "worktree candidate list is re-skinned")
 	must("body.wizard #worktree-cleanup-modal #worktree-cleanup-submit {", "prune lever is re-skinned")
-	must("n === 1 ? 'Prune 1 worktree' : `Prune ${n} worktrees`", "worktree submit swaps to prune copy")
-	must(`title="${esc(worktreeReason(c.reason))}"`, "worktree reason tooltip swaps its nouns")
-	must("document.addEventListener('tclaude:wizard', onWizard);", "open worktree dialog follows live theme flips")
+	must("Prune ${selected.length} worktree", "worktree submit swaps to prune copy")
+	must("title=${wizard ? wizardReason(candidate.reason) : candidate.reason}", "worktree reason tooltip swaps its nouns")
+	must("document.addEventListener('tclaude:wizard', updateWizard);", "open worktree dialog follows live theme flips")
 
 	// Invite-familiar picker.
 	must("body.wizard #add-member-modal .add-member-modal {", "invite dialog surface is re-skinned")
