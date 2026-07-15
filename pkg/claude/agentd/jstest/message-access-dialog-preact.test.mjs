@@ -71,6 +71,42 @@ test('child chooser keeps the keyed parent draft mounted and cancellation return
   await mounted.unmount();
 });
 
+test('chooser keeps keyboard highlight visible and exposes the active option', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createMessageAccessDialogState } = await harness.importDashboardModule('js/message-access-dialog-state.js');
+  const state = createMessageAccessDialogState();
+  const picked = state.pickAgent({ title: 'Pick target', identity: 'agent' });
+  const rows = Array.from({ length: 24 }, (_, index) => ({
+    agent_id: `agt_${String(index).padStart(2, '0')}`,
+    conv_id: `conv-${index}`,
+    title: `agent ${String(index).padStart(2, '0')}`,
+    online: true,
+  }));
+  const original = Object.getOwnPropertyDescriptor(harness.window.HTMLElement.prototype, 'scrollIntoView');
+  let scrolled = '';
+  Object.defineProperty(harness.window.HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    value() { scrolled = this.id; },
+  });
+  t.after(() => {
+    if (original) Object.defineProperty(harness.window.HTMLElement.prototype, 'scrollIntoView', original);
+    else delete harness.window.HTMLElement.prototype.scrollIntoView;
+  });
+  const actions = { sendMessage: async () => {}, replyHuman: async () => {}, grantSudo: async () => {}, savePermissions: async () => {} };
+  const { host, mounted } = await mountDialogs(harness, state, actions, {
+    agents: rows, groups: [], permissions: { defaults: [], overrides: {} }, slugs: [], sudo: [],
+  });
+  scrolled = '';
+  const search = host.querySelector('#cron-pick-target-search');
+  await harness.act(() => harness.fireEvent(search, 'keydown', { key: 'ArrowDown' }));
+  assert.equal(search.getAttribute('aria-activedescendant'), 'cron-pick-target-option-1');
+  assert.equal(host.querySelector('#cron-pick-target-option-1').getAttribute('aria-selected'), 'true');
+  assert.equal(scrolled, 'cron-pick-target-option-1');
+  await harness.act(() => harness.fireEvent(search, 'keydown', { key: 'Enter' }));
+  assert.equal(await picked, 'agt_01');
+  await mounted.unmount();
+});
+
 test('mounted island registers the launcher seam and snapshot subscription preserves component identity', async (t) => {
   const harness = await createPreactHarness(t);
   const [island, stateModule, controller] = await Promise.all([
