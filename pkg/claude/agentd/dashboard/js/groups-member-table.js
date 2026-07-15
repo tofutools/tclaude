@@ -334,13 +334,13 @@ function MemberMenu({ member, group, snapshot, ungrouped }) {
   `;
 }
 
-function MemberActions({ member, group, snapshot, ungrouped }) {
+function MemberActions({ member, group, snapshot, ungrouped, menuKey }) {
   const offlineWhy = member.online ? '' : ' — unavailable while the agent is offline';
   return html`<div class="row-actions">
     <button class="icon-btn" data-act="jump" ...${memberAttrs(member)} disabled=${!member.online} title=${`Focus this agent's terminal window${offlineWhy}`} aria-label="Focus window"><${EyeIcon} /></button>
     <button class="icon-btn" data-act="hide" ...${memberAttrs(member)} disabled=${!member.online} title=${`Hide this agent's terminal window — detaches its tmux client. The agent keeps running.${offlineWhy}`} aria-label="Hide window"><${EyeIcon} hidden=${true} /></button>
     <button class="icon-btn warn" data-act="retire-agent" data-conv=${member.conv_id} data-label=${member.title || member.conv_id} title="Retire this agent — demote it back to a plain conversation, revoking its group memberships and permission grants. Reversible via reinstate (stripped grants are not restored)." aria-label="Retire agent"><${TrashIcon} /></button>
-    <${ActionMenu} menuKey=${`member:${member.agent_id || member.conv_id}`} kind="row-menu"><${MemberMenu} member=${member} group=${group} snapshot=${snapshot} ungrouped=${ungrouped} /><//>
+    <${ActionMenu} menuKey=${menuKey} kind="row-menu"><${MemberMenu} member=${member} group=${group} snapshot=${snapshot} ungrouped=${ungrouped} /><//>
   </div>`;
 }
 
@@ -351,12 +351,11 @@ function SudoBadge({ grants, conv }) {
   return html`<span class="sudo-badge" data-act="sudo-manage" data-conv=${grants[0].conv_id || conv || ''} title=${title}>🔓</span>`;
 }
 
-function MemberName({ member, snapshot, actions, grants }) {
+function MemberName({ member, snapshot, actions, grants, editorKey }) {
   const state = member.state || {};
   const canRename = harnessCanRename(snapshot, state.harness);
   const idPrefix = memberColHidden('id') ? `${idTooltip(member.agent_id, member.conv_id)} — ` : '';
   if (!canRename) return html`<div class="rowname"><span class="rowname-text rowname-fixed" title=${`${idPrefix}This agent's harness does not support renaming`}>${member.title || '(unnamed)'}</span><${SudoBadge} grants=${grants} conv=${member.conv_id} /></div>`;
-  const editorKey = `member:${member.agent_id || member.conv_id}:name`;
   return html`<div class="rowname"><${InlineEditor}
     editorKey=${editorKey} value=${member.title || ''} className="rowname-input"
     placeholder="1-64 chars: A-Za-z0-9 _ - [ ] { } ( ) — Enter saves, Esc cancels"
@@ -452,12 +451,12 @@ function TaskCell({ member }) {
   return html`<span class="task-value">${display}<span class="task-edit task-edit-icon" ...${attrs} aria-label="Edit task link">✎</span></span>`;
 }
 
-function MemberCell({ column, member, group, snapshot, actions, grants, ungrouped }) {
+function MemberCell({ column, member, group, snapshot, actions, grants, ungrouped, menuKey, editorKey }) {
   const state = member.state || {};
   switch (column.key) {
-    case 'ctl': return html`<td><div class="agent-ctl"><${AgentStatusDot} member=${member} /><${MemberActions} member=${member} group=${group} snapshot=${snapshot} ungrouped=${ungrouped} /></div><${HarnessLine} member=${member} /><${SandboxBadge} member=${member} /></td>`;
+    case 'ctl': return html`<td><div class="agent-ctl"><${AgentStatusDot} member=${member} /><${MemberActions} member=${member} group=${group} snapshot=${snapshot} ungrouped=${ungrouped} menuKey=${menuKey} /></div><${HarnessLine} member=${member} /><${SandboxBadge} member=${member} /></td>`;
     case 'id': return html`<td class="id" title=${idTooltip(member.agent_id, member.conv_id)}>${shortAgentId(member.agent_id, member.conv_id)}</td>`;
-    case 'title': return html`<td class="name-cell"><${MemberName} member=${member} snapshot=${snapshot} actions=${actions} grants=${grants} /></td>`;
+    case 'title': return html`<td class="name-cell"><${MemberName} member=${member} snapshot=${snapshot} actions=${actions} grants=${grants} editorKey=${editorKey} /></td>`;
     case 'state': return html`<${StateCell} member=${member} />`;
     case 'last': return html`<td><span class="last-hook">${relTime(state.last_hook)}</span></td>`;
     case 'age': return html`<td><span class="last-hook" title=${member.created_at || ''}>${relTime(member.created_at)}</span></td>`;
@@ -470,9 +469,11 @@ function MemberCell({ column, member, group, snapshot, actions, grants, ungroupe
   }
 }
 
-function MemberRow({ member, group, ungrouped, snapshot, actions, columns }) {
+function MemberRow({ member, group, ungrouped, snapshot, actions, columns, tableKey }) {
   const interactions = useGroupsInteractions();
-  const editorKey = `member:${member.agent_id || member.conv_id}:name`;
+  const memberKey = member.agent_id || member.conv_id;
+  const menuKey = `member:${tableKey}:${memberKey}:menu`;
+  const editorKey = `member:${tableKey}:${memberKey}:name`;
   const grants = (snapshot?.sudo || []).filter((grant) => grant.conv_id === member.conv_id);
   return html`<tr
     class="dnd-draggable" draggable=${interactions.editorKey !== editorKey} data-key=${member.conv_id}
@@ -480,10 +481,10 @@ function MemberRow({ member, group, ungrouped, snapshot, actions, columns }) {
     data-dnd-source-group=${ungrouped ? undefined : group.name}
     data-dnd-conv=${member.conv_id} data-dnd-agent=${member.agent_id || member.conv_id}
     data-dnd-label=${member.title || member.conv_id}
-  >${columns.map((column) => html`<${MemberCell} key=${column.key} column=${column} member=${member} group=${group} ungrouped=${ungrouped} snapshot=${snapshot} actions=${actions} grants=${grants} />`)}</tr>`;
+  >${columns.map((column) => html`<${MemberCell} key=${column.key} column=${column} member=${member} group=${group} ungrouped=${ungrouped} snapshot=${snapshot} actions=${actions} grants=${grants} menuKey=${menuKey} editorKey=${editorKey} />`)}</tr>`;
 }
 
-export function MemberTable({ members, group, ungrouped = false, snapshot, actions, SortHead }) {
+export function MemberTable({ members, group, tableKey, ungrouped = false, snapshot, actions, SortHead }) {
   const columns = visibleMemberCols();
-  return html`<table><${SortHead} table="members" columns=${columns} /><tbody>${applySort('members', members, MEMBER_ACCESSORS).map((member) => html`<${MemberRow} key=${member.conv_id} member=${member} group=${group} ungrouped=${ungrouped} snapshot=${snapshot} actions=${actions} columns=${columns} />`)}</tbody></table>`;
+  return html`<table><${SortHead} table="members" columns=${columns} /><tbody>${applySort('members', members, MEMBER_ACCESSORS).map((member) => html`<${MemberRow} key=${member.conv_id} member=${member} group=${group} tableKey=${tableKey} ungrouped=${ungrouped} snapshot=${snapshot} actions=${actions} columns=${columns} />`)}</tbody></table>`;
 }
