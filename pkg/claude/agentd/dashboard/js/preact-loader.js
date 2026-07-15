@@ -229,6 +229,7 @@ const terminalsDescriptor = createIslandDescriptor({
       mount: (registerCleanup) => mountTerminalShellIsland({
         host, badgeHost, modalHost, state: terminalShellState, actions, registerCleanup,
         widgetFactory: dependencies.widgetFactory,
+        onComposeMessage: dependencies.onComposeMessage,
       }),
     };
   },

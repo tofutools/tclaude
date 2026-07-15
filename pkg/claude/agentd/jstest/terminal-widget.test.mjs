@@ -109,6 +109,7 @@ test('opaque widget owns one host and disposes every imperative edge exactly onc
   const statuses = [];
   const reconnect = [];
   const selections = [];
+  const composeMessage = () => {};
   let disconnected = 0;
   const added = [];
   const removed = [];
@@ -129,6 +130,7 @@ test('opaque widget owns one host and disposes every imperative edge exactly onc
     onStatus: (value) => statuses.push(value),
     onReconnectChange: (value) => reconnect.push(value),
     onSelectionChange: (value) => selections.push(value),
+    onComposeMessage: composeMessage,
     onDisconnect: () => { disconnected += 1; },
     fetchImpl: async () => ({ ok: true }),
     TerminalCtor: fakes.FakeTerminal,
@@ -154,6 +156,7 @@ test('opaque widget owns one host and disposes every imperative edge exactly onc
   assert.ok(fakes.sockets[0].sent.at(-1) instanceof Uint8Array, 'terminal input stays binary');
   fakes.interactionOptions().onSelectionChange(true);
   assert.deepEqual(selections, [true]);
+  assert.equal(fakes.interactionOptions().onComposeMessage, composeMessage);
   await widget.copy();
   assert.equal(fakes.counts.copy, 1);
 
