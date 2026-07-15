@@ -42,15 +42,3 @@ export function openSpawnPermEditor(options = {}) {
 export function pickAgent(options = {}) {
   return requireController().pickAgent(options);
 }
-
-export function configureCronTargetPicker(prefill = {}) {
-  return requireController().configureCronTarget(prefill);
-}
-
-export function readCronTargetPicker() {
-  return requireController().readCronTarget();
-}
-
-export function setCronTargetModeListener(listener) {
-  return requireController().setCronTargetModeListener(listener);
-}
