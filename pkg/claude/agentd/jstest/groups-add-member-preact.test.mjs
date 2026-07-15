@@ -229,6 +229,29 @@ test('add-member picker owns async pool retry, IME navigation and optimistic add
   })));
   assert.equal(host.querySelector('.add-member-row.highlighted .rowname').textContent, 'Bravo',
     'a same-length polling reorder retains the highlighted conv identity');
+  await harness.act(() => state.publish(snapshot([{ name: 'alpha', members: [], online: 0 }], {
+    ungrouped: [
+      { conv_id: 'alpha-worker', agent_id: 'agt-alpha', title: 'Zulu', online: true },
+    ],
+    agents: [{ conv_id: 'dormant', agent_id: 'agt-dormant', title: 'Dormant', online: false }],
+  })));
+  await harness.act(() => Promise.resolve());
+  assert.equal(host.querySelector('.add-member-row.highlighted'), null,
+    'polling disappearance clears selection instead of falling back to index zero');
+  await harness.act(() => harness.fireEvent(search, 'keydown', { key: 'Enter' }));
+  assert.equal(addCalls, 0, 'Enter is a no-op after polling removes the selected identity');
+  await harness.act(() => state.publish(snapshot([{ name: 'alpha', members: [], online: 0 }], {
+    ungrouped: [
+      { conv_id: 'alpha-worker', agent_id: 'agt-alpha', title: 'Zulu', online: true },
+      { conv_id: 'bravo-worker', agent_id: 'agt-bravo', title: 'Bravo', online: true },
+    ],
+    agents: [{ conv_id: 'dormant', agent_id: 'agt-dormant', title: 'Dormant', online: false }],
+  })));
+  assert.equal(host.querySelector('.add-member-row.highlighted'), null,
+    'a later poll cannot silently restore selection without a user gesture');
+  await harness.act(() => harness.fireEvent(search, 'keydown', { key: 'ArrowDown' }));
+  assert.equal(host.querySelector('.add-member-row.highlighted .rowname').textContent, 'Bravo',
+    'Arrow navigation explicitly selects again after disappearance');
   await harness.act(() => harness.fireEvent(search, 'keydown', {
     key: 'Enter', isComposing: true,
   }));
