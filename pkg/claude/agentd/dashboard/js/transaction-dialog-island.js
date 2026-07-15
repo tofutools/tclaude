@@ -321,6 +321,172 @@ function WindowSelectionDialog({ descriptor, actions, confirmDiscard }) {
   </${TransactionDialogFrame}>`;
 }
 
+function DeleteGroupDialog({ descriptor, actions, confirmDiscard }) {
+  const members = descriptor.members || [];
+  const [retireEnabled, setRetireEnabled] = useState(true);
+  const [selected, setSelected] = useState(
+    () => Object.fromEntries(members.map((member) => [member.selector, member.defaultRetire])),
+  );
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [submittedRequest, setSubmittedRequest] = useState(null);
+  const activeRef = useRef(true);
+  useEffect(() => () => { activeRef.current = false; }, []);
+
+  const retireTargets = retireEnabled
+    ? members.filter((member) => selected[member.selector] === true) : [];
+  const detachTargets = members.filter((member) => !retireTargets.includes(member));
+  const locked = !!submittedRequest;
+  const updateMember = (member, checked) => {
+    if (busy || locked || !retireEnabled) return;
+    setSelected((current) => ({ ...current, [member.selector]: checked }));
+  };
+  const changeRetire = (event) => {
+    if (!busy && !locked) setRetireEnabled(event.currentTarget.checked);
+  };
+  const formatError = (cause) => {
+    if (cause?.memberErrors) {
+      const count = cause.memberErrors;
+      return {
+        plain: `retire failed for ${count} ${count === 1 ? 'agent' : 'agents'}; group was not deleted`,
+        wizard: `banish failed for ${count} ${count === 1 ? 'familiar' : 'familiars'}; party was not disbanded`,
+      };
+    }
+    const message = cause?.message || String(cause);
+    if (!cause?.network) return { plain: message, wizard: message };
+    return cause.phase === 'retire'
+      ? { plain: `retire failed: ${message}`, wizard: `banish failed: ${message}` }
+      : { plain: `delete failed: ${message}`, wizard: `disband failed: ${message}` };
+  };
+  const submit = async () => {
+    if (busy) return;
+    const request = submittedRequest || Object.freeze({
+      group: descriptor.group,
+      memberCount: members.length,
+      retireMembers: Object.freeze(retireTargets.map((member) => Object.freeze({
+        selector: member.selector,
+        agent_id: member.agent_id,
+        conv_id: member.conv_id,
+      }))),
+    });
+    if (!submittedRequest) setSubmittedRequest(request);
+    setError(null);
+    setBusy(true);
+    try {
+      const result = await actions.deleteGroupPlan(request);
+      const plainBits = [`deleted group "${descriptor.group}"`];
+      const wizardBits = [`disbanded party "${descriptor.group}"`];
+      if (result.retired) {
+        plainBits.push(`retired ${result.retired}`);
+        wizardBits.push(`banished ${result.retired}`);
+      }
+      if (result.detached) {
+        plainBits.push(`detached ${result.detached}`);
+        wizardBits.push(`detached ${result.detached}`);
+      }
+      await actions.finishDeleteGroup(result, {
+        plain: plainBits.join(' · '),
+        wizard: wizardBits.join(' · '),
+      });
+    } catch (cause) {
+      if (activeRef.current) setError(formatError(cause));
+    } finally {
+      if (activeRef.current) setBusy(false);
+    }
+  };
+
+  const plainBits = [];
+  const wizardBits = [];
+  if (retireTargets.length) {
+    plainBits.push(`${retireTargets.length} retired`);
+    wizardBits.push(`${retireTargets.length} banished`);
+  }
+  if (detachTargets.length) {
+    plainBits.push(`${detachTargets.length} detached`);
+    wizardBits.push(`${detachTargets.length} detached`);
+  }
+  const plainHint = `Deleting "${descriptor.group}" drops the group, owner rows, memberships, and group message history. Conversations are kept. ${plainBits.length ? `Preview: ${plainBits.join(', ')}.` : 'The group has no agents.'}`;
+  const wizardHint = `Disbanding "${descriptor.group}" erases the party, owner marks, memberships, and party message history. Conversation scrolls are kept. ${wizardBits.length ? `Preview: ${wizardBits.join(', ')}.` : 'The party has no familiars.'}`;
+
+  return html`<${TransactionDialogFrame}
+    id="delete-group-modal"
+    labelledby="delete-group-title"
+    title=${html`<${Words} plain="Delete group" wizard="Disband this party?" />`}
+    dialogClass="cleanup-modal"
+    busy=${busy}
+    error=${error ? html`<${Words} plain=${error.plain} wizard=${error.wizard} />` : ''}
+    errorID="delete-group-error"
+    primaryLabel=${html`<${Words} plain="Delete group" wizard="Disband this party?" />`}
+    busyLabel=${html`<span class="btn-spinner" aria-hidden="true"></span><${Words}
+      plain="Deleting…" wizard="Disbanding…"
+    />`}
+    primaryClass="primary danger"
+    cancelID="delete-group-cancel"
+    submitID="delete-group-submit"
+    onClose=${actions.close}
+    onSubmit=${submit}
+    confirmDiscard=${confirmDiscard}
+  >
+    <p class="cleanup-hint danger" id="delete-group-hint"><${Words}
+      plain=${plainHint} wizard=${wizardHint}
+    /></p>
+    <div class="cleanup-toolbar">
+      <span class="cleanup-count" id="delete-group-count"><${Words}
+        plain=${`${members.length} ${members.length === 1 ? 'agent' : 'agents'}: ${retireTargets.length} to retire, ${detachTargets.length} detach`}
+        wizard=${`${members.length} ${members.length === 1 ? 'familiar' : 'familiars'}: ${retireTargets.length} to banish, ${detachTargets.length} detach`}
+      /></span>
+    </div>
+    <div class="cleanup-list" id="delete-group-list">
+      ${members.length ? members.map((member) => {
+        const willRetire = retireEnabled && selected[member.selector] === true;
+        const otherNames = member.otherGroups.map((entry) => entry.name);
+        const plainWhy = willRetire
+          ? (otherNames.length ? `also in ${otherNames.join(', ')} — explicitly included` : 'only member of this group')
+          : otherNames.length
+            ? `also in ${otherNames.join(', ')} — not auto-retired`
+            : retireEnabled ? 'exempted from retirement' : 'retire option off';
+        const wizardWhy = willRetire
+          ? (otherNames.length ? `also in ${otherNames.join(', ')} — explicitly included` : 'only member of this party')
+          : otherNames.length
+            ? `also in ${otherNames.join(', ')} — not auto-banished`
+            : retireEnabled ? 'exempted from banishment' : 'banish option off';
+        return html`<div class="cleanup-row" key=${member.selector}><label>
+          <input
+            type="checkbox" data-agent=${member.selector}
+            checked=${willRetire} disabled=${busy || locked || !retireEnabled}
+            onChange=${(event) => updateMember(member, event.currentTarget.checked)}
+          />
+          <span class="title">${member.title || '(untitled)'}</span>
+          <span class="id">${member.conv_id.slice(0, 8)}</span>
+          <span class="cleanup-badge">${member.status}</span>
+          ${member.role ? html`<span class="cleanup-badge">${member.role}</span>` : null}
+          <span class="cleanup-badge"><${Words}
+            plain=${willRetire ? 'retire + stop' : 'detach only'}
+            wizard=${willRetire ? 'banish familiar + stop' : 'detach only'}
+          /></span>
+          <span class="muted"> <${Words} plain=${plainWhy} wizard=${wizardWhy} /></span>
+        </label></div>`;
+      }) : html`<div class="cleanup-empty"><${Words}
+        plain="no agents in this group" wizard="no familiars in this party"
+      /></div>`}
+    </div>
+    <label class="delete-agent-wt" id="delete-group-retire-row">
+      <input
+        type="checkbox" id="delete-group-retire" checked=${retireEnabled}
+        disabled=${busy || locked} onChange=${changeRetire}
+      />
+      <span>
+        <span class="delete-group-copy-regular">Retire checked agents before deleting the group</span>
+        <span class="delete-group-copy-wizard">Banish checked familiars before disbanding the party</span>
+        <span class="wt-note">
+          <span class="delete-group-copy-regular">single-group agents are checked by default; agents also in other groups are unchecked by default and only detached unless you tick them</span>
+          <span class="delete-group-copy-wizard">single-party familiars are checked by default; familiars also in other parties are unchecked by default and only detached unless you tick them</span>
+        </span>
+      </span>
+    </label>
+  </${TransactionDialogFrame}>`;
+}
+
 function BulkRetireResult({ descriptor, response }) {
   const group = descriptor.kind === 'retire-group-preview';
   const rows = group ? (response?.members || []) : (response?.outcomes || []);
@@ -1223,6 +1389,14 @@ export function TransactionDialogApp({ state, actions, confirmDiscard }) {
   }
   if (current.descriptor.kind === 'window-selection') {
     return html`<${WindowSelectionDialog}
+      key=${current.key}
+      descriptor=${current.descriptor}
+      actions=${actions}
+      confirmDiscard=${confirmDiscard}
+    />`;
+  }
+  if (current.descriptor.kind === 'delete-group') {
+    return html`<${DeleteGroupDialog}
       key=${current.key}
       descriptor=${current.descriptor}
       actions=${actions}

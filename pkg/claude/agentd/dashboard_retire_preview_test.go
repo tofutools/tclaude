@@ -87,7 +87,7 @@ func TestDashboardTransactionGroupRetireExclusiveOwnership(t *testing.T) {
 		t.Error("the per-group palette command lost its preview launcher")
 	}
 	for _, adjacent := range []string{
-		`id="delete-group-modal"`, `id="worktree-cleanup-modal"`,
+		`id="worktree-cleanup-modal"`,
 	} {
 		if !strings.Contains(html, adjacent) {
 			t.Errorf("adjacent static workflow changed during retire cutover: %q", adjacent)
