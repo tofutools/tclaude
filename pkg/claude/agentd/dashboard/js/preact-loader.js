@@ -205,6 +205,39 @@ export function mountDockFeature(dependencies = {}) {
   return mountIslandDescriptor(dockDescriptor, dependencies);
 }
 
+// Terminal chrome and open state are one ownership unit across the nav badge,
+// dashboard pane stack and fallback session modal. xterm itself remains behind
+// the opaque host adapter loaded by terminal-shell-island.js.
+const terminalsDescriptor = createIslandDescriptor({
+  name: 'terminals',
+  label: 'Terminal shell',
+  hosts: {
+    host: '#terminals-root',
+    badgeHost: '#terminals-badge-root',
+    modalHost: '#terminal-session-root',
+  },
+  failureClass: 'terminals-error',
+  load: async ({ hosts: { host, badgeHost, modalHost }, dependencies }) => {
+    const islandModule = import('./terminal-shell-island.js');
+    const stateModule = import('./terminal-shell-state.js');
+    const actionsModule = import('./terminal-shell-actions.js');
+    const [{ mountTerminalShellIsland }, { terminalShellState }, { createTerminalShellActions }] =
+      await Promise.all([islandModule, stateModule, actionsModule]);
+    const actions = createTerminalShellActions({ state: terminalShellState, ...dependencies });
+    return {
+      state: terminalShellState,
+      mount: (registerCleanup) => mountTerminalShellIsland({
+        host, badgeHost, modalHost, state: terminalShellState, actions, registerCleanup,
+        widgetFactory: dependencies.widgetFactory,
+      }),
+    };
+  },
+});
+
+export function mountTerminalsFeature(dependencies = {}) {
+  return mountIslandDescriptor(terminalsDescriptor, dependencies);
+}
+
 // Keep the Jobs graph behind the shared dynamic boundary so a corrupt optional
 // asset produces a visible feature-local error rather than preventing the rest
 // of the dashboard entry module from booting.
