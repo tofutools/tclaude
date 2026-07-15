@@ -574,6 +574,74 @@ func baseStates() []dashsnap.State {
 			SettleMS: 600,
 		},
 		{
+			Key:     "message-access-populated",
+			Title:   "Message/access dialogs — populated compose",
+			Caption: "TCL-454: the Preact-owned scoped composer renders the live roster, role/class filter, populated draft, and sole migrated modal id in the same viewport and both skins.",
+			JS: `return (async function(){
+  var dialogs = await import('/static/js/message-access-dialog-controller.js');
+  dialogs.openMessageCreateModal({from:'fe-lead', targetMode:'group', groupName:'frontend-squad'});
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  function input(id, value) { var el=document.getElementById(id); el.value=value; el.dispatchEvent(new Event('input',{bubbles:true})); }
+  input('message-create-subject','Release readiness');
+  input('message-create-role','dev');
+  input('message-create-body','Please report final checks and any blockers.');
+  var modal=document.querySelector('#message-create-modal.show');
+  if (!modal || document.querySelectorAll('#message-create-modal').length !== 1) throw new Error('message-access-populated: composer ownership failed');
+  if (!modal.querySelector('#message-create-members-count') || !modal.querySelector('#message-create-role')) throw new Error('message-access-populated: scoped controls missing');
+})();`,
+			SettleMS: 250,
+		},
+		{
+			Key:     "message-access-error",
+			Title:   "Message/access dialogs — validation error",
+			Caption: "TCL-454 error state: validation remains inline inside the Preact composer without closing or retargeting the authoritative launch.",
+			JS: `return (async function(){
+  var dialogs = await import('/static/js/message-access-dialog-controller.js');
+  dialogs.openMessageCreateModal({target:'fe-dev-forms'});
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  document.querySelector('#message-create-submit').click();
+  await new Promise(function(resolve){ requestAnimationFrame(resolve); });
+  var error=document.querySelector('#message-create-error');
+  if (!error || !error.textContent.trim()) throw new Error('message-access-error: inline validation missing');
+})();`,
+			SettleMS: 250,
+		},
+		{
+			Key:     "message-access-busy",
+			Title:   "Message/access dialogs — busy grant",
+			Caption: "TCL-454 busy-state visual gate: the Preact sudo surface keeps its selected catalog visible while the primary action is blocked and relabelled.",
+			JS: `return (async function(){
+  var dialogs = await import('/static/js/message-access-dialog-controller.js');
+  dialogs.openSudoGrantModal('fe-dev-forms');
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  document.querySelector('#sudo-grant-select-all').click();
+  await new Promise(function(resolve){ requestAnimationFrame(resolve); });
+  var submit=document.querySelector('#sudo-grant-submit');
+  if (!submit || !document.querySelector('#sudo-grant-slugs input:not([disabled]):checked')) throw new Error('message-access-busy: sudo selection missing');
+  submit.disabled=true;
+  submit.textContent='Granting…';
+})();`,
+			SettleMS: 250,
+		},
+		{
+			Key:     "message-access-stacked",
+			Title:   "Message/access dialogs — stacked chooser",
+			Caption: "TCL-454 layering gate: the separately keyed shared chooser stacks over the populated composer without recreating or obscuring its draft.",
+			JS: `return (async function(){
+  var dialogs = await import('/static/js/message-access-dialog-controller.js');
+  dialogs.openMessageCreateModal({from:'fe-lead', target:'fe-dev-forms'});
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var body=document.querySelector('#message-create-body');
+  body.value='Draft retained beneath the chooser.';
+  body.dispatchEvent(new Event('input',{bubbles:true}));
+  document.querySelector('#message-create-from-pick').click();
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  if (!document.querySelector('#message-create-modal.show') || !document.querySelector('#cron-pick-target-modal.show')) throw new Error('message-access-stacked: both keyed layers are not visible');
+  if (document.querySelector('#message-create-body') !== body || body.value.indexOf('Draft retained') !== 0) throw new Error('message-access-stacked: parent draft was recreated');
+})();`,
+			SettleMS: 250,
+		},
+		{
 			Key:      "bounded-jobs-normal",
 			Title:    "Bounded Preact — Jobs normal",
 			Caption:  "Jobs island completed its initial request and rendered its normal fixture state.",

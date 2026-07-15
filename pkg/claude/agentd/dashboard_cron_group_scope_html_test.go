@@ -5,12 +5,9 @@ import (
 	"testing"
 )
 
-// The cron-create modal's group scoping lives entirely in
-// dashboard.html's embedded JS — there is no Go code path to exercise
-// (the daemon already accepts both a group target and a member
-// conv-id target; nothing server-side changed), and the repo has no
-// JS test runner. So this guard pins the *contract* of the scoping so
-// a future edit cannot silently regress it.
+// The cron-create modal keeps scheduling ownership while its shared controlled
+// target root is Preact-owned. This source-shape guard pins the compatibility
+// seam; component/model tests cover the interactive behavior.
 //
 // The contract: when the cron modal is opened from a group header's
 // "⏰ multicast" button, the shared solo/group target picker is scoped
@@ -28,43 +25,33 @@ func TestDashboardHTML_CronGroupScopedTargetPicker(t *testing.T) {
 		}
 	}
 
-	// The scope state + its arm/clear entry point.
-	must("const targetPickerScopes = {}",
-		"the per-picker scope registry must exist")
-	must("function setTargetPickerScope(prefix, groupName)",
-		"setTargetPickerScope arms/clears a picker's group scope")
-
-	// The scoped-mode DOM: a members <select> row distinct from the
-	// free-text solo row and the group dropdown.
-	must(`id="${prefix}-target-scoped"`,
-		"the scoped-solo row must be in the picker markup")
-	must(`id="${prefix}-scoped-member"`,
-		"the scoped member <select> must be in the picker markup")
-	must("function populateTargetPickerMembers(prefix)",
-		"the scoped member <select> must be populated from the group's members")
-
-	// The group dropdown locks to the one scoped group — a scoped
-	// multicast cannot be retargeted elsewhere.
-	must("const groups = scope",
-		"populateTargetPickerGroups must lock the dropdown to the scoped group")
-	must("sel.disabled = !!scope",
-		"the group dropdown is disabled (locked) while scoped")
-
-	// readTargetPicker reads the scoped member <select> in scoped solo
-	// mode — so the submitted target is structurally a group member.
-	must("$('#' + prefix + '-scoped-member').value.trim()",
-		"readTargetPicker must read the scoped member <select> when scoped")
+	must("export function configureCronTargetPicker(prefill = {})",
+		"legacy cron configures controlled target state only through the controller")
+	must("export function readCronTargetPicker()",
+		"legacy cron reads controlled target state only through the controller")
+	must("const scope = value.scopeGroup || ''",
+		"the Preact target root derives its group scope from controlled state")
+	must("const members = scope ? groupMembers(snapshot, scope) : []",
+		"scoped solo options come only from the scoped group's live members")
+	must("disabled=${!!scope}",
+		"the group dropdown is locked while scoped")
+	must("value=${value.target}",
+		"the scoped member selection remains controlled")
 
 	// The group header's "⏰ multicast" button arms the scope; the
 	// shared populateCronForm wires the prefill's scopeGroup through.
 	must("scopeGroup: g.name",
 		"the group header cron button must pass scopeGroup")
-	must("setTargetPickerScope('cron-create', p.scopeGroup)",
-		"populateCronForm must arm/clear the scope from the prefill")
+	must("configureCronTargetPicker(p)",
+		"populateCronForm must arm/clear target scope through the controller")
 
 	// Closing the modal must clear the scope — otherwise a group scope
 	// armed by one open would leak into the next (e.g. a global "+ new
 	// cron job" opened right after a group multicast).
-	must("setTargetPickerScope('cron-create', null)",
-		"closeCronCreateModal must clear the picker scope on close")
+	must("configureCronTargetPicker({})",
+		"closeCronCreateModal must clear controlled target scope on close")
+	if strings.Contains(dashboardAssets, "function bindTargetPicker(") ||
+		strings.Contains(dashboardAssets, "function populateTargetPicker(") {
+		t.Error("legacy cron still owns a shared target-picker writer")
+	}
 }
