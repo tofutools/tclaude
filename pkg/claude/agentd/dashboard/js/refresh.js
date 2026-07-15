@@ -43,6 +43,7 @@ import {
 } from './shell-state.js';
 import { isTopmostOverlay } from './overlay-stack.js';
 import { disclosurePreference } from './group-tree-activity.js';
+import { hoveredGroupKey, setHoveredGroupKey } from './group-hover-state.js';
 
 // refreshSuspended() is the single source of truth for whether the
 // auto-refresh is allowed to re-render the DOM right now. refresh()
@@ -543,18 +544,13 @@ export function showAccessTab(subtab) {
 // Chromium: the Space activation is a synthetic click on the <summary>, and a
 // capture-phase preventDefault cancels the fold without eating the character.
 // hoveredGroupKey: the group whose <summary> header the pointer is currently
-// over, tracked in JS so the quick-options auto-fold reveal (render.js +
-// dashboard.css) survives the 2s wholesale innerHTML re-render of #groups-list.
-//
-// A pure CSS :hover can't carry the reveal across that re-render on its own: a
-// freshly-inserted node sitting under a STATIONARY cursor is not re-matched by
-// :hover in Blink/WebKit until the next mouse move, so the rebuilt header would
-// compute to the folded state and the chips would snap shut on every poll while
-// the user holds still to read them. renderGroups re-stamps .quick-hover from
-// this key each render, and bindGroupQuickHover keeps it live between renders,
-// so the reveal is deterministic regardless of the browser's :hover bookkeeping.
-// (The CSS keeps :hover too, for the instant smooth reveal during live movement.)
-export let hoveredGroupKey = null;
+// over. Native Groups reconciliation normally retains the keyed <details>
+// node, including this imperative class, across snapshot polls and reorders.
+// Keep the key in JS as well: the native group class computation re-stamps
+// .quick-hover when another class prop changes (notably pin/unpin), so a
+// stationary cursor cannot make the quick chips snap shut. It also keeps
+// delegated handling coherent when a view change removes, reinserts, or
+// reparents a group. CSS keeps :hover for the instant live reveal.
 const groupDisclosureIntents = new Set();
 
 // noteGroupDisclosureIntent marks the next native toggle for one group as a
@@ -565,21 +561,19 @@ export function noteGroupDisclosureIntent(key) {
 }
 
 // bindGroupQuickHover tracks the hovered group header on the stable
-// #groups-list container — bound once at init, delegated, because the
-// container's inner HTML is replaced every poll but the container itself is
-// not. mouseover sets the key to the group whose <summary> the pointer is over
-// (null over the expanded member body, matching the header-only reveal), and
-// mouseleave clears it when the pointer exits the list entirely. It also
-// toggles .quick-hover on the live <details> immediately so live interaction is
-// smooth without waiting for the next render.
+// #groups-list container. It is bound once at init and delegated so it also
+// covers keyed nodes that are moved or conditionally mounted. mouseover sets
+// the key to the group whose <summary> the pointer is over (null over the
+// expanded member body, matching the header-only reveal), and mouseleave
+// clears it when the pointer exits the list entirely. It also toggles
+// .quick-hover immediately so live interaction stays smooth.
 function bindGroupQuickHover() {
   const root = $('#groups-list');
   if (!root) return;
   const setHover = key => {
     if (key === hoveredGroupKey) return;
-    hoveredGroupKey = key;
-    // Re-sync the live DOM now; the next renderGroups also re-stamps from the
-    // key, so a poll landing between events can't lose it.
+    setHoveredGroupKey(key);
+    // Re-sync every currently mounted keyed group immediately.
     root.querySelectorAll('details[data-group-key]').forEach(d => {
       d.classList.toggle('quick-hover', d.getAttribute('data-group-key') === key);
     });
