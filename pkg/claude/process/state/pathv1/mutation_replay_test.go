@@ -261,8 +261,12 @@ func TestActivateAnyReplayIsAtomicAndIdempotent(t *testing.T) {
 	postView.Routing = &before
 	replayView := MutationReplayView{Aggregate: postView, Checkpoint: CheckpointBinding{Generation: 4, Digest: strings.Repeat("a", 64)}}
 	losingCandidates := []CandidateID{detachment.CandidateID}
+	foldDigest, _, causeDigest, err := activationFold(before, beforeReservation)
+	if err != nil {
+		t.Fatal(err)
+	}
 	plan := ActivateGenerationPlan{
-		ReservationID: r.ID, Generation: 1, InputDigest: "candidate-fold", CauseDigest: "cause-union", JoinPolicy: JoinAny,
+		ReservationID: r.ID, Generation: 1, InputDigest: foldDigest, CauseDigest: causeDigest, JoinPolicy: JoinAny,
 		InputPathIDs: []PathID{winnerID}, WinnerPathID: winnerID, LosingCandidateIDs: losingCandidates, PreArrivedLoserPathIDs: []PathID{loserID},
 		Candidates: r.Candidates, PossibleSlots: r.PossibleSlots, Batch: batch,
 	}
@@ -279,6 +283,24 @@ func TestActivateAnyReplayIsAtomicAndIdempotent(t *testing.T) {
 	}
 	if result.Disposition != ReplayApplied || result.Routing.Paths[loserID].State != PathDetachedSink || result.Routing.Paths[loserID].DetachedSink.CommandID != command.ID {
 		t.Fatalf("any replay = %q, %#v", result.Disposition, result.Routing.Paths[loserID])
+	}
+	materialized, err := batch.materialize(command.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for mask := 1; mask < (1<<len(materialized))-1; mask++ {
+		partial := Clone(before)
+		for index, mutation := range materialized {
+			if mask&(1<<index) != 0 {
+				if err := applyRecordMutation(&partial, mutation); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		replayView.Aggregate.Routing = &partial
+		if _, err := ReplayActivateGeneration(replayView, command); !errors.Is(err, ErrMutationInconsistent) {
+			t.Fatalf("partial any mask %#x error = %v", mask, err)
+		}
 	}
 	replayView.Aggregate.Routing = &result.Routing
 	result, err = ReplayActivateGeneration(replayView, command)
@@ -311,6 +333,116 @@ func TestPropagationDuplicateShardDeterminism(t *testing.T) {
 	conflict.Cursor = 1
 	if _, err := normalizePropagationIntents([]PropagationIntent{conflict, intent}); !errors.Is(err, ErrMutationInconsistent) {
 		t.Fatalf("different-byte duplicate error = %v", err)
+	}
+}
+
+func TestPropagateClosureReplayBindsRootFrontierAndIntent(t *testing.T) {
+	view, sourcePathID, reservationID := validOpenArrivalFixture(t)
+	reservation := view.Routing.Reservations[reservationID]
+	candidate := reservation.Candidates[0]
+	causeDigest, _ := CauseSetIdentity(nil)
+	view.Routing.CauseSets[causeDigest] = CauseSetRecord{Digest: causeDigest, CauseIDs: []CauseID{}}
+	before := Clone(*view.Routing)
+	frontierKey, _ := CandidateClosureKeyIdentity(reservationID, candidate.ID)
+	frontier := []CandidateClosureKey{frontierKey}
+	intentPlan, _ := PropagationPlanIdentity(reservationID, candidate.ID, causeDigest, 0, frontier)
+	intentID, _ := PropagationIntentIdentity(causeDigest, 0, intentPlan)
+	intent := PropagationIntent{
+		ID: intentID, RootReservationID: reservationID, RootCandidateID: candidate.ID, RootCauseDigest: causeDigest,
+		Shard: 0, Cursor: 1, Frontier: frontier, PlanDigest: intentPlan, State: PropagationComplete,
+		CommandID: MutationCommandPlaceholder, EventSeq: 3,
+	}
+	afterTemplate := Clone(before)
+	afterTemplate.Propagation[intentID] = intent
+	batch, err := NewMutationBatch(&before, &afterTemplate, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view.Routing = &before
+	replayView := MutationReplayView{Aggregate: view, Checkpoint: CheckpointBinding{Generation: 9, Digest: strings.Repeat("9", 64)}}
+	plan := PropagateClosurePlan{
+		SourcePathID: sourcePathID, TargetReservationID: reservationID, TargetGeneration: 1,
+		InputDigest: intentPlan, CauseDigest: causeDigest, RootReservationID: reservationID, RootCandidateID: candidate.ID, RootCauseDigest: causeDigest,
+		Intents: []PropagationIntent{intent, intent}, Batch: batch,
+	}
+	payload, err := EncodePropagateClosurePayload(replayView, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := CommandIdentity{
+		RunID: view.RunID, Kind: CommandPropagateCandidateClosure, PayloadSchema: 1,
+		SourcePathID: sourcePathID, TargetReservationID: reservationID, TargetGeneration: 1,
+		InputDigest: intentPlan, CauseDigest: causeDigest, PlanDigest: payloadDigest(payload),
+	}
+	command := commandWithPayload(t, identity, CommandObserved, payload)
+	replayView.Aggregate.Commands[command.ID] = command
+	result, err := ReplayPropagateClosure(replayView, command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Disposition != ReplayApplied || result.Routing.Propagation[intentID].CommandID != command.ID {
+		t.Fatalf("propagation replay = %q, %#v", result.Disposition, result.Routing.Propagation[intentID])
+	}
+	replayView.Aggregate.Routing = &result.Routing
+	result, err = ReplayPropagateClosure(replayView, command)
+	if err != nil || result.Disposition != ReplayAlreadyApplied {
+		t.Fatalf("propagation idempotent replay = %q, %v", result.Disposition, err)
+	}
+}
+
+func TestSettleDetachedSinkCreatesLateArrivalAtomically(t *testing.T) {
+	postView := validSlowAnyFixture(t, false)
+	var late PathRecord
+	for _, path := range postView.Routing.Paths {
+		if path.State == PathDetachedSink && path.DetachedSink != nil && path.DetachedSink.ReasonCode == "late_any_arrival" {
+			late = path
+			break
+		}
+	}
+	if late.ID == "" {
+		t.Fatal("late detached sink missing")
+	}
+	before := Clone(*postView.Routing)
+	delete(before.Paths, late.ID)
+	afterTemplate := Clone(*postView.Routing)
+	templatePath := afterTemplate.Paths[late.ID]
+	templatePath.Disposition.CommandID = MutationCommandPlaceholder
+	templatePath.Disposition.ID, _ = DispositionReceiptIdentity(templatePath.ID, PathArrived, PathDetachedSink, "late_any_arrival", MutationCommandPlaceholder, "", uint64(templatePath.UpdatedSeq))
+	templatePath.DetachedSink.CommandID = MutationCommandPlaceholder
+	afterTemplate.Paths[late.ID] = templatePath
+	batch, err := NewMutationBatch(&before, &afterTemplate, late.UpdatedSeq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	postView.Routing = &before
+	replayView := MutationReplayView{Aggregate: postView, Checkpoint: CheckpointBinding{Generation: 8, Digest: strings.Repeat("8", 64)}}
+	plan := SettleDetachedSinkPlan{
+		SourcePathID: late.ID, ReservationID: late.TargetReservationID, Generation: late.SourceActivation.Generation,
+		DetachmentSetID: late.DetachmentSetID, DetachmentID: late.DetachedSink.DetachmentID,
+		ResultCode: "detached", Batch: batch,
+	}
+	payload, err := EncodeSettleDetachedSinkPayload(replayView, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := CommandIdentity{
+		RunID: postView.RunID, Kind: CommandSettleDetachedSink, PayloadSchema: 1,
+		SourcePathID: late.ID, TargetReservationID: late.TargetReservationID, TargetGeneration: late.SourceActivation.Generation,
+		InputDigest: late.DetachmentSetID, ResultCode: "detached",
+	}
+	command := commandWithPayload(t, identity, CommandObserved, payload)
+	replayView.Aggregate.Commands[command.ID] = command
+	result, err := ReplaySettleDetachedSink(replayView, command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Disposition != ReplayApplied || result.Routing.Paths[late.ID].DetachedSink.CommandID != command.ID {
+		t.Fatalf("late sink replay = %q, %#v", result.Disposition, result.Routing.Paths[late.ID])
+	}
+	replayView.Aggregate.Routing = &result.Routing
+	result, err = ReplaySettleDetachedSink(replayView, command)
+	if err != nil || result.Disposition != ReplayAlreadyApplied {
+		t.Fatalf("late sink idempotent replay = %q, %v", result.Disposition, err)
 	}
 }
 
@@ -374,6 +506,35 @@ func TestCompleteRunClaimObservationAndRecovery(t *testing.T) {
 	multiple.Aggregate.Commands[other.ID] = other
 	if _, err := RecoverCompleteRun(multiple); !errors.Is(err, ErrMutationInconsistent) {
 		t.Fatalf("multiple completion error = %v", err)
+	}
+
+	missingSelf := claimed
+	missingSelf.CheckpointJSON = pre.CheckpointJSON
+	if _, err := RecoverCompleteRun(missingSelf); err == nil {
+		t.Fatal("claimed completion without checkpoint self accepted")
+	}
+	extraCheckpoint := observed
+	var raw map[string]any
+	if err := json.Unmarshal(observed.CheckpointJSON, &raw); err != nil {
+		t.Fatal(err)
+	}
+	raw["unexpectedDurableState"] = true
+	extraCheckpoint.CheckpointJSON, _ = json.Marshal(raw)
+	if _, err := RecoverCompleteRun(extraCheckpoint); !errors.Is(err, ErrMutationInconsistent) {
+		t.Fatalf("extra checkpoint state error = %v", err)
+	}
+	terminalWithoutCommand := pre
+	terminalWithoutCommand.RunStatus = "completed"
+	terminalWithoutCommand.CheckpointJSON = completionCheckpoint(t, "completed", 2, "sum-2", nil)
+	if _, err := RecoverCompleteRun(terminalWithoutCommand); !errors.Is(err, ErrMutationInconsistent) {
+		t.Fatalf("terminal without command error = %v", err)
+	}
+	active := pre
+	active.Aggregate.Commands = cloneMap(pre.Aggregate.Commands)
+	activeCommand := makeTestCommand(t, CommandIdentity{RunID: active.Aggregate.RunID, Kind: CommandPerformAttempt, PayloadSchema: 1, SourceActivationID: active.Aggregate.Authority.Genesis.ActivationID, SourceGeneration: 1, Attempt: 1, PlanDigest: "work"}, CommandIssued)
+	active.Aggregate.Commands[activeCommand.ID] = activeCommand
+	if _, err := PlanCompleteRun(active); err == nil {
+		t.Fatal("completion planned with another active command")
 	}
 }
 

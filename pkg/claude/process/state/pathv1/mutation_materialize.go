@@ -124,7 +124,11 @@ func materializeRecord(kind MutationRecordKind, key string, data []byte, command
 			return "", nil, err
 		}
 		if actual, ok := pathIDs[value.ID]; ok {
+			old := value.ID
 			value.ID, key = actual, actual
+			if value.Disposition != nil && value.Disposition.PathID == old {
+				value.Disposition.PathID = actual
+			}
 		}
 		if actual, ok := pathIDs[value.ParentPathID]; ok {
 			value.ParentPathID = actual

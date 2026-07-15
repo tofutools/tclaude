@@ -99,11 +99,14 @@ func (p SettleDetachedSinkPlan) Validate() error {
 	if p.SourcePathID == "" || p.ReservationID == "" || p.Generation == 0 || p.DetachmentSetID == "" || p.DetachmentID == "" || p.ResultCode == "" {
 		return fmt.Errorf("%w: detached-sink plan lacks complete bindings", ErrMutationInvalid)
 	}
+	if p.ResultCode != "detached" {
+		return fmt.Errorf("%w: detached-sink result %q, want detached", ErrMutationInvalid, p.ResultCode)
+	}
 	if err := p.Batch.Validate(); err != nil {
 		return err
 	}
-	if len(p.Batch.Mutations) != 1 || p.Batch.Mutations[0].Kind != MutationPath || p.Batch.Mutations[0].Key != p.SourcePathID || len(p.Batch.Mutations[0].Before) == 0 || len(p.Batch.Mutations[0].After) == 0 {
-		return fmt.Errorf("%w: detached-sink command must own exactly one path update", ErrMutationInvalid)
+	if len(p.Batch.Mutations) != 1 || p.Batch.Mutations[0].Kind != MutationPath || p.Batch.Mutations[0].Key != p.SourcePathID || len(p.Batch.Mutations[0].Before) != 0 || len(p.Batch.Mutations[0].After) == 0 {
+		return fmt.Errorf("%w: detached-sink command must own exactly one atomic arrived-to-sink path create", ErrMutationInvalid)
 	}
 	return nil
 }
@@ -127,10 +130,9 @@ func sortedSlotRecords(values []PossibleSlotRecord) bool {
 }
 
 func normalizePropagationIntents(values []PropagationIntent) ([]PropagationIntent, error) {
-	ordered := append([]PropagationIntent(nil), values...)
-	slices.SortFunc(ordered, comparePropagationIntent)
-	out := ordered[:0]
-	for _, intent := range ordered {
+	out := make([]PropagationIntent, 0, len(values))
+	owners := map[string][]byte{}
+	for index, intent := range values {
 		if intent.ID == "" || intent.RootReservationID == "" || intent.RootCandidateID == "" || intent.RootCauseDigest == "" || intent.PlanDigest == "" || !intent.State.Valid() || intent.Cursor > uint32(len(intent.Frontier)) || !sortedUnique(intent.Frontier) {
 			return nil, fmt.Errorf("%w: invalid propagation intent %q", ErrMutationInvalid, intent.ID)
 		}
@@ -142,13 +144,20 @@ func normalizePropagationIntents(values []PropagationIntent) ([]PropagationInten
 		if err != nil || id != intent.ID {
 			return nil, fmt.Errorf("%w: propagation intent %q identity mismatch", ErrMutationInvalid, intent.ID)
 		}
-		if len(out) > 0 && out[len(out)-1].RootCauseDigest == intent.RootCauseDigest && out[len(out)-1].Shard == intent.Shard {
-			left, _ := json.Marshal(out[len(out)-1])
-			right, _ := json.Marshal(intent)
-			if !bytes.Equal(left, right) {
+		encoded, _ := json.Marshal(intent)
+		owner := fmt.Sprintf("%s/%d", intent.RootCauseDigest, intent.Shard)
+		if previous, duplicate := owners[owner]; duplicate {
+			if !bytes.Equal(previous, encoded) {
 				return nil, fmt.Errorf("%w: duplicate propagation shard has different bytes", ErrMutationInconsistent)
 			}
+			if index == 0 || comparePropagationIntent(values[index-1], intent) != 0 {
+				return nil, fmt.Errorf("%w: identical duplicate propagation shard is not adjacent", ErrMutationInvalid)
+			}
 			continue
+		}
+		owners[owner] = encoded
+		if index > 0 && comparePropagationIntent(values[index-1], intent) >= 0 {
+			return nil, fmt.Errorf("%w: propagation intents are not in deterministic order", ErrMutationInvalid)
 		}
 		out = append(out, intent)
 	}
@@ -267,13 +276,88 @@ func ValidateActivateGenerationCommand(view MutationReplayView, command CommandR
 	if !ok || reservation.State != ReservationOpen || reservation.Generation != plan.Generation || reservation.JoinPolicy != plan.JoinPolicy || !canonicalEqual(reservation.Candidates, plan.Candidates) || !canonicalEqual(reservation.PossibleSlots, plan.PossibleSlots) {
 		return fmt.Errorf("%w: activation plan does not carry byte-exact open reservation candidates/slots", ErrMutationInvalid)
 	}
+	fold, arrivals, causeDigest, err := activationFold(pre, reservation)
+	if err != nil {
+		return err
+	}
+	if fold != plan.InputDigest || causeDigest != plan.CauseDigest {
+		return fmt.Errorf("%w: activation input/cause digest differs from exact candidate fold", ErrMutationInvalid)
+	}
+	afterMutation, ok := findMutation(plan.Batch, MutationReservation, plan.ReservationID)
+	if !ok || len(afterMutation.After) == 0 {
+		return fmt.Errorf("%w: activation plan does not transition its reservation", ErrMutationInvalid)
+	}
+	var afterReservation ActivationReservation
+	if err := decodeExactPayload(afterMutation.After, &afterReservation); err != nil {
+		return err
+	}
+	switch afterReservation.State {
+	case ReservationActivated:
+		if plan.JoinPolicy != JoinAny && !slices.Equal(plan.InputPathIDs, arrivals) {
+			return fmt.Errorf("%w: activation inputs differ from exact arrived candidate set", ErrMutationInvalid)
+		}
+	case ReservationClosedNoActivation:
+		if !slices.Equal(plan.InputPathIDs, arrivals) {
+			return fmt.Errorf("%w: close inputs differ from exact arrived candidate set", ErrMutationInvalid)
+		}
+	default:
+		return fmt.Errorf("%w: reservation post-state is not terminal", ErrMutationInvalid)
+	}
 	if plan.JoinPolicy == JoinAny {
-		return validateAnyPlan(pre, command.ID, plan)
+		return validateAnyPlan(pre, plan)
 	}
 	return nil
 }
 
-func validateAnyPlan(pre RoutingState, commandID string, plan ActivateGenerationPlan) error {
+func activationFold(pre RoutingState, reservation ActivationReservation) (string, []PathID, CauseDigest, error) {
+	entries := make([]CandidateFoldEntry, 0, len(reservation.Candidates))
+	arrivals := make([]PathID, 0)
+	causeIDs := make([]CauseID, 0)
+	for _, candidate := range reservation.Candidates {
+		candidateArrivals := make([]PathID, 0, 1)
+		for _, path := range pre.Paths {
+			if path.Kind == PathEdge && path.State == PathArrived && path.TargetReservationID == reservation.ID && path.CandidateID == candidate.ID {
+				candidateArrivals = append(candidateArrivals, path.ID)
+			}
+		}
+		slices.Sort(candidateArrivals)
+		if len(candidateArrivals) > 1 {
+			return "", nil, "", fmt.Errorf("%w: candidate %q has duplicate arrivals", ErrMutationInconsistent, candidate.ID)
+		}
+		if len(candidateArrivals) == 1 {
+			entries = append(entries, CandidateFoldEntry{CandidateID: candidate.ID, FoldKind: "arrived", PathOrClosureID: candidateArrivals[0]})
+			arrivals = append(arrivals, candidateArrivals[0])
+			continue
+		}
+		key, err := CandidateClosureKeyIdentity(reservation.ID, candidate.ID)
+		if err != nil {
+			return "", nil, "", err
+		}
+		closure, ok := pre.CandidateClosures[key]
+		if !ok {
+			entries = append(entries, CandidateFoldEntry{CandidateID: candidate.ID, FoldKind: CandidateFoldOpen})
+			continue
+		}
+		entries = append(entries, CandidateFoldEntry{CandidateID: candidate.ID, FoldKind: string(closure.TerminalKind), PathOrClosureID: closure.ID})
+		set, ok := pre.CauseSets[closure.CauseDigest]
+		if !ok {
+			return "", nil, "", fmt.Errorf("%w: closure %q cause set missing", ErrMutationInconsistent, closure.ID)
+		}
+		causeIDs = append(causeIDs, set.CauseIDs...)
+	}
+	slices.Sort(arrivals)
+	fold, err := CandidateFoldIdentity(entries)
+	if err != nil {
+		return "", nil, "", err
+	}
+	causeDigest, err := CauseSetIdentity(causeIDs)
+	if err != nil {
+		return "", nil, "", err
+	}
+	return fold, arrivals, causeDigest, nil
+}
+
+func validateAnyPlan(pre RoutingState, plan ActivateGenerationPlan) error {
 	winner, ok := pre.Paths[plan.WinnerPathID]
 	if !ok || winner.State != PathArrived || winner.TargetReservationID != plan.ReservationID {
 		return fmt.Errorf("%w: any winner is not an arrived reservation path", ErrMutationInvalid)
@@ -360,6 +444,29 @@ func ValidatePropagateClosureCommand(view MutationReplayView, command CommandRec
 	if id.SourcePathID != plan.SourcePathID || id.TargetReservationID != plan.TargetReservationID || id.TargetGeneration != plan.TargetGeneration || id.InputDigest != plan.InputDigest || id.CauseDigest != plan.CauseDigest {
 		return fmt.Errorf("%w: propagation command identity differs from typed plan", ErrMutationInvalid)
 	}
+	if plan.CauseDigest != plan.RootCauseDigest {
+		return fmt.Errorf("%w: propagation cause differs from root cause union", ErrMutationInvalid)
+	}
+	pre, err := plan.Batch.preState(view.Aggregate.Routing, command.ID)
+	if err != nil {
+		return err
+	}
+	root, ok := pre.Reservations[plan.RootReservationID]
+	if !ok || root.Generation != plan.TargetGeneration {
+		return fmt.Errorf("%w: propagation root reservation/generation missing", ErrMutationInvalid)
+	}
+	if _, ok := slices.BinarySearchFunc(root.Candidates, plan.RootCandidateID, func(candidate CandidateRecord, id CandidateID) int { return cmp.Compare(candidate.ID, id) }); !ok {
+		return fmt.Errorf("%w: propagation root candidate is not reserved", ErrMutationInvalid)
+	}
+	target, ok := pre.Reservations[plan.TargetReservationID]
+	if !ok || target.Generation != plan.TargetGeneration {
+		return fmt.Errorf("%w: propagation first target reservation/generation missing", ErrMutationInvalid)
+	}
+	if plan.SourcePathID != "" {
+		if _, ok := pre.Paths[plan.SourcePathID]; !ok {
+			return fmt.Errorf("%w: propagation source path missing", ErrMutationInvalid)
+		}
+	}
 	intents, err := normalizePropagationIntents(plan.Intents)
 	if err != nil {
 		return err
@@ -368,12 +475,21 @@ func ValidatePropagateClosureCommand(view MutationReplayView, command CommandRec
 		return fmt.Errorf("%w: propagation shard count %d exceeds %d", ErrMutationInvalid, len(intents), MaxPropagationShards)
 	}
 	for _, intent := range intents {
-		if intent.RootReservationID != plan.RootReservationID || intent.RootCandidateID != plan.RootCandidateID || intent.RootCauseDigest != plan.RootCauseDigest || intent.CommandID != MutationCommandPlaceholder || intent.EventSeq != plan.Batch.EventSeq {
+		if intent.RootReservationID != plan.RootReservationID || intent.RootCandidateID != plan.RootCandidateID || intent.RootCauseDigest != plan.RootCauseDigest || intent.EventSeq != plan.Batch.EventSeq {
 			return fmt.Errorf("%w: propagation intent differs from root/command/event", ErrMutationInvalid)
 		}
 		mutation, ok := findMutation(plan.Batch, MutationPropagation, intent.ID)
 		if !ok || !bytes.Equal(mutation.After, mustMarshal(intent)) {
 			return fmt.Errorf("%w: propagation intent %q missing from exact batch", ErrMutationInvalid, intent.ID)
+		}
+		if len(mutation.Before) == 0 && intent.CommandID != MutationCommandPlaceholder {
+			return fmt.Errorf("%w: created propagation intent lacks command sentinel", ErrMutationInvalid)
+		}
+		if len(mutation.Before) > 0 {
+			var before PropagationIntent
+			if err := decodeExactPayload(mutation.Before, &before); err != nil || intent.CommandID != before.CommandID {
+				return fmt.Errorf("%w: resumed propagation intent changes command authority", ErrMutationInvalid)
+			}
 		}
 	}
 	return nil
@@ -396,24 +512,23 @@ func ValidateSettleDetachedSinkCommand(view MutationReplayView, command CommandR
 	if err != nil {
 		return err
 	}
-	path, ok := pre.Paths[plan.SourcePathID]
-	if !ok || path.State != PathArrived || path.TargetReservationID != plan.ReservationID {
-		return fmt.Errorf("%w: detached sink source is not the exact arrived loser", ErrMutationInvalid)
+	if _, exists := pre.Paths[plan.SourcePathID]; exists {
+		return fmt.Errorf("%w: detached sink source is partially present before its atomic create", ErrMutationInconsistent)
 	}
 	reservation, ok := pre.Reservations[plan.ReservationID]
 	if !ok || reservation.State != ReservationActivated || reservation.Generation != plan.Generation {
 		return fmt.Errorf("%w: detached sink reservation is not closed by activation", ErrMutationInvalid)
 	}
-	key, _ := DetachmentKeyIdentity(plan.ReservationID, path.CandidateID)
-	detachment, ok := pre.Detachments[key]
-	if !ok || detachment.ID != plan.DetachmentID || !detachmentSetContainsExact(pre, plan.DetachmentSetID, plan.DetachmentID) {
-		return fmt.Errorf("%w: detached sink lacks exact detachment/set authority", ErrMutationInvalid)
-	}
 	var after PathRecord
 	if err := decodeExactPayload(plan.Batch.Mutations[0].After, &after); err != nil {
 		return err
 	}
-	if after.State != PathDetachedSink || after.DetachmentSetID != plan.DetachmentSetID || after.Disposition == nil || after.DetachedSink == nil || after.Disposition.CommandID != MutationCommandPlaceholder || after.Disposition.ReasonCode != "late_any_arrival" || after.DetachedSink.CommandID != MutationCommandPlaceholder || after.DetachedSink.DetachmentID != plan.DetachmentID || after.DetachedSink.ReasonCode != "late_any_arrival" || after.UpdatedSeq != plan.Batch.EventSeq {
+	key, _ := DetachmentKeyIdentity(plan.ReservationID, after.CandidateID)
+	detachment, ok := pre.Detachments[key]
+	if !ok || detachment.ID != plan.DetachmentID || !detachmentSetContainsExact(pre, plan.DetachmentSetID, plan.DetachmentID) {
+		return fmt.Errorf("%w: detached sink lacks exact detachment/set authority", ErrMutationInvalid)
+	}
+	if after.ID != plan.SourcePathID || after.Kind != PathEdge || after.State != PathDetachedSink || after.SourceActivation.Generation != plan.Generation || after.TargetReservationID != plan.ReservationID || after.DetachmentSetID != plan.DetachmentSetID || after.Disposition == nil || after.DetachedSink == nil || after.Disposition.FromState != PathArrived || after.Disposition.CommandID != MutationCommandPlaceholder || after.Disposition.ReasonCode != "late_any_arrival" || after.DetachedSink.CommandID != MutationCommandPlaceholder || after.DetachedSink.DetachmentID != plan.DetachmentID || after.DetachedSink.ReasonCode != "late_any_arrival" || after.ArrivedSeq != plan.Batch.EventSeq || after.CreatedSeq != plan.Batch.EventSeq || after.UpdatedSeq != plan.Batch.EventSeq {
 		return fmt.Errorf("%w: detached sink post-state differs from exact late-arrival transition", ErrMutationInvalid)
 	}
 	return nil
