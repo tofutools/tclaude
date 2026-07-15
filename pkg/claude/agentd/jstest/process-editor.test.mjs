@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ProcessTemplateEditor, isProcessEditorFormControl } from '../dashboard/js/process-editor.js';
 import { ProcessEditModel } from '../dashboard/js/process-edit-model.js';
+import { LiveValidation } from '../dashboard/js/process-validation.js';
 
 test('Delete dispatches against the current visible editor selection', () => {
   const selected = { type: 'node', id: 'highlighted' };
@@ -193,6 +194,35 @@ test('selection and diagnostic scribe handoffs fail visibly without current cont
   };
   assert.equal(await ProcessTemplateEditor.prototype.requestScribe.call(fake, 'selection'), false);
   assert.match(statuses.at(-1)[0], /Select one or more graph items/);
+  assert.equal(await ProcessTemplateEditor.prototype.requestScribe.call(fake, 'diagnostic'), false);
+  assert.match(statuses.at(-1)[0], /Focus a validation issue/);
+});
+
+test('diagnostic scribe handoff fails closed for production-shaped duplicate identities', async () => {
+  const entries = [
+    { code: 'undeclared_param_ref', scope: 'node', targetId: 'work', node: 'work', message: 'param foo is undeclared' },
+    { code: 'undeclared_param_ref', scope: 'node', targetId: 'work', node: 'work', message: 'param bar is undeclared' },
+  ];
+  const validation = {
+    mapped: { entries }, issueCursor: -1, focusedIssueIdentity: '', focusedIssueAmbiguous: false,
+    panel: { open: false }, list: { querySelector: () => null }, focusEntry() {},
+    currentIssue: LiveValidation.prototype.currentIssue,
+  };
+  assert.equal(LiveValidation.prototype.focusIssueAt.call(validation, 0, { focusButton: false }), true);
+  assert.equal(validation.focusedIssueAmbiguous, true, 'the two distinct messages share one stable identity');
+
+  const statuses = [];
+  const fake = {
+    blank: false, dirty: false, savePending: false, selection: null, validation,
+    model: {
+      template: { id: 'release-flow', nodes: { work: { type: 'task' } } }, edges: [],
+      currentRef: `release-flow@sha256:${'a'.repeat(64)}`, sourceHash: 'b'.repeat(64),
+    },
+    abort: { signal: { aborted: false } },
+    scribePreviewModal: async () => { throw new Error('ambiguous diagnostic must not reach preview'); },
+    options: { onScribe: async () => { throw new Error('ambiguous diagnostic must not be sent'); } },
+    status: (...args) => statuses.push(args),
+  };
   assert.equal(await ProcessTemplateEditor.prototype.requestScribe.call(fake, 'diagnostic'), false);
   assert.match(statuses.at(-1)[0], /Focus a validation issue/);
 });

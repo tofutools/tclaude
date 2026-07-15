@@ -326,6 +326,7 @@ export class LiveValidation {
   }
 
   currentIssue() {
+    if (this.focusedIssueAmbiguous) return null;
     const entries = this.mapped?.entries || [];
     const entry = this.issueCursor >= 0 && this.issueCursor < entries.length ? entries[this.issueCursor] : null;
     return entry && this.focusedIssueIdentity

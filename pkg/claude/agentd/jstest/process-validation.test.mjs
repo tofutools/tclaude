@@ -312,6 +312,17 @@ test('currentIssue returns only the explicitly focused stable diagnostic entry',
   assert.equal(LiveValidation.prototype.currentIssue.call({
     mapped: { entries: [unrelated] }, issueCursor: 0, focusedIssueIdentity: identity,
   }), null, 'an unrelated issue reusing the old array index is never current');
+
+  const duplicate = { ...entry, message: 'another issue with the same stable identity' };
+  const duplicateFocus = {
+    mapped: { entries: [entry, duplicate] }, issueCursor: -1,
+    focusedIssueIdentity: '', focusedIssueAmbiguous: false,
+    panel: { open: false }, list: { querySelector: () => null }, focusEntry() {},
+  };
+  assert.equal(LiveValidation.prototype.focusIssueAt.call(duplicateFocus, 0, { focusButton: false }), true);
+  assert.equal(duplicateFocus.focusedIssueAmbiguous, true);
+  assert.equal(LiveValidation.prototype.currentIssue.call(duplicateFocus), null,
+    'same-list duplicate identities fail closed immediately after focus');
 });
 
 test('focused diagnostics follow stable identity or clear when no longer exact', () => {
