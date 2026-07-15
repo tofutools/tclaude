@@ -1,0 +1,385 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createPreactHarness } from './preact-harness.mjs';
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+
+async function openRetire(t, options = {}) {
+  const harness = await createPreactHarness(t);
+  const [{ createTransactionDialogState }, island] = await Promise.all([
+    harness.importDashboardModule('js/transaction-dialog-state.js'),
+    harness.importDashboardModule('js/transaction-dialog-island.js'),
+  ]);
+  const state = createTransactionDialogState();
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const opener = harness.document.body.appendChild(harness.document.createElement('button'));
+  opener.id = 'retire-opener';
+  opener.focus();
+  const actions = {
+    close: state.close,
+    loadAgentWorktree: async () => ({ kind: 'none', path: '', removable: false }),
+    retireAgent: async () => {},
+    handoffDangling: async () => {},
+    ...options.actions,
+  };
+  const mounted = await harness.mount(harness.html`
+    <${island.TransactionDialogApp}
+      state=${state}
+      actions=${actions}
+      confirmDiscard=${async () => true}
+    />
+  `, host);
+  let pending;
+  await harness.act(() => {
+    pending = state.open({
+      kind: 'retire-agent',
+      conv: options.conv || 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      label: options.label || 'Retire target',
+    });
+  });
+  await harness.act(() => Promise.resolve());
+  return { harness, state, host, opener, actions, mounted, pending };
+}
+
+test('retire actions preserve raw conv identity, exact queries, and success outputs', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createTransactionDialogState }, { createTransactionDialogActions }] = await Promise.all([
+    harness.importDashboardModule('js/transaction-dialog-state.js'),
+    harness.importDashboardModule('js/transaction-dialog-actions.js'),
+  ]);
+  const state = createTransactionDialogState();
+  const requests = [];
+  const notices = [];
+  let refreshes = 0;
+  const actions = createTransactionDialogActions({
+    state,
+    fetchImpl: async (url, init) => {
+      requests.push([url, init]);
+      return new Response(JSON.stringify({
+        worktree: { action: 'scheduled', detail: 'worktree + branch will be removed after the agent exits' },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    },
+    notify: (...args) => notices.push(args),
+    refresh: async () => { refreshes += 1; },
+    confirm: async () => false,
+  });
+  const conv = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const pending = state.open({ kind: 'retire-agent', conv, label: 'Raw target' });
+  const result = await actions.retireAgent({ conv, label: 'Raw target', shutdown: true, deleteWorktree: true });
+  assert.equal(requests[0][0], `/api/agents/${conv}/retire?shutdown=1&delete_worktree=1`);
+  assert.equal(requests[0][1].method, 'POST');
+  assert.equal(requests[0][1].credentials, 'same-origin');
+  assert.deepEqual(notices, [[
+    'retired + session stopped: Raw target · worktree + branch will be removed after the agent exits',
+  ]]);
+  assert.equal(refreshes, 1);
+  assert.equal(state.dialog.value, null);
+  assert.deepEqual(await pending, { ok: true, response: result.response });
+
+  const second = state.open({ kind: 'retire-agent', conv, label: 'Raw target' });
+  await actions.retireAgent({ conv, label: 'Raw target', shutdown: false, deleteWorktree: false });
+  assert.equal(requests[1][0], `/api/agents/${conv}/retire?shutdown=0`);
+  await second;
+});
+
+test('retire action errors leave the frozen transaction mounted and dangling handoff is explicit', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createTransactionDialogState }, { createTransactionDialogActions }] = await Promise.all([
+    harness.importDashboardModule('js/transaction-dialog-state.js'),
+    harness.importDashboardModule('js/transaction-dialog-actions.js'),
+  ]);
+  const state = createTransactionDialogState();
+  const conv = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const descriptor = { kind: 'retire-agent', conv, label: 'Frozen target' };
+  state.open(descriptor);
+  const frozenDescriptor = state.dialog.value.descriptor;
+  const transport = createTransactionDialogActions({
+    state,
+    fetchImpl: async () => { throw new Error('network down'); },
+    refresh: async () => {}, notify: () => {}, confirm: async () => false,
+  });
+  await assert.rejects(
+    transport.retireAgent({ conv, label: descriptor.label, shutdown: false, deleteWorktree: false }),
+    /network down/,
+  );
+  assert.equal(state.dialog.value.descriptor.conv, conv);
+
+  const server = createTransactionDialogActions({
+    state,
+    fetchImpl: async () => new Response('retire backend unavailable', { status: 503 }),
+    refresh: async () => {}, notify: () => {}, confirm: async () => false,
+  });
+  await assert.rejects(
+    server.retireAgent({ conv, label: descriptor.label, shutdown: true, deleteWorktree: false }),
+    /retire backend unavailable/,
+  );
+  assert.equal(state.dialog.value.descriptor, frozenDescriptor,
+    'non-dangling HTTP errors do not close or replace the transaction');
+
+  let confirmedWhileOpen = null;
+  const requests = [];
+  const notices = [];
+  let refreshes = 0;
+  const dangling = createTransactionDialogActions({
+    state,
+    fetchImpl: async (url, init) => {
+      requests.push([url, init]);
+      if (init.method === 'DELETE') return new Response(null, { status: 204 });
+      return new Response(JSON.stringify({ dangling: true, conv_id: 'confirmed-conv-id' }), {
+        status: 409, headers: { 'Content-Type': 'application/json' },
+      });
+    },
+    confirm: async (copy) => {
+      confirmedWhileOpen = state.dialog.value;
+      assert.equal(copy.title, 'Remove dangling agent entry?');
+      assert.equal(copy.meta, 'Frozen target');
+      return true;
+    },
+    notify: (...args) => notices.push(args),
+    refresh: async () => { refreshes += 1; },
+  });
+  const outcome = await dangling.retireAgent({
+    conv, label: descriptor.label, shutdown: true, deleteWorktree: false,
+  });
+  assert.deepEqual(outcome, { dangling: true, convID: 'confirmed-conv-id' });
+  await dangling.handoffDangling({ ...outcome, conv, label: descriptor.label });
+  assert.equal(confirmedWhileOpen, null, 'retire dialog closes before shell confirmation takes ownership');
+  assert.equal(requests.at(-1)[0], '/api/agents/confirmed-conv-id');
+  assert.equal(requests.at(-1)[1].method, 'DELETE');
+  assert.deepEqual(notices, [['removed dangling entry: Frozen target']]);
+  assert.equal(refreshes, 1);
+});
+
+test('retire renderer preserves copy, corrected worktree defaults, coupling, and focus', async (t) => {
+  const probe = deferred();
+  const mounted = await openRetire(t, {
+    actions: { loadAgentWorktree: (_conv, options) => {
+      assert.equal(options.signal.aborted, false);
+      return probe.promise;
+    } },
+  });
+  const { harness, host, opener } = mounted;
+  assert.ok(host.querySelector('#retire-modal'));
+  assert.equal(host.querySelectorAll('#retire-modal').length, 1);
+  assert.equal(host.querySelector('#retire-title .retire-title-regular').textContent, 'Retire this agent?');
+  assert.equal(host.querySelector('#retire-title .retire-title-wizard').textContent, 'Banish this familiar?');
+  assert.match(host.querySelector('#retire-modal').textContent, /non-destructive soft-delete/);
+  assert.match(host.querySelector('#retire-modal .theme-copy-wizard').textContent, /plain conversation/,
+    'wizard copy is rendered concurrently so a live theme flip cannot reset state');
+  assert.equal(host.querySelector('#retire-wt-row'), null, 'worktree row stays hidden while probing');
+  assert.equal(host.querySelector('#retire-shutdown').hasAttribute('checked'), true);
+  assert.equal(harness.document.activeElement.id, 'retire-ok');
+
+  probe.resolve({
+    kind: 'linked', path: '/tmp/retire-wt', branch: 'feature', shared: false, removable: true,
+  });
+  await harness.act(() => Promise.resolve());
+  const worktree = host.querySelector('#retire-wt');
+  assert.ok(worktree);
+  assert.equal(worktree.disabled, false);
+  assert.equal(worktree.hasAttribute('checked'), true,
+    'a removable probe defaults deletion ON while shutdown is ON');
+  assert.match(host.querySelector('#retire-wt-label').textContent, /removed after the agent exits/);
+
+  const shutdown = host.querySelector('#retire-shutdown');
+  shutdown.checked = false;
+  await harness.act(() => harness.fireEvent(shutdown, 'change'));
+  assert.equal(worktree.disabled, true);
+  assert.equal(worktree.hasAttribute('checked'), false);
+  assert.match(host.querySelector('#retire-wt-label').textContent, /requires shutting down/);
+  shutdown.checked = true;
+  await harness.act(() => harness.fireEvent(shutdown, 'change'));
+  assert.equal(worktree.disabled, false);
+  assert.equal(worktree.hasAttribute('checked'), true,
+    're-enabling shutdown restores the removable default');
+
+  host.querySelector('#retire-cancel').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(host.querySelector('#retire-modal'), null);
+  assert.equal(harness.document.activeElement, opener);
+  assert.equal(await mounted.pending, null);
+  await mounted.mounted.unmount();
+});
+
+test('retire worktree probe distinguishes absent, main, and shared states', async (t) => {
+  for (const row of [
+    { name: 'absent', worktree: { kind: 'none', path: '', removable: false }, visible: false, copy: '' },
+    { name: 'main', worktree: { kind: 'main', path: '/repo', branch: 'main', removable: false }, visible: true, copy: 'main worktree' },
+    { name: 'shared', worktree: { kind: 'linked', path: '/repo/wt', branch: 'feature', shared: true, removable: false }, visible: true, copy: 'shared with another agent' },
+  ]) {
+    await t.test(row.name, async (t) => {
+      const mounted = await openRetire(t, {
+        actions: { loadAgentWorktree: async () => row.worktree },
+      });
+      await mounted.harness.act(() => Promise.resolve());
+      const wtRow = mounted.host.querySelector('#retire-wt-row');
+      assert.equal(!!wtRow, row.visible);
+      if (row.visible) {
+        assert.equal(wtRow.querySelector('input').disabled, true);
+        assert.equal(wtRow.querySelector('input').hasAttribute('checked'), false);
+        assert.match(wtRow.textContent, new RegExp(row.copy));
+      }
+      mounted.state.close();
+      await mounted.harness.act(() => Promise.resolve());
+      await mounted.mounted.unmount();
+    });
+  }
+});
+
+test('retire renderer aborts stale probes and ignores their late generations', async (t) => {
+  const first = deferred();
+  const second = deferred();
+  const signals = [];
+  let calls = 0;
+  const mounted = await openRetire(t, {
+    actions: { loadAgentWorktree: (_conv, { signal }) => {
+      signals.push(signal);
+      calls += 1;
+      return calls === 1 ? first.promise : second.promise;
+    } },
+  });
+  mounted.state.close();
+  await mounted.harness.act(() => Promise.resolve());
+  assert.equal(signals[0].aborted, true);
+
+  let pendingSecond;
+  await mounted.harness.act(() => {
+    pendingSecond = mounted.state.open({
+      kind: 'retire-agent', conv: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff', label: 'Second target',
+    });
+  });
+  await mounted.harness.act(() => Promise.resolve());
+  assert.equal(calls, 2, 'the reopened keyed dialog starts a fresh probe generation');
+  first.resolve({
+    kind: 'linked', path: '/stale', branch: 'stale', removable: true,
+  });
+  await mounted.harness.act(() => Promise.resolve());
+  assert.equal(mounted.host.querySelector('#retire-wt-row'), null,
+    'a prior generation cannot paint the reopened transaction');
+  second.resolve({
+    kind: 'linked', path: '/current', branch: 'current', removable: true,
+  });
+  await mounted.harness.act(() => Promise.resolve());
+  assert.match(mounted.host.querySelector('#retire-wt-label').textContent, /\/current/);
+  mounted.state.close();
+  await mounted.harness.act(() => Promise.resolve());
+  assert.equal(await pendingSecond, null);
+  await mounted.mounted.unmount();
+});
+
+test('retire failure stays inline with frozen choices and explicit retry', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createTransactionDialogState }, { createTransactionDialogActions }, island] = await Promise.all([
+    harness.importDashboardModule('js/transaction-dialog-state.js'),
+    harness.importDashboardModule('js/transaction-dialog-actions.js'),
+    harness.importDashboardModule('js/transaction-dialog-island.js'),
+  ]);
+  const state = createTransactionDialogState();
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const requests = [];
+  const first = deferred();
+  const replies = [
+    () => first.promise,
+    async () => { throw new Error('transport failed again'); },
+    async () => new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
+  ];
+  const notices = [];
+  let refreshes = 0;
+  const actions = createTransactionDialogActions({
+    state,
+    fetchImpl: (url, init) => {
+      requests.push([url, init]);
+      if (url.endsWith('/worktree')) {
+        return Promise.resolve(new Response(JSON.stringify({ kind: 'none', path: '', removable: false }), {
+          status: 200, headers: { 'Content-Type': 'application/json' },
+        }));
+      }
+      return replies.shift()();
+    },
+    refresh: async () => { refreshes += 1; },
+    notify: (...args) => notices.push(args),
+    confirm: async () => false,
+  });
+  const mounted = await harness.mount(harness.html`
+    <${island.TransactionDialogApp} state=${state} actions=${actions} confirmDiscard=${async () => true} />
+  `, host);
+  let completion;
+  await harness.act(() => { completion = state.open({
+    kind: 'retire-agent', conv: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', label: 'Retry target',
+  }); });
+  await harness.act(() => Promise.resolve());
+  const shutdown = host.querySelector('#retire-shutdown');
+  shutdown.checked = false;
+  await harness.act(() => harness.fireEvent(shutdown, 'change'));
+  host.querySelector('#retire-ok').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(requests.filter(([url]) => url.includes('/retire?')).length, 1);
+  assert.equal(host.querySelector('#retire-ok').getAttribute('aria-busy'), 'true');
+  assert.equal(host.querySelector('#retire-cancel').disabled, true);
+
+  const escape = new harness.window.Event('keydown', { bubbles: true });
+  Object.defineProperty(escape, 'key', { value: 'Escape' });
+  harness.document.dispatchEvent(escape);
+  const overlay = host.querySelector('#retire-modal');
+  overlay.dispatchEvent(new harness.window.Event('mousedown', { bubbles: true }));
+  overlay.dispatchEvent(new harness.window.Event('click', { bubbles: true }));
+  host.querySelector('#retire-ok').click();
+  assert.equal(requests.filter(([url]) => url.includes('/retire?')).length, 1,
+    'busy modal blocks dismissal and duplicate submit');
+
+  first.resolve(new Response('backend refused', { status: 503 }));
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.ok(host.querySelector('#retire-modal'), 'HTTP failure stays mounted');
+  assert.equal(host.querySelector('#retire-error').getAttribute('role'), 'alert');
+  assert.equal(host.querySelector('#retire-error').textContent, 'backend refused');
+  assert.equal(host.querySelector('#retire-shutdown').checked, false);
+  assert.equal(host.querySelector('#retire-shutdown').disabled, true,
+    'the first submitted choice is frozen for explicit retry');
+  assert.equal(host.querySelector('#retire-ok').textContent, 'Retry');
+
+  host.querySelector('#retire-ok').click();
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.equal(host.querySelector('#retire-error').textContent, 'transport failed again');
+  assert.ok(host.querySelector('#retire-modal'), 'transport failure also stays mounted');
+  host.querySelector('#retire-ok').click();
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  const retireRequests = requests.filter(([url]) => url.includes('/retire?'));
+  assert.equal(retireRequests.length, 3);
+  assert.deepEqual(retireRequests.map(([url]) => url), [
+    '/api/agents/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/retire?shutdown=0',
+    '/api/agents/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/retire?shutdown=0',
+    '/api/agents/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/retire?shutdown=0',
+  ]);
+  assert.equal(host.querySelector('#retire-modal'), null);
+  assert.deepEqual(notices, [['retired: Retry target']]);
+  assert.equal(refreshes, 1);
+  assert.deepEqual(await completion, { ok: true, response: {} });
+  await mounted.unmount();
+});
+
+test('concrete retire dialog yields Escape to a higher painted overlay', async (t) => {
+  const mounted = await openRetire(t);
+  const blocker = mounted.harness.document.body.appendChild(mounted.harness.document.createElement('div'));
+  blocker.id = 'higher-overlay';
+  blocker.className = 'modal-overlay show';
+  blocker.style.zIndex = '999';
+  mounted.host.querySelector('#retire-modal').style.zIndex = '100';
+  const escape = () => {
+    const event = new mounted.harness.window.Event('keydown', { bubbles: true });
+    Object.defineProperty(event, 'key', { value: 'Escape' });
+    mounted.harness.document.dispatchEvent(event);
+  };
+  escape();
+  await mounted.harness.act(() => Promise.resolve());
+  assert.ok(mounted.host.querySelector('#retire-modal'));
+  blocker.remove();
+  escape();
+  await mounted.harness.act(() => Promise.resolve());
+  assert.equal(mounted.host.querySelector('#retire-modal'), null);
+  await mounted.mounted.unmount();
+});
