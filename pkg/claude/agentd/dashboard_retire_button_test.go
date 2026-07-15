@@ -26,7 +26,8 @@ func helpersFuncBody(t *testing.T, name string) string {
 }
 
 func TestDashboardHTML_RetireButtonWired(t *testing.T) {
-	// Grouped and ungrouped menus keep the deliberately conv-keyed launcher.
+	// Grouped and ungrouped retire stays deliberately conv-keyed; only the
+	// ungrouped menu exposes permanent delete, using MenuButton's stable selector.
 	tmpl := helpersFuncBody(t, "MemberMenu")
 	for _, needle := range []string{
 		`selector="conv" act="retire-agent"`,
@@ -37,6 +38,9 @@ func TestDashboardHTML_RetireButtonWired(t *testing.T) {
 		if !strings.Contains(tmpl, needle) {
 			t.Errorf("MemberMenu: missing %q", needle)
 		}
+	}
+	if !strings.Contains(dashboardAssets, "await openDeleteAgentDialog(agent, label)") {
+		t.Error("ungrouped permanent delete does not launch the stable-agent transaction")
 	}
 
 	// Row, palette, and DnD all launch the one keyed transaction descriptor.
