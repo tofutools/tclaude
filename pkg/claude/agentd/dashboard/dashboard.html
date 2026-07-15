@@ -514,34 +514,11 @@
     </div>
   </div>
 </div>
-<div class="modal-overlay" id="term-modal">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="term-title">
-    <!-- Title copy swaps per theme (pure-CSS span swap, the same mechanism as
-         the spawn / retire / window-picker titles): "Open a terminal" normally,
-         "🔮 Open a scrying portal" in 🧙 wizard mode — a terminal onto a familiar
-         is a scrying portal in the palette's voice (the Terminals tab reads
-         "🔮 Scrying"). -->
-    <h3 id="term-title"><span class="term-title-regular">Open a terminal</span><span class="term-title-wizard">🔮 Open a scrying portal</span></h3>
-    <p><span class="theme-copy-regular">Spawn a terminal window for this agent. <strong>Current</strong> is where it
-    has most recently been editing files; <strong>Worktree</strong> is the git
-    worktree/repo root around that; <strong>Launch</strong> is where Claude Code
-    was started.</span><span class="theme-copy-wizard">Open a scrying portal for this familiar. <strong>Current</strong> is where it
-    most recently worked its craft; <strong>Worktree</strong> is the surrounding git
-    worktree/repo root; <strong>Launch</strong> is where it was summoned.</span></p>
-    <div class="modal-meta" id="term-meta"></div>
-    <div class="modal-buttons">
-      <button id="term-cancel">Cancel</button>
-      <button id="term-start">Launch dir</button>
-      <button id="term-worktree">Worktree dir</button>
-      <button id="term-current">Current dir</button>
-    </div>
-  </div>
-</div>
 <!-- term-session-modal: the in-browser xterm.js terminal, opened when
      /api/term or /api/open-window reports mode:"browser" (no native
      window available — headless agentd or no terminal emulator
-     installed). Distinct from #term-modal above, which is the
-     which-dir picker that runs BEFORE this. See js/modal-term.js. -->
+     installed). Distinct from the Preact-owned #term-modal directory chooser,
+     which runs BEFORE this. See js/modal-term.js. -->
 <div class="modal-overlay" id="term-session-modal">
   <div class="term-session-modal" role="dialog" aria-modal="true" aria-labelledby="term-session-title">
     <div class="term-session-header">
@@ -981,28 +958,9 @@
   </div>
 </div>
 <div id="management-root"></div>
+<!-- Small action dialogs are Preact-owned under this stable host. Their legacy
+     ids remain on rendered overlays so scoped plain/wizard CSS keeps working. -->
 <div id="action-dialog-root"></div>
-<!-- Generic "clone a preset under a new name" dialog for the palette dock's
-     card ⚙ → Clone menu item (profiles + roles). Title / blurb / submit copy are
-     JS-driven (modal-clone.js openCloneModal via wizWord) so one dialog serves
-     both kinds; the CHROME re-skins for wizard via the body.wizard #clone-modal
-     CSS block. Templates keep their own richer #template-duplicate-modal. -->
-<div class="modal-overlay" id="clone-modal">
-  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="clone-modal-title">
-    <h3 id="clone-modal-title"></h3>
-    <div class="modal-meta" id="clone-modal-blurb"></div>
-    <label class="cron-create-row">
-      <span class="cron-create-label">New name</span>
-      <input id="clone-modal-name" type="text" placeholder="kebab-or-snake-case label for the copy" autocomplete="off" spellcheck="false" />
-    </label>
-    <div class="cron-create-error" id="clone-modal-error"></div>
-    <div class="modal-buttons">
-      <button id="clone-modal-cancel" type="button">Cancel</button>
-      <span class="spacer"></span>
-      <button id="clone-modal-submit" class="primary" type="button">Create copy</button>
-    </div>
-  </div>
-</div>
 <div class="modal-overlay" id="cleanup-modal">
   <div class="cleanup-modal" role="dialog" aria-modal="true" aria-labelledby="cleanup-title">
     <h3 id="cleanup-title">Clean up</h3>
@@ -1447,56 +1405,6 @@
       <button id="agent-spawn-cancel" type="button">Cancel</button>
       <span class="spacer"></span>
       <button id="agent-spawn-submit" class="primary" type="button">Spawn</button>
-    </div>
-  </div>
-</div>
-<div class="modal-overlay" id="export-agent-modal">
-  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="export-agent-title">
-    <h3 id="export-agent-title"><span class="theme-copy-regular">Export conversation</span><span class="theme-copy-wizard">Inscribe conversation scroll</span></h3>
-    <div class="modal-meta" id="export-agent-meta"></div>
-    <div id="export-agent-form">
-      <p class="export-intro"><span class="theme-copy-regular">Ask this agent to consolidate a shareable export of the conversation — a summary or report for others to read. It runs on an isolated clone of the conversation, so the live agent is never disturbed; the file downloads here when it's ready. Multiple files are zipped automatically.</span><span class="theme-copy-wizard">Ask this familiar to inscribe a shareable account of its conversation. The work runs through an isolated mirror, so the live familiar is never disturbed; the finished scroll appears here. Multiple scrolls are bundled automatically.</span></p>
-      <label class="cron-create-row">
-        <span class="cron-create-label">Format</span>
-        <select id="export-agent-preset">
-          <option value="summary">Summary report (Markdown)</option>
-          <option value="detailed">Full detailed report</option>
-          <option value="custom">Custom — see instructions</option>
-        </select>
-      </label>
-      <label class="cron-create-row">
-        <span class="cron-create-label">Title</span>
-        <input id="export-agent-title-input" type="text" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional — names the download, e.g. 'Auth research summary'" />
-      </label>
-      <label class="cron-create-row">
-        <span class="cron-create-label">Instructions</span>
-        <textarea id="export-agent-instructions" rows="6" spellcheck="false" placeholder="How should the agent produce the export? Audience, focus, what to include or leave out, format. Leave blank to let the agent decide."></textarea>
-      </label>
-      <label class="export-same-group" title="The export runs on an isolated clone of this conversation so the live agent is never disturbed. By default the clone is standalone. Check this to put the clone in the same group(s) as the original, so the summary writer can message peers if it needs to.">
-        <input id="export-agent-same-group" type="checkbox" />
-        <span><span class="theme-copy-regular">Clone into the same group <span class="export-same-group-hint">— lets the summary writer message peers (default: isolated)</span></span><span class="theme-copy-wizard">Mirror into the same party <span class="export-same-group-hint">— lets the scribe send missives to peers (default: isolated)</span></span></span>
-      </label>
-    </div>
-    <div id="export-agent-status" role="status" aria-live="polite" aria-atomic="true" hidden>
-      <!-- One line per export phase; export-progress.js checks steps off as
-           the job climbs its status ladder (cloning → requested → running →
-           ready), with the spinner on the step in flight. -->
-      <div id="export-agent-checklist"></div>
-      <div class="export-status-note" id="export-agent-status-note"></div>
-    </div>
-    <div id="export-agent-history" class="export-history" hidden>
-      <div class="export-history-head">
-        <span class="export-history-title">Previous exports</span>
-        <button id="export-agent-clear" type="button" class="export-history-clear" title="Delete every saved export for this agent">Clear all</button>
-      </div>
-      <div id="export-agent-history-list" class="export-history-list"></div>
-    </div>
-    <div class="cron-create-error" id="export-agent-error"></div>
-    <div class="modal-buttons">
-      <button id="export-agent-cancel" type="button">Cancel</button>
-      <span class="spacer"></span>
-      <button id="export-agent-download" class="primary" type="button" hidden>Download</button>
-      <button id="export-agent-submit" class="primary" type="button">Export</button>
     </div>
   </div>
 </div>
