@@ -103,7 +103,9 @@ function GroupMenuItems({ group, members, snapshot }) {
     <${MenuButton} ...${shared} data-act="rename-group" title=${wizardMode ? 'Rename this party' : 'Rename this group'} regular="rename" wizard="rename party" onClick=${(event) => {
       event.preventDefault();
       event.stopPropagation();
-      interactions.beginEditor(`group:${name}:name`);
+      const cog = event.currentTarget.closest('.action-menu')
+        ?.parentElement?.querySelector('.cog-btn');
+      interactions.beginEditor(`group:${name}:name`, cog);
     }} />
     <${MenuButton} ...${shared} data-act="nest-group" title=${wizardMode ? 'Nest this party under another party on the board — layout only' : 'Nest this group under another so it draws inside it on the board — collapse the parent to tuck the subgroup away. Board layout only.'} regular="📂 nest under…" wizard="📂 nest party under…" />
     ${group.parent ? html`<${MenuButton} ...${shared} data-act="unnest-group" data-parent=${group.parent} title=${`Move this ${wizardMode ? 'party' : 'group'} back to the top level (currently nested under ${group.parent}).`} regular=${`📂 un-nest (under ${group.parent})`} wizard=${`📂 un-nest party (under ${group.parent})`} />` : null}
@@ -218,7 +220,7 @@ function GroupProfileChip({ group, actions, kind }) {
       onKeyDown=${(event) => {
         if (event.key === 'Escape') {
           event.preventDefault();
-          interactions.endEditor(editorKey);
+          interactions.endEditor(editorKey, true);
         }
       }}
       onBlur=${() => { if (!busyRef.current) interactions.endEditor(editorKey); }}
@@ -243,6 +245,7 @@ function GroupProfileChip({ group, actions, kind }) {
           setError((err && err.message) || String(err));
           busyRef.current = false;
           setBusy(false);
+          queueMicrotask(() => selectRef.current?.focus());
         }
       }}
     >
@@ -264,10 +267,10 @@ function GroupProfileChip({ group, actions, kind }) {
     data-group=${group.name} data-label=${group.name}
     data-profile=${sandbox ? undefined : current} data-sandbox-profile=${sandbox ? current : undefined}
     data-editor-key=${editorKey} title=${title}
-    onClick=${(event) => { event.preventDefault(); event.stopPropagation(); interactions.beginEditor(editorKey); }}
+    onClick=${(event) => { event.preventDefault(); event.stopPropagation(); interactions.beginEditor(editorKey, event.currentTarget); }}
     onKeyDown=${(event) => {
       if (event.key !== 'Enter' && event.key !== ' ') return;
-      event.preventDefault(); interactions.beginEditor(editorKey);
+      event.preventDefault(); interactions.beginEditor(editorKey, event.currentTarget);
     }}
   >${sandbox ? '🛡' : '🧠'}<span class="qo-text">${current ? ` ${current}` : ''}</span></span>`;
 }
