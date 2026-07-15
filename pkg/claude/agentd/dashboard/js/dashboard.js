@@ -39,14 +39,15 @@ import { bindDockDnd } from './dock-dnd.js';
 import { bindDockSaveDnd } from './dock-save-dnd.js';
 import {
   bindCronModal, openCronCreateModal, openCronEditModal,
-  openSudoGrantModal, pickSudoAgentModal,
 } from './modal-cron.js';
 import { bindTermModal } from './modal-term.js';
 import { initTerminalsTab } from './terminals-tab.js';
 import {
-  bindMessageModal, bindSudoModal, bindPermEditModal, bindGroupCreateModal, openSpawnPermEditor,
+  bindGroupCreateModal,
 } from './modal-message.js';
-import { bindHumanReplyModal } from './modal-human-reply.js';
+import {
+  openSudoGrantModal, openSpawnPermEditor, pickAgent,
+} from './message-access-dialog-controller.js';
 import {
   bindTemplatesUI, bindGroupImportModal, summonTemplateScribe,
 } from './modal-templates.js';
@@ -67,7 +68,7 @@ import { bindDock } from './dock.js';
 import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
 import {
-  mountAccessFeature, mountActionDialogsFeature, mountAuditFeature, mountConfigFeature, mountCostsFeature, mountDebugFeature, mountDirectoryPickerFeature, mountDockFeature, mountGroupsFeature, mountJobsFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature,
+  mountAccessFeature, mountActionDialogsFeature, mountAuditFeature, mountConfigFeature, mountCostsFeature, mountDebugFeature, mountDirectoryPickerFeature, mountDockFeature, mountGroupsFeature, mountJobsFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessageAccessDialogsFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature,
 } from './preact-loader.js';
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
 import { triggerExportDownload } from './export-progress.js';
@@ -169,6 +170,11 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   // not by the sum of seven dynamic-import chains. Await the whole group before
   // initNavHistory below so initial deep links still find every lazy loader.
   const featureCleanups = await Promise.all([
+    mountMessageAccessDialogsFeature({
+      refresh: dashboardActions.refresh,
+      notify: toast,
+      confirmDiscard,
+    }),
     mountGroupsFeature({ refresh: dashboardActions.refresh }),
     mountLinksFeature({
       refresh: dashboardActions.refresh,
@@ -190,7 +196,10 @@ export function sudoBadge(activeSudo, fallbackConvID) {
       confirm: confirmModal,
       notify: toast,
       openGrant: async () => {
-        const convID = await pickSudoAgentModal();
+        const convID = await pickAgent({
+          title: 'Grant sudo to', identity: 'conv', showSudo: true,
+          includeOfflineHint: 'Include offline / archived agents (the daemon will still grant; the agent sees the slug on next wake)',
+        });
         if (convID) openSudoGrantModal(convID);
       },
     }),
@@ -263,15 +272,11 @@ export function sudoBadge(activeSudo, fallbackConvID) {
     if (event.persisted) return;
     for (const cleanup of pageCleanups.reverse()) cleanup?.();
   });
-  bindSudoModal();
-  bindPermEditModal();
   bindCronModal();
   bindTermModal();
   // The in-SPA "Terminals" tab — mounts the multiplexer and starts hidden
   // (it reveals itself once "web term" / "web window" opens the first pane).
   initTerminalsTab();
-  bindMessageModal();
-  bindHumanReplyModal();
   bindGroupCreateModal();
   bindTemplatesUI();
   bindProfilesUI();
