@@ -220,6 +220,15 @@ test('add-member picker owns async pool retry, IME navigation and optimistic add
   assert.equal(host.querySelector('.add-member-row.highlighted .rowname').textContent, 'Alpha');
   await harness.act(() => harness.fireEvent(search, 'keydown', { key: 'ArrowDown' }));
   assert.equal(host.querySelector('.add-member-row.highlighted .rowname').textContent, 'Bravo');
+  await harness.act(() => state.publish(snapshot([{ name: 'alpha', members: [], online: 0 }], {
+    ungrouped: [
+      { conv_id: 'alpha-worker', agent_id: 'agt-alpha', title: 'Zulu', online: true },
+      { conv_id: 'bravo-worker', agent_id: 'agt-bravo', title: 'Bravo', online: true },
+    ],
+    agents: [{ conv_id: 'dormant', agent_id: 'agt-dormant', title: 'Dormant', online: false }],
+  })));
+  assert.equal(host.querySelector('.add-member-row.highlighted .rowname').textContent, 'Bravo',
+    'a same-length polling reorder retains the highlighted conv identity');
   await harness.act(() => harness.fireEvent(search, 'keydown', {
     key: 'Enter', isComposing: true,
   }));

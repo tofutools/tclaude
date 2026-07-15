@@ -43,7 +43,7 @@ import {
   bindGroupCreateModal,
 } from './modal-message.js';
 import {
-  openSudoGrantModal, openSpawnPermEditor, pickAgent,
+  openPermEditModal, openSudoGrantModal, openSpawnPermEditor, pickAgent,
 } from './message-access-dialog-controller.js';
 import {
   bindTemplatesUI, bindGroupImportModal, summonTemplateScribe,
