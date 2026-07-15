@@ -139,11 +139,19 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 			})
 			continue
 		}
+		cwd, cwdErr := livePaneCwd(oldSess.TmuxSession)
+		if cwdErr != nil {
+			results = append(results, memberResult{
+				SrcConv: m.ConvID,
+				Error:   "spawn: " + cwdErr.Error(),
+			})
+			continue
+		}
 		// Each clone runs the model + effort its own source is live on
 		// (inheritedLaunchFlags; "" falls back to claude's default).
 		effort, model := inheritedLaunchFlags(oldSess.ID)
 		newConv, _, label, warn, spawnErr := cloneSpawnOnce(
-			m.ConvID, oldSess.Cwd, body.NoCopyConv, effort, model,
+			m.ConvID, cwd, body.NoCopyConv, effort, model,
 			"", false, nil, "", nil)
 		if spawnErr != nil {
 			results = append(results, memberResult{

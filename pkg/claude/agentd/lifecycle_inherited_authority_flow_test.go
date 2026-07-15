@@ -111,6 +111,117 @@ func TestLifecycleInheritedAuthority_AgentOwnedDirectoriesNeedNoCallerProof(t *t
 	}
 }
 
+func TestLifecycleInheritedAuthority_UsesLivePanePhysicalCwd(t *testing.T) {
+	for _, clone := range []bool{false, true} {
+		name := "reincarnate"
+		if clone {
+			name = "clone"
+		}
+		t.Run(name, func(t *testing.T) {
+			if clone {
+				previous := agentd.CloneCooldown
+				agentd.CloneCooldown = 0
+				t.Cleanup(func() { agentd.CloneCooldown = previous })
+			}
+			f := newFlow(t)
+			const target = "physical-cwd-aaaa-bbbb-cccc-111111111111"
+			f.HaveGroup("crew")
+			f.HaveMember("crew", target)
+			oldPhysical := t.TempDir()
+			newPhysical := t.TempDir()
+			link := filepath.Join(t.TempDir(), "work")
+			require.NoError(t, os.Symlink(oldPhysical, link))
+			f.HaveAliveCodexSession(target, "physical-cwd", "tmux-physical-cwd", link)
+			if clone {
+				require.NoError(t, db.GrantAgentPermission(target, agentd.PermSelfClone, "test"))
+			}
+
+			// The stored launch spelling now points elsewhere, while the live pane
+			// remains on the inode it entered at launch.
+			require.NoError(t, os.Remove(link))
+			require.NoError(t, os.Symlink(newPhysical, link))
+			path := "/v1/whoami/reincarnate"
+			body := map[string]any{"follow_up": "continue"}
+			if clone {
+				path = "/v1/whoami/clone"
+				body = map[string]any{"no_copy_conv": true}
+			}
+			rec := agentReq(t, f, target, http.MethodPost, path, body)
+			require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+			var response struct {
+				NewConv string `json:"new_conv"`
+			}
+			testharness.DecodeJSON(t, rec, &response)
+			sessions, err := db.FindSessionsByConvID(response.NewConv)
+			require.NoError(t, err)
+			require.NotEmpty(t, sessions)
+			assert.Equal(t, oldPhysical, sessions[0].Cwd)
+			assert.NotEqual(t, newPhysical, sessions[0].Cwd)
+		})
+	}
+}
+
+func TestLifecycleInheritedAuthority_ReadOnlyCwdNeedsNoDaemonMarker(t *testing.T) {
+	for _, clone := range []bool{false, true} {
+		name := "reincarnate"
+		if clone {
+			name = "clone"
+		}
+		t.Run(name, func(t *testing.T) {
+			if clone {
+				previous := agentd.CloneCooldown
+				agentd.CloneCooldown = 0
+				t.Cleanup(func() { agentd.CloneCooldown = previous })
+			}
+			f := newFlow(t)
+			const target = "readonly-cwd-aaaa-bbbb-cccc-111111111111"
+			f.HaveGroup("crew")
+			f.HaveMember("crew", target)
+			cwd := t.TempDir()
+			f.HaveAliveCodexSession(target, "readonly-cwd", "tmux-readonly-cwd", cwd)
+			require.NoError(t, os.Chmod(cwd, 0o555))
+			t.Cleanup(func() { _ = os.Chmod(cwd, 0o755) })
+			if clone {
+				require.NoError(t, db.GrantAgentPermission(target, agentd.PermSelfClone, "test"))
+			}
+			path := "/v1/whoami/reincarnate"
+			body := map[string]any{"follow_up": "continue"}
+			if clone {
+				path = "/v1/whoami/clone"
+				body = map[string]any{"no_copy_conv": true}
+			}
+			rec := agentReq(t, f, target, http.MethodPost, path, body)
+			require.Equalf(t, http.StatusOK, rec.Code,
+				"an inherited lifecycle launch must not write a marker into cwd; body=%s", rec.Body.String())
+		})
+	}
+}
+
+func TestReincarnateIgnoresMissingSandboxWriteRootForCurrentLaunch(t *testing.T) {
+	f := newFlow(t)
+	group := f.HaveGroup("crew")
+	missing := filepath.Join(t.TempDir(), "future-cache")
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{
+		Name: "future-cache",
+		Filesystem: []db.SandboxFilesystemGrant{{
+			Path: missing, Access: "write",
+		}},
+	})
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupSandboxProfile(group.Name, "future-cache")
+	require.NoError(t, err)
+	target := f.AsHuman().SpawnWith(group.Name, map[string]any{
+		"name": "worker", "harness": "codex", "sandbox": "tclaude-agent", "cwd": t.TempDir(),
+	})
+	require.Equalf(t, http.StatusOK, target.Code, "spawn target body=%s", target.Raw)
+	require.NoFileExists(t, missing)
+
+	rec := agentReq(t, f, target.ConvID, http.MethodPost, "/v1/whoami/reincarnate",
+		map[string]any{"follow_up": "continue"})
+	require.Equalf(t, http.StatusOK, rec.Code,
+		"a missing profile root remains inactive instead of blocking reincarnation; body=%s", rec.Body.String())
+}
+
 func TestReincarnateRefreshesTargetSandboxProfile(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	f := newFlow(t)

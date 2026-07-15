@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -17,7 +16,6 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
-	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // reincarnateSuffixRegex matches a trailing reincarnation suffix in
@@ -335,7 +333,11 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 			"target conv "+short8(target)+" has no live tmux session; can't reincarnate without a cwd to spawn into (try `tclaude agent groups resume` first if it's offline)")
 		return
 	}
-	cwd := oldSess.Cwd
+	cwd, cwdErr := livePaneCwd(oldSess.TmuxSession)
+	if cwdErr != nil {
+		writeError(w, http.StatusInternalServerError, "io", cwdErr.Error())
+		return
+	}
 	relaunchPolicy, policyErr := resolveResumeSandboxPolicy(target)
 	if policyErr != nil {
 		writeEffectiveSandboxLoadError(w, &effectiveSandboxChangedError{err: policyErr})
@@ -371,56 +373,6 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
-	codexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(oldSess.Harness, reincarnateSandbox)
-	codexGitCommonDir := ""
-	var gitWriteDirs []string
-	if codexGitCommonDirPinned {
-		var commonErr error
-		codexGitCommonDir, commonErr = spawnGitCommonDir(oldSess.Harness, reincarnateSandbox, cwd)
-		if commonErr != nil {
-			writeError(w, http.StatusInternalServerError, "io", commonErr.Error())
-			return
-		}
-		if home, homeErr := os.UserHomeDir(); homeErr == nil {
-			gitWriteDirs = harness.GitWorktreeWriteDirs(cwd, codexGitCommonDir, home)
-		}
-	}
-	rawPins := appendUniqueDirs([]string{cwd}, gitWriteDirs...)
-	if effectiveSandbox != nil {
-		for _, grant := range effectiveSandbox.Effective.Filesystem {
-			if grant.Access == sandboxpolicy.AccessWrite {
-				rawPins = appendUniqueDirs(rawPins, grant.Path)
-			}
-		}
-	}
-	pinMapping, pinToken, pinDirs, cleanupPins, pinErr := pinInheritedLaunchDirs(rawPins)
-	if pinErr != nil {
-		writeError(w, http.StatusInternalServerError, "io", pinErr.Error())
-		return
-	}
-	defer cleanupPins()
-	if resolved := pinMapping[cwd]; resolved != "" {
-		cwd = resolved
-	}
-	for i, dir := range gitWriteDirs {
-		if resolved := pinMapping[dir]; resolved != "" {
-			gitWriteDirs[i] = resolved
-		}
-	}
-	if resolved := pinMapping[codexGitCommonDir]; resolved != "" {
-		codexGitCommonDir = resolved
-	}
-	if fail := reassertDirWriteProof(pinDirs); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
-		return
-	}
-	var grantFail *spawnFailure
-	gitWriteDirs, grantFail = canonicalizeRepositoryWriteDirs(gitWriteDirs, pinDirs, pinToken)
-	if grantFail != nil {
-		writeError(w, grantFail.Status, grantFail.Kind, grantFail.Msg)
-		return
-	}
-
 	// Reincarnation refreshes the target's policy through the same resolver as
 	// resume. Persist it before launch so the actor's durable snapshot and the
 	// successor's launch snapshot move together; every failure before identity
@@ -458,21 +410,16 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		}
 	}
 	if err := SpawnDetachedTclaudeNew(clcommon.SpawnArgs{
-		EffectiveSandbox:           effectiveSandbox,
-		Label:                      label,
-		Cwd:                        cwd,
-		CwdWriteProof:              pinToken,
-		Effort:                     effort,
-		Model:                      model,
-		Harness:                    oldSess.Harness,
-		Sandbox:                    reincarnateSandbox,
-		CodexGitCommonDir:          codexGitCommonDir,
-		CodexGitCommonDirPinned:    codexGitCommonDirPinned,
-		GitWorktreeWriteDirs:       gitWriteDirs,
-		GitWorktreeWriteDirsPinned: codexGitCommonDirPinned,
-		Approval:                   approvalForHarness(oldSess.Harness),
-		AskUserQuestionTimeout:     askTimeoutForRelaunch(target),
-		RemoteControl:              remoteControl,
+		EffectiveSandbox:       effectiveSandbox,
+		Label:                  label,
+		Cwd:                    cwd,
+		Effort:                 effort,
+		Model:                  model,
+		Harness:                oldSess.Harness,
+		Sandbox:                reincarnateSandbox,
+		Approval:               approvalForHarness(oldSess.Harness),
+		AskUserQuestionTimeout: askTimeoutForRelaunch(target),
+		RemoteControl:          remoteControl,
 	}); err != nil {
 		rollbackSandbox(true)
 		writeError(w, http.StatusInternalServerError, "spawn",

@@ -793,14 +793,18 @@ func TestSpawnDirProof_CodexCloneInheritedCwdNeedsNoProof(t *testing.T) {
 	testharness.DecodeJSON(t, rec, &resp)
 	dirs, ok := f.World.SpawnGitWorktreeWriteDirs(resp.NewConv)
 	require.True(t, ok)
-	assert.ElementsMatch(t, []string{repoParent, filepath.Join(repo, ".git")}, dirs,
-		"the daemon should pin inherited repository grants without challenging the caller")
+	assert.Empty(t, dirs,
+		"an inherited clone should let session-new derive repository grants from the physical cwd")
 	dirProof, ok := f.World.SpawnDirWriteProof(resp.NewConv)
 	require.True(t, ok)
 	assert.Empty(t, dirProof)
 	cwdProof, ok := f.World.SpawnCwdWriteProof(resp.NewConv)
 	require.True(t, ok)
-	assert.NotEmpty(t, cwdProof, "an internal daemon marker should bind the inherited cwd inode")
+	assert.Empty(t, cwdProof, "an inherited clone must not require a disk proof")
+	sessions, err := db.FindSessionsByConvID(resp.NewConv)
+	require.NoError(t, err)
+	require.NotEmpty(t, sessions)
+	assert.Equal(t, repo, sessions[0].Cwd)
 	assertNoDirWriteProofMarkers(t, repo)
 	assertNoDirWriteProofMarkers(t, repoParent)
 }
@@ -821,13 +825,17 @@ func TestSpawnDirProof_CodexReincarnateNeedsNoProofOrSelfSlug(t *testing.T) {
 	testharness.DecodeJSON(t, rec, &resp)
 	dirs, ok := f.World.SpawnGitWorktreeWriteDirs(resp.NewConv)
 	require.True(t, ok)
-	assert.ElementsMatch(t, []string{repoParent, filepath.Join(repo, ".git")}, dirs)
+	assert.Empty(t, dirs)
 	dirProof, ok := f.World.SpawnDirWriteProof(resp.NewConv)
 	require.True(t, ok)
 	assert.Empty(t, dirProof)
 	cwdProof, ok := f.World.SpawnCwdWriteProof(resp.NewConv)
 	require.True(t, ok)
-	assert.NotEmpty(t, cwdProof, "an internal daemon marker should bind the inherited cwd inode")
+	assert.Empty(t, cwdProof, "reincarnation must not require a disk proof")
+	sessions, err := db.FindSessionsByConvID(resp.NewConv)
+	require.NoError(t, err)
+	require.NotEmpty(t, sessions)
+	assert.Equal(t, repo, sessions[0].Cwd)
 	assertNoDirWriteProofMarkers(t, repo)
 	assertNoDirWriteProofMarkers(t, repoParent)
 }
@@ -909,8 +917,8 @@ func TestSpawnDirProof_CodexTemplateProvesAndPinsGitCommonDir(t *testing.T) {
 }
 
 // Scenario: an agent self-clones with a cwd override — the same dir-granting
-// power as a spawn, so the same proof handshake applies; a clone that
-// inherits the source's cwd still proves and child-binds that cwd.
+// power as a spawn, so the same proof handshake applies. A clone that
+// inherits the source's live physical cwd needs no requester disk proof.
 func TestSpawnDirProof_CloneCwdOverride(t *testing.T) {
 	// Two agent-initiated clones of the same source in one test — disable
 	// the cooldown so the second isn't refused for unrelated reasons.

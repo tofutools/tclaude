@@ -3,7 +3,6 @@ package agentd_test
 import (
 	"encoding/json"
 	"net/http"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -143,7 +142,7 @@ func TestGroupsClone_ResumeRefreshesFromClonedGroupNotSourceGroup(t *testing.T) 
 	assert.Equal(t, cloneGroup.ID, resumed.ResolutionGroupID)
 }
 
-func TestGroupsClone_CodexCopyPinsRepositoryWithoutCallerProof(t *testing.T) {
+func TestGroupsClone_CodexCopyUsesInheritedCwdWithoutCallerProof(t *testing.T) {
 	f := newFlow(t)
 	const source = "92e452c0-eef5-4fa3-beb9-51f4f8722336"
 	repo, _ := initRepoOnMain(t)
@@ -166,11 +165,11 @@ func TestGroupsClone_CodexCopyPinsRepositoryWithoutCallerProof(t *testing.T) {
 
 	got, ok := f.World.SpawnCodexGitCommonDir(cloneConv)
 	require.True(t, ok)
-	assert.Equal(t, filepath.Join(repo, ".git"), got,
-		"the daemon should pin inherited repository authority without challenging the requester")
+	assert.Empty(t, got,
+		"session-new should derive repository authority from the inherited physical cwd")
 	pinned, ok := f.World.SpawnCodexGitCommonDirPinned(cloneConv)
 	require.True(t, ok)
-	assert.True(t, pinned)
+	assert.False(t, pinned)
 }
 
 // Scenario: clone with an explicit name that doesn't collide.

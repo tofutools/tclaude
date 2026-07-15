@@ -426,48 +426,6 @@ func cleanupDirWriteProofMarkers(token string, dirs []string) {
 	}
 }
 
-// pinInheritedLaunchDirs creates daemon-owned, short-lived marker files that
-// bind an inherited lifecycle launch to the target's current physical cwd and
-// repository roots. This is launch-integrity plumbing, not requester
-// authorization: no HTTP challenge is issued and the requester never has to
-// write into the target's directories.
-func pinInheritedLaunchDirs(rawDirs []string) (map[string]string, string, []string, func(), error) {
-	return pinInheritedLaunchDirsWithToken(rawDirs, newDirWriteProofToken())
-}
-
-func pinInheritedLaunchDirsWithToken(rawDirs []string, token string) (map[string]string, string, []string, func(), error) {
-	resolved, mapping, err := resolveDirWriteProofDirs(rawDirs)
-	if err != nil {
-		return nil, "", nil, func() {}, err
-	}
-	if token == "" {
-		return nil, "", nil, func() {}, fmt.Errorf("generate inherited launch pin")
-	}
-	filename := dirWriteProofFilePrefix + token
-	var created []string
-	cleanup := func() { cleanupDirWriteProofMarkers(token, created) }
-	for _, dir := range resolved {
-		path := filepath.Join(dir, filename)
-		f, createErr := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-		if os.IsExist(createErr) {
-			fi, statErr := os.Lstat(path)
-			if statErr == nil && fi.Mode().IsRegular() && fi.Size() == 0 {
-				continue
-			}
-		}
-		if createErr != nil {
-			cleanup()
-			return nil, "", nil, func() {}, fmt.Errorf("create inherited launch pin in %s: %w", dir, createErr)
-		}
-		created = append(created, dir)
-		if closeErr := f.Close(); closeErr != nil {
-			cleanup()
-			return nil, "", nil, func() {}, fmt.Errorf("close inherited launch pin in %s: %w", dir, closeErr)
-		}
-	}
-	return mapping, token, resolved, cleanup, nil
-}
-
 func appendUniqueDirs(dirs []string, candidates ...string) []string {
 	seen := make(map[string]bool, len(dirs)+len(candidates))
 	for _, dir := range dirs {

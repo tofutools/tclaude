@@ -260,6 +260,33 @@ func livePanePID(tmuxSession string) int {
 	return pid
 }
 
+// livePaneCwd returns tmux's view of the live pane process's physical working
+// directory. Unlike sessions.cwd, this follows the cwd inode the predecessor
+// is actually running in, so retargeting a symlink used at the original launch
+// cannot redirect an inherited clone or reincarnation.
+func livePaneCwd(tmuxSession string) (string, error) {
+	out, err := clcommon.TmuxCommand("display-message", "-p", "-t", clcommon.ExactTarget(tmuxSession)+":", "#{pane_current_path}").Output()
+	if err != nil {
+		return "", fmt.Errorf("query live pane working directory: %w", err)
+	}
+	cwd := strings.TrimSpace(string(out))
+	if cwd == "" || !filepath.IsAbs(cwd) {
+		return "", fmt.Errorf("query live pane working directory: tmux returned %q", cwd)
+	}
+	physical, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return "", fmt.Errorf("resolve live pane working directory %s: %w", cwd, err)
+	}
+	info, err := os.Stat(physical)
+	if err != nil {
+		return "", fmt.Errorf("stat live pane working directory %s: %w", physical, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("live pane working directory is not a directory: %s", physical)
+	}
+	return physical, nil
+}
+
 // handleGroupResume starts a tclaude session for every member that
 // has a known conv-id but no live tmux session. Spawns the
 // subprocess detached (`tclaude session new -r <conv> -d --global`)

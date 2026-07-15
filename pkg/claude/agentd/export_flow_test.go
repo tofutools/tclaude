@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -263,7 +262,7 @@ func TestExportFlow_OfflineOriginalStillExports(t *testing.T) {
 	assertCloneRetired(t, workerConv, 3*time.Second)
 }
 
-func TestExportFlow_CodexCopyPinsRepositoryWithoutCallerProof(t *testing.T) {
+func TestExportFlow_CodexCopyUsesInheritedCwdWithoutCallerProof(t *testing.T) {
 	f := newFlow(t)
 	dash := agentd.BuildDashboardHandlerForTest()
 	const source = "f93c855a-72fe-4caa-8052-731c68ca753b"
@@ -276,11 +275,11 @@ func TestExportFlow_CodexCopyPinsRepositoryWithoutCallerProof(t *testing.T) {
 	workerConv, _ := awaitExportClone(t, jobID, 5*time.Second)
 	got, ok := f.World.SpawnCodexGitCommonDir(workerConv)
 	require.True(t, ok)
-	assert.Equal(t, filepath.Join(repo, ".git"), got,
-		"the daemon should pin inherited repository authority without challenging the requester")
+	assert.Empty(t, got,
+		"session-new should derive repository authority from the inherited physical cwd")
 	pinned, ok := f.World.SpawnCodexGitCommonDirPinned(workerConv)
 	require.True(t, ok)
-	assert.True(t, pinned)
+	assert.False(t, pinned)
 }
 
 // TestExportFlow_StandaloneCloneIsIsolated proves the DEFAULT clone is standalone

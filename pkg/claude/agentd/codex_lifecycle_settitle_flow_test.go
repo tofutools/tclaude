@@ -77,12 +77,13 @@ func TestCodexAgent_ReincarnateCarriesIdentityAndTitle(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	const conv = "019ec004-0000-0000-0000-000000000003"
-	cx := f.HaveAliveCodexSession(conv, "codex-3", "tmux-codex-3", "/work")
+	cwd := t.TempDir()
+	cx := f.HaveAliveCodexSession(conv, "codex-3", "tmux-codex-3", cwd)
 	f.HaveMember("crew", conv)
 	// Predecessor's title lives in the native store, not the conv_index the
 	// CC path reads.
 	require.NoError(t, cx.WriteThreadRow(testharness.CodexThreadSeed{
-		Title: "original-codex", Cwd: "/work",
+		Title: "original-codex", Cwd: cwd,
 	}))
 
 	rein := f.AsHuman().Reincarnate(conv, "fresh start")
