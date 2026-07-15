@@ -6,27 +6,15 @@
 <title>tclaude terminals</title>
 <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text x="50" y="52" font-size="70" text-anchor="middle" dominant-baseline="central">🖥️</text></svg>'>
 <link rel="stylesheet" href="/static/vendor/xterm/xterm.min.css">
-<!-- Shared multiplexer widget styles (also loaded by the dashboard's Terminals
-     tab); terminals.css adds only this page's full-page shell. -->
+<!-- Shared terminal shell styles (also loaded by the dashboard's Terminals
+     tab); terminals.css adds only this page's full-page layout. -->
 <link rel="stylesheet" href="/static/mux.css">
 <link rel="stylesheet" href="/static/terminals.css">
 </head>
-<body>
-<!-- The standalone /terminals page. Since the multiplexer moved into the
-     dashboard's own "Terminals" tab, this page is now used only for the "⧉ tab"
-     pop-out (?solo=1: one terminal in its own OS/browser window). It runs the
-     same shared pane core (js/terminals-core.js) over the same /api/term-ws /
-     /api/open-window-ws endpoints, fed the seed carried in the URL hash. See
-     js/terminals.js. -->
-<div id="mux">
-  <div id="mux-tabs" class="mux-tabs" role="tablist" aria-label="Open terminals"></div>
-  <div id="mux-panes" class="mux-panes"></div>
-  <div id="mux-empty">
-    <div class="mux-empty-title">No terminals open</div>
-    <div>Open one from the dashboard with the <code>web term</code> or <code>web window</code> buttons — they open in the dashboard's <code>Terminals</code> tab.</div>
-    <div>Each terminal there has a <code>⧉ tab</code> button that pops it out into its own browser window here.</div>
-  </div>
-</div>
+<body class="solo">
+<!-- Preact owns this stable standalone shell root. The xterm subtree remains
+     opaque beneath its pane host and is created only by terminals-core.js. -->
+<div id="terminals-root"></div>
 <!-- Vendored xterm.js as classic (non-module) scripts so Terminal / FitAddon / WebLinksAddon
      are plain globals by the time the module below runs — same arrangement as
      dashboard.html. -->
@@ -34,6 +22,19 @@
 <script src="/static/vendor/xterm/xterm.min.js"></script>
 <script src="/static/vendor/xterm/addon-fit.min.js"></script>
 <script src="/static/vendor/xterm/addon-web-links.min.js"></script>
+<!-- Browser-native package resolution for the no-build Preact terminal shell.
+     Every target is embedded and served from this authenticated origin. -->
+<script type="importmap">
+{
+  "imports": {
+    "preact": "/static/vendor/preact/preact.module.js",
+    "preact/hooks": "/static/vendor/preact/hooks.module.js",
+    "@preact/signals-core": "/static/vendor/preact/signals-core.module.js",
+    "@preact/signals": "/static/vendor/preact/signals.module.js",
+    "htm": "/static/vendor/preact/htm.module.js"
+  }
+}
+</script>
 <script type="module" src="/static/js/terminals.js"></script>
 </body>
 </html>

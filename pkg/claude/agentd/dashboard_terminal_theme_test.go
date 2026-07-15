@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// The wizard terminal treatment spans the shared xterm palette, multiplexer
+// The wizard terminal treatment spans the shared xterm palette, terminal shell
 // toolbar, pop-out handoff, and fallback modal. These source-shape guards pin
 // that wiring while the pure preference/theme selection is covered by
 // jstest/terminal-theme.test.mjs.
@@ -64,14 +64,12 @@ func TestDashboardTerminalTheme_Wiring(t *testing.T) {
 		t.Error("terminal pop-out must inherit the dashboard wizard theme")
 	}
 
-	popout := read("js/terminals.js")
+	popout := read("js/terminal-standalone.js")
 	for _, needle := range []string{
-		"import { initDashPrefs } from './prefs.js'",
-		"import { initTerminalThemeSync } from './terminal-theme.js'",
-		"document.body.classList.toggle('wizard', seed.wizard === true)",
+		"documentRef.body.classList.toggle('wizard', seed.wizard === true)",
 		"if (prefsReady) consumeHash()",
-		"initDashPrefs().then(",
-		"initTerminalThemeSync()",
+		"Promise.resolve(initPrefs()).then(",
+		"initThemeSync()",
 	} {
 		if !strings.Contains(popout, needle) {
 			t.Errorf("standalone terminal pop-out missing %q", needle)
