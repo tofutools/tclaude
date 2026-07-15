@@ -71,6 +71,26 @@ test('Jobs state explicitly owns query, paging, sort, requests, and derived rows
   assert.equal(state.request.value.phase, 'error');
   assert.equal(state.request.value.hasLoaded, true);
   assert.equal(state.view.value.rows.length, 2, 'failed refresh retains the last successful page');
+
+  assert.equal(state.openCronCreate({ targetMode: 'solo', target: 'agt_one' }), true);
+  const launchID = state.dialog.value.launchID;
+  assert.equal(state.openCronEdit({ id: 4 }), false, 'an active draft keeps ownership');
+  snapshot.value = { ...snapshot.value, export_jobs_active: 3 };
+  assert.equal(state.dialog.value.launchID, launchID, 'snapshot polling cannot replace the draft descriptor');
+  state.closeCronDialog();
+  assert.equal(state.openCronEdit({
+    id: 4, name: 'daily', target_kind: 'conv', target_agent: 'agt_one',
+    cron_expr: '@daily', enabled: true,
+  }), true);
+  assert.equal(state.dialog.value.kind, 'edit');
+  assert.equal(state.dialog.value.prefill.cronExpr, '@daily');
+  state.closeCronDialog();
+  assert.equal(state.openCronDuplicate({
+    id: 4, name: 'daily', target_kind: 'conv', target_agent: 'agt_one',
+    interval_seconds: 300, enabled: true,
+  }), true);
+  assert.equal(state.dialog.value.kind, 'duplicate');
+  assert.equal(state.dialog.value.prefill.name, 'daily-copy');
 });
 
 test('Jobs parameter changes immediately invalidate requests but retain requested paging', async (t) => {

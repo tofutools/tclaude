@@ -11,6 +11,7 @@ export function ManagementOverlay({
   id,
   manage = false,
   dialogClass = '',
+  overlayClass = '',
   labelledby,
   onClose,
   onSubmitHotkey = null,
@@ -52,7 +53,7 @@ export function ManagementOverlay({
       : 'cron-create-modal');
   return html`<div
     ref=${overlayRef}
-    class=${manage ? 'manage-overlay show' : 'modal-overlay show'}
+    class=${`${manage ? 'manage-overlay show' : 'modal-overlay show'}${overlayClass ? ` ${overlayClass}` : ''}`}
     id=${id}
     onMouseDown=${(event) => {
       if (event.target === event.currentTarget) void close();

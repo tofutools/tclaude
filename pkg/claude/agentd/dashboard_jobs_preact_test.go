@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"errors"
 	"io/fs"
 	"strings"
 	"testing"
@@ -44,17 +45,25 @@ func TestDashboardJobsPreactBoundary(t *testing.T) {
 			t.Errorf("Jobs island bypasses its component/action boundary with %q", forbidden)
 		}
 	}
-	for _, coreModule := range []string{"js/refresh.js", "js/modal-cron.js", "js/dashboard.js"} {
+	for _, coreModule := range []string{"js/refresh.js", "js/dashboard.js"} {
 		if strings.Contains(read(coreModule), "./jobs-state.js") {
 			t.Errorf("%s statically imports Jobs state outside the guarded loader", coreModule)
 		}
+	}
+	if _, err := fs.Stat(dashboardAssetsFS, "js/modal-cron.js"); err == nil {
+		t.Error("retired modal-cron.js still ships beside the Jobs-owned dialog")
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("stat retired modal-cron.js: %v", err)
 	}
 
 	for _, needle := range []string{
 		`<div id="jobs-root"></div>`,
 		`<span id="jobs-badge-root"></span>`,
+		`<div id="jobs-cron-dialog-root"></div>`,
 		"await mountJobsFeature({",
 		"const jobsDescriptor = createIslandDescriptor({",
+		"registerJobsController(controller)",
+		"JobsCronDialogRoot",
 		"return mountIslandDescriptor(jobsDescriptor, actionDependencies)",
 		"jobsActive ? get('/api/jobs?' + jobs.params.value)",
 		"jobs.beginRequest(requestId)",
@@ -76,6 +85,9 @@ func TestDashboardJobsPreactBoundary(t *testing.T) {
 		"case 'export-job-dismiss'",
 		"case 'cron-run-now'",
 		"setInterval(pollJobs",
+		"from './modal-cron.js'",
+		"bindCronModal",
+		`id="cron-create-target-mount"`,
 	} {
 		if strings.Contains(dashboardAssets, retired) {
 			t.Errorf("Jobs migration left retired legacy path %q", retired)
