@@ -24,7 +24,9 @@ type AppliedProfile struct {
 // possess. Filesystem coverage is segment-aware: an ancestor grant covers
 // descendants, write covers read, and every parent deny must be preserved by
 // an equal or broader child deny. Environment entries must match the parent's
-// exact value; omission is a safe weakening.
+// exact value; omission is a safe weakening. Agent-owned directories are not
+// inherited host authority: agentd creates fresh private bindings for each
+// child, so their declarations do not participate in containment.
 func RequireContained(parent, child Snapshot) error {
 	parent, err := RevalidateSnapshot(parent)
 	if err != nil {
@@ -80,27 +82,20 @@ func RequireContained(parent, child Snapshot) error {
 			return fmt.Errorf("environment variable %q is new or changed from the parent snapshot", entry.Name)
 		}
 	}
-	parentAgentDirectories := make(map[string]bool, len(parent.Effective.AgentDirectories))
-	for _, name := range parent.Effective.AgentDirectories {
-		parentAgentDirectories[name] = true
-	}
-	for _, name := range child.Effective.AgentDirectories {
-		if !parentAgentDirectories[name] {
-			return fmt.Errorf("agent-owned directory %q is not authorized by the parent snapshot", name)
-		}
-	}
 	return nil
 }
 
-// HasCapabilities reports whether a resolved snapshot adds any filesystem or
-// environment authority. Deny entries are restrictions, not capabilities.
+// HasCapabilities reports whether a resolved snapshot adds inherited host
+// filesystem or literal environment authority. Deny entries are restrictions,
+// and agent-owned directories are fresh private bindings, not capabilities
+// inherited from the parent.
 func HasCapabilities(snapshot Snapshot) bool {
 	for _, grant := range snapshot.Effective.Filesystem {
 		if grant.Access != AccessDeny {
 			return true
 		}
 	}
-	return len(snapshot.Effective.Environment) > 0 || len(snapshot.Effective.AgentDirectories) > 0
+	return len(snapshot.Effective.Environment) > 0
 }
 
 // Snapshot is the immutable, versioned value passed across launch and

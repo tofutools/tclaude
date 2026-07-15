@@ -78,12 +78,12 @@ func TestRequireContainedUsesPathCoverageAccessAndExactEnvironment(t *testing.T)
 		denyOnly := makeSnapshot([]FilesystemGrant{{Path: childDir, Access: AccessDeny}}, nil)
 		assert.False(t, HasCapabilities(denyOnly))
 	})
-	t.Run("agent directories require matching parent declarations", func(t *testing.T) {
+	t.Run("agent directories are fresh child-local bindings", func(t *testing.T) {
 		parent := makeAgentDirectorySnapshot("GOCACHE")
 		require.NoError(t, RequireContained(parent, makeAgentDirectorySnapshot("GOCACHE")))
-		require.ErrorContains(t, RequireContained(parent, makeAgentDirectorySnapshot("GOLANGCI_LINT_CACHE")), "not authorized")
-		require.ErrorContains(t, RequireContained(EmptySnapshot(), makeAgentDirectorySnapshot("GOCACHE")), "not authorized")
-		assert.True(t, HasCapabilities(makeAgentDirectorySnapshot("GOCACHE")))
+		require.NoError(t, RequireContained(parent, makeAgentDirectorySnapshot("GOLANGCI_LINT_CACHE")))
+		require.NoError(t, RequireContained(EmptySnapshot(), makeAgentDirectorySnapshot("GOCACHE")))
+		assert.False(t, HasCapabilities(makeAgentDirectorySnapshot("GOCACHE")))
 	})
 }
 
