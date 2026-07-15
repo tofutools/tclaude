@@ -782,9 +782,10 @@ test('native member rows preserve the legacy field, capability and selector matr
   assert.equal(richRow.querySelectorAll('.ctx-seg.lit-green').length, 4);
   assert.equal(richRow.querySelector('.badge-subagents').textContent, '🤖+2');
 
-  assert.equal(richRow.querySelector('.role-edit').dataset.owner, '1');
   assert.match(richRow.querySelector('.role-edit').textContent, /builder owner/);
-  assert.equal(richRow.querySelector('.descr-edit').dataset.tags, 'frontend, tf:native');
+  assert.equal(richRow.querySelector('.role-edit').hasAttribute('data-owner'), false,
+    'direct Preact launchers do not retain legacy form-prefill attributes');
+  assert.equal(richRow.querySelector('.descr-edit').hasAttribute('data-tags'), false);
   assert.equal(richRow.querySelector('.agent-tag-tf').title, 'task force: native');
   assert.equal(richRow.querySelector('.task-link').draggable, false);
   assert.equal(richRow.querySelector('.task-edit').dataset.currentTaskLabel, 'Native tables');
@@ -825,4 +826,229 @@ test('native member rows preserve the legacy field, capability and selector matr
   harness.document.body.classList.remove('wizard');
   await mounted.unmount();
   host.remove();
+});
+
+test('native member edit launchers carry focus and keep a frozen draft across polls', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createGroupsState }, { GroupsList }, { GroupsMemberDialog }] = await Promise.all([
+    harness.importDashboardModule('js/groups-state.js'),
+    harness.importDashboardModule('js/groups-island.js'),
+    harness.importDashboardModule('js/member-editor-island.js'),
+  ]);
+  const state = createGroupsState({ prefs: memoryPrefs(), resetOffsets: () => {}, ...stateDependencies() });
+  state.initialize();
+  const member = {
+    conv_id: 'member-1', agent_id: 'agt-member-1', title: 'Member one', role: 'builder',
+    descr: 'old descr', tags: ['one'], owner: false, online: true, state: { status: 'idle' },
+  };
+  const group = { name: 'alpha', members: [member] };
+  state.publish(snapshot([group]));
+  const actions = {
+    sort: () => {}, page: () => {}, setPageSize: () => {},
+    openMemberEditor: state.openMemberEditor,
+    closeMemberEditor: state.closeMemberEditor,
+    noMemberChanges: () => {},
+    saveMemberEditor: async () => ({ succeeded: [], errors: [] }),
+    openMemberPermissions: () => {},
+  };
+  const listHost = harness.document.body.appendChild(harness.document.createElement('div'));
+  const dialogHost = harness.document.body.appendChild(harness.document.createElement('div'));
+  const list = await harness.mount(harness.html`<${GroupsList} host=${listHost} state=${state} actions=${actions} />`, listHost);
+  const dialog = await harness.mount(harness.html`<${GroupsMemberDialog} state=${state} actions=${actions} confirmDiscard=${async () => true} />`, dialogHost);
+  const row = listHost.querySelector('tr[data-key="member-1"]');
+  const role = row.querySelector('.role-edit');
+
+  await harness.act(() => harness.fireEvent(role, 'click'));
+  await harness.act(() => Promise.resolve());
+  assert.equal(state.memberEditor.value.focus, 'role');
+  assert.equal(harness.document.activeElement.id, 'edit-member-role');
+  const roleInput = dialogHost.querySelector('#edit-member-role');
+  await harness.input(roleInput, 'reviewer draft');
+  await harness.act(() => state.publish(snapshot([{
+    name: 'alpha', members: [{ ...member, role: 'published role', descr: 'published descr' }],
+  }])));
+  assert.equal(dialogHost.querySelector('#edit-member-role'), roleInput,
+    'polling does not remount the active member transaction');
+  assert.equal(roleInput.value, 'reviewer draft', 'polling cannot overwrite the local draft');
+  dialogHost.querySelector('#edit-member-cancel').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(harness.document.activeElement, role, 'explicit close restores the row-cell invoker');
+
+  const descr = row.querySelector('.descr-edit');
+  await harness.act(() => harness.fireEvent(descr, 'keydown', { key: 'Enter', isComposing: true }));
+  assert.equal(state.memberEditor.value, null, 'IME composition does not activate a row editor');
+  await harness.act(() => harness.fireEvent(descr, 'keydown', { key: 'Enter' }));
+  await harness.act(() => Promise.resolve());
+  assert.equal(state.memberEditor.value.focus, 'descr');
+  assert.equal(harness.document.activeElement.id, 'edit-member-tags',
+    'description-cell parity lands on the rendered tag chips field');
+  dialogHost.querySelector('#edit-member-cancel').click();
+  await harness.act(() => Promise.resolve());
+
+  const cog = row.querySelector('.cog-btn');
+  await harness.act(() => harness.fireEvent(cog, 'click'));
+  await harness.act(() => harness.fireEvent(row.querySelector('[data-act="edit-member"]'), 'click'));
+  await harness.act(() => Promise.resolve());
+  assert.equal(state.memberEditor.value.focus, 'title');
+  assert.equal(harness.document.activeElement.id, 'edit-member-title-input');
+  assert.equal(row.querySelector('.action-menu').classList.contains('open'), false);
+  const escape = new harness.window.Event('keydown', { bubbles: true });
+  Object.defineProperty(escape, 'key', { value: 'Escape' });
+  harness.document.dispatchEvent(escape);
+  await harness.act(() => Promise.resolve());
+  assert.equal(harness.document.activeElement, cog, 'menu launch restores focus to the owning cog');
+
+  await dialog.unmount();
+  await list.unmount();
+  dialogHost.remove();
+  listHost.remove();
+});
+
+test('member editor preserves dirty, IME, busy, stacked overlay and field-level retry behavior', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createGroupsState }, { GroupsMemberDialog }] = await Promise.all([
+    harness.importDashboardModule('js/groups-state.js'),
+    harness.importDashboardModule('js/member-editor-island.js'),
+  ]);
+  const state = createGroupsState({ prefs: memoryPrefs(), resetOffsets: () => {}, ...stateDependencies() });
+  state.openMemberEditor({
+    conv_id: 'member-1', agent_id: 'agt-member-1', title: 'Member one', role: 'builder',
+    descr: 'old', tags: ['one'], owner: false,
+  }, { name: 'alpha' }, 'role');
+  const saves = [];
+  const firstSave = deferred();
+  let saveResult = () => firstSave.promise;
+  let permissionOverlay = null;
+  let confirmOverlay = null;
+  let discardCalls = 0;
+  let discardResult = null;
+  const actions = {
+    saveMemberEditor: (_descriptor, changes) => { saves.push(changes); return saveResult(); },
+    noMemberChanges: () => {},
+    openMemberPermissions: () => {
+      permissionOverlay = harness.document.body.appendChild(harness.document.createElement('div'));
+      permissionOverlay.id = 'perm-edit-modal';
+      permissionOverlay.className = 'modal-overlay show';
+      permissionOverlay.style.zIndex = '160';
+    },
+  };
+  const confirmDiscard = () => {
+    discardCalls++;
+    confirmOverlay = harness.document.body.appendChild(harness.document.createElement('div'));
+    confirmOverlay.id = 'confirm-modal';
+    confirmOverlay.className = 'modal-overlay show';
+    confirmOverlay.style.zIndex = '1000';
+    discardResult = deferred();
+    return discardResult.promise;
+  };
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const mounted = await harness.mount(harness.html`<${GroupsMemberDialog}
+    state=${state} actions=${actions} confirmDiscard=${confirmDiscard}
+  />`, host);
+  await harness.input(host.querySelector('#edit-member-role'), 'reviewer');
+  await harness.input(host.querySelector('#edit-member-tags'), 'one, two');
+  assert.match(host.querySelector('#edit-member-title').textContent, /Edit agent.*Enchant this familiar/,
+    'plain and wizard copy remain in the Preact-owned dialog');
+
+  const composed = new harness.window.Event('keydown', { bubbles: true, cancelable: true });
+  Object.defineProperties(composed, {
+    key: { value: 'Enter' }, ctrlKey: { value: true }, isComposing: { value: true },
+  });
+  host.querySelector('[role="dialog"]').dispatchEvent(composed);
+  await harness.act(() => Promise.resolve());
+  assert.equal(saves.length, 0, 'Ctrl+Enter does not submit during IME composition');
+
+  harness.fireEvent(harness.document, 'keydown', { key: 'Escape' });
+  await harness.act(() => Promise.resolve());
+  assert.equal(discardCalls, 1);
+  harness.fireEvent(harness.document, 'keydown', { key: 'Escape' });
+  await harness.act(() => Promise.resolve());
+  assert.equal(discardCalls, 1, 'a stacked discard confirm prevents re-entrant dismissal');
+  confirmOverlay.remove();
+  discardResult.resolve(false);
+  await harness.act(() => Promise.resolve());
+  assert.ok(host.querySelector('#edit-member-modal'), 'rejected discard preserves the draft');
+
+  host.querySelector('#edit-member-perms').click();
+  await harness.act(() => Promise.resolve());
+  harness.fireEvent(harness.document, 'keydown', { key: 'Escape' });
+  await harness.act(() => Promise.resolve());
+  assert.ok(host.querySelector('#edit-member-modal'), 'stacked permissions owns Escape');
+  assert.equal(discardCalls, 1, 'the underlying dirty editor does not also ask to discard');
+  permissionOverlay.remove();
+
+  host.querySelector('#edit-member-save').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(host.querySelector('#edit-member-save').disabled, true);
+  assert.equal(host.querySelector('#edit-member-role').disabled, true);
+  firstSave.resolve({
+    succeeded: ['membership'],
+    errors: [{ key: 'tags', message: 'tag rejected' }],
+  });
+  await harness.act(() => Promise.resolve());
+  await harness.act(() => Promise.resolve());
+  assert.match(host.querySelector('#edit-member-error').textContent, /tags: tag rejected/);
+  assert.equal(host.querySelector('#edit-member-role').disabled, false);
+  saveResult = async () => ({ succeeded: ['tags'], errors: [] });
+  host.querySelector('#edit-member-save').click();
+  await harness.act(() => Promise.resolve());
+  assert.deepEqual(saves, [
+    { role: 'reviewer', tags: ['one', 'two'] },
+    { tags: ['one', 'two'] },
+  ], 'retry resends only the field whose independent write failed');
+  assert.equal(state.memberEditor.value, null);
+
+  await mounted.unmount();
+  host.remove();
+});
+
+test('member editor actions keep independent endpoint and stable-selector boundaries', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ saveMemberEditorRequests }, { memberEditorChanges }] = await Promise.all([
+    harness.importDashboardModule('js/member-editor-actions.js'),
+    harness.importDashboardModule('js/member-editor-island.js'),
+  ]);
+  const baseline = { title: 'Worker', role: 'builder', descr: 'old', tags: ['one'], owner: false };
+  assert.deepEqual(memberEditorChanges(baseline, {
+    title: 'Worker two', role: 'reviewer', descr: 'checks', tags: 'one, two, one', owner: true,
+  }, false), {
+    rename: { title: 'Worker two' }, role: 'reviewer', descr: 'checks', tags: ['one', 'two'], owner: true,
+  });
+  assert.deepEqual(memberEditorChanges(baseline, {
+    title: 'ignored explicit title', role: 'builder', descr: 'old', tags: 'one', owner: false,
+  }, true), { rename: { auto: true } }, 'auto-title wins over an explicit title draft');
+  assert.throws(() => memberEditorChanges(baseline, {
+    title: 'bad  title', role: 'builder', descr: 'old', tags: 'one', owner: false,
+  }, false), /title must be 1-64 chars/);
+  const requests = [];
+  const notices = [];
+  let refreshes = 0;
+  const result = await saveMemberEditorRequests({
+    descriptor: {
+      conv: 'conv-1', agent: 'agt-stable', label: 'Worker', group: 'alpha group',
+    },
+    changes: {
+      rename: { title: 'Worker two' }, role: 'reviewer', descr: 'checks',
+      tags: ['one'], owner: true,
+    },
+    refresh: async () => { refreshes++; },
+    notify: (...args) => notices.push(args),
+    fetchImpl: async (url, options) => {
+      requests.push([url, options]);
+      if (url.includes('/tags')) return new Response('bad tag', { status: 400 });
+      return new Response('', { status: 200 });
+    },
+  });
+  assert.deepEqual(requests.map(([url]) => url), [
+    '/api/agents/agt-stable/rename',
+    '/api/groups/alpha%20group/members/agt-stable',
+    '/api/agents/agt-stable/tags',
+    '/api/groups/alpha%20group/owners',
+  ]);
+  assert.deepEqual(JSON.parse(requests[1][1].body), { role: 'reviewer', descr: 'checks' });
+  assert.deepEqual(JSON.parse(requests[3][1].body), { conv: 'agt-stable' });
+  assert.deepEqual(result.succeeded, ['rename', 'membership', 'owner']);
+  assert.deepEqual(result.errors, [{ key: 'tags', message: 'bad tag' }]);
+  assert.equal(refreshes, 1);
+  assert.equal(notices.length, 3, 'successful fields retain independent user feedback');
 });
