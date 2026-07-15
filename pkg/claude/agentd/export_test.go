@@ -11,8 +11,8 @@ import (
 // binding. A drop in any one silently breaks the feature at runtime.
 func TestDashboardJS_ExportModalWired(t *testing.T) {
 	for _, needle := range []string{
-		`data-act="export-summary"`,      // ⚙-menu button (helpers.js)
-		"function exportAgentButton(",    // its builder (helpers.js)
+		`act="export-summary"`,           // native ⚙-menu button
+		"function MemberMenu(",           // its component owner
 		"case 'export-summary'",          // row-action dispatch (row-actions.js)
 		"openAgentExportDialog(agent, label)", // dispatch opens the Preact dialog
 		"descriptor.kind === 'agent-export'",  // action-dialog island owner

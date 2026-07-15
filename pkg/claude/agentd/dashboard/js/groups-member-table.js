@@ -5,6 +5,7 @@ import { applySort, MEMBER_ACCESSORS } from './sort.js';
 import { visibleMemberCols, memberColHidden } from './member-columns.js';
 import {
   shortAgentId, idTooltip, relTime, shortCwd, harnessCanRename, harnessCanRemoteControl,
+  SLOP_SYMBOLS,
 } from './helpers.js';
 import { isWizardActive } from './slop.js';
 import { ActionMenu, InlineEditor, useGroupsInteractions } from './groups-interactions.js';
@@ -150,7 +151,6 @@ function StatePill({ state, online }) {
   return html`<span class=${`state-pill ${className}`} title=${info.title}>${label}</span>`;
 }
 
-const SLOP_SYMBOLS = ['🍒', '🍋', '🍇', '🍊', '🔔', '⭐', '💎', '7️⃣'];
 const SLOP_STOPPED = {
   idle: ['7️⃣', '7️⃣', '7️⃣'], awaiting_permission: ['⏳', '❓', '⏳'],
   awaiting_input: ['⏳', '❓', '⏳'], error: ['💥', '❌', '💥'],
