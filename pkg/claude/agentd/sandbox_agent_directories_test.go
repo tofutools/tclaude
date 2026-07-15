@@ -28,6 +28,24 @@ func withAgentDirsMountParent(t *testing.T, enabled bool) {
 		[]byte(`{"features":{"agent_dirs_mount_parent":true}}`), 0o600))
 }
 
+// setAgentDirsMountParent writes or removes the flag in the already-isolated
+// config home ($HOME/.tclaude/data/config.json), so a test can flip modes
+// between successive materialize calls (e.g. a cross-mode clone).
+func setAgentDirsMountParent(t *testing.T, enabled bool) {
+	t.Helper()
+	dataDir := filepath.Join(os.Getenv("HOME"), ".tclaude", "data")
+	require.NoError(t, os.MkdirAll(dataDir, 0o700))
+	path := filepath.Join(dataDir, "config.json")
+	if !enabled {
+		if err := os.Remove(path); err != nil {
+			require.True(t, os.IsNotExist(err))
+		}
+		return
+	}
+	require.NoError(t, os.WriteFile(path,
+		[]byte(`{"features":{"agent_dirs_mount_parent":true}}`), 0o600))
+}
+
 // agentDirWriteGrants returns the write grants from a materialized snapshot.
 func agentDirWriteGrants(snapshot sandboxpolicy.Snapshot) []sandboxpolicy.FilesystemGrant {
 	var out []sandboxpolicy.FilesystemGrant
@@ -217,6 +235,40 @@ func TestMaterializeAgentDirectoriesCloneDropsSourceParentGrant(t *testing.T) {
 	writeGrants := agentDirWriteGrants(clone)
 	require.Len(t, writeGrants, 1)
 	assert.Equal(t, cloneParent, writeGrants[0].Path)
+}
+
+func TestMaterializeAgentDirectoriesCloneCrossModeStripsSourceGrants(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	setAgentDirsMountParent(t, false) // source materialized in per-directory mode
+
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Global: &sandboxpolicy.Profile{
+		Name: "cache", AgentDirectories: []string{"GOCACHE", "GOTMPDIR"},
+	}})
+	require.NoError(t, err)
+	source, cleanup, err := materializeAgentDirectories(sandboxpolicy.NewSnapshot(effective, nil), "spwn-src-off")
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+	sourceEnvPaths := map[string]bool{}
+	for _, entry := range source.Effective.Environment {
+		sourceEnvPaths[entry.Value] = true
+	}
+	require.Len(t, agentDirWriteGrants(source), 2, "off mode grants each directory individually")
+
+	// Flip the flag on and clone: the source's per-directory grants must be
+	// stripped even though the clone materializes in mount-parent mode.
+	setAgentDirsMountParent(t, true)
+	clone, cloneCleanup, err := materializeAgentDirectories(source, "spwn-clone-on")
+	require.NoError(t, err)
+	t.Cleanup(cloneCleanup)
+	grants := agentDirWriteGrants(clone)
+	require.Len(t, grants, 1, "on mode grants the shared parent root once")
+	for _, grant := range clone.Effective.Filesystem {
+		assert.False(t, sourceEnvPaths[grant.Path], "source per-directory grant leaked into clone")
+	}
+	assert.Equal(t, filepath.Dir(clone.Effective.Environment[0].Value), grants[0].Path)
+	_, err = sandboxpolicy.RevalidateSnapshot(clone)
+	require.NoError(t, err)
 }
 
 func TestReconcileAgentDirectoriesForResumeMountsParentPerRoot(t *testing.T) {

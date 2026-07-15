@@ -38,18 +38,24 @@ type agentDirBinding struct {
 // entries are set by the caller either way — only the write surface differs.
 func addAgentDirectoryWriteGrants(effective *sandboxpolicy.EffectiveProfile, mountParent bool, bindings []agentDirBinding) {
 	if mountParent {
-		granted := map[string]bool{}
+		// Several directories can share one parent root; grant it once but union
+		// the provenance across every directory that contributed to it (deduped),
+		// since the single grant is genuinely declared by all of them.
+		seen := map[string]map[sandboxpolicy.ProfileSource]bool{}
 		for _, b := range bindings {
 			parent := filepath.Dir(b.canonical)
-			if granted[parent] {
-				continue
+			if seen[parent] == nil {
+				seen[parent] = map[sandboxpolicy.ProfileSource]bool{}
+				effective.Filesystem = append(effective.Filesystem, sandboxpolicy.FilesystemGrant{
+					Path: parent, Access: sandboxpolicy.AccessWrite,
+				})
 			}
-			granted[parent] = true
-			effective.Filesystem = append(effective.Filesystem, sandboxpolicy.FilesystemGrant{
-				Path: parent, Access: sandboxpolicy.AccessWrite,
-			})
-			if len(b.sources) > 0 {
-				effective.Provenance.Filesystem[parent] = append([]sandboxpolicy.ProfileSource(nil), b.sources...)
+			for _, source := range b.sources {
+				if seen[parent][source] {
+					continue
+				}
+				seen[parent][source] = true
+				effective.Provenance.Filesystem[parent] = append(effective.Provenance.Filesystem[parent], source)
 			}
 		}
 		return
