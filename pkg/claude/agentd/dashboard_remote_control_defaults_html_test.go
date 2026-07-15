@@ -19,7 +19,7 @@ import (
 //     ⚙ menu (not a header chip).
 //
 // The pieces span dashboard.html (the profile row), modal-profiles.js + the
-// profiles.js summary (the profile toggle), render.js (the group cog menu item)
+// profiles.js summary (the profile toggle), groups-list.js (the group cog menu item)
 // and row-actions.js (the item's PATCH dispatch). A rename in any of them silently
 // breaks the control in the browser, and the repo has no JS test runner, so
 // this asserts on the embedded asset concatenation at `go test ./...` — the
@@ -58,17 +58,17 @@ func TestDashboardHTML_RemoteControlDefaultsWired(t *testing.T) {
 
 	// ---- 2. Group remote-control-policy cog-menu item --------------------
 
-	// render.js: the menu-item helper exists, reads the wire token off the
+	// groups-list.js: the native menu component reads the wire token off the
 	// group, and cycles inherit → optin → deny (the three wire tokens the group
 	// PATCH accepts).
-	must("function remoteControlPolicyMenuItem(g)", "the group remote-control-policy menu-item helper is defined")
-	must("g.remote_control_policy || 'inherit'", "the item reads the group's remote_control_policy")
+	must("function GroupMenuItems({ group, members, snapshot })", "the group menu component is defined")
+	must("group.remote_control_policy || 'inherit'", "the item reads the group's remote_control_policy")
 	must("policy === 'inherit' ? 'optin' : policy === 'optin' ? 'deny' : 'inherit'",
 		"the item cycles inherit → optin → deny")
 	must(`data-act="set-group-remote-control"`, "the item dispatches the group remote-control action")
 	// It renders as a button INTO the group ⚙ menu (groupMenuItems), not as
 	// a header chip — the move that decluttered the group summary.
-	must("+ remoteControlPolicyMenuItem(g)", "the policy item is wired into the group cog menu")
+	must("data-policy=${policy} data-next=${nextPolicy}", "the policy item is wired into the group cog menu")
 
 	// row-actions.js: the handler PATCHes the group endpoint with the
 	// remote_control_policy field (same endpoint + method as default_profile).

@@ -29,9 +29,10 @@ func TestDashboardPreactReconciliationWired(t *testing.T) {
 	// Recurring snapshot surfaces use feature-local state and stable keys.
 	present("function GroupsList(", "Groups has a Preact owner")
 	present("function GroupsNativeList(", "Groups renders native group and virtual-group shells")
-	present("function LegacyMemberTableAdapter(", "the temporary TCL-465 member-row boundary is explicit")
-	present("return trustedHTMLToVNodes(presentation.memberTable(", "only the member-table fragment crosses the temporary HTML adapter")
-	present("element.getAttribute('data-group-key')", "Groups promotes stable identities to Preact keys")
+	present("function MemberTable(", "Groups renders native member tables")
+	present("key=${member.conv_id}", "member rows carry stable conversation keys")
+	present("key=${node.key}", "group shells carry stable view-model keys")
+	present("function GroupsInteractionProvider(", "one Preact owner holds menu/editor interaction state")
 	present("function LinksList(", "Links has a Preact owner")
 	present("key=${String(link.id)}", "Links rows carry stable Preact keys")
 	present("function DebugApp(", "Debug has a Preact owner")
@@ -73,13 +74,22 @@ func TestDashboardPreactReconciliationWired(t *testing.T) {
 		t.Fatalf("read native Groups list: %v", err)
 	}
 	groupsSource := string(groupsList)
-	for _, forbidden := range []string{"renderGroupsHTML", "dangerouslySetInnerHTML", ".innerHTML", "useState("} {
+	for _, forbidden := range []string{"renderGroupsHTML", "dangerouslySetInnerHTML", ".innerHTML", "trustedHTMLToVNodes"} {
 		if strings.Contains(groupsSource, forbidden) {
 			t.Errorf("native Groups list retains forbidden renderer seam %q", forbidden)
 		}
 	}
-	if got := strings.Count(groupsSource, "trustedHTMLToVNodes("); got != 1 {
-		t.Errorf("native Groups list has %d trusted HTML adapters, want exactly the named member-table boundary", got)
+	memberTable, err := fs.ReadFile(dashboardAssetsFS, "js/groups-member-table.js")
+	if err != nil {
+		t.Fatalf("read native Groups member table: %v", err)
+	}
+	for _, forbidden := range []string{"dangerouslySetInnerHTML", ".innerHTML", "trustedHTMLToVNodes"} {
+		if strings.Contains(string(memberTable), forbidden) {
+			t.Errorf("native Groups member table retains forbidden renderer seam %q", forbidden)
+		}
+	}
+	if _, err := fs.ReadFile(dashboardAssetsFS, "js/render.js"); err == nil {
+		t.Error("retired legacy Groups string renderer is still embedded")
 	}
 }
 

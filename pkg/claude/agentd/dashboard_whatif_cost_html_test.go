@@ -23,12 +23,12 @@ func TestDashboardHTML_WhatIfCostWired(t *testing.T) {
 		}
 	}
 
-	// helpers.js: harnessLine reads virtual cost and emits a hypothetical span,
+	// HarnessLine reads virtual cost and emits a hypothetical span,
 	// trailing the real cost token, with a ≈ prefix so it never reads as real.
-	must("m.state.virtual_cost_usd", "harnessLine reads the WHAT-IF cost off the agent's state")
+	must("Number(state.virtual_cost_usd || 0)", "HarnessLine reads the WHAT-IF cost off the agent's state")
 	must("harness-cost-whatif", "the WHAT-IF cost has its own span class")
-	must("+ effortEl + costEl + whatifEl + remoteEl", "the WHAT-IF token sits between the real cost and the remote indicator")
-	must("'≈$' + vcost.toFixed(2)", "WHAT-IF cost is prefixed ≈ to read as an estimate")
+	must("${virtualCost > 0 ? html`<span class=\"harness-cost harness-cost-whatif\"", "the WHAT-IF token sits between the real cost and the remote indicator")
+	must("`≈$${virtualCost.toFixed(2)}`", "WHAT-IF cost is prefixed ≈ to read as an estimate")
 
 	// CSS: the WHAT-IF span is hidden unless body.cost-whatif; the 💲 toggle
 	// suppresses the badge; the Costs nav button + section hide on body.hide-costs.

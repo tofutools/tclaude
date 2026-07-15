@@ -8,7 +8,7 @@ import (
 // TestDashboardHTML_HarnessLineWired guards the per-agent harness/model
 // line — "CC · O4.8 1M" under the row's dot/focus/cog cluster — plus
 // its appearance in the status-dot tooltip. The pieces span three files
-// (helpers.js builds + exports it, render.js wires it into the member
+// (groups-member-table.js owns and wires it into the member
 // cell, dashboard.css styles it); a rename in one silently breaks the
 // feature in the browser, and the repo has no JS test runner, so this
 // asserts on the embedded concatenation at `go test ./...`.
@@ -23,34 +23,32 @@ func TestDashboardHTML_HarnessLineWired(t *testing.T) {
 		}
 	}
 
-	// helpers.js: the builders are defined, read state.model, and are
-	// exported for render.js.
-	must("function harnessLine(m)", "harnessLine helper is defined")
-	must("function harnessModel(m)", "harnessModel helper (tooltip text) is defined")
-	must("m.state.model", "the line reads the model off the agent's state")
-	must("agentStatusDot, harnessLine,", "harnessLine is exported from helpers.js")
+	// The native components are defined and read state.model.
+	must("function HarnessLine({ member })", "HarnessLine component is defined")
+	must("function AgentStatusDot({ member })", "status-dot component is defined")
+	must("state.model", "the line reads the model off the agent's state")
 
-	// render.js: wired into the member control cell — same column as the
+	// MemberCell wires it into the member control cell — same column as the
 	// dot/actions, NOT a new <td>.
-	must("${agentStatusDot(m)}${actions}</div>${harnessLine(m)}", "harnessLine renders in the agent-ctl cell")
+	must("<${HarnessLine} member=${member} /><${SandboxBadge} member=${member} />", "HarnessLine renders in the agent-ctl cell")
 
 	// The always-visible label is shortModel()-compressed; the FULL name
 	// stays in the tooltip (the title attr / the status-dot tip).
 	must("function shortModel(", "shortModel compressor is defined")
-	must("${esc(shortModel(model))}", "the visible chip uses the shortened model")
+	must("${shortModel(model)}", "the visible chip uses the shortened model")
 	must("Model: ${model}", "harnessLine's tooltip keeps the FULL model name")
 
 	// The reasoning-effort level (JOH-37) trails the model — "CC · O4.8 1M
 	// high" — read off state.effort_level, with its own styled span and a
 	// tooltip clause. Omitted when absent so models without effort support
 	// stay at "CC · O4.8 1M".
-	must("m.state.effort_level", "harnessLine reads the effort level off the agent's state")
+	must("state.effort_level", "HarnessLine reads the effort level off the agent's state")
 	must("harness-effort", "the effort token has its own span")
 	must("Effort: ${effort}", "harnessLine's tooltip names the effort level when present")
 
 	// Status-dot tooltip surfaces the harness+model on hover (the brief's
 	// second ask), using the full model via harnessModel.
-	must("running on ${hm}", "the status-dot tooltip appends the harness/model")
+	must("running on ${harnessLong(state.harness)} · ${model}", "the status-dot tooltip appends the harness/model")
 
 	// CSS: the line and its prefix/separator are styled (no chip/box — one
 	// continuous string).
@@ -64,14 +62,14 @@ func TestDashboardHTML_HarnessLineWired(t *testing.T) {
 	must("const HARNESS_LABELS = {", "per-harness label map replaces the CC constant")
 	must("claude: { short: 'CC', long: 'Claude Code' }", "claude keeps its CC label")
 	must("codex: { short: 'Codex', long: 'Codex CLI' }", "codex has its own label")
-	must("m.state.harness", "harnessLine reads the harness tag off the agent's state")
+	must("state.harness", "HarnessLine reads the harness tag off the agent's state")
 }
 
 // TestDashboardHTML_HarnessBadgeAndSandboxWired guards the JOH-162 per-agent
 // surfaces: a non-default harness (Codex) is badged even before a model is
 // known, the launch-sandbox chip renders from state.sandbox_mode, and the
 // rename affordance is gated on the harness's deliverable-rename capability.
-// All three span helpers.js (builders) + render.js (wiring) + dashboard.css
+// All three span groups-member-table.js + helpers.js capabilities + dashboard.css
 // (styles); the repo has no JS test runner, so this asserts on the embedded
 // concatenation.
 func TestDashboardHTML_HarnessBadgeAndSandboxWired(t *testing.T) {
@@ -82,30 +80,28 @@ func TestDashboardHTML_HarnessBadgeAndSandboxWired(t *testing.T) {
 		}
 	}
 
-	// helpers.js: a non-default harness is flagged even with no model yet,
+	// HarnessLine flags a non-default harness even with no model yet,
 	// so a mixed group is legible before the first tick. A default-harness
 	// (Claude Code) no-model row stays clean UNLESS Remote Access is armed,
 	// in which case the bare 📱 indicator still earns a minimal line.
-	must("function isDefaultHarness(name)", "default-harness predicate defined")
-	must("if (isDefaultHarness(harness)) {", "no-model Claude Code rows stay clean; Codex still badges")
-	must("return remoteEl ? `<div class=\"agent-harness\">${remoteEl}</div>` : '';", "an armed remote indicator still shows on a pre-tick CC row")
+	must("if (!harness || harness === 'claude')", "no-model Claude Code rows stay clean; Codex still badges")
+	must("return state.remote_control ? html`<div class=\"agent-harness\">${remote}</div>` : null;", "an armed remote indicator still shows on a pre-tick CC row")
 
-	// helpers.js: the sandbox badge builder reads state.sandbox_mode, is
-	// exported, and special-cases the full-access (sandbox-off) mode.
-	must("function sandboxBadge(m)", "sandboxBadge helper is defined")
-	must("m.state.sandbox_mode", "sandboxBadge reads the launch sandbox off the agent's state")
+	// The sandbox badge component reads state.sandbox_mode and special-cases
+	// the full-access (sandbox-off) mode.
+	must("function SandboxBadge({ member })", "SandboxBadge component is defined")
+	must("member.state?.sandbox_mode", "SandboxBadge reads the launch sandbox off the agent's state")
 	must("danger-full-access", "the full-access (sandbox-off) mode is special-cased")
-	must("harnessLine, sandboxBadge,", "sandboxBadge is exported from helpers.js")
 
-	// render.js: the sandbox chip renders in the agent control cell, next
+	// MemberCell: the sandbox chip renders in the agent control cell, next
 	// to the harness line.
-	must("${harnessLine(m)}${sandboxBadge(m)}", "sandboxBadge renders beside the harness line")
+	must("<${HarnessLine} member=${member} /><${SandboxBadge} member=${member} />", "SandboxBadge renders beside the harness line")
 
-	// render.js: the rename affordance is gated on the harness capability —
+	// MemberName: the rename affordance is gated on the harness capability —
 	// a non-renameable harness gets a fixed (non-editable) name.
 	must("function harnessCanRename(snapshot, name)", "rename-capability lookup is defined")
-	must("function renameNameCell(m, state, idPair = '')", "the name cell switches on rename capability")
-	must("harnessCanRename(lastSnapshot, state.harness)", "the name cell gates rename on the agent's harness")
+	must("function MemberName({ member, snapshot, actions, grants, editorKey })", "the name cell switches on rename capability")
+	must("harnessCanRename(snapshot, state.harness)", "the name cell gates rename on the agent's harness")
 	must("rowname-fixed", "a non-renameable harness gets a fixed-name span")
 
 	// CSS: the sandbox chip + its danger variant + the fixed-name tweak are
@@ -197,7 +193,7 @@ func TestDashboardHTML_ShortModelRules(t *testing.T) {
 	must(`paren[1].match(/\d+\s*[KMBkmb]/)`, "extracts the window size token (1M / 200K)")
 
 	// Rule 2: family initial glued onto the version with no space.
-	must("parts[0].charAt(0).toUpperCase() + parts.slice(1).join(' ')", "initial + version, no space")
+	must("parts[0][0].toUpperCase() + parts.slice(1).join(' ')", "initial + version, no space")
 
 	// Rule 2b: the size token is appended after a space when present.
 	must("size ? `${core} ${size}` : core", "size token joins with a space, else core alone")

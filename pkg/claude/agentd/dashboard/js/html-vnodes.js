@@ -69,7 +69,7 @@ function convert(node) {
 
 // Convert trusted dashboard renderer HTML into real Preact VNodes. This is a
 // migration seam, not an HTML injection boundary: callers pass only the
-// existing escaped render.js output. data-group-key/data-key/id become Preact
+// existing escaped compatibility-renderer output. data-group-key/data-key/id become Preact
 // keys, so snapshot reorders retain the same details/row/control DOM nodes.
 export function trustedHTMLToVNodes(markup, documentRef = document) {
   const template = documentRef.createElement('template');
