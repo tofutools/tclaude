@@ -1451,7 +1451,10 @@ export class ProcessTemplateEditor {
       truncated: !!context.truncation,
     });
     if (prompt == null || this.abort?.signal.aborted) {
-      this.graph?.root?.focus?.({ preventScroll: true });
+      const active = globalThis.document?.activeElement;
+      if (!active || !this.root?.contains?.(active)) {
+        this.graph?.root?.focus?.({ preventScroll: true });
+      }
       return false;
     }
     if (!freshnessGuard()) return false;

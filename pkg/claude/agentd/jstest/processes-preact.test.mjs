@@ -289,6 +289,35 @@ test('process scribe preview traps focus and restores its editor invoker on ever
   assert.equal(harness.document.querySelector('.process-scribe-preview'), null);
   assert.equal(editorRoot.inert, false);
   assert.equal(harness.document.activeElement, invoker, 'Send teardown also leaves predictable focus for downstream navigation');
+
+  let graphFocuses = 0;
+  let sends = 0;
+  const graphRoot = { focus: () => { graphFocuses += 1; } };
+  Object.assign(fake, {
+    blank: false, dirty: false, savePending: false, selection: null, validation: null,
+    model: {
+      rev: 0, template: { id: 'release-flow', nodes: {} }, edges: [],
+      currentRef: `release-flow@sha256:${'a'.repeat(64)}`, sourceHash: 'b'.repeat(64),
+    },
+    graph: { root: graphRoot },
+    scribePreviewModal: ProcessTemplateEditor.prototype.scribePreviewModal,
+    options: { onScribe: async () => { sends += 1; return {}; } },
+  });
+  for (const gesture of ['Escape', 'Cancel']) {
+    invoker.focus();
+    const pending = ProcessTemplateEditor.prototype.requestScribe.call(fake);
+    await new Promise(resolve => queueMicrotask(resolve));
+    const integratedDialog = harness.document.querySelector('.process-scribe-preview');
+    if (gesture === 'Escape') {
+      harness.fireEvent(integratedDialog.querySelector('textarea'), 'keydown', { key: 'Escape' });
+    } else {
+      harness.fireEvent(integratedDialog.querySelector('button:not(.primary)'), 'click');
+    }
+    assert.equal(await pending, false, `${gesture} cancels the integrated request`);
+    assert.equal(harness.document.activeElement, invoker, `${gesture} keeps the restored invoker instead of overriding it with graph focus`);
+  }
+  assert.equal(graphFocuses, 0);
+  assert.equal(sends, 0);
   editorRoot.remove();
 });
 
