@@ -82,7 +82,10 @@ export function AddMemberDialog({ descriptor, state, actions, confirmDiscard }) 
   // identity, not an index: a same-length poll reorder cannot retarget Enter.
   const [query, setQuery] = useState('');
   const [includeOffline, setIncludeOffline] = useState(false);
-  const [highlightConv, setHighlightConv] = useState('');
+  // null requests the legacy initial-first selection after an explicit filter
+  // gesture; '' means polling removed the selected identity and selection must
+  // stay empty until Arrow navigation or pointer hover chooses a row.
+  const [highlightConv, setHighlightConv] = useState(null);
   const [promotionPool, setPromotionPool] = useState([]);
   const [poolLoading, setPoolLoading] = useState(true);
   const [poolError, setPoolError] = useState('');
@@ -101,8 +104,8 @@ export function AddMemberDialog({ descriptor, state, actions, confirmDiscard }) 
     includeOffline,
     query,
   }), [currentSnapshot, promotionPool, descriptor.group, includeOffline, query]);
-  const selectedIndex = Math.max(0,
-    candidates.findIndex((candidate) => candidate.conv_id === highlightConv));
+  const selectedIndex = candidates.findIndex(
+    (candidate) => candidate.conv_id === highlightConv);
   const dirty = query !== '' || includeOffline;
 
   const loadPool = async () => {
@@ -131,13 +134,17 @@ export function AddMemberDialog({ descriptor, state, actions, confirmDiscard }) 
 
   useEffect(() => {
     if (!candidates.length) {
-      if (highlightConv) setHighlightConv('');
+      if (highlightConv !== '') setHighlightConv('');
       return;
     }
-    if (!candidates.some((candidate) => candidate.conv_id === highlightConv)) {
+    if (highlightConv === null) {
       setHighlightConv(candidates[0].conv_id);
+      return;
     }
-  }, [candidates, highlightConv]);
+    if (highlightConv && selectedIndex < 0) {
+      setHighlightConv('');
+    }
+  }, [candidates, highlightConv, selectedIndex]);
 
   useLayoutEffect(() => {
     listRef.current?.querySelector('.add-member-row.highlighted')
@@ -166,14 +173,19 @@ export function AddMemberDialog({ descriptor, state, actions, confirmDiscard }) 
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
       if (!candidates.length) return;
-      const delta = event.key === 'ArrowDown' ? 1 : -1;
-      const next = (selectedIndex + delta + candidates.length) % candidates.length;
+      let next;
+      if (selectedIndex < 0) {
+        next = event.key === 'ArrowDown' ? 0 : candidates.length - 1;
+      } else {
+        const delta = event.key === 'ArrowDown' ? 1 : -1;
+        next = (selectedIndex + delta + candidates.length) % candidates.length;
+      }
       setHighlightConv(candidates[next].conv_id);
       return;
     }
     if (event.key !== 'Enter' || event.target.closest('button')) return;
     event.preventDefault();
-    if (!busyRef.current) void addOne(candidates[selectedIndex]);
+    if (!busyRef.current && selectedIndex >= 0) void addOne(candidates[selectedIndex]);
   };
 
   const emptyRetry = includeOffline
@@ -194,11 +206,11 @@ export function AddMemberDialog({ descriptor, state, actions, confirmDiscard }) 
         placeholder="Filter by title / role or class / descr / conv-id…"
         autocomplete="off" spellcheck=${false}
         onKeyDown=${navigate}
-        onInput=${(event) => { setQuery(event.currentTarget.value); setHighlightConv(''); }} />
+        onInput=${(event) => { setQuery(event.currentTarget.value); setHighlightConv(null); }} />
       <div
         class="add-member-list" id="add-member-list" ref=${listRef}
         role="listbox" aria-busy=${busy || poolLoading ? 'true' : 'false'}
-        aria-activedescendant=${candidates.length ? `add-member-option-${selectedIndex}` : undefined}
+        aria-activedescendant=${selectedIndex >= 0 ? `add-member-option-${selectedIndex}` : undefined}
       >
         ${poolError ? html`<div class="add-member-empty" role="alert">${poolError} <button id="add-member-pool-retry" type="button" disabled=${poolLoading || busy} onClick=${loadPool}>Retry</button></div>` : null}
         ${candidates.map((candidate, index) => html`<${CandidateRow}
@@ -213,7 +225,7 @@ export function AddMemberDialog({ descriptor, state, actions, confirmDiscard }) 
       <div class="add-member-foot">
         <label title="Include archived / never-online conversations in the candidate list">
           <input id="add-member-all" type="checkbox" checked=${includeOffline} disabled=${busy}
-            onChange=${(event) => { setIncludeOffline(event.currentTarget.checked); setHighlightConv(''); }} /><span class="theme-copy-regular">Include offline / archived</span><span class="theme-copy-wizard">Include slumbering / archived</span>
+            onChange=${(event) => { setIncludeOffline(event.currentTarget.checked); setHighlightConv(null); }} /><span class="theme-copy-regular">Include offline / archived</span><span class="theme-copy-wizard">Include slumbering / archived</span>
         </label>
         <span class="spacer"></span>
         <span><kbd>↑↓</kbd> nav · <kbd>Enter</kbd> <span class="theme-copy-regular">add</span><span class="theme-copy-wizard">invite</span> · <kbd>Esc</kbd> close</span>
