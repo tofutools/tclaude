@@ -139,8 +139,8 @@ function statusInfo(state, online) {
 
 function StatePill({ state, online }) {
   const info = statusInfo(state, online);
-  let className = 'state-offline';
-  if (info.status === 'crashed') className = 'state-crashed';
+  let className = online ? 'state-idle' : 'state-offline';
+  if (!online && info.status === 'crashed') className = 'state-crashed';
   else if (info.status === 'working' || info.status === 'main_agent_idle') className = 'state-working';
   else if (info.status === 'idle') className = 'state-idle';
   else if (info.status === 'awaiting_permission' || info.status === 'awaiting_input') className = 'state-awaiting';
@@ -175,8 +175,11 @@ function SlopReels({ status, conv }) {
 
 function SlopMachine({ state, online, conv }) {
   const hostRef = useRef(null);
-  const info = statusInfo(state, online);
-  const title = info.detail ? `${info.status}: ${info.detail}` : info.status;
+  const status = online
+    ? (state?.status || 'idle')
+    : state?.exit_reason === 'unexpected' ? 'crashed' : 'offline';
+  const detail = state?.status_detail || '';
+  const title = detail ? `${status}: ${detail}` : status;
   useLayoutEffect(() => {
     const host = hostRef.current;
     // slop-fx may have installed foreign reel children for a manual pull.
@@ -184,10 +187,10 @@ function SlopMachine({ state, online, conv }) {
     // mounting the new Preact-owned reel tree. Same-status publishes do not
     // run this effect and therefore preserve an in-flight pull.
     host.replaceChildren();
-    render(html`<${SlopReels} status=${info.status} conv=${conv || ''} />`, host);
+    render(html`<${SlopReels} status=${status} conv=${conv || ''} />`, host);
     return () => render(null, host);
-  }, [info.status, conv]);
-  return html`<span ref=${hostRef} class="slop-machine" data-status=${info.status} data-conv=${conv || ''} title=${title} aria-label=${title}></span>`;
+  }, [status, conv]);
+  return html`<span ref=${hostRef} class="slop-machine" data-status=${status} data-conv=${conv || ''} title=${title} aria-label=${title}></span>`;
 }
 
 const WIZARD_STATE = {
@@ -197,10 +200,13 @@ const WIZARD_STATE = {
 };
 
 function WizardPill({ state, online, conv }) {
-  const info = statusInfo(state, online);
-  const [glyph, label] = WIZARD_STATE[info.status] || ['✨', info.status];
-  const title = info.detail ? `${info.status}: ${info.detail}` : info.status;
-  return html`<span class="wizard-pill" data-status=${info.status} data-conv=${conv || ''} title=${title} aria-label=${title}><span class="wizard-pill-glyph">${glyph}</span> ${label}</span>`;
+  const status = online
+    ? (state?.status || 'idle')
+    : state?.exit_reason === 'unexpected' ? 'crashed' : 'offline';
+  const detail = state?.status_detail || '';
+  const [glyph, label] = WIZARD_STATE[status] || ['✨', status];
+  const title = detail ? `${status}: ${detail}` : status;
+  return html`<span class="wizard-pill" data-status=${status} data-conv=${conv || ''} title=${title} aria-label=${title}><span class="wizard-pill-glyph">${glyph}</span> ${label}</span>`;
 }
 
 function fmtTokens(value) {
@@ -252,8 +258,16 @@ function TrashIcon() {
   return html`<svg class="trash-ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>`;
 }
 
-function MenuButton({ member, group, act, regular, wizard = regular, title, className, disabled, attrs = {} }) {
-  return html`<button role="menuitem" class=${className} data-act=${act} ...${member ? memberAttrs(member) : {}} data-group=${group?.name} ...${attrs} title=${title} disabled=${disabled}><${ThemeText} regular=${regular} wizard=${wizard} /></button>`;
+function menuMemberAttrs(member, selector) {
+  if (!member) return {};
+  const attrs = { 'data-label': member.title || member.conv_id };
+  if (selector !== 'label') attrs['data-conv'] = member.conv_id;
+  if (selector === 'agent') attrs['data-agent'] = member.agent_id || member.conv_id;
+  return attrs;
+}
+
+function MenuButton({ member, selector = 'agent', group, act, regular, wizard = regular, title, className, disabled, attrs = {} }) {
+  return html`<button role="menuitem" class=${className} data-act=${act} ...${menuMemberAttrs(member, selector)} data-group=${group?.name} ...${attrs} title=${title} disabled=${disabled}><${ThemeText} regular=${regular} wizard=${wizard} /></button>`;
 }
 
 function NotifyMenuItem({ member }) {
@@ -305,18 +319,18 @@ function MemberMenu({ member, group, snapshot, ungrouped }) {
     <${MenuSeparator} />
     ${!ungrouped ? html`<${MenuButton} member=${member} group=${group} act="edit-member" attrs=${editAttrs} regular="edit" wizard="enchant" title=${wizardCopy('Edit this agent — title, role, description, ownership, permissions', 'Enchant this familiar — title, class, description, party ownership, and grimoire')} />
       <${MenuButton} member=${member} group=${group} act=${member.owner ? 'revoke-owner' : 'grant-owner'} className=${member.owner ? 'warn' : undefined} regular=${member.owner ? 'revoke owner' : 'make owner'} wizard=${member.owner ? 'revoke party owner' : 'make party owner'} title=${wizardCopy(member.owner ? 'Revoke group owner status' : 'Make this agent an owner of the group', member.owner ? 'Revoke party owner status' : 'Make this familiar an owner of the party')} />` : null}
-    <${MenuButton} member=${member} act="perm-edit" regular="permissions" wizard="grimoire" title=${wizardCopy("Edit this agent's permanent permissions (grant / deny / inherit-default)", "Open this familiar's grimoire of permanent boons and bindings")} />
-    <${MenuButton} member=${member} act="sudo-grant" regular="+ sudo" wizard="+ sudo" title=${wizardCopy('Grant a time-bounded sudo elevation to this agent', 'Grant this familiar a time-bounded sudo boon')} />
+    <${MenuButton} member=${member} selector="conv" act="perm-edit" regular="permissions" wizard="grimoire" title=${wizardCopy("Edit this agent's permanent permissions (grant / deny / inherit-default)", "Open this familiar's grimoire of permanent boons and bindings")} />
+    <${MenuButton} member=${member} selector="conv" act="sudo-grant" regular="+ sudo" wizard="+ sudo" title=${wizardCopy('Grant a time-bounded sudo elevation to this agent', 'Grant this familiar a time-bounded sudo boon')} />
     <${NotifyMenuItem} member=${member} />
     <${RemoteMenuItem} member=${member} canRemote=${canRemote} />
-    <${MenuButton} member=${member} act="cron-new" attrs=${{ 'data-prefill': prefill }} regular="schedule…" wizard="bind ritual…" title=${wizardCopy(`Schedule a recurring nudge for ${label}`, `Bind a recurring ritual for familiar ${label}`)} />
+    <${MenuButton} member=${member} selector="label" act="cron-new" attrs=${{ 'data-prefill': prefill }} regular="schedule…" wizard="bind ritual…" title=${wizardCopy(`Schedule a recurring nudge for ${label}`, `Bind a recurring ritual for familiar ${label}`)} />
     <${MenuSeparator} />
     <${MenuButton} member=${member} act="clone" attrs=${{ 'data-cwd': member.state?.cwd || member.cwd || '' }} regular="clone" wizard="mirror familiar" title=${wizardCopy('Fork a sibling agent that inherits identity (groups, perms, ownership). The original keeps running.', 'Mirror this familiar into a sibling that inherits its parties, boons, and ownership. The original keeps channeling.')} />
     <${MenuButton} member=${member} act="reincarnate" regular="reincarnate" wizard="reincarnate familiar" title=${wizardCopy('Reincarnate this agent — by default ask it to do so itself (it writes its own handoff); or force an immediate daemon-driven reincarnation.', 'Reincarnate this familiar — by default ask it to write its own handoff; or force its immediate return in a fresh vessel.')} />
     <${MenuSeparator} />
     ${ungrouped
-      ? html`<${MenuButton} member=${member} act="retire-agent" className="warn" regular="retire" wizard="banish" title=${wizardCopy('Retire this agent — demote it back to a plain conversation, revoking its group memberships and permission grants. Reversible via reinstate (stripped grants are not restored).', 'Banish this familiar — return it to a plain conversation, revoking its party memberships and boons. Reversible via reinstate.')} /><${MenuButton} member=${member} act="delete-agent" className="danger" regular="delete" wizard="erase familiar" title=${wizardCopy('Permanently delete this agent and conversation', 'Permanently erase this familiar and its conversation scroll')} />`
-      : html`<${MenuButton} member=${member} group=${group} act="remove-member" className="danger" regular="remove" wizard="dismiss from party" title=${wizardCopy('Remove this agent from the group', 'Remove this familiar from the party')} /><${MenuButton} member=${member} act="retire-agent" className="warn" regular="retire" wizard="banish" title=${wizardCopy('Retire this agent — demote it back to a plain conversation, revoking its group memberships and permission grants. Reversible via reinstate (stripped grants are not restored).', 'Banish this familiar — return it to a plain conversation, revoking its party memberships and boons. Reversible via reinstate.')} />`}
+      ? html`<${MenuButton} member=${member} selector="conv" act="retire-agent" className="warn" regular="retire" wizard="banish" title=${wizardCopy('Retire this agent — demote it back to a plain conversation, revoking its group memberships and permission grants. Reversible via reinstate (stripped grants are not restored).', 'Banish this familiar — return it to a plain conversation, revoking its party memberships and boons. Reversible via reinstate.')} /><${MenuButton} member=${member} act="delete-agent" className="danger" regular="delete" wizard="erase familiar" title=${wizardCopy('Permanently delete this agent and conversation', 'Permanently erase this familiar and its conversation scroll')} />`
+      : html`<${MenuButton} member=${member} group=${group} act="remove-member" className="danger" regular="remove" wizard="dismiss from party" title=${wizardCopy('Remove this agent from the group', 'Remove this familiar from the party')} /><${MenuButton} member=${member} selector="conv" act="retire-agent" className="warn" regular="retire" wizard="banish" title=${wizardCopy('Retire this agent — demote it back to a plain conversation, revoking its group memberships and permission grants. Reversible via reinstate (stripped grants are not restored).', 'Banish this familiar — return it to a plain conversation, revoking its party memberships and boons. Reversible via reinstate.')} />`}
   `;
 }
 

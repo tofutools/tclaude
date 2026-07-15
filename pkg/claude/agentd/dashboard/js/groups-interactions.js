@@ -9,6 +9,7 @@ export function GroupsInteractionProvider({ children }) {
   const [openMenuKey, setOpenMenuKey] = useState('');
   const [editorKey, setEditorKey] = useState('');
   const menus = useRef(new Map());
+  const editorFocusTarget = useRef(null);
   const openMenuKeyRef = useRef('');
   openMenuKeyRef.current = openMenuKey;
 
@@ -58,12 +59,26 @@ export function GroupsInteractionProvider({ children }) {
       }
     },
     closeMenu,
-    beginEditor(key) {
+    beginEditor(key, focusTarget) {
       closeMenu();
+      editorFocusTarget.current = focusTarget || document.activeElement;
       setEditorKey(key);
     },
-    endEditor(key) {
-      setEditorKey((current) => current === key ? '' : current);
+    endEditor(key, restoreFocus = false) {
+      setEditorKey((current) => {
+        if (current !== key) return current;
+        const target = editorFocusTarget.current;
+        editorFocusTarget.current = null;
+        if (restoreFocus) queueMicrotask(() => {
+          if (target?.isConnected) {
+            target.focus();
+            return;
+          }
+          [...document.querySelectorAll('[data-editor-key]')]
+            .find((node) => node.dataset.editorKey === key)?.focus();
+        });
+        return '';
+      });
     },
   }), [openMenuKey, editorKey]);
 
@@ -87,6 +102,15 @@ export function ActionMenu({ menuKey, kind, wrapperClass, children }) {
     button: buttonRef.current,
     menu: menuRef.current,
   }), [menuKey]);
+
+  useLayoutEffect(() => {
+    const menu = menuRef.current;
+    const dismissItem = (event) => {
+      if (event.target.closest('button')) interactions.closeMenu();
+    };
+    menu.addEventListener('click', dismissItem);
+    return () => menu.removeEventListener('click', dismissItem);
+  }, [menuKey, interactions.closeMenu]);
 
   useLayoutEffect(() => {
     if (!open) {
@@ -121,9 +145,6 @@ export function ActionMenu({ menuKey, kind, wrapperClass, children }) {
       class=${`action-menu${open ? ' open' : ''}${opensUp ? ' opens-up' : ''}`}
       data-preact-menu="1"
       role="menu"
-      onClick=${(event) => {
-        if (event.target.closest('button')) interactions.closeMenu();
-      }}
     >${children}</div>
   `;
   return wrapperClass ? html`<span class=${wrapperClass}>${body}</span>` : body;
@@ -158,22 +179,20 @@ export function InlineEditor({
       onClick: (event) => {
         event.preventDefault();
         event.stopPropagation();
-        interactions.beginEditor(editorKey);
+        interactions.beginEditor(editorKey, event.currentTarget);
       },
       onKeyDown: (event) => {
         if (event.key !== 'Enter' && event.key !== ' ') return;
         event.preventDefault();
         event.stopPropagation();
-        interactions.beginEditor(editorKey);
+        interactions.beginEditor(editorKey, event.currentTarget);
       },
     }, children);
   }
 
   const cancel = (restoreFocus = false) => {
     if (busyRef.current) return;
-    interactions.endEditor(editorKey);
-    if (restoreFocus) queueMicrotask(() => [...document.querySelectorAll('[data-editor-key]')]
-      .find((node) => node.dataset.editorKey === editorKey)?.focus());
+    interactions.endEditor(editorKey, restoreFocus);
   };
   const commit = async () => {
     if (busyRef.current) return;
@@ -181,8 +200,8 @@ export function InlineEditor({
     setBusy(true);
     setError('');
     try {
-      const saved = await onCommit(draft);
-      if (saved !== false) interactions.endEditor(editorKey);
+      await onCommit(draft);
+      interactions.endEditor(editorKey);
     } catch (err) {
       setError((err && err.message) || String(err));
     } finally {
@@ -199,9 +218,9 @@ export function InlineEditor({
     spellcheck=${false}
     autocomplete="off"
     disabled=${busy}
+    ...${inputProps}
     aria-invalid=${error ? 'true' : undefined}
     title=${error || inputProps.title}
-    ...${inputProps}
     onInput=${(event) => setDraft(event.currentTarget.value)}
     onKeyDown=${(event) => {
       if (event.key === 'Enter') { event.preventDefault(); void commit(); }
