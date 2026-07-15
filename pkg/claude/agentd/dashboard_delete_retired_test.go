@@ -1,143 +1,127 @@
 package agentd
 
 import (
+	"io/fs"
 	"strings"
 	"testing"
 )
 
-// JOH-31: the dashboard's "Delete retired agents…" tool — reachable from
-// the command palette and the Groups ⚙ menu — opens a PREVIEW modal
-// (openDeleteRetiredPreview, refresh.js) that lists every retired agent
-// (all ticked), offers live title/age filters and a per-row opt-out, and
-// on submit POSTs the EXPLICIT list of conv-ids that are BOTH ticked AND
-// visible to /api/cleanup/agents {mode:"delete"}.
-//
-// The repo has no JS test runner, so — following the established
-// dashboard_*_test.go structural guards — this pins the wiring across the
-// embedded HTML + JS so a refactor can't silently drop the preview, the
-// opt-out, or (crucially) the ticked-AND-visible explicit-list POST that
-// makes "what was previewed" == "what is deleted" (the operator's
-// load-bearing invariant). The delete backend path has its own flow tests
-// (cleanup_flow_test.go: TestCleanup_Agents_DeleteRetired_ExplicitSubsetOnly /
-// TestCleanup_Agents_DeleteRetiredAgent).
-func TestDashboardHTML_DeleteRetiredWired(t *testing.T) {
-	must := func(needle, why string) {
+// The dashboard's global delete-retired command loads every retired agent,
+// then hands the exact roster to the keyed transaction island. The Preact owner
+// preserves the title/age filters, visible-and-checked selection contract,
+// editable failure recovery, and stable per-conv result phase. Node component
+// tests pin behavior; this guard pins exclusive ownership and production wiring.
+func TestDashboardTransactionDeleteRetiredExclusiveOwnership(t *testing.T) {
+	read := func(path string) string {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
-			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		data, err := fs.ReadFile(dashboardAssetsFS, path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
 		}
+		return string(data)
 	}
+	html := read("dashboard.html")
+	island := read("js/transaction-dialog-island.js")
+	actions := read("js/transaction-dialog-actions.js")
+	controller := read("js/transaction-dialog-controller.js")
+	refresh := read("js/refresh.js")
+	palette := read("js/palette.js")
+	modalMessage := read("js/modal-message.js")
 
-	// 1. Markup: the overlay rides on .modal-overlay (shared backdrop), with the
-	//    candidate list, the per-row opt-out
-	//    toolbar (select-all/none + the title filter + the age floor), the
-	//    delete-worktrees toggle, and the submit button the JS drives.
-	must(`id="delete-retired-modal"`, "the delete-retired overlay exists")
-	must(`class="modal-overlay" id="delete-retired-modal"`,
-		"the preview uses the shared modal backdrop")
-	must(`id="delete-retired-list"`, "the preview has a candidate list")
-	must(`id="delete-retired-search"`, "the preview has a title/id filter")
-	must(`id="delete-retired-age"`, "the preview has an age-floor filter")
-	must(`id="delete-retired-select-all"`, "the preview can select all candidates")
-	must(`id="delete-retired-select-none"`, "the preview can clear the selection")
-	must(`id="delete-retired-wt"`, "the preview has a delete-worktrees toggle")
-	must(`id="delete-retired-submit"`, "the preview has a submit button")
-	must(`id="delete-retired-cancel"`, "the preview has a cancel button")
-
-	// 2. The driver is defined and exported, and BOTH affordances reach it:
-	//    the command palette and the Groups ⚙ menu button.
-	must("function openDeleteRetiredPreview(", "refresh.js defines the preview driver")
-	must("openDeleteRetiredPreview,", "refresh.js exports the preview driver")
-	must("run: () => openDeleteRetiredPreview()", "the palette command opens the preview")
-	must(`id="delete-retired-open"`, "a Groups-menu button opens the preview for discoverability")
-	must("$('#delete-retired-open').addEventListener('click', () => openDeleteRetiredPreview())",
-		"the Groups-menu button is wired to the driver")
-
-	// 3. The candidate list is seeded from the FULL retired endpoint
-	//    (/api/retired with no paging params), all ticked by default — so the
-	//    headline action targets the whole retired population and the human
-	//    opts rows OUT. The snapshot now only ships ONE PAGE of retired[], so
-	//    reading it would silently scope the bulk delete to the visible window;
-	//    the modal must fetch the complete list.
-	must("retired = await fetchListFull('retired')",
-		"the preview seeds its candidates from the full retired endpoint, not the windowed snapshot")
-	must("checked: true,", "retired candidates are ticked by default")
-
-	// Bound the rest of the assertions to the driver's own body so a needle
-	// can't be satisfied by an unrelated modal elsewhere in refresh.js.
-	disp := dashboardAssets
-	start := strings.Index(disp, "function openDeleteRetiredPreview(")
-	if start < 0 {
-		t.Fatal("refresh.js: function openDeleteRetiredPreview( not found")
+	if strings.Contains(html, `id="delete-retired-modal"`) {
+		t.Error("static dashboard HTML still owns #delete-retired-modal")
 	}
-	fnBody, _, found := strings.Cut(disp[start:], "\n}\n")
-	if !found {
-		t.Fatal("refresh.js: could not bound openDeleteRetiredPreview")
-	}
-
-	// 4. THE load-bearing property (JOH-31): submit posts the conv-ids that
-	//    are BOTH ticked AND visible (pass matchesFilter) — not merely
-	//    c.checked. A row hidden by a filter is never deleted even if it was
-	//    ticked before the filter narrowed. The list is sent verbatim to the
-	//    delete tier; it is NOT a status filter the server re-resolves.
-	for _, needle := range []string{
-		"candidates.filter(c => c.checked && matchesFilter(c))", // ticked AND visible — the whole point
-		"visibleChecked().map(c => c.agent_id || c.conv_id)",    // posted set (agent_id, conv_id fallback)
-		"mode: 'delete'",        // the existing delete tier
-		"'/api/cleanup/agents'", // to the cleanup endpoint, not a new one
+	for _, required := range []string{
+		`kind === 'delete-retired-preview'`, `id="delete-retired-modal"`,
+		`id="delete-retired-search"`, `id="delete-retired-age"`,
+		`id="delete-retired-select-all"`, `id="delete-retired-select-none"`,
+		`id="delete-retired-wt"`, `id="delete-retired-list"`,
+		`submitID="delete-retired-submit"`,
+		`primaryClass=${result ? 'primary' : 'primary danger'}`,
+		"visibleCandidates.filter(",
+		"selected.has(candidate.conv_id)",
+		"candidate.agent_id || candidate.conv_id",
+		"deleteRetiredAgeDays(candidate) >= minAgeDays",
+		"await actions.deleteRetiredPreview(request)",
+		"await actions.finishDeleteRetired({ kind: descriptor.kind, response: result })",
 	} {
-		if !strings.Contains(fnBody, needle) {
-			t.Errorf("openDeleteRetiredPreview: missing %q — the ticked-AND-visible explicit-list POST is the whole point", needle)
+		if !strings.Contains(island, required) {
+			t.Errorf("transaction island is missing delete-retired contract %q", required)
 		}
 	}
-	// It must NOT post the bare c.checked set (the retire-preview behavior) —
-	// that would delete rows the human filtered out of view.
-	if strings.Contains(fnBody, "candidates.filter(c => c.checked).map") {
-		t.Error("openDeleteRetiredPreview: must post ticked-AND-visible, not bare c.checked (a filtered-out row must not be deleted)")
-	}
-	// And it must not smuggle in a server-re-resolved status filter.
-	if strings.Contains(fnBody, "?status=") {
-		t.Error("openDeleteRetiredPreview: must POST the explicit conv list, not a ?status= filter the server re-resolves")
-	}
-
-	// 5. Both live filters re-render the list, and select-all/none act on the
-	//    currently-FILTERED rows only (never ticking/unticking hidden rows).
-	for _, needle := range []string{
-		"searchEl.addEventListener('input', onSearch)",                        // title/id filter is live
-		"ageEl.addEventListener('input', onAge)",                              // age floor is live
-		"for (const c of candidates.filter(matchesFilter)) c.checked = true",  // select-all on filtered only
-		"for (const c of candidates.filter(matchesFilter)) c.checked = false", // select-none on filtered only
+	for _, required := range []string{
+		"export function normalizeDeleteRetiredCandidates(candidates)",
+		"result.sort((a, b) => {",
+		"kind: 'delete-retired-preview'",
+		"candidates: normalizeDeleteRetiredCandidates(candidates)",
 	} {
-		if !strings.Contains(fnBody, needle) {
-			t.Errorf("openDeleteRetiredPreview: missing %q — filters/selection wiring broken", needle)
+		if !strings.Contains(controller, required) {
+			t.Errorf("transaction controller is missing delete-retired launch contract %q", required)
 		}
 	}
-
-	// 6. Busy feedback: clicking submit shows an in-flight state (spinner +
-	//    aria-busy) and renderFooter tears it back down on the error paths.
-	for _, needle := range []string{
-		`submitBtn.setAttribute('aria-busy', 'true')`,
-		`class="btn-spinner"`,
-		`submitBtn.removeAttribute('aria-busy')`,
+	for _, required := range []string{
+		"async deleteRetiredPreview({ agents, deleteWorktrees })",
+		"'/api/cleanup/agents'",
+		"agents, mode: 'delete', delete_worktrees: !!deleteWorktrees",
+		"async finishDeleteRetired(result)",
+		"try { await refresh(); } finally { state.finish(result); }",
 	} {
-		if !strings.Contains(fnBody, needle) {
-			t.Errorf("openDeleteRetiredPreview: missing %q — submit must give in-flight feedback", needle)
+		if !strings.Contains(actions, required) {
+			t.Errorf("transaction actions are missing delete-retired wire contract %q", required)
+		}
+	}
+	for _, required := range []string{
+		"async function openDeleteRetiredPreview()",
+		"retired = await fetchListFull('retired')",
+		"return openDeleteRetiredPreviewDialog(retired)",
+		"from './transaction-dialog-controller.js';",
+	} {
+		if !strings.Contains(refresh, required) {
+			t.Errorf("refresh launcher is missing delete-retired cutover %q", required)
+		}
+	}
+	if strings.Contains(refresh, "$('#delete-retired-modal')") {
+		t.Error("refresh.js retains the superseded imperative delete-retired owner")
+	}
+	if !strings.Contains(palette, "run: () => openDeleteRetiredPreview()") {
+		t.Error("the command palette lost its delete-retired launcher")
+	}
+	if !strings.Contains(modalMessage,
+		"$('#delete-retired-open').addEventListener('click', () => openDeleteRetiredPreview())") {
+		t.Error("the Groups menu lost its delete-retired launcher")
+	}
+
+	// Adjacent imperative cleanup, delete-group, worktree, and window owners are
+	// intentionally out of this cutover.
+	for _, adjacent := range []string{
+		`id="cleanup-modal"`, `id="delete-group-modal"`, `id="worktree-cleanup-modal"`,
+		`id="window-modal"`,
+	} {
+		if !strings.Contains(html, adjacent) {
+			t.Errorf("adjacent static workflow changed during delete-retired cutover: %q", adjacent)
+		}
+	}
+	for _, adjacent := range []string{
+		"function openDeleteGroupModal(group)",
+		"function openWindowModal(scope, groupName)",
+		"export async function openCleanupModal(opts)",
+		"async function openWorktreeCleanup(group = '')",
+	} {
+		if !strings.Contains(refresh, adjacent) {
+			t.Errorf("adjacent imperative owner changed during delete-retired cutover: %q", adjacent)
 		}
 	}
 
-	// 7. The submit button reads as DESTRUCTIVE — the cleanup-modal red
-	//    `primary danger` variant — so a batch DELETE never looks benign.
-	must(`id="delete-retired-submit" class="primary danger"`,
-		"the batch-delete submit button carries the cleanup-modal danger (red) styling")
-	must(".cleanup-modal .modal-buttons button.primary.danger {",
-		"the cleanup-modal danger (red) button rule exists for the submit to bind to")
-
-	// 8. The palette command is gated on ≥1 retired agent so it never offers
-	//    a no-op, and carries the 🗑 icon (distinct from the ♻ retire ones).
-	must("const retiredCount = snap.retired_total || 0",
-		"the palette command gates on the snapshot's cheap retired total even when the full list is not fetched")
-	must("if (retiredCount) {", "the command is only listed when there is at least one retired agent")
-	must("icon: wiz('🗑', '🔥'), label: wiz('Delete retired agents…', 'Dispel banished familiars…')",
-		"the palette command carries the distinct 🗑 delete label (arcane 🔥 Dispel in wizard mode)")
-	must("keywords: 'delete purge retired cleanup remove wipe agents'", "the command's search keywords")
+	// The palette remains gated by the cheap total rather than fetching a full
+	// list merely to render a command.
+	for _, required := range []string{
+		"const retiredCount = snap.retired_total || 0",
+		"if (retiredCount) {",
+		"icon: wiz('🗑', '🔥'), label: wiz('Delete retired agents…', 'Dispel banished familiars…')",
+		"keywords: 'delete purge retired cleanup remove wipe agents'",
+	} {
+		if !strings.Contains(palette, required) {
+			t.Errorf("delete-retired palette contract missing %q", required)
+		}
+	}
 }
