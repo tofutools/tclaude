@@ -10,10 +10,15 @@ func TestDashboardOperatorMessageModalPolishWired(t *testing.T) {
 	js := readDashboardJS(t, "modal-operator-message.js")
 	for _, needle := range []string{
 		"import { makeModalResizable } from './helpers.js';",
+		"import { snapshotOperatorMessageDraft } from './operator-message-model.js';",
 		"import { bindBackdropDiscard } from './refresh.js';",
 		"dismissGuard = bindBackdropDiscard('operator-message-modal', close, () => !pending);",
 		"dismissGuard.tryDismiss()",
 		"dismissGuard?.markDirty()",
+		"const draft = snapshotOperatorMessageDraft({",
+		"const attachmentToken = await upload(draft.files);",
+		"setPending(true);",
+		"'operator-message-attach-btn', 'operator-message-attach-input'",
 		"'tclaude.dash.modalSize.operator-message'",
 	} {
 		if !strings.Contains(js, needle) {

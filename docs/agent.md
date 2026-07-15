@@ -269,10 +269,12 @@ their archival inbox copy is atomically marked delivered/read. Longer,
 multiline, or control-bearing bodies use the stable `inbox read <id>` pointer.
 Configure the rune threshold with `agent.message_inline_max_chars` (default
 1000; `0` disables regular-message inlining). Human-authored dashboard mail is
-explicitly labelled **human operator** and tells the agent to answer in its
-regular chat/output; `human.notify` remains optional extra feedback for agents
-that hold that permission. Attachments are listed by durable, agent-readable
-absolute path in `inbox read` output.
+explicitly labelled **human operator**. Its short inline form contains only the
+system metadata followed by the operator's own body (and attachment paths when
+present). The longer pointer form tells the agent to answer in its regular
+chat/output; `human.notify` remains optional extra feedback for agents that hold
+that permission. Attachments are listed by durable, agent-readable absolute
+path in `inbox read` output.
 
 ```bash
 tclaude agent inbox ls                # last 20, all
