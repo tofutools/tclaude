@@ -308,7 +308,7 @@ func validatePropagationMutationSet(pre RoutingState, plan PropagateClosurePlan,
 		}
 	}
 
-	activationIDs := make(map[ActivationID]struct{})
+	requiredPathIDs := make(map[PathID]struct{})
 	detachmentIDs := make(map[DetachmentID]struct{})
 	causeDigests := make(map[CauseDigest]struct{})
 	for _, mutation := range plan.Batch.Mutations {
@@ -337,8 +337,12 @@ func validatePropagationMutationSet(pre RoutingState, plan PropagateClosurePlan,
 				return err
 			}
 			causeDigests[reservation.CauseDigest] = struct{}{}
-			if reservation.Activation != nil {
-				activationIDs[reservation.Activation.ID] = struct{}{}
+			if reservation.State == ReservationClosedNoActivation {
+				for _, path := range pre.Paths {
+					if path.TargetReservationID == reservation.ID && path.State == PathArrived {
+						requiredPathIDs[path.ID] = struct{}{}
+					}
+				}
 			}
 			allowed[mutationTarget{kind: mutation.Kind, key: mutation.Key}] = struct{}{}
 		case MutationActivation:
@@ -349,7 +353,12 @@ func validatePropagationMutationSet(pre RoutingState, plan PropagateClosurePlan,
 			if _, ok := reservations[activation.ReservationID]; !ok {
 				return unauthorizedPropagationMutation(mutation)
 			}
-			activationIDs[activation.ID] = struct{}{}
+			for _, pathID := range activation.InputPathIDs {
+				requiredPathIDs[pathID] = struct{}{}
+			}
+			if activation.OutputPathID != "" {
+				requiredPathIDs[activation.OutputPathID] = struct{}{}
+			}
 			causeDigests[activation.Receipt.CauseDigest] = struct{}{}
 			allowed[mutationTarget{kind: mutation.Kind, key: mutation.Key}] = struct{}{}
 		case MutationScope:
@@ -384,18 +393,12 @@ func validatePropagationMutationSet(pre RoutingState, plan PropagateClosurePlan,
 	for _, mutation := range plan.Batch.Mutations {
 		switch mutation.Kind {
 		case MutationPath:
+			if _, required := requiredPathIDs[mutation.Key]; !required {
+				return unauthorizedPropagationMutation(mutation)
+			}
 			var path PathRecord
 			if err := decodeMutationSide(mutation, &path); err != nil {
 				return err
-			}
-			_, target := reservations[path.TargetReservationID]
-			_, source := activationIDs[path.SourceActivation.ID]
-			consumed := false
-			if path.ConsumedBy != nil {
-				_, consumed = activationIDs[path.ConsumedBy.ID]
-			}
-			if !target && !source && !consumed {
-				return unauthorizedPropagationMutation(mutation)
 			}
 			causeDigests[path.ImpossibleCauseDigest] = struct{}{}
 			allowed[mutationTarget{kind: mutation.Kind, key: mutation.Key}] = struct{}{}
@@ -408,6 +411,11 @@ func validatePropagationMutationSet(pre RoutingState, plan PropagateClosurePlan,
 				return unauthorizedPropagationMutation(mutation)
 			}
 			allowed[mutationTarget{kind: mutation.Kind, key: mutation.Key}] = struct{}{}
+		}
+	}
+	for pathID := range requiredPathIDs {
+		if _, ok := findMutation(plan.Batch, MutationPath, pathID); !ok {
+			return fmt.Errorf("%w: propagation-required path mutation %q is missing", ErrMutationInvalid, pathID)
 		}
 	}
 

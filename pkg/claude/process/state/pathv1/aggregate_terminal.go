@@ -146,13 +146,67 @@ func (i *aggregateIndex) validateRouteTerminal(path string, p PathRecord, d Disp
 	if outcome != settle.Identity.ResultCode {
 		fail("terminal route result %q does not conserve settlement result %q", id.ResultCode, settle.Identity.ResultCode)
 	}
-	var payload routeTerminalPayload
-	if err := decodeExactPayload(route.Payload, &payload); err != nil {
+	payload, err := i.decodeRouteTerminalPayload(p, route)
+	if err != nil {
 		fail("terminal route payload is invalid: %v", err)
 		return
 	}
 	want := routeTerminalPayload{TemplateRef: i.view.TemplateRef, SettlementCommandID: settle.ID, SourceActivationID: id.SourceActivationID, SourceGeneration: id.SourceGeneration, SourcePathID: p.ID, Attempt: id.Attempt, ResultCode: id.ResultCode, ReasonCode: d.ReasonCode, ProducedPathIDs: append([]PathID(nil), p.ProducedPathIDs...)}
 	if payload.TemplateRef != want.TemplateRef || payload.SettlementCommandID != want.SettlementCommandID || payload.SourceActivationID != want.SourceActivationID || payload.SourceGeneration != want.SourceGeneration || payload.SourcePathID != want.SourcePathID || payload.Attempt != want.Attempt || payload.ResultCode != want.ResultCode || payload.ReasonCode != want.ReasonCode || !slices.Equal(payload.ProducedPathIDs, want.ProducedPathIDs) || id.PlanDigest != payloadDigest(route.Payload) || id.PlanDigest != route.PayloadHash {
 		fail("terminal route plan digest does not bind the exact settlement and terminal transition")
+	}
+}
+
+func (i *aggregateIndex) decodeRouteTerminalPayload(current PathRecord, route CommandRecord) (routeTerminalPayload, error) {
+	var envelope mutationPayload[RoutePathsPlan]
+	typedErr := decodeExactPayload(route.Payload, &envelope)
+	if typedErr == nil {
+		plan := envelope.Plan
+		if envelope.TemplateRef != i.view.TemplateRef || envelope.TemplateSourceHash != i.view.TemplateSourceHash {
+			return routeTerminalPayload{}, fmt.Errorf("typed envelope template binding mismatch")
+		}
+		if err := envelope.Checkpoint.Validate(); err != nil {
+			return routeTerminalPayload{}, fmt.Errorf("typed envelope checkpoint binding: %w", err)
+		}
+		if err := plan.Validate(); err != nil {
+			return routeTerminalPayload{}, fmt.Errorf("typed route plan: %w", err)
+		}
+		id := route.Identity
+		if plan.SettlementCommandID != id.InputDigest || plan.SourceActivationID != id.SourceActivationID || plan.SourceGeneration != id.SourceGeneration || plan.SourcePathID != id.SourcePathID || plan.Attempt != id.Attempt || plan.CauseDigest != id.CauseDigest || plan.ResultCode != id.ResultCode {
+			return routeTerminalPayload{}, fmt.Errorf("typed route plan differs from command identity")
+		}
+		materialized, err := plan.Batch.materialize(route.ID)
+		if err != nil {
+			return routeTerminalPayload{}, fmt.Errorf("typed route plan materialization: %w", err)
+		}
+		mutation, ok := findMutation(MutationBatch{Mutations: materialized}, MutationPath, plan.SourcePathID)
+		if !ok || len(mutation.Before) == 0 || len(mutation.After) == 0 {
+			return routeTerminalPayload{}, fmt.Errorf("typed route plan lacks exact source transition")
+		}
+		var after PathRecord
+		if err := decodeExactPayload(mutation.After, &after); err != nil {
+			return routeTerminalPayload{}, fmt.Errorf("typed route source transition: %w", err)
+		}
+		if !canonicalEqual(after, current) || after.Disposition == nil {
+			return routeTerminalPayload{}, fmt.Errorf("typed route source transition differs from durable terminal path")
+		}
+		return routeTerminalPayload{
+			TemplateRef:         envelope.TemplateRef,
+			SettlementCommandID: plan.SettlementCommandID,
+			SourceActivationID:  plan.SourceActivationID,
+			SourceGeneration:    plan.SourceGeneration,
+			SourcePathID:        plan.SourcePathID,
+			Attempt:             plan.Attempt,
+			ResultCode:          plan.ResultCode,
+			ReasonCode:          after.Disposition.ReasonCode,
+			ProducedPathIDs:     append([]PathID(nil), plan.ProducedPathIDs...),
+		}, nil
+	}
+
+	var legacy routeTerminalPayload
+	if legacyErr := decodeExactPayload(route.Payload, &legacy); legacyErr == nil {
+		return legacy, nil
+	} else {
+		return routeTerminalPayload{}, fmt.Errorf("neither strict typed envelope (%v) nor strict legacy envelope (%v)", typedErr, legacyErr)
 	}
 }

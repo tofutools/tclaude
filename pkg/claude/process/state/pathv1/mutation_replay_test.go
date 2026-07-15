@@ -160,6 +160,90 @@ func TestRoutePathsTypedReplayAppliesOnceAndRejectsDrift(t *testing.T) {
 	}
 }
 
+func TestRoutePathsTypedTerminalReplayAndStrictEnvelope(t *testing.T) {
+	view := validGenesisFixture(t)
+	pathID := view.Authority.Genesis.OutputPathID
+	path := view.Routing.Paths[pathID]
+	settlement := addTerminalAttemptCommands(t, &view, path.SourceActivation.ID, path.SourceActivation.Generation, 1, "pass", "", "observed")
+	before := Clone(*view.Routing)
+	beforePath := before.Paths[path.ID]
+	beforePath.State = PathLive
+	beforePath.UpdatedSeq = 1
+	before.Paths[beforePath.ID] = beforePath
+	afterTemplate := Clone(before)
+	path.State = PathEnded
+	path.UpdatedSeq = 2
+	dispositionID, _ := DispositionReceiptIdentity(path.ID, PathLive, PathEnded, "completed", MutationCommandPlaceholder, "", 2)
+	path.Disposition = &DispositionReceipt{
+		ID: dispositionID, PathID: path.ID, FromState: PathLive, ToState: PathEnded,
+		ReasonCode: "completed", CommandID: MutationCommandPlaceholder, EventSeq: 2,
+	}
+	afterTemplate.Paths[path.ID] = path
+	batch, err := NewMutationBatch(&before, &afterTemplate, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view.Routing = &before
+	replayView := MutationReplayView{Aggregate: view, Checkpoint: CheckpointBinding{Generation: 11, Digest: strings.Repeat("b", 64)}}
+	plan := RoutePathsPlan{
+		SettlementCommandID: settlement.ID, SourceActivationID: path.SourceActivation.ID,
+		SourceGeneration: path.SourceActivation.Generation, SourcePathID: path.ID, Attempt: 1,
+		CauseDigest: "terminal-route", ResultCode: "pass", ProducedPathIDs: []PathID{}, Batch: batch,
+	}
+	payload, err := EncodeRoutePathsPayload(replayView, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := CommandIdentity{
+		RunID: view.RunID, Kind: CommandRoutePaths, PayloadSchema: 1,
+		SourceActivationID: path.SourceActivation.ID, SourceGeneration: path.SourceActivation.Generation,
+		SourcePathID: path.ID, Attempt: 1, InputDigest: settlement.ID,
+		CauseDigest: plan.CauseDigest, PlanDigest: payloadDigest(payload), ResultCode: plan.ResultCode,
+	}
+	command := commandWithPayload(t, identity, CommandObserved, payload)
+	replayView.Aggregate.Commands[command.ID] = command
+	result, err := ReplayRoutePaths(replayView, command)
+	if err != nil || result.Disposition != ReplayApplied || result.Routing.Paths[path.ID].State != PathEnded {
+		t.Fatalf("typed terminal route replay = %q, %v", result.Disposition, err)
+	}
+
+	for _, test := range []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "missing_template_source_hash", mutate: func(value map[string]any) { delete(value, "templateSourceHash") }},
+		{name: "unknown_top_level_field", mutate: func(value map[string]any) { value["unexpected"] = true }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var malformed map[string]any
+			if err := json.Unmarshal(payload, &malformed); err != nil {
+				t.Fatal(err)
+			}
+			test.mutate(malformed)
+			malformedPayload, err := json.Marshal(malformed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			forgedIdentity := identity
+			forgedIdentity.PlanDigest = payloadDigest(malformedPayload)
+			forged := commandWithPayload(t, forgedIdentity, CommandObserved, malformedPayload)
+			aggregate := replayView.Aggregate
+			aggregate.Commands = cloneMap(replayView.Aggregate.Commands)
+			aggregate.Commands[forged.ID] = forged
+			routing := Clone(result.Routing)
+			terminal := routing.Paths[path.ID]
+			terminal.Disposition.CommandID = forged.ID
+			terminal.Disposition.ID, _ = DispositionReceiptIdentity(terminal.ID, terminal.Disposition.FromState, terminal.Disposition.ToState, terminal.Disposition.ReasonCode, forged.ID, "", uint64(terminal.Disposition.EventSeq))
+			routing.Paths[terminal.ID] = terminal
+			aggregate.Routing = &routing
+			report := ValidateAggregate(aggregate)
+			if !reportHasCode(report, "terminal_command_provenance") {
+				t.Fatalf("malformed typed route diagnostics: %#v", report.Diagnostics)
+			}
+		})
+	}
+}
+
 func TestActivateAnyRealCandidateBoundaryAndMutationFormula(t *testing.T) {
 	makePlan := func(count int) ActivateGenerationPlan {
 		candidates := make([]CandidateRecord, count)
@@ -504,6 +588,29 @@ func TestPropagateClosureReplayBindsRootFrontierAndIntent(t *testing.T) {
 	}
 	delete(replayView.Aggregate.Commands, badCommand.ID)
 
+	badPathAfter := Clone(afterTemplate)
+	unrelatedArrival := badPathAfter.Paths[sourcePathID]
+	unrelatedArrival.UpdatedSeq = 3
+	badPathAfter.Paths[sourcePathID] = unrelatedArrival
+	badPathBatch, err := NewMutationBatch(&before, &badPathAfter, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	badPathPlan := plan
+	badPathPlan.Batch = badPathBatch
+	badPathPayload, err := EncodePropagateClosurePayload(replayView, badPathPlan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	badPathIdentity := identity
+	badPathIdentity.PlanDigest = payloadDigest(badPathPayload)
+	badPathCommand := commandWithPayload(t, badPathIdentity, CommandObserved, badPathPayload)
+	replayView.Aggregate.Commands[badPathCommand.ID] = badPathCommand
+	if err := ValidatePropagateClosureCommand(replayView, badPathCommand); !errors.Is(err, ErrMutationInvalid) {
+		t.Fatalf("propagation unrelated arrived-path rewrite error = %v", err)
+	}
+	delete(replayView.Aggregate.Commands, badPathCommand.ID)
+
 	result, err := ReplayPropagateClosure(replayView, command)
 	if err != nil {
 		t.Fatal(err)
@@ -691,6 +798,19 @@ func TestCompleteRunClaimObservationAndRecovery(t *testing.T) {
 	if _, err := PlanCompleteRun(nonderived); !errors.Is(err, ErrMutationInvalid) {
 		t.Fatalf("completion non-derived planning checkpoint error = %v", err)
 	}
+	ghostCommand := makeTestCommand(t, CommandIdentity{
+		RunID: pre.Aggregate.RunID, Kind: CommandPerformAttempt, PayloadSchema: 1,
+		SourceActivationID: pre.Aggregate.Authority.Genesis.ActivationID, SourceGeneration: 1, Attempt: 1, PlanDigest: "ghost-work",
+	}, CommandIssued)
+	ghost := pre
+	ghost.CheckpointJSON = completionCheckpoint(t, "running", 1, "sum-1", map[string]CommandRecord{ghostCommand.ID: ghostCommand})
+	bindCompletionCheckpoint(t, &ghost)
+	if _, err := PlanCompleteRun(ghost); !errors.Is(err, ErrMutationInconsistent) {
+		t.Fatalf("completion planned with checkpoint-only active command: %v", err)
+	}
+	if _, err := RecoverCompleteRun(ghost); !errors.Is(err, ErrMutationInconsistent) {
+		t.Fatalf("completion recovery ignored checkpoint-only active command: %v", err)
+	}
 	for _, status := range []string{"paused", "dirty", "inconsistent", "completed"} {
 		unsafe := pre
 		unsafe.RunStatus = status
@@ -704,6 +824,9 @@ func TestCompleteRunClaimObservationAndRecovery(t *testing.T) {
 	claimed.Aggregate.Commands = cloneMap(pre.Aggregate.Commands)
 	claimed.Aggregate.Commands[planned.ID] = planned
 	claimed.CheckpointJSON = completionCheckpoint(t, "running", 1, "sum-1", map[string]CommandRecord{planned.ID: planned})
+	if err := validateCompletionView(claimed); err != nil {
+		t.Fatalf("reconciled checkpoint/aggregate completion command: %v", err)
+	}
 	recovery, err = RecoverCompleteRun(claimed)
 	if err != nil || recovery.Phase != CompletionReadyToObserve {
 		t.Fatalf("claim recovery = %#v, %v", recovery, err)

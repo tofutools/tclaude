@@ -248,6 +248,51 @@ func validateCompletionView(view CompletionReplayView) error {
 	if anchors.Status != view.RunStatus || anchors.LastLogSeq != view.LastLogSeq || anchors.LogChecksum != view.LogChecksum {
 		return fmt.Errorf("%w: checkpoint anchors differ from current durable run", ErrMutationInconsistent)
 	}
+	if err := reconcileCheckpointCommands(view); err != nil {
+		return err
+	}
+	return nil
+}
+
+func reconcileCheckpointCommands(view CompletionReplayView) error {
+	var envelope struct {
+		OutstandingCommands map[string]json.RawMessage `json:"outstandingCommands"`
+	}
+	if err := json.Unmarshal(view.CheckpointJSON, &envelope); err != nil || envelope.OutstandingCommands == nil {
+		return fmt.Errorf("%w: checkpoint outstanding commands are missing or invalid", ErrMutationInconsistent)
+	}
+	checkpointCommands := make(map[string]CommandRecord, len(envelope.OutstandingCommands))
+	for id, raw := range envelope.OutstandingCommands {
+		var command CommandRecord
+		if err := decodeExactPayload(raw, &command); err != nil || command.ID != id {
+			return fmt.Errorf("%w: checkpoint command %q is not an exact command record", ErrMutationInconsistent, id)
+		}
+		var validationErr error
+		if command.Identity.Kind == CommandCompleteRun {
+			validationErr = validateCompleteRunCommandPrimitive(command)
+		} else {
+			validationErr = ValidateCommand(command)
+		}
+		if validationErr != nil {
+			return fmt.Errorf("%w: checkpoint command %q is invalid: %v", ErrMutationInconsistent, id, validationErr)
+		}
+		checkpointCommands[id] = command
+		if command.State.Active() {
+			stored, ok := view.Aggregate.Commands[id]
+			if !ok || !canonicalEqual(stored, command) {
+				return fmt.Errorf("%w: active checkpoint command %q is absent or different in aggregate", ErrMutationInconsistent, id)
+			}
+		}
+	}
+	for id, command := range view.Aggregate.Commands {
+		if !command.State.Active() {
+			continue
+		}
+		checkpoint, ok := checkpointCommands[id]
+		if !ok || !canonicalEqual(checkpoint, command) {
+			return fmt.Errorf("%w: active aggregate command %q is absent or different in checkpoint", ErrMutationInconsistent, id)
+		}
+	}
 	return nil
 }
 
