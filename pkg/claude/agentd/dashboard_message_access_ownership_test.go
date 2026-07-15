@@ -37,6 +37,9 @@ func TestDashboardMessageAccessDialogsHaveSingleOwner(t *testing.T) {
 		}
 	}
 	cronLegacy := string(mustReadFS(dashboardAssetsFS, "js/modal-cron.js"))
+	if !strings.Contains(cronLegacy, "import { bindBackdropDiscard, refresh, toast } from './refresh.js';") {
+		t.Error("modal-cron.js lost retained success-path refresh/toast dependencies")
+	}
 	for _, forbidden := range []string{
 		"function bindTargetPicker", "function populateTargetPicker",
 		"function readTargetPicker", "function pickCronTargetModal",
@@ -54,6 +57,7 @@ func TestDashboardMessageAccessDialogsHaveSingleOwner(t *testing.T) {
 		"from './modal-human-reply.js'",
 		"bindMessageModal, bindSudoModal",
 		"pickCronTargetModal, bindTargetPicker",
+		"sudoGrantBlocklist",
 	} {
 		if strings.Contains(dashboardAssets, forbidden) {
 			t.Errorf("dashboard assets retain migrated legacy import/wiring %q", forbidden)
@@ -62,6 +66,7 @@ func TestDashboardMessageAccessDialogsHaveSingleOwner(t *testing.T) {
 	for _, required := range []string{
 		"registerMessageAccessDialogController(controller)",
 		"mountMessageAccessDialogsFeature({",
+		"if (messageAccessDialogsMounted) bindCronModal();",
 		"configureCronTargetPicker(p)",
 		"readCronTargetPicker()",
 	} {
