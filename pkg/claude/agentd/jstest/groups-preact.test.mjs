@@ -24,17 +24,6 @@ function snapshot(groups) {
   };
 }
 
-function testPresentation() {
-  return {
-    memberTable(members, context) {
-      return `<table><tbody>${members.map((member) => {
-        const status = member.state?.status || '';
-        return `<tr data-key="${member.conv_id || member.title}"${context.ungrouped ? ' data-dnd-source-ungrouped="1"' : ''}><td><button data-act="inspect" aria-label="inspect ${context.group?.name || 'ungrouped'}">inspect</button></td><td class="state-cell"><span class="slop-machine" data-status="${status}"><span>${status}</span></span></td></tr>`;
-      }).join('')}</tbody></table>`;
-    },
-  };
-}
-
 function stateDependencies() {
   return {
     columns: {
@@ -49,10 +38,9 @@ function stateDependencies() {
 
 test('Groups list preserves keyed disclosure, focus and nodes across reorder/activity polls', async (t) => {
   const harness = await createPreactHarness(t);
-  const [{ createGroupsState }, { GroupsList }, { mountTransientSiblingEditor }] = await Promise.all([
+  const [{ createGroupsState }, { GroupsList }] = await Promise.all([
     harness.importDashboardModule('js/groups-state.js'),
     harness.importDashboardModule('js/groups-island.js'),
-    harness.importDashboardModule('js/transient-editor.js'),
   ]);
   const prefs = memoryPrefs({
     'tclaude.dash.ungrouped.groups': '0',
@@ -61,8 +49,8 @@ test('Groups list preserves keyed disclosure, focus and nodes across reorder/act
   const state = createGroupsState({ prefs, resetOffsets: () => {}, ...stateDependencies() });
   state.initialize();
   state.publish(snapshot([
-    { name: 'alpha', descr: 'old', members: [{ conv_id: 'alpha-member', online: true, state: { status: 'working' } }] },
-    { name: 'beta', members: [{ conv_id: 'beta-member', online: true, state: { status: 'idle' } }] },
+    { name: 'alpha', descr: 'old', members: [{ conv_id: 'alpha-member', title: 'Alpha member', online: true, state: { status: 'working' } }] },
+    { name: 'beta', members: [{ conv_id: 'beta-member', title: 'Beta member', online: true, state: { status: 'idle' } }] },
   ]));
   const actions = { sort: () => {}, page: () => {}, setPageSize: () => {} };
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
@@ -71,38 +59,35 @@ test('Groups list preserves keyed disclosure, focus and nodes across reorder/act
       host=${host}
       state=${state}
       actions=${actions}
-      presentation=${testPresentation()}
     />
   `, host);
 
   const alpha = host.querySelector('details[data-group-key="alpha"]');
   const beta = host.querySelector('details[data-group-key="beta"]');
-  const inspect = getByRole(alpha, 'button', { name: 'inspect alpha' });
+  const inspect = getByRole(alpha, 'button', { name: 'Alpha member' });
   const descr = alpha.querySelector('.group-descr');
   alpha.open = true;
   inspect.focus();
 
-  const editor = harness.document.createElement('input');
-  const restoreEditor = mountTransientSiblingEditor(descr, editor);
-  assert.equal(descr.isConnected, true, 'the managed inline-edit host stays connected');
-  assert.equal(descr.hidden, true);
-  restoreEditor();
-  assert.equal(descr.hidden, false);
-  assert.equal(editor.isConnected, false);
+  await harness.act(() => harness.fireEvent(descr, 'click'));
+  const editor = alpha.querySelector('.group-descr-input');
+  await harness.input(editor, 'draft survives poll');
 
   await harness.act(() => state.publish(snapshot([
-    { name: 'beta', members: [{ conv_id: 'beta-member', online: true, state: { status: 'awaiting_input' } }] },
-    { name: 'alpha', descr: 'new', members: [{ conv_id: 'alpha-member', online: true, state: { status: 'working' } }] },
+    { name: 'beta', members: [{ conv_id: 'beta-member', title: 'Beta member', online: true, state: { status: 'awaiting_input' } }] },
+    { name: 'alpha', descr: 'new', members: [{ conv_id: 'alpha-member', title: 'Alpha member', online: true, state: { status: 'working' } }] },
   ])));
 
   assert.equal(host.querySelector('details[data-group-key="alpha"]'), alpha);
   assert.equal(host.querySelector('details[data-group-key="beta"]'), beta);
   assert.equal(host.querySelector('details:first-child'), beta, 'snapshot reorder moves keyed nodes');
   assert.equal(alpha.open, true, 'live disclosure state is not reset by a reorder');
-  assert.equal(harness.document.activeElement, inspect, 'focused legacy action remains focused');
-  assert.equal(alpha.querySelector('.group-descr'), descr, 'inline-edit host identity survives publish');
-  assert.match(descr.textContent, /new/, 'restored inline-edit host receives later updates');
+  assert.equal(alpha.querySelector('.group-descr-input'), editor, 'native inline editor identity survives publish');
+  assert.equal(editor.value, 'draft survives poll', 'poll data cannot overwrite a live draft');
   assert.ok(beta.querySelector('.group-activity'));
+  await harness.act(() => harness.fireEvent(editor, 'keydown', { key: 'Escape' }));
+  assert.match(alpha.querySelector('.group-descr').textContent, /new/, 'cancel reveals the latest published value');
+  inspect.focus();
 
   harness.document.body.classList.add('wizard');
   await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent(
@@ -116,22 +101,23 @@ test('Groups list preserves keyed disclosure, focus and nodes across reorder/act
   activeReel.textContent = 'spinning';
   machine.replaceChildren(activeReel); // manual reel pull installs foreign children
   await harness.act(() => state.publish(snapshot([
-    { name: 'beta', members: [{ conv_id: 'beta-member', online: true, state: { status: 'awaiting_input' } }] },
-    { name: 'alpha', descr: 'new', members: [{ conv_id: 'alpha-member', online: true, state: { status: 'working' } }] },
+    { name: 'beta', members: [{ conv_id: 'beta-member', title: 'Beta member', online: true, state: { status: 'awaiting_input' } }] },
+    { name: 'alpha', descr: 'new', members: [{ conv_id: 'alpha-member', title: 'Alpha member', online: true, state: { status: 'working' } }] },
   ])));
   assert.equal(machine.firstElementChild, activeReel,
     'a same-status publish preserves an in-flight imperative reel pull');
 
   await harness.act(() => state.publish(snapshot([
-    { name: 'beta', members: [{ conv_id: 'beta-member', online: true, state: { status: 'idle' } }] },
-    { name: 'alpha', descr: 'new', members: [{ conv_id: 'alpha-member', online: true, state: { status: 'working' } }] },
+    { name: 'beta', members: [{ conv_id: 'beta-member', title: 'Beta member', online: true, state: { status: 'idle' } }] },
+    { name: 'alpha', descr: 'new', members: [{ conv_id: 'alpha-member', title: 'Alpha member', online: true, state: { status: 'working' } }] },
   ])));
-  assert.equal(machine.querySelector('span').textContent, 'idle',
+  assert.equal(machine.dataset.status, 'idle');
+  assert.equal(machine.querySelector('span').textContent, '7️⃣',
     'a changed status replaces imperative reel children after a manual pull');
 
   await harness.act(() => state.publish(snapshot([
     { name: 'beta', members: [] },
-    { name: 'alpha', descr: 'new', members: [{ conv_id: 'alpha-member', online: true, state: { status: 'working' } }] },
+    { name: 'alpha', descr: 'new', members: [{ conv_id: 'alpha-member', title: 'Alpha member', online: true, state: { status: 'working' } }] },
   ])));
   assert.equal(harness.document.activeElement, inspect,
     'a neighboring activity chip disappearing does not replace the keyed action');
@@ -256,7 +242,6 @@ test('native group chrome preserves hierarchy, virtual DnD and shared menu contr
   const mounted = await harness.mount(harness.html`<${GroupsList}
     host=${host} state=${state}
     actions=${{ sort: () => {}, page: () => {}, setPageSize: () => {} }}
-    presentation=${testPresentation()}
   />`, host);
 
   const parent = host.querySelector('details[data-dnd-target-group="parent"]');
@@ -353,7 +338,6 @@ test('Groups list owns sort and virtual-list pager event routing', async (t) => 
       host=${host}
       state=${state}
       actions=${actions}
-      presentation=${testPresentation()}
     />
   `, host);
 
