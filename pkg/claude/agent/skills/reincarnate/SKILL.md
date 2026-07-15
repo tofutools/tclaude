@@ -6,13 +6,23 @@ description: >-
   reincarnate`. This is the do-it-now procedure: checkpoint your task
   state to a handoff file, then hand off. Use when the human types
   `/reincarnate` (optionally followed by a focus for the successor), asks
-  you to reincarnate / hand off to a fresh instance, or you have already
-  decided to act on a full context window. For the full lifecycle
-  reference — compact vs. clone trade-offs, when-to-act policy, and the
-  `--target` manager pattern — see the `agent-lifecycle` skill.
+  you to reincarnate / hand off to a fresh instance, or a Claude Code agent
+  has already decided to act on a full context window. Do not reincarnate a
+  Codex agent merely to free context space; let Codex use its effective
+  automatic compaction. For the full lifecycle reference — harness-specific
+  compact vs. reincarnate guidance, clone trade-offs, and the `--target`
+  manager pattern — see the `agent-lifecycle` skill.
 ---
 
 # /reincarnate — hand off to a fresh successor, now
+
+Reincarnation is primarily a **Claude Code** context-management tool because
+Claude Code's compaction is comparatively slow and lossy. **Codex CLI should
+normally run to full context and use its effective, efficient automatic
+compaction; do not reincarnate a Codex agent merely to free context space.**
+An explicit request from the human still takes precedence, and another
+deliberate reason to replace the agent can justify reincarnating either
+harness.
 
 You are about to replace yourself. The daemon spawns a fresh agent
 instance, migrates your identity onto it — group memberships, per-conv
