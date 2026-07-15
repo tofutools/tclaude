@@ -36,6 +36,8 @@ export function createTransactionDialogActions({
   refresh = async () => {},
   notify = () => {},
   confirm = async () => false,
+  openWebWindowPane = () => {},
+  closeTerminalsForWindowOp = () => {},
 }) {
   const report = (message, isError = false) => {
     // Feedback is advisory. A broken injected sink must never strand the
@@ -60,6 +62,96 @@ export function createTransactionDialogActions({
 
   return Object.freeze({
     close: state.close,
+
+    async selectAgentWindows(request) {
+      // Web focus never reaches the native window endpoint: the terminal shell
+      // adapter is the lifecycle authority for browser panes. Relinquish the
+      // dialog first, matching the legacy close-before-open ordering.
+      if (request.direction === 'focus' && request.webTerminal) {
+        state.handoff();
+        const result = {
+          direction: 'focus', scope: request.scope,
+          targeted: request.targets?.length || 0,
+          focused: request.targets?.length || 0,
+          terminal: 'web',
+        };
+        try {
+          for (const target of request.targets || []) {
+            openWebWindowPane(target.selector, target.label);
+          }
+          report(`focus web terminals: ${result.focused} focused`);
+          return result;
+        } catch (cause) {
+          report(`focus web terminals failed: ${cause?.message || cause}`, true);
+          throw cause;
+        } finally {
+          // Even an unexpected terminal-shell adapter failure cannot orphan the
+          // promise-backed launcher after visual ownership was handed off.
+          state.finish(result);
+        }
+      }
+
+      // Only the daemon's exact native wire fields cross the HTTP boundary.
+      const payload = {
+        direction: request.direction,
+        scope: request.scope,
+        convs: request.convs,
+      };
+      if (request.scope === 'group') payload.group = request.group;
+      let response;
+      try {
+        response = await fetchImpl('/api/agent-windows', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } catch (cause) {
+        throw new Error(`request failed: ${cause?.message || cause}`);
+      }
+      if (!response.ok) {
+        const message = await response.text();
+        throw new Error(message || `HTTP ${response.status}`);
+      }
+      // The daemon has already accepted the operation. An unreadable/empty
+      // success body is the legacy generic-success path, never grounds to retry
+      // a possibly non-idempotent window operation.
+      let text = '';
+      try { text = await response.text(); } catch (_) {}
+      let result = null;
+      if (text) {
+        try { result = JSON.parse(text); } catch (_) {}
+      }
+
+      state.handoff();
+      if (!result) {
+        report('agent windows: done');
+      } else if (request.direction === 'focus') {
+        const extra = result.failed ? `, ${result.failed} failed` : '';
+        report(
+          `focus windows (${result.targeted} targeted): ${result.focused} focused${extra}`,
+          result.failed > 0,
+        );
+      } else {
+        // Pane cleanup is keyed to the daemon's returned identities/outcomes,
+        // never the optimistic submitted list. The terminal shell decides which
+        // exact detached panes to close and leaves no-window/failed rows alone.
+        try {
+          closeTerminalsForWindowOp(result.agents);
+        } catch (cause) {
+          report(`unfocus terminal cleanup failed: ${cause?.message || cause}`, true);
+        }
+        const parts = [`${result.detached} detached`];
+        if (result.no_window) parts.push(`${result.no_window} had no window`);
+        if (result.failed) parts.push(`${result.failed} failed`);
+        report(
+          `unfocus windows (${result.targeted} targeted): ${parts.join(', ')}`,
+          result.failed > 0,
+        );
+      }
+      state.finish(result || { ok: true });
+      return result;
+    },
 
     async loadAgentWorktree(conv, { signal } = {}) {
       const response = await fetchImpl(
