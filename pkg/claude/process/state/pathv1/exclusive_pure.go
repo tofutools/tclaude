@@ -287,6 +287,9 @@ func ReduceExclusiveDeadReservation(ctx context.Context, input *VerifiedExclusiv
 	}
 	post := draft.view.Aggregate
 	post.Routing = &result.Routing
+	if report := ValidateAggregate(post); !report.Valid() {
+		return nil, fmt.Errorf("%w: projected dead-reservation aggregate has %d diagnostics", ErrMutationInconsistent, len(report.Diagnostics)+report.Suppressed)
+	}
 	aggregate, err := checkpointAggregate(post)
 	if err != nil {
 		return nil, err
@@ -319,6 +322,9 @@ func ReduceExclusiveActivation(ctx context.Context, input *VerifiedExclusiveInpu
 	}
 	post := draft.view.Aggregate
 	post.Routing = &result.Routing
+	if report := ValidateAggregate(post); !report.Valid() {
+		return nil, fmt.Errorf("%w: projected activation aggregate has %d diagnostics", ErrMutationInconsistent, len(report.Diagnostics)+report.Suppressed)
+	}
 	aggregate, err := checkpointAggregate(post)
 	if err != nil {
 		return nil, err
@@ -348,6 +354,9 @@ func ReduceExclusiveEnd(ctx context.Context, input *VerifiedExclusiveInput, obse
 	}
 	post := draft.view.Aggregate
 	post.Routing = &result.Routing
+	if report := ValidateAggregate(post); !report.Valid() {
+		return nil, fmt.Errorf("%w: projected end aggregate has %d diagnostics", ErrMutationInconsistent, len(report.Diagnostics)+report.Suppressed)
+	}
 	aggregate, err := checkpointAggregate(post)
 	if err != nil {
 		return nil, err
@@ -464,6 +473,9 @@ func buildExclusiveRouteDraft(ctx context.Context, input *VerifiedExclusiveInput
 	outgoing, err := exactOutgoingEdges(view.TemplateRef, sourceReservation.NodeID, node.Next)
 	if err != nil {
 		return exclusiveRouteDraft{}, err
+	}
+	if len(outgoing) > 2 {
+		return exclusiveRouteDraft{}, fmt.Errorf("%w: exclusive fan-out %d requires bounded multi-way DPE", ErrExclusiveUnsupported, len(outgoing))
 	}
 	if _, err := MutationCountExclusive(len(outgoing)); err != nil {
 		return exclusiveRouteDraft{}, err

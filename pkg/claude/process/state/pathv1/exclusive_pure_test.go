@@ -194,6 +194,33 @@ nodes:
 	}
 }
 
+func TestPureExclusiveRejectsThreeWayFanOut(t *testing.T) {
+	source := []byte(`apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: exclusive-three-way
+start: choose
+nodes:
+  choose:
+    type: decision
+    performer: {kind: human, ask: choose}
+    next: {one: first, two: second, three: third}
+  first: {type: end}
+  second: {type: end}
+  third: {type: end}
+`)
+	input, err := VerifyExclusiveInput(t.Context(), initializedExclusiveCheckpoint(t, source), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observation := ExclusiveObservation{
+		SourcePathID: input.checkpoint.Initialize.Aggregate.Authority.Genesis.OutputPathID,
+		Attempt:      1, Outcome: "one",
+	}
+	if _, err := PlanExclusiveRoute(t.Context(), input, observation); !errors.Is(err, ErrExclusiveUnsupported) {
+		t.Fatalf("three-way route error = %v", err)
+	}
+}
+
 func TestPureExclusiveWaitRoutesOnlySatisfiedObservation(t *testing.T) {
 	source := []byte(`apiVersion: tclaude.dev/v1alpha1
 kind: ProcessTemplate
