@@ -8,10 +8,13 @@
 
 import { $, $$ } from './helpers.js';
 import { renderGroupsTab } from './tabs.js';
-// refresh()/toast()/confirmModal/retireConfirm/retireToast live in refresh.js;
+// refresh()/toast()/confirmModal live in refresh.js;
 // lastSnapshot is dashboard.js's shared state (read-only here).
 // Deliberate benign module cycles; TDZ-safe.
-import { refresh, toast, confirmModal, retireConfirm, retireToast, maybeHandleDanglingRetire } from './refresh.js';
+import { refresh, toast, confirmModal } from './refresh.js';
+import {
+  openRetireAgentDialog, retireResultNeedsReconcile,
+} from './transaction-dialog-controller.js';
 import { lastSnapshot } from './dashboard.js';
 
 // Drag-and-drop: move a member row from group A onto group B's box
@@ -353,9 +356,8 @@ function bindDnd() {
     // On Cancel / Escape / outside-click the runDnd* function calls refresh()
     // to reconcile any drag-local presentation, then returns without touching
     // the daemon or lastSnapshot.
-    // runDndRetire uses the richer retireConfirm modal — shutdown
-    // checkbox and all — so a retire-by-drag and the per-row retire
-    // button ask the identical question.
+    // runDndRetire opens the keyed transaction dialog — shutdown/worktree
+    // choices and all — so drag, row, and palette retire share one owner.
 
     // A pending spawn can only ever be dropped on a retired-target (the
     // trash bin or the virtual Retired group — dndInertOnto makes every
@@ -682,8 +684,7 @@ async function runDndRemoveFromGroup(payload) {
 // a virtual-Ungrouped row) ONTO the virtual Retired group — the agent
 // is retired, demoting it back to a plain conversation. Retire
 // revokes group memberships + grants, so it gets the same
-// retireConfirm modal — checkbox and all — as the per-row retire
-// button.
+// keyed transaction dialog — checkbox and all — as the per-row retire button.
 async function runDndRetire(payload) {
   const {conv, label} = payload;
   // Retire stays conv-keyed (unlike the other runDnd* endpoint calls): the
@@ -691,44 +692,17 @@ async function runDndRetire(payload) {
   // selector that fails to resolve, so sending the stable agent_id would
   // silently demote a dangling orphan instead of offering to remove it
   // (JOH-322). See row-actions.js's retire-agent case.
-  // The retire runs inside retireConfirm's `perform`, so the confirm modal
-  // keeps a spinner on its OK button while the POST is in flight (same as
-  // the per-row retire and the bulk-retire preview). close() dismisses the
-  // modal once the POST settles, before any toast / dangling modal. The
-  // finally re-syncs either way — and on the cancel branch (perform never
-  // ran, choice is null) the refresh below undoes the optimistic dragend.
-  const choice = await retireConfirm({
-    label, conv,
-    perform: async (ch, close) => {
-      try {
-        const q = `?shutdown=${ch.shutdown ? 1 : 0}`
-          + (ch.deleteWorktree ? '&delete_worktree=1' : '');
-        const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/retire${q}`, {
-          method: 'POST', credentials: 'same-origin',
-        });
-        if (!r.ok) {
-          close();
-          // A dangling entry (conversation gone) can't be retired — offer
-          // to remove it instead. The finally below re-syncs.
-          if (await maybeHandleDanglingRetire(r, conv, label)) return;
-          toast(`retire ${label} failed: ${await r.text()}`, true);
-          return;
-        }
-        let retireResp = null;
-        try { retireResp = await r.json(); } catch (_) {}
-        close();
-        toast(retireToast(label, ch, retireResp));
-      } catch (err) {
-        close();
-        toast(`retire failed: ${err && err.message || err}`, true);
-      } finally {
-        await refresh();
-      }
-    },
-  });
-  if (!choice) {
-    await refresh(); // undo the optimistic dragend state on cancel
+  let result = null;
+  try {
+    result = await openRetireAgentDialog(conv, label);
+  } catch (err) {
+    toast(`retire failed: ${err && err.message || err}`, true);
   }
+  // Successful normal retirement and successful dangling deletion already
+  // refresh inside the transaction action before resolving. Every other final
+  // result is presentation-only (cancel/decline/failure), so DnD must repaint
+  // once to undo its drag-local optimistic state.
+  if (retireResultNeedsReconcile(result)) await refresh();
 }
 
 // runDndDeletePending handles a drag of a PENDING spawn (JOH-205) onto the
