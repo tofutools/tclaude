@@ -134,6 +134,7 @@ export function AddMemberDialog({ descriptor, state, actions, confirmDiscard }) 
 
   useEffect(() => {
     if (!candidates.length) {
+      if (highlightConv === null && poolLoading) return;
       if (highlightConv !== '') setHighlightConv('');
       return;
     }
@@ -144,7 +145,7 @@ export function AddMemberDialog({ descriptor, state, actions, confirmDiscard }) 
     if (highlightConv && selectedIndex < 0) {
       setHighlightConv('');
     }
-  }, [candidates, highlightConv, selectedIndex]);
+  }, [candidates, highlightConv, poolLoading, selectedIndex]);
 
   useLayoutEffect(() => {
     listRef.current?.querySelector('.add-member-row.highlighted')
@@ -205,12 +206,14 @@ export function AddMemberDialog({ descriptor, state, actions, confirmDiscard }) 
         value=${query} disabled=${busy} autofocus data-select-on-focus
         placeholder="Filter by title / role or class / descr / conv-id…"
         autocomplete="off" spellcheck=${false}
+        role="combobox" aria-autocomplete="list" aria-controls="add-member-list"
+        aria-expanded="true"
+        aria-activedescendant=${selectedIndex >= 0 ? `add-member-option-${selectedIndex}` : undefined}
         onKeyDown=${navigate}
         onInput=${(event) => { setQuery(event.currentTarget.value); setHighlightConv(null); }} />
       <div
         class="add-member-list" id="add-member-list" ref=${listRef}
         role="listbox" aria-busy=${busy || poolLoading ? 'true' : 'false'}
-        aria-activedescendant=${selectedIndex >= 0 ? `add-member-option-${selectedIndex}` : undefined}
       >
         ${poolError ? html`<div class="add-member-empty" role="alert">${poolError} <button id="add-member-pool-retry" type="button" disabled=${poolLoading || busy} onClick=${loadPool}>Retry</button></div>` : null}
         ${candidates.map((candidate, index) => html`<${CandidateRow}
