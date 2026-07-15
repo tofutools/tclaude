@@ -81,29 +81,19 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 		}
 	}
 
-	tab := readDashboardJS(t, "terminals-tab.js")
 	for _, needle := range []string{
 		"import { terminalComposeShortcutAction } from './terminal-compose-route.js';",
-		"const pane = mux?.activePaneDescriptor();",
-		"if (!pane?.seed?.agent) return false;",
-		"restoreFocus: () => mux?.activatePane(pane.key)",
+		"const pane = current.panes.find((candidate) => candidate.key === current.activeKey);",
+		"restoreFocus: () => actions.activatePane(pane.key)",
 		"operatorModalOpen: document.getElementById('operator-message-modal')?.classList.contains('show'),",
-		"blockingOverlayOpen: Boolean($$('.modal-overlay.show, .manage-overlay.show').length),",
+		"blockingOverlayOpen: Boolean(document.querySelectorAll('.modal-overlay.show, .manage-overlay.show').length),",
 		"if (action === 'ignore') return;",
-		"document.addEventListener('keydown', onTerminalsComposeShortcut, true);",
+		"document.addEventListener('keydown', onComposeShortcut, true);",
+		"document.removeEventListener('keydown', onComposeShortcut, true);",
 		"event.stopPropagation();",
 	} {
-		if !strings.Contains(tab, needle) {
+		if !strings.Contains(shell, needle) {
 			t.Errorf("integrated terminals shortcut missing %q", needle)
-		}
-	}
-	for _, needle := range []string{
-		"function activePaneDescriptor()",
-		"return p ? { key: p.key, seed: p.seed } : null;",
-		"activePaneDescriptor,",
-	} {
-		if !strings.Contains(core, needle) {
-			t.Errorf("terminal mux active-pane API missing %q", needle)
 		}
 	}
 	for _, needle := range []string{
