@@ -16,7 +16,7 @@
 //   - spawn              → opens the existing spawn modal
 //   - power control      → POST /api/shutdown | /api/power-on (global or
 //                          per-group, via shutdownScope/powerOnScope) and
-//                          per-agent stop/resume (stopAgentReq /
+//                          per-agent stop/resume (transaction dialog /
 //                          resumeAgentReq) — the same calls the dashboard's
 //                          Shutdown/Power-on buttons and status dots make
 //   - retire             → the per-agent / per-group demote-to-conversation
@@ -43,10 +43,12 @@ import {
   toast, openWindowModal,
   openRetirePreview, openRetireUngroupedPreview, openDeleteRetiredPreview,
   openWorktreeCleanup,
-  shutdownScope, powerOnScope, shutdownConfirm, stopAgentReq, resumeAgentReq,
+  shutdownScope, powerOnScope, resumeAgentReq,
   noteGroupDisclosureIntent,
 } from './refresh.js';
-import { openRetireAgentDialog } from './transaction-dialog-controller.js';
+import {
+  openRetireAgentDialog, openShutdownAgentDialog,
+} from './transaction-dialog-controller.js';
 import { openAgentSpawnModal } from './modal-spawn.js';
 import { openProfilesManageModal } from './modal-profiles.js';
 import { openRolesManageModal } from './modal-roles.js';
@@ -140,17 +142,6 @@ async function hideAgent(conv, label) {
   } catch (e) {
     toast(`hide ${label}: ${(e && e.message) || e}`, true);
   }
-}
-
-// stopAgentInteractive mirrors the per-row status-dot toggle's STOP path
-// (row-actions 'dot-toggle'): pop the 3-way shutdownConfirm (Cancel /
-// Soft exit / Force kill) and, unless cancelled, stop with the chosen
-// force flag via the shared stopAgentReq. Resume needs no wrapper — it
-// is non-destructive, so the palette calls resumeAgentReq directly.
-async function stopAgentInteractive(conv, label) {
-  const choice = await shutdownConfirm({ label });
-  if (!choice) return; // Cancel
-  await stopAgentReq(conv, label, choice === 'force');
 }
 
 // -- Group fold helpers — collapse/expand the Groups-tab listing. Each
@@ -617,8 +608,8 @@ export function buildCommands(snapshot) {
 
   // 7b) Per-agent power control — stop a running agent or resume an
   //     offline one. The single-agent analog of the per-agent window
-  //     ops above, mirroring the per-row status-dot toggle: a stop pops
-  //     the 3-way shutdownConfirm (Cancel / Soft exit / Force kill), a
+  //     ops above, mirroring the per-row status-dot toggle: a stop opens
+  //     the Preact transaction (Cancel / Soft exit / Force kill), a
   //     resume fires straight away (non-destructive). Each agent is
   //     listed for its CURRENT state only — online → Stop, offline →
   //     Resume — so the palette never offers the wrong verb.
@@ -632,7 +623,7 @@ export function buildCommands(snapshot) {
           'lull into slumber: a gentle /exit, then a firmer hand if it lingers (rousable)'),
         keywords: 'stop shutdown shut down kill power off halt agent ' + label + ' ' + (a.conv_id || '')
           + ' slumber sleep rest lull dormant familiar',
-        run: () => stopAgentInteractive(sel, label),
+        run: () => openShutdownAgentDialog(sel, label),
       });
     } else {
       cmds.push({
