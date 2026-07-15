@@ -62,7 +62,7 @@ function CandidateRow({ candidate, index, highlighted, busy, onHighlight, onAdd 
     class=${`add-member-row${highlighted ? ' highlighted' : ''}`}
     role="option" aria-selected=${highlighted ? 'true' : 'false'}
     aria-disabled=${busy ? 'true' : 'false'} data-i=${index}
-    onMouseMove=${() => onHighlight(index)}
+    onMouseMove=${() => onHighlight(candidate.conv_id)}
     onClick=${() => { if (!busy) void onAdd(candidate); }}
   >
     <span class=${candidate.online ? 'online' : 'offline'} title=${candidate.online ? 'online' : 'offline'}>${candidate.online ? '●' : '○'}</span>
@@ -78,10 +78,11 @@ function CandidateRow({ candidate, index, highlighted, busy, onHighlight, onAdd 
 export function AddMemberDialog({ descriptor, state, actions, confirmDiscard }) {
   // The descriptor key and local controls survive snapshot polling. Polls may
   // change the candidate source, but never reset the user's query, toggle or
-  // keyboard highlight while this transaction stays mounted.
+  // keyboard selection while this transaction stays mounted. Selection is an
+  // identity, not an index: a same-length poll reorder cannot retarget Enter.
   const [query, setQuery] = useState('');
   const [includeOffline, setIncludeOffline] = useState(false);
-  const [highlight, setHighlight] = useState(0);
+  const [highlightConv, setHighlightConv] = useState('');
   const [promotionPool, setPromotionPool] = useState([]);
   const [poolLoading, setPoolLoading] = useState(true);
   const [poolError, setPoolError] = useState('');
@@ -100,6 +101,8 @@ export function AddMemberDialog({ descriptor, state, actions, confirmDiscard }) 
     includeOffline,
     query,
   }), [currentSnapshot, promotionPool, descriptor.group, includeOffline, query]);
+  const selectedIndex = Math.max(0,
+    candidates.findIndex((candidate) => candidate.conv_id === highlightConv));
   const dirty = query !== '' || includeOffline;
 
   const loadPool = async () => {
@@ -127,13 +130,19 @@ export function AddMemberDialog({ descriptor, state, actions, confirmDiscard }) 
   }, []);
 
   useEffect(() => {
-    setHighlight((current) => Math.max(0, Math.min(current, candidates.length - 1)));
-  }, [candidates.length]);
+    if (!candidates.length) {
+      if (highlightConv) setHighlightConv('');
+      return;
+    }
+    if (!candidates.some((candidate) => candidate.conv_id === highlightConv)) {
+      setHighlightConv(candidates[0].conv_id);
+    }
+  }, [candidates, highlightConv]);
 
   useLayoutEffect(() => {
     listRef.current?.querySelector('.add-member-row.highlighted')
       ?.scrollIntoView?.({ block: 'nearest' });
-  }, [highlight, candidates.length]);
+  }, [highlightConv, candidates.length]);
 
   const addOne = async (candidate) => {
     if (!candidate || busyRef.current) return;
@@ -158,12 +167,13 @@ export function AddMemberDialog({ descriptor, state, actions, confirmDiscard }) 
       event.preventDefault();
       if (!candidates.length) return;
       const delta = event.key === 'ArrowDown' ? 1 : -1;
-      setHighlight((highlight + delta + candidates.length) % candidates.length);
+      const next = (selectedIndex + delta + candidates.length) % candidates.length;
+      setHighlightConv(candidates[next].conv_id);
       return;
     }
     if (event.key !== 'Enter' || event.target.closest('button')) return;
     event.preventDefault();
-    if (!busyRef.current) void addOne(candidates[highlight]);
+    if (!busyRef.current) void addOne(candidates[selectedIndex]);
   };
 
   const emptyRetry = includeOffline
@@ -184,17 +194,17 @@ export function AddMemberDialog({ descriptor, state, actions, confirmDiscard }) 
         placeholder="Filter by title / role or class / descr / conv-id…"
         autocomplete="off" spellcheck=${false}
         onKeyDown=${navigate}
-        onInput=${(event) => { setQuery(event.currentTarget.value); setHighlight(0); }} />
+        onInput=${(event) => { setQuery(event.currentTarget.value); setHighlightConv(''); }} />
       <div
         class="add-member-list" id="add-member-list" ref=${listRef}
         role="listbox" aria-busy=${busy || poolLoading ? 'true' : 'false'}
-        aria-activedescendant=${candidates.length ? `add-member-option-${highlight}` : undefined}
+        aria-activedescendant=${candidates.length ? `add-member-option-${selectedIndex}` : undefined}
       >
         ${poolError ? html`<div class="add-member-empty" role="alert">${poolError} <button id="add-member-pool-retry" type="button" disabled=${poolLoading || busy} onClick=${loadPool}>Retry</button></div>` : null}
         ${candidates.map((candidate, index) => html`<${CandidateRow}
           key=${candidate.conv_id} candidate=${candidate} index=${index}
-          highlighted=${index === highlight} busy=${busy}
-          onHighlight=${setHighlight} onAdd=${addOne}
+          highlighted=${index === selectedIndex} busy=${busy}
+          onHighlight=${setHighlightConv} onAdd=${addOne}
         />`)}
         ${!candidates.length && poolLoading ? html`<div class="add-member-empty" role="status">Loading conversations…</div>` : null}
         ${!candidates.length && !poolLoading ? html`<div class="add-member-empty"><span class="theme-copy-regular">No matching conversations. ${emptyRetry}</span><span class="theme-copy-wizard">No matching conversations. ${wizardEmptyRetry}</span></div>` : null}
@@ -203,7 +213,7 @@ export function AddMemberDialog({ descriptor, state, actions, confirmDiscard }) 
       <div class="add-member-foot">
         <label title="Include archived / never-online conversations in the candidate list">
           <input id="add-member-all" type="checkbox" checked=${includeOffline} disabled=${busy}
-            onChange=${(event) => { setIncludeOffline(event.currentTarget.checked); setHighlight(0); }} /><span class="theme-copy-regular">Include offline / archived</span><span class="theme-copy-wizard">Include slumbering / archived</span>
+            onChange=${(event) => { setIncludeOffline(event.currentTarget.checked); setHighlightConv(''); }} /><span class="theme-copy-regular">Include offline / archived</span><span class="theme-copy-wizard">Include slumbering / archived</span>
         </label>
         <span class="spacer"></span>
         <span><kbd>↑↓</kbd> nav · <kbd>Enter</kbd> <span class="theme-copy-regular">add</span><span class="theme-copy-wizard">invite</span> · <kbd>Esc</kbd> close</span>
