@@ -344,9 +344,8 @@ func ObserveExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput,
 	if !found || plan == nil || !exactExclusiveCommand(current.command, plan.command) || !canonicalEqual(current.performer, plan.performer) || !canonicalEqual(current.params, plan.params) {
 		return nil, fmt.Errorf("%w: observation does not settle the exact durable claim", ErrMutationInvalid)
 	}
-	outcome := strings.TrimSpace(observation.Outcome)
 	actor := legacy.ActorRef(strings.TrimSpace(observation.Actor))
-	if outcome == "" || !legacy.ValidateActorRef(actor) || legacy.IsEngineActor(actor) {
+	if strings.TrimSpace(observation.Outcome) == "" || !legacy.ValidateActorRef(actor) || legacy.IsEngineActor(actor) {
 		return nil, fmt.Errorf("%w: performer observation requires outcome and actor provenance", ErrMutationInvalid)
 	}
 	observation.Actor = string(actor)
@@ -357,6 +356,12 @@ func ObserveExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput,
 	view := aggregate.View()
 	activation := view.Routing.Activations[plan.command.Identity.SourceActivationID]
 	source := view.Routing.Paths[activation.OutputPathID]
+	node := input.template.Nodes[plan.nodeID]
+	observation.Outcome, err = canonicalExclusiveOutcome(node, observation.Outcome)
+	if err != nil {
+		return nil, err
+	}
+	outcome := observation.Outcome
 	observation.SourcePathID = source.ID
 	observation.Attempt = plan.command.Identity.Attempt
 	disposition, err := classifyExclusiveObservation(view, input.template, observation)
@@ -364,7 +369,6 @@ func ObserveExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput,
 		return nil, err
 	}
 	if disposition == ExclusiveRouteReady {
-		node := input.template.Nodes[plan.nodeID]
 		outgoing, err := exactOutgoingEdges(view.TemplateRef, plan.nodeID, node.Next)
 		if err != nil {
 			return nil, err
@@ -387,7 +391,7 @@ func ObserveExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput,
 		SourceActivationID: activation.ID, SourceGeneration: activation.Ref.Generation,
 		Attempt: plan.command.Identity.Attempt, ResultCode: outcome,
 		Actor: observation.Actor, EvidenceRef: observation.EvidenceRef, EvidenceHash: observation.EvidenceHash,
-		ExternalRef: observation.ExternalRef, Feedback: observation.Feedback,
+		ResolutionDigest: observation.ResolutionDigest, ExternalRef: observation.ExternalRef, Feedback: observation.Feedback,
 	})
 	if err != nil {
 		return nil, err
@@ -461,7 +465,7 @@ func PendingExclusiveObservation(ctx context.Context, input *VerifiedExclusiveIn
 		candidate := ExclusiveObservation{
 			SourcePathID: source.ID, Attempt: command.Identity.Attempt, Outcome: payload.ResultCode,
 			Actor: payload.Actor, EvidenceRef: payload.EvidenceRef, EvidenceHash: payload.EvidenceHash,
-			ExternalRef: payload.ExternalRef, Feedback: payload.Feedback,
+			ResolutionDigest: payload.ResolutionDigest, ExternalRef: payload.ExternalRef, Feedback: payload.Feedback,
 		}
 		disposition, err := classifyExclusiveObservation(aggregate.View(), input.template, candidate)
 		if err != nil {

@@ -25,6 +25,7 @@ type settleAttemptObservationPayload struct {
 	Actor              string       `json:"actor,omitempty"`
 	EvidenceRef        string       `json:"evidenceRef,omitempty"`
 	EvidenceHash       string       `json:"evidenceHash,omitempty"`
+	ResolutionDigest   string       `json:"resolutionDigest,omitempty"`
 	ExternalRef        string       `json:"externalRef,omitempty"`
 	Feedback           string       `json:"feedback,omitempty"`
 }

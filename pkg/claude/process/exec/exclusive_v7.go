@@ -189,6 +189,11 @@ func (e *ExclusiveV7Executor) executeAttempt(ctx context.Context, runID string, 
 			return nil, false, fmt.Errorf("reconcile path-v1 command %q: %w", request.Command.ID, err)
 		}
 		switch status {
+		case DeferredMissing:
+			if _, err := deferred.Dispatch(ctx, request); err != nil {
+				return nil, false, fmt.Errorf("redispatch path-v1 command %q: %w", request.Command.ID, err)
+			}
+			return nil, true, nil
 		case DeferredInFlight:
 			return nil, true, nil
 		case DeferredObserved:

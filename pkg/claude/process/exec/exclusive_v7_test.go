@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -24,6 +25,12 @@ type exclusiveV7Adapter struct {
 	perform   func(Request)
 	reconcile func(Request) (Observation, bool, error)
 	results   []Observation
+}
+
+type exclusiveV7DeferredAdapter struct {
+	mu             sync.Mutex
+	dispatches     int
+	reconcileCalls int
 }
 
 func (a *exclusiveV7Adapter) Validate(Request) error { return nil }
@@ -58,6 +65,37 @@ func (a *exclusiveV7Adapter) count() int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.performs
+}
+
+func (a *exclusiveV7DeferredAdapter) Validate(Request) error { return nil }
+
+func (a *exclusiveV7DeferredAdapter) Perform(context.Context, Request) (Observation, error) {
+	panic("Perform should not be called on a deferred adapter")
+}
+
+func (a *exclusiveV7DeferredAdapter) Dispatch(_ context.Context, request Request) (DispatchResult, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.dispatches++
+	return DispatchResult{ExternalRef: fmt.Sprintf("dispatch-%s-%d", request.Command.ID, a.dispatches)}, nil
+}
+
+func (a *exclusiveV7DeferredAdapter) ReconcileDeferred(_ context.Context, request Request) (Observation, DeferredStatus, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.reconcileCalls++
+	switch a.reconcileCalls {
+	case 1:
+		return Observation{}, DeferredMissing, nil
+	default:
+		return Observation{Actor: "agent:agt_test1", Verdict: "pass", EvidenceRef: "artifact:found"}, DeferredObserved, nil
+	}
+}
+
+func (a *exclusiveV7DeferredAdapter) counts() (int, int) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.dispatches, a.reconcileCalls
 }
 
 func TestExclusiveV7DriveClaimsPerformsObservesRoutesAndCompletes(t *testing.T) {
@@ -196,6 +234,31 @@ func TestExclusiveV7RecoveredProgramClaimFailsBeforeAdapter(t *testing.T) {
 	_, err = executor.Drive(t.Context(), runID)
 	assert.ErrorContains(t, err, "immutable audited authority")
 	assert.Equal(t, 0, adapter.count())
+}
+
+func TestExclusiveV7RecoveredMissingDeferredClaimRedispatches(t *testing.T) {
+	fs, runID := exclusiveV7Run(t)
+	adapter := &exclusiveV7DeferredAdapter{}
+	executor := NewExclusiveV7(fs, map[model.PerformerKind]Adapter{model.PerformerAgent: adapter})
+
+	_, err := executor.Drive(t.Context(), runID)
+	require.NoError(t, err)
+	dispatches, reconciles := adapter.counts()
+	assert.Equal(t, 1, dispatches)
+	assert.Equal(t, 0, reconciles)
+
+	_, err = executor.Drive(t.Context(), runID)
+	require.NoError(t, err)
+	dispatches, reconciles = adapter.counts()
+	assert.Equal(t, 2, dispatches, "missing reconcile must redispatch the durable claim")
+	assert.Equal(t, 1, reconciles)
+
+	checkpoint, err := executor.Drive(t.Context(), runID)
+	require.NoError(t, err)
+	assert.Equal(t, "completed", pathv1.CurrentRunStatus(checkpoint))
+	dispatches, reconciles = adapter.counts()
+	assert.Equal(t, 2, dispatches)
+	assert.Equal(t, 2, reconciles)
 }
 
 func TestExclusiveV7AmbiguousObservationRecoversWithoutReperform(t *testing.T) {

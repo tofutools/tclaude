@@ -476,6 +476,10 @@ func buildExclusiveRouteDraft(ctx context.Context, input *VerifiedExclusiveInput
 	if !ok {
 		return exclusiveRouteDraft{}, fmt.Errorf("%w: source node is absent from exact template", ErrExclusiveInputInvalid)
 	}
+	observation.Outcome, err = canonicalExclusiveOutcome(node, observation.Outcome)
+	if err != nil {
+		return exclusiveRouteDraft{}, err
+	}
 	disposition, err := classifyExclusiveObservation(view, input.template, observation)
 	if err != nil {
 		return exclusiveRouteDraft{}, err
@@ -612,7 +616,7 @@ func buildExclusiveRouteDraft(ctx context.Context, input *VerifiedExclusiveInput
 	plan := RoutePathsPlan{
 		SettlementCommandID: settle.ID, SourceActivationID: source.SourceActivation.ID,
 		SourceGeneration: source.SourceActivation.Generation, SourcePathID: source.ID,
-		Attempt: observation.Attempt, CauseDigest: causeDigest, ResultCode: "exclusive/" + strings.ToLower(strings.TrimSpace(observation.Outcome)),
+		Attempt: observation.Attempt, CauseDigest: causeDigest, ResultCode: "exclusive/" + observation.Outcome,
 		ProducedPathIDs: produced, Batch: batch,
 	}
 	payload, err := EncodeRoutePathsPayload(replayView, plan)
@@ -1356,12 +1360,23 @@ func resolvePassTarget(next model.Next, outcome string) (string, error) {
 }
 
 func isFailOutcome(value string) bool {
-	switch value {
-	case "fail", "failed", "failure", "error", "timeout", "rejected":
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "fail", "failed", "failure", "error", "timeout", "rejected", "cancel", "canceled", "cancelled":
 		return true
 	default:
 		return false
 	}
+}
+
+func canonicalExclusiveOutcome(node model.Node, outcome string) (string, error) {
+	outcome = strings.TrimSpace(outcome)
+	if outcome == "" {
+		return "", fmt.Errorf("%w: empty exclusive outcome", ErrMutationInvalid)
+	}
+	if node.Type == model.NodeTypeDecision {
+		return outcome, nil
+	}
+	return strings.ToLower(outcome), nil
 }
 
 func exactOutgoingEdges(templateRef, nodeID string, next model.Next) ([]EdgeKey, error) {
@@ -1525,12 +1540,15 @@ func observedAttemptCommands(view AggregateView, nodeID string, node model.Node,
 	} else if perform.State != CommandObserved && perform.State != CommandReconciled {
 		return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, fmt.Errorf("%w: performer attempt remains active", ErrMutationInconsistent)
 	}
-	outcome := strings.ToLower(strings.TrimSpace(observation.Outcome))
+	outcome, err := canonicalExclusiveOutcome(node, observation.Outcome)
+	if err != nil {
+		return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, err
+	}
 	settlePayload, err := json.Marshal(settleAttemptObservationPayload{
 		TemplateRef: view.TemplateRef, SourceCommandID: perform.ID, SourceActivationID: source.SourceActivation.ID,
 		SourceGeneration: source.SourceActivation.Generation, Attempt: observation.Attempt, ResultCode: outcome,
 		Actor: observation.Actor, EvidenceRef: observation.EvidenceRef, EvidenceHash: observation.EvidenceHash,
-		ExternalRef: observation.ExternalRef, Feedback: observation.Feedback,
+		ResolutionDigest: observation.ResolutionDigest, ExternalRef: observation.ExternalRef, Feedback: observation.Feedback,
 	})
 	if err != nil {
 		return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, err

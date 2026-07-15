@@ -4,10 +4,223 @@ import (
 	"bytes"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 )
+
+func TestExclusiveCanceledObservationUsesFailureEdge(t *testing.T) {
+	source := []byte(`apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: canceled-is-failure
+start: work
+nodes:
+  work:
+    type: task
+    performer: {kind: agent, prompt: work}
+    next: {pass: done, fail: recover}
+  recover:
+    type: task
+    performer: {kind: agent, prompt: recover}
+    next: {pass: done}
+  done: {type: end}
+`)
+	observedBytes := observedExclusiveAttemptForTest(t, initializedExclusiveCheckpoint(t, source), source, ExclusiveObservation{Outcome: "cancelled", Actor: "human:operator"})
+	input, err := VerifyExclusiveInput(t.Context(), observedBytes, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, found, err := PendingExclusiveObservation(t.Context(), input)
+	if err != nil || !found || pending.Outcome != "cancelled" {
+		t.Fatalf("pending canceled observation = %#v, found=%v err=%v", pending, found, err)
+	}
+	route, err := PlanExclusiveRoute(t.Context(), input, pending)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload mutationPayload[RoutePathsPlan]
+	if err := decodeExactPayload(route.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Plan.ProducedPathIDs) == 0 {
+		t.Fatalf("produced path IDs = %#v", payload.Plan.ProducedPathIDs)
+	}
+	selectedRecovery := false
+	for _, producedPathID := range payload.Plan.ProducedPathIDs {
+		mutation, ok := findMutation(payload.Plan.Batch, MutationPath, producedPathID)
+		if !ok {
+			continue
+		}
+		var selected PathRecord
+		if err := decodeExactPayload(mutation.After, &selected); err != nil {
+			t.Fatal(err)
+		}
+		if selected.Edge != nil && selected.Edge.ToNodeID == "recover" {
+			selectedRecovery = true
+			break
+		}
+	}
+	if !selectedRecovery {
+		t.Fatalf("canceled task produced paths %#v without selecting the recovery failure edge", payload.Plan.ProducedPathIDs)
+	}
+}
+
+func TestExclusiveOutcomeCanonicalizationSurvivesSettlementReplay(t *testing.T) {
+	tests := []struct {
+		name        string
+		source      []byte
+		outcome     string
+		wantOutcome string
+	}{
+		{
+			name: "task outcome normalized",
+			source: []byte(`apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: uppercase-task-outcome
+start: work
+nodes:
+  work:
+    type: task
+    performer: {kind: agent, prompt: work}
+    next: {pass: done}
+  done: {type: end}
+`),
+			outcome: "PASS", wantOutcome: "pass",
+		},
+		{
+			name: "decision verdict preserves exact case",
+			source: []byte(`apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: uppercase-decision-outcome
+start: choose
+nodes:
+  choose:
+    type: decision
+    performer: {kind: human, ask: Choose}
+    next: {SHIP: shipped, HOLD: held}
+  shipped: {type: end}
+  held: {type: end}
+`),
+			outcome: "SHIP", wantOutcome: "SHIP",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			observedBytes := observedExclusiveAttemptForTest(t, initializedExclusiveCheckpoint(t, test.source), test.source, ExclusiveObservation{Outcome: test.outcome, Actor: "human:operator"})
+			input, err := VerifyExclusiveInput(t.Context(), observedBytes, test.source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pending, found, err := PendingExclusiveObservation(t.Context(), input)
+			if err != nil || !found || pending.Outcome != test.wantOutcome {
+				t.Fatalf("pending observation = %#v, found=%v err=%v", pending, found, err)
+			}
+			route, err := AdvanceExclusiveRoute(t.Context(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, _, err := ValidateExecutionTransitionForAppend(t.Context(), observedBytes, test.source, route); err != nil {
+				t.Fatalf("canonical settlement route replay failed: %v", err)
+			}
+		})
+	}
+}
+
+func TestExclusiveSettlementPreservesBlockResolutionAuthority(t *testing.T) {
+	source := []byte(`apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: preserve-block-resolution
+start: work
+nodes:
+  work:
+    type: task
+    performer: {kind: agent, prompt: work}
+    next: {pass: done, fail: failed}
+  done: {type: end}
+  failed: {type: end, result: failed}
+`)
+	resolvedBytes, digest := resolvedExclusiveCheckpoint(t, initializedExclusiveCheckpoint(t, source), "skip", 1)
+	observedBytes := observedExclusiveAttemptForTest(t, resolvedBytes, source, ExclusiveObservation{
+		Outcome: "pass", Actor: "human:operator", ResolutionDigest: digest,
+	})
+	input, err := VerifyExclusiveInput(t.Context(), observedBytes, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, found, err := PendingExclusiveObservation(t.Context(), input)
+	if !errors.Is(err, ErrExclusiveUnsupported) || found || pending != (ExclusiveObservation{}) || !strings.Contains(err.Error(), string(ExclusiveResolvedSkip)) {
+		t.Fatalf("durable resolution authority was not reconstructed: pending=%#v found=%v err=%v", pending, found, err)
+	}
+
+	checkpoint, err := DecodeCheckpointV7(observedBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aggregate, err := CurrentAggregateCheckpoint(checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range aggregate.Commands {
+		if command.Identity.Kind != CommandSettleAttempt {
+			continue
+		}
+		var payload settleAttemptObservationPayload
+		if err := decodeExactPayload(command.Payload, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.ResolutionDigest != digest {
+			t.Fatalf("settlement resolution digest = %q, want %q", payload.ResolutionDigest, digest)
+		}
+		return
+	}
+	t.Fatal("settlement command not found")
+}
+
+func observedExclusiveAttemptForTest(t *testing.T, checkpointBytes, source []byte, observation ExclusiveObservation) []byte {
+	t.Helper()
+	input, err := VerifyExclusiveInput(t.Context(), checkpointBytes, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint, err := DecodeCheckpointV7(checkpointBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aggregate, err := CurrentAggregateCheckpoint(checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanExclusiveAttempt(t.Context(), input, aggregate.Authority.Genesis.OutputPathID, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := ClaimExclusiveAttempt(t.Context(), input, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, claimedBytes, _, err := ValidateExecutionTransitionForAppend(t.Context(), checkpointBytes, source, claim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimedInput, err := VerifyExclusiveInput(t.Context(), claimedBytes, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovered, found, err := RecoverExclusiveAttempt(t.Context(), claimedInput)
+	if err != nil || !found {
+		t.Fatalf("recover claim: found=%v err=%v", found, err)
+	}
+	observe, err := ObserveExclusiveAttempt(t.Context(), claimedInput, recovered, observation, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, observedBytes, _, err := ValidateExecutionTransitionForAppend(t.Context(), claimedBytes, source, observe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return observedBytes
+}
 
 func TestObserveExclusiveAttemptRejectsDecisionTypoBeforeTransition(t *testing.T) {
 	source := []byte(`apiVersion: tclaude.dev/v1alpha1
