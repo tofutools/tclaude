@@ -277,8 +277,8 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
     />`
     : descriptor.kind === 'retire-group-preview'
       ? html`<${Words}
-        plain=${`These ${descriptor.status} agents in group "${descriptor.group}" will be demoted to plain, reinstatable conversations. Untick any you want to keep; only ticked agents are retired.`}
-        wizard=${`These ${descriptor.status} familiars in party "${descriptor.group}" will return to restorable conversation scrolls. Untick any you want to keep; only ticked familiars are banished.`}
+        plain=${`These ${descriptor.status} agents in group "${descriptor.group}" will be demoted to plain, reinstatable conversations. Each ticked agent is removed from all its groups, including groups it owns, and its permission and sudo grants are revoked. Untick any you want to keep; only ticked agents are retired.`}
+        wizard=${`These ${descriptor.status} familiars in party "${descriptor.group}" will return to restorable conversation scrolls. Each ticked familiar is removed from all its parties, including parties it owns, and its boons and sudo grants are revoked. Untick any you want to keep; only ticked familiars are banished.`}
       />`
       : html`<${Words}
         plain="These agents are not in any group. Each ticked agent will be demoted to a plain, reinstatable conversation and its grants revoked."

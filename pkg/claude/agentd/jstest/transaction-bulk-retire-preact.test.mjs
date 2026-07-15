@@ -183,6 +183,10 @@ test('group retire preview preserves bulk-only worktree coupling, hidden checks,
     'Retire idle agents in "alpha team"');
   assert.equal(host.querySelector('#retire-preview-title .theme-copy-wizard').textContent,
     'Banish idle familiars in "alpha team"');
+  assert.equal(host.querySelector('#retire-preview-hint .theme-copy-regular').textContent,
+    'These idle agents in group "alpha team" will be demoted to plain, reinstatable conversations. Each ticked agent is removed from all its groups, including groups it owns, and its permission and sudo grants are revoked. Untick any you want to keep; only ticked agents are retired.');
+  assert.equal(host.querySelector('#retire-preview-hint .theme-copy-wizard').textContent,
+    'These idle familiars in party "alpha team" will return to restorable conversation scrolls. Each ticked familiar is removed from all its parties, including parties it owns, and its boons and sudo grants are revoked. Untick any you want to keep; only ticked familiars are banished.');
   assert.equal(host.querySelector('#retire-preview-count').textContent, '2 of 2 selected');
   assert.equal(harness.document.activeElement.id, 'retire-preview-submit');
 
