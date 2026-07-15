@@ -167,7 +167,7 @@ test('group menu launches a polling-stable dirty picker and restores its cog foc
   listHost.remove();
 });
 
-test('promotion-only async candidates preserve initial keyboard selection', async (t) => {
+test('promotion-only retry restores initial keyboard selection after pool failure', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createGroupsState }, { GroupsAddMemberDialog }] = await Promise.all([
     harness.importDashboardModule('js/groups-state.js'),
@@ -178,13 +178,18 @@ test('promotion-only async candidates preserve initial keyboard selection', asyn
   });
   state.publish(snapshot([{ name: 'alpha', members: [], online: 0 }]));
   state.openAddMember({ name: 'alpha' });
-  const pool = deferred();
+  const firstPool = deferred();
+  const retryPool = deferred();
+  let poolCalls = 0;
   let addedCandidate = null;
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
   const mounted = await harness.mount(harness.html`<${GroupsAddMemberDialog}
     state=${state}
     actions=${{
-      loadAddMemberPromotionPool: async () => pool.promise,
+      loadAddMemberPromotionPool: async () => {
+        poolCalls++;
+        return poolCalls === 1 ? firstPool.promise : retryPool.promise;
+      },
       addExistingMember: async (_descriptor, candidate) => { addedCandidate = candidate; },
     }}
     confirmDiscard=${async () => true}
@@ -194,11 +199,17 @@ test('promotion-only async candidates preserve initial keyboard selection', asyn
   assert.equal(search.hasAttribute('aria-activedescendant'), false,
     'the loading combobox does not claim a missing active option');
 
-  pool.resolve([{ conv_id: 'plain-worker', title: 'Plain worker', online: true }]);
+  firstPool.reject(new Error('promotion pool unavailable'));
+  await harness.act(() => Promise.resolve());
+  await harness.act(() => Promise.resolve());
+  assert.match(host.querySelector('[role="alert"]').textContent, /promotion pool unavailable/);
+  await harness.act(() => harness.fireEvent(host.querySelector('#add-member-pool-retry'), 'click'));
+  assert.equal(poolCalls, 2);
+  retryPool.resolve([{ conv_id: 'plain-worker', title: 'Plain worker', online: true }]);
   await harness.act(() => Promise.resolve());
   await harness.act(() => Promise.resolve());
   assert.equal(host.querySelector('.add-member-row.highlighted .rowname').textContent, 'Plain worker',
-    'the first promotion-only row inherits the initial selection sentinel');
+    'the first promotion-only retry row inherits the re-armed selection sentinel');
   assert.equal(search.getAttribute('aria-activedescendant'), 'add-member-option-0');
   await harness.act(() => harness.fireEvent(search, 'keydown', { key: 'Enter' }));
   assert.equal(addedCandidate?.conv_id, 'plain-worker',
