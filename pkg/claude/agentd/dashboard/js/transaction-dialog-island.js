@@ -321,6 +321,373 @@ function WindowSelectionDialog({ descriptor, actions, confirmDiscard }) {
   </${TransactionDialogFrame}>`;
 }
 
+const CLEANUP_CATEGORY_ORDER = ['agent', 'retired', 'conversation'];
+const CLEANUP_CATEGORY_LABEL = {
+  agent: 'Active agents', retired: 'Retired agents', conversation: 'Conversations',
+};
+
+function cleanupTierCategories(tier) {
+  if (tier === 'delete') return CLEANUP_CATEGORY_ORDER;
+  if (tier === 'reinstate') return ['retired'];
+  return ['agent'];
+}
+
+function cleanupInactivityHours(candidate) {
+  if (!candidate.lastActivity) return Infinity;
+  const parsed = Date.parse(candidate.lastActivity);
+  if (Number.isNaN(parsed)) return Infinity;
+  return (Date.now() - parsed) / 3600000;
+}
+
+function cleanupActivityLabel(candidate) {
+  if (!candidate.lastActivity) return 'no recent activity';
+  const relative = relTime(candidate.lastActivity);
+  if (candidate.category === 'retired') return `retired ${relative}`;
+  if (candidate.category === 'conversation') return `last activity ${relative}`;
+  return `last seen ${relative}`;
+}
+
+function CleanupResult({ response }) {
+  const outcomes = response?.outcomes || [];
+  return html`<div class="cleanup-list" id="cleanup-list">
+    ${outcomes.length ? outcomes.map((outcome) => html`
+      <div class="cleanup-row" key=${outcome.conv_id || outcome.agent_id}>
+        <span class=${`cleanup-badge ${outcome.result || ''}`}>${outcome.result || 'unknown'}</span>
+        <span class="title">${outcome.title || String(outcome.conv_id || '').slice(0, 8)}</span>
+        <span class="id">${String(outcome.conv_id || '').slice(0, 8)}</span>
+        <span class="meta">${outcome.detail || ''}</span>
+      </div>
+    `) : html`<div class="cleanup-empty">Nothing to do.</div>`}
+  </div>`;
+}
+
+function CleanupDialog({ descriptor, actions, confirmDiscard }) {
+  const candidates = descriptor.candidates || [];
+  const groupMode = descriptor.mode === 'group';
+  const multiCategory = !groupMode;
+  const [tier, setTier] = useState(groupMode ? 'unjoin' : descriptor.tier || 'delete');
+  const [categoryOn, setCategoryOn] = useState(() => Object.fromEntries(
+    CLEANUP_CATEGORY_ORDER.map((category) => [
+      category, (descriptor.categories || CLEANUP_CATEGORY_ORDER).includes(category),
+    ]),
+  ));
+  const [includeOnline, setIncludeOnline] = useState(false);
+  const [includeOwners, setIncludeOwners] = useState(false);
+  const [deleteWorktrees, setDeleteWorktrees] = useState(true);
+  const [shutdown, setShutdown] = useState(true);
+  const [query, setQuery] = useState('');
+  const [age, setAge] = useState('0');
+  const [selected, setSelected] = useState(() => new Set(
+    groupMode
+      ? candidates.filter((candidate) => !candidate.owner).map((candidate) => candidate.conv_id)
+      : [],
+  ));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [submittedRequest, setSubmittedRequest] = useState(null);
+  const [result, setResult] = useState(null);
+  const activeRef = useRef(true);
+  useEffect(() => () => { activeRef.current = false; }, []);
+
+  const effectiveTier = groupMode ? 'unjoin' : tier;
+  const normalizedQuery = query.trim().toLowerCase();
+  const rowVisible = (candidate) => {
+    if (normalizedQuery && !candidate.title.toLowerCase().includes(normalizedQuery)
+      && !candidate.conv_id.toLowerCase().includes(normalizedQuery)) return false;
+    if (!multiCategory) return true;
+    if (!categoryOn[candidate.category]) return false;
+    if (!cleanupTierCategories(effectiveTier).includes(candidate.category)) return false;
+    if (candidate.online && !includeOnline && effectiveTier !== 'reinstate') return false;
+    return true;
+  };
+  const rowEnabled = (candidate) => !groupMode || !candidate.owner || includeOwners;
+  const visibleCandidates = candidates.filter(rowVisible);
+  const selectedCandidates = candidates.filter(
+    (candidate) => rowVisible(candidate) && rowEnabled(candidate)
+      && selected.has(candidate.conv_id),
+  );
+  const locked = !!submittedRequest;
+  const controlsDisabled = busy || locked;
+
+  const updateCandidate = (candidate, checked) => {
+    if (controlsDisabled || !rowEnabled(candidate)) return;
+    const next = new Set(selected);
+    if (checked) next.add(candidate.conv_id);
+    else next.delete(candidate.conv_id);
+    setSelected(next);
+  };
+  const selectAll = () => {
+    if (controlsDisabled) return;
+    const next = new Set(selected);
+    for (const candidate of visibleCandidates) {
+      if (rowEnabled(candidate)) next.add(candidate.conv_id);
+    }
+    setSelected(next);
+  };
+  const selectNone = () => {
+    if (!controlsDisabled) setSelected(new Set());
+  };
+  const applyAge = (value) => {
+    if (controlsDisabled) return;
+    const hours = Math.max(0, Number.parseFloat(value) || 0);
+    const next = new Set(selected);
+    for (const candidate of visibleCandidates) {
+      if (!rowEnabled(candidate)) continue;
+      if (cleanupInactivityHours(candidate) >= hours) next.add(candidate.conv_id);
+      else next.delete(candidate.conv_id);
+    }
+    setSelected(next);
+  };
+  const changeOwners = (checked) => {
+    if (controlsDisabled) return;
+    setIncludeOwners(checked);
+    if (groupMode) {
+      const next = new Set(selected);
+      for (const candidate of candidates) {
+        if (!candidate.owner) continue;
+        if (checked) next.add(candidate.conv_id);
+        else next.delete(candidate.conv_id);
+      }
+      setSelected(next);
+    }
+  };
+
+  const submit = async () => {
+    if (busy || selectedCandidates.length === 0) return;
+    const request = submittedRequest || Object.freeze({
+      mode: descriptor.mode,
+      ...(groupMode ? { group: descriptor.group } : {}),
+      tier: effectiveTier,
+      targets: Object.freeze(selectedCandidates.map(
+        (candidate) => candidate.agent_id || candidate.conv_id,
+      )),
+      includeOwners: groupMode ? includeOwners
+        : effectiveTier === 'unjoin' && includeOwners,
+      includeOnline: !groupMode && effectiveTier !== 'reinstate' && includeOnline,
+      deleteWorktrees: !groupMode && effectiveTier === 'delete' && deleteWorktrees,
+      shutdown: !groupMode && effectiveTier === 'retire' && shutdown,
+    });
+    if (!submittedRequest) setSubmittedRequest(request);
+    setError('');
+    setBusy(true);
+    try {
+      const response = await actions.cleanup(request);
+      if (activeRef.current) setResult(response || {});
+    } catch (cause) {
+      if (activeRef.current) setError(cause?.message || String(cause));
+    } finally {
+      if (activeRef.current) setBusy(false);
+    }
+  };
+
+  const close = () => {
+    if (result) actions.finishCleanup(result);
+    else actions.close();
+  };
+  const count = selectedCandidates.length;
+  const resultBits = result ? [
+    ['removed', 'removed'], ['retired', 'retired'], ['reinstated', 'reinstated'],
+    ['deleted', 'deleted'], ['skipped', 'skipped'], ['failed', 'failed'],
+  ].filter(([field]) => result[field]).map(([field, label]) => `${result[field]} ${label}`) : [];
+
+  let title;
+  let hint;
+  let primaryLabel;
+  if (groupMode) {
+    title = html`<${Words}
+      plain=${`🧹 Clean up group: ${descriptor.group}`}
+      wizard=${`🧹 Tidy party: ${descriptor.group}`}
+    />`;
+    hint = html`<${Words}
+      plain="Removes the selected confirmed-offline members from this group. Their conversations keep running and stay on disk — only the membership is dropped. Owners are excluded unless you opt in below."
+      wizard="Dismisses the selected confirmed-slumbering familiars from this party. Their conversation scrolls remain on disk — only the party bond is broken. Party owners are excluded unless you opt in below."
+    />`;
+    primaryLabel = html`<${Words}
+      plain=${count ? `Remove ${count} from ${descriptor.group}` : 'Remove from group'}
+      wizard=${count ? `Dismiss ${count} from ${descriptor.group}` : 'Dismiss from party'}
+    />`;
+  } else {
+    title = '🧹 Clean up agents and conversations';
+    if (effectiveTier === 'delete') {
+      hint = 'Permanently deletes the selected conversations — wipes the history from disk and drops every group / owner / permission row. Works on active agents, retired agents and plain conversations alike. Cannot be undone.';
+      primaryLabel = count
+        ? `Delete ${count} conversation${count === 1 ? '' : 's'} permanently`
+        : 'Delete conversations';
+    } else if (effectiveTier === 'retire') {
+      hint = 'Retires the selected agents: revokes their group memberships and permission grants so they stop being agents — the conversations stay on disk and can be reinstated later. The non-destructive soft-delete. Running sessions are also soft-stopped unless you untick the option below.';
+      primaryLabel = count ? `Retire ${count} agent${count === 1 ? '' : 's'}` : 'Retire agents';
+    } else if (effectiveTier === 'reinstate') {
+      hint = 'Reinstates the selected retired agents — returns them to the active roster. Their former groups and permissions are not restored; they start fresh.';
+      primaryLabel = count ? `Reinstate ${count} agent${count === 1 ? '' : 's'}` : 'Reinstate agents';
+    } else {
+      hint = 'Removes the selected agents from every group they belong to. They stay agents (and stay on disk) — only the group memberships are dropped.';
+      primaryLabel = count
+        ? `Remove ${count} agent${count === 1 ? '' : 's'} from all groups`
+        : 'Remove from groups';
+    }
+  }
+
+  if (result) {
+    return html`<${TransactionDialogFrame}
+      id="cleanup-modal"
+      labelledby="cleanup-title"
+      title=${title}
+      dialogClass="cleanup-modal"
+      primaryLabel="Done"
+      primaryClass="primary"
+      hideCancel=${true}
+      submitID="cleanup-submit"
+      onClose=${close}
+      onSubmit=${close}
+      confirmDiscard=${confirmDiscard}
+    >
+      <p class="cleanup-hint" id="cleanup-hint">Cleanup complete — ${resultBits.join(' · ') || 'nothing to do'}.</p>
+      <${CleanupResult} response=${result} />
+      ${(result.warnings || []).length ? html`<div class="cleanup-warn" id="cleanup-warn">
+        ⚠ ${(result.warnings || []).join('\n⚠ ')}
+      </div>` : null}
+    </${TransactionDialogFrame}>`;
+  }
+
+  const tierOption = (value, label, note) => html`<label key=${value}>
+    <input
+      type="radio" name="cleanup-tier" value=${value}
+      checked=${effectiveTier === value} disabled=${controlsDisabled}
+      onChange=${() => setTier(value)}
+    /> ${label} <span class="opt-note">— ${note}</span>
+  </label>`;
+  return html`<${TransactionDialogFrame}
+    id="cleanup-modal"
+    labelledby="cleanup-title"
+    title=${title}
+    dialogClass="cleanup-modal"
+    busy=${busy}
+    error=${error}
+    errorID="cleanup-error"
+    primaryLabel=${primaryLabel}
+    busyLabel=${html`<span class="btn-spinner" aria-hidden="true"></span><${Words}
+      plain="Cleaning up…" wizard="Tidying…" />`}
+    primaryClass=${effectiveTier === 'delete' ? 'primary danger' : 'primary'}
+    submitDisabled=${count === 0}
+    cancelID="cleanup-cancel"
+    submitID="cleanup-submit"
+    onClose=${actions.close}
+    onSubmit=${submit}
+    confirmDiscard=${confirmDiscard}
+  >
+    <p class=${`cleanup-hint${effectiveTier === 'delete' ? ' danger' : ''}`} id="cleanup-hint">${hint}</p>
+    <div class="cleanup-toolbar" id="cleanup-toolbar">
+      <button type="button" id="cleanup-select-all" disabled=${controlsDisabled} onClick=${selectAll}>select all</button>
+      <button type="button" id="cleanup-select-none" disabled=${controlsDisabled} onClick=${selectNone}>select none</button>
+      <span title="Tick every visible row whose last activity is at least this many hours ago. 0 selects all.">
+        inactive ≥ <input
+          type="number" id="cleanup-age" min="0" step="1" value=${age}
+          disabled=${controlsDisabled}
+          onInput=${(event) => { setAge(event.currentTarget.value); applyAge(event.currentTarget.value); }}
+        /> h
+      </span>
+      ${multiCategory ? html`<input
+        type="search" id="cleanup-search" placeholder="filter title / id…"
+        value=${query} disabled=${controlsDisabled}
+        onInput=${(event) => setQuery(event.currentTarget.value)}
+      />` : null}
+      <span class="spacer"></span>
+      <span class="cleanup-count" id="cleanup-count">${count} selected</span>
+    </div>
+    ${multiCategory ? html`<div class="cleanup-cats" id="cleanup-cats">
+      <span class="cleanup-cats-label">categories:</span>
+      ${CLEANUP_CATEGORY_ORDER.map((category) => html`<label class="cleanup-cat-toggle" key=${category}>
+        <input
+          type="checkbox" data-cat=${category} checked=${categoryOn[category]}
+          disabled=${controlsDisabled}
+          onChange=${(event) => setCategoryOn({
+            ...categoryOn, [category]: event.currentTarget.checked,
+          })}
+        />
+        ${CLEANUP_CATEGORY_LABEL[category]}
+        <span class="muted"> (${candidates.filter((candidate) => candidate.category === category).length})</span>
+      </label>`)}
+    </div>` : null}
+    <div class="cleanup-list" id="cleanup-list">
+      ${visibleCandidates.length ? CLEANUP_CATEGORY_ORDER.map((category) => {
+        const rows = visibleCandidates.filter((candidate) => candidate.category === category);
+        if (!rows.length || (!multiCategory && category !== 'agent')) return null;
+        return html`<div class="cleanup-category" key=${category}>
+          ${multiCategory ? html`<div class="cleanup-cat-head">${CLEANUP_CATEGORY_LABEL[category]} <span>(${rows.length})</span></div>` : null}
+          ${rows.map((candidate) => {
+            const enabled = rowEnabled(candidate);
+            return html`<div class=${`cleanup-row${enabled ? '' : ' disabled'}`} key=${candidate.conv_id}>
+              <label><input
+                type="checkbox" data-conv=${candidate.conv_id}
+                checked=${enabled && selected.has(candidate.conv_id)}
+                disabled=${controlsDisabled || !enabled}
+                onChange=${(event) => updateCandidate(candidate, event.currentTarget.checked)}
+              />
+                <span class="title">${candidate.title || candidate.conv_id.slice(0, 8)}</span>
+                <span class="id">${candidate.conv_id.slice(0, 8)}</span>
+                ${candidate.owner ? html`<span class="cleanup-badge owner">owner</span>` : null}
+                ${candidate.online ? html`<span class="cleanup-badge online">online</span>` : null}
+                <span class="meta">${candidate.groups.length ? `in: ${candidate.groups.join(', ')}` : ''}</span>
+                <span class="seen">${cleanupActivityLabel(candidate)}</span>
+              </label>
+            </div>`;
+          })}
+        </div>`;
+      }) : html`<div class="cleanup-empty">${candidates.length
+        ? 'No conversations match the current filters.' : 'Nothing to clean up.'}</div>`}
+    </div>
+    <div class="cleanup-options" id="cleanup-options">
+      ${groupMode ? html`<label><input
+        type="checkbox" id="cleanup-opt-owners" checked=${includeOwners}
+        disabled=${controlsDisabled}
+        onChange=${(event) => changeOwners(event.currentTarget.checked)}
+      /> <${Words} plain="Include offline owners" wizard="Include slumbering party owners" />
+        <span class="opt-note"><${Words}
+          plain="— also strips their owner status"
+          wizard="— also revokes their party-owner mark"
+        /></span>
+      </label>` : html`
+        <div class="cleanup-tier">
+          ${tierOption('unjoin', 'Unjoin from groups', 'stays an agent — only its group memberships are dropped')}
+          ${tierOption('retire', 'Retire (soft-delete)', 'demote to a plain conversation: revokes groups + permissions, keeps the .jsonl, reinstatable')}
+          ${tierOption('delete', 'Delete permanently', 'wipes the conversation from disk and every agent row — cannot be undone')}
+          ${tierOption('reinstate', 'Reinstate', 'return a retired agent to the active roster — groups and permissions are not restored')}
+        </div>
+        <label id="cleanup-opt-owners-row" class=${effectiveTier === 'unjoin' ? '' : 'disabled'}><input
+          type="checkbox" id="cleanup-opt-owners" checked=${includeOwners}
+          disabled=${controlsDisabled || effectiveTier !== 'unjoin'}
+          onChange=${(event) => changeOwners(event.currentTarget.checked)}
+        /> Include offline owners <span class="opt-note">— unjoin tier only; retire and delete drop owner rows anyway</span></label>
+        <label id="cleanup-opt-online-row" class=${effectiveTier === 'reinstate' ? 'disabled' : ''}><input
+          type="checkbox" id="cleanup-opt-online" checked=${includeOnline}
+          disabled=${controlsDisabled || effectiveTier === 'reinstate'}
+          onChange=${(event) => setIncludeOnline(event.currentTarget.checked)}
+        /> Include online sessions <span class="opt-note">— also act on conversations whose tmux session is still running. Delete force-stops them first; retire / unjoin leave the process running. Reinstate ignores liveness either way.</span></label>
+        <label id="cleanup-opt-shutdown-row" class=${effectiveTier === 'retire' ? '' : 'disabled'}><input
+          type="checkbox" id="cleanup-opt-shutdown" checked=${shutdown}
+          disabled=${controlsDisabled || effectiveTier !== 'retire'}
+          onChange=${(event) => setShutdown(event.currentTarget.checked)}
+        /> Also shut down running sessions <span class="opt-note">— retire tier only; soft-exits (/exit) the tmux pane of each retired agent that is still running. The conversation is kept and reinstatable either way.</span></label>
+        <label id="cleanup-opt-wt-row" class=${effectiveTier === 'delete' ? '' : 'disabled'}><input
+          type="checkbox" id="cleanup-opt-wt" checked=${deleteWorktrees}
+          disabled=${controlsDisabled || effectiveTier !== 'delete'}
+          onChange=${(event) => setDeleteWorktrees(event.currentTarget.checked)}
+        /> Delete associated git worktrees <span class="opt-note">— removes the worktree directory; the branch and its commits are kept. The main repo and worktrees shared with another agent are always skipped.</span></label>
+        <div class="cleanup-related"><button
+          type="button" id="cleanup-worktrees-all" disabled=${controlsDisabled}
+          onClick=${() => actions.handoffCleanupWorktrees({ group: '' })}
+        ><${Words}
+          plain="🧹 Review worktrees across all groups…"
+          wizard="🍂 Prune stray branches across all parties…"
+        /></button><span class="opt-note"><${Words}
+          plain="— opens a safe preview of stale worktrees in every group repo"
+          wizard="— opens a safe preview of withered branches in every party grove"
+        /></span></div>
+      `}
+    </div>
+  </${TransactionDialogFrame}>`;
+}
+
 function DeleteGroupDialog({ descriptor, actions, confirmDiscard }) {
   const members = descriptor.members || [];
   const [retireEnabled, setRetireEnabled] = useState(true);
@@ -1414,6 +1781,14 @@ export function TransactionDialogApp({ state, actions, confirmDiscard }) {
   }
   if (current.descriptor.kind === 'delete-retired-preview') {
     return html`<${DeleteRetiredDialog}
+      key=${current.key}
+      descriptor=${current.descriptor}
+      actions=${actions}
+      confirmDiscard=${confirmDiscard}
+    />`;
+  }
+  if (current.descriptor.kind === 'cleanup') {
+    return html`<${CleanupDialog}
       key=${current.key}
       descriptor=${current.descriptor}
       actions=${actions}
