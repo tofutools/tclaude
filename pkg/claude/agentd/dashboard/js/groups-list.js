@@ -193,6 +193,8 @@ function GroupProfileChip({ group, actions, kind }) {
   const busyRef = useRef(false);
   const [error, setError] = useState('');
   const selectRef = useRef(null);
+  const triggerRef = useRef(null);
+  const restoreFocusRef = useRef(false);
   useLayoutEffect(() => {
     if (!active) return;
     let live = true;
@@ -212,6 +214,11 @@ function GroupProfileChip({ group, actions, kind }) {
     });
     return () => { live = false; };
   }, [active, kind]);
+  useLayoutEffect(() => {
+    if (active || !restoreFocusRef.current) return;
+    restoreFocusRef.current = false;
+    triggerRef.current?.focus();
+  }, [active]);
   if (active) {
     const missing = current && !choices.some((choice) => choice.value === current);
     return html`<select
@@ -220,7 +227,8 @@ function GroupProfileChip({ group, actions, kind }) {
       onKeyDown=${(event) => {
         if (event.key === 'Escape') {
           event.preventDefault();
-          interactions.endEditor(editorKey, true);
+          restoreFocusRef.current = true;
+          interactions.endEditor(editorKey);
         }
       }}
       onBlur=${() => { if (!busyRef.current) interactions.endEditor(editorKey); }}
@@ -262,6 +270,7 @@ function GroupProfileChip({ group, actions, kind }) {
     ? current ? `Sandbox profile for ${group.name}: ${current} — composes after the global sandbox profile for newly launched agents. Click to change.` : 'No group sandbox profile — newly launched agents get the global one only. Click to set one.'
     : current ? `Default spawn profile for agents spawned into this group: ${current} — fills blank launch fields at spawn. Click to change.` : 'No default spawn profile — click to set one. (Spawns use their own fields until set.)';
   return html`<span
+    ref=${triggerRef}
     class=${className} tabindex="0" role="button"
     data-act=${sandbox ? 'set-group-sandbox-profile' : 'set-group-profile'}
     data-group=${group.name} data-label=${group.name}

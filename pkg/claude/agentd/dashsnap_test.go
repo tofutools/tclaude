@@ -1278,8 +1278,8 @@ document.dispatchEvent(new CustomEvent('tclaude:wizard', {detail:{active:true}})
 		},
 		{
 			Key:     "groups-inline-editor",
-			Title:   "Groups tab — legacy inline editor boundary",
-			Caption: "TCL-357 (self-checked): the description editor remains styled in both skins while its exact Preact-managed chip stays connected and hidden behind the transient input.",
+			Title:   "Groups tab — native inline editor boundary",
+			Caption: "TCL-465 (self-checked): the native description editor replaces only its keyed trigger while the group shell stays connected and its summary parks DnD.",
 			JS: showGroups + expandGroups + `document.body.classList.add('dock-open');` + `return (async function(){
   var det = document.querySelector('details[data-group-key="frontend-squad"]');
   var chip = det && det.querySelector(':scope > summary .group-descr');
@@ -1288,7 +1288,9 @@ document.dispatchEvent(new CustomEvent('tclaude:wizard', {detail:{active:true}})
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
   var input = det.querySelector(':scope > summary .group-descr-input');
   if (!input) throw new Error('groups-inline-editor: input did not open');
-  if (!chip.isConnected || !chip.hidden) throw new Error('groups-inline-editor: managed chip was detached instead of hidden');
+  if (chip.isConnected) throw new Error('groups-inline-editor: native trigger remained as a second writer');
+  if (!det.isConnected) throw new Error('groups-inline-editor: stable group shell was detached');
+  if (det.querySelector(':scope > summary').draggable) throw new Error('groups-inline-editor: group DnD was not parked');
 })();`,
 		},
 		{
@@ -1391,14 +1393,24 @@ document.dispatchEvent(new CustomEvent('tclaude:wizard', {detail:{active:true}})
 				{Kind: "key", Key: "Enter"},
 				{Kind: "eval", JS: `return (async function(){
   var deadline = Date.now() + 3000;
-  while (!document.querySelector('.group-default-profile-select') && Date.now() < deadline) {
+  var select = document.querySelector('.group-default-profile-select');
+  while ((!select || document.activeElement !== select) && Date.now() < deadline) {
     await new Promise(function(resolve){ setTimeout(resolve, 60); });
+    select = document.querySelector('.group-default-profile-select');
   }
-  if (!document.querySelector('.group-default-profile-select')) throw new Error('chip-keyboard: Enter did not open the profile picker');
+  if (!select) throw new Error('chip-keyboard: Enter did not open the profile picker');
+  if (document.activeElement !== select) throw new Error('chip-keyboard: profile picker did not take focus');
 })();`},
 				{Kind: "key", Key: "Escape"},
-				{Kind: "eval", JS: `var ae = document.activeElement;
-  if (!ae || !ae.classList.contains('group-default-model')) throw new Error('chip-keyboard: Escape did not hand focus back to the chip');`},
+				{Kind: "eval", JS: `return (async function(){
+  var deadline = Date.now() + 3000;
+  var ae = document.activeElement;
+  while ((!ae || ae.dataset.editorKey !== 'group:frontend-squad:default_profile') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 30); });
+    ae = document.activeElement;
+  }
+  if (!ae || !ae.classList.contains('group-default-model')) throw new Error('chip-keyboard: Escape did not hand focus back to the chip');
+})();`},
 			},
 			SettleMS: 400,
 		},
