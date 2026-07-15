@@ -56,6 +56,8 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 		"Option-drag to select on macOS; Shift-drag on Linux/Windows",
 		"copyButton.dataset.hasSelection = selected ? 'true' : 'false'",
 		"flash(SELECT_HINT);\n      term.focus();",
+		"isComposeMessageShortcut(event)",
+		"onComposeMessage();",
 	} {
 		if !strings.Contains(interactions, needle) {
 			t.Errorf("terminal-interactions.js missing %q", needle)
@@ -70,9 +72,21 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 	for _, needle := range []string{
 		"hintEl.className = 'terminal-interaction-hint'",
 		"Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C",
+		"messageBtn.textContent = '✉ Message'",
+		"onComposeMessage: messageBtn ? () => onComposeMessage(seed) : null",
 	} {
 		if !strings.Contains(core, needle) {
 			t.Errorf("mux terminal header missing persistent guidance %q", needle)
+		}
+	}
+	for _, needle := range []string{
+		`id="operator-message-modal"`,
+		`id="operator-message-attach-input"`,
+		`id="operator-message-submit"`,
+		`fetch('/api/operator-message'`,
+	} {
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("operator message composer missing %q", needle)
 		}
 	}
 	if !strings.Contains(dashboardAssets, `<span class="terminal-interaction-hint">Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C</span>`) {

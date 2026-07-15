@@ -949,12 +949,13 @@ func handleDashboardHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 	// (awaiting human input) — the row still lands in its inbox and flushes
 	// when it resumes; we surface that as "held" so the toast can say so.
 	id, err := db.InsertAgentMessage(&db.AgentMessage{
-		GroupID:      0,
-		FromConv:     "",
-		ToConv:       target,
-		Subject:      replySubjectFor(orig.Subject),
-		Body:         body.Body,
-		ToRecipients: []string{target},
+		GroupID:          0,
+		FromConv:         "",
+		ToConv:           target,
+		Subject:          replySubjectFor(orig.Subject),
+		Body:             body.Body,
+		ToRecipients:     []string{target},
+		OperatorAuthored: true,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "queue reply: "+err.Error())

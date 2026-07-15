@@ -859,6 +859,44 @@
     </div>
   </div>
 </div>
+<!-- Human-authored, durable message composer opened from an agent terminal's
+     Ctrl/Cmd+M shortcut or Message button. The target is locked to the pane;
+     bytes are enqueued in the mailbox and never typed through xterm. -->
+<div class="modal-overlay" id="operator-message-modal">
+  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="operator-message-title">
+    <h3 id="operator-message-title">Send message to agent</h3>
+    <p style="margin:4px 0; font-size:12px; color:#7d8590">Queued through the agent mailbox, so incoming agent output cannot interfere with what you type.</p>
+    <div class="cron-create-row">
+      <span class="cron-create-label">To</span>
+      <div class="cron-create-target"><strong id="operator-message-to"></strong></div>
+    </div>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Subject</span>
+      <input id="operator-message-subject" type="text" maxlength="256" placeholder="optional" autocomplete="off" />
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Message</span>
+      <textarea id="operator-message-body" rows="6" maxlength="16384" placeholder="Message text — Ctrl/Cmd+Enter to send" spellcheck="true"></textarea>
+    </label>
+    <div class="cron-create-row">
+      <span class="cron-create-label">Attachments</span>
+      <div class="cron-create-target spawn-attachments">
+        <div class="spawn-attachments-controls">
+          <button type="button" id="operator-message-attach-btn">📎 Attach files…</button>
+          <input type="file" id="operator-message-attach-input" multiple hidden />
+          <span class="spawn-attachments-hint">…or drag files here / paste a screenshot</span>
+        </div>
+        <ul class="spawn-attachments-list" id="operator-message-attachments-list"></ul>
+      </div>
+    </div>
+    <div class="cron-create-error" id="operator-message-error"></div>
+    <div class="modal-buttons">
+      <button id="operator-message-cancel" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button id="operator-message-submit" class="primary" type="button">Send</button>
+    </div>
+  </div>
+</div>
 <!-- Reply-to-a-human-notification dialog. Opened from the Messages tab's
      Human folder reader (the `reply` button → row-actions.js msg-reply →
      modal-human-reply.js). Sends the operator's answer back to the agent

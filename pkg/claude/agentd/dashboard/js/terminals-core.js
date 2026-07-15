@@ -85,7 +85,7 @@ export function normalizeSeed(seed) {
 //   onCount     — called with the live pane count whenever it changes, so a
 //                 mount can react (the in-dashboard tab shows/hides itself off
 //                 this).
-export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manageTitle = false, onCount = () => {} }) {
+export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manageTitle = false, onCount = () => {}, onComposeMessage = null }) {
   // key -> pane object. The key dedupes opens: opening the same agent's "web
   // window" twice focuses the existing pane instead of stacking a duplicate.
   const panes = new Map();
@@ -300,6 +300,15 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
     copyBtn.textContent = 'Copy';
     header.append(copyBtn);
 
+    let messageBtn = null;
+    if (seed.agent && onComposeMessage) {
+      messageBtn = document.createElement('button');
+      messageBtn.className = 'mux-btn';
+      messageBtn.textContent = '✉ Message';
+      messageBtn.title = 'Send a queued message to this agent (Ctrl/Cmd+M)';
+      header.append(messageBtn);
+    }
+
     const paletteToggle = document.createElement('label');
     paletteToggle.className = 'mux-palette-toggle';
     paletteToggle.title = 'Recolour terminal defaults with the persisted wizard palette; explicit application RGB colours are unchanged';
@@ -350,6 +359,7 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
     p.interactions = attachTerminalInteractions({
       term, host, copyButton: copyBtn, setStatus: (text) => setStatus(p, text),
       baseStatus: () => p.ws && p.ws.readyState === WebSocket.OPEN ? 'connected' : 'disconnected',
+      onComposeMessage: messageBtn ? () => onComposeMessage(seed) : null,
     });
 
     // Keystrokes go over the wire as binary frames — never text — so the
@@ -393,6 +403,7 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
     }
 
     if (popBtn) popBtn.addEventListener('click', () => popOut(key));
+    if (messageBtn) messageBtn.addEventListener('click', () => onComposeMessage(seed));
     reconnectBtn.addEventListener('click', () => connect(p));
     paletteCheckbox.addEventListener('change', () => setArcanePaletteEnabled(paletteCheckbox.checked));
 

@@ -57,6 +57,12 @@ func TestActorHeader(t *testing.T) {
 	assert.Equal(t, "planner (conv-xyz)",
 		actorHeader("planner", "", "conv-xyz"),
 		"falls back to conv-id when the actor has no agent_id")
+	assert.Equal(t, "human operator",
+		actorHeader("human operator", "", ""),
+		"named actor without an id has no dangling parentheses")
+	assert.Equal(t, "human operator",
+		actorHeader("", "", ""),
+		"senderless messages identify the operator")
 }
 
 // TestMessageSenderLabel exercises the tmux-nudge sender label: the (truncated)

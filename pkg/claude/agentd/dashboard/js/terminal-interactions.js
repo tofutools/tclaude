@@ -51,6 +51,14 @@ export function isBrowserPasteShortcut(event) {
   return pasteKey && Boolean(event.ctrlKey || event.metaKey);
 }
 
+export function isComposeMessageShortcut(event) {
+  if (!event || event.type !== 'keydown' || event.altKey || event.shiftKey ||
+      event.isComposing || event.keyCode === 229) return false;
+  const m = event.code === 'KeyM' ||
+    (typeof event.key === 'string' && event.key.toLowerCase() === 'm');
+  return m && Boolean(event.ctrlKey || event.metaKey);
+}
+
 // OSC 52 payloads have the form "selection;base64-data". tmux emits one when
 // copy-mode creates a paste buffer while set-clipboard is external/on (external
 // is the default). xterm exposes the payload without the OSC identifier.
@@ -215,7 +223,7 @@ async function uploadImages(files, signal) {
 
 // attachTerminalInteractions must be called after term.open(host). It returns a
 // disposer for DOM listeners; xterm-owned handlers/addons die with term.dispose.
-export function attachTerminalInteractions({ term, host, copyButton, setStatus, baseStatus = () => '' }) {
+export function attachTerminalInteractions({ term, host, copyButton, setStatus, baseStatus = () => '', onComposeMessage = null }) {
   let statusTimer = null;
   let uploadPending = false;
   let uploadController = null;
@@ -386,6 +394,11 @@ export function attachTerminalInteractions({ term, host, copyButton, setStatus, 
 
   term.attachCustomKeyEventHandler((event) => {
     if (event.type !== 'keydown') return true;
+    if (onComposeMessage && isComposeMessageShortcut(event)) {
+      event.preventDefault();
+      onComposeMessage();
+      return false;
+    }
     // Do not call preventDefault: Chrome still needs to dispatch the paste
     // event to xterm's textarea (and our capture listener above it).
     if (isBrowserPasteShortcut(event)) return false;

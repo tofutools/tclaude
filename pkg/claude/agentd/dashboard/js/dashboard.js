@@ -47,6 +47,7 @@ import {
   bindMessageModal, bindSudoModal, bindPermEditModal, bindGroupCreateModal, openSpawnPermEditor,
 } from './modal-message.js';
 import { bindHumanReplyModal } from './modal-human-reply.js';
+import { bindOperatorMessageModal } from './modal-operator-message.js';
 import {
   bindTemplatesUI, bindGroupImportModal, summonTemplateScribe,
 } from './modal-templates.js';
@@ -268,6 +269,7 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   initTerminalsTab();
   bindMessageModal();
   bindHumanReplyModal();
+  bindOperatorMessageModal();
   bindGroupCreateModal();
   bindTemplatesUI();
   bindProfilesUI();

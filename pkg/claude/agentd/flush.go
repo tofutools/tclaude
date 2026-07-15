@@ -204,7 +204,8 @@ func flushQueue(label string, list func() ([]*db.AgentMessage, error), canDelive
 					"retry_in", nudgeRetryDelay(m.NudgeAttempts+1))
 				return false
 			}
-			stamped, err := db.CompleteAgentMessageNudge(m.ID, token, time.Now())
+			_, consumed := messageInlineText(m)
+			stamped, err := db.CompleteAgentMessageNudgeState(m.ID, token, time.Now(), consumed)
 			if err != nil || !stamped {
 				// The pane may have received the nudge, but without the durable
 				// completion stamp we must preserve at-least-once semantics. Release

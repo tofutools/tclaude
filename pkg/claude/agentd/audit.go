@@ -314,6 +314,8 @@ func canonicalizeAuditSegs(rest []string) []string {
 		out[0] = "agent"
 	case "message":
 		out[0] = "messages"
+	case "operator-message":
+		out[0] = "messages"
 	}
 	return out
 }

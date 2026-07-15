@@ -638,6 +638,14 @@ open-terminal, and bulk focus from the **🪟 windows…** modal into panes in t
 dashboard's **Terminals** tab. Bulk unfocus still detaches the selected terminal
 clients and closes matching web panes; it never stops the agents.
 
+An agent terminal pane also has a **✉ Message** button. Pressing
+**Ctrl+M** or **Cmd+M** while that pane has focus opens the same composer with
+the pane's agent locked as recipient. The composer accepts text, files,
+drag-and-drop, and pasted screenshots; **Ctrl/Cmd+Enter** sends. The message is
+stored in the agent's mailbox and handed to its normal asynchronous delivery
+queue rather than typed through xterm, so terminal output and agent nudges
+cannot race with the operator's draft. Offline and busy agents keep it queued.
+
 Every dashboard **Browse…** directory action uses one shared chooser. On a
 loopback/localhost dashboard it opens the host's native OS dialog by default.
 For a dashboard reached through any non-loopback hostname it automatically

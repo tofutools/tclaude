@@ -89,6 +89,7 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/human-messages/", handleDashboardHumanMessageAttachment)
 	registerDashboardCronRoutes(mux)
 	registerDashboardMessageRoutes(mux)
+	registerDashboardOperatorMessageRoutes(mux)
 	registerDashboardMailboxRoutes(mux)
 	registerDashboardAccessRequestRoutes(mux)
 	registerDashboardLists(mux)

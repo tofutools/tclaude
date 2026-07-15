@@ -290,6 +290,10 @@ func TestAgentMessageInsertAndList(t *testing.T) {
 	got, _ = GetAgentMessage(id1)
 	assert.False(t, got.DeliveredAt.IsZero(), "delivered_at should be set")
 	assert.False(t, got.ReadAt.IsZero(), "read_at should be set")
+	require.NoError(t, MarkAgentMessageDeliveredState(id2, true), "MarkAgentMessageDeliveredState inline")
+	got, _ = GetAgentMessage(id2)
+	assert.False(t, got.DeliveredAt.IsZero(), "inline delivered_at should be set")
+	assert.False(t, got.ReadAt.IsZero(), "inline read_at should be set atomically")
 
 	// Deleting a group cascades through membership/ownership but
 	// PRESERVES its message history: the rows survive, rewritten to
