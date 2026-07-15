@@ -11,11 +11,8 @@ import (
 // agent into a spawn profile, or spawning from a profile that carries one, must
 // keep that exact id SELECTABLE rather than silently dropping it on the
 // <select>'s prior pick (a <select> ignores .value for an absent option).
-// setModelSelectValue (helpers.js) injects the out-of-catalog id as an option
-// before selecting it, and both the profile editor and the spawn dialog seed
-// their Model control through it. There is no server path a flow test can drive
-// for the <select> wiring, so — following the established dashboard_*_test.go
-// structural guards — this pins its shape in the embedded JS.
+// The Preact spawn owner keeps the exact model string in its plain draft and
+// derives whether the curated select displays it through the Custom sentinel.
 func TestDashboardHTML_ModelCaptureOutOfCatalog(t *testing.T) {
 	// The helper exists, is exported from helpers.js, keys its injected option
 	// by a data attribute (so a re-open strips the stale one), and flags it so
@@ -38,13 +35,19 @@ func TestDashboardHTML_ModelCaptureOutOfCatalog(t *testing.T) {
 		t.Error("Preact profile editor must seed and submit the exact model string")
 	}
 
-	// Spawn dialog applies a profile's model through the helper too — a profile
-	// carrying a non-default model must be selectable when spawning from it. It
-	// routes to the curated <select> explicitly (not activeSpawnModelEl, which
-	// may point at the "Custom…" free-text input) so a stale custom entry can't
-	// swallow the profile's model.
-	if !strings.Contains(dashboardAssets, "setModelSelectValue($('#agent-spawn-model'), p.model)") {
-		t.Error("applyProfileToSpawnForm: must apply the profile model to the curated <select> via setModelSelectValue so a non-default model is selectable when spawning")
+	// Spawn profiles preserve the exact string in controlled state and the
+	// selector derives the Custom sentinel for values outside the catalog.
+	for _, needle := range []string{
+		"if (profile.model) {",
+		"next.model = text(profile.model)",
+		"next.customModel = view.hasModelList && !view.models.includes(next.model)",
+		"return view.models.includes(draft.model) ? draft.model : MODEL_CUSTOM_VALUE",
+	} {
+		if strings.Contains(dashboardAssets, needle) {
+			continue
+		}
+		t.Error("Preact spawn profile application must preserve an out-of-catalog model through the Custom sentinel")
+		break
 	}
 }
 
@@ -68,7 +71,7 @@ func TestDashboardHTML_CustomModelFreeText(t *testing.T) {
 		}
 	}
 
-	// The still-imperative spawn editor retains the select+sentinel helper.
+	// The Preact spawn editor retains the select+sentinel/custom-input contract.
 	for _, base := range []string{"agent-spawn-model"} {
 		for _, needle := range []string{
 			`id="` + base + `-custom"`,     // the free-text input
@@ -76,11 +79,9 @@ func TestDashboardHTML_CustomModelFreeText(t *testing.T) {
 			// The select routes to the custom input on the sentinel (reads:
 			// submit + effort read the typed value). Compared against the shared
 			// MODEL_CUSTOM_VALUE constant, not a hardcoded literal.
-			"sel.value === MODEL_CUSTOM_VALUE ? $('#" + base + "-custom')",
-			// The harness reshape reconciles the row with the select.
-			"syncCustomModelRow('" + base + "')",
-			// Picking "Custom…" reveals + focuses the row.
-			"syncCustomModelRow('" + base + "', { focus: true })",
+			"modelSelectValue(draft, context)",
+			"hidden=${selectedModel !== MODEL_CUSTOM_VALUE}",
+			"document.querySelector('#agent-spawn-model-custom')?.focus()",
 		} {
 			if !strings.Contains(dashboardAssets, needle) {
 				t.Errorf("dashboard JS/HTML missing %q — custom-model wiring broken for %s", needle, base)
@@ -106,22 +107,20 @@ func TestDashboardHTML_CustomModelFreeText(t *testing.T) {
 	// Each editor rebuilds that shared selector from the selected harness's
 	// catalog, so Codex and Claude receive the same preset + custom-ID behavior.
 	for _, call := range []string{
-		"populateModelSelect($('#agent-spawn-model'), h.models)",
+		"view.models.map((model)",
 		"const models = hEntry?.models || []",
 	} {
 		if !strings.Contains(dashboardAssets, call) {
 			t.Errorf("dashboard JS missing %q — per-harness model catalog is not wired across every editor", call)
 		}
 	}
-	if !strings.Contains(dashboardAssets, "appliedSpawnHarness === harnessName") ||
-		!strings.Contains(dashboardAssets, "setModelSelectValue($('#agent-spawn-model'), keepModel)") {
+	if !strings.Contains(dashboardAssets, "const keepModel = profile.harness === next.harness ? next.model : ''") ||
+		!strings.Contains(dashboardAssets, "if (keepModel) next.model = keepModel") {
 		t.Error("spawn harness re-apply must preserve a manual model when a sparse same-harness profile is applied")
 	}
 
-	// The spawn selector remains static HTML; the shared Preact selector emits
-	// its sentinel dynamically from the options array above.
-	if got := strings.Count(dashboardAssets, `<option value="__custom__">Custom model id…</option>`); got != 1 {
-		t.Errorf("expected one spawn-dialog custom-model sentinel, got %d", got)
+	if !strings.Contains(dashboardAssets, `<option value=${MODEL_CUSTOM_VALUE}>Custom model id…</option>`) {
+		t.Error("Preact spawn selector must emit the Custom model sentinel")
 	}
 
 	// Each revealed free-text input carries an accessible name — its row's label

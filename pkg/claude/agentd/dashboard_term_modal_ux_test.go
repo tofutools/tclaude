@@ -63,7 +63,7 @@ func TestTerminalShellModalDetachCloseAndCopyMapping(t *testing.T) {
 }
 
 func TestTerminalShellModalCallersPreserveLiveSessionIdentity(t *testing.T) {
-	spawn := readDashboardJS(t, "modal-spawn.js")
+	spawn := readDashboardJS(t, "agent-spawn-actions.js")
 	if strings.Contains(spawn, "payload.focus_ws") && !strings.Contains(spawn, "hideConv: payload.conv_id") {
 		t.Error("spawn auto-focus must carry hideConv into the Preact terminal modal")
 	}

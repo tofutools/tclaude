@@ -4,7 +4,7 @@
 // The dock (dock.js) renders profile/role/template cards as drag sources
 // (draggable="true" + data-dock-kind/name). Dropping a PROFILE or ROLE onto a
 // real group's box (its whole <details>, header or expanded body) opens the
-// existing spawn modal (modal-spawn.js) with the target group pinned and the
+// agent-spawn controller with the target group pinned and the
 // profile/role prefilled — no new spawn semantics, just a shortcut into the
 // same dialog. Dropping a TEMPLATE onto a group opens the unified summon dialog
 // (modal-templates.js) with a drop-mode chooser: reinforce the group in place,
@@ -36,7 +36,7 @@
 
 import { $, $$ } from './helpers.js';
 import { wizWord } from './slop.js';
-import { openAgentSpawnModal } from './modal-spawn.js';
+import { openAgentSpawnModal } from './agent-spawn-controller.js';
 import { openSummonForDrop } from './modal-templates.js';
 
 // Custom drag payload MIME. Intentionally NOT 'text/plain' — see the module

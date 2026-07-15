@@ -15,7 +15,7 @@ import { openProfileEditor } from './modal-profiles.js';
 // closes the already-tolerated refresh.js↔row-actions.js style of cycle
 // (function/let bindings resolved at call time — TDZ-safe).
 import {
-  loadSandboxProfiles, openSandboxProfileEditor, refreshSpawnSandboxProfileUI,
+  loadSandboxProfiles, openSandboxProfileEditor,
 } from './sandbox-profiles.js';
 import { renderDashDefaultProfile, renderDashSandboxProfile } from './toolbar-profile-renderers.js';
 import { openCronCreateModal } from './jobs-controller.js';
@@ -40,7 +40,7 @@ import {
   openTerminalPane, closeTerminalsForConvs, focusTerminalForConv,
   openWebWindowPane, openWebTermPane, openGroupWebTermPane,
 } from './terminals-tab.js';
-import { openAgentSpawnModal } from './modal-spawn.js';
+import { openAgentSpawnModal, refreshAgentSpawnSandboxPolicy } from './agent-spawn-controller.js';
 // openMailbox brings the Messages tab forward + selects a folder; mail.js
 // doesn't import row-actions.js, so this is a one-way edge (no cycle).
 import { openMailbox } from './mail-bridge.js';
@@ -846,7 +846,7 @@ function bindRowActions() {
               toast(name ? `global sandbox profile: ${name}` : 'global sandbox profile cleared');
               await refresh();
               renderDashSandboxProfile();
-              await refreshSpawnSandboxProfileUI($('#agent-spawn-group').value);
+              refreshAgentSpawnSandboxPolicy();
               return true;
             } finally {
               delete btn.dataset.sandboxProfilePending;

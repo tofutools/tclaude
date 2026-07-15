@@ -291,7 +291,7 @@ func TestDashboardJS_SelectTooltipWired(t *testing.T) {
 		"function syncSelectTitle(",                 // helper exists (helpers.js)
 		"function bindSelectTitles(",                // modal-level binder exists (helpers.js)
 		"syncSelectTitle(select)",                   // worktree picker syncs after repopulate (modal-link-wt.js)
-		"bindSelectTitles($('#agent-spawn-modal'))", // spawn modal wires it (modal-spawn.js)
+		"title=${`${branch}${main} — ${worktree.path}`}", // Preact worktree options retain the full path
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard JS missing %q — select tooltip wiring broken", needle)
@@ -307,7 +307,7 @@ func TestDashboardJS_SelectTooltipWired(t *testing.T) {
 func TestDashboardJS_ModalResizePersisted(t *testing.T) {
 	for _, needle := range []string{
 		"function makeModalResizable(",                                  // helper exists (helpers.js)
-		"makeModalResizable($('#agent-spawn-modal .cron-create-modal')", // spawn modal wires it
+		`resizeKey="tclaude.dash.modalSize.agent-spawn"`,               // Preact spawn overlay wires it
 		`resizeKey="tclaude.dash.modalSize.clone-agent"`,                // Preact clone modal wires it
 		"makeModalResizable(dialogRef.current, resizeKey)",              // Preact management overlays wire it
 		`resizeKey: 'tclaude.dash.modalSize.templates-manage'`,

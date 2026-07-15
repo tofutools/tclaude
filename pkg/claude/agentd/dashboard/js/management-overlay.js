@@ -22,6 +22,11 @@ export function ManagementOverlay({
   resizeKey = '',
   fitContent = true,
   guardBackdropDrag = false,
+  onDragEnter = null,
+  onDragOver = null,
+  onDragLeave = null,
+  onDrop = null,
+  onPaste = null,
   initialFocusRef = null,
   children,
 }) {
@@ -71,6 +76,11 @@ export function ManagementOverlay({
       pressedOnBackdrop.current = false;
       if (dismiss) void close();
     } : undefined}
+    onDragEnter=${onDragEnter}
+    onDragOver=${onDragOver}
+    onDragLeave=${onDragLeave}
+    onDrop=${onDrop}
+    onPaste=${onPaste}
   >
     <div
       ref=${dialogRef}
