@@ -298,7 +298,11 @@ test('native group chrome preserves hierarchy, virtual DnD and shared menu contr
   assert.match(parent.querySelector('[data-act="cleanup-worktrees-group"]').title, /protected/);
   assert.equal(parent.querySelector('[data-act="link-delete"]').title, 'Remove this link');
   assert.equal(host.querySelector('details[data-dnd-target-ungrouped]').dataset.groupKey, ' ungrouped-virtual');
-  assert.ok(host.querySelector('tr[data-dnd-source-ungrouped][data-key="loose"]'));
+  const loose = host.querySelector('tr[data-dnd-source-ungrouped][data-key="loose"]');
+  assert.ok(loose);
+  assert.equal(loose.querySelector('.rowname-text').dataset.editorKey,
+    'member:virtual:ungrouped:loose:name',
+    'virtual member tables contribute their own interaction identity');
 
   const pending = host.querySelector('tr[data-key="gate-1"]');
   const retired = host.querySelector('tr[data-key="retired-1"]');
@@ -442,6 +446,66 @@ test('native group and member menus share dismissal, focus, flip and publish sta
   await mounted.unmount();
 });
 
+test('multi-group member copies isolate menus, editors, focus and unmount cleanup', async (t) => {
+  const harness = await createPreactHarness(t);
+  const member = {
+    conv_id: 'shared-member', agent_id: 'agt-shared-member', title: 'Shared member', online: true,
+    state: { status: 'idle', harness: 'claude' },
+  };
+  const alpha = { name: 'alpha', members: [member] };
+  const beta = { name: 'beta', members: [member] };
+  const actions = {
+    sort: () => {}, page: () => {}, setPageSize: () => {},
+    renameAgent: async () => true,
+  };
+  const { state, host, mounted } = await mountGroups(t, harness, [alpha, beta], actions);
+  const alphaDetails = host.querySelector('details[data-group-key="alpha"]');
+  const betaDetails = host.querySelector('details[data-group-key="beta"]');
+  const alphaRow = alphaDetails.querySelector('tr[data-key="shared-member"]');
+  const betaRow = betaDetails.querySelector('tr[data-key="shared-member"]');
+  const alphaCog = alphaRow.querySelector('.cog-btn');
+  const betaCog = betaRow.querySelector('.cog-btn');
+  const alphaMenu = alphaRow.querySelector('.action-menu');
+  const betaMenu = betaRow.querySelector('.action-menu');
+
+  await harness.act(() => harness.fireEvent(alphaCog, 'click'));
+  assert.equal(alphaMenu.classList.contains('open'), true);
+  assert.equal(betaMenu.classList.contains('open'), false,
+    'opening one membership copy does not open the same agent in another group');
+
+  const alphaTrigger = alphaRow.querySelector('.rowname-text');
+  await harness.act(() => harness.fireEvent(alphaTrigger, 'click'));
+  const alphaInput = alphaRow.querySelector('.rowname-input');
+  assert.ok(alphaInput);
+  assert.equal(betaRow.querySelector('.rowname-input'), null,
+    'editing one membership copy does not replace the other group copy');
+  assert.equal(alphaRow.draggable, false);
+  assert.equal(betaRow.draggable, true);
+  await harness.act(() => harness.fireEvent(alphaInput, 'keydown', { key: 'Escape' }));
+  const restoredAlphaTrigger = alphaRow.querySelector('.rowname-text');
+  assert.equal(harness.document.activeElement, restoredAlphaTrigger);
+  assert.equal(restoredAlphaTrigger.dataset.editorKey,
+    'member:group:alpha:agt-shared-member:name');
+
+  await harness.act(() => harness.fireEvent(betaCog, 'click'));
+  assert.equal(betaMenu.classList.contains('open'), true);
+  await harness.act(() => state.publish(snapshot([{
+    ...beta, members: [{ ...member, title: 'Published shared member' }],
+  }])));
+  const survivingBeta = host.querySelector('details[data-group-key="beta"]');
+  const survivingCog = survivingBeta.querySelector('tr[data-key="shared-member"] .cog-btn');
+  const survivingMenu = survivingBeta.querySelector('tr[data-key="shared-member"] .action-menu');
+  assert.equal(survivingMenu.classList.contains('open'), true,
+    'removing another membership leaves the surviving menu registration live');
+  survivingMenu.querySelector('button[data-act="term"]').focus();
+  await harness.act(() => harness.fireEvent(harness.document.body, 'keydown', { key: 'Escape' }));
+  assert.equal(survivingMenu.classList.contains('open'), false);
+  assert.equal(harness.document.activeElement, survivingCog,
+    'Escape returns focus through the surviving registration after sibling unmount');
+
+  await mounted.unmount();
+});
+
 test('native member and group editors preserve drafts, park DnD and surface busy/error state', async (t) => {
   const harness = await createPreactHarness(t);
   const calls = [];
@@ -451,7 +515,8 @@ test('native member and group editors preserve drafts, park DnD and surface busy
   let profileChoicesResult = async () => [{ value: 'profile-b', label: 'Profile B' }];
   let setProfileResult = async () => true;
   const actions = {
-    sort: () => {}, page: () => {}, setPageSize: () => {}, reportError: () => {},
+    sort: () => {}, page: () => {}, setPageSize: () => {},
+    reportError: (error) => calls.push(['report-error', error.message || String(error)]),
     renameAgent: (member, value) => { calls.push(['rename-agent', member.conv_id, value]); return renameAgentResult(); },
     renameGroup: (group, value) => { calls.push(['rename-group', group.name, value]); return renameGroupResult(); },
     patchGroup: (group, field, value) => { calls.push(['patch', group.name, field, value]); return patchResult(); },
@@ -504,7 +569,8 @@ test('native member and group editors preserve drafts, park DnD and surface busy
   assert.equal(failedName.getAttribute('aria-invalid'), 'true');
   assert.equal(failedName.title, 'rename rejected');
   await harness.act(() => harness.fireEvent(failedName, 'keydown', { key: 'Escape' }));
-  assert.equal(harness.document.activeElement.dataset.editorKey, 'member:agt-member-1:name');
+  assert.equal(harness.document.activeElement.dataset.editorKey,
+    'member:group:alpha:agt-member-1:name');
   calls.shift();
 
   const descrTrigger = summary.querySelector('.group-descr');
@@ -613,6 +679,14 @@ test('native member and group editors preserve drafts, park DnD and surface busy
   assert.equal(calls[0][0], 'choices');
   assert.equal(calls[1][0], 'new-profile');
   assert.equal(calls[1][1], 'sandbox');
+  assert.equal(calls[1][2]('created-sandbox'), undefined,
+    'post-create assignment is reported asynchronously instead of escaping the editor');
+  await harness.act(() => Promise.resolve());
+  await harness.act(() => Promise.resolve());
+  assert.deepEqual(calls.slice(2, 4), [
+    ['profile', 'alpha', 'sandbox', 'created-sandbox'],
+    ['report-error', 'sandbox rejected'],
+  ]);
 
   // A successful rename still uses the same native editor/action boundary.
   renameGroupResult = async () => true;
