@@ -5,6 +5,9 @@ import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { normaliseFollowUp } from './action-dialog-actions.js';
 import { registerActionDialogController } from './action-dialog-controller.js';
 import { shortCwd } from './helpers.js';
+import {
+  AgentExportDialog, PresetCloneDialog, TerminalDirectoryDialog,
+} from './small-dialog-components.js';
 
 const html = htm.bind(h);
 const WT_NEW = '__new__';
@@ -473,11 +476,14 @@ export function ActionDialogApp({ state, actions, confirmDiscard }) {
   if (descriptor.kind === 'reincarnate-agent') return html`<${ReincarnateAgentDialog} key=${`reincarnate:${descriptor.conv}`} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
   if (descriptor.kind === 'nest-group') return html`<${NestGroupDialog} key=${`nest:${descriptor.group}`} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
   if (descriptor.kind === 'task-link') return html`<${TaskLinkDialog} key=${`task-link:${descriptor.conv}`} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
+  if (descriptor.kind === 'preset-clone') return html`<${PresetCloneDialog} key=${`preset-clone:${descriptor.presetKind}:${descriptor.source.name}`} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
+  if (descriptor.kind === 'agent-export') return html`<${AgentExportDialog} key=${`agent-export:${descriptor.conv}`} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
+  if (descriptor.kind === 'terminal-directory') return html`<${TerminalDirectoryDialog} key=${`terminal-directory:${descriptor.label}`} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
   return null;
 }
 
 export function mountActionDialogIsland({ host, state, actions, confirmDiscard, registerCleanup }) {
   render(html`<${ActionDialogApp} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} />`, host);
   const unregister = registerActionDialogController(actions);
-  registerCleanup(() => { unregister(); render(null, host); });
+  registerCleanup(() => { state.dispose(); unregister(); render(null, host); });
 }
