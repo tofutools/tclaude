@@ -143,16 +143,25 @@ function optionsFor(groups, ...selected) {
 function LinkEditor({ descriptor, groups, actions, confirmDiscard }) {
   const edit = descriptor.kind === 'edit';
   const preset = edit ? descriptor : descriptor.preset;
-  const initialFrom = preset.from || groups[0] || '';
-  const initialTo = preset.to || groups.find((name) => name !== initialFrom) || '';
-  const initialMode = preset.linkMode || 'members->members';
-  const [from, setFrom] = useState(initialFrom);
-  const [to, setTo] = useState(initialTo);
-  const [mode, setMode] = useState(initialMode);
+  // The keyed editor owns one draft lifetime. Snapshot publishes keep the
+  // group options live, but must not move the baseline used for dirty checks:
+  // otherwise a changed draft can accidentally become "clean" when a group
+  // disappears (or an untouched draft can become spuriously dirty).
+  const [initial] = useState(() => {
+    const from = preset.from || groups[0] || '';
+    return {
+      from,
+      to: preset.to || groups.find((name) => name !== from) || '',
+      mode: preset.linkMode || 'members->members',
+    };
+  });
+  const [from, setFrom] = useState(initial.from);
+  const [to, setTo] = useState(initial.to);
+  const [mode, setMode] = useState(initial.mode);
   const [bidir, setBidir] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const dirty = from !== initialFrom || to !== initialTo || mode !== initialMode || bidir;
+  const dirty = from !== initial.from || to !== initial.to || mode !== initial.mode || bidir;
   const groupOptions = optionsFor(groups, from, to);
 
   const submit = async () => {
