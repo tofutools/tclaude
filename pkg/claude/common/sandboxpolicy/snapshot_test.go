@@ -119,7 +119,12 @@ func TestRequireContainedUsesPathCoverageAccessAndExactEnvironment(t *testing.T)
 		require.NoError(t, RequireContained(makeNetworkSnapshot(NetworkAccessInternet), makeNetworkSnapshot(NetworkAccessNone)))
 		require.ErrorContains(t, RequireContained(makeNetworkSnapshot(NetworkAccessNone), makeNetworkSnapshot(NetworkAccessInternet)), "network access")
 		require.ErrorContains(t, RequireContained(makeNetworkSnapshot(NetworkAccessInternet), EmptySnapshot()), "network access")
-		require.NoError(t, RequireContained(EmptySnapshot(), makeNetworkSnapshot(NetworkAccessInternet)))
+		require.ErrorContains(t, RequireContained(EmptySnapshot(), makeNetworkSnapshot(NetworkAccessInternet)), "network access")
+		require.NoError(t, RequireContained(EmptySnapshot(), makeNetworkSnapshot(NetworkAccessNone)))
+		require.NoError(t, RequireContained(EmptySnapshot(), EmptySnapshot()))
+		assert.True(t, HasCapabilities(makeNetworkSnapshot(NetworkAccessInternet)))
+		assert.False(t, HasCapabilities(makeNetworkSnapshot(NetworkAccessNone)))
+		assert.False(t, HasCapabilities(EmptySnapshot()))
 	})
 }
 

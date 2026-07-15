@@ -89,28 +89,28 @@ func RequireContained(parent, child Snapshot) error {
 }
 
 func networkAccessContained(parent, child NetworkAccess) bool {
-	// Inherit means the harness default, which is the broadest authority: it
-	// may include ordinary IP networking and arbitrary local Unix sockets.
-	if parent == NetworkAccessInherit {
+	// Inherit is unknown authority rather than guaranteed Internet access: the
+	// harness or user config may impose a restrictive managed proxy. A child
+	// may preserve that unknown posture or narrow it to none, but may not turn
+	// it into explicit Internet access (which disables an inherited proxy).
+	if child == NetworkAccessNone {
 		return true
 	}
-	if child == NetworkAccessInherit {
-		return false
-	}
-	return parent == NetworkAccessInternet || child == NetworkAccessNone
+	return parent == child
 }
 
 // HasCapabilities reports whether a resolved snapshot adds inherited host
-// filesystem or literal environment authority. Deny entries are restrictions,
-// and agent-owned directories are fresh private bindings, not capabilities
-// inherited from the parent.
+// filesystem, literal environment, or explicit Internet authority. Deny and
+// offline entries are restrictions, and agent-owned directories are fresh
+// private bindings rather than capabilities inherited from the parent.
 func HasCapabilities(snapshot Snapshot) bool {
 	for _, grant := range snapshot.Effective.Filesystem {
 		if grant.Access != AccessDeny {
 			return true
 		}
 	}
-	return len(snapshot.Effective.Environment) > 0
+	return len(snapshot.Effective.Environment) > 0 ||
+		snapshot.Effective.NetworkAccess == NetworkAccessInternet
 }
 
 // Snapshot is the immutable, versioned value passed across launch and

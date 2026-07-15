@@ -13,6 +13,8 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 func TestSandboxProfileSpawnRefreshesExplicitValuesOnResumeAndSelectionIsHumanOnly(t *testing.T) {
@@ -336,6 +338,60 @@ func TestSandboxProfileSpawnRejectsAmbientCapabilityWideningAfterParentLaunch(t 
 			assert.Contains(t, string(denied.Raw), writeRoot)
 		})
 	}
+}
+
+func TestSandboxProfileSpawnRejectsExplicitInternetWidening(t *testing.T) {
+	makeInternetProfile := func(t *testing.T) {
+		t.Helper()
+		_, err := db.CreateSandboxProfile(&db.SandboxProfile{
+			Name: "explicit-internet", NetworkAccess: sandboxpolicy.NetworkAccessInternet,
+		})
+		require.NoError(t, err)
+		_, err = db.SetAgentGroupSandboxProfile("crew", "explicit-internet")
+		require.NoError(t, err)
+	}
+
+	t.Run("current parent with inherited network posture", func(t *testing.T) {
+		f := newFlow(t)
+		f.HaveGroup("crew")
+		parent := f.AsHuman().SpawnWith("crew", map[string]any{
+			"name": "parent", "harness": "codex", "sandbox": harness.SandboxManagedProfile,
+		})
+		require.Equalf(t, http.StatusOK, parent.Code, "spawn body=%s", parent.Raw)
+		// The simulator does not round-trip the managed permission-profile
+		// pseudo-mode into its session row; pin the production launch posture so
+		// the independent OS-sandbox lineage guard permits the child request.
+		parentSession, err := db.FindSessionByConvID(parent.ConvID)
+		require.NoError(t, err)
+		require.NotNil(t, parentSession)
+		parentSession.SandboxMode = harness.SandboxManagedProfile
+		require.NoError(t, db.SaveSession(parentSession))
+		require.NoError(t, db.GrantAgentPermission(parent.ConvID, agentd.PermGroupsSpawn, "test"))
+		makeInternetProfile(t)
+
+		denied := f.AsAgent(parent.ConvID).SpawnWith("crew", map[string]any{
+			"name": "child", "harness": "codex", "sandbox": harness.SandboxManagedProfile,
+		})
+		require.Equal(t, http.StatusForbidden, denied.Code)
+		assert.Contains(t, string(denied.Raw), "sandbox_profile_restricted")
+		assert.Contains(t, string(denied.Raw), "network access")
+	})
+
+	t.Run("parent predating effective snapshots", func(t *testing.T) {
+		f := newFlow(t)
+		f.HaveGroup("crew")
+		const parent = "legacy-1111-2222-3333-444444444444"
+		f.HaveMember("crew", parent)
+		require.NoError(t, db.GrantAgentPermission(parent, agentd.PermGroupsSpawn, "test"))
+		makeInternetProfile(t)
+
+		denied := f.AsAgent(parent).SpawnWith("crew", map[string]any{
+			"name": "child", "harness": "codex", "sandbox": harness.SandboxManagedProfile,
+		})
+		require.Equal(t, http.StatusForbidden, denied.Code)
+		assert.Contains(t, string(denied.Raw), "sandbox_profile_restricted")
+		assert.Contains(t, string(denied.Raw), "predates effective sandbox snapshots")
+	})
 }
 
 func TestSandboxProfileWriteRootParticipatesInAgentSpawnProof(t *testing.T) {
