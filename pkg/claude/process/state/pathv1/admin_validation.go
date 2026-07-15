@@ -18,6 +18,9 @@ func ValidateAdminRecord(record PathV1AdminRecord, legacy bool, resolution *Bloc
 	if record.RunID == "" || record.AdminType == "" || record.Actor == "" {
 		return fmt.Errorf("admin record lacks required authority tuple")
 	}
+	if legacy && record.Timestamp == "" {
+		return fmt.Errorf("legacy admin record lacks timestamp")
+	}
 	if record.EventSeq < 0 {
 		return fmt.Errorf("negative admin event sequence")
 	}
