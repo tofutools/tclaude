@@ -36,7 +36,11 @@ var (
 type CheckpointV7 struct {
 	StateSchemaVersion int             `json:"stateSchemaVersion"`
 	Initialize         InitializeEvent `json:"initialize"`
-	Digest             string          `json:"digest"`
+	// Execution is the mutable, append-only-revision execution head. Older
+	// installed schema-7 checkpoints omit it; their validated initialization
+	// aggregate is revision zero. Initialize is never rewritten.
+	Execution *ExecutionCheckpoint `json:"execution,omitempty"`
+	Digest    string               `json:"digest"`
 }
 
 // InitializeEvent contains every durable record created by the transition.
@@ -422,9 +426,16 @@ func ValidateCheckpointV7(checkpoint *CheckpointV7) error {
 	if err != nil || wantAggregate != event.AggregateDigest {
 		return fmt.Errorf("%w: aggregate digest mismatch", ErrInitializationInvalid)
 	}
-	wantDigest, err := initializeEventDigest(event)
-	if err != nil || checkpoint.Digest != wantDigest {
-		return fmt.Errorf("%w: checkpoint digest mismatch", ErrInitializationInvalid)
+	genesisDigest, err := initializeEventDigest(event)
+	if err != nil {
+		return fmt.Errorf("%w: checkpoint genesis digest cannot be computed", ErrInitializationInvalid)
+	}
+	if checkpoint.Execution == nil {
+		if checkpoint.Digest != genesisDigest {
+			return fmt.Errorf("%w: checkpoint digest mismatch", ErrInitializationInvalid)
+		}
+	} else if err := validateExecutionCheckpoint(checkpoint, genesisDigest); err != nil {
+		return err
 	}
 	return nil
 }

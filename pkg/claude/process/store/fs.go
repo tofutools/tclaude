@@ -47,6 +47,9 @@ type FS struct {
 	pathV1InitializeBeforeCommit  func() error
 	pathV1InitializeAfterCommit   func() error
 	pathV1InitializeDirSync       func() error
+	pathV1AppendBeforeCommit      func() error
+	pathV1AppendAfterCommit       func() error
+	pathV1AppendDirSync           func() error
 }
 
 var processLocks sync.Map
@@ -135,6 +138,23 @@ func (s *FS) SetPathV1InitializeDirSyncHookForTest(hook func() error) func() {
 	old := s.pathV1InitializeDirSync
 	s.pathV1InitializeDirSync = hook
 	return func() { s.pathV1InitializeDirSync = old }
+}
+
+// SetPathV1AppendHooksForTest installs crash-boundary hooks around one dormant
+// schema-7 execution append. An after-commit error models an ambiguous durable
+// rename acknowledgement; callers recover by exact desired-state replay.
+func (s *FS) SetPathV1AppendHooksForTest(beforeCommit, afterCommit func() error) func() {
+	oldBefore, oldAfter := s.pathV1AppendBeforeCommit, s.pathV1AppendAfterCommit
+	s.pathV1AppendBeforeCommit, s.pathV1AppendAfterCommit = beforeCommit, afterCommit
+	return func() {
+		s.pathV1AppendBeforeCommit, s.pathV1AppendAfterCommit = oldBefore, oldAfter
+	}
+}
+
+func (s *FS) SetPathV1AppendDirSyncHookForTest(hook func() error) func() {
+	old := s.pathV1AppendDirSync
+	s.pathV1AppendDirSync = hook
+	return func() { s.pathV1AppendDirSync = old }
 }
 
 func (s *FS) PutTemplate(ctx context.Context, tmpl *model.Template) (TemplateRecord, error) {

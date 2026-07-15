@@ -71,6 +71,33 @@ type ExecutionView struct {
 	LegacyAdminResolutions map[string]pathv1.BlockResolution
 }
 
+// PathV1ExecutionView is valid only during the callback supplied to
+// FS.WithPathV1ExecutionView. It contains the exact descriptor-safe checkpoint
+// and template source from one run-then-template locked observation. Input is
+// sealed by pathv1 verification and must not be retained past the callback.
+type PathV1ExecutionView struct {
+	Run            RunRecord
+	Template       *model.Template
+	TemplateSource []byte
+	CheckpointJSON []byte
+	Checkpoint     *pathv1.CheckpointV7
+	Binding        pathv1.CheckpointBinding
+	Input          *pathv1.VerifiedExclusiveInput
+}
+
+type PathV1AppendDisposition string
+
+const (
+	PathV1AppendApplied        PathV1AppendDisposition = "applied"
+	PathV1AppendAlreadyApplied PathV1AppendDisposition = "already_applied"
+)
+
+type PathV1AppendResult struct {
+	Disposition PathV1AppendDisposition
+	Binding     pathv1.CheckpointBinding
+	Checkpoint  *pathv1.CheckpointV7
+}
+
 // ExecutionViewInconsistentError marks a stable persisted-data failure. Anchor
 // and invariant disagreements receive a bounded second observation before this
 // classification; immutable-template failures are already stable under lock.

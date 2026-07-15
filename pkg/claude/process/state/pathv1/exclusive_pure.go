@@ -133,7 +133,11 @@ func VerifyExclusiveInput(ctx context.Context, checkpointBytes, templateSource [
 	if parsed.Ref != event.UpgradeNeeded.TemplateRef || parsed.SemanticHash != event.TemplateHash || parsed.SourceHash != event.UpgradeNeeded.TemplateSourceHash {
 		return nil, fmt.Errorf("%w: exact template ref/source binding mismatch", ErrExclusiveInputInvalid)
 	}
-	view := event.Aggregate.View()
+	current, err := CurrentAggregateCheckpoint(checkpoint)
+	if err != nil {
+		return nil, fmt.Errorf("%w: current aggregate: %v", ErrExclusiveInputInvalid, err)
+	}
+	view := current.View()
 	if view.RunID != event.UpgradeNeeded.RunID || view.TemplateRef != parsed.SemanticHash || view.TemplateSourceHash != parsed.SourceHash {
 		return nil, fmt.Errorf("%w: exact run/template aggregate binding mismatch", ErrExclusiveInputInvalid)
 	}
@@ -145,10 +149,7 @@ func VerifyExclusiveInput(ctx context.Context, checkpointBytes, templateSource [
 		templateSource:  sourceCopy,
 		checkpoint:      checkpoint,
 		template:        parsed.Template,
-		binding: CheckpointBinding{
-			Generation: uint64(event.EventSeq),
-			Digest:     checkpoint.Digest,
-		},
+		binding:         CurrentCheckpointBinding(checkpoint),
 	}, nil
 }
 
@@ -173,7 +174,11 @@ func ClassifyExclusiveObservation(ctx context.Context, input *VerifiedExclusiveI
 	if input == nil || input.checkpoint == nil || input.template == nil {
 		return "", fmt.Errorf("%w: sealed input is required", ErrExclusiveInputInvalid)
 	}
-	return classifyExclusiveObservation(input.checkpoint.Initialize.Aggregate.View(), input.template, observation)
+	current, err := CurrentAggregateCheckpoint(input.checkpoint)
+	if err != nil {
+		return "", err
+	}
+	return classifyExclusiveObservation(current.View(), input.template, observation)
 }
 
 // ReduceExclusiveRoute is the sole apply path for a planned exclusive route.
@@ -442,7 +447,7 @@ func buildExclusiveRouteDraft(ctx context.Context, input *VerifiedExclusiveInput
 		return exclusiveRouteDraft{}, fmt.Errorf("%w: incomplete exclusive observation", ErrMutationInvalid)
 	}
 
-	aggregate, err := cloneAggregateCheckpoint(input.checkpoint.Initialize.Aggregate)
+	aggregate, err := CurrentAggregateCheckpoint(input.checkpoint)
 	if err != nil {
 		return exclusiveRouteDraft{}, err
 	}

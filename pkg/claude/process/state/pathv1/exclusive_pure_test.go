@@ -643,12 +643,23 @@ nodes:
 func TestPureExclusiveAPIRemainsStructurallyDormant(t *testing.T) {
 	root := filepath.Clean(filepath.Join("..", ".."))
 	active := []string{"plan", "engine", "exec", "store", "view"}
+	// TCL-505 admits only these explicitly constructed closed-gate library
+	// seams. Live host/scheduler/command/API files remain forbidden below.
+	allowed := map[string]bool{
+		"store/fs_pathv1_execution_unix.go": true,
+		"exec/exclusive_v7.go":              true,
+		"view/pathv1_execution.go":          true,
+	}
 	for _, directory := range active {
 		files, err := filepath.Glob(filepath.Join(root, directory, "*.go"))
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, name := range files {
+			rel := filepath.ToSlash(filepath.Join(directory, filepath.Base(name)))
+			if allowed[rel] {
+				continue
+			}
 			data, err := os.ReadFile(name)
 			if err != nil {
 				t.Fatal(err)
