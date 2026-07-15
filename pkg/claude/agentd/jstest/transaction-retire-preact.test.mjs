@@ -96,7 +96,7 @@ test('retire action errors leave the frozen transaction mounted and dangling han
   const state = createTransactionDialogState();
   const conv = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
   const descriptor = { kind: 'retire-agent', conv, label: 'Frozen target' };
-  state.open(descriptor);
+  const completion = state.open(descriptor);
   const frozenDescriptor = state.dialog.value.descriptor;
   const transport = createTransactionDialogActions({
     state,
@@ -153,6 +153,89 @@ test('retire action errors leave the frozen transaction mounted and dangling han
   assert.equal(requests.at(-1)[1].method, 'DELETE');
   assert.deepEqual(notices, [['removed dangling entry: Frozen target']]);
   assert.equal(refreshes, 1);
+  assert.deepEqual(await completion, {
+    dangling: true, removed: true, convID: 'confirmed-conv-id', reason: 'removed',
+  });
+});
+
+test('dangling handoff resolves every non-success branch without leaking ownership', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createTransactionDialogState }, { createTransactionDialogActions }] = await Promise.all([
+    harness.importDashboardModule('js/transaction-dialog-state.js'),
+    harness.importDashboardModule('js/transaction-dialog-actions.js'),
+  ]);
+  const cases = [
+    {
+      name: 'declined',
+      confirm: async () => false,
+      fetchImpl: async () => { throw new Error('DELETE must not run'); },
+      reason: 'declined', notice: ['dangling entry kept'],
+    },
+    {
+      name: 'confirm failure',
+      confirm: async () => { throw new Error('confirm unavailable'); },
+      fetchImpl: async () => { throw new Error('DELETE must not run'); },
+      reason: 'confirm_failed', notice: ['Remove failed: confirm unavailable', true],
+    },
+    {
+      name: 'delete transport failure',
+      confirm: async () => true,
+      fetchImpl: async () => { throw new Error('socket closed'); },
+      reason: 'transport_failed', notice: ['Remove failed: socket closed', true],
+    },
+    {
+      name: 'delete HTTP failure',
+      confirm: async () => true,
+      fetchImpl: async () => new Response('delete refused', { status: 503 }),
+      reason: 'http_failed', notice: ['Remove failed: delete refused', true],
+    },
+  ];
+  for (const row of cases) {
+    await t.test(row.name, async () => {
+      const state = createTransactionDialogState();
+      const notices = [];
+      const pending = state.open({ kind: 'retire-agent', conv: 'raw-conv', label: 'Dangling' });
+      const actions = createTransactionDialogActions({
+        state, fetchImpl: row.fetchImpl, confirm: row.confirm,
+        notify: (...args) => notices.push(args), refresh: async () => {},
+      });
+      const result = await actions.handoffDangling({
+        dangling: true, convID: 'daemon-raw-conv', conv: 'raw-conv', label: 'Dangling',
+      });
+      assert.deepEqual(result, {
+        dangling: true, removed: false, convID: 'daemon-raw-conv', reason: row.reason,
+      });
+      assert.deepEqual(await pending, result);
+      assert.deepEqual(notices, [row.notice]);
+      assert.equal(state.dialog.value, null);
+      const next = state.open({ kind: 'retire-agent', conv: 'next' });
+      assert.ok(state.dialog.value, 'every failed/declined handoff releases ownership after resolving');
+      state.close();
+      await next;
+    });
+  }
+});
+
+test('retire controller freezes launcher descriptors and classifies DnD reconciliation', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createTransactionDialogState }, controller] = await Promise.all([
+    harness.importDashboardModule('js/transaction-dialog-state.js'),
+    harness.importDashboardModule('js/transaction-dialog-controller.js'),
+  ]);
+  const state = createTransactionDialogState();
+  const unregister = controller.registerTransactionDialogController(state);
+  const pending = controller.openRetireAgentDialog('raw-conv-id', 'Raw label');
+  assert.deepEqual(state.dialog.value.descriptor, {
+    kind: 'retire-agent', conv: 'raw-conv-id', label: 'Raw label',
+  });
+  assert.ok(Object.isFrozen(state.dialog.value.descriptor));
+  assert.equal(controller.retireResultNeedsReconcile(null), true);
+  assert.equal(controller.retireResultNeedsReconcile({ dangling: true, removed: false }), true);
+  assert.equal(controller.retireResultNeedsReconcile({ dangling: true, removed: true }), false);
+  assert.equal(controller.retireResultNeedsReconcile({ ok: true }), false);
+  state.close();
+  await pending;
+  unregister();
 });
 
 test('retire renderer preserves copy, corrected worktree defaults, coupling, and focus', async (t) => {
