@@ -37,8 +37,6 @@ import { bindDnd } from './dnd.js';
 import { bindGroupReorder } from './group-reorder.js';
 import { bindDockDnd } from './dock-dnd.js';
 import { bindDockSaveDnd } from './dock-save-dnd.js';
-import { bindTermModal } from './modal-term.js';
-import { initTerminalsTab } from './terminals-tab.js';
 import {
   bindGroupCreateModal,
 } from './modal-message.js';
@@ -65,7 +63,7 @@ import { bindDock } from './dock.js';
 import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
 import {
-  mountAccessFeature, mountActionDialogsFeature, mountAuditFeature, mountConfigFeature, mountCostsFeature, mountDebugFeature, mountDirectoryPickerFeature, mountDockFeature, mountGroupsFeature, mountJobsFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessageAccessDialogsFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature,
+  mountAccessFeature, mountActionDialogsFeature, mountAuditFeature, mountConfigFeature, mountCostsFeature, mountDebugFeature, mountDirectoryPickerFeature, mountDockFeature, mountGroupsFeature, mountJobsFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessageAccessDialogsFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature, mountTerminalsFeature,
 } from './preact-loader.js';
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
 import { triggerExportDownload } from './export-progress.js';
@@ -166,6 +164,7 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   // not by the sum of seven dynamic-import chains. Await the whole group before
   // initNavHistory below so initial deep links still find every lazy loader.
   const featureCleanups = await Promise.all([
+    mountTerminalsFeature({ confirm: confirmModal }),
     mountMessageAccessDialogsFeature({
       refresh: dashboardActions.refresh,
       notify: toast,
@@ -274,10 +273,6 @@ export function sudoBadge(activeSudo, fallbackConvID) {
     if (event.persisted) return;
     for (const cleanup of pageCleanups.reverse()) cleanup?.();
   });
-  bindTermModal();
-  // The in-SPA "Terminals" tab — mounts the multiplexer and starts hidden
-  // (it reveals itself once "web term" / "web window" opens the first pane).
-  initTerminalsTab();
   bindGroupCreateModal();
   bindTemplatesUI();
   bindProfilesUI();

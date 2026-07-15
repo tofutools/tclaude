@@ -232,7 +232,7 @@ export function initNavHistory() {
   // hidden (e.g. /terminals reloaded with no live terminals, so the Terminals
   // tab is CSS-hidden) has nothing to show — fall back to the default rather
   // than stranding on a blank section. Runs here, after the tab binders and
-  // initTerminalsTab set the visibility classes.
+  // the Terminal Shell island set the visibility classes.
   if (loc.tab !== DEFAULT_TAB && !tabAvailable(loc.tab)) {
     loc = normalizeLocation({ tab: DEFAULT_TAB });
     stack = initialState(loc);
