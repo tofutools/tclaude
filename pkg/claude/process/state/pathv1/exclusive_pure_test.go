@@ -647,8 +647,11 @@ func TestPureExclusiveAPIRemainsStructurallyDormant(t *testing.T) {
 	// seams. Live host/scheduler/command/API files remain forbidden below.
 	allowed := map[string]bool{
 		"store/fs_pathv1_execution_unix.go": true,
+		"store/fs_pathv1_execution_test.go": true,
 		"exec/exclusive_v7.go":              true,
+		"exec/exclusive_v7_test.go":         true,
 		"view/pathv1_execution.go":          true,
+		"view/pathv1_execution_test.go":     true,
 	}
 	for _, directory := range active {
 		files, err := filepath.Glob(filepath.Join(root, directory, "*.go"))
@@ -674,7 +677,8 @@ func TestPureExclusiveAPIRemainsStructurallyDormant(t *testing.T) {
 					return true
 				}
 				switch selector.Sel.Name {
-				case "VerifyExclusiveInput", "PlanExclusiveRoute", "ReduceExclusiveRoute", "PlanExclusiveDeadPath", "ReduceExclusiveDeadPath", "PlanExclusiveDeadReservation", "ReduceExclusiveDeadReservation", "PlanExclusiveActivation", "ReduceExclusiveActivation", "PlanExclusiveEnd", "ReduceExclusiveEnd", "PlanExclusiveCompletion", "ReduceExclusiveCompletion", "ClassifyExclusiveObservation":
+				case "VerifyExclusiveInput", "PlanExclusiveRoute", "ReduceExclusiveRoute", "PlanExclusiveDeadPath", "ReduceExclusiveDeadPath", "PlanExclusiveDeadReservation", "ReduceExclusiveDeadReservation", "PlanExclusiveActivation", "ReduceExclusiveActivation", "PlanExclusiveEnd", "ReduceExclusiveEnd", "PlanExclusiveCompletion", "ReduceExclusiveCompletion", "ClassifyExclusiveObservation",
+					"WithPathV1ExecutionView", "AppendPathV1", "PlanExclusiveAttempt", "ClaimExclusiveAttempt", "RecoverExclusiveAttempt", "ObserveExclusiveAttempt", "PendingExclusiveObservation", "AdvanceExclusiveRoute", "AdvanceExclusiveStart", "ClaimExclusiveCompletion", "ObserveExclusiveCompletion", "ProjectCurrentPathV1ViewerV2", "NewExclusiveV7":
 					t.Errorf("active package %s references dormant pure API %s", directory, selector.Sel.Name)
 				}
 				return true

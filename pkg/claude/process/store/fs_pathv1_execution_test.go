@@ -154,9 +154,10 @@ func TestPathV1ConcurrentExactCASHasOneApplyAndOneReplay(t *testing.T) {
 		require.NoError(t, err)
 	}
 	for disposition := range results {
-		if disposition == store.PathV1AppendApplied {
+		switch disposition {
+		case store.PathV1AppendApplied:
 			applied++
-		} else if disposition == store.PathV1AppendAlreadyApplied {
+		case store.PathV1AppendAlreadyApplied:
 			replayed++
 		}
 	}
@@ -225,7 +226,7 @@ func planPathV1Claim(t *testing.T, fs *store.FS, runID string) (pathv1.Checkpoin
 			return err
 		}
 		pathID := aggregate.Authority.Genesis.OutputPathID
-		plan, err := pathv1.PlanExclusiveAttempt(t.Context(), view.Input, pathID, 1)
+		plan, err := pathv1.PlanExclusiveAttempt(t.Context(), view.Input, pathID, 1, view.Run.Params)
 		if err != nil {
 			return err
 		}

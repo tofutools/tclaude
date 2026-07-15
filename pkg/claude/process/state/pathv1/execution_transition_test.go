@@ -39,7 +39,7 @@ nodes:
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := PlanExclusiveAttempt(t.Context(), input, aggregate.Authority.Genesis.OutputPathID, 1)
+	plan, err := PlanExclusiveAttempt(t.Context(), input, aggregate.Authority.Genesis.OutputPathID, 1, map[string]string{"release": "stable"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,6 +48,8 @@ nodes:
 	performer.Choices[0] = "mutated"
 	performer.ChoiceOutcomes["ship"] = "fail"
 	performer.Contact.Cadence = "mutated"
+	params := plan.Params()
+	params["release"] = "mutated"
 
 	want := &model.Performer{
 		Kind: model.PerformerHuman, Ask: "Ship it?", Choices: []string{"ship", "hold"},
@@ -56,6 +58,9 @@ nodes:
 	}
 	if got := plan.Performer(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("sealed performer was mutated through accessor: got %#v want %#v", got, want)
+	}
+	if got := plan.Params()["release"]; got != "stable" {
+		t.Fatalf("sealed params were mutated through accessor: got %q", got)
 	}
 }
 
@@ -115,7 +120,7 @@ nodes:
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = PlanExclusiveAttempt(t.Context(), input, aggregate.Authority.Genesis.OutputPathID, 1)
+			_, err = PlanExclusiveAttempt(t.Context(), input, aggregate.Authority.Genesis.OutputPathID, 1, nil)
 			if !errors.Is(err, ErrExclusiveUnsupported) {
 				t.Fatalf("PlanExclusiveAttempt error = %v, want unsupported", err)
 			}

@@ -36,6 +36,7 @@ type ExecutionCheckpoint struct {
 	Revision       uint64              `json:"revision"`
 	PreviousDigest string              `json:"previousDigest"`
 	Status         string              `json:"status"`
+	LogAdvanced    bool                `json:"logAdvanced,omitempty"`
 	LastLogSeq     uint64              `json:"lastLogSeq"`
 	LogChecksum    string              `json:"logChecksum"`
 	Aggregate      AggregateCheckpoint `json:"aggregate"`
@@ -71,12 +72,28 @@ func CurrentRunStatus(checkpoint *CheckpointV7) string {
 }
 
 func CurrentLastLogSeq(checkpoint *CheckpointV7) uint64 {
-	return CurrentCheckpointBinding(checkpoint).Generation
+	if checkpoint != nil && checkpoint.Execution != nil {
+		return checkpoint.Execution.LastLogSeq
+	}
+	if checkpoint != nil && checkpoint.Initialize.EventSeq > 0 {
+		return uint64(checkpoint.Initialize.EventSeq)
+	}
+	return 0
 }
 
 func CurrentLogChecksum(checkpoint *CheckpointV7) string {
 	if checkpoint != nil && checkpoint.Execution != nil {
 		return checkpoint.Execution.LogChecksum
+	}
+	if checkpoint == nil {
+		return ""
+	}
+	return checkpoint.Digest
+}
+
+func currentCompletionCheckpointDigest(checkpoint *CheckpointV7) string {
+	if checkpoint != nil && checkpoint.Execution != nil && !checkpoint.Execution.LogAdvanced {
+		return checkpoint.Execution.PreviousDigest
 	}
 	if checkpoint == nil {
 		return ""
@@ -101,6 +118,14 @@ func CurrentAggregateCheckpoint(checkpoint *CheckpointV7) (AggregateCheckpoint, 
 // aggregate is not persistence authority. Only exact planner/reducer
 // constructors may wrap its result in a sealed ExecutionTransition.
 func advanceCheckpointV7(checkpoint *CheckpointV7, aggregate AggregateCheckpoint, status string) (*CheckpointV7, error) {
+	return advanceCheckpointV7WithLog(checkpoint, aggregate, status, true)
+}
+
+func advanceCheckpointV7PreservingLog(checkpoint *CheckpointV7, aggregate AggregateCheckpoint, status string) (*CheckpointV7, error) {
+	return advanceCheckpointV7WithLog(checkpoint, aggregate, status, false)
+}
+
+func advanceCheckpointV7WithLog(checkpoint *CheckpointV7, aggregate AggregateCheckpoint, status string, logAdvanced bool) (*CheckpointV7, error) {
 	if err := ValidateCheckpointV7(checkpoint); err != nil {
 		return nil, err
 	}
@@ -128,14 +153,20 @@ func advanceCheckpointV7(checkpoint *CheckpointV7, aggregate AggregateCheckpoint
 		Revision:       CheckpointRevision(checkpoint) + 1,
 		PreviousDigest: current.Digest,
 		Status:         status,
-		LastLogSeq:     current.Generation + 1,
+		LogAdvanced:    logAdvanced,
+		LastLogSeq:     CurrentLastLogSeq(checkpoint),
 		Aggregate:      aggregate,
 	}
-	checksum, err := executionLogChecksum(execution)
-	if err != nil {
-		return nil, err
+	if logAdvanced {
+		execution.LastLogSeq++
+		checksum, err := executionLogChecksum(execution)
+		if err != nil {
+			return nil, err
+		}
+		execution.LogChecksum = checksum
+	} else {
+		execution.LogChecksum = CurrentLogChecksum(checkpoint)
 	}
-	execution.LogChecksum = checksum
 	encoded, err := json.Marshal(checkpoint)
 	if err != nil {
 		return nil, err
@@ -201,7 +232,7 @@ func CompletionCheckpointJSON(checkpoint *CheckpointV7, selfCommandID string) ([
 		Status:             CurrentRunStatus(checkpoint),
 		LastLogSeq:         CurrentLastLogSeq(checkpoint),
 		LogChecksum:        CurrentLogChecksum(checkpoint),
-		CheckpointDigest:   checkpoint.Digest,
+		CheckpointDigest:   currentCompletionCheckpointDigest(checkpoint),
 		Aggregate:          aggregate,
 		Outstanding:        outstanding,
 	}
@@ -217,8 +248,12 @@ func CompletionCheckpointJSON(checkpoint *CheckpointV7, selfCommandID string) ([
 
 func validateExecutionCheckpoint(checkpoint *CheckpointV7, genesisDigest string) error {
 	execution := checkpoint.Execution
-	if execution == nil || execution.Revision == 0 || execution.PreviousDigest == "" || !canonicalDigest(execution.PreviousDigest) ||
-		!runtimeStatusValid(execution.Status) || execution.LastLogSeq != uint64(checkpoint.Initialize.EventSeq)+execution.Revision {
+	if execution == nil {
+		return fmt.Errorf("%w: execution checkpoint is absent", ErrInitializationInvalid)
+	}
+	maximumLogSeq := uint64(checkpoint.Initialize.EventSeq) + execution.Revision
+	if execution.Revision == 0 || execution.PreviousDigest == "" || !canonicalDigest(execution.PreviousDigest) ||
+		!runtimeStatusValid(execution.Status) || execution.LastLogSeq < uint64(checkpoint.Initialize.EventSeq) || execution.LastLogSeq > maximumLogSeq {
 		return fmt.Errorf("%w: execution revision metadata is invalid", ErrInitializationInvalid)
 	}
 	if execution.Revision == 1 && execution.PreviousDigest != genesisDigest {
@@ -231,9 +266,13 @@ func validateExecutionCheckpoint(checkpoint *CheckpointV7, genesisDigest string)
 	if report := ValidateAggregate(execution.Aggregate.View()); !report.Valid() {
 		return fmt.Errorf("%w: execution aggregate diagnostics=%v (%d suppressed)", ErrInitializationInvalid, report.Diagnostics, report.Suppressed)
 	}
-	wantChecksum, err := executionLogChecksum(execution)
-	if err != nil || execution.LogChecksum != wantChecksum {
-		return fmt.Errorf("%w: execution log checksum mismatch", ErrInitializationInvalid)
+	if execution.LogAdvanced {
+		wantChecksum, err := executionLogChecksum(execution)
+		if err != nil || execution.LogChecksum != wantChecksum {
+			return fmt.Errorf("%w: execution log checksum mismatch", ErrInitializationInvalid)
+		}
+	} else if !canonicalDigest(execution.LogChecksum) {
+		return fmt.Errorf("%w: preserved execution log checksum is invalid", ErrInitializationInvalid)
 	}
 	wantDigest, err := executionCheckpointDigest(genesisDigest, execution)
 	if err != nil || checkpoint.Digest != wantDigest {
@@ -249,9 +288,10 @@ func executionLogChecksum(execution *ExecutionCheckpoint) (string, error) {
 		PreviousDigest string              `json:"previousDigest"`
 		Revision       uint64              `json:"revision"`
 		Status         string              `json:"status"`
+		LogAdvanced    bool                `json:"logAdvanced,omitempty"`
 		LastLogSeq     uint64              `json:"lastLogSeq"`
 		Aggregate      AggregateCheckpoint `json:"aggregate"`
-	}{copy.PreviousDigest, copy.Revision, copy.Status, copy.LastLogSeq, copy.Aggregate})
+	}{copy.PreviousDigest, copy.Revision, copy.Status, copy.LogAdvanced, copy.LastLogSeq, copy.Aggregate})
 	if err != nil {
 		return "", err
 	}

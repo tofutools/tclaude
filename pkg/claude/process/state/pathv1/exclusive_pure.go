@@ -40,6 +40,11 @@ type ExclusiveObservation struct {
 	Attempt          uint64
 	Outcome          string
 	ResolutionDigest string
+	Actor            string
+	EvidenceRef      string
+	EvidenceHash     string
+	ExternalRef      string
+	Feedback         string
 }
 
 type ExclusiveDisposition string
@@ -428,12 +433,14 @@ type exclusiveEndDraft struct {
 }
 
 type performAttemptPayload struct {
-	TemplateRef        string `json:"templateRef"`
-	TemplateSourceHash string `json:"templateSourceHash"`
-	NodeID             string `json:"nodeId"`
-	SourceActivationID string `json:"sourceActivationId"`
-	SourceGeneration   uint64 `json:"sourceGeneration"`
-	Attempt            uint64 `json:"attempt"`
+	TemplateRef        string            `json:"templateRef"`
+	TemplateSourceHash string            `json:"templateSourceHash"`
+	NodeID             string            `json:"nodeId"`
+	SourceActivationID string            `json:"sourceActivationId"`
+	SourceGeneration   uint64            `json:"sourceGeneration"`
+	Attempt            uint64            `json:"attempt"`
+	Performer          *model.Performer  `json:"performer,omitempty"`
+	Params             map[string]string `json:"params,omitempty"`
 }
 
 func buildExclusiveRouteDraft(ctx context.Context, input *VerifiedExclusiveInput, observation ExclusiveObservation) (exclusiveRouteDraft, error) {
@@ -1474,6 +1481,25 @@ func candidateForID(reservation ActivationReservation, candidateID CandidateID) 
 }
 
 func observedAttemptCommands(view AggregateView, nodeID string, node model.Node, source PathRecord, observation ExclusiveObservation) (CommandRecord, CommandRecord, SideEffectIdentity, error) {
+	var existingPerform, existingSettle CommandRecord
+	for _, candidate := range view.Commands {
+		identity := candidate.Identity
+		if identity.SourceActivationID != source.SourceActivation.ID || identity.SourceGeneration != source.SourceActivation.Generation || identity.Attempt != observation.Attempt {
+			continue
+		}
+		switch identity.Kind {
+		case CommandPerformAttempt:
+			if existingPerform.ID != "" {
+				return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, fmt.Errorf("%w: performer attempt has multiple source commands", ErrMutationInconsistent)
+			}
+			existingPerform = cloneCommandRecord(candidate)
+		case CommandSettleAttempt:
+			if existingSettle.ID != "" {
+				return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, fmt.Errorf("%w: performer attempt has multiple settlement commands", ErrMutationInconsistent)
+			}
+			existingSettle = cloneCommandRecord(candidate)
+		}
+	}
 	performPayload, err := json.Marshal(performAttemptPayload{
 		TemplateRef: view.TemplateRef, TemplateSourceHash: view.TemplateSourceHash, NodeID: nodeID,
 		SourceActivationID: source.SourceActivation.ID, SourceGeneration: source.SourceActivation.Generation, Attempt: observation.Attempt,
@@ -1486,14 +1512,21 @@ func observedAttemptCommands(view AggregateView, nodeID string, node model.Node,
 		SourceActivationID: source.SourceActivation.ID, SourceGeneration: source.SourceActivation.Generation,
 		Attempt: observation.Attempt, PlanDigest: payloadDigest(performPayload),
 	}
-	perform, err := observedCommand(performIdentity, performPayload)
-	if err != nil {
-		return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, err
+	perform := existingPerform
+	if perform.ID == "" {
+		perform, err = observedCommand(performIdentity, performPayload)
+		if err != nil {
+			return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, err
+		}
+	} else if perform.State != CommandObserved && perform.State != CommandReconciled {
+		return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, fmt.Errorf("%w: performer attempt remains active", ErrMutationInconsistent)
 	}
 	outcome := strings.ToLower(strings.TrimSpace(observation.Outcome))
 	settlePayload, err := json.Marshal(settleAttemptObservationPayload{
 		TemplateRef: view.TemplateRef, SourceCommandID: perform.ID, SourceActivationID: source.SourceActivation.ID,
 		SourceGeneration: source.SourceActivation.Generation, Attempt: observation.Attempt, ResultCode: outcome,
+		Actor: observation.Actor, EvidenceRef: observation.EvidenceRef, EvidenceHash: observation.EvidenceHash,
+		ExternalRef: observation.ExternalRef, Feedback: observation.Feedback,
 	})
 	if err != nil {
 		return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, err
@@ -1503,9 +1536,14 @@ func observedAttemptCommands(view AggregateView, nodeID string, node model.Node,
 		SourceActivationID: source.SourceActivation.ID, SourceGeneration: source.SourceActivation.Generation,
 		Attempt: observation.Attempt, InputDigest: perform.ID, PlanDigest: payloadDigest(settlePayload), ResultCode: outcome,
 	}
-	settle, err := observedCommand(settleIdentity, settlePayload)
-	if err != nil {
-		return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, err
+	settle := existingSettle
+	if settle.ID == "" {
+		settle, err = observedCommand(settleIdentity, settlePayload)
+		if err != nil {
+			return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, err
+		}
+	} else if settle.State != CommandObserved && settle.State != CommandReconciled {
+		return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, fmt.Errorf("%w: settlement remains active", ErrMutationInconsistent)
 	}
 	effect := SideEffectIdentity{Kind: SideEffectAttempt, RunID: view.RunID, ActivationID: source.SourceActivation.ID, Attempt: observation.Attempt, State: "observed"}
 	if node.Type == model.NodeTypeWait {

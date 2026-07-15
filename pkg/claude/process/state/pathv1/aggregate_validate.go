@@ -244,7 +244,13 @@ func (i *aggregateIndex) validateCommandsAndAuthority() {
 		if record.Identity.RunID != i.view.RunID {
 			i.c.add("command_run_mismatch", "commands."+id, "command run %q differs from aggregate run", record.Identity.RunID)
 		}
-		if err := ValidateCommand(record); err != nil {
+		var err error
+		if record.Identity.Kind == CommandCompleteRun {
+			err = validateCompleteRunCommandPrimitive(record)
+		} else {
+			err = ValidateCommand(record)
+		}
+		if err != nil {
 			i.c.add("command_invalid", "commands."+id, "%v", err)
 		}
 	}

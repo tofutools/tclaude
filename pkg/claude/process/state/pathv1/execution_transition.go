@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
+	legacy "github.com/tofutools/tclaude/pkg/claude/process/state"
 )
 
 // ExecutionTransition is a sealed exact successor. Its bytes can only be
@@ -108,6 +110,9 @@ func ValidateExecutionTransitionForAppend(ctx context.Context, currentBytes, tem
 		post.Execution.PreviousDigest != pre.Digest || CurrentCheckpointBinding(post) != transition.post {
 		return pre, nil, nil, fmt.Errorf("%w: transition post-state is not the exact next checkpoint", ErrMutationInvalid)
 	}
+	if !post.Execution.LogAdvanced && (post.Execution.LastLogSeq != CurrentLastLogSeq(current) || post.Execution.LogChecksum != CurrentLogChecksum(current)) {
+		return pre, nil, nil, fmt.Errorf("%w: log-preserving transition changed completion anchors", ErrMutationInvalid)
+	}
 	return pre, postBytes, post, nil
 }
 
@@ -117,6 +122,7 @@ type ExclusiveAttemptPlan struct {
 	command   CommandRecord
 	nodeID    string
 	performer *model.Performer
+	params    map[string]string
 }
 
 func (p *ExclusiveAttemptPlan) Command() CommandRecord {
@@ -140,7 +146,14 @@ func (p *ExclusiveAttemptPlan) Performer() *model.Performer {
 	return cloneExclusivePerformer(p.performer)
 }
 
-func PlanExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput, sourcePathID PathID, attempt uint64) (*ExclusiveAttemptPlan, error) {
+func (p *ExclusiveAttemptPlan) Params() map[string]string {
+	if p == nil {
+		return nil
+	}
+	return cloneExclusiveParams(p.params)
+}
+
+func PlanExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput, sourcePathID PathID, attempt uint64, params map[string]string) (*ExclusiveAttemptPlan, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -188,7 +201,8 @@ func PlanExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput, so
 	if attempt != wantAttempt {
 		return nil, fmt.Errorf("%w: attempt %d is not exact next attempt %d", ErrMutationInvalid, attempt, wantAttempt)
 	}
-	payload, err := performCommandPayload(view, reservation.NodeID, source, attempt)
+	performer := model.InterpolatePerformer(*node.Performer, params)
+	payload, err := performCommandPayload(view, reservation.NodeID, source, attempt, &performer, params)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +215,7 @@ func PlanExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput, so
 	if err != nil {
 		return nil, err
 	}
-	return &ExclusiveAttemptPlan{command: command, nodeID: reservation.NodeID, performer: cloneExclusivePerformer(node.Performer)}, nil
+	return &ExclusiveAttemptPlan{command: command, nodeID: reservation.NodeID, performer: cloneExclusivePerformer(&performer), params: cloneExclusiveParams(params)}, nil
 }
 
 // ClaimExclusiveAttempt creates the exact durable self-only claim transition.
@@ -223,11 +237,11 @@ func ClaimExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput, p
 		return nil, fmt.Errorf("%w: attempt plan activation is not current", ErrMutationInvalid)
 	}
 	source := view.Routing.Paths[activation.OutputPathID]
-	replanned, err := PlanExclusiveAttempt(ctx, input, source.ID, plan.command.Identity.Attempt)
+	replanned, err := PlanExclusiveAttempt(ctx, input, source.ID, plan.command.Identity.Attempt, plan.params)
 	if err != nil {
 		return nil, err
 	}
-	if !exactExclusiveCommand(replanned.command, plan.command) || replanned.nodeID != plan.nodeID {
+	if !exactExclusiveCommand(replanned.command, plan.command) || replanned.nodeID != plan.nodeID || !canonicalEqual(replanned.performer, plan.performer) || !canonicalEqual(replanned.params, plan.params) {
 		return nil, fmt.Errorf("%w: supplied attempt differs from deterministic plan", ErrMutationInvalid)
 	}
 	aggregate.Commands[plan.command.ID] = cloneCommandRecord(plan.command)
@@ -242,6 +256,364 @@ func ClaimExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput, p
 		return nil, err
 	}
 	return newExecutionTransition(input.checkpoint, next, "claim_attempt")
+}
+
+// RecoverExclusiveAttempt returns the sole durable active performer request.
+// It never converts a claimed command back into new-perform authority.
+func RecoverExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput) (*ExclusiveAttemptPlan, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	if input == nil || input.checkpoint == nil || input.template == nil {
+		return nil, false, fmt.Errorf("%w: sealed input is required", ErrExclusiveInputInvalid)
+	}
+	aggregate, err := CurrentAggregateCheckpoint(input.checkpoint)
+	if err != nil {
+		return nil, false, err
+	}
+	var command CommandRecord
+	for _, candidate := range aggregate.Commands {
+		if !candidate.State.Active() || candidate.Identity.Kind != CommandPerformAttempt {
+			continue
+		}
+		if command.ID != "" {
+			return nil, false, fmt.Errorf("%w: multiple active performer commands", ErrMutationInconsistent)
+		}
+		command = cloneCommandRecord(candidate)
+	}
+	if command.ID == "" {
+		return nil, false, nil
+	}
+	var payload performAttemptPayload
+	if err := decodeExactPayload(command.Payload, &payload); err != nil {
+		return nil, false, fmt.Errorf("%w: claimed performer payload: %v", ErrMutationInvalid, err)
+	}
+	view := aggregate.View()
+	activation, ok := view.Routing.Activations[command.Identity.SourceActivationID]
+	if !ok || activation.Ref.Generation != command.Identity.SourceGeneration || activation.OutputPathID == "" {
+		return nil, false, fmt.Errorf("%w: claimed performer activation is unavailable", ErrMutationInconsistent)
+	}
+	source, ok := view.Routing.Paths[activation.OutputPathID]
+	if !ok || source.State != PathLive {
+		return nil, false, fmt.Errorf("%w: claimed performer source path is not live", ErrMutationInconsistent)
+	}
+	reservation, ok := view.Routing.Reservations[activation.ReservationID]
+	if !ok || reservation.NodeID != payload.NodeID {
+		return nil, false, fmt.Errorf("%w: claimed performer node binding differs", ErrMutationInconsistent)
+	}
+	node, ok := input.template.Nodes[reservation.NodeID]
+	if !ok || node.Performer == nil || (node.Type != model.NodeTypeTask && node.Type != model.NodeTypeDecision) || node.IsCompound() {
+		return nil, false, fmt.Errorf("%w: claimed node has no direct performer path", ErrExclusiveUnsupported)
+	}
+	wantPerformer := model.InterpolatePerformer(*node.Performer, payload.Params)
+	if payload.TemplateRef != view.TemplateRef || payload.TemplateSourceHash != view.TemplateSourceHash ||
+		payload.SourceActivationID != string(activation.ID) || payload.SourceGeneration != activation.Ref.Generation ||
+		payload.Attempt != command.Identity.Attempt || !canonicalEqual(payload.Performer, &wantPerformer) {
+		return nil, false, fmt.Errorf("%w: claimed performer request differs from exact template-bound payload", ErrMutationInvalid)
+	}
+	effectID, err := AttemptIdentity(view.RunID, activation.ID, command.Identity.Attempt)
+	if err != nil {
+		return nil, false, err
+	}
+	effect, ok := aggregate.SideEffects[effectID]
+	if !ok || !ActiveSideEffect(effect) {
+		return nil, false, fmt.Errorf("%w: claimed performer lacks active attempt evidence", ErrMutationInconsistent)
+	}
+	return &ExclusiveAttemptPlan{
+		command: command, nodeID: reservation.NodeID, performer: cloneExclusivePerformer(payload.Performer), params: cloneExclusiveParams(payload.Params),
+	}, true, nil
+}
+
+// ObserveExclusiveAttempt settles exactly one durable claim. recovered marks
+// an observation obtained through adapter reconciliation after an ambiguous
+// perform acknowledgement; it never authorizes another Perform call.
+func ObserveExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput, plan *ExclusiveAttemptPlan, observation ExclusiveObservation, recovered bool) (*ExecutionTransition, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	current, found, err := RecoverExclusiveAttempt(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	if !found || plan == nil || !exactExclusiveCommand(current.command, plan.command) || !canonicalEqual(current.performer, plan.performer) || !canonicalEqual(current.params, plan.params) {
+		return nil, fmt.Errorf("%w: observation does not settle the exact durable claim", ErrMutationInvalid)
+	}
+	outcome := strings.TrimSpace(observation.Outcome)
+	actor := legacy.ActorRef(strings.TrimSpace(observation.Actor))
+	if outcome == "" || !legacy.ValidateActorRef(actor) || legacy.IsEngineActor(actor) {
+		return nil, fmt.Errorf("%w: performer observation requires outcome and actor provenance", ErrMutationInvalid)
+	}
+	observation.Actor = string(actor)
+	aggregate, err := CurrentAggregateCheckpoint(input.checkpoint)
+	if err != nil {
+		return nil, err
+	}
+	view := aggregate.View()
+	activation := view.Routing.Activations[plan.command.Identity.SourceActivationID]
+	source := view.Routing.Paths[activation.OutputPathID]
+	observedPerform := cloneCommandRecord(plan.command)
+	observedPerform.State = CommandObserved
+	if recovered {
+		observedPerform.State = CommandReconciled
+	}
+	if err := ValidateCommand(observedPerform); err != nil {
+		return nil, err
+	}
+	aggregate.Commands[observedPerform.ID] = observedPerform
+	settlePayload, err := json.Marshal(settleAttemptObservationPayload{
+		TemplateRef: aggregate.TemplateRef, SourceCommandID: observedPerform.ID,
+		SourceActivationID: activation.ID, SourceGeneration: activation.Ref.Generation,
+		Attempt: plan.command.Identity.Attempt, ResultCode: outcome,
+		Actor: observation.Actor, EvidenceRef: observation.EvidenceRef, EvidenceHash: observation.EvidenceHash,
+		ExternalRef: observation.ExternalRef, Feedback: observation.Feedback,
+	})
+	if err != nil {
+		return nil, err
+	}
+	settleIdentity := CommandIdentity{
+		RunID: aggregate.RunID, Kind: CommandSettleAttempt, PayloadSchema: 1,
+		SourceActivationID: activation.ID, SourceGeneration: activation.Ref.Generation,
+		Attempt: plan.command.Identity.Attempt, InputDigest: observedPerform.ID,
+		PlanDigest: payloadDigest(settlePayload), ResultCode: outcome,
+	}
+	settle, err := observedCommand(settleIdentity, settlePayload)
+	if err != nil {
+		return nil, err
+	}
+	aggregate.Commands[settle.ID] = settle
+	effectID, err := AttemptIdentity(aggregate.RunID, activation.ID, plan.command.Identity.Attempt)
+	if err != nil {
+		return nil, err
+	}
+	effect := aggregate.SideEffects[effectID]
+	effect.State = "observed"
+	aggregate.SideEffects[effectID] = effect
+	observation.SourcePathID = source.ID
+	observation.Attempt = plan.command.Identity.Attempt
+	if _, _, _, err := observedAttemptCommands(aggregate.View(), plan.nodeID, input.template.Nodes[plan.nodeID], source, observation); err != nil {
+		return nil, err
+	}
+	next, err := advanceCheckpointV7(input.checkpoint, aggregate, CurrentRunStatus(input.checkpoint))
+	if err != nil {
+		return nil, err
+	}
+	return newExecutionTransition(input.checkpoint, next, "observe_attempt")
+}
+
+// PendingExclusiveObservation returns the sole routable observed settlement
+// that still owns a live source path. Retry-pending settlements remain durable
+// provenance but do not prevent planning their exact next attempt.
+func PendingExclusiveObservation(ctx context.Context, input *VerifiedExclusiveInput) (ExclusiveObservation, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return ExclusiveObservation{}, false, err
+	}
+	if input == nil || input.checkpoint == nil {
+		return ExclusiveObservation{}, false, fmt.Errorf("%w: sealed input is required", ErrExclusiveInputInvalid)
+	}
+	aggregate, err := CurrentAggregateCheckpoint(input.checkpoint)
+	if err != nil {
+		return ExclusiveObservation{}, false, err
+	}
+	used := make(map[string]bool)
+	for _, command := range aggregate.Commands {
+		if command.Identity.Kind == CommandRoutePaths {
+			used[command.Identity.InputDigest] = true
+		}
+	}
+	var pending ExclusiveObservation
+	found := false
+	for _, command := range aggregate.Commands {
+		if command.Identity.Kind != CommandSettleAttempt || (command.State != CommandObserved && command.State != CommandReconciled) || used[command.ID] {
+			continue
+		}
+		activation, ok := aggregate.Routing.Activations[command.Identity.SourceActivationID]
+		if !ok || activation.Ref.Generation != command.Identity.SourceGeneration {
+			continue
+		}
+		source, ok := aggregate.Routing.Paths[activation.OutputPathID]
+		if !ok || source.State != PathLive {
+			continue
+		}
+		var payload settleAttemptObservationPayload
+		if err := decodeExactPayload(command.Payload, &payload); err != nil {
+			return ExclusiveObservation{}, false, fmt.Errorf("%w: pending settlement payload: %v", ErrMutationInvalid, err)
+		}
+		candidate := ExclusiveObservation{
+			SourcePathID: source.ID, Attempt: command.Identity.Attempt, Outcome: payload.ResultCode,
+			Actor: payload.Actor, EvidenceRef: payload.EvidenceRef, EvidenceHash: payload.EvidenceHash,
+			ExternalRef: payload.ExternalRef, Feedback: payload.Feedback,
+		}
+		disposition, err := classifyExclusiveObservation(aggregate.View(), input.template, candidate)
+		if err != nil {
+			return ExclusiveObservation{}, false, err
+		}
+		if disposition == ExclusiveRetryPending || disposition == ExclusiveResolvedRetry {
+			continue
+		}
+		if disposition != ExclusiveRouteReady {
+			return ExclusiveObservation{}, false, fmt.Errorf("%w: pending observation disposition %q requires explicit integration", ErrExclusiveUnsupported, disposition)
+		}
+		if found {
+			return ExclusiveObservation{}, false, fmt.Errorf("%w: multiple pending exclusive observations", ErrMutationInconsistent)
+		}
+		pending = candidate
+		found = true
+	}
+	return pending, found, nil
+}
+
+// AdvanceExclusiveRoute deterministically folds one observed exclusive result
+// through route, local DPE, activation, and a directly reached end node.
+func AdvanceExclusiveRoute(ctx context.Context, input *VerifiedExclusiveInput, observation ExclusiveObservation) (*ExecutionTransition, error) {
+	route, err := PlanExclusiveRoute(ctx, input, observation)
+	if err != nil {
+		return nil, err
+	}
+	routeDraft, err := buildExclusiveRouteDraft(ctx, input, observation)
+	if err != nil {
+		return nil, err
+	}
+	var closure, dead CommandRecord
+	if len(routeDraft.outgoing) == 2 {
+		closure, err = PlanExclusiveDeadPath(ctx, input, observation, route)
+		if err != nil {
+			return nil, err
+		}
+		dead, err = PlanExclusiveDeadReservation(ctx, input, observation, route, closure)
+		if err != nil {
+			return nil, err
+		}
+	}
+	activation, err := PlanExclusiveActivation(ctx, input, observation, route, closure, dead)
+	if err != nil {
+		return nil, err
+	}
+	projection, err := ReduceExclusiveActivation(ctx, input, observation, route, closure, dead, activation)
+	if err != nil {
+		return nil, err
+	}
+	reservation := projection.aggregate.Routing.Reservations[activation.Identity.TargetReservationID]
+	if node, ok := input.template.Nodes[reservation.NodeID]; ok && node.Type == model.NodeTypeEnd {
+		end, endErr := PlanExclusiveEnd(ctx, input, observation, route, closure, dead, activation)
+		if endErr != nil {
+			return nil, endErr
+		}
+		projection, err = ReduceExclusiveEnd(ctx, input, observation, route, closure, dead, activation, end)
+		if err != nil {
+			return nil, err
+		}
+	}
+	next, err := advanceCheckpointV7(input.checkpoint, projection.aggregate, CurrentRunStatus(input.checkpoint))
+	if err != nil {
+		return nil, err
+	}
+	return newExecutionTransition(input.checkpoint, next, "route_observation")
+}
+
+// AdvanceExclusiveStart routes an instantaneous start node without creating
+// adapter dispatch authority.
+func AdvanceExclusiveStart(ctx context.Context, input *VerifiedExclusiveInput, sourcePathID PathID) (*ExecutionTransition, error) {
+	if input == nil || input.checkpoint == nil || input.template == nil {
+		return nil, fmt.Errorf("%w: sealed input is required", ErrExclusiveInputInvalid)
+	}
+	aggregate, err := CurrentAggregateCheckpoint(input.checkpoint)
+	if err != nil {
+		return nil, err
+	}
+	source, ok := aggregate.Routing.Paths[sourcePathID]
+	activation := aggregate.Routing.Activations[source.SourceActivation.ID]
+	reservation := aggregate.Routing.Reservations[activation.ReservationID]
+	node, nodeOK := input.template.Nodes[reservation.NodeID]
+	if !ok || source.State != PathLive || !nodeOK || node.Type != model.NodeTypeStart {
+		return nil, fmt.Errorf("%w: source is not a live instantaneous start", ErrExclusiveUnsupported)
+	}
+	return AdvanceExclusiveRoute(ctx, input, ExclusiveObservation{SourcePathID: sourcePathID, Attempt: 1, Outcome: "pass"})
+}
+
+func completionReplayView(checkpoint *CheckpointV7, aggregate AggregateCheckpoint, selfCommandID string) (CompletionReplayView, error) {
+	checkpointJSON, err := CompletionCheckpointJSON(checkpoint, selfCommandID)
+	if err != nil {
+		return CompletionReplayView{}, err
+	}
+	view := CompletionReplayView{
+		Aggregate: aggregate.View(), CheckpointJSON: checkpointJSON,
+		RunStatus: CurrentRunStatus(checkpoint), LastLogSeq: CurrentLastLogSeq(checkpoint), LogChecksum: CurrentLogChecksum(checkpoint),
+		Checkpoint: CurrentCheckpointBinding(checkpoint),
+	}
+	basis, err := computeCompletionBasis(view, CompletionBasis{
+		BasisRunStatus: view.RunStatus, BasisLastLogSeq: view.LastLogSeq, BasisLogChecksum: view.LogChecksum,
+	}, selfCommandID)
+	if err != nil {
+		return CompletionReplayView{}, err
+	}
+	view.Checkpoint = completionBasisCheckpoint(basis)
+	return view, nil
+}
+
+// ClaimExclusiveCompletion durably installs the sole completion self-command
+// against the exact current checkpoint basis.
+func ClaimExclusiveCompletion(ctx context.Context, input *VerifiedExclusiveInput) (*ExecutionTransition, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	aggregate, err := CurrentAggregateCheckpoint(input.checkpoint)
+	if err != nil {
+		return nil, err
+	}
+	view, err := completionReplayView(input.checkpoint, aggregate, "")
+	if err != nil {
+		return nil, err
+	}
+	recovery, err := RecoverCompleteRun(view)
+	if err != nil || recovery.Phase != CompletionReadyToClaim {
+		return nil, fmt.Errorf("%w: completion is not ready to claim: %v", ErrMutationInconsistent, err)
+	}
+	aggregate.Commands[recovery.Command.ID] = cloneCommandRecord(recovery.Command)
+	next, err := advanceCheckpointV7PreservingLog(input.checkpoint, aggregate, CurrentRunStatus(input.checkpoint))
+	if err != nil {
+		return nil, err
+	}
+	return newExecutionTransition(input.checkpoint, next, "claim_completion")
+}
+
+// ObserveExclusiveCompletion atomically marks the completion self-command and
+// the run status from the same validated completion basis.
+func ObserveExclusiveCompletion(ctx context.Context, input *VerifiedExclusiveInput) (*ExecutionTransition, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	aggregate, err := CurrentAggregateCheckpoint(input.checkpoint)
+	if err != nil {
+		return nil, err
+	}
+	var self string
+	for id, command := range aggregate.Commands {
+		if command.Identity.Kind == CommandCompleteRun && command.State.Active() {
+			if self != "" {
+				return nil, fmt.Errorf("%w: multiple active completion commands", ErrMutationInconsistent)
+			}
+			self = id
+		}
+	}
+	if self == "" {
+		return nil, fmt.Errorf("%w: active completion command is absent", ErrMutationInconsistent)
+	}
+	view, err := completionReplayView(input.checkpoint, aggregate, self)
+	if err != nil {
+		return nil, err
+	}
+	recovery, err := RecoverCompleteRun(view)
+	if err != nil || recovery.Phase != CompletionReadyToObserve {
+		return nil, fmt.Errorf("%w: completion is not ready to observe: %v", ErrMutationInconsistent, err)
+	}
+	command := aggregate.Commands[self]
+	command.State = CommandObserved
+	aggregate.Commands[self] = command
+	next, err := advanceCheckpointV7(input.checkpoint, aggregate, recovery.Result)
+	if err != nil {
+		return nil, err
+	}
+	return newExecutionTransition(input.checkpoint, next, "observe_completion")
 }
 
 func cloneExclusivePerformer(performer *model.Performer) *model.Performer {
@@ -264,10 +636,22 @@ func cloneExclusivePerformer(performer *model.Performer) *model.Performer {
 	return &clone
 }
 
-func performCommandPayload(view AggregateView, nodeID string, source PathRecord, attempt uint64) ([]byte, error) {
+func cloneExclusiveParams(params map[string]string) map[string]string {
+	if params == nil {
+		return nil
+	}
+	clone := make(map[string]string, len(params))
+	for key, value := range params {
+		clone[key] = value
+	}
+	return clone
+}
+
+func performCommandPayload(view AggregateView, nodeID string, source PathRecord, attempt uint64, performer *model.Performer, params map[string]string) ([]byte, error) {
 	return json.Marshal(performAttemptPayload{
 		TemplateRef: view.TemplateRef, TemplateSourceHash: view.TemplateSourceHash, NodeID: nodeID,
 		SourceActivationID: source.SourceActivation.ID, SourceGeneration: source.SourceActivation.Generation, Attempt: attempt,
+		Performer: cloneExclusivePerformer(performer), Params: cloneExclusiveParams(params),
 	})
 }
 
