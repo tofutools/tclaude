@@ -7,6 +7,8 @@ import { formatJobInterval } from './jobs-format.js';
 import { EXPORT_STEPS, activeExportStepIndex, fmtBytes } from './export-progress.js';
 import { idTooltip, relTime, shortAgentId } from './helpers.js';
 import { AsyncLoadState } from './async-load-state.js';
+import { JobsCronDialogRoot } from './jobs-dialog-island.js';
+import { registerJobsController } from './jobs-controller.js';
 
 const html = htm.bind(h);
 
@@ -77,7 +79,8 @@ function CronRow({ job, actions }) {
     <td><${CronSchedule} job=${job} /></td>
     <td><div class="row-actions">
       <button onClick=${() => actions.runCron(job)} title="Fire this job immediately (also stamps last_run_at)">run now</button>
-      <button onClick=${() => actions.editCron(job)} title="Edit this cron job">edit</button>
+      <button onClick=${() => actions.openCronEdit(job)} title="Edit this cron job">edit</button>
+      <button onClick=${() => actions.openCronDuplicate(job)} title="Duplicate this cron job">duplicate</button>
       <button class=${job.enabled ? 'warn' : ''} onClick=${() => actions.toggleCron(job)}
         title=${job.enabled ? 'Pause this cron job' : 'Re-enable this cron job'}>
         ${job.enabled ? 'disable' : 'enable'}
@@ -217,7 +220,7 @@ export function JobsApp({ state, actions }) {
         onClick=${() => { onQuery(''); inputRef.current?.focus(); }}>×</button>
       <span class="spacer"></span>
       <button id="cron-create-open" class="primary" title="Schedule a new recurring cron job"
-        onClick=${actions.createCron}>
+        onClick=${() => actions.openCronCreate({})}>
         <span class="cron-open-label-regular">+ new cron job</span>
         <span class="cron-open-label-wizard">⏳ Bind a recurring ritual</span>
       </button>
@@ -249,10 +252,40 @@ export function JobsBadge({ state }) {
   return html`<span id="jobs-badge" class="tab-badge count" hidden=${count === 0}>${count}</span>`;
 }
 
-export function mountJobsIsland({ host, badgeHost, state, actions, registerCleanup }) {
+export function mountJobsIsland({
+  host, badgeHost, dialogHost, state, actions, confirmDiscard, registerCleanup,
+}) {
   state.initialize();
-  render(html`<${JobsApp} state=${state} actions=${actions} />`, host);
-  registerCleanup(() => render(null, host));
-  render(html`<${JobsBadge} state=${state} />`, badgeHost);
-  registerCleanup(() => render(null, badgeHost));
+  const controller = {
+    openCreate: state.openCronCreate,
+    openEdit: state.openCronEdit,
+    openDuplicate: state.openCronDuplicate,
+  };
+  let unregister = null;
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    const failures = [];
+    const attempt = (step) => { try { step(); } catch (error) { failures.push(error); } };
+    attempt(() => { unregister?.(); unregister = null; });
+    attempt(() => state.closeCronDialog());
+    attempt(() => render(null, dialogHost));
+    attempt(() => render(null, badgeHost));
+    attempt(() => render(null, host));
+    if (failures.length) throw new AggregateError(failures, 'Jobs cleanup failed');
+    cleaned = true;
+  };
+  try {
+    unregister = registerJobsController(controller);
+    render(html`<${JobsApp} state=${state} actions=${actions} />`, host);
+    render(html`<${JobsBadge} state=${state} />`, badgeHost);
+    render(html`<${JobsCronDialogRoot} state=${state} actions=${actions}
+      confirmDiscard=${confirmDiscard}/>` , dialogHost);
+    registerCleanup(cleanup);
+  } catch (error) {
+    try { cleanup(); } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'Jobs initialization failed');
+    }
+    throw error;
+  }
 }
