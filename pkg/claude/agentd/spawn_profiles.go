@@ -400,7 +400,12 @@ func handleSpawnProfiles(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
 		}
-		writeJSON(w, http.StatusCreated, map[string]any{"id": id, "name": p.Name})
+		p.ID = id
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"id":      id,
+			"name":    p.Name,
+			"profile": profileToJSON(p),
+		})
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET or POST")
 	}

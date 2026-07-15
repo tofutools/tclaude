@@ -44,6 +44,11 @@ func TestSpawnProfiles_DisabledReasonRoundTrip(t *testing.T) {
 		"name": "paused", "disabled_reason": "Provider quota exhausted until Friday",
 	})
 	require.Equalf(t, http.StatusCreated, rec.Code, "create body=%s", rec.Body.String())
+	var created struct {
+		Profile wireProfile `json:"profile"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
+	assert.Equal(t, "Provider quota exhausted until Friday", created.Profile.DisabledReason)
 
 	rec = profileReq(t, f, http.MethodGet, "/v1/spawn-profiles/paused", nil)
 	require.Equal(t, http.StatusOK, rec.Code)

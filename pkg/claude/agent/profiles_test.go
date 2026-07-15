@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -124,6 +125,59 @@ func TestRunProfilesDisableRejectsOldDaemonFalseSuccess(t *testing.T) {
 	assert.Equal(t, rcIOFailure, rc)
 	assert.Empty(t, stdout.String(), "must not print a false success")
 	assert.Contains(t, stderr.String(), "does not support disabling spawn profiles")
+}
+
+func TestRunProfilesDisableComparesCanonicalReason(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, func(method, path string) (int, string, string) {
+		if method == http.MethodGet {
+			return 200, "", `{"name":"paused"}`
+		}
+		return 200, "", `{"id":1,"name":"paused","profile":{"name":"paused","disabled_reason":"line 1\nline 2"}}`
+	})
+
+	var stdout, stderr bytes.Buffer
+	rc := runProfilesDisable(&profilesDisableParams{
+		Name: "paused", Reason: "line 1\r\nline 2",
+	}, &stdout, &stderr)
+	require.Equal(t, rcOK, rc, "stderr=%s", stderr.String())
+	require.Len(t, calls, 2)
+	patched, ok := calls[1].body.(*profileJSON)
+	require.True(t, ok)
+	assert.Equal(t, "line 1\nline 2", patched.DisabledReason)
+	assert.Contains(t, stdout.String(), "line 1\nline 2")
+}
+
+func TestRunProfilesCreateAndEditRejectOldDaemonDisabledFalseSuccess(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(io.Reader, io.Writer, io.Writer) int
+	}{
+		{
+			name: "create",
+			run: func(stdin io.Reader, stdout, stderr io.Writer) int {
+				return runProfilesCreate(&profilesCreateParams{File: "-"}, stdin, stdout, stderr)
+			},
+		},
+		{
+			name: "edit",
+			run: func(stdin io.Reader, stdout, stderr io.Writer) int {
+				return runProfilesEdit(&profilesEditParams{Name: "paused", File: "-"}, stdin, stdout, stderr)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls []capturedReq
+			stubDaemon(t, &calls, ok(`{"id":1,"name":"paused"}`))
+			var stdout, stderr bytes.Buffer
+			rc := tc.run(strings.NewReader(
+				`{"name":"paused","disabled_reason":"provider maintenance"}`,
+			), &stdout, &stderr)
+			assert.Equal(t, rcIOFailure, rc)
+			assert.Empty(t, stdout.String(), "must not print a false success")
+			assert.Contains(t, stderr.String(), "does not support disabling spawn profiles")
+		})
+	}
 }
 
 // mergeProfileIntoSpawn is the CLI-side flatten of a spawn profile under the
