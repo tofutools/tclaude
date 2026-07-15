@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  attachTerminalInteractions, beginGestureClipboardWrite, decodeOSC52,
-  isBrowserPasteShortcut, shouldArmTmuxClipboard, terminalKeyInput,
+	attachTerminalInteractions, beginGestureClipboardWrite, decodeOSC52,
+	isBrowserPasteShortcut, isComposeMessageShortcut, shouldArmTmuxClipboard, terminalKeyInput,
 } from '../dashboard/js/terminal-interactions.js';
 
 function key(overrides = {}) {
@@ -15,6 +15,14 @@ function key(overrides = {}) {
 
 test('Shift+Enter becomes the universal Ctrl+J newline byte', () => {
   assert.equal(terminalKeyInput(key({ shiftKey: true })), '\n');
+});
+
+test('Ctrl/Cmd+M is reserved only for the exact compose chord', () => {
+	assert.equal(isComposeMessageShortcut(key({ key: 'm', code: 'KeyM', ctrlKey: true })), true);
+	assert.equal(isComposeMessageShortcut(key({ key: 'M', code: 'KeyM', metaKey: true })), true);
+	assert.equal(isComposeMessageShortcut(key({ key: 'm', code: 'KeyM' })), false);
+	assert.equal(isComposeMessageShortcut(key({ key: 'm', code: 'KeyM', ctrlKey: true, shiftKey: true })), false);
+	assert.equal(isComposeMessageShortcut(key({ key: 'm', code: 'KeyM', ctrlKey: true, isComposing: true })), false);
 });
 
 test('plain Enter and unrelated keys remain xterm-owned', () => {

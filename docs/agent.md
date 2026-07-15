@@ -273,6 +273,16 @@ target) the sender must be a member of that group. If the target's
 tmux session is alive they get a system-style nudge; otherwise the
 message queues in their inbox until they `inbox ls`.
 
+Short printable, single-line messages are included directly in that nudge and
+their archival inbox copy is atomically marked delivered/read. Longer,
+multiline, or control-bearing bodies use the stable `inbox read <id>` pointer.
+Configure the rune threshold with `agent.message_inline_max_chars` (default
+1000; `0` disables regular-message inlining). Human-authored dashboard mail is
+explicitly labelled **human operator** and tells the agent to answer in its
+regular chat/output; `human.notify` remains optional extra feedback for agents
+that hold that permission. Attachments are listed by durable, agent-readable
+absolute path in `inbox read` output.
+
 ```bash
 tclaude agent inbox ls                # last 20, all
 tclaude agent inbox ls --unread       # only unread

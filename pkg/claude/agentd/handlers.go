@@ -14,6 +14,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -1165,15 +1166,65 @@ func fanOutToGroup(g *db.AgentGroup, fromConv, subject, body, roleFilter string,
 // one place.
 func messageNudgeText(msgID int64) string {
 	if m, err := db.GetAgentMessage(msgID); err == nil && m != nil {
+		if inline, ok := messageInlineText(m); ok {
+			return inline
+		}
+		if db.IsOperatorAgentMessage(m.ID) {
+			return fmt.Sprintf("[system: new agent message #%d from the human operator. Read it with: tclaude agent inbox read %d. Reply only in your regular chat/output; human.notify is optional extra feedback when permitted.]", msgID, msgID)
+		}
 		if sender := agent.MessageSenderLabel(m.FromConv, m.FromAgent); sender != "" {
-			return fmt.Sprintf(
-				"[system: new agent message #%d from %s for you. fetch with: tclaude agent inbox read %d]",
-				msgID, sender, msgID)
+			return fmt.Sprintf("[system: new agent message #%d from %s for you. fetch with: tclaude agent inbox read %d]", msgID, sender, msgID)
 		}
 	}
 	return fmt.Sprintf(
 		"[system: new agent message #%d for you. fetch with: tclaude agent inbox read %d]",
 		msgID, msgID)
+}
+
+func messageInlineMaxChars() int {
+	cfg, err := config.Load()
+	if err != nil || cfg == nil || cfg.Agent == nil || cfg.Agent.MessageInlineMaxChars == nil {
+		return config.DefaultMessageInlineMaxChars
+	}
+	return *cfg.Agent.MessageInlineMaxChars
+}
+
+// messageInlineText returns a complete server-authored nudge only for bounded,
+// printable, single-line content. That conservative gate keeps user-controlled
+// bytes from becoming tmux control/input syntax while eliminating the inbox
+// round trip for the common short instruction.
+func messageInlineText(m *db.AgentMessage) (string, bool) {
+	cap := messageInlineMaxChars()
+	if cap <= 0 || !db.IsOperatorAgentMessage(m.ID) || strings.TrimSpace(m.Body) == "" {
+		return "", false
+	}
+	for _, r := range m.Body + m.Subject {
+		if r == '\n' || r == '\r' || r < 0x20 || r == 0x7f {
+			return "", false
+		}
+	}
+	attachments, err := db.ListAgentMessageAttachments(m.ID)
+	if err != nil {
+		return "", false
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "[system: new agent message #%d from the human operator", m.ID)
+	if m.Subject != "" {
+		fmt.Fprintf(&b, "; subject: %s", m.Subject)
+	}
+	fmt.Fprintf(&b, "] %s", m.Body)
+	if len(attachments) > 0 {
+		b.WriteString(" Attachments:")
+		for _, a := range attachments {
+			fmt.Fprintf(&b, " %s (%s);", a.Filename, a.StoragePath)
+		}
+	}
+	b.WriteString(" Respond only in your regular chat/output; human.notify is optional extra feedback when permitted.")
+	text := b.String()
+	if len([]rune(text)) > cap {
+		return "", false
+	}
+	return text, true
 }
 
 // nudgeIfAlive looks up the target's tmux session and, if alive, sends
@@ -1232,6 +1283,13 @@ func nudgeIfAlive(msgID int64, toID string) deliveryOutcome {
 	// landed, so log on failure rather than failing the whole call.
 	if err := db.MarkAgentMessageDelivered(msgID); err != nil {
 		slog.Warn("failed to record delivered_at", "error", err, "msg_id", msgID)
+	}
+	if m, _ := db.GetAgentMessage(msgID); m != nil {
+		if _, inlined := messageInlineText(m); inlined {
+			if err := db.MarkAgentMessageRead(msgID); err != nil {
+				slog.Warn("failed to record inline message read_at", "error", err, "msg_id", msgID)
+			}
+		}
 	}
 	return outcomeDelivered
 }
@@ -2308,15 +2366,21 @@ func handleMessageByID(w http.ResponseWriter, r *http.Request) {
 		"subject":    m.Subject,
 		"body":       m.Body,
 		"created_at": m.CreatedAt.Format(time.RFC3339),
-		// Reply-To is the conv-id to address when replying. Same as
-		// `from` today; broken out so clients have an obvious affordance
-		// and so we can support distinct reply-to addresses later
-		// without breaking the wire format.
-		"reply_to": m.FromConv,
-		// Reply-Cmd is a ready-to-paste shell command for the human-friendly
-		// case. Agents in skills should prefer the `agent reply` command,
-		// which figures this out from the message ID.
-		"reply_cmd": fmt.Sprintf("tclaude agent reply %d \"<your reply body>\"", m.ID),
+	}
+	if db.IsOperatorAgentMessage(m.ID) {
+		resp["from_title"] = "human operator"
+	} else {
+		// Operator-authored mail has no mailbox return address: its nudge tells
+		// the agent to answer in normal harness output. Agent-authored mail keeps
+		// the existing reply affordances.
+		resp["reply_to"] = m.FromConv
+		resp["reply_cmd"] = fmt.Sprintf("tclaude agent reply %d \"<your reply body>\"", m.ID)
+	}
+	if attachments, err := db.ListAgentMessageAttachments(m.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	} else if len(attachments) > 0 {
+		resp["attachments"] = attachments
 	}
 	// Original-To: non-empty when this message was redirected by the
 	// succession-aware send path — the sender addressed a superseded
@@ -2431,6 +2495,9 @@ func handleInbox(w http.ResponseWriter, r *http.Request) {
 		} else {
 			item.From = m.FromConv
 			item.FromShort = agent.ShortAgentID(m.FromAgent, m.FromConv)
+			if db.IsOperatorAgentMessage(m.ID) {
+				item.FromShort = "human"
+			}
 		}
 		out = append(out, item)
 	}

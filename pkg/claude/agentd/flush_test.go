@@ -137,6 +137,45 @@ func TestFlush_DeliversUndeliveredOldestFirst(t *testing.T) {
 	}
 }
 
+func TestFlush_InlineOperatorMessageIsConsumedAtomically(t *testing.T) {
+	setupTestDB(t)
+	id, err := db.InsertAgentMessage(&db.AgentMessage{
+		ToConv: "me", Subject: "priority", Body: "Please inspect the failing test.", OperatorAuthored: true,
+	})
+	require.NoError(t, err)
+	var nudge string
+	assert.Equal(t, 1, drainExactConv("me", func(m *db.AgentMessage) bool {
+		nudge = messageNudgeText(m.ID)
+		return true
+	}))
+	assert.Contains(t, nudge, "from the human operator")
+	assert.Contains(t, nudge, "Please inspect the failing test.")
+	assert.Contains(t, nudge, "regular chat/output")
+	m, err := db.GetAgentMessage(id)
+	require.NoError(t, err)
+	assert.False(t, m.DeliveredAt.IsZero())
+	assert.False(t, m.ReadAt.IsZero(), "inline archival copy is consumed in queue completion")
+}
+
+func TestFlush_MultilineOperatorMessageKeepsUnreadPointer(t *testing.T) {
+	setupTestDB(t)
+	id, err := db.InsertAgentMessage(&db.AgentMessage{
+		ToConv: "me", Body: "first line\nsecond line", OperatorAuthored: true,
+	})
+	require.NoError(t, err)
+	var nudge string
+	assert.Equal(t, 1, drainExactConv("me", func(m *db.AgentMessage) bool {
+		nudge = messageNudgeText(m.ID)
+		return true
+	}))
+	assert.Contains(t, nudge, "tclaude agent inbox read")
+	assert.NotContains(t, nudge, "first line")
+	m, err := db.GetAgentMessage(id)
+	require.NoError(t, err)
+	assert.False(t, m.DeliveredAt.IsZero())
+	assert.True(t, m.ReadAt.IsZero(), "pointer delivery remains unread until inbox read")
+}
+
 func TestFlush_NoMessagesNoCalls(t *testing.T) {
 	setupTestDB(t)
 	calls := 0

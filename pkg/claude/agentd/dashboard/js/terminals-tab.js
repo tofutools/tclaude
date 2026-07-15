@@ -18,6 +18,7 @@
 import { $, $$ } from './helpers.js';
 import { createAgentRosterReconciler, mountMux, normalizeSeed } from './terminals-core.js';
 import { dashboardState } from './snapshot-store.js';
+import { openOperatorMessageModal } from './modal-operator-message.js';
 
 let mux = null;
 const reconcileAgentRoster = createAgentRosterReconciler();
@@ -30,7 +31,11 @@ export function initTerminalsTab() {
   if (!tabsEl || !panesEl) return;
   // manageTitle:false — the dashboard owns document.title. onCount drives the
   // tab's show/hide off the live pane count.
-  mux = mountMux({ tabsEl, panesEl, solo: false, manageTitle: false, onCount: applyTerminalsTabVisibility });
+	mux = mountMux({
+		tabsEl, panesEl, solo: false, manageTitle: false,
+		onCount: applyTerminalsTabVisibility,
+		onComposeMessage: (seed) => openOperatorMessageModal({ agent: seed.agent, label: seed.label }),
+	});
   applyTerminalsTabVisibility(0);
 }
 

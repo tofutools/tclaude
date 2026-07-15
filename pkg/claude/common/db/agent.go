@@ -608,6 +608,10 @@ type AgentMessage struct {
 	// FromAgent/ToAgent it is NOT derived — it is explicit caller intent,
 	// persisted by InsertAgentMessage and read back by scanAgentMessage.
 	PinGen bool
+	// OperatorAuthored is persisted in operator_agent_messages rather than the
+	// legacy sender columns. Empty FromConv is also used by internal system
+	// handoffs, so this explicit marker is the only safe human attribution.
+	OperatorAuthored bool
 }
 
 // CreateAgentGroup inserts a new group. Returns the new group's ID.
@@ -1845,6 +1849,28 @@ func InsertAgentMessage(m *AgentMessage) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	if m.OperatorAuthored {
+		tx, err := db.Begin()
+		if err != nil {
+			return 0, err
+		}
+		defer func() { _ = tx.Rollback() }()
+		id, err := insertAgentMessage(tx, m)
+		if err != nil {
+			return 0, err
+		}
+		if _, err := tx.Exec(`INSERT INTO operator_agent_messages (message_id) VALUES (?)`, id); err != nil {
+			return 0, err
+		}
+		if err := tx.Commit(); err != nil {
+			return 0, err
+		}
+		return id, nil
+	}
+	return insertAgentMessage(db, m)
+}
+
+func insertAgentMessage(db dbExecQuerier, m *AgentMessage) (int64, error) {
 	if m.CreatedAt.IsZero() {
 		m.CreatedAt = time.Now()
 	}
@@ -2539,14 +2565,25 @@ func ClaimAgentMessageNudge(id int64, now time.Time) (token AgentMessageNudgeCla
 // delivery. The token guard prevents a stale worker from completing a newer
 // claim. Returns false when the lease no longer belongs to this worker.
 func CompleteAgentMessageNudge(id int64, token AgentMessageNudgeClaim, now time.Time) (bool, error) {
+	return CompleteAgentMessageNudgeState(id, token, now, false)
+}
+
+// CompleteAgentMessageNudgeState records a successful pane delivery. Inline
+// delivery also marks the archival inbox copy read in the same guarded write,
+// so unread reminders do not ask the agent to fetch content it already saw.
+func CompleteAgentMessageNudgeState(id int64, token AgentMessageNudgeClaim, now time.Time, consumed bool) (bool, error) {
 	d, err := Open()
 	if err != nil {
 		return false, err
 	}
+	readAt := ""
+	if consumed {
+		readAt = now.Format(time.RFC3339Nano)
+	}
 	res, err := d.Exec(`UPDATE agent_messages
-		SET delivered_at = ?, nudge_claimed_at = ''
+		SET delivered_at = ?, read_at = CASE WHEN ? != '' THEN ? ELSE read_at END, nudge_claimed_at = ''
 		WHERE id = ? AND delivered_at = '' AND nudge_claimed_at = ? AND nudge_attempts = ?`,
-		now.Format(time.RFC3339Nano), id, token.ClaimedAt, token.Attempt)
+		now.Format(time.RFC3339Nano), readAt, readAt, id, token.ClaimedAt, token.Attempt)
 	if err != nil {
 		return false, err
 	}

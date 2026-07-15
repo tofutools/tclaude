@@ -269,6 +269,13 @@ type recipientLine struct {
 	Title   string `json:"title"`
 }
 
+type inboxAttachment struct {
+	Name        string `json:"name"`
+	Path        string `json:"path"`
+	Size        int64  `json:"size"`
+	ContentType string `json:"content_type"`
+}
+
 // formatRecipientList renders a recipient list as comma-separated
 // "title <agent_id>" entries (or just the short id when no title is
 // known), leading with the stable agent_id so the audience reads by the
@@ -293,23 +300,24 @@ func runInboxReadDaemon(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 		path += "?keep-unread=1"
 	}
 	var m struct {
-		ID             int64           `json:"id"`
-		From           string          `json:"from"`
-		FromAgent      string          `json:"from_agent"`
-		FromTitle      string          `json:"from_title"`
-		To             string          `json:"to"`
-		ToAgent        string          `json:"to_agent"`
-		OriginalToConv string          `json:"original_to_conv,omitempty"`
-		Group          string          `json:"group"`
-		Subject        string          `json:"subject"`
-		Body           string          `json:"body"`
-		CreatedAt      string          `json:"created_at"`
-		ReplyTo        string          `json:"reply_to"`
-		ReplyCmd       string          `json:"reply_cmd"`
-		InReplyTo      int64           `json:"in_reply_to,omitempty"`
-		ParentSubject  string          `json:"parent_subject,omitempty"`
-		ToRecipients   []recipientLine `json:"to_recipients,omitempty"`
-		CcRecipients   []recipientLine `json:"cc_recipients,omitempty"`
+		ID             int64             `json:"id"`
+		From           string            `json:"from"`
+		FromAgent      string            `json:"from_agent"`
+		FromTitle      string            `json:"from_title"`
+		To             string            `json:"to"`
+		ToAgent        string            `json:"to_agent"`
+		OriginalToConv string            `json:"original_to_conv,omitempty"`
+		Group          string            `json:"group"`
+		Subject        string            `json:"subject"`
+		Body           string            `json:"body"`
+		CreatedAt      string            `json:"created_at"`
+		ReplyTo        string            `json:"reply_to"`
+		ReplyCmd       string            `json:"reply_cmd"`
+		InReplyTo      int64             `json:"in_reply_to,omitempty"`
+		ParentSubject  string            `json:"parent_subject,omitempty"`
+		ToRecipients   []recipientLine   `json:"to_recipients,omitempty"`
+		CcRecipients   []recipientLine   `json:"cc_recipients,omitempty"`
+		Attachments    []inboxAttachment `json:"attachments,omitempty"`
 	}
 	if err := DaemonRequest("GET", path, nil, &m, DaemonOpts{TargetConv: p.Target}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -370,6 +378,13 @@ func runInboxReadDaemon(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 	fmt.Fprintln(stdout, "")
 	fmt.Fprintln(stdout, "Body:")
 	fmt.Fprintln(stdout, m.Body)
+	if len(m.Attachments) > 0 {
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintln(stdout, "Attachments:")
+		for _, a := range m.Attachments {
+			fmt.Fprintf(stdout, "  %s (%d bytes, %s): %s\n", a.Name, a.Size, a.ContentType, a.Path)
+		}
+	}
 	return rcOK
 }
 
@@ -388,6 +403,9 @@ func actorID(agentID, convID string) string {
 // actorHeader renders a message actor as "name (agent_id)" for an
 // inbox-read From header, or just the id when no title is indexed.
 func actorHeader(title, agentID, convID string) string {
+	if title == "" && agentID == "" && convID == "" {
+		return "human operator"
+	}
 	id := actorID(agentID, convID)
 	if title == "" {
 		return id

@@ -774,3 +774,20 @@ CREATE TRIGGER spawn_profile_alias_not_name_update
 			SELECT RAISE(ABORT, 'spawn profile handle already exists');
 		END;
 
+CREATE TABLE agent_message_attachments (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			message_id INTEGER NOT NULL REFERENCES agent_messages(id) ON DELETE CASCADE,
+			ordinal INTEGER NOT NULL,
+			filename TEXT NOT NULL,
+			content_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+			size_bytes INTEGER NOT NULL,
+			storage_path TEXT NOT NULL,
+			UNIQUE(message_id, ordinal)
+		);
+
+CREATE INDEX idx_agent_message_attachments_message ON agent_message_attachments(message_id, ordinal);
+
+CREATE TABLE operator_agent_messages (
+			message_id INTEGER PRIMARY KEY REFERENCES agent_messages(id) ON DELETE CASCADE
+		);
+

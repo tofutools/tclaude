@@ -1576,6 +1576,14 @@ type AgentConfig struct {
 	// (a newline = an early submit). See agentd.spawnInlineMaxChars.
 	SpawnInlineMaxChars *int `json:"spawn_inline_max_chars,omitempty"`
 
+	// MessageInlineMaxChars bounds safe, single-line mailbox messages that are
+	// included directly in their pane nudge. The inbox row remains the durable
+	// archive; an inlined copy is atomically marked delivered and read. Longer
+	// or control-bearing messages keep the traditional inbox-read pointer.
+	// nil uses DefaultMessageInlineMaxChars; <= 0 disables regular-message
+	// inlining without affecting spawn briefings.
+	MessageInlineMaxChars *int `json:"message_inline_max_chars,omitempty"`
+
 	// DashboardPort pins the loopback TCP port the agentd dashboard +
 	// human-approval popup bind to. 0 / absent (the default) lets the OS
 	// pick a random free port at each `agentd serve`. A fixed port gives
@@ -1655,6 +1663,10 @@ func (c *Config) AccessRequestSystemNotification() bool {
 // enough that a genuinely large brief still routes to the inbox rather than
 // ballooning the launch command. See agentd.spawnInlineMaxChars.
 const DefaultSpawnInlineMaxChars = 2000
+
+// DefaultMessageInlineMaxChars is deliberately smaller than the spawn brief
+// threshold because regular mail crosses a live pane injection boundary.
+const DefaultMessageInlineMaxChars = 1000
 
 // ContextNudgeConfig controls the opt-in "consider reincarnating"
 // nudge that fires as a long-running agent's context fills. Off by
