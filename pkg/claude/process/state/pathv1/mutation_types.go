@@ -3,6 +3,7 @@ package pathv1
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 )
 
 var (
@@ -127,6 +128,20 @@ const (
 	ReplayApplied        ReplayDisposition = "applied"
 	ReplayAlreadyApplied ReplayDisposition = "already_applied"
 )
+
+func exactSettlementResult(resultCode string, exclusive bool) (string, bool) {
+	// Exclusive routes own exactly one protocol prefix; all other routes own
+	// the bare settlement result. Keep case exact and reject a valid payload
+	// whose result uses the form belonging to a different transition kind.
+	if exclusive {
+		outcome, ok := strings.CutPrefix(resultCode, "exclusive/")
+		return outcome, ok && outcome != ""
+	}
+	if resultCode == "" || strings.Contains(resultCode, "/") {
+		return "", false
+	}
+	return resultCode, true
+}
 
 type MutationReplayResult struct {
 	Routing     RoutingState
