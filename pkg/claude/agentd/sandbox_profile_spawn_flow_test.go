@@ -288,13 +288,16 @@ func TestSandboxProfileAgentCanSpawnChildWithAdditionalAgentDirectories(t *testi
 	require.True(t, ok)
 	require.NotNil(t, childSnapshot)
 	assert.Equal(t, []string{"GOCACHE", "GOTMPDIR"}, childSnapshot.Effective.AgentDirectories)
-	require.Len(t, childSnapshot.Effective.Filesystem, 2)
+	require.Len(t, childSnapshot.Effective.Filesystem, 1)
 	require.Len(t, childSnapshot.Effective.Environment, 2)
 
 	parentGOCACHE := parentSnapshot.Effective.Environment[0].Value
+	childRoot := childSnapshot.Effective.Filesystem[0]
+	assert.Equal(t, "write", string(childRoot.Access))
 	for _, entry := range childSnapshot.Effective.Environment {
 		assert.NotEqual(t, parentGOCACHE, entry.Value, "%s must be private to the child", entry.Name)
 		assert.Contains(t, entry.Value, string(filepath.Separator)+"agent-dirs"+string(filepath.Separator))
+		assert.Equal(t, childRoot.Path, filepath.Dir(entry.Value), "%s must share the child's writable root", entry.Name)
 		info, statErr := os.Stat(entry.Value)
 		require.NoError(t, statErr)
 		assert.True(t, info.IsDir())
