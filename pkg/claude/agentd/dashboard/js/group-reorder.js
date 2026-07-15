@@ -2,7 +2,7 @@
 // Groups tab (n-level groups-in-groups, JOH-392).
 //
 // A real group's HEADER (its <summary>, carrying data-group-reorder +
-// draggable, see render.js) is the drag handle: press the bare header and drag.
+// draggable, see groups-list.js) is the drag handle: press the bare header and drag.
 // Where you DROP on a target group decides the gesture (see dropZone):
 //   - onto the BULK of the target box (most of the header + its whole expanded
 //     body — a big, forgiving zone like the member-row DnD's whole-box target)
@@ -47,7 +47,7 @@
 // modules' document-level listeners coexist without stepping on each other.
 //
 // Deliberate, benign import cycle with tabs.js (group-reorder ↔ tabs),
-// mirroring render.js/dashboard.js: neither module reads the other's
+// mirroring groups-list.js/dashboard.js: neither module reads the other's
 // export at evaluation time — renderGroupsTab is called on drop and
 // sortGroupsByPref on render, both long after every module finishes
 // loading.

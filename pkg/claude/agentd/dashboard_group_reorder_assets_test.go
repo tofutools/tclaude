@@ -12,8 +12,8 @@ import (
 // the load-bearing wiring against a silent refactor break.
 //
 // The pieces that must stay connected:
-//   - render.js makes each real group's HEADER (<summary>) the draggable
-//     reorder handle, carrying the group name (escaped) as the drag identity;
+//   - groups-list.js makes each real group's HEADER (<summary>) the draggable
+//     reorder handle, carrying the group name as the Preact attribute value;
 //   - group-reorder.js suppresses that drag for a press on an interactive
 //     header child (so the title still folds and the chips still edit), drives
 //     the drag, and persists the order under the dashPrefs key via a custom MIME;
@@ -24,10 +24,12 @@ import (
 //   - keyed Preact group nodes let refresh continue while a drag is in flight.
 func TestDashboardJS_GroupReorderWired(t *testing.T) {
 	for _, c := range []struct{ needle, why string }{
-		// render.js: the group HEADER is the reorder drag handle — draggable
-		// and naming its group (escaped).
-		{`<summary draggable="true" data-group-reorder="${esc(g.name)}"`,
-			"render.js makes each real group's header the escaped, draggable reorder handle"},
+		// groups-list.js: the group HEADER is the reorder drag handle, disabled
+		// only while a keyed group editor owns the summary.
+		{`<summary draggable=${!groupEditing} data-group-reorder=${group.name}`,
+			"groups-list.js makes each real group's header the native draggable reorder handle"},
+		{`const groupEditing = interactions.editorKey.startsWith(`,
+			"native editors temporarily disable only their owning group drag handle"},
 		// group-reorder.js: a press on an interactive header child suppresses the
 		// drag so the click (fold / edit) lands instead of starting a reorder.
 		{`const summary = e.target.closest('summary[data-group-reorder]');`,
