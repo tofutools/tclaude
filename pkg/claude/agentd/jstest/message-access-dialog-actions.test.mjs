@@ -48,6 +48,24 @@ test('action errors retain status, code, and server message for component retry 
   );
 });
 
+test('accepted reply and sudo mutations do not await snapshot refresh before completion', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createMessageAccessDialogActions } = await harness.importDashboardModule('js/message-access-dialog-actions.js');
+  let refreshes = 0;
+  const actions = createMessageAccessDialogActions({
+    fetchImpl: async (url) => response(200, url === '/api/sudo'
+      ? { agent_id: 'agt_worker', grants: [{ id: 1 }] }
+      : { held: false }),
+    refresh: () => {
+      refreshes++;
+      return { then() { throw new Error('accepted mutation awaited snapshot refresh'); } };
+    },
+  });
+  await actions.replyHuman({ id: 1, body: 'answer', label: 'worker' });
+  await actions.grantSudo({ conv: 'conv-worker', slugs: ['self.rename'], duration: '5m', reason: '' });
+  assert.equal(refreshes, 2);
+});
+
 test('permission actions use mode-specific payloads and buffered saves strip defaults', async (t) => {
   const harness = await createPreactHarness(t);
   const { createMessageAccessDialogActions } = await harness.importDashboardModule('js/message-access-dialog-actions.js');
