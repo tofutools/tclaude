@@ -1,12 +1,16 @@
 package agentd
 
 import (
+	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	tclcommon "github.com/tofutools/tclaude/pkg/common"
 )
@@ -33,7 +37,7 @@ func materializeAgentDirectories(snapshot sandboxpolicy.Snapshot, launchKey stri
 	}
 	base := filepath.Join(cacheDir, "agent-dirs")
 	root := filepath.Join(base, launchKey)
-	cleanup := func() { _ = os.RemoveAll(root) }
+	cleanup := func() { _, _ = removeDirAtNoFollow(base, launchKey) }
 	if err := mkdirAllNoFollow(root, 0o700); err != nil {
 		return sandboxpolicy.Snapshot{}, func() {}, fmt.Errorf("create agent-owned directory root: %w", err)
 	}
@@ -217,6 +221,143 @@ func reconcileAgentDirectoriesForResume(current, previous sandboxpolicy.Snapshot
 	resumed := sandboxpolicy.NewSnapshot(effective, current.Applied)
 	resumed.ResolutionGroupID = current.ResolutionGroupID
 	return sandboxpolicy.RevalidateSnapshot(resumed)
+}
+
+// removeMaterializedAgentDirectories removes every cache root represented by
+// the frozen agent-owned directory bindings in snapshot. A single root can
+// contain several declared variables, so removing the root also sweeps stale
+// siblings left behind when a resumed profile stopped declaring one of them.
+//
+// Recursive deletion is deliberately limited to direct children of agentd's
+// own agent-dirs cache root. The frozen environment values are durable state,
+// not trusted deletion authority: a missing, malformed, or out-of-tree binding
+// fails validation before any root is removed.
+func removeMaterializedAgentDirectories(snapshot sandboxpolicy.Snapshot) (int, error) {
+	base, roots, err := materializedAgentDirectoryRoots(snapshot)
+	if err != nil {
+		return 0, err
+	}
+	return removeMaterializedAgentDirectoryRoots(base, roots)
+}
+
+func removeAgentDirectoriesForConv(convID string) (int, error) {
+	snapshot, err := db.AgentEffectiveSandboxConfigForConv(convID)
+	if err != nil || snapshot == nil {
+		return 0, err
+	}
+	return removeMaterializedAgentDirectories(*snapshot)
+}
+
+// cleanupAgentDirectoriesAfterRetire removes an offline retired agent's cache
+// roots immediately. When a soft shutdown is in flight it waits for the pane to
+// exit first, avoiding recursive deletion while the harness is still writing.
+// An explicit retire-without-shutdown retains the historical immediate cleanup
+// contract: the cache is disposable even though the conversation keeps running.
+func cleanupAgentDirectoriesAfterRetire(convID string, shutdownRequested bool) {
+	cleanupLocked := func() {
+		state, err := db.AgentState(convID)
+		if err != nil || state != db.AgentStateRetired {
+			return
+		}
+		removed, cleanupErr := removeAgentDirectoriesForConv(convID)
+		if cleanupErr != nil {
+			slog.Warn("retire: agent-owned directory cleanup failed",
+				"conv", convID, "removed_roots", removed, "error", cleanupErr)
+			postRetireWorktreeNotice(agent.FreshTitle(convID),
+				"Retire agent-owned directory cleanup failed",
+				"agent-owned cache directories were kept: "+cleanupErr.Error())
+		}
+	}
+	launchLock := resumeLaunchLock(convID)
+	launchLock.Lock()
+	if pickAliveSession(convID) == nil || !shutdownRequested {
+		cleanupLocked()
+		launchLock.Unlock()
+		return
+	}
+	launchLock.Unlock()
+	goBackground(func() {
+		if waitForConvOffline(convID, retireWorktreeExitGrace) {
+			launchLock.Lock()
+			defer launchLock.Unlock()
+			cleanupLocked()
+			return
+		}
+		slog.Warn("retire: agent-owned directories kept because agent did not exit within grace",
+			"conv", convID, "grace", retireWorktreeExitGrace)
+		postRetireWorktreeNotice(agent.FreshTitle(convID),
+			"Retire agent-owned directories kept",
+			"agent-owned cache directories were kept because the agent did not exit within "+retireWorktreeExitGrace.String())
+	})
+}
+
+func materializedAgentDirectoryRoots(snapshot sandboxpolicy.Snapshot) (string, map[string]string, error) {
+	cacheDir := tclcommon.CacheDir()
+	if !filepath.IsAbs(cacheDir) {
+		return "", nil, fmt.Errorf("resolve tclaude cache directory for agent-owned directories")
+	}
+	cacheDir, err := canonicalizeForSecureMkdir(cacheDir)
+	if err != nil {
+		return "", nil, fmt.Errorf("resolve tclaude cache directory for agent-owned directories: %w", err)
+	}
+	base := filepath.Clean(filepath.Join(cacheDir, "agent-dirs"))
+	if len(snapshot.Effective.AgentDirectories) == 0 {
+		return base, map[string]string{}, nil
+	}
+
+	bindings := make(map[string]string, len(snapshot.Effective.Environment))
+	for _, entry := range snapshot.Effective.Environment {
+		bindings[entry.Name] = entry.Value
+	}
+	roots := make(map[string]string, len(snapshot.Effective.AgentDirectories))
+	for _, name := range snapshot.Effective.AgentDirectories {
+		path := filepath.Clean(bindings[name])
+		if path == "." || !filepath.IsAbs(path) || filepath.Base(path) != name {
+			return "", nil, fmt.Errorf("agent-owned directory binding for %s is missing or malformed", name)
+		}
+		root := filepath.Dir(path)
+		rel, err := filepath.Rel(base, root)
+		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) ||
+			strings.Contains(rel, string(filepath.Separator)) || !agentDirectoryLaunchKeyRE.MatchString(rel) {
+			return "", nil, fmt.Errorf("agent-owned directory binding for %s escapes its launch root", name)
+		}
+		roots[root] = rel
+	}
+	return base, roots, nil
+}
+
+func removeMaterializedAgentDirectoryRoots(base string, roots map[string]string) (int, error) {
+	var removed int
+	var errs []error
+	for _, rel := range roots {
+		didRemove, err := removeDirAtNoFollow(base, rel)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("remove agent-owned directory root: %w", err))
+			continue
+		}
+		if didRemove {
+			removed++
+		}
+	}
+	return removed, errors.Join(errs...)
+}
+
+// removeSupersededMaterializedAgentDirectories removes roots referenced only
+// by previous. Resume calls this before replacing the persisted actor snapshot,
+// so profile removal cannot discard the sole durable reference to an old root.
+func removeSupersededMaterializedAgentDirectories(previous, current sandboxpolicy.Snapshot) (int, error) {
+	base, previousRoots, err := materializedAgentDirectoryRoots(previous)
+	if err != nil {
+		return 0, err
+	}
+	_, currentRoots, err := materializedAgentDirectoryRoots(current)
+	if err != nil {
+		return 0, err
+	}
+	for root := range currentRoots {
+		delete(previousRoots, root)
+	}
+	return removeMaterializedAgentDirectoryRoots(base, previousRoots)
 }
 
 // canonicalizeForSecureMkdir resolves symlinks in the existing prefix while

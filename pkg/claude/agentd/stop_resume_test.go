@@ -123,6 +123,19 @@ func TestResumeOneConv_EmptyConvIDSkips(t *testing.T) {
 	assert.Equal(t, "skipped:no_conv_id", res.Action, "action")
 }
 
+func TestResumeOneConv_RetiredAgentSkips(t *testing.T) {
+	setupTestDB(t)
+	const convID = "retired-resume-conv-12345678"
+	_, _, err := db.EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	_, err = db.RetireAgent(convID, "test", "done")
+	require.NoError(t, err)
+
+	res := resumeOneConv(convID)
+	assert.Equal(t, "skipped:not_active_agent", res.Action)
+	assert.Contains(t, res.Detail, "retired")
+}
+
 func TestResumeOneConv_OrphanWithoutSessionOrIndexErrors(t *testing.T) {
 	setupTestDB(t)
 	res := resumeOneConv("orphan-conv-id-12345678")
