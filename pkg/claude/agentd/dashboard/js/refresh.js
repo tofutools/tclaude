@@ -45,7 +45,8 @@ import { isTopmostOverlay } from './overlay-stack.js';
 import { disclosurePreference } from './group-tree-activity.js';
 import { hoveredGroupKey, setHoveredGroupKey } from './group-hover-state.js';
 import {
-  openGroupRetirePreviewDialog, openUngroupedRetirePreviewDialog,
+  openDeleteRetiredPreviewDialog, openGroupRetirePreviewDialog,
+  openUngroupedRetirePreviewDialog,
 } from './transaction-dialog-controller.js';
 
 // refreshSuspended() is the single source of truth for whether the
@@ -1096,7 +1097,8 @@ function openRetireUngroupedPreview() {
 // palette and the Groups ⚙ menu, and — like openRetirePreview — it pops
 // a PREVIEW modal so the human commits an EXACT list rather than a filter
 // the server re-resolves:
-//   1. lists every retired agent from the snapshot (global, newest-first),
+//   1. loads every retired agent from the complete endpoint (global,
+//      newest-first),
 //      each ticked by default, so the headline action deletes the whole
 //      retired population — the human opts individual rows OUT;
 //   2. two live filters re-render the list as the human types — a
@@ -1119,10 +1121,10 @@ function openRetireUngroupedPreview() {
 // worktrees kept). Retired agents are offline, so there is no shutdown or
 // include_online toggle — the delete tier acts on them directly.
 //
-// Like the retire preview, the candidate list is snapshotted at open time and
-// OWNED by the modal, so background snapshots cannot shift the population
-// between preview and submit. On success the editable list is swapped for the
-// per-conv outcome log the cleanup endpoint returns (the result phase).
+// The complete candidate list is normalized and frozen when it crosses the
+// transaction-controller seam, so background snapshots cannot shift the
+// population between preview and submit. On success the Preact owner swaps the
+// editable list for the per-conv outcome log the cleanup endpoint returns.
 async function openDeleteRetiredPreview() {
   // retired[] in the snapshot is only one page now — fetch the COMPLETE list
   // (the /api/retired no-param path) so this bulk-delete preview acts on every
@@ -1134,237 +1136,11 @@ async function openDeleteRetiredPreview() {
     toast('delete retired: failed to load (' + (e.message || e) + ')');
     return;
   }
-  const candidates = retired
-    .map(r => ({
-      agent_id: r.agent_id || '',
-      conv_id: r.conv_id,
-      title: r.title || '',
-      retired_at: r.retired_at || '',
-      retired_by: r.retired_by_display || r.retired_by || '',
-      // online is ~always false for a retired agent, but the BE's delete
-      // tier skips a still-running session unless include_online (which
-      // this modal never sends) — so flag it on the row so the rare online
-      // row reads as "will be skipped" rather than silently no-op'ing.
-      online: !!r.online,
-      checked: true,
-    }))
-    // Newest retirement first — the snapshot already sorts this way, but a
-    // local sort keeps the modal independent of that contract.
-    .sort((a, b) => (b.retired_at || '').localeCompare(a.retired_at || ''));
-  if (candidates.length === 0) {
+  if (retired.length === 0) {
     toast('delete retired: no retired agents');
-    return;
+    return null;
   }
-
-  const overlay = $('#delete-retired-modal');
-  const hintEl = $('#delete-retired-hint');
-  const listEl = $('#delete-retired-list');
-  const countEl = $('#delete-retired-count');
-  const errEl = $('#delete-retired-error');
-  const searchEl = $('#delete-retired-search');
-  const ageEl = $('#delete-retired-age');
-  const wtCb = $('#delete-retired-wt');
-  const submitBtn = $('#delete-retired-submit');
-  const cancelBtn = $('#delete-retired-cancel');
-  const selAllBtn = $('#delete-retired-select-all');
-  const selNoneBtn = $('#delete-retired-select-none');
-  let phase = 'select';
-
-  // Reset transient state on every open.
-  errEl.textContent = '';
-  searchEl.value = '';
-  ageEl.value = '0'; // plain show-all default (JOH-31 Q4 — not wired to after_days for v1)
-  wtCb.checked = false; // worktree delete defaults OFF
-  for (const c of candidates) c.checked = true;
-
-  // ageDays — whole days since retirement. A missing / unparseable stamp
-  // sorts as "infinitely old" so it always clears an age floor (an age
-  // filter must never hide a row the human might still want to purge).
-  const ageDays = (c) => {
-    if (!c.retired_at) return Infinity;
-    const t = Date.parse(c.retired_at);
-    if (isNaN(t)) return Infinity;
-    return (Date.now() - t) / 86400000;
-  };
-  const minAgeDays = () => Math.max(0, parseFloat(ageEl.value) || 0);
-  // matchesFilter composes the two live filters: title/conv-id substring
-  // (case-insensitive) AND the age floor. A row is "visible" iff it passes
-  // BOTH.
-  const matchesFilter = (c) => {
-    const q = searchEl.value.trim().toLowerCase();
-    if (q && !(c.title.toLowerCase().includes(q) || c.conv_id.toLowerCase().includes(q))) return false;
-    // Only apply the age floor when it's positive — at 0 ("show all") a
-    // future-dated retired_at (client clock skew) yields a negative age that
-    // would otherwise be wrongly hidden by `age < 0`.
-    const minAge = minAgeDays();
-    if (minAge > 0 && ageDays(c) < minAge) return false;
-    return true;
-  };
-  // visibleChecked is the load-bearing set (JOH-31): rows that are BOTH
-  // ticked AND pass the current filters. This is what the footer counts
-  // and what submit POSTs — verbatim, never re-resolved server-side.
-  const visibleChecked = () => candidates.filter(c => c.checked && matchesFilter(c));
-
-  function renderHint() {
-    hintEl.textContent = 'Permanently deletes the ticked retired agents — wipes each conversation '
-      + 'from disk and drops every agent / group / permission row. Only agents that are both ticked '
-      + 'AND visible under the current filters are deleted. This cannot be undone.';
-  }
-  function renderList() {
-    const rows = candidates.filter(matchesFilter);
-    if (rows.length === 0) {
-      listEl.innerHTML = '<div class="cleanup-empty">no retired agents match the filter</div>';
-      return;
-    }
-    listEl.innerHTML = rows.map(c => {
-      const age = c.retired_at ? `retired ${relTime(c.retired_at)}` : 'retired (unknown)';
-      // An online retired agent is skipped by the BE (no include_online
-      // here), so badge it so the human isn't surprised by a "skipped" row.
-      const online = c.online ? '<span class="cleanup-badge online">online — will skip</span>' : '';
-      const by = c.retired_by ? `<span class="cleanup-badge">by ${esc(c.retired_by)}</span>` : '';
-      return `<div class="cleanup-row"><label>`
-        + `<input type="checkbox" data-conv="${esc(c.conv_id)}"${c.checked ? ' checked' : ''} />`
-        + `<span class="title">${esc(c.title || '(untitled)')}</span>`
-        + `<span class="id">${esc(shortId(c.conv_id))}</span>`
-        + `<span class="seen">${esc(age)}</span>`
-        + `${online}${by}</label></div>`;
-    }).join('');
-  }
-  function renderFooter() {
-    const n = visibleChecked().length;
-    countEl.textContent = `${n} of ${candidates.length} selected`;
-    // textContent (not innerHTML) also clears any in-flight busy spinner —
-    // renderFooter is the canonical "button reflects the selection" state,
-    // so it's where the busy state is torn down on an error path.
-    submitBtn.textContent = n === 1 ? 'Delete 1 agent' : `Delete ${n} agents`;
-    submitBtn.disabled = n === 0;
-    submitBtn.removeAttribute('aria-busy');
-  }
-  function render() { renderHint(); renderList(); renderFooter(); }
-
-  const findCandidate = (conv) => candidates.find(c => c.conv_id === conv);
-  const onListChange = (e) => {
-    const cb = e.target.closest('input[type=checkbox]');
-    if (!cb) return;
-    const c = findCandidate(cb.getAttribute('data-conv'));
-    if (c) c.checked = cb.checked;
-    renderFooter();
-  };
-  const onSearch = () => { renderList(); renderFooter(); };
-  const onAge = () => { renderList(); renderFooter(); };
-  // select-all / select-none act on the CURRENTLY-VISIBLE rows only, so
-  // under an active filter they never tick / untick agents hidden by it.
-  const onSelectAll = () => { for (const c of candidates.filter(matchesFilter)) c.checked = true; render(); };
-  const onSelectNone = () => { for (const c of candidates.filter(matchesFilter)) c.checked = false; render(); };
-
-  const cleanup = () => {
-    overlay.classList.remove('show');
-    listEl.removeEventListener('change', onListChange);
-    searchEl.removeEventListener('input', onSearch);
-    ageEl.removeEventListener('input', onAge);
-    selAllBtn.removeEventListener('click', onSelectAll);
-    selNoneBtn.removeEventListener('click', onSelectNone);
-    submitBtn.removeEventListener('click', onSubmit);
-    cancelBtn.removeEventListener('click', onCancel);
-    overlay.removeEventListener('click', onOverlay);
-    document.removeEventListener('keydown', onKey);
-    // After a completed delete the roster shrank — pull the post-delete
-    // snapshot once the overlay is gone (refresh is suppressed while a
-    // .modal-overlay is open).
-    if (phase === 'result') refresh();
-  };
-  const onCancel = () => cleanup();
-  const onOverlay = (e) => { if (e.target === overlay) cleanup(); };
-  const onKey = (e) => { if (e.key === 'Escape') cleanup(); };
-
-  // renderResult swaps the modal into its read-only result phase — the
-  // editable list becomes the per-conv outcome log the cleanup endpoint
-  // returns, and the danger button becomes a plain "Done".
-  function renderResult(resp) {
-    phase = 'result';
-    const outcomes = (resp && resp.outcomes) || [];
-    listEl.innerHTML = outcomes.length
-      ? outcomes.map(o => `<div class="cleanup-row">
-          <span class="cleanup-badge ${esc(o.result)}">${esc(o.result)}</span>
-          <span class="title">${esc(o.title || shortId(o.conv_id))}</span>
-          <span class="id">${esc(shortId(o.conv_id))}</span>
-          <span class="meta">${esc(o.detail || '')}</span>
-        </div>`).join('')
-      : '<div class="cleanup-empty">Nothing to do.</div>';
-    const bits = [];
-    if (resp && resp.deleted) bits.push(resp.deleted + ' deleted');
-    if (resp && resp.skipped) bits.push(resp.skipped + ' skipped');
-    if (resp && resp.failed) bits.push(resp.failed + ' failed');
-    hintEl.className = 'cleanup-hint';
-    hintEl.textContent = 'Delete complete — ' + (bits.join(' · ') || 'nothing to do') + '.';
-    countEl.textContent = ''; // the "n of N selected" tally is meaningless once results are in
-    errEl.textContent = (resp && (resp.warnings || []).length) ? '⚠ ' + resp.warnings.join('  ⚠ ') : '';
-    submitBtn.textContent = 'Done';
-    submitBtn.disabled = false;
-    submitBtn.classList.remove('danger');
-    submitBtn.removeAttribute('aria-busy');
-    cancelBtn.style.display = 'none';
-    // The filters + options are meaningless once results are in.
-    searchEl.disabled = true; ageEl.disabled = true;
-    selAllBtn.disabled = true; selNoneBtn.disabled = true; wtCb.disabled = true;
-  }
-
-  async function onSubmit() {
-    if (phase === 'result') { cleanup(); return; }
-    // Snapshot the ticked-AND-visible conv-ids at click time — this is the
-    // list POSTed verbatim, never re-resolved server-side (JOH-31). Lead
-    // with the stable agent_id (the BE maps it back to a conv-id), falling
-    // back to conv_id for a row with no actor id.
-    const convs = visibleChecked().map(c => c.agent_id || c.conv_id);
-    if (convs.length === 0) return;
-    const deleteWorktrees = wtCb.checked;
-    // Busy feedback: disable + swap the label for a spinner while the POST
-    // is in flight. Torn down by renderFooter on any error path.
-    submitBtn.disabled = true;
-    submitBtn.setAttribute('aria-busy', 'true');
-    submitBtn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>Deleting…';
-    errEl.textContent = '';
-    let r;
-    try {
-      r = await fetch('/api/cleanup/agents', {
-        method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agents: convs, mode: 'delete', delete_worktrees: deleteWorktrees }),
-      });
-    } catch (e) {
-      errEl.textContent = `delete failed: ${(e && e.message) || e}`;
-      renderFooter();
-      return;
-    }
-    if (!r.ok) {
-      errEl.textContent = (await r.text()) || ('HTTP ' + r.status);
-      renderFooter();
-      return;
-    }
-    const out = await r.json().catch(() => null);
-    renderResult(out || {});
-  }
-
-  listEl.addEventListener('change', onListChange);
-  searchEl.addEventListener('input', onSearch);
-  ageEl.addEventListener('input', onAge);
-  selAllBtn.addEventListener('click', onSelectAll);
-  selNoneBtn.addEventListener('click', onSelectNone);
-  submitBtn.addEventListener('click', onSubmit);
-  cancelBtn.addEventListener('click', onCancel);
-  overlay.addEventListener('click', onOverlay);
-  document.addEventListener('keydown', onKey);
-
-  // Reset chrome a prior result phase may have changed.
-  hintEl.className = 'cleanup-hint danger';
-  cancelBtn.style.display = '';
-  searchEl.disabled = false; ageEl.disabled = false;
-  selAllBtn.disabled = false; selNoneBtn.disabled = false; wtCb.disabled = false;
-  submitBtn.classList.add('danger');
-
-  render();
-  overlay.classList.add('show');
-  setTimeout(() => submitBtn.focus(), 0);
+  return openDeleteRetiredPreviewDialog(retired);
 }
 
 // openWorktreeCleanup drives both the group cog's "🧹 cleanup

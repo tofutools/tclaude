@@ -61,6 +61,47 @@ export function openUngroupedRetirePreviewDialog(candidates) {
   });
 }
 
+// Delete-retired is loaded from the complete retired endpoint before it crosses
+// this seam. Normalize the renderer's exact data shape, conv-dedupe defensively,
+// and sort newest-first locally so neither endpoint ordering nor a later caller
+// mutation can change the roster the human is reviewing. Invalid/missing stamps
+// sort after valid stamps; their separate age-filter semantics live with the
+// controlled form that owns the current filter value.
+export function normalizeDeleteRetiredCandidates(candidates) {
+  const seen = new Set();
+  const result = [];
+  for (const candidate of candidates || []) {
+    const conv = String(candidate?.conv_id || '').trim();
+    if (!conv || seen.has(conv)) continue;
+    seen.add(conv);
+    result.push({
+      agent_id: String(candidate?.agent_id || '').trim(),
+      conv_id: conv,
+      title: String(candidate?.title || ''),
+      retired_at: String(candidate?.retired_at || ''),
+      retired_by: String(candidate?.retired_by_display || candidate?.retired_by || ''),
+      online: candidate?.online === true,
+    });
+  }
+  result.sort((a, b) => {
+    const aTime = Date.parse(a.retired_at);
+    const bTime = Date.parse(b.retired_at);
+    const aValid = !Number.isNaN(aTime);
+    const bValid = !Number.isNaN(bTime);
+    if (aValid && bValid && aTime !== bTime) return bTime - aTime;
+    if (aValid !== bValid) return aValid ? -1 : 1;
+    return 0;
+  });
+  return result;
+}
+
+export function openDeleteRetiredPreviewDialog(candidates) {
+  return openTransactionDialog({
+    kind: 'delete-retired-preview',
+    candidates: normalizeDeleteRetiredCandidates(candidates),
+  });
+}
+
 // DnD owns optimistic drag presentation, while the transaction root owns the
 // authoritative mutation refresh. Only results that did not already complete
 // and refresh need the DnD caller to reconcile the cancelled/failed gesture.
