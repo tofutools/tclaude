@@ -144,6 +144,53 @@ test('mounted island registers the launcher seam and snapshot subscription prese
   cronTargetHost.remove();
 });
 
+test('partial island initialization rolls back the controller and permits a clean remount', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [island, stateModule, controller] = await Promise.all([
+    harness.importDashboardModule('js/message-access-dialog-island.js'),
+    harness.importDashboardModule('js/message-access-dialog-state.js'),
+    harness.importDashboardModule('js/message-access-dialog-controller.js'),
+  ]);
+  const dialogHost = harness.document.body.appendChild(harness.document.createElement('div'));
+  const cronTargetHost = harness.document.body.appendChild(harness.document.createElement('div'));
+  const actions = { sendMessage: async () => {}, replyHuman: async () => {}, grantSudo: async () => {}, savePermissions: async () => {} };
+  const failedCleanups = [];
+  assert.throws(() => island.mountMessageAccessDialogIsland({
+    dialogHost,
+    cronTargetHost,
+    state: stateModule.createMessageAccessDialogState(),
+    actions,
+    snapshot: {
+      value: snapshot({ members: [] }),
+      subscribe() { throw new Error('snapshot subscription failed'); },
+    },
+    confirmDiscard: async () => true,
+    registerCleanup: (cleanup) => failedCleanups.push(cleanup),
+  }), /snapshot subscription failed/);
+  assert.equal(failedCleanups.length, 0, 'failed initialization never publishes a page cleanup');
+  assert.equal(dialogHost.childElementCount, 0);
+  assert.equal(cronTargetHost.childElementCount, 0);
+  assert.throws(() => controller.openMessageCreateModal(), /dialogs are not ready/,
+    'failed initialization releases the global launcher seam');
+
+  const cleanups = [];
+  const state = stateModule.createMessageAccessDialogState();
+  await harness.act(() => island.mountMessageAccessDialogIsland({
+    dialogHost,
+    cronTargetHost,
+    state,
+    actions,
+    snapshot: harness.signals.signal(snapshot({ members: [] })),
+    confirmDiscard: async () => true,
+    registerCleanup: (cleanup) => cleanups.push(cleanup),
+  }));
+  await harness.act(() => { controller.openMessageCreateModal({ from: 'agt_sender', target: 'agt_a' }); });
+  assert.ok(dialogHost.querySelector('#message-create-modal'));
+  await harness.act(() => { cleanups.reverse().forEach((cleanup) => cleanup()); });
+  dialogHost.remove();
+  cronTargetHost.remove();
+});
+
 test('scoped message follows live-all membership and sends exact group role payload', async (t) => {
   const harness = await createPreactHarness(t);
   const { createMessageAccessDialogState } = await harness.importDashboardModule('js/message-access-dialog-state.js');
@@ -177,7 +224,7 @@ test('scoped message follows live-all membership and sends exact group role payl
   await mounted.unmount();
 });
 
-test('custom group selection survives newcomer/removal, blocks a missing group, and retries exactly', async (t) => {
+test('custom group selection survives identity promotion/newcomer/removal, blocks a missing group, and retries exactly', async (t) => {
   const harness = await createPreactHarness(t);
   const { createMessageAccessDialogState } = await harness.importDashboardModule('js/message-access-dialog-state.js');
   const state = createMessageAccessDialogState();
@@ -193,7 +240,7 @@ test('custom group selection survives newcomer/removal, blocks a missing group, 
     replyHuman: async () => {}, grantSudo: async () => {}, savePermissions: async () => {},
   };
   const { host, mounted, rerender } = await mountDialogs(
-    harness, state, actions, snapshot({ members: [member('a'), member('b')] }),
+    harness, state, actions, snapshot({ members: [member('a'), { ...member('b'), agent_id: '' }] }),
   );
   await harness.input(host.querySelector('#message-create-body'), 'only b');
   await harness.act(() => { host.querySelector('#message-create-members-none').click(); });
@@ -204,9 +251,6 @@ test('custom group selection survives newcomer/removal, blocks a missing group, 
 
   await rerender(snapshot({ members: [member('b'), member('c')] }));
   assert.equal(host.querySelector('#message-create-members-count').textContent, '1 of 2 selected');
-  const selected = [...host.querySelectorAll('#message-create-members input')].filter((input) => input.checked);
-  assert.deepEqual(selected.map((input) => input.getAttribute('data-conv')), ['conv-b'],
-    'customized selection drops a removed member and does not absorb a newcomer');
 
   await rerender(snapshot({ groups: [] }));
   assert.equal(host.querySelector('#message-create-submit').disabled, true);
@@ -221,7 +265,7 @@ test('custom group selection survives newcomer/removal, blocks a missing group, 
   assert.deepEqual(sent, [
     { from: 'agt_sender', to: 'group:team', subject: '', body: 'only b', members: ['agt_b'] },
     { from: 'agt_sender', to: 'group:team', subject: '', body: 'only b', members: ['agt_b'] },
-  ]);
+  ], 'promoted selected member stays selected while the newcomer remains excluded');
   assert.equal(state.dialog.value, null);
   await mounted.unmount();
 });
