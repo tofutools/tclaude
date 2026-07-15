@@ -6,267 +6,133 @@ import (
 	"testing"
 )
 
-// The in-browser terminal modal (js/modal-term.js) must not tear itself
-// down or silently retry behind the user's back. There is no JS test
-// runner, so these structural guards pin the two behaviours against the
-// embedded module source — they assert invariants, not user-facing copy,
-// so rewording the dialogs won't churn them.
-
-// TestTermModal_NoSilentReconnect guards that a dropped connection prompts
-// the human (promptReconnect → confirmModal) instead of looping a quiet
-// setTimeout(connect, …) retry that hides a session that has actually ended.
-func TestTermModal_NoSilentReconnect(t *testing.T) {
-	src := readTermModalSrc(t)
-
-	if strings.Contains(src, "setTimeout(connect") {
-		t.Error("modal-term.js auto-reconnects via setTimeout(connect, …) — a drop must " +
-			"prompt the human (promptReconnect), not silently retry")
+func TestTerminalShellModalReconnectAndBackdropParity(t *testing.T) {
+	actions := readDashboardJS(t, "terminal-shell-actions.js")
+	island := readDashboardJS(t, "terminal-shell-island.js")
+	if strings.Contains(actions, "setTimeout(connect") {
+		t.Error("terminal shell silently reconnects instead of asking the operator")
 	}
 	for _, needle := range []string{
-		"import { confirmModal } from './refresh.js'", // the prompt primitive
-		"promptReconnect", // the disconnect handler
+		"async function promptModalReconnect(id)",
+		"title: 'Terminal disconnected'",
+		"okLabel: 'Reconnect'",
+		"if (disposed || confirmOpen",
+		"onDisconnect=${() => actions.onModalDisconnect(descriptor.id)}",
+		"if (event.currentTarget === event.target) void actions.confirmModalClose(descriptor.id)",
 	} {
-		if !strings.Contains(src, needle) {
-			t.Errorf("modal-term.js missing %q — disconnect prompt wiring broken", needle)
+		if !strings.Contains(actions+island, needle) {
+			t.Errorf("Preact terminal modal missing parity contract %q", needle)
+		}
+	}
+	if strings.Contains(island, "onKeyDown") && strings.Contains(island, "confirmModalClose(descriptor.id)") {
+		// Pane tabs legitimately own onKeyDown. Pin the modal's explicit lack of an
+		// Escape close through its dedicated component block instead.
+		start := strings.Index(island, "function TerminalModalSession(")
+		end := strings.Index(island[start:], "\nfunction TerminalModal(")
+		if start >= 0 && end >= 0 && strings.Contains(island[start:start+end], "event.key === 'Escape'") {
+			t.Error("terminal modal must leave Escape to xterm")
 		}
 	}
 }
 
-// TestTermModal_BackdropDoesNotCloseDirectly guards that an outside (backdrop)
-// click asks for confirmation rather than tearing the terminal down — clicking
-// beside the modal while reaching for the terminal is too easy to do by
-// accident. The old direct-close handler must be gone.
-func TestTermModal_BackdropDoesNotCloseDirectly(t *testing.T) {
-	src := readTermModalSrc(t)
-
-	if strings.Contains(src, "if (e.target === overlay) closeTermModal()") {
-		t.Error("modal-term.js closes on a backdrop click without confirming — " +
-			"an outside click must ask first, not tear the terminal down")
+func TestTerminalShellModalDetachCloseAndCopyMapping(t *testing.T) {
+	actions := readDashboardJS(t, "terminal-shell-actions.js")
+	island := readDashboardJS(t, "terminal-shell-island.js")
+	for _, needle := range []string{
+		"confirm(descriptor.seed.hideConv ?",
+		"okLabel: 'Detach'",
+		"okLabel: 'Close terminal'",
+		"return closeModal(id, { detach: true })",
+		"await closeModal(id, { detach: true })",
+		"if (!conv) return",
+		"fetchImpl(`/api/hide/${encodeURIComponent(conv)}`",
+		"onClick=${() => void actions.detachModal(descriptor.id)}",
+		"onClick=${() => void actions.confirmModalClose(descriptor.id)}",
+		"descriptor.seed.hideConv ? html`",
+	} {
+		if !strings.Contains(actions+island, needle) {
+			t.Errorf("Preact terminal modal missing detach/close contract %q", needle)
+		}
 	}
-	// Pin the backdrop handler specifically (not just "confirmModal is called
-	// somewhere", which promptReconnect alone would satisfy): the click
-	// handler must early-return on a non-backdrop target and route the actual
-	// close through confirmModal.
-	if !strings.Contains(src, "if (e.target !== overlay) return;") {
-		t.Error("modal-term.js backdrop handler must early-return on a non-backdrop " +
-			"target before deciding to close")
-	}
-	// Route the actual close through the ask-first confirm (confirmAndClose), not
-	// a direct teardown. The exact copy (detach vs close) varies by view type and
-	// is pinned in TestTermModal_BackdropDetachVsCloseByViewType.
-	if !strings.Contains(src, "confirmAndClose();") {
-		t.Error("modal-term.js backdrop handler must route the close through " +
-			"confirmAndClose() (ask first), not tear the terminal down directly")
-	}
-}
-
-// TestTermModal_BackdropDetachVsCloseByViewType pins the copy split keyed on
-// hideConv. A web window (the live-agent "open window" attach, hideConv set) is
-// a view onto the agent's real tmux session: clicking outside it must read as a
-// DETACH — it only drops the tmux client (via /api/hide) while the agent keeps
-// running — not as a shutdown. The ad hoc web terminal (hideConv null, its own
-// throwaway shell) keeps asking to CLOSE, exactly as before. Both gestures still
-// route through the same confirmAndClose → detachAndClose; only the wording and
-// the server-side hide differ.
-func TestTermModal_BackdropDetachVsCloseByViewType(t *testing.T) {
-	src := readTermModalSrc(t)
-
-	// The confirm copy is chosen off hideConv (set = web window, null = web term).
-	start := strings.Index(src, "confirmModal(hideConv ?")
-	if start < 0 {
-		t.Fatal("modal-term.js confirmAndClose must pick its copy off hideConv — a web " +
-			"window detaches (agent keeps running) while an ad hoc web terminal closes")
-	}
-	// Pin the branch→copy MAPPING, not just that both labels appear somewhere: the
-	// hideConv-truthy branch (before the `} : {` separator) must carry 'Detach',
-	// the else branch (after it) 'Close terminal'. A transposition that swapped the
-	// two branches' copy would still pass a "both strings present" check, so order
-	// is the real invariant.
-	rest := src[start:]
-	detachIdx := strings.Index(rest, "okLabel: 'Detach'")
-	elseIdx := strings.Index(rest, "} : {")
-	closeIdx := strings.Index(rest, "okLabel: 'Close terminal'")
-	ordered := detachIdx >= 0 && elseIdx >= 0 && closeIdx >= 0 &&
-		detachIdx < elseIdx && elseIdx < closeIdx
-	if !ordered {
-		t.Error("modal-term.js confirm copy is mis-mapped: the hideConv-truthy branch must " +
-			"offer 'Detach' (web window) and the else branch 'Close terminal' (ad hoc web terminal)")
+	detach := strings.Index(actions, "okLabel: 'Detach'")
+	branch := strings.Index(actions, "} : {")
+	close := strings.Index(actions, "okLabel: 'Close terminal'")
+	if detach < 0 || branch < detach || close < branch {
+		t.Error("hideConv copy mapping must offer Detach for live windows and Close terminal for throwaway shells")
 	}
 }
 
-// TestTermModal_SpawnAutoFocusDetaches pins that the spawn auto-focus in-browser
-// fallback (modal-spawn.js) is treated as a web window, not a throwaway terminal.
-// It attaches to the agent's LIVE tmux session (handleDashboardSpawnFocusWS →
-// openAttachCmd, the same attach the open-window row action uses), so closing it
-// must run the reliable server-side detach (/api/hide) and its confirm must ask
-// to DETACH — exactly like the open-window caller. That requires passing hideConv
-// to openTermModal; without it the modal both shows the wrong "Close terminal?"
-// copy and skips the detach, leaving the forked tmux client stuck attached.
-func TestTermModal_SpawnAutoFocusDetaches(t *testing.T) {
-	data, err := fs.ReadFile(dashboardAssetsFS, "js/modal-spawn.js")
-	if err != nil {
-		t.Fatalf("read js/modal-spawn.js: %v", err)
-	}
-	src := string(data)
-	if !strings.Contains(src, "payload.focus_ws") {
-		t.Skip("spawn auto-focus in-browser fallback not present — nothing to pin")
-	}
-	if !strings.Contains(src, "hideConv: payload.conv_id") {
-		t.Error("modal-spawn.js spawn auto-focus opens a live-session web window — it must " +
-			"pass hideConv (payload.conv_id) so closing it detaches via /api/hide and asks to " +
-			"detach, not just drop the WebSocket")
-	}
-}
-
-// TestTermModal_DetachVsClose pins the two-button split: the Detach button is
-// the instant, no-confirm path (binds straight to detachAndClose), while the ×
-// Close button asks first (routes through confirmAndClose). Both keep the
-// underlying agent session alive — the only difference is the confirmation
-// gate, so these guard the wiring, not the copy.
-func TestTermModal_DetachVsClose(t *testing.T) {
-	src := readTermModalSrc(t)
-
-	// Detach = instant detach+close, no confirm.
-	if !strings.Contains(src, "$('#term-session-detach').addEventListener('click', detachAndClose)") {
-		t.Error("modal-term.js Detach button must bind directly to detachAndClose " +
-			"(instant, no confirm)")
-	}
-	// × Close must confirm first — it must NOT bind directly to the close/detach
-	// path.
-	if strings.Contains(src, "$('#term-session-close').addEventListener('click', closeTermModal)") ||
-		strings.Contains(src, "$('#term-session-close').addEventListener('click', detachAndClose)") {
-		t.Error("modal-term.js × Close must confirm first (confirmAndClose), not bind " +
-			"directly to a close/detach handler")
-	}
-	if !strings.Contains(src, "$('#term-session-close').addEventListener('click', confirmAndClose)") {
-		t.Error("modal-term.js × Close must route through confirmAndClose (ask first)")
-	}
-}
-
-// TestTermModal_DetachCallsHideAPI pins the actual fix: the detach path issues
-// the server-side detach (POST /api/hide/{conv}) — the same reliable mechanism
-// the per-agent "hide" eye button uses — rather than only closing the
-// WebSocket (which did not reliably detach the open-window tmux client).
-func TestTermModal_DetachCallsHideAPI(t *testing.T) {
-	src := readTermModalSrc(t)
-	if !strings.Contains(src, "/api/hide/") {
-		t.Error("modal-term.js detach path must POST /api/hide/{conv} — closing the " +
-			"WebSocket alone did not reliably detach the open-window tmux client")
-	}
-	// Gated on hideConv: a null hideConv (ad hoc web-term) must NOT fire a hide.
-	// /api/hide resolves to the agent's MAIN session, so hiding from a throwaway
-	// terminal would detach the agent's real window.
-	if !strings.Contains(src, "if (hideConv) {") {
-		t.Error("modal-term.js detach must be gated on `if (hideConv)` so a null " +
-			"hideConv (web-term) never POSTs /api/hide")
-	}
-	// Order: close (which nulls ws.onclose) BEFORE the awaited hide. /api/hide
-	// drops this window's own client → agentd closes the WS; if onclose were
-	// still armed it would fire a spurious "Terminal disconnected" reconnect
-	// prompt over the just-closed modal. Pin closeTermModal() immediately ahead
-	// of the hide block.
-	if !strings.Contains(src, "closeTermModal();\n  if (hideConv) {") {
-		t.Error("modal-term.js detachAndClose must call closeTermModal() BEFORE the " +
-			"awaited /api/hide — otherwise the server-side WS close races a spurious " +
-			"reconnect prompt onto the screen")
-	}
-}
-
-// TestTermModal_OnlyOpenWindowPassesHideConv pins the load-bearing wiring and
-// guards a footgun. The live-session attach paths must thread the agent selector
-// through as hideConv so their detach hits /api/hide for the agent's live
-// session; the THROWAWAY-shell paths must NOT, because /api/hide resolves to the
-// agent's MAIN session — passing hideConv there would detach the agent's real
-// window when its throwaway terminal closes.
-//
-// Since the Terminals-tab pane seeds were extracted into terminals-tab.js's
-// shared helpers, the two homes are:
-//   - row-actions.js `open-window` → openTermModal (the native-window fallback's
-//     in-page modal) is the ONLY inline hideConv left in row-actions.js;
-//   - terminals-tab.js openWebWindowPane (live session) passes hideConv, while
-//     openWebTermPane (throwaway shell) must not.
-//
-// hideConv is legitimate from OTHER files too when the view attaches to the
-// agent's main session — the spawn auto-focus fallback in modal-spawn.js is
-// another such caller (see TestTermModal_SpawnAutoFocusDetaches). These scoped
-// counts fail the build if a future edit copy-pastes hideConv onto a throwaway
-// caller.
-func TestTermModal_OnlyOpenWindowPassesHideConv(t *testing.T) {
-	// row-actions.js: exactly one inline hideConv — the native `open-window`
-	// fallback that hands it to openTermModal.
-	src := readRowActionsSrc(t)
-	if !strings.Contains(src, "hideConv: agent") {
-		t.Error("row-actions.js open-window caller must pass `hideConv: agent` to " +
-			"openTermModal — without it the web window's Detach/Close can't hit /api/hide")
-	}
-	if n := strings.Count(src, "hideConv:"); n != 1 {
-		t.Errorf("exactly one row-actions.js caller may inline hideConv (the native "+
-			"`open-window` fallback to openTermModal); found %d — the web-pane seeds now live "+
-			"in terminals-tab.js's helpers", n)
+func TestTerminalShellModalCallersPreserveLiveSessionIdentity(t *testing.T) {
+	spawn := readDashboardJS(t, "modal-spawn.js")
+	if strings.Contains(spawn, "payload.focus_ws") && !strings.Contains(spawn, "hideConv: payload.conv_id") {
+		t.Error("spawn auto-focus must carry hideConv into the Preact terminal modal")
 	}
 
-	// terminals-tab.js: the live-session helper carries hideConv; the throwaway
-	// web-term helper must not (else closing a throwaway shell would detach the
-	// agent's MAIN session).
+	rows := readDashboardJS(t, "row-actions.js")
+	if !strings.Contains(rows, "hideConv: agent") {
+		t.Error("open-window fallback must carry hideConv")
+	}
+	if n := strings.Count(rows, "hideConv:"); n != 1 {
+		t.Errorf("exactly one row-actions caller may inline hideConv; found %d", n)
+	}
+
 	tab := readDashboardJS(t, "terminals-tab.js")
-	wpIdx := strings.Index(tab, "export function openWebWindowPane(")
-	tpIdx := strings.Index(tab, "export function openWebTermPane(")
-	focusIdx := strings.Index(tab, "export function focusTerminalForConv(")
-	if wpIdx < 0 || tpIdx < 0 || focusIdx < 0 || wpIdx >= tpIdx || tpIdx >= focusIdx {
-		t.Fatalf("terminals-tab.js must define openWebWindowPane then openWebTermPane before "+
-			"focusTerminalForConv (got wp=%d tp=%d focus=%d)", wpIdx, tpIdx, focusIdx)
+	windowAt := strings.Index(tab, "export function openWebWindowPane(")
+	termAt := strings.Index(tab, "export function openWebTermPane(")
+	focusAt := strings.Index(tab, "export function focusTerminalForConv(")
+	if windowAt < 0 || termAt < 0 || focusAt < 0 || windowAt >= termAt || termAt >= focusAt {
+		t.Fatal("terminal controller helper order is malformed")
 	}
-	if windowBlock := tab[wpIdx:tpIdx]; !strings.Contains(windowBlock, "hideConv: agent") {
-		t.Error("terminals-tab.js openWebWindowPane must pass `hideConv: agent` — the live-session " +
-			"pane's Detach/Close needs it to hit /api/hide")
+	if !strings.Contains(tab[windowAt:termAt], "hideConv: agent") {
+		t.Error("live web-window pane must carry hideConv")
 	}
-	if termBlock := tab[tpIdx:focusIdx]; strings.Contains(termBlock, "hideConv: agent") {
-		t.Error("terminals-tab.js openWebTermPane must NOT pass hideConv — a throwaway web-term " +
-			"targets a throwaway session, so /api/hide would wrongly detach the agent's MAIN session")
+	if strings.Contains(tab[termAt:focusAt], "hideConv: agent") {
+		t.Error("throwaway web-term pane must not carry hideConv")
 	}
 }
 
-func readRowActionsSrc(t *testing.T) string {
-	t.Helper()
-	data, err := fs.ReadFile(dashboardAssetsFS, "js/row-actions.js")
+func TestTerminalShellPreactAtomicOwnership(t *testing.T) {
+	htmlBytes, err := fs.ReadFile(dashboardAssetsFS, "dashboard.html")
 	if err != nil {
-		t.Fatalf("read js/row-actions.js: %v", err)
+		t.Fatal(err)
 	}
-	return string(data)
-}
+	html := string(htmlBytes)
+	for _, host := range []string{`id="terminals-root"`, `id="terminals-badge-root"`, `id="terminal-session-root"`} {
+		if !strings.Contains(html, host) {
+			t.Errorf("dashboard missing terminal Preact host %s", host)
+		}
+	}
+	for _, retired := range []string{`id="term-session-modal"`, `id="term-session-xterm"`, `id="term-tab-tabs"`, `id="term-tab-panes"`} {
+		if strings.Contains(html, retired) {
+			t.Errorf("static dashboard terminal writer remains: %s", retired)
+		}
+	}
+	if _, err := fs.ReadFile(dashboardAssetsFS, "js/modal-term.js"); err == nil {
+		t.Error("retired modal-term.js remains embedded")
+	}
 
-// TestTermModal_DetachButtonOnlyForWebWindow pins that the Detach button is
-// shown only for a web WINDOW (a view onto the agent's live session, hideConv
-// set) and hidden for an ad hoc web TERMINAL (hideConv null) — a throwaway
-// shell has nothing to detach from, so it gets only the × Close. The toggle is
-// keyed off hideConv in openTermModal.
-func TestTermModal_DetachButtonOnlyForWebWindow(t *testing.T) {
-	src := readTermModalSrc(t)
-	if !strings.Contains(src, "$('#term-session-detach').style.display = hideConv ?") {
-		t.Error("modal-term.js must toggle the Detach button on hideConv (shown for a web " +
-			"window, hidden for an ad hoc web terminal) — `$('#term-session-detach')." +
-			"style.display = hideConv ? …`")
+	loader := readDashboardJS(t, "preact-loader.js")
+	for _, needle := range []string{
+		"name: 'terminals'", "#terminals-root", "#terminals-badge-root", "#terminal-session-root",
+		"mountTerminalShellIsland", "createTerminalShellActions",
+	} {
+		if !strings.Contains(loader, needle) {
+			t.Errorf("terminal loader missing ownership contract %q", needle)
+		}
 	}
-}
-
-// TestTermModal_DetachButtonInMarkup pins the Detach button into the modal
-// header (dashboard.html) so the JS binding above has an element to attach to.
-func TestTermModal_DetachButtonInMarkup(t *testing.T) {
-	data, err := fs.ReadFile(dashboardAssetsFS, "dashboard.html")
-	if err != nil {
-		t.Fatalf("read dashboard.html: %v", err)
+	controller := readDashboardJS(t, "terminals-tab.js")
+	for _, forbidden := range []string{"document.", "querySelector", "createElement", "mountMux"} {
+		if strings.Contains(controller, forbidden) {
+			t.Errorf("terminal compatibility controller still writes DOM through %q", forbidden)
+		}
 	}
-	if !strings.Contains(string(data), `id="term-session-detach"`) {
-		t.Error(`dashboard.html missing id="term-session-detach" — the Detach affordance ` +
-			"has no element for bindTermModal to wire")
+	dashboard := readDashboardJS(t, "dashboard.js")
+	if !strings.Contains(dashboard, "mountTerminalsFeature({ confirm: confirmModal })") {
+		t.Error("dashboard does not mount the terminal ownership unit")
 	}
-}
-
-func readTermModalSrc(t *testing.T) string {
-	t.Helper()
-	data, err := fs.ReadFile(dashboardAssetsFS, "js/modal-term.js")
-	if err != nil {
-		t.Fatalf("read js/modal-term.js: %v", err)
+	for _, retired := range []string{"bindTermModal", "initTerminalsTab", "modal-term.js"} {
+		if strings.Contains(dashboard, retired) {
+			t.Errorf("dashboard still binds retired terminal path %q", retired)
+		}
 	}
-	return string(data)
 }

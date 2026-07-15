@@ -28,12 +28,12 @@ func readDashboardJS(t *testing.T, name string) string {
 // server-side, so re-hiding would be redundant (and, for a pane that's somehow
 // still live, wrong). The mechanism is closePane's skipDetach opt.
 func TestTerminalsCore_CloseForHideSkipsDetach(t *testing.T) {
-	src := readDashboardJS(t, "terminals-core.js")
+	src := readDashboardJS(t, "terminal-shell-actions.js")
 	if !strings.Contains(src, "function closeForHide(") {
-		t.Error("terminals-core.js must expose closeForHide() to close panes on an external hide")
+		t.Error("terminal shell actions must expose closeForHide() to close panes on an external hide")
 	}
-	if !strings.Contains(src, "closePane(key, { skipDetach: true })") {
-		t.Error("terminals-core.js closeForHide must close with { skipDetach: true } — the detach " +
+	if !strings.Contains(src, "closePane(pane.key, { skipDetach: true })") {
+		t.Error("terminal shell closeForHide must close with { skipDetach: true } — the detach " +
 			"already ran server-side, so it must NOT re-POST /api/hide")
 	}
 }
