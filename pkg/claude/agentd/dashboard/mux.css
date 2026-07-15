@@ -1,6 +1,6 @@
-/* mux.css — shared styles for the terminal-multiplexer widgets.
+/* mux.css — shared styles for the Preact terminal shell widgets.
  *
- * Loaded by BOTH surfaces that run the shared pane core (js/terminals-core.js):
+ * Loaded by BOTH Preact shell surfaces:
  *   - the in-dashboard "Terminals" tab (#tab-terminals in dashboard.html);
  *   - the standalone /terminals pop-out page (terminals.html).
  *
@@ -14,8 +14,8 @@
  * default.
  */
 
-/* Tab strip — one tab per open terminal. Hidden in solo mode and when empty
-   (the core toggles display inline). */
+/* Tab strip — one tab per open dashboard terminal. The standalone solo shell
+   does not render a tab strip. */
 .mux-tabs {
   display: flex; flex: none; gap: 4px;
   padding: 5px 6px 0; overflow-x: auto;
@@ -78,7 +78,7 @@
 .mux-pane-xterm { flex: 1; min-height: 0; padding: 6px; overflow: hidden; }
 .mux-pane-xterm .xterm { height: 100%; }
 
-/* Wizard multiplexer chrome. This lives in the shared widget sheet so a
+/* Wizard terminal chrome. This lives in the shared widget sheet so a
    terminal popped into its own browser tab keeps the same portal frame. The
    xterm canvas palette itself is controlled independently by the persisted
    "Arcane palette" checkbox in terminal-theme.js. */

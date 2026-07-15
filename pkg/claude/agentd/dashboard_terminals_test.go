@@ -63,7 +63,7 @@ func TestDashboardTerminals_RequiresAuth(t *testing.T) {
 }
 
 // TestDashboardTerminals_SoloServesPopout: with the session cookie,
-// /terminals?solo=1 serves the standalone multiplexer popout page — no-store,
+// /terminals?solo=1 serves the standalone Preact terminal popout page — no-store,
 // and referencing the assets it needs (the page JS, its stylesheet, and the
 // vendored xterm scripts) so the browser can render a popped-out terminal. The
 // ?solo=1 query is what the "⧉ tab" pop-out opens (js/terminals.js).
@@ -83,7 +83,9 @@ func TestDashboardTerminals_SoloServesPopout(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, needle := range []string{
-		`id="mux-tabs"`,
+		`id="terminals-root"`,
+		`type="importmap"`,
+		`"preact": "/static/vendor/preact/preact.module.js"`,
 		`/static/js/terminals.js`,
 		`/static/terminals.css`,
 		`/static/mux.css`,
@@ -92,6 +94,11 @@ func TestDashboardTerminals_SoloServesPopout(t *testing.T) {
 	} {
 		if !strings.Contains(body, needle) {
 			t.Errorf("terminals popout page missing %q", needle)
+		}
+	}
+	for _, forbidden := range []string{`id="mux"`, `id="mux-tabs"`, `id="mux-panes"`, `id="mux-empty"`} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("terminals popout page retains static shell writer %q", forbidden)
 		}
 	}
 	// It's the popout, NOT the dashboard SPA.
