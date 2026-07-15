@@ -583,7 +583,8 @@ test('native member and group editors preserve drafts, park DnD and surface busy
 
   profileChoicesResult = async () => [{ value: 'sandbox-b', label: 'Sandbox B' }];
   setProfileResult = async () => { throw new Error('sandbox rejected'); };
-  await harness.act(() => harness.fireEvent(summary.querySelector('.group-sandbox-profile'), 'click'));
+  const sandboxTrigger = summary.querySelector('.group-sandbox-profile');
+  await harness.act(() => harness.fireEvent(sandboxTrigger, 'click'));
   const sandboxSelect = summary.querySelector('.group-default-profile-select');
   await harness.act(() => Promise.resolve());
   sandboxSelect.querySelector('option[value="sandbox-b"]').selected = true;
@@ -595,7 +596,11 @@ test('native member and group editors preserve drafts, park DnD and surface busy
   assert.equal(harness.document.activeElement, sandboxSelect, 'failed persistence restores picker focus');
   await harness.act(() => harness.fireEvent(sandboxSelect, 'keydown', { key: 'Escape' }));
   await harness.act(() => Promise.resolve());
-  assert.equal(harness.document.activeElement.dataset.editorKey, 'group:alpha:sandbox_profile');
+  const restoredSandboxTrigger = summary.querySelector('.group-sandbox-profile');
+  assert.equal(sandboxTrigger.isConnected, false, 'the picker replaces its original trigger node');
+  assert.equal(harness.document.activeElement, restoredSandboxTrigger,
+    'Escape focuses the locally committed replacement profile trigger');
+  assert.equal(restoredSandboxTrigger.dataset.editorKey, 'group:alpha:sandbox_profile');
   calls.splice(0, 2);
 
   profileChoicesResult = async () => [];
