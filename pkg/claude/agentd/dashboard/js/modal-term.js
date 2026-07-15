@@ -16,7 +16,7 @@
 // this file — so `Terminal` / `FitAddon` are plain globals here, not
 // ES imports.
 //
-// Distinct from #term-modal (refresh.js's termDirModal), which is the
+// Distinct from #term-modal (the Preact action-dialog directory choice), which is the
 // start/current/worktree picker that runs BEFORE this — this is what
 // opens once that choice (or a plain open-window click) comes back
 // with mode:"browser".

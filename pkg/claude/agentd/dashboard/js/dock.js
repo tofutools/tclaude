@@ -52,7 +52,7 @@ import { openRoleEditor, openRolesManageModal, removeRole } from './modal-roles.
 import { templateReadbackBadges, openTemplatesManageModal, openTemplateEditor, openDuplicateModal, deleteTemplate } from './modal-templates.js';
 // The generic "clone under a new name" dialog (profiles + roles). Templates
 // reuse their own richer openDuplicateModal above — see the SECTIONS clone hooks.
-import { openCloneModal } from './modal-clone.js';
+import { openPresetCloneDialog } from './action-dialog-controller.js';
 
 // The persisted open/collapsed flag. dash-namespaced like every other
 // server-backed dashboard pref. Default OPEN (see isDockOpen): the dock is a
@@ -123,8 +123,8 @@ export const dockSections = Object.freeze([
     drag: true,
     onManageItem: (p) => openProfileEditor(p),
     // Clone → the generic name dialog; the copy is the source profile re-POSTed
-    // under the new name via createProfile (modal-clone.js does the name swap).
-    onCloneItem: (p) => openCloneModal({ kind: 'profile', kindWizard: 'pattern', source: p, create: createProfile }),
+    // under the new name through the Preact-owned action-dialog host.
+    onCloneItem: (p) => openPresetCloneDialog({ kind: 'profile', kindWizard: 'pattern', source: p, create: createProfile }),
     // Delete → the manager's confirm + delete + toast (removeProfile), then a
     // dashboard refresh so the dock card leaves at once (removeProfile only
     // repaints the closed manager overlay).
@@ -149,7 +149,7 @@ export const dockSections = Object.freeze([
     onManageItem: (t) => openTemplateEditor(t),
     // Clone → templates reuse their OWN richer duplicate dialog (a template
     // carries a whole roster, so its bespoke blurb is worth keeping) rather than
-    // the generic modal-clone.js one profiles/roles use. Both are name dialogs.
+    // the generic action-dialog name shell profiles/roles use. Both are name dialogs.
     onCloneItem: (t) => openDuplicateModal(t.name),
     // Delete → deleteTemplate already runs the confirm + DELETE + refresh,
     // so the dock calls it directly (no extra refresh needed here).
@@ -167,7 +167,7 @@ export const dockSections = Object.freeze([
     drag: true,
     onManageItem: (rl) => openRoleEditor(rl),
     // Clone → the generic name dialog, cloning via createRole (see profiles).
-    onCloneItem: (rl) => openCloneModal({ kind: 'role', kindWizard: 'class', source: rl, create: createRole }),
+    onCloneItem: (rl) => openPresetCloneDialog({ kind: 'role', kindWizard: 'class', source: rl, create: createRole }),
     // Delete → removeRole's confirm + delete + toast (incl. the 409 role_in_use
     // surfacing), then a dashboard refresh so the dock card leaves at once.
     onDeleteItem: (rl) => removeRole(rl.name).then(() => refresh()),
