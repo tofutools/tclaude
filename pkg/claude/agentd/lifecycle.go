@@ -608,6 +608,15 @@ func resumeOneConvWithGrant(convID string, recreateMissingDir bool, grant *resum
 		res.Action = "skipped:already_online"
 		return res
 	}
+	if state, err := db.AgentState(convID); err != nil {
+		res.Action = "error"
+		res.Detail = "agent-state lookup: " + err.Error()
+		return res
+	} else if state == db.AgentStateRetired {
+		res.Action = "skipped:not_active_agent"
+		res.Detail = "state: " + state
+		return res
+	}
 	if convID == "" {
 		res.Action = "skipped:no_conv_id"
 		res.Detail = "placeholder member (no conv yet) — Phase B will support template-based fresh spawn"
@@ -766,6 +775,11 @@ func resumeOneConvWithGrant(convID string, recreateMissingDir bool, grant *resum
 	}); err != nil {
 		res.Action = "error"
 		res.Detail = "spawn: " + err.Error()
+		if resumePolicy != nil && resumePolicy.Previous != nil && effectiveSandbox != nil {
+			if _, cleanupErr := removeSupersededMaterializedAgentDirectories(*effectiveSandbox, *resumePolicy.Previous); cleanupErr != nil {
+				res.Detail += "; remove unused agent-owned directories: " + cleanupErr.Error()
+			}
+		}
 		if persistedAgentID != "" {
 			var previous *sandboxpolicy.Snapshot
 			if resumePolicy != nil {
@@ -777,6 +791,11 @@ func resumeOneConvWithGrant(convID string, recreateMissingDir bool, grant *resum
 		}
 	} else {
 		res.Action = "resumed"
+		if resumePolicy != nil && resumePolicy.Previous != nil && effectiveSandbox != nil {
+			if _, cleanupErr := removeSupersededMaterializedAgentDirectories(*resumePolicy.Previous, *effectiveSandbox); cleanupErr != nil {
+				res.Detail = "resumed; remove superseded agent-owned directories: " + cleanupErr.Error()
+			}
+		}
 		// Tag the fresh row's best-known state ON once it comes online. The
 		// --remote-control launch flag (threaded above) already re-armed CC;
 		// this only re-records tclaude's best-known state. Backgrounded so the
@@ -1166,6 +1185,7 @@ func retireGroupMember(convID, by, reason string, shutdown, deleteWorktree bool,
 			res.Detail = joinDetail(res.Detail, "/exit sent")
 		}
 	}
+	cleanupAgentDirectoriesAfterRetire(convID, shutdown)
 	if deleteWorktree {
 		plan := scheduleRetireWorktreeCleanup(convID, wt, shutdown)
 		res.Worktree = &plan
@@ -1398,6 +1418,11 @@ func handleAgentDelete(w http.ResponseWriter, r *http.Request, targetConv string
 	// multi-generation actor's delete leaves nothing orphaned. The selector
 	// resolves a predecessor forward to the head before it reaches here, so
 	// `targetConv` is the head in the agent-delete case.
+	if _, err := removeAgentDirectoriesForConv(targetConv); err != nil {
+		writeError(w, http.StatusInternalServerError, "io",
+			"delete agent-owned directories: "+err.Error())
+		return
+	}
 	counts, swept, err := conv.DeleteAgentAllGenerations(targetConv)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io",

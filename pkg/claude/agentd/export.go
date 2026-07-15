@@ -443,6 +443,8 @@ func retireSummaryWriterClone(cloneConv string) {
 	if _, _, err := retireAgentConv(cloneConv, "system:export-clone",
 		"export complete — retired to preserve cost"); err != nil {
 		slog.Warn("export clone: retire failed", "conv", cloneConv, "error", err)
+	} else {
+		cleanupAgentDirectoriesAfterRetire(cloneConv, true)
 	}
 }
 
@@ -459,6 +461,10 @@ func deleteSummaryWriterClone(cloneConv string) {
 		return
 	}
 	stopOneConv(cloneConv, true /* force kill */)
+	if _, err := removeAgentDirectoriesForConv(cloneConv); err != nil {
+		slog.Warn("export clone: agent-owned directory cleanup failed", "conv", cloneConv, "error", err)
+		return
+	}
 	if _, err := conv.DeleteConvByID(cloneConv); err != nil {
 		slog.Warn("export clone: delete conv failed", "conv", cloneConv, "error", err)
 	}

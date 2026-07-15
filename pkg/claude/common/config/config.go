@@ -125,16 +125,16 @@ type Config struct {
 	// ResolvedUsageIdleTimeout and PollAnthropicUsageAPI.
 	Usage *UsageConfig `json:"usage,omitempty"`
 
-	// Features holds opt-in flags for features under active development —
-	// see FeaturesConfig. Absent → everything off.
+	// Features holds switches for features under active development — see
+	// FeaturesConfig. Each switch documents its own absent-value default.
 	Features *FeaturesConfig `json:"features,omitempty"`
 }
 
-// FeaturesConfig holds opt-in flags for features under active development.
+// FeaturesConfig holds switches for features under active development.
 // Big features are built as dark increments on main behind these flags
 // (rather than on long-lived feature branches), so regular users see nothing
-// until a feature graduates and its flag is removed. Every flag defaults to
-// off; flip it here or in the dashboard Config tab to test locally.
+// until a feature graduates and its flag is removed. Each flag documents its
+// default; change it here or in the dashboard Config tab to test locally.
 type FeaturesConfig struct {
 	// Processes enables the in-development Processes feature — BPMN-lite
 	// repeatable process graphs (drag-and-drop template editor, long-running
@@ -142,6 +142,14 @@ type FeaturesConfig struct {
 	// feature's user-visible surfaces (dashboard tab, CLI command, daemon
 	// routes) as they land.
 	Processes bool `json:"processes,omitempty"`
+
+	// AgentDirsMountParent switches how agent-owned directories are granted to
+	// the sandbox. On (the default): the shared parent root
+	// (agent-dirs/<launch-key>) is granted rw once, so the agent can create,
+	// rewrite, and delete its own env-var'd directories. Set false to restore
+	// per-directory grants: the agent can write inside each directory but cannot
+	// delete the directory itself because its parent is not writable.
+	AgentDirsMountParent *bool `json:"agent_dirs_mount_parent,omitempty"`
 }
 
 // ProcessesEnabled reports whether the opt-in Processes feature flag is set.
@@ -149,6 +157,16 @@ type FeaturesConfig struct {
 // a bare Load() result without nil checks.
 func (c *Config) ProcessesEnabled() bool {
 	return c != nil && c.Features != nil && c.Features.Processes
+}
+
+// AgentDirsMountParentEnabled reports whether agent-owned directories should be
+// granted by mounting their shared parent root rw instead of granting each
+// declared directory individually. It defaults on and is nil-safe.
+func (c *Config) AgentDirsMountParentEnabled() bool {
+	if c == nil || c.Features == nil || c.Features.AgentDirsMountParent == nil {
+		return true
+	}
+	return *c.Features.AgentDirsMountParent
 }
 
 // TUI color schemes — config tui.color_scheme. Picks the color palette the

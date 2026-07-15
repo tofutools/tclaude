@@ -405,6 +405,7 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 						out.Detail += " · session shutdown failed: " + st.Detail
 					}
 				}
+				cleanupAgentDirectoriesAfterRetire(tg.convID, retireShutdown)
 				// Worktree + branch cleanup, honouring the same per-agent
 				// safety rules as the single-agent retire: the main repo and
 				// any worktree a surviving agent still works in are kept, and
@@ -428,6 +429,11 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 			// is normally a no-op; kept for parity with the per-agent
 			// delete button, which force-kills any lingering pane.
 			stopOneConv(tg.convID, true)
+			if _, cleanupErr := removeAgentDirectoriesForConv(tg.convID); cleanupErr != nil {
+				out.Result, out.Detail = "failed", "delete agent-owned directories: "+cleanupErr.Error()
+				resp.Failed++
+				break
+			}
 			// Actor-aware (JOH-26 PR3d): an agent's head-generation delete
 			// also sweeps its predecessor generations' rows + .jsonl.
 			counts, _, derr := conv.DeleteAgentAllGenerations(tg.convID)

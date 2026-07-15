@@ -353,8 +353,19 @@ credentials in them. Profile payload reads and all mutations require the
 directory for each name under tclaude's cache tree, adds it to that agent's
 writable sandbox paths, and injects the literal path as the variable's value.
 The generated paths are frozen in the launch snapshot: resume and reincarnate
-retain them, while a clone receives fresh directories. A name cannot also have
-a literal `environment` value, and the normal reserved-variable rules apply.
+retain them, while a clone receives fresh directories. Retiring an agent
+deletes all of its generated directory roots; reinstating and resuming that
+agent recreates the declared directories empty at their frozen paths. A name
+cannot also have a literal `environment` value, and the normal reserved-variable
+rules apply.
+
+By default the shared parent root is granted once, so the agent can create,
+rewrite, and delete its own env-var'd directories. Setting
+`features.agent_dirs_mount_parent` to `false` (in the config file or dashboard
+Config tab) restores per-directory grants: the agent can write inside each
+directory but cannot delete the directory itself because its parent is not
+writable. The setting is read at each launch and resume; env-var values are
+unchanged either way.
 At an agent resume boundary, the ordinary global, launch-group, and explicit
 profile values are resolved again from the current registry before the pane is
 started; a running agent is never widened in place. If the launch group is

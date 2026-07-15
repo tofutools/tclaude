@@ -37,16 +37,20 @@ type retireConvOutcome struct {
 // conversation: it unjoins every group (owner rows included), revokes
 // every permission and sudo grant in one transaction, then flips the
 // enrollment bit. The conversation data — the .jsonl, the conv_index row,
-// the worktree —
-// is left completely untouched; this is the non-destructive half of
-// cleanup. Safe on a conv that is already retired or was never an
-// agent: the group/grant revokes are no-ops and Retired comes back
+// the worktree — is left completely untouched; generated agent-owned cache
+// directories are the exception and are removed after a successful transition.
+// A cache cleanup failure is reported separately and does not undo or block the
+// security-sensitive demotion. Safe on a conv that is already retired or was
+// never an agent: the group/grant revokes are no-ops and Retired comes back
 // false. Shared by the /v1 retire verb and the bulk cleanup endpoint.
 //
 // The second return value is the IDs of groups whose owner roster this
 // retire touched — the bulk cleanup uses them for its ownerless-group
 // warning; the /v1 handler ignores them.
 func retireAgentConv(convID, by, reason string) (retireConvOutcome, []int64, error) {
+	launchLock := resumeLaunchLock(convID)
+	launchLock.Lock()
+	defer launchLock.Unlock()
 	cronAuthorityMu.Lock()
 	defer cronAuthorityMu.Unlock()
 	var out retireConvOutcome
@@ -200,6 +204,7 @@ func handleAgentRetire(w http.ResponseWriter, r *http.Request, convID string) {
 	if shutdown {
 		resp["shutdown"] = stopOneConv(convID, false /* soft exit */)
 	}
+	cleanupAgentDirectoriesAfterRetire(convID, shutdown)
 
 	// Worktree+branch cleanup runs only after the agent's process exits
 	// (its cwd is the worktree). scheduleRetireWorktreeCleanup removes

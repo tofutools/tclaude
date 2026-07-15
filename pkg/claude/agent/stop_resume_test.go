@@ -7,10 +7,31 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRunStopPassesAskHumanToDaemon(t *testing.T) {
+	prevAvail, prevReq := DaemonAvailableImpl, DaemonRequestImpl
+	t.Cleanup(func() { DaemonAvailableImpl, DaemonRequestImpl = prevAvail, prevReq })
+	DaemonAvailableImpl = func() bool { return true }
+
+	var gotOpts DaemonOpts
+	DaemonRequestImpl = func(method, path string, _ any, out any, opts DaemonOpts) error {
+		assert.Equal(t, http.MethodPost, method)
+		assert.Equal(t, "/v1/agent/worker/stop", path)
+		gotOpts = opts
+		return json.Unmarshal([]byte(`{"conv_id":"worker-conv","action":"soft_stopped"}`), out)
+	}
+
+	var stdout, stderr bytes.Buffer
+	rc := runStop(&stopParams{Selector: "worker", AskHuman: "30s"}, &stdout, &stderr)
+	require.Equal(t, rcOK, rc, "stderr=%s", stderr.String())
+	assert.Equal(t, 30*time.Second, gotOpts.AskHuman)
+	assert.Contains(t, stdout.String(), "Waiting up to 30s for human approval")
+}
 
 func TestRunResumeAnswersWriteProofChallenge(t *testing.T) {
 	prevAvail, prevReq := DaemonAvailableImpl, DaemonRequestImpl
