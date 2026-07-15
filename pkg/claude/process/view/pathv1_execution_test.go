@@ -67,11 +67,11 @@ nodes:
 	if err != nil {
 		t.Fatal(err)
 	}
-	pending, found, err := pathv1.PendingExclusiveObservation(t.Context(), input)
+	_, found, err = pathv1.PendingExclusiveObservation(t.Context(), input)
 	if err != nil || !found {
 		t.Fatalf("pending observation: found=%v err=%v", found, err)
 	}
-	routed, err := pathv1.AdvanceExclusiveRoute(t.Context(), input, pending)
+	routed, err := pathv1.AdvanceExclusiveRoute(t.Context(), input)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -35,7 +35,7 @@ type exclusiveV7Action struct {
 	transition *pathv1.ExecutionTransition
 	plan       *pathv1.ExclusiveAttemptPlan
 	recover    bool
-	done       *pathv1.CheckpointV7
+	terminal   *pathv1.CheckpointBinding
 }
 
 // Drive advances one closed-gate path-v1 run until it is terminal, blocked on
@@ -49,8 +49,12 @@ func (e *ExclusiveV7Executor) Drive(ctx context.Context, runID string) (*pathv1.
 		if err != nil {
 			return nil, err
 		}
-		if action.done != nil {
-			return action.done, nil
+		if action.terminal != nil {
+			checkpoint, err := e.Store.ReconfirmPathV1Durability(ctx, runID, *action.terminal)
+			if store.IsConflict(err) {
+				continue
+			}
+			return checkpoint, err
 		}
 		if action.plan != nil {
 			checkpoint, blocked, err := e.executeAttempt(ctx, runID, action)
@@ -79,7 +83,8 @@ func (e *ExclusiveV7Executor) nextAction(ctx context.Context, runID string) (exc
 	var action exclusiveV7Action
 	err := e.Store.WithPathV1ExecutionView(ctx, runID, func(view store.PathV1ExecutionView) error {
 		if status := pathv1.CurrentRunStatus(view.Checkpoint); status == "completed" || status == "failed" || status == "canceled" {
-			action.done = view.Checkpoint
+			binding := view.Binding
+			action.terminal = &binding
 			return nil
 		}
 		aggregate, err := pathv1.CurrentAggregateCheckpoint(view.Checkpoint)
@@ -98,12 +103,12 @@ func (e *ExclusiveV7Executor) nextAction(ctx context.Context, runID string) (exc
 			action.plan, action.recover = recovered, true
 			return nil
 		}
-		observation, pending, err := pathv1.PendingExclusiveObservation(ctx, view.Input)
+		_, pending, err := pathv1.PendingExclusiveObservation(ctx, view.Input)
 		if err != nil {
 			return err
 		}
 		if pending {
-			action.transition, err = pathv1.AdvanceExclusiveRoute(ctx, view.Input, observation)
+			action.transition, err = pathv1.AdvanceExclusiveRoute(ctx, view.Input)
 			return err
 		}
 		if _, completeErr := pathv1.AssessAggregateCompletion(aggregate.View()); completeErr == nil {
@@ -144,8 +149,8 @@ func (e *ExclusiveV7Executor) nextAction(ctx context.Context, runID string) (exc
 		if err != nil {
 			return err
 		}
-		if performer := planned.Performer(); performer != nil && performer.Kind == model.PerformerProgram && !view.Run.AllowPrograms {
-			return fmt.Errorf("process run %q does not allow program performers; instantiate it with --allow-programs", runID)
+		if performer := planned.Performer(); performer != nil && performer.Kind == model.PerformerProgram {
+			return fmt.Errorf("path-v1 program performers require immutable audited authority and remain disabled while the schema-v7 gate is closed")
 		}
 		action.plan = planned
 		action.transition, err = pathv1.ClaimExclusiveAttempt(ctx, view.Input, planned)
@@ -220,6 +225,9 @@ func (e *ExclusiveV7Executor) exclusiveRequest(attempt *pathv1.ExclusiveAttemptP
 	performer := attempt.Performer()
 	if performer == nil || command.Identity.Attempt > math.MaxInt {
 		return Request{}, nil, fmt.Errorf("path-v1 command %q has invalid performer request", command.ID)
+	}
+	if performer.Kind == model.PerformerProgram {
+		return Request{}, nil, fmt.Errorf("path-v1 program performers require immutable audited authority and remain disabled while the schema-v7 gate is closed")
 	}
 	adapter := e.Adapters[performer.Kind]
 	if adapter == nil {

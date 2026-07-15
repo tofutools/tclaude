@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 
@@ -497,7 +498,10 @@ func buildExclusiveRouteDraft(ctx context.Context, input *VerifiedExclusiveInput
 		return exclusiveRouteDraft{}, err
 	}
 
-	eventSeq := int64(input.binding.Generation + 1)
+	if CurrentLastLogSeq(input.checkpoint) >= math.MaxInt64 {
+		return exclusiveRouteDraft{}, &OverBudgetError{Limit: "log_entries", Value: math.MaxInt64, Maximum: math.MaxInt64 - 1}
+	}
+	eventSeq := int64(CurrentLastLogSeq(input.checkpoint) + 1)
 	before := Clone(*view.Routing)
 	after := Clone(before)
 	authority := cloneExclusiveAuthority(view.Authority)

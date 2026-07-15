@@ -113,6 +113,12 @@ func ValidateExecutionTransitionForAppend(ctx context.Context, currentBytes, tem
 	if !post.Execution.LogAdvanced && (post.Execution.LastLogSeq != CurrentLastLogSeq(current) || post.Execution.LogChecksum != CurrentLogChecksum(current)) {
 		return pre, nil, nil, fmt.Errorf("%w: log-preserving transition changed completion anchors", ErrMutationInvalid)
 	}
+	if post.Execution.LogAdvanced {
+		currentLogSeq := CurrentLastLogSeq(current)
+		if post.Execution.LastLogSeq <= currentLogSeq || post.Execution.LastLogSeq-currentLogSeq > uint64(MaxRoutingLogEntries) {
+			return pre, nil, nil, fmt.Errorf("%w: log-advancing transition has invalid logical sequence delta", ErrMutationInvalid)
+		}
+	}
 	return pre, postBytes, post, nil
 }
 
@@ -351,6 +357,22 @@ func ObserveExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput,
 	view := aggregate.View()
 	activation := view.Routing.Activations[plan.command.Identity.SourceActivationID]
 	source := view.Routing.Paths[activation.OutputPathID]
+	observation.SourcePathID = source.ID
+	observation.Attempt = plan.command.Identity.Attempt
+	disposition, err := classifyExclusiveObservation(view, input.template, observation)
+	if err != nil {
+		return nil, err
+	}
+	if disposition == ExclusiveRouteReady {
+		node := input.template.Nodes[plan.nodeID]
+		outgoing, err := exactOutgoingEdges(view.TemplateRef, plan.nodeID, node.Next)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := resolveExclusiveEdge(node, observation.Outcome, outgoing); err != nil {
+			return nil, err
+		}
+	}
 	observedPerform := cloneCommandRecord(plan.command)
 	observedPerform.State = CommandObserved
 	if recovered {
@@ -388,8 +410,6 @@ func ObserveExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput,
 	effect := aggregate.SideEffects[effectID]
 	effect.State = "observed"
 	aggregate.SideEffects[effectID] = effect
-	observation.SourcePathID = source.ID
-	observation.Attempt = plan.command.Identity.Attempt
 	if _, _, _, err := observedAttemptCommands(aggregate.View(), plan.nodeID, input.template.Nodes[plan.nodeID], source, observation); err != nil {
 		return nil, err
 	}
@@ -462,9 +482,22 @@ func PendingExclusiveObservation(ctx context.Context, input *VerifiedExclusiveIn
 	return pending, found, nil
 }
 
-// AdvanceExclusiveRoute deterministically folds one observed exclusive result
-// through route, local DPE, activation, and a directly reached end node.
-func AdvanceExclusiveRoute(ctx context.Context, input *VerifiedExclusiveInput, observation ExclusiveObservation) (*ExecutionTransition, error) {
+// AdvanceExclusiveRoute deterministically derives the sole pending durable
+// observation from the verified checkpoint, then folds it through route,
+// local DPE, activation, and a directly reached end node. Callers cannot
+// supply observation authority to this persistence-authorizing constructor.
+func AdvanceExclusiveRoute(ctx context.Context, input *VerifiedExclusiveInput) (*ExecutionTransition, error) {
+	observation, found, err := PendingExclusiveObservation(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("%w: no pending durable observation is routable", ErrExclusiveNotRoutable)
+	}
+	return advanceExclusiveRoute(ctx, input, observation)
+}
+
+func advanceExclusiveRoute(ctx context.Context, input *VerifiedExclusiveInput, observation ExclusiveObservation) (*ExecutionTransition, error) {
 	route, err := PlanExclusiveRoute(ctx, input, observation)
 	if err != nil {
 		return nil, err
@@ -503,11 +536,97 @@ func AdvanceExclusiveRoute(ctx context.Context, input *VerifiedExclusiveInput, o
 			return nil, err
 		}
 	}
-	next, err := advanceCheckpointV7(input.checkpoint, projection.aggregate, CurrentRunStatus(input.checkpoint))
+	lastLogSeq, err := aggregateLogicalLastSeq(projection.aggregate)
+	if err != nil {
+		return nil, err
+	}
+	next, err := advanceCheckpointV7To(input.checkpoint, projection.aggregate, CurrentRunStatus(input.checkpoint), lastLogSeq)
 	if err != nil {
 		return nil, err
 	}
 	return newExecutionTransition(input.checkpoint, next, "route_observation")
+}
+
+func aggregateLogicalLastSeq(aggregate AggregateCheckpoint) (uint64, error) {
+	var maximum int64
+	add := func(sequence int64) error {
+		if sequence < 0 {
+			return fmt.Errorf("%w: negative aggregate event sequence", ErrMutationInconsistent)
+		}
+		if sequence > maximum {
+			maximum = sequence
+		}
+		return nil
+	}
+	for _, path := range aggregate.Routing.Paths {
+		for _, sequence := range []int64{path.CreatedSeq, path.UpdatedSeq, path.ArrivedSeq} {
+			if err := add(sequence); err != nil {
+				return 0, err
+			}
+		}
+		if path.Disposition != nil {
+			if err := add(path.Disposition.EventSeq); err != nil {
+				return 0, err
+			}
+		}
+		if path.DetachedSink != nil {
+			if err := add(path.DetachedSink.EventSeq); err != nil {
+				return 0, err
+			}
+		}
+	}
+	for _, scope := range aggregate.Routing.Scopes {
+		if err := add(scope.EventSeq); err != nil {
+			return 0, err
+		}
+	}
+	for _, reservation := range aggregate.Routing.Reservations {
+		if err := add(reservation.EventSeq); err != nil {
+			return 0, err
+		}
+		if reservation.CloseReceipt != nil {
+			if err := add(reservation.CloseReceipt.EventSeq); err != nil {
+				return 0, err
+			}
+		}
+	}
+	for _, activation := range aggregate.Routing.Activations {
+		if err := add(activation.EventSeq); err != nil {
+			return 0, err
+		}
+		if err := add(activation.Receipt.EventSeq); err != nil {
+			return 0, err
+		}
+	}
+	for _, cause := range aggregate.Routing.CauseRecords {
+		if err := add(cause.EventSeq); err != nil {
+			return 0, err
+		}
+	}
+	for _, closure := range aggregate.Routing.CandidateClosures {
+		if err := add(closure.EventSeq); err != nil {
+			return 0, err
+		}
+	}
+	for _, detachment := range aggregate.Routing.Detachments {
+		if err := add(detachment.EventSeq); err != nil {
+			return 0, err
+		}
+		if err := add(detachment.ActivatedSeq); err != nil {
+			return 0, err
+		}
+	}
+	for _, propagation := range aggregate.Routing.Propagation {
+		if err := add(propagation.EventSeq); err != nil {
+			return 0, err
+		}
+	}
+	for _, admin := range aggregate.AdminRecords {
+		if err := add(admin.EventSeq); err != nil {
+			return 0, err
+		}
+	}
+	return uint64(maximum), nil
 }
 
 // AdvanceExclusiveStart routes an instantaneous start node without creating
@@ -527,7 +646,7 @@ func AdvanceExclusiveStart(ctx context.Context, input *VerifiedExclusiveInput, s
 	if !ok || source.State != PathLive || !nodeOK || node.Type != model.NodeTypeStart {
 		return nil, fmt.Errorf("%w: source is not a live instantaneous start", ErrExclusiveUnsupported)
 	}
-	return AdvanceExclusiveRoute(ctx, input, ExclusiveObservation{SourcePathID: sourcePathID, Attempt: 1, Outcome: "pass"})
+	return advanceExclusiveRoute(ctx, input, ExclusiveObservation{SourcePathID: sourcePathID, Attempt: 1, Outcome: "pass"})
 }
 
 func completionReplayView(checkpoint *CheckpointV7, aggregate AggregateCheckpoint, selfCommandID string) (CompletionReplayView, error) {

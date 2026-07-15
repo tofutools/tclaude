@@ -51,6 +51,20 @@ func TestPathV1ExecutionViewAndAppendExactReplayCAS(t *testing.T) {
 	}))
 }
 
+func TestInitializePathV1ReplayAcceptsAuthenticatedMutableExecutionHead(t *testing.T) {
+	fs, runID, initial := initializedPathV1ExecutionRun(t)
+	_, claim := planPathV1Claim(t, fs, runID)
+	applied, err := fs.AppendPathV1(t.Context(), runID, claim)
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), pathv1.CheckpointRevision(applied.Checkpoint))
+
+	replayed, err := fs.InitializePathV1(t.Context(), runID, initial.Initialize.UpgradeNeeded)
+	require.NoError(t, err)
+	assert.Equal(t, pathv1.InitializationAlreadyApplied, replayed.Disposition)
+	assert.Equal(t, applied.Binding, pathv1.CurrentCheckpointBinding(replayed.Checkpoint))
+	assert.Equal(t, uint64(1), pathv1.CheckpointRevision(replayed.Checkpoint))
+}
+
 func TestPathV1AppendCrashBoundariesAndAmbiguousAcknowledgement(t *testing.T) {
 	t.Run("before rename", func(t *testing.T) {
 		fs, runID, _ := initializedPathV1ExecutionRun(t)

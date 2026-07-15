@@ -118,14 +118,26 @@ func CurrentAggregateCheckpoint(checkpoint *CheckpointV7) (AggregateCheckpoint, 
 // aggregate is not persistence authority. Only exact planner/reducer
 // constructors may wrap its result in a sealed ExecutionTransition.
 func advanceCheckpointV7(checkpoint *CheckpointV7, aggregate AggregateCheckpoint, status string) (*CheckpointV7, error) {
-	return advanceCheckpointV7WithLog(checkpoint, aggregate, status, true)
+	current := CurrentLastLogSeq(checkpoint)
+	if current >= math.MaxInt64 {
+		return nil, &OverBudgetError{Limit: "log_entries", Value: math.MaxInt64, Maximum: math.MaxInt64 - 1}
+	}
+	target := current + 1
+	aggregateLast, err := aggregateLogicalLastSeq(aggregate)
+	if err != nil {
+		return nil, err
+	}
+	if aggregateLast > target {
+		target = aggregateLast
+	}
+	return advanceCheckpointV7To(checkpoint, aggregate, status, target)
 }
 
 func advanceCheckpointV7PreservingLog(checkpoint *CheckpointV7, aggregate AggregateCheckpoint, status string) (*CheckpointV7, error) {
-	return advanceCheckpointV7WithLog(checkpoint, aggregate, status, false)
+	return advanceCheckpointV7To(checkpoint, aggregate, status, CurrentLastLogSeq(checkpoint))
 }
 
-func advanceCheckpointV7WithLog(checkpoint *CheckpointV7, aggregate AggregateCheckpoint, status string, logAdvanced bool) (*CheckpointV7, error) {
+func advanceCheckpointV7To(checkpoint *CheckpointV7, aggregate AggregateCheckpoint, status string, lastLogSeq uint64) (*CheckpointV7, error) {
 	if err := ValidateCheckpointV7(checkpoint); err != nil {
 		return nil, err
 	}
@@ -149,16 +161,31 @@ func advanceCheckpointV7WithLog(checkpoint *CheckpointV7, aggregate AggregateChe
 	if CheckpointRevision(checkpoint) == math.MaxUint64 || current.Generation >= math.MaxInt64 {
 		return nil, &OverBudgetError{Limit: "execution_revision", Value: math.MaxInt64, Maximum: math.MaxInt64 - 1}
 	}
+	currentLogSeq := CurrentLastLogSeq(checkpoint)
+	if lastLogSeq < currentLogSeq || lastLogSeq > math.MaxInt64 {
+		return nil, fmt.Errorf("%w: invalid logical log sequence %d after %d", ErrMutationInvalid, lastLogSeq, currentLogSeq)
+	}
+	delta := lastLogSeq - currentLogSeq
+	if delta > uint64(MaxRoutingLogEntries) {
+		return nil, &OverBudgetError{Limit: "log_entries", Value: int(delta), Maximum: MaxRoutingLogEntries}
+	}
+	aggregateLast, err := aggregateLogicalLastSeq(aggregate)
+	if err != nil {
+		return nil, err
+	}
+	if aggregateLast > lastLogSeq {
+		return nil, fmt.Errorf("%w: aggregate event sequence %d exceeds logical checkpoint sequence %d", ErrMutationInvalid, aggregateLast, lastLogSeq)
+	}
+	logAdvanced := delta > 0
 	execution := &ExecutionCheckpoint{
 		Revision:       CheckpointRevision(checkpoint) + 1,
 		PreviousDigest: current.Digest,
 		Status:         status,
 		LogAdvanced:    logAdvanced,
-		LastLogSeq:     CurrentLastLogSeq(checkpoint),
+		LastLogSeq:     lastLogSeq,
 		Aggregate:      aggregate,
 	}
 	if logAdvanced {
-		execution.LastLogSeq++
 		checksum, err := executionLogChecksum(execution)
 		if err != nil {
 			return nil, err
@@ -251,9 +278,8 @@ func validateExecutionCheckpoint(checkpoint *CheckpointV7, genesisDigest string)
 	if execution == nil {
 		return fmt.Errorf("%w: execution checkpoint is absent", ErrInitializationInvalid)
 	}
-	maximumLogSeq := uint64(checkpoint.Initialize.EventSeq) + execution.Revision
 	if execution.Revision == 0 || execution.PreviousDigest == "" || !canonicalDigest(execution.PreviousDigest) ||
-		!runtimeStatusValid(execution.Status) || execution.LastLogSeq < uint64(checkpoint.Initialize.EventSeq) || execution.LastLogSeq > maximumLogSeq {
+		!runtimeStatusValid(execution.Status) || execution.LastLogSeq < uint64(checkpoint.Initialize.EventSeq) || execution.LastLogSeq > math.MaxInt64 {
 		return fmt.Errorf("%w: execution revision metadata is invalid", ErrInitializationInvalid)
 	}
 	if execution.Revision == 1 && execution.PreviousDigest != genesisDigest {
@@ -265,6 +291,10 @@ func validateExecutionCheckpoint(checkpoint *CheckpointV7, genesisDigest string)
 	}
 	if report := ValidateAggregate(execution.Aggregate.View()); !report.Valid() {
 		return fmt.Errorf("%w: execution aggregate diagnostics=%v (%d suppressed)", ErrInitializationInvalid, report.Diagnostics, report.Suppressed)
+	}
+	aggregateLast, err := aggregateLogicalLastSeq(execution.Aggregate)
+	if err != nil || aggregateLast > execution.LastLogSeq {
+		return fmt.Errorf("%w: execution aggregate exceeds logical log sequence", ErrInitializationInvalid)
 	}
 	if execution.LogAdvanced {
 		wantChecksum, err := executionLogChecksum(execution)

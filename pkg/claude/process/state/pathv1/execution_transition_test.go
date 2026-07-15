@@ -1,12 +1,110 @@
 package pathv1
 
 import (
+	"bytes"
 	"errors"
 	"reflect"
 	"testing"
 
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 )
+
+func TestObserveExclusiveAttemptRejectsDecisionTypoBeforeTransition(t *testing.T) {
+	source := []byte(`apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: reject-decision-typo
+start: choose
+nodes:
+  choose:
+    type: decision
+    performer: {kind: human, ask: Choose}
+    next: {ship: shipped, hold: held}
+  shipped: {type: end}
+  held: {type: end}
+`)
+	genesisBytes := initializedExclusiveCheckpoint(t, source)
+	input, err := VerifyExclusiveInput(t.Context(), genesisBytes, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	genesis, err := DecodeCheckpointV7(genesisBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aggregate, err := CurrentAggregateCheckpoint(genesis)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanExclusiveAttempt(t.Context(), input, aggregate.Authority.Genesis.OutputPathID, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := ClaimExclusiveAttempt(t.Context(), input, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, claimedBytes, claimed, err := ValidateExecutionTransitionForAppend(t.Context(), genesisBytes, source, claim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeBytes := bytes.Clone(claimedBytes)
+	beforeBinding := CurrentCheckpointBinding(claimed)
+	claimedInput, err := VerifyExclusiveInput(t.Context(), claimedBytes, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovered, found, err := RecoverExclusiveAttempt(t.Context(), claimedInput)
+	if err != nil || !found {
+		t.Fatalf("recover claim: found=%v err=%v", found, err)
+	}
+	transition, err := ObserveExclusiveAttempt(t.Context(), claimedInput, recovered, ExclusiveObservation{Outcome: "shpi", Actor: "human:operator"}, false)
+	if !errors.Is(err, ErrExclusiveUnsupported) || transition != nil {
+		t.Fatalf("typo observation transition=%#v error=%v", transition, err)
+	}
+	after, err := DecodeCheckpointV7(claimedBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(claimedBytes, beforeBytes) || CurrentCheckpointBinding(after) != beforeBinding {
+		t.Fatal("invalid verdict changed checkpoint bytes or binding")
+	}
+}
+
+func TestAdvanceExclusiveRouteCannotSynthesizeTaskObservation(t *testing.T) {
+	source := []byte(`apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: reject-synthetic-route
+start: work
+nodes:
+  work:
+    type: task
+    performer: {kind: agent, prompt: work}
+    next: {pass: done}
+  done: {type: end}
+`)
+	checkpointBytes := initializedExclusiveCheckpoint(t, source)
+	input, err := VerifyExclusiveInput(t.Context(), checkpointBytes, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transition, err := AdvanceExclusiveRoute(t.Context(), input)
+	if !errors.Is(err, ErrExclusiveNotRoutable) || transition != nil {
+		t.Fatalf("fresh task synthesized route transition=%#v error=%v", transition, err)
+	}
+	checkpoint, err := DecodeCheckpointV7(checkpointBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aggregate, err := CurrentAggregateCheckpoint(checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range aggregate.Commands {
+		if command.Identity.Kind == CommandPerformAttempt || command.Identity.Kind == CommandSettleAttempt {
+			t.Fatalf("fresh task gained performer authority: %#v", command)
+		}
+	}
+}
 
 func TestExclusiveAttemptPlanPerformerIsDeeplyDetached(t *testing.T) {
 	source := []byte(`apiVersion: tclaude.dev/v1alpha1

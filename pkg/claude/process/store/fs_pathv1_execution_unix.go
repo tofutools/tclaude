@@ -224,6 +224,58 @@ func (s *FS) AppendPathV1(ctx context.Context, runID string, transition *pathv1.
 	return result, nil
 }
 
+// ReconfirmPathV1Durability verifies the exact current terminal checkpoint
+// under the run/template lock order and fsyncs its held run directory. The
+// dormant executor uses this after an ambiguous terminal rename so visibility
+// alone is never reported as durable success.
+func (s *FS) ReconfirmPathV1Durability(ctx context.Context, runID string, expected pathv1.CheckpointBinding) (*pathv1.CheckpointV7, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := expected.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid expected path-v1 binding: %w", err)
+	}
+	if err := safeSegment(runID); err != nil {
+		return nil, fmt.Errorf("invalid run id: %w", err)
+	}
+	unlockRun, err := s.lockRun(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer unlockRun()
+	var checkpoint *pathv1.CheckpointV7
+	err = s.withPathV1ExecutionViewRunLocked(ctx, runID, func(view PathV1ExecutionView) error {
+		if view.Binding != expected {
+			return &ConflictError{RunID: runID, ExpectedSeq: int64(expected.Generation), ActualSeq: int64(view.Binding.Generation)}
+		}
+		runDir, err := s.openPathV1InitializationRunDir(runID)
+		if err != nil {
+			return err
+		}
+		defer runDir.Close()
+		current, err := readPathV1InitializationStateAt(ctx, runDir, s.newExecutionViewBudget(ctx))
+		if err != nil {
+			return err
+		}
+		if !bytes.Equal(current, view.CheckpointJSON) {
+			return &ConflictError{RunID: runID, ExpectedSeq: int64(expected.Generation), ActualSeq: int64(view.Binding.Generation)}
+		}
+		if err := s.requirePathV1RunDirCurrent(runID, runDir); err != nil {
+			return err
+		}
+		if err := s.syncPathV1AppendDir(runDir); err != nil {
+			return err
+		}
+		encoded, err := pathv1.EncodeCheckpointV7(view.Checkpoint)
+		if err != nil {
+			return err
+		}
+		checkpoint, err = pathv1.DecodeCheckpointV7(encoded)
+		return err
+	})
+	return checkpoint, err
+}
+
 func (s *FS) syncPathV1AppendDir(dir *os.File) error {
 	if s.pathV1AppendDirSync != nil {
 		if err := s.pathV1AppendDirSync(); err != nil {
