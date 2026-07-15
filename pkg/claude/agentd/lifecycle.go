@@ -1029,8 +1029,8 @@ func bulkRetireGroupMembers(g *db.AgentGroup, caller, reason string, shutdown, d
 	}
 	by := enrollmentActor(caller)
 
-	// Normalize an explicit selection to canonical conv-ids. The dashboard
-	// now submits agent_ids (the conv_id phase-out), but a selector may be
+	// Normalize an explicit selection to canonical conv-ids. The group preview
+	// deliberately submits canonical conv_id values, but a selector may also be
 	// an agt_ id, a live conv-id, or a UUID-shaped reference to a dangling
 	// agent. resolveCleanupConv maps agt_/conv to the conv-id the member
 	// universe (m.ConvID) is keyed on, and KEEPS a raw UUID-shaped fallback
