@@ -18,25 +18,34 @@ func TestDashboardLinksPreactOwnership(t *testing.T) {
 
 	island := read("js/links-island.js")
 	state := read("js/links-state.js")
+	actions := read("js/links-actions.js")
+	controller := read("js/links-controller.js")
 	loader := read("js/preact-loader.js")
 	dashboard := read("js/dashboard.js")
+	html := read("dashboard.html")
 	tabs := read("js/tabs.js")
+	rowActions := read("js/row-actions.js")
 	legacyModal := read("js/modal-link-wt.js")
 
 	for _, needle := range []string{
 		"export function LinksControls(",
 		"export function LinksList(",
+		"function LinksManager(",
+		"function LinkEditor(",
+		`id="links-manage-modal"`,
+		`id="link-modal"`,
 		"key=${String(link.id)}",
-		`data-act="link-edit"`,
-		`data-act="link-delete"`,
-		"onClick=${openCreate}",
+		"onClick=${() => actions.openCreate()}",
+		"onClick=${() => actions.openEdit(",
+		"onClick=${() => remove(link)}",
 		"onClick=${() => state.cycleSort(column.col)}",
+		"registerLinksController(actions)",
 	} {
 		if !strings.Contains(island, needle) {
 			t.Errorf("links-island.js missing %q", needle)
 		}
 	}
-	for _, forbidden := range []string{"innerHTML", "morphInto", "fetch(", "./refresh.js"} {
+	for _, forbidden := range []string{"innerHTML", "morphInto", "fetch(", "./refresh.js", `data-act="link-edit"`, `data-act="link-delete"`} {
 		if strings.Contains(island+state, forbidden) {
 			t.Errorf("Links bounded owner contains forbidden legacy dependency %q", forbidden)
 		}
@@ -46,6 +55,9 @@ func TestDashboardLinksPreactOwnership(t *testing.T) {
 		"computed(() =>",
 		"persistTableSort",
 		"prefs.setItem(FILTER_KEY, next)",
+		"managerOpen = signal(false)",
+		"editor = signal(null)",
+		"if (editor.value) return false",
 	} {
 		if !strings.Contains(state, needle) {
 			t.Errorf("links-state.js missing %q", needle)
@@ -53,27 +65,70 @@ func TestDashboardLinksPreactOwnership(t *testing.T) {
 	}
 	for _, needle := range []string{
 		"const linksDescriptor = createIslandDescriptor({",
-		"filterHost: '#links-filter-root'",
-		"listHost: '#links-list'",
+		"host: '#links-feature-root'",
 		"mountLinksFeature",
-		"openCreate: dependencies.openCreate",
+		"createLinksActions",
+		"confirmDiscard: dependencies.confirmDiscard",
 	} {
 		if !strings.Contains(loader, needle) {
 			t.Errorf("preact-loader.js missing Links ownership contract %q", needle)
 		}
 	}
-	if !strings.Contains(dashboard, "mountLinksFeature({ openCreate: () => openLinkModal({ mode: 'create' }) })") {
+	if !strings.Contains(dashboard, "mountLinksFeature({") || !strings.Contains(dashboard, "words: wizWord") {
 		t.Error("dashboard bootstrap does not mount the Links island")
+	}
+	for _, needle := range []string{
+		"export function createLinksActions(",
+		"async createLink(",
+		"async updateLink(",
+		"async deleteLink(",
+		"await refresh()",
+	} {
+		if !strings.Contains(actions, needle) {
+			t.Errorf("links-actions.js missing plain mutation boundary %q", needle)
+		}
+	}
+	for _, forbidden := range []string{"document.", "querySelector", "innerHTML"} {
+		if strings.Contains(actions, forbidden) {
+			t.Errorf("plain Links actions retain DOM dependency %q", forbidden)
+		}
+	}
+	for _, needle := range []string{
+		"registerLinksController", "openLinksManager", "openLinkCreate", "openLinkEdit", "deleteLink",
+	} {
+		if !strings.Contains(controller, needle) {
+			t.Errorf("links-controller.js missing delegated launcher seam %q", needle)
+		}
+	}
+	if !strings.Contains(html, `<div id="links-feature-root"></div>`) {
+		t.Error("dashboard does not expose the exclusive Links feature host")
+	}
+	for _, forbidden := range []string{`<div class="manage-overlay" id="links-manage-modal">`, `<div class="modal-overlay" id="link-modal">`} {
+		if strings.Contains(html, forbidden) {
+			t.Errorf("static Links dialog markup remains: %q", forbidden)
+		}
 	}
 	if !strings.Contains(tabs, "featureState('links')?.publish(lastSnapshot)") {
 		t.Error("legacy Links adapter does not publish into the bounded island")
 	}
-	for _, forbidden := range []string{"bindFilter('links')", "bindSortHeaders", "renderLinks("} {
+	for _, forbidden := range []string{"bindFilter('links')", "bindSortHeaders", "renderLinks(", "bindLinkModal", "openLinkModal"} {
 		if strings.Contains(dashboard+tabs, forbidden) {
 			t.Errorf("legacy Links ownership remains: %q", forbidden)
 		}
 	}
-	if strings.Contains(legacyModal, "$('#link-new-open')") {
-		t.Error("legacy modal bootstrap still requires the optional island-owned create control")
+	for _, forbidden := range []string{"link-modal", "links-manage", "openLinkModal", "submitLinkModal", "bindLinkModal"} {
+		if strings.Contains(legacyModal, forbidden) {
+			t.Errorf("modal-link-wt.js retains retired Links controller %q", forbidden)
+		}
+	}
+	for _, needle := range []string{"WT_NEW", "wtToggleNew", "wtLoad", "bindWtPicker", "wtResolve", "wtResolveCwd"} {
+		if !strings.Contains(legacyModal, needle) {
+			t.Errorf("modal-link-wt.js lost unrelated worktree picker export %q", needle)
+		}
+	}
+	for _, needle := range []string{"openLinkCreate({ from })", "openLinksManager()", "openLinkEdit({ id, from, to, mode })", "await deleteLink({ id, from, to, scope })"} {
+		if !strings.Contains(rowActions, needle) {
+			t.Errorf("delegated group launcher does not use Links controller: %q", needle)
+		}
 	}
 }
