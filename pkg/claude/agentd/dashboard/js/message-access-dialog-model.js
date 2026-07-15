@@ -80,7 +80,14 @@ export function permissionSeed(snapshot, descriptor) {
 function membershipGroups(snapshot, descriptor) {
   if (descriptor.mode === 'agent') {
     const agent = (snapshot?.agents || []).find((item) => item.conv_id === descriptor.conv);
-    return agent?.groups || [];
+    const groups = new Set(agent?.groups || []);
+    for (const group of snapshot?.groups || []) {
+      if ((group.members || []).some((member) =>
+        (agent?.agent_id && member.agent_id === agent.agent_id) || member.conv_id === descriptor.conv)) {
+        groups.add(group.name);
+      }
+    }
+    return [...groups];
   }
   if (descriptor.mode === 'buffer' && descriptor.group && descriptor.group !== 'the spawn group') {
     return [descriptor.group];
@@ -117,4 +124,3 @@ export function permissionRows(snapshot, descriptor, selection) {
     return { ...slug, effect, granted, sources, ownedGroups, inDefault: defaults.has(slug.slug) };
   });
 }
-
