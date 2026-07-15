@@ -92,7 +92,7 @@ func TestTemplateExportImport_RoundTrip(t *testing.T) {
 	var env exportEnvelope
 	testharness.DecodeJSON(t, rec, &env)
 	assert.Equal(t, "tclaude-task-force", env.Format, "envelope format tag")
-	assert.Equal(t, 2, env.FormatVersion, "envelope format version")
+	assert.Equal(t, 3, env.FormatVersion, "envelope format version")
 	assert.NotEmpty(t, env.ExportedAt, "exported_at provenance stamp")
 	// Machine-local identity is stripped from the blueprint.
 	assert.Empty(t, env.Template.CreatedAt, "created_at stripped from export")
@@ -129,6 +129,39 @@ func TestTemplateExportImport_RoundTrip(t *testing.T) {
 	assert.Equal(t, "lead", got.WorkPattern[0].SendTo)
 	assert.Equal(t, "Kick off: {{task}}", got.WorkPattern[0].Value, "{{task}} placeholder survives export/import")
 	assert.Equal(t, "all", got.WorkPattern[1].SendTo)
+}
+
+func TestTemplateExportImport_ProfileInlineRoundTrip(t *testing.T) {
+	f := newFlow(t)
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
+		"name": "inline-origin",
+		"agents": []map[string]any{{
+			"name": "worker", "profile_inline": map[string]any{
+				"model": "haiku", "remote_control": false,
+			},
+		}},
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "create: %s", rec.Body.String())
+
+	rec = humanReq(t, f, http.MethodGet, "/v1/templates/inline-origin/export", nil)
+	require.Equalf(t, http.StatusOK, rec.Code, "export: %s", rec.Body.String())
+	var env map[string]any
+	testharness.DecodeJSON(t, rec, &env)
+	template := env["template"].(map[string]any)
+	agents := template["agents"].([]any)
+	inline := agents[0].(map[string]any)["profile_inline"].(map[string]any)
+	assert.NotContains(t, inline, "disabled", "registry-only disabled state must stay absent")
+
+	rec = humanReq(t, f, http.MethodPost, "/v1/templates/import?as=inline-clone", env)
+	require.Equalf(t, http.StatusCreated, rec.Code, "import: %s", rec.Body.String())
+	rec = humanReq(t, f, http.MethodGet, "/v1/templates/inline-clone", nil)
+	require.Equalf(t, http.StatusOK, rec.Code, "fetch clone: %s", rec.Body.String())
+	var cloned map[string]any
+	testharness.DecodeJSON(t, rec, &cloned)
+	clonedAgents := cloned["agents"].([]any)
+	clonedInline := clonedAgents[0].(map[string]any)["profile_inline"].(map[string]any)
+	assert.Equal(t, "haiku", clonedInline["model"])
+	assert.Equal(t, false, clonedInline["remote_control"])
 }
 
 // TestTemplateImport_CollisionRequiresUpdate: importing over an existing

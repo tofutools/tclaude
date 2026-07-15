@@ -54,7 +54,7 @@ func TestProcessAgentSpawnParams_ResolvesProfileAlias(t *testing.T) {
 func TestProcessAgentSpawnParams_RejectsDisabledProfile(t *testing.T) {
 	setupTestDB(t)
 	_, err := db.CreateSpawnProfile(&db.SpawnProfile{
-		Name: "paused", DisabledReason: "provider maintenance", Harness: "codex",
+		Name: "paused", Disabled: true, DisabledReason: "provider maintenance", Harness: "codex",
 	})
 	require.NoError(t, err)
 	_, err = processAgentSpawnParams(processexec.Request{

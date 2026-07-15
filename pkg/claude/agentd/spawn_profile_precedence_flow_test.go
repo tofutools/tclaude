@@ -139,7 +139,7 @@ func TestDisabledSpawnProfilesBlockEveryDefaultTier(t *testing.T) {
 			f := newFlow(t)
 			f.HaveGroup("alpha")
 			require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
-				"name": "paused", "disabled_reason": "vendor outage until 18:00 UTC",
+				"name": "paused", "disabled": true, "disabled_reason": "vendor outage until 18:00 UTC",
 			}).Code)
 			tc.setup(t, f)
 
@@ -149,6 +149,17 @@ func TestDisabledSpawnProfilesBlockEveryDefaultTier(t *testing.T) {
 			assert.Contains(t, string(spawn.Raw), `spawn profile \"paused\" is disabled: vendor outage until 18:00 UTC`)
 		})
 	}
+}
+
+func TestEnabledSpawnProfileWithRememberedReasonCanSpawn(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "restored", "disabled": false, "disabled_reason": "previous provider outage",
+	}).Code)
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{"name": "worker", "profile": "restored"})
+	assert.Equal(t, http.StatusOK, spawn.Code, "remembered reason must not act as the disable switch")
 }
 
 func TestSpawnProfilePrecedence_ExplicitProfileAliasWinsAndIsDisclosed(t *testing.T) {

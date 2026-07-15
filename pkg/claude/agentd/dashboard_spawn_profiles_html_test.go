@@ -67,6 +67,8 @@ func TestDashboardHTML_SpawnProfilesUI(t *testing.T) {
 	present(`id="profile-editor-disabled"`, "the editor can disable a profile without deleting it")
 	present(`id="profile-editor-disabled-reason"`, "the editor captures the reason shown on failed spawns")
 	present(`profile-card-disabled`, "disabled profiles stay visible and visibly marked in the manager")
+	present(`🚫 Disabled`, "disabled profile cards use an unmistakable prohibition marker")
+	present(`profile.disabled ?`, "profile selectors key their warning marker from the explicit disabled state")
 	present(`id=${profile ? 'profile-editor-harness'`, "the editor's harness selector")
 	present(`id="profile-editor-submit"`, "the editor's Save button")
 	present(`function ProfileExport(`, "profile export component")

@@ -48,8 +48,9 @@ import (
 type spawnProfileJSON struct {
 	Name    string   `json:"name"`
 	Aliases []string `json:"aliases,omitempty"`
-	// DisabledReason is empty when the profile is enabled. A non-empty reason
-	// preserves the profile for management/references while blocking its use.
+	// Disabled is the authoritative spawn gate. DisabledReason is remembered
+	// independently so enabling does not discard the operator's explanation.
+	Disabled       *bool  `json:"disabled,omitempty"`
 	DisabledReason string `json:"disabled_reason,omitempty"`
 
 	// Launch fields — overlap clcommon.SpawnArgs.
@@ -93,9 +94,11 @@ type spawnProfileJSON struct {
 
 // profileToJSON projects a db.SpawnProfile onto the wire shape.
 func profileToJSON(p *db.SpawnProfile) spawnProfileJSON {
+	disabled := p.Disabled
 	out := spawnProfileJSON{
 		Name:                       p.Name,
 		Aliases:                    append([]string{}, p.Aliases...),
+		Disabled:                   &disabled,
 		DisabledReason:             p.DisabledReason,
 		Harness:                    p.Harness,
 		Model:                      p.Model,
@@ -122,6 +125,16 @@ func profileToJSON(p *db.SpawnProfile) spawnProfileJSON {
 	if !p.UpdatedAt.IsZero() {
 		out.UpdatedAt = p.UpdatedAt.Format(time.RFC3339)
 	}
+	return out
+}
+
+// profileInlineToJSON projects a template-local profile. Disabled state only
+// belongs to saved registry profiles, so it must remain absent from this wire
+// shape; buildInlineProfileFromJSON deliberately rejects the field when set.
+func profileInlineToJSON(p *db.SpawnProfile) spawnProfileJSON {
+	out := profileToJSON(p)
+	out.Disabled = nil
+	out.DisabledReason = ""
 	return out
 }
 
@@ -179,6 +192,14 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 	if len(disabledReason) > maxProfileDisabledReasonBytes {
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg", fmt.Sprintf(
 			"disabled_reason must be at most %d bytes", maxProfileDisabledReasonBytes)}
+	}
+	disabled := disabledReason != "" // compatibility for pre-v122 clients/files
+	if body.Disabled != nil {
+		disabled = *body.Disabled
+	}
+	if disabled && disabledReason == "" {
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+			"disabled_reason is required when disabled is true"}
 	}
 
 	// Resolve the profile's harness — empty means Claude (the default), an
@@ -268,6 +289,7 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 	return &db.SpawnProfile{
 		Name:                       name,
 		Aliases:                    aliases,
+		Disabled:                   disabled,
 		DisabledReason:             disabledReason,
 		Harness:                    hName,
 		Model:                      model,
@@ -310,9 +332,9 @@ func buildInlineProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawn
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
 			"profile_inline: a template-local profile has no name — use spawn_profile to reference a registry profile by name"}
 	}
-	if strings.TrimSpace(body.DisabledReason) != "" {
+	if body.Disabled != nil || strings.TrimSpace(body.DisabledReason) != "" {
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
-			"profile_inline: disabled_reason is only valid on a saved spawn profile"}
+			"profile_inline: disabled state is only valid on a saved spawn profile"}
 	}
 	switch {
 	case strings.TrimSpace(body.AgentName) != "":
@@ -351,13 +373,17 @@ func normalizeProfileDisabledReason(reason string) string {
 }
 
 func disabledProfileFailure(p *db.SpawnProfile) *spawnFailure {
-	if p == nil || strings.TrimSpace(p.DisabledReason) == "" {
+	if p == nil || !p.Disabled {
 		return nil
+	}
+	reason := strings.TrimSpace(p.DisabledReason)
+	if reason == "" {
+		reason = "no reason provided"
 	}
 	return &spawnFailure{
 		Status: http.StatusConflict,
 		Kind:   "profile_disabled",
-		Msg:    fmt.Sprintf("spawn profile %q is disabled: %s", p.Name, p.DisabledReason),
+		Msg:    fmt.Sprintf("spawn profile %q is disabled: %s", p.Name, reason),
 	}
 }
 
@@ -402,9 +428,10 @@ func handleSpawnProfiles(w http.ResponseWriter, r *http.Request) {
 		}
 		p.ID = id
 		writeJSON(w, http.StatusCreated, map[string]any{
-			"id":      id,
-			"name":    p.Name,
-			"profile": profileToJSON(p),
+			"id":                         id,
+			"name":                       p.Name,
+			"supports_explicit_disabled": true,
+			"profile":                    profileToJSON(p),
 		})
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET or POST")
@@ -514,7 +541,7 @@ func handleSpawnProfileFromAgent(w http.ResponseWriter, r *http.Request) {
 
 const (
 	profileExportFormat  = "tclaude-spawn-profiles"
-	profileExportVersion = 3
+	profileExportVersion = 4
 )
 
 type profileExportEnvelope struct {
@@ -580,6 +607,32 @@ func stripProfileExportLocalFields(p spawnProfileJSON) spawnProfileJSON {
 	p.CreatedAt = ""
 	p.UpdatedAt = ""
 	return p
+}
+
+// normalizeLegacyProfileDisabledState preserves the safety semantics of older
+// bundles, where a non-empty reason itself was the disable switch. Callers pass
+// the first format version that writes an independent disabled boolean.
+func normalizeLegacyProfileDisabledState(profiles []spawnProfileJSON, formatVersion, explicitStateVersion int) []spawnProfileJSON {
+	if formatVersion >= explicitStateVersion {
+		return profiles
+	}
+	out := append([]spawnProfileJSON{}, profiles...)
+	for i := range out {
+		disabled := strings.TrimSpace(out[i].DisabledReason) != ""
+		out[i].Disabled = &disabled
+	}
+	return out
+}
+
+func validateExplicitProfileDisabledState(profiles []spawnProfileJSON) *spawnFailure {
+	for _, profile := range profiles {
+		if profile.Disabled == nil {
+			return &spawnFailure{http.StatusBadRequest, "invalid_format", fmt.Sprintf(
+				"profile %q is missing disabled — current-format exports must carry the explicit disabled state",
+				profile.Name)}
+		}
+	}
+	return nil
 }
 
 func validateProfileEnvelope(env profileExportEnvelope) *spawnFailure {
@@ -706,6 +759,12 @@ func inspectProfileEnvelope(env profileExportEnvelope) (profileImportInspectResu
 	if fail := validateProfileEnvelope(env); fail != nil {
 		return profileImportInspectResult{}, fail
 	}
+	if env.FormatVersion >= 4 {
+		if fail := validateExplicitProfileDisabledState(env.Profiles); fail != nil {
+			return profileImportInspectResult{}, fail
+		}
+	}
+	env.Profiles = normalizeLegacyProfileDisabledState(env.Profiles, env.FormatVersion, 4)
 	res := profileImportInspectResult{
 		Format:        env.Format,
 		FormatVersion: env.FormatVersion,
@@ -801,6 +860,12 @@ func importProfiles(env profileExportEnvelope, decisions []profileImportDecision
 	if fail := validateProfileEnvelope(env); fail != nil {
 		return profileImportResult{}, fail
 	}
+	if env.FormatVersion >= 4 {
+		if fail := validateExplicitProfileDisabledState(env.Profiles); fail != nil {
+			return profileImportResult{}, fail
+		}
+	}
+	env.Profiles = normalizeLegacyProfileDisabledState(env.Profiles, env.FormatVersion, 4)
 	byName := make(map[string]spawnProfileJSON, len(env.Profiles))
 	for _, p := range env.Profiles {
 		byName[strings.TrimSpace(p.Name)] = p
@@ -1037,9 +1102,10 @@ func handleSpawnProfileByName(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"id":      p.ID,
-			"name":    p.Name,
-			"profile": profileToJSON(p),
+			"id":                         p.ID,
+			"name":                       p.Name,
+			"supports_explicit_disabled": true,
+			"profile":                    profileToJSON(p),
 		})
 	case http.MethodDelete:
 		if _, ok := requirePermission(w, r, PermProfilesManage); !ok {

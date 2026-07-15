@@ -88,7 +88,7 @@ func TestScribeSpawnHarness_RejectsDisabledDefault(t *testing.T) {
 	db.ResetForTest()
 
 	_, err := db.CreateSpawnProfile(&db.SpawnProfile{
-		Name: "paused", Harness: harness.CodexName, DisabledReason: "provider maintenance",
+		Name: "paused", Harness: harness.CodexName, Disabled: true, DisabledReason: "provider maintenance",
 	})
 	require.NoError(t, err)
 	groupID, err := db.CreateAgentGroup("paused-scribe", scribeGroupDescr)

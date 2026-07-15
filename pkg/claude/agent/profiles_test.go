@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -61,19 +62,30 @@ func TestRunProfilesDefaultShow_Unset(t *testing.T) {
 	assert.Contains(t, stdout.String(), "no global default spawn profile")
 }
 
+func TestRunProfilesLsUsesProminentDisabledMarker(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, ok(`[{"name":"paused","disabled":true,"disabled_reason":"provider outage"},{"name":"restored","disabled":false,"disabled_reason":"previous outage"}]`))
+	var stdout, stderr bytes.Buffer
+	require.Equal(t, rcOK, runProfilesLs(&stdout, &stderr))
+	assert.Contains(t, stdout.String(), "🚫 disabled: provider outage")
+	assert.NotContains(t, stdout.String(), "🚫 disabled: previous outage",
+		"a remembered reason does not make an enabled profile look disabled")
+}
+
 func TestRunProfilesDisableAndEnable(t *testing.T) {
 	var calls []capturedReq
+	stateDisabled := false
+	reason := ""
 	stubDaemon(t, &calls, func(method, path string) (int, string, string) {
 		switch method {
 		case http.MethodGet:
-			return 200, "", `{"name":"paused","model":"sonnet"}`
+			return 200, "", fmt.Sprintf(`{"name":"paused","model":"sonnet","disabled":%t,"disabled_reason":%q}`, stateDisabled, reason)
 		case http.MethodPatch:
-			if len(calls) > 0 {
-				if body, ok := calls[len(calls)-1].body.(*profileJSON); ok && body.DisabledReason == "" {
-					return 200, "", `{"id":1,"name":"paused","profile":{"name":"paused","model":"sonnet"}}`
-				}
-			}
-			return 200, "", `{"id":1,"name":"paused","profile":{"name":"paused","model":"sonnet","disabled_reason":"provider maintenance"}}`
+			body, ok := calls[len(calls)-1].body.(*profileJSON)
+			require.True(t, ok)
+			require.NotNil(t, body.Disabled)
+			stateDisabled, reason = *body.Disabled, body.DisabledReason
+			return 200, "", fmt.Sprintf(`{"id":1,"name":"paused","supports_explicit_disabled":true,"profile":{"name":"paused","model":"sonnet","disabled":%t,"disabled_reason":%q}}`, stateDisabled, reason)
 		default:
 			return 405, "method", ""
 		}
@@ -87,6 +99,8 @@ func TestRunProfilesDisableAndEnable(t *testing.T) {
 	require.Len(t, calls, 2)
 	disabled, ok := calls[1].body.(*profileJSON)
 	require.True(t, ok)
+	require.NotNil(t, disabled.Disabled)
+	assert.True(t, *disabled.Disabled)
 	assert.Equal(t, "provider maintenance", disabled.DisabledReason)
 	assert.Equal(t, "sonnet", disabled.Model, "disable preserves the complete profile")
 
@@ -96,15 +110,30 @@ func TestRunProfilesDisableAndEnable(t *testing.T) {
 	require.Len(t, calls, 2)
 	enabled, ok := calls[1].body.(*profileJSON)
 	require.True(t, ok)
-	assert.Empty(t, enabled.DisabledReason)
+	require.NotNil(t, enabled.Disabled)
+	assert.False(t, *enabled.Disabled)
+	assert.Equal(t, "provider maintenance", enabled.DisabledReason, "enable remembers the reason")
 	assert.Contains(t, stdout.String(), `Enabled profile "paused"`)
+
+	// Re-disabling without --reason reuses the remembered explanation.
+	calls = nil
+	stdout.Reset()
+	require.Equal(t, rcOK, runProfilesDisable(&profilesDisableParams{Name: "paused"}, &stdout, &stderr))
+	require.Len(t, calls, 2)
+	reused, ok := calls[1].body.(*profileJSON)
+	require.True(t, ok)
+	require.NotNil(t, reused.Disabled)
+	assert.True(t, *reused.Disabled)
+	assert.Equal(t, "provider maintenance", reused.DisabledReason)
 }
 
-func TestRunProfilesDisableRequiresReason(t *testing.T) {
+func TestRunProfilesDisableRequiresReasonWhenNoneRemembered(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, ok(`{"name":"paused","disabled":false}`))
 	var stdout, stderr bytes.Buffer
 	rc := runProfilesDisable(&profilesDisableParams{Name: "paused"}, &stdout, &stderr)
 	assert.Equal(t, rcInvalidArg, rc)
-	assert.Contains(t, stderr.String(), "--reason is required")
+	assert.Contains(t, stderr.String(), "no remembered disable reason")
 }
 
 func TestRunProfilesDisableRejectsOldDaemonFalseSuccess(t *testing.T) {
@@ -124,7 +153,7 @@ func TestRunProfilesDisableRejectsOldDaemonFalseSuccess(t *testing.T) {
 	}, &stdout, &stderr)
 	assert.Equal(t, rcIOFailure, rc)
 	assert.Empty(t, stdout.String(), "must not print a false success")
-	assert.Contains(t, stderr.String(), "does not support disabling spawn profiles")
+	assert.Contains(t, stderr.String(), "does not support explicit spawn-profile disabled state")
 }
 
 func TestRunProfilesDisableComparesCanonicalReason(t *testing.T) {
@@ -133,7 +162,7 @@ func TestRunProfilesDisableComparesCanonicalReason(t *testing.T) {
 		if method == http.MethodGet {
 			return 200, "", `{"name":"paused"}`
 		}
-		return 200, "", `{"id":1,"name":"paused","profile":{"name":"paused","disabled_reason":"line 1\nline 2"}}`
+		return 200, "", `{"id":1,"name":"paused","supports_explicit_disabled":true,"profile":{"name":"paused","disabled":true,"disabled_reason":"line 1\nline 2"}}`
 	})
 
 	var stdout, stderr bytes.Buffer
@@ -144,6 +173,8 @@ func TestRunProfilesDisableComparesCanonicalReason(t *testing.T) {
 	require.Len(t, calls, 2)
 	patched, ok := calls[1].body.(*profileJSON)
 	require.True(t, ok)
+	require.NotNil(t, patched.Disabled)
+	assert.True(t, *patched.Disabled)
 	assert.Equal(t, "line 1\nline 2", patched.DisabledReason)
 	assert.Contains(t, stdout.String(), "line 1\nline 2")
 }
@@ -171,11 +202,46 @@ func TestRunProfilesCreateAndEditRejectOldDaemonDisabledFalseSuccess(t *testing.
 			stubDaemon(t, &calls, ok(`{"id":1,"name":"paused"}`))
 			var stdout, stderr bytes.Buffer
 			rc := tc.run(strings.NewReader(
-				`{"name":"paused","disabled_reason":"provider maintenance"}`,
+				`{"name":"paused","disabled":true,"disabled_reason":"provider maintenance"}`,
 			), &stdout, &stderr)
 			assert.Equal(t, rcIOFailure, rc)
 			assert.Empty(t, stdout.String(), "must not print a false success")
-			assert.Contains(t, stderr.String(), "does not support disabling spawn profiles")
+			assert.Contains(t, stderr.String(), "does not support explicit spawn-profile disabled state")
+		})
+	}
+}
+
+func TestRunProfilesCreateAndEditPreserveLegacyReasonOnlyDisabledState(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(io.Reader, io.Writer, io.Writer) int
+	}{
+		{
+			name: "create",
+			run: func(stdin io.Reader, stdout, stderr io.Writer) int {
+				return runProfilesCreate(&profilesCreateParams{File: "-"}, stdin, stdout, stderr)
+			},
+		},
+		{
+			name: "edit",
+			run: func(stdin io.Reader, stdout, stderr io.Writer) int {
+				return runProfilesEdit(&profilesEditParams{Name: "paused", File: "-"}, stdin, stdout, stderr)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls []capturedReq
+			stubDaemon(t, &calls, ok(`{"id":1,"name":"paused","supports_explicit_disabled":true,"profile":{"name":"paused","disabled":true,"disabled_reason":"legacy outage"}}`))
+			var stdout, stderr bytes.Buffer
+			rc := tc.run(strings.NewReader(
+				`{"name":"paused","disabled_reason":"legacy outage"}`,
+			), &stdout, &stderr)
+			require.Equal(t, rcOK, rc, "stderr=%s", stderr.String())
+			require.Len(t, calls, 1)
+			body, ok := calls[0].body.(*profileJSON)
+			require.True(t, ok)
+			assert.Nil(t, body.Disabled, "absence must reach the daemon so it can apply legacy reason semantics")
+			assert.Equal(t, "legacy outage", body.DisabledReason)
 		})
 	}
 }
@@ -383,6 +449,7 @@ func TestPrintProfileHuman(t *testing.T) {
 	var buf bytes.Buffer
 	printProfileHuman(&buf, profileJSON{
 		Name:                "team",
+		Disabled:            boolPtr(true),
 		DisabledReason:      "provider quota exhausted",
 		Aliases:             []string{"codex-reviewer", "cold-reviewer"},
 		Descr:               "the team default",
@@ -398,7 +465,7 @@ func TestPrintProfileHuman(t *testing.T) {
 	})
 	out := buf.String()
 	assert.Contains(t, out, "Profile: team")
-	assert.Contains(t, out, "status:  disabled")
+	assert.Contains(t, out, "status:  🚫 disabled")
 	assert.Contains(t, out, "reason:  provider quota exhausted")
 	assert.Contains(t, out, "aliases: codex-reviewer, cold-reviewer")
 	assert.Contains(t, out, "the team default")
@@ -411,6 +478,16 @@ func TestPrintProfileHuman(t *testing.T) {
 	assert.Contains(t, out, "human.notify=grant")
 	assert.Contains(t, out, "line one")
 	assert.Contains(t, out, "line two")
+}
+
+func TestPrintProfileHumanShowsRememberedReasonWhileEnabled(t *testing.T) {
+	var buf bytes.Buffer
+	printProfileHuman(&buf, profileJSON{
+		Name: "restored", Disabled: boolPtr(false), DisabledReason: "previous provider outage",
+	})
+	assert.Contains(t, buf.String(), "status:  enabled")
+	assert.Contains(t, buf.String(), "last disable reason: previous provider outage")
+	assert.NotContains(t, buf.String(), "🚫")
 }
 
 // An empty/sparse profile renders without panicking and shows only the name.

@@ -266,10 +266,12 @@ renaming or overwriting.
 
 A profile can be **disabled without deleting it**. Its editor keeps a Disabled
 checkbox and required reason; disabled profiles remain visible, editable,
-exportable, and available in selectors with a disabled marker. Any direct,
+exportable, and available in selectors with a prominent **🚫 Disabled** marker.
+Any direct,
 default-, role-, template-, or process-driven spawn that would use one fails
 with the stored reason, as does `tclaude ask` when configured to use it. Clear
-Disabled to make all existing references usable again.
+Disabled to make all existing references usable again; the editor retains and
+shows the previous reason so it can be reviewed or reused next time.
 
 ### Sandbox Profiles
 

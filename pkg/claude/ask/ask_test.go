@@ -516,7 +516,7 @@ func TestResolveAskTarget_Profile(t *testing.T) {
 	})
 	t.Run("disabled profile fails with its stored reason", func(t *testing.T) {
 		_, err := db.CreateSpawnProfile(&db.SpawnProfile{
-			Name: "paused", DisabledReason: "provider outage",
+			Name: "paused", Disabled: true, DisabledReason: "provider outage",
 		})
 		require.NoError(t, err)
 		_, _, _, err = resolveAskTarget("", "", cfg("paused"))

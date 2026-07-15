@@ -121,7 +121,7 @@ func TestGroupTemplate_DisabledProfileStaysReferencedButBlocksInstantiate(t *tes
 	// Disable after the reference exists: the template remains editable and the
 	// stable reference remains intact, but runtime use is denied.
 	rec := profileReq(t, f, http.MethodPatch, "/v1/spawn-profiles/seasonal", map[string]any{
-		"name": "seasonal", "model": "haiku", "disabled_reason": "seasonal capacity is offline",
+		"name": "seasonal", "model": "haiku", "disabled": true, "disabled_reason": "seasonal capacity is offline",
 	})
 	require.Equalf(t, http.StatusOK, rec.Code, "disable profile: %s", rec.Body.String())
 
