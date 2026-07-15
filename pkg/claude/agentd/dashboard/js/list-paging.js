@@ -5,10 +5,11 @@
 // so a few hundred retired agents meant an ever-growing payload on every tick.
 // They now come from their own paginated endpoints — /api/retired,
 // /api/conversations, /api/replaced — which refresh.js fetches in parallel with
-// the snapshot on each tick and stitches back onto the snapshot object (so the
-// downstream renderers keep reading data.retired / data.conversations /
-// data.replaced unchanged). This module owns the per-list offset/limit those
-// fetches send and renders the pager footer the virtual groups show.
+// the snapshot while the corresponding virtual group is visible, then stitches
+// the page back onto the snapshot object (so downstream renderers keep reading
+// data.retired / data.conversations / data.replaced unchanged). This module
+// owns the per-list offset/limit those fetches send and renders the pager footer
+// the virtual groups show.
 //
 // Modals + cross-tab filters that need the COMPLETE list (bulk delete-retired,
 // the cleanup tool, the add-member promote picker, the Messages-tab prev-gen
@@ -44,6 +45,23 @@ export function listParams(kind, q) {
   let s = `offset=${listOffset(kind)}&limit=${listLimit(kind)}`;
   if (q) s += `&q=${encodeURIComponent(q)}`;
   return s;
+}
+
+// fetchVisibleGroupListPages starts the windowed roster requests owned by the
+// Groups tab. Keeping the visibility gate beside the request construction makes
+// the no-poll contract directly testable: a hidden virtual group must not even
+// invoke get(). The returned tuple mirrors refresh.js's retired / conversations
+// / replaced Promise.all slots; disabled slots resolve to undefined so the
+// stitcher preserves the previous page without special casing.
+export function fetchVisibleGroupListPages(groups, onGroups, q, get) {
+  if (typeof get !== 'function') throw new TypeError('group list polling requires get');
+  const visible = groups?.visibility.value || {};
+  const request = (kind) => get('/api/' + kind + '?' + listParams(kind, q));
+  return [
+    (onGroups && visible.retired) ? request('retired') : Promise.resolve(undefined),
+    (onGroups && visible.conversations) ? request('conversations') : Promise.resolve(undefined),
+    (onGroups && visible.replaced) ? request('replaced') : Promise.resolve(undefined),
+  ];
 }
 
 // resetListOffsets zeroes every list's offset — used when the Groups-tab filter

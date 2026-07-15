@@ -165,6 +165,8 @@ test('Groups controls own query, visibility, columns, badge and dropdown behavio
     reorder: (groups) => groups,
   });
   state.initialize();
+  assert.equal(state.visibility.value.retired, false,
+    'the retired roster is opt-in so its polling endpoint stays idle by default');
   state.publish(snapshot([
     { name: 'alpha', members: [] },
     { name: 'beta', members: [] },
