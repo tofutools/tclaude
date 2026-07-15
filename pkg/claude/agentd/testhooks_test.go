@@ -157,6 +157,12 @@ func SetWaitTimingsForTest(aliveTimeout, readyDelay time.Duration) func() {
 	}
 }
 
+func SetReincarnateSpawnTimeoutForTest(timeout time.Duration) func() {
+	previous := reincarnateSpawnTimeout
+	reincarnateSpawnTimeout = timeout
+	return func() { reincarnateSpawnTimeout = previous }
+}
+
 // SetInjectSettleDelayForTest shrinks injectTextAndSubmit's per-send-keys
 // settle gap for the duration of a test. The simulator processes
 // keystrokes synchronously, so the production 500 ms window is pure dead

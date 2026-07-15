@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -142,7 +143,7 @@ func TestGroupsClone_ResumeRefreshesFromClonedGroupNotSourceGroup(t *testing.T) 
 	assert.Equal(t, cloneGroup.ID, resumed.ResolutionGroupID)
 }
 
-func TestGroupsClone_CodexCopyLeavesProoflessRepositoryDerivationToChild(t *testing.T) {
+func TestGroupsClone_CodexCopyPinsRepositoryWithoutCallerProof(t *testing.T) {
 	f := newFlow(t)
 	const source = "92e452c0-eef5-4fa3-beb9-51f4f8722336"
 	repo, _ := initRepoOnMain(t)
@@ -165,10 +166,11 @@ func TestGroupsClone_CodexCopyLeavesProoflessRepositoryDerivationToChild(t *test
 
 	got, ok := f.World.SpawnCodexGitCommonDir(cloneConv)
 	require.True(t, ok)
-	assert.Empty(t, got, "proofless human group clone derives repository grants in the child")
+	assert.Equal(t, filepath.Join(repo, ".git"), got,
+		"the daemon should pin inherited repository authority without challenging the requester")
 	pinned, ok := f.World.SpawnCodexGitCommonDirPinned(cloneConv)
 	require.True(t, ok)
-	assert.False(t, pinned, "proofless human group clone must not carry internal pinned paths")
+	assert.True(t, pinned)
 }
 
 // Scenario: clone with an explicit name that doesn't collide.

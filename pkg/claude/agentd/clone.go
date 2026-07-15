@@ -64,6 +64,7 @@ func (e *cloneSpawnError) write(w http.ResponseWriter) {
 // each fork, closing the verify→launch window the same way executeSpawn does.
 func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proofToken string, proofCwd bool, proofDirs []string, codexGitCommonDir string, gitWriteDirs []string) (newConv, newTmux, label, warn string, spawnErr *cloneSpawnError) {
 	effectiveSandbox, err := db.AgentEffectiveSandboxConfigForConv(sourceConv)
+	var profileWriteDirs []string
 	if err != nil {
 		return "", "", "", "", &cloneSpawnError{Status: http.StatusInternalServerError, Code: "io", Msg: "load source sandbox snapshot: " + err.Error()}
 	}
@@ -73,8 +74,14 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 			return "", "", "", "", &cloneSpawnError{Status: http.StatusConflict, Code: "sandbox_profile_changed", Msg: err.Error()}
 		}
 		effectiveSandbox = &validated
-		if _, launchErr := sandboxpolicy.FilesystemForLaunch(validated.Effective); launchErr != nil {
+		launchFilesystem, launchErr := sandboxpolicy.FilesystemForLaunch(validated.Effective)
+		if launchErr != nil {
 			return "", "", "", "", &cloneSpawnError{Status: http.StatusConflict, Code: "sandbox_profile_changed", Msg: launchErr.Error()}
+		}
+		for _, grant := range launchFilesystem {
+			if grant.Access == sandboxpolicy.AccessWrite {
+				profileWriteDirs = appendUniqueDirs(profileWriteDirs, grant.Path)
+			}
 		}
 	}
 	reassertFail := func() *cloneSpawnError {
@@ -94,6 +101,44 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 	remoteControl := remoteControlForRelaunch(sourceConv, srcHarness)
 	cloneSandbox := sandboxForHarness(srcHarness)
 	codexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(srcHarness, cloneSandbox)
+	if proofToken == "" {
+		if codexGitCommonDirPinned {
+			var commonErr error
+			codexGitCommonDir, commonErr = spawnGitCommonDir(srcHarness, cloneSandbox, cwd)
+			if commonErr != nil {
+				return "", "", "", "", &cloneSpawnError{Status: http.StatusInternalServerError, Code: "io", Msg: commonErr.Error()}
+			}
+			if home, homeErr := os.UserHomeDir(); homeErr == nil {
+				gitWriteDirs = harness.GitWorktreeWriteDirs(cwd, codexGitCommonDir, home)
+			}
+		}
+		rawPins := appendUniqueDirs([]string{cwd}, gitWriteDirs...)
+		rawPins = appendUniqueDirs(rawPins, profileWriteDirs...)
+		mapping, token, pinnedDirs, cleanupPins, pinErr := pinInheritedLaunchDirs(rawPins)
+		if pinErr != nil {
+			return "", "", "", "", &cloneSpawnError{Status: http.StatusInternalServerError, Code: "io", Msg: pinErr.Error()}
+		}
+		defer cleanupPins()
+		proofToken, proofCwd, proofDirs = token, true, pinnedDirs
+		if resolved := mapping[cwd]; resolved != "" {
+			cwd = resolved
+		}
+		for i, dir := range gitWriteDirs {
+			if resolved := mapping[dir]; resolved != "" {
+				gitWriteDirs[i] = resolved
+			}
+		}
+		if resolved := mapping[codexGitCommonDir]; resolved != "" {
+			codexGitCommonDir = resolved
+		}
+	} else if len(profileWriteDirs) > 0 {
+		_, _, pinnedDirs, cleanupPins, pinErr := pinInheritedLaunchDirsWithToken(profileWriteDirs, proofToken)
+		if pinErr != nil {
+			return "", "", "", "", &cloneSpawnError{Status: http.StatusInternalServerError, Code: "io", Msg: pinErr.Error()}
+		}
+		defer cleanupPins()
+		proofDirs = appendUniqueDirs(proofDirs, pinnedDirs...)
+	}
 	if codexGitCommonDirPinned && gitWriteDirs == nil {
 		if home, err := os.UserHomeDir(); err == nil {
 			gitWriteDirs = harness.GitWorktreeWriteDirs(cwd, codexGitCommonDir, home)
@@ -135,9 +180,8 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 			return "", "", "", "", fail
 		}
 		proofArgs := clcommon.SpawnArgs{
-			DirWriteProof:           proofToken,
-			EffectiveSandbox:        effectiveSandbox,
-			InheritSandboxWriteDirs: proofToken != "",
+			DirWriteProof:    proofToken,
+			EffectiveSandbox: effectiveSandbox,
 		}
 		if proofCwd {
 			proofArgs.CwdWriteProof = proofToken
@@ -211,9 +255,8 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 		return "", "", "", "", fail
 	}
 	proofArgs := clcommon.SpawnArgs{
-		DirWriteProof:           proofToken,
-		EffectiveSandbox:        effectiveSandbox,
-		InheritSandboxWriteDirs: proofToken != "",
+		DirWriteProof:    proofToken,
+		EffectiveSandbox: effectiveSandbox,
 	}
 	if proofCwd {
 		proofArgs.CwdWriteProof = proofToken

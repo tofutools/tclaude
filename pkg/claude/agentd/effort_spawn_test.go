@@ -33,7 +33,6 @@ func TestSessionNewArgs_InternalWriteProofFlags(t *testing.T) {
 	withProof := sessionNewArgs(clcommon.SpawnArgs{
 		Label: "lbl", Cwd: "/tmp/x", CwdWriteProof: "proof_123", CodexGitCommonDir: "/tmp/repo/.git", CodexGitCommonDirPinned: true,
 		GitWorktreeWriteDirs: []string{"/tmp/repo-parent"}, GitWorktreeWriteDirsPinned: true,
-		InheritSandboxWriteDirs: true,
 	})
 	if i := slices.Index(withProof, "--cwd-write-proof"); i < 0 || i+1 >= len(withProof) || withProof[i+1] != "proof_123" {
 		t.Fatalf("cwd proof must ride into the forked session launcher, got %v", withProof)
@@ -49,9 +48,6 @@ func TestSessionNewArgs_InternalWriteProofFlags(t *testing.T) {
 	}
 	if !slices.Contains(withProof, "--git-worktree-write-dirs-pinned") {
 		t.Fatalf("repository write-root pin-presence must ride into the forked session launcher, got %v", withProof)
-	}
-	if !slices.Contains(withProof, "--inherit-sandbox-write-dirs") {
-		t.Fatalf("target-authorized sandbox roots must be distinguished from caller-proved roots, got %v", withProof)
 	}
 
 	pinnedEmpty := sessionNewArgs(clcommon.SpawnArgs{Label: "lbl", Cwd: "/tmp/x", CodexGitCommonDirPinned: true})

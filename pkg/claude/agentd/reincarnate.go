@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // reincarnateSuffixRegex matches a trailing reincarnation suffix in
@@ -172,9 +174,9 @@ func waitForConvAlive(newConv string) bool {
 
 // reincarnateSpawnTimeout caps how long we wait for the new tclaude
 // session's conv-id to materialise. Mirrors handleGroupSpawn's
-// default. If we hit this, the spawned session may still come up —
-// the human can attach via the label we return.
-const reincarnateSpawnTimeout = 30 * time.Second
+// default. A timeout kills the incomplete successor and rolls policy back.
+// A var so flow tests can exercise that failure path without waiting 30s.
+var reincarnateSpawnTimeout = 30 * time.Second
 
 // reincarnateAliveTimeout caps how long the post-spawn delivery
 // goroutine waits for the new pane to be online before giving up on
@@ -310,6 +312,19 @@ func decodeReincarnateBody(w http.ResponseWriter, r *http.Request) (reincarnateB
 //
 // Writes the JSON response (or error) directly to w.
 func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm string, body reincarnateBody) {
+	launchLock := resumeLaunchLock(target)
+	launchLock.Lock()
+	defer launchLock.Unlock()
+	actor, actorErr := db.GetAgentByConv(target)
+	if actorErr != nil {
+		writeError(w, http.StatusInternalServerError, "io", "resolve target agent: "+actorErr.Error())
+		return
+	}
+	if actor != nil && actor.CurrentConvID != target {
+		writeError(w, http.StatusConflict, "stale_generation",
+			"target conversation is no longer the agent's current generation")
+		return
+	}
 	followUp := body.FollowUp
 	// 1. Snapshot target conv state. We require an alive tmux session
 	// for the target — that's the cwd source and the target of the
@@ -356,6 +371,55 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
+	codexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(oldSess.Harness, reincarnateSandbox)
+	codexGitCommonDir := ""
+	var gitWriteDirs []string
+	if codexGitCommonDirPinned {
+		var commonErr error
+		codexGitCommonDir, commonErr = spawnGitCommonDir(oldSess.Harness, reincarnateSandbox, cwd)
+		if commonErr != nil {
+			writeError(w, http.StatusInternalServerError, "io", commonErr.Error())
+			return
+		}
+		if home, homeErr := os.UserHomeDir(); homeErr == nil {
+			gitWriteDirs = harness.GitWorktreeWriteDirs(cwd, codexGitCommonDir, home)
+		}
+	}
+	rawPins := appendUniqueDirs([]string{cwd}, gitWriteDirs...)
+	if effectiveSandbox != nil {
+		for _, grant := range effectiveSandbox.Effective.Filesystem {
+			if grant.Access == sandboxpolicy.AccessWrite {
+				rawPins = appendUniqueDirs(rawPins, grant.Path)
+			}
+		}
+	}
+	pinMapping, pinToken, pinDirs, cleanupPins, pinErr := pinInheritedLaunchDirs(rawPins)
+	if pinErr != nil {
+		writeError(w, http.StatusInternalServerError, "io", pinErr.Error())
+		return
+	}
+	defer cleanupPins()
+	if resolved := pinMapping[cwd]; resolved != "" {
+		cwd = resolved
+	}
+	for i, dir := range gitWriteDirs {
+		if resolved := pinMapping[dir]; resolved != "" {
+			gitWriteDirs[i] = resolved
+		}
+	}
+	if resolved := pinMapping[codexGitCommonDir]; resolved != "" {
+		codexGitCommonDir = resolved
+	}
+	if fail := reassertDirWriteProof(pinDirs); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	}
+	var grantFail *spawnFailure
+	gitWriteDirs, grantFail = canonicalizeRepositoryWriteDirs(gitWriteDirs, pinDirs, pinToken)
+	if grantFail != nil {
+		writeError(w, grantFail.Status, grantFail.Kind, grantFail.Msg)
+		return
+	}
 
 	// Reincarnation refreshes the target's policy through the same resolver as
 	// resume. Persist it before launch so the actor's durable snapshot and the
@@ -394,16 +458,21 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		}
 	}
 	if err := SpawnDetachedTclaudeNew(clcommon.SpawnArgs{
-		EffectiveSandbox:       effectiveSandbox,
-		Label:                  label,
-		Cwd:                    cwd,
-		Effort:                 effort,
-		Model:                  model,
-		Harness:                oldSess.Harness,
-		Sandbox:                reincarnateSandbox,
-		Approval:               approvalForHarness(oldSess.Harness),
-		AskUserQuestionTimeout: askTimeoutForRelaunch(target),
-		RemoteControl:          remoteControl,
+		EffectiveSandbox:           effectiveSandbox,
+		Label:                      label,
+		Cwd:                        cwd,
+		CwdWriteProof:              pinToken,
+		Effort:                     effort,
+		Model:                      model,
+		Harness:                    oldSess.Harness,
+		Sandbox:                    reincarnateSandbox,
+		CodexGitCommonDir:          codexGitCommonDir,
+		CodexGitCommonDirPinned:    codexGitCommonDirPinned,
+		GitWorktreeWriteDirs:       gitWriteDirs,
+		GitWorktreeWriteDirsPinned: codexGitCommonDirPinned,
+		Approval:                   approvalForHarness(oldSess.Harness),
+		AskUserQuestionTimeout:     askTimeoutForRelaunch(target),
+		RemoteControl:              remoteControl,
 	}); err != nil {
 		rollbackSandbox(true)
 		writeError(w, http.StatusInternalServerError, "spawn",
@@ -427,10 +496,17 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		time.Sleep(250 * time.Millisecond)
 	}
 	if newConv == "" {
+		tmuxToKill := newTmux
+		if tmuxToKill == "" {
+			tmuxToKill = label
+		}
+		if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxToKill)).Run(); err != nil {
+			slog.Warn("reincarnate: timed-out successor kill failed", "session", tmuxToKill, "error", err)
+		}
+		rollbackSandbox(true)
 		writeError(w, http.StatusGatewayTimeout, "timeout",
 			"spawned session "+label+" but conv-id never materialised within "+
-				reincarnateSpawnTimeout.String()+
-				" — the session may still come up; check `tclaude session attach "+label+"`")
+				reincarnateSpawnTimeout.String()+"; the timed-out successor was stopped and the target policy was restored")
 		return
 	}
 	// Tag the successor row's best-known remote-control state ON (JOH-261). The
@@ -596,9 +672,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		_ = injectSoftExit(target, h.Life.SoftExitCommand(), "reincarnate-exit")
 	}
 	if relaunchPolicy != nil && relaunchPolicy.Previous != nil && effectiveSandbox != nil {
-		if _, err := removeSupersededMaterializedAgentDirectories(*relaunchPolicy.Previous, *effectiveSandbox); err != nil {
-			slog.Warn("reincarnate: remove superseded agent-owned directories failed", "error", err)
-		}
+		scheduleReincarnationDirectoryCleanup(target, newConv, *relaunchPolicy.Previous)
 	}
 
 	resp := map[string]any{
@@ -678,6 +752,30 @@ func runReincarnatePostSpawn(newConv, newTitle string) {
 	// per-agent dispatcher so head-following mail queued to the actor
 	// (across the rotation) is delivered to it, not just exact-conv mail.
 	enqueueDeliveryForConv(newConv)
+}
+
+// scheduleReincarnationDirectoryCleanup waits until the predecessor pane has
+// actually stopped before deleting directories removed by the refreshed
+// profile. It reloads the successor's latest snapshot at cleanup time so a
+// subsequent profile change cannot make an old root live again underneath a
+// stale cleanup decision.
+func scheduleReincarnationDirectoryCleanup(oldConv, newConv string, previous sandboxpolicy.Snapshot) {
+	goBackground(func() {
+		if !waitForConvOffline(oldConv, retireWorktreeExitGrace) {
+			slog.Warn("reincarnate: superseded agent-owned directories kept because predecessor did not exit within grace",
+				"conv", oldConv, "grace", retireWorktreeExitGrace)
+			return
+		}
+		current, err := db.AgentEffectiveSandboxConfigForConv(newConv)
+		if err != nil || current == nil {
+			slog.Warn("reincarnate: superseded agent-owned directories kept because successor policy could not be loaded",
+				"conv", newConv, "error", err)
+			return
+		}
+		if _, err := removeSupersededMaterializedAgentDirectories(previous, *current); err != nil {
+			slog.Warn("reincarnate: remove superseded agent-owned directories failed", "error", err)
+		}
+	})
 }
 
 // switchTmuxClients moves tmux clients currently attached to oldTmux

@@ -113,7 +113,7 @@ follow-up with a message telling you to single-line it.
 | Symptom | Meaning / fix |
 |---|---|
 | `tclaude agentd is not running.` | Ask the human to run `tclaude agentd serve` in a non-sandboxed terminal. |
-| 504 spawn timeout | The new session produced no conv-id within ~30s. The pane may still come up — the human can `tclaude session attach <label>` to inspect. |
+| 504 spawn timeout | The new session produced no conv-id within ~30s. The incomplete successor was stopped and the predecessor's sandbox policy was restored; retry when the launch issue is resolved. |
 | `no_tmux` 503 | You're not running under tclaude; there is no pane the daemon can reach. Ask the human to wrap the session via tclaude. |
 
 ## Related

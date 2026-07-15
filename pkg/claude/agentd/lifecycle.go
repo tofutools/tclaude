@@ -4450,9 +4450,6 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	if a.DirWriteProof != "" {
 		args = append(args, "--dir-write-proof", a.DirWriteProof)
 	}
-	if a.InheritSandboxWriteDirs {
-		args = append(args, "--inherit-sandbox-write-dirs")
-	}
 	if a.CodexGitCommonDir != "" {
 		args = append(args, "--codex-git-common-dir", a.CodexGitCommonDir)
 	}
@@ -4537,9 +4534,6 @@ func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 	}
 	if a.DirWriteProof != "" {
 		args = append(args, "--dir-write-proof", a.DirWriteProof)
-	}
-	if a.InheritSandboxWriteDirs {
-		args = append(args, "--inherit-sandbox-write-dirs")
 	}
 	if a.CodexGitCommonDir != "" {
 		args = append(args, "--codex-git-common-dir", a.CodexGitCommonDir)
