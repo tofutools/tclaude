@@ -18,6 +18,7 @@ func TestDashboardOperatorMessageModalPolishWired(t *testing.T) {
 		"const draft = snapshotOperatorMessageDraft({",
 		"const attachmentToken = await upload(draft.files);",
 		"setPending(true);",
+		"el('operator-message-body').readOnly = next;",
 		"'operator-message-attach-btn', 'operator-message-attach-input'",
 		"'tclaude.dash.modalSize.operator-message'",
 	} {

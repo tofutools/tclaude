@@ -75,8 +75,11 @@ async function upload(batch) {
 
 function setPending(next) {
   pending = next;
+  // Keep the focused editor in the tab/focus chain so a failed send restores
+  // the draft at the same caret. disabled would blur it in most browsers.
+  el('operator-message-subject').readOnly = next;
+  el('operator-message-body').readOnly = next;
   for (const id of [
-    'operator-message-subject', 'operator-message-body',
     'operator-message-attach-btn', 'operator-message-attach-input',
     'operator-message-cancel', 'operator-message-submit',
   ]) {
