@@ -194,7 +194,7 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 
 	// Retire: the palette can demote agents back to plain conversations.
 	// A per-agent "Retire agent: <name>" reuses the same confirm + flags
-	// as the per-row ⚙ Retire button (retireAgentInteractive), and a
+	// as the per-row ⚙ Retire button (openRetireAgentDialog), and a
 	// per-group "Retire idle/offline agents in <group>" opens a PREVIEW
 	// modal (openRetirePreview) that lists precisely the matching members,
 	// lets the human opt agents out, and POSTs the EXPLICIT ticked conv-id
@@ -202,8 +202,8 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	// the human previewed, not a cohort it re-derived. Listed only when a
 	// live match count is non-zero so the palette never offers a no-op.
 	must("wiz(`Retire agent: ${label}`, `Banish familiar: ${label}`)", "the palette offers a per-agent retire (plain + arcane Banish label)")
-	must("retireAgentInteractive(a.conv_id, label)",
-		"per-agent retire reuses the shared confirm + POST flow")
+	must("openRetireAgentDialog(a.conv_id, label)",
+		"per-agent retire reuses the keyed transaction flow")
 	must("for (const status of ['idle', 'offline'])",
 		"the bulk retire offers the idle and offline cohorts")
 	must("wiz(`Retire ${status} agents in ${g.name}`, `Banish ${status} familiars in ${g.name}`)",
