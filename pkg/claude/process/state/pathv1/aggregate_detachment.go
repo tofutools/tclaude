@@ -138,6 +138,10 @@ func (i *aggregateIndex) detachmentSetContains(setID string, detachmentID Detach
 
 func (i *aggregateIndex) validateAnyDetachmentSet(r ActivationReservation) {
 	path := "reservations." + r.ID
+	if r.Activation == nil {
+		i.c.add("any_activation_missing", path, "activated any reservation lacks its activation reference")
+		return
+	}
 	a, ok := i.view.Routing.Activations[r.Activation.ID]
 	if !ok {
 		return

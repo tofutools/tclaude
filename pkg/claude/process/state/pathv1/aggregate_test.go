@@ -190,13 +190,36 @@ func addWideOpenReservation(t *testing.T, view *AggregateView, node string, poli
 
 func makeTestCommand(t *testing.T, identity CommandIdentity, state CommandState) CommandRecord {
 	t.Helper()
+	return makeTestCommandPayload(t, identity, state, json.RawMessage(`{"plan":true}`))
+}
+
+func makeTestCommandPayload(t *testing.T, identity CommandIdentity, state CommandState, payload json.RawMessage) CommandRecord {
+	t.Helper()
 	id, err := CommandIdentityDigest(identity)
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload := json.RawMessage(`{"plan":true}`)
 	sum := sha256.Sum256(payload)
 	return CommandRecord{ID: id, IdempotencyKey: CommandIdempotencyKey(identity.Kind, id), Identity: identity, Payload: payload, PayloadHash: hex.EncodeToString(sum[:]), State: state}
+}
+
+func addTerminalAttemptCommands(t *testing.T, view *AggregateView, activationID ActivationID, generation, attempt uint64, resultCode, reasonCode, effectState string) CommandRecord {
+	t.Helper()
+	perform := makeTestCommand(t, CommandIdentity{RunID: view.RunID, Kind: CommandPerformAttempt, PayloadSchema: 1, SourceActivationID: activationID, SourceGeneration: generation, Attempt: attempt, PlanDigest: "perform"}, CommandObserved)
+	view.Commands[perform.ID] = perform
+	payload, err := json.Marshal(settleAttemptObservationPayload{TemplateRef: view.TemplateRef, SourceCommandID: perform.ID, SourceActivationID: activationID, SourceGeneration: generation, Attempt: attempt, ResultCode: resultCode, ReasonCode: reasonCode})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := payloadDigest(payload)
+	settle := makeTestCommandPayload(t, CommandIdentity{RunID: view.RunID, Kind: CommandSettleAttempt, PayloadSchema: 1, SourceActivationID: activationID, SourceGeneration: generation, Attempt: attempt, InputDigest: perform.ID, PlanDigest: plan, ResultCode: resultCode}, CommandObserved, payload)
+	view.Commands[settle.ID] = settle
+	attemptID, err := AttemptIdentity(view.RunID, activationID, attempt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view.SideEffects[attemptID] = SideEffectIdentity{Kind: SideEffectAttempt, ID: attemptID, RunID: view.RunID, ActivationID: activationID, Attempt: attempt, State: effectState}
+	return settle
 }
 
 func validAnyFixture(t *testing.T) AggregateView {
@@ -396,8 +419,7 @@ func validSlowAnyFixture(t *testing.T, failBeforeSink bool) AggregateView {
 	anyAuthority.PossibleSlots = r.PossibleSlots
 	view.Authority.Reservations[r.ID] = anyAuthority
 	if failBeforeSink {
-		failure := makeTestCommand(t, CommandIdentity{RunID: view.RunID, Kind: CommandSettleAttempt, PayloadSchema: 1, SourceActivationID: localActivationID, SourceGeneration: 1, Attempt: 1, InputDigest: "attempt", PlanDigest: "observe", ResultCode: "failed"}, CommandObserved)
-		view.Commands[failure.ID] = failure
+		failure := addTerminalAttemptCommands(t, &view, localActivationID, 1, 1, "failed", "performer_failed", "failed")
 		localOutput.State = PathFailed
 		localOutput.UpdatedSeq = 5
 		dispID, _ := DispositionReceiptIdentity(localOutput.ID, PathLive, PathFailed, "performer_failed", failure.ID, "", 5)
@@ -837,6 +859,30 @@ func TestAnyDetachmentRejectsPartialWrongAndUnsettledPostStates(t *testing.T) {
 	}
 }
 
+func TestMalformedActivatedAnyReservationDoesNotPanic(t *testing.T) {
+	t.Parallel()
+	view := validAnyFixture(t)
+	for id, reservation := range view.Routing.Reservations {
+		if reservation.JoinPolicy == JoinAny {
+			reservation.Activation = nil
+			view.Routing.Reservations[id] = reservation
+			break
+		}
+	}
+	var report InvariantReport
+	func() {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				t.Fatalf("ValidateAggregate panicked: %v", recovered)
+			}
+		}()
+		report = ValidateAggregate(view)
+	}()
+	if report.Valid() || !reportHasCode(report, "any_activation_missing") {
+		t.Fatalf("malformed any reservation diagnostics: %#v", report.Diagnostics)
+	}
+}
+
 func TestDetachedCandidateCrossScopeEscapeAndReactivationRejected(t *testing.T) {
 	t.Parallel()
 	view := validAnyFixture(t)
@@ -1076,6 +1122,32 @@ func TestAllArrivedPlusNonSuccessExactCloseCause(t *testing.T) {
 	}
 }
 
+func TestAnyReservationWithArrivalCannotCloseWithoutActivation(t *testing.T) {
+	t.Parallel()
+	view := validAllArrivedNonSuccessFixture(t)
+	for id, reservation := range view.Routing.Reservations {
+		if reservation.State != ReservationClosedNoActivation || reservation.JoinPolicy != JoinAll {
+			continue
+		}
+		reservation.JoinPolicy = JoinAny
+		reservation.CloseReceipt.JoinPolicy = JoinAny
+		view.Routing.Reservations[id] = reservation
+		authority := cloneAuthority(view.Authority)
+		entry := authority.Reservations[id]
+		entry.JoinPolicy = JoinAny
+		authority.Reservations[id] = entry
+		view.Authority = authority
+		break
+	}
+	report := ValidateAggregate(view)
+	if !reportHasCode(report, "reservation_fold_mismatch") {
+		t.Fatalf("any closed-with-arrival diagnostics: %#v", report.Diagnostics)
+	}
+	if _, err := AssessAggregateCompletion(view); !errors.Is(err, ErrAggregateInvalid) {
+		t.Fatalf("completion error = %v, want ErrAggregateInvalid", err)
+	}
+}
+
 func TestDetachmentSetIndexAllowsRepeatedMemberAcrossDistinctChains(t *testing.T) {
 	t.Parallel()
 	first, second := DetachmentID("detachment-first"), DetachmentID("detachment-second")
@@ -1200,6 +1272,168 @@ func failedPathID(view AggregateView) PathID {
 	return ""
 }
 
+func terminalSettleCommand(view AggregateView, pathID PathID) CommandRecord {
+	p := view.Routing.Paths[pathID]
+	return view.Commands[p.Disposition.CommandID]
+}
+
+func replaceTerminalAttemptState(t *testing.T, view *AggregateView, pathID PathID, state PathState, reason, effectState string, admin bool) {
+	t.Helper()
+	p := view.Routing.Paths[pathID]
+	oldSettle := view.Commands[p.Disposition.CommandID]
+	source := view.Commands[oldSettle.Identity.InputDigest]
+	delete(view.Commands, oldSettle.ID)
+	oldCause := view.Routing.CauseRecords[p.TerminalCauseID]
+	delete(view.Routing.CauseRecords, oldCause.ID)
+	adminID := ""
+	if admin {
+		record := PathV1AdminRecord{RunID: view.RunID, EventSeq: p.Disposition.EventSeq, AdminType: "terminal_disposition", Actor: "user:test", ReasonCode: reason}
+		var err error
+		record.ID, err = AdminRecordIdentity(record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		adminID = record.ID
+		view.AdminRecords[record.ID] = record
+	}
+	payload, err := json.Marshal(settleAttemptObservationPayload{TemplateRef: view.TemplateRef, SourceCommandID: source.ID, SourceActivationID: p.SourceActivation.ID, SourceGeneration: p.SourceActivation.Generation, Attempt: oldSettle.Identity.Attempt, ResultCode: string(state), ReasonCode: reason})
+	if err != nil {
+		t.Fatal(err)
+	}
+	settle := makeTestCommandPayload(t, CommandIdentity{RunID: view.RunID, Kind: CommandSettleAttempt, PayloadSchema: 1, SourceActivationID: p.SourceActivation.ID, SourceGeneration: p.SourceActivation.Generation, Attempt: oldSettle.Identity.Attempt, InputDigest: source.ID, PlanDigest: payloadDigest(payload), ResultCode: string(state)}, CommandObserved, payload)
+	view.Commands[settle.ID] = settle
+	attemptID, _ := AttemptIdentity(view.RunID, p.SourceActivation.ID, oldSettle.Identity.Attempt)
+	effect := view.SideEffects[attemptID]
+	effect.State = effectState
+	view.SideEffects[attemptID] = effect
+	p.State = state
+	p.Disposition.ToState = state
+	p.Disposition.ReasonCode = reason
+	p.Disposition.CommandID = settle.ID
+	p.Disposition.AdminRecordID = adminID
+	p.Disposition.ID, _ = DispositionReceiptIdentity(p.ID, p.Disposition.FromState, state, reason, settle.ID, adminID, uint64(p.Disposition.EventSeq))
+	kind := terminalKindForPath(state)
+	causeID, _ := CauseIdentity(p.ID, kind, reason, p.SourceActivation.ID, settle.ID, adminID, uint64(p.Disposition.EventSeq))
+	p.TerminalCauseID = causeID
+	view.Routing.Paths[p.ID] = p
+	view.Routing.CauseRecords[causeID] = CauseRecord{ID: causeID, SourcePathID: p.ID, TerminalKind: kind, DispositionReason: reason, SourceActivationID: p.SourceActivation.ID, SourceCommandID: settle.ID, AdminRecordID: adminID, EventSeq: p.Disposition.EventSeq}
+}
+
+func TestTerminalAttemptProvenanceRejectsSubstitution(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		state       PathState
+		reason      string
+		effectState string
+		admin       bool
+	}{
+		{name: "failed", state: PathFailed, reason: "performer_failed", effectState: "failed"},
+		{name: "canceled", state: PathCanceled, reason: "user_canceled", effectState: "canceled", admin: true},
+		{name: "skipped", state: PathSkipped, reason: "user_skipped", effectState: "observed", admin: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			view := validSlowAnyFixture(t, true)
+			pathID := failedPathID(view)
+			if test.state != PathFailed {
+				replaceTerminalAttemptState(t, &view, pathID, test.state, test.reason, test.effectState, test.admin)
+				if report := ValidateAggregate(view); !report.Valid() {
+					t.Fatalf("valid %s terminal diagnostics: %#v", test.state, report.Diagnostics)
+				}
+			}
+			valid := terminalSettleCommand(view, pathID)
+			payload, err := json.Marshal(settleAttemptObservationPayload{TemplateRef: view.TemplateRef, SourceCommandID: valid.Identity.InputDigest, SourceActivationID: valid.Identity.SourceActivationID, SourceGeneration: valid.Identity.SourceGeneration, Attempt: valid.Identity.Attempt, ResultCode: "pass", ReasonCode: test.reason})
+			if err != nil {
+				t.Fatal(err)
+			}
+			forged := makeTestCommandPayload(t, CommandIdentity{RunID: view.RunID, Kind: CommandSettleAttempt, PayloadSchema: 1, SourceActivationID: valid.Identity.SourceActivationID, SourceGeneration: valid.Identity.SourceGeneration, Attempt: valid.Identity.Attempt, InputDigest: valid.Identity.InputDigest, PlanDigest: payloadDigest(payload), ResultCode: "pass"}, CommandObserved, payload)
+			view.Commands[forged.ID] = forged
+			rebindTerminalPathCommand(t, &view, pathID, forged.ID)
+			report := ValidateAggregate(view)
+			if !reportHasCode(report, "terminal_command_provenance") {
+				t.Fatalf("substituted %s observation diagnostics: %#v", test.state, report.Diagnostics)
+			}
+			if _, err := AssessAggregateCompletion(view); !errors.Is(err, ErrAggregateInvalid) {
+				t.Fatalf("completion error = %v, want ErrAggregateInvalid", err)
+			}
+		})
+	}
+}
+
+func TestTerminalAttemptProvenanceRejectsReplayAndDigestDrift(t *testing.T) {
+	t.Parallel()
+	view := validSlowAnyFixture(t, true)
+	pathID := failedPathID(view)
+	valid := terminalSettleCommand(view, pathID)
+	addTerminalAttemptCommands(t, &view, valid.Identity.SourceActivationID, valid.Identity.SourceGeneration, valid.Identity.Attempt+1, "failed", "performer_failed", "failed")
+	report := ValidateAggregate(view)
+	if !reportHasCode(report, "terminal_command_provenance") {
+		t.Fatalf("replayed attempt diagnostics: %#v", report.Diagnostics)
+	}
+
+	view = validSlowAnyFixture(t, true)
+	pathID = failedPathID(view)
+	valid = terminalSettleCommand(view, pathID)
+	forgedIdentity := valid.Identity
+	forgedIdentity.PlanDigest = strings.Repeat("f", 64)
+	forged := makeTestCommandPayload(t, forgedIdentity, CommandObserved, valid.Payload)
+	view.Commands[forged.ID] = forged
+	rebindTerminalPathCommand(t, &view, pathID, forged.ID)
+	report = ValidateAggregate(view)
+	if !reportHasCode(report, "terminal_command_provenance") {
+		t.Fatalf("drifted observation digest diagnostics: %#v", report.Diagnostics)
+	}
+
+	view = validSlowAnyFixture(t, true)
+	pathID = failedPathID(view)
+	valid = terminalSettleCommand(view, pathID)
+	alternateSource := makeTestCommand(t, CommandIdentity{RunID: view.RunID, Kind: CommandPerformAttempt, PayloadSchema: 1, SourceActivationID: valid.Identity.SourceActivationID, SourceGeneration: valid.Identity.SourceGeneration, Attempt: valid.Identity.Attempt, PlanDigest: "different-performer-plan"}, CommandObserved)
+	view.Commands[alternateSource.ID] = alternateSource
+	payload, err := json.Marshal(settleAttemptObservationPayload{TemplateRef: view.TemplateRef, SourceCommandID: alternateSource.ID, SourceActivationID: valid.Identity.SourceActivationID, SourceGeneration: valid.Identity.SourceGeneration, Attempt: valid.Identity.Attempt, ResultCode: "failed", ReasonCode: "performer_failed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	forged = makeTestCommandPayload(t, CommandIdentity{RunID: view.RunID, Kind: CommandSettleAttempt, PayloadSchema: 1, SourceActivationID: valid.Identity.SourceActivationID, SourceGeneration: valid.Identity.SourceGeneration, Attempt: valid.Identity.Attempt, InputDigest: alternateSource.ID, PlanDigest: payloadDigest(payload), ResultCode: "failed"}, CommandObserved, payload)
+	view.Commands[forged.ID] = forged
+	rebindTerminalPathCommand(t, &view, pathID, forged.ID)
+	report = ValidateAggregate(view)
+	if !reportHasCode(report, "terminal_command_provenance") {
+		t.Fatalf("substituted source command diagnostics: %#v", report.Diagnostics)
+	}
+}
+
+func TestEndedTerminalRouteBindsSettlementAndPlan(t *testing.T) {
+	t.Parallel()
+	view := validGenesisFixture(t)
+	p := view.Routing.Paths[view.Authority.Genesis.OutputPathID]
+	settle := addTerminalAttemptCommands(t, &view, p.SourceActivation.ID, p.SourceActivation.Generation, 1, "pass", "", "observed")
+	p.UpdatedSeq = 2
+	payload, err := json.Marshal(routeTerminalPayload{TemplateRef: view.TemplateRef, SettlementCommandID: settle.ID, SourceActivationID: p.SourceActivation.ID, SourceGeneration: p.SourceActivation.Generation, SourcePathID: p.ID, Attempt: 1, ResultCode: "pass", ReasonCode: "completed", ProducedPathIDs: []PathID{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	route := makeTestCommandPayload(t, CommandIdentity{RunID: view.RunID, Kind: CommandRoutePaths, PayloadSchema: 1, SourceActivationID: p.SourceActivation.ID, SourceGeneration: p.SourceActivation.Generation, SourcePathID: p.ID, Attempt: 1, InputDigest: settle.ID, CauseDigest: "terminal", PlanDigest: payloadDigest(payload), ResultCode: "pass"}, CommandObserved, payload)
+	view.Commands[route.ID] = route
+	dispositionID, _ := DispositionReceiptIdentity(p.ID, PathLive, PathEnded, "completed", route.ID, "", 2)
+	p.Disposition = &DispositionReceipt{ID: dispositionID, PathID: p.ID, FromState: PathLive, ToState: PathEnded, ReasonCode: "completed", CommandID: route.ID, EventSeq: 2}
+	view.Routing.Paths[p.ID] = p
+	if report := ValidateAggregate(view); !report.Valid() {
+		t.Fatalf("valid ended route diagnostics: %#v", report.Diagnostics)
+	}
+	forgedIdentity := route.Identity
+	forgedIdentity.PlanDigest = strings.Repeat("e", 64)
+	forged := makeTestCommandPayload(t, forgedIdentity, CommandObserved, route.Payload)
+	view.Commands[forged.ID] = forged
+	p.Disposition.CommandID = forged.ID
+	p.Disposition.ID, _ = DispositionReceiptIdentity(p.ID, PathLive, PathEnded, "completed", forged.ID, "", 2)
+	view.Routing.Paths[p.ID] = p
+	report := ValidateAggregate(view)
+	if !reportHasCode(report, "terminal_command_provenance") {
+		t.Fatalf("forged ended plan diagnostics: %#v", report.Diagnostics)
+	}
+}
+
 func TestTerminalDispositionRejectsUnrelatedCommandAtCompletion(t *testing.T) {
 	t.Parallel()
 	view := validSlowAnyFixture(t, true)
@@ -1254,6 +1488,59 @@ func TestEndedDispositionRequiresRouteCapability(t *testing.T) {
 	report := ValidateAggregate(view)
 	if !reportHasCode(report, "terminal_command_capability") {
 		t.Fatalf("ended command diagnostics: %#v", report.Diagnostics)
+	}
+	if _, err := AssessAggregateCompletion(view); !errors.Is(err, ErrAggregateInvalid) {
+		t.Fatalf("completion error = %v, want ErrAggregateInvalid", err)
+	}
+}
+
+func TestCauseRecordRejectsUnownedEndedSourcePath(t *testing.T) {
+	t.Parallel()
+	view := validGenesisFixture(t)
+	p := view.Routing.Paths[view.Authority.Genesis.OutputPathID]
+	initID := view.Authority.Genesis.ActivationID
+	for id, command := range view.Commands {
+		if command.Identity.Kind == CommandInitializeRouting {
+			initID = id
+		}
+	}
+	causeID, err := CauseIdentity(p.ID, TerminalFailed, "forged", p.SourceActivation.ID, initID, "", uint64(p.UpdatedSeq))
+	if err != nil {
+		t.Fatal(err)
+	}
+	view.Routing.CauseRecords[causeID] = CauseRecord{ID: causeID, SourcePathID: p.ID, TerminalKind: TerminalFailed, DispositionReason: "forged", SourceActivationID: p.SourceActivation.ID, SourceCommandID: initID, EventSeq: p.UpdatedSeq}
+	setID, err := CauseSetIdentity([]string{causeID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view.Routing.CauseSets[setID] = CauseSetRecord{Digest: setID, CauseIDs: []string{causeID}}
+	report := ValidateAggregate(view)
+	if !reportHasCode(report, "terminal_cause_provenance") {
+		t.Fatalf("unowned ended-path cause diagnostics: %#v", report.Diagnostics)
+	}
+	if _, err := AssessAggregateCompletion(view); !errors.Is(err, ErrAggregateInvalid) {
+		t.Fatalf("completion error = %v, want ErrAggregateInvalid", err)
+	}
+}
+
+func TestRootScopeClosureRequiresReducingAuthority(t *testing.T) {
+	t.Parallel()
+	view := validGenesisFixture(t)
+	rootID := view.Authority.Genesis.RootScopeID
+	scope := view.Routing.Scopes[rootID]
+	scope.State = ScopeClosedActivated
+	scope.CloseReason = ScopeCloseAll
+	scope.ClosedByCommandID = view.Authority.Genesis.ActivationID
+	scope.EventSeq = 2
+	for id, command := range view.Commands {
+		if command.Identity.Kind == CommandInitializeRouting {
+			scope.ClosedByCommandID = id
+		}
+	}
+	view.Routing.Scopes[rootID] = scope
+	report := ValidateAggregate(view)
+	if !reportHasCode(report, "root_scope_close_authority") {
+		t.Fatalf("unowned root closure diagnostics: %#v", report.Diagnostics)
 	}
 	if _, err := AssessAggregateCompletion(view); !errors.Is(err, ErrAggregateInvalid) {
 		t.Fatalf("completion error = %v, want ErrAggregateInvalid", err)

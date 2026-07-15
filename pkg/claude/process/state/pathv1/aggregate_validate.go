@@ -345,11 +345,17 @@ func (i *aggregateIndex) validateScopes() {
 				i.c.add("scope_close_reason", path, "closed activated scope has reason %q", s.CloseReason)
 			}
 			i.refCommand(s.ClosedByCommandID, path+".closedByCommandId")
+			if s.ParentScopeID == "" {
+				i.validateRootScopeClosure(path, s, false)
+			}
 		case ScopeClosedNoActivation:
 			if s.CloseReason != ScopeCloseAllImpossible && s.CloseReason != ScopeCloseCandidateNonSuccess {
 				i.c.add("scope_close_reason", path, "closed-no-activation scope has reason %q", s.CloseReason)
 			}
 			i.refCommand(s.ClosedByCommandID, path+".closedByCommandId")
+			if s.ParentScopeID == "" {
+				i.validateRootScopeClosure(path, s, true)
+			}
 		}
 	}
 	for _, id := range sortedMapKeys(i.view.Routing.Reservations) {
@@ -364,6 +370,34 @@ func (i *aggregateIndex) validateScopes() {
 		}
 	}
 	i.indexScopeTree()
+}
+
+func (i *aggregateIndex) validateRootScopeClosure(path string, scope ScopeRecord, noActivation bool) {
+	var reducer *ActivationReservation
+	for _, candidate := range i.view.Routing.Reservations {
+		if candidate.IsReducing && candidate.ReducesScopeID == scope.ID {
+			copy := candidate
+			reducer = &copy
+			break
+		}
+	}
+	if reducer == nil {
+		i.c.add("root_scope_close_authority", path, "closed root scope lacks an exact reducing reservation")
+		return
+	}
+	if reducer.CommandID != scope.ClosedByCommandID {
+		i.c.add("root_scope_close_authority", path, "root scope close command does not match reducing reservation")
+	}
+	if noActivation && reducer.State != ReservationClosedNoActivation {
+		i.c.add("root_scope_close_authority", path, "closed-no-activation root scope lacks closed reducing reservation")
+	}
+	if !noActivation && reducer.State != ReservationActivated {
+		i.c.add("root_scope_close_authority", path, "activated root scope lacks activated reducing reservation")
+	}
+	command, ok := i.view.Commands[scope.ClosedByCommandID]
+	if !ok || command.Identity.Kind != CommandActivateGeneration || command.Identity.TargetReservationID != reducer.ID || command.Identity.TargetGeneration != reducer.Generation {
+		i.c.add("root_scope_close_authority", path, "root scope close is not owned by the reducing activation command")
+	}
 }
 
 func (i *aggregateIndex) indexScopeTree() {
@@ -797,13 +831,13 @@ func (i *aggregateIndex) validateDisposition(path string, p PathRecord) {
 					}
 				}
 			case PathEnded:
-				i.validateTerminalCommand(path, p, d, command.Identity, CommandRoutePaths)
+				i.validateTerminalCommand(path, p, d, command, CommandRoutePaths)
 			case PathFailed, PathCanceled, PathSkipped:
 				want := CommandSettleAttempt
 				if d.FromState == PathArrived {
 					want = CommandActivateGeneration
 				}
-				i.validateTerminalCommand(path, p, d, command.Identity, want)
+				i.validateTerminalCommand(path, p, d, command, want)
 			}
 		}
 	}
@@ -824,7 +858,8 @@ func (i *aggregateIndex) validateDisposition(path string, p PathRecord) {
 	}
 }
 
-func (i *aggregateIndex) validateTerminalCommand(path string, p PathRecord, d DispositionReceipt, command CommandIdentity, want CommandKindV1) {
+func (i *aggregateIndex) validateTerminalCommand(path string, p PathRecord, d DispositionReceipt, record CommandRecord, want CommandKindV1) {
+	command := record.Identity
 	if command.Kind != want {
 		i.c.add("terminal_command_capability", path+".disposition", "command kind %q cannot own terminal transition %q -> %q", command.Kind, d.FromState, p.State)
 		return
@@ -841,6 +876,18 @@ func (i *aggregateIndex) validateTerminalCommand(path string, p PathRecord, d Di
 	}
 	if !exact {
 		i.c.add("terminal_command_tuple", path+".disposition", "terminal command does not name the exact source/target path authority")
+	}
+	if record.State != CommandObserved && record.State != CommandReconciled {
+		i.c.add("terminal_command_state", path+".disposition", "terminal command state %q is not settled authority", record.State)
+	}
+	if (p.State == PathCanceled || p.State == PathSkipped) && d.AdminRecordID == "" {
+		i.c.add("terminal_admin_authority", path+".disposition", "%s terminal transition requires explicit admin authority", p.State)
+	}
+	switch want {
+	case CommandSettleAttempt:
+		i.validateSettleAttemptTerminal(path, p, d, record)
+	case CommandRoutePaths:
+		i.validateRouteTerminal(path, p, d, record)
 	}
 }
 

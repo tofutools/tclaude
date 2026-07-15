@@ -37,10 +37,8 @@ func (i *aggregateIndex) validateCausesAndClosures() {
 			p, ok := i.view.Routing.Paths[cause.SourcePathID]
 			if !ok {
 				i.c.add("cause_source_missing", path, "source path %q is missing", cause.SourcePathID)
-			} else if p.TerminalCauseID == cause.ID {
-				if !p.State.TerminalNonSuccess() || terminalKindForPath(p.State) != cause.TerminalKind || p.Disposition == nil || p.Disposition.ReasonCode != cause.DispositionReason || p.Disposition.CommandID != cause.SourceCommandID || p.Disposition.AdminRecordID != cause.AdminRecordID || p.Disposition.EventSeq != cause.EventSeq || p.SourceActivation.ID != cause.SourceActivationID {
-					i.c.add("terminal_cause_provenance", path, "cause does not exactly match terminal path disposition")
-				}
+			} else if p.TerminalCauseID != cause.ID || !p.State.TerminalNonSuccess() || terminalKindForPath(p.State) != cause.TerminalKind || p.Disposition == nil || p.Disposition.ReasonCode != cause.DispositionReason || p.Disposition.CommandID != cause.SourceCommandID || p.Disposition.AdminRecordID != cause.AdminRecordID || p.Disposition.EventSeq != cause.EventSeq || p.SourceActivation.ID != cause.SourceActivationID {
+				i.c.add("terminal_cause_provenance", path, "cause does not exactly match terminal path disposition")
 			}
 		} else if cause.SourceActivationID != "" || cause.AdminRecordID != "" || cause.SourceCommandID == "" {
 			i.c.add("join_cause_authority", path, "join-level cause must be automatic command authority with empty source/admin")
@@ -351,6 +349,9 @@ func validateClosedReservationFold(i *aggregateIndex, r ActivationReservation) e
 			return fmt.Errorf("all activation includes non-success")
 		}
 		return nil
+	}
+	if r.JoinPolicy == JoinAny && arrived {
+		return fmt.Errorf("any reservation with an arrived candidate must activate")
 	}
 	if open {
 		return fmt.Errorf("candidate fold remains open")
