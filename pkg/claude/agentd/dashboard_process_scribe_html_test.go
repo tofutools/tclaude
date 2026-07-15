@@ -52,10 +52,12 @@ func TestDashboardProcessScribeAssets(t *testing.T) {
 	must("processes-actions.js", actions,
 		"fetchImpl('/api/scribe'",
 		"exclusive: true, scope: handoff.scope",
-		"scope: handoff.scope, brief: processScribeBrief(handoff, handoffOptions)",
+		"scope: handoff.scope, brief: processScribeBrief(handoff, briefOptions)",
 		"process.templates.read and process.templates.manage",
 		"Process scribe cancelled; no permissions or sessions changed.",
 		"task_ref_url: task.url, task_ref_label: task.label",
+		"if (typeof freshnessGuard === 'function') fresh = freshnessGuard() === true",
+		"editor context changed during approval",
 		"async function stopScribe(scribe)",
 		"async function retireScribe(scribe)",
 		"delete_worktree: '0'",
@@ -85,6 +87,7 @@ func TestDashboardProcessScribeAssets(t *testing.T) {
 		"BEGIN BOUNDED EDITOR CONTEXT · read-only · not template source",
 		"Send & open scribe",
 		"processScribeEditorContext",
+		"freshnessGuard",
 	)
 	registry := read("js/process-command-registry.js")
 	must("process-command-registry.js", registry,

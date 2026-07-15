@@ -59,6 +59,12 @@ function externalInteractionPending(editor) {
   return !!(editor.externalDecisionPending || editor.externalReloadPending);
 }
 
+function scribeSelectionIdentity(selection) {
+  return JSON.stringify(selectionItems(selection).map((item) => item?.type === 'node'
+    ? ['node', String(item.id || '')]
+    : ['edge', String(item?.from || ''), String(item?.outcome || '')]).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))));
+}
+
 function h(tag, attrs = {}, ...children) {
   const el = document.createElement(tag);
   for (const [key, value] of Object.entries(attrs)) {
@@ -1394,6 +1400,9 @@ export class ProcessTemplateEditor {
     };
     let context;
     const focusedDiagnostic = kind === 'diagnostic' ? this.validation?.currentIssue?.() || null : null;
+    const guardedModel = this.model;
+    const guardedRev = guardedModel.rev;
+    const guardedSelection = kind === 'selection' ? scribeSelectionIdentity(this.selection) : '';
     try {
       const handoff = processScribeHandoff(anchor);
       context = processScribeEditorContext({
@@ -1404,6 +1413,24 @@ export class ProcessTemplateEditor {
       this.status(error.message, true);
       return false;
     }
+    const freshnessGuard = () => {
+      const currentID = (this.model?.template?.id || '').trim();
+      const modelFresh = !this.abort?.signal?.aborted
+        && this.model === guardedModel && this.model.rev === guardedRev
+        && currentID === anchor.id
+        && (this.model.currentRef || '') === anchor.currentRef
+        && (this.model.sourceHash || '') === anchor.sourceHash
+        && (this.blank && !this.model.sourceHash) === anchor.isNew
+        && !this.savePending && !externalInteractionPending(this);
+      const selectionFresh = kind !== 'selection' || scribeSelectionIdentity(this.selection) === guardedSelection;
+      const currentDiagnostic = kind === 'diagnostic' ? this.validation?.currentIssue?.() || null : null;
+      const diagnosticFresh = kind !== 'diagnostic' || (!!focusedDiagnostic && !!currentDiagnostic
+        && diagnosticIdentity(currentDiagnostic) === diagnosticIdentity(focusedDiagnostic));
+      if (modelFresh && selectionFresh && diagnosticFresh) return true;
+      this.status('Scribe handoff cancelled because the editor context changed while the request was open.');
+      this.graph?.root?.focus?.({ preventScroll: true });
+      return false;
+    };
     const prompt = await this.scribePreviewModal({
       kind, prompt: processScribePrompt(kind), context: processScribeContextPreview(context),
       truncated: !!context.truncation,
@@ -1412,16 +1439,8 @@ export class ProcessTemplateEditor {
       this.graph?.root?.focus?.({ preventScroll: true });
       return false;
     }
-    if (kind === 'diagnostic') {
-      const currentDiagnostic = this.validation?.currentIssue?.() || null;
-      if (!focusedDiagnostic || !currentDiagnostic
-          || diagnosticIdentity(currentDiagnostic) !== diagnosticIdentity(focusedDiagnostic)) {
-        this.status('Scribe handoff cancelled because the focused diagnostic changed while the preview was open.');
-        this.graph?.root?.focus?.({ preventScroll: true });
-        return false;
-      }
-    }
-    return !!(await this.options.onScribe(anchor, { context, prompt }));
+    if (!freshnessGuard()) return false;
+    return !!(await this.options.onScribe(anchor, { context, prompt, freshnessGuard }));
   }
 
   async saveRequest(requestSeq) {

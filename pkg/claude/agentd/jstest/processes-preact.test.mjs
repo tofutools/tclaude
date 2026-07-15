@@ -168,6 +168,43 @@ test('process scribe actions send bounded structured scope, exact grants, and re
   assert.equal(transitionPrompt.okLabel, 'Start separate scribe');
 });
 
+test('process scribe freshness guard runs after approval and immediately before POST', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { createProcessesActions }, { dashboardState }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
+    harness.importDashboardModule('js/snapshot-store.js'),
+  ]);
+  dashboardState.snapshot.value = { groups: [] };
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const approval = deferred();
+  let fresh = true;
+  const requests = [];
+  const actions = createProcessesActions({
+    state, dashboardOrigin: 'https://dashboard.example', confirm: () => approval.promise,
+    fetchImpl: async (...args) => { requests.push(args); throw new Error('stale context must not POST'); },
+  });
+  const pending = actions.summonScribe({
+    kind: 'template', id: 'release-flow', currentRef: `release-flow@sha256:${'a'.repeat(64)}`,
+    sourceHash: 'b'.repeat(64), isNew: false,
+  }, { freshnessGuard: () => fresh });
+  fresh = false;
+  approval.resolve(true);
+  assert.equal(await pending, null);
+  assert.equal(requests.length, 0, 'a mutation during the permission/reuse confirmation prevents /api/scribe');
+  assert.match(state.notice.value, /editor context changed during approval/);
+
+  const order = [];
+  const accepted = createProcessesActions({
+    state, dashboardOrigin: 'https://dashboard.example',
+    confirm: async () => { order.push('confirm'); return true; },
+    fetchImpl: async () => { order.push('post'); return { ok: true, json: async () => ({ focus_mode: 'native' }) }; },
+  });
+  await accepted.summonScribe({ kind: 'library' }, {
+    freshnessGuard: () => { order.push('freshness'); return true; },
+  });
+  assert.deepEqual(order, ['confirm', 'freshness', 'post'], 'no asynchronous boundary remains between freshness and POST');
+});
+
 test('process scribe preview exposes read-only bounded context and an editable/cancellable request', async (t) => {
   const harness = await createPreactHarness(t);
   const { ProcessTemplateEditor } = await harness.importDashboardModule('js/process-editor.js');

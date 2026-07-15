@@ -287,7 +287,10 @@ test('diagnostic send rechecks exact unique focus after the human preview', asyn
         scenario.mutate(validation);
         return 'Fix this issue.';
       },
-      options: { onScribe: async (...args) => { emitted.push(args); return {}; } },
+      options: { onScribe: async (...args) => {
+        assert.equal(args[1].freshnessGuard(), true, `${scenario.name}: action-boundary guard accepts only fresh context`);
+        emitted.push(args); return {};
+      } },
       status: (...args) => statuses.push(args),
     };
     assert.equal(await ProcessTemplateEditor.prototype.requestScribe.call(fake, 'diagnostic'), scenario.sends === 1,
@@ -298,9 +301,51 @@ test('diagnostic send rechecks exact unique focus after the human preview', asyn
         { code: 'missing_performer', scope: 'node', targetId: 'build' });
       assert.equal(focused, 0, `${scenario.name}: accepted send keeps focus behavior unchanged`);
     } else {
-      assert.match(statuses.at(-1)[0], /changed while the preview was open/);
+      assert.match(statuses.at(-1)[0], /editor context changed while the request was open/);
       assert.equal(focused, 1, `${scenario.name}: cancelled send returns focus to the graph`);
     }
+  }
+});
+
+test('scribe action freshness guard covers model lifecycle, selection, and diagnostic focus', async () => {
+  const hash = 'a'.repeat(64);
+  const diagnostic = { code: 'missing_performer', scope: 'node', targetId: 'build', node: 'build', message: 'missing' };
+  const otherDiagnostic = { code: 'missing_next', scope: 'node', targetId: 'ship', node: 'ship', message: 'changed' };
+  const cases = [
+    { name: 'model revision', kind: 'template', mutate(fake) { fake.model.rev += 1; } },
+    { name: 'model replacement', kind: 'template', mutate(fake) { fake.model = { ...fake.model }; } },
+    { name: 'selection identity', kind: 'selection', mutate(fake) { fake.selection = { type: 'node', id: 'ship' }; } },
+    { name: 'diagnostic identity', kind: 'diagnostic', mutate(fake) {
+      fake.validation.mapped.entries = [otherDiagnostic];
+      fake.validation.issueCursor = 0;
+      fake.validation.focusedIssueIdentity = diagnosticIdentity(otherDiagnostic);
+    } },
+  ];
+
+  for (const scenario of cases) {
+    const validation = {
+      mapped: { entries: [diagnostic] }, issueCursor: 0,
+      focusedIssueIdentity: diagnosticIdentity(diagnostic), focusedIssueAmbiguous: false,
+      currentIssue: LiveValidation.prototype.currentIssue,
+    };
+    const fake = {
+      blank: false, dirty: false, savePending: false,
+      externalDecisionPending: false, externalReloadPending: false,
+      selection: scenario.kind === 'selection' ? { type: 'node', id: 'build' } : null,
+      validation,
+      model: {
+        rev: 7, template: { id: 'release-flow', nodes: { build: { type: 'task' }, ship: { type: 'task' } } }, edges: [],
+        currentRef: `release-flow@sha256:${hash}`, sourceHash: 'b'.repeat(64),
+      },
+      abort: { signal: { aborted: false } }, graph: { root: { focus() {} } }, status() {},
+      scribePreviewModal: async () => 'Proceed.',
+      options: { onScribe: async (_anchor, options) => {
+        scenario.mutate(fake);
+        assert.equal(options.freshnessGuard(), false, `${scenario.name} must invalidate the final action boundary`);
+        return null;
+      } },
+    };
+    assert.equal(await ProcessTemplateEditor.prototype.requestScribe.call(fake, scenario.kind), false, scenario.name);
   }
 });
 
