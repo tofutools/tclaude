@@ -12,18 +12,18 @@ import {
 import { recordGroupInteraction } from './last-group.js';
 import {
   renderDashDefaultProfile, renderDashSandboxProfile,
-} from './render.js';
+} from './toolbar-profile-renderers.js';
 import { focusNextMessagesAttention, renderMailTab, renderAccessRequests } from './mail-bridge.js';
 import { renderGroupsTab, renderLinksTab } from './tabs.js';
 import { renderTemplatesTab } from './modal-templates.js';
 import { applyProcessesTabVisibility } from './processes.js';
 import { renderDock } from './dock.js';
-// renameEditing is owned by row-actions.js; refreshSuspended() only reads it.
-// lastSnapshot
+// renameEditing is the historical flag for row-actions.js's remaining toolbar
+// profile picker; refreshSuspended() only reads it. lastSnapshot
 // is dashboard.js's shared state — read directly, written via the
 // setLastSnapshot setter (two writers: refresh() here, and the
-// row-actions rename-rollback). All deliberate, benign cycles (see
-// render.js): TDZ-safe — no top-level code reads a cyclic import.
+// row-actions picker rollback). All deliberate, benign cycles are TDZ-safe —
+// no top-level code reads a cyclic import.
 import { renameEditing } from './row-actions.js';
 import {
   closeTerminalsForWindowOp, openWebWindowPane, reconcileTerminalsForAgentRoster,
@@ -50,13 +50,12 @@ import { hoveredGroupKey, setHoveredGroupKey } from './group-hover-state.js';
 // consults it both BEFORE its /api/snapshot fetch and AGAIN after, so a refresh
 // that started before a transient editor opened cannot publish underneath it.
 //
-// Preact owns the modal, menu, drag and slop-machine surfaces and retains their
-// keyed nodes across snapshot publishes. The only remaining imperative edit
-// boundary is row-actions.js's transient sibling input/select: it is not part of
-// the Groups VNode tree, so a publish while it is open could remove it.
+// Preact owns the Groups menu, editor, drag and slop-machine surfaces and
+// retains their keyed nodes across snapshot publishes. The only remaining
+// imperative edit boundary is the dashboard toolbar's transient profile
+// <select>; a publish while it is open could replace its stable toolbar chip.
 function refreshSuspended() {
-  // An inline rename <input> is open — re-rendering would destroy it
-  // mid-keystroke.
+  // A legacy toolbar profile <select> is open.
   if (renameEditing) return true;
   return false;
 }
@@ -75,9 +74,8 @@ function groupsTabActive() {
 
 export async function refresh() {
   if (refreshSuspended()) {
-    // A transient inline-edit input/select is open. Skip this tick so the
-    // Groups publish cannot remove it mid-keystroke; its commit/cancel path
-    // re-triggers refresh() once the user is done.
+    // A transient toolbar profile select is open. Skip this tick so a toolbar
+    // publish cannot replace its stable chip before commit/cancel restores it.
     return;
   }
   // responded flips true the instant the /api/snapshot fetch resolves (agentd
@@ -159,8 +157,8 @@ export async function refresh() {
       dashboardState.discardRequest(requestId, { responded });
       return;
     }
-    // The suspend guard was sampled BEFORE the fetch; an inline editor may have
-    // opened since. Re-check before publishing into the Groups tree.
+    // The suspend guard was sampled BEFORE the fetch; the toolbar picker may
+    // have opened since. Re-check before publishing.
     if (refreshSuspended()) {
       dashboardState.discardRequest(requestId, { responded });
       jobs?.discardRequest(requestId);
@@ -184,8 +182,8 @@ export async function refresh() {
     await stitchListPage(data, 'replaced', replacedR, prevSnap);
     const jobsResult = await stitchListPage(data, 'jobs', jobsR, prevSnap);
     // stitchListPage awaited resp.json() (async boundaries) — re-check the request
-    // (a newer refresh may have started) AND the suspend guard (an inline editor
-    // may have opened) before mutating shared offset state and the DOM.
+    // (a newer refresh may have started) AND the suspend guard (the toolbar
+    // picker may have opened) before mutating shared offset state and the DOM.
     if (!dashboardState.isCurrentRequest(requestId)) {
       jobs?.discardRequest(requestId);
       return;
@@ -239,8 +237,8 @@ export async function refresh() {
     // default "hover"). body.group-quick-fold drives the CSS horizontal
     // accordion: the editable chips in each group <summary> collapse to
     // icon-only at rest and expand on header hover. "expanded" keeps them
-    // full. A plain class toggle, like hide-slop-lever below — render.js
-    // already rebuilt the (re-rendered) group rows this same tick, so the
+    // full. A plain class toggle, like hide-slop-lever below — the native
+    // Groups tree already reconciled its rows this same tick, so the
     // class is the only extra state. Folding is gated to hover-capable
     // pointers in CSS, so touch devices stay expanded whatever the mode.
     document.body.classList.toggle('group-quick-fold', data.group_quick_options !== 'expanded');
@@ -269,7 +267,7 @@ export async function refresh() {
     // keeps the dependency one-way — refresh.js doesn't have to
     // import any feature module that wants to react to a tick.
     document.dispatchEvent(new CustomEvent('tclaude:snapshot'));
-    // Publish only after the full legacy render succeeds. Signal subscribers
+    // Publish only after every renderer has succeeded. Signal subscribers
     // can now react without observing a snapshot the current UI failed to
     // finish applying.
     dashboardState.commitRequest(requestId, data);

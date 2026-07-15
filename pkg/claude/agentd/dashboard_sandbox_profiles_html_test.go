@@ -45,7 +45,7 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		`await options.onCreate?.(preview.after.name)`:                   "successful create hands off canonical name",
 		`apply_assignments: false`:                                       "import never applies assignments",
 		`id="dashboard-default-sandbox-profile"`:                         "global quick assignment chip",
-		`data-act="set-group-sandbox-profile"`:                           "group quick assignment chip",
+		`'set-group-sandbox-profile' : 'set-group-profile'`:              "group quick assignment chip",
 		`openSandboxProfileEditor(null, { onCreate:`:                     "quick-create assignment handoff",
 		`id="agent-spawn-sandbox-profile"`:                               "explicit spawn selector",
 		`id="agent-spawn-sandbox-profile-preview"`:                       "redacted effective preview",
