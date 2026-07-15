@@ -71,29 +71,23 @@ func TestDashboardTerminalFitContainerWiring(t *testing.T) {
 	}
 
 	core := readDashboardJS(t, "terminals-core.js")
-	for _, want := range []string{
-		"scrollback: 0",
-		"fitHost.className = 'mux-pane-xterm-fit'",
-		"host.append(fitHost)",
-		"term.open(fitHost)",
-		"p.ro.observe(fitHost)",
-	} {
-		if !strings.Contains(core, want) {
-			t.Errorf("terminal multiplexer missing fit-container wiring %q", want)
-		}
+	if !strings.Contains(core, "scrollback: 0") {
+		t.Error("opaque terminal widget must disable redundant xterm scrollback")
 	}
 
-	modal := readDashboardJS(t, "modal-term.js")
+	shell := readDashboardJS(t, "terminal-shell-island.js")
 	for _, want := range []string{
-		"scrollback: 0",
-		"term.open($('#term-session-xterm-fit'))",
-		".observe($('#term-session-xterm-fit'))",
+		"return html`<div class=${className}><div ref=${hostRef} class=${fitClassName}></div></div>`;",
+		`className="mux-pane-xterm"`,
+		`fitClassName="mux-pane-xterm-fit"`,
+		`className="term-session-xterm"`,
+		`fitClassName="term-session-xterm-fit"`,
 	} {
-		if !strings.Contains(modal, want) {
-			t.Errorf("modal terminal missing fit-container wiring %q", want)
+		if !strings.Contains(shell, want) {
+			t.Errorf("Preact terminal shell missing fit-container wiring %q", want)
 		}
 	}
-	if !strings.Contains(string(dashboardIndexHTML), `class="term-session-xterm-fit" id="term-session-xterm-fit"`) {
-		t.Error("modal terminal HTML missing the inner fit container")
+	if !strings.Contains(string(dashboardIndexHTML), `id="terminal-session-root"`) {
+		t.Error("dashboard HTML missing the stable Preact terminal-modal host")
 	}
 }
