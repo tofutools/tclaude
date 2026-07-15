@@ -205,36 +205,80 @@ test('process scribe freshness guard runs after approval and immediately before 
   assert.deepEqual(order, ['confirm', 'freshness', 'post'], 'no asynchronous boundary remains between freshness and POST');
 });
 
-test('process scribe preview exposes read-only bounded context and an editable/cancellable request', async (t) => {
+test('process scribe preview traps focus and restores its editor invoker on every close path', async (t) => {
   const harness = await createPreactHarness(t);
   const { ProcessTemplateEditor } = await harness.importDashboardModule('js/process-editor.js');
-  const fake = { modalDispose: null, abort: new AbortController() };
-  const cancelled = ProcessTemplateEditor.prototype.scribePreviewModal.call(fake, {
-    kind: 'selection', prompt: 'Explain this selection.',
-    context: '{\n  "nodeIds": ["build"]\n}', truncated: true,
-  });
-  const dialog = document.querySelector('.process-scribe-preview');
-  assert.ok(dialog);
-  const textarea = dialog.querySelector('textarea[aria-label="Request for the process scribe"]');
+  const editorRoot = harness.document.body.appendChild(harness.document.createElement('div'));
+  const fake = { modalDispose: null, abort: new AbortController(), root: editorRoot };
+  const invoker = editorRoot.appendChild(harness.document.createElement('button'));
+  invoker.textContent = 'Edit process graph';
+
+  const openPreview = async (overrides = {}) => {
+    invoker.focus();
+    const result = ProcessTemplateEditor.prototype.scribePreviewModal.call(fake, {
+      kind: 'selection', prompt: 'Explain this selection.',
+      context: '{\n  "nodeIds": ["build"]\n}', truncated: true,
+      ...overrides,
+    });
+    await new Promise(resolve => queueMicrotask(resolve));
+    const dialog = harness.document.querySelector('.process-scribe-preview');
+    assert.ok(dialog);
+    assert.equal(editorRoot.inert, true, 'editor and graph controls behind the preview are inert');
+    return { result, dialog };
+  };
+
+  let { result, dialog } = await openPreview();
+  let textarea = dialog.querySelector('textarea[aria-label="Request for the process scribe"]');
   const preview = dialog.querySelector('pre[aria-label="Read-only bounded editor context"]');
+  const send = dialog.querySelector('button.primary');
+  assert.equal(harness.document.activeElement, textarea, 'the editable human request receives initial focus');
   assert.equal(textarea.value, 'Explain this selection.');
   assert.match(preview.textContent, /"build"/);
   assert.equal(preview.querySelector('textarea'), null, 'stable context is displayed read-only');
   assert.match(dialog.querySelector('.process-scribe-context-end').textContent, /visibly truncated.*reread canonical YAML/);
-  textarea.value = 'Changed by the human.';
-  harness.fireEvent(dialog.querySelector('button:not(.primary)'), 'click');
-  assert.equal(await cancelled, null);
-  assert.equal(document.querySelector('.process-scribe-preview'), null);
 
-  const sent = ProcessTemplateEditor.prototype.scribePreviewModal.call(fake, {
-    kind: 'diagnostic', prompt: 'Fix it.', context: '{"code":"missing_start"}', truncated: false,
+  send.focus();
+  let tab = harness.fireEvent(send, 'keydown', { key: 'Tab' });
+  assert.equal(tab.defaultPrevented, true);
+  assert.equal(harness.document.activeElement, textarea, 'Tab wraps from Send to the request field');
+  tab = harness.fireEvent(textarea, 'keydown', { key: 'Tab', shiftKey: true });
+  assert.equal(tab.defaultPrevented, true);
+  assert.equal(harness.document.activeElement, send, 'Shift+Tab wraps from the request field to Send');
+
+  let behindActivations = 0;
+  invoker.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') behindActivations += 1;
   });
-  const next = document.querySelector('.process-scribe-preview');
-  const input = next.querySelector('textarea');
-  input.value = 'Preserve unrelated stages.';
-  harness.fireEvent(next.querySelector('button.primary'), 'click');
-  assert.equal(await sent, 'Preserve unrelated stages.');
-  assert.equal(document.querySelector('.process-scribe-preview'), null);
+  invoker.focus();
+  tab = harness.fireEvent(invoker, 'keydown', { key: 'Tab' });
+  assert.equal(tab.defaultPrevented, true, 'escaped background focus is reclaimed by the modal');
+  assert.equal(harness.document.activeElement, textarea);
+  harness.fireEvent(harness.document.activeElement, 'keydown', { key: 'Enter' });
+  assert.equal(behindActivations, 0, 'keyboard activation stays on the preview instead of the editor control behind it');
+
+  harness.fireEvent(textarea, 'keydown', { key: 'Escape' });
+  assert.equal(await result, null, 'Escape closes without sending');
+  assert.equal(harness.document.querySelector('.process-scribe-preview'), null);
+  assert.equal(editorRoot.inert, false);
+  assert.equal(harness.document.activeElement, invoker, 'Escape restores the invoking editor control');
+
+  ({ result, dialog } = await openPreview());
+  harness.fireEvent(dialog.querySelector('button:not(.primary)'), 'click');
+  assert.equal(await result, null, 'Cancel closes without sending');
+  assert.equal(editorRoot.inert, false);
+  assert.equal(harness.document.activeElement, invoker, 'Cancel restores the invoking editor control');
+
+  ({ result, dialog } = await openPreview({
+    kind: 'diagnostic', prompt: 'Fix it.', context: '{"code":"missing_start"}', truncated: false,
+  }));
+  textarea = dialog.querySelector('textarea');
+  textarea.value = 'Preserve unrelated stages.';
+  harness.fireEvent(dialog.querySelector('button.primary'), 'click');
+  assert.equal(await result, 'Preserve unrelated stages.', 'Send retains the established request result');
+  assert.equal(harness.document.querySelector('.process-scribe-preview'), null);
+  assert.equal(editorRoot.inert, false);
+  assert.equal(harness.document.activeElement, invoker, 'Send teardown also leaves predictable focus for downstream navigation');
+  editorRoot.remove();
 });
 
 test('process scribe lifecycle distinguishes stop, retire, and stale recovery', async (t) => {

@@ -78,6 +78,8 @@ func TestDashboardProcessScribeAssets(t *testing.T) {
 	)
 	editor := read("js/process-editor.js")
 	must("process-editor.js", editor,
+		"import { bindDialogFocus } from './dialog-focus-core.js'",
+		"import { isTopmostOverlay } from './overlay-stack.js'",
 		"this.scribeButton.addEventListener('click', () => this.requestScribe('template')",
 		"Resolve unsaved edits before handing off",
 		"Discard local edits", "Save changes first",
@@ -86,6 +88,8 @@ func TestDashboardProcessScribeAssets(t *testing.T) {
 		"Share editor context with process scribe",
 		"BEGIN BOUNDED EDITOR CONTEXT · read-only · not template source",
 		"Send & open scribe",
+		"bindDialogFocus({",
+		"shouldHandle: () => isTopmostOverlay(overlay)",
 		"processScribeEditorContext",
 		"freshnessGuard",
 	)
