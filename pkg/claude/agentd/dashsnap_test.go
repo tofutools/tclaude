@@ -210,6 +210,15 @@ func seedDashSnapFixture(t *testing.T, f *testharness.Flow) {
 	}); err != nil {
 		t.Fatalf("seed dashboard human message: %v", err)
 	}
+	if _, err := db.InsertAgentCronJob(&db.AgentCronJob{
+		Name: "dashsnap-release-ritual", OwnerConv: feMembers[0].convID,
+		TargetKind: db.CronTargetGroup, GroupID: fe.ID, TargetRole: "dev",
+		CronExpr: "0 9 * * 1-5", Subject: "Release readiness",
+		Body:    "Report final checks and blockers before the weekday release window.",
+		Enabled: true, CreatedAt: base.Add(4 * time.Minute),
+	}); err != nil {
+		t.Fatalf("seed dashboard cron job: %v", err)
+	}
 
 	// Nest infra-crew under frontend-squad so the Groups tab renders the group
 	// TREE (n-level groups-in-groups, JOH-392): infra-crew draws inside
@@ -646,6 +655,27 @@ func baseStates() []dashsnap.State {
 			Title:    "Bounded Preact — Jobs normal",
 			Caption:  "Jobs island completed its initial request and rendered its normal fixture state.",
 			JS:       boundedTabJS("jobs", "#cron-create-open"),
+			SettleMS: 500,
+		},
+		{
+			Key:      "jobs-cron-create-populated",
+			Title:    "Jobs cron dialog — populated create",
+			Caption:  "TCL-456 create gate: the Jobs-owned form shows a group target, role/class filter, cron-expression explanation, enabled state, and retained message draft in plain and wizard chrome.",
+			JS:       jobsCronCreateDashSnapJS(),
+			SettleMS: 500,
+		},
+		{
+			Key:      "jobs-cron-edit-prefill",
+			Title:    "Jobs cron dialog — edit prefill",
+			Caption:  "TCL-456 edit gate: a real seeded Jobs row opens with its identity metadata, group and role/class target, schedule expression, subject, body, and enabled state prefilled.",
+			JS:       jobsCronRowDialogDashSnapJS("edit", false),
+			SettleMS: 500,
+		},
+		{
+			Key:      "jobs-cron-duplicate-picker",
+			Title:    "Jobs cron dialog — duplicate with target chooser",
+			Caption:  "TCL-456 duplicate/layering gate: the copied draft keeps its source metadata and -copy name while the Jobs-owned agent chooser stacks above it without losing the parent form.",
+			JS:       jobsCronRowDialogDashSnapJS("duplicate", true),
 			SettleMS: 500,
 		},
 		{
@@ -2104,6 +2134,100 @@ func actionDialogJS(call, readySelector, extraJS string) string {
     throw new Error('wizard action dialog chrome leaked into plain mode');
   }
 })();`, call, readySelector, readySelector, readySelector, extraJS, readySelector, readySelector)
+}
+
+func jobsCronCreateDashSnapJS() string {
+	return `return (async function(){
+  document.querySelector('nav [data-tab="jobs"]').click();
+  var deadline = Date.now() + 4000;
+  while (!document.querySelector('#cron-create-open') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 25); });
+  }
+  var open = document.querySelector('#cron-create-open');
+  if (!open) throw new Error('jobs-cron-create: Jobs launcher did not render');
+  open.click();
+  while (!document.querySelector('#cron-create-modal.show') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 25); });
+  }
+  function input(id, value) {
+    var el = document.getElementById(id);
+    if (!el) throw new Error('jobs-cron-create: missing #' + id);
+    el.value = value;
+    el.dispatchEvent(new Event('input', {bubbles:true}));
+  }
+  input('cron-create-name', 'release-readiness');
+  document.querySelector('input[name="cron-create-target-mode"][value="group"]').click();
+  await Promise.resolve();
+  var group = document.querySelector('#cron-create-group');
+  group.value = 'frontend-squad';
+  group.dispatchEvent(new Event('change', {bubbles:true}));
+  await Promise.resolve();
+  input('cron-create-role', 'dev');
+  document.querySelector('input[name="cron-create-schedule-mode"][value="cron"]').click();
+  await Promise.resolve();
+  input('cron-create-cron', '*/15 * * * *');
+  input('cron-create-subject', 'Release readiness');
+  input('cron-create-body', 'Report final checks and blockers before the release window.');
+  while (Date.now() < deadline) {
+    var explanation = document.querySelector('#cron-create-cron-explain');
+    if (explanation && explanation.textContent.trim() && !explanation.textContent.includes('Explaining')) break;
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  var modal = document.querySelector('#cron-create-modal.show');
+  var expectedTitle = document.body.classList.contains('wizard') ? 'Bind a recurring ritual' : 'Schedule a cron job';
+  if (!modal || document.querySelectorAll('#cron-create-modal').length !== 1) throw new Error('jobs-cron-create: dialog ownership failed');
+  if (document.querySelector('#cron-create-title').textContent.trim() !== expectedTitle) throw new Error('jobs-cron-create: theme title mismatch');
+  if (group.value !== 'frontend-squad' || document.querySelector('#cron-create-role').value !== 'dev') throw new Error('jobs-cron-create: group target draft missing');
+  if (!document.querySelector('#cron-create-cron-explain').textContent.trim()) throw new Error('jobs-cron-create: schedule explanation missing');
+  if (!document.querySelector('#cron-create-enabled').checked) throw new Error('jobs-cron-create: enabled default missing');
+})();`
+}
+
+func jobsCronRowDialogDashSnapJS(action string, stacked bool) string {
+	return fmt.Sprintf(`return (async function(){
+  document.querySelector('nav [data-tab="jobs"]').click();
+  var deadline = Date.now() + 4000;
+  var row;
+  while (!(row = document.querySelector('#jobs-list tr[data-key^="cron-"]')) && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 25); });
+  }
+  if (!row) throw new Error('jobs-cron-%s: seeded cron row did not render');
+  var action = %q;
+  var button = Array.from(row.querySelectorAll('.row-actions button')).find(function(node){
+    return node.textContent.trim() === action;
+  });
+  if (!button) throw new Error('jobs-cron-%s: row action missing');
+  button.click();
+  while (!document.querySelector('#cron-create-modal.show') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 25); });
+  }
+  var name = document.querySelector('#cron-create-name');
+  var expectedName = action === 'duplicate' ? 'dashsnap-release-ritual-copy' : 'dashsnap-release-ritual';
+  if (!name || name.value !== expectedName) throw new Error('jobs-cron-%s: name prefill mismatch');
+  if (document.querySelector('#cron-create-group').value !== 'frontend-squad') throw new Error('jobs-cron-%s: group prefill missing');
+  if (document.querySelector('#cron-create-role').value !== 'dev') throw new Error('jobs-cron-%s: role prefill missing');
+  if (document.querySelector('#cron-create-cron').value !== '0 9 * * 1-5') throw new Error('jobs-cron-%s: cron expression prefill missing');
+  if (document.querySelector('#cron-create-body').value.indexOf('Report final checks') !== 0) throw new Error('jobs-cron-%s: body prefill missing');
+  if (%t) {
+    document.querySelector('input[name="cron-create-target-mode"][value="solo"]').click();
+    await Promise.resolve();
+    document.querySelector('#cron-create-target-pick').click();
+    while (!document.querySelector('#cron-pick-target-modal.show') && Date.now() < deadline) {
+      await new Promise(function(resolve){ setTimeout(resolve, 25); });
+    }
+    if (!document.querySelector('#cron-pick-target-modal.show')) throw new Error('jobs-cron-%s: target chooser missing');
+    if (document.querySelector('#cron-create-name') !== name || name.value !== expectedName) throw new Error('jobs-cron-%s: stacked chooser recreated the parent draft');
+    if (!document.querySelector('#cron-pick-target-list .add-member-row')) throw new Error('jobs-cron-%s: target chooser candidates missing');
+  } else {
+    while (Date.now() < deadline) {
+      var explanation = document.querySelector('#cron-create-cron-explain');
+      if (explanation && explanation.textContent.trim() && !explanation.textContent.includes('Explaining')) break;
+      await new Promise(function(resolve){ setTimeout(resolve, 40); });
+    }
+    if (!document.querySelector('#cron-create-cron-explain').textContent.trim()) throw new Error('jobs-cron-%s: stored expression explanation missing');
+  }
+})();`, action, action, action, action, action, action, action, action, stacked,
+		action, action, action, action)
 }
 
 func boundedTabJS(tab, readySelector string) string {
