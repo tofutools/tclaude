@@ -68,7 +68,13 @@ func TestDashboardTransactionGroupRetireExclusiveOwnership(t *testing.T) {
 	}
 	for _, required := range []string{
 		"function groupMembersByStatus(",
+		"for (const m of (g.members || [])) {",
+		"if (!m.conv_id || seen.has(m.conv_id)) continue; // dedupe owner + member rows",
+		"const matches = status === 'offline'",
+		": (m.online && m.state && m.state.status === status);",
+		"const candidates = groupMembersByStatus(group, status);",
 		"openGroupRetirePreviewDialog(group, status, candidates)",
+		"from './transaction-dialog-controller.js';",
 	} {
 		if !strings.Contains(refresh, required) {
 			t.Errorf("refresh launcher is missing group-retire cutover %q", required)
@@ -82,9 +88,21 @@ func TestDashboardTransactionGroupRetireExclusiveOwnership(t *testing.T) {
 	}
 	for _, adjacent := range []string{
 		`id="delete-retired-modal"`, `id="delete-group-modal"`, `id="worktree-cleanup-modal"`,
+		`id="window-modal"`,
 	} {
 		if !strings.Contains(html, adjacent) {
 			t.Errorf("adjacent static workflow changed during retire cutover: %q", adjacent)
+		}
+	}
+	for _, adjacent := range []string{
+		"async function openDeleteRetiredPreview()",
+		"function openDeleteGroupModal(group)",
+		"function openWindowModal(scope, groupName)",
+		"export async function openCleanupModal(opts)",
+		"async function openWorktreeCleanup(group = '')",
+	} {
+		if !strings.Contains(refresh, adjacent) {
+			t.Errorf("adjacent imperative owner changed during retire cutover: %q", adjacent)
 		}
 	}
 }

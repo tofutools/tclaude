@@ -70,8 +70,12 @@ func TestDashboardTransactionUngroupedRetireExclusiveOwnership(t *testing.T) {
 	}
 	for _, required := range []string{
 		"function ungroupedRetireCandidates(",
+		"for (const a of (snap.ungrouped || [])) {",
+		"if (!a.conv_id || seen.has(a.conv_id)) continue;",
 		"function countUngroupedAgents(",
+		"const candidates = ungroupedRetireCandidates();",
 		"openUngroupedRetirePreviewDialog(candidates)",
+		"from './transaction-dialog-controller.js';",
 	} {
 		if !strings.Contains(refresh, required) {
 			t.Errorf("refresh launcher is missing ungrouped-retire cutover %q", required)
