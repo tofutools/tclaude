@@ -1,6 +1,6 @@
 import { esc } from './helpers.js';
 import { fmtRemaining } from './tabs.js';
-import { applySlopThemeIfRequested, bindSlopHotkey, bindWizardHotkey } from './slop.js';
+import { applySlopThemeIfRequested, bindSlopHotkey, bindWizardHotkey, wizWord } from './slop.js';
 import {
   bindWizardCursorTrail, bindWizardCastFx, bindWizardStatusWatch,
   bindWizardMarquee, bindWizardSpectacle, bindWizardEnterBanner,
@@ -54,7 +54,6 @@ import {
 import { bindProfilesUI } from './modal-profiles.js';
 import { bindSandboxProfilesUI, refreshSpawnSandboxProfileUI, summonSandboxScribe } from './sandbox-profiles.js';
 import { bindRolesUI } from './modal-roles.js';
-import { bindLinkModal, openLinkModal } from './modal-link-wt.js';
 import {
   bindAgentSpawnModal,
 } from './modal-spawn.js';
@@ -172,7 +171,13 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   // initNavHistory below so initial deep links still find every lazy loader.
   const featureCleanups = await Promise.all([
     mountGroupsFeature({ refresh: dashboardActions.refresh }),
-    mountLinksFeature({ openCreate: () => openLinkModal({ mode: 'create' }) }),
+    mountLinksFeature({
+      refresh: dashboardActions.refresh,
+      confirm: confirmModal,
+      confirmDiscard,
+      notify: toast,
+      words: wizWord,
+    }),
     mountDockFeature(),
     mountPluginsFeature({
       requestMutation: dashboardActions.requestMutation,
@@ -275,7 +280,6 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   bindSandboxProfilesUI();
   bindRolesUI();
   bindGroupImportModal();
-  bindLinkModal();
   bindAgentSpawnModal();
   bindRemoteAdmin();
   document.querySelector('nav [data-tab="config"]')?.addEventListener('click', () => { void loadRemoteAdmin(); });
