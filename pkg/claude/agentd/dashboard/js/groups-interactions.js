@@ -67,7 +67,9 @@ export function GroupsInteractionProvider({ children }) {
     editorKey,
     registerMenu(key, entry) {
       menus.current.set(key, entry);
-      return () => menus.current.delete(key);
+      return () => {
+        if (menus.current.get(key) === entry) menus.current.delete(key);
+      };
     },
     toggleMenu(key) {
       if (openMenuKeyRef.current === key) closeMenu(true);
