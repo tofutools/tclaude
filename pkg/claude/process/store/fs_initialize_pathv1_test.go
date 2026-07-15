@@ -240,6 +240,60 @@ func TestInitializePathV1CorruptInstalledCheckpointIsTypedInconsistency(t *testi
 	assert.ErrorIs(t, err, pathv1.ErrInitializationInconsistent)
 }
 
+func TestInitializePathV1ReplayValidatesEmbeddedTemplateIdentity(t *testing.T) {
+	t.Run("exact match is already applied", func(t *testing.T) {
+		root := t.TempDir()
+		fs, runID, proof := pristineInitializationRun(t, root)
+		_, err := fs.InitializePathV1(t.Context(), runID, proof)
+		require.NoError(t, err)
+
+		result, err := fs.InitializePathV1(t.Context(), runID, proof)
+		require.NoError(t, err)
+		assert.Equal(t, pathv1.InitializationAlreadyApplied, result.Disposition)
+	})
+
+	for _, tc := range []struct {
+		name   string
+		mutate func(*model.Template)
+	}{
+		{
+			name: "same id semantic drift",
+			mutate: func(tmpl *model.Template) {
+				tmpl.Description = "drifted after initialization"
+			},
+		},
+		{
+			name: "template id mismatch",
+			mutate: func(tmpl *model.Template) {
+				tmpl.ID = "different-template"
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			fs, runID, proof := pristineInitializationRun(t, root)
+			_, err := fs.InitializePathV1(t.Context(), runID, proof)
+			require.NoError(t, err)
+
+			runPath := filepath.Join(root, "runs", runID, "run.json")
+			runData, err := os.ReadFile(runPath)
+			require.NoError(t, err)
+			var run store.RunRecord
+			require.NoError(t, json.Unmarshal(runData, &run))
+			require.NotNil(t, run.Template)
+			tc.mutate(run.Template)
+			runData, err = json.MarshalIndent(run, "", "  ")
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(runPath, append(runData, '\n'), 0o644))
+
+			result, err := fs.InitializePathV1(t.Context(), runID, proof)
+			assert.ErrorIs(t, err, pathv1.ErrInitializationInconsistent)
+			assert.Zero(t, result.Disposition)
+			assert.NotEqual(t, pathv1.InitializationAlreadyApplied, result.Disposition)
+		})
+	}
+}
+
 func TestInitializePathV1CancellationPreservesV6(t *testing.T) {
 	root := t.TempDir()
 	fs, runID, proof := pristineInitializationRun(t, root)
