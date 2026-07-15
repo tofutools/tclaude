@@ -406,7 +406,9 @@ bounded overlay derived from a validated checkpoint aggregate; evidence and
 the schema-v1 `traversedEdges` history are never routing fallbacks. Closed
 unavailability reasons are `legacy_schema`, `routing_absent`,
 `unsupported_schema`, `unsupported_protocol`, `over_budget`, and
-`inconsistent`.
+`inconsistent`. Before an exact topology is exposed, its encoded JSON shape is
+measured without constructing a second encoded copy and capped at 16 MiB;
+larger valid topologies are classified as `over_budget`.
 Obligations and blocked nodes include only their recorded wait/contact state;
 missing legacy timestamps and schedules remain absent rather than being
 reconstructed. A conversation reference contains only the durable agent ID
