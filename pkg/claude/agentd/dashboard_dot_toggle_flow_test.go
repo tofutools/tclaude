@@ -14,8 +14,8 @@ import (
 // Flow coverage for the clickable status-dot — the agent's SOLE
 // per-row power control (the dedicated wake/shutdown row buttons were
 // removed; the dot replaces them). The dot is a frontend control, so
-// its confirm dialog — an online click pops the 3-way Cancel / Soft
-// exit / Force kill confirm — lives in dashboard.html and is not
+// its transaction dialog — an online click pops the 3-way Cancel / Soft
+// exit / Force kill choice — lives in the Preact island and is not
 // observable here. What IS observable — and what these scenarios pin
 // — is the backend effect a dot click produces: clicking an online
 // dot reaches POST /api/agents/{conv}/stop (soft /exit, or a
