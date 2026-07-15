@@ -35,10 +35,17 @@ export function createTransactionDialogActions({
   fetchImpl = fetch,
   refresh = async () => {},
   notify = () => {},
+  words = (plain) => plain,
   confirm = async () => false,
   openWebWindowPane = () => {},
   closeTerminalsForWindowOp = () => {},
 }) {
+  // A request object is the immutable identity of one visible delete-group
+  // plan. Phase progress lives outside Preact render state so retries cannot
+  // accidentally replay a completed retire/detach phase after a final DELETE
+  // failure. Weak keys release the bookkeeping with the finished dialog.
+  const deleteGroupProgress = new WeakMap();
+
   const report = (message, isError = false) => {
     // Feedback is advisory. A broken injected sink must never strand the
     // promise-backed transaction after its visual owner has handed off.
@@ -272,6 +279,138 @@ export function createTransactionDialogActions({
       const payload = await responsePayload(response);
       if (!response.ok) throw responseError(response, payload);
       return payload;
+    },
+
+    async deleteGroupPlan(request) {
+      let progress = deleteGroupProgress.get(request);
+      if (!progress) {
+        progress = {
+          pendingRetire: [...(request.retireMembers || [])],
+          retiredSelectors: new Set(),
+          retireComplete: (request.retireMembers || []).length === 0,
+          deleteComplete: false,
+          result: null,
+        };
+        deleteGroupProgress.set(request, progress);
+      }
+      if (progress.result) return progress.result;
+
+      if (!progress.retireComplete) {
+        let response;
+        try {
+          response = await fetchImpl(
+            `/api/groups/${encodeURIComponent(request.group)}/retire`,
+            {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                convs: progress.pendingRetire.map((member) => member.selector),
+                shutdown: true,
+                delete_worktree: false,
+              }),
+            },
+          );
+        } catch (cause) {
+          const error = new Error(cause?.message || String(cause));
+          error.phase = 'retire';
+          error.network = true;
+          throw error;
+        }
+        const payload = await responsePayload(response);
+        if (!response.ok) {
+          const error = responseError(response, payload);
+          error.phase = 'retire';
+          throw error;
+        }
+
+        const hasTopLevelError = payload !== null && typeof payload === 'object'
+          && !Array.isArray(payload)
+          && Object.prototype.hasOwnProperty.call(payload, 'error');
+        if (hasTopLevelError || !Array.isArray(payload?.members)) {
+          const detail = hasTopLevelError
+            ? (payload.error || payload.message || 'endpoint returned an error')
+            : 'invalid response (expected a "members" array)';
+          const error = new Error(`retire failed: ${String(detail)}`);
+          error.phase = 'retire';
+          error.status = response.status;
+          error.payload = payload;
+          throw error;
+        }
+
+        const rows = payload.members;
+        const aliases = new Map();
+        for (const member of progress.pendingRetire) {
+          for (const alias of [member.selector, member.agent_id, member.conv_id]) {
+            if (alias) aliases.set(String(alias), member);
+          }
+        }
+        const failed = new Set();
+        let unmappedErrors = 0;
+        for (const row of rows) {
+          const member = aliases.get(String(row?.agent_id || ''))
+            || aliases.get(String(row?.conv_id || ''));
+          if (row?.action === 'error') {
+            if (member) failed.add(member);
+            else unmappedErrors += 1;
+            continue;
+          }
+          if (row?.action === 'retired' && member) {
+            progress.retiredSelectors.add(member.selector);
+          }
+        }
+        if (failed.size || unmappedErrors) {
+          // Only retry exact frozen selectors whose own result failed. If an
+          // impossible malformed response reports an unidentifiable error,
+          // retain the whole pending cohort and keep the delete barrier shut.
+          progress.pendingRetire = unmappedErrors
+            ? progress.pendingRetire : [...failed];
+          const error = new Error(`retire failed for ${failed.size + unmappedErrors} members`);
+          error.phase = 'retire';
+          error.memberErrors = failed.size + unmappedErrors;
+          throw error;
+        }
+        // A successful explicit response is authoritative. Missing rows mean a
+        // frozen selector is no longer a current member; there is no member
+        // error to replay, and the final group delete will detach what remains.
+        progress.pendingRetire = [];
+        progress.retireComplete = true;
+      }
+
+      if (!progress.deleteComplete) {
+        let response;
+        try {
+          response = await fetchImpl(
+            `/api/groups/${encodeURIComponent(request.group)}`,
+            { method: 'DELETE', credentials: 'same-origin' },
+          );
+        } catch (cause) {
+          const error = new Error(cause?.message || String(cause));
+          error.phase = 'delete';
+          error.network = true;
+          throw error;
+        }
+        const payload = await responsePayload(response);
+        if (!response.ok) {
+          const error = responseError(response, payload);
+          error.phase = 'delete';
+          throw error;
+        }
+        progress.deleteComplete = true;
+      }
+
+      const retired = progress.retiredSelectors.size;
+      progress.result = Object.freeze({
+        ok: true,
+        group: request.group,
+        retired,
+        detached: Math.max(0, Number(request.memberCount || 0) - retired),
+      });
+      return progress.result;
+    },
+
+    async finishDeleteGroup(result, notices) {
+      return finishSuccess(result, words(notices.plain, notices.wizard));
     },
 
     async finishBulkRetire(result) {
