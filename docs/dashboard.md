@@ -270,7 +270,9 @@ Sandbox profiles are separate, harness-neutral launch policy: absolute
 filesystem rules (`read`, `write`, or `deny`), literal environment entries,
 and optional agent-owned directory variables. For each agent-owned variable,
 agentd creates a fresh private writable cache directory at spawn and injects
-its path as the variable's value. A deny
+its path as the variable's value. The directories persist across resume and
+reincarnation, are fresh for clones, and are deleted when the owning agent is
+retired. A later reinstate and resume recreates them empty. A deny
 blocks both reads and writes and dominates an exact-path grant from another
 applied profile. Open the
 manager from **Groups → ⚙ → 🛡 sandbox profiles…** to create/edit/delete named
@@ -857,7 +859,9 @@ Three verbs, with different blast radii:
 
 - **Retire** (per-member status dot / the group ⚙ cog, or `groups retire`) is
   **non-destructive**: it demotes agents to plain conversations. The group and
-  its history survive, and a retired conversation can be reinstated.
+  its history survive, and a retired conversation can be reinstated. Generated
+  agent-owned cache directories are discarded; they are recreated empty if the
+  agent is later reinstated and resumed.
   - When a retire leaves the group with **no live members**, its group-target
     rhythms would otherwise keep firing every interval to nobody. So a retire
     that empties the group **auto-disables** those cron jobs (they stay visible

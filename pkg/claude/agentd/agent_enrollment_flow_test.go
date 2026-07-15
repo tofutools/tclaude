@@ -2,12 +2,15 @@ package agentd_test
 
 import (
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -147,6 +150,50 @@ func TestEnrollment_RetireDemotesAndRevokes(t *testing.T) {
 	row, err := db.GetConvIndex(conv)
 	require.NoError(t, err)
 	assert.NotNil(t, row, "retire must NOT touch the conversation's conv_index row")
+}
+
+// Scenario: retiring an agent sweeps the private cache root materialized for
+// its agent-owned directory bindings without touching another agent's root.
+func TestEnrollment_RetireDeletesAgentOwnedDirectories(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	cacheHome := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cacheHome)
+	f := newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	const conv = "dirs-1111-2222-3333-4444"
+	f.HaveConvWithTitle(conv, "cached-agent")
+	f.HaveEnrolledAgent(conv)
+
+	base := filepath.Join(cacheHome, "tclaude", "agent-dirs")
+	root := filepath.Join(base, "spwn-cached-agent")
+	cache := filepath.Join(root, "GOCACHE")
+	otherRoot := filepath.Join(base, "spwn-other-agent")
+	require.NoError(t, os.MkdirAll(cache, 0o700))
+	require.NoError(t, os.MkdirAll(otherRoot, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(cache, "entry"), []byte("cached"), 0o600))
+
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Global: &sandboxpolicy.Profile{
+		Name: "cache", AgentDirectories: []string{"GOCACHE"},
+	}})
+	require.NoError(t, err)
+	effective.Filesystem = append(effective.Filesystem, sandboxpolicy.FilesystemGrant{
+		Path: cache, Access: sandboxpolicy.AccessWrite,
+	})
+	effective.Environment = append(effective.Environment, sandboxpolicy.EnvironmentEntry{
+		Name: "GOCACHE", Value: cache,
+	})
+	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
+	_, err = sandboxpolicy.RevalidateSnapshot(snapshot)
+	require.NoError(t, err)
+	agentID, err := db.AgentIDForConv(conv)
+	require.NoError(t, err)
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &snapshot))
+
+	res := postAgentVerb(t, mux, conv, "retire")
+	require.Equal(t, http.StatusOK, res.Code, "retire: %s", res.Body)
+	assert.NoDirExists(t, root)
+	assert.DirExists(t, otherRoot)
 }
 
 // Scenario: reinstate returns a retired agent to active status.
