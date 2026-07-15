@@ -10,8 +10,26 @@ export function GroupsInteractionProvider({ children }) {
   const [editorKey, setEditorKey] = useState('');
   const menus = useRef(new Map());
   const editorFocusTarget = useRef(null);
+  const pendingEditorFocus = useRef(null);
   const openMenuKeyRef = useRef('');
   openMenuKeyRef.current = openMenuKey;
+
+  useLayoutEffect(() => {
+    if (editorKey || !pendingEditorFocus.current) return;
+    const { key, target } = pendingEditorFocus.current;
+    pendingEditorFocus.current = null;
+    // The provider's layout effect can run before its child trigger has
+    // committed. Defer from the post-render effect, not from the key handler,
+    // so the replacement trigger is queryable in both Preact and real Chrome.
+    queueMicrotask(() => {
+      if (target?.isConnected) {
+        target.focus();
+        return;
+      }
+      [...document.querySelectorAll('[data-editor-key]')]
+        .find((node) => node.dataset.editorKey === key)?.focus();
+    });
+  }, [editorKey]);
 
   const closeMenu = (restoreFocus = false) => {
     const key = openMenuKeyRef.current;
@@ -69,14 +87,7 @@ export function GroupsInteractionProvider({ children }) {
         if (current !== key) return current;
         const target = editorFocusTarget.current;
         editorFocusTarget.current = null;
-        if (restoreFocus) queueMicrotask(() => {
-          if (target?.isConnected) {
-            target.focus();
-            return;
-          }
-          [...document.querySelectorAll('[data-editor-key]')]
-            .find((node) => node.dataset.editorKey === key)?.focus();
-        });
+        if (restoreFocus) pendingEditorFocus.current = { key, target };
         return '';
       });
     },
