@@ -27,6 +27,11 @@ type MutationReplayView struct {
 type MutationRecordKind string
 
 const (
+	// MutationCommandPlaceholder breaks the otherwise circular dependency
+	// between a raw-payload PlanDigest and command-owned post-record bytes. It
+	// is materialized as the derived command ID before validation/application.
+	MutationCommandPlaceholder = "$commandId"
+
 	MutationPath             MutationRecordKind = "path"
 	MutationScope            MutationRecordKind = "scope"
 	MutationReservation      MutationRecordKind = "reservation"
@@ -126,4 +131,53 @@ const (
 type MutationReplayResult struct {
 	Routing     RoutingState
 	Disposition ReplayDisposition
+}
+
+type CompletionBasis struct {
+	SelfCommandID         string      `json:"selfCommandId"`
+	BasisRunStatus        string      `json:"basisRunStatus"`
+	BasisLastLogSeq       uint64      `json:"basisLastLogSeq"`
+	BasisLogChecksum      string      `json:"basisLogChecksum"`
+	CheckpointDigest      string      `json:"checkpointDigest"`
+	PathFoldDigest        string      `json:"pathFoldDigest"`
+	ReservationFoldDigest string      `json:"reservationFoldDigest"`
+	PropagationFoldDigest string      `json:"propagationFoldDigest"`
+	SideEffectFoldDigest  string      `json:"sideEffectFoldDigest"`
+	TerminalCauseDigest   CauseDigest `json:"terminalCauseDigest"`
+	ActiveCommandDigest   string      `json:"activeCommandDigest"`
+	AggregateDigest       string      `json:"aggregateDigest"`
+	Result                string      `json:"result"`
+}
+
+type CompleteRunCommandPayload struct {
+	TemplateRef        string            `json:"templateRef"`
+	TemplateSourceHash string            `json:"templateSourceHash"`
+	Checkpoint         CheckpointBinding `json:"checkpoint"`
+	Basis              CompletionBasis   `json:"basis"`
+}
+
+// CompletionReplayView is the pure complete_run_v1 recovery input. The raw
+// checkpoint remains outside RoutingState because this layer is dormant and
+// schema v6 must not gain path-v1 fields.
+type CompletionReplayView struct {
+	Aggregate      AggregateView
+	Checkpoint     CheckpointBinding
+	CheckpointJSON json.RawMessage
+	RunStatus      string
+	LastLogSeq     uint64
+	LogChecksum    string
+}
+
+type CompletionRecoveryPhase string
+
+const (
+	CompletionReadyToClaim   CompletionRecoveryPhase = "ready_to_claim"
+	CompletionReadyToObserve CompletionRecoveryPhase = "ready_to_observe"
+	CompletionRecovered      CompletionRecoveryPhase = "complete"
+)
+
+type CompletionRecovery struct {
+	Phase   CompletionRecoveryPhase
+	Command CommandRecord
+	Result  string
 }
