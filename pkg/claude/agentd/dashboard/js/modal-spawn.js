@@ -17,7 +17,7 @@ import { lastSnapshot } from './dashboard.js';
 import { refresh, toast, confirmModal, bindBackdropDiscard } from './refresh.js';
 import { slopJackpot } from './slop-fx.js';
 import { wizardSummon } from './wizard-fx.js';
-import { openTermModal } from './modal-term.js';
+import { openTermModal } from './terminals-tab.js';
 import { recordGroupInteraction } from './last-group.js';
 import { openSpawnPermEditor } from './message-access-dialog-controller.js';
 import { refreshSpawnSandboxProfileUI } from './sandbox-profiles.js';
