@@ -245,6 +245,9 @@ func (i *aggregateIndex) validateAnyDetachmentSet(r ActivationReservation) {
 }
 
 func (i *aggregateIndex) validateDetachedPath(p PathRecord) {
+	if p.State == PathDetachedSink {
+		i.validateDetachedSinkAuthority(p)
+	}
 	applicable := map[DetachmentID]struct{}{}
 	for _, frame := range p.CandidateLineage {
 		key, _ := DetachmentKeyIdentity(frame.ReservationID, frame.CandidateID)
@@ -252,7 +255,9 @@ func (i *aggregateIndex) validateDetachedPath(p PathRecord) {
 		if !ok {
 			continue
 		}
-		applicable[d.ID] = struct{}{}
+		if d.EventSeq <= p.UpdatedSeq {
+			applicable[d.ID] = struct{}{}
+		}
 		r := i.view.Routing.Reservations[d.ReservationID]
 		base := r.ScopeID
 		if r.IsReducing {
@@ -268,6 +273,9 @@ func (i *aggregateIndex) validateDetachedPath(p PathRecord) {
 			i.c.add("detached_reactivation", "paths."+p.ID, "detached candidate returned to closed reservation without sink")
 		}
 	}
+	if len(applicable) > 0 && p.DetachmentSetID == "" {
+		i.c.add("detachment_set_missing", "paths."+p.ID, "path lacks its applicable causal detachment set")
+	}
 	if p.DetachmentSetID != "" {
 		for detachmentID := range applicable {
 			if !i.detachmentSetContains(p.DetachmentSetID, detachmentID) {
@@ -277,5 +285,41 @@ func (i *aggregateIndex) validateDetachedPath(p PathRecord) {
 		if interval, ok := i.detachmentSetIntervals[p.DetachmentSetID]; ok && interval.depth+1 != len(applicable) {
 			i.c.add("detachment_set_lineage", "paths."+p.ID, "set chain has %d members, want %d applicable causal detachments", interval.depth+1, len(applicable))
 		}
+	}
+}
+
+func (i *aggregateIndex) validateDetachedSinkAuthority(p PathRecord) {
+	path := "paths." + p.ID
+	key, err := DetachmentKeyIdentity(p.TargetReservationID, p.CandidateID)
+	d, ok := i.view.Routing.Detachments[key]
+	if err != nil || !ok {
+		i.c.add("detached_sink_authority", path, "detached sink has no exact reservation/candidate detachment")
+		return
+	}
+	if p.DetachedSink == nil || p.Disposition == nil {
+		i.c.add("detached_sink_receipt_missing", path, "detached sink lacks its receipt/disposition")
+		return
+	}
+	receipt, disposition := *p.DetachedSink, *p.Disposition
+	reason := "late_any_arrival"
+	if p.ArrivedSeq <= d.EventSeq {
+		reason = "pre_arrived_any_loser"
+	}
+	if receipt.DetachmentID != d.ID || receipt.CommandID != disposition.CommandID || receipt.EventSeq != disposition.EventSeq || receipt.EventSeq != p.UpdatedSeq || receipt.ReasonCode != reason || disposition.ReasonCode != reason {
+		i.c.add("detached_sink_event", path, "sink receipt is not coupled to its exact disposition event/detachment")
+	}
+	if reason == "pre_arrived_any_loser" {
+		if receipt.CommandID != d.CommandID || receipt.EventSeq != d.EventSeq {
+			i.c.add("detached_sink_event", path, "pre-arrived sink is not atomic with the detachment event")
+		}
+	} else {
+		command, commandOK := i.view.Commands[receipt.CommandID]
+		reservation, reservationOK := i.view.Routing.Reservations[p.TargetReservationID]
+		if !commandOK || !reservationOK || command.Identity.Kind != CommandSettleDetachedSink || command.Identity.SourcePathID != p.ID || command.Identity.TargetReservationID != p.TargetReservationID || command.Identity.TargetGeneration != reservation.Generation {
+			i.c.add("detached_sink_authority", path, "late sink command does not own the exact path/reservation generation")
+		}
+	}
+	if p.DetachmentSetID == "" || !i.detachmentSetContains(p.DetachmentSetID, d.ID) {
+		i.c.add("detached_sink_set", path, "sink does not link the exact causal detachment set")
 	}
 }

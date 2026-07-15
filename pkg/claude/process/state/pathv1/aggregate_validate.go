@@ -594,6 +594,7 @@ func (i *aggregateIndex) validatePathShape(path string, p PathRecord, inputActiv
 			i.c.add("edge_source_activation", path, "source activation differs from parent output")
 		}
 		if parentOK {
+			i.validateEdgeLineage(path, parent, p)
 			if sourceActivation, ok := i.view.Routing.Activations[parent.SourceActivation.ID]; ok {
 				if sourceReservation, ok := i.view.Routing.Reservations[sourceActivation.ReservationID]; ok && p.Edge != nil && p.Edge.FromNodeID != sourceReservation.NodeID {
 					i.c.add("edge_source_node", path, "edge source node %q differs from activation node %q", p.Edge.FromNodeID, sourceReservation.NodeID)
@@ -684,6 +685,38 @@ func (i *aggregateIndex) validatePathShape(path string, p PathRecord, inputActiv
 	i.validateDisposition(path, p)
 }
 
+func (i *aggregateIndex) validateEdgeLineage(path string, parent, edge PathRecord) {
+	expected := append([]CandidateLineageFrame(nil), parent.CandidateLineage...)
+	lineageID := parent.CandidateLineageID
+	appendFrame := func(reservationID ReservationID, candidateID CandidateID) {
+		id, err := CandidateLineageIdentity(lineageID, reservationID, candidateID)
+		if err != nil {
+			return
+		}
+		expected = append(expected, CandidateLineageFrame{ID: id, ParentLineageID: lineageID, ReservationID: reservationID, CandidateID: candidateID})
+		lineageID = id
+	}
+	if parent.State == PathSplit {
+		if scopeID, ok := i.forkScopeByOutput[parent.ID]; ok {
+			scope := i.view.Routing.Scopes[scopeID]
+			if reducer, ok := i.view.Routing.Reservations[scope.JoinReservationID]; ok {
+				for _, candidate := range reducer.Candidates {
+					if candidate.Kind == CandidateScopeBranch && candidate.MemberID == edge.BranchEdgeID {
+						appendFrame(reducer.ID, candidate.ID)
+						break
+					}
+				}
+			}
+		}
+	}
+	if len(expected) == len(parent.CandidateLineage) || expected[len(expected)-1].ReservationID != edge.TargetReservationID || expected[len(expected)-1].CandidateID != edge.CandidateID {
+		appendFrame(edge.TargetReservationID, edge.CandidateID)
+	}
+	if !slices.Equal(expected, edge.CandidateLineage) || lineageID != edge.CandidateLineageID || int(edge.LineageDepth) != len(expected) {
+		i.c.add("edge_lineage_authority", path+".candidateLineage", "edge lineage is not the exact parent/branch/target causal chain")
+	}
+}
+
 func (i *aggregateIndex) validateDisposition(path string, p PathRecord) {
 	requires := p.State == PathRouted || p.State == PathSplit || p.State == PathConsumed || p.State == PathDetachedSink || p.State.TerminalNonSuccess() || (p.State == PathEnded && p.UpdatedSeq != p.CreatedSeq)
 	if !requires {
@@ -728,8 +761,18 @@ func (i *aggregateIndex) validateDisposition(path string, p PathRecord) {
 		if command, ok := i.view.Commands[d.CommandID]; ok {
 			switch p.State {
 			case PathRouted, PathSplit:
-				if command.Identity.Kind != CommandRoutePaths && command.Identity.Kind != CommandSettleDetachedSink {
+				if command.Identity.Kind != CommandRoutePaths && (p.State != PathRouted || command.Identity.Kind != CommandSettleDetachedSink) {
 					i.c.add("disposition_command_authority", path+".disposition", "command kind %q cannot route/split", command.Identity.Kind)
+				} else if command.Identity.Kind == CommandRoutePaths {
+					if command.Identity.SourceActivationID != p.SourceActivation.ID || command.Identity.SourceGeneration != p.SourceActivation.Generation || command.Identity.SourcePathID != p.ID {
+						i.c.add("disposition_command_tuple", path+".disposition", "route command does not own the exact source path generation")
+					}
+				} else {
+					child, childOK := i.view.Routing.Paths[command.Identity.SourcePathID]
+					reservation, reservationOK := i.view.Routing.Reservations[command.Identity.TargetReservationID]
+					if !childOK || !reservationOK || child.ParentPathID != p.ID || child.State != PathDetachedSink || child.Disposition == nil || child.Disposition.CommandID != d.CommandID || child.UpdatedSeq != d.EventSeq || command.Identity.TargetReservationID != child.TargetReservationID || command.Identity.TargetGeneration != reservation.Generation {
+						i.c.add("disposition_command_tuple", path+".disposition", "detached route command does not own the exact sink child event")
+					}
 				}
 			case PathConsumed:
 				if command.Identity.Kind != CommandActivateGeneration {
@@ -742,6 +785,16 @@ func (i *aggregateIndex) validateDisposition(path string, p PathRecord) {
 				}
 				if command.Identity.Kind != want {
 					i.c.add("disposition_command_authority", path+".disposition", "command kind %q cannot own %q", command.Identity.Kind, d.ReasonCode)
+				} else if want == CommandSettleDetachedSink {
+					reservation, ok := i.view.Routing.Reservations[p.TargetReservationID]
+					if !ok || command.Identity.SourcePathID != p.ID || command.Identity.TargetReservationID != p.TargetReservationID || command.Identity.TargetGeneration != reservation.Generation {
+						i.c.add("disposition_command_tuple", path+".disposition", "sink command does not own the exact path/reservation generation")
+					}
+				} else {
+					reservation, ok := i.view.Routing.Reservations[p.TargetReservationID]
+					if !ok || command.Identity.TargetReservationID != p.TargetReservationID || command.Identity.TargetGeneration != reservation.Generation {
+						i.c.add("disposition_command_tuple", path+".disposition", "activation command does not own the exact sink reservation generation")
+					}
 				}
 			case PathEnded:
 				i.validateTerminalCommand(path, p, d, command.Identity, CommandRoutePaths)

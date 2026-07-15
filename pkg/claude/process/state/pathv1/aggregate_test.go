@@ -385,6 +385,7 @@ func validSlowAnyFixture(t *testing.T, failBeforeSink bool) AggregateView {
 	setID, _ := DetachmentSetIdentity("", d.ID)
 	view.Routing.Detachments[key] = d
 	view.Routing.DetachmentSets[setID] = DetachmentSetRecord{ID: setID, DetachmentID: d.ID}
+	localOutput.DetachmentSetID = setID
 	view.Routing.Reservations[r.ID] = r
 	view.Routing.Scopes[scope.ID] = scope
 	view.Routing.Activations[anyActivation.ID] = anyActivation
@@ -1325,4 +1326,126 @@ func TestAggregateRejectsCommandlessReceiptClosureAndPropagation(t *testing.T) {
 			t.Fatalf("commandless propagation diagnostics: %#v", report.Diagnostics)
 		}
 	})
+}
+
+func TestEdgeLineageMustExtendExactParentAndTarget(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		mutate func(*PathRecord)
+	}{
+		{"drop", func(p *PathRecord) {
+			p.CandidateLineage = nil
+			p.CandidateLineageID = ""
+			p.LineageDepth = 0
+		}},
+		{"rewrite", func(p *PathRecord) {
+			id, _ := CandidateLineageIdentity("", "forged-reservation", "forged-candidate")
+			p.CandidateLineage = []CandidateLineageFrame{{ID: id, ReservationID: "forged-reservation", CandidateID: "forged-candidate"}}
+			p.CandidateLineageID = id
+			p.LineageDepth = 1
+		}},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			view, pathID, reservationID := validOpenArrivalFixture(t)
+			activateOpenArrival(t, &view, pathID, reservationID)
+			p := view.Routing.Paths[pathID]
+			test.mutate(&p)
+			view.Routing.Paths[pathID] = p
+			report := ValidateAggregate(view)
+			if !reportHasCode(report, "edge_lineage_authority") {
+				t.Fatalf("forged lineage diagnostics: %#v", report.Diagnostics)
+			}
+		})
+	}
+}
+
+func TestApplicableDetachmentRequiresExactSet(t *testing.T) {
+	t.Parallel()
+	view := validSlowAnyFixture(t, false)
+	for id, p := range view.Routing.Paths {
+		if p.State == PathRouted && p.DetachmentSetID != "" {
+			p.DetachmentSetID = ""
+			view.Routing.Paths[id] = p
+			break
+		}
+	}
+	report := ValidateAggregate(view)
+	if !reportHasCode(report, "detachment_set_missing") {
+		t.Fatalf("missing applicable set diagnostics: %#v", report.Diagnostics)
+	}
+}
+
+func TestRouteDispositionRejectsUnrelatedValidCommand(t *testing.T) {
+	t.Parallel()
+	view, pathID, _ := validOpenArrivalFixture(t)
+	p := view.Routing.Paths[pathID]
+	parent := view.Routing.Paths[p.ParentPathID]
+	wrong := makeTestCommand(t, CommandIdentity{RunID: view.RunID, Kind: CommandRoutePaths, PayloadSchema: 1, SourceActivationID: parent.SourceActivation.ID, SourceGeneration: parent.SourceActivation.Generation, SourcePathID: p.ID, InputDigest: "settled", CauseDigest: "cause", PlanDigest: "exclusive", ResultCode: "pass"}, CommandObserved)
+	view.Commands[wrong.ID] = wrong
+	parent.Disposition.CommandID = wrong.ID
+	parent.Disposition.ID, _ = DispositionReceiptIdentity(parent.ID, parent.Disposition.FromState, parent.Disposition.ToState, parent.Disposition.ReasonCode, wrong.ID, "", uint64(parent.Disposition.EventSeq))
+	view.Routing.Paths[parent.ID] = parent
+	report := ValidateAggregate(view)
+	if !reportHasCode(report, "disposition_command_tuple") {
+		t.Fatalf("unrelated route command diagnostics: %#v", report.Diagnostics)
+	}
+}
+
+func TestDetachedSinkRequiresExactCommandReceiptAndEvent(t *testing.T) {
+	t.Parallel()
+	t.Run("unrelated command", func(t *testing.T) {
+		view := validSlowAnyFixture(t, false)
+		for id, p := range view.Routing.Paths {
+			if p.State != PathDetachedSink {
+				continue
+			}
+			r := view.Routing.Reservations[p.TargetReservationID]
+			wrong := makeTestCommand(t, CommandIdentity{RunID: view.RunID, Kind: CommandSettleDetachedSink, PayloadSchema: 1, SourcePathID: p.ParentPathID, TargetReservationID: r.ID, TargetGeneration: r.Generation, InputDigest: p.DetachmentSetID, ResultCode: "detached"}, CommandObserved)
+			view.Commands[wrong.ID] = wrong
+			p.Disposition.CommandID = wrong.ID
+			p.Disposition.ID, _ = DispositionReceiptIdentity(p.ID, p.Disposition.FromState, p.Disposition.ToState, p.Disposition.ReasonCode, wrong.ID, "", uint64(p.Disposition.EventSeq))
+			p.DetachedSink.CommandID = wrong.ID
+			view.Routing.Paths[id] = p
+			break
+		}
+		report := ValidateAggregate(view)
+		if !reportHasCode(report, "disposition_command_tuple") || !reportHasCode(report, "detached_sink_authority") {
+			t.Fatalf("unrelated sink command diagnostics: %#v", report.Diagnostics)
+		}
+	})
+	t.Run("receipt event drift", func(t *testing.T) {
+		view := validSlowAnyFixture(t, false)
+		for id, p := range view.Routing.Paths {
+			if p.State == PathDetachedSink {
+				p.DetachedSink.EventSeq++
+				view.Routing.Paths[id] = p
+				break
+			}
+		}
+		report := ValidateAggregate(view)
+		if !reportHasCode(report, "detached_sink_event") {
+			t.Fatalf("sink event drift diagnostics: %#v", report.Diagnostics)
+		}
+	})
+}
+
+func TestOrdinaryEdgeCannotClaimDetachedSinkState(t *testing.T) {
+	t.Parallel()
+	view, pathID, reservationID := validOpenArrivalFixture(t)
+	r := view.Routing.Reservations[reservationID]
+	command := makeTestCommand(t, CommandIdentity{RunID: view.RunID, Kind: CommandActivateGeneration, PayloadSchema: 1, TargetReservationID: r.ID, TargetGeneration: r.Generation, InputDigest: "fold", CauseDigest: "cause", PlanDigest: "activate"}, CommandObserved)
+	view.Commands[command.ID] = command
+	p := view.Routing.Paths[pathID]
+	p.State = PathDetachedSink
+	p.UpdatedSeq = 3
+	dispositionID, _ := DispositionReceiptIdentity(p.ID, PathArrived, PathDetachedSink, "pre_arrived_any_loser", command.ID, "", 3)
+	p.Disposition = &DispositionReceipt{ID: dispositionID, PathID: p.ID, FromState: PathArrived, ToState: PathDetachedSink, ReasonCode: "pre_arrived_any_loser", CommandID: command.ID, EventSeq: 3}
+	view.Routing.Paths[p.ID] = p
+	report := ValidateAggregate(view)
+	if !reportHasCode(report, "detached_sink_authority") {
+		t.Fatalf("fake sink diagnostics: %#v", report.Diagnostics)
+	}
 }
