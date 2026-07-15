@@ -30,7 +30,8 @@ import { getDashDefaultProfile } from './profiles.js';
 // every module finishes evaluating (sudoBadge is a hoisted function;
 // lastSnapshot / sudoByConv are read-only live bindings here).
 import { lastSnapshot, sudoBadge } from './dashboard.js';
-import { sudoByConv, hoveredGroupKey } from './refresh.js';
+import { sudoByConv } from './refresh.js';
+import { hoveredGroupKey } from './group-hover-state.js';
 
 // renameNameCell renders the agent's name — the click-to-edit rename
 // affordance when the agent's harness supports a rename (the common case:
@@ -118,6 +119,10 @@ function memberRowHTML(m, ctx) {
                   data-dnd-conv="${esc(m.conv_id)}"
                   data-dnd-agent="${esc(m.agent_id || m.conv_id)}"
                   data-dnd-label="${esc(m.title || m.conv_id)}">${body}</tr>`;
+}
+
+function memberTableHTML(members, ctx) {
+  return `<table>${sortHead('members', visibleMemberCols(), isWizardActive())}<tbody>${applySort('members', members, MEMBER_ACCESSORS).map((member) => memberRowHTML(member, ctx)).join('')}</tbody></table>`;
 }
 
 // renderVirtualGroup renders the synthetic "Ungrouped" group. It is
@@ -922,9 +927,8 @@ function renderRealGroup(g, childrenHTML, activityMembers, isOpen) {
     // 👥 chip's online/total/cap counts so the header stays truthful.
     const visible = groupShowOffline(g.name) ? members : members.filter(m => m.online);
     const hiddenOffline = members.length - visible.length;
-    // Restore expanded state across the 2s polling re-renders by
-    // keying on group name. Persisted in localStorage so it
-    // survives a full page reload too.
+    // Restore expanded state by group name for callers of this retained
+    // legacy renderer. dashPrefs keeps it across full page reloads too.
     // Quick-options pin: a per-group, per-browser opt-out of the
     // body.group-quick-fold accordion. A pinned group carries .quick-pinned
     // on its <details>, which the fold CSS excludes, so its chips stay
@@ -934,8 +938,8 @@ function renderRealGroup(g, childrenHTML, activityMembers, isOpen) {
     // folds there to opt out of.
     const quickPinned = dashPrefs.getItem('tclaude.dash.quickpin.' + g.name) === '1';
     // Compose the <details> class list: .quick-pinned opts out of folding,
-    // .quick-hover re-stamps the JS-tracked hover so the reveal survives the
-    // 2s re-render (see bindGroupQuickHover / hoveredGroupKey in refresh.js).
+    // while .quick-hover mirrors the same shared hover identity used by the
+    // native shell (see bindGroupQuickHover in refresh.js).
     const detailsClasses = [];
     if (quickPinned) detailsClasses.push('quick-pinned');
     if (!quickPinned && g.name === hoveredGroupKey) detailsClasses.push('quick-hover');
@@ -1126,4 +1130,5 @@ function renderDashSandboxProfile() {
 
 export {
   renderGroups, renderDashDefaultProfile, renderDashSandboxProfile,
+  memberTableHTML,
 };
