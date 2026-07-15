@@ -2811,8 +2811,11 @@ details[data-group-key][open] > summary .group-sandbox-profile {
   font-family: ui-monospace, monospace;
 }
 .term-session-detach:hover { background: #2d333b; border-color: #3d4450; }
-.term-session-xterm { flex: 1; padding: 6px; overflow: hidden; min-height: 0; }
-.term-session-xterm .xterm { height: 100%; }
+.term-session-xterm { flex: 1; overflow: hidden; min-height: 0; }
+/* FitAddon accounts for padding on .xterm, but not padding on this host. Keep
+   the inset on the element whose padding it subtracts so the modal terminal
+   never advertises a row or column its visible content box cannot fit. */
+.term-session-xterm .xterm { height: 100%; padding: 6px; }
 /* The "auto" self-rename checkbox sits under the Title input in the
    same .field — strip the text-input styling .modal .field input
    would otherwise smear onto a checkbox. The selectors carry the
