@@ -323,7 +323,7 @@ export function createTransactionDialogActions({
     },
 
     async handoffCleanupWorktrees(descriptor = {}) {
-      // The legacy janitor remains the next visual owner for now. Unpaint the
+      // The dedicated worktree island is the next visual owner. Unpaint the
       // keyed cleanup transaction first, let opener focus restore, then launch
       // the exact follow-up descriptor without admitting a competing dialog.
       const followup = Object.freeze({ group: String(descriptor.group || '') });

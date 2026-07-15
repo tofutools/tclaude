@@ -1,65 +1,119 @@
 package agentd
 
 import (
+	"io/fs"
 	"strings"
 	"testing"
 )
 
-// The group cog's "🧹 cleanup worktrees…" command and the global
-// command-palette / cleanup-modal entries open the repo-wide worktree janitor
-// modal (openWorktreeCleanup, refresh.js): it loads the candidate set from the
-// per-group or all-groups GET, lets the human
-// edit the selection (per-row, category mass-toggle chips, select-all/
-// none, filter, live rescan), and POSTs the EXPLICIT ticked path list to
-// /api/worktrees/cleanup.
-//
-// The repo has no JS test runner, so — following the established
-// dashboard_*_test.go structural guards (TestDashboardHTML_RetirePreviewWired)
-// — this pins the shape of that wiring across the embedded HTML + JS so a
-// refactor can't silently drop the modal, the mass-toggle/rescan
-// controls, or the explicit-list POST. The backend has its own flow tests
-// (worktree_sweep_flow_test.go).
-func TestDashboardHTML_WorktreeCleanupWired(t *testing.T) {
-	must := func(needle, why string) {
+// Component/model/action tests pin the worktree janitor's behavior. This guard
+// pins the production ownership boundary across embedded assets so static DOM
+// or refresh.js cannot silently regain an imperative writer.
+func TestDashboardWorktreeCleanupPreactOwnership(t *testing.T) {
+	read := func(path string) string {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
-			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		data, err := fs.ReadFile(dashboardAssetsFS, path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		return string(data)
+	}
+	html := read("dashboard.html")
+	dashboard := read("js/dashboard.js")
+	loader := read("js/preact-loader.js")
+	refresh := read("js/refresh.js")
+	controller := read("js/worktree-cleanup-controller.js")
+	model := read("js/worktree-cleanup-model.js")
+	actions := read("js/worktree-cleanup-actions.js")
+	island := read("js/worktree-cleanup-island.js")
+
+	if !strings.Contains(html, `id="worktree-cleanup-root"`) {
+		t.Error("dashboard HTML is missing the stable worktree-cleanup Preact host")
+	}
+	if strings.Contains(html, `id="worktree-cleanup-modal"`) {
+		t.Error("static dashboard HTML still owns #worktree-cleanup-modal")
+	}
+	for _, required := range []string{
+		"mountWorktreeCleanupFeature({", "refresh: dashboardActions.refresh", "notify: toast",
+	} {
+		if !strings.Contains(dashboard, required) {
+			t.Errorf("dashboard bootstrap is missing worktree owner wiring %q", required)
+		}
+	}
+	for _, required := range []string{
+		"name: 'worktree-cleanup'", "hosts: { root: '#worktree-cleanup-root' }",
+		"createWorktreeCleanupState", "createWorktreeCleanupActions", "mountWorktreeCleanupIsland",
+	} {
+		if !strings.Contains(loader, required) {
+			t.Errorf("Preact loader is missing worktree owner wiring %q", required)
+		}
+	}
+	for _, required := range []string{
+		"registerWorktreeCleanupController", "export function openWorktreeCleanup(group = '')",
+		"return requireController().open(group)",
+	} {
+		if !strings.Contains(controller, required) {
+			t.Errorf("worktree controller is missing launch contract %q", required)
+		}
+	}
+	for _, required := range []string{
+		"function openWorktreeCleanup(group = '')", "openWorktreeCleanupDialog(group)",
+	} {
+		if !strings.Contains(refresh, required) {
+			t.Errorf("refresh compatibility launcher is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"$('#worktree-cleanup-modal')", "$('#worktree-cleanup-list')",
+		"worktree-cleanup-submit').addEventListener", "async function load(isRescan)",
+	} {
+		if strings.Contains(refresh, forbidden) {
+			t.Errorf("refresh.js retains superseded worktree ownership %q", forbidden)
 		}
 	}
 
-	// 1. Markup: the overlay rides on .modal-overlay (shared backdrop) with the
-	//    list, the opt-out toolbar
-	//    (select-all/none + filter), the live rescan button, the category
-	//    mass-toggle row, the delete-branches toggle and the submit button.
-	must(`class="modal-overlay" id="worktree-cleanup-modal"`,
-		"the modal uses the shared modal backdrop")
-	must(`id="worktree-cleanup-list"`, "the modal has a candidate list")
-	must(`id="worktree-cleanup-search"`, "the modal has a path/branch filter")
-	must(`id="worktree-cleanup-select-all"`, "the modal can select all candidates")
-	must(`id="worktree-cleanup-select-none"`, "the modal can clear the selection")
-	must(`id="worktree-cleanup-rescan"`, "the modal has a live rescan button")
-	must(`id="worktree-cleanup-categories"`, "the modal has the category mass-toggle row")
-	must(`id="worktree-cleanup-branches"`, "the modal has the delete-branches toggle")
-	must(`id="worktree-cleanup-submit"`, "the modal has a submit button")
-	must(`id="worktree-cleanup-cancel"`, "the modal has a cancel button")
+	for _, required := range []string{
+		`id="worktree-cleanup-modal"`, `id="worktree-cleanup-list"`,
+		`id="worktree-cleanup-search"`, `id="worktree-cleanup-select-all"`,
+		`id="worktree-cleanup-select-none"`, `id="worktree-cleanup-rescan"`,
+		`id="worktree-cleanup-categories"`, `id="worktree-cleanup-branches"`,
+		`id="worktree-cleanup-submit"`, `id="worktree-cleanup-cancel"`,
+		"reconcileWorktreeCandidates(response.worktrees, touchedChoices.current)",
+		"const request = submittedRequest || freezeWorktreeCleanupRequest(",
+		"setResult(response)", "CleanupOutcomeList", "state.finish(result ? { response: result } : null)",
+	} {
+		if !strings.Contains(island, required) {
+			t.Errorf("worktree island is missing controlled UI contract %q", required)
+		}
+	}
+	for _, required := range []string{
+		"candidate.is_main || !touchedChoices.has(candidate.path)",
+		"checked: !isMain && worktree?.checked === true",
+		"paths: Object.freeze(selectedWorktrees(candidates).map(",
+	} {
+		if !strings.Contains(model, required) {
+			t.Errorf("worktree model is missing selection/safety contract %q", required)
+		}
+	}
+	for _, required := range []string{
+		"`/api/groups/${encodeURIComponent(normalizedGroup)}/worktrees`",
+		"'/api/worktrees/cleanup'", "paths: request.paths",
+		"delete_branches: request.deleteBranches === true", "outcomes: Object.freeze(",
+	} {
+		if !strings.Contains(actions, required) {
+			t.Errorf("worktree actions are missing scan/cleanup wire contract %q", required)
+		}
+	}
 
-	// 2. The driver is defined and exported, and both entry points reach it.
-	must("async function openWorktreeCleanup(", "refresh.js defines the driver")
-	must("openWorktreeCleanup,", "refresh.js exports the driver")
-	must("openWorktreeCleanup(group)", "row-actions / palette open the modal for the group")
-	must("run: () => openWorktreeCleanup()", "the palette opens the all-groups scope")
-	must(`id="cleanup-worktrees-all"`, "the global cleanup modal links to the all-groups scope")
-	must(`data-act="cleanup-worktrees-group"`, "the group cog has the cleanup-worktrees button")
-	must("case 'cleanup-worktrees-group'", "row-actions dispatches the cog button")
-
-	// 3. The load-bearing properties: discovery is a per-group GET and the
-	//    submit POSTs the EXPLICIT ticked path list (not a filter the server
-	//    re-resolves), so what the human previewed is exactly what is removed.
-	must("/api/groups/${encodeURIComponent(group)}/worktrees",
-		"discovery loads the candidate set from the per-group endpoint")
-	must("? '/api/worktrees/cleanup'",
-		"all-groups discovery loads from the global endpoint")
-	must("/api/worktrees/cleanup", "submit posts to the cleanup endpoint")
-	must("delete_branches: branchesCb.checked",
-		"the delete-branches toggle is sent to the backend")
+	// Existing group/global entry points continue to route through the same
+	// compatibility launcher after ownership moves.
+	for _, required := range []string{
+		"openWorktreeCleanup(group)", "run: () => openWorktreeCleanup()",
+		`id="cleanup-worktrees-all"`, `data-act="cleanup-worktrees-group"`,
+		"case 'cleanup-worktrees-group'",
+	} {
+		if !strings.Contains(dashboardAssets, required) {
+			t.Errorf("worktree entry point is missing %q", required)
+		}
+	}
 }

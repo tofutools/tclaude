@@ -29,8 +29,8 @@ func TestDashboardTransactionCleanupExclusiveOwnership(t *testing.T) {
 	if strings.Contains(html, `id="cleanup-modal"`) {
 		t.Error("static dashboard HTML still owns #cleanup-modal")
 	}
-	if !strings.Contains(html, `id="worktree-cleanup-modal"`) {
-		t.Error("the adjacent worktree cleanup owner was removed")
+	if !strings.Contains(html, `id="worktree-cleanup-root"`) {
+		t.Error("the adjacent Preact worktree cleanup host was removed")
 	}
 	for _, required := range []string{
 		`kind === 'cleanup'`, `function CleanupDialog(`,
