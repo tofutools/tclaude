@@ -21,6 +21,9 @@ func TestDashboardOperatorMessageModalPolishWired(t *testing.T) {
 		"el('operator-message-body').readOnly = next;",
 		"'operator-message-attach-btn', 'operator-message-attach-input'",
 		"'tclaude.dash.modalSize.operator-message'",
+		"restoreFocus = typeof nextTarget.restoreFocus === 'function' ? nextTarget.restoreFocus : null;",
+		"const focus = restoreFocus;",
+		"if (!modal?.classList.contains('show')) focus?.();",
 	} {
 		if !strings.Contains(js, needle) {
 			t.Errorf("operator composer missing %q", needle)
@@ -35,6 +38,7 @@ func TestDashboardOperatorMessageModalPolishWired(t *testing.T) {
 
 	for _, needle := range []string{
 		`aria-describedby="operator-message-desc"`,
+		`class="cron-create-row operator-message-body-row"`,
 		`class="theme-copy-wizard">✒ Send a missive to the familiar</span>`,
 		`class="theme-copy-wizard">Dispel</span>`,
 		`class="theme-copy-wizard">✒ Send missive</span>`,
@@ -53,6 +57,9 @@ func TestDashboardOperatorMessageModalResizableAndWizardStyled(t *testing.T) {
 	css := string(data)
 	for _, needle := range []string{
 		"#operator-message-modal .cron-create-modal {\n  resize: both; overflow: auto;\n}",
+		"#operator-message-modal .operator-message-body-row {\n  flex: 1 1 auto; min-height: 100px; align-items: stretch;\n}",
+		"#operator-message-modal .operator-message-body-row textarea {\n  align-self: stretch; min-height: 0; max-height: none; resize: none;\n}",
+		"#operator-message-modal .modal-buttons { flex: 0 0 auto; }",
 		"body.wizard #operator-message-modal .cron-create-modal {",
 		"body.wizard #operator-message-modal .cron-create-row :is(input[type=text], textarea)",
 		"body.wizard #operator-message-modal .spawn-attachments-list li",

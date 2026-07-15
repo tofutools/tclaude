@@ -3485,6 +3485,17 @@ body.wizard .group-pending-title-wizard { display: inline; }
 #operator-message-modal .cron-create-modal {
   resize: both; overflow: auto;
 }
+/* The message is the composer's elastic region: it consumes every extra pixel
+   from a vertical resize while the surrounding metadata stays natural-height
+   and the action row remains pinned to the bottom. Override the shared 220px
+   textarea ceiling; the dialog's own viewport cap remains the only bound. */
+#operator-message-modal .operator-message-body-row {
+  flex: 1 1 auto; min-height: 100px; align-items: stretch;
+}
+#operator-message-modal .operator-message-body-row textarea {
+  align-self: stretch; min-height: 0; max-height: none; resize: none;
+}
+#operator-message-modal .modal-buttons { flex: 0 0 auto; }
 /* Theme the scroll container's scrollbar to the dark dialog chrome. Without
    this the tall spawn/clone dialogs (and the Initial-msg textarea) fall back
    to the browser's default light, classic scrollbar — the same white-default
