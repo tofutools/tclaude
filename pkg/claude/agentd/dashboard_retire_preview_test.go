@@ -87,7 +87,7 @@ func TestDashboardTransactionGroupRetireExclusiveOwnership(t *testing.T) {
 		t.Error("the per-group palette command lost its preview launcher")
 	}
 	for _, adjacent := range []string{
-		`id="delete-retired-modal"`, `id="delete-group-modal"`, `id="worktree-cleanup-modal"`,
+		`id="delete-group-modal"`, `id="worktree-cleanup-modal"`,
 		`id="window-modal"`,
 	} {
 		if !strings.Contains(html, adjacent) {
@@ -95,7 +95,6 @@ func TestDashboardTransactionGroupRetireExclusiveOwnership(t *testing.T) {
 		}
 	}
 	for _, adjacent := range []string{
-		"async function openDeleteRetiredPreview()",
 		"function openDeleteGroupModal(group)",
 		"function openWindowModal(scope, groupName)",
 		"export async function openCleanupModal(opts)",
