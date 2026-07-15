@@ -41,37 +41,63 @@ type agentDirBinding struct {
 // directories; otherwise each directory is granted individually. Environment
 // entries are set by the caller either way — only the write surface differs.
 func addAgentDirectoryWriteGrants(effective *sandboxpolicy.EffectiveProfile, mountParent bool, bindings []agentDirBinding) {
-	if mountParent {
-		// Several directories can share one parent root; grant it once but union
-		// the provenance across every directory that contributed to it (deduped),
-		// since the single grant is genuinely declared by all of them.
-		seen := map[string]map[sandboxpolicy.ProfileSource]bool{}
-		for _, b := range bindings {
-			parent := filepath.Dir(b.canonical)
-			if seen[parent] == nil {
-				seen[parent] = map[sandboxpolicy.ProfileSource]bool{}
-				effective.Filesystem = append(effective.Filesystem, sandboxpolicy.FilesystemGrant{
-					Path: parent, Access: sandboxpolicy.AccessWrite,
-				})
-			}
-			for _, source := range b.sources {
-				if seen[parent][source] {
-					continue
-				}
-				seen[parent][source] = true
-				effective.Provenance.Filesystem[parent] = append(effective.Provenance.Filesystem[parent], source)
-			}
+	for _, b := range bindings {
+		path := b.canonical
+		if mountParent {
+			// Several directories can share one parent root; ensureAgentDirWriteGrant
+			// grants it once and unions the provenance across every contributor.
+			path = filepath.Dir(b.canonical)
 		}
+		ensureAgentDirWriteGrant(effective, path, b.sources)
+	}
+}
+
+// ensureAgentDirWriteGrant makes path writable exactly once, mirroring
+// normalizeFilesystem's "one entry per path, highest access rank wins" rule so
+// the materialized snapshot survives RevalidateSnapshot (which normalizes and
+// then rejects any pre-normalization drift). Blindly appending a grant for a
+// path that already carries one — a sibling agent dir sharing a parent, or a
+// user who explicitly granted the agent-dirs base as a manual workaround — would
+// leave a duplicate that normalization collapses, failing revalidation. A
+// pre-existing read grant is upgraded to write; an existing write or deny grant
+// is left as-is (write is already sufficient; a user deny must still win).
+func ensureAgentDirWriteGrant(effective *sandboxpolicy.EffectiveProfile, path string, sources []sandboxpolicy.ProfileSource) {
+	for i := range effective.Filesystem {
+		if effective.Filesystem[i].Path != path {
+			continue
+		}
+		if effective.Filesystem[i].Access == sandboxpolicy.AccessRead {
+			effective.Filesystem[i].Access = sandboxpolicy.AccessWrite
+		}
+		unionFilesystemProvenance(effective, path, sources)
 		return
 	}
-	for _, b := range bindings {
-		effective.Filesystem = append(effective.Filesystem, sandboxpolicy.FilesystemGrant{
-			Path: b.canonical, Access: sandboxpolicy.AccessWrite,
-		})
-		if len(b.sources) > 0 {
-			effective.Provenance.Filesystem[b.canonical] = append([]sandboxpolicy.ProfileSource(nil), b.sources...)
-		}
+	effective.Filesystem = append(effective.Filesystem, sandboxpolicy.FilesystemGrant{
+		Path: path, Access: sandboxpolicy.AccessWrite,
+	})
+	unionFilesystemProvenance(effective, path, sources)
+}
+
+// unionFilesystemProvenance adds sources to the provenance for path without
+// duplicates, preserving any sources already recorded (e.g. a user grant the
+// agent-dir grant now shares a path with).
+func unionFilesystemProvenance(effective *sandboxpolicy.EffectiveProfile, path string, sources []sandboxpolicy.ProfileSource) {
+	if len(sources) == 0 {
+		return
 	}
+	existing := effective.Provenance.Filesystem[path]
+	seen := make(map[sandboxpolicy.ProfileSource]bool, len(existing))
+	for _, source := range existing {
+		seen[source] = true
+	}
+	for _, source := range sources {
+		if seen[source] {
+			continue
+		}
+		seen[source] = true
+		existing = append(existing, source)
+	}
+	effective.Provenance.Filesystem[path] = existing
 }
 
 // materializeAgentDirectories turns profile declarations into literal frozen

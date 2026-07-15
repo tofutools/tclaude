@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	tclcommon "github.com/tofutools/tclaude/pkg/common"
 )
 
 // withAgentDirsMountParent isolates the config home for the test and writes the
@@ -393,6 +394,66 @@ func TestMaterializeAgentDirectoriesCloneDropsSourceParentGrant(t *testing.T) {
 	writeGrants := agentDirWriteGrants(clone)
 	require.Len(t, writeGrants, 1)
 	assert.Equal(t, cloneParent, writeGrants[0].Path)
+}
+
+func TestMaterializeAgentDirectoriesMountParentCoexistsWithExplicitBaseGrant(t *testing.T) {
+	cache, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	t.Setenv("XDG_CACHE_HOME", cache)
+	withAgentDirsMountParent(t, true)
+
+	// The profile already grants the per-launch base write — the manual
+	// workaround a user might have used before this flag existed. The generated
+	// mount-parent grant targets the same path; without dedup the duplicate would
+	// fail RevalidateSnapshot ("effective sandbox filesystem changed").
+	const launchKey = "spwn-collision"
+	base := filepath.Join(tclcommon.CacheDir(), "agent-dirs", launchKey)
+	require.NoError(t, os.MkdirAll(base, 0o700))
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Global: &sandboxpolicy.Profile{
+		Name:             "cache",
+		AgentDirectories: []string{"GOCACHE"},
+		Filesystem:       []sandboxpolicy.FilesystemGrant{{Path: base, Access: sandboxpolicy.AccessWrite}},
+	}})
+	require.NoError(t, err)
+
+	got, cleanup, err := materializeAgentDirectories(sandboxpolicy.NewSnapshot(effective, nil), launchKey)
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+
+	writeGrants := agentDirWriteGrants(got)
+	require.Len(t, writeGrants, 1, "the explicit and generated grants must collapse to one")
+	assert.Equal(t, base, writeGrants[0].Path)
+	_, err = sandboxpolicy.RevalidateSnapshot(got)
+	require.NoError(t, err)
+}
+
+func TestMaterializeAgentDirectoriesMountParentUpgradesExistingReadGrant(t *testing.T) {
+	cache, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	t.Setenv("XDG_CACHE_HOME", cache)
+	withAgentDirsMountParent(t, true)
+
+	// A pre-existing read grant on the base must be upgraded to write (not
+	// duplicated) so the agent can actually write its own directories.
+	const launchKey = "spwn-upgrade"
+	base := filepath.Join(tclcommon.CacheDir(), "agent-dirs", launchKey)
+	require.NoError(t, os.MkdirAll(base, 0o700))
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Global: &sandboxpolicy.Profile{
+		Name:             "cache",
+		AgentDirectories: []string{"GOCACHE"},
+		Filesystem:       []sandboxpolicy.FilesystemGrant{{Path: base, Access: sandboxpolicy.AccessRead}},
+	}})
+	require.NoError(t, err)
+
+	got, cleanup, err := materializeAgentDirectories(sandboxpolicy.NewSnapshot(effective, nil), launchKey)
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+
+	require.Len(t, got.Effective.Filesystem, 1)
+	assert.Equal(t, base, got.Effective.Filesystem[0].Path)
+	assert.Equal(t, sandboxpolicy.AccessWrite, got.Effective.Filesystem[0].Access)
+	_, err = sandboxpolicy.RevalidateSnapshot(got)
+	require.NoError(t, err)
 }
 
 func TestMaterializeAgentDirectoriesCloneCrossModeStripsSourceGrants(t *testing.T) {
