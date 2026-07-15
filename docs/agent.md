@@ -1,25 +1,16 @@
 # Agent Coordination 🤝
 
-> **BETA / EXPERIMENTAL**
->
-> The agent feature is under active development. Commands, flags,
-> permission slugs, the daemon wire format, the dashboard, and the
-> SQLite schema may all change without notice. Per-agent permission
-> grants and time-bounded elevations are stored in tables that have
-> not been field-tested across many upgrades. **Don't build automation
-> against this yet that you can't readily migrate.** See the
-> project's issue tracker for what's still in flight.
-
-Cross-session coordination between Claude Code conversations on the
-same machine: messaging, group membership, agent lifecycle (spawn,
-clone, reincarnate), scheduled nudges, and a browser dashboard — all
-gated by a permission model the human curates.
+Cross-session coordination between coding-harness conversations on the same
+machine: messaging, group membership, agent lifecycle (spawn, clone,
+reincarnate), scheduled nudges, reusable task forces, and a browser dashboard —
+all gated by a permission model the human curates. Claude Code and Codex agents
+can share the same group and use the same coordination API.
 
 `tclaude agent` (the CLI) talks to `tclaude agentd` (a long-running
 daemon) over a Unix socket. The daemon owns the database, tmux nudges,
 and permission gating; the CLI is a thin client. The daemon resolves
 every caller from the connecting socket peer: a caller running inside
-a Claude Code session is an *agent*, identified by a stable `agent_id`
+a recognized coding-harness session is an *agent*, identified by a stable `agent_id`
 the daemon resolves from its live conv-id (re-read on every request, so
 `/fork` and `/resume` keep working); the *human operator*
 authenticates with an operator token. A caller it can confirm as
@@ -44,13 +35,13 @@ only once.
 ## What you can do
 
 - **Talk between conversations.** Send messages, replies, and
-  threaded follow-ups between CC sessions. The receiver gets a tmux
+  threaded follow-ups between harness sessions. The receiver gets a tmux
   nudge if they're online; otherwise the message queues in their
   inbox.
 - **Group sessions.** Allow-list who can talk to whom. Out-of-group
   messages are refused server-side. Inter-group links open up
   directed cross-group messaging without co-membership.
-- **Spawn and manage agents.** Spawn fresh CC sessions straight into
+- **Spawn and manage agents.** Spawn fresh Claude Code or Codex sessions straight into
   a group, clone an agent into a sibling, reincarnate it onto a fresh
   context window, wake/stop sessions, and open terminals — your own
   or, with the right permission, another agent's.
@@ -86,14 +77,14 @@ only once.
   token**; the human exports it as `TCLAUDE_HUMAN_TOKEN` to run
   human-only commands (see [Identity](#identity)).
 
-The daemon binds two sockets:
+The daemon binds one canonical socket plus two temporary compatibility sockets:
 
-- `~/.tclaude-agentd.sock` — canonical, state-free Unix socket for all
-  `tclaude agent` traffic. Keeping it outside `~/.tclaude` lets every
-  harness deny the private state tree wholesale.
-- `~/.tclaude/agentd.sock` — temporary compatibility listener for older
-  clients and previously installed Claude sandbox settings. New clients and
-  generated settings do not use it.
+- `~/.tclaude/api/agentd.sock` — canonical, state-free Unix socket for all
+  `tclaude agent` traffic. It is separated from the denied
+  `~/.tclaude/data/` private-state tree.
+- `~/.tclaude-agentd.sock` and `~/.tclaude/agentd.sock` — temporary
+  compatibility listeners for older clients and previously installed sandbox
+  settings. New clients and generated settings do not use them.
 - `127.0.0.1:<random>` — loopback HTTP for the human-approval popup
   and the [dashboard](dashboard.md).
 
@@ -104,7 +95,7 @@ in WSL and headless sessions), agentd reports that the tray is unavailable
 and continues without it. A missing tray host on an otherwise working bus
 also leaves the daemon running normally. Pass `--no-tray` (or set
 `agent.disable_tray: true` in
-`~/.tclaude/config.json`) to skip the tray entirely. Pass
+`~/.tclaude/data/config.json`) to skip the tray entirely. Pass
 `--auto-launch-dashboard` (or set `agent.auto_launch_dashboard` in
 config) to open the dashboard on startup.
 
@@ -153,26 +144,26 @@ tclaude agent dashboard
 
 On every request the daemon resolves the connecting socket peer into
 exactly one *caller identity*. It reads the peer's PID from the kernel,
-walks the host process tree looking for a `claude`/`node` ancestor, and
+walks the host process tree looking for a recognized harness runtime (`claude`,
+`codex`, or Claude Code's `node` process), and
 checks the request for an operator token. The verdict is one of:
 
-- **Agent** — a `claude`/`node` ancestor is present in the process
-  tree. The daemon resolves that ancestor's current conv-id — from
-  `~/.claude/sessions/<pid>.json` (the `sessionId` Claude Code is
-  *currently* on, so it follows `/fork` and `/resume`), falling back
-  to the daemon's own `sessions` table keyed by host PID. It then maps
+- **Agent** — a coding-harness ancestor is present in the process tree. For
+  Claude Code, the daemon can read `~/.claude/sessions/<pid>.json`; for every
+  harness it can fall back to the daemon's `sessions` table keyed by the
+  harness or pane-wrapper host PID. It then maps
   that live conv-id to the agent's stable `agent_id` — the
   rotation-immune identity that outlives any conv-id rotation
   (reincarnate, `/clear`) — and gates the agent by the
   [permission model](#permission-model).
 - **Human** — the operator. There are two ways to reach this class:
-  a CLI caller with **no** `claude`/`node` ancestor that presents a
+  a CLI caller with **no** coding-harness ancestor that presents a
   valid operator token, or a request from the cookie-authenticated
   browser [dashboard](dashboard.md). The human bypasses every
   permission gate.
 - **Refused** — a caller the daemon can confirm as neither. No
-  `claude`/`node` ancestor and no valid token → `403 unconfirmed`; a
-  Claude Code ancestor whose conv-id can't be resolved → `403`; a peer
+  harness ancestor and no valid token → `403 unconfirmed`; a
+  harness ancestor whose conv-id can't be resolved → `403`; a peer
   whose PID can't be read at all → `401`. There is **no** fail-open
   "assume human" path — an unproven caller is always refused.
 
@@ -193,13 +184,13 @@ human re-copies it. Agents never need a token.
 
 **Opt in to a stable token.** If re-copying after every restart is
 tiresome, pass `--persist-operator-token` to `agentd serve` (or set
-`agent.persist_operator_token: true` in `~/.tclaude/config.json`, also a
+`agent.persist_operator_token: true` in `~/.tclaude/data/config.json`, also a
 checkbox on the dashboard's Config tab — the two OR together). The daemon
 then generates the token once and stores it, reusing it across restarts,
 so you export it a single time. It is stored in the **OS keychain** when
 one is reachable (macOS Keychain, Linux Secret Service, Windows Credential
 Manager); on a host with no keychain backend (headless Linux, WSL without
-D-Bus) it falls back to a `0600 ~/.tclaude/operator_token` file. The
+D-Bus) it falls back to a `0600 ~/.tclaude/data/operator_token` file. The
 secret is deliberately **not** written into `config.json` (which is
 plaintext and shows up in the Config-tab diff and backups); the file
 fallback keeps the same boundary as the in-memory token, since the agent
@@ -207,15 +198,15 @@ sandbox already denies reads to `~/.tclaude`. You can also pin your own
 token by writing that file directly. Default (off) is the
 fresh-token-each-boot behaviour described above.
 
-**A Claude Code ancestor always wins over the token.** Because the
-human exports `TCLAUDE_HUMAN_TOKEN` into their shell, a CC session
+**A coding-harness ancestor always wins over the token.** Because the
+human exports `TCLAUDE_HUMAN_TOKEN` into their shell, a harness session
 launched from that shell would inherit it — so the daemon classifies
 *agent-ness first* and never offers the token branch to a caller with
-a `claude`/`node` ancestor. An agent therefore cannot escalate to the
+a recognized harness ancestor. An agent therefore cannot escalate to the
 human even if it holds the token (and `agentd` also strips
-`TCLAUDE_HUMAN_TOKEN` from the environment of every CC session it
+`TCLAUDE_HUMAN_TOKEN` from the environment of every session it
 spawns). The flip side: a human running `tclaude agent` from a shell
-that happens to descend from a non-Claude `node` process is classified
+that happens to descend from a non-harness `node` process can be classified
 agent-side, not human, and the token won't rescue it — run operator
 commands from a clean terminal, or use the dashboard.
 
@@ -332,7 +323,7 @@ tclaude agent groups links                                 # every link, all gro
 ```
 
 All mutating subcommands take `--ask-human <duration>` (see
-[below](#ad-hoc-human-approval---ask-human)).
+[below](#ad-hoc-human-approval-ask-human)).
 
 ### spawn profiles
 
@@ -497,7 +488,7 @@ custom-title turn, exactly as `/rename` does) and the welcome — an
 welcome keystrokes are injected over tmux, so there is no post-connect
 delay. To revert Claude Code to the older flow — launch a bare `claude`,
 poll for its conv-id, then inject `/rename` + the welcome over tmux — set
-`agent.spawn_legacy_injection: true` in `~/.tclaude/config.json`.
+`agent.spawn_legacy_injection: true` in `~/.tclaude/data/config.json`.
 
 **Name charset + auto-normalization.** A spawn name doubles as a git
 worktree branch token and the conversation title, so it is restricted to
@@ -508,7 +499,7 @@ trimmed (a `_` you typed is kept), so `--name "code reviewer!"` lands as
 `code-reviewer`. This applies uniformly to
 `tclaude agent spawn`, `--join-group`, and the dashboard's spawn modal (which
 previews the normalized name as you type). Set
-`agent.spawn_name_normalize: false` in `~/.tclaude/config.json` (or untick
+`agent.spawn_name_normalize: false` in `~/.tclaude/data/config.json` (or untick
 *Normalize spawn names* on the dashboard's Config tab) to restore the strict
 behaviour, where an out-of-charset name is rejected. An empty name is always
 valid — the agent gets an auto-generated label.
@@ -567,7 +558,7 @@ permission gate:
 | **Dir write-proof** — the caller must prove its own sandbox can write in the child's launch dirs | on | `403 write_proof_required` / `403 write_proof_failed` |
 | **Max group size** — `agent_groups.max_members`; binds the human too | unlimited (0) | `409 group_full` |
 
-The first two are tuned in `~/.tclaude/config.json` under `agent`
+The first two are tuned in `~/.tclaude/data/config.json` under `agent`
 (`spawn_group_restriction`, `spawn_allowed_groups`, `spawn_max_per_hour`);
 the member cap is a per-group property — `groups set-max-members`, or the
 👥 chip on the dashboard's Groups tab. See [Permission model](#permission-model).
@@ -823,7 +814,7 @@ A template carries three things that shape a deployed force, and they work
 | Rhythms | cron jobs at deploy | yes, on a schedule | no — nudges | cron jobs deleted |
 
 The verbs that drive each are below; the dashboard's
-[Concepts](dashboard.md#concepts-pattern-process--rhythms) note covers the same
+[Concepts](dashboard.md#concepts-pattern-process-rhythms) note covers the same
 model from the UI side.
 
 ### templates
@@ -888,7 +879,7 @@ agent skills) via `tclaude setup --install-agent-skills`.
 **Scribe launch profile.** By default a summoned scribe launches on the
 harness default (Claude Code at its default model/effort). To run scribes on a
 different harness/model — e.g. Codex, or a cheaper model for their light
-editing — set `scribe.profile` in `~/.tclaude/config.json` (or pick it from the
+editing — set `scribe.profile` in `~/.tclaude/data/config.json` (or pick it from the
 dashboard **Config tab → Scribe defaults**) to the name of a saved [spawn
 profile](#roles); each fresh summon adopts that profile's whole launch
 shape, and the harness-matched dir-trust pre-seed follows it automatically.
@@ -1113,7 +1104,7 @@ has [classified the caller](#identity), it decides:
 
 | Where                                     | What                          | How to edit               |
 |-------------------------------------------|-------------------------------|----------------------------|
-| `~/.tclaude/config.json` → `agent.default_permissions` | Slugs granted to **every** agent | hand-edit, or `permissions grant default <slug>` |
+| `~/.tclaude/data/config.json` → `agent.default_permissions` | Slugs granted to **every** agent | hand-edit, or `permissions grant default <slug>` |
 | SQLite `agent_group_permissions` table    | Live additive grants for every current member of one active group | Groups tab → group ⚙ → **group permissions…** |
 | SQLite `agent_permissions` table          | Per-conv grants (additive on top of defaults) | `permissions grant <conv> <slug>` (writes the DB row) |
 | SQLite sudo-elevation table               | Time-bounded grants from `sudo` | `sudo request` / `sudo revoke` |
@@ -1185,7 +1176,7 @@ its action accepted) **only** for eligible slugs; destructive or
 fleet-affecting slugs (e.g. `agent.delete`, `groups.rm`) never offer it.
 
 For a *bundle* of slugs over a *window* of time rather than one
-command, use [`sudo`](#permissions--sudo) instead.
+command, use [`sudo`](#permissions-sudo) instead.
 
 ### Recursion
 
@@ -1260,7 +1251,7 @@ embeds.
   held in memory only — never persisted to disk — and a daemon restart
   mints a fresh one. Opting in (`--persist-operator-token` /
   `agent.persist_operator_token`) makes it stable across restarts,
-  stored in the OS keychain or a `0600 ~/.tclaude/operator_token` file;
+  stored in the OS keychain or a `0600 ~/.tclaude/data/operator_token` file;
   see [The operator token](#the-operator-token).
 - `agent_messages` rows accumulate forever for now (no auto-prune);
   bodies are short, so this is fine for a long while.
@@ -1273,7 +1264,7 @@ embeds.
 |--------------------------------------------------------------------------|-----------------------------------------------------------------|
 | `Error: tclaude agentd is not running.`                                  | Start it: `tclaude agentd serve` (in a non-sandboxed shell).    |
 | `Error: not in a shared group with target`                               | Add both convs to the same group, or add an inter-group link.   |
-| `Error: selector matches multiple conversations`                         | Use the 8-char conv-id prefix instead of the title.            |
+| `Error: selector matches multiple conversations`                         | Use the stable `agent_id` (or a unique `agt_…` prefix) from `agent ls`. |
 | `Error: caller is not granted permission "<slug>"`                       | Grant via `permissions grant`, retry with `--ask-human`, or `sudo request`. |
 | `Error: unconfirmed caller: not a known agent, and no valid operator token` | You're the human: `export TCLAUDE_HUMAN_TOKEN=…` from the agentd startup banner. See [Identity](#identity). |
 | Dashboard shows `403` on `GET /`                                         | Open it via `tclaude agent dashboard` — the cookie is only issued by the init-token exchange. |

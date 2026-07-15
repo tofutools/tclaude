@@ -32,7 +32,7 @@ every request**:
 
 All secret material — the CA, server and client keys, the passphrase hash
 (PBKDF2-HMAC-SHA256), and the cookie-signing key — lives as `0600` files under
-`~/.tclaude/remote-access/`, never in `config.json`. Client **private** keys are
+`~/.tclaude/data/remote-access/`, never in `config.json`. Client **private** keys are
 only ever inside the one-time `.p12` you install on the device; the server keeps
 the public client cert (for the record) but never the key.
 
@@ -81,7 +81,7 @@ tclaude remote-access status
 ## On the phone
 
 1. Transfer the `.p12` (printed by `setup`, under
-   `~/.tclaude/remote-access/clients/<name>.p12`) to the device and install it as
+   `~/.tclaude/data/remote-access/clients/<name>.p12`) to the device and install it as
    a client certificate:
    - **iOS:** open the `.p12` → install the configuration profile (Settings →
      Profile Downloaded), then enter the `.p12` password.

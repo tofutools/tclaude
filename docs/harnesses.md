@@ -3,8 +3,9 @@
 tclaude started life as a wrapper around [Claude Code](https://claude.ai/code).
 It is now **harness-agnostic**: the session, conversation, agent-coordination,
 and dashboard machinery can drive more than one coding *harness* (the underlying
-agentic CLI). Claude Code is the default; **OpenAI Codex CLI** is the second
-supported harness.
+agentic CLI). **Claude Code and OpenAI Codex CLI are both supported first-class
+harnesses.** Claude remains the default so existing commands and databases keep
+their historical behavior when no harness is recorded.
 
 A *harness* is whichever CLI actually runs the model in the tmux pane — `claude`
 or `codex`. tclaude owns everything around it: the tmux session, the status
@@ -13,10 +14,11 @@ dashboard. Each harness plugs into the same seam and contributes only the parts
 that are genuinely harness-specific (how to launch it, where it stores
 conversations, which in-pane commands it understands).
 
-!!! note "Experimental"
-    Multi-harness support is new. Claude Code is the mature, fully-supported
-    path; the Codex integration is usable end-to-end but newer. File issues if
-    something behaves differently between the two.
+The common contracts are production paths, not an experimental alternative:
+sessions, conversations, `ask`, mixed-harness agent groups, lifecycle, hooks,
+and the dashboard all understand Codex. The harnesses still expose different
+native features, so use the [capability matrix](#capability-matrix) instead of
+assuming every Claude Code control has a Codex equivalent (or vice versa).
 
 !!! note "`--harness shell` is not a harness"
     `tclaude session new --harness shell` starts a plain, ephemeral
@@ -28,8 +30,10 @@ conversations, which in-pane commands it understands).
 
 ## Choosing a harness
 
-Every place that launches a session takes a `--harness` flag. It defaults to
-`claude`, so nothing changes unless you ask for Codex.
+The primary launch surfaces (`tclaude`, `session new`, and `agent spawn`) take a
+`--harness` flag. It defaults to `claude`, so existing commands keep their
+behavior unless you ask for Codex. Saved spawn profiles and group/global profile
+defaults can also select a harness; an explicit flag wins.
 
 ```bash
 # Start a Claude Code session (the default — --harness claude is implied)
@@ -43,10 +47,14 @@ tclaude agent spawn --group mygroup --name worker --harness codex
 ```
 
 The harness is **persisted per conversation** (a `harness` column on the
-session/conv tables, defaulting to `claude`). Every later operation — resume,
-`conv ls`, rename, stop, reincarnate, clone — looks up the conversation's
-recorded harness and does the right thing for it automatically. You do not pass
-`--harness` again when resuming or managing an existing conversation.
+session/conv tables, defaulting to `claude`). Conversation-oriented and agent
+lifecycle operations such as `conv resume`, rename, stop, reincarnate, and clone
+look up that recorded harness automatically.
+
+The lower-level `session new --resume` command is the exception: it selects a
+harness before searching that harness's conversation store. Add `--harness
+codex` there when resuming a Codex conversation, or use `conv resume`, which
+detects the harness for you.
 
 ## Per-harness setup
 
@@ -85,7 +93,7 @@ instead of slash-command injection).
 |---|---|---|
 | **Spawn** | ✅ `claude` | ✅ `codex` |
 | **Resume** | ✅ `claude --resume <id>` | ✅ `codex resume <id>` |
-| **Ad-hoc ask** (`tclaude ask`) | ✅ `claude [-p]`, conv-id pre-minted (`--session-id`) | ✅ `codex exec` (capture, read-only) / TUI (interactive), conv-id discovered post-turn |
+| **Ad-hoc ask** ([guide](ask.md)) | ✅ `claude [-p]`, conv-id pre-minted (`--session-id`) | ✅ `codex exec` (capture, read-only) / TUI (interactive), conv-id discovered post-turn |
 | **Live-streamed ask output** (print mode → a TTY) | ✅ `--output-format stream-json`, answer rendered token-by-token | ➖ buffered (`codex exec` prints the final message at the end) |
 | **Conversation list & search** (`conv ls`/`search`) | ✅ cwd-indexed `.jsonl` | ✅ date-indexed rollout + state DB |
 | **Rename** | ✅ in-pane `/rename` (writes the conversation file) | ✅ out-of-band (writes Codex's title store) |
@@ -121,7 +129,7 @@ safe and non-blocking:
     It gives the same `workspace-write` containment (only the working directory
     plus `/tmp`/`$TMPDIR` writable; `$HOME` read-only) while explicitly
     denying all filesystem access to `~/.tclaude`. The daemon exposes a
-    state-free agent endpoint at `~/.tclaude-agentd.sock`, and the profile
+    state-free agent endpoint at `~/.tclaude/api/agentd.sock`, and the profile
     allowlists exactly that Unix socket — which the raw `--sandbox` modes
     block, so only under this profile can a sandboxed agent run
     `tclaude agent …`. At spawn
@@ -137,7 +145,7 @@ safe and non-blocking:
     fallback root. The
     operator, Codex, and Claude Code all use the same canonical state-free
     endpoint; agentd temporarily also serves the legacy
-    `~/.tclaude/agentd.sock` path for
+    `~/.tclaude-agentd.sock` and `~/.tclaude/agentd.sock` paths for
     older clients and installed settings. Daemon-spawned
     Codex agents (via `agent spawn`, resume, clone, reincarnate) default to it.
   - **`workspace-write` / `read-only` / `danger-full-access`** are passed through

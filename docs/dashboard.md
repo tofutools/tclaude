@@ -5,12 +5,6 @@ agent-coordination system — groups, agents, permissions, scheduled jobs, and
 time-bounded elevations — without dropping to the CLI for every action. It is
 served by `tclaude agentd` on its loopback port and is **human-only**.
 
-> **BETA / EXPERIMENTAL**
->
-> The dashboard is part of the experimental [Agent Coordination](agent.md)
-> feature. Tabs, endpoints, the wire format, and the SQLite schema can all
-> change without notice.
-
 It used to be a read-only viewer; it is now a full operations console. Almost
 everything you can do with `tclaude agent` on the command line you can also do
 here — spawn agents, edit group membership, wake/stop sessions, schedule cron
@@ -45,10 +39,10 @@ Other entry points:
   The same colours match the per-agent status dots/pills on the dashboard.
   Hover the tray icon for the count behind whichever colour is showing.
   Pass `--no-tray` (or set `agent.disable_tray: true` in
-  `~/.tclaude/config.json`, or tick **System tray → hide** in the Config tab)
+  `~/.tclaude/data/config.json`, or tick **System tray → hide** in the Config tab)
   to run the daemon without the tray icon.
 - **On startup** — `tclaude agentd serve --auto-launch-dashboard` (or
-  `agent.auto_launch_dashboard: true` in `~/.tclaude/config.json`) pops the
+  `agent.auto_launch_dashboard: true` in `~/.tclaude/data/config.json`) pops the
   dashboard automatically when the daemon comes up. Off by default — a fresh
   daemon doesn't open a browser tab uninvited.
 
@@ -61,7 +55,7 @@ By default the dashboard (and the approval popup it shares a listener with)
 binds a **random** free loopback port each time `agentd serve` starts. To pin a
 **fixed** port instead — for a bookmarkable URL, a reverse proxy, or a firewall
 rule — pass `tclaude agentd serve --dashboard-port <port>`, or set
-`agent.dashboard_port` in `~/.tclaude/config.json` (also editable from the
+`agent.dashboard_port` in `~/.tclaude/data/config.json` (also editable from the
 **Config** tab). Resolution order is flag > config > random.
 
 Binding is strict: if the configured port is already in use (or out of range),
@@ -79,7 +73,7 @@ them, access is gated by an **init-token exchange**:
 
 1. `tclaude agent dashboard` calls the daemon's human-only
    `/v1/dashboard/open` endpoint over the peer-credential-authenticated Unix
-   socket. Any caller with a Claude Code ancestor process (i.e. an agent) gets
+   socket. Any caller with a recognized coding-harness ancestor process (i.e. an agent) gets
    a `403`; the human gets a URL carrying a one-shot `init_token`.
 2. Opening that URL exchanges the token for an `HttpOnly` / `SameSite=Strict`
    session cookie, then 303-redirects to the bare path so the token never
@@ -92,10 +86,11 @@ Init tokens live in memory, expire after ~60s, and are single-use. Restarting
 the daemon drops every pending token; just reopen the dashboard.
 
 **Threat model.** Loopback-only, same-user trust boundary — the same as the
-[approval popup](agent.md#ad-hoc-human-approval---ask-human). A same-user
+[approval popup](agent.md#ad-hoc-human-approval-ask-human). A same-user
 process could still scrape the human browser's on-disk cookie store; that is
-the genuine trust floor, far above "make one unauthenticated HTTP request," and
-is blocked by the Claude Code bash sandbox anyway.
+the genuine trust floor, far above "make one unauthenticated HTTP request."
+The recommended Claude sandbox hardening and Codex `tclaude-agent` profile both
+deny direct access to agentd's private state.
 
 ## Layout
 
@@ -558,7 +553,7 @@ buttons on the Groups tab). See
 Active **time-bounded permission elevations**. Shows who holds what, the reason,
 and the expiry. The human can proactively **grant** an elevation to an agent or
 **revoke** one early. See
-[Agent Coordination → sudo](agent.md#permissions--sudo) for the
+[Agent Coordination → sudo](agent.md#permissions-sudo) for the
 elevation model.
 
 ### Links
@@ -623,7 +618,7 @@ switch the tab on.
 
 ### Config
 
-A visual editor for `~/.tclaude/config.json`, covering the settings this
+A visual editor for `~/.tclaude/data/config.json`, covering the settings this
 build of tclaude recognises. Edits are staged in the form until you press
 **Save changes**, which shows a confirm diff before anything is written. Most
 settings apply on next use; a few resolved at `agentd` startup (spawn

@@ -2,6 +2,13 @@
 
 Run a list of tasks sequentially with Claude Code, with automatic git commits and progress tracking.
 
+!!! note "Claude Code-only"
+    The `tclaude task` runner directly drives Claude Code's interactive,
+    plan-mode, hook, skill, and `/exit` contracts. It is not part of the shared
+    harness seam and does not currently run tasks through Codex CLI. For
+    mixed-harness team execution, use [Agent Coordination](agent.md); for
+    structured repeatable workflows, see [Processes](processes.md).
+
 ## Overview
 
 Define tasks in a `TODO.md` file at the root of your project (or in a custom directory with `-C`). Each task has a title and a prompt. When you run `tclaude task run`, tasks are executed one by one in a tmux session. After each task:

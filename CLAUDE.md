@@ -57,7 +57,10 @@ the code tree and focused docs as the source of truth.
 - Commands use Cobra through Boa (`boa.CmdT[...]`) with
   `common.DefaultParamEnricher()` unless nearby code establishes another
   pattern.
-- Session and conversation state lives in SQLite under `~/.tclaude/db.sqlite`.
+- Session and conversation state lives in SQLite under
+  `~/.tclaude/data/db.sqlite`. The sibling `~/.tclaude/api/` tree is reserved
+  for the agent-reachable daemon socket; private daemon state stays under
+  `~/.tclaude/data/`.
   Legacy JSON files may still be written for compatibility, but SQLite is the
   source of truth for tclaude.
 - Harness support is capability-based. Callers should gate behavior on the

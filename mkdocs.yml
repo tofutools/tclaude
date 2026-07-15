@@ -1,6 +1,6 @@
 site_name: tclaude
 site_url: https://tofutools.github.io/tclaude/
-site_description: Claude Code CLI extensions and utilities
+site_description: Session, conversation, and multi-agent tooling for Claude Code and OpenAI Codex CLI
 repo_url: https://github.com/tofutools/tclaude
 repo_name: tofutools/tclaude
 
@@ -36,15 +36,23 @@ markdown_extensions:
 
 nav:
   - Home: index.md
-  - Harnesses: harnesses.md
-  - Adding a Harness: adding-a-harness.md
-  - Session Management: sessions.md
-  - Task Management: tasks.md
-  - Conversation Management: conversations.md
-  - Agent Coordination: agent.md
-  - Agent Dashboard: dashboard.md
-  - Remote Control: remote-control.md
-  - Semantic Search: semantic-search.md
-  - Git Worktrees: worktrees.md
-  - Notifications: notifications.md
-  - Status Bar: status-bar.md
+  - Core Use:
+      - Harnesses: harnesses.md
+      - Sessions: sessions.md
+      - Conversations: conversations.md
+      - Ask from the Shell: ask.md
+      - Git Worktrees: worktrees.md
+      - Semantic Search: semantic-search.md
+      - Notifications: notifications.md
+  - Agent Operations:
+      - Coordination: agent.md
+      - Dashboard: dashboard.md
+      - Remote Control: remote-control.md
+      - Remote Dashboard Access: remote-access.md
+      - Sandbox Hardening: sandbox-hardening.md
+      - Processes: processes.md
+  - Claude Code Utilities:
+      - Task Runner: tasks.md
+      - Status Bar: status-bar.md
+  - Contributors:
+      - Adding a Harness: adding-a-harness.md

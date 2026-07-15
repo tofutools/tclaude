@@ -1,10 +1,14 @@
 # OS Notifications
 
-Get notified when Claude sessions need attention.
+Get notified when Claude Code or Codex sessions need attention.
 
 ## Overview
 
-tclaude can send OS notifications when Claude sessions transition to states that require user attention (idle, awaiting permission, awaiting input). This is useful when running multiple sessions or working in a different window.
+tclaude can send OS notifications when a coding session transitions to a state
+that requires attention (`idle`, `awaiting_permission`, `awaiting_input`, or
+`exited`). Notification titles identify the session's harness (`Claude: …` or
+`Codex: …`). This is useful when running multiple sessions or working in a
+different window.
 
 **Disabled by default** - run `tclaude setup` to enable.
 
@@ -17,7 +21,7 @@ tclaude setup
 ```
 
 This will:
-1. Install Claude hooks for status tracking
+1. Install Claude Code hooks for status tracking and offer Codex setup when it is detected
 2. Register the protocol handler (WSL/Windows) for clickable notifications
 3. Ask if you want to enable notifications — but only on the first run
 
@@ -25,18 +29,19 @@ Re-running `tclaude setup` never changes notification settings you've
 already chosen: a deliberately disabled block stays disabled (even with
 `--yes`), and your transitions, cooldown and other tweaks are preserved.
 Setup only *adds* notification categories introduced in a newer tclaude
-version; to enable/disable notifications later, edit `~/.tclaude/config.json`
+version; to enable/disable notifications later, edit `~/.tclaude/data/config.json`
 or use the dashboard's Config tab.
 
 You can check your setup status anytime:
 
 ```bash
 tclaude setup --check
+tclaude setup --check --harness codex
 ```
 
 ## Manual Configuration
 
-Alternatively, create `~/.tclaude/config.json` manually:
+Alternatively, create `~/.tclaude/data/config.json` manually:
 
 ```json
 {
@@ -71,9 +76,9 @@ enabled block; set `false` to suppress just the human-message banners.
 Each transition rule has `from` and `to` fields. Use `*` as a wildcard to match any state.
 
 **Default transitions:**
-- `*` → `idle` - Claude finished processing
-- `*` → `awaiting_permission` - Claude needs permission to proceed
-- `*` → `awaiting_input` - Claude is asking a question
+- `*` → `idle` - the harness finished processing
+- `*` → `awaiting_permission` - the harness needs permission to proceed
+- `*` → `awaiting_input` - the harness is asking a question
 - `*` → `exited` - Session ended
 
 **Available states:** `working`, `idle`, `awaiting_permission`, `awaiting_input`, `exited`
@@ -174,7 +179,7 @@ Notify on any state change from working:
 ## Notification Content
 
 Notifications display:
-- **Title:** `Claude: <state>` (e.g., "Claude: Idle")
+- **Title:** `<Harness>: <state>` (e.g., "Claude: Idle" or "Codex: Idle")
 - **Body:** Session ID, project name, and conversation title/prompt
 
 ## Platform Support
@@ -232,7 +237,7 @@ If clicking doesn't work:
 ### Notifications not appearing
 
 1. Run `tclaude setup --check` to verify everything is configured
-2. Check that `~/.tclaude/config.json` has `"enabled": true`
+2. Check that `~/.tclaude/data/config.json` has `"enabled": true`
 3. Check that the session state transition matches your configured rules
 
 ### WSL-specific issues
