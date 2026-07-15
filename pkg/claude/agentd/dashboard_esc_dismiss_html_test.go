@@ -67,7 +67,8 @@ func TestDashboardHTML_EscDismissWired(t *testing.T) {
 	must(`id: 'templates-manage-modal'`, "the Preact templates browser uses the clean manage-overlay boundary")
 	must(`manage: true`, "the templates browser uses the listing-overlay variant")
 	must("manage-overlay show", "Preact management browsers use the clean shared overlay close")
-	must("bindManageOverlayDismiss('links-manage-modal', closeLinksManageModal);", "the links browser closes cleanly")
+	must(`id="links-manage-modal"`, "the Preact Links browser uses the clean shared overlay boundary")
+	must(`id="link-modal"`, "the Preact Links editor uses the stacked form boundary")
 
 	// A manage overlay's Escape must key on the z-index/DOM-order topmost test,
 	// NOT a bare "any .modal-overlay is shown" guard. The naive guard couldn't

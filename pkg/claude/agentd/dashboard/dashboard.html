@@ -166,7 +166,7 @@
           <button role="menuitem" id="templates-manage-open" title="Manage group templates — reusable team blueprints (create, edit, delete, snapshot from a group, instantiate)"><span class="tpl-word-regular">⧉ templates…</span><span class="tpl-word-wizard">⧉ circles…</span></button>
           <button role="menuitem" id="roles-manage-open" title="Manage the role library — named, reusable agent-role defaults (a canonical brief, a default launch shape and a default permission set) that a template roster agent references and inherits from"><span class="roles-word-regular">⧉ roles…</span><span class="roles-word-wizard">⧉ classes…</span></button>
           <button role="menuitem" id="sandbox-profiles-manage-open" title="Manage sandbox profiles — filesystem and environment policy applied at agent launch"><span class="sandbox-word-regular">🛡 sandbox profiles…</span><span class="sandbox-word-wizard">🛡 wards…</span></button>
-          <button role="menuitem" id="links-manage-open" title="Manage inter-group communication links — the full cross-group listing (add, edit, delete)">🔗 links…</button>
+          <button role="menuitem" id="links-manage-open" data-act="links-manage" title="Manage inter-group communication links — the full cross-group listing (add, edit, delete)">🔗 links…</button>
         </div>
       </div>
     </div>
@@ -1143,54 +1143,8 @@
 <!-- Preact renders the Plugins create/edit dialog here so the overlay is not
      hidden with the tab section while open. -->
 <div id="plugins-modal-root"></div>
-<!-- Links… manage overlay — the former Links tab, folded into the Groups
-     tab's ⚙ cog menu. A .manage-overlay (not .modal-overlay) for the same
-     reason as the Templates one above: the listing stays live so add/edit/
-     delete via the +new-link / link-edit child modal reflect immediately.
-     Per-group links also surface as chips in each group header + a table in
-     each group's expanded body. -->
-<div class="manage-overlay" id="links-manage-modal">
-  <div class="manage-modal" role="dialog" aria-modal="true" aria-labelledby="links-manage-title">
-    <h3 id="links-manage-title"><span class="theme-copy-regular">Inter-group links</span><span class="theme-copy-wizard">Arcane channels between parties</span></h3>
-    <p class="manage-intro"><span class="theme-copy-regular">Communication edges between groups: members of FROM may message members of TO. Direction matters — add a reverse edge for two-way reach.</span><span class="theme-copy-wizard">Missive channels between parties: familiars of FROM may whisper to familiars of TO. Direction matters — weave a reverse channel for two-way reach.</span></p>
-    <div class="filter-bar" id="links-filter-root"></div>
-    <div id="links-list"></div>
-    <div class="modal-buttons">
-      <span class="spacer"></span>
-      <button id="links-manage-close" type="button"><span class="theme-copy-regular">Close</span><span class="theme-copy-wizard">Dispel</span></button>
-    </div>
-  </div>
-</div>
-<div class="modal-overlay" id="link-modal">
-  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="link-modal-title">
-    <h3 id="link-modal-title">Add inter-group link</h3>
-    <div class="modal-meta" id="link-modal-meta" style="display:none"></div>
-    <label class="cron-create-row">
-      <span class="cron-create-label">From</span>
-      <select id="link-modal-from"></select>
-    </label>
-    <label class="cron-create-row">
-      <span class="cron-create-label">To</span>
-      <select id="link-modal-to"></select>
-    </label>
-    <label class="cron-create-row">
-      <span class="cron-create-label">Mode</span>
-      <select id="link-modal-mode">
-        <option value="members-&gt;members">members → members (any member of FROM may message any member of TO)</option>
-        <option value="owners-&gt;members">owners → members (only owners of FROM may message members of TO)</option>
-      </select>
-    </label>
-    <label class="cron-create-enabled" id="link-modal-bidir-row" title="Also create the reverse link (TO → FROM) with the same mode in one call.">
-      <input id="link-modal-bidir" type="checkbox" /> <span class="theme-copy-regular">Also create reverse link (TO → FROM)</span><span class="theme-copy-wizard">Also weave a reverse channel (TO → FROM)</span>
-    </label>
-    <div class="cron-create-error" id="link-modal-error"></div>
-    <div class="modal-buttons">
-      <button id="link-modal-cancel" type="button"><span class="theme-copy-regular">Cancel</span><span class="theme-copy-wizard">Dispel</span></button>
-      <span class="spacer"></span>
-      <button id="link-modal-submit" class="primary" type="button">Create link</button>
-    </div>
-  </div>
-</div>
+<!-- Preact exclusively owns the Links manager, live list and stacked editor. -->
+<div id="links-feature-root"></div>
 <div class="modal-overlay" id="agent-spawn-modal">
   <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="agent-spawn-title">
     <!-- Title copy swaps per theme (pure-CSS span swap, like the music tab's
