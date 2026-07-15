@@ -58,6 +58,7 @@ import { bindCostDisplayToggle } from './cost-display-toggle.js';
 import { focusAccessRequest } from './mail-bridge.js';
 import { dashPrefs, initDashPrefs } from './prefs.js';
 import { initTerminalThemeSync } from './terminal-theme.js';
+import { closeTerminalsForWindowOp, openWebWindowPane } from './terminals-tab.js';
 import { recordGroupInteraction } from './last-group.js';
 import { loadSortState } from './sort.js';
 import { bindDock } from './dock.js';
@@ -240,6 +241,8 @@ export function sudoBadge(activeSudo, fallbackConvID) {
       confirmDiscard,
       refresh: dashboardActions.refresh,
       notify: toast,
+      openWebWindowPane,
+      closeTerminalsForWindowOp,
     }),
   ]);
   pageCleanups.push(...featureCleanups);
