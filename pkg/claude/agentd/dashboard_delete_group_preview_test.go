@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"io/fs"
 	"strings"
 	"testing"
 )
@@ -11,41 +12,53 @@ import (
 // default, leave multi-group agents unchecked by default, let the human toggle
 // either cohort, then DELETE the group.
 func TestDashboardHTML_DeleteGroupPreviewWired(t *testing.T) {
-	must := func(needle, why string) {
+	read := func(path string) string {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
-			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		data, err := fs.ReadFile(dashboardAssetsFS, path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		return string(data)
+	}
+	html := read("dashboard.html")
+	refresh := read("js/refresh.js")
+	controller := read("js/transaction-dialog-controller.js")
+	island := read("js/transaction-dialog-island.js")
+	actions := read("js/transaction-dialog-actions.js")
+
+	if strings.Contains(html, `id="delete-group-modal"`) {
+		t.Error("static dashboard HTML still owns #delete-group-modal")
+	}
+	for source, required := range map[string][]string{
+		controller: {
+			"buildDeleteGroupDescriptor(snapshot, groupName)",
+			"openDeleteGroupDialog(snapshot, group)",
+			"memberships,", "otherGroups,", "defaultRetire: otherGroups.length === 0",
+		},
+		island: {
+			"kind === 'delete-group'", `id="delete-group-modal"`, `id="delete-group-list"`,
+			`id="delete-group-retire"`, "explicitly included", "not auto-retired",
+			"Banish checked familiars before disbanding the party",
+			"single-party familiars are checked by default; familiars also in other parties",
+		},
+		actions: {
+			"async deleteGroupPlan(request)", "pendingRetire", "retireComplete",
+			"deleteComplete", "memberErrors", "method: 'DELETE'",
+		},
+		refresh: {
+			"function openDeleteGroupModal(group)",
+			"return openDeleteGroupDialog(lastSnapshot, group)", "openDeleteGroupModal,",
+		},
+	} {
+		for _, needle := range required {
+			if !strings.Contains(source, needle) {
+				t.Errorf("delete-group Preact ownership contract missing %q", needle)
+			}
 		}
 	}
-
-	must(`id="delete-group-modal"`, "the delete-group preview overlay exists")
-	must(`id="delete-group-list"`, "the preview has a per-agent decision list")
-	must(`id="delete-group-retire" checked`, "retiring single-group members defaults on")
-	must(`single-group agents are checked by default; agents also in other groups are unchecked by default`,
-		"the modal explains the default retire selection")
-	must(`Banish checked familiars before disbanding the party`, "wizard copy uses familiar/party wording")
-	must(`single-party familiars are checked by default; familiars also in other parties`,
-		"wizard helper copy uses familiar/party wording")
-	must("function openDeleteGroupModal(group)", "refresh.js defines the shared modal driver")
-	must("openDeleteGroupModal,", "refresh.js exports the modal driver")
-	must("openDeleteGroupModal(group);", "row-actions delete-group opens the preview")
-	must("groupDeletePlan(group)", "the modal builds its preview from the snapshot")
-	must("const onlyThisGroup = otherGroups.length === 0", "the plan identifies single-group members")
-	must("checked: onlyThisGroup", "single-group agents default checked; multi-group agents default unchecked")
-	must(`type="checkbox" data-agent`, "each preview row gets a retirement checkbox")
-	must("listEl.addEventListener('change', onListChange)", "per-row checkbox changes are wired")
-	must("if (m) m.checked = cb.checked", "per-row toggles update the retirement selection")
-	must("not auto-${w.retired}", "multi-group members are visible but not automatically retired/banished")
-	must("explicitly included", "checking a multi-group member opts it into retirement")
-	must("deleteTitle: wiz ? 'Disband this party?' : 'Delete group'", "wizard title/submit says Disband this party")
-	must("Conversation scrolls are kept.", "wizard hint copy keeps the scroll/familiar vocabulary")
-	must("retireDecision: wiz ? 'banish familiar + stop' : 'retire + stop'", "wizard row decision says banish familiar")
-	must("const toRetire = retireTargets().map(m => m.agent_id || m.conv_id).filter(Boolean);",
-		"submit sends only preview-approved retire targets")
-	must("JSON.stringify({ convs: toRetire, shutdown: true, delete_worktree: false })",
-		"single-group members retire via explicit list with worktrees kept")
-	must("method: 'DELETE', credentials: 'same-origin'",
-		"the final group delete still runs after any retire step")
+	if !strings.Contains(dashboardAssets, "openDeleteGroupModal(group);") {
+		t.Error("row-actions delete-group no longer opens the shared snapshot launcher")
+	}
 }
 
 // TestDashboardJS_GroupDragToDeleteWired guards the drag-to-banish group path:

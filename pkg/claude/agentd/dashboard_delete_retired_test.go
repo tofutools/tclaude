@@ -91,10 +91,10 @@ func TestDashboardTransactionDeleteRetiredExclusiveOwnership(t *testing.T) {
 		t.Error("the Groups menu lost its delete-retired launcher")
 	}
 
-	// Adjacent imperative cleanup, delete-group, and worktree owners are
-	// intentionally out of this cutover. The window owner migrated later.
+	// Adjacent imperative cleanup and worktree owners remain static. Delete-group
+	// has since moved to the transaction root, while retaining its launcher.
 	for _, adjacent := range []string{
-		`id="cleanup-modal"`, `id="delete-group-modal"`, `id="worktree-cleanup-modal"`,
+		`id="cleanup-modal"`, `id="worktree-cleanup-modal"`,
 	} {
 		if !strings.Contains(html, adjacent) {
 			t.Errorf("adjacent static workflow changed during delete-retired cutover: %q", adjacent)

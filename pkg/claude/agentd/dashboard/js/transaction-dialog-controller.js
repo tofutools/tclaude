@@ -29,6 +29,62 @@ export function openDeleteAgentDialog(agent, label = '') {
   return openTransactionDialog({ kind: 'delete-agent', agent, label });
 }
 
+function deleteGroupMemberKey(member) {
+  return String(member?.agent_id || member?.conv_id || '').trim();
+}
+
+function deleteGroupMemberships(groups, member) {
+  const agentID = String(member?.agent_id || '').trim();
+  const convID = String(member?.conv_id || '').trim();
+  return groups.filter((entry) => (entry.members || []).some((candidate) => {
+    const candidateAgent = String(candidate?.agent_id || '').trim();
+    const candidateConv = String(candidate?.conv_id || '').trim();
+    return (agentID && candidateAgent === agentID) || (convID && candidateConv === convID);
+  })).map((entry) => ({
+    name: String(entry.name || ''),
+    parent: String(entry.parent || ''),
+  }));
+}
+
+// buildDeleteGroupDescriptor is the snapshot-to-plan adapter. It captures the
+// exact target roster plus every direct group membership (including the nested
+// position of those groups) once, before the keyed transaction owner mounts.
+// Later snapshot publishes therefore cannot silently flip a member between the
+// default retire and detach-only cohorts while the destructive plan is open.
+export function buildDeleteGroupDescriptor(snapshot, groupName) {
+  const groups = Array.isArray(snapshot?.groups) ? snapshot.groups : [];
+  const group = String(groupName || '');
+  const target = groups.find((entry) => entry?.name === group);
+  const members = (target?.members || []).map((member) => {
+    const memberships = deleteGroupMemberships(groups, member);
+    const otherGroups = memberships.filter((entry) => entry.name !== group);
+    const selector = deleteGroupMemberKey(member);
+    return {
+      agent_id: String(member?.agent_id || ''),
+      conv_id: String(member?.conv_id || ''),
+      selector,
+      title: String(member?.title || ''),
+      status: member?.online
+        ? String(member?.state?.status || 'online') : 'offline',
+      role: String(member?.role || ''),
+      memberships,
+      otherGroups,
+      onlyThisGroup: otherGroups.length === 0,
+      defaultRetire: otherGroups.length === 0,
+    };
+  }).filter((member) => member.selector);
+  return {
+    kind: 'delete-group',
+    group,
+    parent: String(target?.parent || ''),
+    members,
+  };
+}
+
+export function openDeleteGroupDialog(snapshot, group) {
+  return openTransactionDialog(buildDeleteGroupDescriptor(snapshot, group));
+}
+
 function uniqueStrings(values) {
   const seen = new Set();
   const result = [];
