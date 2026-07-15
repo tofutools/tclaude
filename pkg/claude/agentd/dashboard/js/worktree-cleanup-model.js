@@ -44,11 +44,17 @@ export function normalizeWorktreeCandidates(worktrees) {
 }
 
 // Reconcile only choices that the human explicitly touched, keyed by the
-// server's exact worktree path. A newly discovered path takes the latest
-// server default; a path that disappears and later returns still keeps its
-// explicit choice. Main worktrees always win the safety gate and stay off.
+// server's exact worktree path. A successful snapshot also proves which paths
+// are absent, so forget choices for paths it no longer contains. If a new
+// worktree later reuses that path, it must take the latest server default.
+// Main worktrees always win the safety gate and stay off.
 export function reconcileWorktreeCandidates(worktrees, touchedChoices = new Map()) {
-  return Object.freeze(normalizeWorktreeCandidates(worktrees).map((candidate) => {
+  const candidates = normalizeWorktreeCandidates(worktrees);
+  const presentPaths = new Set(candidates.map((candidate) => candidate.path));
+  for (const path of touchedChoices.keys()) {
+    if (!presentPaths.has(path)) touchedChoices.delete(path);
+  }
+  return Object.freeze(candidates.map((candidate) => {
     if (candidate.is_main || !touchedChoices.has(candidate.path)) return candidate;
     return Object.freeze({ ...candidate, checked: touchedChoices.get(candidate.path) === true });
   }));
