@@ -165,10 +165,36 @@ export function createTransactionDialogActions({
       return payload;
     },
 
+    async deleteRetiredPreview({ agents, deleteWorktrees }) {
+      const response = await fetchImpl(
+        '/api/cleanup/agents',
+        {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            agents, mode: 'delete', delete_worktrees: !!deleteWorktrees,
+          }),
+        },
+      );
+      const payload = await responsePayload(response);
+      if (!response.ok) throw responseError(response, payload);
+      return payload;
+    },
+
     async finishBulkRetire(result) {
       // Successful bulk responses deliberately remain painted as a stable,
       // read-only outcome table. Only Done/Escape/backdrop reaches this seam:
       // unpaint first, then refresh the roster, then resolve the launcher.
+      state.handoff();
+      try { await refresh(); } finally { state.finish(result); }
+      return result;
+    },
+
+    async finishDeleteRetired(result) {
+      // The accepted cleanup response stays mounted as the authoritative
+      // per-item result. Only Done/Escape/backdrop reconciles the dashboard,
+      // after the result has relinquished visual ownership.
       state.handoff();
       try { await refresh(); } finally { state.finish(result); }
       return result;
