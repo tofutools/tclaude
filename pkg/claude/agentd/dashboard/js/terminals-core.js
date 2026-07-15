@@ -10,7 +10,7 @@
 //
 // Each pane streams over a WebSocket to a real PTY on the agentd host — the
 // same /api/term-ws/{conv} and /api/open-window-ws/{conv} endpoints the
-// in-dashboard modal (modal-term.js) connects to. Background panes stay live:
+// Preact-owned in-dashboard modal connects to. Background panes stay live:
 // their socket keeps writing into the off-screen xterm buffer, so switching to
 // a pane (or back to the tab) shows the up-to-date terminal.
 //
@@ -594,7 +594,7 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
     // Keystrokes go over the wire as binary frames — never text — so the
     // server's resize-control check (which only parses TextMessage frames) can
     // never mistake typed input for a {"type":"resize",…} command. Same
-    // contract as modal-term.js.
+    // contract as the fallback terminal modal.
     term.onData((d) => { if (p.ws && p.ws.readyState === WebSocket.OPEN) p.ws.send(new TextEncoder().encode(d)); });
     term.onResize(() => sendResize(p));
     p.ro = new ResizeObserver(() => { if (activeKey === key) fit(p); });

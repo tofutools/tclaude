@@ -15,10 +15,11 @@ import (
 // callers' short-circuit.
 func TestFocusJumpsToOpenPane(t *testing.T) {
 	// The core can find a pane by agent and (re)activate it.
-	core := readDashboardJS(t, "terminals-core.js")
-	for _, needle := range []string{"function findPaneKey(", "activatePane: activate"} {
-		if !strings.Contains(core, needle) {
-			t.Errorf("terminals-core.js missing %q — focus-to-open-pane plumbing broken", needle)
+	state := readDashboardJS(t, "terminal-shell-state.js")
+	actions := readDashboardJS(t, "terminal-shell-actions.js")
+	for _, needle := range []string{"function findPaneKey(", "function focusForSelectors("} {
+		if !strings.Contains(state+actions, needle) {
+			t.Errorf("terminal shell missing %q — focus-to-open-pane plumbing broken", needle)
 		}
 	}
 	// The tab exposes the focus entry point.
