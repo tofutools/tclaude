@@ -217,19 +217,21 @@ function TerminalTabs({ state, actions, widgetFactory, solo = false, manageTitle
           ${current.panes.map((pane) => html`<${PaneTab} key=${pane.key} pane=${pane} active=${current.activeKey === pane.key} actions=${actions} />`)}
         </div>
       ` : null}
-      <div class="mux-panes">
-        ${current.panes.map((pane) => html`
-          <${TerminalPane}
-            key=${pane.key}
-            pane=${pane}
-            active=${current.activeKey === pane.key}
-            solo=${solo}
-            manageTitle=${manageTitle}
-            actions=${actions}
-            widgetFactory=${widgetFactory}
-          />
-        `)}
-      </div>
+      ${hasPanes || !empty ? html`
+        <div class="mux-panes">
+          ${current.panes.map((pane) => html`
+            <${TerminalPane}
+              key=${pane.key}
+              pane=${pane}
+              active=${current.activeKey === pane.key}
+              solo=${solo}
+              manageTitle=${manageTitle}
+              actions=${actions}
+              widgetFactory=${widgetFactory}
+            />
+          `)}
+        </div>
+      ` : null}
       ${empty && !hasPanes ? html`
         <div id="mux-empty">
           <div class="mux-empty-title">No terminals open</div>
@@ -316,6 +318,31 @@ export function mountTerminalShellIsland({
     render(null, host);
     actions.dispose();
   });
+}
+
+export function mountStandaloneTerminalShell({
+  host,
+  state,
+  actions,
+  widgetFactory = mountTerminalWidget,
+}) {
+  let disposed = false;
+  render(html`
+    <${TerminalTabs}
+      state=${state}
+      actions=${actions}
+      widgetFactory=${widgetFactory}
+      solo=${true}
+      manageTitle=${true}
+      empty=${true}
+    />
+  `, host);
+  return () => {
+    if (disposed) return;
+    disposed = true;
+    render(null, host);
+    actions.dispose();
+  };
 }
 
 export { OpaqueTerminalHost, PaneTab, TerminalBadge, TerminalModal, TerminalModalSession, TerminalPane, TerminalTabs };
