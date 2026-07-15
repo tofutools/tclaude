@@ -952,7 +952,13 @@ func TestSpawnDirProof_CloneCwdOverride(t *testing.T) {
 	body := map[string]any{"no_copy_conv": true, "cwd": dir}
 	ch := decodeWriteProofChallenge(t,
 		agentReq(t, f, caller, http.MethodPost, "/v1/whoami/clone", body))
-	assert.Equal(t, []string{dir}, ch.WriteProof.Dirs)
+	require.Len(t, ch.WriteProof.Dirs, 1)
+	wantChallengeDir, err := os.Stat(dir)
+	require.NoError(t, err)
+	gotChallengeDir, err := os.Stat(ch.WriteProof.Dirs[0])
+	require.NoError(t, err)
+	assert.True(t, os.SameFile(wantChallengeDir, gotChallengeDir),
+		"challenge must cover the requested cwd inode (got %s, want %s)", ch.WriteProof.Dirs[0], dir)
 	assert.NotContains(t, ch.WriteProof.Dirs, profileRoot)
 	answerChallenge(t, ch)
 	body["write_proof_token"] = ch.WriteProof.Token
