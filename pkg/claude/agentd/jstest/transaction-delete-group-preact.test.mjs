@@ -317,6 +317,88 @@ test('member errors block deletion and retry only the exact failed frozen member
   assert.deepEqual(result, { ok: true, group: 'child', retired: 2, detached: 1 });
 });
 
+test('invalid successful retire responses keep deletion blocked and retry the frozen cohort', async (t) => {
+  const cases = [
+    {
+      name: 'top-level error',
+      response: () => new Response(JSON.stringify({ error: 'retire unavailable' }), { status: 200 }),
+      message: 'retire failed: retire unavailable',
+    },
+    {
+      name: 'top-level error with members envelope',
+      response: () => new Response(JSON.stringify({
+        error: 'retire unavailable', members: [],
+      }), { status: 200 }),
+      message: 'retire failed: retire unavailable',
+    },
+    {
+      name: 'missing members envelope',
+      response: () => new Response(JSON.stringify({}), { status: 200 }),
+      message: 'retire failed: invalid response (expected a "members" array)',
+    },
+    {
+      name: 'non-array members envelope',
+      response: () => new Response(JSON.stringify({ members: {} }), { status: 200 }),
+      message: 'retire failed: invalid response (expected a "members" array)',
+    },
+    {
+      name: 'empty body',
+      response: () => new Response(null, { status: 200 }),
+      message: 'retire failed: invalid response (expected a "members" array)',
+    },
+    {
+      name: 'malformed JSON',
+      response: () => new Response('not-json', { status: 200 }),
+      message: 'retire failed: not-json',
+    },
+  ];
+
+  for (const scenario of cases) {
+    await t.test(scenario.name, async (subtest) => {
+      const harness = await createPreactHarness(subtest);
+      const [{ createTransactionDialogState }, { createTransactionDialogActions }] = await Promise.all([
+        harness.importDashboardModule('js/transaction-dialog-state.js'),
+        harness.importDashboardModule('js/transaction-dialog-actions.js'),
+      ]);
+      const requests = [];
+      const actions = createTransactionDialogActions({
+        state: createTransactionDialogState(),
+        fetchImpl: async (url, init) => {
+          requests.push([url, init]);
+          if (requests.length === 1) return scenario.response();
+          if (url.endsWith('/retire')) {
+            return new Response(JSON.stringify({ members: [
+              { agent_id: alpha.agent_id, conv_id: alpha.conv_id, action: 'retired' },
+              { agent_id: beta.agent_id, conv_id: beta.conv_id, action: 'retired' },
+            ] }), { status: 200 });
+          }
+          return new Response(null, { status: 204 });
+        },
+      });
+      const request = requestFor('child', [
+        { selector: alpha.agent_id, agent_id: alpha.agent_id, conv_id: alpha.conv_id },
+        { selector: beta.agent_id, agent_id: beta.agent_id, conv_id: beta.conv_id },
+      ], 3);
+
+      await assert.rejects(actions.deleteGroupPlan(request), (error) => {
+        assert.equal(error.phase, 'retire');
+        assert.equal(error.message, scenario.message);
+        return true;
+      });
+      assert.equal(requests.length, 1, 'invalid retire response cannot issue DELETE');
+      assert.equal(requests[0][1].method, 'POST');
+
+      const result = await actions.deleteGroupPlan(request);
+      assert.deepEqual(JSON.parse(requests[1][1].body), {
+        convs: [alpha.agent_id, beta.agent_id], shutdown: true, delete_worktree: false,
+      }, 'retry reuses every unresolved selector from the frozen cohort');
+      assert.equal(requests.filter(([url]) => url.endsWith('/retire')).length, 2);
+      assert.equal(requests.filter(([, init]) => init.method === 'DELETE').length, 1);
+      assert.deepEqual(result, { ok: true, group: 'child', retired: 2, detached: 1 });
+    });
+  }
+});
+
 test('delete failure retry is idempotent and never repeats completed retirement', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createTransactionDialogState }, { createTransactionDialogActions }] = await Promise.all([
