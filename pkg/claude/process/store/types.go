@@ -10,6 +10,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/evidence"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
+	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -21,17 +22,73 @@ func DefaultRoot() string {
 }
 
 var (
-	ErrNotFound               = errors.New("process store record not found")
-	ErrRunExists              = errors.New("process run already exists")
-	ErrTemplateConflict       = errors.New("process template content conflict")
-	ErrTemplateSourceConflict = errors.New("process template source conflict")
-	ErrContentMismatch        = errors.New("process store content does not match its ref")
-	ErrLeaseHeld              = errors.New("process run lease is held")
-	ErrRunInconsistent        = errors.New("process run state is inconsistent with evidence")
-	ErrTemplateSavePending    = errors.New("process template has an unfinished attributed save")
-	ErrUnsafeRunPath          = errors.New("process run path is not a regular directory")
-	ErrViewerResourceLimit    = errors.New("process viewer resource limit exceeded")
+	ErrNotFound                = errors.New("process store record not found")
+	ErrRunExists               = errors.New("process run already exists")
+	ErrTemplateConflict        = errors.New("process template content conflict")
+	ErrTemplateSourceConflict  = errors.New("process template source conflict")
+	ErrContentMismatch         = errors.New("process store content does not match its ref")
+	ErrLeaseHeld               = errors.New("process run lease is held")
+	ErrRunInconsistent         = errors.New("process run state is inconsistent with evidence")
+	ErrTemplateSavePending     = errors.New("process template has an unfinished attributed save")
+	ErrUnsafeRunPath           = errors.New("process run path is not a regular directory")
+	ErrExecutionViewOverBudget = errors.New("execution_view_over_budget")
+	ErrViewerResourceLimit     = errors.New("process viewer resource limit exceeded")
+	ErrWriterInProgress        = errors.New("process store writer is in progress")
 )
+
+// ExecutionViewOverBudgetError identifies the exact bounded-read dimension
+// that refused an execution view. It is deliberately distinct from evidence
+// read errors: exceeding a resource ceiling is never evidence of a torn write.
+type ExecutionViewOverBudgetError struct {
+	Limit          string
+	Component      string
+	Value, Maximum int64
+}
+
+func (e *ExecutionViewOverBudgetError) Error() string {
+	if e == nil {
+		return ""
+	}
+	component := ""
+	if e.Component != "" {
+		component = " for " + e.Component
+	}
+	return fmt.Sprintf("%v: %s%s is %d, maximum %d", ErrExecutionViewOverBudget, e.Limit, component, e.Value, e.Maximum)
+}
+
+func (e *ExecutionViewOverBudgetError) Unwrap() error { return ErrExecutionViewOverBudget }
+
+// ExecutionView is valid only for the lifetime of the callback passed to
+// FS.WithExecutionView. Snapshot and Template are detached values, but callers
+// must not retain them: the callback boundary is what guarantees the run and
+// exact-template locks still protect every verified premise.
+type ExecutionView struct {
+	Snapshot               Snapshot
+	Template               *model.Template
+	LegacyAdminRecords     map[string]pathv1.PathV1AdminRecord
+	LegacyAdminResolutions map[string]pathv1.BlockResolution
+}
+
+// ExecutionViewInconsistentError marks a stable persisted-data failure. Anchor
+// and invariant disagreements receive a bounded second observation before this
+// classification; immutable-template failures are already stable under lock.
+type ExecutionViewInconsistentError struct {
+	Err error
+}
+
+func (e *ExecutionViewInconsistentError) Error() string {
+	if e == nil || e.Err == nil {
+		return ErrRunInconsistent.Error()
+	}
+	return fmt.Sprintf("%v: %v", ErrRunInconsistent, e.Err)
+}
+
+func (e *ExecutionViewInconsistentError) Unwrap() []error {
+	if e == nil || e.Err == nil {
+		return []error{ErrRunInconsistent}
+	}
+	return []error{ErrRunInconsistent, e.Err}
+}
 
 // DecodeError identifies persisted JSON that was read successfully but could
 // not be decoded. Viewer callers may distinguish corrupt history from
