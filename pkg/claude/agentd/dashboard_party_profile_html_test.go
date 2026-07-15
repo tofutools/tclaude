@@ -20,14 +20,28 @@ func TestDashboardHTML_PartyProfilePicker(t *testing.T) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
 		}
 	}
+	mustNot := func(needle, why string) {
+		t.Helper()
+		if strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source still contains %q (%s)", needle, why)
+		}
+	}
+
+	// Preact has the sole visual owner. dashboard.html provides only the stable
+	// host; external surfaces enter through a controller registered at mount.
+	must(`<div id="group-create-root"></div>`, "the Preact owner has a stable host")
+	must(`hosts: { root: '#group-create-root' }`, "the lazy feature claims the stable host")
+	must(`registerGroupCreateController(controller)`, "the island publishes its stable controller")
+	mustNot(`<div class="modal-overlay" id="group-create-modal">`, "the legacy static overlay is removed")
+	mustNot(`function bindGroupCreateModal`, "the legacy group-create DOM binder is removed")
 
 	// (a) HTML: the party-profile dropdown, its manage affordance, the template-
 	// only Task row + roster preview row, and the id the Max-members row needs so
 	// it can be hidden in template mode.
 	must(`id="group-create-template"`, "the party-profile dropdown exists")
 	must(`id="group-create-manage-templates"`, "the ⧉ manage-circles affordance exists")
-	must(`<span class="tpl-word-regular">Party profile</span><span class="tpl-word-wizard">Summoning circle</span>`, "the picker label swaps per vocab mode")
-	must(`<span class="tpl-word-regular">⧉ manage templates…</span><span class="tpl-word-wizard">⧉ manage circles…</span>`, "the manage button label swaps per vocab mode")
+	must(`plain="Party profile" wizard="Summoning circle"`, "the picker label swaps per vocab mode")
+	must(`plain="⧉ manage templates…" wizard="⧉ manage circles…"`, "the manage button label swaps per vocab mode")
 	must(`id="group-create-task-row"`, "the template-only Task row exists")
 	must(`id="group-create-task"`, "the Task textarea exists")
 	must(`id="group-create-template-preview-row"`, "the roster preview row exists")
@@ -45,15 +59,18 @@ func TestDashboardHTML_PartyProfilePicker(t *testing.T) {
 
 	// (c) JS: prefill + preview + instantiate routing carrying the group's own
 	// edited context copy, and the "(blank party)" default both vocab modes.
-	must("applyGroupCreateTemplate", "the selection-prefill handler is wired")
-	must("renderGroupCreateTemplatePreview", "the roster preview render is wired")
-	must("submitGroupCreateFromTemplate", "the instantiate routing exists")
+	must("selectGroupCreateTemplate", "the pure selection-prefill transition is wired")
+	must("TemplatePreview", "the Preact roster preview is wired")
+	must("actions.submit(draft, template, current.parentGroup)", "the shared action boundary owns create/instantiate routing")
 	must("combineGroupAndTemplateContext(", "mirrored template creates combine source-group and template context")
 	must("## Mirrored group context", "the combined context labels the mirrored group portion")
 	must("## Template context", "the combined context labels the template portion")
 	must("context_override", "the edited context copy is sent as context_override")
 	must("descr_override", "the edited description copy is sent as descr_override")
-	must("if (mirrorSource && $('#group-create-parent').checked) payload.parent = mirrorSource;", "template-based group create can nest under the mirrored source")
+	must("else if (draft.source && draft.nested) body.parent = draft.source;", "template-based group create can nest under the mirrored source")
+	must("openTemplateManager({ onClose });", "template-manager reconciliation uses an explicit close callback")
+	must("state.isCurrent(generation)", "async returns are guarded by the open generation")
+	must("if (submitLock.current) return;", "duplicate submissions are synchronously blocked")
 	must("(blank party)", "the regular blank-party default option")
 	must("(no circle — a blank party)", "the wizard blank-party default option")
 

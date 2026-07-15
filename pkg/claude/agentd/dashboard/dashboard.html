@@ -520,81 +520,8 @@
     </div>
   </div>
 </div>
-<div class="modal-overlay" id="group-create-modal">
-  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="group-create-title">
-    <!-- Title copy swaps per theme (pure-CSS span swap, like the spawn dialog's
-         .spawn-title-regular / .spawn-title-wizard pair): a plain "Create a new
-         agent group" normally, the arcane "⚔ Form a party" in 🧙 wizard mode —
-         matching the button that opens it, the same way the cron dialog's title
-         echoes its "⏳ Bind a recurring ritual" opener. -->
-    <h3 id="group-create-title"><span class="group-create-title-regular">Create a new agent group</span><span class="group-create-title-wizard">⚔ Form a party</span></h3>
-    <!-- Party profile (JOH-356): start the group from a template / summoning
-         circle. "(blank party)" is the default and creates an EMPTY group,
-         exactly as before. Pick a circle and the group's own editable copy of
-         descr / startup context is prefilled, a roster readback appears below,
-         and the per-instantiation Task field is surfaced — submitting then
-         routes through the template instantiate path (spawns the whole roster,
-         waves / rhythms / pattern and all). Agent : spawn-profile :: party :
-         template. The "⧉ manage circles…" button opens the templates manager so
-         creating / editing a circle is one hop away (the JOH-350 "⧉ manage…"
-         idiom). Static copy swaps via the .tpl-word-regular / -wizard span pair
-         like the rest of the templates dialog family; the JS-rendered spots
-         (options, preview) swap via wizWord. -->
-    <label class="cron-create-row">
-      <span class="cron-create-label"><span class="tpl-word-regular">Party profile</span><span class="tpl-word-wizard">Summoning circle</span></span>
-      <select id="group-create-template"></select>
-      <button id="group-create-manage-templates" type="button" class="tool" title="Open the group templates manager to create or edit a circle — the created/edited circle is available in this picker when you close it"><span class="tpl-word-regular">⧉ manage templates…</span><span class="tpl-word-wizard">⧉ manage circles…</span></button>
-    </label>
-    <div class="cron-create-row" id="group-create-template-preview-row" style="display:none">
-      <span class="cron-create-label"><span class="tpl-word-regular">Roster</span><span class="tpl-word-wizard">Party</span></span>
-      <div id="group-create-template-preview" class="template-preview"></div>
-    </div>
-    <label class="cron-create-row">
-      <span class="cron-create-label">Name</span>
-      <input id="group-create-name" type="text" placeholder="kebab-or-snake-case label" autocomplete="off" spellcheck="false" />
-    </label>
-    <label class="cron-create-row" id="group-create-source-row" style="display:none">
-      <span class="cron-create-label">Mirror settings</span>
-      <select id="group-create-source"></select>
-    </label>
-    <label class="cron-create-enabled" id="group-create-parent-row" style="display:none">
-      <input id="group-create-parent" type="checkbox" />
-      <span>Deploy as subgroup under the mirrored group</span>
-    </label>
-    <label class="cron-create-row group-create-descr-row">
-      <span class="cron-create-label">Descr</span>
-      <input id="group-create-descr" type="text" placeholder="optional one-line description" autocomplete="off" spellcheck="false" />
-    </label>
-    <label class="cron-create-row">
-      <span class="cron-create-label">Default cwd</span>
-      <input id="group-create-cwd" type="text" placeholder="optional — absolute path (~ OK) pre-filled when spawning agents into this group" autocomplete="off" spellcheck="false" />
-      <button id="group-create-cwd-browse" type="button" class="dir-browse-btn" title="Open a native directory picker on the daemon's desktop">Browse…</button>
-    </label>
-    <label class="cron-create-row">
-      <span class="cron-create-label">Startup context</span>
-      <textarea id="group-create-context" class="modal-context-textarea" rows="5" placeholder="optional — shared guidance delivered to the inbox of every agent spawned into this group (multi-line OK)" spellcheck="false"></textarea>
-    </label>
-    <!-- Task / project (JOH-356): the per-instantiation assignment, shown only
-         when a party profile is picked — folded into the group context under
-         ## Task, exactly like the instantiate dialog's Task field. -->
-    <label class="cron-create-row" id="group-create-task-row" style="display:none">
-      <span class="cron-create-label">Task / project</span>
-      <textarea id="group-create-task" class="modal-context-textarea" rows="4" placeholder="the assignment for this party — folded into the group context under ## Task so every spawned agent sees it (multi-line OK)" spellcheck="false"></textarea>
-    </label>
-    <!-- Max members is not honoured by the template instantiate path (it spawns
-         the whole roster in one shot), so it is hidden when a circle is picked. -->
-    <label class="cron-create-row" id="group-create-max-members-row">
-      <span class="cron-create-label">Max members</span>
-      <input id="group-create-max-members" type="number" min="0" step="1" placeholder="optional — 0 = unlimited; a spawn that would exceed it is refused" autocomplete="off" />
-    </label>
-    <div class="cron-create-error" id="group-create-error"></div>
-    <div class="modal-buttons">
-      <button id="group-create-cancel" type="button">Cancel</button>
-      <span class="spacer"></span>
-      <button id="group-create-submit" class="primary" type="button">Create</button>
-    </div>
-  </div>
-</div>
+<!-- Preact exclusively owns the group-create workflow under this stable host. -->
+<div id="group-create-root"></div>
 <div id="management-root"></div>
 <!-- Message compose, human reply, sudo, permission and shared chooser overlays
      are Preact-owned under this stable host. -->

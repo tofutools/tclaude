@@ -604,6 +604,39 @@ export function mountWorktreeCleanupFeature(dependencies = {}) {
   return mountIslandDescriptor(worktreeCleanupDescriptor, dependencies);
 }
 
+const groupCreateDescriptor = createIslandDescriptor({
+  name: 'group-create',
+  label: 'Group creation',
+  hosts: { root: '#group-create-root' },
+  primaryHost: 'root',
+  failureClass: 'group-create-error',
+  load: async ({ hosts, dependencies }) => {
+    const islandModule = import('./group-create-island.js');
+    const stateModule = import('./group-create-state.js');
+    const actionsModule = import('./group-create-actions.js');
+    const [
+      { mountGroupCreateIsland },
+      { createGroupCreateState },
+      { createGroupCreateActions },
+    ] = await Promise.all([islandModule, stateModule, actionsModule]);
+    const state = createGroupCreateState({ getSnapshot: dependencies.getSnapshot });
+    const actions = createGroupCreateActions(dependencies);
+    return {
+      state,
+      mount: (registerCleanup) => mountGroupCreateIsland({
+        host: hosts.root, state, actions,
+        confirmDiscard: dependencies.confirmDiscard,
+        words: dependencies.words,
+        registerCleanup,
+      }),
+    };
+  },
+});
+
+export function mountGroupCreateFeature(dependencies = {}) {
+  return mountIslandDescriptor(groupCreateDescriptor, dependencies);
+}
+
 const directoryPickerDescriptor = createIslandDescriptor({
   name: 'directory-picker',
   label: 'Directory picker',
