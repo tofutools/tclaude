@@ -308,6 +308,7 @@ func TestDashboardJS_ModalResizePersisted(t *testing.T) {
 		`resizeKey: 'tclaude.dash.modalSize.templates-manage'`,
 		`fitContent: false`,
 		"tclaude.dash.modalSize.agent-spawn",            // per-modal pref key
+		"tclaude.dash.modalSize.operator-message",       // terminal operator composer
 		"tclaude.dash.modalSize.template-editor",        // template editor pref key (JOH-357)
 		"tclaude.dash.modalSize.sandbox-profile-editor", // sandbox-profile editor pref key
 	} {

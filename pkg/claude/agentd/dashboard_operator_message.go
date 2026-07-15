@@ -57,9 +57,6 @@ func handleDashboardOperatorMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "too_large", "subject or body is too long")
 		return
 	}
-	if req.Subject == "" {
-		req.Subject = "Message from the human operator"
-	}
 	target, matches, err := agent.ResolveSelector(req.To)
 	if errors.Is(err, agent.ErrAmbiguous) {
 		writeJSON(w, http.StatusConflict, map[string]any{

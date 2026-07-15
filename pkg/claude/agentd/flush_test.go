@@ -140,7 +140,7 @@ func TestFlush_DeliversUndeliveredOldestFirst(t *testing.T) {
 func TestFlush_InlineOperatorMessageIsConsumedAtomically(t *testing.T) {
 	setupTestDB(t)
 	id, err := db.InsertAgentMessage(&db.AgentMessage{
-		ToConv: "me", Subject: "priority", Body: "Please inspect the failing test.", OperatorAuthored: true,
+		ToConv: "me", Body: "Please inspect the failing test.", OperatorAuthored: true,
 	})
 	require.NoError(t, err)
 	var nudge string
@@ -150,11 +150,27 @@ func TestFlush_InlineOperatorMessageIsConsumedAtomically(t *testing.T) {
 	}))
 	assert.Contains(t, nudge, "from the human operator")
 	assert.Contains(t, nudge, "Please inspect the failing test.")
-	assert.Contains(t, nudge, "regular chat/output")
+	assert.NotContains(t, nudge, "regular chat/output")
+	assert.NotContains(t, nudge, "human.notify")
+	assert.NotContains(t, nudge, "subject:")
+	assert.True(t, strings.HasSuffix(nudge, "] Please inspect the failing test."),
+		"only the operator body should follow the metadata bracket: %q", nudge)
 	m, err := db.GetAgentMessage(id)
 	require.NoError(t, err)
 	assert.False(t, m.DeliveredAt.IsZero())
 	assert.False(t, m.ReadAt.IsZero(), "inline archival copy is consumed in queue completion")
+}
+
+func TestInlineOperatorMessageKeepsExplicitSubjectInMetadata(t *testing.T) {
+	setupTestDB(t)
+	id, err := db.InsertAgentMessage(&db.AgentMessage{
+		ToConv: "me", Subject: "priority", Body: "Please inspect the failing test.", OperatorAuthored: true,
+	})
+	require.NoError(t, err)
+	nudge := messageNudgeText(id)
+	assert.Contains(t, nudge, "; subject: priority]")
+	assert.True(t, strings.HasSuffix(nudge, "] Please inspect the failing test."),
+		"explicit subject belongs inside metadata, before the operator body: %q", nudge)
 }
 
 func TestFlush_MultilineOperatorMessageKeepsUnreadPointer(t *testing.T) {

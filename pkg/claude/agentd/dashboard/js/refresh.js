@@ -690,11 +690,12 @@ function bindDetailsPersistence() {
 //      the shared confirm overlay is already on top, so we never race
 //      to pop a second confirm on top of the first.
 //
-// The explicit Cancel button remains an instant unconditional dismiss
-// path. Pass the modal's id (without leading #) and the close function
-// to invoke once the user confirms (or the modal is clean). An optional
-// canDismiss predicate suppresses both the confirmation and close gesture
-// while a caller-owned operation such as an async save is in flight.
+// Existing explicit Cancel buttons remain unconditional unless their caller
+// opts into the same protection by invoking the returned tryDismiss function.
+// Pass the modal's id (without leading #) and the close function to invoke once
+// the user confirms (or the modal is clean). An optional canDismiss predicate
+// suppresses both the confirmation and close gesture while a caller-owned
+// operation such as an async save is in flight.
 
 export function bindBackdropDiscard(modalId, closeFn, canDismiss = () => true) {
   const el = $('#' + modalId);
@@ -771,7 +772,7 @@ export function bindBackdropDiscard(modalId, closeFn, canDismiss = () => true) {
   // config, applied from the profile editor on top) fires no input/change in
   // this modal, yet abandoning it would lose real work. Existing callers ignore
   // the return value, so this is purely additive.
-  return { isDirty: () => dirty, markDirty };
+  return { isDirty: () => dirty, markDirty, tryDismiss };
 }
 
 // bindManageOverlayDismiss wires backdrop-click + Escape close for the
