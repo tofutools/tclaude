@@ -22,25 +22,24 @@ func TestDashboardHTML_AgentTagsWired(t *testing.T) {
 	must("function TagChips(", "tag chips component")
 	must("function DescrCell(", "the Description cell component (text + chips + click-to-edit)")
 	must("agent-tag-tf", "the tf:<template> task-force chip gets a distinct class")
-	must(`data-act="edit-descr"`, "the descr cell is click-to-edit")
+	must("editableMemberCellAttrs(member, group, actions, 'edit-descr', 'descr')", "the descr cell directly opens the Preact editor")
 	must("descr-add", "the empty descr+tags cell shows a discoverable hint")
 
 	// The native column maps through DescrCell rather than raw text.
-	must("<${DescrCell} member=${member} group=${group} />", "the descr column renders through DescrCell")
+	must("<${DescrCell} member=${member} group=${group} actions=${actions} />", "the descr column renders through DescrCell")
 	must("case 'descr':", "the member-column switch owns the description cell")
 
-	// row-actions.js: the descr entry point + the independent tags write.
-	must("case 'edit-descr':", "the descr cell opens the edit-member modal")
-	must("/api/agents/${encodeURIComponent(agent)}/tags", "the tags write hits the agent-tags endpoint")
-	must("'tags' in result", "the tags edit is applied independently of the role/descr PATCH")
+	// member-editor-actions.js: tags persist independently from membership edits.
+	must("/api/agents/${encodeURIComponent(descriptor.agent)}/tags", "the tags write hits the agent-tags endpoint")
+	must("if ('tags' in changes)", "the tags edit is applied independently of the role/descr PATCH")
 
-	// refresh.js: the modal Tags field + its parse/compare.
-	must("#edit-member-tags", "the edit-member modal has a Tags field")
-	must("function parseTagsField(", "the Tags field is parsed into a de-duped set")
+	// member-editor-island.js: the Preact-owned Tags field + parse/compare.
+	must(`id="edit-member-tags"`, "the edit-member modal has a Tags field")
+	must("function parseMemberTags(", "the Tags field is parsed into a de-duped set")
 	must("function sameTagSet(", "a set-equal Tags edit is not written")
 
-	// dashboard.html: the Tags input in the edit-member modal.
-	must(`id="edit-member-tags"`, "the Tags input is present in the modal")
+	// dashboard.html retains only the stable Preact host, not a second form owner.
+	must(`id="groups-member-dialog-root"`, "the member editor has a stable Preact host")
 
 	// dashboard.css: the chip styling in BOTH the default and wizard themes
 	// (the operator asked wizard mode not be left unstyled), and the wizard
