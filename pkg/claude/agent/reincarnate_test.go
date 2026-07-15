@@ -11,6 +11,6 @@ func TestReincarnateHelpDocumentsHarnessSpecificContextPolicy(t *testing.T) {
 	assert.Contains(t, long, "primarily a Claude Code context-management tool")
 	assert.Contains(t, long, "Codex CLI has effective, efficient automatic compaction")
 	assert.Contains(t, long, "run to full context and auto-compact")
-	assert.Contains(t, long, "merely to free context space")
+	assert.Contains(t, long, "Do not reincarnate a Codex agent merely to free context space")
 	assert.Contains(t, long, "explicit human request")
 }

@@ -79,13 +79,17 @@ func TestBundledLifecycleSkillsDocumentHarnessSpecificReincarnationPolicy(t *tes
 		t.Run(name, func(t *testing.T) {
 			data, err := skillsFS.ReadFile("skills/" + name + "/SKILL.md")
 			require.NoError(t, err)
-			body := string(data)
-			assert.Contains(t, body, "Claude Code")
-			assert.Contains(t, body, "Codex")
+			body := strings.Join(strings.Fields(string(data)), " ")
 			assert.Contains(t, body, "automatic compaction")
-			assert.Contains(t, body, "merely to free context space")
+			assert.Contains(t, body, "Do not reincarnate a Codex agent merely to free context space")
 		})
 	}
+
+	lifecycle, err := skillsFS.ReadFile("skills/agent-lifecycle/SKILL.md")
+	require.NoError(t, err)
+	normalized := strings.Join(strings.Fields(string(lifecycle)), " ")
+	assert.Contains(t, normalized, "The same harness policy applies to a target agent")
+	assert.Contains(t, normalized, "Let Codex workers reach full context and auto-compact")
 }
 
 func TestProcessTemplateSkillPinsSafeAuthoringContract(t *testing.T) {

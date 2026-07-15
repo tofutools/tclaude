@@ -41,8 +41,8 @@ func reincarnateCmd() *cobra.Command {
 			"Reincarnation is primarily a Claude Code context-management tool: its " +
 			"compaction is comparatively slow and lossy. Codex CLI has effective, " +
 			"efficient automatic compaction; normally let a Codex agent run to full " +
-			"context and auto-compact instead of reincarnating it merely to free " +
-			"context space. An explicit human request or another deliberate reason " +
+			"context and auto-compact. Do not reincarnate a Codex agent merely to " +
+			"free context space. An explicit human request or another deliberate reason " +
 			"to replace the agent can still justify reincarnating either harness. " +
 			"\n\n" +
 			"By default the target is the calling agent itself (self-reincarnate). " +

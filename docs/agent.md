@@ -637,6 +637,13 @@ Lifecycle commands. By default they target the calling agent itself;
 `--target <selector>` retargets another agent (the **manager
 pattern**, gated on the `agent.*` slug or group ownership).
 
+For context pressure, reincarnation is primarily a Claude Code tool because
+its compaction is comparatively slow and lossy. Codex CLI has effective,
+efficient automatic compaction: normally let a Codex agent run to full context
+and auto-compact. Do not reincarnate a Codex agent merely to free context space;
+an explicit human request or another deliberate replacement reason can still
+justify reincarnating either harness.
+
 ```bash
 tclaude agent clone [follow-up]              # fork a sibling; the original keeps running
 tclaude agent clone --no-copy-conv           # clone with a blank context instead of the copied jsonl
@@ -1210,7 +1217,8 @@ for Claude Code, plus both `~/.agents/skills/` and `$CODEX_HOME/skills`
 - **`present-pr-to-operator`** — present a PR intentionally in the
   dashboard with `tclaude agent present-pr <url>`.
 - **`agent-lifecycle`** — context-window self-management: `compact`,
-  `reincarnate`, `clone`, `context-info`.
+  `reincarnate`, `clone`, `context-info`, including why context-driven
+  reincarnation is for Claude Code while Codex should normally auto-compact.
 - **`reincarnate`** — the do-it-now sibling of `agent-lifecycle`:
   invocable as `/reincarnate`, it carries the checkpoint-then-hand-off
   procedure (write a handoff notes file, run

@@ -207,10 +207,10 @@ Long-running agents can act on context pressure via
 `tclaude agent reincarnate`. The default depends on the harness:
 reincarnation is primarily for Claude Code, whose compaction is comparatively
 slow and lossy. Codex CLI has effective, efficient automatic compaction, so let
-a Codex agent run to full context and auto-compact instead of reincarnating it
-merely to free context space. An explicit human request or another deliberate
-replacement reason still takes precedence. Project policy decides when a
-Claude Code agent should act. The mechanics, permission slugs
+a Codex agent run to full context and auto-compact. Do not reincarnate a Codex
+agent merely to free context space. An explicit human request or another
+deliberate replacement reason still takes precedence. Project policy decides
+when a Claude Code agent should act. The mechanics, permission slugs
 (`self.compact` / `self.reincarnate`), disk-handoff convention, and
 follow-up etiquette live in the dedicated **`agent-lifecycle`** skill —
 load that one when you need to compact or reincarnate yourself, not this

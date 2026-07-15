@@ -56,11 +56,11 @@ Reincarnation is primarily a **Claude Code** context-management tool. Claude
 Code's compaction is comparatively slow and lossy, so a curated handoff to a
 fresh successor can be more effective.
 
-**For Codex CLI, do not reincarnate merely to free context space.** Codex's
+**Do not reincarnate a Codex agent merely to free context space.** Codex's
 native automatic compaction is effective and efficient: let the agent run to
-full context and auto-compact. Reincarnate a Codex agent only when the human
-explicitly asks or there is another deliberate reason to replace the agent,
-not as routine context maintenance.
+full context and auto-compact. Reincarnate it only when the human explicitly
+asks or there is another deliberate reason to replace the agent, not as routine
+context maintenance.
 
 For a Claude Code agent, the exact threshold or cadence remains a policy
 decision. Apply guidance in roughly this order:
@@ -396,6 +396,11 @@ onto a peer instead of yourself. The selector is the same one the rest of
 prefix — preferred, since it survives the peer's own reincarnations), its
 title, or a conv-id / 8+-char conv prefix.
 
+The same harness policy applies to a target agent: use context-driven compact
+or reincarnate management for Claude Code workers. Let Codex workers reach full
+context and auto-compact; do not replace them merely because their context
+percentage is high.
+
 ```bash
 # Read-only: check how full a worker's context window is BEFORE it
 # breaks — the watch-then-nudge half of the manager loop.
@@ -405,13 +410,15 @@ tclaude agent context-info --target worker-1
 # lead can spot anyone running hot. Read-only.
 tclaude agent context-info --group my-squad
 
-# Cheap: nudge a worker to free its context.
+# Claude Code: nudge a worker to free its context.
 tclaude agent compact --target worker-1 "keep going on the failing test"
 
-# Heavier: replace the worker entirely with a fresh successor that
+# Claude Code: replace the worker entirely with a fresh successor that
 # inherits the worker's identity and picks up at a known checkpoint.
 tclaude agent reincarnate --target worker-1 \
   "rotted on the auth refactor; reload /tmp/auth-notes.md and pick up where you left off"
+
+# Codex: leave context management to native automatic compaction.
 
 # Fork: stand up a sibling worker (with the same context, by default)
 # without disturbing the original. Useful for "try a parallel approach
@@ -446,12 +453,14 @@ Notes vs. self variants:
   `tclaude agent groups resume` it first.
 - `--ask-human` is **not** honored on cross-agent calls; the manager
   pattern is opt-in via explicit grants, not a popup escape hatch.
-- For `reincarnate`, the disk-handoff convention (persist task state
-  before reincarnating) applies to the TARGET, not you. Best pattern:
+- When deliberately using `reincarnate`, the disk-handoff convention (persist
+  task state before reincarnating) applies to the TARGET, not you. This mechanic
+  is not a reason to reincarnate a Codex worker for context pressure. Best
+  handoff pattern:
   send the worker `"checkpoint your state to /tmp/<task>-notes.md"`
   first, wait for it to ack, then `agent reincarnate --target worker
   "reload /tmp/<task>-notes.md and continue"`.
-- For `compact`, you can chain multiple workers:
+- For Claude Code workers, you can chain multiple `compact` calls:
   `for w in worker-1 worker-2 worker-3; do tclaude agent compact --target $w "keep going"; done`.
   Each call is independent and idempotent-ish (if the worker is
   already mid-compact it's harmless).
