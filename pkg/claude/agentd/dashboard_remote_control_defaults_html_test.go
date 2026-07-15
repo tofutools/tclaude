@@ -61,7 +61,7 @@ func TestDashboardHTML_RemoteControlDefaultsWired(t *testing.T) {
 	// groups-list.js: the native menu component reads the wire token off the
 	// group, and cycles inherit → optin → deny (the three wire tokens the group
 	// PATCH accepts).
-	must("function GroupMenuItems({ group, members, snapshot })", "the group menu component is defined")
+	must("function GroupMenuItems({ group, members, snapshot, actions })", "the group menu component is defined")
 	must("group.remote_control_policy || 'inherit'", "the item reads the group's remote_control_policy")
 	must("policy === 'inherit' ? 'optin' : policy === 'optin' ? 'deny' : 'inherit'",
 		"the item cycles inherit → optin → deny")
