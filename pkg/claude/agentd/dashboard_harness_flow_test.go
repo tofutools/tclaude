@@ -153,7 +153,7 @@ func TestDashboardSnapshot_PerAgentHarnessAndSandbox(t *testing.T) {
 }
 
 // Scenario: the spawn dialog forwards the chosen harness + sandbox in the
-// POST body as the keys {"harness", "sandbox"} (modal-spawn.js). This pins
+// POST body as the keys {"harness", "sandbox"} (agent-spawn-model.js). This pins
 // that body contract end-to-end: a spawn with those exact keys resolves
 // against the named harness and threads the chosen sandbox to the spawner —
 // guarding against a key-name drift between the dialog and the daemon's
@@ -181,7 +181,7 @@ func TestDashboardSpawn_HarnessAndSandboxBodyContract(t *testing.T) {
 }
 
 // Scenario: the Claude Code spawn dialog forwards the chosen sandbox + permission
-// mode in the POST body as {"sandbox", "approval"} (modal-spawn.js). This pins
+// mode in the POST body as {"sandbox", "approval"} (agent-spawn-model.js). This pins
 // that body contract end-to-end for the new Claude launch-containment fields: a
 // default-harness (Claude) spawn with those keys threads the explicit sandbox
 // mode AND the permission mode through to the spawner (which renders them as a

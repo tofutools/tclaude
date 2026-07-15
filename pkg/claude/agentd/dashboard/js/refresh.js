@@ -746,7 +746,7 @@ export function bindBackdropDiscard(modalId, closeFn, canDismiss = () => true) {
     // path closes this modal *synchronously* inside tryDismiss, so any other
     // bindBackdropDiscard keydown listener registered after ours (the spawn
     // dialog's, when this is the profile editor stacked on top — bindProfilesUI
-    // runs before bindAgentSpawnModal) would then fire for the SAME Escape,
+    // runs before the Preact management overlay) would then fire for the SAME Escape,
     // re-evaluate isTopmostOverlay — now true, because we just removed our own
     // .show — and dismiss the dialog beneath too. Claiming the event here stops
     // those later sibling listeners before they can run.

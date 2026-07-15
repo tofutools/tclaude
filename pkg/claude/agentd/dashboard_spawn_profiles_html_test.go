@@ -41,9 +41,9 @@ func TestDashboardHTML_SpawnProfilesUI(t *testing.T) {
 	present(`id="agent-spawn-load-profile"`, "spawn dialog load-from-profile selector")
 	present(`id="agent-spawn-clear"`, "spawn dialog Clear button")
 	present(`id="agent-spawn-save-profile"`, "spawn dialog Save-as-profile button")
-	present(`function applyProfileToSpawnForm(`, "spawn-form profile applier")
-	present(`function spawnFormAsProfileSeed(`, "spawn-form → profile seed for Save-as")
-	present(`body.profile = spawnProfile`, "dashboard spawns preserve the selected profile identity for server-side disable checks")
+	present(`export function applySpawnProfile(`, "plain spawn-model profile applier")
+	present(`export function spawnProfileSeed(`, "controlled spawn draft → profile seed")
+	present(`if (draft.profile) body.profile = draft.profile`, "dashboard spawns preserve the selected profile identity for server-side disable checks")
 
 	// The default-profile pickers offer a "new profile" entry that jumps to
 	// the editor (so an empty profile list isn't a dead end).
@@ -96,9 +96,9 @@ func TestDashboardHTML_SpawnProfilesUI(t *testing.T) {
 	present(`select.replaceWith(chipEl)`, "picker teardown preserves the chip identity used by the dock")
 	present(`syncDashDefaultProfile(data.spawn_profile_default)`, "snapshot reconciles CLI changes without a separate poll request")
 	absent(`function refreshDashDefaultProfile(`, "global default no longer has a separate poll fetch")
-	present(`body.trust_dir = $('#agent-spawn-trust-dir').checked`, "profile false trust intent stays explicit on spawn")
-	present(`if (p.trust_dir != null)`, "sparse profiles preserve trust-dir fallthrough")
-	present(`harness === 'codex' && spawnTrustDirSpecified`, "untouched trust-dir stays omitted")
+	present(`body.trust_dir = !!draft.trustDir`, "profile false trust intent stays explicit on spawn")
+	present(`profile.trust_dir != null`, "sparse profiles preserve trust-dir fallthrough")
+	present(`draft.harness === 'codex' && draft.trustDirSpecified`, "untouched trust-dir stays omitted")
 
 	// The retired user-level default-MODEL chip and its inline editor are gone.
 	// (The backend /api/claude-settings/default-model endpoint and the

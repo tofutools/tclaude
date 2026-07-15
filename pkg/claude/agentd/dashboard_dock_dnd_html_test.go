@@ -54,8 +54,9 @@ func TestDashboardHTML_DockDnd(t *testing.T) {
 	// clone of the modal. Group-drop pins the group; the profile/role rides in
 	// via openAgentSpawnModal's opts (threaded through initSpawnProfileSelector).
 	must("openAgentSpawnModal(opts)", "the drop opens the existing spawn modal with prefill opts")
-	must("profileName: (opts && opts.profileName) || '',", "the spawn modal accepts a preselected profile")
-	must("if (forceRole) $('#agent-spawn-role').value = forceRole;", "the spawn modal presets a dropped role")
+	must("profileName: String(options?.profileName || ''),", "the spawn state accepts a preselected profile")
+	must("if (current.options.role) {", "the Preact owner applies an explicit dropped role after profile resolution")
+	must("nextBaseline = { ...nextBaseline, role: current.options.role };", "the dropped role overrides the resolved profile role")
 
 	// Drop-target highlight in BOTH skins, wizard rule SCOPED to this feature's
 	// selectors (the anti-pin invariant — no unscoped body.wizard widening).

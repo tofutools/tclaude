@@ -6,7 +6,8 @@ import {
 import { dashPrefs } from './prefs.js';
 import { loadProfiles, profileChoices } from './profiles.js';
 import { openProfileEditor } from './modal-profiles.js';
-import { loadSandboxProfiles, openSandboxProfileEditor, refreshSpawnSandboxProfileUI } from './sandbox-profiles.js';
+import { loadSandboxProfiles, openSandboxProfileEditor } from './sandbox-profiles.js';
+import { refreshAgentSpawnSandboxPolicy } from './agent-spawn-controller.js';
 import { pickDirectory } from './helpers.js';
 import { saveMemberEditorRequests } from './member-editor-actions.js';
 import {
@@ -153,7 +154,7 @@ export function createGroupsActions({
         });
         if (!response.ok) throw new Error(`set sandbox profile failed: ${await responseError(response)}`);
         notify(name ? `${group.name} sandbox profile: ${name}` : `${group.name} sandbox profile cleared`);
-        void refreshSpawnSandboxProfileUI(document.querySelector('#agent-spawn-group')?.value || '');
+        refreshAgentSpawnSandboxPolicy();
       } else {
         const response = await fetch(`/api/groups/${encodeURIComponent(group.name)}`, {
           method: 'PATCH', credentials: 'same-origin',

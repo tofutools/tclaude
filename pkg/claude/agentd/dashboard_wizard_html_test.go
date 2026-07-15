@@ -180,15 +180,14 @@ func TestDashboardHTML_WizardSpawnModal(t *testing.T) {
 
 	// Title copy: a pure-CSS span swap, "Spawn a new agent" → "Summon a new
 	// familiar". Both spans must exist in the HTML and the swap rules in CSS.
-	must(`<span class="spawn-title-regular">Spawn a new agent</span>`, "the default spawn title span")
-	must(`<span class="spawn-title-wizard">Summon a new familiar</span>`, "the wizard spawn title span")
+	must(`prefix="spawn-title"`, "the title renders the stable theme span pair")
+	must(`plain="Spawn a new agent" wizard="Summon a new familiar"`, "both spawn title vocabularies remain component-owned")
 	must("body.wizard #agent-spawn-title .spawn-title-regular", "wizard hides the default title")
 	must("body.wizard #agent-spawn-title .spawn-title-wizard", "wizard shows the familiar title")
 
 	// The "Group" field label swaps to "Party" in wizard mode — same pure-CSS
 	// span swap as the title. Both spans + the swap rules must be present.
-	must(`<span class="spawn-group-word-regular">Group</span>`, "the default group-field label span")
-	must(`<span class="spawn-group-word-wizard">Party</span>`, "the wizard group-field label reads 'Party'")
+	must(`prefix="spawn-group-word" plain="Group" wizard="Party"`, "both group-field vocabularies remain component-owned")
 	must(".spawn-group-word-wizard { display: none; }", "the wizard party-word span is hidden by default")
 	must("body.wizard .spawn-group-word-regular { display: none; }", "wizard hides the default 'Group' label")
 	must("body.wizard .spawn-group-word-wizard { display: inline; }", "wizard shows the 'Party' label")
@@ -335,7 +334,7 @@ func TestDashboardHTML_WizardSummonFx(t *testing.T) {
 		}
 	}
 
-	// The module is embedded — without it modal-spawn.js's import would 404.
+	// The module is embedded — without it the Preact spawn dependency would 404.
 	if _, err := fs.ReadFile(dashboardAssetsFS, "js/wizard-fx.js"); err != nil {
 		t.Fatalf("embedded js/wizard-fx.js missing: %v", err)
 	}
@@ -344,8 +343,9 @@ func TestDashboardHTML_WizardSummonFx(t *testing.T) {
 	// celebration and modal-spawn fires it on a successful spawn, right next to
 	// the slop jackpot (the two themes are mutually exclusive, so calling both
 	// paints at most one).
-	must("export function wizardSummon(", "wizard-fx.js exports the summon celebration modal-spawn.js calls")
-	must("wizardSummon();", "modal-spawn.js fires the summon celebration on a successful spawn")
+	must("export function wizardSummon(", "wizard-fx.js exports the summon celebration the spawn actions call")
+	must("celebrateWizard: wizardSummon,", "dashboard injects the summon celebration into spawn actions")
+	must("celebrateWizard();", "successful spawn completion fires the injected summon celebration")
 
 	// The banner text is theme flavour, not just an emoji — pin a couple of the
 	// silly spell quotes so a refactor that empties the pool trips here.
@@ -620,7 +620,7 @@ func TestDashboardHTML_WizardProfileVocabulary(t *testing.T) {
 	must(`<span class="profiles-word-wizard">Familiar patterns</span>`, "the manage overlay title reads 'Familiar patterns' in wizard mode")
 	must(`<span class="profiles-word-wizard">+ new pattern</span>`, "the + new action reads '+ new pattern' in wizard mode")
 	must(`<span class="profiles-word-wizard">⧉ patterns…</span>`, "the Groups-cog entry reads '⧉ patterns…' in wizard mode")
-	must(`<span class="profiles-word-wizard">Save as pattern…</span>`, "the Save-as button reads 'Save as pattern…' in wizard mode")
+	must(`prefix="profiles-word" plain="Save as profile…" wizard="Save as pattern…"`, "the Save-as button keeps both vocabularies")
 	// The regular twin still ships (so non-wizard mode is unchanged).
 	must(`<span class="profiles-word-regular">Spawn profiles</span>`, "the default manage overlay title still reads 'Spawn profiles'")
 
@@ -633,7 +633,7 @@ func TestDashboardHTML_WizardProfileVocabulary(t *testing.T) {
 	//   - spawn dialog: the "Profile" row label (static .profiles-word span pair)
 	//   - global + group default: the "＋ new profile…" option in the shared
 	//     openProfilePicker <select> (JS, wizWord).
-	must(`<span class="profiles-word-wizard">Pattern</span>`, "the spawn dialog's Profile selector label reads 'Pattern' in wizard mode")
+	must(`prefix="profiles-word" plain="Profile" wizard="Pattern"`, "the spawn dialog's Profile selector keeps both vocabularies")
 	must("＋ new pattern…", "the global/group default picker's new-entry reads '＋ new pattern…' in wizard mode")
 }
 

@@ -637,6 +637,38 @@ export function mountGroupCreateFeature(dependencies = {}) {
   return mountIslandDescriptor(groupCreateDescriptor, dependencies);
 }
 
+const agentSpawnDescriptor = createIslandDescriptor({
+  name: 'agent-spawn',
+  label: 'Agent spawn',
+  hosts: { root: '#agent-spawn-root' },
+  primaryHost: 'root',
+  failureClass: 'agent-spawn-error',
+  load: async ({ hosts, dependencies }) => {
+    const islandModule = import('./agent-spawn-island.js');
+    const stateModule = import('./agent-spawn-state.js');
+    const actionsModule = import('./agent-spawn-actions.js');
+    const [
+      { mountAgentSpawnIsland },
+      { createAgentSpawnState },
+      { createAgentSpawnActions },
+    ] = await Promise.all([islandModule, stateModule, actionsModule]);
+    const state = createAgentSpawnState({ getSnapshot: dependencies.getSnapshot });
+    const actions = createAgentSpawnActions(dependencies);
+    return {
+      state,
+      mount: (registerCleanup) => mountAgentSpawnIsland({
+        host: hosts.root, state, actions,
+        confirmDiscard: dependencies.confirmDiscard,
+        registerCleanup,
+      }),
+    };
+  },
+});
+
+export function mountAgentSpawnFeature(dependencies = {}) {
+  return mountIslandDescriptor(agentSpawnDescriptor, dependencies);
+}
+
 const directoryPickerDescriptor = createIslandDescriptor({
   name: 'directory-picker',
   label: 'Directory picker',

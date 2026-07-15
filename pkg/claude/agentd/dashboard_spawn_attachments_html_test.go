@@ -25,21 +25,21 @@ func TestDashboardHTML_SpawnAttachmentsUI(t *testing.T) {
 	present(`id="agent-spawn-attachments-list"`, "the pending-attachment list mount")
 
 	// JS: the state helpers and the submit-time upload.
-	present(`function addSpawnAttachments(`, "adds chosen/pasted files to the list")
-	present(`function removeSpawnAttachment(`, "removes one attachment")
-	present(`function clearSpawnAttachments(`, "clears + revokes object URLs on open/close")
-	present(`function handleSpawnPaste(`, "captures pasted clipboard files/images")
+	present(`const addAttachments = (files) => {`, "controlled owner adds chosen/pasted files")
+	present(`const removeAttachment = (id) => {`, "controlled owner removes one attachment")
+	present(`URL.revokeObjectURL(attachment.url)`, "unmount clears + revokes object URLs")
+	present(`const paste = (event) => {`, "component captures pasted clipboard files/images")
 	// Keyboard-repeat guard (JOH-307): holding ⌘/Ctrl-V auto-repeats the paste
 	// event; handleSpawnPaste drops a file that repeats the previous paste within
 	// a short burst window, scoped to paste so picker/drag stay un-deduped.
 	present(`function attachKey(`, "per-file signature used by the key-repeat guard")
-	present(`SPAWN_PASTE_REPEAT_MS`, "the key-repeat burst window")
-	present(`lastSpawnPasteKeys`, "tracks the previous paste's files to detect repeats")
-	present(`function bindSpawnDragDrop(`, "wires Finder/Explorer drag-and-drop onto the dialog")
-	present(`bindSpawnDragDrop();`, "drag-and-drop is wired at bind time")
-	present(`function uploadSpawnAttachments(`, "uploads to /api/spawn-attachments")
+	present(`const PASTE_REPEAT_MS = 1000`, "the key-repeat burst window")
+	present(`pasteState.current.keys`, "tracks the previous paste's files to detect repeats")
+	present(`onDragEnter=${dragEnter}`, "wires Finder/Explorer drag-and-drop onto the dialog")
+	present(`onDrop=${drop}`, "drop delivery is component-owned")
+	present(`async uploadAttachments(attachments)`, "plain actions upload to /api/spawn-attachments")
 	present(`/api/spawn-attachments`, "the upload endpoint path is wired client-side")
-	present(`body.attachments = attachmentPaths`, "uploaded paths ride along in the spawn body")
+	present(`body.attachments = [...attachmentPaths]`, "uploaded paths ride along in the spawn body")
 
 	// CSS: the list styling + the drag-over highlight exist.
 	present(`.spawn-attachments-list`, "the attachment-list CSS")

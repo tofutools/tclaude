@@ -23,17 +23,16 @@ func TestDashboardHTML_SpawnNameNormalizeWired(t *testing.T) {
 
 	// The normalizer + its helpers (mirror of agent.NormalizeSpawnName).
 	must("function normalizeSpawnName(", "client-side normalizer")
-	must("function spawnNameNormalizeEnabled(", "reads the snapshot's spawn_name_normalize flag")
-	must("function updateSpawnNameHint(", "live preview of the normalized name")
-	must("function commitSpawnName(", "applies the normalized name on blur/submit")
+	must("export function spawnNameHint(", "controlled live preview of the normalized name")
+	must("export function prepareSpawnDraft(", "applies the normalized name on blur/submit")
 
 	// The flag the front-end gates on is the snapshot field the daemon sets.
-	must("lastSnapshot.spawn_name_normalize", "gate reads the daemon-provided flag")
+	must("normalizeNames: snapshot.spawn_name_normalize !== false", "open snapshots the daemon-provided flag")
 
 	// Wiring: live preview on input, commit on blur.
-	must("$('#agent-spawn-name').addEventListener('input', updateSpawnNameHint);",
+	must("onInput=${(event) => updateName(event.currentTarget.value)}",
 		"name edits refresh the normalize preview")
-	must("$('#agent-spawn-name').addEventListener('blur', commitSpawnName);",
+	must("onBlur=${() => {",
 		"leaving the field commits the normalized name")
 
 	// The preview element + the Config-tab opt-out checkbox exist.
