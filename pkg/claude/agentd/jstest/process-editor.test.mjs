@@ -320,6 +320,12 @@ test('scribe action freshness guard covers model lifecycle, selection, and diagn
       fake.validation.issueCursor = 0;
       fake.validation.focusedIssueIdentity = diagnosticIdentity(otherDiagnostic);
     } },
+    { name: 'diagnostic message', kind: 'diagnostic', mutate(fake) {
+      fake.validation.mapped.entries = [{ ...diagnostic, message: 'performer requirement changed' }];
+    } },
+    { name: 'diagnostic severity', kind: 'diagnostic', mutate(fake) {
+      fake.validation.mapped.entries = [{ ...diagnostic, severity: 'error' }];
+    } },
   ];
 
   for (const scenario of cases) {
