@@ -50,7 +50,7 @@ type spawnProfileJSON struct {
 	Aliases []string `json:"aliases,omitempty"`
 	// Disabled is the authoritative spawn gate. DisabledReason is remembered
 	// independently so enabling does not discard the operator's explanation.
-	Disabled       bool   `json:"disabled"`
+	Disabled       *bool  `json:"disabled,omitempty"`
 	DisabledReason string `json:"disabled_reason,omitempty"`
 
 	// Launch fields — overlap clcommon.SpawnArgs.
@@ -94,10 +94,11 @@ type spawnProfileJSON struct {
 
 // profileToJSON projects a db.SpawnProfile onto the wire shape.
 func profileToJSON(p *db.SpawnProfile) spawnProfileJSON {
+	disabled := p.Disabled
 	out := spawnProfileJSON{
 		Name:                       p.Name,
 		Aliases:                    append([]string{}, p.Aliases...),
-		Disabled:                   p.Disabled,
+		Disabled:                   &disabled,
 		DisabledReason:             p.DisabledReason,
 		Harness:                    p.Harness,
 		Model:                      p.Model,
@@ -182,7 +183,11 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg", fmt.Sprintf(
 			"disabled_reason must be at most %d bytes", maxProfileDisabledReasonBytes)}
 	}
-	if body.Disabled && disabledReason == "" {
+	disabled := disabledReason != "" // compatibility for pre-v122 clients/files
+	if body.Disabled != nil {
+		disabled = *body.Disabled
+	}
+	if disabled && disabledReason == "" {
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
 			"disabled_reason is required when disabled is true"}
 	}
@@ -274,7 +279,7 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 	return &db.SpawnProfile{
 		Name:                       name,
 		Aliases:                    aliases,
-		Disabled:                   body.Disabled,
+		Disabled:                   disabled,
 		DisabledReason:             disabledReason,
 		Harness:                    hName,
 		Model:                      model,
@@ -317,7 +322,7 @@ func buildInlineProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawn
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
 			"profile_inline: a template-local profile has no name — use spawn_profile to reference a registry profile by name"}
 	}
-	if body.Disabled || strings.TrimSpace(body.DisabledReason) != "" {
+	if body.Disabled != nil || strings.TrimSpace(body.DisabledReason) != "" {
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
 			"profile_inline: disabled state is only valid on a saved spawn profile"}
 	}
@@ -603,9 +608,21 @@ func normalizeLegacyProfileDisabledState(profiles []spawnProfileJSON, formatVers
 	}
 	out := append([]spawnProfileJSON{}, profiles...)
 	for i := range out {
-		out[i].Disabled = strings.TrimSpace(out[i].DisabledReason) != ""
+		disabled := strings.TrimSpace(out[i].DisabledReason) != ""
+		out[i].Disabled = &disabled
 	}
 	return out
+}
+
+func validateExplicitProfileDisabledState(profiles []spawnProfileJSON) *spawnFailure {
+	for _, profile := range profiles {
+		if profile.Disabled == nil {
+			return &spawnFailure{http.StatusBadRequest, "invalid_format", fmt.Sprintf(
+				"profile %q is missing disabled — current-format exports must carry the explicit disabled state",
+				profile.Name)}
+		}
+	}
+	return nil
 }
 
 func validateProfileEnvelope(env profileExportEnvelope) *spawnFailure {
@@ -732,6 +749,11 @@ func inspectProfileEnvelope(env profileExportEnvelope) (profileImportInspectResu
 	if fail := validateProfileEnvelope(env); fail != nil {
 		return profileImportInspectResult{}, fail
 	}
+	if env.FormatVersion >= 4 {
+		if fail := validateExplicitProfileDisabledState(env.Profiles); fail != nil {
+			return profileImportInspectResult{}, fail
+		}
+	}
 	env.Profiles = normalizeLegacyProfileDisabledState(env.Profiles, env.FormatVersion, 4)
 	res := profileImportInspectResult{
 		Format:        env.Format,
@@ -827,6 +849,11 @@ func handleSpawnProfilesImport(w http.ResponseWriter, r *http.Request) {
 func importProfiles(env profileExportEnvelope, decisions []profileImportDecision) (profileImportResult, *spawnFailure) {
 	if fail := validateProfileEnvelope(env); fail != nil {
 		return profileImportResult{}, fail
+	}
+	if env.FormatVersion >= 4 {
+		if fail := validateExplicitProfileDisabledState(env.Profiles); fail != nil {
+			return profileImportResult{}, fail
+		}
 	}
 	env.Profiles = normalizeLegacyProfileDisabledState(env.Profiles, env.FormatVersion, 4)
 	byName := make(map[string]spawnProfileJSON, len(env.Profiles))

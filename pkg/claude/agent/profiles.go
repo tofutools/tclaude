@@ -37,10 +37,12 @@ import (
 // for field, so `show --json` round-trips exactly what the dashboard editor
 // posts. Every field is optional: a blank text field / absent toggle is unset.
 type profileJSON struct {
-	Name           string   `json:"name"`
-	Aliases        []string `json:"aliases,omitempty"`
-	Disabled       bool     `json:"disabled"`
-	DisabledReason string   `json:"disabled_reason,omitempty"`
+	Name    string   `json:"name"`
+	Aliases []string `json:"aliases,omitempty"`
+	// Disabled is a pointer so CLI file input can distinguish an explicit false
+	// from the pre-v122 shape where disabled_reason was the disable switch.
+	Disabled       *bool  `json:"disabled,omitempty"`
+	DisabledReason string `json:"disabled_reason,omitempty"`
 
 	// Launch fields.
 	Harness  string `json:"harness,omitempty"`
@@ -246,7 +248,7 @@ func runProfilesLs(stdout, stderr io.Writer) int {
 	fmt.Fprintln(stdout, strings.Repeat("─", 144))
 	for _, p := range profiles {
 		status := "enabled"
-		if p.Disabled {
+		if profileDisabledValue(&p) {
 			status = "🚫 disabled: " + profileOneLine(p.DisabledReason)
 		}
 		fmt.Fprintf(stdout, "%-16s  %-22s  %-8s  %-12s  %-7s  %-36s  %s\n",
@@ -531,7 +533,7 @@ func updateProfileDisabledState(name string, disabled bool, reason string, stder
 	if rc != rcOK {
 		return nil, rc
 	}
-	prof.Disabled = disabled
+	prof.Disabled = profileDisabledPointer(disabled)
 	if reason != "" {
 		prof.DisabledReason = reason
 	}
@@ -565,16 +567,31 @@ func canonicalProfileDisabledReason(reason string) string {
 	return strings.TrimSpace(reason)
 }
 
+func profileDisabledPointer(disabled bool) *bool {
+	return &disabled
+}
+
+func profileDisabledValue(profile *profileJSON) bool {
+	if profile == nil {
+		return false
+	}
+	if profile.Disabled != nil {
+		return *profile.Disabled
+	}
+	// Compatibility with pre-v122 daemon responses and profile JSON files.
+	return profile.DisabledReason != ""
+}
+
 func verifySubmittedDisabledState(requested, persisted *profileJSON, explicitDisabled bool, stderr io.Writer) int {
-	needsExplicitState := requested.Disabled || requested.DisabledReason != ""
+	needsExplicitState := requested.Disabled != nil || requested.DisabledReason != ""
 	if !needsExplicitState {
 		return rcOK
 	}
-	if !explicitDisabled || persisted == nil {
+	if !explicitDisabled || persisted == nil || persisted.Disabled == nil {
 		fmt.Fprintln(stderr, "Error: the running tclaude agentd does not support explicit spawn-profile disabled state; restart it with the updated tclaude binary")
 		return rcIOFailure
 	}
-	if persisted.Disabled != requested.Disabled || persisted.DisabledReason != requested.DisabledReason {
+	if *persisted.Disabled != profileDisabledValue(requested) || persisted.DisabledReason != requested.DisabledReason {
 		fmt.Fprintln(stderr, "Error: the running tclaude agentd did not persist the requested spawn-profile state")
 		return rcIOFailure
 	}
@@ -626,7 +643,7 @@ func runProfilesRm(p *profilesRmParams, stdout, stderr io.Writer) int {
 // in) so it is unit-tested without a daemon. Only set fields are shown.
 func printProfileHuman(w io.Writer, p profileJSON) {
 	fmt.Fprintf(w, "Profile: %s\n", p.Name)
-	if p.Disabled {
+	if profileDisabledValue(&p) {
 		fmt.Fprintln(w, "  status:  🚫 disabled")
 		fmt.Fprintf(w, "  reason:  %s\n", p.DisabledReason)
 	} else if p.DisabledReason != "" {

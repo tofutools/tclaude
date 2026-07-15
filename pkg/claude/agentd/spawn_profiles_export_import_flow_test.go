@@ -144,6 +144,18 @@ func TestSpawnProfilesImport_V3ReasonBackfillsDisabledState(t *testing.T) {
 	assert.Equal(t, "legacy outage", got.DisabledReason)
 }
 
+func TestSpawnProfilesImport_V4RequiresExplicitDisabledState(t *testing.T) {
+	f := newFlow(t)
+	for _, path := range []string{"/v1/spawn-profiles/import/inspect", "/v1/spawn-profiles/import"} {
+		rec := profileReq(t, f, http.MethodPost, path, map[string]any{
+			"format": "tclaude-spawn-profiles", "format_version": 4,
+			"profiles": []map[string]any{{"name": "ambiguous", "disabled_reason": "old outage"}},
+		})
+		assert.Equalf(t, http.StatusBadRequest, rec.Code, "path=%s body=%s", path, rec.Body.String())
+		assert.Contains(t, rec.Body.String(), "missing disabled")
+	}
+}
+
 func TestSpawnProfilesImport_RejectsExistingAliasCollision(t *testing.T) {
 	f := newFlow(t)
 	require.Equal(t, http.StatusCreated, profileReq(t, f, http.MethodPost, "/v1/spawn-profiles",

@@ -90,6 +90,31 @@ func TestSpawnProfiles_DisabledRequiresReason(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "disabled_reason is required")
 }
 
+func TestSpawnProfiles_LegacyReasonInfersDisabledWhenBooleanIsAbsent(t *testing.T) {
+	f := newFlow(t)
+	rec := profileReq(t, f, http.MethodPost, "/v1/spawn-profiles", map[string]any{
+		"name": "legacy-paused", "disabled_reason": "legacy provider outage",
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "create body=%s", rec.Body.String())
+
+	var created struct {
+		Profile wireProfile `json:"profile"`
+	}
+	testharness.DecodeJSON(t, rec, &created)
+	assert.True(t, created.Profile.Disabled)
+
+	rec = profileReq(t, f, http.MethodPatch, "/v1/spawn-profiles/legacy-paused", map[string]any{
+		"name": "legacy-paused", "disabled_reason": "updated legacy outage",
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "patch body=%s", rec.Body.String())
+	var patched struct {
+		Profile wireProfile `json:"profile"`
+	}
+	testharness.DecodeJSON(t, rec, &patched)
+	assert.True(t, patched.Profile.Disabled)
+	assert.Equal(t, "updated legacy outage", patched.Profile.DisabledReason)
+}
+
 func TestSpawnProfiles_AliasCRUDAndResolution(t *testing.T) {
 	f := newFlow(t)
 	rec := profileReq(t, f, http.MethodPost, "/v1/spawn-profiles", map[string]any{

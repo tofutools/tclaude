@@ -294,6 +294,23 @@ func TestTemplateImport_V2ProfileReasonBackfillsDisabledState(t *testing.T) {
 	assert.Equal(t, "legacy provider outage", got.DisabledReason)
 }
 
+func TestTemplateImport_V3RequiresExplicitProfileDisabledState(t *testing.T) {
+	f := newFlow(t)
+	env := map[string]any{
+		"format": "tclaude-task-force", "format_version": 3,
+		"template": map[string]any{
+			"name":   "ambiguous-force",
+			"agents": []map[string]any{{"name": "worker", "spawn_profile": "ambiguous"}},
+		},
+		"profiles": []map[string]any{{
+			"name": "ambiguous", "disabled_reason": "old outage",
+		}},
+	}
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/import", env)
+	assert.Equalf(t, http.StatusBadRequest, rec.Code, "import body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "missing disabled")
+}
+
 // Scenario: templateToJSON derives effective_is_owner — the owner bit a deploy
 // would grant across the tiers (ref profile default → profile_inline tri-state
 // → legacy flag) — so thin clients (the CLI's owner column) see profile-granted

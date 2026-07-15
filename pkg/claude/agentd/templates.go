@@ -1772,6 +1772,11 @@ func importTemplateEnvelope(env templateExportEnvelope, asName string, update bo
 			"this export is format_version %d, but this tclaude supports up to %d — upgrade tclaude to import it",
 			env.FormatVersion, templateExportVersion)}
 	}
+	if env.FormatVersion >= 3 {
+		if fail := validateExplicitProfileDisabledState(env.Profiles); fail != nil {
+			return templateImportResult{}, false, fail
+		}
+	}
 	env.Profiles = normalizeLegacyProfileDisabledState(env.Profiles, env.FormatVersion, 3)
 
 	body := env.Template
