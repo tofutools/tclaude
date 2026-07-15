@@ -71,17 +71,18 @@ func TestDashboardHTML_WizardTheme(t *testing.T) {
 	must("e.code !== 'KeyW'", "matches the physical W key, not layout-dependent e.key")
 	must("toggleWizard();", "the +W hotkey flips wizard mode")
 
-	// The wizard state pill replaces the plain pill in wizard mode: helper
-	// exported + called from render.js alongside the slot machine.
-	must("wizardPill,", "helpers.js exports the wizard pill")
-	must("wizardPill(state, m.online, m.conv_id)", "render.js emits the wizard pill in the state cell")
+	// The native wizard state pill replaces the plain pill in wizard mode and
+	// remains mounted beside the slop machine in the keyed state cell.
+	must("function WizardPill({ state, online, conv })", "the native wizard pill component exists")
+	must("<${SlopMachine} state=${state} online=${member.online} conv=${member.conv_id} /><${WizardPill}", "the state cell emits both preserved theme surfaces")
 
 	// The activity-bot row gets a wizard re-skin too: a third wrapper
 	// (.ga-wizard) with fantasy glyphs by default (or opt-in pixel sprites),
 	// emitted alongside regular + slop and CSS-swapped in via body.wizard
 	// (same "always emit, theme picks" trick).
 	must("export function wizardBotsHTML(", "group-activity.js exports the wizard glyph row")
-	must("styledWizardBotsHTML,", "render.js imports the wizard bot-row switchboard")
+	must("function GroupActivity({ members, snapshot })", "the native group activity switchboard exists")
+	must("wizard: true", "the native group activity component emits its wizard row")
 	must("body.wizard .ga-wizard", "dashboard.css shows the wizard bot row in wizard mode")
 	must("body.wizard .ga-regular { display: none", "wizard mode hides the plain bot row")
 
@@ -235,9 +236,7 @@ func TestDashboardHTML_WizardLinksDialogs(t *testing.T) {
 	must("body.wizard #link-modal .cron-create-modal", "the link editor surface is re-skinned")
 	must("body.wizard #link-modal .cron-create-row select", "the link fields are re-skinned")
 	must("body.wizard #link-modal #link-modal-submit", "the link submit action is gilded")
-	if got := strings.Count(dashboardAssets, "themeWords('+ link', '+ weave channel')"); got != 2 {
-		t.Errorf("per-party add-link wizard copy appears %d times, want 2 (empty and populated link sections)", got)
-	}
+	must(`regular="+ link" wizard="+ weave channel"`, "the native per-party add-link action carries both voices")
 	must("body.wizard .group-links-section > button", "the per-party add-link action keeps wizard styling")
 	must("body.wizard .group-links-section > button {\n  background: #241b3d;\n  border-color: #7a5db0;\n  color: #e7d9f5;", "the compact wizard action uses contrast-safe secondary chrome")
 	must("body.wizard .group-links-section > button:hover {\n  background: #3a2a63;\n  border-color: #d9b45a;\n  color: #f3e6c0;", "the compact wizard action keeps contrast-safe hover chrome")
@@ -269,30 +268,24 @@ func TestDashboardHTML_WizardGroupsTabCopy(t *testing.T) {
 		needle string
 		why    string
 	}{
-		{"themeWords(g.name, 'Unbound')", "Ungrouped becomes Unbound"},
-		{"themeWords('(no ungrouped agents)', '(no unbound familiars)')", "the Unbound empty state is themed"},
-		{"themeWords(g.name, 'Plain scrolls')", "Conversations becomes Plain scrolls"},
-		{"themeWords('(no non-agent conversations)', '(no plain scrolls)')", "the Plain scrolls empty state is themed"},
-		{"themeWords(g.name, 'Banished')", "Retired becomes Banished"},
-		{"themeWords('(no retired agents)', '(no banished familiars)')", "the Banished empty state is themed"},
-		{"themeWords(g.name, 'Past incarnations')", "Replaced generations becomes Past incarnations"},
-		{"themeWords('(no replaced generations)', '(no past incarnations)')", "the Past incarnations empty state is themed"},
-		{"themeWords(g.name, 'Summoning')", "Pending becomes Summoning"},
-		{"themeWords('(no pending spawns)', '(no familiars awaiting summoning)')", "the Summoning defensive empty state is themed"},
-		{"themeWords('virtual', 'ethereal')", "virtual-card badges use wizard vocabulary"},
+		{`regular=${group.name} wizard="Unbound"`, "Ungrouped becomes Unbound"},
+		{`regular="(no ungrouped agents)" wizard="(no unbound familiars)"`, "the Unbound empty state is themed"},
+		{`wizardName: 'Plain scrolls', regularEmpty: '(no non-agent conversations)', wizardEmpty: '(no plain scrolls)'`, "Conversations becomes Plain scrolls"},
+		{`wizardName: 'Banished', regularEmpty: '(no retired agents)', wizardEmpty: '(no banished familiars)'`, "Retired becomes Banished"},
+		{`wizardName: 'Past incarnations', regularEmpty: '(no replaced generations)', wizardEmpty: '(no past incarnations)'`, "Replaced generations becomes Past incarnations"},
+		{`wizardName: 'Summoning', regularEmpty: '(no pending spawns)', wizardEmpty: '(no familiars awaiting summoning)'`, "Pending becomes Summoning"},
+		{`regular="virtual" wizard="ethereal"`, "virtual-card badges use wizard vocabulary"},
 	} {
 		must(pair.needle, pair.why)
 	}
-	if got := strings.Count(dashboardAssets, "themeWords('virtual', 'ethereal')"); got != 5 {
-		t.Errorf("wizard virtual-card badge copy appears %d times, want 5", got)
-	}
+	must("function VirtualBadge(", "one native virtual badge component serves every virtual card")
 
 	must(`<span class="theme-copy-wizard"><strong>party maneuvers:</strong>`, "the drag-and-drop footer has a wizard version")
 	must(`<em>Plain scroll</em> → party (awaken + bind)`, "the footer explains promotion in wizard terms")
 	must("No arcane channels are woven to or from this party.", "the per-party empty channel state follows the weaving metaphor")
-	must("themeWords('Links', 'Arcane channels')", "populated per-party channels keep their wizard heading")
-	must("themeWords('Other group', 'Other party')", "populated channel rows name the other party")
-	must("themeWords('edit', 'rebind')", "populated channel actions keep their wizard verb")
+	must(`regular="Links" wizard="Arcane channels"`, "populated per-party channels keep their wizard heading")
+	must(`regular="Other group" wizard="Other party"`, "populated channel rows name the other party")
+	must(`regular="edit" wizard="rebind"`, "populated channel actions keep their wizard verb")
 }
 
 // TestDashboardHTML_WizardRetireModal pins the wizard re-skin of the retire
@@ -988,7 +981,7 @@ func TestDashboardHTML_WizardPartyButton(t *testing.T) {
 	must("body.wizard #group-create-open.primary", "the party button is re-skinned in wizard mode")
 
 	// The same span pair swaps the empty-state hint that names the button, so
-	// "No groups yet…" reads "⚔ Form a party" in wizard mode too. render.js
+	// "No groups yet…" reads "⚔ Form a party" in wizard mode too. groups-list.js
 	// emits both variants; the swap rules above reveal the active one. Pin the
 	// full markup (through the wizard span) so dropping the wizard variant from
 	// the hint alone still fails — a looser prefix needle would pass on the
@@ -1256,7 +1249,7 @@ func TestDashboardCSS_WizardCommandPaletteScoped(t *testing.T) {
 
 // TestDashboardCSS_WizardPillHideScopedToStateCell mirrors the slop guard:
 // the wizard pill replaces the plain state pill ONLY in the agent-row state
-// cell (render.js), so the hide rule MUST be scoped there — an unscoped
+// cell (groups-member-table.js), so the hide rule MUST be scoped there — an unscoped
 // `body.wizard .state-pill { display: none }` would blank the Audit Outcome
 // and Plugins pills too.
 func TestDashboardCSS_WizardPillHideScopedToStateCell(t *testing.T) {
@@ -1768,23 +1761,23 @@ func TestDashboardHTML_WizardCogNomenclature(t *testing.T) {
 	must(`body.wizard .theme-copy-wizard { display: inline; }`, "wizard mode reveals themed copies")
 
 	// Group cog: the entity-bearing actions use party/familiar language.
-	must(`themeWords('+ add member', '+ add familiar')`, "add-member becomes add-familiar")
-	must(`themeWords('⧉ clone…', '⧉ mirror party…')`, "clone-group becomes mirror-party")
-	must(`themeWords('⧉ save as template…', '🕯 trace as circle…')`, "save-template becomes trace-circle")
-	must(`themeWords('🪟 windows…', '👁 familiars…')`, "group windows names familiars")
-	must(`themeWords('delete group', 'disband party')`, "delete-group becomes disband-party")
-	must(`themeWords('📂 nest under…', '📂 nest party under…')`, "nest-group names the party")
+	must(`regular="+ add member" wizard="+ add familiar"`, "add-member becomes add-familiar")
+	must(`regular="⧉ clone…" wizard="⧉ mirror party…"`, "clone-group becomes mirror-party")
+	must(`regular="⧉ save as template…" wizard="🕯 trace as circle…"`, "save-template becomes trace-circle")
+	must(`regular="🪟 windows…" wizard="👁 familiars…"`, "group windows names familiars")
+	must(`regular="delete group" wizard="disband party"`, "delete-group becomes disband-party")
+	must(`regular="📂 nest under…" wizard="📂 nest party under…"`, "nest-group names the party")
 
 	// Agent cog: actions and destructive lifecycle verbs use familiar voice.
-	must(`themeWords('edit', 'enchant')`, "edit becomes enchant")
-	must(`themeWords('permissions', 'grimoire')`, "permissions becomes grimoire")
-	must(`themeWords('clone', 'mirror familiar')`, "clone becomes mirror familiar")
-	must(`themeWords('summary…', 'inscribe scroll…')`, "summary becomes inscribe-scroll")
-	must(`themeWords('schedule…', 'bind ritual…')`, "schedule becomes bind-ritual")
-	must(`themeWords('view messages', 'view missives')`, "messages become missives")
-	must(`themeWords('remove', 'dismiss from party')`, "remove-member names the party")
-	must(`themeWords('retire', 'banish')`, "retire becomes banish")
-	must(`themeWords('delete', 'erase familiar')`, "permanent delete names the familiar")
+	must(`regular="edit" wizard="enchant"`, "edit becomes enchant")
+	must(`regular="permissions" wizard="grimoire"`, "permissions becomes grimoire")
+	must(`regular="clone" wizard="mirror familiar"`, "clone becomes mirror familiar")
+	must(`regular="summary…" wizard="inscribe scroll…"`, "summary becomes inscribe-scroll")
+	must(`regular="schedule…" wizard="bind ritual…"`, "schedule becomes bind-ritual")
+	must(`regular="view messages" wizard="view missives"`, "messages become missives")
+	must(`regular="remove" wizard="dismiss from party"`, "remove-member names the party")
+	must(`regular="retire" wizard="banish"`, "retire becomes banish")
+	must(`regular="delete" wizard="erase familiar"`, "permanent delete names the familiar")
 
 	// Dialogs launched from those actions retain both noun sets.
 	must(`<span class="theme-copy-wizard">Invite familiar into party</span>`, "add-member dialog names familiar and party")
@@ -2011,7 +2004,7 @@ func TestDashboardHTML_TemplateWavesAndRhythms(t *testing.T) {
 	must(`id="cron-create-role"`, "the cron role-filter input ships")
 
 	// Group-summary wave chip.
-	must("function groupWavesChip(", "the wave chip renderer exists")
+	must(`class="group-waves-chip"`, "the native wave chip renderer exists")
 	must(".group-waves-chip", "the wave chip has the dark-theme skin")
 }
 

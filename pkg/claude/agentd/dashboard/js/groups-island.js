@@ -11,7 +11,7 @@ const html = htm.bind(h);
 
 // The Groups island stays mounted while the cosmetic theme cycles. Copy pairs
 // switch through CSS, but placeholder/title/aria attributes are single-valued
-// and the legacy list renderer chooses them at render time, so both bounded
+// and the native list chooses them at render time, so both bounded
 // components subscribe to the wizard edge and repaint immediately.
 function useWizardTheme() {
   const [wizard, setWizard] = useState(isWizardActive());

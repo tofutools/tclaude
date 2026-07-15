@@ -12,7 +12,7 @@ import {
   WT_NEW, wtToggleNew, wtLoad, bindWtPicker, wtResolve,
 } from './modal-link-wt.js';
 // lastSnapshot lives in dashboard.js; refresh() / toast in refresh.js.
-// Imported back — benign cycles (see render.js); TDZ-safe.
+// Imported back through benign TDZ-safe module cycles.
 import { lastSnapshot } from './dashboard.js';
 import { refresh, toast, confirmModal, bindBackdropDiscard } from './refresh.js';
 import { slopJackpot } from './slop-fx.js';
