@@ -188,7 +188,7 @@ export function createProcessesActions({
       if (!response.ok) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
       const name = result.name || PROCESS_SCRIBE_NAME;
       if (result.focus_mode === 'browser' && result.focus_ws) {
-        const { openTermModal } = await import('./modal-term.js');
+        const { openTermModal } = await import('./terminals-tab.js');
         openTermModal({ wsPath: result.focus_ws, label: name, hideConv: result.conv_id || null });
       }
       state.setNotice(`${result.reused ? 'Reopened' : 'Summoned'} process scribe ${name}.`);
@@ -213,7 +213,7 @@ export function createProcessesActions({
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
       if (result.mode === 'browser' && result.ws) {
-        const { openTermModal } = await import('./modal-term.js');
+        const { openTermModal } = await import('./terminals-tab.js');
         openTermModal({ wsPath: result.ws, label, hideConv: agentId });
       }
       state.setNotice(`Opened ${label}.`);

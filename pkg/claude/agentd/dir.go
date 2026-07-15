@@ -309,7 +309,7 @@ func handleDashboardTermAPI(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if useBrowser {
-		// modal-term.js opens a WebSocket at ws and streams a PTY attached to
+		// The dashboard terminal shell opens a WebSocket at ws and streams a PTY attached to
 		// an ad hoc tmux session at dir (handleDashboardTermWS).
 		writeJSON(w, http.StatusOK, map[string]string{
 			"dir": dir, "which": which, "mode": "browser",
