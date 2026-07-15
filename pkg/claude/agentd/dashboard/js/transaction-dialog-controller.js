@@ -21,6 +21,14 @@ export function openRetireAgentDialog(conv, label = '') {
   return openTransactionDialog({ kind: 'retire-agent', conv, label });
 }
 
+export function openShutdownAgentDialog(agent, label = '') {
+  return openTransactionDialog({ kind: 'shutdown-agent', agent, label });
+}
+
+export function openDeleteAgentDialog(agent, label = '') {
+  return openTransactionDialog({ kind: 'delete-agent', agent, label });
+}
+
 // DnD owns optimistic drag presentation, while the transaction root owns the
 // authoritative mutation refresh. Only results that did not already complete
 // and refresh need the DnD caller to reconcile the cancelled/failed gesture.
