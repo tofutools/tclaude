@@ -168,7 +168,7 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   const featureCleanups = await Promise.all([
     mountTerminalsFeature({
       confirm: confirmModal,
-      onComposeMessage: (seed) => openOperatorMessageModal({ agent: seed.agent, label: seed.label }),
+      onComposeMessage: (seed) => openOperatorMessageModal(seed),
     }),
     mountMessageAccessDialogsFeature({
       refresh: dashboardActions.refresh,
