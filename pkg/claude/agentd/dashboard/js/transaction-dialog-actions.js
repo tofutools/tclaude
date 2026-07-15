@@ -66,9 +66,9 @@ export function createTransactionDialogActions({
         throw responseError(response, payload);
       }
       const result = { ok: true, response: payload };
-      state.finish(result);
+      state.handoff();
       notify(retireNotice(label || conv, choice, payload));
-      await refresh();
+      try { await refresh(); } finally { state.finish(result); }
       return { response: payload };
     },
 
@@ -76,21 +76,35 @@ export function createTransactionDialogActions({
       // The shell confirmation becomes the sole painted owner. Closing the
       // transaction first also restores its opener before the follow-up focus
       // boundary mounts.
-      state.finish({ dangling: true, convID });
-      const approved = await confirm({
-        title: 'Remove dangling agent entry?',
-        body: 'No conversation data was found for this agent — its conversation is '
-          + 'gone, so it can’t be retired (there’s nothing to demote). Remove the '
-          + 'dangling entry instead? This purges its leftover enrollment, group '
-          + 'and permission rows. It cannot be undone.',
-        meta: label || conv,
-        okLabel: 'Remove dangling entry',
-      });
+      state.handoff();
+      // Give the transaction root one microtask to unmount and restore its
+      // opener before the shell confirmation captures the next focus owner.
+      await Promise.resolve();
+      const target = convID || conv;
+      const finish = (removed, reason) => {
+        const result = { dangling: true, removed, convID: target, reason };
+        state.finish(result);
+        return result;
+      };
+      let approved;
+      try {
+        approved = await confirm({
+          title: 'Remove dangling agent entry?',
+          body: 'No conversation data was found for this agent — its conversation is '
+            + 'gone, so it can’t be retired (there’s nothing to demote). Remove the '
+            + 'dangling entry instead? This purges its leftover enrollment, group '
+            + 'and permission rows. It cannot be undone.',
+          meta: label || conv,
+          okLabel: 'Remove dangling entry',
+        });
+      } catch (error) {
+        notify(`Remove failed: ${error?.message || error}`, true);
+        return finish(false, 'confirm_failed');
+      }
       if (!approved) {
         notify('dangling entry kept');
-        return false;
+        return finish(false, 'declined');
       }
-      const target = convID || conv;
       let response;
       try {
         response = await fetchImpl(`/api/agents/${encodeURIComponent(target)}`, {
@@ -98,16 +112,17 @@ export function createTransactionDialogActions({
         });
       } catch (error) {
         notify(`Remove failed: ${error?.message || error}`, true);
-        return false;
+        return finish(false, 'transport_failed');
       }
       if (!response.ok) {
         const payload = await responsePayload(response);
         notify(`Remove failed: ${payload?.error || payload?.message || `HTTP ${response.status}`}`, true);
-        return false;
+        return finish(false, 'http_failed');
       }
+      const result = { dangling: true, removed: true, convID: target, reason: 'removed' };
       notify(`removed dangling entry: ${label || conv}`);
-      await refresh();
-      return true;
+      try { await refresh(); } finally { state.finish(result); }
+      return result;
     },
   });
 }

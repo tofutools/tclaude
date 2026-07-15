@@ -6806,8 +6806,8 @@ body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal)
    share the .modal class and must keep the default chrome.
 
    Title text is a pure-CSS span swap (the .retire-title-regular /
-   .retire-title-wizard pair in the HTML), the same mechanism as the spawn
-   title / music tab label — no JS involved. */
+   .retire-title-wizard pair rendered by the Preact dialog), the same
+   mechanism as the spawn title / music tab label. */
 .retire-title-wizard { display: none; }
 body.wizard #retire-title .retire-title-regular { display: none; }
 body.wizard #retire-title .retire-title-wizard { display: inline; }
@@ -6851,9 +6851,9 @@ body.wizard #retire-modal .modal-buttons button:not(#retire-ok):hover {
 /* Retire = 🪄 Banish! — the confirm button re-skinned into a gilded
    conjuring lever, the destructive twin of the spawn dialog's 🔮 Summon!.
    Same mechanism: the button's own "Retire" text is hidden (font-size: 0)
-   and replaced by a ::before glyph; the busy state (JS disables the button
-   and swaps in a "Retiring…" spinner via setBusy) keeps that raw text hidden
-   and paints a themed "Banishing…" via ::after instead — a familiar is
+   and replaced by a ::before glyph; the Preact busy state disables the button
+   and renders a "Retiring…" spinner while CSS keeps that raw text hidden and
+   paints a themed "Banishing…" via ::after instead — a familiar is
    *banished*, not retired, so the busy copy stays in the arcane voice too.
    The copy swap is pure-CSS, like the ::before idle label; the click already
    sprays cast sparks via wizard-fx's global cast-FX handler, so no extra JS
@@ -6887,7 +6887,7 @@ body.wizard #retire-modal #retire-ok:active {
   box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
 }
 body.wizard #retire-modal #retire-ok:disabled {
-  /* Busy state: setBusy injects a "Retiring…" text node next to the spinner.
+  /* Busy state renders a "Retiring…" text node next to the spinner.
      Keep font-size: 0 so that raw label stays hidden (the .btn-spinner is a
      fixed 12px circle, unaffected by font-size, so it stays visible) and paint
      a themed "Banishing…" via ::after below. */
@@ -10478,7 +10478,7 @@ body.wizard .group-actions .cog-btn:focus-visible .cog-glyph {
 /* ─── Wizard trash icon — the banishment sigil (body.wizard) ─────────
    The top-level 🗑 retire icon that rides beside each row's cog becomes,
    in the wizard reskin, a banishment sigil — retiring an agent is
-   "banishing" it (mirroring the retireConfirm title swap "Retire this
+   "banishing" it (mirroring the retire dialog title swap "Retire this
    agent?" → "Banish this…"). At rest it wears the same tarnished-gold /
    mystic-purple edge the wizard cogs wear, so the trash + cog read as a
    matched clockwork pair; reach for it (hover/focus) and the sigil flares

@@ -215,6 +215,7 @@ function RetireAgentDialog({ descriptor, actions, confirmDiscard }) {
 
   const title = html`<span class="retire-title-regular">Retire this agent?</span><span class="retire-title-wizard">Banish this familiar?</span>`;
   const retrying = !!submittedChoice;
+  const busyLabel = html`<span class="btn-spinner" aria-hidden="true"></span>${retrying ? 'Retrying…' : 'Retiring…'}`;
   return html`
     <${TransactionDialogFrame}
       id="retire-modal"
@@ -226,7 +227,7 @@ function RetireAgentDialog({ descriptor, actions, confirmDiscard }) {
       errorID="retire-error"
       busy=${busy}
       primaryLabel=${retrying ? 'Retry' : 'Retire'}
-      busyLabel=${retrying ? 'Retrying…' : 'Retiring…'}
+      busyLabel=${busyLabel}
       cancelID="retire-cancel"
       submitID="retire-ok"
       onClose=${actions.close}
