@@ -19,7 +19,8 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 	for name, src := range map[string]string{"terminals-core.js": core} {
 		for _, needle := range []string{
 			"import { attachTerminalInteractions } from './terminal-interactions.js';",
-			"attachTerminalInteractions({",
+			"interactionsFactory = attachTerminalInteractions",
+			"interactionsFactory({",
 		} {
 			if !strings.Contains(src, needle) {
 				t.Errorf("%s missing %q", name, needle)

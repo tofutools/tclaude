@@ -7,9 +7,9 @@ import (
 )
 
 // When an agent's terminal window is hidden/detached from OUTSIDE the
-// multiplexer — the per-agent eye button, the command palette's per-agent hide,
+// terminal shell — the per-agent eye button, the command palette's per-agent hide,
 // or a bulk unfocus — the agent's live-session tmux client is detached
-// server-side, which would leave any open multiplexer pane for that agent
+// server-side, which would leave any open terminal pane for that agent
 // showing a stale "disconnected". These structural guards pin the wiring that
 // closes the corresponding pane instead. There is no JS test runner, so they
 // assert against the embedded module source.
@@ -46,7 +46,7 @@ func TestTerminalsTab_ExportsHideClosers(t *testing.T) {
 	for _, needle := range []string{
 		"export function closeTerminalsForConvs(",
 		"export function closeTerminalsForWindowOp(",
-		"o.outcome === 'detached'",
+		"outcome?.outcome !== 'detached'",
 	} {
 		if !strings.Contains(src, needle) {
 			t.Errorf("terminals-tab.js missing %q — hide→close-pane wiring broken", needle)
@@ -54,7 +54,7 @@ func TestTerminalsTab_ExportsHideClosers(t *testing.T) {
 	}
 }
 
-// TestHidePathsClosePanes pins that every "hide from outside the multiplexer"
+// TestHidePathsClosePanes pins that every "hide from outside the terminal shell"
 // path notifies the Terminals tab to close the matching pane: the per-agent eye
 // button (row-actions.js), the palette per-agent hide + bulk unfocus
 // (palette.js), and the window-picker modal's unfocus (refresh.js).
@@ -63,13 +63,13 @@ func TestHidePathsClosePanes(t *testing.T) {
 		file, needle, why string
 	}{
 		{"row-actions.js", "closeTerminalsForConvs([agent])",
-			"the eye-button hide case must close the agent's multiplexer pane"},
+			"the eye-button hide case must close the agent's terminal pane"},
 		{"palette.js", "closeTerminalsForConvs([conv])",
-			"the palette per-agent hide must close that agent's multiplexer pane"},
+			"the palette per-agent hide must close that agent's terminal pane"},
 		{"palette.js", "closeTerminalsForWindowOp(out.agents)",
-			"the palette bulk unfocus must close the detached agents' multiplexer panes"},
+			"the palette bulk unfocus must close the detached agents' terminal panes"},
 		{"refresh.js", "closeTerminalsForWindowOp(out.agents)",
-			"the window-picker modal's unfocus must close the detached agents' multiplexer panes"},
+			"the window-picker modal's unfocus must close the detached agents' terminal panes"},
 	}
 	for _, c := range cases {
 		src := readDashboardJS(t, c.file)
