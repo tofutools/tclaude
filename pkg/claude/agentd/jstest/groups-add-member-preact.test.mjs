@@ -167,6 +167,47 @@ test('group menu launches a polling-stable dirty picker and restores its cog foc
   listHost.remove();
 });
 
+test('promotion-only async candidates preserve initial keyboard selection', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createGroupsState }, { GroupsAddMemberDialog }] = await Promise.all([
+    harness.importDashboardModule('js/groups-state.js'),
+    harness.importDashboardModule('js/add-member-dialog-island.js'),
+  ]);
+  const state = createGroupsState({
+    prefs: memoryPrefs(), resetOffsets: () => {}, ...stateDependencies(),
+  });
+  state.publish(snapshot([{ name: 'alpha', members: [], online: 0 }]));
+  state.openAddMember({ name: 'alpha' });
+  const pool = deferred();
+  let addedCandidate = null;
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const mounted = await harness.mount(harness.html`<${GroupsAddMemberDialog}
+    state=${state}
+    actions=${{
+      loadAddMemberPromotionPool: async () => pool.promise,
+      addExistingMember: async (_descriptor, candidate) => { addedCandidate = candidate; },
+    }}
+    confirmDiscard=${async () => true}
+  />`, host);
+  const search = host.querySelector('#add-member-search');
+  assert.equal(host.querySelector('.add-member-row.highlighted'), null);
+  assert.equal(search.hasAttribute('aria-activedescendant'), false,
+    'the loading combobox does not claim a missing active option');
+
+  pool.resolve([{ conv_id: 'plain-worker', title: 'Plain worker', online: true }]);
+  await harness.act(() => Promise.resolve());
+  await harness.act(() => Promise.resolve());
+  assert.equal(host.querySelector('.add-member-row.highlighted .rowname').textContent, 'Plain worker',
+    'the first promotion-only row inherits the initial selection sentinel');
+  assert.equal(search.getAttribute('aria-activedescendant'), 'add-member-option-0');
+  await harness.act(() => harness.fireEvent(search, 'keydown', { key: 'Enter' }));
+  assert.equal(addedCandidate?.conv_id, 'plain-worker',
+    'Enter activates the asynchronously initialized first row');
+
+  await mounted.unmount();
+  host.remove();
+});
+
 test('add-member picker owns async pool retry, IME navigation and optimistic add retry', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createGroupsState }, { GroupsAddMemberDialog }] = await Promise.all([
@@ -217,7 +258,15 @@ test('add-member picker owns async pool retry, IME navigation and optimistic add
     ['Alpha', 'Bravo', 'Charlie']);
 
   const search = host.querySelector('#add-member-search');
+  const list = host.querySelector('#add-member-list');
+  assert.equal(search.getAttribute('role'), 'combobox');
+  assert.equal(search.getAttribute('aria-controls'), 'add-member-list');
+  assert.equal(search.getAttribute('aria-autocomplete'), 'list');
+  assert.equal(list.getAttribute('role'), 'listbox');
+  assert.equal(list.hasAttribute('aria-activedescendant'), false,
+    'active option ownership stays on the focused combobox');
   assert.equal(host.querySelector('.add-member-row.highlighted .rowname').textContent, 'Alpha');
+  assert.equal(search.getAttribute('aria-activedescendant'), 'add-member-option-0');
   await harness.act(() => harness.fireEvent(search, 'keydown', { key: 'ArrowDown' }));
   assert.equal(host.querySelector('.add-member-row.highlighted .rowname').textContent, 'Bravo');
   await harness.act(() => state.publish(snapshot([{ name: 'alpha', members: [], online: 0 }], {
@@ -238,6 +287,8 @@ test('add-member picker owns async pool retry, IME navigation and optimistic add
   await harness.act(() => Promise.resolve());
   assert.equal(host.querySelector('.add-member-row.highlighted'), null,
     'polling disappearance clears selection instead of falling back to index zero');
+  assert.equal(search.hasAttribute('aria-activedescendant'), false,
+    'the focused combobox omits its active descendant while selection is empty');
   await harness.act(() => harness.fireEvent(search, 'keydown', { key: 'Enter' }));
   assert.equal(addCalls, 0, 'Enter is a no-op after polling removes the selected identity');
   await harness.act(() => state.publish(snapshot([{ name: 'alpha', members: [], online: 0 }], {
@@ -252,6 +303,7 @@ test('add-member picker owns async pool retry, IME navigation and optimistic add
   await harness.act(() => harness.fireEvent(search, 'keydown', { key: 'ArrowDown' }));
   assert.equal(host.querySelector('.add-member-row.highlighted .rowname').textContent, 'Bravo',
     'Arrow navigation explicitly selects again after disappearance');
+  assert.equal(search.getAttribute('aria-activedescendant'), 'add-member-option-0');
   await harness.act(() => harness.fireEvent(search, 'keydown', {
     key: 'Enter', isComposing: true,
   }));
