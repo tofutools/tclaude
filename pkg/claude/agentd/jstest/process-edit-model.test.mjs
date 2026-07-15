@@ -71,6 +71,41 @@ test('unknown node types degrade to task', () => {
   assert.equal(model.template.nodes[id].type, 'task');
 });
 
+test('connector-drop node and edge are one atomic positioned undo step in either direction', () => {
+  const after = new ProcessEditModel(view());
+  const created = after.addConnectedNode('decision', {
+    x: 321.5, y: -47.25, connectFrom: 'begin',
+  });
+  assert.equal(created.id, 'decision');
+  assert.deepEqual(after.layout.nodes.decision, { x: 321.5, y: -47.25 });
+  assert.deepEqual(created.edge, { from: 'begin', outcome: 'pass-2', to: 'decision' });
+  assert.equal(after.undoStack.length, 1);
+  assert.equal(after.undo(), true);
+  assert.equal(after.node('decision'), undefined);
+  assert.equal(after.findEdge('begin', 'pass-2'), undefined);
+
+  const before = new ProcessEditModel(view());
+  const prepended = before.addConnectedNode('task', { x: 9, y: 11, connectTo: 'build' });
+  assert.deepEqual(prepended.edge, { from: 'task', outcome: 'pass', to: 'build' });
+  assert.equal(before.undoStack.length, 1);
+});
+
+test('invalid connector-drop origins and locked edges reject before any partial mutation', () => {
+  for (const [model, operation, message] of [
+    [new ProcessEditModel(view()), (candidate) => candidate.addConnectedNode('task', { connectFrom: 'ship' }), /end node must not have outgoing edges/],
+    [new ProcessEditModel(view()), (candidate) => candidate.addConnectedNode('end', { connectTo: 'build' }), /end node must not have outgoing edges/],
+    [new ProcessEditModel(view(), { edgeEditable: () => false }), (candidate) => candidate.addConnectedNode('task', { connectFrom: 'build' }), /read-only/],
+  ]) {
+    const nodes = Object.keys(model.template.nodes);
+    const edges = structuredClone(model.edges);
+    assert.throws(() => operation(model), message);
+    assert.deepEqual(Object.keys(model.template.nodes), nodes);
+    assert.deepEqual(model.edges, edges);
+    assert.equal(model.dirty, false);
+    assert.equal(model.canUndo, false);
+  }
+});
+
 test('addEdge enforces the unique (from, outcome) invariant', () => {
   const model = new ProcessEditModel(view());
   model.addEdge('begin', 'fail', 'ship');

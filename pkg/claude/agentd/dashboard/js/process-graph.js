@@ -619,6 +619,8 @@ export class ProcessGraph {
         nodeId: pointer.nodeID, port: pointer.port, point,
         targetNodeId: target.node?.dataset.nodeId || null,
         targetPort: target.port?.dataset.port || null,
+        emptyCanvas: !!hit && this.svg.contains(hit)
+          && !target.node && !target.port && !target.edge,
         event,
       });
     } else if (pointer.mode === 'node') {
@@ -903,6 +905,13 @@ export class ProcessGraph {
     this.view.x = rect.width / 2 - x * this.view.k;
     this.view.y = rect.height / 2 - y * this.view.k;
     this.applyView();
+  }
+
+  focusNode(id) {
+    const node = this.nodeLayer.querySelector(`[data-node-id="${CSS.escape(String(id))}"]`);
+    if (!node) return false;
+    node.focus({ preventScroll: true });
+    return true;
   }
 
   select(selection) {

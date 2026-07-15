@@ -490,6 +490,12 @@ commands remain visible with a reason. The global shortcut deliberately does
 not fire while an input, textarea, select, contenteditable, or embedded editor
 owns the keystroke.
 
+Dragging a node port onto empty canvas opens the same searchable node-type
+vocabulary at the release point. Choose with pointer or arrow keys plus Enter;
+Escape, Cancel, or clicking away leaves the graph unchanged. The chosen node
+is created at the release coordinate and connected in one undoable operation,
+and task, decision, and wait nodes open their normal configuration editor.
+
 With Processes enabled, the engine-hosted create endpoint is:
 
 ```http

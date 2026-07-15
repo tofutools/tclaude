@@ -835,6 +835,18 @@ func baseStates() []dashsnap.State {
 			SettleMS: 1100,
 		},
 		{
+			Key:     "process-editor-edge-drop-chooser",
+			Title:   "Process editor — connector-drop chooser",
+			Caption: "TCL-433: releasing a connector on empty canvas anchors the searchable, keyboard-accessible complete node vocabulary at the intended graph coordinate.",
+			JS: processEditorStateJS(`var p={x:360,y:260},r=ed.graph.svg.getBoundingClientRect();
+  ed.openConnectedNodeChooser({nodeId:'begin',port:'out'},p,{clientX:r.left+ed.graph.view.x+p.x*ed.graph.view.k,clientY:r.top+ed.graph.view.y+p.y*ed.graph.view.k});
+  await Promise.resolve();
+  var chooser=document.querySelector('.process-node-chooser');
+  if(!chooser||document.activeElement!==chooser.querySelector('.process-node-chooser-input')) throw new Error('edge-drop chooser did not open or focus');
+  if(chooser.querySelectorAll('[role="option"]').length!==5) throw new Error('edge-drop chooser vocabulary incomplete');`),
+			SettleMS: 1100,
+		},
+		{
 			Key:     "process-editor-commands-wizard",
 			Title:   "Process editor — contextual commands (wizard)",
 			Caption: "The same TCL-435 command registry under the wizard skin: arcane labels remain searchable by ordinary vocabulary and disabled context stays visibly explained.",
