@@ -109,7 +109,6 @@ func runStop(p *stopParams, stdout, stderr io.Writer) int {
 type resumeParams struct {
 	Selector    string `pos:"true" help:"Target conv: title, full conv-id, or 8+-char prefix"`
 	RecreateDir bool   `long:"recreate-dir" help:"If the agent's recorded launch directory was deleted, recreate it empty so the agent can start (otherwise resume reports missing_cwd and does nothing)"`
-	AskHuman    string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
 }
 
 func resumeCmd() *cobra.Command {
@@ -135,7 +134,6 @@ func resumeCmd() *cobra.Command {
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *resumeParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Selector).SetAlternativesFunc(completeConvSelectors)
-			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
 			return nil
 		},
 		RunFunc: func(p *resumeParams, _ *cobra.Command, _ []string) {
@@ -153,14 +151,6 @@ func runResume(p *resumeParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(p.AskHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
-	}
 	path := "/v1/agent/" + url.PathEscape(selector) + "/resume"
 	if p.RecreateDir {
 		path += "?recreate=1"
@@ -174,7 +164,7 @@ func runResume(p *resumeParams, stdout, stderr io.Writer) int {
 	}
 	if err := DaemonRequestWithWriteProof(http.MethodPost, path,
 		func(token string) any { return withWriteProofToken(nil, token) },
-		&resp, DaemonOpts{AskHuman: ask}); err != nil {
+		&resp, DaemonOpts{}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
