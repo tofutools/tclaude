@@ -32,7 +32,9 @@ import {
   chooseTerminalDirectory, openAgentExportDialog, openCloneAgentDialog,
   openNestGroupDialog, openReincarnateAgentDialog, openTaskLinkDialog,
 } from './action-dialog-controller.js';
-import { openRetireAgentDialog } from './transaction-dialog-controller.js';
+import {
+  openRetireAgentDialog, openShutdownAgentDialog,
+} from './transaction-dialog-controller.js';
 import { openTermModal } from './terminals-tab.js';
 import {
   openTerminalPane, closeTerminalsForConvs, focusTerminalForConv,
@@ -50,7 +52,7 @@ import {
   refresh, toast, confirmModal, deleteAgentModal,
   shutdownScope, powerOnScope, openCleanupModal, openWindowModal,
   openWorktreeCleanup,
-  resumeAgentReq, shutdownConfirm, stopAgentReq,
+  resumeAgentReq,
   openDeleteGroupModal,
   showAccessTab,
 } from './refresh.js';
@@ -727,10 +729,9 @@ function bindRowActions() {
           // context-aware:
           //   - offline dot → wake (resume). Non-destructive; starting
           //     a session never needs a confirm.
-          //   - online dot → open the 3-way shutdownConfirm modal
-          //     (Cancel / Soft exit / Force kill), then stop with the
-          //     chosen force flag. The confirm fires for EVERY online
-          //     click, idle or busy: the dot's rendered state can be
+          //   - online dot → open the Preact shutdown transaction
+          //     (Cancel / Soft exit / Force kill). The dialog opens for
+          //     EVERY online click, idle or busy: the dot's rendered state can be
           //     stale by click time (the snapshot refreshes
           //     asynchronously), so a dot that looks idle may front an
           //     agent that has since started working — skipping the
@@ -741,9 +742,7 @@ function bindRowActions() {
             await resumeAgentReq(agent, label);
             return;
           }
-          const choice = await shutdownConfirm({label});
-          if (!choice) return;
-          await stopAgentReq(agent, label, choice === 'force');
+          await openShutdownAgentDialog(agent, label);
           return;
         }
         case 'spawn-agent': {
