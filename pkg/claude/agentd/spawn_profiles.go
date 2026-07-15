@@ -128,6 +128,16 @@ func profileToJSON(p *db.SpawnProfile) spawnProfileJSON {
 	return out
 }
 
+// profileInlineToJSON projects a template-local profile. Disabled state only
+// belongs to saved registry profiles, so it must remain absent from this wire
+// shape; buildInlineProfileFromJSON deliberately rejects the field when set.
+func profileInlineToJSON(p *db.SpawnProfile) spawnProfileJSON {
+	out := profileToJSON(p)
+	out.Disabled = nil
+	out.DisabledReason = ""
+	return out
+}
+
 // collectProfilesSnapshot builds the dashboard's spawn-profile list for the
 // poll (the palette dock, JOH-374). Returns an empty (non-nil) slice on error
 // or when there are no profiles, so the page's JS .map() never trips on null.

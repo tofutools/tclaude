@@ -234,7 +234,7 @@ func templateToJSON(t *db.GroupTemplate) templateJSON {
 			EffectiveIsOwner: effectiveTemplateAgentOwner(a, lookupProfile),
 		}
 		if a.ProfileInline != nil {
-			pj := profileToJSON(a.ProfileInline)
+			pj := profileInlineToJSON(a.ProfileInline)
 			aj.ProfileInline = &pj
 		}
 		out.Agents = append(out.Agents, aj)
