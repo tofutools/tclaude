@@ -38,6 +38,7 @@ func (b MutationBatch) materialize(commandID string) ([]RecordMutation, error) {
 	}
 
 	causeDigests := map[string]string{}
+	causeSetMembers := map[string][]CauseID{}
 	for _, mutation := range b.Mutations {
 		if mutation.Kind != MutationCauseSet || len(mutation.After) == 0 {
 			continue
@@ -61,6 +62,7 @@ func (b MutationBatch) materialize(commandID string) ([]RecordMutation, error) {
 		if err != nil {
 			return nil, err
 		}
+		causeSetMembers[value.Digest] = cloneSlice(value.CauseIDs)
 		causeDigests[value.Digest] = actual
 	}
 
@@ -88,7 +90,7 @@ func (b MutationBatch) materialize(commandID string) ([]RecordMutation, error) {
 	for _, mutation := range b.Mutations {
 		actual := mutation
 		if len(mutation.After) > 0 {
-			key, data, err := materializeRecord(mutation.Kind, mutation.Key, mutation.After, commandID, causeIDs, causeDigests, pathIDs)
+			key, data, err := materializeRecord(mutation.Kind, mutation.Key, mutation.After, commandID, causeIDs, causeDigests, causeSetMembers, pathIDs)
 			if err != nil {
 				return nil, err
 			}
@@ -112,7 +114,7 @@ func (b MutationBatch) materialize(commandID string) ([]RecordMutation, error) {
 	return materialized, nil
 }
 
-func materializeRecord(kind MutationRecordKind, key string, data []byte, commandID string, causeIDs, causeDigests, pathIDs map[string]string) (string, []byte, error) {
+func materializeRecord(kind MutationRecordKind, key string, data []byte, commandID string, causeIDs, causeDigests map[string]string, causeSetMembers map[string][]CauseID, pathIDs map[string]string) (string, []byte, error) {
 	marshal := func(key string, value any) (string, []byte, error) {
 		data, err := json.Marshal(value)
 		return key, data, err
@@ -247,10 +249,8 @@ func materializeRecord(kind MutationRecordKind, key string, data []byte, command
 		if err := decodeExactPayload(data, &value); err != nil {
 			return "", nil, err
 		}
-		for index, id := range value.CauseIDs {
-			if actual, ok := causeIDs[id]; ok {
-				value.CauseIDs[index] = actual
-			}
+		if actual, ok := causeSetMembers[value.Digest]; ok {
+			value.CauseIDs = cloneSlice(actual)
 		}
 		if actual, ok := causeDigests[value.Digest]; ok {
 			value.Digest, key = actual, actual

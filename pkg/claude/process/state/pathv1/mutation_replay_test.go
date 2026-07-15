@@ -53,6 +53,38 @@ func TestMutationBatchRequiresCanonicalWholePreOrPostState(t *testing.T) {
 	}
 }
 
+func TestMutationMaterializeSingleCauseSetIsIdempotent(t *testing.T) {
+	before := NewRoutingState()
+	after := Clone(before)
+	placeholderID, _ := CauseIdentity("", TerminalFailed, "single", "", MutationCommandPlaceholder, "", 1)
+	placeholderDigest, _ := CauseSetIdentity([]CauseID{placeholderID})
+	after.CauseRecords[placeholderID] = CauseRecord{
+		ID: placeholderID, TerminalKind: TerminalFailed, DispositionReason: "single",
+		SourceCommandID: MutationCommandPlaceholder, EventSeq: 1,
+	}
+	after.CauseSets[placeholderDigest] = CauseSetRecord{Digest: placeholderDigest, CauseIDs: []CauseID{placeholderID}}
+	batch, err := NewMutationBatch(&before, &after, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commandID := strings.Repeat("a", 64)
+	actualID, _ := CauseIdentity("", TerminalFailed, "single", "", commandID, "", 1)
+	actualDigest, _ := CauseSetIdentity([]CauseID{actualID})
+
+	got, disposition, err := batch.replay(&before, commandID)
+	if err != nil || disposition != ReplayApplied {
+		t.Fatalf("single cause-set replay = %q, %v", disposition, err)
+	}
+	set, ok := got.CauseSets[actualDigest]
+	if !ok || set.Digest != actualDigest || !slices.Equal(set.CauseIDs, []CauseID{actualID}) {
+		t.Fatalf("single materialized cause set = %#v", set)
+	}
+	got, disposition, err = batch.replay(&got, commandID)
+	if err != nil || disposition != ReplayAlreadyApplied {
+		t.Fatalf("single cause-set idempotent replay = %q, %v", disposition, err)
+	}
+}
+
 func TestRoutePathsTypedReplayAppliesOnceAndRejectsDrift(t *testing.T) {
 	postView, childID, reservationID := validOpenArrivalFixture(t)
 	parentID := postView.Authority.Genesis.OutputPathID
@@ -309,8 +341,17 @@ func TestRouteMutationAuthorityImpossibleCauseClosureAndForkEvent(t *testing.T) 
 		fullBefore.Paths[parentID] = fullParent
 		fullAfter := Clone(fullBefore)
 		fullAfter.Paths[arrived.ID] = arrived
-		fullCauseID, _ := CauseIdentity("", TerminalImpossible, "condition_false", "", MutationCommandPlaceholder, "", 2)
-		fullCauseDigest, _ := CauseSetIdentity([]CauseID{fullCauseID})
+		fullCauseReasons := []string{"condition_false_a", "condition_false_b", "condition_false_c"}
+		fullCauseIDs := make([]CauseID, 0, len(fullCauseReasons))
+		fullCauseReasonByID := make(map[CauseID]string, len(fullCauseReasons))
+		for _, reason := range fullCauseReasons {
+			id, _ := CauseIdentity("", TerminalImpossible, reason, "", MutationCommandPlaceholder, "", 2)
+			fullCauseIDs = append(fullCauseIDs, id)
+			fullCauseReasonByID[id] = reason
+			fullAfter.CauseRecords[id] = CauseRecord{ID: id, TerminalKind: TerminalImpossible, DispositionReason: reason, SourceCommandID: MutationCommandPlaceholder, EventSeq: 2}
+		}
+		slices.Sort(fullCauseIDs)
+		fullCauseDigest, _ := CauseSetIdentity(fullCauseIDs)
 		fullImpossibleID, _ := ImpossibleEdgePathIdentity(fullCauseDigest, otherEdge.ID, otherReservationID)
 		impossible := PathRecord{
 			ID: fullImpossibleID, Kind: PathImpossibleEdge, State: PathImpossible,
@@ -329,8 +370,7 @@ func TestRouteMutationAuthorityImpossibleCauseClosureAndForkEvent(t *testing.T) 
 		fullDispositionID, _ := DispositionReceiptIdentity(parentID, PathLive, PathRouted, "route", MutationCommandPlaceholder, "", 2)
 		fullParent.Disposition = &DispositionReceipt{ID: fullDispositionID, PathID: parentID, FromState: PathLive, ToState: PathRouted, ReasonCode: "route", CommandID: MutationCommandPlaceholder, EventSeq: 2}
 		fullAfter.Paths[parentID] = fullParent
-		fullAfter.CauseRecords[fullCauseID] = CauseRecord{ID: fullCauseID, TerminalKind: TerminalImpossible, DispositionReason: "condition_false", SourceCommandID: MutationCommandPlaceholder, EventSeq: 2}
-		fullAfter.CauseSets[fullCauseDigest] = CauseSetRecord{Digest: fullCauseDigest, CauseIDs: []CauseID{fullCauseID}}
+		fullAfter.CauseSets[fullCauseDigest] = CauseSetRecord{Digest: fullCauseDigest, CauseIDs: fullCauseIDs}
 		fullBatch, err := NewMutationBatch(&fullBefore, &fullAfter, 2)
 		if err != nil {
 			t.Fatal(err)
@@ -359,8 +399,33 @@ func TestRouteMutationAuthorityImpossibleCauseClosureAndForkEvent(t *testing.T) 
 		}
 		fullCommand := commandWithPayload(t, fullIdentity, CommandObserved, fullPayload)
 		fullView.Aggregate.Commands[fullCommand.ID] = fullCommand
-		if result, err := ReplayRoutePaths(fullView, fullCommand); err != nil || result.Disposition != ReplayApplied {
+		result, err := ReplayRoutePaths(fullView, fullCommand)
+		if err != nil || result.Disposition != ReplayApplied {
 			t.Fatalf("full impossible-edge route replay = %q, %v", result.Disposition, err)
+		}
+		materializedIDs := make([]CauseID, 0, len(fullCauseReasons))
+		for _, reason := range fullCauseReasons {
+			id, _ := CauseIdentity("", TerminalImpossible, reason, "", fullCommand.ID, "", 2)
+			materializedIDs = append(materializedIDs, id)
+		}
+		slices.Sort(materializedIDs)
+		unfixedOrder := make([]CauseID, 0, len(fullCauseIDs))
+		for _, placeholderID := range fullCauseIDs {
+			id, _ := CauseIdentity("", TerminalImpossible, fullCauseReasonByID[placeholderID], "", fullCommand.ID, "", 2)
+			unfixedOrder = append(unfixedOrder, id)
+		}
+		if slices.IsSorted(unfixedOrder) {
+			t.Fatal("multi-cause fixture does not exercise materialized member reordering")
+		}
+		materializedDigest, _ := CauseSetIdentity(materializedIDs)
+		materializedSet, ok := result.Routing.CauseSets[materializedDigest]
+		if !ok || materializedSet.Digest != materializedDigest || !slices.IsSorted(materializedSet.CauseIDs) || !slices.Equal(materializedSet.CauseIDs, materializedIDs) {
+			t.Fatalf("materialized multi-cause set = %#v, want digest %s members %v", materializedSet, materializedDigest, materializedIDs)
+		}
+		fullView.Aggregate.Routing = &result.Routing
+		result, err = ReplayRoutePaths(fullView, fullCommand)
+		if err != nil || result.Disposition != ReplayAlreadyApplied {
+			t.Fatalf("full impossible-edge idempotent replay = %q, %v", result.Disposition, err)
 		}
 
 		missing := Clone(after)
