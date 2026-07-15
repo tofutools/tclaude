@@ -518,6 +518,78 @@ func TestPropagateClosureReplayBindsRootFrontierAndIntent(t *testing.T) {
 	}
 }
 
+func TestPropagateClosurePreservesExistingClosureAuthority(t *testing.T) {
+	view := validAllArrivedNonSuccessFixture(t)
+	var closure CandidateClosure
+	for _, candidateClosure := range view.Routing.CandidateClosures {
+		closure = candidateClosure
+		break
+	}
+	if closure.ID == "" {
+		t.Fatal("existing candidate closure missing")
+	}
+	reservation := view.Routing.Reservations[closure.Key.ReservationID]
+	before := Clone(*view.Routing)
+	frontier := []CandidateClosureKey{closure.Key.ID}
+	intentPlan, _ := PropagationPlanIdentity(reservation.ID, closure.Key.CandidateID, closure.CauseDigest, 0, frontier)
+	intentID, _ := PropagationIntentIdentity(closure.CauseDigest, 0, intentPlan)
+	intent := PropagationIntent{
+		ID: intentID, RootReservationID: reservation.ID, RootCandidateID: closure.Key.CandidateID, RootCauseDigest: closure.CauseDigest,
+		Shard: 0, Cursor: 1, Frontier: frontier, PlanDigest: intentPlan, State: PropagationComplete,
+		CommandID: MutationCommandPlaceholder, EventSeq: 99,
+	}
+	positiveAfter := Clone(before)
+	positiveAfter.Propagation[intent.ID] = intent
+	positiveBatch, err := NewMutationBatch(&before, &positiveAfter, 99)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayView := MutationReplayView{Aggregate: view, Checkpoint: CheckpointBinding{Generation: 10, Digest: strings.Repeat("a", 64)}}
+	makeCommand := func(batch MutationBatch) CommandRecord {
+		plan := PropagateClosurePlan{
+			TargetReservationID: reservation.ID, TargetGeneration: reservation.Generation,
+			InputDigest: intentPlan, CauseDigest: closure.CauseDigest,
+			RootReservationID: reservation.ID, RootCandidateID: closure.Key.CandidateID, RootCauseDigest: closure.CauseDigest,
+			Intents: []PropagationIntent{intent}, Batch: batch,
+		}
+		payload, encodeErr := EncodePropagateClosurePayload(replayView, plan)
+		if encodeErr != nil {
+			t.Fatal(encodeErr)
+		}
+		identity := CommandIdentity{
+			RunID: view.RunID, Kind: CommandPropagateCandidateClosure, PayloadSchema: 1,
+			TargetReservationID: reservation.ID, TargetGeneration: reservation.Generation,
+			InputDigest: intentPlan, CauseDigest: closure.CauseDigest, PlanDigest: payloadDigest(payload),
+		}
+		return commandWithPayload(t, identity, CommandObserved, payload)
+	}
+	positiveCommand := makeCommand(positiveBatch)
+	positiveView := replayView
+	positiveView.Aggregate.Commands = cloneMap(view.Commands)
+	positiveView.Aggregate.Commands[positiveCommand.ID] = positiveCommand
+	result, err := ReplayPropagateClosure(positiveView, positiveCommand)
+	if err != nil || result.Disposition != ReplayApplied || !canonicalEqual(result.Routing.CandidateClosures[closure.Key.ID], closure) {
+		t.Fatalf("valid propagation over existing closure = %q, %v", result.Disposition, err)
+	}
+
+	badAfter := Clone(positiveAfter)
+	rewritten := badAfter.CandidateClosures[closure.Key.ID]
+	rewritten.CommandID = MutationCommandPlaceholder
+	rewritten.EventSeq = 17
+	badAfter.CandidateClosures[closure.Key.ID] = rewritten
+	badBatch, err := NewMutationBatch(&before, &badAfter, 99)
+	if err != nil {
+		t.Fatal(err)
+	}
+	badCommand := makeCommand(badBatch)
+	badView := replayView
+	badView.Aggregate.Commands = cloneMap(view.Commands)
+	badView.Aggregate.Commands[badCommand.ID] = badCommand
+	if _, err := ReplayPropagateClosure(badView, badCommand); !errors.Is(err, ErrMutationInvalid) {
+		t.Fatalf("existing closure authority rewrite error = %v", err)
+	}
+}
+
 func TestSettleDetachedSinkCreatesLateArrivalAtomically(t *testing.T) {
 	postView := validSlowAnyFixture(t, false)
 	var late PathRecord

@@ -319,8 +319,11 @@ func validatePropagationMutationSet(pre RoutingState, plan PropagateClosurePlan,
 			if _, ok := processed[mutation.Key]; !ok {
 				return unauthorizedPropagationMutation(mutation)
 			}
+			if len(mutation.Before) != 0 || len(mutation.After) == 0 {
+				return fmt.Errorf("%w: propagation cannot rewrite immutable candidate closure %q", ErrMutationInvalid, mutation.Key)
+			}
 			var closure CandidateClosure
-			if err := decodeMutationSide(mutation, &closure); err != nil {
+			if err := decodeExactPayload(mutation.After, &closure); err != nil {
 				return err
 			}
 			causeDigests[closure.CauseDigest] = struct{}{}
@@ -434,7 +437,98 @@ func validatePropagationMutationSet(pre RoutingState, plan PropagateClosurePlan,
 		}
 		allowed[mutationTarget{kind: mutation.Kind, key: mutation.Key}] = struct{}{}
 	}
-	return validateExactMutationTargets(plan.Batch, allowed)
+	if err := validateExactMutationTargets(plan.Batch, allowed); err != nil {
+		return err
+	}
+	return validatePropagationEventSeq(plan.Batch)
+}
+
+func validatePropagationEventSeq(batch MutationBatch) error {
+	want := batch.EventSeq
+	for _, mutation := range batch.Mutations {
+		if len(mutation.After) == 0 {
+			continue
+		}
+		switch mutation.Kind {
+		case MutationPath:
+			var record PathRecord
+			if err := decodeExactPayload(mutation.After, &record); err != nil {
+				return err
+			}
+			if record.UpdatedSeq != want || (len(mutation.Before) == 0 && record.CreatedSeq != want) || (record.Disposition != nil && record.Disposition.CommandID == MutationCommandPlaceholder && record.Disposition.EventSeq != want) || (record.DetachedSink != nil && record.DetachedSink.CommandID == MutationCommandPlaceholder && record.DetachedSink.EventSeq != want) {
+				return propagationEventSeqError(mutation, want)
+			}
+		case MutationScope:
+			var record ScopeRecord
+			if err := decodeExactPayload(mutation.After, &record); err != nil {
+				return err
+			}
+			if record.EventSeq != want || record.ClosedByCommandID != MutationCommandPlaceholder {
+				return propagationEventSeqError(mutation, want)
+			}
+		case MutationReservation:
+			var record ActivationReservation
+			if err := decodeExactPayload(mutation.After, &record); err != nil {
+				return err
+			}
+			if record.EventSeq != want || record.CommandID != MutationCommandPlaceholder || (record.CloseReceipt != nil && (record.CloseReceipt.EventSeq != want || record.CloseReceipt.CommandID != MutationCommandPlaceholder)) {
+				return propagationEventSeqError(mutation, want)
+			}
+		case MutationActivation:
+			var record ActivationRecord
+			if err := decodeExactPayload(mutation.After, &record); err != nil {
+				return err
+			}
+			if len(mutation.Before) != 0 || record.EventSeq != want || record.CommandID != MutationCommandPlaceholder || record.Receipt.EventSeq != want || record.Receipt.CommandID != MutationCommandPlaceholder {
+				return propagationEventSeqError(mutation, want)
+			}
+		case MutationCandidateClosure:
+			var record CandidateClosure
+			if err := decodeExactPayload(mutation.After, &record); err != nil {
+				return err
+			}
+			if len(mutation.Before) != 0 || record.EventSeq != want || record.CommandID != MutationCommandPlaceholder {
+				return propagationEventSeqError(mutation, want)
+			}
+		case MutationCauseRecord:
+			var record CauseRecord
+			if err := decodeExactPayload(mutation.After, &record); err != nil {
+				return err
+			}
+			if len(mutation.Before) != 0 || record.EventSeq != want || record.SourceCommandID != MutationCommandPlaceholder {
+				return propagationEventSeqError(mutation, want)
+			}
+		case MutationCauseSet:
+			if len(mutation.Before) != 0 {
+				return fmt.Errorf("%w: propagation cannot rewrite immutable cause set %q", ErrMutationInvalid, mutation.Key)
+			}
+		case MutationDetachment:
+			var record DetachmentRecord
+			if err := decodeExactPayload(mutation.After, &record); err != nil {
+				return err
+			}
+			if len(mutation.Before) != 0 || record.EventSeq != want || record.ActivatedSeq != want || record.CommandID != MutationCommandPlaceholder {
+				return propagationEventSeqError(mutation, want)
+			}
+		case MutationDetachmentSet:
+			if len(mutation.Before) != 0 {
+				return fmt.Errorf("%w: propagation cannot rewrite immutable detachment set %q", ErrMutationInvalid, mutation.Key)
+			}
+		case MutationPropagation:
+			var record PropagationIntent
+			if err := decodeExactPayload(mutation.After, &record); err != nil {
+				return err
+			}
+			if record.EventSeq != want {
+				return propagationEventSeqError(mutation, want)
+			}
+		}
+	}
+	return nil
+}
+
+func propagationEventSeqError(mutation RecordMutation, want int64) error {
+	return fmt.Errorf("%w: propagation-owned post record %s/%s is not coupled to reducer event %d", ErrMutationInvalid, mutation.Kind, mutation.Key, want)
 }
 
 func decodeMutationSide[T any](mutation RecordMutation, value *T) error {
