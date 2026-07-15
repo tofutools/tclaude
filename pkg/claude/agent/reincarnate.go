@@ -14,7 +14,7 @@ import (
 )
 
 // `tclaude agent reincarnate [follow-up]` — replace the calling agent
-// with a fresh CC instance that inherits its identity (groups,
+// with a fresh harness instance that inherits its identity (groups,
 // per-conv permission grants, group ownerships) and, optionally, picks
 // up a new task via a queued message or direct prompt injection.
 //
@@ -33,10 +33,17 @@ func reincarnateCmd() *cobra.Command {
 	return boa.CmdT[reincarnateParams]{
 		Use:   "reincarnate",
 		Short: "Replace this agent (or another, with --target) with a fresh successor that inherits its identity",
-		Long: "Spawns a fresh CC instance and migrates the target agent's identity " +
+		Long: "Spawns a fresh harness instance and migrates the target agent's identity " +
 			"(group memberships, per-conv permission grants, group ownerships) onto " +
 			"the new conv-id. The old conversation is then soft-stopped. The new " +
 			"agent comes up with a clean context window but the same identity. " +
+			"\n\n" +
+			"Reincarnation is primarily a Claude Code context-management tool: its " +
+			"compaction is comparatively slow and lossy. Codex CLI has effective, " +
+			"efficient automatic compaction; normally let a Codex agent run to full " +
+			"context and auto-compact instead of reincarnating it merely to free " +
+			"context space. An explicit human request or another deliberate reason " +
+			"to replace the agent can still justify reincarnating either harness. " +
 			"\n\n" +
 			"By default the target is the calling agent itself (self-reincarnate). " +
 			"Use --target <selector> to reincarnate ANOTHER agent — the manager " +

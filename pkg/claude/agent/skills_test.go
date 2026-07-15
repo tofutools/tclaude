@@ -74,6 +74,20 @@ func TestBundledSkillsDocumentSpawnResolution(t *testing.T) {
 	assert.Contains(t, string(circles), "carries its own `harness`")
 }
 
+func TestBundledLifecycleSkillsDocumentHarnessSpecificReincarnationPolicy(t *testing.T) {
+	for _, name := range []string{"agent-coord", "agent-lifecycle", "reincarnate"} {
+		t.Run(name, func(t *testing.T) {
+			data, err := skillsFS.ReadFile("skills/" + name + "/SKILL.md")
+			require.NoError(t, err)
+			body := string(data)
+			assert.Contains(t, body, "Claude Code")
+			assert.Contains(t, body, "Codex")
+			assert.Contains(t, body, "automatic compaction")
+			assert.Contains(t, body, "merely to free context space")
+		})
+	}
+}
+
 func TestProcessTemplateSkillPinsSafeAuthoringContract(t *testing.T) {
 	data, err := skillsFS.ReadFile("skills/process-templates/SKILL.md")
 	require.NoError(t, err)

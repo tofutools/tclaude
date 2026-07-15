@@ -5,11 +5,12 @@ description: >-
   `reincarnate`, and `clone`. Use when you need context pressure details, a
   /compact injection, a fresh successor that inherits identity, or a sibling
   agent that keeps the original running. `reincarnate` requires a follow-up so
-  the new pane is not idle. Context thresholds and cadence are project/operator
-  policy; this skill documents the capability, not when to invoke it. Manager
-  pattern: every verb accepts `--target <peer>` to act on another agent
-  (requires the matching `agent.<verb>` slug, OR ownership of a group containing
-  the target).
+  the new pane is not idle. Reincarnation for context pressure is intended for
+  Claude Code; Codex agents should normally run to full context and use native
+  automatic compaction instead. Claude Code thresholds and cadence are
+  project/operator policy. Manager pattern: every verb accepts `--target
+  <peer>` to act on another agent (requires the matching `agent.<verb>` slug,
+  OR ownership of a group containing the target).
 ---
 
 # Self-lifecycle: keep yourself fresh on long tasks
@@ -49,13 +50,20 @@ decision — read it directly rather than recomputing from the tokens (the
 two won't always match exactly). The line shows the percentage alone
 until the first turn's token counts arrive.
 
-## When to reincarnate (or compact) — your project's call, not this skill's
+## Choose by harness first
 
-Context rot is real: as the window fills you become slower, less
-coherent, and more likely to forget early instructions. These commands
-exist to let you *do something* about it — but **this skill deliberately
-does not hardcode when, or at what context %, to act.** That timing is a
-policy decision, and it belongs to — in roughly this order of authority:
+Reincarnation is primarily a **Claude Code** context-management tool. Claude
+Code's compaction is comparatively slow and lossy, so a curated handoff to a
+fresh successor can be more effective.
+
+**For Codex CLI, do not reincarnate merely to free context space.** Codex's
+native automatic compaction is effective and efficient: let the agent run to
+full context and auto-compact. Reincarnate a Codex agent only when the human
+explicitly asks or there is another deliberate reason to replace the agent,
+not as routine context maintenance.
+
+For a Claude Code agent, the exact threshold or cadence remains a policy
+decision. Apply guidance in roughly this order:
 
 - a **direct instruction from the human** at the moment ("reincarnate
   and pick up from X"),
@@ -67,7 +75,7 @@ policy decision, and it belongs to — in roughly this order of authority:
 Baking a single threshold into a bundled tool's skill would impose one
 project's policy on every project, so we don't.
 
-If you want a concrete anchor and nothing above gave you one:
+For **Claude Code**, if you want a concrete anchor and nothing above gave you one:
 **reincarnating around ~300–400k tokens (≈30–40% on a 1M-window model)
 is one reasonable rhythm.** Take that as *one illustrative option, not a
 recommendation* — lighter or heavier both work, and because
@@ -75,11 +83,13 @@ recommendation* — lighter or heavier both work, and because
 below) you can comfortably do it early and often rather than nursing a
 fat, rotting window.
 
-Two steady defaults, whatever threshold you land on:
+Two steady defaults:
 
-- **Don't `/compact` on a timer.** It's lossy and slow (see below), and
-  an unprompted `/compact` appearing in a pane is surprising to a human
-  watching. When you free context, reach for `reincarnate`.
+- **Claude Code:** don't `/compact` on a timer. It's lossy and slow (see
+  below), and an unprompted `/compact` appearing in a pane is surprising to a
+  human watching. When you need to free context, reach for `reincarnate`.
+- **Codex:** don't reincarnate on a timer or context threshold. Let automatic
+  compaction manage the window.
 - **`tclaude agent context-info` is free** — check where you stand
   whenever you like, independent of any decision to act.
 
@@ -89,15 +99,16 @@ off work, the charset/delivery rules, and the manager pattern.
 ## Compact vs. reincarnate vs. clone
 
 - `compact` — the harness summarises the prior turns and replaces them with a
-  short recap, in place. Identity, conv-id, name, and most state survive.
-  Its fundamental limitation is that it is **undirected**: the harness has no way
+  short recap, in place. Identity, conv-id, name, and most state survive. In
+  Claude Code its fundamental limitation is that it is **undirected**: the harness has no way
   of knowing what you'll care about *going forward* — that you only need
   a subset of the history, or that you're deliberately tuning context for
   a specific follow-up task. It just compacts the conversation in
   general, **lossily**, and — because it runs a full LLM summarisation
   pass over the whole window — **slowly**; you then keep accumulating in
-  the same conversation. Kept mainly for compatibility; in practice
-  `reincarnate` is almost always the better choice.
+  the same conversation. For Claude Code, `reincarnate` is usually the better
+  choice. Codex's automatic compaction is different: it is the effective,
+  efficient default, so let it happen rather than replacing the agent.
 - `reincarnate` — the daemon spawns a fresh agent instance, migrates your
   identity (groups, per-conv permissions, ownerships) onto the new
   conv-id, and soft-stops the old one. The new agent keeps your identity
@@ -112,10 +123,10 @@ off work, the charset/delivery rules, and the manager pattern.
   *next* task needs (a notes file, the specific files/decisions) and let
   the rest go. Curated, not blindly compressed. And despite
   "spawning a new instance" sounding heavy, it is **not** the heavy
-  option — a fresh pane is usually *faster* than a `/compact` (no
-  summarisation pass) and far more precise. So **for most ongoing tasks
-  it is the preferred tool**; reach for it over `compact` unless you have
-  a specific reason to stay in the same conversation. Especially when:
+  option — a fresh pane is usually *faster* than a Claude Code `/compact` (no
+  summarisation pass) and far more precise. So **for many ongoing Claude Code
+  tasks it is the preferred tool**; for Codex context pressure, use automatic
+  compaction instead. Reincarnation is especially useful when:
   - You're switching to an unrelated task and prior context would
     actively interfere.
   - You want the next stretch focused on a specific subset of what you
@@ -203,14 +214,16 @@ tclaude agent context-info
 # context: 35% (320k in + 30k out = 350k of 1.0M tokens)
 # model:   Opus 4.8 (1M context)
 
-# Before you compact or reincarnate — write down what matters
+# Claude Code: before you compact or reincarnate, write down what matters
 # (do this in your tools — Read/Edit/Write — not via tclaude)
 
 # Compact in-place, with a follow-up that lands after the summary
 tclaude agent compact "now reload /tmp/task-notes.md and continue"
 
-# Or reincarnate to start fresh while keeping your identity
+# Or reincarnate a Claude Code agent to start fresh while keeping its identity
 tclaude agent reincarnate "reload /tmp/task-notes.md and continue"
+
+# Codex: keep working and let native automatic compaction manage context.
 
 # Long, multi-line, or code-heavy handoff? Read it from a file
 # instead of quoting it on the command line ('-' reads stdin).
