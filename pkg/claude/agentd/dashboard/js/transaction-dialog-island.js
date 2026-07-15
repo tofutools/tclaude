@@ -35,6 +35,8 @@ export function TransactionDialogFrame({
   errorID = '',
   cancelID = '',
   submitID = '',
+  dialogClass = 'modal',
+  hideCancel = false,
   onClose,
   onSubmit,
   onAlternateSubmit,
@@ -74,14 +76,14 @@ export function TransactionDialogFrame({
       confirmDiscard=${confirmDiscard}
       guardBackdropDrag=${true}
       initialFocusRef=${submitRef}
-      dialogClass="modal"
+      dialogClass=${dialogClass}
     >
       <h3 id=${labelledby}>${title}</h3>
       ${meta ? html`<div class="modal-meta" id=${metaID || undefined}>${meta}</div>` : null}
       ${children}
       <div class="cleanup-error" id=${errorID || undefined} role=${error ? 'alert' : undefined}>${error}</div>
       <div class="modal-buttons">
-        <button id=${cancelID || `${baseID}-cancel`} type="button" disabled=${busy} onClick=${close}>Cancel</button>
+        ${hideCancel ? null : html`<button id=${cancelID || `${baseID}-cancel`} type="button" disabled=${busy} onClick=${close}>Cancel</button>`}
         <span class="spacer"></span>
         ${alternateLabel ? html`<button
           id=${alternateID || `${baseID}-alternate`}
@@ -108,6 +110,263 @@ export function TransactionDialogFrame({
 
 function Words({ plain, wizard }) {
   return html`<span class="theme-copy-regular">${plain}</span><span class="theme-copy-wizard">${wizard}</span>`;
+}
+
+function BulkRetireResult({ descriptor, response }) {
+  const group = descriptor.kind === 'retire-group-preview';
+  const rows = group ? (response?.members || []) : (response?.outcomes || []);
+  return html`<div class="cleanup-list" id="retire-preview-list">
+    ${rows.length ? rows.map((row) => {
+      const status = group ? row.action : row.result;
+      const worktree = group ? row.worktree : null;
+      return html`<div class="cleanup-row" key=${row.conv_id || row.agent_id}>
+        <span class=${`cleanup-badge ${status || ''}`}>${status || 'unknown'}</span>
+        <span class="title">${row.title || row.conv_id || '(untitled)'}</span>
+        <span class="id">${String(row.conv_id || '').slice(0, 8)}</span>
+        <span class="meta">${row.detail || ''}</span>
+        ${worktree ? html`<span class=${`cleanup-badge ${worktree.action || ''}`}>
+          worktree ${worktree.action || 'unknown'}
+        </span><span class="meta">${worktree.detail || ''}</span>` : null}
+      </div>`;
+    }) : html`<div class="cleanup-empty">Nothing to do.</div>`}
+  </div>`;
+}
+
+function bulkRetireSummary(descriptor, response) {
+  if (descriptor.kind === 'retire-group-preview') {
+    const members = response?.members || [];
+    const retired = members.filter((member) => member.action === 'retired').length;
+    const failed = members.filter((member) => member.action === 'error').length;
+    const skipped = members.filter((member) => String(member.action || '').startsWith('skipped')).length;
+    return { retired, skipped, failed };
+  }
+  return {
+    retired: Number(response?.retired || 0),
+    skipped: Number(response?.skipped || 0),
+    failed: Number(response?.failed || 0),
+  };
+}
+
+function summaryText(summary) {
+  const parts = [`${summary.retired} retired`];
+  if (summary.skipped) parts.push(`${summary.skipped} skipped`);
+  if (summary.failed) parts.push(`${summary.failed} failed`);
+  return parts.join(' · ');
+}
+
+function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
+  const candidates = descriptor.candidates || [];
+  const [query, setQuery] = useState('');
+  const [selected, setSelected] = useState(
+    () => new Set(candidates.map((candidate) => candidate.conv_id)),
+  );
+  const [shutdown, setShutdown] = useState(true);
+  const [deleteWorktrees, setDeleteWorktrees] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [submittedRequest, setSubmittedRequest] = useState(null);
+  const [result, setResult] = useState(null);
+  const activeRef = useRef(true);
+  useEffect(() => () => { activeRef.current = false; }, []);
+
+  const normalizedQuery = query.trim().toLowerCase();
+  const matchesFilter = (candidate) => !normalizedQuery
+    || String(candidate.title || '').toLowerCase().includes(normalizedQuery)
+    || String(candidate.conv_id || '').toLowerCase().includes(normalizedQuery);
+  const visibleCandidates = candidates.filter(matchesFilter);
+  const selectedCandidates = candidates.filter((candidate) => selected.has(candidate.conv_id));
+  const locked = !!submittedRequest || !!result;
+  const dirty = !result && (
+    query !== '' || selected.size !== candidates.length
+    || !shutdown || !deleteWorktrees || !!submittedRequest
+  );
+  const regularTitle = descriptor.kind === 'retire-group-preview'
+    ? `Retire ${descriptor.status} agents in "${descriptor.group}"`
+    : 'Retire ungrouped agents';
+  const wizardTitle = descriptor.kind === 'retire-group-preview'
+    ? `Banish ${descriptor.status} familiars in "${descriptor.group}"`
+    : 'Banish unbound familiars';
+
+  const updateVisible = (checked) => {
+    if (busy || locked) return;
+    setSelected((current) => {
+      const next = new Set(current);
+      for (const candidate of visibleCandidates) {
+        if (checked) next.add(candidate.conv_id);
+        else next.delete(candidate.conv_id);
+      }
+      return next;
+    });
+  };
+  const updateCandidate = (candidate, checked) => {
+    if (busy || locked) return;
+    setSelected((current) => {
+      const next = new Set(current);
+      if (checked) next.add(candidate.conv_id);
+      else next.delete(candidate.conv_id);
+      return next;
+    });
+  };
+  const changeShutdown = (event) => {
+    if (busy || locked) return;
+    const checked = event.currentTarget.checked;
+    setShutdown(checked);
+    // Bulk retire deliberately differs from single retire: turning shutdown
+    // off forces worktree deletion off, while turning it back on merely
+    // re-enables the control and preserves that visible OFF choice.
+    if (!checked) setDeleteWorktrees(false);
+  };
+
+  const finishResult = async () => {
+    if (!result || busy) return;
+    setBusy(true);
+    try {
+      await actions.finishBulkRetire({ kind: descriptor.kind, response: result });
+    } catch (_) {
+      // Roster refresh is advisory after an accepted mutation. The action
+      // releases ownership in finally, so a refresh failure must not become an
+      // unhandled rejection after this component has already unmounted.
+    }
+  };
+  const close = () => {
+    if (result) void finishResult();
+    else actions.close();
+  };
+  const submit = async () => {
+    if (busy) return;
+    if (result) {
+      await finishResult();
+      return;
+    }
+    if (selectedCandidates.length === 0) return;
+    const request = submittedRequest || (descriptor.kind === 'retire-group-preview'
+      ? Object.freeze({
+        group: descriptor.group,
+        convs: Object.freeze(selectedCandidates.map((candidate) => candidate.conv_id)),
+        shutdown,
+        deleteWorktree: shutdown && deleteWorktrees,
+      })
+      : Object.freeze({
+        agents: Object.freeze(selectedCandidates.map((candidate) => candidate.agent_id || candidate.conv_id)),
+        shutdown,
+        deleteWorktrees: shutdown && deleteWorktrees,
+      }));
+    if (!submittedRequest) setSubmittedRequest(request);
+    setError('');
+    setBusy(true);
+    try {
+      const response = descriptor.kind === 'retire-group-preview'
+        ? await actions.retireGroupPreview(request)
+        : await actions.retireUngroupedPreview(request);
+      if (activeRef.current) setResult(response || {});
+    } catch (cause) {
+      if (activeRef.current) setError(cause?.message || String(cause));
+    } finally {
+      if (activeRef.current) setBusy(false);
+    }
+  };
+
+  const retrying = !!submittedRequest && !result;
+  const summary = result ? bulkRetireSummary(descriptor, result) : null;
+  const warning = result && (result.warnings || []).length
+    ? `⚠ ${result.warnings.join('  ⚠ ')}` : '';
+  const hint = result
+    ? html`<${Words}
+      plain=${`Retire complete — ${summaryText(summary)}.`}
+      wizard=${`Banishment complete — ${summaryText(summary)}.`}
+    />`
+    : descriptor.kind === 'retire-group-preview'
+      ? html`<${Words}
+        plain=${`These ${descriptor.status} agents in group "${descriptor.group}" will be demoted to plain, reinstatable conversations. Untick any you want to keep; only ticked agents are retired.`}
+        wizard=${`These ${descriptor.status} familiars in party "${descriptor.group}" will return to restorable conversation scrolls. Untick any you want to keep; only ticked familiars are banished.`}
+      />`
+      : html`<${Words}
+        plain="These agents are not in any group. Each ticked agent will be demoted to a plain, reinstatable conversation and its grants revoked."
+        wizard="These unbound familiars belong to no party. Each ticked familiar will return to a restorable conversation scroll and lose its boons."
+      />`;
+
+  return html`<${TransactionDialogFrame}
+    id="retire-preview-modal"
+    labelledby="retire-preview-title"
+    title=${html`<${Words} plain=${regularTitle} wizard=${wizardTitle} />`}
+    dialogClass="cleanup-modal"
+    busy=${busy}
+    dirty=${dirty}
+    error=${result ? warning : error}
+    errorID="retire-preview-error"
+    primaryLabel=${result ? 'Done' : retrying ? 'Retry retire' : selectedCandidates.length === 1
+      ? 'Retire 1 agent' : `Retire ${selectedCandidates.length} agents`}
+    busyLabel=${html`<span class="btn-spinner" aria-hidden="true"></span>${result ? 'Refreshing…' : retrying ? 'Retrying…' : 'Retiring…'}`}
+    primaryClass=${result ? 'primary' : 'primary danger'}
+    submitDisabled=${!result && selectedCandidates.length === 0}
+    hideCancel=${!!result}
+    cancelID="retire-preview-cancel"
+    submitID="retire-preview-submit"
+    onClose=${close}
+    onSubmit=${submit}
+    confirmDiscard=${confirmDiscard}
+  >
+    <p class="cleanup-hint" id="retire-preview-hint">${hint}</p>
+    ${result ? html`<${BulkRetireResult} descriptor=${descriptor} response=${result} />` : html`
+      <div class="cleanup-toolbar">
+        <button type="button" id="retire-preview-select-all" disabled=${busy || locked} onClick=${() => updateVisible(true)}>select all</button>
+        <button type="button" id="retire-preview-select-none" disabled=${busy || locked} onClick=${() => updateVisible(false)}>select none</button>
+        <input
+          type="search"
+          id="retire-preview-search"
+          placeholder="filter title / id…"
+          aria-label="Filter agents"
+          value=${query}
+          disabled=${busy || locked}
+          onInput=${(event) => setQuery(event.currentTarget.value)}
+        />
+        <span class="cleanup-count" id="retire-preview-count">${selectedCandidates.length} of ${candidates.length} selected</span>
+      </div>
+      <div class="cleanup-list" id="retire-preview-list">
+        ${visibleCandidates.length ? visibleCandidates.map((candidate) => html`
+          <div class="cleanup-row" key=${candidate.conv_id}><label>
+            <input
+              type="checkbox"
+              data-conv=${candidate.conv_id}
+              checked=${selected.has(candidate.conv_id)}
+              disabled=${busy || locked}
+              onChange=${(event) => updateCandidate(candidate, event.currentTarget.checked)}
+            />
+            <span class="title">${candidate.title || '(untitled)'}</span>
+            <span class="id">${candidate.conv_id.slice(0, 8)}</span>
+            <span class="cleanup-badge">${candidate.status}</span>
+            ${candidate.role ? html`<span class="cleanup-badge">${candidate.role}</span>` : null}
+          </label></div>
+        `) : html`<div class="cleanup-empty">no agents match the filter</div>`}
+      </div>
+      <label class="delete-agent-wt" id="retire-preview-shutdown-row">
+        <input
+          type="checkbox"
+          id="retire-preview-shutdown"
+          checked=${shutdown}
+          disabled=${busy || locked}
+          onChange=${changeShutdown}
+        />
+        <span><${Words} plain="Also shut down running sessions" wizard="Also slumber running familiars" />
+          <span class="wt-note">soft-exits each tmux pane (/exit) — conversations are kept either way</span>
+        </span>
+      </label>
+      <label class=${`delete-agent-wt${!shutdown ? ' disabled' : ''}`} id="retire-preview-wt-row">
+        <input
+          type="checkbox"
+          id="retire-preview-wt"
+          checked=${deleteWorktrees}
+          disabled=${busy || locked || !shutdown}
+          onChange=${(event) => {
+            if (!busy && !locked && shutdown) setDeleteWorktrees(event.currentTarget.checked);
+          }}
+        />
+        <span><${Words} plain="Also delete each agent’s git worktree + branch" wizard="Also dissolve each familiar’s git worktree + branch" />
+          <span class="wt-note">main/shared/no-worktree agents are kept by the daemon</span>
+        </span>
+      </label>
+    `}
+  </${TransactionDialogFrame}>`;
 }
 
 function worktreePath(worktree) {
@@ -525,6 +784,15 @@ export function TransactionDialogApp({ state, actions, confirmDiscard }) {
   }
   if (current.descriptor.kind === 'delete-agent') {
     return html`<${DeleteAgentDialog}
+      key=${current.key}
+      descriptor=${current.descriptor}
+      actions=${actions}
+      confirmDiscard=${confirmDiscard}
+    />`;
+  }
+  if (current.descriptor.kind === 'retire-group-preview'
+    || current.descriptor.kind === 'retire-ungrouped-preview') {
+    return html`<${BulkRetireDialog}
       key=${current.key}
       descriptor=${current.descriptor}
       actions=${actions}
