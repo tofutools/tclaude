@@ -114,16 +114,35 @@ test('Preact cleanup owner preserves safety, full-bucket toggles, and visible se
   await flush(harness);
 });
 
-test('rescan reconciles touched choices by exact path while accepting fresh defaults and classifications', async (t) => {
+test('rescan preserves present exact-path choices but forgets them after successful absence', async (t) => {
   let scans = 0;
   const opened = await mountCleanup(t, {
     scan: async () => {
       scans += 1;
       if (scans === 1) return initialScan();
-      return {
+      if (scans === 2) return {
         repoRoots: ['/repo'],
         worktrees: [
           worktree('/repo-orphan', { category: 'live', checked: true, reason: 'in use by a running agent' }),
+          worktree('/repo-agent', { category: 'retired', checked: true }),
+          worktree('/repo-orphan-child', { category: 'orphan', checked: false }),
+        ],
+      };
+      if (scans === 3) return {
+        repoRoots: ['/repo'],
+        worktrees: [
+          worktree('/repo-agent', { category: 'retired', checked: true }),
+          worktree('/repo-orphan-child', { category: 'orphan', checked: false }),
+        ],
+      };
+      return {
+        repoRoots: ['/repo'],
+        worktrees: [
+          worktree('/repo-orphan', {
+            category: 'agent', checked: false, dirty: true,
+            agents: [{ title: 'Replacement', conv_id: 'replacement-conv' }],
+            reason: 'belongs to agent Replacement — deleting breaks its resume',
+          }),
           worktree('/repo-agent', { category: 'retired', checked: true }),
           worktree('/repo-orphan-child', { category: 'orphan', checked: false }),
         ],
@@ -145,6 +164,54 @@ test('rescan reconciles touched choices by exact path while accepting fresh defa
     'an untouched row accepts the fresh server smart default');
   assert.equal(isChecked(host, '/repo-orphan-child'), false,
     'a similar but new path does not inherit a touched prefix choice');
+
+  orphan.checked = true;
+  await harness.act(() => harness.fireEvent(orphan, 'change'));
+  host.querySelector('#worktree-cleanup-rescan').click();
+  await flush(harness);
+  assert.equal(checkbox(host, '/repo-orphan'), null,
+    'a successful rescan can establish that the touched path is absent');
+
+  host.querySelector('#worktree-cleanup-rescan').click();
+  await flush(harness);
+  assert.equal(isChecked(host, '/repo-orphan'), false,
+    'a replacement at the same path uses its new safe server default');
+  const replacement = host.querySelector('[data-path="/repo-orphan"]');
+  assert.match(replacement.querySelector('.cat-agent').textContent, /agent/);
+  assert.match(replacement.querySelector('.dirty').textContent, /uncommitted/);
+  assert.match(replacement.textContent, /Replacement/,
+    'replacement classification and safety metadata come from the fresh scan');
+  host.querySelector('#worktree-cleanup-cancel').click();
+  await pending;
+  await flush(harness);
+});
+
+test('failed rescan does not erase a touched choice', async (t) => {
+  let scans = 0;
+  const opened = await mountCleanup(t, {
+    scan: async () => {
+      scans += 1;
+      if (scans === 1) return initialScan();
+      if (scans === 2) throw new Error('temporary scan failure');
+      return {
+        repoRoots: ['/repo'],
+        worktrees: [worktree('/repo-orphan', { checked: true })],
+      };
+    },
+  });
+  const { harness, host, pending } = opened;
+  const orphan = checkbox(host, '/repo-orphan');
+  orphan.checked = false;
+  await harness.act(() => harness.fireEvent(orphan, 'change'));
+
+  host.querySelector('#worktree-cleanup-rescan').click();
+  await flush(harness);
+  assert.match(host.querySelector('#worktree-cleanup-error').textContent, /temporary scan failure/);
+
+  host.querySelector('#worktree-cleanup-rescan').click();
+  await flush(harness);
+  assert.equal(isChecked(host, '/repo-orphan'), false,
+    'failure did not establish absence, so the exact touched choice survives');
   host.querySelector('#worktree-cleanup-cancel').click();
   await pending;
   await flush(harness);
