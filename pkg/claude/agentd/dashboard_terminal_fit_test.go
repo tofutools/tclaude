@@ -10,7 +10,9 @@ import (
 // TestDashboardTerminalFitContainerWiring is a narrow source guard for the
 // base terminal rules, not a CSS-cascade simulator. FitAddon measures .xterm's
 // direct parent, so an inner 100%-height box must separate it from the padded
-// visual host on both web-terminal surfaces.
+// visual host on both web-terminal surfaces. The dashboard app shell must also
+// inherit the document's scrollbar-adjusted height so horizontal page overflow
+// reduces the space FitAddon receives without any JS scrollbar arithmetic.
 func TestDashboardTerminalFitContainerWiring(t *testing.T) {
 	t.Parallel()
 
@@ -56,8 +58,15 @@ func TestDashboardTerminalFitContainerWiring(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	rootHeightRule := regexp.MustCompile(`html:has\(#tab-terminals\.active\)\s*\{([^}]*)\}`).FindStringSubmatch(string(dashboardCSS))
+	if rootHeightRule == nil || !strings.Contains(rootHeightRule[1], "height: 100%") || !strings.Contains(rootHeightRule[1], "scrollbar-color: transparent transparent") {
+		t.Error("terminal document root must expose its scrollbar-adjusted content height while retaining transparent scrollbar chrome")
+	}
+	bodyHeightRule := regexp.MustCompile(`body:has\(#tab-terminals\.active\)\s*\{([^}]*)\}`).FindStringSubmatch(string(dashboardCSS))
+	if bodyHeightRule == nil || !strings.Contains(bodyHeightRule[1], "height: 100%") || strings.Contains(bodyHeightRule[1], "100vh") {
+		t.Error("terminal app shell must inherit the root content height instead of using viewport units")
+	}
 	for _, want := range []string{
-		"html:has(#tab-terminals.active) { scrollbar-color: transparent transparent; }",
 		"html:has(#tab-terminals.active) body { scrollbar-color: auto; }",
 		"html:has(#tab-terminals.active)::-webkit-scrollbar-button,",
 		"background: transparent; border-color: transparent; color: transparent;",
