@@ -265,6 +265,63 @@ test('stacked Links focus, Escape and live snapshot refresh are deterministic', 
   await mounted.cleanup();
 });
 
+test('Links create dirty baseline survives live group membership changes', async (t) => {
+  let discardChecks = 0;
+  let allowDiscard = false;
+  const mounted = await mountLinks(t, {
+    confirmDiscard: async () => {
+      discardChecks += 1;
+      return allowDiscard;
+    },
+  });
+  const { harness, host, state } = mounted;
+  const escape = () => {
+    const event = new harness.window.Event('keydown', { bubbles: true });
+    Object.defineProperty(event, 'key', { value: 'Escape' });
+    harness.document.dispatchEvent(event);
+  };
+
+  await harness.act(() => state.openCreate());
+  await harness.act(() => Promise.resolve());
+  const from = host.querySelector('#link-modal-from');
+  const to = host.querySelector('#link-modal-to');
+  // The minimal DOM harness does not derive select.value from Preact's initial
+  // controlled value until its first change event, so pin the default tuple by
+  // the ordered options from which LinkEditor selects alpha and then beta.
+  assert.equal(from.options[0].value, 'alpha');
+  assert.equal(to.options[1].value, 'beta');
+  await choose(harness, from, 'beta');
+  await choose(harness, to, 'gamma');
+
+  await harness.act(() => state.publish({ ...sample, groups: [{ name: 'beta' }, { name: 'gamma' }] }));
+  await harness.act(() => escape());
+  await harness.act(() => Promise.resolve());
+  assert.equal(discardChecks, 1, 'a publish cannot make a changed draft appear clean');
+  assert.ok(host.querySelector('#link-modal'), 'denied discard retains the editor');
+  assert.equal(host.querySelector('#link-modal-from'), from, 'publish retains the controlled From element');
+  assert.equal(host.querySelector('#link-modal-to'), to, 'publish retains the controlled To element');
+  assert.equal(from.value, 'beta');
+  assert.equal(to.value, 'gamma');
+
+  allowDiscard = true;
+  await harness.act(() => escape());
+  await harness.act(() => Promise.resolve());
+  assert.equal(discardChecks, 2);
+  assert.equal(host.querySelector('#link-modal'), null);
+
+  // The inverse remains clean: an untouched alpha→beta draft does not start
+  // prompting just because a publish removes alpha from the live group list.
+  await harness.act(() => state.publish(sample));
+  await harness.act(() => state.openCreate());
+  await harness.act(() => Promise.resolve());
+  await harness.act(() => state.publish({ ...sample, groups: [{ name: 'beta' }, { name: 'gamma' }] }));
+  await harness.act(() => escape());
+  await harness.act(() => Promise.resolve());
+  assert.equal(discardChecks, 2, 'a publish cannot make an untouched draft appear dirty');
+  assert.equal(host.querySelector('#link-modal'), null);
+  await mounted.cleanup();
+});
+
 test('plain Links actions preserve mutation payloads, refresh and deletion feedback', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createLinksState }, { createLinksActions }] = await Promise.all([
