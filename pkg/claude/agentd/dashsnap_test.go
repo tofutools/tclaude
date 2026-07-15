@@ -2331,11 +2331,16 @@ return new Promise(function(resolve, reject){
     var clone = card.querySelector('.dock-card-menu-item[data-dock-act="clone-item"]');
     if (!clone) { reject(new Error('card-clone FAIL: no Clone menu item')); return; }
     clone.click();
-    var modal = document.querySelector('#clone-modal.show');
-    if (!modal) { reject(new Error('card-clone FAIL: clone dialog did not open')); return; }
-    var name = document.querySelector('#clone-modal-name');
-    if (!name || !name.value) { reject(new Error('card-clone FAIL: name not pre-filled')); return; }
-    resolve();
+    // The action-dialog host reconciles the published signal on Preact's next
+    // turn. Wait for that paint instead of asserting in the click stack (the
+    // retired imperative modal used to mutate the DOM synchronously here).
+    requestAnimationFrame(function(){
+      var modal = document.querySelector('#clone-modal.show');
+      if (!modal) { reject(new Error('card-clone FAIL: clone dialog did not open')); return; }
+      var name = document.querySelector('#clone-modal-name');
+      if (!name || !name.value) { reject(new Error('card-clone FAIL: name not pre-filled')); return; }
+      resolve();
+    });
   }, 200);
 });
 `
