@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  NO_EXTERNAL_CHANGE, attachExternalReview, keepExternalChange, reconcileExternalChange,
+  CHANGE_SUMMARY_LIMITS, NO_EXTERNAL_CHANGE, attachExternalReview, keepExternalChange, reconcileExternalChange,
   summarizeTemplateChange, templateHeadFromEditView, templateHeadSignature,
 } from '../dashboard/js/process-external-change.js';
 
@@ -108,4 +108,77 @@ test('graph and canonical-source review is concise and attaches only to its requ
   assert.ok(attachExternalReview(latest, after, before).review);
   const stale = { ...after, currentRef: 'release@sha256:old', sourceHash: 'source-old' };
   assert.equal(attachExternalReview(latest, stale, before), latest, 'stale response cannot replace the latest review target');
+});
+
+test('a local edge/start save followed by a canonical source/layout-only save has no false semantic change', () => {
+  const before = {
+    template: {
+      id: 'release', start: 'stale-start',
+      nodes: {
+        start: { type: 'start', next: { pass: 'stale-target' } },
+        done: { type: 'end' },
+      },
+    },
+    edges: [
+      { from: '', outcome: 'start', to: 'start' },
+      { from: 'start', outcome: 'pass', to: 'done' },
+    ],
+    layout: { nodes: { start: { x: 10, y: 10 } } },
+  };
+  const after = {
+    template: {
+      id: 'release', start: 'start',
+      nodes: {
+        start: { type: 'start', next: { pass: 'done' } },
+        done: { type: 'end' },
+      },
+    },
+    edges: structuredClone(before.edges),
+    layout: { nodes: { start: { x: 200, y: 300 } } },
+    source: 'id: release\nstart: start\n',
+  };
+  const summary = summarizeTemplateChange(before, after);
+  assert.equal(summary.metadataChanged, false);
+  assert.equal(summary.changedNodeCount, 0);
+  assert.equal(summary.addedEdges, 0);
+  assert.equal(summary.removedEdges, 0);
+
+  const topologyChange = summarizeTemplateChange(after, {
+    ...after,
+    template: { ...after.template, start: 'done' },
+    edges: [
+      { from: '', outcome: 'start', to: 'done' },
+      { from: 'start', outcome: 'pass', to: 'done' },
+    ],
+  });
+  assert.equal(topologyChange.metadataChanged, false, 'derived start stays out of settings comparison');
+  assert.equal(topologyChange.addedEdges, 1, 'the new exact start pseudo-edge is reported');
+  assert.equal(topologyChange.removedEdges, 1, 'the replaced exact start pseudo-edge is reported');
+});
+
+test('change summaries retain exact totals while bounding node ids and source previews', () => {
+  const count = CHANGE_SUMMARY_LIMITS.nodeIDs + 9;
+  const afterNodes = Object.fromEntries(Array.from({ length: count }, (_, index) => [`added-${String(index).padStart(3, '0')}`, { type: 'task' }]));
+  const longASCII = 'x'.repeat(CHANGE_SUMMARY_LIMITS.sourceCharactersPerLine + 100);
+  const longUTF8 = '界'.repeat(CHANGE_SUMMARY_LIMITS.sourceBytesPerLine);
+  const changedLines = Array.from({ length: CHANGE_SUMMARY_LIMITS.sourceLinesPerSide + 3 }, (_, index) => `${index}-${index % 2 ? longASCII : longUTF8}`);
+  const summary = summarizeTemplateChange(
+    { template: { id: 'bounded', nodes: {} }, edges: [], source: 'id: bounded\nold\n' },
+    { template: { id: 'bounded', nodes: afterNodes }, edges: [], source: `id: bounded\n${changedLines.join('\n')}\n` },
+  );
+
+  assert.equal(summary.addedNodeCount, count);
+  assert.equal(summary.addedNodes.length, CHANGE_SUMMARY_LIMITS.nodeIDs);
+  assert.equal(summary.addedNodesTruncated, true);
+  assert.ok(summary.source.before.length <= CHANGE_SUMMARY_LIMITS.sourceLinesPerSide);
+  assert.ok(summary.source.after.length <= CHANGE_SUMMARY_LIMITS.sourceLinesPerSide);
+  assert.equal(summary.source.truncated, true);
+  assert.equal(summary.source.truncation.lines, true);
+  assert.equal(summary.source.truncation.characters, true);
+  assert.equal(summary.source.truncation.bytes, true);
+  const preview = [...summary.source.before, ...summary.source.after];
+  assert.ok(preview.reduce((total, line) => total + line.length, 0) <= CHANGE_SUMMARY_LIMITS.sourceCharacters);
+  assert.ok(preview.reduce((total, line) => total + new TextEncoder().encode(line).length, 0) <= CHANGE_SUMMARY_LIMITS.sourceBytes);
+  assert.ok(preview.every((line) => line.length <= CHANGE_SUMMARY_LIMITS.sourceCharactersPerLine));
+  assert.ok(preview.every((line) => new TextEncoder().encode(line).length <= CHANGE_SUMMARY_LIMITS.sourceBytesPerLine));
 });

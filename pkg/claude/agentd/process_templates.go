@@ -62,6 +62,8 @@ type processTemplateEditView struct {
 	SemanticHash  string                     `json:"semanticHash,omitempty"`
 	CurrentRef    string                     `json:"currentRef,omitempty"`
 	Source        string                     `json:"source,omitempty"`
+	Actor         state.ActorRef             `json:"actor,omitempty"`
+	AuthoredAt    *time.Time                 `json:"authoredAt,omitempty"`
 	Diagnostics   []processEditDiag          `json:"diagnostics,omitempty"`
 	Authorship    []store.TemplateAuthorship `json:"authorship,omitempty"`
 	layoutPresent bool
@@ -176,25 +178,10 @@ func handleProcessTemplateHeads(w http.ResponseWriter, r *http.Request) {
 	}
 	views := make([]processTemplateHeadView, 0, len(heads))
 	for _, head := range heads {
-		view := processTemplateHeadView{ID: head.ID, Ref: head.Ref, SourceHash: head.SourceHash}
-		snapshot, snapshotErr := fs.GetTemplateAuthoringSnapshot(r.Context(), head.Ref)
-		if snapshotErr != nil {
-			writeError(w, http.StatusInternalServerError, "process_template_head", snapshotErr.Error())
-			return
-		}
-		// One semantic ref may carry several layout/source-only generations.
-		// Match both fields so this actor describes the polled committed head,
-		// not merely the last event attached to the semantic version.
-		for i := len(snapshot.Authorship) - 1; i >= 0; i-- {
-			authorship := snapshot.Authorship[i]
-			if authorship.Ref != head.Ref || authorship.SourceHash != head.SourceHash {
-				continue
-			}
-			view.Actor = authorship.Actor
-			view.AuthoredAt = &authorship.AuthoredAt
-			break
-		}
-		views = append(views, view)
+		views = append(views, processTemplateHeadView{
+			ID: head.ID, Ref: head.Ref, SourceHash: head.SourceHash,
+			Actor: head.Actor, AuthoredAt: head.AuthoredAt,
+		})
 	}
 	writeProcessJSON(w, http.StatusOK, map[string]any{"heads": views})
 }
@@ -220,7 +207,21 @@ func handleProcessTemplateGet(w http.ResponseWriter, r *http.Request, fs *store.
 	if _, ok := requirePermission(w, r, PermProcessTemplatesRead); !ok {
 		return
 	}
-	record, err := resolveProcessTemplateVersion(r, fs, r.PathValue("id"), r.URL.Query().Get("version"))
+	version := r.URL.Query().Get("version")
+	includeAuthorship := r.URL.Query().Get("authorship") != "omit"
+	var exactHead *store.TemplateHead
+	var record store.TemplateRecord
+	var err error
+	if !includeAuthorship && version == "" {
+		head, headErr := fs.GetTemplateHeadGeneration(r.Context(), r.PathValue("id"))
+		if headErr == nil {
+			exactHead = &head
+			record = store.TemplateRecord{ID: head.ID, Ref: head.Ref}
+		}
+		err = headErr
+	} else {
+		record, err = resolveProcessTemplateVersion(r, fs, r.PathValue("id"), version)
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		http.NotFound(w, r)
 		return
@@ -229,10 +230,17 @@ func handleProcessTemplateGet(w http.ResponseWriter, r *http.Request, fs *store.
 		writeError(w, http.StatusBadRequest, "process_template_version", err.Error())
 		return
 	}
-	view, err := loadProcessTemplateEditView(r, fs, record.Ref)
+	view, err := loadProcessTemplateEditView(r, fs, record.Ref, includeAuthorship)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "process_template", err.Error())
 		return
+	}
+	// The source read and head observation use separate short locks so writers
+	// are not blocked while YAML is parsed. Publish attribution only when the
+	// returned source still matches the exact observed ref+sourceHash pair.
+	if exactHead != nil && view.CurrentRef == exactHead.Ref && view.SourceHash == exactHead.SourceHash {
+		view.Actor = exactHead.Actor
+		view.AuthoredAt = exactHead.AuthoredAt
 	}
 	writeProcessJSON(w, http.StatusOK, view)
 }
@@ -449,12 +457,23 @@ func assembleProcessEditModel(body *processTemplateEditView) error {
 	return nil
 }
 
-func loadProcessTemplateEditView(r *http.Request, fs *store.FS, ref string) (*processTemplateEditView, error) {
-	snapshot, err := fs.GetTemplateAuthoringSnapshot(r.Context(), ref)
-	if err != nil {
-		return nil, err
+func loadProcessTemplateEditView(r *http.Request, fs *store.FS, ref string, includeAuthorship bool) (*processTemplateEditView, error) {
+	var source []byte
+	var authorship []store.TemplateAuthorship
+	if includeAuthorship {
+		snapshot, err := fs.GetTemplateAuthoringSnapshot(r.Context(), ref)
+		if err != nil {
+			return nil, err
+		}
+		source, authorship = snapshot.Source, snapshot.Authorship
+	} else {
+		var err error
+		source, err = fs.GetTemplateSource(r.Context(), ref)
+		if err != nil {
+			return nil, err
+		}
 	}
-	parsed, err := model.Parse(snapshot.Source)
+	parsed, err := model.Parse(source)
 	if err != nil {
 		return nil, err
 	}
@@ -467,9 +486,9 @@ func loadProcessTemplateEditView(r *http.Request, fs *store.FS, ref string) (*pr
 		SourceHash:   parsed.SourceHash,
 		SemanticHash: parsed.SemanticHash,
 		CurrentRef:   ref,
-		Source:       string(snapshot.Source),
+		Source:       string(source),
 		Diagnostics:  diagnosticsForEditor(parsed.Diagnostics, parsed.Template),
-		Authorship:   snapshot.Authorship,
+		Authorship:   authorship,
 	}, nil
 }
 

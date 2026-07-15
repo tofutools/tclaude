@@ -51,6 +51,7 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 // Custom drag payload MIME (dock-dnd idiom): withholding text/plain keeps
 // every other document-level DnD feature out of a palette drag.
 const PALETTE_MIME = 'application/x-tclaude-process-palette';
+const EXTERNAL_REVIEW_TIMEOUT_MS = 15_000;
 
 export function isProcessEditorFormControl(target) {
   const tag = String(target?.tagName || '').toUpperCase();
@@ -59,6 +60,16 @@ export function isProcessEditorFormControl(target) {
 
 function externalInteractionPending(editor) {
   return !!(editor.externalDecisionPending || editor.externalReloadPending);
+}
+
+function cancelExternalReview(editor) {
+  const request = editor.externalReviewRequest;
+  if (!request) return false;
+  editor.externalReviewRequest = null;
+  editor.externalReviewPending = false;
+  editor.externalReviewSeq += 1;
+  request.controller.abort();
+  return true;
 }
 
 function scribeSelectionIdentity(selection) {
@@ -84,9 +95,10 @@ function shortHash(hash) {
   return hash ? hash.slice(0, 8) : '';
 }
 
-async function fetchEditView(id, version) {
-  const query = version ? `?version=${encodeURIComponent(version)}` : '';
-  const response = await fetch(`/v1/process/templates/${encodeURIComponent(id)}${query}`);
+async function fetchEditView(id, version, { signal } = {}) {
+  const query = new URLSearchParams({ authorship: 'omit' });
+  if (version) query.set('version', version);
+  const response = await fetch(`/v1/process/templates/${encodeURIComponent(id)}?${query}`, { signal });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.message || body.error || `${response.status} ${response.statusText}`);
   return body;
@@ -114,6 +126,7 @@ export class ProcessTemplateEditor {
     this.externalReloadSeq = 0;
     this.externalReviewSeq = 0;
     this.externalReviewPending = false;
+    this.externalReviewRequest = null;
     this.externalChange = NO_EXTERNAL_CHANGE;
     this.abort = new AbortController();
     this.buildDOM();
@@ -293,9 +306,8 @@ export class ProcessTemplateEditor {
   }
 
   destroy() {
-    // Invalidate any delayed save completion before tearing down its DOM and
-    // callbacks. Fetch is not tied to the event-listener AbortController, so
-    // the request generation is the authoritative stale-response guard.
+    // Invalidate delayed completions and cancel the bounded review request
+    // before tearing down the editor's DOM and callbacks.
     this.saveSeq += 1;
     this.externalReloadSeq += 1;
     this.externalReviewSeq += 1;
@@ -303,6 +315,7 @@ export class ProcessTemplateEditor {
     this.externalReloadPending = false;
     this.externalDecisionPending = false;
     this.externalReviewPending = false;
+    cancelExternalReview(this);
     this.abort.abort();
     this.nodeChooserDispose?.();
     this.nodeChooserDispose = null;
@@ -400,18 +413,26 @@ export class ProcessTemplateEditor {
     const summary = this.externalChange.review?.summary;
     if (summary) {
       const parts = [];
-      if (summary.addedNodes.length) parts.push(`+${summary.addedNodes.length} node${summary.addedNodes.length === 1 ? '' : 's'} (${summary.addedNodes.join(', ')})`);
-      if (summary.removedNodes.length) parts.push(`−${summary.removedNodes.length} node${summary.removedNodes.length === 1 ? '' : 's'} (${summary.removedNodes.join(', ')})`);
-      if (summary.changedNodes.length) parts.push(`${summary.changedNodes.length} changed node${summary.changedNodes.length === 1 ? '' : 's'} (${summary.changedNodes.join(', ')})`);
+      const nodePart = (prefix, label, ids, count, truncated) => {
+        if (!count) return;
+        const omitted = Math.max(0, count - ids.length);
+        const listed = [...ids, ...(truncated ? [`… ${omitted} more IDs omitted`] : [])].join(', ');
+        parts.push(`${prefix}${count} ${label}${count === 1 ? '' : 's'} (${listed})`);
+      };
+      nodePart('+', 'node', summary.addedNodes, summary.addedNodeCount ?? summary.addedNodes.length, summary.addedNodesTruncated);
+      nodePart('−', 'node', summary.removedNodes, summary.removedNodeCount ?? summary.removedNodes.length, summary.removedNodesTruncated);
+      nodePart('', 'changed node', summary.changedNodes, summary.changedNodeCount ?? summary.changedNodes.length, summary.changedNodesTruncated);
       if (summary.addedEdges) parts.push(`+${summary.addedEdges} edge${summary.addedEdges === 1 ? '' : 's'}`);
       if (summary.removedEdges) parts.push(`−${summary.removedEdges} edge${summary.removedEdges === 1 ? '' : 's'}`);
       if (summary.metadataChanged) parts.push('template settings changed');
       this.externalGraphSummary.textContent = parts.length ? `Graph: ${parts.join(' · ')}` : 'Graph: no semantic changes (layout/source only)';
       const source = summary.source;
+      const sourceLimits = source?.truncation ? Object.entries(source.truncation)
+        .filter(([, clipped]) => clipped).map(([limit]) => limit === 'bytes' ? 'UTF-8 bytes' : limit) : [];
       this.externalSourceSummary.textContent = source
         ? [`Source near line ${source.firstLine}: −${source.removedLines} / +${source.addedLines}`,
           ...source.before.map((line) => `− ${line}`), ...source.after.map((line) => `+ ${line}`),
-          ...(source.truncated ? ['… concise preview truncated'] : []),
+          ...(source.truncated ? [`… source preview truncated at ${sourceLimits.join(', ') || 'configured'} limit${sourceLimits.length === 1 ? '' : 's'}`] : []),
           ...(this.externalChange.kind === 'dirty' ? ['Keep editing preserves this draft; Save still uses CAS and will stop on a 409 conflict.'] : []),
         ].join('\n')
         : (this.externalChange.kind === 'dirty'
@@ -430,6 +451,8 @@ export class ProcessTemplateEditor {
 
   observeExternalHead({ ref: currentRef, sourceHash: currentSourceHash, actor, authoredAt } = {}) {
     const previous = this.externalChange;
+    const observedKey = currentRef && currentSourceHash ? `${currentRef}\n${currentSourceHash}` : '';
+    if (this.externalReviewRequest && this.externalReviewRequest.key !== observedKey) cancelExternalReview(this);
     this.externalChange = reconcileExternalChange(this.externalChange, {
       loadedRef: this.model.currentRef, loadedSourceHash: this.model.sourceHash,
       currentRef, currentSourceHash, actor, authoredAt, dirty: this.dirty,
@@ -450,38 +473,70 @@ export class ProcessTemplateEditor {
     return true;
   }
 
-  async loadExternalReview() {
+  loadExternalReview() {
     const target = { ref: this.externalChange.ref, sourceHash: this.externalChange.sourceHash };
-    if (!target.ref || !target.sourceHash || this.abort.signal.aborted) return false;
+    if (!target.ref || !target.sourceHash || this.abort.signal.aborted) return Promise.resolve(false);
+    const key = `${target.ref}\n${target.sourceHash}`;
+    const active = this.externalReviewRequest;
+    if (active?.key === key && !active.controller.signal.aborted) return active.promise;
+    if (active) cancelExternalReview(this);
+
     const model = this.model; const loadedRef = model.currentRef; const loadedSourceHash = model.sourceHash;
     const requestSeq = ++this.externalReviewSeq;
+    const controller = new AbortController();
+    const cancelForTeardown = () => controller.abort();
+    this.abort.signal.addEventListener('abort', cancelForTeardown, { once: true });
+    const configuredTimeout = Number(this.options.externalReviewTimeoutMs);
+    const timeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0
+      ? Math.min(configuredTimeout, EXTERNAL_REVIEW_TIMEOUT_MS) : EXTERNAL_REVIEW_TIMEOUT_MS;
+    const request = { key, controller, promise: null };
+    this.externalReviewRequest = request;
+    const timeout = setTimeout(() => {
+      if (request === this.externalReviewRequest) {
+        cancelExternalReview(this);
+        this.renderExternalChange();
+      } else {
+        controller.abort();
+      }
+    }, timeoutMs);
     this.externalReviewPending = true;
     this.renderExternalChange();
-    try {
-      const view = await fetchEditView(model.template.id);
-      if (requestSeq !== this.externalReviewSeq || this.abort.signal.aborted || this.model !== model
-          || model.currentRef !== loadedRef || model.sourceHash !== loadedSourceHash) return false;
-      // The head poll owns ordering. A GET for an older/newer generation may
-      // finish after another save; never let that response replace or clear
-      // the polled target. The next bounded poll will coalesce to the latest.
-      if (!sameTemplateGeneration(target, view)) return false;
-      const head = templateHeadFromEditView(view);
-      this.externalChange = reconcileExternalChange(this.externalChange, {
-        loadedRef, loadedSourceHash, currentRef: head.ref, currentSourceHash: head.sourceHash,
-        actor: head.actor, authoredAt: head.authoredAt, dirty: this.dirty,
-      });
-      if (this.externalChange.kind !== 'clean' && this.externalChange.kind !== 'dirty') return false;
-      this.externalChange = attachExternalReview(this.externalChange, view, this.loadedView);
-      return !!this.externalChange.review;
-    } catch (error) {
-      if (requestSeq === this.externalReviewSeq && !this.abort.signal.aborted) this.status(`Change review failed: ${error.message}`, true);
-      return false;
-    } finally {
-      if (requestSeq === this.externalReviewSeq) {
-        this.externalReviewPending = false;
-        this.renderExternalChange();
+    request.promise = (async () => {
+      try {
+        const view = await fetchEditView(model.template.id, undefined, { signal: controller.signal });
+        if (request !== this.externalReviewRequest || requestSeq !== this.externalReviewSeq
+            || controller.signal.aborted || this.abort.signal.aborted || this.model !== model
+            || model.currentRef !== loadedRef || model.sourceHash !== loadedSourceHash
+            || !sameTemplateGeneration(target, this.externalChange)) return false;
+        // The head poll owns ordering. A GET for an older/newer generation may
+        // finish after another save; never let that response replace or clear
+        // the polled target. The next bounded poll will coalesce to the latest.
+        if (!sameTemplateGeneration(target, view)) return false;
+        const head = templateHeadFromEditView(view);
+        this.externalChange = reconcileExternalChange(this.externalChange, {
+          loadedRef, loadedSourceHash, currentRef: head.ref, currentSourceHash: head.sourceHash,
+          actor: head.actor, authoredAt: head.authoredAt, dirty: this.dirty,
+        });
+        if (this.externalChange.kind !== 'clean' && this.externalChange.kind !== 'dirty') return false;
+        this.externalChange = attachExternalReview(this.externalChange, view, this.loadedView);
+        return !!this.externalChange.review;
+      } catch (error) {
+        if (request === this.externalReviewRequest && requestSeq === this.externalReviewSeq
+            && !controller.signal.aborted && !this.abort.signal.aborted) {
+          this.status(`Change review failed: ${error.message}`, true);
+        }
+        return false;
+      } finally {
+        clearTimeout(timeout);
+        this.abort.signal.removeEventListener('abort', cancelForTeardown);
+        if (request === this.externalReviewRequest && requestSeq === this.externalReviewSeq) {
+          this.externalReviewRequest = null;
+          this.externalReviewPending = false;
+          this.renderExternalChange();
+        }
       }
-    }
+    })();
+    return request.promise;
   }
 
   keepExternalChange() {

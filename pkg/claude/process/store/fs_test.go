@@ -107,6 +107,42 @@ func TestListTemplateHeadsObservesPublishedGenerationAndMigratesLegacyPointer(t 
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"version":1,"ref":"`+betaRecord.Ref+`","sourceHash":"`+betaParsed.SourceHash+`"}`, string(migrated))
 
+	// Structured v1 pointers remain readable and deliberately unattributed;
+	// observing one does not scan history or invent a migration actor.
+	require.NoError(t, os.WriteFile(headPath, []byte(`{"version":1,"ref":"`+betaRecord.Ref+`","sourceHash":"`+betaParsed.SourceHash+`"}`), 0o444))
+	heads, err = fs.ListTemplateHeads(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, store.TemplateHead{ID: "beta", Ref: betaRecord.Ref, SourceHash: betaParsed.SourceHash}, heads[1])
+
+	// Attribution is optional index metadata. If it is malformed while the
+	// generation fields remain valid, polling keeps the exact generation and
+	// omits attribution rather than falling back to authorship history.
+	attributionPath := filepath.Join(root, "templates", "beta", "head-attribution")
+	require.NoError(t, os.WriteFile(
+		attributionPath,
+		[]byte(`{"version":1,"ref":"`+betaRecord.Ref+`","sourceHash":"`+betaParsed.SourceHash+`","actor":"invalid","authoredAt":"not-a-time"}`), 0o644,
+	))
+	heads, err = fs.ListTemplateHeads(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, store.TemplateHead{ID: "beta", Ref: betaRecord.Ref, SourceHash: betaParsed.SourceHash}, heads[1])
+
+	for name, sidecar := range map[string]string{
+		"missing":   "",
+		"stale":     `{"version":1,"ref":"beta@sha256:` + strings.Repeat("0", 64) + `","sourceHash":"` + betaParsed.SourceHash + `","actor":"agent:agt_stale","authoredAt":"2026-07-15T08:00:00Z"}`,
+		"oversized": strings.Repeat("x", (4<<10)+1),
+	} {
+		t.Run("optional attribution "+name, func(t *testing.T) {
+			if sidecar == "" {
+				require.NoError(t, os.Remove(attributionPath))
+			} else {
+				require.NoError(t, os.WriteFile(attributionPath, []byte(sidecar), 0o644))
+			}
+			got, listErr := fs.ListTemplateHeads(ctx)
+			require.NoError(t, listErr)
+			assert.Equal(t, store.TemplateHead{ID: "beta", Ref: betaRecord.Ref, SourceHash: betaParsed.SourceHash}, got[1])
+		})
+	}
+
 	// A failed first create can leave directories, but never a committed head
 	// generation that churns the dashboard signature.
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "templates", "orphan", "sha256-dead"), 0o755))
@@ -138,6 +174,22 @@ func TestListTemplateHeadsDetectsSourceOnlyGeneration(t *testing.T) {
 	assert.Equal(t, first.Ref, second.Ref, "layout-only authoring keeps semantic identity")
 	assert.Equal(t, before[0].Ref, after[0].Ref)
 	assert.NotEqual(t, before[0].SourceHash, after[0].SourceHash, "head generation follows the CAS authority")
+}
+
+func TestListTemplateHeadsBoundsPointerReads(t *testing.T) {
+	ctx := t.Context()
+	root := t.TempDir()
+	fs := newStoreAt(t, root)
+	tmpl := storetest.Template()
+	_, err := fs.PutTemplate(ctx, tmpl)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(root, "templates", tmpl.ID, "head"),
+		[]byte(strings.Repeat("x", (4<<10)+1)), 0o644,
+	))
+
+	_, err = fs.ListTemplateHeads(ctx)
+	require.ErrorContains(t, err, "template head exceeds 4096 bytes")
 }
 
 func TestTemplateSourcePreservesAndUpdatesEditorLayoutWithoutChangingRef(t *testing.T) {
@@ -229,6 +281,14 @@ func TestTemplateAuthorshipAppendsAcrossSourceOnlyEdits(t *testing.T) {
 	assert.Equal(t, secondParsed.SourceHash, authorship[1].SourceHash)
 	assert.Equal(t, state.ActorRef("agent:agt_second"), authorship[1].Actor)
 	assert.NotEqual(t, authorship[0].SourceHash, authorship[1].SourceHash)
+	heads, err := fs.ListTemplateHeads(ctx)
+	require.NoError(t, err)
+	require.Len(t, heads, 1)
+	assert.Equal(t, second.Ref, heads[0].Ref)
+	assert.Equal(t, secondParsed.SourceHash, heads[0].SourceHash)
+	assert.Equal(t, state.ActorRef("agent:agt_second"), heads[0].Actor)
+	require.NotNil(t, heads[0].AuthoredAt)
+	assert.Equal(t, authorship[1].AuthoredAt, *heads[0].AuthoredAt)
 }
 
 func TestTemplateAuthorshipIsOptionalForLegacyAndValidatesActor(t *testing.T) {
@@ -243,6 +303,75 @@ func TestTemplateAuthorshipIsOptionalForLegacyAndValidatesActor(t *testing.T) {
 
 	_, err = fs.PutTemplateEditorSourceAttributed(ctx, storetest.Template(), "", "not-an-actor")
 	require.ErrorContains(t, err, "invalid process template authoring actor")
+}
+
+func TestTemplateHeadWriteReadBoundAndOversizeRollback(t *testing.T) {
+	ctx := t.Context()
+	root := t.TempDir()
+	fs := newStoreAt(t, root)
+	now := time.Date(2026, 7, 15, 9, 30, 0, 0, time.UTC)
+	restore := fs.SetNowForTest(func() time.Time { return now })
+	t.Cleanup(restore)
+	tmpl := storetest.Template()
+	source, err := model.CanonicalYAML(tmpl)
+	require.NoError(t, err)
+	parsed, err := model.Parse(source)
+	require.NoError(t, err)
+
+	type attributionWire struct {
+		Version    int            `json:"version"`
+		Ref        string         `json:"ref"`
+		SourceHash string         `json:"sourceHash"`
+		Actor      state.ActorRef `json:"actor"`
+		AuthoredAt time.Time      `json:"authoredAt"`
+	}
+	var boundaryActor state.ActorRef
+	for size := 1; size < 5<<10; size++ {
+		actor := state.ActorRef("human:" + strings.Repeat("a", size))
+		data, marshalErr := json.Marshal(attributionWire{
+			Version: 1, Ref: parsed.Ref, SourceHash: parsed.SourceHash, Actor: actor, AuthoredAt: now,
+		})
+		require.NoError(t, marshalErr)
+		if len(data)+1 == 4<<10 {
+			boundaryActor = actor
+			break
+		}
+	}
+	require.NotEmpty(t, boundaryActor, "fixture must exactly fill the bounded head including newline")
+	first, err := fs.PutTemplateEditorSourceAttributed(ctx, tmpl, "", boundaryActor)
+	require.NoError(t, err)
+	heads, err := fs.ListTemplateHeads(ctx)
+	require.NoError(t, err)
+	require.Len(t, heads, 1)
+	assert.Equal(t, first.SourceHash, heads[0].SourceHash)
+	assert.Equal(t, boundaryActor, heads[0].Actor)
+	// A normal attributed write must leave the authoritative pointer readable
+	// by the previous release, whose strict decoder knows only v1 fields.
+	headData, err := os.ReadFile(filepath.Join(root, "templates", tmpl.ID, "head"))
+	require.NoError(t, err)
+	var legacy struct {
+		Version    int    `json:"version"`
+		Ref        string `json:"ref"`
+		SourceHash string `json:"sourceHash"`
+	}
+	dec := json.NewDecoder(strings.NewReader(string(headData)))
+	dec.DisallowUnknownFields()
+	require.NoError(t, dec.Decode(&legacy))
+	assert.Equal(t, 1, legacy.Version)
+	assert.Equal(t, first.Ref, legacy.Ref)
+	assert.Equal(t, first.SourceHash, legacy.SourceHash)
+
+	now = now.Add(time.Minute)
+	tmpl.Layout = &model.Layout{Nodes: map[string]model.LayoutNode{tmpl.Start: {X: 40, Y: 50}}}
+	_, err = fs.PutTemplateEditorSourceAttributed(ctx, tmpl, first.SourceHash, boundaryActor+"a")
+	require.ErrorContains(t, err, "template head attribution exceeds 4096 bytes")
+	after, err := fs.ListTemplateHeads(ctx)
+	require.NoError(t, err)
+	require.Len(t, after, 1)
+	assert.Equal(t, heads[0], after[0], "oversized attribution must not advance the exact head")
+	authorship, err := fs.ListTemplateAuthorship(ctx, first.Ref)
+	require.NoError(t, err)
+	require.Len(t, authorship, 1, "oversized publication must roll back its appended provenance")
 }
 
 func TestTemplateAuthorshipFailureRollsBackFirstCreate(t *testing.T) {
