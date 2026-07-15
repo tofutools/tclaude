@@ -14,6 +14,7 @@ import (
 // the same string-pin approach as the slop / wizard guards.
 func TestDashboardHTML_HumanReplyWired(t *testing.T) {
 	island := string(mustReadFS(dashboardAssetsFS, "js/mail-island.js"))
+	html := string(mustReadFS(dashboardAssetsFS, "dashboard.html"))
 	must := func(needle, why string) {
 		t.Helper()
 		if !strings.Contains(dashboardAssets, needle) {
@@ -38,23 +39,24 @@ func TestDashboardHTML_HumanReplyWired(t *testing.T) {
 	must("case 'msg-reply':", "row-actions.js handles the msg-reply click")
 	must("openHumanReplyModal({", "the msg-reply handler opens the reply dialog")
 
-	// modal-human-reply.js: the dialog module, its online gate, and the POST.
-	must("export { openHumanReplyModal, bindHumanReplyModal }", "the reply modal module exports its entrypoints")
-	must("function syncReplyOnline(", "the dialog re-derives the sender's live/offline state")
-	must("senderOnline(replyCtx.agent, replyCtx.conv)", "the dialog gates Send on the sender being online in the accepted snapshot")
+	// The controller is the sole launcher seam; the Preact dialog derives its
+	// gate from the accepted snapshot and the action boundary owns the POST.
+	must("export function openHumanReplyModal(context = {})", "the controller exports the reply launcher")
+	must("senderOnline(snapshot, context.agent || '', context.conv || '')", "the dialog gates Send on live snapshot state")
 	must("'/api/human-messages/reply'", "the dialog POSTs to the reply endpoint")
-	must("document.addEventListener('tclaude:snapshot', syncReplyOnline)", "the dialog follows accepted snapshots while open")
-	must("document.removeEventListener('tclaude:snapshot', syncReplyOnline)", "the dialog removes its snapshot listener on close")
+	must("useEffect(() => { setServerOffline(false); }, [snapshot])", "accepted snapshots reconcile a prior server-offline verdict")
 	if strings.Contains(dashboardAssets, "setInterval(pollReplyOnline") {
 		t.Error("reply modal retains its duplicate snapshot polling loop")
 	}
-	must(`code === 'offline'`, "the dialog trusts the server's offline verdict on a 409")
+	must(`cause?.code === 'offline'`, "the dialog trusts the server's offline verdict on a 409")
 
-	// dashboard.js: the module is bound at init.
-	must("bindHumanReplyModal();", "the reply modal is bound at dashboard init")
-
-	// dashboard.html: the modal shell + its fields.
-	must(`id="human-reply-modal"`, "the reply modal markup ships")
+	// The static shell owns only the stable island host; dialog ids belong to
+	// the component so a legacy duplicate cannot coexist in the viewport.
+	if strings.Contains(html, `id="human-reply-modal"`) {
+		t.Error("dashboard.html still contains the legacy human-reply modal")
+	}
+	must(`id="message-access-dialog-root"`, "the stable dialog island host ships")
+	must(`id="human-reply-modal"`, "the Preact reply component owns the modal id")
 	must(`id="human-reply-body"`, "the reply textarea ships")
 	must(`id="human-reply-status"`, "the online-status line ships")
 	must(`id="human-reply-submit"`, "the Send button ships")
