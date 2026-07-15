@@ -107,17 +107,24 @@ const groupsDescriptor = createIslandDescriptor({
     filterHost: '#groups-filter-root',
     listHost: '#groups-list',
     memberDialogHost: '#groups-member-dialog-root',
+    addMemberDialogHost: '#groups-add-member-dialog-root',
   },
   failureClass: 'groups-error',
-  load: async ({ hosts: { filterHost, listHost, memberDialogHost }, dependencies }) => {
+  load: async ({ hosts: {
+    filterHost, listHost, memberDialogHost, addMemberDialogHost,
+  }, dependencies }) => {
     const islandModule = import('./groups-island.js');
     const memberEditorModule = import('./member-editor-island.js');
+    const addMemberDialogModule = import('./add-member-dialog-island.js');
     const stateModule = import('./groups-state.js');
     const actionsModule = import('./groups-actions.js');
     const [
       { mountGroupsIsland }, { mountGroupsMemberEditor },
+      { mountGroupsAddMemberDialog },
       { groupsState }, { createGroupsActions },
-    ] = await Promise.all([islandModule, memberEditorModule, stateModule, actionsModule]);
+    ] = await Promise.all([
+      islandModule, memberEditorModule, addMemberDialogModule, stateModule, actionsModule,
+    ]);
     const actions = createGroupsActions({ state: groupsState, ...dependencies });
     return {
       state: groupsState,
@@ -128,6 +135,10 @@ const groupsDescriptor = createIslandDescriptor({
         });
         mountGroupsMemberEditor({
           host: memberDialogHost, state: groupsState, actions,
+          confirmDiscard: dependencies.confirmDiscard, registerCleanup,
+        });
+        mountGroupsAddMemberDialog({
+          host: addMemberDialogHost, state: groupsState, actions,
           confirmDiscard: dependencies.confirmDiscard, registerCleanup,
         });
       },
