@@ -1639,10 +1639,6 @@ export class ProcessTemplateEditor {
       // a graph control behind this body-level overlay cannot be activated.
       const editorSurface = this.root;
       const editorWasInert = editorSurface?.inert === true || editorSurface?.hasAttribute('inert');
-      if (editorSurface) {
-        editorSurface.inert = true;
-        editorSurface.setAttribute('inert', '');
-      }
       let releaseDialogFocus = () => {};
       const done = (result) => {
         overlay.remove();
@@ -1658,13 +1654,19 @@ export class ProcessTemplateEditor {
       cancel.addEventListener('click', () => done(null));
       overlay.addEventListener('click', (event) => { if (event.target === overlay) done(null); });
       this.modalDispose = done;
-      document.body.append(overlay);
+      // Capture the invoker before inerting its editor ancestor. Browsers may
+      // blur a focused descendant as soon as inert is applied.
       releaseDialogFocus = bindDialogFocus({
         dialog,
         initialFocus: input,
         onEscape: () => done(null),
         shouldHandle: () => isTopmostOverlay(overlay),
       });
+      if (editorSurface) {
+        editorSurface.inert = true;
+        editorSurface.setAttribute('inert', '');
+      }
+      document.body.append(overlay);
     });
   }
 }

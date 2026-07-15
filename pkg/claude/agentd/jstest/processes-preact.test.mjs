@@ -209,6 +209,17 @@ test('process scribe preview traps focus and restores its editor invoker on ever
   const harness = await createPreactHarness(t);
   const { ProcessTemplateEditor } = await harness.importDashboardModule('js/process-editor.js');
   const editorRoot = harness.document.body.appendChild(harness.document.createElement('div'));
+  let editorInert = false;
+  Object.defineProperty(editorRoot, 'inert', {
+    configurable: true,
+    get: () => editorInert,
+    set: (value) => {
+      editorInert = !!value;
+      if (editorInert && editorRoot.contains(harness.document.activeElement)) {
+        harness.document.activeElement.blur();
+      }
+    },
+  });
   const fake = { modalDispose: null, abort: new AbortController(), root: editorRoot };
   const invoker = editorRoot.appendChild(harness.document.createElement('button'));
   invoker.textContent = 'Edit process graph';
