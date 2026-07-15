@@ -27,9 +27,9 @@ import { openHumanReplyModal } from './modal-human-reply.js';
 import { openGroupContextModal, openGroupCloneModal, openFromGroupModal } from './modal-templates.js';
 import { openLinkModal, openLinksManageModal } from './modal-link-wt.js';
 import {
-  openCloneAgentDialog, openNestGroupDialog, openReincarnateAgentDialog, openTaskLinkDialog,
+  chooseTerminalDirectory, openAgentExportDialog, openCloneAgentDialog,
+  openNestGroupDialog, openReincarnateAgentDialog, openTaskLinkDialog,
 } from './action-dialog-controller.js';
-import { openExportModal } from './modal-export.js';
 import { openTermModal } from './modal-term.js';
 import {
   openTerminalPane, closeTerminalsForConvs, focusTerminalForConv,
@@ -48,7 +48,7 @@ import {
   refresh, toast, confirmModal, addMemberModal, deleteAgentModal,
   editMemberModal, shutdownScope, powerOnScope, openCleanupModal, openWindowModal,
   openWorktreeCleanup,
-  resumeAgentReq, retireAgentInteractive, shutdownConfirm, stopAgentReq, termDirModal,
+  resumeAgentReq, retireAgentInteractive, shutdownConfirm, stopAgentReq,
   openDeleteGroupModal,
   showAccessTab,
 } from './refresh.js';
@@ -602,8 +602,8 @@ function bindRowActions() {
           // = "web"), route this straight to a browser web-term pane — same as
           // the dedicated "web term" button. Hand the picker promise through so
           // a cancelled pick is a clean no-op.
-          if (webTerminalDefault()) { openWebTermPane(agent, label, termDirModal({ label })); return; }
-          const which = await termDirModal({ label });
+          if (webTerminalDefault()) { openWebTermPane(agent, label, chooseTerminalDirectory(label)); return; }
+          const which = await chooseTerminalDirectory(label);
           if (!which) return;
           const r = await fetch(`/api/term/${encodeURIComponent(agent)}`, {
             method: 'POST', credentials: 'same-origin',
@@ -626,7 +626,7 @@ function bindRowActions() {
           // promise directly and reveals the tab once it resolves (a cancelled
           // pick is a no-op). Same helper the "open terminal" action uses when
           // web terminals are the default.
-          openWebTermPane(agent, label, termDirModal({ label }));
+          openWebTermPane(agent, label, chooseTerminalDirectory(label));
           return;
         }
         case 'open-window': {
@@ -1023,7 +1023,7 @@ function bindRowActions() {
           // shareable artifact, then polls + downloads it. The button is
           // disabled while the agent is offline, so a click means it was
           // online at render; the daemon re-checks and fast-fails if not.
-          openExportModal(agent, label);
+          openAgentExportDialog(agent, label);
           return;
         }
         case 'rename-name': {
