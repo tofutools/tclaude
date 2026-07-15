@@ -45,6 +45,7 @@ function OpaqueTerminalHost({
   activationToken,
   authenticate,
   className,
+  fitClassName,
   actions,
   widgetFactory,
   onStatus,
@@ -78,7 +79,7 @@ function OpaqueTerminalHost({
     };
   }, [descriptor.id]);
   useLayoutEffect(() => widgetRef.current?.setActive(active), [active, activationToken]);
-  return html`<div ref=${hostRef} class=${className}></div>`;
+  return html`<div class=${className}><div ref=${hostRef} class=${fitClassName}></div></div>`;
 }
 
 function CopyButton({ className, id, hasSelection, actions, runtimeID }) {
@@ -151,6 +152,7 @@ function TerminalPane({
         activationToken=${activationToken}
         authenticate=${true}
         className="mux-pane-xterm"
+        fitClassName="mux-pane-xterm-fit"
         actions=${actions}
         widgetFactory=${widgetFactory}
         onStatus=${setStatus}
@@ -327,6 +329,7 @@ function TerminalModalSession({ descriptor, actions, widgetFactory }) {
           active=${true}
           authenticate=${false}
           className="term-session-xterm"
+          fitClassName="term-session-xterm-fit"
           actions=${actions}
           widgetFactory=${widgetFactory}
           onStatus=${setStatus}
