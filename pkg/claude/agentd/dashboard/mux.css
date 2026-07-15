@@ -76,7 +76,12 @@
 .mux-palette-toggle input { margin: 0; accent-color: #8b6dd6; cursor: pointer; }
 
 .mux-pane-xterm { flex: 1; min-height: 0; padding: 6px; overflow: hidden; }
-.mux-pane-xterm .xterm { height: 100%; }
+/* FitAddon measures .xterm's direct parent. The inner box fills the host's
+   CONTENT area, so the outer visual inset is excluded from row/column sizing
+   without becoming xterm padding (which draws a black frame and displaces its
+   scrollbar). */
+.mux-pane-xterm-fit,
+.mux-pane-xterm-fit .xterm { height: 100%; }
 
 /* Wizard multiplexer chrome. This lives in the shared widget sheet so a
    terminal popped into its own browser tab keeps the same portal frame. The

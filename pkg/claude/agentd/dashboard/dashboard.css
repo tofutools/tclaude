@@ -2812,7 +2812,11 @@ details[data-group-key][open] > summary .group-sandbox-profile {
 }
 .term-session-detach:hover { background: #2d333b; border-color: #3d4450; }
 .term-session-xterm { flex: 1; padding: 6px; overflow: hidden; min-height: 0; }
-.term-session-xterm .xterm { height: 100%; }
+/* FitAddon measures .xterm's direct parent. Size that inner parent to the
+   padded host's content box so the modal keeps its original visual inset while
+   fitting only rows and columns that are actually drawable. */
+.term-session-xterm-fit,
+.term-session-xterm-fit .xterm { height: 100%; }
 /* The "auto" self-rename checkbox sits under the Title input in the
    same .field — strip the text-input styling .modal .field input
    would otherwise smear onto a checkbox. The selectors carry the

@@ -95,7 +95,7 @@ export function openTermModal({ wsPath, label, hideConv: hc }) {
     });
     fitAddon = new FitAddon.FitAddon();
     term.loadAddon(fitAddon);
-    term.open($('#term-session-xterm'));
+    term.open($('#term-session-xterm-fit'));
     interactions = attachTerminalInteractions({
       term,
       host: $('#term-session-xterm'),
@@ -111,7 +111,7 @@ export function openTermModal({ wsPath, label, hideConv: hc }) {
       if (ws && ws.readyState === WebSocket.OPEN) ws.send(new TextEncoder().encode(data));
     });
     term.onResize(() => sendResize());
-    new ResizeObserver(() => fitAddon.fit()).observe($('#term-session-xterm'));
+    new ResizeObserver(() => fitAddon.fit()).observe($('#term-session-xterm-fit'));
     const syncTheme = () => {
       term.options.theme = terminalThemeFor(document.body.classList.contains('wizard'));
     };
