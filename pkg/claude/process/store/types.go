@@ -65,6 +65,8 @@ func (e *ExecutionViewOverBudgetError) Unwrap() error { return ErrExecutionViewO
 type ExecutionView struct {
 	Snapshot               Snapshot
 	Template               *model.Template
+	TemplateSourceHash     string
+	LegacyCheckpointJSON   []byte
 	LegacyAdminRecords     map[string]pathv1.PathV1AdminRecord
 	LegacyAdminResolutions map[string]pathv1.BlockResolution
 }

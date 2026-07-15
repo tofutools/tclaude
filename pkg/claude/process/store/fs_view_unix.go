@@ -17,6 +17,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/tofutools/tclaude/pkg/claude/process/evidence"
+	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
 )
 
@@ -589,6 +590,55 @@ func (s *FS) getTemplateExactBodyWithBudget(ctx context.Context, id, hash string
 	}
 	defer version.Close()
 	return readViewRegularAt(budget, version, "template.json", false)
+}
+
+func (s *FS) getTemplateExactSourceWithBudget(ctx context.Context, id, hash string, budget *viewBudget, tmpl *model.Template) ([]byte, error) {
+	root, err := openViewDir(s.root)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	templates, err := openViewDirAt(root, "templates")
+	if err != nil {
+		return nil, err
+	}
+	defer templates.Close()
+	idDir, err := openViewDirAt(templates, id)
+	if err != nil {
+		return nil, err
+	}
+	defer idDir.Close()
+	version, err := openViewDirAt(idDir, "sha256-"+hash)
+	if err != nil {
+		return nil, err
+	}
+	defer version.Close()
+	source, err := readViewRegularAt(budget, version, "template.yaml", false)
+	if err == nil {
+		return source, nil
+	}
+	if !errors.Is(err, unix.ENOENT) {
+		return nil, err
+	}
+	// Semantic versions written before template.yaml existed are bound to the
+	// same canonical fallback used by GetTemplateSource, without mutating the
+	// immutable version while an execution view is being observed.
+	generated, err := model.CanonicalYAML(tmpl)
+	if err != nil {
+		return nil, err
+	}
+	if err := budget.ctx.Err(); err != nil {
+		return nil, err
+	}
+	size := int64(len(generated))
+	if size > budget.maxFile {
+		return nil, budget.over("file_bytes", "template.yaml fallback", size, budget.maxFile)
+	}
+	if budget.bytes+size > budget.maxTotal {
+		return nil, budget.over("total_bytes", "template.yaml fallback", budget.bytes+size, budget.maxTotal)
+	}
+	budget.bytes += size
+	return generated, nil
 }
 
 func (b *viewBudget) addRecords(data []byte) error {
