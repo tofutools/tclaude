@@ -18,7 +18,7 @@ import {
   loadSandboxProfiles, openSandboxProfileEditor, refreshSpawnSandboxProfileUI,
 } from './sandbox-profiles.js';
 import { renderDashDefaultProfile, renderDashSandboxProfile } from './toolbar-profile-renderers.js';
-import { openCronCreateModal } from './modal-cron.js';
+import { openCronCreateModal } from './jobs-controller.js';
 import { openGroupCreateModal } from './modal-message.js';
 import {
   openGroupPermEditor, openHumanReplyModal, openMessageCreateModal,

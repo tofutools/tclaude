@@ -1090,8 +1090,10 @@ func TestDashboardHTML_WizardCronDialog(t *testing.T) {
 	must(`content: "⏳ Re-binding…";`, "edit-mode in-flight submit copy")
 
 	// The JS toggles the mode class on the modal (a MODE flag, not a theme read).
-	must("$('#cron-create-modal').classList.add('cron-editing')", "edit-open JS sets the edit mode class")
-	must("$('#cron-create-modal').classList.remove('cron-editing')", "create-open JS clears the edit mode class")
+	must("overlayClass=${editing ? 'cron-editing' : descriptor.kind === 'duplicate' ? 'cron-duplicating' : ''}",
+		"component state controls edit/duplicate mode classes")
+	must("body.wizard #cron-create-modal.cron-duplicating #cron-create-title::before",
+		"duplicate mode has explicit wizard title copy")
 
 	// The picked "Every" chip keeps a distinct gilded highlight over the row of
 	// tarnished-gold chips. Excluding the submit via :not(.primary) (not
@@ -1789,7 +1791,7 @@ func TestDashboardHTML_WizardCogNomenclature(t *testing.T) {
 	must(`plain="Group (multicast)" wizard="Party (multicast)"`, "shared target picker swaps group noun")
 	must(`Send a missive to party`, "group message dialog names the party")
 	must(`plain=${scopedGroup ? `+"`"+`Send a message to group “${scopedGroup}”`+"`"+` : 'Send a message'}`, "unscoped message dialog owns both title shapes")
-	must(`if ($('#cron-create-modal').classList.contains('show')) renderCronTitle();`, "open cron dialog follows live theme flips")
+	must(`const title = wizWord(plainTitle, wizardTitle);`, "open cron dialog follows live theme flips")
 	must(`document.addEventListener('tclaude:wizard', refreshThemeCopy)`, "open message dialog follows live theme flips")
 	must(`const wizardWhere = scope === 'group' ? `+"`"+`party "${groupName}"`+"`"+` : 'the tower';`, "window dialog uses party in wizard hints")
 	mustNot(`aria-label="Reveal or veil this party's familiars — focus or unfocus this group's agent windows"`, "group window button must not expose a mixed-theme accessible name")
