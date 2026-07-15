@@ -132,6 +132,48 @@ export function createTransactionDialogActions({
       return finishSuccess(result, notice);
     },
 
+    async retireGroupPreview({ group, convs, shutdown, deleteWorktree }) {
+      const response = await fetchImpl(
+        `/api/groups/${encodeURIComponent(group)}/retire`,
+        {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ convs, shutdown: !!shutdown, delete_worktree: !!deleteWorktree }),
+        },
+      );
+      const payload = await responsePayload(response);
+      if (!response.ok) throw responseError(response, payload);
+      return payload;
+    },
+
+    async retireUngroupedPreview({ agents, shutdown, deleteWorktrees }) {
+      const response = await fetchImpl(
+        '/api/cleanup/agents',
+        {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            agents, mode: 'retire', include_online: true,
+            shutdown: !!shutdown, delete_worktrees: !!deleteWorktrees,
+          }),
+        },
+      );
+      const payload = await responsePayload(response);
+      if (!response.ok) throw responseError(response, payload);
+      return payload;
+    },
+
+    async finishBulkRetire(result) {
+      // Successful bulk responses deliberately remain painted as a stable,
+      // read-only outcome table. Only Done/Escape/backdrop reaches this seam:
+      // unpaint first, then refresh the roster, then resolve the launcher.
+      state.handoff();
+      try { await refresh(); } finally { state.finish(result); }
+      return result;
+    },
+
     async retireAgent({ conv, label, shutdown, deleteWorktree }) {
       // Keep the daemon's deliberately asymmetric defaults explicit at this
       // destructive boundary: shutdown is always named; worktree deletion is
