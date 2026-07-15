@@ -236,6 +236,7 @@ export function sudoBadge(activeSudo, fallbackConvID) {
       getSnapshot: () => lastSnapshot,
     }),
   ]);
+  const messageAccessDialogsMounted = typeof featureCleanups[0] === 'function';
   pageCleanups.push(...featureCleanups);
 
   bindTabs();
@@ -274,7 +275,11 @@ export function sudoBadge(activeSudo, fallbackConvID) {
     if (event.persisted) return;
     for (const cleanup of pageCleanups.reverse()) cleanup?.();
   });
-  bindCronModal();
+  // The cron form's controlled target and chooser are owned by the
+  // message/access island. If that optional chunk failed locally, keep the
+  // rest of dashboard bootstrap alive instead of binding through an absent
+  // controller.
+  if (messageAccessDialogsMounted) bindCronModal();
   bindTermModal();
   // The in-SPA "Terminals" tab — mounts the multiplexer and starts hidden
   // (it reveals itself once "web term" / "web window" opens the first pane).
