@@ -344,6 +344,9 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
 
     const host = document.createElement('div');
     host.className = 'mux-pane-xterm';
+    const fitHost = document.createElement('div');
+    fitHost.className = 'mux-pane-xterm-fit';
+    host.append(fitHost);
 
     wrap.append(header, host);
     panesEl.append(wrap);
@@ -358,7 +361,7 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
     });
     const fitAddon = new FitAddon.FitAddon();
     term.loadAddon(fitAddon);
-    term.open(host);
+    term.open(fitHost);
 
     const p = {
       key, label, seed, term, fitAddon, ws: null, wrap, statusEl,
@@ -379,7 +382,7 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
     term.onData((d) => { if (p.ws && p.ws.readyState === WebSocket.OPEN) p.ws.send(new TextEncoder().encode(d)); });
     term.onResize(() => sendResize(p));
     p.ro = new ResizeObserver(() => { if (activeKey === key) fit(p); });
-    p.ro.observe(host);
+    p.ro.observe(fitHost);
 
     if (!solo) {
       // The pane wrap is this tab's panel — link them so assistive tech pairs
