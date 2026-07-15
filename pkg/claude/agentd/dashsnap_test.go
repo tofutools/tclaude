@@ -1157,6 +1157,14 @@ func baseStates() []dashsnap.State {
 			JS:      showGroups + expandGroups + ensureForceOpen + `document.body.classList.add('dock-open');`,
 		},
 		{
+			Key:     "groups-wizard",
+			Title:   "Groups tab — wizard",
+			Caption: "The same viewport in wizard mode: native party shells, activity familiars, force quest card, group actions, hierarchy, and member-table adapter preserve the established re-skin.",
+			JS: showGroups + expandGroups + ensureForceOpen + `document.body.classList.add('dock-open', 'wizard');
+document.dispatchEvent(new CustomEvent('tclaude:wizard', {detail:{active:true}}));`,
+			SettleMS: 300,
+		},
+		{
 			Key:     "task-link-editor",
 			Title:   "Task link editor",
 			Caption: "The operator's Task/Quest editor: an existing short link stays navigable, its hover/focus pencil opens the prefilled URL + optional display-name dialog, and wizard mode applies the quill/violet/parchment treatment.",
