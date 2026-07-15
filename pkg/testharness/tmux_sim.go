@@ -445,12 +445,6 @@ func (t *TmuxSim) killSession(target string) {
 // has-session returns false even if the session entry is still in the
 // table.
 func (t *TmuxSim) Register(name, cwd string, pane PaneSim) {
-	// Real tmux reports the cwd inode held by the pane process, not a launch
-	// symlink that may later be retargeted. Resolve once at registration to
-	// preserve that distinction in lifecycle flow tests.
-	if physical, err := filepath.EvalSymlinks(cwd); err == nil {
-		cwd = physical
-	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.nextPID++

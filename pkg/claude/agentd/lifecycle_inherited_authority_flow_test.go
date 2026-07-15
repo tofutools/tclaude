@@ -129,9 +129,18 @@ func TestLifecycleInheritedAuthority_UsesLivePanePhysicalCwd(t *testing.T) {
 			f.HaveMember("crew", target)
 			oldPhysical := t.TempDir()
 			newPhysical := t.TempDir()
+			oldCanonical, err := filepath.EvalSymlinks(oldPhysical)
+			require.NoError(t, err)
+			newCanonical, err := filepath.EvalSymlinks(newPhysical)
+			require.NoError(t, err)
 			link := filepath.Join(t.TempDir(), "work")
 			require.NoError(t, os.Symlink(oldPhysical, link))
-			f.HaveAliveCodexSession(target, "physical-cwd", "tmux-physical-cwd", link)
+			f.HaveAliveCodexSession(target, "physical-cwd", "tmux-physical-cwd", oldPhysical)
+			stored, err := db.LoadSession("physical-cwd")
+			require.NoError(t, err)
+			require.NotNil(t, stored)
+			stored.Cwd = link
+			require.NoError(t, db.SaveSession(stored))
 			if clone {
 				require.NoError(t, db.GrantAgentPermission(target, agentd.PermSelfClone, "test"))
 			}
@@ -155,8 +164,8 @@ func TestLifecycleInheritedAuthority_UsesLivePanePhysicalCwd(t *testing.T) {
 			sessions, err := db.FindSessionsByConvID(response.NewConv)
 			require.NoError(t, err)
 			require.NotEmpty(t, sessions)
-			assert.Equal(t, oldPhysical, sessions[0].Cwd)
-			assert.NotEqual(t, newPhysical, sessions[0].Cwd)
+			assert.Equal(t, oldCanonical, sessions[0].Cwd)
+			assert.NotEqual(t, newCanonical, sessions[0].Cwd)
 		})
 	}
 }
