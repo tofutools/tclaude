@@ -125,6 +125,57 @@ func TestCrossAgentAskHuman_HeaderAndApprovalAllowsCall(t *testing.T) {
 	require.NotEmpty(t, successor, "reincarnate did not record a successor; the orchestration was not actually run")
 }
 
+// A title selector is resolved independently for the approved request and its
+// proved retry. If the title moves to another agent between those requests,
+// the first target's approval must not silently authorize the second target.
+func TestCrossAgentAskHuman_ProvedRetryRetargetedSelectorAsksAgain(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	approvalCalls, restoreApproval := agentd.StubCountingApprovalForTest(true)
+	t.Cleanup(restoreApproval)
+
+	f := newFlow(t)
+	const (
+		targetA  = "target-a-1111-2222-3333-444444444444"
+		targetB  = "target-b-1111-2222-3333-444444444444"
+		caller   = "caller-r-1111-2222-3333-444444444444"
+		selector = "moving-target"
+	)
+	f.HaveConvWithTitle(targetA, selector)
+	f.HaveConvWithTitle(targetB, "standby-target")
+	f.HaveAliveSession(targetA, "target-a-session", "target-a-tmux", f.World.HomeDir)
+	f.HaveAliveSession(targetB, "target-b-session", "target-b-tmux", f.World.HomeDir)
+	f.HaveGroup("alpha")
+	f.HaveMember("alpha", targetA)
+	f.HaveMember("alpha", targetB)
+	f.HaveMember("alpha", caller)
+
+	body := map[string]any{"follow_up": "fresh start"}
+	path := "/v1/agent/" + selector + "/reincarnate"
+	firstReq := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, path, body), caller)
+	firstReq.Header.Set("X-Tclaude-Ask-Human", "30s")
+	challenge := decodeWriteProofChallenge(t, testharness.Serve(f.Mux, firstReq))
+	require.Equal(t, int32(1), approvalCalls(), "initial target should be approved once")
+
+	// Retarget the exact route string while preserving the proof directory set.
+	// Without binding the continuation to the resolved conv ID, the retry would
+	// reuse target A's approval for target B.
+	require.NoError(t, db.SetConvIndexCustomTitle(targetA, "former-target", harness.DefaultName))
+	require.NoError(t, db.SetConvIndexCustomTitle(targetB, selector, harness.DefaultName))
+	answerChallenge(t, challenge)
+	body["write_proof_token"] = challenge.WriteProof.Token
+	retryReq := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, path, body), caller)
+	retryReq.Header.Set("X-Tclaude-Ask-Human", "30s")
+	retry := testharness.Serve(f.Mux, retryReq)
+	require.Equalf(t, http.StatusOK, retry.Code, "retargeted retry may proceed only after fresh approval; body=%s", retry.Body.String())
+	require.Equal(t, int32(2), approvalCalls(), "newly resolved target must require its own approval")
+
+	successorB, err := db.GetConvSuccessor(targetB)
+	require.NoError(t, err)
+	require.NotEmpty(t, successorB, "retry should operate on the newly resolved target after approval")
+	successorA, _ := db.GetConvSuccessor(targetA)
+	assert.Empty(t, successorA, "challenge-only target must not be reincarnated")
+}
+
 // Same setup but popup DENIES. The cross-agent call must still
 // return 403 — the popup is an escape hatch, not a free pass.
 func TestCrossAgentAskHuman_HeaderAndDenialStillRefuses(t *testing.T) {

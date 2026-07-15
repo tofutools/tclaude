@@ -475,7 +475,7 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ow
 	// authoritative and (like an undecided with no bypass) falls through
 	// to the popup-or-403 path below.
 	allowed := false
-	if hasWriteProofApprovalContinuation(r, p.ConvID, perm) {
+	if hasWriteProofApprovalContinuation(r, p.ConvID, perm, p.ConvID) {
 		allowed = true
 	} else {
 		switch resolvePermission(p.ConvID, perm) {
@@ -529,7 +529,7 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ow
 				extend:          make(chan time.Duration, 1),
 			}
 			if requestHumanApproval(req, popupBaseURL) {
-				markWriteProofHumanApproval(r, perm)
+				markWriteProofHumanApproval(r, perm, p.ConvID)
 				return p.ConvID, true
 			}
 			writeError(w, http.StatusForbidden, "permission",

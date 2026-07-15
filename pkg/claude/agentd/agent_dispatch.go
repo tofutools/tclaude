@@ -150,7 +150,7 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 	case classAgent:
 		// Confirmed agent — fall through to the per-conv evaluation below.
 	}
-	if hasWriteProofApprovalContinuation(r, p.ConvID, perm) {
+	if hasWriteProofApprovalContinuation(r, p.ConvID, perm, targetConv) {
 		return p.ConvID, true
 	}
 	switch resolvePermission(p.ConvID, perm) {
@@ -204,7 +204,7 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 			extend:    make(chan time.Duration, 1),
 		}
 		if requestHumanApproval(req, popupBaseURL) {
-			markWriteProofHumanApproval(r, perm)
+			markWriteProofHumanApproval(r, perm, targetConv)
 			return p.ConvID, true
 		}
 		writeError(w, http.StatusForbidden, "permission",

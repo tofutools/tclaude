@@ -76,11 +76,12 @@ type dirWriteChallenge struct {
 // writeProofApprovalContinuation carries a one-shot human approval across the
 // write-proof challenge/retry handshake. The challenge is only minted after
 // the first request has passed its permission gate. Binding the continuation
-// to the caller, permission, endpoint, and canonical body (excluding only the
-// proof token) lets the proved retry skip a duplicate popup without widening
-// the approval to another operation.
+// to the caller, resolved authorization target, permission, endpoint, and
+// canonical body (excluding only the proof token) lets the proved retry skip a
+// duplicate popup without widening the approval to another operation.
 type writeProofApprovalContinuation struct {
 	perm        string
+	authTarget  string
 	method      string
 	path        string
 	rawQuery    string
@@ -139,8 +140,8 @@ func mintDirWriteChallenge(convID string, dirs []string, continuation *writeProo
 // If the handler subsequently emits a write-proof challenge, the challenge
 // inherits this tightly scoped continuation. Non-proof-gated handlers simply
 // ignore the annotation.
-func markWriteProofHumanApproval(r *http.Request, perm string) {
-	continuation, _, ok := writeProofContinuationForRequest(r, perm)
+func markWriteProofHumanApproval(r *http.Request, perm, authTarget string) {
+	continuation, _, ok := writeProofContinuationForRequest(r, perm, authTarget)
 	if !ok {
 		return
 	}
@@ -151,8 +152,8 @@ func markWriteProofHumanApproval(r *http.Request, perm string) {
 // exact operation the human already approved before the daemon challenged for
 // directory write access. It deliberately peeks rather than consumes: the
 // proof gate later consumes and validates the same single-use token and files.
-func hasWriteProofApprovalContinuation(r *http.Request, convID, perm string) bool {
-	continuation, token, ok := writeProofContinuationForRequest(r, perm)
+func hasWriteProofApprovalContinuation(r *http.Request, convID, perm, authTarget string) bool {
+	continuation, token, ok := writeProofContinuationForRequest(r, perm, authTarget)
 	if !ok || token == "" {
 		return false
 	}
@@ -169,7 +170,7 @@ func hasWriteProofApprovalContinuation(r *http.Request, convID, perm string) boo
 // only write_proof_token. The client adds that field between the challenge and
 // proved retry; every human-visible/action-bearing field must remain identical.
 // The body is restored byte-for-byte for the permission preview and handler.
-func writeProofContinuationForRequest(r *http.Request, perm string) (*writeProofApprovalContinuation, string, bool) {
+func writeProofContinuationForRequest(r *http.Request, perm, authTarget string) (*writeProofApprovalContinuation, string, bool) {
 	if r == nil || r.Body == nil {
 		return nil, "", false
 	}
@@ -206,6 +207,7 @@ func writeProofContinuationForRequest(r *http.Request, perm string) (*writeProof
 	}
 	return &writeProofApprovalContinuation{
 		perm:        perm,
+		authTarget:  authTarget,
 		method:      r.Method,
 		path:        r.URL.Path,
 		rawQuery:    r.URL.RawQuery,
