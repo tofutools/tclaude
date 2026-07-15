@@ -547,16 +547,23 @@ const transactionDialogsDescriptor = createIslandDescriptor({
   hosts: { root: '#transaction-dialog-root' },
   primaryHost: 'root',
   failureClass: 'transaction-dialog-error',
-  load: async ({ hosts }) => {
+  load: async ({ hosts, dependencies }) => {
     const islandModule = import('./transaction-dialog-island.js');
     const stateModule = import('./transaction-dialog-state.js');
-    const [{ mountTransactionDialogIsland }, { createTransactionDialogState }] =
-      await Promise.all([islandModule, stateModule]);
+    const actionsModule = import('./transaction-dialog-actions.js');
+    const [
+      { mountTransactionDialogIsland },
+      { createTransactionDialogState },
+      { createTransactionDialogActions },
+    ] = await Promise.all([islandModule, stateModule, actionsModule]);
     const state = createTransactionDialogState();
+    const actions = createTransactionDialogActions({ state, ...dependencies });
     return {
       state,
       mount: (registerCleanup) => mountTransactionDialogIsland({
-        host: hosts.root, state, registerCleanup,
+        host: hosts.root, state, actions,
+        confirmDiscard: dependencies.confirmDiscard,
+        registerCleanup,
       }),
     };
   },
