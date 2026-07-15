@@ -13,10 +13,10 @@ import (
 // script/include/import otherwise fails only when a human opens that surface.
 func TestDashboardTerminalInteractionsWired(t *testing.T) {
 	core := readDashboardJS(t, "terminals-core.js")
-	modal := readDashboardJS(t, "modal-term.js")
+	shell := readDashboardJS(t, "terminal-shell-island.js")
 	interactions := readDashboardJS(t, "terminal-interactions.js")
 
-	for name, src := range map[string]string{"terminals-core.js": core, "modal-term.js": modal} {
+	for name, src := range map[string]string{"terminals-core.js": core} {
 		for _, needle := range []string{
 			"import { attachTerminalInteractions } from './terminal-interactions.js';",
 			"attachTerminalInteractions({",
@@ -70,12 +70,12 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 		t.Error("terminal Copy action must expose guidance accessibly without a native title tooltip")
 	}
 	for _, needle := range []string{
-		"hintEl.className = 'terminal-interaction-hint'",
+		"class=\"terminal-interaction-hint\"",
 		"Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C",
 		"messageBtn.textContent = '✉ Message'",
 		"onComposeMessage: messageBtn ? () => onComposeMessage(seed) : null",
 	} {
-		if !strings.Contains(core, needle) {
+		if !strings.Contains(shell, needle) {
 			t.Errorf("mux terminal header missing persistent guidance %q", needle)
 		}
 	}
@@ -115,7 +115,7 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 			t.Errorf("operator message composer missing %q", needle)
 		}
 	}
-	if !strings.Contains(dashboardAssets, `<span class="terminal-interaction-hint">Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C</span>`) {
+	if !strings.Contains(shell, "<span class=\"terminal-interaction-hint\">${INTERACTION_HINT}</span>") {
 		t.Error("fallback terminal modal missing persistent selection/copy guidance")
 	}
 
@@ -131,29 +131,26 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 	if data, err := fs.ReadFile(dashboardAssetsFS, "vendor/xterm/addon-web-links.min.js"); err != nil || len(data) < 1000 {
 		t.Errorf("vendored web-links addon missing or unexpectedly small: bytes=%d err=%v", len(data), err)
 	}
-	if !strings.Contains(dashboardAssets, `id="term-session-copy"`) {
+	if !strings.Contains(shell, `id="term-session-copy"`) {
 		t.Error("fallback terminal modal has no visible Copy action")
 	}
-	modalLiveStatus := `<span class="term-session-status" id="term-session-status" role="status"
-        aria-live="polite" aria-atomic="true"></span>`
-	if !strings.Contains(dashboardAssets, modalLiveStatus) {
+	if !strings.Contains(shell, `class="term-session-status" id="term-session-status" role="status" aria-live="polite" aria-atomic="true"`) {
 		t.Error("fallback terminal status must be a polite atomic live region")
 	}
 	for _, jsAttr := range []string{
-		`statusEl.setAttribute('role', 'status')`,
-		`statusEl.setAttribute('aria-live', 'polite')`,
-		`statusEl.setAttribute('aria-atomic', 'true')`,
+		`class="mux-pane-status" role="status" aria-live="polite" aria-atomic="true"`,
 	} {
-		if !strings.Contains(core, jsAttr) {
+		if !strings.Contains(shell, jsAttr) {
 			t.Errorf("mux terminal status missing live-region attribute wiring %q", jsAttr)
 		}
 	}
 	for _, needle := range []string{
-		"if (interactions) interactions.invalidate();",
-		"interactions = attachTerminalInteractions({",
+		"const interactions = interactionsFactory({",
+		"if (disposed) return",
+		"try { interactions.dispose(); }",
 	} {
-		if !strings.Contains(modal, needle) {
-			t.Errorf("modal-term.js missing upload-session race guard %q", needle)
+		if !strings.Contains(core, needle) {
+			t.Errorf("opaque terminal adapter missing interaction lifecycle guard %q", needle)
 		}
 	}
 }

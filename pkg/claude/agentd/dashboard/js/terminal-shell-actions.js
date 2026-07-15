@@ -1,0 +1,210 @@
+import { setArcanePaletteEnabled } from './terminal-theme.js';
+
+export function createTerminalShellActions({
+  state,
+  confirm = async () => false,
+  fetchImpl = globalThis.fetch,
+  windowRef = globalThis.window,
+  documentRef = globalThis.document,
+} = {}) {
+  if (!state) throw new TypeError('terminal shell actions require state');
+  const widgets = new Map();
+  let confirmOpen = false;
+  let disposed = false;
+
+  function registerWidget(id, widget) {
+    if (disposed) {
+      widget.dispose();
+      return () => {};
+    }
+    widgets.get(id)?.dispose();
+    widgets.set(id, widget);
+    return () => {
+      if (widgets.get(id) === widget) widgets.delete(id);
+    };
+  }
+
+  function widgetFor(id) {
+    return widgets.get(id) || null;
+  }
+
+  async function hideSeed(seed) {
+    const conv = seed?.hideConv;
+    if (!conv) return;
+    try {
+      const response = await fetchImpl(`/api/hide/${encodeURIComponent(conv)}`, {
+        method: 'POST', credentials: 'same-origin',
+      });
+      if (!response.ok) console.warn('terminal detach (hide) failed:', response.status);
+    } catch (error) {
+      console.warn('terminal detach (hide) request error:', error);
+    }
+  }
+
+  function openPane(seed) {
+    if (disposed) return null;
+    return state.openPane(seed);
+  }
+
+  function activatePane(key) {
+    return !disposed && state.activatePane(key);
+  }
+
+  async function closePane(key, { skipDetach = false } = {}) {
+    if (disposed) return;
+    const pane = state.panes.value.find((candidate) => candidate.key === key);
+    if (!pane) return;
+    widgetFor(pane.id)?.dispose();
+    state.removePane(key);
+    if (!skipDetach) await hideSeed(pane.seed);
+  }
+
+  function closeForHide(selectors) {
+    const wanted = new Set(selectors || []);
+    for (const pane of [...state.panes.value]) {
+      if (pane.seed.hideConv && wanted.has(pane.seed.hideConv)) {
+        void closePane(pane.key, { skipDetach: true });
+      }
+    }
+  }
+
+  function closeForAgents(selectors) {
+    const wanted = new Set(selectors || []);
+    for (const pane of [...state.panes.value]) {
+      if (pane.seed.agent && wanted.has(pane.seed.agent)) void closePane(pane.key);
+    }
+  }
+
+  function focusForSelectors(selectors) {
+    const key = state.findPaneKey(selectors);
+    return key ? state.activatePane(key) : false;
+  }
+
+  async function popOutPane(key) {
+    const pane = state.panes.value.find((candidate) => candidate.key === key);
+    if (!pane) return;
+    let target = null;
+    try { target = windowRef.open('about:blank', '_blank'); } catch (_) { target = null; }
+    if (!target) return;
+    const payload = encodeURIComponent(JSON.stringify({
+      ws: pane.seed.ws,
+      label: pane.label,
+      key: pane.seed.key,
+      hideConv: pane.seed.hideConv,
+      wizard: documentRef.body.classList.contains('wizard'),
+    }));
+    await closePane(key);
+    try { target.location.replace(`/terminals?solo=1#open=${payload}`); }
+    catch (_) { /* target closed while detach was landing */ }
+  }
+
+  function openModal(descriptor) {
+    if (disposed) return null;
+    return state.openModal(descriptor);
+  }
+
+  async function closeModal(id, { detach = false } = {}) {
+    const descriptor = state.modal.value;
+    if (!descriptor || (id && descriptor.id !== id)) return;
+    widgetFor(descriptor.id)?.dispose();
+    state.closeModal(descriptor.id);
+    if (detach) await hideSeed(descriptor.seed);
+  }
+
+  async function promptModalReconnect(id) {
+    if (disposed || confirmOpen || state.modal.value?.id !== id) return;
+    confirmOpen = true;
+    let reconnect = false;
+    try {
+      reconnect = await confirm({
+        title: 'Terminal disconnected',
+        body: 'The connection to the terminal was closed. The underlying session keeps running — reconnect to it, or close this terminal?',
+        okLabel: 'Reconnect',
+        cancelLabel: 'Close terminal',
+      });
+    } finally {
+      confirmOpen = false;
+    }
+    if (disposed || state.modal.value?.id !== id) return;
+    if (reconnect) void widgetFor(id)?.connect();
+    else await closeModal(id);
+  }
+
+  function onModalDisconnect(id) {
+    void promptModalReconnect(id);
+  }
+
+  async function confirmModalClose(id) {
+    const descriptor = state.modal.value;
+    if (disposed || confirmOpen || !descriptor || descriptor.id !== id) return;
+    confirmOpen = true;
+    let close = false;
+    try {
+      close = await confirm(descriptor.seed.hideConv ? {
+        title: 'Detach terminal?',
+        body: 'This only drops your view — the agent keeps running, and you can reopen it to reattach.',
+        okLabel: 'Detach',
+        cancelLabel: 'Keep open',
+      } : {
+        title: 'Close terminal?',
+        body: 'The underlying session keeps running — you can reopen it to reattach.',
+        okLabel: 'Close terminal',
+        cancelLabel: 'Keep open',
+      });
+    } finally {
+      confirmOpen = false;
+    }
+    if (disposed || state.modal.value?.id !== id) return;
+    if (close) {
+      await closeModal(id, { detach: true });
+      return;
+    }
+    if (widgetFor(id)?.status() === 'disconnected') void promptModalReconnect(id);
+  }
+
+  function detachModal(id) {
+    return closeModal(id, { detach: true });
+  }
+
+  async function moveModalToPane(id) {
+    const descriptor = state.modal.value;
+    if (!descriptor || descriptor.id !== id) return;
+    const seed = {
+      ws: descriptor.seed.ws,
+      label: descriptor.label,
+      hideConv: descriptor.seed.hideConv,
+      agent: descriptor.seed.hideConv,
+    };
+    await closeModal(id, { detach: true });
+    openPane(seed);
+  }
+
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    for (const widget of widgets.values()) widget.dispose();
+    widgets.clear();
+    state.dispose();
+  }
+
+  return Object.freeze({
+    registerWidget,
+    widgetFor,
+    openPane,
+    activatePane,
+    closePane,
+    closeForHide,
+    closeForAgents,
+    focusForSelectors,
+    popOutPane,
+    openModal,
+    closeModal,
+    promptModalReconnect,
+    onModalDisconnect,
+    confirmModalClose,
+    detachModal,
+    moveModalToPane,
+    setArcanePaletteEnabled,
+    dispose,
+  });
+}
