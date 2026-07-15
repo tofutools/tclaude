@@ -1215,6 +1215,7 @@ type dashboardCronJob struct {
 	TargetLabel     string `json:"target_label,omitempty"`
 	GroupID         int64  `json:"group_id"`
 	GroupName       string `json:"group_name,omitempty"`
+	TargetRole      string `json:"target_role,omitempty"`
 	IntervalSeconds int64  `json:"interval_seconds"`
 	CronExpr        string `json:"cron_expr,omitempty"`
 	CronDesc        string `json:"cron_desc,omitempty"` // English rendering of CronExpr; best-effort, may be empty
@@ -2524,6 +2525,7 @@ func cronJobToView(j *db.AgentCronJob, groupNames map[int64]string) dashboardCro
 		TargetAgent:     j.TargetAgent,
 		TargetConv:      j.TargetConv,
 		GroupID:         j.GroupID,
+		TargetRole:      j.TargetRole,
 		IntervalSeconds: j.IntervalSeconds,
 		CronExpr:        j.CronExpr,
 		CronDesc:        cronexpr.Describe(j.CronExpr),
