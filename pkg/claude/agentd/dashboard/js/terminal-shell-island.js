@@ -3,10 +3,20 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { mountTerminalWidget } from './terminals-core.js';
 import { arcanePaletteEnabled } from './terminal-theme.js';
+import { terminalComposeShortcutAction } from './terminal-compose-route.js';
 import { registerTerminalShellController } from './terminals-tab.js';
 
 const html = htm.bind(h);
 const INTERACTION_HINT = 'Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C';
+
+function composeTarget(pane, actions) {
+  return Object.freeze({
+    ...pane.seed,
+    // activatePane refits and focuses the opaque xterm widget. If this exact
+    // pane closed while the composer was open, activation safely returns false.
+    restoreFocus: () => actions.activatePane(pane.key),
+  });
+}
 
 function useTerminalThemeState() {
   const read = () => ({
@@ -95,7 +105,7 @@ function TerminalPane({
   const [hasSelection, setHasSelection] = useState(false);
   const theme = useTerminalThemeState();
   const composeMessage = pane.seed.agent && onComposeMessage
-    ? () => onComposeMessage(pane.seed)
+    ? () => onComposeMessage(composeTarget(pane, actions))
     : null;
   useEffect(() => {
     if (active && manageTitle) {
@@ -224,6 +234,27 @@ function TerminalTabs({
   useEffect(() => {
     if (!hasPanes && manageTitle) document.title = 'tclaude terminals';
   }, [hasPanes, manageTitle]);
+
+  useEffect(() => {
+    if (solo || !onComposeMessage) return undefined;
+    const onComposeShortcut = (event) => {
+      const pane = current.panes.find((candidate) => candidate.key === current.activeKey);
+      const action = terminalComposeShortcutAction(event, {
+        tabActive: document.getElementById('tab-terminals')?.classList.contains('active'),
+        operatorModalOpen: document.getElementById('operator-message-modal')?.classList.contains('show'),
+        blockingOverlayOpen: Boolean(document.querySelectorAll('.modal-overlay.show, .manage-overlay.show').length),
+        eligiblePane: Boolean(pane?.seed?.agent),
+      });
+      if (action === 'ignore') return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (action === 'open') onComposeMessage(composeTarget(pane, actions));
+    };
+    // Capture before xterm or terminal-tab chrome sees Ctrl/Cmd+M. This keeps
+    // the shortcut available from the pane, tab strip, and header alike.
+    document.addEventListener('keydown', onComposeShortcut, true);
+    return () => document.removeEventListener('keydown', onComposeShortcut, true);
+  }, [actions, current.activeKey, current.panes, onComposeMessage, solo]);
 
   return html`
     <div class="terminal-shell-root">

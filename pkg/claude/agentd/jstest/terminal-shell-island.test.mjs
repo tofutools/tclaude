@@ -124,10 +124,19 @@ test('dashboard terminal feature owns three hosts while preserving opaque xterm 
   const message = getByRole(host, 'button', { name: '✉ Message' });
   harness.fireEvent(message, 'click');
   fake.widgets[0].options.onComposeMessage();
-  assert.deepEqual(composed, [
+  assert.deepEqual(composed.map(({ restoreFocus, ...target }) => target), [
     { ws: '/one', key: 'one', label: 'one', agent: 'agt_one' },
     { ws: '/one', key: 'one', label: 'one', agent: 'agt_one' },
-  ], 'button and Ctrl/Cmd+M callback open the same agent-scoped composer');
+  ], 'button and xterm Ctrl/Cmd+M callback open the same agent-scoped composer');
+  assert.equal(typeof composed[0].restoreFocus, 'function');
+
+  const headerChord = new harness.window.Event('keydown', { bubbles: true, cancelable: true });
+  Object.defineProperties(headerChord, {
+    key: { value: 'm' }, code: { value: 'KeyM' }, ctrlKey: { value: true },
+  });
+  harness.document.dispatchEvent(headerChord);
+  assert.equal(headerChord.defaultPrevented, true, 'page capture owns Ctrl/Cmd+M outside xterm');
+  assert.equal(composed.length, 3);
 
   await harness.act(async () => {
     controller.openTerminalPane({ ws: '/two', key: 'two', label: 'two', agent: 'agt_two' });
@@ -137,6 +146,9 @@ test('dashboard terminal feature owns three hosts while preserving opaque xterm 
   assert.equal(badgeHost.querySelector('#terminals-badge').textContent, '2');
   assert.equal(fake.widgets[0].activeEdges.at(-1), false);
   assert.equal(fake.widgets[1].activeEdges.at(-1), true);
+  await harness.act(() => composed[0].restoreFocus());
+  assert.equal(fake.widgets[0].activeEdges.at(-1), true,
+    'closing the composer restores the exact originating pane');
   await harness.act(() => controller.focusTerminalForConv(['agt_one']));
   assert.equal(fake.widgets[0].activeEdges.at(-1), true);
   const activeEdges = fake.widgets[0].activeEdges.length;
