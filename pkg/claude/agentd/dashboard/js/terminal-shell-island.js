@@ -32,6 +32,7 @@ function OpaqueTerminalHost({
   descriptor,
   runtimeID,
   active,
+  activationToken,
   authenticate,
   className,
   actions,
@@ -64,7 +65,7 @@ function OpaqueTerminalHost({
       if (widgetRef.current === widget) widgetRef.current = null;
     };
   }, [descriptor.id]);
-  useLayoutEffect(() => widgetRef.current?.setActive(active), [active]);
+  useLayoutEffect(() => widgetRef.current?.setActive(active), [active, activationToken]);
   return html`<div ref=${hostRef} class=${className}></div>`;
 }
 
@@ -84,7 +85,7 @@ function CopyButton({ className, id, hasSelection, actions, runtimeID }) {
   `;
 }
 
-function TerminalPane({ pane, active, solo, manageTitle, actions, widgetFactory }) {
+function TerminalPane({ pane, active, activationToken, solo, manageTitle, actions, widgetFactory }) {
   const [status, setStatus] = useState('disconnected');
   const [reconnect, setReconnect] = useState(false);
   const [hasSelection, setHasSelection] = useState(false);
@@ -127,6 +128,7 @@ function TerminalPane({ pane, active, solo, manageTitle, actions, widgetFactory 
         descriptor=${pane}
         runtimeID=${pane.id}
         active=${active}
+        activationToken=${activationToken}
         authenticate=${true}
         className="mux-pane-xterm"
         actions=${actions}
@@ -224,6 +226,7 @@ function TerminalTabs({ state, actions, widgetFactory, solo = false, manageTitle
               key=${pane.key}
               pane=${pane}
               active=${current.activeKey === pane.key}
+              activationToken=${current.activeKey === pane.key ? current.revealRequest : 0}
               solo=${solo}
               manageTitle=${manageTitle}
               actions=${actions}
