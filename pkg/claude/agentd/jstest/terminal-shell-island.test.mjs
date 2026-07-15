@@ -75,12 +75,14 @@ test('dashboard terminal feature owns three hosts while preserving opaque xterm 
   const { host, badgeHost, modalHost, terminals } = installHosts(harness);
   const fake = fakeWidgetFactory(harness);
   const requests = [];
+  const composed = [];
   const { mountTerminalsFeature } = await harness.importDashboardModule('js/preact-loader.js');
   const controller = await harness.importDashboardModule('js/terminals-tab.js');
   const cleanup = await mountTerminalsFeature({
     widgetFactory: fake.factory,
     confirm: async () => true,
     fetchImpl: async (url) => { requests.push(url); return { ok: true }; },
+    onComposeMessage: (seed) => composed.push(seed),
   });
   await harness.act(() => {});
 
@@ -119,6 +121,13 @@ test('dashboard terminal feature owns three hosts while preserving opaque xterm 
   const copy = getByRole(host, 'button', { name: /Copy selected terminal text/ });
   harness.fireEvent(copy, 'click');
   assert.equal(fake.widgets[0].copyCount, 1);
+  const message = getByRole(host, 'button', { name: '✉ Message' });
+  harness.fireEvent(message, 'click');
+  fake.widgets[0].options.onComposeMessage();
+  assert.deepEqual(composed, [
+    { ws: '/one', key: 'one', label: 'one', agent: 'agt_one' },
+    { ws: '/one', key: 'one', label: 'one', agent: 'agt_one' },
+  ], 'button and Ctrl/Cmd+M callback open the same agent-scoped composer');
 
   await harness.act(async () => {
     controller.openTerminalPane({ ws: '/two', key: 'two', label: 'two', agent: 'agt_two' });

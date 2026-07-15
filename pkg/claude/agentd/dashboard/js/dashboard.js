@@ -40,7 +40,7 @@ import { bindDockSaveDnd } from './dock-save-dnd.js';
 import {
   bindGroupCreateModal,
 } from './modal-message.js';
-import { bindOperatorMessageModal } from './modal-operator-message.js';
+import { bindOperatorMessageModal, openOperatorMessageModal } from './modal-operator-message.js';
 import {
   openPermEditModal, openSudoGrantModal, openSpawnPermEditor, pickAgent,
 } from './message-access-dialog-controller.js';
@@ -166,7 +166,10 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   // not by the sum of seven dynamic-import chains. Await the whole group before
   // initNavHistory below so initial deep links still find every lazy loader.
   const featureCleanups = await Promise.all([
-    mountTerminalsFeature({ confirm: confirmModal }),
+    mountTerminalsFeature({
+      confirm: confirmModal,
+      onComposeMessage: (seed) => openOperatorMessageModal({ agent: seed.agent, label: seed.label }),
+    }),
     mountMessageAccessDialogsFeature({
       refresh: dashboardActions.refresh,
       notify: toast,
