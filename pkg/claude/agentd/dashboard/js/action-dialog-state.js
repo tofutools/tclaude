@@ -3,6 +3,28 @@ import { computed, signal } from '@preact/signals';
 export function createActionDialogState() {
   const dialog = signal(null);
   const view = computed(() => ({ dialog: dialog.value }));
+  let choiceResolve = null;
+
+  function openChoice(descriptor) {
+    // Choice dialogs are promise-backed compatibility seams. Refuse a second
+    // open instead of retargeting the live prompt and orphaning its caller.
+    if (dialog.value || choiceResolve) return Promise.resolve(null);
+    dialog.value = descriptor;
+    return new Promise((resolve) => { choiceResolve = resolve; });
+  }
+
+  function finishChoice(result) {
+    const resolve = choiceResolve;
+    choiceResolve = null;
+    dialog.value = null;
+    resolve?.(result);
+  }
+
+  function close() {
+    if (choiceResolve) finishChoice(null);
+    else dialog.value = null;
+  }
+
   return Object.freeze({
     dialog,
     view,
@@ -23,6 +45,21 @@ export function createActionDialogState() {
       if (dialog.value?.kind === 'task-link') return;
       dialog.value = { kind: 'task-link', conv, agentLabel, url, taskLabel };
     },
-    close() { dialog.value = null; },
+    openPresetClone({ kind, kindWizard, source, create }) {
+      if (dialog.value) return false;
+      dialog.value = { kind: 'preset-clone', presetKind: kind, kindWizard, source, create };
+      return true;
+    },
+    openExport({ conv, label = '' }) {
+      if (dialog.value) return false;
+      dialog.value = { kind: 'agent-export', conv, label };
+      return true;
+    },
+    openTerminalDirectory({ label = '' }) {
+      return openChoice({ kind: 'terminal-directory', label });
+    },
+    finishChoice,
+    close,
+    dispose: close,
   });
 }

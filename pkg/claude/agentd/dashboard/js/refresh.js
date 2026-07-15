@@ -2933,47 +2933,6 @@ function shutdownConfirm({label}) {
   });
 }
 
-// termDirModal pops a 4-button picker: Current dir (default),
-// Worktree dir, Launch dir, Cancel. Resolves to
-// "current" / "worktree" / "start" / null. The caller POSTs the
-// choice to /api/term/{conv}; the daemon opens the terminal window
-// out-of-sandbox via terminal.OpenWithCommand.
-function termDirModal({label}) {
-  return new Promise(resolve => {
-    const overlay = $('#term-modal');
-    $('#term-meta').textContent = label || '';
-    $('#term-meta').style.display = label ? 'block' : 'none';
-    const currentBtn = $('#term-current');
-    const worktreeBtn = $('#term-worktree');
-    const startBtn = $('#term-start');
-    const cancelBtn = $('#term-cancel');
-    const cleanup = (result) => {
-      overlay.classList.remove('show');
-      currentBtn.removeEventListener('click', onCurrent);
-      worktreeBtn.removeEventListener('click', onWorktree);
-      startBtn.removeEventListener('click', onStart);
-      cancelBtn.removeEventListener('click', onCancel);
-      overlay.removeEventListener('click', onOverlay);
-      document.removeEventListener('keydown', onKey);
-      resolve(result);
-    };
-    const onCurrent = () => cleanup('current');
-    const onWorktree = () => cleanup('worktree');
-    const onStart = () => cleanup('start');
-    const onCancel = () => cleanup(null);
-    const onOverlay = (e) => { if (e.target === overlay) cleanup(null); };
-    const onKey = (e) => { if (e.key === 'Escape') cleanup(null); };
-    currentBtn.addEventListener('click', onCurrent);
-    worktreeBtn.addEventListener('click', onWorktree);
-    startBtn.addEventListener('click', onStart);
-    cancelBtn.addEventListener('click', onCancel);
-    overlay.addEventListener('click', onOverlay);
-    document.addEventListener('keydown', onKey);
-    overlay.classList.add('show');
-    currentBtn.focus();
-  });
-}
-
 // isValidRenameTitleJS mirrors the daemon's isValidRenameTitle
 // (agentd/handlers.go): 1-64 chars from [A-Za-z0-9_-[]{}() ], no
 // double spaces. A client-side pre-check so an obviously-bad title
@@ -4227,6 +4186,6 @@ export {
   maybeHandleDanglingRetire, retireAgentInteractive, openRetirePreview, openRetireUngroupedPreview, openDeleteRetiredPreview, openWorktreeCleanup,
   openDeleteGroupModal,
   groupMembersByStatus, countGroupMembersByStatus, countUngroupedAgents,
-  termDirModal, editMemberModal, addMemberModal, deleteAgentModal,
+  editMemberModal, addMemberModal, deleteAgentModal,
   resumeAgentReq, stopAgentReq,
 };

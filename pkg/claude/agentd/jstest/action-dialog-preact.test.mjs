@@ -15,6 +15,7 @@ async function mountDialogs(t, kind, descriptor, overrides = {}) {
     openClone: state.openClone,
     openReincarnate: state.openReincarnate,
     openNest: state.openNest,
+    finishChoice: state.finishChoice,
     close: state.close,
     nestModel: () => ({ currentParent: '', candidates: ['alpha', 'beta'] }),
     loadWorktrees: async () => ({
@@ -29,6 +30,15 @@ async function mountDialogs(t, kind, descriptor, overrides = {}) {
     cloneAgent: async (value) => { calls.push(['clone', value]); },
     reincarnateAgent: async (value) => { calls.push(['reincarnate', value]); },
     nestGroup: async (value) => { calls.push(['nest', value]); },
+    clonePreset: async (value) => { calls.push(['clone-preset', value]); },
+    loadExportHistory: async () => [],
+    startExport: async () => ({ id: 7 }),
+    watchExport: () => () => {},
+    downloadExport: (id) => calls.push(['download-export', id]),
+    exportReady: (label) => calls.push(['export-ready', label]),
+    exportStillRunning: () => calls.push(['export-running']),
+    deleteExport: async () => {},
+    clearExports: async () => {},
     ...overrides,
   };
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
@@ -168,4 +178,155 @@ test('action mutations preserve endpoint payloads, notifications, and refresh bo
   assert.equal(requests[2][0], '/api/groups/child/parent');
   assert.deepEqual(JSON.parse(requests[2][1].body), { parent: '' });
   assert.deepEqual(refreshes, [null, null, null]);
+});
+
+test('preset clone dialog submits controlled names and surfaces create errors', async (t) => {
+  const source = { name: 'writer', aliases: ['scribe'], model: 'opus' };
+  const mounted = await mountDialogs(t, 'preset-clone', {
+    presetKind: 'profile', kindWizard: 'pattern', source, create: async () => {},
+  });
+  const { harness, host, calls } = mounted;
+  await harness.act(() => Promise.resolve());
+  assert.equal(harness.document.activeElement.id, 'clone-modal-name');
+  const input = host.querySelector('#clone-modal-name');
+  input.value = 'writer-copy-2';
+  input.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+  host.querySelector('#clone-modal-submit').click();
+  await harness.act(() => Promise.resolve());
+  assert.deepEqual(calls[0], ['clone-preset', {
+    source, create: mounted.state.dialog.value.create, name: 'writer-copy-2',
+  }]);
+  await mounted.cleanup();
+
+  const failed = await mountDialogs(t, 'preset-clone', {
+    presetKind: 'role', kindWizard: 'class', source, create: async () => {},
+  }, { clonePreset: async () => { throw new Error('name already exists'); } });
+  failed.host.querySelector('#clone-modal-submit').click();
+  await failed.harness.act(() => Promise.resolve());
+  assert.equal(failed.host.querySelector('#clone-modal-error').textContent, 'name already exists');
+  assert.ok(failed.host.querySelector('#clone-modal'), 'failed clone stays open for correction/retry');
+  await failed.cleanup();
+});
+
+test('terminal-directory state resolves every result and cancellation path', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createActionDialogState } = await harness.importDashboardModule('js/action-dialog-state.js');
+  const state = createActionDialogState();
+
+  const worktree = state.openTerminalDirectory({ label: 'worker' });
+  assert.equal(state.dialog.value.kind, 'terminal-directory');
+  state.finishChoice('worktree');
+  assert.equal(await worktree, 'worktree');
+
+  const canceled = state.openTerminalDirectory({ label: 'worker' });
+  state.close();
+  assert.equal(await canceled, null);
+
+  const unmounted = state.openTerminalDirectory({ label: 'worker' });
+  state.dispose();
+  assert.equal(await unmounted, null);
+});
+
+test('terminal-directory component publishes choice and cancel without DOM listeners', async (t) => {
+  const chosen = await mountDialogs(t, 'terminal-directory', { label: 'worker' });
+  chosen.host.querySelector('#term-current').click();
+  await chosen.harness.act(() => Promise.resolve());
+  assert.equal(chosen.state.dialog.value, null);
+  await chosen.cleanup();
+
+  const canceled = await mountDialogs(t, 'terminal-directory', { label: 'worker' });
+  canceled.host.querySelector('#term-cancel').click();
+  await canceled.harness.act(() => Promise.resolve());
+  assert.equal(canceled.state.dialog.value, null);
+  await canceled.cleanup();
+});
+
+test('export dialog owns submit/error/retry UI and cancels its watcher on close', async (t) => {
+  let watcherCleanup = 0;
+  let callbacks;
+  const mounted = await mountDialogs(t, 'agent-export', { conv: 'abcdefgh-rest', label: 'worker' }, {
+    watchExport: (_id, value) => { callbacks = value; return () => { watcherCleanup++; }; },
+  });
+  const { harness, host, calls } = mounted;
+  await harness.act(() => Promise.resolve());
+  host.querySelector('#export-agent-submit').click();
+  await harness.act(() => Promise.resolve());
+  assert.ok(host.querySelector('#export-agent-status'));
+  callbacks.onSlow();
+  await harness.act(() => Promise.resolve());
+  assert.match(host.querySelector('#export-agent-status-note').textContent, /Still working/);
+  assert.match(host.querySelector('#export-agent-status-note').textContent, /Still inscribing/);
+  callbacks.onFailed({});
+  await harness.act(() => Promise.resolve());
+  assert.match(host.querySelector('#export-agent-status-note').textContent, /agent did not deliver/);
+  assert.match(host.querySelector('#export-agent-status-note').textContent, /familiar did not deliver/);
+  host.querySelector('#export-agent-retry').click();
+  await harness.act(() => Promise.resolve());
+  assert.ok(host.querySelector('#export-agent-form'));
+  assert.equal(watcherCleanup, 1, 'leaving the working phase cancels the poll watcher');
+
+  host.querySelector('#export-agent-submit').click();
+  await harness.act(() => Promise.resolve());
+  host.querySelector('#export-agent-cancel').click();
+  await harness.act(() => Promise.resolve());
+  assert.deepEqual(calls.at(-1), ['export-running']);
+  assert.equal(watcherCleanup, 2, 'closing an active export cancels the watcher');
+  await mounted.cleanup();
+});
+
+test('export polling owns timers and aborts an in-flight request on cleanup', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createActionDialogState }, { createActionDialogActions }] = await Promise.all([
+    harness.importDashboardModule('js/action-dialog-state.js'),
+    harness.importDashboardModule('js/action-dialog-actions.js'),
+  ]);
+  const timers = [];
+  const cleared = [];
+  let aborted = false;
+  const actions = createActionDialogActions({
+    state: createActionDialogState(),
+    refresh: async () => {}, notify: () => {},
+    setTimer(fn) { timers.push(fn); return timers.length; },
+    clearTimer(id) { cleared.push(id); },
+    fetchImpl: (_url, options) => new Promise((_resolve, reject) => {
+      options.signal.addEventListener('abort', () => {
+        aborted = true;
+        reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+      });
+    }),
+  });
+  const cancel = actions.watchExport(9, {
+    onStatus() {}, onReady() {}, onFailed() {}, onSlow() {},
+  });
+  assert.equal(timers.length, 1);
+  const pending = timers[0]();
+  cancel();
+  await pending;
+  assert.equal(aborted, true, 'cleanup aborts the request currently in flight');
+  assert.ok(cleared.length >= 1, 'cleanup clears the scheduled poll timer');
+});
+
+test('export request errors prefer friendly JSON error fields and retain plain text', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createActionDialogState }, { createActionDialogActions }] = await Promise.all([
+    harness.importDashboardModule('js/action-dialog-state.js'),
+    harness.importDashboardModule('js/action-dialog-actions.js'),
+  ]);
+  const responses = [
+    new Response(JSON.stringify({ error: 'friendly collision' }), { status: 409 }),
+    new Response('plain failure', { status: 400 }),
+  ];
+  const actions = createActionDialogActions({
+    state: createActionDialogState(), refresh: async () => {}, notify: () => {},
+    fetchImpl: async () => responses.shift(),
+  });
+  await assert.rejects(
+    actions.startExport({ conv: 'agent', preset: 'summary' }),
+    /friendly collision/,
+  );
+  await assert.rejects(
+    actions.startExport({ conv: 'agent', preset: 'summary' }),
+    /plain failure/,
+  );
 });
