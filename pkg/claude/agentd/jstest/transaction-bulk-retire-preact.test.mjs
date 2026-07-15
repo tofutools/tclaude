@@ -192,6 +192,8 @@ test('group retire preview preserves bulk-only worktree coupling, hidden checks,
 
   const shutdown = host.querySelector('#retire-preview-shutdown');
   const worktrees = host.querySelector('#retire-preview-wt');
+  assert.equal(host.querySelector('#retire-preview-wt-row .wt-note').textContent,
+    'The main worktree is never removed; a worktree shared with a surviving agent is kept. Removal happens only after its agent exits and requires shutdown; deleting a linked worktree also deletes its branch.');
   assert.equal(shutdown.hasAttribute('checked'), true);
   assert.equal(worktrees.hasAttribute('checked'), true);
   shutdown.checked = false;
@@ -297,6 +299,10 @@ test('ungrouped retire preview uses visible-only controls but submits every chec
     'Retire ungrouped agents');
   assert.equal(host.querySelector('#retire-preview-title .theme-copy-wizard').textContent,
     'Banish unbound familiars');
+  assert.equal(host.querySelector('#retire-preview-hint .theme-copy-regular').textContent,
+    'These agents are not in any group. Each ticked agent will be demoted to a plain, reinstatable conversation and its grants revoked. Untick any you want to keep; only the ticked agents are retired.');
+  assert.equal(host.querySelector('#retire-preview-hint .theme-copy-wizard').textContent,
+    'These unbound familiars belong to no party. Each ticked familiar will return to a restorable conversation scroll and lose its boons. Untick any you want to keep; only the ticked familiars are banished.');
   const search = host.querySelector('#retire-preview-search');
   search.value = 'alpha';
   await harness.act(() => harness.fireEvent(search, 'input'));

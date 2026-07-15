@@ -281,8 +281,8 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
         wizard=${`These ${descriptor.status} familiars in party "${descriptor.group}" will return to restorable conversation scrolls. Each ticked familiar is removed from all its parties, including parties it owns, and its boons and sudo grants are revoked. Untick any you want to keep; only ticked familiars are banished.`}
       />`
       : html`<${Words}
-        plain="These agents are not in any group. Each ticked agent will be demoted to a plain, reinstatable conversation and its grants revoked."
-        wizard="These unbound familiars belong to no party. Each ticked familiar will return to a restorable conversation scroll and lose its boons."
+        plain="These agents are not in any group. Each ticked agent will be demoted to a plain, reinstatable conversation and its grants revoked. Untick any you want to keep; only the ticked agents are retired."
+        wizard="These unbound familiars belong to no party. Each ticked familiar will return to a restorable conversation scroll and lose its boons. Untick any you want to keep; only the ticked familiars are banished."
       />`;
 
   return html`<${TransactionDialogFrame}
@@ -362,7 +362,7 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
           }}
         />
         <span><${Words} plain="Also delete each agent’s git worktree + branch" wizard="Also dissolve each familiar’s git worktree + branch" />
-          <span class="wt-note">main/shared/no-worktree agents are kept by the daemon</span>
+          <span class="wt-note">The main worktree is never removed; a worktree shared with a surviving agent is kept. Removal happens only after its agent exits and requires shutdown; deleting a linked worktree also deletes its branch.</span>
         </span>
       </label>
     `}
