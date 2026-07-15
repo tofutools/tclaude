@@ -28,6 +28,15 @@ export function createTransactionDialogActions({
   notify = () => {},
   confirm = async () => false,
 }) {
+  const report = (message, isError = false) => {
+    // Feedback is advisory. A broken injected sink must never strand the
+    // promise-backed transaction after its visual owner has handed off.
+    try {
+      const pending = isError ? notify(message, true) : notify(message);
+      pending?.catch?.(() => {});
+    } catch (_) {}
+  };
+
   return Object.freeze({
     close: state.close,
 
@@ -67,7 +76,7 @@ export function createTransactionDialogActions({
       }
       const result = { ok: true, response: payload };
       state.handoff();
-      notify(retireNotice(label || conv, choice, payload));
+      report(retireNotice(label || conv, choice, payload));
       try { await refresh(); } finally { state.finish(result); }
       return { response: payload };
     },
@@ -86,6 +95,11 @@ export function createTransactionDialogActions({
         state.finish(result);
         return result;
       };
+      const finishWithNotice = (removed, reason, message, isError = false) => {
+        const result = finish(removed, reason);
+        report(message, isError);
+        return result;
+      };
       let approved;
       try {
         approved = await confirm({
@@ -98,12 +112,12 @@ export function createTransactionDialogActions({
           okLabel: 'Remove dangling entry',
         });
       } catch (error) {
-        notify(`Remove failed: ${error?.message || error}`, true);
-        return finish(false, 'confirm_failed');
+        return finishWithNotice(
+          false, 'confirm_failed', `Remove failed: ${error?.message || error}`, true,
+        );
       }
       if (!approved) {
-        notify('dangling entry kept');
-        return finish(false, 'declined');
+        return finishWithNotice(false, 'declined', 'dangling entry kept');
       }
       let response;
       try {
@@ -111,16 +125,27 @@ export function createTransactionDialogActions({
           method: 'DELETE', credentials: 'same-origin',
         });
       } catch (error) {
-        notify(`Remove failed: ${error?.message || error}`, true);
-        return finish(false, 'transport_failed');
+        return finishWithNotice(
+          false, 'transport_failed', `Remove failed: ${error?.message || error}`, true,
+        );
       }
       if (!response.ok) {
-        const payload = await responsePayload(response);
-        notify(`Remove failed: ${payload?.error || payload?.message || `HTTP ${response.status}`}`, true);
-        return finish(false, 'http_failed');
+        let payload;
+        try {
+          payload = await responsePayload(response);
+        } catch (_) {
+          return finishWithNotice(
+            false, 'http_failed',
+            `Remove failed: HTTP ${response.status} (response body unreadable)`, true,
+          );
+        }
+        return finishWithNotice(
+          false, 'http_failed',
+          `Remove failed: ${payload?.error || payload?.message || `HTTP ${response.status}`}`, true,
+        );
       }
       const result = { dangling: true, removed: true, convID: target, reason: 'removed' };
-      notify(`removed dangling entry: ${label || conv}`);
+      report(`removed dangling entry: ${label || conv}`);
       try { await refresh(); } finally { state.finish(result); }
       return result;
     },
