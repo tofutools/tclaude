@@ -32,12 +32,21 @@ test('worktree model preserves classifications, safety gates, and exact-path res
     paths: ['/repo-wt', '/repo-wt-child'], deleteBranches: false,
   });
 
-  const returned = model.reconcileWorktreeCandidates([
-    { path: '/repo-wt', category: 'live', checked: false },
+  model.reconcileWorktreeCandidates([
+    { path: '/repo-other', category: 'orphan', checked: true },
   ], choices);
-  assert.equal(returned[0].checked, true,
-    'a touched path keeps its choice after disappearing and returning on a later scan');
-  assert.equal(returned[0].category, 'live', 'fresh server classification still wins');
+  assert.equal(choices.has('/repo-wt'), false,
+    'a successful snapshot forgets choices for absent exact paths');
+
+  const returned = model.reconcileWorktreeCandidates([{
+    path: '/repo-wt', category: 'agent', checked: false, dirty: true,
+    agents: [{ title: 'Replacement', conv_id: 'replacement-conv' }],
+  }], choices);
+  assert.equal(returned[0].checked, false,
+    'a replacement at a forgotten path takes its fresh server default');
+  assert.equal(returned[0].category, 'agent', 'fresh server classification still wins');
+  assert.equal(returned[0].dirty, true);
+  assert.equal(returned[0].agents[0].title, 'Replacement');
 });
 
 test('worktree model filters by path, branch, and agent identity and summarizes partial results', async (t) => {
