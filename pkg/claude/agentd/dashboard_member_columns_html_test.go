@@ -28,20 +28,21 @@ func TestDashboardHTML_MemberColumnsShowHideWired(t *testing.T) {
 	must("function memberColDeviationCount(", "badge count of non-default columns")
 	must("'tclaude.dash.members.hidden'", "hidden set persists under a stable dashPrefs key")
 
-	// render.js: the header AND the body render off the SAME visible-column
-	// list, so they can never drift out of alignment.
+	// groups-member-table.js: the native header AND body render off the SAME
+	// visible-column list, so they can never drift out of alignment.
 	must("import { visibleMemberCols, memberColHidden } from './member-columns.js';", "render imports the store")
-	must("sortHead('members', visibleMemberCols(), isWizardActive())", "the members header renders visible columns with the live theme")
+	must("const columns = visibleMemberCols();", "the native member table resolves visible columns once")
+	must(`<${SortHead} table="members" columns=${columns}`, "the members header receives that visible-column list")
 	must("wizardLabel: 'Class'", "the Role header and column toggle use wizard Class vocabulary")
 	must("wizardLabel: 'Quest'", "the Task link header and column toggle use wizard Quest vocabulary")
 	must("wizardLabel: 'Lore'", "the Description header and column toggle use wizard Lore vocabulary")
-	must("visibleMemberCols().map((c) => cells[c.key]", "each row emits only the visible columns, in order")
+	must("columns.map((column) => html`<${MemberCell}", "each row emits only the visible columns, in order")
 	// A missing cell must degrade to an empty <td> (fails ALIGNED), never to
 	// '' (which would shift every later cell left into a misaligned table).
-	must("cells[c.key] ?? '<td></td>'", "a visible column with no cell keeps the row aligned")
+	must("default: return html`<td></td>`", "a visible column with no cell keeps the row aligned")
 	// Hiding ID folds its agent-id/conv-id hover onto the Name cell.
-	must("renameNameCell(m, state, namePair)", "the id pair is passed to the name cell when ID is hidden")
-	must("function renameNameCell(m, state, idPair = '')", "renameNameCell accepts the optional id pair")
+	must("const idPrefix = memberColHidden('id')", "the name cell checks whether ID is hidden")
+	must("`${idTooltip(member.agent_id, member.conv_id)} — `", "the hidden ID pair is folded into the name tooltip")
 
 	// groups-state/island: the ▾ view "Columns" section is generated from the
 	// column model and each toggle persists + rerenders + feeds the badge.

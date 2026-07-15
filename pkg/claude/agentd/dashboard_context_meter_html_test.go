@@ -46,9 +46,9 @@ func TestDashboardHTML_ContextMeterHonestRounding(t *testing.T) {
 
 	// The corrected formula: round to the nearest block, floor of one
 	// for any non-zero usage, clamp at the segment count.
-	must("Math.round(pct / (100 / CTX_SEGMENTS))", "lit count rounds to nearest block")
+	must("Math.round(pct / 20)", "lit count rounds to nearest 20%-wide block")
 	must("Math.max(1, Math.round(", "non-zero usage still lights at least one block")
-	must("Math.min(CTX_SEGMENTS, Math.max(1,", "lit count is clamped to CTX_SEGMENTS")
+	must("Math.min(5, Math.max(1,", "lit count is clamped to five segments")
 
 	// pct == 0 (or an unknown snapshot, which pins pct to 0) must light
 	// zero blocks — the gate that keeps a freshly-spawned agent's meter

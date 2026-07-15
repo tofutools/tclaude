@@ -19,13 +19,13 @@ func TestDashboardHTML_CrashedPill(t *testing.T) {
 		}
 	}
 
-	must("state.exit_reason",
+	must("state?.exit_reason",
 		"statePill must read the exit_reason field off the snapshot")
 	must("'unexpected'",
 		"only an explicit 'unexpected' reason is treated as a crash")
-	must("state-pill state-crashed",
+	must("className = 'state-crashed'",
 		"the crash case renders a .state-crashed pill")
-	must(">crashed</span>",
+	must("status === 'crashed'",
 		"the unexpected-death pill is labelled 'crashed'")
 	must(".state-crashed ",
 		"the .state-crashed CSS rule must be defined")
