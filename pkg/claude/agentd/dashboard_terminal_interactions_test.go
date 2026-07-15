@@ -73,8 +73,8 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 	for _, needle := range []string{
 		"class=\"terminal-interaction-hint\"",
 		"Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C",
-		"messageBtn.textContent = '✉ Message'",
-		"onComposeMessage: messageBtn ? () => onComposeMessage(seed) : null",
+		">✉ Message</button>",
+		"onComposeMessage=${composeMessage}",
 	} {
 		if !strings.Contains(shell, needle) {
 			t.Errorf("mux terminal header missing persistent guidance %q", needle)

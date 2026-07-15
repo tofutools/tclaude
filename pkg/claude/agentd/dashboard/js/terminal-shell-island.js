@@ -40,6 +40,7 @@ function OpaqueTerminalHost({
   onStatus,
   onReconnectChange,
   onSelectionChange,
+  onComposeMessage,
   onDisconnect,
 }) {
   const hostRef = useRef(null);
@@ -53,6 +54,7 @@ function OpaqueTerminalHost({
       onStatus,
       onReconnectChange,
       onSelectionChange,
+      onComposeMessage,
       onDisconnect,
     });
     widgetRef.current = widget;
@@ -85,11 +87,16 @@ function CopyButton({ className, id, hasSelection, actions, runtimeID }) {
   `;
 }
 
-function TerminalPane({ pane, active, activationToken, solo, manageTitle, actions, widgetFactory }) {
+function TerminalPane({
+  pane, active, activationToken, solo, manageTitle, actions, widgetFactory, onComposeMessage,
+}) {
   const [status, setStatus] = useState('disconnected');
   const [reconnect, setReconnect] = useState(false);
   const [hasSelection, setHasSelection] = useState(false);
   const theme = useTerminalThemeState();
+  const composeMessage = pane.seed.agent && onComposeMessage
+    ? () => onComposeMessage(pane.seed)
+    : null;
   useEffect(() => {
     if (active && manageTitle) {
       document.title = `${pane.label ? `${pane.label} — ` : ''}tclaude terminals`;
@@ -107,6 +114,9 @@ function TerminalPane({ pane, active, activationToken, solo, manageTitle, action
         <span class="terminal-interaction-hint">${INTERACTION_HINT}</span>
         ${reconnect ? html`<button type="button" class="mux-btn" onClick=${() => void actions.widgetFor(pane.id)?.connect()}>Reconnect</button>` : null}
         <${CopyButton} className="mux-btn" hasSelection=${hasSelection} actions=${actions} runtimeID=${pane.id} />
+        ${composeMessage ? html`
+          <button type="button" class="mux-btn" title="Send a queued message to this agent (Ctrl/Cmd+M)" onClick=${composeMessage}>✉ Message</button>
+        ` : null}
         <label
           class="mux-palette-toggle"
           hidden=${!theme.wizard}
@@ -136,6 +146,7 @@ function TerminalPane({ pane, active, activationToken, solo, manageTitle, action
         onStatus=${setStatus}
         onReconnectChange=${setReconnect}
         onSelectionChange=${setHasSelection}
+        onComposeMessage=${composeMessage}
       />
     </div>
   `;
@@ -169,7 +180,9 @@ function PaneTab({ pane, active, actions }) {
   `;
 }
 
-function TerminalTabs({ state, actions, widgetFactory, solo = false, manageTitle = false, empty = false }) {
+function TerminalTabs({
+  state, actions, widgetFactory, onComposeMessage, solo = false, manageTitle = false, empty = false,
+}) {
   const current = state.view.value;
   const hasPanes = current.panes.length > 0;
 
@@ -231,6 +244,7 @@ function TerminalTabs({ state, actions, widgetFactory, solo = false, manageTitle
               manageTitle=${manageTitle}
               actions=${actions}
               widgetFactory=${widgetFactory}
+              onComposeMessage=${onComposeMessage}
             />
           `)}
         </div>
@@ -309,9 +323,10 @@ export function mountTerminalShellIsland({
   actions,
   registerCleanup,
   widgetFactory = mountTerminalWidget,
+  onComposeMessage = null,
 }) {
   const unregisterController = registerTerminalShellController(actions);
-  render(html`<${TerminalTabs} state=${state} actions=${actions} widgetFactory=${widgetFactory} />`, host);
+  render(html`<${TerminalTabs} state=${state} actions=${actions} widgetFactory=${widgetFactory} onComposeMessage=${onComposeMessage} />`, host);
   render(html`<${TerminalBadge} state=${state} />`, badgeHost);
   render(html`<${TerminalModal} state=${state} actions=${actions} widgetFactory=${widgetFactory} />`, modalHost);
   registerCleanup(() => {

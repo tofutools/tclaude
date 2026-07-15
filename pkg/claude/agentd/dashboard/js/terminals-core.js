@@ -77,6 +77,7 @@ export function mountTerminalWidget({
   onStatus = () => {},
   onReconnectChange = () => {},
   onSelectionChange = () => {},
+  onComposeMessage = null,
   onDisconnect = () => {},
   fetchImpl = globalThis.fetch,
   TerminalCtor = globalThis.Terminal,
@@ -235,6 +236,7 @@ export function mountTerminalWidget({
     copyButton: null,
     setStatus,
     baseStatus: () => ws && ws.readyState === WebSocketCtor.OPEN ? 'connected' : 'disconnected',
+    onComposeMessage,
     onSelectionChange: (selected) => { if (!disposed) onSelectionChange(selected); },
   });
 
