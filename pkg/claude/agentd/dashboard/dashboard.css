@@ -7789,11 +7789,10 @@ body.wizard #window-modal #window-submit:disabled { opacity: 0.6; }
    discipline the retire / edit-member / window re-skins follow, guarded by
    TestDashboardCSS_WizardWindowModalScoped and friends.
 
-   The title + hint copy is JS-set honest prose (applyChrome / applyHint),
-   not a per-theme span pair, so it is left legible and only the chrome is
-   re-skinned — matching the terminal-picker re-skin. Because every rule keys
-   on body.wizard, the whole dialog re-flows correctly on a live 🧙 toggle
-   with no JS wiring. */
+   The keyed Preact owner renders plain/wizard copy spans where vocabulary
+   differs and keeps the remaining honest prose legible. Because every rule
+   keys on body.wizard, the whole dialog re-flows correctly on a live 🧙 toggle
+   with no listener wiring. */
 
 /* The dialog surface: midnight-violet void, mystic-purple frame + glow,
    parchment text — the Summon / Banish palette, same as #window-modal. */

@@ -52,10 +52,19 @@ test('worktree cleanup renders a successful scan response', async (t) => {
     export function sudoBadge() { return ''; }
   `);
   const { openWorktreeCleanup } = await harness.importDashboardModule('js/refresh.js');
-  await openWorktreeCleanup('alpha');
+  let settled = false;
+  const closed = openWorktreeCleanup('alpha');
+  closed.finally(() => { settled = true; });
+  await harness.act(async () => {
+    for (let turn = 0; turn < 6; turn += 1) await Promise.resolve();
+  });
 
   assert.match(harness.document.querySelector('#worktree-cleanup-list').textContent, /feature/);
   assert.match(harness.document.querySelector('#worktree-cleanup-list').textContent, /\/repo-feature/);
   assert.match(harness.document.querySelector('#worktree-cleanup-categories').textContent, /orphans 1\/1/);
   assert.equal(harness.document.querySelector('#worktree-cleanup-count').textContent, '1 of 1 selected');
+  assert.equal(settled, false, 'the driver retains ownership while its modal is visible');
+  harness.document.querySelector('#worktree-cleanup-cancel').click();
+  await closed;
+  assert.equal(settled, true);
 });

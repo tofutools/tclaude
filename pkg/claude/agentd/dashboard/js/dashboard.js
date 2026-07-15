@@ -16,7 +16,7 @@ import { bindSlopSpectacle } from './slop-spectacle.js';
 import { bindVegasMusic } from './vegas.js';
 import {
   bindTabs, bindTabHotkeys, bindDetailsPersistence, bindGroupTitleToggle, bindGroupQuickHover,
-  confirmDiscard, confirmModal, isCyclingTabs, refresh, toast,
+  confirmDiscard, confirmModal, isCyclingTabs, openWorktreeCleanup, refresh, toast,
 } from './refresh.js';
 
 // Cosmetic re-skins — slop (?slop=1) and wizard (?wizard=1), mutually
@@ -247,6 +247,7 @@ export function sudoBadge(activeSudo, fallbackConvID) {
       words: wizWord,
       openWebWindowPane,
       closeTerminalsForWindowOp,
+      openWorktreeCleanup,
     }),
   ]);
   pageCleanups.push(...featureCleanups);
