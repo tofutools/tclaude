@@ -333,7 +333,7 @@ export function bindWizardMarquee() {
 // successful POST. Flashes a random silly spell quote and rains an arcane
 // shower from the top edge — the wizard-mode "It's wizard time!" moment when a
 // new familiar is conjured. Silently no-ops when wizard mode is off (mirroring
-// slopJackpot's slop-off no-op) so modal-spawn can call it unconditionally
+// slopJackpot's slop-off no-op) so the spawn island can call it unconditionally
 // next to slopJackpot; the two themes are mutually exclusive, so only the
 // active one ever paints. reduced-motion suppresses it like every other
 // wizard effect.

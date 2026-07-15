@@ -348,7 +348,7 @@ func TestIsValidRenameSink(t *testing.T) {
 // TestIsValidSpawnName locks down the spawn-name charset rules. The
 // daemon side is the actual boundary (handleGroupSpawn), so this test is
 // the authoritative spec — the CLI mirror in pkg/claude/agent/lifecycle.go
-// and the dashboard regex in dashboard/js/modal-spawn.js must stay in
+// and the dashboard regex in dashboard/js/agent-spawn-model.js must stay in
 // sync with these expectations. The charset is intentionally STRICTER
 // than the rename title (no spaces / brackets / parens): a spawn name
 // doubles as a git worktree branch name and must be a safe token.

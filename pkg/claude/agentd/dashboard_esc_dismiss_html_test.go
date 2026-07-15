@@ -56,7 +56,8 @@ func TestDashboardHTML_EscDismissWired(t *testing.T) {
 	must("if (!dirty || (await confirmDiscard())) onClose();", "Preact management editors confirm before discarding")
 	must(`id="role-editor-modal"`, "the role editor uses the shared Preact dismissal boundary")
 	must(`id="profile-editor-modal"`, "the profile editor uses the shared Preact dismissal boundary")
-	must("bindBackdropDiscard('agent-spawn-modal', closeAgentSpawnModal);", "the spawn dialog confirms before discarding")
+	must(`id="agent-spawn-modal"`, "the Preact spawn dialog retains its scoped overlay id")
+	must("spawnDraftIsDirty(draft, baseline, attachments.length)", "the spawn dialog derives dirty state from its controlled draft")
 	must(`id="cron-create-modal"`, "the cron editor uses the shared Preact overlay")
 	must("overlayClass=${editing ? 'cron-editing' : descriptor.kind === 'duplicate' ? 'cron-duplicating' : ''}",
 		"component mode controls only the overlay presentation class")

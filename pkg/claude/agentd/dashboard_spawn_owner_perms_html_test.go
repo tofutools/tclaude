@@ -39,7 +39,7 @@ func TestDashboardSpawnOwnerPermsUI_Wired(t *testing.T) {
 
 	// The spawn body carries the birth-time access controls.
 	present("body.is_owner = true", "the spawn body sends is_owner when checked")
-	present("body.permission_overrides = spawnPermOverrides",
+	present("body.permission_overrides = { ...draft.permissionOverrides }",
 		"the spawn body sends the buffered overrides")
 
 	// The profile payload carries them too (tri-state owner + overrides).

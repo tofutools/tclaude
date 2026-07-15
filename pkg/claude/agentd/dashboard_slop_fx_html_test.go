@@ -8,7 +8,7 @@ import (
 
 // TestDashboardHTML_SlopFx pins the slop-mode visual feedback wiring:
 // the slop-fx.js module ships embedded, exports the two entry-points
-// dashboard.js + modal-spawn.js call, and the CSS classes its DOM
+// dashboard.js + the spawn actions call, and the CSS classes its DOM
 // uses survive into dashboardAssets.
 //
 // Same playbook as the other dashboard render guards
@@ -24,7 +24,7 @@ func TestDashboardHTML_SlopFx(t *testing.T) {
 	}
 
 	// The module itself is embedded — without this the import in
-	// dashboard.js / modal-spawn.js would 404 in the browser.
+	// dashboard.js / the lazy spawn feature would 404 in the browser.
 	if _, err := fs.ReadFile(dashboardAssetsFS, "js/slop-fx.js"); err != nil {
 		t.Fatalf("embedded js/slop-fx.js missing: %v", err)
 	}
@@ -33,14 +33,15 @@ func TestDashboardHTML_SlopFx(t *testing.T) {
 	must("export function bindSlopClickFx",
 		"the click-burst entry-point dashboard.js calls")
 	must("export function slopJackpot",
-		"the celebration entry-point modal-spawn.js calls")
+		"the celebration entry-point the spawn actions call")
 
 	// Wiring on both sides — a future refactor that drops either call
 	// loses the feature silently.
 	must("bindSlopClickFx();",
 		"dashboard.js installs the delegated click listener once at bootstrap")
-	must("slopJackpot();",
-		"modal-spawn.js fires the celebration on a successful spawn")
+	must("celebrateSlop: slopJackpot,",
+		"dashboard injects the celebration into spawn actions")
+	must("celebrateSlop();", "successful spawn completion fires the injected celebration")
 
 	// slop-fx.js leans on isSlopActive() for its gating; if that
 	// helper is renamed/removed we want a test break here, not a

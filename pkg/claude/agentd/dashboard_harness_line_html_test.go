@@ -115,8 +115,8 @@ func TestDashboardHTML_HarnessBadgeAndSandboxWired(t *testing.T) {
 // a harness selector that reshapes the Model + Sandbox menus per harness,
 // driven off the snapshot's harness catalog, with the chosen harness +
 // sandbox forwarded in the spawn POST body. Spans dashboard.html (the new
-// rows) + modal-spawn.js (the logic); asserted on the embedded source
-// since the repo has no JS test runner.
+// component + plain model; asserted here for production wiring and exercised
+// behaviourally by jstest/agent-spawn-preact.test.mjs.
 func TestDashboardHTML_SpawnHarnessMenusWired(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
@@ -135,36 +135,35 @@ func TestDashboardHTML_SpawnHarnessMenusWired(t *testing.T) {
 	must(`id="agent-spawn-sandbox"`, "spawn dialog has a sandbox selector")
 	must(`#agent-spawn-modal .spawn-inline-fields`, "spawn dialog has scoped CSS for the compact launch row")
 
-	// modal-spawn.js: the selector is populated from the catalog, the rows
-	// reshape per harness, and the active model control is read on submit.
-	must("function populateSpawnHarnessSelect()", "harness selector is populated from the catalog")
-	must("lastSnapshot.harnesses", "the dialog reads the snapshot harness catalog")
-	must("function applySpawnHarness(harnessName)", "the dialog reshapes per harness")
-	must("function activeSpawnModelEl()", "submit reads whichever Model control is active")
-	must("populateModelSelect($('#agent-spawn-model'), h.models)", "the Model dropdown is rebuilt from the selected harness catalog")
+	// The state snapshots the catalog, while the pure model derives capability
+	// visibility and the component renders the active model control.
+	must("harnesses: Object.freeze([...(snapshot.harnesses || [])])", "open snapshots the harness catalog")
+	must("export function spawnCapabilityView(", "the plain model reshapes per harness")
+	must("modelSelectValue(draft, context)", "the component derives the active model control")
+	must("view.models.map((model)", "the Model dropdown is rebuilt from the selected harness catalog")
 
-	// modal-spawn.js: the spawn POST body always carries the dropdown's explicit
+	// agent-spawn-model.js: the spawn POST body always carries the dropdown's explicit
 	// harness selection (including Claude) and sandbox.
-	must("if (harness) body.harness = harness", "selected harness is always sent in the spawn body")
-	must("body.sandbox = sandbox", "the chosen sandbox is sent in the spawn body")
+	must("if (draft.harness) body.harness = draft.harness", "selected harness is always sent in the spawn body")
+	must("if (view.sandbox.visible && draft.sandbox) body.sandbox = draft.sandbox", "the chosen sandbox is sent in the spawn body")
 
 	// AskUserQuestion idle-timeout (Claude-Code-only) — the row + selector exist,
 	// reshape per harness off the catalog's can_ask_timeout gate, and the chosen
 	// value is forwarded in the spawn body. Pins the JS/HTML so a JS-stale
 	// worktree (embedded assets) trips here rather than silently at integration.
 	must(`id="agent-spawn-ask-timeout"`, "spawn dialog has an AskUserQuestion-timeout selector")
-	must("can: 'can_ask_timeout', modes: 'ask_timeout_modes'", "the timeout row gates on the harness catalog's can_ask_timeout (via the shared SPAWN_LAUNCH_SETTINGS table)")
-	must("body.ask_user_question_timeout = askTimeout", "the chosen AskUserQuestion timeout is sent in the spawn body")
+	must("askTimeout: ['can_ask_timeout', 'ask_timeout_modes'", "the timeout row gates on the harness catalog's can_ask_timeout")
+	must("body.ask_user_question_timeout = draft.askTimeout", "the chosen AskUserQuestion timeout is sent in the spawn body")
 	// modal-profiles.js: the profile editor edits + persists the same field.
 	must(`id="profile-editor-ask-timeout"`, "profile editor has an AskUserQuestion-timeout selector")
 	must("body.ask_user_question_timeout = draft.ask_user_question_timeout", "the profile editor persists the AskUserQuestion timeout")
 
-	// modal-spawn.js: the Effort menu is rebuilt per harness from the
+	// agent-spawn-island.js: the Effort menu is rebuilt per harness from the
 	// catalog's effort_levels (single source of truth — the static HTML
 	// options are only a pre-snapshot fallback), so a harness with its own
 	// reasoning scale needs no dashboard edit.
-	must("function populateSpawnEffortSelect(", "the effort menu is rebuilt per harness")
-	must("h.effort_levels", "the effort menu reads the harness's effort levels from the catalog")
+	must("efforts: Array.isArray(harness?.effort_levels)", "the effort menu is rebuilt per harness")
+	must("harness.effort_levels : DEFAULT_EFFORTS", "the effort menu reads the harness's effort levels from the catalog")
 }
 
 // TestDashboardHTML_ShortModelRules pins the shortModel() compression

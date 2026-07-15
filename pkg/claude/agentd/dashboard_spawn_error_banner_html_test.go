@@ -10,8 +10,7 @@ import (
 // at the bottom of a tall, scrollable modal — easy to miss, especially when a
 // Ctrl/Cmd+Enter submit fired while that line sat below the scroll fold. This
 // guards the uplift: the line renders as a collapse-when-empty banner, and the
-// legacy spawn submit path routes through showModalError, while the migrated
-// clone/reincarnate paths render the equivalent controlled ErrorBanner.
+// migrated spawn/clone/reincarnate paths render an equivalent controlled banner.
 func TestDashboardHTML_SpawnErrorBannerWired(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
@@ -47,11 +46,10 @@ func TestDashboardHTML_SpawnErrorBannerWired(t *testing.T) {
 	must(".cron-create-error.dismissible {",
 		"flex variant places the ✕ at the banner's right")
 
-	// Spawn still uses the imperative helper. The Preact clone/reincarnate
-	// dialogs use the same scroll/flash/dismiss contract from controlled state.
-	if n := strings.Count(dashboardAssets, "showModalError(errEl, (await r.text())"); n != 1 {
-		t.Errorf("want the legacy spawn fetch-error site routed through showModalError; got %d", n)
-	}
+	// Spawn and the action dialogs use controlled error state with the same
+	// scroll/flash/dismiss contract.
+	must(`<${ErrorBanner} error=${error} onDismiss=${() => setError('')} />`, "Preact spawn dialog renders its controlled banner")
+	must("setError(errorMessage(cause))", "spawn request failures publish through controlled state")
 	must("function ErrorBanner({ id, error, onDismiss })", "Preact action dialogs share a controlled error banner")
 	must("element.scrollIntoView({ block: 'nearest' });", "Preact error banner scrolls into view")
 	must("<${ErrorBanner} id=\"clone-agent-error\"", "clone dialog uses the Preact banner")

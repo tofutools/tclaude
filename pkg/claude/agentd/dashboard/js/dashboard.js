@@ -1,13 +1,13 @@
-import { esc, pickDirectory } from './helpers.js';
+import { esc, pickDirectory, shortId } from './helpers.js';
 import { fmtRemaining } from './tabs.js';
 import { applySlopThemeIfRequested, bindSlopHotkey, bindWizardHotkey, wizWord } from './slop.js';
 import {
   bindWizardCursorTrail, bindWizardCastFx, bindWizardStatusWatch,
-  bindWizardMarquee, bindWizardSpectacle, bindWizardEnterBanner,
+  bindWizardMarquee, bindWizardSpectacle, bindWizardEnterBanner, wizardSummon,
 } from './wizard-fx.js';
 import {
   bindSlopClickFx, bindSlopMachineClicks, bindSlopStatusWatch,
-  bindSlopCursorTrail, bindSlopMarquee,
+  bindSlopCursorTrail, bindSlopMarquee, slopJackpot,
 } from './slop-fx.js';
 import { bindSlopAudio } from './slop-audio.js';
 import { bindSlopVolume } from './slop-volume.js';
@@ -45,25 +45,24 @@ import {
 import {
   bindTemplatesUI, bindGroupImportModal, openTemplatesManageModal, summonTemplateScribe,
 } from './modal-templates.js';
-import { bindProfilesUI } from './modal-profiles.js';
-import { bindSandboxProfilesUI, refreshSpawnSandboxProfileUI, summonSandboxScribe } from './sandbox-profiles.js';
+import { bindProfilesUI, openProfileEditor } from './modal-profiles.js';
+import { getDashDefaultProfile, loadProfiles } from './profiles.js';
+import { bindSandboxProfilesUI, loadSandboxProfiles, summonSandboxScribe } from './sandbox-profiles.js';
 import { bindRolesUI } from './modal-roles.js';
-import {
-  bindAgentSpawnModal,
-} from './modal-spawn.js';
+import { refreshAgentSpawnSandboxPolicy } from './agent-spawn-controller.js';
 import { bindRemoteAdmin, loadRemoteAdmin } from './remote-admin.js';
 import { bindCostDisplayToggle } from './cost-display-toggle.js';
 import { focusAccessRequest } from './mail-bridge.js';
 import { dashPrefs, initDashPrefs } from './prefs.js';
 import { initTerminalThemeSync } from './terminal-theme.js';
-import { closeTerminalsForWindowOp, openWebWindowPane } from './terminals-tab.js';
+import { closeTerminalsForWindowOp, openTermModal, openWebWindowPane } from './terminals-tab.js';
 import { recordGroupInteraction } from './last-group.js';
 import { loadSortState } from './sort.js';
 import { bindDock } from './dock.js';
 import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
 import {
-  mountAccessFeature, mountActionDialogsFeature, mountAuditFeature, mountConfigFeature, mountCostsFeature, mountDebugFeature, mountDirectoryPickerFeature, mountDockFeature, mountGroupCreateFeature, mountGroupsFeature, mountJobsFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessageAccessDialogsFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature, mountTerminalsFeature, mountTransactionDialogsFeature, mountWorktreeCleanupFeature,
+  mountAccessFeature, mountActionDialogsFeature, mountAgentSpawnFeature, mountAuditFeature, mountConfigFeature, mountCostsFeature, mountDebugFeature, mountDirectoryPickerFeature, mountDockFeature, mountGroupCreateFeature, mountGroupsFeature, mountJobsFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessageAccessDialogsFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature, mountTerminalsFeature, mountTransactionDialogsFeature, mountWorktreeCleanupFeature,
 } from './preact-loader.js';
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
 import { triggerExportDownload } from './export-progress.js';
@@ -227,11 +226,30 @@ export function sudoBadge(activeSudo, fallbackConvID) {
       setExpanded: (name) => dashPrefs.setItem(`tclaude.dash.group.${name}`, '1'),
       recordInteraction: recordGroupInteraction,
     }),
+    mountAgentSpawnFeature({
+      getSnapshot: () => lastSnapshot,
+      prefs: dashPrefs,
+      loadProfiles,
+      loadSandboxProfiles,
+      getDashboardDefaultProfile: getDashDefaultProfile,
+      pickDirectory,
+      openProfileEditor,
+      openPermissions: (options) => openSpawnPermEditor({ ...options, group: options.group || 'the spawn group' }),
+      confirm: confirmModal,
+      confirmDiscard,
+      notify: toast,
+      refresh: dashboardActions.refresh,
+      openTerminal: openTermModal,
+      celebrateSlop: slopJackpot,
+      celebrateWizard: wizardSummon,
+      recordInteraction: recordGroupInteraction,
+      shortID: shortId,
+    }),
     mountManagementFeature({
       confirm: confirmModal, confirmDiscard, notify: toast,
       getSnapshot: () => lastSnapshot,
       openProfilePermissions: (options) => openSpawnPermEditor({ ...options, group: 'the spawn group' }),
-      refreshSandboxSpawn: () => refreshSpawnSandboxProfileUI(document.querySelector('#agent-spawn-group')?.value || ''),
+      refreshSandboxSpawn: refreshAgentSpawnSandboxPolicy,
       summonSandboxScribe,
       summonTemplateScribe,
       refresh,
@@ -308,7 +326,6 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   bindSandboxProfilesUI();
   bindRolesUI();
   bindGroupImportModal();
-  bindAgentSpawnModal();
   bindRemoteAdmin();
   document.querySelector('nav [data-tab="config"]')?.addEventListener('click', () => { void loadRemoteAdmin(); });
   bindCostDisplayToggle();
