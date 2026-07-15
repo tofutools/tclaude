@@ -26,17 +26,17 @@ func TestDashboardHTML_CostInHarnessLineWired(t *testing.T) {
 		}
 	}
 
-	// helpers.js: harnessLine reads the cost off the agent's state and
+	// HarnessLine reads the cost off the agent's state and
 	// emits its own styled span, trailing the effort token.
-	must("m.state.cost_usd", "harnessLine reads the cost off the agent's state")
+	must("Number(state.cost_usd || 0)", "HarnessLine reads the cost off the agent's state")
 	must("harness-cost", "the cost token has its own span")
-	must("+ effortEl + costEl +", "the cost token trails the effort token in the line")
+	must("${cost > 0 ? html`<span class=\"harness-cost\"", "the cost token trails the effort token in the line")
 
 	// Zero/absent cost renders no token at all.
-	must("const costEl = cost > 0", "the token is gated on nonzero cost")
+	must("cost > 0 ? html", "the token is gated on nonzero cost")
 
 	// Sub-cent costs show as "<1¢", never a lying "$0.00".
-	must("cost >= 0.005 ? '$' + cost.toFixed(2) : '<1¢'",
+	must("cost >= 0.005 ? `$${cost.toFixed(2)}` : '<1¢'",
 		"two-decimal dollar format with a sub-cent floor")
 
 	// The tooltip carries the precise figure and names the pricing mode.
