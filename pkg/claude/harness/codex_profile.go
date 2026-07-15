@@ -161,6 +161,25 @@ func codexAgentProfileContentForNameAndRulesAndNetwork(profileName, socketPath, 
 	return codexAgentProfileContentForNameAndRulesAndNetworkForOS(profileName, socketPath, privateStateDir, readDirs, writeDirs, denyDirs, networkAccess, runtime.GOOS)
 }
 
+// ValidateCodexAgentNetworkAccess checks whether the current Codex platform can
+// enforce the requested external-network posture without severing tclaude's
+// agentd Unix socket. Codex's Linux restricted-network seccomp currently denies
+// connect(2) for every address family, including AF_UNIX.
+func ValidateCodexAgentNetworkAccess(networkAccess sandboxpolicy.NetworkAccess) error {
+	return validateCodexAgentNetworkAccessForOS(networkAccess, runtime.GOOS)
+}
+
+func validateCodexAgentNetworkAccessForOS(networkAccess sandboxpolicy.NetworkAccess, goos string) error {
+	networkAccess, err := sandboxpolicy.NormalizeNetworkAccess(networkAccess)
+	if err != nil {
+		return err
+	}
+	if networkAccess == sandboxpolicy.NetworkAccessNone && goos == "linux" {
+		return fmt.Errorf("offline network access is unavailable on Linux/WSL because Codex's restricted-network seccomp also blocks the agentd Unix socket")
+	}
+	return nil
+}
+
 func codexAgentProfileContentForNameAndRulesAndNetworkForOS(profileName, socketPath, privateStateDir string, readDirs, writeDirs, denyDirs []string, networkAccess sandboxpolicy.NetworkAccess, goos string) (string, error) {
 	profileName, err := ValidateCodexProfileName(profileName)
 	if err != nil {
@@ -175,7 +194,7 @@ func codexAgentProfileContentForNameAndRulesAndNetworkForOS(profileName, socketP
 	if err := validateCodexProfilePath("tclaude private state dir", privateStateDir); err != nil {
 		return "", err
 	}
-	if _, err := sandboxpolicy.NormalizeNetworkAccess(networkAccess); err != nil {
+	if err := validateCodexAgentNetworkAccessForOS(networkAccess, goos); err != nil {
 		return "", err
 	}
 	tmuxSocketDir, err := codexTmuxSocketDir()
@@ -219,13 +238,19 @@ func codexAgentProfileContentForNameAndRulesAndNetworkForOS(profileName, socketP
 	fmt.Fprintf(&b, "# tclaude-spawned Codex agents so they can reach the agentd Unix socket\n")
 	fmt.Fprintf(&b, "# (`tclaude agent …`) while staying sandboxed.\n\n")
 	fmt.Fprintf(&b, "default_permissions = %q\n\n", p)
-	if useOfflineProxy {
+	featureNetworkProxy := ""
+	if networkAccess == sandboxpolicy.NetworkAccessInternet {
+		featureNetworkProxy = "false"
+	} else if useOfflineProxy {
+		featureNetworkProxy = "true"
+	}
+	if featureNetworkProxy != "" {
 		// Use the scalar feature form so this launch profile replaces any
-		// feature-level proxy configuration from the user's base config. A
-		// nested feature table would merge inherited domain allowlists and
-		// silently widen an offline launch.
+		// feature-level proxy configuration from the user's base config. This
+		// prevents inherited allowlists from widening an offline launch and
+		// prevents an inherited proxy from narrowing explicit Internet access.
 		fmt.Fprintf(&b, "[features]\n")
-		fmt.Fprintf(&b, "network_proxy = true\n\n")
+		fmt.Fprintf(&b, "network_proxy = %s\n\n", featureNetworkProxy)
 	}
 	fmt.Fprintf(&b, "[permissions.%s]\n", p)
 	fmt.Fprintf(&b, "extends = \":workspace\"\n\n")

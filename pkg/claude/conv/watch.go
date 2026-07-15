@@ -2303,6 +2303,11 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	if networkAccess != sandboxpolicy.NetworkAccessInherit && sandboxMode != harness.SandboxManagedProfile {
 		return "", nil, fmt.Errorf("unsupported_sandbox_profile_network: codex network rules require sandbox %s", harness.SandboxManagedProfile)
 	}
+	if networkAccess != sandboxpolicy.NetworkAccessInherit {
+		if err := harness.ValidateCodexAgentNetworkAccess(networkAccess); err != nil {
+			return "", nil, fmt.Errorf("unsupported_sandbox_profile_network: %w", err)
+		}
+	}
 	if (h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile) ||
 		(h.Name == harness.DefaultName && sandboxMode != harness.ClaudeSandboxOff) {
 		gitWriteDirs, err := resumeGitWorktreeWriteDirs(resumeCwd)

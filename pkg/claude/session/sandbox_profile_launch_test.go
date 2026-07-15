@@ -29,6 +29,8 @@ func TestCodexManagedProfileCarriesSnapshotNetworkPolicy(t *testing.T) {
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
 	content := string(raw)
+	assert.Contains(t, content, "[features]")
+	assert.Contains(t, content, "network_proxy = false")
 	assert.NotContains(t, content, "[features.network_proxy]")
 	assert.Contains(t, content, "enabled = true")
 	assert.Contains(t, content, ".network.unix_sockets]")

@@ -30,6 +30,8 @@ func TestCodexAgentProfileContent(t *testing.T) {
 	}
 	for _, want := range []string{
 		`default_permissions = "tclaude-agent"`,
+		`[features]`,
+		`network_proxy = false`,
 		`[permissions.tclaude-agent]`,
 		`extends = ":workspace"`,
 		`"/home/dev/.tclaude/data" = "none"`,
@@ -45,7 +47,7 @@ func TestCodexAgentProfileContent(t *testing.T) {
 		}
 	}
 	if strings.Contains(got, "[features.network_proxy]") || strings.Contains(got, ".network.domains]") {
-		t.Fatalf("profile must not enable Codex's managed proxy:\n%s", got)
+		t.Fatalf("profile must disable rather than configure Codex's managed proxy:\n%s", got)
 	}
 
 	// Pin the parsed hierarchy too: a syntactically valid TOML table emitted in
@@ -78,22 +80,14 @@ func TestCodexAgentProfileContentNetworkPostures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(baseline, "enabled = true") || strings.Contains(baseline, "[features.network_proxy]") {
+	if !strings.Contains(baseline, "enabled = true") || strings.Contains(baseline, "network_proxy") {
 		t.Fatalf("inherited network policy must retain ordinary networking without a managed proxy:\n%s", baseline)
 	}
-	offline, err := codexAgentProfileContentForNameAndRulesAndNetworkForOS(
+	_, err = codexAgentProfileContentForNameAndRulesAndNetworkForOS(
 		"test", sock, "/tmp/private", nil, nil, nil, sandboxpolicy.NetworkAccessNone, "linux",
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"enabled = false", `"/tmp/agentd.sock" = "allow"`} {
-		if !strings.Contains(offline, want) {
-			t.Fatalf("offline profile missing %q:\n%s", want, offline)
-		}
-	}
-	if strings.Contains(offline, "[features.network_proxy]") || strings.Contains(offline, ".network.domains]") {
-		t.Fatalf("offline profile must use the native network sandbox, not the managed proxy:\n%s", offline)
+	if err == nil || !strings.Contains(err.Error(), "agentd Unix socket") {
+		t.Fatalf("Linux offline policy must fail clearly, got %v", err)
 	}
 
 	offlineMac, err := codexAgentProfileContentForNameAndRulesAndNetworkForOS(

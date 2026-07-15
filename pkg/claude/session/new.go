@@ -410,6 +410,11 @@ func runNew(params *NewParams) error {
 	if networkAccess != sandboxpolicy.NetworkAccessInherit && params.PermissionProfile != harness.CodexAgentProfile {
 		return fmt.Errorf("unsupported_sandbox_profile_network: codex network rules require sandbox %s", harness.SandboxManagedProfile)
 	}
+	if networkAccess != sandboxpolicy.NetworkAccessInherit {
+		if err := harness.ValidateCodexAgentNetworkAccess(networkAccess); err != nil {
+			return fmt.Errorf("unsupported_sandbox_profile_network: %w", err)
+		}
+	}
 
 	// Validate --permission-profile: a Codex-only knob (codex -p <name>) that
 	// is mutually exclusive with --sandbox. The daemon spawn path passes the

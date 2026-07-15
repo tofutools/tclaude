@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -52,7 +53,7 @@ func TestSandboxProfilesDisabledOnlyForCodexDangerFullAccess(t *testing.T) {
 
 func TestSandboxProfileCapabilityFailureRejectsUnsupportedNetworkOnlyProfile(t *testing.T) {
 	snapshot := &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{
-		NetworkAccess: sandboxpolicy.NetworkAccessNone,
+		NetworkAccess: sandboxpolicy.NetworkAccessInternet,
 	}}
 
 	require.Nil(t, sandboxProfileCapabilityFailure(harness.CodexName, harness.SandboxManagedProfile, snapshot))
@@ -67,5 +68,15 @@ func TestSandboxProfileCapabilityFailureRejectsUnsupportedNetworkOnlyProfile(t *
 		failure := sandboxProfileCapabilityFailure(tc.harness, tc.mode, snapshot)
 		require.NotNil(t, failure)
 		require.Equal(t, "unsupported_sandbox_profile_network", failure.Kind)
+	}
+
+	snapshot.Effective.NetworkAccess = sandboxpolicy.NetworkAccessNone
+	failure := sandboxProfileCapabilityFailure(harness.CodexName, harness.SandboxManagedProfile, snapshot)
+	if runtime.GOOS == "linux" {
+		require.NotNil(t, failure)
+		require.Equal(t, "unsupported_sandbox_profile_network", failure.Kind)
+		require.Contains(t, failure.Msg, "agentd Unix socket")
+	} else {
+		require.Nil(t, failure)
 	}
 }

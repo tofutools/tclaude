@@ -59,6 +59,11 @@ func sandboxProfileCapabilityFailure(harnessName, sandboxMode string, snapshot *
 		return nil
 	case harness.CodexName:
 		if strings.TrimSpace(sandboxMode) == harness.SandboxManagedProfile {
+			if hasNetworkPolicy {
+				if err := harness.ValidateCodexAgentNetworkAccess(snapshot.Effective.NetworkAccess); err != nil {
+					return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_network", err.Error()}
+				}
+			}
 			return nil
 		}
 		if hasNetworkPolicy {
