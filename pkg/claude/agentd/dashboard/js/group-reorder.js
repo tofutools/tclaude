@@ -309,10 +309,9 @@ function bindGroupReorder() {
 
   // dragend is the guaranteed reset for a CANCELLED or no-target drag
   // (Escape, or a release over nothing). A SUCCESSFUL drop tears down in the
-  // drop handler instead (see there) — it must, because that handler
-  // re-renders #groups-list and detaches the dragged header, after which a
-  // dragend dispatched on the now-detached node never bubbles to this
-  // document-level listener. So this is a fallback, not the primary path.
+  // drop handler instead (see there) before keyed reconciliation moves the
+  // source or, for a re-parent, may replace its header. Browser dragend
+  // delivery after that synchronous update is not a reliable primary path.
   listen(document, 'dragend', endGroupDrag);
 
   listen(document, 'dragover', (e) => {
@@ -380,17 +379,16 @@ function bindGroupReorder() {
     const details = reorderTarget(e);
     if (!details) return;
     e.preventDefault();
-    // Snapshot everything we need from the live DOM BEFORE tearing down /
-    // re-rendering: the target name and the drop zone (measured against the
-    // still-attached target box).
+    // Snapshot everything we need from the live DOM BEFORE teardown and
+    // reconciliation: the target name and the drop zone (measured against the
+    // current target box).
     const dragName = groupDragName;
     const targetName = details.getAttribute('data-group-key');
     const zone = dropZone(e, details);
-    // Tear down NOW, before applyGroupDrop re-renders #groups-list and detaches
-    // the dragged header. If we left teardown to dragend, that event — fired
-    // on the detached header — would never bubble here, so the pill would stay
-    // stuck and later document events would be misrouted. endGroupDrag is
-    // idempotent, so a dragend that does still fire is a harmless no-op.
+    // Tear down NOW, before applyGroupDrop reconciles the keyed tree and moves
+    // or replaces the dragged header. Leaving cleanup to browser dragend could
+    // strand the pill and route later document events through stale drag state.
+    // endGroupDrag is idempotent, so a dragend that does fire is harmless.
     endGroupDrag();
     applyGroupDrop(dragName, targetName, zone);
   });
