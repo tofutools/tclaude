@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -536,6 +537,108 @@ func TestDeleteAgent_WithWorktree(t *testing.T) {
 	require.Equal(t, http.StatusOK, drec.Code, "body=%s", drec.Body.String())
 	assert.True(t, fw.wasRemoved(cwd), "worktree removed on ?delete_worktree=1")
 	f.AssertDeleted(conv)
+}
+
+// The delete dialog probes a removable worktree before the human confirms.
+// The DELETE must fail closed if the agent moves to another worktree in that
+// gap: neither the agent nor either worktree may be removed from stale UI
+// state. A matching, URL-encoded path remains the successful opt-in contract.
+func TestDeleteAgent_WorktreePrecondition(t *testing.T) {
+	t.Run("moved after probe conflicts before deletion", func(t *testing.T) {
+		t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+		f := newFlow(t)
+
+		const conv = "wtpc-1111-2222-3333-4444"
+		const pathA = "/tmp/wt-precondition-a"
+		const pathB = "/tmp/wt-precondition-b"
+		f.HaveConvWithTitle(conv, "moving-worker")
+		f.HaveAliveSession(conv, "spwn-wtpc", "tmux-wtpc", pathA)
+		f.MarkOffline("tmux-wtpc")
+		fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+			pathA: {Root: pathA, Branch: "feature-a", Kind: "linked"},
+			pathB: {Root: pathB, Branch: "feature-b", Kind: "linked"},
+		})
+		mux := agentd.BuildDashboardHandlerForTest()
+
+		probe := testharness.Serve(mux,
+			testharness.JSONRequest(t, http.MethodGet, "/api/agents/"+conv+"/worktree", nil))
+		require.Equal(t, http.StatusOK, probe.Code, "body=%s", probe.Body.String())
+		assert.Contains(t, probe.Body.String(), pathA)
+
+		require.NoError(t, db.UpsertAgentWorkdir(conv, pathB, pathB, "feature-b"))
+		query := url.Values{
+			"delete_worktree":   {"1"},
+			"expected_worktree": {pathA},
+		}.Encode()
+		req, err := http.NewRequest(http.MethodDelete, "/api/agents/"+conv+"?"+query, nil)
+		require.NoError(t, err)
+		resp := testharness.Serve(mux, req)
+		require.Equal(t, http.StatusConflict, resp.Code, "body=%s", resp.Body.String())
+		assert.Contains(t, resp.Body.String(), "worktree changed")
+		assert.Contains(t, resp.Body.String(), "retry")
+
+		sessionRow, err := db.FindSessionByConvID(conv)
+		require.NoError(t, err)
+		require.NotNil(t, sessionRow, "agent session must survive the conflict")
+		convRow, err := db.GetConvIndex(conv)
+		require.NoError(t, err)
+		require.NotNil(t, convRow, "conversation must survive the conflict")
+		assert.False(t, fw.wasRemoved(pathA), "stale probed worktree must survive")
+		assert.False(t, fw.wasRemoved(pathB), "current worktree must survive")
+	})
+
+	t.Run("matching encoded path deletes", func(t *testing.T) {
+		t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+		f := newFlow(t)
+
+		const conv = "wtpd-1111-2222-3333-4444"
+		const cwd = "/tmp/wt precondition & exact?#"
+		f.HaveConvWithTitle(conv, "steady-worker")
+		f.HaveAliveSession(conv, "spwn-wtpd", "tmux-wtpd", cwd)
+		f.MarkOffline("tmux-wtpd")
+		fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+			cwd: {Root: cwd, Branch: "feature-safe", Kind: "linked"},
+		})
+		mux := agentd.BuildDashboardHandlerForTest()
+
+		query := url.Values{
+			"delete_worktree":   {"1"},
+			"expected_worktree": {cwd},
+		}.Encode()
+		req, err := http.NewRequest(http.MethodDelete, "/api/agents/"+conv+"?"+query, nil)
+		require.NoError(t, err)
+		resp := testharness.Serve(mux, req)
+		require.Equal(t, http.StatusOK, resp.Code, "body=%s", resp.Body.String())
+		assert.True(t, fw.wasRemoved(cwd), "decoded matching worktree must be removed")
+		f.AssertDeleted(conv)
+	})
+
+	t.Run("precondition without opt-in is rejected", func(t *testing.T) {
+		t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+		f := newFlow(t)
+
+		const conv = "wtpu-1111-2222-3333-4444"
+		const cwd = "/tmp/wt-unexpected-precondition"
+		f.HaveConvWithTitle(conv, "guarded-worker")
+		f.HaveAliveSession(conv, "spwn-wtpu", "tmux-wtpu", cwd)
+		f.MarkOffline("tmux-wtpu")
+		fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+			cwd: {Root: cwd, Branch: "feature-guarded", Kind: "linked"},
+		})
+		mux := agentd.BuildDashboardHandlerForTest()
+
+		query := url.Values{"expected_worktree": {cwd}}.Encode()
+		req, err := http.NewRequest(http.MethodDelete, "/api/agents/"+conv+"?"+query, nil)
+		require.NoError(t, err)
+		resp := testharness.Serve(mux, req)
+		require.Equal(t, http.StatusBadRequest, resp.Code, "body=%s", resp.Body.String())
+		assert.Contains(t, resp.Body.String(), "requires delete_worktree=1")
+
+		sessionRow, err := db.FindSessionByConvID(conv)
+		require.NoError(t, err)
+		require.NotNil(t, sessionRow, "agent must survive an invalid precondition")
+		assert.False(t, fw.wasRemoved(cwd))
+	})
 }
 
 // --- category coverage: retired agents & plain conversations -------
