@@ -581,11 +581,14 @@ func TestDashboardAssets_QuickChipKeyboardOperability(t *testing.T) {
 		// spans, funneled through the click dispatcher.
 		`e.target.closest('span[data-act][role="button"]')`,
 		"chip.click();",
-		// groups-interactions.js / groups-list.js — native editors hand focus
-		// back to their exact keyed trigger on Escape.
-		"interactions.endEditor(editorKey, true);",
+		// groups-interactions.js / groups-list.js — generic native editors use
+		// the exact keyed fallback, while profile chips focus the replacement
+		// trigger from their own post-commit layout effect.
 		"if (target?.isConnected)",
 		".find((node) => node.dataset.editorKey === key)?.focus();",
+		"restoreFocusRef.current = true;",
+		"if (active || !restoreFocusRef.current) return;",
+		"triggerRef.current?.focus();",
 		// dashboard.html — the toolbar 🧠 chip keeps native keyboard
 		// semantics, like its 🛡 sibling.
 		`<button type="button" id="dashboard-default-profile"`,
