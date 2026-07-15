@@ -5,7 +5,7 @@
 // Extracted from dashboard.js in the Stage 2 module split. refresh() is
 // the 2-second snapshot poll that re-renders every tab.
 
-import { $, $$, isModifiedClick, esc, themeWords, shortId, relTime } from './helpers.js';
+import { $, $$, isModifiedClick, esc, themeWords } from './helpers.js';
 import { dashPrefs } from './prefs.js';
 import { listParams, syncServedOffset, fetchListFull } from './list-paging.js';
 import { recordGroupInteraction } from './last-group.js';
@@ -42,7 +42,8 @@ import { isTopmostOverlay } from './overlay-stack.js';
 import { disclosurePreference } from './group-tree-activity.js';
 import { hoveredGroupKey, setHoveredGroupKey } from './group-hover-state.js';
 import {
-  buildWindowSelectionDescriptor, openDeleteRetiredPreviewDialog,
+  buildCleanupDescriptor, buildWindowSelectionDescriptor, openCleanupDialog,
+  openDeleteRetiredPreviewDialog,
   openDeleteGroupDialog, openGroupRetirePreviewDialog, openUngroupedRetirePreviewDialog,
   openWindowSelectionDialog,
 } from './transaction-dialog-controller.js';
@@ -1174,6 +1175,9 @@ async function openWorktreeCleanup(group = '') {
   const rescanBtn = $('#worktree-cleanup-rescan');
   const selAllBtn = $('#worktree-cleanup-select-all');
   const selNoneBtn = $('#worktree-cleanup-select-none');
+  let resolveClosed;
+  const closed = new Promise((resolve) => { resolveClosed = resolve; });
+  let didClose = false;
 
   let candidates = [];
   let repoRoots = [];
@@ -1377,6 +1381,8 @@ async function openWorktreeCleanup(group = '') {
   }
 
   const cleanup = () => {
+    if (didClose) return;
+    didClose = true;
     overlay.classList.remove('show');
     listEl.removeEventListener('change', onListChange);
     searchEl.removeEventListener('input', onSearch);
@@ -1389,6 +1395,7 @@ async function openWorktreeCleanup(group = '') {
     overlay.removeEventListener('click', onOverlay);
     document.removeEventListener('keydown', onKey);
     document.removeEventListener('tclaude:wizard', onWizard);
+    resolveClosed();
   };
   const onOverlay = (e) => { if (e.target === overlay) cleanup(); };
   const onKey = (e) => { if (e.key === 'Escape') cleanup(); };
@@ -1450,6 +1457,10 @@ async function openWorktreeCleanup(group = '') {
 
   overlay.classList.add('show');
   await load(false);
+  // The returned promise is the visual-ownership contract used by the keyed
+  // cleanup transaction handoff. Keep it pending after the initial scan until
+  // Cancel/Escape/backdrop or a successful removal actually closes the modal.
+  return closed;
 }
 
 // openWindowModal is now only the snapshot launcher. It freezes the exact
@@ -1477,621 +1488,27 @@ function openDeleteGroupModal(group) {
   return openDeleteGroupDialog(lastSnapshot, group);
 }
 
-// ---- 🧹 Cleanup modal ---------------------------------------------
+// ---- 🧹 Cleanup dialog --------------------------------------------
 //
-// CLEANUP_CATS — the three conversation categories the 'agents'-mode
-// cleanup modal spans, in display order. Each maps to a disjoint
-// snapshot list (agents / retired / conversations).
-const CLEANUP_CATS = ['agent', 'retired', 'conversation'];
-const CLEANUP_CAT_LABEL = {
-  agent: 'Active agents', retired: 'Retired agents', conversation: 'Conversations',
-};
-
-// openCleanupModal drives the bulk-cleanup overlay. opts.mode:
-//   'group'      — remove confirmed-offline members from opts.group.
-//   'agents'     — the rich multi-category tool: spans all three
-//                  categories (active agents, retired agents, plain
-//                  conversations) with category / online / search
-//                  filters and four tiers (unjoin, retire, delete,
-//                  reinstate). opts.categories pre-scopes the
-//                  category filter; opts.tier pre-selects the tier.
-//
-// The overlay builds its candidate list from the current snapshot,
-// lets the human edit the include/exclude selection (and bulk-pick
-// by inactivity age), POSTs the explicit conv-id list to
-// /api/cleanup/… and renders the per-item result back. The daemon
-// re-checks tmux liveness for every conv-id, so a conv that came
-// back online between snapshot and submit is reported skipped unless
-// "include online sessions" was opted into.
-export async function openCleanupModal(opts) {
-  const overlay = $('#cleanup-modal');
-  const listEl = $('#cleanup-list');
-  const optsEl = $('#cleanup-options');
-  const catsEl = $('#cleanup-cats');
-  const hintEl = $('#cleanup-hint');
-  const warnEl = $('#cleanup-warn');
-  const errEl = $('#cleanup-error');
-  const countEl = $('#cleanup-count');
-  const toolbar = $('#cleanup-toolbar');
-  const ageInput = $('#cleanup-age');
-  const searchInput = $('#cleanup-search');
-  const submitBtn = $('#cleanup-submit');
-  const cancelBtn = $('#cleanup-cancel');
-  const mode = opts.mode;
-  const groupName = opts.group || '';
-  let phase = 'select';
-  // multiCat — only 'agents' mode spans categories and gets
-  // the category / search filters and the reinstate tier.
-  const multiCat = mode === 'agents';
-  // The cleanup tier: unjoin | retire | delete | reinstate.
-  // 'agents' mode defaults to delete so every category is visible on
-  // open (retire/reinstate would hide other categories); 'group'
-  // mode always unjoins.
-  let tier = multiCat ? 'delete' : 'unjoin';
-  if (opts.tier) tier = opts.tier;
-  // Category filter for 'agents' mode. opts.categories, when
-  // supplied by a caller, pre-scopes which categories start ticked.
-  const catOn = {};
-  for (const k of CLEANUP_CATS) {
-    catOn[k] = opts.categories ? opts.categories.includes(k) : true;
-  }
-  // includeOnline — opt-in that lets a tier act on still-running
-  // sessions. Off by default: the offline-only safety stance.
-  let includeOnline = false;
-  let searchText = '';
-  // 'agents' mode spans retired + conversations, which the 2s snapshot now
-  // only ships a page of. Fetch the FULL lists (the endpoints' no-param path)
-  // so a bulk cleanup acts on every candidate, not just the visible window.
-  // agents[] is not paginated, so it still comes from the snapshot.
-  let fullRetired = [];
-  let fullConversations = [];
-  if (mode === 'agents') {
+// The launcher captures the current snapshot before any complete-list request,
+// then hands one normalized descriptor to the keyed Preact transaction owner.
+// Later polling and list pagination cannot retarget an open cleanup operation.
+export async function openCleanupModal(options = {}) {
+  const snapshot = lastSnapshot;
+  let completeLists = {};
+  if (options.mode === 'agents') {
     try {
-      [fullRetired, fullConversations] = await Promise.all([
+      const [retired, conversations] = await Promise.all([
         fetchListFull('retired'),
         fetchListFull('conversations'),
       ]);
-    } catch (e) {
-      toast('cleanup: failed to load candidates (' + (e.message || e) + ')');
-      return;
+      completeLists = { retired, conversations };
+    } catch (cause) {
+      toast(`cleanup: failed to load candidates (${cause?.message || cause})`);
+      return null;
     }
   }
-
-  // Build the candidate list from the current snapshot. Each entry
-  // carries its own `checked` flag so re-renders (filter changes)
-  // preserve the human's hand-tuned selection. `category` tags which
-  // snapshot list it came from; `lastActivity` is the per-category
-  // recency stamp (last_hook / retired_at / modified).
-  function buildCandidates() {
-    const out = [];
-    if (mode === 'group') {
-      const g = (lastSnapshot?.groups || []).find(gr => gr.name === groupName);
-      for (const m of (g?.members || [])) {
-        if (m.online) continue;
-        out.push({
-          agent_id: m.agent_id || '',
-          conv_id: m.conv_id, title: m.title || '', category: 'agent',
-          online: false, lastActivity: (m.state || {}).last_hook || '',
-          owner: !!m.owner, groups: [],
-          checked: !m.owner, // owners excluded by default
-        });
-      }
-    } else {
-      // agents mode — all three categories, online + offline alike.
-      // Nothing is pre-checked: with delete as the default tier,
-      // auto-selection would be a footgun.
-      for (const a of (lastSnapshot?.agents || [])) {
-        out.push({
-          agent_id: a.agent_id || '',
-          conv_id: a.conv_id, title: a.title || '', category: 'agent',
-          online: !!a.online, lastActivity: (a.state || {}).last_hook || '',
-          owner: !!(a.owned_groups || []).length,
-          groups: a.groups || [], checked: false,
-        });
-      }
-      for (const r of fullRetired) {
-        out.push({
-          agent_id: r.agent_id || '',
-          conv_id: r.conv_id, title: r.title || '', category: 'retired',
-          online: !!r.online, lastActivity: r.retired_at || '',
-          owner: false, groups: [], checked: false,
-        });
-      }
-      for (const c of fullConversations) {
-        out.push({
-          conv_id: c.conv_id, title: c.title || '', category: 'conversation',
-          online: !!c.online, lastActivity: c.modified || '',
-          owner: false, groups: [], checked: false,
-        });
-      }
-    }
-    // Longest-inactive first — what a human cleaning up wants at the
-    // top. Missing stamp (orphan / never had a session) sorts oldest.
-    out.sort((x, y) => {
-      const tx = x.lastActivity ? Date.parse(x.lastActivity) : 0;
-      const ty = y.lastActivity ? Date.parse(y.lastActivity) : 0;
-      return tx - ty;
-    });
-    return out;
-  }
-  const candidates = buildCandidates();
-
-  function inactivityHours(c) {
-    if (!c.lastActivity) return Infinity;
-    const t = Date.parse(c.lastActivity);
-    if (isNaN(t)) return Infinity;
-    return (Date.now() - t) / 3600000;
-  }
-  // activityLabel — the per-category recency line shown on each row.
-  function activityLabel(c) {
-    if (!c.lastActivity) return 'no recent activity';
-    const rel = relTime(c.lastActivity);
-    if (c.category === 'retired') return 'retired ' + rel;
-    if (c.category === 'conversation') return 'last activity ' + rel;
-    return 'last seen ' + rel;
-  }
-
-  // cleanupTier is the effective tier for the current mode: group
-  // mode is hardwired to unjoin (it hits the single-group endpoint);
-  // agents mode reads the radio-backed `tier` variable.
-  function cleanupTier() {
-    return mode === 'group' ? 'unjoin' : tier;
-  }
-  // tierCategories — which categories the current tier can act on.
-  // delete is universal; reinstate is retired-only; retire / unjoin
-  // are agent-only. The tier therefore doubles as a category gate.
-  function tierCategories() {
-    const t = cleanupTier();
-    if (t === 'delete') return CLEANUP_CATS;
-    if (t === 'reinstate') return ['retired'];
-    return ['agent'];
-  }
-  function tierRadio(val, label, note) {
-    return '<label><input type="radio" name="cleanup-tier" value="' + val + '"' +
-      (val === tier ? ' checked' : '') + ' /> ' + label +
-      ' <span class="opt-note">— ' + note + '</span></label>';
-  }
-  function renderOptions() {
-    if (mode === 'group') {
-      optsEl.innerHTML =
-        '<label><input type="checkbox" id="cleanup-opt-owners" /> ' +
-        themeWords('Include offline owners', 'Include slumbering party owners') +
-        ` <span class="opt-note">${themeWords('— also strips their owner status', '— also revokes their party-owner mark')}</span></label>`;
-      return;
-    }
-    // agents mode: the tier selector (group mode returned above).
-    // The reinstate tier has no meaning for a single-group
-    // membership cleanup, so it only appears here.
-    let radios =
-      tierRadio('unjoin', 'Unjoin from groups',
-        'stays an agent — only its group memberships are dropped') +
-      tierRadio('retire', 'Retire (soft-delete)',
-        'demote to a plain conversation: revokes groups + permissions, keeps the .jsonl, reinstatable') +
-      tierRadio('delete', 'Delete permanently',
-        'wipes the conversation from disk and every agent row — cannot be undone');
-    if (multiCat) {
-      radios += tierRadio('reinstate', 'Reinstate',
-        'return a retired agent to the active roster — groups and permissions are not restored');
-    }
-    const ownersOpt =
-      '<label id="cleanup-opt-owners-row"><input type="checkbox" id="cleanup-opt-owners" /> ' +
-      'Include offline owners <span class="opt-note">— unjoin tier only; retire and delete drop owner rows anyway</span></label>';
-    const onlineOpt = multiCat
-      ? '<label id="cleanup-opt-online-row"><input type="checkbox" id="cleanup-opt-online"' +
-        (includeOnline ? ' checked' : '') + ' /> ' +
-        'Include online sessions <span class="opt-note">— also act on conversations whose tmux ' +
-        'session is still running. Delete force-stops them first; retire / unjoin leave the process ' +
-        'running. Reinstate ignores liveness either way.</span></label>'
-      : '';
-    const wtOpt =
-      '<label id="cleanup-opt-wt-row"><input type="checkbox" id="cleanup-opt-wt" checked /> ' +
-      'Delete associated git worktrees <span class="opt-note">— removes the worktree directory; ' +
-      'the branch and its commits are kept. The main repo and worktrees shared with another ' +
-      'agent are always skipped.</span></label>';
-    const allWorktreesAction =
-      '<div class="cleanup-related"><button type="button" id="cleanup-worktrees-all">' +
-      themeWords('🧹 Review worktrees across all groups…', '🍂 Prune stray branches across all parties…') +
-      '</button><span class="opt-note">' +
-      themeWords('— opens a safe preview of stale worktrees in every group repo',
-        '— opens a safe preview of withered branches in every party grove') +
-      '</span></div>';
-    const shutdownOpt =
-      '<label id="cleanup-opt-shutdown-row"><input type="checkbox" id="cleanup-opt-shutdown" checked /> ' +
-      'Also shut down running sessions <span class="opt-note">— retire tier only; soft-exits ' +
-      '(/exit) the tmux pane of each retired agent that is still running. The conversation is ' +
-      'kept and reinstatable either way.</span></label>';
-    optsEl.innerHTML =
-      '<div class="cleanup-tier">' + radios + '</div>' +
-      ownersOpt + onlineOpt + shutdownOpt + wtOpt + allWorktreesAction;
-    syncTierLocks();
-  }
-  // syncTierLocks enables each sub-option only for the tier it
-  // applies to: owners → unjoin, worktrees → delete, shutdown →
-  // retire, include-online → every tier except reinstate (which
-  // ignores liveness).
-  function syncTierLocks() {
-    if (mode === 'group') return;
-    const tr = cleanupTier();
-    const lock = (id, rowId, enabledWhen) => {
-      const cb = $(id), row = $(rowId);
-      if (!cb || !row) return;
-      cb.disabled = !enabledWhen;
-      row.classList.toggle('disabled', !enabledWhen);
-    };
-    lock('#cleanup-opt-owners', '#cleanup-opt-owners-row', tr === 'unjoin');
-    lock('#cleanup-opt-wt', '#cleanup-opt-wt-row', tr === 'delete');
-    lock('#cleanup-opt-shutdown', '#cleanup-opt-shutdown-row', tr === 'retire');
-    lock('#cleanup-opt-online', '#cleanup-opt-online-row', tr !== 'reinstate');
-  }
-  function optInclOwners() {
-    const cb = $('#cleanup-opt-owners');
-    return !!(cb && cb.checked && !cb.disabled);
-  }
-  function optDeleteWorktrees() {
-    const cb = $('#cleanup-opt-wt');
-    return !!(cb && cb.checked && !cb.disabled);
-  }
-  function optIncludeOnline() {
-    const cb = $('#cleanup-opt-online');
-    return !!(cb && cb.checked && !cb.disabled);
-  }
-  function optShutdown() {
-    const cb = $('#cleanup-opt-shutdown');
-    return !!(cb && cb.checked && !cb.disabled);
-  }
-
-  // matchesSearch / rowVisible / rowEnabled compose the filter
-  // pipeline. A row is visible when it passes the search box, the
-  // category checkboxes, the current tier's category gate and the
-  // online filter; it is selectable when, additionally, it is not a
-  // locked group-mode owner row.
-  function matchesSearch(c) {
-    if (!searchText) return true;
-    const q = searchText.toLowerCase();
-    return (c.title || '').toLowerCase().includes(q) ||
-           c.conv_id.toLowerCase().includes(q);
-  }
-  function rowVisible(c) {
-    if (!matchesSearch(c)) return false;
-    if (!multiCat) return true;
-    if (!catOn[c.category]) return false;
-    if (!tierCategories().includes(c.category)) return false;
-    // Online rows are hidden unless opted in — except under
-    // reinstate, which is non-destructive and ignores liveness.
-    if (c.online && !includeOnline && cleanupTier() !== 'reinstate') return false;
-    return true;
-  }
-  function rowEnabled(c) {
-    if (mode === 'group' && c.owner) return optInclOwners();
-    return true;
-  }
-  // selected() only counts rows the human can currently see — a row
-  // checked then hidden by a filter change is not submitted.
-  function selected() {
-    return candidates.filter(c => rowVisible(c) && rowEnabled(c) && c.checked);
-  }
-
-  // renderCategories draws the category-filter row ('agents' mode only).
-  function renderCategories() {
-    if (!multiCat) { catsEl.style.display = 'none'; return; }
-    catsEl.style.display = '';
-    catsEl.innerHTML = '<span class="cleanup-cats-label">categories:</span>' +
-      CLEANUP_CATS.map(cat => {
-        const n = candidates.filter(c => c.category === cat).length;
-        return `<label class="cleanup-cat-toggle">
-          <input type="checkbox" data-cat="${cat}"${catOn[cat] ? ' checked' : ''} />
-          ${esc(CLEANUP_CAT_LABEL[cat])} <span class="muted">(${n})</span>
-        </label>`;
-      }).join('');
-  }
-
-  function rowHTML(c) {
-    const enabled = rowEnabled(c);
-    const checked = enabled && c.checked;
-    const ownerBadge = c.owner ? '<span class="cleanup-badge owner">owner</span>' : '';
-    const onlineBadge = c.online ? '<span class="cleanup-badge online">online</span>' : '';
-    const metaText = (c.groups && c.groups.length) ? 'in: ' + c.groups.join(', ') : '';
-    return `<div class="cleanup-row${enabled ? '' : ' disabled'}">
-      <label>
-        <input type="checkbox" data-conv="${esc(c.conv_id)}"${checked ? ' checked' : ''}${enabled ? '' : ' disabled'} />
-        <span class="title">${esc(c.title || shortId(c.conv_id))}</span>
-        <span class="id">${esc(shortId(c.conv_id))}</span>
-        ${ownerBadge}${onlineBadge}
-        <span class="meta">${esc(metaText)}</span>
-        <span class="seen">${esc(activityLabel(c))}</span>
-      </label>
-    </div>`;
-  }
-  function renderList() {
-    const vis = candidates.filter(rowVisible);
-    if (!vis.length) {
-      listEl.innerHTML = '<div class="cleanup-empty">' +
-        (candidates.length ? 'No conversations match the current filters.'
-                           : 'Nothing to clean up.') + '</div>';
-      return;
-    }
-    if (!multiCat) {
-      listEl.innerHTML = vis.map(rowHTML).join('');
-      return;
-    }
-    // 'agents' mode: group the visible rows under category sub-headers.
-    let html = '';
-    for (const cat of CLEANUP_CATS) {
-      const rows = vis.filter(c => c.category === cat);
-      if (!rows.length) continue;
-      html += `<div class="cleanup-cat-head">${esc(CLEANUP_CAT_LABEL[cat])} <span>(${rows.length})</span></div>`;
-      html += rows.map(rowHTML).join('');
-    }
-    listEl.innerHTML = html;
-  }
-
-  function recompute() {
-    const n = selected().length;
-    const tr = cleanupTier();
-    countEl.textContent = n + ' selected';
-    let label;
-    if (mode === 'group') {
-      submitBtn.innerHTML = themeWords(
-        n ? `Remove ${n} from ${groupName}` : 'Remove from group',
-        n ? `Dismiss ${n} from ${groupName}` : 'Dismiss from party',
-      );
-    } else if (tr === 'delete') {
-      label = n ? `Delete ${n} conversation${n === 1 ? '' : 's'} permanently` : 'Delete conversations';
-    } else if (tr === 'retire') {
-      label = n ? `Retire ${n} agent${n === 1 ? '' : 's'}` : 'Retire agents';
-    } else if (tr === 'reinstate') {
-      label = n ? `Reinstate ${n} agent${n === 1 ? '' : 's'}` : 'Reinstate agents';
-    } else {
-      label = n ? `Remove ${n} agent${n === 1 ? '' : 's'} from all groups` : 'Remove from groups';
-    }
-    if (mode !== 'group') submitBtn.textContent = label;
-    submitBtn.disabled = n === 0;
-    submitBtn.classList.toggle('danger', tr === 'delete');
-    applyHint();
-  }
-
-  // Bulk-select every visible, selectable row whose inactivity meets
-  // the age threshold (0 h selects all visible). A convenience on top
-  // of the per-row checkboxes the human can still hand-tune.
-  function applyAge() {
-    const h = Math.max(0, parseFloat(ageInput.value) || 0);
-    for (const c of candidates) {
-      if (!rowVisible(c) || !rowEnabled(c)) continue;
-      c.checked = inactivityHours(c) >= h;
-    }
-    renderList();
-    recompute();
-  }
-
-  function applyChrome() {
-    const titleEl = $('#cleanup-title');
-    if (mode === 'group') {
-      titleEl.innerHTML = themeWords('🧹 Clean up group: ' + groupName, '🧹 Tidy party: ' + groupName);
-    } else {
-      titleEl.textContent = '🧹 Clean up agents and conversations';
-    }
-    applyHint();
-  }
-  // applyHint sets the modal's explanatory line. For group mode it is
-  // static; otherwise it tracks the selected tier so the human always
-  // sees exactly what the action will do.
-  function applyHint() {
-    if (phase === 'result') return;
-    if (mode === 'group') {
-      hintEl.className = 'cleanup-hint';
-      hintEl.innerHTML = themeWords(
-        'Removes the selected confirmed-offline members from this group. Their conversations keep running and stay on disk — only the membership is dropped. Owners are excluded unless you opt in below.',
-        'Dismisses the selected confirmed-slumbering familiars from this party. Their conversation scrolls remain on disk — only the party bond is broken. Party owners are excluded unless you opt in below.',
-      );
-      return;
-    }
-    const tr = cleanupTier();
-    if (tr === 'delete') {
-      hintEl.className = 'cleanup-hint danger';
-      hintEl.textContent = 'Permanently deletes the selected conversations — wipes the history from '
-        + 'disk and drops every group / owner / permission row. Works on active agents, retired '
-        + 'agents and plain conversations alike. Cannot be undone.';
-    } else if (tr === 'retire') {
-      hintEl.className = 'cleanup-hint';
-      hintEl.textContent = 'Retires the selected agents: revokes their group memberships and '
-        + 'permission grants so they stop being agents — the conversations stay on disk and can '
-        + 'be reinstated later. The non-destructive soft-delete. Running sessions are also '
-        + 'soft-stopped unless you untick the option below.';
-    } else if (tr === 'reinstate') {
-      hintEl.className = 'cleanup-hint';
-      hintEl.textContent = 'Reinstates the selected retired agents — returns them to the active '
-        + 'roster. Their former groups and permissions are not restored; they start fresh.';
-    } else {
-      hintEl.className = 'cleanup-hint';
-      hintEl.textContent = 'Removes the selected agents from every group they belong to. '
-        + 'They stay agents (and stay on disk) — only the group memberships are dropped.';
-    }
-  }
-
-  async function submit() {
-    // Lead with the stable agent_id (the BE's resolveCleanupConv maps it
-    // back to a conv-id); a plain conversation has no actor id, so it falls
-    // back to conv_id — which also keeps a dangling agent reachable by its
-    // raw conv-id.
-    const picks = selected().map(c => c.agent_id || c.conv_id);
-    if (!picks.length) return;
-    errEl.textContent = '';
-    submitBtn.disabled = true;
-    let url, payload;
-    if (mode === 'group') {
-      url = '/api/cleanup/group';
-      payload = { group: groupName, members: picks, include_owners: optInclOwners() };
-    } else {
-      url = '/api/cleanup/agents';
-      payload = {
-        agents: picks,
-        mode: cleanupTier(),
-        include_owners: optInclOwners(),
-        include_online: optIncludeOnline(),
-        delete_worktrees: optDeleteWorktrees(),
-        shutdown: optShutdown(),
-      };
-    }
-    try {
-      const r = await fetch(url, {
-        method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (!r.ok) {
-        errEl.textContent = (await r.text()) || ('HTTP ' + r.status);
-        recompute();
-        return;
-      }
-      renderResult(await r.json());
-    } catch (err) {
-      errEl.textContent = 'Request failed: ' + (err && err.message || err);
-      recompute();
-    }
-  }
-
-  // renderResult swaps the modal into its read-only result phase:
-  // the editable list becomes a per-conv outcome log, the action
-  // button becomes "Done".
-  function renderResult(resp) {
-    phase = 'result';
-    toolbar.style.display = 'none';
-    optsEl.style.display = 'none';
-    catsEl.style.display = 'none';
-    const outcomes = resp.outcomes || [];
-    listEl.innerHTML = outcomes.length
-      ? outcomes.map(o => `<div class="cleanup-row">
-          <span class="cleanup-badge ${esc(o.result)}">${esc(o.result)}</span>
-          <span class="title">${esc(o.title || shortId(o.conv_id))}</span>
-          <span class="id">${esc(shortId(o.conv_id))}</span>
-          <span class="meta">${esc(o.detail || '')}</span>
-        </div>`).join('')
-      : '<div class="cleanup-empty">Nothing to do.</div>';
-    const bits = [];
-    if (resp.removed) bits.push(resp.removed + ' removed');
-    if (resp.retired) bits.push(resp.retired + ' retired');
-    if (resp.reinstated) bits.push(resp.reinstated + ' reinstated');
-    if (resp.deleted) bits.push(resp.deleted + ' deleted');
-    if (resp.skipped) bits.push(resp.skipped + ' skipped');
-    if (resp.failed) bits.push(resp.failed + ' failed');
-    hintEl.className = 'cleanup-hint';
-    hintEl.textContent = 'Cleanup complete — ' + (bits.join(' · ') || 'nothing to do') + '.';
-    if ((resp.warnings || []).length) {
-      warnEl.style.display = 'block';
-      warnEl.textContent = '⚠ ' + resp.warnings.join('\n⚠ ');
-    }
-    errEl.textContent = '';
-    submitBtn.textContent = 'Done';
-    submitBtn.disabled = false;
-    submitBtn.classList.remove('danger');
-    cancelBtn.style.display = 'none';
-  }
-
-  function close() {
-    overlay.classList.remove('show');
-    cancelBtn.removeEventListener('click', onCancel);
-    submitBtn.removeEventListener('click', onSubmit);
-    overlay.removeEventListener('click', onOverlay);
-    document.removeEventListener('keydown', onKey);
-    $('#cleanup-select-all').removeEventListener('click', onSelectAll);
-    $('#cleanup-select-none').removeEventListener('click', onSelectNone);
-    ageInput.removeEventListener('input', applyAge);
-    searchInput.removeEventListener('input', onSearch);
-    catsEl.removeEventListener('change', onCatChange);
-    optsEl.removeEventListener('change', onOptChange);
-    optsEl.removeEventListener('click', onOptClick);
-    listEl.removeEventListener('change', onListChange);
-    // After a completed cleanup (phase === 'result') the dashboard needs the
-    // post-cleanup snapshot. Refresh on close so the result view remains stable
-    // until the human dismisses it.
-    if (phase === 'result') refresh();
-  }
-  function onCancel() { close(); }
-  function onSubmit() { if (phase === 'result') close(); else submit(); }
-  function onOverlay(e) { if (e.target === overlay) close(); }
-  function onKey(e) { if (e.key === 'Escape') close(); }
-  function onSelectAll() {
-    for (const c of candidates) { if (rowVisible(c) && rowEnabled(c)) c.checked = true; }
-    renderList(); recompute();
-  }
-  function onSelectNone() {
-    for (const c of candidates) c.checked = false;
-    renderList(); recompute();
-  }
-  function onSearch() {
-    searchText = searchInput.value.trim();
-    renderList(); recompute();
-  }
-  function onCatChange(e) {
-    const cb = e.target.closest('input[type=checkbox]');
-    if (!cb) return;
-    catOn[cb.getAttribute('data-cat')] = cb.checked;
-    renderList(); recompute();
-  }
-  function onOptChange(e) {
-    // Group mode: toggling "include owners" unlocks owner rows and
-    // pre-selects them (the human can still hand-uncheck any).
-    if (e.target.id === 'cleanup-opt-owners' && mode === 'group') {
-      for (const c of candidates) { if (c.owner) c.checked = e.target.checked; }
-    }
-    // "Include online sessions" toggled — reveal / hide online rows.
-    if (e.target.id === 'cleanup-opt-online') {
-      includeOnline = e.target.checked;
-    }
-    // agents mode: a tier radio changed — update the tier and
-    // re-lock the dependent sub-options.
-    if (e.target.name === 'cleanup-tier') {
-      tier = e.target.value;
-      syncTierLocks();
-    }
-    renderList();
-    recompute();
-  }
-  function onOptClick(e) {
-    if (!e.target.closest('#cleanup-worktrees-all')) return;
-    close();
-    openWorktreeCleanup();
-  }
-  function onListChange(e) {
-    const cb = e.target.closest('input[type=checkbox]');
-    if (!cb) return;
-    const c = candidates.find(x => x.conv_id === cb.getAttribute('data-conv'));
-    if (c) c.checked = cb.checked;
-    recompute();
-  }
-
-  // Reset chrome — a prior result-phase render may have hidden bits.
-  toolbar.style.display = '';
-  optsEl.style.display = '';
-  cancelBtn.style.display = '';
-  cancelBtn.textContent = 'Cancel';
-  warnEl.style.display = 'none';
-  warnEl.textContent = '';
-  errEl.textContent = '';
-  ageInput.value = '0';
-  searchInput.value = '';
-  searchInput.style.display = multiCat ? '' : 'none';
-  submitBtn.classList.remove('danger');
-
-  applyChrome();
-  renderOptions();
-  renderCategories();
-  renderList();
-  recompute();
-
-  cancelBtn.addEventListener('click', onCancel);
-  submitBtn.addEventListener('click', onSubmit);
-  overlay.addEventListener('click', onOverlay);
-  document.addEventListener('keydown', onKey);
-  $('#cleanup-select-all').addEventListener('click', onSelectAll);
-  $('#cleanup-select-none').addEventListener('click', onSelectNone);
-  ageInput.addEventListener('input', applyAge);
-  searchInput.addEventListener('input', onSearch);
-  catsEl.addEventListener('change', onCatChange);
-  optsEl.addEventListener('change', onOptChange);
-  optsEl.addEventListener('click', onOptClick);
-  listEl.addEventListener('change', onListChange);
-  overlay.classList.add('show');
+  return openCleanupDialog(buildCleanupDescriptor(snapshot, options, completeLists));
 }
 
 // resumeAgentReq POSTs the resume endpoint, toasts the per-conv

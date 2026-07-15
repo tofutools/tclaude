@@ -606,31 +606,6 @@
      into this single keyed owner atomically; adjacent legacy static modals
      remain live until their corresponding renderer and launch adapter land. -->
 <div id="transaction-dialog-root"></div>
-<div class="modal-overlay" id="cleanup-modal">
-  <div class="cleanup-modal" role="dialog" aria-modal="true" aria-labelledby="cleanup-title">
-    <h3 id="cleanup-title">Clean up</h3>
-    <p class="cleanup-hint" id="cleanup-hint"></p>
-    <div class="cleanup-toolbar" id="cleanup-toolbar">
-      <button type="button" id="cleanup-select-all">select all</button>
-      <button type="button" id="cleanup-select-none">select none</button>
-      <span title="Tick every visible row whose last activity is at least this many hours ago. 0 selects all.">
-        inactive ≥ <input type="number" id="cleanup-age" min="0" step="1" value="0" /> h
-      </span>
-      <input type="search" id="cleanup-search" placeholder="filter title / id…" />
-      <span class="spacer"></span>
-      <span class="cleanup-count" id="cleanup-count"></span>
-    </div>
-    <div class="cleanup-cats" id="cleanup-cats" style="display:none"></div>
-    <div class="cleanup-list" id="cleanup-list"></div>
-    <div class="cleanup-options" id="cleanup-options"></div>
-    <div class="cleanup-warn" id="cleanup-warn" style="display:none"></div>
-    <div class="cleanup-error" id="cleanup-error"></div>
-    <div class="modal-buttons">
-      <button id="cleanup-cancel" type="button">Cancel</button>
-      <button id="cleanup-submit" class="primary" type="button">Clean up</button>
-    </div>
-  </div>
-</div>
 <div class="modal-overlay" id="worktree-cleanup-modal">
   <div class="cleanup-modal" role="dialog" aria-modal="true" aria-labelledby="worktree-cleanup-title">
     <h3 id="worktree-cleanup-title">Clean up worktrees</h3>
