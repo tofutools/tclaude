@@ -324,7 +324,21 @@ export function createTransactionDialogActions({
           throw error;
         }
 
-        const rows = Array.isArray(payload?.members) ? payload.members : [];
+        const hasTopLevelError = payload !== null && typeof payload === 'object'
+          && !Array.isArray(payload)
+          && Object.prototype.hasOwnProperty.call(payload, 'error');
+        if (hasTopLevelError || !Array.isArray(payload?.members)) {
+          const detail = hasTopLevelError
+            ? (payload.error || payload.message || 'endpoint returned an error')
+            : 'invalid response (expected a "members" array)';
+          const error = new Error(`retire failed: ${String(detail)}`);
+          error.phase = 'retire';
+          error.status = response.status;
+          error.payload = payload;
+          throw error;
+        }
+
+        const rows = payload.members;
         const aliases = new Map();
         for (const member of progress.pendingRetire) {
           for (const alias of [member.selector, member.agent_id, member.conv_id]) {
