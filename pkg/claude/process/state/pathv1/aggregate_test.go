@@ -190,7 +190,11 @@ func addWideOpenReservation(t *testing.T, view *AggregateView, node string, poli
 
 func makeTestCommand(t *testing.T, identity CommandIdentity, state CommandState) CommandRecord {
 	t.Helper()
-	return makeTestCommandPayload(t, identity, state, json.RawMessage(`{"plan":true}`))
+	payload := json.RawMessage(`{"plan":true}`)
+	if identity.Kind == CommandSettleDetachedSink && identity.PlanDigest == "" {
+		identity.PlanDigest = payloadDigest(payload)
+	}
+	return makeTestCommandPayload(t, identity, state, payload)
 }
 
 func makeTestCommandPayload(t *testing.T, identity CommandIdentity, state CommandState, payload json.RawMessage) CommandRecord {
