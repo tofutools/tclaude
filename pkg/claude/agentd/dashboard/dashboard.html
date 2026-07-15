@@ -593,76 +593,8 @@
     </div>
   </div>
 </div>
-<div class="modal-overlay" id="cron-create-modal">
-  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="cron-create-title">
-    <h3 id="cron-create-title">Schedule a cron job</h3>
-    <div class="modal-meta" id="cron-create-meta" style="display:none"></div>
-    <label class="cron-create-row">
-      <span class="cron-create-label">Name</span>
-      <input id="cron-create-name" type="text" placeholder="kebab-or-snake-case label" autocomplete="off" spellcheck="false" />
-    </label>
-    <label class="cron-create-row">
-      <span class="cron-create-label">Owner</span>
-      <div class="cron-create-target">
-        <div class="cron-target-input-row">
-          <input id="cron-create-owner" type="text" placeholder="(default: dashboard human) title / conv-id / 8+-char prefix" autocomplete="off" spellcheck="false" />
-          <button type="button" id="cron-create-owner-pick" title="Pick from the agent / familiar list">🔍</button>
-        </div>
-      </div>
-    </label>
-    <label class="cron-create-row">
-      <span class="cron-create-label">Target</span>
-      <!-- Preact-owned controlled solo/group target picker. Legacy cron keeps
-           scheduling ownership and talks to this root only via the controller. -->
-      <div class="cron-create-target" id="cron-create-target-mount"></div>
-    </label>
-    <label class="cron-create-row" id="cron-create-role-row" style="display:none">
-      <span class="cron-create-label" title="For a group / party target only: deliver only to members / familiars whose role / class matches. Blank or 'all' means the whole target."><span class="theme-copy-regular">Role filter</span><span class="theme-copy-wizard">Class filter</span></span>
-      <input id="cron-create-role" type="text" placeholder="optional — blank / all = entire target (e.g. dev)" autocomplete="off" spellcheck="false" />
-    </label>
-    <label class="cron-create-row">
-      <span class="cron-create-label">Schedule</span>
-      <div class="cron-create-schedule">
-        <div class="cron-target-modes">
-          <label><input type="radio" name="cron-create-schedule-mode" value="interval" checked /> Interval</label>
-          <label><input type="radio" name="cron-create-schedule-mode" value="cron" /> Cron expression</label>
-        </div>
-        <div class="cron-schedule-interval" id="cron-create-schedule-interval">
-          <div class="cron-schedule-chips" id="cron-create-chips">
-            <button type="button" data-chip="5m">5m</button>
-            <button type="button" data-chip="15m">15m</button>
-            <button type="button" data-chip="1h">1h</button>
-            <button type="button" data-chip="4h">4h</button>
-            <button type="button" data-chip="24h">daily</button>
-          </div>
-          <input id="cron-create-interval" type="text" placeholder="custom (30s min, e.g. 10m, 2h, 1h30m)" autocomplete="off" spellcheck="false" />
-        </div>
-        <div class="cron-schedule-cron" id="cron-create-schedule-cron" style="display:none">
-          <input id="cron-create-cron" type="text" placeholder="min hour dom month dow — e.g. */5 * * * *, 0 9 * * 1-5, @daily" autocomplete="off" spellcheck="false" />
-          <div class="cron-explain" id="cron-create-cron-explain"></div>
-        </div>
-      </div>
-    </label>
-    <label class="cron-create-row">
-      <span class="cron-create-label">Subject</span>
-      <input id="cron-create-subject" type="text" placeholder="optional, shows in inbox listings" maxlength="100" autocomplete="off" spellcheck="false" />
-    </label>
-    <label class="cron-create-row">
-      <span class="cron-create-label">Body</span>
-      <textarea id="cron-create-body" rows="4" placeholder="message text the cron job sends each tick (required)" spellcheck="false"></textarea>
-    </label>
-    <label class="cron-create-enabled">
-      <input id="cron-create-enabled" type="checkbox" checked /> Enabled
-    </label>
-    <div class="cron-create-error" id="cron-create-error"></div>
-    <div class="modal-buttons">
-      <button id="cron-create-cancel" type="button">Cancel</button>
-      <span class="spacer"></span>
-      <button id="cron-create-save-another" class="secondary" type="button" title="Save and reset the form so you can create another in the same sitting">Save &amp; create another</button>
-      <button id="cron-create-submit" class="primary" type="button">Create</button>
-    </div>
-  </div>
-</div>
+<!-- Jobs Preact exclusively owns the cron create/edit/duplicate overlays. -->
+<div id="jobs-cron-dialog-root"></div>
 <div class="modal-overlay" id="group-create-modal">
   <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="group-create-title">
     <!-- Title copy swaps per theme (pure-CSS span swap, like the spawn dialog's

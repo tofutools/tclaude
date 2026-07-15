@@ -27,8 +27,9 @@ func TestDashboardHTML_CronExpressionMode(t *testing.T) {
 
 	// The debounced explainer round-trip: the JS posts the expression, the
 	// box renders description / next fires / the inline parse error.
-	must(`fetch('/api/cron/explain'`, "modal-cron.js explain fetch")
-	must("scheduleCronExplain", "the debounce wrapper")
+	must("explainCron: (expr) => requestMutation('/api/cron/explain'", "DOM-free Jobs explain transport")
+	must("const timer = setTimeout(async () => {", "the component-owned debounce wrapper")
+	must("firstExplain.current ? 0 : 350", "stored expressions explain immediately and typed expressions debounce")
 	must("cron-explain-error", "the inline invalid-expression style hook")
 
 	// The explainer box collapses when empty (like .cron-create-error), so
