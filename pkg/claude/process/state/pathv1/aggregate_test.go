@@ -70,6 +70,103 @@ func addOpenAuthorityReservation(t *testing.T, view *AggregateView, node string)
 	return reservationID
 }
 
+func validOpenArrivalFixture(t *testing.T) (AggregateView, PathID, ReservationID) {
+	t.Helper()
+	view := validGenesisFixture(t)
+	reservationID := addOpenAuthorityReservation(t, &view, "target")
+	r := view.Routing.Reservations[reservationID]
+	edge := EdgeKey{TemplateRef: view.TemplateRef, FromNodeID: "start", Outcome: "pass", ToNodeID: "target"}
+	edge.ID, _ = EdgeIdentity(edge.TemplateRef, edge.FromNodeID, edge.Outcome, edge.ToNodeID)
+	candidate := r.Candidates[0]
+	parentID := view.Authority.Genesis.OutputPathID
+	parent := view.Routing.Paths[parentID]
+	pathID, _ := EdgePathIdentity(parent.SourceActivation.ID, parent.ID, edge.ID, r.ID, candidate.ID)
+	arrivalID, _ := ArrivalIdentity(pathID, r.ID, candidate.ID)
+	lineageID, _ := CandidateLineageIdentity("", r.ID, candidate.ID)
+	route := makeTestCommand(t, CommandIdentity{RunID: view.RunID, Kind: CommandRoutePaths, PayloadSchema: 1, SourceActivationID: parent.SourceActivation.ID, SourceGeneration: parent.SourceActivation.Generation, SourcePathID: parent.ID, InputDigest: "settled", CauseDigest: "cause", PlanDigest: "exclusive", ResultCode: "pass"}, CommandObserved)
+	view.Commands[route.ID] = route
+	parent.State = PathRouted
+	parent.ProducedPathIDs = []string{pathID}
+	parent.UpdatedSeq = 2
+	dispositionID, _ := DispositionReceiptIdentity(parent.ID, PathLive, PathRouted, "route", route.ID, "", 2)
+	parent.Disposition = &DispositionReceipt{ID: dispositionID, PathID: parent.ID, FromState: PathLive, ToState: PathRouted, ReasonCode: "route", CommandID: route.ID, EventSeq: 2}
+	view.Routing.Paths[parent.ID] = parent
+	view.Routing.Paths[pathID] = PathRecord{ID: pathID, Kind: PathEdge, State: PathArrived, ParentPathID: parent.ID, SourceActivation: parent.SourceActivation, Edge: &edge, TargetReservationID: r.ID, CandidateID: candidate.ID, ScopeID: parent.ScopeID, CandidateLineage: []CandidateLineageFrame{{ID: lineageID, ReservationID: r.ID, CandidateID: candidate.ID}}, CandidateLineageID: lineageID, LineageDepth: 1, ArrivalID: arrivalID, ArrivedSeq: 2, CreatedSeq: 2, UpdatedSeq: 2}
+	return view, pathID, reservationID
+}
+
+func activateOpenArrival(t *testing.T, view *AggregateView, pathID PathID, reservationID ReservationID) {
+	t.Helper()
+	r := view.Routing.Reservations[reservationID]
+	inputDigest, _ := InputSetIdentity([]string{pathID})
+	command := makeTestCommand(t, CommandIdentity{RunID: view.RunID, Kind: CommandActivateGeneration, PayloadSchema: 1, TargetReservationID: r.ID, TargetGeneration: r.Generation, InputDigest: "fold", CauseDigest: "cause", PlanDigest: "activate"}, CommandObserved)
+	activationID, _ := ActivationIdentity(view.RunID, r.ID, r.Generation, inputDigest)
+	outputID, _ := ActivationOutputIdentity(activationID, r.Generation)
+	ref := ActivationRef{ID: activationID, Generation: r.Generation}
+	receiptID, _ := ActivationReceiptIdentity(activationID, r.ID, inputDigest, outputID, command.ID, 3)
+	receipt := ActivationReceipt{ID: receiptID, ActivationID: activationID, ReservationID: r.ID, InputSetDigest: inputDigest, OutputPathID: outputID, ScopeID: r.ScopeID, JoinPolicy: r.JoinPolicy, Result: ReceiptActivated, CommandID: command.ID, EventSeq: 3}
+	p := view.Routing.Paths[pathID]
+	p.State = PathConsumed
+	p.ConsumedBy = &ref
+	p.UpdatedSeq = 3
+	dispositionID, _ := DispositionReceiptIdentity(p.ID, PathArrived, PathConsumed, "exclusive_winner", command.ID, "", 3)
+	p.Disposition = &DispositionReceipt{ID: dispositionID, PathID: p.ID, FromState: PathArrived, ToState: PathConsumed, ReasonCode: "exclusive_winner", CommandID: command.ID, EventSeq: 3}
+	view.Routing.Paths[p.ID] = p
+	view.Routing.Paths[outputID] = PathRecord{ID: outputID, Kind: PathActivationOutput, State: PathEnded, SourceActivation: ref, ScopeID: r.ScopeID, CreatedSeq: 3, UpdatedSeq: 3}
+	view.Routing.Activations[activationID] = ActivationRecord{ID: activationID, RunID: view.RunID, Ref: ref, ReservationID: r.ID, InputPathIDs: []string{p.ID}, InputSetDigest: inputDigest, OutputPathID: outputID, Receipt: receipt, CommandID: command.ID, EventSeq: 3}
+	r.State = ReservationActivated
+	r.Activation = &ref
+	r.CommandID = command.ID
+	r.EventSeq = 3
+	view.Routing.Reservations[r.ID] = r
+	view.Commands[command.ID] = command
+}
+
+func forgeActivatedInputEdge(t *testing.T, view *AggregateView, oldPathID PathID) PathID {
+	t.Helper()
+	p := view.Routing.Paths[oldPathID]
+	edge := *p.Edge
+	edge.Outcome = "forged"
+	edge.ID, _ = EdgeIdentity(edge.TemplateRef, edge.FromNodeID, edge.Outcome, edge.ToNodeID)
+	newPathID, _ := EdgePathIdentity(p.SourceActivation.ID, p.ParentPathID, edge.ID, p.TargetReservationID, p.CandidateID)
+	p.ID = newPathID
+	p.Edge = &edge
+	p.ArrivalID, _ = ArrivalIdentity(newPathID, p.TargetReservationID, p.CandidateID)
+	p.Disposition.PathID = newPathID
+	p.Disposition.ID, _ = DispositionReceiptIdentity(newPathID, p.Disposition.FromState, p.Disposition.ToState, p.Disposition.ReasonCode, p.Disposition.CommandID, p.Disposition.AdminRecordID, uint64(p.Disposition.EventSeq))
+	oldActivation := view.Routing.Activations[p.ConsumedBy.ID]
+	inputDigest, _ := InputSetIdentity([]string{newPathID})
+	newActivationID, _ := ActivationIdentity(view.RunID, oldActivation.ReservationID, oldActivation.Ref.Generation, inputDigest)
+	newOutputID, _ := ActivationOutputIdentity(newActivationID, oldActivation.Ref.Generation)
+	newRef := ActivationRef{ID: newActivationID, Generation: oldActivation.Ref.Generation}
+	p.ConsumedBy = &newRef
+	delete(view.Routing.Paths, oldPathID)
+	view.Routing.Paths[newPathID] = p
+	parent := view.Routing.Paths[p.ParentPathID]
+	parent.ProducedPathIDs = []string{newPathID}
+	view.Routing.Paths[parent.ID] = parent
+	oldOutput := view.Routing.Paths[oldActivation.OutputPathID]
+	delete(view.Routing.Paths, oldActivation.OutputPathID)
+	oldOutput.ID = newOutputID
+	oldOutput.SourceActivation = newRef
+	view.Routing.Paths[newOutputID] = oldOutput
+	delete(view.Routing.Activations, oldActivation.ID)
+	oldActivation.ID = newActivationID
+	oldActivation.Ref = newRef
+	oldActivation.InputPathIDs = []string{newPathID}
+	oldActivation.InputSetDigest = inputDigest
+	oldActivation.OutputPathID = newOutputID
+	oldActivation.Receipt.ID, _ = ActivationReceiptIdentity(newActivationID, oldActivation.ReservationID, inputDigest, newOutputID, oldActivation.CommandID, uint64(oldActivation.EventSeq))
+	oldActivation.Receipt.ActivationID = newActivationID
+	oldActivation.Receipt.InputSetDigest = inputDigest
+	oldActivation.Receipt.OutputPathID = newOutputID
+	view.Routing.Activations[newActivationID] = oldActivation
+	r := view.Routing.Reservations[oldActivation.ReservationID]
+	r.Activation = &newRef
+	view.Routing.Reservations[r.ID] = r
+	return newPathID
+}
+
 func addWideOpenReservation(t *testing.T, view *AggregateView, node string, policy JoinPolicy, count int) string {
 	t.Helper()
 	root := view.Authority.Genesis.RootScopeID
@@ -1016,5 +1113,148 @@ func TestDetachmentSetIndexAllowsRepeatedMemberAcrossDistinctChains(t *testing.T
 	index.indexAllDetachmentSets()
 	if !reportHasCode(*report, "detachment_set_duplicate") {
 		t.Fatalf("duplicate-chain diagnostics: %#v", report.Diagnostics)
+	}
+}
+
+func TestEdgeArrivalRequiresExactAuthorizedSlot(t *testing.T) {
+	t.Parallel()
+	view, oldPathID, _ := validOpenArrivalFixture(t)
+	if report := ValidateAggregate(view); !report.Valid() {
+		t.Fatalf("valid arrival diagnostics: %#v", report.Diagnostics)
+	}
+	p := view.Routing.Paths[oldPathID]
+	edge := *p.Edge
+	edge.Outcome = "forged"
+	edge.ID, _ = EdgeIdentity(edge.TemplateRef, edge.FromNodeID, edge.Outcome, edge.ToNodeID)
+	newPathID, _ := EdgePathIdentity(p.SourceActivation.ID, p.ParentPathID, edge.ID, p.TargetReservationID, p.CandidateID)
+	p.ID = newPathID
+	p.Edge = &edge
+	p.ArrivalID, _ = ArrivalIdentity(newPathID, p.TargetReservationID, p.CandidateID)
+	delete(view.Routing.Paths, oldPathID)
+	view.Routing.Paths[newPathID] = p
+	parent := view.Routing.Paths[p.ParentPathID]
+	parent.ProducedPathIDs = []string{newPathID}
+	view.Routing.Paths[parent.ID] = parent
+	report := ValidateAggregate(view)
+	if !reportHasCode(report, "path_slot_authority") {
+		t.Fatalf("forged slot diagnostics: %#v", report.Diagnostics)
+	}
+}
+
+func TestAuthorizedSlotCannotMaterializeAsEdgeAndImpossibleEdge(t *testing.T) {
+	t.Parallel()
+	view, pathID, _ := validOpenArrivalFixture(t)
+	p := view.Routing.Paths[pathID]
+	commandID := view.Routing.Paths[p.ParentPathID].Disposition.CommandID
+	causeID, _ := CauseIdentity("", TerminalImpossible, "condition_false", "", commandID, "", 2)
+	view.Routing.CauseRecords[causeID] = CauseRecord{ID: causeID, TerminalKind: TerminalImpossible, DispositionReason: "condition_false", SourceCommandID: commandID, EventSeq: 2}
+	causeDigest, _ := CauseSetIdentity([]string{causeID})
+	view.Routing.CauseSets[causeDigest] = CauseSetRecord{Digest: causeDigest, CauseIDs: []string{causeID}}
+	impossibleID, _ := ImpossibleEdgePathIdentity(causeDigest, p.Edge.ID, p.TargetReservationID)
+	view.Routing.Paths[impossibleID] = PathRecord{ID: impossibleID, Kind: PathImpossibleEdge, State: PathImpossible, ParentPathID: p.ParentPathID, SourceActivation: p.SourceActivation, Edge: p.Edge, TargetReservationID: p.TargetReservationID, CandidateID: p.CandidateID, ScopeID: p.ScopeID, BranchEdgeID: p.BranchEdgeID, CandidateLineage: p.CandidateLineage, CandidateLineageID: p.CandidateLineageID, LineageDepth: p.LineageDepth, ImpossibleCauseDigest: causeDigest, CreatedSeq: 2, UpdatedSeq: 2}
+	parent := view.Routing.Paths[p.ParentPathID]
+	parent.ProducedPathIDs = append(parent.ProducedPathIDs, impossibleID)
+	slices.Sort(parent.ProducedPathIDs)
+	view.Routing.Paths[parent.ID] = parent
+	report := ValidateAggregate(view)
+	if !reportHasCode(report, "slot_multiple_paths") {
+		t.Fatalf("duplicate slot diagnostics: %#v", report.Diagnostics)
+	}
+}
+
+func TestActivationInputRequiresExactAuthorizedSlot(t *testing.T) {
+	t.Parallel()
+	view, pathID, reservationID := validOpenArrivalFixture(t)
+	activateOpenArrival(t, &view, pathID, reservationID)
+	if report := ValidateAggregate(view); !report.Valid() {
+		t.Fatalf("valid activation diagnostics: %#v", report.Diagnostics)
+	}
+	forgedID := forgeActivatedInputEdge(t, &view, pathID)
+	report := ValidateAggregate(view)
+	if !reportHasCode(report, "path_slot_authority") {
+		t.Fatalf("forged activation input %q diagnostics: %#v", forgedID, report.Diagnostics)
+	}
+}
+
+func rebindTerminalPathCommand(t *testing.T, view *AggregateView, pathID PathID, commandID string) {
+	t.Helper()
+	p := view.Routing.Paths[pathID]
+	oldCause := view.Routing.CauseRecords[p.TerminalCauseID]
+	delete(view.Routing.CauseRecords, oldCause.ID)
+	p.Disposition.CommandID = commandID
+	p.Disposition.ID, _ = DispositionReceiptIdentity(p.ID, p.Disposition.FromState, p.Disposition.ToState, p.Disposition.ReasonCode, commandID, p.Disposition.AdminRecordID, uint64(p.Disposition.EventSeq))
+	oldCause.SourceCommandID = commandID
+	oldCause.ID, _ = CauseIdentity(oldCause.SourcePathID, oldCause.TerminalKind, oldCause.DispositionReason, oldCause.SourceActivationID, commandID, oldCause.AdminRecordID, uint64(oldCause.EventSeq))
+	p.TerminalCauseID = oldCause.ID
+	view.Routing.Paths[pathID] = p
+	view.Routing.CauseRecords[oldCause.ID] = oldCause
+}
+
+func failedPathID(view AggregateView) PathID {
+	for id, path := range view.Routing.Paths {
+		if path.State == PathFailed {
+			return id
+		}
+	}
+	return ""
+}
+
+func TestTerminalDispositionRejectsUnrelatedCommandAtCompletion(t *testing.T) {
+	t.Parallel()
+	view := validSlowAnyFixture(t, true)
+	pathID := failedPathID(view)
+	initializeID := ""
+	for id, command := range view.Commands {
+		if command.Identity.Kind == CommandInitializeRouting {
+			initializeID = id
+		}
+	}
+	rebindTerminalPathCommand(t, &view, pathID, initializeID)
+	report := ValidateAggregate(view)
+	if !reportHasCode(report, "terminal_command_capability") {
+		t.Fatalf("unrelated terminal command diagnostics: %#v", report.Diagnostics)
+	}
+	if _, err := AssessAggregateCompletion(view); !errors.Is(err, ErrAggregateInvalid) {
+		t.Fatalf("completion error = %v, want ErrAggregateInvalid", err)
+	}
+}
+
+func TestTerminalDispositionRequiresExactSourceTuple(t *testing.T) {
+	t.Parallel()
+	view := validSlowAnyFixture(t, true)
+	pathID := failedPathID(view)
+	wrong := makeTestCommand(t, CommandIdentity{RunID: view.RunID, Kind: CommandSettleAttempt, PayloadSchema: 1, SourceActivationID: view.Authority.Genesis.ActivationID, SourceGeneration: 1, Attempt: 1, InputDigest: "attempt", PlanDigest: "observe", ResultCode: "failed"}, CommandObserved)
+	view.Commands[wrong.ID] = wrong
+	rebindTerminalPathCommand(t, &view, pathID, wrong.ID)
+	report := ValidateAggregate(view)
+	if !reportHasCode(report, "terminal_command_tuple") {
+		t.Fatalf("wrong terminal tuple diagnostics: %#v", report.Diagnostics)
+	}
+	if _, err := AssessAggregateCompletion(view); !errors.Is(err, ErrAggregateInvalid) {
+		t.Fatalf("completion error = %v, want ErrAggregateInvalid", err)
+	}
+}
+
+func TestEndedDispositionRequiresRouteCapability(t *testing.T) {
+	t.Parallel()
+	view := validGenesisFixture(t)
+	pathID := view.Authority.Genesis.OutputPathID
+	p := view.Routing.Paths[pathID]
+	p.UpdatedSeq = 2
+	initializeID := view.Authority.Genesis.ReservationID
+	for id, command := range view.Commands {
+		if command.Identity.Kind == CommandInitializeRouting {
+			initializeID = id
+		}
+	}
+	dispositionID, _ := DispositionReceiptIdentity(p.ID, PathLive, PathEnded, "completed", initializeID, "", 2)
+	p.Disposition = &DispositionReceipt{ID: dispositionID, PathID: p.ID, FromState: PathLive, ToState: PathEnded, ReasonCode: "completed", CommandID: initializeID, EventSeq: 2}
+	view.Routing.Paths[p.ID] = p
+	report := ValidateAggregate(view)
+	if !reportHasCode(report, "terminal_command_capability") {
+		t.Fatalf("ended command diagnostics: %#v", report.Diagnostics)
+	}
+	if _, err := AssessAggregateCompletion(view); !errors.Is(err, ErrAggregateInvalid) {
+		t.Fatalf("completion error = %v, want ErrAggregateInvalid", err)
 	}
 }

@@ -207,10 +207,19 @@ func (i *aggregateIndex) indexPaths() {
 				if parent.State == PathSplit {
 					sourceScopeID, sourceBranchEdgeID = path.ScopeID, path.BranchEdgeID
 				}
-				slot, err := PossibleSlotIdentity(path.TargetReservationID, path.CandidateID, path.Edge.FromNodeID, path.Edge.ID, sourceScopeID, sourceBranchEdgeID, path.SourceActivation.Generation)
-				if err == nil {
-					i.pathsBySlot[slot] = append(i.pathsBySlot[slot], id)
+				slotID, err := PossibleSlotIdentity(path.TargetReservationID, path.CandidateID, path.Edge.FromNodeID, path.Edge.ID, sourceScopeID, sourceBranchEdgeID, path.SourceActivation.Generation)
+				exact := PossibleSlotRecord{ID: slotID, ReservationID: path.TargetReservationID, CandidateID: path.CandidateID, SourceNodeID: path.Edge.FromNodeID, SourceEdgeID: path.Edge.ID, SourceScopeID: sourceScopeID, SourceBranchEdgeID: sourceBranchEdgeID, Generation: path.SourceActivation.Generation}
+				authorized, exists := i.slots[slotID]
+				if err != nil || !exists || authorized != exact {
+					i.c.add("path_slot_authority", "paths."+id, "edge/impossible-edge path lacks its exact authorized possible slot")
+				} else {
+					i.pathsBySlot[slotID] = append(i.pathsBySlot[slotID], id)
+					if len(i.pathsBySlot[slotID]) == 2 {
+						i.c.add("slot_multiple_paths", "possibleSlots."+slotID, "authorized slot is materialized by multiple paths")
+					}
 				}
+			} else {
+				i.c.add("path_slot_authority", "paths."+id, "edge/impossible-edge path cannot recompute an authorized possible slot")
 			}
 		}
 		active := path.State == PathLive || path.State == PathArrived
@@ -709,6 +718,10 @@ func (i *aggregateIndex) validateDisposition(path string, p PathRecord) {
 	if d.CommandID == "" && d.AdminRecordID == "" {
 		i.c.add("disposition_authority_missing", path+".disposition", "transition has neither command nor admin authority")
 	}
+	terminal := p.State == PathEnded || p.State.TerminalNonSuccess()
+	if terminal && d.CommandID == "" {
+		i.c.add("terminal_command_capability", path+".disposition", "terminal transition lacks command authority")
+	}
 	if d.CommandID != "" {
 		i.refCommand(d.CommandID, path+".disposition.commandId")
 		if command, ok := i.view.Commands[d.CommandID]; ok {
@@ -729,6 +742,14 @@ func (i *aggregateIndex) validateDisposition(path string, p PathRecord) {
 				if command.Identity.Kind != want {
 					i.c.add("disposition_command_authority", path+".disposition", "command kind %q cannot own %q", command.Identity.Kind, d.ReasonCode)
 				}
+			case PathEnded:
+				i.validateTerminalCommand(path, p, d, command.Identity, CommandRoutePaths)
+			case PathFailed, PathCanceled, PathSkipped:
+				want := CommandSettleAttempt
+				if d.FromState == PathArrived {
+					want = CommandActivateGeneration
+				}
+				i.validateTerminalCommand(path, p, d, command.Identity, want)
 			}
 		}
 	}
@@ -746,6 +767,26 @@ func (i *aggregateIndex) validateDisposition(path string, p PathRecord) {
 		}
 	} else if p.TerminalCauseID != "" {
 		i.c.add("terminal_cause_unexpected", path, "successful path has terminal cause")
+	}
+}
+
+func (i *aggregateIndex) validateTerminalCommand(path string, p PathRecord, d DispositionReceipt, command CommandIdentity, want CommandKindV1) {
+	if command.Kind != want {
+		i.c.add("terminal_command_capability", path+".disposition", "command kind %q cannot own terminal transition %q -> %q", command.Kind, d.FromState, p.State)
+		return
+	}
+	exact := false
+	switch want {
+	case CommandSettleAttempt:
+		exact = command.SourceActivationID == p.SourceActivation.ID && command.SourceGeneration == p.SourceActivation.Generation
+	case CommandRoutePaths:
+		exact = command.SourceActivationID == p.SourceActivation.ID && command.SourceGeneration == p.SourceActivation.Generation && command.SourcePathID == p.ID
+	case CommandActivateGeneration:
+		reservation, ok := i.view.Routing.Reservations[p.TargetReservationID]
+		exact = ok && command.TargetReservationID == p.TargetReservationID && command.TargetGeneration == reservation.Generation
+	}
+	if !exact {
+		i.c.add("terminal_command_tuple", path+".disposition", "terminal command does not name the exact source/target path authority")
 	}
 }
 
