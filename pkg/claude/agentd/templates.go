@@ -1316,7 +1316,7 @@ const (
 	// safety-relevant field, even if that field is structurally additive.
 	// Import accepts any version <= this and rejects anything newer with
 	// an "upgrade tclaude" message.
-	templateExportVersion = 2
+	templateExportVersion = 3
 )
 
 // templateExportEnvelope is the portable file shape: a small versioned
@@ -1344,10 +1344,10 @@ type templateExportEnvelope struct {
 	// Import materializes any that are MISSING locally (never overwriting an
 	// existing profile of the same name — same sacred-edits rule as roles); a
 	// reference that stays unresolved is dropped + warned on import, exactly like
-	// today. Version 2 additionally guarantees that safety-relevant profile
-	// state such as disabled_reason is preserved; a version-1 reader would
-	// silently recreate such a profile as enabled, so version-2 exports must be
-	// rejected by that older reader.
+	// today. Version 3 guarantees that the explicit disabled switch and its
+	// independently retained reason are interpreted together; a version-2
+	// reader would treat any remembered reason as disabled, so version-3 exports
+	// must be rejected by that older reader.
 	Profiles []spawnProfileJSON `json:"profiles,omitempty"`
 }
 
@@ -1772,6 +1772,7 @@ func importTemplateEnvelope(env templateExportEnvelope, asName string, update bo
 			"this export is format_version %d, but this tclaude supports up to %d — upgrade tclaude to import it",
 			env.FormatVersion, templateExportVersion)}
 	}
+	env.Profiles = normalizeLegacyProfileDisabledState(env.Profiles, env.FormatVersion, 3)
 
 	body := env.Template
 	if asName != "" {

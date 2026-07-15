@@ -29,6 +29,7 @@ func profileReq(t *testing.T, f *testharness.Flow, method, path string, body any
 type wireProfile struct {
 	Name           string   `json:"name"`
 	Aliases        []string `json:"aliases"`
+	Disabled       bool     `json:"disabled"`
 	DisabledReason string   `json:"disabled_reason"`
 	Harness        string   `json:"harness"`
 	Model          string   `json:"model"`
@@ -38,36 +39,55 @@ type wireProfile struct {
 	SyncWorktree   *bool    `json:"sync_worktree"`
 }
 
-func TestSpawnProfiles_DisabledReasonRoundTrip(t *testing.T) {
+func TestSpawnProfiles_DisabledStateAndRememberedReasonRoundTrip(t *testing.T) {
 	f := newFlow(t)
 	rec := profileReq(t, f, http.MethodPost, "/v1/spawn-profiles", map[string]any{
-		"name": "paused", "disabled_reason": "Provider quota exhausted until Friday",
+		"name": "paused", "disabled": true, "disabled_reason": "Provider quota exhausted until Friday",
 	})
 	require.Equalf(t, http.StatusCreated, rec.Code, "create body=%s", rec.Body.String())
 	var created struct {
-		Profile wireProfile `json:"profile"`
+		SupportsExplicitDisabled bool        `json:"supports_explicit_disabled"`
+		Profile                  wireProfile `json:"profile"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
+	assert.True(t, created.SupportsExplicitDisabled)
+	assert.True(t, created.Profile.Disabled)
 	assert.Equal(t, "Provider quota exhausted until Friday", created.Profile.DisabledReason)
 
 	rec = profileReq(t, f, http.MethodGet, "/v1/spawn-profiles/paused", nil)
 	require.Equal(t, http.StatusOK, rec.Code)
 	var got wireProfile
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	assert.True(t, got.Disabled)
 	assert.Equal(t, "Provider quota exhausted until Friday", got.DisabledReason)
 
-	rec = profileReq(t, f, http.MethodPatch, "/v1/spawn-profiles/paused", map[string]any{"name": "paused"})
+	rec = profileReq(t, f, http.MethodPatch, "/v1/spawn-profiles/paused", map[string]any{
+		"name": "paused", "disabled": false, "disabled_reason": got.DisabledReason,
+	})
 	require.Equalf(t, http.StatusOK, rec.Code, "enable body=%s", rec.Body.String())
 	var patched struct {
-		Profile wireProfile `json:"profile"`
+		SupportsExplicitDisabled bool        `json:"supports_explicit_disabled"`
+		Profile                  wireProfile `json:"profile"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &patched))
+	assert.True(t, patched.SupportsExplicitDisabled)
 	assert.Equal(t, "paused", patched.Profile.Name)
-	assert.Empty(t, patched.Profile.DisabledReason)
+	assert.False(t, patched.Profile.Disabled)
+	assert.Equal(t, "Provider quota exhausted until Friday", patched.Profile.DisabledReason)
 	rec = profileReq(t, f, http.MethodGet, "/v1/spawn-profiles/paused", nil)
 	got = wireProfile{}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
-	assert.Empty(t, got.DisabledReason)
+	assert.False(t, got.Disabled)
+	assert.Equal(t, "Provider quota exhausted until Friday", got.DisabledReason)
+}
+
+func TestSpawnProfiles_DisabledRequiresReason(t *testing.T) {
+	f := newFlow(t)
+	rec := profileReq(t, f, http.MethodPost, "/v1/spawn-profiles", map[string]any{
+		"name": "paused", "disabled": true,
+	})
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "disabled_reason is required")
 }
 
 func TestSpawnProfiles_AliasCRUDAndResolution(t *testing.T) {

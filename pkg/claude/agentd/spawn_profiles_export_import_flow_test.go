@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -45,6 +46,7 @@ func TestSpawnProfilesExportImport_RoundTripSelected(t *testing.T) {
 		map[string]any{
 			"name": "alpha", "aliases": []string{"codex-reviewer"},
 			"model": "sonnet", "role": "lead", "sync_worktree": true,
+			"disabled":        true,
 			"disabled_reason": "provider maintenance",
 		}).Code)
 	require.Equal(t, http.StatusCreated, profileReq(t, f, http.MethodPost, "/v1/spawn-profiles",
@@ -55,12 +57,13 @@ func TestSpawnProfilesExportImport_RoundTripSelected(t *testing.T) {
 	var bundle profileBundle
 	testharness.DecodeJSON(t, rec, &bundle)
 	assert.Equal(t, "tclaude-spawn-profiles", bundle.Format)
-	assert.Equal(t, 3, bundle.FormatVersion)
+	assert.Equal(t, 4, bundle.FormatVersion)
 	assert.NotEmpty(t, bundle.ExportedAt)
 	require.Len(t, bundle.Profiles, 1)
 	assert.Equal(t, "alpha", bundle.Profiles[0].Name)
 	assert.Equal(t, []string{"codex-reviewer"}, bundle.Profiles[0].Aliases)
 	assert.Equal(t, "sonnet", bundle.Profiles[0].Model)
+	assert.True(t, bundle.Profiles[0].Disabled)
 	assert.Equal(t, "provider maintenance", bundle.Profiles[0].DisabledReason)
 	require.NotNil(t, bundle.Profiles[0].SyncWorktree)
 	assert.True(t, *bundle.Profiles[0].SyncWorktree)
@@ -87,6 +90,7 @@ func TestSpawnProfilesExportImport_RoundTripSelected(t *testing.T) {
 	var got wireProfile
 	testharness.DecodeJSON(t, rec, &got)
 	assert.Equal(t, "sonnet", got.Model)
+	assert.True(t, got.Disabled)
 	assert.Equal(t, "provider maintenance", got.DisabledReason,
 		"portable import must preserve the spawn safety state")
 	assert.Equal(t, []string{"codex-reviewer"}, got.Aliases)
@@ -95,6 +99,49 @@ func TestSpawnProfilesExportImport_RoundTripSelected(t *testing.T) {
 
 	rec = profileReq(t, f, http.MethodGet, "/v1/spawn-profiles/codex-reviewer", nil)
 	require.Equal(t, http.StatusOK, rec.Code, "the imported alias resolves")
+}
+
+func TestSpawnProfilesExportImport_EnabledProfileRetainsReason(t *testing.T) {
+	f := newFlow(t)
+	require.Equal(t, http.StatusCreated, profileReq(t, f, http.MethodPost, "/v1/spawn-profiles",
+		map[string]any{
+			"name": "restored", "disabled": false, "disabled_reason": "previous provider outage",
+		}).Code)
+
+	rec := profileReq(t, f, http.MethodGet, "/v1/spawn-profiles/export?name=restored", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var bundle profileBundle
+	testharness.DecodeJSON(t, rec, &bundle)
+	require.Equal(t, 4, bundle.FormatVersion)
+	require.Len(t, bundle.Profiles, 1)
+	assert.False(t, bundle.Profiles[0].Disabled)
+	assert.Equal(t, "previous provider outage", bundle.Profiles[0].DisabledReason)
+
+	require.Equal(t, http.StatusNoContent, profileReq(t, f, http.MethodDelete, "/v1/spawn-profiles/restored", nil).Code)
+	rec = profileReq(t, f, http.MethodPost, "/v1/spawn-profiles/import", map[string]any{
+		"format": bundle.Format, "format_version": bundle.FormatVersion,
+		"profiles": bundle.Profiles,
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "import body=%s", rec.Body.String())
+	restored, err := db.GetSpawnProfile("restored")
+	require.NoError(t, err)
+	require.NotNil(t, restored)
+	assert.False(t, restored.Disabled)
+	assert.Equal(t, "previous provider outage", restored.DisabledReason)
+}
+
+func TestSpawnProfilesImport_V3ReasonBackfillsDisabledState(t *testing.T) {
+	f := newFlow(t)
+	rec := profileReq(t, f, http.MethodPost, "/v1/spawn-profiles/import", map[string]any{
+		"format": "tclaude-spawn-profiles", "format_version": 3,
+		"profiles": []map[string]any{{"name": "legacy-paused", "disabled_reason": "legacy outage"}},
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "import body=%s", rec.Body.String())
+	got, err := db.GetSpawnProfile("legacy-paused")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.True(t, got.Disabled)
+	assert.Equal(t, "legacy outage", got.DisabledReason)
 }
 
 func TestSpawnProfilesImport_RejectsExistingAliasCollision(t *testing.T) {

@@ -22,6 +22,7 @@ func TestSpawnProfile_CRUDRoundTrip(t *testing.T) {
 	// explicitly true, the dialog toggles left unset (nil).
 	id, err := CreateSpawnProfile(&SpawnProfile{
 		Name:           "codex-sandboxed",
+		Disabled:       true,
 		DisabledReason: "capacity temporarily exhausted",
 		Harness:        "codex",
 		Model:          "gpt-5",
@@ -43,6 +44,7 @@ func TestSpawnProfile_CRUDRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, id, got.ID)
+	assert.True(t, got.Disabled)
 	assert.Equal(t, "capacity temporarily exhausted", got.DisabledReason)
 	assert.Equal(t, "codex", got.Harness)
 	assert.Equal(t, "gpt-5", got.Model)
@@ -106,6 +108,7 @@ func TestSpawnProfile_Update(t *testing.T) {
 	err = UpdateSpawnProfile(&SpawnProfile{
 		ID:             id,
 		Name:           "p",
+		Disabled:       true,
 		DisabledReason: "paused for maintenance",
 		Model:          "sonnet",    // changed
 		SyncWorktree:   boolp(true), // nil -> true
@@ -117,6 +120,7 @@ func TestSpawnProfile_Update(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, "sonnet", got.Model)
+	assert.True(t, got.Disabled)
 	assert.Equal(t, "paused for maintenance", got.DisabledReason)
 	require.NotNil(t, got.SyncWorktree)
 	assert.True(t, *got.SyncWorktree)

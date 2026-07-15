@@ -265,7 +265,7 @@ func resolveAskTarget(flagModel, flagEffort string, cfg *config.Config) (harness
 
 	if name := cfg.AskProfileName(); name != "" {
 		if prof, err := db.ResolveSpawnProfile(name); err == nil && prof != nil {
-			if strings.TrimSpace(prof.DisabledReason) != "" {
+			if prof.Disabled {
 				return "", "", "", fmt.Errorf("spawn profile %q is disabled: %s", prof.Name, prof.DisabledReason)
 			}
 			if prof.Harness != "" {

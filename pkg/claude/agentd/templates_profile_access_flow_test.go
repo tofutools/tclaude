@@ -212,6 +212,7 @@ func TestTemplateExportImport_EmbedsAndMaterializesProfile(t *testing.T) {
 		"name":            "shipped-kit",
 		"model":           "haiku",
 		"is_owner":        true,
+		"disabled":        true,
 		"disabled_reason": "provider maintenance",
 		"permission_overrides": map[string]any{
 			agentd.PermGroupsSpawn: "grant",
@@ -223,13 +224,14 @@ func TestTemplateExportImport_EmbedsAndMaterializesProfile(t *testing.T) {
 	}).Code, "create template")
 
 	env := exportRaw(t, f, "shipper")
-	assert.Equal(t, float64(2), env["format_version"],
-		"version 2 prevents older importers from silently enabling disabled profiles")
+	assert.Equal(t, float64(3), env["format_version"],
+		"version 3 preserves the explicit disabled state independently of its reason")
 	profiles, _ := env["profiles"].([]any)
 	require.Len(t, profiles, 1, "export embeds the referenced profile")
 	p0, _ := profiles[0].(map[string]any)
 	assert.Equal(t, "shipped-kit", p0["name"], "embedded profile carries its definition")
 	assert.Equal(t, true, p0["is_owner"], "embedded profile carries its owner default")
+	assert.Equal(t, true, p0["disabled"], "embedded profile carries its disable switch")
 	assert.Equal(t, "provider maintenance", p0["disabled_reason"],
 		"embedded profile carries its spawn safety state")
 
@@ -249,6 +251,7 @@ func TestTemplateExportImport_EmbedsAndMaterializesProfile(t *testing.T) {
 	require.NotNil(t, got, "profile materialized on import")
 	require.NotNil(t, got.IsOwner)
 	assert.True(t, *got.IsOwner, "materialized profile keeps its owner default")
+	assert.True(t, got.Disabled, "materialized profile remains disabled")
 	assert.Equal(t, "provider maintenance", got.DisabledReason,
 		"materialized profile remains disabled")
 	assert.Equal(t, "grant", got.PermissionOverrides[agentd.PermGroupsSpawn], "materialized profile keeps its overrides")
@@ -268,6 +271,27 @@ func TestTemplateExportImport_EmbedsAndMaterializesProfile(t *testing.T) {
 	testharness.DecodeJSON(t, rec, &ir)
 	assert.Contains(t, ir.Warnings, `spawn profile "shipped-kit" already exists here — kept the local version (import never overwrites a profile)`,
 		"existing profile kept local + warned")
+}
+
+func TestTemplateImport_V2ProfileReasonBackfillsDisabledState(t *testing.T) {
+	f := newFlow(t)
+	env := map[string]any{
+		"format": "tclaude-task-force", "format_version": 2,
+		"template": map[string]any{
+			"name":   "legacy-force",
+			"agents": []map[string]any{{"name": "worker", "spawn_profile": "legacy-paused"}},
+		},
+		"profiles": []map[string]any{{
+			"name": "legacy-paused", "disabled_reason": "legacy provider outage",
+		}},
+	}
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/import", env)
+	require.Equalf(t, http.StatusCreated, rec.Code, "import body=%s", rec.Body.String())
+	got, err := db.GetSpawnProfile("legacy-paused")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.True(t, got.Disabled)
+	assert.Equal(t, "legacy provider outage", got.DisabledReason)
 }
 
 // Scenario: templateToJSON derives effective_is_owner — the owner bit a deploy

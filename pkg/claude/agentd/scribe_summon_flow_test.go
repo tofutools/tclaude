@@ -913,7 +913,7 @@ func TestScribeSummon_DisabledConfiguredProfileRejectsBeforeTrustSeed(t *testing
 
 	_, err := db.CreateSpawnProfile(&db.SpawnProfile{
 		Name: "paused-scribe", Harness: harness.CodexName,
-		DisabledReason: "provider maintenance",
+		Disabled: true, DisabledReason: "provider maintenance",
 	})
 	require.NoError(t, err)
 	require.NoError(t, config.Save(&config.Config{

@@ -344,14 +344,17 @@ tclaude agent profiles ls
 tclaude agent profiles show <name>
 tclaude agent profiles disable <name> --reason "provider maintenance"
 tclaude agent profiles enable <name>
+# Later, reuse the remembered reason:
+tclaude agent profiles disable <name>
 ```
 
 A disabled profile remains listed, editable, exportable, and referenced by
 aliases, defaults, roles, templates, and process performers. Any spawn that
 would use it fails with `profile_disabled` and the stored reason; `tclaude ask`
 also refuses a disabled selected profile. Neither silently falls through to
-another profile. `enable` clears the reason and reactivates every existing
-reference. Profile writes require
+another profile. `enable` clears only the disabled switch and reactivates every
+existing reference while retaining the last reason for review or reuse; pass a
+new `--reason` to replace it on a later disable. Profile writes require
 `profiles.manage`.
 
 ### sandbox profiles

@@ -77,7 +77,7 @@ function findProfileByHandle(profiles, handle) {
 function profileChoices(profiles) {
   const out = [];
   for (const profile of profiles || []) {
-    const disabled = profile.disabled_reason ? ` [disabled: ${String(profile.disabled_reason).replace(/\s+/g, ' ').trim()}]` : '';
+    const disabled = profile.disabled ? ` [🚫 disabled: ${String(profile.disabled_reason).replace(/\s+/g, ' ').trim()}]` : '';
     out.push({ value: profile.name, label: profile.name + disabled, profile, alias: false });
     for (const alias of profile.aliases || []) {
       out.push({ value: alias, label: `${alias} → ${profile.name}${disabled}`, profile, alias: true });
@@ -213,7 +213,7 @@ function syncDashDefaultProfile(name) {
 // then the identity bits. Mirrors the terse meta style of the template cards.
 function profileSummary(p) {
   const parts = [];
-  if (p.disabled_reason) parts.push('disabled');
+  if (p.disabled) parts.push('🚫 disabled');
   // Claude is the default harness — only name a non-default one.
   if (p.harness && p.harness !== 'claude') parts.push(p.harness);
   if (p.model) parts.push(p.model);
@@ -249,7 +249,8 @@ function profileSummary(p) {
 // startup text is represented by presence/size rather than copied into a chip.
 function profileDetailChips(p) {
   const parts = [];
-  if (p.disabled_reason) parts.push(`disabled · ${String(p.disabled_reason).replace(/\s+/g, ' ').trim()}`);
+  if (p.disabled) parts.push(`🚫 disabled · ${String(p.disabled_reason).replace(/\s+/g, ' ').trim()}`);
+  else if (p.disabled_reason) parts.push(`last disable reason · ${String(p.disabled_reason).replace(/\s+/g, ' ').trim()}`);
   const text = (label, value) => { if (value) parts.push(`${label} ${String(value).replace(/\s+/g, ' ').trim()}`); };
   const toggle = (label, value) => { if (value != null) parts.push(`${label} ${value ? 'on' : 'off'}`); };
   text('harness', p.harness);

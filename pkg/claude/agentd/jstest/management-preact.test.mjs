@@ -7,11 +7,12 @@ const catalog = [{ name: 'claude', display_name: 'Claude Code', models: ['sonnet
 test('management model preserves full-replace profile and role semantics', async (t) => {
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/management-model.js');
-  const original = { name: 'old', aliases: ['codex-reviewer'], harness: 'codex', approval: 'never', auto_review: true, model: 'gpt-5' };
+  const original = { name: 'old', aliases: ['codex-reviewer'], harness: 'codex', approval: 'never', auto_review: true, model: 'gpt-5', disabled: false, disabled_reason: 'previous outage' };
   const draft = model.profileDraft(original, {}, catalog); draft.name = 'renamed'; draft.trust_dir = '1';
   draft.aliases_text += ', cold-reviewer';
   const payload = model.profilePayload(draft, original, catalog);
   assert.equal(payload.name, 'renamed'); assert.equal(payload.approval, 'never'); assert.equal(payload.auto_review, true); assert.equal(payload.trust_dir, true);
+  assert.equal(payload.disabled, false); assert.equal(payload.disabled_reason, 'previous outage');
   assert.deepEqual(payload.aliases, ['codex-reviewer', 'cold-reviewer']);
   draft.harness = 'claude'; draft.approval = 'plan'; draft.sandbox = 'on';
   const switched = model.profilePayload(draft, original, catalog);
@@ -25,20 +26,23 @@ test('management model preserves full-replace profile and role semantics', async
 test('profile choices expose aliases as distinct handles tied to one profile', async (t) => {
   const harness = await createPreactHarness(t);
   const profiles = await harness.importDashboardModule('js/profiles.js');
-  const list = [{ name: 'gpt5.6-sol-high', aliases: ['codex-reviewer', 'cold-reviewer'] }];
+  const list = [{ name: 'gpt5.6-sol-high', aliases: ['codex-reviewer', 'cold-reviewer'] }, { name: 'paused', aliases: [], disabled: true, disabled_reason: 'provider outage' }];
   assert.deepEqual(profiles.profileChoices(list).map(({ value, label }) => ({ value, label })), [
     { value: 'gpt5.6-sol-high', label: 'gpt5.6-sol-high' },
     { value: 'codex-reviewer', label: 'codex-reviewer → gpt5.6-sol-high' },
     { value: 'cold-reviewer', label: 'cold-reviewer → gpt5.6-sol-high' },
+    { value: 'paused', label: 'paused [🚫 disabled: provider outage]' },
   ]);
   assert.equal(profiles.findProfileByHandle(list, 'codex-reviewer').name, 'gpt5.6-sol-high');
   assert.deepEqual(profiles.profileDetailChips({
+		disabled: false, disabled_reason: 'previous outage',
     harness: 'claude', model: 'sonnet', effort: 'high', sandbox: 'inherit', approval: 'plan',
     ask_user_question_timeout: '5m', auto_review: false, trust_dir: true, remote_control: false,
     agent_name: 'worker', role: 'reviewer', descr: 'cold\nreview', initial_message: 'check this',
     sync_worktree: true, auto_focus: false, include_group_default_context: true, is_owner: false,
     permission_overrides: { 'human.notify': 'grant', 'groups.spawn': 'deny' },
   }), [
+		'last disable reason · previous outage',
     'harness claude', 'model sonnet', 'effort high', 'sandbox inherit', 'approval plan',
     'ask-timeout 5m', 'auto-review off', 'trust-dir on', 'remote-control off',
     'name worker', 'role reviewer', 'descr cold review', 'initial message · 10 chars',
@@ -74,16 +78,20 @@ test('management island renders keyed profile list and explicit editor state', a
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
     harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
   ]);
-  const state = createManagementState(); state.profilesRequest.commitRequest(state.profilesRequest.beginRequest(), [{ name: 'one', aliases: ['reviewer'], model: 'sonnet' }]); state.openManager('profiles');
+  const state = createManagementState(); state.profilesRequest.commitRequest(state.profilesRequest.beginRequest(), [{ name: 'one', aliases: ['reviewer'], model: 'sonnet', disabled: true, disabled_reason: 'provider outage' }]); state.openManager('profiles');
   const actions = { load() {}, openProfileEditor(seed = null, options = {}) { state.openDialog({ kind: 'profile-editor', seed, options, catalog }); }, openRoleEditor() {}, removeProfile() {}, removeRole() {}, openManager() {}, saveProfile() {} };
   const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
   mountManagementIsland({ host, state, actions, confirmDiscard: async () => false, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } });
   await harness.act(() => Promise.resolve());
   assert.equal(host.querySelectorAll('.profile-card').length, 1);
+  assert.equal(host.querySelector('.profile-card').classList.contains('profile-card-disabled'), true);
+  assert.match(host.querySelector('.tc-disabled').textContent, /🚫 Disabled/);
   assert.match(host.querySelector('.tc-aliases').textContent, /aka reviewer/);
   host.querySelector('.profile-card button').click(); await harness.act(() => Promise.resolve());
   const input = host.querySelector('#profile-editor-name'); assert.equal(input.value, 'one'); assert.match(input.placeholder, /profile name/);
   assert.equal(host.querySelector('#profile-editor-aliases').value, 'reviewer');
+  assert.equal(host.querySelector('#profile-editor-disabled').hasAttribute('checked'), true);
+  assert.equal(host.querySelector('#profile-editor-disabled-reason').value, 'provider outage');
   const model = host.querySelector('#profile-editor-model'); assert.equal(model.tagName, 'SELECT'); assert.ok([...model.options].some((option) => option.value === 'sonnet'));
   const askTimeout = host.querySelector('#profile-editor-ask-timeout'); assert.equal([...askTimeout.options].find((option) => option.value === 'inherit').textContent.includes('recommended'), true);
   assert.match([...host.querySelectorAll('.cron-create-row input')].find((field) => field.placeholder?.includes('names the spawned agent')).placeholder, /names the spawned agent/);
