@@ -236,7 +236,11 @@ function GroupProfileChip({ group, actions, kind }) {
         const name = event.currentTarget.value;
         if (name === NEW_PROFILE) {
           interactions.endEditor(editorKey);
-          actions.openNewGroupProfile(kind, (created) => actions.setGroupProfile(group, kind, created));
+          actions.openNewGroupProfile(kind, (created) => {
+            void Promise.resolve()
+              .then(() => actions.setGroupProfile(group, kind, created))
+              .catch((error) => actions.reportError(error));
+          });
           return;
         }
         if (name === current) {
@@ -455,7 +459,7 @@ function RealGroup({ node, snapshot, actions }) {
         ? html`<div class="muted">(no members yet)</div>`
         : !view.visible.length
           ? html`<div class="muted">(${view.hiddenOffline} offline member${view.hiddenOffline === 1 ? '' : 's'} hidden — toggle "show offline" to see ${view.hiddenOffline === 1 ? 'it' : 'them'})</div>`
-          : html`<${MemberTable} members=${view.visible} group=${group} snapshot=${snapshot} actions=${actions} SortHead=${SortHead} />`}
+          : html`<${MemberTable} members=${view.visible} group=${group} tableKey=${`group:${group.name}`} snapshot=${snapshot} actions=${actions} SortHead=${SortHead} />`}
       <${GroupLinksSection} group=${group} snapshot=${snapshot} />
     </div>
   </details>`;
@@ -494,7 +498,7 @@ function VirtualUngrouped({ group, snapshot, actions }) {
         regular=${`(${view.hiddenOffline} offline agent${view.hiddenOffline === 1 ? '' : 's'} hidden — toggle "show offline" to see ${view.hiddenOffline === 1 ? 'it' : 'them'})`}
         wizard=${`(${view.hiddenOffline} slumbering familiar${view.hiddenOffline === 1 ? '' : 's'} hidden — enable "show slumbering" to reveal ${view.hiddenOffline === 1 ? 'it' : 'them'})`}
       /></div>`
-      : html`<${MemberTable} members=${view.visible} ungrouped=${true} snapshot=${snapshot} actions=${actions} SortHead=${SortHead} />`;
+      : html`<${MemberTable} members=${view.visible} tableKey="virtual:ungrouped" ungrouped=${true} snapshot=${snapshot} actions=${actions} SortHead=${SortHead} />`;
   return html`<${VirtualShell} group=${group} target="ungrouped" summary=${summary}>${body}<//>`;
 }
 
