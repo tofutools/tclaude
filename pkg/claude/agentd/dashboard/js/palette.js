@@ -52,7 +52,7 @@ import {
 import { openAgentSpawnModal } from './modal-spawn.js';
 import { openProfilesManageModal } from './modal-profiles.js';
 import { openRolesManageModal } from './modal-roles.js';
-import { openGroupCreateModal } from './modal-message.js';
+import { openGroupCreateModal } from './group-create-controller.js';
 import { toggleSlop, isSlopActive, toggleWizard, isWizardActive } from './slop.js';
 import { recordGroupInteraction, lastInteractedGroup } from './last-group.js';
 import { setDockOpen } from './dock.js';

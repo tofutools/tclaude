@@ -66,7 +66,10 @@ func TestDashboardHTML_EscDismissWired(t *testing.T) {
 	must("onClose=${state.close} dirty=${!!body} blocked=${busy} confirmDiscard=${confirmDiscard}", "the Preact human-reply dialog confirms before discarding")
 	must("bindBackdropDiscard('operator-message-modal', close, () => !pending);", "the operator composer confirms before accidental dismissal")
 	must("dismissGuard.tryDismiss()", "the operator composer routes Cancel through the same discard confirmation")
-	must("bindBackdropDiscard('group-create-modal', closeGroupCreateModal);", "the group-create dialog confirms before discarding")
+	must(`id="group-create-modal"`, "the Preact group-create dialog retains its scoped overlay id")
+	must("dirty=${dirty}", "the Preact group-create dialog publishes its controlled dirty state")
+	must("blocked=${busy}", "the Preact group-create dialog blocks dismissal while submitting")
+	must("if (!dirty || await confirmDiscard()) state.close();", "the group-create Cancel path confirms before discarding")
 
 	// The non-form LISTING overlays get the friction-free clean close (no
 	// "discard?" for a typed filter). A child .modal-overlay on top claims
