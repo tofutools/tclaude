@@ -787,6 +787,7 @@ export function createManagementActions({
         environment: draft.environment,
         includes: draft.includes,
         agent_directories: draft.agent_directories,
+        network_access: draft.network_access || '',
       };
       if (!body.name) throw new Error('name is required');
       const targetName = options.targetName || original?.name || '';

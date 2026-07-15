@@ -403,6 +403,18 @@ func runNew(params *NewParams) error {
 		h.Name == harness.DefaultName && sandboxMode != harness.ClaudeSandboxOn {
 		return fmt.Errorf("unsupported_sandbox_profile_filesystem: Claude filesystem deny rules require sandbox %s", harness.ClaudeSandboxOn)
 	}
+	networkAccess := sandboxSnapshotNetworkAccess(launchSandbox)
+	if networkAccess != sandboxpolicy.NetworkAccessInherit && h.Name != harness.CodexName {
+		return fmt.Errorf("unsupported_sandbox_profile_network: network policies are currently supported only by the Codex managed sandbox")
+	}
+	if networkAccess != sandboxpolicy.NetworkAccessInherit && params.PermissionProfile != harness.CodexAgentProfile {
+		return fmt.Errorf("unsupported_sandbox_profile_network: codex network rules require sandbox %s", harness.SandboxManagedProfile)
+	}
+	if networkAccess != sandboxpolicy.NetworkAccessInherit {
+		if err := harness.ValidateCodexAgentNetworkAccess(networkAccess); err != nil {
+			return fmt.Errorf("unsupported_sandbox_profile_network: %w", err)
+		}
+	}
 
 	// Validate --permission-profile: a Codex-only knob (codex -p <name>) that
 	// is mutually exclusive with --sandbox. The daemon spawn path passes the
@@ -937,11 +949,19 @@ func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID stri
 	writeDirs = append(writeDirs, sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessWrite)...)
 	readDirs := sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessRead)
 	denyDirs := sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessDeny)
-	profileName, path, err := harness.EnsureCodexAgentLaunchProfileWithRules(readDirs, writeDirs, denyDirs, launchID)
+	networkAccess := sandboxSnapshotNetworkAccess(effectiveSandbox)
+	profileName, path, err := harness.EnsureCodexAgentLaunchProfileWithRulesAndNetwork(readDirs, writeDirs, denyDirs, networkAccess, launchID)
 	if err != nil {
 		return "", "", fmt.Errorf("ensure codex permission profile %q: %w", params.PermissionProfile, err)
 	}
 	return profileName, path, nil
+}
+
+func sandboxSnapshotNetworkAccess(snapshot *sandboxpolicy.Snapshot) sandboxpolicy.NetworkAccess {
+	if snapshot == nil {
+		return sandboxpolicy.NetworkAccessInherit
+	}
+	return snapshot.Effective.NetworkAccess
 }
 
 func sandboxSnapshotDirs(snapshot *sandboxpolicy.Snapshot, access sandboxpolicy.Access) []string {

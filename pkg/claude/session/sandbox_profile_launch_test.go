@@ -10,7 +10,31 @@ import (
 	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
+
+func TestCodexManagedProfileCarriesSnapshotNetworkPolicy(t *testing.T) {
+	t.Setenv("CODEX_HOME", t.TempDir())
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Global: &sandboxpolicy.Profile{
+		Name: "internet", NetworkAccess: sandboxpolicy.NetworkAccessInternet,
+	}})
+	require.NoError(t, err)
+	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
+	params := &NewParams{
+		PermissionProfile:          harness.CodexAgentProfile,
+		GitWorktreeWriteDirsPinned: true,
+	}
+	_, path, err := ensureCodexManagedProfileWithSnapshot(params, t.TempDir(), "1234567890abcdef", &snapshot)
+	require.NoError(t, err)
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	content := string(raw)
+	assert.Contains(t, content, "[features]")
+	assert.Contains(t, content, "network_proxy = false")
+	assert.NotContains(t, content, "[features.network_proxy]")
+	assert.Contains(t, content, "enabled = true")
+	assert.Contains(t, content, ".network.unix_sockets]")
+}
 
 func TestSandboxSnapshotDirsOmitsMissingRuleUntilLaterLaunch(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())

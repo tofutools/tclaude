@@ -11,7 +11,7 @@ import (
 // TestCodexSandbox_DefaultMode pins the secure default: a tclaude-spawned
 // Codex agent runs under the managed tclaude-agent profile (SandboxManagedProfile)
 // — workspace-write containment (writes confined to cwd+/tmp+$TMPDIR, $HOME
-// read-only, network denied) PLUS the agentd-socket allowlist — never a raw
+// read-only) PLUS agentd socket access — never a raw
 // full-access mode.
 func TestCodexSandbox_DefaultMode(t *testing.T) {
 	if got := (codexSandbox{}).DefaultMode(); got != SandboxManagedProfile {

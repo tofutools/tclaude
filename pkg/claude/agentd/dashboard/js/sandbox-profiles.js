@@ -33,7 +33,7 @@ function profileOptions(blankLabel = '— none —') {
 }
 
 function flattenProfilePreview(profile, byName, state) {
-  const filesystem = new Map(); const environment = new Map(); const owned = new Map();
+  const filesystem = new Map(); const environment = new Map(); const owned = new Map(); let network = '';
   state.onPath.add(profile.name);
   for (const name of profile.includes || []) {
     if (state.onPath.has(name)) { state.problems.add(name); continue; }
@@ -42,16 +42,18 @@ function flattenProfilePreview(profile, byName, state) {
     for (const [path, access] of flat.filesystem) filesystem.set(path, access);
     for (const name of flat.environment.keys()) { owned.delete(name); environment.set(name, true); }
     for (const name of flat.owned.keys()) { environment.delete(name); owned.set(name, true); }
+    if (flat.network) network = flat.network;
   }
   state.onPath.delete(profile.name);
   for (const grant of profile.filesystem || []) filesystem.set(grant.path, grant.access);
   for (const entry of profile.environment || []) { owned.delete(entry.name); environment.set(entry.name, true); }
   for (const name of profile.agent_directories || []) { environment.delete(name); owned.set(name, true); }
-  return { filesystem, environment, owned };
+  if (profile.network_access) network = profile.network_access;
+  return { filesystem, environment, owned, network };
 }
 
 function composePreview(applied, byName = {}) {
-  const filesystem = new Map(); const environment = new Map(); const owned = new Map(); const state = { memo: new Map(), onPath: new Set(), problems: new Set() };
+  const filesystem = new Map(); const environment = new Map(); const owned = new Map(); let network = ''; const state = { memo: new Map(), onPath: new Set(), problems: new Set() };
   for (const { scope, profile } of applied) {
     const flat = flattenProfilePreview(profile, byName, state);
     for (const [path, access] of flat.filesystem) {
@@ -60,13 +62,14 @@ function composePreview(applied, byName = {}) {
     }
     for (const name of flat.environment.keys()) environment.set(name, scope);
     for (const name of flat.owned.keys()) owned.set(name, scope);
+    if (flat.network) network = `${flat.network} (${scope})`;
   }
   const scopes = applied.map((item) => `${item.scope}:${item.profile.name}`).join(' → ') || 'no profiles applied';
   const grants = [...filesystem].map(([path, value]) => `${value.access} ${path} (${value.scope})`).join(' · ');
   const keys = [...environment].map(([name, scope]) => `${name} (${scope})`).join(', ');
   const ownedKeys = [...owned].map(([name, scope]) => `${name} (${scope})`).join(', ');
   const problems = state.problems.size ? ` · ⚠ unresolved includes: ${[...state.problems].sort().join(', ')}` : '';
-  return `${scopes}${grants ? ` · ${grants}` : ''}${keys ? ` · env: ${keys}` : ''}${ownedKeys ? ` · agent dirs: ${ownedKeys}` : ''}${problems}`;
+  return `${scopes}${grants ? ` · ${grants}` : ''}${keys ? ` · env: ${keys}` : ''}${ownedKeys ? ` · agent dirs: ${ownedKeys}` : ''}${network ? ` · network: ${network}` : ''}${problems}`;
 }
 
 async function refreshSpawnSandboxProfileUI(groupName = '') {
@@ -100,12 +103,12 @@ function sandboxScribeToken() {
 
 function sandboxScribeBrief(token, targetName, seed) {
   return [
-    'You are a sandbox-profile scribe. Talk with the human to interactively design one filesystem/environment sandbox profile, including optional per-agent generated directories.',
+    'You are a sandbox-profile scribe. Talk with the human to interactively design one filesystem/environment/network sandbox profile, including optional per-agent generated directories.',
     'Critical safety boundary: create a structured DRAFT only. Never create, edit, delete, assign, or apply a sandbox profile; never launch or relaunch an agent; never request sandbox-profiles.manage. Your purpose-specific permission is sandbox-profiles.draft.',
-    'Environment values are ordinary non-secret configuration. Filesystem entries are absolute-path rules with access "read", "write", or "deny". agent_directories is an array of environment-variable names backed by isolated writable directories created at spawn. includes is an ordered array of other profiles composed first. The daemon remains authoritative for validation.',
+    'Environment values are ordinary non-secret configuration. Filesystem entries are absolute-path rules with access "read", "write", or "deny". network_access is "internet", "none", or omitted to inherit. Explicit network policies currently require the Codex managed sandbox and control external IP connectivity while preserving agentd; offline is supported on macOS and rejected on Linux/WSL until Codex can preserve the agentd Unix socket there. Managed Codex profiles block the host tmux server independently. agent_directories is an array of environment-variable names backed by isolated writable directories created at spawn. includes is an ordered array of other profiles composed first. The daemon remains authoritative for validation.',
     targetName ? `This is a proposed replacement for the existing profile named "${targetName}".` : 'This is a proposed new sandbox profile.',
     `Starting draft:\n${JSON.stringify(seed, null, 2)}`,
-    'Discuss the desired paths, access levels, environment names/values, included profiles, agent-owned directory variables, and profile name. Wait until the human agrees that the proposal is ready.',
+    'Discuss the desired paths, access levels, network posture, environment names/values, included profiles, agent-owned directory variables, and profile name. Wait until the human agrees that the proposal is ready.',
     `Then write the complete profile JSON to a file and run exactly this draft handoff:\n\`tclaude agent sandbox-profiles draft --token ${token} --file <path>\``,
     'That command validates and returns the draft to the dashboard; it does NOT save anything.',
   ].join('\n\n');

@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -48,4 +49,34 @@ func TestSandboxProfilesDisabledOnlyForCodexDangerFullAccess(t *testing.T) {
 	require.False(t, sandboxProfilesDisabled(harness.CodexName, harness.SandboxManagedProfile))
 	require.False(t, sandboxProfilesDisabled(harness.CodexName, harness.SandboxReadOnly))
 	require.False(t, sandboxProfilesDisabled(harness.DefaultName, harness.ClaudeSandboxOff))
+}
+
+func TestSandboxProfileCapabilityFailureRejectsUnsupportedNetworkOnlyProfile(t *testing.T) {
+	snapshot := &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{
+		NetworkAccess: sandboxpolicy.NetworkAccessInternet,
+	}}
+
+	require.Nil(t, sandboxProfileCapabilityFailure(harness.CodexName, harness.SandboxManagedProfile, snapshot))
+	for _, tc := range []struct {
+		harness string
+		mode    string
+	}{
+		{harness.DefaultName, harness.ClaudeSandboxOn},
+		{harness.CodexName, harness.SandboxReadOnly},
+		{harness.CodexName, harness.SandboxDangerFull},
+	} {
+		failure := sandboxProfileCapabilityFailure(tc.harness, tc.mode, snapshot)
+		require.NotNil(t, failure)
+		require.Equal(t, "unsupported_sandbox_profile_network", failure.Kind)
+	}
+
+	snapshot.Effective.NetworkAccess = sandboxpolicy.NetworkAccessNone
+	failure := sandboxProfileCapabilityFailure(harness.CodexName, harness.SandboxManagedProfile, snapshot)
+	if runtime.GOOS == "linux" {
+		require.NotNil(t, failure)
+		require.Equal(t, "unsupported_sandbox_profile_network", failure.Kind)
+		require.Contains(t, failure.Msg, "agentd Unix socket")
+	} else {
+		require.Nil(t, failure)
+	}
 }

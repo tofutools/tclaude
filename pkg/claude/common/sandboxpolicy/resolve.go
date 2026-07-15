@@ -40,6 +40,7 @@ type ResolutionProvenance struct {
 	Filesystem       map[string][]ProfileSource `json:"filesystem"`
 	Environment      map[string]ProfileSource   `json:"environment"`
 	AgentDirectories map[string][]ProfileSource `json:"agent_directories"`
+	Network          *ProfileSource             `json:"network,omitempty"`
 }
 
 // EffectiveProfile is the fully-composed harness-neutral sandbox payload and
@@ -49,6 +50,7 @@ type EffectiveProfile struct {
 	Filesystem       []FilesystemGrant    `json:"filesystem"`
 	Environment      []EnvironmentEntry   `json:"environment"`
 	AgentDirectories []string             `json:"agent_directories"`
+	NetworkAccess    NetworkAccess        `json:"network_access,omitempty"`
 	Provenance       ResolutionProvenance `json:"provenance"`
 }
 
@@ -71,6 +73,7 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 		Filesystem:       []FilesystemGrant{},
 		Environment:      []EnvironmentEntry{},
 		AgentDirectories: []string{},
+		NetworkAccess:    NetworkAccessInherit,
 		Provenance: ResolutionProvenance{
 			Applied:          []ProfileSource{},
 			Filesystem:       map[string][]ProfileSource{},
@@ -128,6 +131,11 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 				return EffectiveProfile{}, fmt.Errorf("environment variable %q is both literal and agent-owned across sandbox profile scopes", name)
 			}
 			agentDirectories[name] = append(agentDirectories[name], source)
+		}
+		if normalized.NetworkAccess != NetworkAccessInherit {
+			result.NetworkAccess = normalized.NetworkAccess
+			networkSource := source
+			result.Provenance.Network = &networkSource
 		}
 	}
 

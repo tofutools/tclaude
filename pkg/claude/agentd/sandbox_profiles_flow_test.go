@@ -16,6 +16,7 @@ import (
 type wireSandboxProfile struct {
 	Name             string   `json:"name"`
 	AgentDirectories []string `json:"agent_directories"`
+	NetworkAccess    string   `json:"network_access"`
 	Filesystem       []struct {
 		Path   string `json:"path"`
 		Access string `json:"access"`
@@ -97,6 +98,7 @@ func TestSandboxProfilesCRUDValidationAndAssignments(t *testing.T) {
 			{"name": "GOCACHE", "value": cache},
 		},
 		"agent_directories": []string{"GOLANGCI_LINT_CACHE"},
+		"network_access":    "internet",
 	})
 	require.Equalf(t, http.StatusCreated, rec.Code, "create body=%s", rec.Body.String())
 
@@ -110,9 +112,11 @@ func TestSandboxProfilesCRUDValidationAndAssignments(t *testing.T) {
 	require.Len(t, got.Environment, 1)
 	assert.Equal(t, "GOCACHE", got.Environment[0].Name)
 	assert.Equal(t, []string{"GOLANGCI_LINT_CACHE"}, got.AgentDirectories)
+	assert.Equal(t, "internet", got.NetworkAccess)
 
 	for _, body := range []map[string]any{
 		{"name": "export"},
+		{"name": "bad-network", "network_access": "local-only"},
 		{"name": "IMPORT"},
 		{"name": "protected", "filesystem": []map[string]any{{"path": filepath.Join(home, ".tclaude", "data"), "access": "write"}}},
 		{"name": "reserved", "environment": []map[string]any{{"name": "TCLAUDE_SESSION_ID", "value": "spoof"}}},
@@ -163,9 +167,10 @@ func TestSandboxProfilesExportImportRoundTrip(t *testing.T) {
 	_, err = db.CreateAgentGroup("portable-group", "")
 	require.NoError(t, err)
 	require.Equal(t, http.StatusCreated, profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
-		"name":        "portable",
-		"filesystem":  []map[string]any{{"path": cache, "access": "write"}},
-		"environment": []map[string]any{{"name": "GOCACHE", "value": cache}},
+		"name":           "portable",
+		"filesystem":     []map[string]any{{"path": cache, "access": "write"}},
+		"environment":    []map[string]any{{"name": "GOCACHE", "value": cache}},
+		"network_access": "none",
 	}).Code)
 	require.Equal(t, http.StatusOK, profileReq(t, f, http.MethodPut,
 		"/v1/sandbox-profile-default", map[string]any{"name": "portable"}).Code)
@@ -177,6 +182,7 @@ func TestSandboxProfilesExportImportRoundTrip(t *testing.T) {
 	var bundle map[string]any
 	testharness.DecodeJSON(t, rec, &bundle)
 	assert.Equal(t, "tclaude-sandbox-profiles", bundle["format"])
+	assert.Equal(t, float64(2), bundle["format_version"])
 
 	require.Equal(t, http.StatusNoContent,
 		profileReq(t, f, http.MethodDelete, "/v1/sandbox-profiles/portable", nil).Code)
@@ -189,6 +195,7 @@ func TestSandboxProfilesExportImportRoundTrip(t *testing.T) {
 	testharness.DecodeJSON(t, rec, &got)
 	require.Len(t, got.Filesystem, 1)
 	assert.Equal(t, canonicalCache, got.Filesystem[0].Path)
+	assert.Equal(t, "none", got.NetworkAccess)
 	for _, path := range []string{"/v1/sandbox-profile-default", "/v1/groups/portable-group/sandbox-profile"} {
 		rec = profileReq(t, f, http.MethodGet, path, nil)
 		var ref struct {

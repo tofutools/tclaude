@@ -34,6 +34,7 @@ func TestSandboxProfileCRUDRoundTrip(t *testing.T) {
 			{Name: "ALPHA", Value: "first"},
 		},
 		AgentDirectories: []string{"GOLANGCI_LINT_CACHE", "GOCACHE"},
+		NetworkAccess:    sandboxpolicy.NetworkAccessInternet,
 	})
 	require.NoError(t, err)
 
@@ -59,6 +60,7 @@ func TestSandboxProfileCRUDRoundTrip(t *testing.T) {
 		{Name: "ZED", Value: "last"},
 	}, got.Environment)
 	assert.Equal(t, []string{"GOCACHE", "GOLANGCI_LINT_CACHE"}, got.AgentDirectories)
+	assert.Equal(t, sandboxpolicy.NetworkAccessInternet, got.NetworkAccess)
 	assert.False(t, got.CreatedAt.IsZero())
 	assert.False(t, got.UpdatedAt.IsZero())
 
@@ -66,6 +68,7 @@ func TestSandboxProfileCRUDRoundTrip(t *testing.T) {
 	got.Filesystem = []SandboxFilesystemGrant{{Path: filepath.Join(work, "new"), Access: "read"}}
 	got.Environment = []SandboxEnvironmentEntry{}
 	got.AgentDirectories = []string{"GOMODCACHE"}
+	got.NetworkAccess = sandboxpolicy.NetworkAccessNone
 	require.NoError(t, UpdateSandboxProfile(got))
 	updated, err := GetSandboxProfileByID(populatedID)
 	require.NoError(t, err)
@@ -73,6 +76,7 @@ func TestSandboxProfileCRUDRoundTrip(t *testing.T) {
 	assert.Equal(t, []SandboxFilesystemGrant{{Path: filepath.Join(canonicalWork, "new"), Access: "read"}}, updated.Filesystem)
 	assert.Empty(t, updated.Environment)
 	assert.Equal(t, []string{"GOMODCACHE"}, updated.AgentDirectories)
+	assert.Equal(t, sandboxpolicy.NetworkAccessNone, updated.NetworkAccess)
 
 	list, err := ListSandboxProfiles()
 	require.NoError(t, err)
@@ -212,6 +216,18 @@ func TestSandboxProfileImportRetainsMissingPathsAndResolutionKeepsRule(t *testin
 		Name: stored.Name, Filesystem: stored.Filesystem, Environment: stored.Environment,
 	}})
 	require.NoError(t, err, "the imported profile becomes usable once its local path exists")
+}
+
+func TestSandboxProfileImportRejectsInvalidNetworkAccess(t *testing.T) {
+	setupTestDB(t)
+	_, err := ImportSandboxProfiles([]*SandboxProfile{{
+		Name: "invalid-network", NetworkAccess: sandboxpolicy.NetworkAccess("lan-only"),
+	}}, "error", nil)
+	require.ErrorContains(t, err, "network_access")
+
+	stored, getErr := GetSandboxProfile("invalid-network")
+	require.NoError(t, getErr)
+	assert.Nil(t, stored)
 }
 
 func TestSandboxProfileCreateRetainsMissingPathsAndResolutionKeepsRule(t *testing.T) {

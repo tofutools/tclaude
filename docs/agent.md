@@ -362,9 +362,9 @@ new `--reason` to replace it on a later disable. Profile writes require
 
 ### sandbox profiles
 
-Sandbox profiles are operator-authored, harness-neutral bundles of filesystem
-access rules, environment configuration, and optional agent-owned directory
-declarations. Filesystem access accepts `read`,
+Sandbox profiles are operator-authored bundles of filesystem access rules,
+environment configuration, optional agent-owned directory declarations, and
+an optional `network_access` posture. Filesystem access accepts `read`,
 `write`, or `deny`; deny blocks both reads and writes and dominates an
 exact-path grant from any other applied profile. This lets an explicit
 per-spawn profile subtract access inherited from a global or group profile.
@@ -373,6 +373,23 @@ profiles. Environment values
 are stored and displayed as ordinary **non-secret configuration** — do not put
 credentials in them. Profile payload reads and all mutations require the
 `sandbox-profiles.manage` permission.
+
+`network_access` accepts `internet`, `none`, or may be omitted to inherit the
+harness's existing behavior. On the Codex managed `tclaude-agent` sandbox, both
+explicit values use Codex's network boundary. `internet` explicitly disables
+an inherited managed proxy and permits ordinary IP networking. On macOS,
+`none` uses Codex's deny-by-default managed proxy so
+Seatbelt can preserve the agentd Unix-socket exception. Independently of this
+setting, every managed Codex profile denies the private directory containing
+tclaude's tmux server socket; a Codex agent therefore cannot control its host
+tmux server even when Internet access is enabled. Network policies currently
+require Codex's managed sandbox; a Claude launch or a raw Codex sandbox mode
+is rejected instead of silently dropping the rule. Linux/WSL `none` launches
+are also rejected: Codex's current restricted-network seccomp denies the
+`connect` syscall for Unix sockets as well as IP sockets, which would sever
+the agentd control channel. The profile value remains portable so this can be
+enabled when Codex gains a compatible Linux boundary. Existing profiles omit
+the field and therefore remain backward-compatible.
 
 `agent_directories` is a JSON array of environment-variable names, for example
 `["GOCACHE", "GOLANGCI_LINT_CACHE"]`. At spawn, agentd creates a fresh private

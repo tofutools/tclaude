@@ -106,3 +106,22 @@ func TestEffectiveSandboxSnapshotRoundTripsAgentAndPendingSpawn(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, missing)
 }
+
+func TestEffectiveSandboxSnapshotUpgradesLegacyVersionAtPersistenceBoundary(t *testing.T) {
+	legacy := sandboxpolicy.EmptySnapshot()
+	legacy.Version = 1
+
+	raw, err := marshalEffectiveSandboxSnapshot(&legacy)
+	require.NoError(t, err)
+	decoded, err := unmarshalEffectiveSandboxSnapshot(raw)
+	require.NoError(t, err)
+	require.NotNil(t, decoded)
+	assert.Equal(t, sandboxpolicy.SnapshotVersion, decoded.Version)
+
+	// Existing database rows were written before marshal knew about v2, so
+	// exercise the read side against a literal v1 payload too.
+	decoded, err = unmarshalEffectiveSandboxSnapshot(`{"version":1,"effective":{},"applied":[]}`)
+	require.NoError(t, err)
+	require.NotNil(t, decoded)
+	assert.Equal(t, sandboxpolicy.SnapshotVersion, decoded.Version)
+}

@@ -24,6 +24,8 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		`/api/sandbox-profile-directories/inspect`:                       "missing-directory inspection",
 		`/api/sandbox-profile-directories/create`:                        "explicit missing-directory creation",
 		`agent_directories: draft.agent_directories`:                     "agent-owned directories persist in save payloads",
+		`network_access: draft.network_access || ''`:                     "network posture persists in save payloads",
+		`id="sandbox-profile-editor-network"`:                           "structured network posture selector",
 		`id="sandbox-profile-scribe-open"`:                               "new-profile agent configuration",
 		`id="sandbox-profile-editor-scribe"`:                             "current-draft agent configuration",
 		`id="sandbox-profile-export-open"`:                               "export trigger",

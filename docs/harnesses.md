@@ -135,8 +135,7 @@ safe and non-blocking:
     plus `/tmp`/`$TMPDIR` writable; `$HOME` read-only) while explicitly
     denying all filesystem access to `~/.tclaude`. The daemon exposes a
     state-free agent endpoint at `~/.tclaude/api/agentd.sock`, and the profile
-    allowlists exactly that Unix socket — which the raw `--sandbox` modes
-    block, so only under this profile can a sandboxed agent run
+    allowlists that socket so a sandboxed agent can run
     `tclaude agent …`. At spawn
     time, when the launch directory is inside a Git repo, the profile also grants
     write access to a minimal repository root: normally the safe container
