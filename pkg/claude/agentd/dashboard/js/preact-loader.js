@@ -289,6 +289,39 @@ export async function mountAccessFeature(actionDependencies) {
   });
 }
 
+const messageAccessDialogsDescriptor = createIslandDescriptor({
+  name: 'message-access-dialogs',
+  label: 'Message and access dialogs',
+  hosts: {
+    dialogHost: '#message-access-dialog-root',
+    cronTargetHost: '#cron-create-target-mount',
+  },
+  failureClass: 'message-access-dialog-error',
+  load: async ({ hosts, dependencies }) => {
+    const islandModule = import('./message-access-dialog-island.js');
+    const stateModule = import('./message-access-dialog-state.js');
+    const actionsModule = import('./message-access-dialog-actions.js');
+    const snapshotModule = import('./snapshot-store.js');
+    const [
+      { mountMessageAccessDialogIsland }, { createMessageAccessDialogState },
+      { createMessageAccessDialogActions }, { dashboardState },
+    ] = await Promise.all([islandModule, stateModule, actionsModule, snapshotModule]);
+    const state = createMessageAccessDialogState();
+    const actions = createMessageAccessDialogActions({ ...dependencies });
+    return {
+      state,
+      mount: (registerCleanup) => mountMessageAccessDialogIsland({
+        ...hosts, state, actions, snapshot: dashboardState.snapshot,
+        confirmDiscard: dependencies.confirmDiscard, registerCleanup,
+      }),
+    };
+  },
+});
+
+export function mountMessageAccessDialogsFeature(dependencies = {}) {
+  return mountIslandDescriptor(messageAccessDialogsDescriptor, dependencies);
+}
+
 const messagesDescriptor = createIslandDescriptor({
   name: 'messages', label: 'Messages', hosts: { host: '#messages-root' }, failureClass: 'messages-error',
   load: async ({ hosts: { host } }) => {
