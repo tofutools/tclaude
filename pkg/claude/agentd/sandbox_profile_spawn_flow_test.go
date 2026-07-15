@@ -245,6 +245,62 @@ func TestSandboxProfileSpawnMaterializesUniqueAgentDirectories(t *testing.T) {
 	assert.NotEqual(t, filepath.Dir(pathsBySpawn[0]["GOCACHE"]), filepath.Dir(pathsBySpawn[1]["GOCACHE"]))
 }
 
+func TestSandboxProfileAgentCanSpawnChildWithAdditionalAgentDirectories(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{
+		Name: "parent-cache", AgentDirectories: []string{"GOCACHE"},
+	})
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupSandboxProfile("crew", "parent-cache")
+	require.NoError(t, err)
+
+	parent := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name": "parent", "harness": "codex", "sandbox": "tclaude-agent",
+	})
+	require.Equalf(t, http.StatusOK, parent.Code, "parent spawn body=%s", parent.Raw)
+	// The simulator's first status write does not carry the launch sandbox;
+	// restore the production launch metadata so the nested-spawn lineage gate
+	// exercises the managed Codex path before sandbox-profile containment.
+	parentSession, err := db.FindSessionByConvID(parent.ConvID)
+	require.NoError(t, err)
+	parentSession.SandboxMode = "tclaude-agent"
+	require.NoError(t, db.SaveSession(parentSession))
+	require.NoError(t, db.GrantAgentPermission(parent.ConvID, agentd.PermGroupsSpawn, "test"))
+	parentSnapshot, ok := f.World.SpawnSandboxPolicy(parent.ConvID)
+	require.True(t, ok)
+	require.NotNil(t, parentSnapshot)
+	require.Equal(t, []string{"GOCACHE"}, parentSnapshot.Effective.AgentDirectories)
+
+	_, err = db.CreateSandboxProfile(&db.SandboxProfile{
+		Name: "child-caches", AgentDirectories: []string{"GOCACHE", "GOTMPDIR"},
+	})
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupSandboxProfile("crew", "child-caches")
+	require.NoError(t, err)
+
+	child := f.AsAgent(parent.ConvID).SpawnWith("crew", map[string]any{
+		"name": "child", "harness": "codex", "sandbox": "tclaude-agent",
+	})
+	require.Equalf(t, http.StatusOK, child.Code, "child spawn body=%s", child.Raw)
+	childSnapshot, ok := f.World.SpawnSandboxPolicy(child.ConvID)
+	require.True(t, ok)
+	require.NotNil(t, childSnapshot)
+	assert.Equal(t, []string{"GOCACHE", "GOTMPDIR"}, childSnapshot.Effective.AgentDirectories)
+	require.Len(t, childSnapshot.Effective.Filesystem, 2)
+	require.Len(t, childSnapshot.Effective.Environment, 2)
+
+	parentGOCACHE := parentSnapshot.Effective.Environment[0].Value
+	for _, entry := range childSnapshot.Effective.Environment {
+		assert.NotEqual(t, parentGOCACHE, entry.Value, "%s must be private to the child", entry.Name)
+		assert.Contains(t, entry.Value, string(filepath.Separator)+"agent-dirs"+string(filepath.Separator))
+		info, statErr := os.Stat(entry.Value)
+		require.NoError(t, statErr)
+		assert.True(t, info.IsDir())
+	}
+}
+
 func TestSandboxProfileSpawnRejectsAmbientCapabilityWideningAfterParentLaunch(t *testing.T) {
 	for _, scope := range []string{"global", "group"} {
 		t.Run(scope, func(t *testing.T) {
