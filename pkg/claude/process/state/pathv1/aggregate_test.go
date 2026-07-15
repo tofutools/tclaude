@@ -1258,3 +1258,71 @@ func TestEndedDispositionRequiresRouteCapability(t *testing.T) {
 		t.Fatalf("completion error = %v, want ErrAggregateInvalid", err)
 	}
 }
+
+func TestAggregateRejectsCommandlessMaterializedActivation(t *testing.T) {
+	t.Parallel()
+	view := validGenesisFixture(t)
+	activationID := view.Authority.Genesis.ActivationID
+	reservationID := view.Authority.Genesis.ReservationID
+	a := view.Routing.Activations[activationID]
+	commandID := a.CommandID
+	a.CommandID = ""
+	a.Receipt.CommandID = ""
+	a.Receipt.ID, _ = ActivationReceiptIdentity(a.ID, a.ReservationID, a.InputSetDigest, a.OutputPathID, "", uint64(a.EventSeq))
+	view.Routing.Activations[a.ID] = a
+	r := view.Routing.Reservations[reservationID]
+	r.CommandID = ""
+	view.Routing.Reservations[r.ID] = r
+	delete(view.Commands, commandID)
+	report := ValidateAggregate(view)
+	if !reportHasCode(report, "command_authority_missing") {
+		t.Fatalf("commandless activation diagnostics: %#v", report.Diagnostics)
+	}
+	if _, err := AssessAggregateCompletion(view); !errors.Is(err, ErrAggregateInvalid) {
+		t.Fatalf("completion error = %v, want ErrAggregateInvalid", err)
+	}
+}
+
+func TestAggregateRejectsCommandlessReceiptClosureAndPropagation(t *testing.T) {
+	t.Parallel()
+	t.Run("receipt", func(t *testing.T) {
+		view := validGenesisFixture(t)
+		a := view.Routing.Activations[view.Authority.Genesis.ActivationID]
+		a.Receipt.CommandID = ""
+		a.Receipt.ID, _ = ActivationReceiptIdentity(a.ID, a.ReservationID, a.InputSetDigest, a.OutputPathID, "", uint64(a.EventSeq))
+		view.Routing.Activations[a.ID] = a
+		if report := ValidateAggregate(view); !reportHasCode(report, "command_authority_missing") {
+			t.Fatalf("commandless receipt diagnostics: %#v", report.Diagnostics)
+		}
+	})
+	t.Run("closure", func(t *testing.T) {
+		view := validAllArrivedNonSuccessFixture(t)
+		for key, closure := range view.Routing.CandidateClosures {
+			closure.CommandID = ""
+			view.Routing.CandidateClosures[key] = closure
+			break
+		}
+		if report := ValidateAggregate(view); !reportHasCode(report, "command_authority_missing") {
+			t.Fatalf("commandless closure diagnostics: %#v", report.Diagnostics)
+		}
+	})
+	t.Run("propagation", func(t *testing.T) {
+		view := validGenesisFixture(t)
+		reservationID := addOpenAuthorityReservation(t, &view, "target")
+		r := view.Routing.Reservations[reservationID]
+		candidate := r.Candidates[0]
+		commandID := view.Routing.Activations[view.Authority.Genesis.ActivationID].CommandID
+		causeID, _ := CauseIdentity("", TerminalImpossible, "condition_false", "", commandID, "", 2)
+		view.Routing.CauseRecords[causeID] = CauseRecord{ID: causeID, TerminalKind: TerminalImpossible, DispositionReason: "condition_false", SourceCommandID: commandID, EventSeq: 2}
+		causeDigest, _ := CauseSetIdentity([]string{causeID})
+		view.Routing.CauseSets[causeDigest] = CauseSetRecord{Digest: causeDigest, CauseIDs: []string{causeID}}
+		closureKey, _ := CandidateClosureKeyIdentity(r.ID, candidate.ID)
+		frontier := []string{closureKey}
+		plan, _ := PropagationPlanIdentity(r.ID, candidate.ID, causeDigest, 0, frontier)
+		intentID, _ := PropagationIntentIdentity(causeDigest, 0, plan)
+		view.Routing.Propagation[intentID] = PropagationIntent{ID: intentID, RootReservationID: r.ID, RootCandidateID: candidate.ID, RootCauseDigest: causeDigest, Cursor: 1, Frontier: frontier, PlanDigest: plan, State: PropagationComplete, EventSeq: 2}
+		if report := ValidateAggregate(view); !reportHasCode(report, "command_authority_missing") {
+			t.Fatalf("commandless propagation diagnostics: %#v", report.Diagnostics)
+		}
+	})
+}

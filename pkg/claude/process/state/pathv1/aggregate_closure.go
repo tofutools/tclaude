@@ -200,8 +200,11 @@ func (i *aggregateIndex) validateCandidateClosure(mapKey string, closure Candida
 		i.c.add("closure_sequence", path, "negative event sequence")
 	}
 	i.refCommand(closure.CommandID, path+".commandId")
-	if cmd, ok := i.view.Commands[closure.CommandID]; ok && cmd.Identity.Kind != CommandPropagateCandidateClosure && cmd.Identity.Kind != CommandActivateGeneration {
-		i.c.add("closure_command_authority", path, "command kind %q cannot close a candidate", cmd.Identity.Kind)
+	if cmd, ok := i.view.Commands[closure.CommandID]; ok {
+		reservation := i.view.Routing.Reservations[closure.Key.ReservationID]
+		if (cmd.Identity.Kind != CommandPropagateCandidateClosure && cmd.Identity.Kind != CommandActivateGeneration) || cmd.Identity.TargetReservationID != closure.Key.ReservationID || cmd.Identity.TargetGeneration != reservation.Generation {
+			i.c.add("closure_command_authority", path, "command does not own this exact candidate reservation generation")
+		}
 	}
 }
 
@@ -258,8 +261,11 @@ func (i *aggregateIndex) validatePropagation() {
 			}
 		}
 		i.refCommand(intent.CommandID, path+".commandId")
-		if cmd, ok := i.view.Commands[intent.CommandID]; ok && cmd.Identity.Kind != CommandPropagateCandidateClosure && cmd.Identity.Kind != CommandActivateGeneration {
-			i.c.add("propagation_command_authority", path, "command kind %q cannot own propagation", cmd.Identity.Kind)
+		if cmd, ok := i.view.Commands[intent.CommandID]; ok {
+			reservation := i.view.Routing.Reservations[intent.RootReservationID]
+			if (cmd.Identity.Kind != CommandPropagateCandidateClosure && cmd.Identity.Kind != CommandActivateGeneration) || cmd.Identity.TargetReservationID != intent.RootReservationID || cmd.Identity.TargetGeneration != reservation.Generation {
+				i.c.add("propagation_command_authority", path, "command does not own this exact root reservation generation")
+			}
 		}
 	}
 }

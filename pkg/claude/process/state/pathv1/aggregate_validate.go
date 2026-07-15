@@ -155,6 +155,7 @@ func (i *aggregateIndex) validateGenesis() {
 
 func (i *aggregateIndex) refCommand(id, path string) {
 	if id == "" {
+		i.c.add("command_authority_missing", path, "required command authority is empty")
 		return
 	}
 	i.commandRefs[id] = struct{}{}
@@ -847,6 +848,7 @@ func (i *aggregateIndex) validateActivation(id string, a ActivationRecord) {
 		}
 	}
 	i.refCommand(a.CommandID, path+".commandId")
+	i.refCommand(a.Receipt.CommandID, path+".receipt.commandId")
 	if command, ok := i.view.Commands[a.CommandID]; ok {
 		if i.genesisActivation(id) {
 			if command.Identity.Kind != CommandInitializeRouting {
@@ -999,6 +1001,7 @@ func (i *aggregateIndex) validateReservation(id string, r ActivationReservation)
 		i.validateReservationCommand(path, r)
 		if r.CloseReceipt != nil {
 			receipt := r.CloseReceipt
+			i.refCommand(receipt.CommandID, path+".closeReceipt.commandId")
 			if receipt.ActivationID != "" || receipt.ReservationID != r.ID || receipt.OutputPathID != "" || receipt.Result != ReceiptClosedNoActivation || receipt.JoinPolicy != r.JoinPolicy || receipt.CauseDigest != r.CauseDigest || receipt.CommandID != r.CommandID || receipt.EventSeq != r.EventSeq {
 				i.c.add("close_receipt_fields", path+".closeReceipt", "close receipt does not match reservation")
 			}
