@@ -64,7 +64,7 @@ import { bindDock } from './dock.js';
 import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
 import {
-  mountAccessFeature, mountActionDialogsFeature, mountAuditFeature, mountConfigFeature, mountCostsFeature, mountDebugFeature, mountDirectoryPickerFeature, mountDockFeature, mountGroupsFeature, mountJobsFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessageAccessDialogsFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature, mountTerminalsFeature,
+  mountAccessFeature, mountActionDialogsFeature, mountAuditFeature, mountConfigFeature, mountCostsFeature, mountDebugFeature, mountDirectoryPickerFeature, mountDockFeature, mountGroupsFeature, mountJobsFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessageAccessDialogsFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature, mountTerminalsFeature, mountTransactionDialogsFeature,
 } from './preact-loader.js';
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
 import { triggerExportDownload } from './export-progress.js';
@@ -235,6 +235,7 @@ export function sudoBadge(activeSudo, fallbackConvID) {
       downloadExport: triggerExportDownload,
       getSnapshot: () => lastSnapshot,
     }),
+    mountTransactionDialogsFeature(),
   ]);
   pageCleanups.push(...featureCleanups);
 
