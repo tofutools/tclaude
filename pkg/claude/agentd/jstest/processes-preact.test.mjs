@@ -101,6 +101,42 @@ test('process scribe actions send bounded structured scope, exact grants, and re
   assert.equal(notices.at(-1)[1], true);
 });
 
+test('process actor presentation renders only validated attribution and marks navigation only for a live match', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ processActorPresentation, createProcessesActions }, { createProcessesState }, { dashboardState }] = await Promise.all([
+    harness.importDashboardModule('js/processes-actions.js'), harness.importDashboardModule('js/processes-state.js'),
+    harness.importDashboardModule('js/snapshot-store.js'),
+  ]);
+  const agentId = `agt_${'a'.repeat(32)}`;
+  const snapshot = { agents: [{ agent_id: agentId, title: 'release-scribe', online: true }] };
+  assert.deepEqual(processActorPresentation(snapshot, `agent:${agentId}`), {
+    label: 'agent release-scribe', live: true, agentId,
+  });
+  assert.deepEqual(processActorPresentation({ agents: [] }, `agent:${agentId}`), {
+    label: `agent ${agentId.slice(0, 12)}…`, live: false, agentId,
+  });
+  assert.deepEqual(processActorPresentation(snapshot, 'human:operator'), {
+    label: 'the operator', live: false, agentId: '',
+  });
+  assert.deepEqual(processActorPresentation(snapshot, 'agent:agt_legacy123'), {
+    label: 'agent agt_legacy12…', live: false, agentId: '',
+  }, 'valid legacy actor refs stay attributed but cannot become navigation targets');
+  assert.equal(processActorPresentation(snapshot, 'agent:not-a-stable-id'), null);
+  assert.equal(processActorPresentation(snapshot, ''), null, 'unknown actor stays unattributed');
+
+  dashboardState.snapshot.value = snapshot;
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const requests = [];
+  const actions = createProcessesActions({ state, fetchImpl: async (path, options) => {
+    requests.push({ path, options });
+    return { ok: true, json: async () => ({ mode: 'native' }) };
+  } });
+  assert.equal(await actions.openActor(`agent:${agentId}`), true);
+  assert.equal(requests[0].path, `/api/open-window/${agentId}`);
+  assert.equal(requests[0].options.method, 'POST');
+  assert.equal(await actions.openActor(`agent:${'b'.repeat(32)}`), false, 'an unattributed/offline actor is not presented as a live navigation target');
+});
+
 test('instantiate actions load an exact ref, POST string params, and navigate to its viewer', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([

@@ -97,6 +97,7 @@ func TestProcessTemplateRESTListGetSaveAndConflict(t *testing.T) {
 	assert.Equal(t, latestRecord.Ref, heads.Heads[0].Ref)
 	assert.Equal(t, "release", heads.Heads[0].ID)
 	assert.Equal(t, list.Templates[0].LatestVersion.SourceHash, heads.Heads[0].SourceHash)
+	assert.NotContains(t, headsRec.Body.String(), `"actor"`, "legacy/unattributed heads must not invent an identity")
 
 	getRec := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates/release", nil)
 	require.Equal(t, http.StatusOK, getRec.Code, getRec.Body.String())
@@ -340,6 +341,21 @@ func TestProcessTemplateAgentSourceWorkflowPermissionsCASAndAttribution(t *testi
 	assert.Equal(t, saved.SourceHash, shown.SourceHash)
 	require.Len(t, shown.Authorship, 1)
 	assert.Equal(t, saved.Actor, string(shown.Authorship[0].Actor))
+	headsRec := processTemplateRequest(t, f, http.MethodGet, "/v1/process/template-heads", nil)
+	require.Equal(t, http.StatusOK, headsRec.Code, headsRec.Body.String())
+	var heads struct {
+		Heads []struct {
+			store.TemplateHead
+			Actor      string    `json:"actor"`
+			AuthoredAt time.Time `json:"authoredAt"`
+		} `json:"heads"`
+	}
+	testharness.DecodeJSON(t, headsRec, &heads)
+	require.Len(t, heads.Heads, 1)
+	assert.Equal(t, saved.Ref, heads.Heads[0].Ref)
+	assert.Equal(t, saved.SourceHash, heads.Heads[0].SourceHash)
+	assert.Equal(t, saved.Actor, heads.Heads[0].Actor)
+	assert.Equal(t, saved.AuthoredAt, heads.Heads[0].AuthoredAt)
 
 	// A complete scribe grant includes read for show/validate, but stale CAS is
 	// still refused with the documented 409 shape.
@@ -355,6 +371,38 @@ func TestProcessTemplateAgentSourceWorkflowPermissionsCASAndAttribution(t *testi
 	assert.Contains(t, stale.Body.String(), `"code":"process_template_conflict"`)
 	assert.Contains(t, stale.Body.String(), `"currentSourceHash":"`+saved.SourceHash+`"`)
 	assert.Contains(t, stale.Body.String(), `"currentRef":"`+saved.Ref+`"`)
+
+	// A later source/layout-only save retains the semantic ref but advances the
+	// committed generation. The bounded poll must attribute the exact new
+	// ref+sourceHash pair, not fall back to the first event on this ref.
+	const secondScribe = "proc-scribe-cccc-dddd"
+	require.NoError(t, db.GrantAgentPermission(secondScribe, agentd.PermProcessTemplatesManage, "test"))
+	tmpl.Layout = &model.Layout{Nodes: map[string]model.LayoutNode{
+		"begin": {X: 120, Y: 80},
+	}}
+	layoutSource, err := model.CanonicalYAML(tmpl)
+	require.NoError(t, err)
+	secondSave := agentReq(t, f, secondScribe, http.MethodPost, "/v1/process/templates/agent-source", map[string]any{
+		"source": string(layoutSource), "sourceHash": saved.SourceHash,
+	})
+	require.Equal(t, http.StatusCreated, secondSave.Code, secondSave.Body.String())
+	var second struct {
+		Ref        string `json:"ref"`
+		SourceHash string `json:"sourceHash"`
+		Actor      string `json:"actor"`
+	}
+	testharness.DecodeJSON(t, secondSave, &second)
+	assert.Equal(t, saved.Ref, second.Ref, "layout-only authoring keeps the content-addressed semantic ref")
+	assert.NotEqual(t, saved.SourceHash, second.SourceHash)
+	assert.NotEqual(t, saved.Actor, second.Actor)
+
+	headsRec = processTemplateRequest(t, f, http.MethodGet, "/v1/process/template-heads", nil)
+	require.Equal(t, http.StatusOK, headsRec.Code, headsRec.Body.String())
+	testharness.DecodeJSON(t, headsRec, &heads)
+	require.Len(t, heads.Heads, 1)
+	assert.Equal(t, second.Ref, heads.Heads[0].Ref)
+	assert.Equal(t, second.SourceHash, heads.Heads[0].SourceHash)
+	assert.Equal(t, second.Actor, heads.Heads[0].Actor)
 }
 
 func TestProcessTemplateRawSourceValidationPreservesYAMLDiagnostics(t *testing.T) {

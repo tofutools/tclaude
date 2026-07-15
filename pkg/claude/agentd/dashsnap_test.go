@@ -1030,21 +1030,25 @@ func baseStates() []dashsnap.State {
 		},
 		{
 			Key:     "process-editor-external-clean",
-			Title:   "Process editor — clean external change",
-			Caption: "TCL-307: a clean editor keeps its graph and viewport intact while an external head advertises a non-destructive Reload action, in both dashboard skins.",
+			Title:   "Process editor — attributed clean agent change",
+			Caption: "TCL-437: a clean editor shows the exact agent-authored version plus a concise graph/source review and a non-destructive Apply update action.",
 			JS: processEditorStateJS(`var external = ed.model.saveBody();
   external.template.description = 'dashsnap external clean ' + Date.now();
   var response = await fetch('/v1/process/templates/release-train', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(external)});
   var saved = await response.json();
   if (!response.ok || !saved.ref) throw new Error('external clean save failed: ' + JSON.stringify(saved));
   ed.observeExternalHead(saved);
-  if (ed.externalChange.kind !== 'clean') throw new Error('clean external banner state missing');`),
+  await ed.loadExternalReview();
+  ed.observeExternalHead = function(){ return this.externalChange; };
+  ed.externalChange.actor = 'agent:agt_11111111111111111111111111111111';
+  ed.externalReviewPanel.hidden = false; ed.renderExternalChange();
+  if (ed.externalChange.kind !== 'clean' || !ed.externalChange.review) throw new Error('clean external review state missing');`),
 			SettleMS: 1100,
 		},
 		{
 			Key:     "process-editor-external-dirty",
-			Title:   "Process editor — dirty external change",
-			Caption: "TCL-307: a dirty editor is never overwritten; its external-change banner offers confirmed Reload versus Keep editing, in both dashboard skins.",
+			Title:   "Process editor — conflicting agent change",
+			Caption: "TCL-437: a dirty editor is never overwritten; review explains the agent change and the CAS-backed Reload & discard / Keep editing decision.",
 			JS: processEditorStateJS(`var external = ed.model.saveBody();
   external.template.description = 'dashsnap external dirty ' + Date.now();
   var response = await fetch('/v1/process/templates/release-train', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(external)});
@@ -1052,7 +1056,11 @@ func baseStates() []dashsnap.State {
   if (!response.ok || !saved.ref) throw new Error('external dirty save failed: ' + JSON.stringify(saved));
   ed.model.addNode('task', {x: 470, y: 120, name: 'Local draft'}); ed.refresh({fit: true});
   ed.observeExternalHead(saved);
-  if (ed.externalChange.kind !== 'dirty' || ed.externalKeepButton.hidden) throw new Error('dirty external banner actions missing');`),
+  await ed.loadExternalReview();
+  ed.observeExternalHead = function(){ return this.externalChange; };
+  ed.externalChange.actor = 'agent:agt_22222222222222222222222222222222';
+  ed.externalReviewPanel.hidden = false; ed.renderExternalChange();
+  if (ed.externalChange.kind !== 'dirty' || ed.externalKeepButton.hidden || !ed.externalChange.review) throw new Error('dirty external review actions missing');`),
 			SettleMS: 1100,
 		},
 		{

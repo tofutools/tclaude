@@ -613,6 +613,28 @@ function externalReloadEditor({ dirty = false, confirmDiscard = async () => true
   return editor;
 }
 
+test('a stale review GET cannot clear or reorder the polled external generation', async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true, status: 200, statusText: 'OK',
+    json: async () => ({
+      template: { id: 'alpha', nodes: { a: { type: 'start' } } }, edges: [], layout: {},
+      currentRef: 'alpha@sha256:old', sourceHash: 'source-old', semanticHash: 'old', source: 'id: alpha\n',
+    }),
+  });
+  try {
+    const editor = externalReloadEditor();
+    editor.loadedView = { template: structuredClone(editor.model.template), edges: [], source: 'id: alpha\n' };
+    editor.externalReviewSeq = 0; editor.externalReviewPending = false;
+    assert.equal(await ProcessTemplateEditor.prototype.loadExternalReview.call(editor), false);
+    assert.deepEqual(editor.externalChange, { kind: 'clean', ref: 'alpha@sha256:new', sourceHash: 'source-new' });
+    assert.equal(editor.externalReviewPending, false);
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+  }
+});
+
 test('dirty external Reload never fetches or replaces the model when discard is denied', async () => {
   const previousFetch = globalThis.fetch;
   let fetches = 0; let prompts = 0;
@@ -737,6 +759,7 @@ test('confirmed external Reload swaps in the new head without fitting the viewpo
   });
   try {
     const editor = externalReloadEditor({ dirty: true, confirmDiscard: async () => { prompts += 1; return true; } });
+    editor.selection = { type: 'multi', items: [{ type: 'node', id: 'a' }, { type: 'node', id: 'gone' }] };
     const dispose = () => { modalClosed += 1; editor.modalDispose = null; };
     dispose.isDirty = () => false;
     editor.modalDispose = dispose;
@@ -745,8 +768,9 @@ test('confirmed external Reload swaps in the new head without fitting the viewpo
     assert.equal(modalClosed, 1);
     assert.equal(editor.model.template.name, 'External');
     assert.equal(editor.model.currentRef, 'alpha@sha256:new');
-    assert.equal(editor.selection, null, 'selection whose target vanished is dropped');
+    assert.deepEqual(editor.selection, { type: 'node', id: 'a' }, 'surviving selected ids remain selected while removed ids drop');
     assert.equal(editor.refreshOptions, undefined, 'no fit request preserves the graph pan/zoom');
+    assert.equal(editor.loadedView.currentRef, 'alpha@sha256:new', 'applied canonical view becomes the next review baseline');
     assert.equal(editor.externalChange.kind, 'none');
     assert.match(editor.lastStatus.message, /Reloaded external version/);
   } finally {
