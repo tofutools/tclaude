@@ -11896,6 +11896,61 @@ body.wizard .process-fit-button { box-shadow: 0 2px 12px rgba(75, 48, 119, 0.5);
 .process-action-danger { color: #f85149; }
 .process-action-danger:hover { border-color: #f85149; }
 .process-editor-modal .modal-buttons button { min-width: 0; }
+.process-scribe-preview {
+  width: min(760px, 94vw);
+  max-width: 760px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  color: #c9d1d9;
+  background: #161b22;
+  border: 1px solid #30363d;
+}
+.process-scribe-prompt-label,
+.process-scribe-context-label {
+  color: #e6edf3;
+  font-size: 12px;
+  font-weight: 650;
+}
+.process-scribe-prompt {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 86px;
+  resize: vertical;
+  margin-top: 5px;
+  padding: 8px 9px;
+  color: #e6edf3;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+}
+.process-scribe-prompt:focus { border-color: #58a6ff; outline: none; }
+.process-scribe-prompt-count { align-self: flex-end; color: #8b949e; font-size: 11px; }
+.process-scribe-context-label { margin-top: 10px; }
+.process-scribe-context-preview {
+  min-height: 110px;
+  max-height: 38vh;
+  overflow: auto;
+  margin: 5px 0 0;
+  padding: 9px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: #c9d1d9;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px 6px 0 0;
+  font-size: 11px;
+}
+.process-scribe-context-end {
+  padding: 5px 9px;
+  color: #8b949e;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-top: 0;
+  border-radius: 0 0 6px 6px;
+  font-size: 11px;
+}
+.process-scribe-context-end.is-truncated { color: #e3a341; }
 .process-param-dialog {
   width: min(920px, 96vw);
   max-width: 920px;
@@ -12069,6 +12124,14 @@ body.wizard .process-editor-modal .modal {
 }
 body.wizard .process-editor-modal .modal h3 { color: #f3e6c0; }
 body.wizard .process-editor-modal .modal p { color: #e7d9f5; }
+body.wizard .process-scribe-preview { background: #211832; border-color: #6d5695; }
+body.wizard .process-scribe-prompt-label,
+body.wizard .process-scribe-context-label { color: #f3e6c0; }
+body.wizard .process-scribe-prompt,
+body.wizard .process-scribe-context-preview { color: #f3e6c0; background: #181226; border-color: #6d5695; }
+body.wizard .process-scribe-prompt:focus { border-color: #d4af37; }
+body.wizard .process-scribe-context-end { color: #a99bc0; background: #211832; border-color: #6d5695; }
+body.wizard .process-scribe-context-end.is-truncated { color: #f3d58b; }
 body.wizard .process-editor-modal .modal-buttons button:not(.confirm-danger) {
   background: #2c2042; border-color: #6d5695; color: #f3e6c0;
 }

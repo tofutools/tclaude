@@ -142,8 +142,9 @@ export function createProcessesActions({
     state.setCanvas({ kind: 'editor', id, blank, key: `${id}:${blank}:${Date.now()}` });
     state.setNotice(blank ? 'Blank template scaffold ready.' : `Opening ${id}.`);
   }
-  async function summonScribe(anchor = { kind: 'library' }) {
+  async function summonScribe(anchor = { kind: 'library' }, handoffOptions = {}) {
     try {
+      const { freshnessGuard, ...briefOptions } = handoffOptions;
       const handoff = processScribeHandoff(anchor);
       const task = processScribeTaskRef(handoff, dashboardOrigin);
       const scribes = processScribeSessions(dashboardState.snapshot.value);
@@ -165,11 +166,21 @@ export function createProcessesActions({
         state.setNotice('Process scribe cancelled; no permissions or sessions changed.');
         return null;
       }
+      let fresh = true;
+      try {
+        if (typeof freshnessGuard === 'function') fresh = freshnessGuard() === true;
+      } catch {
+        fresh = false;
+      }
+      if (!fresh) {
+        state.setNotice('Process scribe cancelled because the editor context changed during approval. Review the current context and try again.');
+        return null;
+      }
       const response = await fetchImpl('/api/scribe', {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: PROCESS_SCRIBE_NAME, slugs: PROCESS_SCRIBE_SLUGS,
-          exclusive: true, scope: handoff.scope, brief: processScribeBrief(handoff),
+          exclusive: true, scope: handoff.scope, brief: processScribeBrief(handoff, briefOptions),
           task_ref_url: task.url, task_ref_label: task.label,
         }),
       });

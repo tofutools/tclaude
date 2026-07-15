@@ -40,6 +40,10 @@ import {
 import { requestCommandPalette } from './command-registry.js';
 import { openProcessNodeTypeChooser } from './process-node-chooser.js';
 import { PROCESS_NODE_TYPES } from './process-node-types.js';
+import {
+  PROCESS_SCRIBE_PROMPT_MAX, processScribeContextPreview, processScribeEditorContext,
+  processScribeHandoff, processScribePrompt,
+} from './process-scribe.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 // Custom drag payload MIME (dock-dnd idiom): withholding text/plain keeps
@@ -53,6 +57,12 @@ export function isProcessEditorFormControl(target) {
 
 function externalInteractionPending(editor) {
   return !!(editor.externalDecisionPending || editor.externalReloadPending);
+}
+
+function scribeSelectionIdentity(selection) {
+  return JSON.stringify(selectionItems(selection).map((item) => item?.type === 'node'
+    ? ['node', String(item.id || '')]
+    : ['edge', String(item?.from || ''), String(item?.outcome || '')]).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))));
 }
 
 function h(tag, attrs = {}, ...children) {
@@ -228,7 +238,7 @@ export class ProcessTemplateEditor {
     this.saveButton.addEventListener('click', () => this.save(), { signal });
     this.instantiateButton.addEventListener('click', () => this.requestInstantiate(), { signal });
     this.commandsButton.addEventListener('click', () => requestCommandPalette(), { signal });
-    this.scribeButton.addEventListener('click', () => this.requestScribe(), { signal });
+    this.scribeButton.addEventListener('click', () => this.requestScribe('template'), { signal });
     this.externalReloadButton.addEventListener('click', () => this.reloadExternalChange(), { signal });
     this.externalKeepButton.addEventListener('click', () => this.keepExternalChange(), { signal });
     this.externalReviewButton.addEventListener('click', () => this.toggleExternalReview(), { signal });
@@ -1125,6 +1135,7 @@ export class ProcessTemplateEditor {
       && affectedEdges.every((edge) => this.model.config.edgeEditable(edge));
     const busyReason = pending ? 'An external template reload is in progress.' : '';
     const issueCount = this.validation?.mapped?.entries?.length || 0;
+    const hasCurrentIssue = !!this.validation?.currentIssue?.();
     const id = (this.model.template.id || '').trim();
     return {
       hasGraph: Object.keys(this.model.template.nodes).length > 0,
@@ -1141,6 +1152,7 @@ export class ProcessTemplateEditor {
       canValidate: !pending && !!this.validation,
       validateReason: busyReason || 'Validation is not available.',
       issueCount,
+      hasCurrentIssue,
       canSave: !pending && !this.savePending && !!id && (this.model.dirty || this.blank),
       saveReason: busyReason || (this.savePending ? 'A save is already in progress.' : !id ? 'Enter a template id first.' : 'There are no unsaved changes.'),
       canInstantiate: !pending && !this.savePending && typeof this.options.onInstantiate === 'function',
@@ -1321,7 +1333,7 @@ export class ProcessTemplateEditor {
     }
   }
 
-  async requestScribe() {
+  async requestScribe(kind = 'template') {
     if (!this.options.onScribe || this.savePending || externalInteractionPending(this)) return false;
     const originalBlank = this.blank;
     if (this.dirty) {
@@ -1381,11 +1393,67 @@ export class ProcessTemplateEditor {
       }
     }
     const id = (this.model.template.id || '').trim();
-    return !!(await this.options.onScribe({
+    const anchor = {
       kind: 'template', id,
       currentRef: this.model.currentRef || '', sourceHash: this.model.sourceHash || '',
       isNew: this.blank && !this.model.sourceHash,
-    }));
+    };
+    let context;
+    let handoff;
+    const focusedDiagnostic = kind === 'diagnostic' ? this.validation?.currentIssue?.() || null : null;
+    const guardedModel = this.model;
+    const guardedRev = guardedModel.rev;
+    const guardedSelection = kind === 'selection' ? scribeSelectionIdentity(this.selection) : '';
+    try {
+      handoff = processScribeHandoff(anchor);
+      context = processScribeEditorContext({
+        kind, handoff, template: this.model.template, edges: this.model.edges,
+        selection: selectionItems(this.selection), diagnostic: focusedDiagnostic,
+      });
+    } catch (error) {
+      this.status(error.message, true);
+      return false;
+    }
+    const freshnessGuard = () => {
+      const currentID = (this.model?.template?.id || '').trim();
+      const modelFresh = !this.abort?.signal?.aborted
+        && this.model === guardedModel && this.model.rev === guardedRev
+        && currentID === anchor.id
+        && (this.model.currentRef || '') === anchor.currentRef
+        && (this.model.sourceHash || '') === anchor.sourceHash
+        && (this.blank && !this.model.sourceHash) === anchor.isNew
+        && !this.savePending && !externalInteractionPending(this);
+      const selectionFresh = kind !== 'selection' || scribeSelectionIdentity(this.selection) === guardedSelection;
+      let diagnosticFresh = kind !== 'diagnostic';
+      if (kind === 'diagnostic') {
+        const currentDiagnostic = this.validation?.currentIssue?.() || null;
+        if (focusedDiagnostic && currentDiagnostic) {
+          try {
+            const currentContext = processScribeEditorContext({
+              kind, handoff, template: this.model.template, edges: this.model.edges,
+              selection: [], diagnostic: currentDiagnostic,
+            });
+            diagnosticFresh = JSON.stringify(currentContext.diagnostic) === JSON.stringify(context.diagnostic);
+          } catch {
+            diagnosticFresh = false;
+          }
+        }
+      }
+      if (modelFresh && selectionFresh && diagnosticFresh) return true;
+      this.status('Scribe handoff cancelled because the editor context changed while the request was open.');
+      this.graph?.root?.focus?.({ preventScroll: true });
+      return false;
+    };
+    const prompt = await this.scribePreviewModal({
+      kind, prompt: processScribePrompt(kind), context: processScribeContextPreview(context),
+      truncated: !!context.truncation,
+    });
+    if (prompt == null || this.abort?.signal.aborted) {
+      this.graph?.root?.focus?.({ preventScroll: true });
+      return false;
+    }
+    if (!freshnessGuard()) return false;
+    return !!(await this.options.onScribe(anchor, { context, prompt, freshnessGuard }));
   }
 
   async saveRequest(requestSeq) {
@@ -1522,6 +1590,63 @@ export class ProcessTemplateEditor {
       this.modalDispose = done;
       document.body.append(overlay);
       (buttons.find((_, index) => choices[index].initialFocus || choices[index].primary) || cancel).focus();
+    });
+  }
+
+  // The human edits only their request. Stable context stays read-only and
+  // visibly delimited so it cannot quietly become an alternate template body.
+  async scribePreviewModal({ kind, prompt, context, truncated = false }) {
+    const current = this.modalDispose;
+    if (current) {
+      const closed = current.requestClose ? await current.requestClose() : (current(null), true);
+      if (!closed || this.abort?.signal.aborted) return null;
+    }
+    return new Promise((resolve) => {
+      const input = h('textarea', {
+        class: 'process-scribe-prompt', rows: '4', maxlength: PROCESS_SCRIBE_PROMPT_MAX,
+        'aria-label': 'Request for the process scribe', spellcheck: 'true',
+      });
+      input.value = prompt;
+      const count = h('span', { class: 'process-scribe-prompt-count' });
+      const updateCount = () => { count.textContent = `${input.value.length} / ${PROCESS_SCRIBE_PROMPT_MAX}`; };
+      input.addEventListener('input', updateCount);
+      updateCount();
+      const preview = h('pre', {
+        class: 'process-scribe-context-preview', text: context,
+        'aria-label': 'Read-only bounded editor context', tabindex: '0',
+      });
+      const send = h('button', { class: 'primary process-editor-modal-btn', type: 'button', text: 'Send & open scribe' });
+      const cancel = h('button', { type: 'button', text: 'Cancel', class: 'process-editor-modal-btn' });
+      const overlay = h('div', { class: 'modal-overlay show process-editor-modal process-scribe-preview-overlay' },
+        h('div', { class: 'modal process-scribe-preview', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'process-scribe-preview-title' },
+          h('h3', { id: 'process-scribe-preview-title', text: 'Share editor context with process scribe' }),
+          h('p', { text: kind === 'selection' ? 'The selected graph identities below will be shared.'
+            : kind === 'diagnostic' ? 'The current diagnostic identity below will be shared.'
+              : 'A bounded whole-template summary will be shared.' }),
+          h('label', { class: 'process-scribe-prompt-label', text: 'Your request (editable)' }), input, count,
+          h('div', { class: 'process-scribe-context-label', text: 'BEGIN BOUNDED EDITOR CONTEXT · read-only · not template source' }),
+          preview,
+          h('div', { class: `process-scribe-context-end${truncated ? ' is-truncated' : ''}`,
+            text: truncated ? 'END BOUNDED EDITOR CONTEXT · visibly truncated; the scribe must reread canonical YAML'
+              : 'END BOUNDED EDITOR CONTEXT · the scribe must reread canonical YAML' }),
+          h('div', { class: 'modal-buttons' }, cancel, send)));
+      const done = (result) => {
+        overlay.remove();
+        document.removeEventListener('keydown', onKey, true);
+        if (this.modalDispose === done) this.modalDispose = null;
+        resolve(result);
+      };
+      const onKey = (event) => {
+        if (event.key !== 'Escape') return;
+        event.preventDefault(); event.stopImmediatePropagation(); done(null);
+      };
+      send.addEventListener('click', () => done(input.value.trim()));
+      cancel.addEventListener('click', () => done(null));
+      overlay.addEventListener('click', (event) => { if (event.target === overlay) done(null); });
+      document.addEventListener('keydown', onKey, true);
+      this.modalDispose = done;
+      document.body.append(overlay);
+      input.focus(); input.select?.();
     });
   }
 }

@@ -36,6 +36,27 @@ export function splitEdgeTarget(targetId) {
   return { from: targetId.slice(0, at), outcome: targetId.slice(at + 1) };
 }
 
+// A diagnostic's stable editor identity is semantic, never its array index or
+// display message. Duplicate identities are intentionally ambiguous: after a
+// changed validation result we clear focus rather than guessing which row the
+// human meant.
+export function diagnosticIdentity(entry) {
+  return JSON.stringify([
+    String(entry?.code || ''),
+    String(entry?.scope || 'template'),
+    String(entry?.targetId || ''),
+  ]);
+}
+
+export function resolveDiagnosticFocus(entries, { identity = '', ambiguous = false } = {}) {
+  if (!identity || ambiguous) return -1;
+  const matches = [];
+  for (let index = 0; index < (entries || []).length; index++) {
+    if (diagnosticIdentity(entries[index]) === identity) matches.push(index);
+  }
+  return matches.length === 1 ? matches[0] : -1;
+}
+
 // ValidationScheduler is the debounce + sequence-number core. `run` performs
 // one validation round for a built payload and resolves to a diagnostics
 // array, or null when the round must be skipped. Timers are injectable so
@@ -205,6 +226,8 @@ export class LiveValidation {
     this.mapped = null;
     this.panelSignature = '';
     this.issueCursor = -1;
+    this.focusedIssueIdentity = '';
+    this.focusedIssueAmbiguous = false;
     this.scheduler = new ValidationScheduler({
       run: (payload) => this.post(payload),
       onResult: (diagnostics) => this.applyDiagnostics(diagnostics),
@@ -302,10 +325,20 @@ export class LiveValidation {
     return this.focusIssueAt(index);
   }
 
+  currentIssue() {
+    if (this.focusedIssueAmbiguous) return null;
+    const entries = this.mapped?.entries || [];
+    const entry = this.issueCursor >= 0 && this.issueCursor < entries.length ? entries[this.issueCursor] : null;
+    return entry && this.focusedIssueIdentity
+      && diagnosticIdentity(entry) === this.focusedIssueIdentity ? entry : null;
+  }
+
   focusIssueAt(index, { focusButton = true } = {}) {
     const entries = this.mapped?.entries || [];
     if (!Number.isInteger(index) || index < 0 || index >= entries.length) return false;
     this.issueCursor = index;
+    this.focusedIssueIdentity = diagnosticIdentity(entries[index]);
+    this.focusedIssueAmbiguous = entries.filter((entry) => diagnosticIdentity(entry) === this.focusedIssueIdentity).length > 1;
     this.panel.open = true;
     this.focusEntry(entries[index]);
     if (focusButton) this.list.querySelector(`button[data-issue-index="${index}"]`)?.focus();
@@ -320,7 +353,13 @@ export class LiveValidation {
     // only rebuild when the content actually changed.
     if (signature === this.panelSignature) return;
     this.panelSignature = signature;
-    this.issueCursor = Math.min(this.issueCursor, entries.length - 1);
+    this.issueCursor = resolveDiagnosticFocus(entries, {
+      identity: this.focusedIssueIdentity, ambiguous: this.focusedIssueAmbiguous,
+    });
+    if (this.issueCursor < 0) {
+      this.focusedIssueIdentity = '';
+      this.focusedIssueAmbiguous = false;
+    }
     const bits = [];
     if (errorCount) bits.push(`${errorCount} error${errorCount === 1 ? '' : 's'}`);
     if (warningCount) bits.push(`${warningCount} warning${warningCount === 1 ? '' : 's'}`);
