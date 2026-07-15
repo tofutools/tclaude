@@ -31,6 +31,7 @@ import (
 type stopParams struct {
 	Selector string `pos:"true" help:"Target conv: title, full conv-id, or 8+-char prefix"`
 	Force    bool   `long:"force" short:"f" help:"Use tmux kill-session instead of soft-stop /exit (drops unsubmitted input)"`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
 }
 
 func stopCmd() *cobra.Command {
@@ -50,6 +51,7 @@ func stopCmd() *cobra.Command {
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *stopParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Selector).SetAlternativesFunc(completeConvSelectors)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
 			return nil
 		},
 		RunFunc: func(p *stopParams, _ *cobra.Command, _ []string) {
@@ -67,6 +69,14 @@ func runStop(p *stopParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
+	ask, err := ParseAskHuman(p.AskHuman)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
+	if ask > 0 {
+		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	}
 	path := "/v1/agent/" + url.PathEscape(selector) + "/stop"
 	if p.Force {
 		path += "?force=1"
@@ -79,7 +89,7 @@ func runStop(p *stopParams, stdout, stderr io.Writer) int {
 		Detail        string `json:"detail,omitempty"`
 		TmuxSession   string `json:"tmux_session,omitempty"`
 	}
-	if err := DaemonRequest(http.MethodPost, path, nil, &resp, DaemonOpts{}); err != nil {
+	if err := DaemonRequest(http.MethodPost, path, nil, &resp, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
