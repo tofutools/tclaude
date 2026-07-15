@@ -96,3 +96,39 @@ func TestSandboxSnapshotProofDirsExcludesMaterializedAgentDirectory(t *testing.T
 	require.NoError(t, err)
 	assert.Equal(t, "error:repository-proof", string(status))
 }
+
+// With features.agent_dirs_mount_parent, the write grant is the shared parent
+// root rather than each per-name subdir. The classifier must still recognize
+// that root as daemon-generated (parent of the agent-dir env values) so it
+// skips the caller-marker proof — otherwise the launch would demand a marker
+// inside a directory the caller never created.
+func TestSandboxSnapshotProofDirsExcludesMountedParentRoot(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	customWriteDir := filepath.Join(root, "custom")
+	agentRoot := filepath.Join(root, "agent-dirs", "spwn-test")
+	goCache := filepath.Join(agentRoot, "GOCACHE")
+	goTmp := filepath.Join(agentRoot, "GOTMPDIR")
+	snapshot := &sandboxpolicy.Snapshot{
+		Version: sandboxpolicy.SnapshotVersion,
+		Effective: sandboxpolicy.EffectiveProfile{
+			AgentDirectories: []string{"GOCACHE", "GOTMPDIR"},
+			Environment: []sandboxpolicy.EnvironmentEntry{
+				{Name: "GOCACHE", Value: goCache},
+				{Name: "GOTMPDIR", Value: goTmp},
+			},
+			// Mount-parent mode grants the parent root once; the subdirs
+			// themselves get no individual grant.
+			Filesystem: []sandboxpolicy.FilesystemGrant{
+				{Path: agentRoot, Access: sandboxpolicy.AccessWrite},
+				{Path: customWriteDir, Access: sandboxpolicy.AccessWrite},
+			},
+		},
+	}
+
+	proofDirs, generatedDirs := sandboxSnapshotProofDirs(snapshot, sandboxpolicy.AccessWrite)
+	assert.Equal(t, []string{customWriteDir}, proofDirs,
+		"only the caller-controlled root should require the caller's marker")
+	assert.Equal(t, []string{agentRoot}, generatedDirs,
+		"the mounted parent root is daemon-generated and must skip the caller marker")
+}

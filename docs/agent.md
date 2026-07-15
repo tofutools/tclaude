@@ -358,6 +358,13 @@ deletes all of its generated directory roots; reinstating and resuming that
 agent recreates the declared directories empty at their frozen paths. A name
 cannot also have a literal `environment` value, and the normal reserved-variable
 rules apply.
+
+By default each directory is granted individually, so the agent can write
+inside it but cannot delete the directory itself (its parent is not writable).
+The experimental `features.agent_dirs_mount_parent` flag (config file or
+dashboard Config tab) instead grants the shared parent root once, so the agent
+can create, rewrite, and delete its own env-var'd directories. The flag is read
+at each launch and resume; env-var values are unchanged either way.
 At an agent resume boundary, the ordinary global, launch-group, and explicit
 profile values are resolved again from the current registry before the pane is
 started; a running agent is never widened in place. If the launch group is

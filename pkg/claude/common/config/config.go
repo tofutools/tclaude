@@ -142,6 +142,15 @@ type FeaturesConfig struct {
 	// feature's user-visible surfaces (dashboard tab, CLI command, daemon
 	// routes) as they land.
 	Processes bool `json:"processes,omitempty"`
+
+	// AgentDirsMountParent switches how agent-owned directories are granted to
+	// the sandbox. Off (default): each declared directory is granted rw
+	// individually, so the agent can write inside each but cannot delete the
+	// directory itself (its parent is not writable). On: the shared parent root
+	// (agent-dirs/<launch-key>) is granted rw once, so the agent can create,
+	// rewrite, and delete its own env-var'd directories. Experimental — gated
+	// while we evaluate the broader write surface.
+	AgentDirsMountParent bool `json:"agent_dirs_mount_parent,omitempty"`
 }
 
 // ProcessesEnabled reports whether the opt-in Processes feature flag is set.
@@ -149,6 +158,13 @@ type FeaturesConfig struct {
 // a bare Load() result without nil checks.
 func (c *Config) ProcessesEnabled() bool {
 	return c != nil && c.Features != nil && c.Features.Processes
+}
+
+// AgentDirsMountParentEnabled reports whether agent-owned directories should be
+// granted by mounting their shared parent root rw instead of granting each
+// declared directory individually. Nil-safe like ProcessesEnabled.
+func (c *Config) AgentDirsMountParentEnabled() bool {
+	return c != nil && c.Features != nil && c.Features.AgentDirsMountParent
 }
 
 // TUI color schemes — config tui.color_scheme. Picks the color palette the

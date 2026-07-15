@@ -10,12 +10,95 @@ import (
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	tclcommon "github.com/tofutools/tclaude/pkg/common"
 )
 
 var agentDirectoryLaunchKeyRE = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// agentDirsMountParentEnabled reports whether the experimental
+// features.agent_dirs_mount_parent flag is set. A failed load degrades to the
+// default (individual per-directory grants). Read at materialization/resume so
+// flipping the flag takes effect on the next launch without a daemon restart.
+func agentDirsMountParentEnabled() bool {
+	cfg, err := config.Load()
+	return err == nil && cfg.AgentDirsMountParentEnabled()
+}
+
+// agentDirBinding pairs a materialized agent-owned directory with the profile
+// sources that declared it, so write grants can carry provenance regardless of
+// whether they land per-directory or on a shared parent root.
+type agentDirBinding struct {
+	canonical string
+	sources   []sandboxpolicy.ProfileSource
+}
+
+// addAgentDirectoryWriteGrants appends the write grants for the given agent-owned
+// directories. When mountParent is set, each directory's parent root is granted
+// once (deduped) so the agent can create, rewrite, and delete its own env-var'd
+// directories; otherwise each directory is granted individually. Environment
+// entries are set by the caller either way — only the write surface differs.
+func addAgentDirectoryWriteGrants(effective *sandboxpolicy.EffectiveProfile, mountParent bool, bindings []agentDirBinding) {
+	for _, b := range bindings {
+		path := b.canonical
+		if mountParent {
+			// Several directories can share one parent root; ensureAgentDirWriteGrant
+			// grants it once and unions the provenance across every contributor.
+			path = filepath.Dir(b.canonical)
+		}
+		ensureAgentDirWriteGrant(effective, path, b.sources)
+	}
+}
+
+// ensureAgentDirWriteGrant makes path writable exactly once, mirroring
+// normalizeFilesystem's "one entry per path, highest access rank wins" rule so
+// the materialized snapshot survives RevalidateSnapshot (which normalizes and
+// then rejects any pre-normalization drift). Blindly appending a grant for a
+// path that already carries one — a sibling agent dir sharing a parent, or a
+// user who explicitly granted the agent-dirs base as a manual workaround — would
+// leave a duplicate that normalization collapses, failing revalidation. A
+// pre-existing read grant is upgraded to write; an existing write or deny grant
+// is left as-is (write is already sufficient; a user deny must still win).
+func ensureAgentDirWriteGrant(effective *sandboxpolicy.EffectiveProfile, path string, sources []sandboxpolicy.ProfileSource) {
+	for i := range effective.Filesystem {
+		if effective.Filesystem[i].Path != path {
+			continue
+		}
+		if effective.Filesystem[i].Access == sandboxpolicy.AccessRead {
+			effective.Filesystem[i].Access = sandboxpolicy.AccessWrite
+		}
+		unionFilesystemProvenance(effective, path, sources)
+		return
+	}
+	effective.Filesystem = append(effective.Filesystem, sandboxpolicy.FilesystemGrant{
+		Path: path, Access: sandboxpolicy.AccessWrite,
+	})
+	unionFilesystemProvenance(effective, path, sources)
+}
+
+// unionFilesystemProvenance adds sources to the provenance for path without
+// duplicates, preserving any sources already recorded (e.g. a user grant the
+// agent-dir grant now shares a path with).
+func unionFilesystemProvenance(effective *sandboxpolicy.EffectiveProfile, path string, sources []sandboxpolicy.ProfileSource) {
+	if len(sources) == 0 {
+		return
+	}
+	existing := effective.Provenance.Filesystem[path]
+	seen := make(map[sandboxpolicy.ProfileSource]bool, len(existing))
+	for _, source := range existing {
+		seen[source] = true
+	}
+	for _, source := range sources {
+		if seen[source] {
+			continue
+		}
+		seen[source] = true
+		existing = append(existing, source)
+	}
+	effective.Provenance.Filesystem[path] = existing
+}
 
 // materializeAgentDirectories turns profile declarations into literal frozen
 // environment values and writable filesystem grants. The generated root is
@@ -48,7 +131,9 @@ func materializeAgentDirectories(snapshot sandboxpolicy.Snapshot, launchKey stri
 	// A clone can carry the source agent's already-materialized snapshot. Strip
 	// those generated bindings before assigning this launch a new root; literal
 	// environment entries cannot use these names because profile validation
-	// rejects that collision.
+	// rejects that collision. The source may have been materialized under either
+	// grant mode, so strip both the per-directory grants (env values) and the
+	// mount-parent grants (their parent roots).
 	oldPaths := map[string]bool{}
 	agentNames := map[string]bool{}
 	for _, name := range effective.AgentDirectories {
@@ -58,6 +143,7 @@ func materializeAgentDirectories(snapshot sandboxpolicy.Snapshot, launchKey stri
 	for _, entry := range effective.Environment {
 		if agentNames[entry.Name] {
 			oldPaths[entry.Value] = true
+			oldPaths[filepath.Dir(entry.Value)] = true
 			delete(effective.Provenance.Environment, entry.Name)
 			continue
 		}
@@ -73,6 +159,7 @@ func materializeAgentDirectories(snapshot sandboxpolicy.Snapshot, launchKey stri
 		filteredFilesystem = append(filteredFilesystem, grant)
 	}
 	effective.Filesystem = filteredFilesystem
+	bindings := make([]agentDirBinding, 0, len(effective.AgentDirectories))
 	for _, name := range effective.AgentDirectories {
 		dir := filepath.Join(root, name)
 		if err := mkdirAllNoFollow(dir, 0o700); err != nil {
@@ -84,18 +171,16 @@ func materializeAgentDirectories(snapshot sandboxpolicy.Snapshot, launchKey stri
 			cleanup()
 			return sandboxpolicy.Snapshot{}, func() {}, fmt.Errorf("canonicalize agent-owned directory for %s: %w", name, err)
 		}
-		effective.Filesystem = append(effective.Filesystem, sandboxpolicy.FilesystemGrant{
-			Path: canonical, Access: sandboxpolicy.AccessWrite,
-		})
 		effective.Environment = append(effective.Environment, sandboxpolicy.EnvironmentEntry{
 			Name: name, Value: canonical,
 		})
 		sources := effective.Provenance.AgentDirectories[name]
 		if len(sources) > 0 {
-			effective.Provenance.Filesystem[canonical] = append([]sandboxpolicy.ProfileSource(nil), sources...)
 			effective.Provenance.Environment[name] = sources[len(sources)-1]
 		}
+		bindings = append(bindings, agentDirBinding{canonical: canonical, sources: sources})
 	}
+	addAgentDirectoryWriteGrants(&effective, agentDirsMountParentEnabled(), bindings)
 	materialized := sandboxpolicy.NewSnapshot(effective, snapshot.Applied)
 	materialized.ResolutionGroupID = snapshot.ResolutionGroupID
 	validated, err := sandboxpolicy.RevalidateSnapshot(materialized)
@@ -194,6 +279,7 @@ func reconcileAgentDirectoriesForResume(current, previous sandboxpolicy.Snapshot
 	effective := current.Effective
 	effective.Filesystem = append([]sandboxpolicy.FilesystemGrant(nil), effective.Filesystem...)
 	effective.Environment = append([]sandboxpolicy.EnvironmentEntry(nil), effective.Environment...)
+	bindings := make([]agentDirBinding, 0, len(effective.AgentDirectories))
 	for _, name := range effective.AgentDirectories {
 		path := oldBindings[name]
 		if path == "" {
@@ -206,18 +292,20 @@ func reconcileAgentDirectoriesForResume(current, previous sandboxpolicy.Snapshot
 				return sandboxpolicy.Snapshot{}, fmt.Errorf("canonicalize resumed agent-owned directory for %s: %w", name, err)
 			}
 		}
-		effective.Filesystem = append(effective.Filesystem, sandboxpolicy.FilesystemGrant{
-			Path: path, Access: sandboxpolicy.AccessWrite,
-		})
 		effective.Environment = append(effective.Environment, sandboxpolicy.EnvironmentEntry{
 			Name: name, Value: path,
 		})
 		sources := effective.Provenance.AgentDirectories[name]
 		if len(sources) > 0 {
-			effective.Provenance.Filesystem[path] = append([]sandboxpolicy.ProfileSource(nil), sources...)
 			effective.Provenance.Environment[name] = sources[len(sources)-1]
 		}
+		bindings = append(bindings, agentDirBinding{canonical: path, sources: sources})
 	}
+	// Resume re-reads the flag: existing declarations keep their frozen paths
+	// (grant shape follows the current flag), so flipping it takes effect on the
+	// next relaunch. Old bindings may sit under a different root than newly-added
+	// ones, so mount-parent grants each distinct parent (deduped by the helper).
+	addAgentDirectoryWriteGrants(&effective, agentDirsMountParentEnabled(), bindings)
 	resumed := sandboxpolicy.NewSnapshot(effective, current.Applied)
 	resumed.ResolutionGroupID = current.ResolutionGroupID
 	return sandboxpolicy.RevalidateSnapshot(resumed)

@@ -529,6 +529,11 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-feature-processes" /> enable the in-development <strong>Processes</strong> feature</label>
         <span class="cfg-hint">BPMN-lite repeatable process graphs — a drag-and-drop template editor, long-running instantiated runs, and a live process viewer. In development: surfaces appear as they land, and may change or break between versions. Stored as <code>features.processes</code>.</span>
       </div>
+      <div class="cfg-field">
+        <span class="cfg-label">Agent dirs: mount parent</span>
+        <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-feature-agent-dirs-mount-parent" /> mount the shared parent root of <strong>agent-owned directories</strong> read-write</label>
+        <span class="cfg-hint">Changes how a profile's <code>agent_directories</code> are granted to the sandbox. Off: each directory is granted individually — the agent can write inside each but cannot delete it. On: the shared parent root is granted once, so the agent can create, rewrite, and delete its own env-var'd directories. Takes effect on the next launch/resume. Stored as <code>features.agent_dirs_mount_parent</code>.</span>
+      </div>
     </div>
 
     <div class="cfg-section">
