@@ -147,11 +147,14 @@ type TemplateRecord struct {
 
 // TemplateHead is the bounded observation shape for editor heads. Ref tracks
 // semantic identity; SourceHash also advances for layout/source-only saves
-// that retain the same Ref.
+// that retain the same Ref. Actor and AuthoredAt are an optional exact-head
+// index: legacy/manual heads leave both empty rather than inferring provenance.
 type TemplateHead struct {
-	ID         string `json:"id"`
-	Ref        string `json:"ref"`
-	SourceHash string `json:"sourceHash"`
+	ID         string         `json:"id"`
+	Ref        string         `json:"ref"`
+	SourceHash string         `json:"sourceHash"`
+	Actor      state.ActorRef `json:"actor,omitempty"`
+	AuthoredAt *time.Time     `json:"authoredAt,omitempty"`
 }
 
 // TemplateAuthorship is one append-only authoring event for a process-template

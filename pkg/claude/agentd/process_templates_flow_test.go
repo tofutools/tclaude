@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -292,7 +293,7 @@ func TestProcessTemplateSaveRequiresProcessTemplatesManageForAgent(t *testing.T)
 }
 
 func TestProcessTemplateAgentSourceWorkflowPermissionsCASAndAttribution(t *testing.T) {
-	f, _ := processEngineFlow(t)
+	f, root := processEngineFlow(t)
 	const scribe = "proc-scribe-aaaa-bbbb"
 
 	tmpl := processRESTTemplate("agent-source", "created conversationally", 10)
@@ -387,15 +388,50 @@ func TestProcessTemplateAgentSourceWorkflowPermissionsCASAndAttribution(t *testi
 	})
 	require.Equal(t, http.StatusCreated, secondSave.Code, secondSave.Body.String())
 	var second struct {
-		Ref        string `json:"ref"`
-		SourceHash string `json:"sourceHash"`
-		Actor      string `json:"actor"`
+		Ref        string    `json:"ref"`
+		SourceHash string    `json:"sourceHash"`
+		Actor      string    `json:"actor"`
+		AuthoredAt time.Time `json:"authoredAt"`
 	}
 	testharness.DecodeJSON(t, secondSave, &second)
 	assert.Equal(t, saved.Ref, second.Ref, "layout-only authoring keeps the content-addressed semantic ref")
 	assert.NotEqual(t, saved.SourceHash, second.SourceHash)
 	assert.NotEqual(t, saved.Actor, second.Actor)
 
+	headsRec = processTemplateRequest(t, f, http.MethodGet, "/v1/process/template-heads", nil)
+	require.Equal(t, http.StatusOK, headsRec.Code, headsRec.Body.String())
+	testharness.DecodeJSON(t, headsRec, &heads)
+	require.Len(t, heads.Heads, 1)
+	assert.Equal(t, second.Ref, heads.Heads[0].Ref)
+	assert.Equal(t, second.SourceHash, heads.Heads[0].SourceHash)
+	assert.Equal(t, second.Actor, heads.Heads[0].Actor)
+
+	// Polling attribution is served from the exact bounded head pointer. Even a
+	// multi-megabyte corrupt append-only history is outside this read path: it
+	// cannot block/fail the heads response and must not trigger actor inference.
+	semanticHash := strings.TrimPrefix(second.Ref, "agent-source@sha256:")
+	authorshipPath := filepath.Join(root, "templates", "agent-source", "sha256-"+semanticHash, "authorship.jsonl")
+	require.NoError(t, os.WriteFile(authorshipPath, []byte(strings.Repeat("corrupt-history\n", 400_000)), 0o644))
+	corruptGet := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates/agent-source", nil)
+	assert.Equal(t, http.StatusInternalServerError, corruptGet.Code, "fixture must be genuinely corrupt: %s", corruptGet.Body.String())
+	boundedReview := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates/agent-source?authorship=omit", nil)
+	require.Equal(t, http.StatusOK, boundedReview.Code, boundedReview.Body.String())
+	assert.NotContains(t, boundedReview.Body.String(), `"authorship"`, "dashboard review omits append-only history")
+	var bounded struct {
+		CurrentRef string         `json:"currentRef"`
+		SourceHash string         `json:"sourceHash"`
+		Actor      string         `json:"actor"`
+		AuthoredAt time.Time      `json:"authoredAt"`
+		Template   model.Template `json:"template"`
+		Layout     model.Layout   `json:"layout"`
+	}
+	testharness.DecodeJSON(t, boundedReview, &bounded)
+	assert.Equal(t, second.Ref, bounded.CurrentRef)
+	assert.Equal(t, second.SourceHash, bounded.SourceHash)
+	assert.Equal(t, second.Actor, bounded.Actor)
+	assert.Equal(t, second.AuthoredAt, bounded.AuthoredAt)
+	assert.Equal(t, tmpl.Description, bounded.Template.Description, "exact external semantics remain visible")
+	assert.Equal(t, float64(120), bounded.Layout.Nodes["begin"].X)
 	headsRec = processTemplateRequest(t, f, http.MethodGet, "/v1/process/template-heads", nil)
 	require.Equal(t, http.StatusOK, headsRec.Code, headsRec.Body.String())
 	testharness.DecodeJSON(t, headsRec, &heads)

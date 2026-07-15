@@ -796,6 +796,7 @@ function externalReloadEditor({ dirty = false, confirmDiscard = async () => true
     model, blank: false, selection: { type: 'node', id: 'gone' },
     externalChange: { kind: dirty ? 'dirty' : 'clean', ref: 'alpha@sha256:new', sourceHash: 'source-new' },
     externalDecisionPending: false, externalReloadPending: false, externalReloadSeq: 0, savePending: false,
+    externalReviewSeq: 0, externalReviewPending: false, externalReviewRequest: null,
     abort: new AbortController(), options: { confirmDiscard }, modalDispose: null, inlineCommit: null,
     validation: null,
     renderExternalChange() {},
@@ -808,15 +809,117 @@ function externalReloadEditor({ dirty = false, confirmDiscard = async () => true
   return editor;
 }
 
+function externalReviewResponse(ref, sourceHash, name = 'External') {
+  return {
+    ok: true, status: 200, statusText: 'OK',
+    json: async () => ({
+      template: { id: 'alpha', name, start: 'a', nodes: { a: { type: 'start' } } },
+      edges: [{ from: '', outcome: 'start', to: 'a' }], layout: {},
+      currentRef: ref, sourceHash, semanticHash: ref.split(':').at(-1), source: `id: alpha\nname: ${name}\n`,
+    }),
+  };
+}
+
+test('repeated head polls single-flight a hung external review and a newer head aborts it', async () => {
+  const previousFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = (_path, options) => {
+    const response = deferred();
+    requests.push({ response, signal: options.signal });
+    return response.promise;
+  };
+  try {
+    const editor = externalReloadEditor();
+    editor.loadedView = { template: structuredClone(editor.model.template), edges: structuredClone(editor.model.edges), source: 'id: alpha\n' };
+    editor.externalChange = { kind: 'none', ref: '' };
+    editor.loadExternalReview = () => ProcessTemplateEditor.prototype.loadExternalReview.call(editor);
+
+    const oldHead = { ref: 'alpha@sha256:first', sourceHash: 'source-first' };
+    for (let i = 0; i < 25; i += 1) ProcessTemplateEditor.prototype.observeExternalHead.call(editor, oldHead);
+    assert.equal(requests.length, 1, 'one exact generation owns at most one in-flight review');
+    const stale = editor.externalReviewRequest.promise;
+
+    ProcessTemplateEditor.prototype.observeExternalHead.call(editor, {
+      ref: 'alpha@sha256:second', sourceHash: 'source-second',
+    });
+    assert.equal(requests.length, 2, 'the newer exact generation starts its own review');
+    assert.equal(requests[0].signal.aborted, true, 'the superseded generation is actively cancelled');
+    const current = editor.externalReviewRequest.promise;
+
+    requests[0].response.resolve(externalReviewResponse(oldHead.ref, oldHead.sourceHash, 'Stale'));
+    assert.equal(await stale, false);
+    assert.equal(editor.externalChange.ref, 'alpha@sha256:second');
+    assert.equal(editor.externalChange.review, undefined, 'an abort-ignoring stale completion cannot install review state');
+
+    requests[1].response.resolve(externalReviewResponse('alpha@sha256:second', 'source-second', 'Current'));
+    assert.equal(await current, true);
+    assert.ok(editor.externalChange.review);
+    assert.equal(editor.externalReviewPending, false);
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+  }
+});
+
+test('editor teardown aborts an in-flight external review', async () => {
+  const previousFetch = globalThis.fetch;
+  let requestSignal;
+  globalThis.fetch = (_path, options) => new Promise((_resolve, reject) => {
+    requestSignal = options.signal;
+    requestSignal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
+  });
+  try {
+    const editor = externalReloadEditor();
+    editor.loadedView = { template: structuredClone(editor.model.template), edges: [], source: 'id: alpha\n' };
+    editor.externalChange = { kind: 'clean', ref: 'alpha@sha256:new', sourceHash: 'source-new' };
+    editor.nodeChooserDispose = null; editor.closeInline = () => {}; editor.validation = null;
+    editor.graph = { destroy() {} }; editor.modalDispose = null;
+    editor.mount = { classList: { remove() {} }, replaceChildren() {}, __processEditor: editor };
+    const pending = ProcessTemplateEditor.prototype.loadExternalReview.call(editor);
+    ProcessTemplateEditor.prototype.destroy.call(editor);
+    assert.equal(requestSignal.aborted, true);
+    assert.equal(await pending, false);
+    assert.equal(editor.externalReviewPending, false);
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+  }
+});
+
+test('a hung external review is cancelled at the bounded timeout', async () => {
+  const previousFetch = globalThis.fetch;
+  let requestSignal;
+  globalThis.fetch = (_path, options) => new Promise((_resolve, reject) => {
+    requestSignal = options.signal;
+    requestSignal.addEventListener('abort', () => reject(new DOMException('timed out', 'AbortError')), { once: true });
+  });
+  try {
+    const editor = externalReloadEditor();
+    editor.options.externalReviewTimeoutMs = 5;
+    editor.loadedView = { template: structuredClone(editor.model.template), edges: [], source: 'id: alpha\n' };
+    assert.equal(await ProcessTemplateEditor.prototype.loadExternalReview.call(editor), false);
+    assert.equal(requestSignal.aborted, true);
+    assert.equal(editor.externalReviewPending, false);
+    assert.equal(editor.lastStatus, undefined, 'expected cancellation is not reported as a failed review');
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+  }
+});
+
 test('a stale review GET cannot clear or reorder the polled external generation', async () => {
   const previousFetch = globalThis.fetch;
-  globalThis.fetch = async () => ({
+  let requested = '';
+  globalThis.fetch = async (path) => {
+    requested = path;
+    return ({
     ok: true, status: 200, statusText: 'OK',
     json: async () => ({
       template: { id: 'alpha', nodes: { a: { type: 'start' } } }, edges: [], layout: {},
       currentRef: 'alpha@sha256:old', sourceHash: 'source-old', semanticHash: 'old', source: 'id: alpha\n',
     }),
-  });
+    });
+  };
   try {
     const editor = externalReloadEditor();
     editor.loadedView = { template: structuredClone(editor.model.template), edges: [], source: 'id: alpha\n' };
@@ -824,10 +927,80 @@ test('a stale review GET cannot clear or reorder the polled external generation'
     assert.equal(await ProcessTemplateEditor.prototype.loadExternalReview.call(editor), false);
     assert.deepEqual(editor.externalChange, { kind: 'clean', ref: 'alpha@sha256:new', sourceHash: 'source-new' });
     assert.equal(editor.externalReviewPending, false);
+    assert.match(requested, /[?&]authorship=omit(?:&|$)/, 'automatic review never requests append-only history');
   } finally {
     if (previousFetch === undefined) delete globalThis.fetch;
     else globalThis.fetch = previousFetch;
   }
+});
+
+test('a changed head automatically loads bounded review with exact head attribution', async () => {
+  const previousFetch = globalThis.fetch;
+  let requested = '';
+  globalThis.fetch = async (path) => {
+    requested = path;
+    return {
+      ok: true, status: 200, statusText: 'OK',
+      json: async () => ({
+        template: { id: 'alpha', name: 'External', start: 'a', nodes: { a: { type: 'start' } } },
+        edges: [{ from: '', outcome: 'start', to: 'a' }], layout: { nodes: { a: { x: 40, y: 50 } } },
+        currentRef: 'alpha@sha256:new', sourceHash: 'source-new', semanticHash: 'semantic-new',
+        source: 'id: alpha\nname: External\n', actor: 'agent:agt_exact', authoredAt: '2026-07-15T08:00:00Z',
+      }),
+    };
+  };
+  try {
+    const editor = externalReloadEditor();
+    editor.loadedView = { template: structuredClone(editor.model.template), edges: structuredClone(editor.model.edges), source: 'id: alpha\n' };
+    editor.externalChange = { kind: 'none', ref: '' };
+    editor.externalReviewSeq = 0; editor.externalReviewPending = false;
+    let reviewPromise;
+    editor.loadExternalReview = () => {
+      reviewPromise = ProcessTemplateEditor.prototype.loadExternalReview.call(editor);
+      return reviewPromise;
+    };
+
+    ProcessTemplateEditor.prototype.observeExternalHead.call(editor, {
+      ref: 'alpha@sha256:new', sourceHash: 'source-new', actor: 'agent:agt_polled', authoredAt: '2026-07-15T07:59:00Z',
+    });
+    assert.ok(reviewPromise, 'a changed polled head starts automatic review');
+    assert.equal(await reviewPromise, true);
+    assert.match(requested, /[?&]authorship=omit(?:&|$)/);
+    assert.equal(editor.externalChange.actor, 'agent:agt_exact');
+    assert.equal(editor.externalChange.authoredAt, '2026-07-15T08:00:00Z');
+    assert.ok(editor.externalChange.review, 'bounded response still exposes exact external semantics');
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+  }
+});
+
+test('external review rendering exposes node-id and source-limit truncation markers', () => {
+  const control = () => ({ hidden: false, disabled: false, textContent: '' });
+  const editor = {
+    externalChange: {
+      kind: 'clean', ref: 'alpha@sha256:abcdef123456', sourceHash: 'source-new',
+      review: { summary: {
+        addedNodes: ['a', 'b'], addedNodeCount: 7, addedNodesTruncated: true,
+        removedNodes: [], removedNodeCount: 0, changedNodes: [], changedNodeCount: 0,
+        addedEdges: 0, removedEdges: 0, metadataChanged: false,
+        source: {
+          firstLine: 2, removedLines: 20, addedLines: 20, before: ['old'], after: ['new'], truncated: true,
+          truncation: { lines: true, characters: true, bytes: true },
+        },
+      } },
+    },
+    externalBanner: { hidden: true, classList: { toggle() {} } },
+    externalMessage: control(), externalActorButton: control(), externalKeepButton: control(),
+    externalReloadButton: control(), externalReviewButton: control(),
+    externalReviewPanel: { hidden: false }, externalGraphSummary: control(), externalSourceSummary: control(),
+    externalDecisionPending: false, externalReloadPending: false, externalReviewPending: false, savePending: false,
+    options: {}, root: { classList: { toggle() {} } },
+  };
+
+  ProcessTemplateEditor.prototype.renderExternalChange.call(editor);
+  assert.match(editor.externalGraphSummary.textContent, /\+7 nodes \(a, b, … 5 more IDs omitted\)/);
+  assert.match(editor.externalSourceSummary.textContent, /source preview truncated at lines, characters, UTF-8 bytes limits/);
 });
 
 test('dirty external Reload never fetches or replaces the model when discard is denied', async () => {

@@ -260,7 +260,12 @@ func (s *FS) putTemplateEditorSource(
 		commit.Actor = event.Actor
 		commit.AuthoredAt = event.AuthoredAt
 	}
-	if err := s.writeTemplateHead(TemplateHead{ID: record.ID, Ref: record.Ref, SourceHash: commit.SourceHash}); err != nil {
+	publishedHead := TemplateHead{ID: record.ID, Ref: record.Ref, SourceHash: commit.SourceHash, Actor: commit.Actor}
+	if !commit.AuthoredAt.IsZero() {
+		authoredAt := commit.AuthoredAt
+		publishedHead.AuthoredAt = &authoredAt
+	}
+	if err := s.writeTemplateHead(publishedHead); err != nil {
 		return rollback(err)
 	}
 	if intent != nil {
@@ -277,9 +282,12 @@ func (s *FS) putTemplateEditorSource(
 	return commit, nil
 }
 
-const templateSaveIntentVersion = 1
+const (
+	templateSaveIntentLegacyVersion = 1
+	templateSaveIntentVersion       = 2
+)
 
-// An attributed editor save updates up to four filesystem records. Its durable
+// An attributed editor save updates up to five filesystem records. Its durable
 // intent is written and synced before those mutations. A process crash leaves
 // the intent behind, and every template read/list/write path recovers it under
 // the same per-template lock before exposing state. If recovery cannot finish,
@@ -310,6 +318,7 @@ func (s *FS) newTemplateSaveIntent(tmpl *model.Template) (*templateSaveIntent, e
 	}
 	paths := []string{
 		filepath.Join(s.root, "templates", tmpl.ID, "head"),
+		filepath.Join(s.root, "templates", tmpl.ID, "head-attribution"),
 		filepath.Join(dir, "template.yaml"),
 		filepath.Join(dir, "template.json"),
 		filepath.Join(dir, "authorship.jsonl"),
@@ -448,7 +457,7 @@ func (s *FS) recoverAttributedTemplateSaveUnlocked(ctx context.Context, id strin
 }
 
 func (s *FS) validateTemplateSaveIntent(intent *templateSaveIntent) error {
-	if intent == nil || intent.Version != templateSaveIntentVersion {
+	if intent == nil || (intent.Version != templateSaveIntentLegacyVersion && intent.Version != templateSaveIntentVersion) {
 		return fmt.Errorf("%w: unsupported attributed save intent", ErrContentMismatch)
 	}
 	dir, err := s.templateDir(intent.ID, intent.SemanticHash)
@@ -457,9 +466,13 @@ func (s *FS) validateTemplateSaveIntent(intent *templateSaveIntent) error {
 	}
 	want := []string{
 		filepath.Join(s.root, "templates", intent.ID, "head"),
+		filepath.Join(s.root, "templates", intent.ID, "head-attribution"),
 		filepath.Join(dir, "template.yaml"),
 		filepath.Join(dir, "template.json"),
 		filepath.Join(dir, "authorship.jsonl"),
+	}
+	if intent.Version == templateSaveIntentLegacyVersion {
+		want = append(want[:1], want[2:]...)
 	}
 	if len(intent.Files) != len(want) {
 		return fmt.Errorf("%w: attributed save intent has %d files", ErrContentMismatch, len(intent.Files))
@@ -678,6 +691,25 @@ func (s *FS) GetTemplateHead(ctx context.Context, id string) (TemplateRecord, er
 	return s.getTemplateHeadUnlocked(ctx, id)
 }
 
+// GetTemplateHeadGeneration returns the bounded exact editor generation,
+// including optional same-commit attribution. It never reads template source
+// or append-only authorship history.
+func (s *FS) GetTemplateHeadGeneration(ctx context.Context, id string) (TemplateHead, error) {
+	if err := ctx.Err(); err != nil {
+		return TemplateHead{}, err
+	}
+	unlock, err := s.lockTemplate(ctx, id)
+	if err != nil {
+		return TemplateHead{}, err
+	}
+	defer unlock()
+	if err := s.recoverAttributedTemplateSaveUnlocked(ctx, id); err != nil {
+		return TemplateHead{}, err
+	}
+	head, _, err := s.getTemplateHeadStateUnlocked(ctx, id)
+	return head, err
+}
+
 // ListTemplateHeads returns one small, sorted, committed authoring generation
 // per template. Each read takes the existing per-template lock and recovers a
 // crash intent before observing the pointer. Ref-only and pointer-less legacy
@@ -731,7 +763,14 @@ func (s *FS) getTemplateHeadUnlocked(ctx context.Context, id string) (TemplateRe
 	return record, err
 }
 
-const templateHeadPointerVersion = 1
+const (
+	// The authoritative pointer stays v1 so a normal save remains readable by
+	// the prior release. Exact attribution lives in an optional bounded sidecar
+	// that older binaries ignore and new readers validate against ref+sourceHash.
+	templateHeadPointerVersion     = 1
+	templateHeadAttributionVersion = 1
+	maxTemplateHeadPointerBytes    = 4 << 10
+)
 
 type templateHeadPointer struct {
 	Version    int    `json:"version"`
@@ -739,12 +778,28 @@ type templateHeadPointer struct {
 	SourceHash string `json:"sourceHash"`
 }
 
+type templateHeadAttribution struct {
+	Version    int             `json:"version"`
+	Ref        string          `json:"ref"`
+	SourceHash string          `json:"sourceHash"`
+	Actor      json.RawMessage `json:"actor"`
+	AuthoredAt json.RawMessage `json:"authoredAt"`
+}
+
+type templateHeadAttributionWrite struct {
+	Version    int            `json:"version"`
+	Ref        string         `json:"ref"`
+	SourceHash string         `json:"sourceHash"`
+	Actor      state.ActorRef `json:"actor,omitempty"`
+	AuthoredAt *time.Time     `json:"authoredAt,omitempty"`
+}
+
 func (s *FS) getTemplateHeadStateUnlocked(ctx context.Context, id string) (TemplateHead, TemplateRecord, error) {
 	if err := safeSegment(id); err != nil {
 		return TemplateHead{}, TemplateRecord{}, fmt.Errorf("invalid template id: %w", err)
 	}
 	headPath := filepath.Join(s.root, "templates", id, "head")
-	if data, err := os.ReadFile(headPath); err == nil {
+	if data, err := readTemplateHeadPointer(headPath); err == nil {
 		head, legacy, decodeErr := decodeTemplateHead(id, data)
 		if decodeErr != nil {
 			return TemplateHead{}, TemplateRecord{}, decodeErr
@@ -761,6 +816,8 @@ func (s *FS) getTemplateHeadStateUnlocked(ctx context.Context, id string) (Templ
 			if writeErr := s.writeTemplateHead(head); writeErr != nil {
 				return TemplateHead{}, TemplateRecord{}, writeErr
 			}
+		} else {
+			head.Actor, head.AuthoredAt = s.readTemplateHeadAttribution(id, head.Ref, head.SourceHash)
 		}
 		return head, record, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -795,6 +852,22 @@ func (s *FS) getTemplateHeadStateUnlocked(ctx context.Context, id string) (Templ
 	return head, records[0], nil
 }
 
+func readTemplateHeadPointer(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxTemplateHeadPointerBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxTemplateHeadPointerBytes {
+		return nil, fmt.Errorf("%w: template head exceeds %d bytes", ErrContentMismatch, maxTemplateHeadPointerBytes)
+	}
+	return data, nil
+}
+
 func templateRecordsForID(ctx context.Context, s *FS, id string) ([]TemplateRecord, error) {
 	return s.listTemplateRecordsForIDUnlocked(ctx, id)
 }
@@ -826,6 +899,36 @@ func decodeTemplateHead(id string, data []byte) (TemplateHead, bool, error) {
 		return TemplateHead{}, false, fmt.Errorf("%w: invalid template head for %q", ErrContentMismatch, id)
 	}
 	return TemplateHead{ID: id, Ref: pointer.Ref, SourceHash: pointer.SourceHash}, false, nil
+}
+
+func (s *FS) readTemplateHeadAttribution(id, ref, sourceHash string) (state.ActorRef, *time.Time) {
+	path := filepath.Join(s.root, "templates", id, "head-attribution")
+	data, err := readTemplateHeadPointer(path)
+	if err != nil {
+		return "", nil
+	}
+	var pointer templateHeadAttribution
+	dec := json.NewDecoder(bytes.NewReader(bytes.TrimSpace(data)))
+	dec.DisallowUnknownFields()
+	if dec.Decode(&pointer) != nil {
+		return "", nil
+	}
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return "", nil
+	}
+	if pointer.Version != templateHeadAttributionVersion || pointer.Ref != ref || pointer.SourceHash != sourceHash {
+		return "", nil
+	}
+	var actor state.ActorRef
+	var authoredAt *time.Time
+	if len(pointer.Actor) > 0 && len(pointer.AuthoredAt) > 0 {
+		if json.Unmarshal(pointer.Actor, &actor) != nil || json.Unmarshal(pointer.AuthoredAt, &authoredAt) != nil ||
+			!state.ValidateActorRef(actor) || authoredAt == nil || authoredAt.IsZero() {
+			actor = ""
+			authoredAt = nil
+		}
+	}
+	return actor, authoredAt
 }
 
 func (s *FS) templateRecordForRefUnlocked(ref string) (TemplateRecord, error) {
@@ -862,7 +965,10 @@ func (s *FS) templateHeadForRecordUnlocked(ctx context.Context, record TemplateR
 
 func (s *FS) writeTemplateHead(head TemplateHead) error {
 	refID, _, err := parseTemplateRef(head.Ref)
-	if head.ID == "" || refID != head.ID || err != nil || !isHexSHA256(head.SourceHash) {
+	if head.ID == "" || refID != head.ID || err != nil || !isHexSHA256(head.SourceHash) ||
+		(head.Actor == "") != (head.AuthoredAt == nil) ||
+		(head.Actor != "" && !state.ValidateActorRef(head.Actor)) ||
+		(head.AuthoredAt != nil && head.AuthoredAt.IsZero()) {
 		return fmt.Errorf("%w: invalid template head for %q", ErrContentMismatch, head.ID)
 	}
 	data, err := json.Marshal(templateHeadPointer{
@@ -871,8 +977,29 @@ func (s *FS) writeTemplateHead(head TemplateHead) error {
 	if err != nil {
 		return fmt.Errorf("encode template head: %w", err)
 	}
-	path := filepath.Join(s.root, "templates", head.ID, "head")
-	return writeFileAtomic(path, append(data, '\n'), 0o644)
+	if len(data)+1 > maxTemplateHeadPointerBytes {
+		return fmt.Errorf("%w: template head exceeds %d bytes", ErrContentMismatch, maxTemplateHeadPointerBytes)
+	}
+	dir := filepath.Join(s.root, "templates", head.ID)
+	attributionPath := filepath.Join(dir, "head-attribution")
+	if head.Actor != "" {
+		attribution, marshalErr := json.Marshal(templateHeadAttributionWrite{
+			Version: templateHeadAttributionVersion, Ref: head.Ref, SourceHash: head.SourceHash,
+			Actor: head.Actor, AuthoredAt: head.AuthoredAt,
+		})
+		if marshalErr != nil {
+			return fmt.Errorf("encode template head attribution: %w", marshalErr)
+		}
+		if len(attribution)+1 > maxTemplateHeadPointerBytes {
+			return fmt.Errorf("%w: template head attribution exceeds %d bytes", ErrContentMismatch, maxTemplateHeadPointerBytes)
+		}
+		if err := writeFileAtomic(attributionPath, append(attribution, '\n'), 0o644); err != nil {
+			return fmt.Errorf("write template head attribution: %w", err)
+		}
+	} else if err := os.Remove(attributionPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove template head attribution: %w", err)
+	}
+	return writeFileAtomic(filepath.Join(dir, "head"), append(data, '\n'), 0o644)
 }
 
 func sourceHash(source []byte) string {
