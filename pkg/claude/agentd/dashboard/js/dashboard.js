@@ -1,4 +1,4 @@
-import { esc } from './helpers.js';
+import { esc, pickDirectory } from './helpers.js';
 import { fmtRemaining } from './tabs.js';
 import { applySlopThemeIfRequested, bindSlopHotkey, bindWizardHotkey, wizWord } from './slop.js';
 import {
@@ -37,15 +37,13 @@ import { bindDnd } from './dnd.js';
 import { bindGroupReorder } from './group-reorder.js';
 import { bindDockDnd } from './dock-dnd.js';
 import { bindDockSaveDnd } from './dock-save-dnd.js';
-import {
-  bindGroupCreateModal,
-} from './modal-message.js';
+import { bindGroupsCleanupButtons } from './modal-message.js';
 import { bindOperatorMessageModal, openOperatorMessageModal } from './modal-operator-message.js';
 import {
   openPermEditModal, openSudoGrantModal, openSpawnPermEditor, pickAgent,
 } from './message-access-dialog-controller.js';
 import {
-  bindTemplatesUI, bindGroupImportModal, summonTemplateScribe,
+  bindTemplatesUI, bindGroupImportModal, openTemplatesManageModal, summonTemplateScribe,
 } from './modal-templates.js';
 import { bindProfilesUI } from './modal-profiles.js';
 import { bindSandboxProfilesUI, refreshSpawnSandboxProfileUI, summonSandboxScribe } from './sandbox-profiles.js';
@@ -65,7 +63,7 @@ import { bindDock } from './dock.js';
 import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
 import {
-  mountAccessFeature, mountActionDialogsFeature, mountAuditFeature, mountConfigFeature, mountCostsFeature, mountDebugFeature, mountDirectoryPickerFeature, mountDockFeature, mountGroupsFeature, mountJobsFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessageAccessDialogsFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature, mountTerminalsFeature, mountTransactionDialogsFeature, mountWorktreeCleanupFeature,
+  mountAccessFeature, mountActionDialogsFeature, mountAuditFeature, mountConfigFeature, mountCostsFeature, mountDebugFeature, mountDirectoryPickerFeature, mountDockFeature, mountGroupCreateFeature, mountGroupsFeature, mountJobsFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessageAccessDialogsFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature, mountTerminalsFeature, mountTransactionDialogsFeature, mountWorktreeCleanupFeature,
 } from './preact-loader.js';
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
 import { triggerExportDownload } from './export-progress.js';
@@ -218,6 +216,17 @@ export function sudoBadge(activeSudo, fallbackConvID) {
     mountDirectoryPickerFeature({
       prefersWeb: () => lastSnapshot?.default_directory_picker === 'web',
     }),
+    mountGroupCreateFeature({
+      getSnapshot: () => lastSnapshot,
+      pickDirectory,
+      openTemplateManager: openTemplatesManageModal,
+      confirmDiscard,
+      words: wizWord,
+      notify: toast,
+      refresh: dashboardActions.refresh,
+      setExpanded: (name) => dashPrefs.setItem(`tclaude.dash.group.${name}`, '1'),
+      recordInteraction: recordGroupInteraction,
+    }),
     mountManagementFeature({
       confirm: confirmModal, confirmDiscard, notify: toast,
       getSnapshot: () => lastSnapshot,
@@ -293,7 +302,7 @@ export function sudoBadge(activeSudo, fallbackConvID) {
     for (const cleanup of pageCleanups.reverse()) cleanup?.();
   });
   bindOperatorMessageModal();
-  bindGroupCreateModal();
+  bindGroupsCleanupButtons();
   bindTemplatesUI();
   bindProfilesUI();
   bindSandboxProfilesUI();

@@ -93,13 +93,12 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	// "+ new group" button opens (openGroupCreateModal → POST /api/groups on
 	// submit), so it adds no new behaviour — a thin surface, like every other
 	// command. Pinned by its wiz(plain, arcane) label and the reused opener +
-	// its import (the opener had to be exported from modal-message.js for the
-	// palette to reach it). The arcane "Form a party…" twin's presentation is
+	// its import from the stable Preact controller. The arcane "Form a party…" twin's presentation is
 	// covered by TestDashboardHTML_WizardCommandPaletteSynonyms.
-	must("import { openGroupCreateModal } from './modal-message.js'",
-		"palette imports the existing group-create modal opener")
-	must("bindGroupCreateModal, openGroupCreateModal,",
-		"modal-message.js exports the group-create opener for the palette")
+	must("import { openGroupCreateModal } from './group-create-controller.js'",
+		"palette imports the stable Preact group-create controller")
+	must("registerGroupCreateController(controller)",
+		"the Preact owner registers the controller used by every external entry point")
 	must("wiz('Create new group…', 'Form a party…')",
 		"the palette offers a create-group command (plain label + arcane Form-a-party label)")
 	must("run: () => openGroupCreateModal()",
