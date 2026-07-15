@@ -95,7 +95,7 @@ func TestDashboardTransactionGroupRetireExclusiveOwnership(t *testing.T) {
 	}
 	for _, adjacent := range []string{
 		"function openDeleteGroupModal(group)",
-		"export async function openCleanupModal(opts)",
+		"export async function openCleanupModal(options = {})",
 		"async function openWorktreeCleanup(group = '')",
 	} {
 		if !strings.Contains(refresh, adjacent) {
