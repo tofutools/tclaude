@@ -111,14 +111,17 @@ const groupsDescriptor = createIslandDescriptor({
     const actionsModule = import('./groups-actions.js');
     const renderModule = import('./render.js');
     const [
-      { mountGroupsIsland }, { groupsState }, { createGroupsActions }, { renderGroups },
+      { mountGroupsIsland }, { groupsState }, { createGroupsActions }, { memberTableHTML },
     ] = await Promise.all([islandModule, stateModule, actionsModule, renderModule]);
     const actions = createGroupsActions({ state: groupsState, ...dependencies });
+    const presentation = {
+      memberTable: memberTableHTML,
+    };
     return {
       state: groupsState,
       mount: (registerCleanup) => mountGroupsIsland({
         filterHost, listHost, state: groupsState, actions,
-        renderGroupsHTML: renderGroups, registerCleanup,
+        presentation, registerCleanup,
       }),
     };
   },
