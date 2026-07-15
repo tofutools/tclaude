@@ -23,8 +23,9 @@ type jobsPage struct {
 			Status string `json:"status"`
 		} `json:"export"`
 		Cron *struct {
-			ID   int64  `json:"id"`
-			Name string `json:"name"`
+			ID         int64  `json:"id"`
+			Name       string `json:"name"`
+			TargetRole string `json:"target_role"`
 		} `json:"cron"`
 	} `json:"rows"`
 	Offset          int `json:"offset"`
@@ -47,7 +48,8 @@ func getJobs(t *testing.T, dash http.Handler, query string) jobsPage {
 // filter (it searches the WHOLE set, not a page), offset/limit windowing and
 // stale-offset clamping (the /api/retired contract).
 func TestDashboardJobs_UnifiedListing(t *testing.T) {
-	newFlow(t)
+	f := newFlow(t)
+	group := f.HaveGroup("gamma-team")
 	dash := agentd.BuildDashboardHandlerForTest()
 
 	_, err := db.InsertExportJob(&db.ExportJob{
@@ -61,8 +63,8 @@ func TestDashboardJobs_UnifiedListing(t *testing.T) {
 	})
 	require.NoError(t, err)
 	_, err = db.InsertAgentCronJob(&db.AgentCronJob{
-		Name: "gamma-ping", TargetKind: db.CronTargetConv,
-		TargetConv:      "jjj00000-0000-4000-8000-000000000001",
+		Name: "gamma-ping", TargetKind: db.CronTargetGroup,
+		GroupID: group.ID, TargetRole: "reviewer",
 		IntervalSeconds: 300, Subject: "ping", Body: "status?", Enabled: true,
 	})
 	require.NoError(t, err)
@@ -83,6 +85,7 @@ func TestDashboardJobs_UnifiedListing(t *testing.T) {
 			require.NotNil(t, r.Cron, "a cron row must carry its cron payload")
 			assert.Nil(t, r.Export)
 			assert.Equal(t, "gamma-ping", r.Cron.Name)
+			assert.Equal(t, "reviewer", r.Cron.TargetRole, "group role is available for edit prefill")
 		}
 	}
 	assert.Equal(t, map[string]int{"export": 2, "cron": 1}, kinds)
