@@ -156,7 +156,7 @@ test('bulk retire actions preserve the exact group and ungrouped wire contracts'
   assert.deepEqual(await completion, result);
 });
 
-test('group retire preview keeps hidden checks, freezes retry choices, and renders partial worktree results', async (t) => {
+test('group retire preview preserves bulk-only worktree coupling, hidden checks, frozen retry, and partial results', async (t) => {
   const first = deferred();
   const second = deferred();
   const requests = [];
