@@ -134,19 +134,21 @@ export function mountGroupsFeature(dependencies = {}) {
 const linksDescriptor = createIslandDescriptor({
   name: 'links',
   label: 'Inter-group links',
-  hosts: { filterHost: '#links-filter-root', listHost: '#links-list' },
+  hosts: { host: '#links-feature-root' },
   failureClass: 'links-error',
-  load: async ({ hosts: { filterHost, listHost }, dependencies }) => {
+  load: async ({ hosts: { host }, dependencies }) => {
     const islandModule = import('./links-island.js');
     const stateModule = import('./links-state.js');
-    const [{ mountLinksIsland }, { linksState }] = await Promise.all([
-      islandModule, stateModule,
+    const actionsModule = import('./links-actions.js');
+    const [{ mountLinksIsland }, { linksState }, { createLinksActions }] = await Promise.all([
+      islandModule, stateModule, actionsModule,
     ]);
+    const actions = createLinksActions({ state: linksState, ...dependencies });
     return {
       state: linksState,
       mount: (registerCleanup) => mountLinksIsland({
-        filterHost, listHost, state: linksState, openCreate: dependencies.openCreate,
-        registerCleanup,
+        host, state: linksState, actions,
+        confirmDiscard: dependencies.confirmDiscard, registerCleanup,
       }),
     };
   },
