@@ -7185,6 +7185,48 @@ body.wizard #add-member-modal .add-member-foot kbd {
   background: #241b3d; border-color: #7a5db0; color: #f3e6c0;
 }
 
+/* TCL-454: the shared Preact chooser is mounted at
+   #cron-pick-target-modal for message sender, cron owner/target, and Access
+   sudo launches. Give that separately-keyed overlay the same readable wizard
+   palette as the invite-familiar picker; without the id-scoped rules, broad
+   wizard span coloring makes its live row copy nearly black on #0d1117. */
+body.wizard #cron-pick-target-modal .add-member-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #cron-pick-target-modal .add-member-modal h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #cron-pick-target-modal .add-member-modal h3 .muted,
+body.wizard #cron-pick-target-modal .add-member-modal h3 .theme-copy-wizard { color: #d9b45a; }
+body.wizard #cron-pick-target-modal .add-member-search {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
+}
+body.wizard #cron-pick-target-modal .add-member-search:focus { border-color: #a97bd6; }
+body.wizard #cron-pick-target-modal .add-member-list {
+  background: #120c24; border-color: rgba(122, 93, 176, 0.5);
+}
+body.wizard #cron-pick-target-modal .add-member-row { border-bottom-color: #241b3d; }
+body.wizard #cron-pick-target-modal .add-member-row.highlighted { background: #3a2a63; }
+body.wizard #cron-pick-target-modal .add-member-row .rowname { color: #f3e6c0; }
+body.wizard #cron-pick-target-modal .add-member-row .id,
+body.wizard #cron-pick-target-modal .add-member-row .descr,
+body.wizard #cron-pick-target-modal .add-member-row .groups-tag,
+body.wizard #cron-pick-target-modal .add-member-row .offline,
+body.wizard #cron-pick-target-modal .add-member-empty,
+body.wizard #cron-pick-target-modal .add-member-foot { color: #b39ddb; }
+body.wizard #cron-pick-target-modal .add-member-row .role { color: #d9b45a; }
+body.wizard #cron-pick-target-modal .add-member-row .online { color: #5ee58a; }
+body.wizard #cron-pick-target-modal .add-member-foot input[type=checkbox] { accent-color: #a97bd6; }
+body.wizard #cron-pick-target-modal .add-member-foot kbd {
+  background: #241b3d; border-color: #7a5db0; color: #f3e6c0;
+}
+
 /* ─── Wizard "⚔ Form a party" button — the 🧙 re-skin of the filter bar's
    "+ new group" primary. Its label is a pure-CSS span swap (the
    .group-create-label-regular / .group-create-label-wizard pair, same idiom as
