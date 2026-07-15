@@ -16,7 +16,7 @@ import (
 )
 
 // codexApprovalMonitorDebounce lets Codex's atomic config edit settle before
-// the daemon parses and promotes an app-tool approval.
+// the daemon parses and promotes durable user choices from the launch profile.
 var codexApprovalMonitorDebounce = 100 * time.Millisecond
 
 var codexApprovalCleanupTailRe = regexp.MustCompile(`^; (?:}; )?exit \$tclaude_(?:launch|resume)_status$`)
@@ -143,8 +143,8 @@ func (m *codexApprovalMonitor) loop() {
 	}
 }
 
-// reconcileLiveProfilesAtStartup recovers approvals written while agentd was
-// down, but only for managed profiles named by currently live tmux panes.
+// reconcileLiveProfilesAtStartup recovers durable choices written while agentd
+// was down, but only for managed profiles named by currently live tmux panes.
 // Crash leftovers and retired/stopped sessions remain untouched for the normal
 // age-bounded stale-profile sweep.
 func (m *codexApprovalMonitor) reconcileLiveProfilesAtStartup() {
@@ -287,13 +287,13 @@ func (m *codexApprovalMonitor) reconcile(path string) {
 	if !harness.IsCodexAgentLaunchProfilePath(path) {
 		return
 	}
-	report, err := harness.PromoteCodexLaunchProfileApprovals(path)
+	report, err := harness.PromoteCodexLaunchProfileChanges(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			slog.Debug("codex-approval-monitor: profile not eligible for promotion", "path", path, "error", err)
 			return
 		}
-		slog.Warn("codex-approval-monitor: refused profile approval promotion", "path", path, "error", err)
+		slog.Warn("codex-approval-monitor: refused launch-profile promotion", "path", path, "error", err)
 		return
 	}
 	if len(report.Conflicts) > 0 {
@@ -303,5 +303,13 @@ func (m *codexApprovalMonitor) reconcile(path string) {
 	if report.Added > 0 {
 		slog.Info("codex-approval-monitor: persisted app-tool Always allow choice",
 			"path", path, "added", report.Added, "already_present", report.Existing)
+	}
+	if len(report.NoticeConflicts) > 0 {
+		slog.Warn("codex-approval-monitor: kept existing global notice preferences",
+			"path", path, "conflicts", report.NoticeConflicts)
+	}
+	if report.NoticesAdded > 0 {
+		slog.Info("codex-approval-monitor: persisted Codex notice dismissal",
+			"path", path, "added", report.NoticesAdded, "already_present", report.NoticesExisting)
 	}
 }

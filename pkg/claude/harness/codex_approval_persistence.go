@@ -16,6 +16,12 @@ import (
 
 var codexAppIDRe = regexp.MustCompile(`^asdk_app_[A-Za-z0-9]+$`)
 
+const CodexNoticeHideRateLimitModelNudge = "hide_rate_limit_model_nudge"
+
+var promotedCodexNoticeKeys = map[string]struct{}{
+	CodexNoticeHideRateLimitModelNudge: {},
+}
+
 // CodexToolApproval is one app-tool "Always allow" choice from a
 // launch-specific config profile.
 type CodexToolApproval struct {
@@ -23,15 +29,33 @@ type CodexToolApproval struct {
 	Tool  string
 }
 
-// CodexApprovalPromotion reports what a launch-profile reconciliation found.
+// CodexNoticePreference is one allowlisted, monotonic Codex notice dismissal
+// written into a launch-specific profile. Only true values are promoted: a
+// false value means "show this notice" and is not a durable user choice made by
+// dismissing a prompt.
+type CodexNoticePreference struct {
+	Key   string
+	Value bool
+}
+
+// CodexProfilePromotion reports what a launch-profile reconciliation found.
 // Conflicts are deliberately not overwritten: an existing global decision is
 // user-owned and wins over the temporary profile.
-type CodexApprovalPromotion struct {
-	Found     int
-	Added     int
-	Existing  int
-	Conflicts []string
+type CodexProfilePromotion struct {
+	Found           int
+	Added           int
+	Existing        int
+	Conflicts       []string
+	NoticesFound    int
+	NoticesAdded    int
+	NoticesExisting int
+	NoticeConflicts []string
 }
+
+// CodexApprovalPromotion is kept for source compatibility with callers of the
+// original app-approval-only reconciliation API.
+// Deprecated: use CodexProfilePromotion.
+type CodexApprovalPromotion = CodexProfilePromotion
 
 type codexLaunchProfileValidationError struct{ err error }
 
@@ -132,6 +156,42 @@ func ExtractCodexLaunchProfileApprovals(data []byte) ([]CodexToolApproval, error
 	return approvals, nil
 }
 
+// ExtractCodexLaunchProfileNotices returns allowlisted notice dismissals that
+// Codex wrote into a launch-specific profile. Unknown notice keys and false
+// values remain profile-local; a malformed notice table is treated like any
+// other malformed managed profile.
+func ExtractCodexLaunchProfileNotices(data []byte) ([]CodexNoticePreference, error) {
+	var profile map[string]any
+	if err := toml.Unmarshal(data, &profile); err != nil {
+		return nil, fmt.Errorf("parse managed Codex profile: %w", err)
+	}
+	rawNotice, exists := profile["notice"]
+	if !exists {
+		return nil, nil
+	}
+	notice, ok := stringMap(rawNotice)
+	if !ok {
+		return nil, fmt.Errorf("managed Codex profile notice key has a non-table shape")
+	}
+
+	preferences := make([]CodexNoticePreference, 0, len(promotedCodexNoticeKeys))
+	for key := range promotedCodexNoticeKeys {
+		rawValue, exists := notice[key]
+		if !exists {
+			continue
+		}
+		value, ok := rawValue.(bool)
+		if !ok {
+			return nil, fmt.Errorf("managed Codex profile notice %s has a non-boolean value", key)
+		}
+		if value {
+			preferences = append(preferences, CodexNoticePreference{Key: key, Value: true})
+		}
+	}
+	sort.Slice(preferences, func(i, j int) bool { return preferences[i].Key < preferences[j].Key })
+	return preferences, nil
+}
+
 func validCodexToolName(name string) bool {
 	if name == "" || len(name) > 256 || !utf8.ValidString(name) {
 		return false
@@ -144,24 +204,64 @@ func stringMap(v any) (map[string]any, bool) {
 	return m, ok
 }
 
-// PromoteCodexLaunchProfileApprovals copies explicit app-tool "Always allow"
-// decisions into the persistent Codex config. It never overwrites an existing
-// per-tool decision and never copies unrelated launch-profile settings.
-func PromoteCodexLaunchProfileApprovals(profilePath string) (CodexApprovalPromotion, error) {
-	var report CodexApprovalPromotion
+// PromoteCodexLaunchProfileChanges copies explicit app-tool "Always allow"
+// decisions and allowlisted Codex notice dismissals into the persistent Codex
+// config. It never overwrites an existing global decision and never copies
+// unrelated launch-profile settings.
+func PromoteCodexLaunchProfileChanges(profilePath string) (CodexProfilePromotion, error) {
+	var report CodexProfilePromotion
+	data, err := readCodexLaunchProfile(profilePath)
+	if err != nil {
+		return report, err
+	}
+	approvals, err := ExtractCodexLaunchProfileApprovals(data)
+	if err != nil {
+		return report, &codexLaunchProfileValidationError{err: err}
+	}
+	notices, err := ExtractCodexLaunchProfileNotices(data)
+	if err != nil {
+		return report, &codexLaunchProfileValidationError{err: err}
+	}
+	report.Found = len(approvals)
+	report.NoticesFound = len(notices)
+	if len(approvals) == 0 && len(notices) == 0 {
+		return report, nil
+	}
+
+	dir, err := codexConfigDir()
+	if err != nil {
+		return report, err
+	}
+	configPath := filepath.Join(dir, "config.toml")
+	return mergeCodexProfileChanges(configPath, approvals, notices)
+}
+
+func readCodexLaunchProfile(profilePath string) ([]byte, error) {
 	if !IsCodexAgentLaunchProfilePath(profilePath) {
-		return report, fmt.Errorf("refusing non-managed Codex profile path %q", profilePath)
+		return nil, fmt.Errorf("refusing non-managed Codex profile path %q", profilePath)
 	}
 	fi, err := os.Lstat(profilePath)
 	if err != nil {
-		return report, fmt.Errorf("inspect managed Codex profile: %w", err)
+		return nil, fmt.Errorf("inspect managed Codex profile: %w", err)
 	}
 	if !fi.Mode().IsRegular() {
-		return report, fmt.Errorf("managed Codex profile is not a regular file")
+		return nil, fmt.Errorf("managed Codex profile is not a regular file")
 	}
 	data, err := os.ReadFile(profilePath)
 	if err != nil {
-		return report, fmt.Errorf("read managed Codex profile: %w", err)
+		return nil, fmt.Errorf("read managed Codex profile: %w", err)
+	}
+	return data, nil
+}
+
+// PromoteCodexLaunchProfileApprovals preserves the original exported entry
+// point and its approval-only behavior.
+// Deprecated: use PromoteCodexLaunchProfileChanges.
+func PromoteCodexLaunchProfileApprovals(profilePath string) (CodexApprovalPromotion, error) {
+	var report CodexApprovalPromotion
+	data, err := readCodexLaunchProfile(profilePath)
+	if err != nil {
+		return report, err
 	}
 	approvals, err := ExtractCodexLaunchProfileApprovals(data)
 	if err != nil {
@@ -171,28 +271,42 @@ func PromoteCodexLaunchProfileApprovals(profilePath string) (CodexApprovalPromot
 	if len(approvals) == 0 {
 		return report, nil
 	}
-
 	dir, err := codexConfigDir()
 	if err != nil {
 		return report, err
 	}
-	configPath := filepath.Join(dir, "config.toml")
-	return mergeCodexToolApprovals(configPath, approvals)
+	return mergeCodexToolApprovals(filepath.Join(dir, "config.toml"), approvals)
 }
 
-func mergeCodexToolApprovals(configPath string, approvals []CodexToolApproval) (CodexApprovalPromotion, error) {
-	report := CodexApprovalPromotion{Found: len(approvals)}
+func mergeCodexProfileChanges(configPath string, approvals []CodexToolApproval, notices []CodexNoticePreference) (CodexProfilePromotion, error) {
+	report := CodexProfilePromotion{Found: len(approvals), NoticesFound: len(notices)}
 	err := EditCodexConfigFile(configPath, 0o600, func(data []byte) (bool, []byte, error) {
-		report = CodexApprovalPromotion{Found: len(approvals)}
-		return planCodexToolApprovals(data, approvals, &report)
+		report = CodexProfilePromotion{Found: len(approvals), NoticesFound: len(notices)}
+		return planCodexProfileChanges(data, approvals, notices, &report)
 	})
 	if err != nil {
-		return report, fmt.Errorf("persist Codex app-tool approval: %w", err)
+		return report, fmt.Errorf("persist Codex launch-profile changes: %w", err)
 	}
 	return report, nil
 }
 
-func planCodexToolApprovals(data []byte, approvals []CodexToolApproval, report *CodexApprovalPromotion) (bool, []byte, error) {
+func mergeCodexToolApprovals(configPath string, approvals []CodexToolApproval) (CodexProfilePromotion, error) {
+	return mergeCodexProfileChanges(configPath, approvals, nil)
+}
+
+func planCodexProfileChanges(data []byte, approvals []CodexToolApproval, notices []CodexNoticePreference, report *CodexProfilePromotion) (bool, []byte, error) {
+	approvalsChanged, out, err := planCodexToolApprovals(data, approvals, report)
+	if err != nil {
+		return false, nil, err
+	}
+	noticesChanged, out, err := planCodexNoticePreferences(out, notices, report)
+	if err != nil {
+		return false, nil, err
+	}
+	return approvalsChanged || noticesChanged, out, nil
+}
+
+func planCodexToolApprovals(data []byte, approvals []CodexToolApproval, report *CodexProfilePromotion) (bool, []byte, error) {
 	var config map[string]any
 	if len(bytes.TrimSpace(data)) > 0 {
 		if err := toml.Unmarshal(data, &config); err != nil {
@@ -246,6 +360,96 @@ func planCodexToolApprovals(data []byte, approvals []CodexToolApproval, report *
 		return false, nil, fmt.Errorf("approval would conflict with existing Codex config shape: %w", err)
 	}
 	report.Added = len(toAdd)
+	return true, out, nil
+}
+
+func planCodexNoticePreferences(data []byte, notices []CodexNoticePreference, report *CodexProfilePromotion) (bool, []byte, error) {
+	if len(notices) == 0 {
+		return false, data, nil
+	}
+
+	var config map[string]any
+	if len(bytes.TrimSpace(data)) > 0 {
+		if err := toml.Unmarshal(data, &config); err != nil {
+			return false, nil, fmt.Errorf("parse Codex config: %w", err)
+		}
+	} else {
+		config = make(map[string]any)
+	}
+
+	var notice map[string]any
+	rawNotice, noticeExists := config["notice"]
+	if noticeExists {
+		var ok bool
+		notice, ok = stringMap(rawNotice)
+		if !ok {
+			return false, nil, fmt.Errorf("codex config notice key has a conflicting non-table shape")
+		}
+	} else {
+		notice = make(map[string]any)
+	}
+
+	toAdd := make([]CodexNoticePreference, 0, len(notices))
+	for _, preference := range notices {
+		if _, allowed := promotedCodexNoticeKeys[preference.Key]; !allowed || !preference.Value {
+			continue
+		}
+		rawValue, exists := notice[preference.Key]
+		if !exists {
+			toAdd = append(toAdd, preference)
+			continue
+		}
+		value, ok := rawValue.(bool)
+		if !ok {
+			return false, nil, fmt.Errorf("codex config notice %s has a non-boolean value", preference.Key)
+		}
+		if value {
+			report.NoticesExisting++
+		} else {
+			report.NoticeConflicts = append(report.NoticeConflicts,
+				fmt.Sprintf("notice.%s is already false", preference.Key))
+		}
+	}
+	if len(toAdd) == 0 {
+		return false, data, nil
+	}
+	sort.Slice(toAdd, func(i, j int) bool { return toAdd[i].Key < toAdd[j].Key })
+
+	lines, sep := splitConfigLines(data)
+	headerIdx := -1
+	for i, line := range lines {
+		if name, ok := tomlTableHeader(line); ok && name == "notice" {
+			headerIdx = i
+			break
+		}
+	}
+
+	preferenceLines := make([]string, 0, len(toAdd))
+	for _, preference := range toAdd {
+		preferenceLines = append(preferenceLines, preference.Key+" = true")
+	}
+	var outLines []string
+	switch {
+	case headerIdx >= 0:
+		outLines = append([]string{}, lines[:headerIdx+1]...)
+		outLines = append(outLines, preferenceLines...)
+		outLines = append(outLines, lines[headerIdx+1:]...)
+	case noticeExists:
+		return false, nil, fmt.Errorf("codex config notice table uses a form tclaude cannot safely extend")
+	default:
+		outLines = append([]string{}, lines...)
+		if len(outLines) > 0 && strings.TrimSpace(outLines[len(outLines)-1]) != "" {
+			outLines = append(outLines, "")
+		}
+		outLines = append(outLines, "[notice]")
+		outLines = append(outLines, preferenceLines...)
+	}
+	out := joinConfigLines(outLines, sep)
+	var check map[string]any
+	if err := toml.Unmarshal(out, &check); err != nil {
+		return false, nil, fmt.Errorf("notice preference would conflict with existing Codex config shape: %w", err)
+	}
+	report.NoticesAdded = len(toAdd)
 	return true, out, nil
 }
 

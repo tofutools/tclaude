@@ -38,6 +38,30 @@ func TestCodexApprovalMonitor_PromotesAlwaysAllow(t *testing.T) {
 	}, 3*time.Second, 10*time.Millisecond)
 }
 
+func TestCodexApprovalMonitor_PromotesRateLimitModelNudgeDismissal(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	if agentd.StartCodexApprovalMonitorForTest(t, 15*time.Millisecond) == nil {
+		t.Skip("fsnotify watcher unavailable in this environment")
+	}
+
+	_, profilePath, err := harness.EnsureCodexAgentLaunchProfile(nil, "1717171717171717")
+	require.NoError(t, err)
+	f, err := os.OpenFile(profilePath, os.O_APPEND|os.O_WRONLY, 0)
+	require.NoError(t, err)
+	_, err = f.WriteString("\n[notice]\n" + harness.CodexNoticeHideRateLimitModelNudge + " = true\n")
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	configPath := filepath.Join(home, ".codex", "config.toml")
+	require.Eventually(t, func() bool {
+		data, readErr := os.ReadFile(configPath)
+		return readErr == nil && stringContainsAll(string(data),
+			"[notice]", harness.CodexNoticeHideRateLimitModelNudge+" = true")
+	}, 3*time.Second, 10*time.Millisecond)
+}
+
 func TestCodexApprovalMonitor_PromotesFromValidReformattedProfile(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
