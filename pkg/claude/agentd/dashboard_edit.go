@@ -458,6 +458,10 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 	// session-env + sync tombstone. Actor-aware (JOH-26 PR3d): deleting an
 	// agent's head generation also sweeps its predecessor generations'
 	// rows + .jsonl, so a multi-generation actor leaves nothing orphaned.
+	if _, err := removeAgentDirectoriesForConv(convID); err != nil {
+		http.Error(w, "delete agent-owned directories: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	if _, _, err := conv.DeleteAgentAllGenerations(convID); err != nil {
 		http.Error(w, "delete conv: "+err.Error(), http.StatusInternalServerError)
 		return
