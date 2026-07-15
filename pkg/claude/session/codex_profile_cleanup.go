@@ -51,7 +51,7 @@ func cleanupCodexLaunchProfile(path string) error {
 		return fmt.Errorf("refusing to clean up managed Codex profile that is not a regular file")
 	}
 
-	report, promoteErr := harness.PromoteCodexLaunchProfileApprovals(path)
+	report, promoteErr := harness.PromoteCodexLaunchProfileChanges(path)
 	if promoteErr != nil {
 		if errors.Is(promoteErr, os.ErrNotExist) {
 			return nil
@@ -60,7 +60,7 @@ func cleanupCodexLaunchProfile(path string) error {
 			// Preserve the only copy of the explicit choice when the persistent
 			// config is temporarily unreadable/unwritable. agentd's startup scan
 			// can retry the still-valid profile later.
-			return fmt.Errorf("persist Codex profile approvals (profile retained at %s): %w", path, promoteErr)
+			return fmt.Errorf("persist Codex profile changes (profile retained at %s): %w", path, promoteErr)
 		}
 		// A malformed profile cannot be reconciled safely. It is deliberately
 		// removed without promoting anything.
@@ -73,6 +73,14 @@ func cleanupCodexLaunchProfile(path string) error {
 		if report.Added > 0 {
 			slog.Info("codex profile cleanup: persisted app-tool Always allow choice",
 				"path", path, "added", report.Added, "already_present", report.Existing)
+		}
+		if len(report.NoticeConflicts) > 0 {
+			slog.Warn("codex profile cleanup: kept existing global notice preferences",
+				"path", path, "conflicts", report.NoticeConflicts)
+		}
+		if report.NoticesAdded > 0 {
+			slog.Info("codex profile cleanup: persisted Codex notice dismissal",
+				"path", path, "added", report.NoticesAdded, "already_present", report.NoticesExisting)
 		}
 	}
 	after, err := os.Lstat(path)

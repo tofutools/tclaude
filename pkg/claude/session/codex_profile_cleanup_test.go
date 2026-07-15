@@ -21,7 +21,8 @@ func TestCleanupCodexLaunchProfile_FinalReconcileAndRemove(t *testing.T) {
 	f, err := os.OpenFile(profilePath, os.O_APPEND|os.O_WRONLY, 0)
 	require.NoError(t, err)
 	_, err = f.WriteString("\n[apps.asdk_app_69a089a326dc8191b32a3f2553f5be2c.tools.\"linear.save_issue\"]\n" +
-		"approval_mode = \"approve\"\n")
+		"approval_mode = \"approve\"\n\n" +
+		"[notice]\n" + harness.CodexNoticeHideRateLimitModelNudge + " = true\n")
 	require.NoError(t, err)
 	require.NoError(t, f.Close())
 
@@ -31,6 +32,8 @@ func TestCleanupCodexLaunchProfile_FinalReconcileAndRemove(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(config), "linear.save_issue")
 	assert.Contains(t, string(config), `approval_mode = "approve"`)
+	assert.Contains(t, string(config), `[notice]`)
+	assert.Contains(t, string(config), harness.CodexNoticeHideRateLimitModelNudge+` = true`)
 }
 
 func TestCodexProfileCleanupShell_HasLegacyRemoveFallback(t *testing.T) {
