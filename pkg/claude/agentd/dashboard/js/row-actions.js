@@ -32,6 +32,7 @@ import {
   chooseTerminalDirectory, openAgentExportDialog, openCloneAgentDialog,
   openNestGroupDialog, openReincarnateAgentDialog, openTaskLinkDialog,
 } from './action-dialog-controller.js';
+import { openRetireAgentDialog } from './transaction-dialog-controller.js';
 import { openTermModal } from './terminals-tab.js';
 import {
   openTerminalPane, closeTerminalsForConvs, focusTerminalForConv,
@@ -49,7 +50,7 @@ import {
   refresh, toast, confirmModal, deleteAgentModal,
   shutdownScope, powerOnScope, openCleanupModal, openWindowModal,
   openWorktreeCleanup,
-  resumeAgentReq, retireAgentInteractive, shutdownConfirm, stopAgentReq,
+  resumeAgentReq, shutdownConfirm, stopAgentReq,
   openDeleteGroupModal,
   showAccessTab,
 } from './refresh.js';
@@ -629,15 +630,15 @@ function bindRowActions() {
           break;
         }
         case 'retire-agent': {
-          // The whole confirm → POST → dangling-recovery → toast → refresh
-          // flow lives in refresh.js so the command palette's "Retire
-          // agent: <name>" runs the identical path. Retire stays conv-keyed
+          // The keyed transaction root owns confirm → POST → recovery →
+          // feedback. The command palette and DnD use this same launcher.
+          // Retire stays conv-keyed
           // (uses `conv`, not `agent`): the dashboardEnrollmentVerb dangling
           // path only fires for a UUID-shaped selector that FAILS to resolve
           // (a dangling agent whose conversation is gone); a stable agent_id
           // resolves successfully even then and would silently demote the
           // orphan instead of offering to remove it (JOH-322).
-          await retireAgentInteractive(conv, label);
+          await openRetireAgentDialog(conv, label);
           return;
         }
         case 'reinstate-agent': {

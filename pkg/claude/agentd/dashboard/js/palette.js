@@ -41,11 +41,12 @@
 import { $, $$ } from './helpers.js';
 import {
   toast, openWindowModal,
-  retireAgentInteractive, openRetirePreview, openRetireUngroupedPreview, openDeleteRetiredPreview,
+  openRetirePreview, openRetireUngroupedPreview, openDeleteRetiredPreview,
   openWorktreeCleanup,
   shutdownScope, powerOnScope, shutdownConfirm, stopAgentReq, resumeAgentReq,
   noteGroupDisclosureIntent,
 } from './refresh.js';
+import { openRetireAgentDialog } from './transaction-dialog-controller.js';
 import { openAgentSpawnModal } from './modal-spawn.js';
 import { openProfilesManageModal } from './modal-profiles.js';
 import { openRolesManageModal } from './modal-roles.js';
@@ -712,7 +713,7 @@ export function buildCommands(snapshot) {
 
   // 9) Per-agent retire — "Retire agent: <name>". Demotes one agent back
   //    to a plain conversation via the same confirm + flags the per-row
-  //    ⚙ Retire button uses (retireAgentInteractive). Listed for every
+  //    ⚙ Retire button uses (openRetireAgentDialog). Listed for every
   //    agent on the roster, online OR offline — retire is valid on an
   //    offline agent too (there is just no pane to soft-exit).
   for (const a of (snap.agents || [])) {
@@ -727,7 +728,7 @@ export function buildCommands(snapshot) {
       // recovery only triggers for a UUID-shaped selector that fails to
       // resolve, so a stable agent_id would silently demote a dangling
       // orphan instead of offering to remove it (JOH-322).
-      run: () => retireAgentInteractive(a.conv_id, label),
+      run: () => openRetireAgentDialog(a.conv_id, label),
     });
   }
 
