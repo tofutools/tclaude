@@ -19,6 +19,7 @@ export function createManagementState() {
   const error = signal('');
   const sandboxDiff = signal(null);
   let settleSandboxDiff = null;
+  const templateManagerCloseCallbacks = new Set();
 
   const view = computed(() => ({
     manager: manager.value, dialog: dialog.value, templateDialog: templateDialog.value, templateManager: templateManager.value,
@@ -52,8 +53,21 @@ export function createManagementState() {
     closeDialog() { cancelSandboxDiff(false); dialog.value = null; error.value = ''; },
     openTemplateDialog(value) { error.value = ''; templateDialog.value = value; },
     closeTemplateDialog() { templateDialog.value = null; error.value = ''; },
-    openTemplateManager() { templateManager.value = true; },
-    closeTemplateManager() { templateManager.value = false; },
+    openTemplateManager(options = {}) {
+      if (typeof options?.onClose === 'function') {
+        templateManagerCloseCallbacks.add(options.onClose);
+      }
+      templateManager.value = true;
+    },
+    closeTemplateManager() {
+      if (!templateManager.value && !templateManagerCloseCallbacks.size) return;
+      templateManager.value = false;
+      const callbacks = [...templateManagerCloseCallbacks];
+      templateManagerCloseCallbacks.clear();
+      for (const callback of callbacks) {
+        try { callback(); } catch (_) {}
+      }
+    },
     setTemplateFilter(value) {
       templateFilter.value = value;
       if (value) dashPrefs.setItem('tclaude.dash.filter.templates', value);

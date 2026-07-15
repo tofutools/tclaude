@@ -231,16 +231,6 @@ function SandboxDiffModal({ model, close }) {
 
 function ManagementApp({ state, actions, confirm, confirmDiscard, openProfilePermissions }) {
   const current = state.view.value; const descriptor = current.dialog;
-  const previousManager = useRef('');
-  const templateManagerWasOpen = useRef(false);
-  useEffect(() => {
-    if (previousManager.current && !current.manager) document.dispatchEvent(new CustomEvent('tclaude:management-closed', { detail: { kind: previousManager.current } }));
-    previousManager.current = current.manager;
-  }, [current.manager]);
-  useEffect(() => {
-    if (templateManagerWasOpen.current && !current.templateManager) document.dispatchEvent(new CustomEvent('tclaude:management-closed', { detail: { kind: 'templates' } }));
-    templateManagerWasOpen.current = current.templateManager;
-  }, [current.templateManager]);
   return html`${current.templateManager && html`<${TemplateManager} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
     ${current.templateDialog?.kind === 'template-editor' && html`<${TemplateEditor} descriptor=${current.templateDialog} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} confirm=${confirm}/>`}
     ${current.manager && html`<${Manager} kind=${current.manager} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
