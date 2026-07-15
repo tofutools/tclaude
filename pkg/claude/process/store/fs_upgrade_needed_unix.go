@@ -16,16 +16,33 @@ func (s *FS) UpgradeNeeded(ctx context.Context, runID string) (pathv1.UpgradeNee
 	var result pathv1.UpgradeNeeded
 	err := s.WithExecutionView(ctx, runID, func(view ExecutionView) error {
 		var err error
-		result, err = pathv1.AssessUpgradeNeeded(
-			ctx,
-			view.LegacyCheckpointJSON,
-			view.Snapshot.State,
-			view.Snapshot.Run.TemplateRef,
-			view.TemplateSourceHash,
-			view.LegacyAdminRecords,
-			view.LegacyAdminResolutions,
-		)
+		result, err = assessUpgradeNeeded(ctx, view)
 		return err
 	})
 	return result, err
+}
+
+// ConfirmUpgradeNeeded rederives migration readiness from a fresh coherent
+// execution view and rejects any detached authority that omitted or changed
+// source membership. Structural validation alone cannot prove completeness.
+func (s *FS) ConfirmUpgradeNeeded(ctx context.Context, runID string, supplied pathv1.UpgradeNeeded) error {
+	return s.WithExecutionView(ctx, runID, func(view ExecutionView) error {
+		derived, err := assessUpgradeNeeded(ctx, view)
+		if err != nil {
+			return err
+		}
+		return pathv1.RequireExactUpgradeNeeded(supplied, derived)
+	})
+}
+
+func assessUpgradeNeeded(ctx context.Context, view ExecutionView) (pathv1.UpgradeNeeded, error) {
+	return pathv1.AssessUpgradeNeeded(
+		ctx,
+		view.LegacyCheckpointJSON,
+		view.Snapshot.State,
+		view.Snapshot.Run.TemplateRef,
+		view.TemplateSourceHash,
+		view.LegacyAdminRecords,
+		view.LegacyAdminResolutions,
+	)
 }

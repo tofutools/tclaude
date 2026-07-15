@@ -107,6 +107,335 @@ func TestAssessAndValidateUpgradeNeededFailClosedTampering(t *testing.T) {
 	}
 }
 
+func TestValidateUpgradeNeededRejectsForgedCheckpointAdminProvenance(t *testing.T) {
+	tests := []struct {
+		name             string
+		mutate           func(*UpgradeNeeded)
+		rebind           bool
+		rebindResolution bool
+	}{
+		{
+			name: "resolution omitted from active ids",
+			mutate: func(needed *UpgradeNeeded) {
+				needed.ActiveLegacyIDs = nil
+				needed.Reason = UpgradeMigrationRequired
+			},
+		},
+		{
+			name: "cross-run record",
+			mutate: func(needed *UpgradeNeeded) {
+				needed.CheckpointAdminRecords[0].Record.RunID = "other-run"
+			},
+			rebind: true,
+		},
+		{
+			name: "positive legacy event sequence rebound",
+			mutate: func(needed *UpgradeNeeded) {
+				needed.CheckpointAdminRecords[0].Record.EventSeq = 1
+			},
+			rebind: true,
+		},
+		{
+			name: "missing admin type",
+			mutate: func(needed *UpgradeNeeded) {
+				needed.CheckpointAdminRecords[0].Record.AdminType = ""
+			},
+			rebind: true,
+		},
+		{
+			name: "missing actor",
+			mutate: func(needed *UpgradeNeeded) {
+				needed.CheckpointAdminRecords[0].Record.Actor = ""
+			},
+			rebind: true,
+		},
+		{
+			name: "missing timestamp",
+			mutate: func(needed *UpgradeNeeded) {
+				needed.CheckpointAdminRecords[0].Record.Timestamp = ""
+			},
+			rebind: true,
+		},
+		{
+			name: "block-resolution type without payload rebound",
+			mutate: func(needed *UpgradeNeeded) {
+				admin := &needed.CheckpointAdminRecords[0]
+				admin.Record.ResolutionDigest = ""
+				admin.Resolution = nil
+				needed.ActiveLegacyIDs = nil
+				needed.Reason = UpgradeMigrationRequired
+			},
+			rebind: true,
+		},
+		{
+			name: "resolution digest mismatch",
+			mutate: func(needed *UpgradeNeeded) {
+				needed.CheckpointAdminRecords[0].Resolution.Actor = "human:forged"
+			},
+		},
+		{
+			name: "zero blocked attempt rebound",
+			mutate: func(needed *UpgradeNeeded) {
+				needed.CheckpointAdminRecords[0].Resolution.BlockedAttempt = 0
+			},
+			rebindResolution: true,
+		},
+		{
+			name: "invalid resolution actor rebound",
+			mutate: func(needed *UpgradeNeeded) {
+				needed.CheckpointAdminRecords[0].Resolution.Actor = "operator"
+			},
+			rebindResolution: true,
+		},
+		{
+			name: "engine resolution actor rebound",
+			mutate: func(needed *UpgradeNeeded) {
+				needed.CheckpointAdminRecords[0].Resolution.Actor = "engine:forged"
+			},
+			rebindResolution: true,
+		},
+		{
+			name: "missing resolution node rebound",
+			mutate: func(needed *UpgradeNeeded) {
+				needed.CheckpointAdminRecords[0].Resolution.NodeID = ""
+			},
+			rebindResolution: true,
+		},
+		{
+			name: "missing resolution reason rebound",
+			mutate: func(needed *UpgradeNeeded) {
+				needed.CheckpointAdminRecords[0].Resolution.Reason = ""
+			},
+			rebindResolution: true,
+		},
+		{
+			name: "missing resolution evidence rebound",
+			mutate: func(needed *UpgradeNeeded) {
+				needed.CheckpointAdminRecords[0].Resolution.EvidenceRef = ""
+			},
+			rebindResolution: true,
+		},
+		{
+			name: "missing resolution timestamp rebound",
+			mutate: func(needed *UpgradeNeeded) {
+				needed.CheckpointAdminRecords[0].Resolution.Timestamp = ""
+			},
+			rebindResolution: true,
+		},
+		{
+			name: "wrong resolution admin type rebound",
+			mutate: func(needed *UpgradeNeeded) {
+				needed.CheckpointAdminRecords[0].Record.AdminType = "admin_repair_recorded"
+			},
+			rebind: true,
+		},
+		{
+			name: "repair type swap clears resolution authority rebound",
+			mutate: func(needed *UpgradeNeeded) {
+				admin := &needed.CheckpointAdminRecords[0]
+				admin.Record.AdminType = "admin_repair_recorded"
+				admin.Record.ResolutionDigest = ""
+				admin.Resolution = nil
+				needed.ActiveLegacyIDs = nil
+				needed.Reason = UpgradeMigrationRequired
+			},
+			rebind: true,
+		},
+		{
+			name: "programs-allowed type swap clears resolution authority rebound",
+			mutate: func(needed *UpgradeNeeded) {
+				admin := &needed.CheckpointAdminRecords[0]
+				admin.Record.AdminType = "admin_programs_allowed"
+				admin.Record.ResolutionDigest = ""
+				admin.Resolution = nil
+				needed.ActiveLegacyIDs = nil
+				needed.Reason = UpgradeMigrationRequired
+			},
+			rebind: true,
+		},
+		{
+			name: "unknown nonresolution admin type rebound",
+			mutate: func(needed *UpgradeNeeded) {
+				admin := &needed.CheckpointAdminRecords[0]
+				admin.Record.AdminType = "invented"
+				admin.Record.ResolutionDigest = ""
+				admin.Resolution = nil
+				needed.ActiveLegacyIDs = nil
+				needed.Reason = UpgradeMigrationRequired
+			},
+			rebind: true,
+		},
+		{
+			name: "outer actor mismatch rebound",
+			mutate: func(needed *UpgradeNeeded) {
+				needed.CheckpointAdminRecords[0].Record.Actor = "human:other"
+			},
+			rebind: true,
+		},
+		{
+			name: "outer reason mismatch rebound",
+			mutate: func(needed *UpgradeNeeded) {
+				needed.CheckpointAdminRecords[0].Record.ReasonCode = "other"
+			},
+			rebind: true,
+		},
+		{
+			name: "outer evidence mismatch rebound",
+			mutate: func(needed *UpgradeNeeded) {
+				needed.CheckpointAdminRecords[0].Record.EvidenceRef = "ticket:other"
+			},
+			rebind: true,
+		},
+		{
+			name: "outer timestamp mismatch rebound",
+			mutate: func(needed *UpgradeNeeded) {
+				needed.CheckpointAdminRecords[0].Record.Timestamp = "2026-07-15T00:00:01Z"
+			},
+			rebind: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			needed := validUpgradeNeededWithCheckpointAdmin(t)
+			test.mutate(&needed)
+			if test.rebindResolution {
+				rebindCheckpointAdminResolution(t, &needed)
+			} else if test.rebind {
+				rebindCheckpointAdminIdentity(t, &needed)
+			}
+			if err := ValidateUpgradeNeeded(needed); err == nil {
+				t.Fatal("forged checkpoint admin provenance was accepted")
+			}
+		})
+	}
+}
+
+func TestAssessUpgradeNeededCarriesBoundAdminResolution(t *testing.T) {
+	want := validUpgradeNeededWithCheckpointAdmin(t)
+	admin := want.CheckpointAdminRecords[0]
+	ref := want.TemplateRef
+	st := legacy.New(want.RunID, ref, ref, nil)
+
+	needed, err := AssessUpgradeNeeded(
+		t.Context(),
+		[]byte(`{"checkpoint":true}`),
+		&st,
+		ref,
+		want.TemplateSourceHash,
+		map[string]PathV1AdminRecord{admin.LegacyID: admin.Record},
+		map[string]BlockResolution{admin.LegacyID: *admin.Resolution},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(needed.CheckpointAdminRecords) != 1 || needed.CheckpointAdminRecords[0].Resolution == nil {
+		t.Fatalf("checkpoint admin records = %#v", needed.CheckpointAdminRecords)
+	}
+	if err := ValidateUpgradeNeeded(needed); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAssessUpgradeNeededClassifiesNonResolutionAdminAsDrain(t *testing.T) {
+	ref := "demo@sha256:" + strings.Repeat("a", 64)
+	st := legacy.New("run", ref, ref, nil)
+	record := PathV1AdminRecord{
+		RunID: "run", AdminType: string(legacy.EventAdminRepairRecorded), Actor: "human:operator",
+		ReasonCode: "repaired", EvidenceRef: "ticket:TCL-507", Timestamp: "2026-07-15T00:00:00Z",
+	}
+	var err error
+	record.ID, err = LegacyAdminRecordIdentity(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	needed, err := AssessUpgradeNeeded(
+		t.Context(), []byte(`{"checkpoint":true}`), &st, ref, strings.Repeat("c", 64),
+		map[string]PathV1AdminRecord{record.ID: record}, nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if needed.Reason != UpgradeLegacyDrainRequired || len(needed.ActiveLegacyIDs) != 1 ||
+		needed.ActiveLegacyIDs[0] != (LegacyActiveID{Kind: LegacyActiveAdminRecord, ID: needed.CheckpointAdminRecords[0].ID}) {
+		t.Fatalf("nonresolution admin classification = %#v", needed)
+	}
+	if err := ValidateUpgradeNeeded(needed); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func validUpgradeNeededWithCheckpointAdmin(t *testing.T) UpgradeNeeded {
+	t.Helper()
+	resolution := BlockResolution{
+		NodeID: "review", BlockedAttempt: 2, Decision: "skip", Actor: "human:operator",
+		Reason: "waived", EvidenceRef: "ticket:TCL-507", Timestamp: "2026-07-15T00:00:00Z",
+	}
+	digest, err := ValidateBlockResolution(resolution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := PathV1AdminRecord{
+		RunID: "run", AdminType: "block_resolution_recorded", Actor: resolution.Actor,
+		ReasonCode: resolution.Reason, EvidenceRef: resolution.EvidenceRef,
+		Timestamp: resolution.Timestamp, ResolutionDigest: digest,
+	}
+	record.ID, err = LegacyAdminRecordIdentity(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint := CheckpointBinding{Generation: 12, Digest: strings.Repeat("b", 64)}
+	checkpointID, err := CheckpointLegacyAdminRecordIdentity(checkpoint, record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return UpgradeNeeded{
+		Reason: UpgradeLegacyDrainRequired, RunID: record.RunID, LegacyStateSchema: 6,
+		Checkpoint: checkpoint, TemplateRef: "demo@sha256:" + strings.Repeat("a", 64),
+		TemplateSourceHash: strings.Repeat("c", 64),
+		ActiveLegacyIDs:    []LegacyActiveID{{Kind: LegacyActiveBlockResolution, ID: checkpointID}},
+		CheckpointAdminRecords: []CheckpointLegacyAdminRecord{{
+			ID: checkpointID, LegacyID: record.ID, Record: record, Resolution: &resolution,
+		}},
+	}
+}
+
+func rebindCheckpointAdminIdentity(t *testing.T, needed *UpgradeNeeded) {
+	t.Helper()
+	admin := &needed.CheckpointAdminRecords[0]
+	oldID := admin.ID
+	legacyID, err := LegacyAdminRecordIdentity(admin.Record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin.Record.ID = legacyID
+	admin.LegacyID = legacyID
+	admin.ID, err = CheckpointLegacyAdminRecordIdentity(needed.Checkpoint, admin.Record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range needed.ActiveLegacyIDs {
+		if needed.ActiveLegacyIDs[i] == (LegacyActiveID{Kind: LegacyActiveBlockResolution, ID: oldID}) {
+			needed.ActiveLegacyIDs[i].ID = admin.ID
+		}
+	}
+}
+
+func rebindCheckpointAdminResolution(t *testing.T, needed *UpgradeNeeded) {
+	t.Helper()
+	admin := &needed.CheckpointAdminRecords[0]
+	admin.Record.Actor = admin.Resolution.Actor
+	admin.Record.ReasonCode = admin.Resolution.Reason
+	admin.Record.EvidenceRef = admin.Resolution.EvidenceRef
+	admin.Record.Timestamp = admin.Resolution.Timestamp
+	var err error
+	admin.Record.ResolutionDigest, err = BlockResolutionIdentity(*admin.Resolution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rebindCheckpointAdminIdentity(t, needed)
+}
+
 func TestCheckpointLegacyAdminIdentityDuplicateGoldenCompatibility(t *testing.T) {
 	checkpoint := CheckpointBinding{Generation: 12, Digest: strings.Repeat("a", 64)}
 	record := PathV1AdminRecord{

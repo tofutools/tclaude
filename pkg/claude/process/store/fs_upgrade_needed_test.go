@@ -26,6 +26,7 @@ func TestUpgradeNeededBindsCoherentCheckpointTemplateAndSource(t *testing.T) {
 	needed, err := fs.UpgradeNeeded(t.Context(), runID)
 	require.NoError(t, err)
 	require.NoError(t, pathv1.ValidateUpgradeNeeded(needed))
+	require.NoError(t, fs.ConfirmUpgradeNeeded(t.Context(), runID, needed))
 	assert.Equal(t, pathv1.UpgradeMigrationRequired, needed.Reason)
 	assert.Equal(t, uint64(0), needed.Checkpoint.Generation)
 	assert.NotEmpty(t, needed.Checkpoint.Digest)
@@ -36,6 +37,27 @@ func TestUpgradeNeededBindsCoherentCheckpointTemplateAndSource(t *testing.T) {
 	parsed, err := model.Parse(source)
 	require.NoError(t, err)
 	assert.Equal(t, parsed.SourceHash, needed.TemplateSourceHash)
+}
+
+func TestConfirmUpgradeNeededRejectsTotalAdminOmission(t *testing.T) {
+	fs, runID := initializedRunAt(t, t.TempDir())
+	_, err := fs.Append(t.Context(), runID, 0, []evidence.LogEntry{storetest.AdminLogEntry(runID, "implement", 0)})
+	require.NoError(t, err)
+
+	coherent, err := fs.UpgradeNeeded(t.Context(), runID)
+	require.NoError(t, err)
+	require.Equal(t, pathv1.UpgradeLegacyDrainRequired, coherent.Reason)
+	require.Len(t, coherent.CheckpointAdminRecords, 1)
+	require.Equal(t, []pathv1.LegacyActiveID{{Kind: pathv1.LegacyActiveAdminRecord, ID: coherent.CheckpointAdminRecords[0].ID}}, coherent.ActiveLegacyIDs)
+	require.NoError(t, fs.ConfirmUpgradeNeeded(t.Context(), runID, coherent))
+
+	forged := coherent
+	forged.ActiveLegacyIDs = nil
+	forged.CheckpointAdminRecords = nil
+	forged.Reason = pathv1.UpgradeMigrationRequired
+	require.NoError(t, pathv1.ValidateUpgradeNeeded(forged))
+	err = fs.ConfirmUpgradeNeeded(t.Context(), runID, forged)
+	require.ErrorIs(t, err, pathv1.ErrInitializationInconsistent)
 }
 
 func TestUpgradeNeededCancellationAndSourceMismatchFailClosed(t *testing.T) {

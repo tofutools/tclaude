@@ -580,6 +580,10 @@ func cloneUpgradeNeeded(in UpgradeNeeded) UpgradeNeeded {
 	}
 	for i := range out.CheckpointAdminRecords {
 		out.CheckpointAdminRecords[i].Record = in.CheckpointAdminRecords[i].Record
+		if in.CheckpointAdminRecords[i].Resolution != nil {
+			resolution := *in.CheckpointAdminRecords[i].Resolution
+			out.CheckpointAdminRecords[i].Resolution = &resolution
+		}
 	}
 	return out
 }
@@ -587,5 +591,15 @@ func cloneUpgradeNeeded(in UpgradeNeeded) UpgradeNeeded {
 func equalUpgradeNeeded(a, b UpgradeNeeded) bool {
 	return a.Reason == b.Reason && a.RunID == b.RunID && a.LegacyStateSchema == b.LegacyStateSchema &&
 		a.Checkpoint == b.Checkpoint && a.TemplateRef == b.TemplateRef && a.TemplateSourceHash == b.TemplateSourceHash &&
-		slices.Equal(a.ActiveLegacyIDs, b.ActiveLegacyIDs) && slices.Equal(a.CheckpointAdminRecords, b.CheckpointAdminRecords)
+		slices.Equal(a.ActiveLegacyIDs, b.ActiveLegacyIDs) && slices.EqualFunc(a.CheckpointAdminRecords, b.CheckpointAdminRecords, equalCheckpointAdminRecord)
+}
+
+func equalCheckpointAdminRecord(a, b CheckpointLegacyAdminRecord) bool {
+	if a.ID != b.ID || a.LegacyID != b.LegacyID || a.Record != b.Record {
+		return false
+	}
+	if a.Resolution == nil || b.Resolution == nil {
+		return a.Resolution == nil && b.Resolution == nil
+	}
+	return *a.Resolution == *b.Resolution
 }
