@@ -59,17 +59,22 @@ func TestDashboardTerminalFitContainerWiring(t *testing.T) {
 		t.Fatal(err)
 	}
 	rootHeightRule := regexp.MustCompile(`html:has\(#tab-terminals\.active\)\s*\{([^}]*)\}`).FindStringSubmatch(string(dashboardCSS))
-	if rootHeightRule == nil || !strings.Contains(rootHeightRule[1], "height: 100%") || !strings.Contains(rootHeightRule[1], "scrollbar-color: transparent transparent") {
-		t.Error("terminal document root must expose its scrollbar-adjusted content height while retaining transparent scrollbar chrome")
+	if rootHeightRule == nil || !strings.Contains(rootHeightRule[1], "height: 100%") || strings.Contains(rootHeightRule[1], "scrollbar-color") {
+		t.Error("terminal document root must expose its scrollbar-adjusted content height without overriding native scrollbar color")
 	}
 	bodyHeightRule := regexp.MustCompile(`body:has\(#tab-terminals\.active\)\s*\{([^}]*)\}`).FindStringSubmatch(string(dashboardCSS))
 	if bodyHeightRule == nil || !strings.Contains(bodyHeightRule[1], "height: 100%") || strings.Contains(bodyHeightRule[1], "100vh") {
 		t.Error("terminal app shell must inherit the root content height instead of using viewport units")
 	}
+	for _, unwanted := range []string{
+		"html:has(#tab-terminals.active) body { scrollbar-color:",
+		"html:has(#tab-terminals.active)::-webkit-scrollbar",
+	} {
+		if strings.Contains(string(dashboardCSS), unwanted) {
+			t.Errorf("dashboard-level scrollbar must retain native chrome; found %q", unwanted)
+		}
+	}
 	for _, want := range []string{
-		"html:has(#tab-terminals.active) body { scrollbar-color: auto; }",
-		"html:has(#tab-terminals.active)::-webkit-scrollbar-button,",
-		"background: transparent; border-color: transparent; color: transparent;",
 		".term-session-xterm .xterm-viewport { scrollbar-width: none; }",
 		".term-session-xterm .xterm-viewport::-webkit-scrollbar { display: none; }",
 		".term-session-xterm .xterm-scrollable-element > .scrollbar { display: none; }",

@@ -24,27 +24,12 @@
    scrollbars (macOS) float and never caused the reflow, so this is harmless
    there. */
 html { overflow-y: scroll; }
-/* The Terminals tab owns all scrolling inside xterm. Make the otherwise forced,
-   inactive document scrollbar transparent on this full-height app shell; it
-   leaves a visible bottom-right remnant beside xterm even when the page cannot
-   scroll. Keep its gutter width reserved so entering/leaving Terminals never
-   shifts the right-aligned chrome or changes the fitted terminal columns. */
+/* The Terminals app shell needs a percentage containing block so it can inherit
+   the document's scrollbar-adjusted height. Keep the document scrollbar itself
+   native and visible, just like every other dashboard tab; only xterm's nested,
+   redundant scrollbars are suppressed below. */
 html:has(#tab-terminals.active) {
-  /* Percentage app-shell sizing below resolves against this scrollbar-adjusted
-     content height. Unlike 100vh, it shrinks when a classic horizontal page
-     scrollbar consumes part of the viewport. */
   height: 100%;
-  scrollbar-color: transparent transparent;
-}
-/* scrollbar-color inherits. Restore normal chrome at body so nested scrollers
-   such as the terminal tab strip and any open modal remain visible. */
-html:has(#tab-terminals.active) body { scrollbar-color: auto; }
-html:has(#tab-terminals.active)::-webkit-scrollbar,
-html:has(#tab-terminals.active)::-webkit-scrollbar-track,
-html:has(#tab-terminals.active)::-webkit-scrollbar-thumb,
-html:has(#tab-terminals.active)::-webkit-scrollbar-button,
-html:has(#tab-terminals.active)::-webkit-scrollbar-corner {
-  background: transparent; border-color: transparent; color: transparent;
 }
 body {
   margin: 0;
