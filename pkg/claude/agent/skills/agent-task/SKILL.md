@@ -41,7 +41,7 @@ tclaude agentd serve   # in a non-sandboxed terminal
 Setting your own link is opt-in. The fastest path is
 `tclaude setup --install-default-agent-permissions`, which grants
 `self.task` (alongside the other self-lifecycle default slugs —
-`self.rename`, `self.compact`, `self.reincarnate`, `self.clone`,
+`self.rename`, `self.compact`, `self.clone`,
 `self.schedule`, `self.remote-control`) in one shot. Manual alternatives:
 
 ```bash

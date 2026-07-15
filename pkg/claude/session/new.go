@@ -30,8 +30,9 @@ type NewParams struct {
 	// CwdWriteProof is an internal daemon-to-session capability. The harness
 	// command checks its marker only after tmux has established the pane's cwd
 	// inode. Hidden from normal CLI help.
-	CwdWriteProof string `long:"cwd-write-proof" optional:"true" help:"Internal: verify a daemon-issued cwd marker before launching the harness"`
-	DirWriteProof string `short:"Z" long:"dir-write-proof" optional:"true" help:"Internal: verify daemon-issued repository-root markers before launching the harness"`
+	CwdWriteProof           string `long:"cwd-write-proof" optional:"true" help:"Internal: verify a daemon-issued cwd marker before launching the harness"`
+	DirWriteProof           string `short:"Z" long:"dir-write-proof" optional:"true" help:"Internal: verify daemon-issued repository-root markers before launching the harness"`
+	InheritSandboxWriteDirs bool   `long:"inherit-sandbox-write-dirs" help:"Internal: retain target-authorized sandbox write roots without caller markers"`
 	// CodexGitCommonDir is the historical name for an internal, daemon-pinned
 	// linked-worktree metadata result. The managed Codex profile and Claude
 	// Code's per-session sandbox allowWrite overlay both consume it. Hidden from
@@ -758,7 +759,14 @@ func runNew(params *NewParams) error {
 		proofReadyPath = path
 		proofWriteDirs := append([]string{}, params.GitWorktreeWriteDirs...)
 		sandboxProofDirs, generatedWriteDirs := sandboxSnapshotProofDirs(launchSandbox, sandboxpolicy.AccessWrite)
-		proofWriteDirs = append(proofWriteDirs, sandboxProofDirs...)
+		if params.InheritSandboxWriteDirs {
+			// The lifecycle permission authorizes carrying the target's existing
+			// profile authority. Keep the final canonical/no-symlink pin without
+			// demanding that the requester can write marker files in those roots.
+			generatedWriteDirs = append(generatedWriteDirs, sandboxProofDirs...)
+		} else {
+			proofWriteDirs = append(proofWriteDirs, sandboxProofDirs...)
+		}
 		harnessCmd = guardHarnessCommandWithDirProof(
 			harnessCmd, proofToken, proofReadyPath, params.CwdWriteProof != "", proofWriteDirs, generatedWriteDirs)
 	}

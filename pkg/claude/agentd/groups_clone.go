@@ -4,18 +4,12 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
-	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
-
-// groupCloneAfterProofForTest is a deterministic seam for liveness-transition
-// flow tests. Production leaves it nil.
-var groupCloneAfterProofForTest func()
 
 // handleGroupClone clones an entire group: snapshots source members +
 // owners, creates a new group, clones each member into the new group
@@ -51,8 +45,7 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 		// CopyOwners is pointer-valued for compatibility: omitted preserves
 		// the historical API/CLI default of copying owner rows, while the
 		// dashboard can explicitly opt out when it clones settings only.
-		CopyOwners      *bool  `json:"copy_owners,omitempty"`
-		WriteProofToken string `json:"write_proof_token,omitempty"`
+		CopyOwners *bool `json:"copy_owners,omitempty"`
 	}
 	if r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -93,84 +86,6 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 			"snapshot owners: "+err.Error())
 		return
 	}
-	type memberGrant struct {
-		commonDir        string
-		writeDirs        []string
-		profileWriteDirs []string
-		cwd              string
-		// skipOffline binds the proof-time liveness snapshot. A member that
-		// comes online later in the same request was not part of the proved
-		// launch set and must not be cloned without a fresh challenge.
-		skipOffline bool
-	}
-	memberGrants := map[string]memberGrant{}
-	var proofDirs []string
-	proofToken := ""
-	if !body.NoCloneMembers && !isHumanCloneCaller(caller) {
-		var rawDirs []string
-		for _, member := range srcMembers {
-			sess := pickAliveSession(member.ConvID)
-			if sess == nil {
-				memberGrants[member.ConvID] = memberGrant{skipOffline: true}
-				continue
-			}
-			harnessName := harnessForConv(member.ConvID).Name
-			sandboxMode := sandboxForHarness(harnessName)
-			_, profileWriteDirs, snapshotErr := effectiveSandboxWriteDirsForConv(member.ConvID)
-			if snapshotErr != nil {
-				writeEffectiveSandboxLoadError(w, snapshotErr)
-				return
-			}
-			commonDir, err := spawnGitCommonDir(harnessName, sandboxMode, sess.Cwd)
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, "io", err.Error())
-				return
-			}
-			grant := memberGrant{commonDir: commonDir, cwd: sess.Cwd, profileWriteDirs: profileWriteDirs}
-			if spawnUsesPinnedGitCommonDir(harnessName, sandboxMode) {
-				home, err := os.UserHomeDir()
-				if err != nil {
-					writeError(w, http.StatusInternalServerError, "io", err.Error())
-					return
-				}
-				grant.writeDirs = harness.GitWorktreeWriteDirs(sess.Cwd, commonDir, home)
-			}
-			memberGrants[member.ConvID] = grant
-			rawDirs = appendUniqueDirs(rawDirs, sess.Cwd)
-			rawDirs = appendUniqueDirs(rawDirs, grant.writeDirs...)
-			rawDirs = appendUniqueDirs(rawDirs, grant.profileWriteDirs...)
-		}
-		if len(rawDirs) > 0 {
-			resolved, ok := requireDirWriteProof(w, r, caller, body.WriteProofToken, rawDirs)
-			if !ok {
-				return
-			}
-			if resolved != nil {
-				proofToken = strings.TrimSpace(body.WriteProofToken)
-				for convID, grant := range memberGrants {
-					if v := resolved[grant.cwd]; v != "" {
-						grant.cwd = v
-					}
-					for i, dir := range grant.writeDirs {
-						if v := resolved[dir]; v != "" {
-							grant.writeDirs[i] = v
-						}
-					}
-					memberGrants[convID] = grant
-				}
-				for _, dir := range rawDirs {
-					proofDirs = appendUniqueDirs(proofDirs, resolved[dir])
-				}
-			}
-		}
-	}
-	if proofToken != "" {
-		defer cleanupDirWriteProofMarkers(proofToken, proofDirs)
-	}
-	if groupCloneAfterProofForTest != nil {
-		groupCloneAfterProofForTest()
-	}
-
 	// Clone EVERY configurable setting onto the new group — default cwd,
 	// startup context, default profile, max-members cap and the notify
 	// switch — not just the description. A clone is meant to come up
@@ -213,14 +128,6 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 		membersToClone = nil
 	}
 	for _, m := range membersToClone {
-		grant, proofStateBound := memberGrants[m.ConvID]
-		if proofStateBound && grant.skipOffline {
-			results = append(results, memberResult{
-				SrcConv: m.ConvID,
-				Error:   "skipped: source had no live tmux session when launch authority was proved",
-			})
-			continue
-		}
 		// Source member must be alive — cloneSpawnOnce reads the cwd
 		// from a live tmux session. Surface a clear "skipped — offline"
 		// status instead of failing the whole group clone.
@@ -235,24 +142,9 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 		// Each clone runs the model + effort its own source is live on
 		// (inheritedLaunchFlags; "" falls back to claude's default).
 		effort, model := inheritedLaunchFlags(oldSess.ID)
-		srcHarness := harnessForConv(m.ConvID).Name
-		cloneSandbox := sandboxForHarness(srcHarness)
-		codexGitCommonDir, gerr := spawnGitCommonDir(srcHarness, cloneSandbox, oldSess.Cwd)
-		if gerr != nil {
-			results = append(results, memberResult{
-				SrcConv: m.ConvID,
-				Error:   "spawn: " + gerr.Error(),
-			})
-			continue
-		}
-		if grant.commonDir != "" || grant.writeDirs != nil {
-			codexGitCommonDir = grant.commonDir
-		}
-		cloneCwd := oldSess.Cwd
-		if grant.cwd != "" {
-			cloneCwd = grant.cwd
-		}
-		newConv, _, label, warn, spawnErr := cloneSpawnOnce(m.ConvID, cloneCwd, body.NoCopyConv, effort, model, proofToken, proofToken != "", proofDirs, codexGitCommonDir, grant.writeDirs)
+		newConv, _, label, warn, spawnErr := cloneSpawnOnce(
+			m.ConvID, oldSess.Cwd, body.NoCopyConv, effort, model,
+			"", false, nil, "", nil)
 		if spawnErr != nil {
 			results = append(results, memberResult{
 				SrcConv: m.ConvID,

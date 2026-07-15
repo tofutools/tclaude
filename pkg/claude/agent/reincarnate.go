@@ -26,7 +26,7 @@ type reincarnateParams struct {
 	FollowUp string `pos:"true" optional:"true" help:"First-turn prompt for the new agent (REQUIRED — give it inline here or via --file). Quote multi-word strings. If you have no concrete next directive, summarise your previous 'life' (what you were doing, where the relevant files are) so the successor has something to start from."`
 	File     string `long:"file" short:"f" optional:"true" help:"Read the follow-up from this file instead of the positional argument ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing follow-ups. Mutually exclusive with the positional argument."`
 	Target   string `long:"target" optional:"true" help:"Reincarnate ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires the agent.reincarnate permission, or being an owner of a group containing the target."`
-	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny. Self-target only."`
+	AskHuman string `long:"ask-human" optional:"true" help:"Deprecated compatibility no-op for self-reincarnation, which needs no permission; cross-agent calls still require an explicit grant or group ownership."`
 }
 
 func reincarnateCmd() *cobra.Command {
@@ -110,20 +110,17 @@ func runReincarnate(p *reincarnateParams, stdin io.Reader, stdout, stderr io.Wri
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(askHuman)
+	_, err := ParseAskHuman(askHuman)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcInvalidArg
 	}
-	if ask > 0 && target != "" {
+	if askHuman != "" && target != "" {
 		// Cross-agent path doesn't honour X-Tclaude-Ask-Human (see
 		// requireCrossAgentPermission). Surface that here so the caller
 		// doesn't think they have an escape hatch.
 		fmt.Fprintln(stderr, "Error: --ask-human is only supported when reincarnating self; cross-agent calls require an explicit slug grant or group ownership.")
 		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
 	}
 	body := map[string]any{"follow_up": followUp}
 	path := "/v1/whoami/reincarnate"
@@ -143,9 +140,7 @@ func runReincarnate(p *reincarnateParams, stdin io.Reader, stdout, stderr io.Wri
 		MessageID     int64    `json:"message_id,omitempty"`
 		Note          string   `json:"note,omitempty"`
 	}
-	if err := DaemonRequestWithWriteProof(http.MethodPost, path,
-		func(token string) any { return withWriteProofToken(body, token) },
-		&resp, DaemonOpts{AskHuman: ask}); err != nil {
+	if err := DaemonRequest(http.MethodPost, path, body, &resp, DaemonOpts{}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}

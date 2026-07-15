@@ -53,7 +53,7 @@ func cloneCmd() *cobra.Command {
 			"Cross-agent: --target <selector> clones ANOTHER agent (requires the " +
 			"agent.clone permission, or being an owner of a group containing the target). " +
 			"Otherwise self-targeted, requires the self.clone permission " +
-			"(default-granted alongside self.compact and self.reincarnate).",
+			"(default-granted alongside self.compact; self-reincarnation needs no slug).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *cloneParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Target).SetAlternativesFunc(completeConvSelectors)

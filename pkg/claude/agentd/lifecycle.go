@@ -446,36 +446,6 @@ func writeEffectiveSandboxLoadError(w http.ResponseWriter, err error) {
 	writeError(w, http.StatusInternalServerError, "io", "load effective sandbox snapshot: "+err.Error())
 }
 
-// effectiveSandboxWriteDirsForConv loads and revalidates the immutable policy
-// a lifecycle relaunch will preserve, returning every custom write root that
-// must participate in the caller's write-proof challenge. Resolving this set
-// before the challenge keeps clone/reincarnate from turning a preserved
-// profile into an unproved writable proxy.
-func effectiveSandboxWriteDirsForConv(convID string) (*sandboxpolicy.Snapshot, []string, error) {
-	snapshot, err := db.AgentEffectiveSandboxConfigForConv(convID)
-	if err != nil || snapshot == nil {
-		return snapshot, nil, err
-	}
-	validated, err := ensureAgentDirectoriesForRelaunch(*snapshot)
-	if err != nil {
-		return nil, nil, &effectiveSandboxChangedError{err: err}
-	}
-	if _, err := sandboxpolicy.FilesystemForLaunch(validated.Effective); err != nil {
-		return nil, nil, &effectiveSandboxChangedError{err: err}
-	}
-	writeDirs := make([]string, 0, len(validated.Effective.Filesystem))
-	for _, grant := range validated.Effective.Filesystem {
-		if grant.Access == sandboxpolicy.AccessWrite {
-			proofDir, err := sandboxWriteProofDir(grant.Path)
-			if err != nil {
-				return nil, nil, err
-			}
-			writeDirs = appendUniqueDirs(writeDirs, proofDir)
-		}
-	}
-	return &validated, writeDirs, nil
-}
-
 // sandboxWriteProofDir returns the concrete directory that controls whether a
 // frozen write path can materialize. Existing roots prove themselves; missing
 // roots prove their nearest existing ancestor. Thus an agent cannot arrange
@@ -4480,6 +4450,9 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	if a.DirWriteProof != "" {
 		args = append(args, "--dir-write-proof", a.DirWriteProof)
 	}
+	if a.InheritSandboxWriteDirs {
+		args = append(args, "--inherit-sandbox-write-dirs")
+	}
 	if a.CodexGitCommonDir != "" {
 		args = append(args, "--codex-git-common-dir", a.CodexGitCommonDir)
 	}
@@ -4564,6 +4537,9 @@ func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 	}
 	if a.DirWriteProof != "" {
 		args = append(args, "--dir-write-proof", a.DirWriteProof)
+	}
+	if a.InheritSandboxWriteDirs {
+		args = append(args, "--inherit-sandbox-write-dirs")
 	}
 	if a.CodexGitCommonDir != "" {
 		args = append(args, "--codex-git-common-dir", a.CodexGitCommonDir)

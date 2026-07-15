@@ -226,7 +226,6 @@ func completePermissionSlugs(_ *cobra.Command, _ []string, toComplete string) []
 		slugs = []slugEntry{
 			{"self.rename", "Rename own conversation"},
 			{"self.compact", "Compact own conversation"},
-			{"self.reincarnate", "Replace self with fresh successor"},
 			{"self.clone", "Fork self into a sibling"},
 			{"self.task", "Set/clear own task-reference link"},
 			{"self.pr", "Present own PR to the operator dashboard"},

@@ -256,7 +256,6 @@ func requireAgent(w http.ResponseWriter, r *http.Request) (string, bool) {
 const (
 	PermSelfRename         = "self.rename"
 	PermSelfCompact        = "self.compact"
-	PermSelfReincarnate    = "self.reincarnate"
 	PermSelfClone          = "self.clone"
 	PermSelfRemoteControl  = "self.remote-control"
 	PermSelfTask           = "self.task"

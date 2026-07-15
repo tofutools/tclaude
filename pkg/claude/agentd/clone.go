@@ -73,20 +73,8 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 			return "", "", "", "", &cloneSpawnError{Status: http.StatusConflict, Code: "sandbox_profile_changed", Msg: err.Error()}
 		}
 		effectiveSandbox = &validated
-		launchFilesystem, launchErr := sandboxpolicy.FilesystemForLaunch(validated.Effective)
-		if launchErr != nil {
+		if _, launchErr := sandboxpolicy.FilesystemForLaunch(validated.Effective); launchErr != nil {
 			return "", "", "", "", &cloneSpawnError{Status: http.StatusConflict, Code: "sandbox_profile_changed", Msg: launchErr.Error()}
-		}
-		if proofToken != "" {
-			proved := make(map[string]bool, len(proofDirs))
-			for _, dir := range proofDirs {
-				proved[dir] = true
-			}
-			for _, grant := range launchFilesystem {
-				if grant.Access == sandboxpolicy.AccessWrite && !proved[grant.Path] {
-					return "", "", "", "", &cloneSpawnError{Status: http.StatusForbidden, Code: "write_proof_failed", Msg: "sandbox profile write root was not included in the clone write proof: " + grant.Path}
-				}
-			}
 		}
 	}
 	reassertFail := func() *cloneSpawnError {
@@ -146,7 +134,11 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 			agentDirectoryCleanup()
 			return "", "", "", "", fail
 		}
-		proofArgs := clcommon.SpawnArgs{DirWriteProof: proofToken, EffectiveSandbox: effectiveSandbox}
+		proofArgs := clcommon.SpawnArgs{
+			DirWriteProof:           proofToken,
+			EffectiveSandbox:        effectiveSandbox,
+			InheritSandboxWriteDirs: proofToken != "",
+		}
 		if proofCwd {
 			proofArgs.CwdWriteProof = proofToken
 			proofArgs.DirWriteProof = ""
@@ -218,7 +210,11 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 		agentDirectoryCleanup()
 		return "", "", "", "", fail
 	}
-	proofArgs := clcommon.SpawnArgs{DirWriteProof: proofToken, EffectiveSandbox: effectiveSandbox}
+	proofArgs := clcommon.SpawnArgs{
+		DirWriteProof:           proofToken,
+		EffectiveSandbox:        effectiveSandbox,
+		InheritSandboxWriteDirs: proofToken != "",
+	}
 	if proofCwd {
 		proofArgs.CwdWriteProof = proofToken
 		proofArgs.DirWriteProof = ""
@@ -436,8 +432,8 @@ func scanCloneSuffixes(prefix string) map[int]bool {
 }
 
 // handleWhoamiClone handles POST /v1/whoami/clone (self path).
-// Gated on self.clone (default-granted alongside self.compact /
-// self.reincarnate). Delegates to runCloneOrchestration with
+// Gated on self.clone (default-granted alongside self.compact). Delegates to
+// runCloneOrchestration with
 // target == caller.
 func handleWhoamiClone(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -493,8 +489,9 @@ type cloneBody struct {
 	// WriteProofToken answers the dir write-proof challenge an agent caller
 	// receives when it sets Cwd — same contract as SpawnRequest's field: the
 	// caller must prove its own sandbox can write in the override directory
-	// before it may aim a clone's write access there. Unused (and not
-	// required) for humans and for clones that inherit the source's cwd.
+	// before it may aim a clone's cwd-based access there. The source's inherited
+	// sandbox-profile roots are target-authorized and never require this proof.
+	// Unused for humans and for clones that inherit the source's cwd.
 	WriteProofToken string `json:"write_proof_token"`
 }
 
@@ -557,11 +554,6 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 	cwd := oldSess.Cwd
 	var proofDirs []string
 	var proofToken string
-	_, profileWriteDirs, snapshotErr := effectiveSandboxWriteDirsForConv(target)
-	if snapshotErr != nil {
-		writeEffectiveSandboxLoadError(w, snapshotErr)
-		return
-	}
 	srcHarness := harnessForConv(target).Name
 	cloneSandbox := sandboxForHarness(srcHarness)
 	codexGitCommonDir, gerr := spawnGitCommonDir(srcHarness, cloneSandbox, cwd)
@@ -588,13 +580,12 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 			gitWriteDirs = harness.GitWorktreeWriteDirs(cwd, codexGitCommonDir, home)
 		}
 	}
-	// Every agent-triggered clone proves all authority the child receives,
-	// including repository roots added by the managed sandbox. Inheriting cwd
-	// alone is not an exemption: a newly installed profile may grant a broader
-	// sibling-worktree container than the source session held.
-	if !isHumanCloneCaller(caller) && (childSandboxGrantsDirWrite(srcHarness, cloneSandbox) || len(profileWriteDirs) > 0) {
+	// Cloning the target in place carries only authority the target already
+	// holds, so the lifecycle permission is sufficient. A caller-selected cwd
+	// is the one scope-changing input: prove it and the repository roots derived
+	// from it, while retaining the target's sandbox-profile roots unchanged.
+	if !isHumanCloneCaller(caller) && cwdOverride != "" {
 		dirs := appendUniqueDirs([]string{cwd}, gitWriteDirs...)
-		dirs = appendUniqueDirs(dirs, profileWriteDirs...)
 		if len(dirs) > 0 {
 			proofed, ok := requireDirWriteProof(w, r, caller, body.WriteProofToken, dirs)
 			if !ok {

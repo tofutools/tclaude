@@ -80,6 +80,12 @@ type SpawnArgs struct {
 	// DirWriteProof is the same daemon challenge token when only extra
 	// repository roots (not cwd) require child-side marker verification.
 	DirWriteProof string
+	// InheritSandboxWriteDirs tells the session launcher that sandbox-profile
+	// write roots are inherited from an already-authorized target rather than
+	// delegated by the caller answering this proof. The launcher still pins and
+	// no-symlink-checks those roots, but does not require caller marker files in
+	// them. Used by clone when an agent proves only an explicit cwd override.
+	InheritSandboxWriteDirs bool
 
 	// CodexGitCommonDir is the historical name for the daemon-pinned Git common
 	// dir that drives repository write grants for both harnesses: the managed

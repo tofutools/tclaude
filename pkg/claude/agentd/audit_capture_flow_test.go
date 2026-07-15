@@ -160,12 +160,10 @@ func TestAudit_SelfRenameCapturesTitle(t *testing.T) {
 	assert.Contains(t, row.Detail, "audit-fixer", "the new title is captured in detail")
 }
 
-// Scenario: an agent attempts to reincarnate ITSELF without holding the
-// self.reincarnate slug — the daemon refuses (403). Self-lifecycle DENIALS
-// must leave a trail too (the audit module records every outcome), so the
-// row exists with verb "reincarnate", the agent as actor, and a 4xx status.
-// Doubles as proof the self-path /v1/whoami/{verb} is matched at all.
-func TestAudit_SelfReincarnateDeniedIsRecorded(t *testing.T) {
+// Scenario: self-reincarnation is intrinsic lifecycle authority, so an active
+// agent needs no self.reincarnate slug. The successful self-path still leaves
+// the same audit trail as other lifecycle operations.
+func TestAudit_SelfReincarnateWithoutSlugIsRecorded(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("crew")
 
@@ -176,12 +174,12 @@ func TestAudit_SelfReincarnateDeniedIsRecorded(t *testing.T) {
 	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(
 		testharness.JSONRequest(t, http.MethodPost, "/v1/whoami/reincarnate",
 			map[string]any{"follow_up": "carry on"}), worker.ConvID))
-	require.GreaterOrEqual(t, rec.Code, 400, "self-reincarnate without the slug should be refused; got %d", rec.Code)
+	require.Equal(t, http.StatusOK, rec.Code, "self-reincarnate should be intrinsic; body=%s", rec.Body.String())
 
 	row := auditRowByVerb(t, "reincarnate")
 	assert.Equal(t, db.AuditActorAgent, row.ActorKind)
 	assert.Equal(t, worker.ConvID, row.ActorConv)
-	assert.GreaterOrEqual(t, row.Status, 400, "the denial status is recorded")
+	assert.Equal(t, http.StatusOK, row.Status)
 	assert.Equal(t, db.AuditSourceCLI, row.Source)
 }
 

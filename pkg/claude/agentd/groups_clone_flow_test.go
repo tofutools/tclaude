@@ -415,32 +415,3 @@ func TestGroupsClone_OfflineMemberSkipped(t *testing.T) {
 	newMembers, _ := db.ListAgentGroupMembers(newGroup.ID)
 	assert.Len(t, newMembers, 1, "new group should have 1 member (the live clone)")
 }
-
-func TestGroupsClone_AgentCannotCloneMemberThatCameOnlineAfterProofSnapshot(t *testing.T) {
-	f := newFlow(t)
-	const caller = "group-clone-caller-aaaa-bbbb-111111111111"
-	const source = "group-clone-source-aaaa-bbbb-222222222222"
-	const tmuxSession = "tmux-group-clone-transition"
-	f.HaveEnrolledAgent(caller)
-	require.NoError(t, db.GrantAgentPermission(caller, agentd.PermGroupsClone, "test"))
-	f.HaveAliveSession(source, "spwn-group-clone-transition", tmuxSession, t.TempDir())
-	f.MarkOffline(tmuxSession)
-	f.HaveGroup("transition-team")
-	f.HaveMember("transition-team", source)
-
-	t.Cleanup(agentd.SetGroupCloneAfterProofForTest(func() {
-		f.World.Tmux.MarkAlive(tmuxSession)
-	}))
-	r := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost,
-		"/v1/groups/transition-team/clone", map[string]any{
-			"new_name": "transition-copy", "no_copy_conv": true,
-		}), caller)
-	rec := testharness.Serve(f.Mux, r)
-	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
-	var resp cloneGroupResp
-	testharness.DecodeJSON(t, rec, &resp)
-	require.Len(t, resp.Members, 1)
-	assert.Contains(t, resp.Members[0].Error, "when launch authority was proved")
-	assert.Empty(t, resp.Members[0].NewConv,
-		"member absent from the proof set must not turn into a clone launch")
-}

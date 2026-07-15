@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -16,7 +15,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
-	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 // reincarnateSuffixRegex matches a trailing reincarnation suffix in
@@ -197,28 +196,33 @@ var reincarnateAliveTimeout = 60 * time.Second
 // Same `var` rationale as reincarnateAliveTimeout above.
 var reincarnateReadyDelay = 1 * time.Second
 
-// handleWhoamiReincarnate handles POST /v1/whoami/reincarnate (self
-// path). Gated on self.reincarnate (default-granted). Delegates to
-// runReincarnationOrchestration with target == caller.
+// handleWhoamiReincarnate handles POST /v1/whoami/reincarnate (self path).
+// A confirmed active agent may always replace itself: reincarnation cannot
+// select a different cwd or sandbox policy, so an additional permission gate
+// would only prevent an agent from relaunching authority it already holds.
 func handleWhoamiReincarnate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
 		return
 	}
-	caller, ok := requirePermission(w, r, PermSelfReincarnate)
+	caller, isHuman, ok := authedCaller(w, r)
 	if !ok {
 		return
 	}
-	if caller == "" {
+	if isHuman || caller == "" {
 		writeError(w, http.StatusBadRequest, "invalid_arg",
 			"this endpoint operates on the calling agent's own conversation; humans should manage CC sessions directly, or use POST /v1/agent/{conv}/reincarnate to reincarnate another agent")
+		return
+	}
+	if state, err := db.AgentState(caller); err != nil || state == db.AgentStateRetired {
+		writeError(w, http.StatusForbidden, "auth", "caller is not an active agent")
 		return
 	}
 	body, ok := decodeReincarnateBody(w, r)
 	if !ok {
 		return
 	}
-	runReincarnationOrchestration(w, r, caller, caller, PermSelfReincarnate, body)
+	runReincarnationOrchestration(w, caller, caller, "", body)
 }
 
 // handleAgentReincarnate handles POST /v1/agent/{conv}/reincarnate
@@ -237,12 +241,11 @@ func handleAgentReincarnate(w http.ResponseWriter, r *http.Request, targetConv s
 	if !ok {
 		return
 	}
-	runReincarnationOrchestration(w, r, targetConv, caller, PermAgentReincarnate, body)
+	runReincarnationOrchestration(w, targetConv, caller, PermAgentReincarnate, body)
 }
 
 type reincarnateBody struct {
-	FollowUp        string `json:"follow_up"`
-	WriteProofToken string `json:"write_proof_token"`
+	FollowUp string `json:"follow_up"`
 }
 
 // decodeReincarnateBody parses + validates the REQUIRED follow_up
@@ -283,7 +286,6 @@ func decodeReincarnateBody(w http.ResponseWriter, r *http.Request) (reincarnateB
 				"characters are not.", agent.MaxInitialMessageBytes))
 		return reincarnateBody{}, false
 	}
-	body.WriteProofToken = strings.TrimSpace(body.WriteProofToken)
 	return body, true
 }
 
@@ -302,12 +304,12 @@ func decodeReincarnateBody(w http.ResponseWriter, r *http.Request) (reincarnateB
 //   - followUp is an optional first-turn prompt; empty means "just
 //     reincarnate, no handoff message".
 //
-//   - perm is the slug requirePermission gated this call on
-//     (PermSelfReincarnate / PermAgentReincarnate). Used by
-//     auditedCaller to annotate via-sudo grants in the audit trail.
+//   - perm is the cross-agent permission slug used by auditedCaller to
+//     annotate via-sudo grants in the audit trail. It is empty for self calls,
+//     which are unconditionally available to active agents.
 //
 // Writes the JSON response (or error) directly to w.
-func runReincarnationOrchestration(w http.ResponseWriter, r *http.Request, target, caller, perm string, body reincarnateBody) {
+func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm string, body reincarnateBody) {
 	followUp := body.FollowUp
 	// 1. Snapshot target conv state. We require an alive tmux session
 	// for the target — that's the cwd source and the target of the
@@ -319,10 +321,14 @@ func runReincarnationOrchestration(w http.ResponseWriter, r *http.Request, targe
 		return
 	}
 	cwd := oldSess.Cwd
-	effectiveSandbox, profileWriteDirs, snapshotErr := effectiveSandboxWriteDirsForConv(target)
-	if snapshotErr != nil {
-		writeEffectiveSandboxLoadError(w, snapshotErr)
+	relaunchPolicy, policyErr := resolveResumeSandboxPolicy(target)
+	if policyErr != nil {
+		writeEffectiveSandboxLoadError(w, &effectiveSandboxChangedError{err: policyErr})
 		return
+	}
+	var effectiveSandbox *sandboxpolicy.Snapshot
+	if relaunchPolicy != nil {
+		effectiveSandbox = relaunchPolicy.Snapshot
 	}
 
 	// 2. Spawn a fresh tclaude session in the same cwd, carrying the
@@ -346,77 +352,60 @@ func runReincarnationOrchestration(w http.ResponseWriter, r *http.Request, targe
 	// trustDir=false for the same reason: pre-trusting the cwd edits the user's
 	// ~/.codex/config.toml and is only ever an explicit fresh-spawn opt-in.
 	reincarnateSandbox := sandboxForHarness(oldSess.Harness)
-	codexGitCommonDir, gerr := spawnGitCommonDir(oldSess.Harness, reincarnateSandbox, cwd)
-	if gerr != nil {
-		writeError(w, http.StatusInternalServerError, "io", gerr.Error())
-		return
-	}
-	var proofDirs, gitWriteDirs []string
-	proofToken := ""
-	if spawnUsesPinnedGitCommonDir(oldSess.Harness, reincarnateSandbox) {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", err.Error())
-			return
-		}
-		gitWriteDirs = harness.GitWorktreeWriteDirs(cwd, codexGitCommonDir, home)
-	}
-	if !isHumanCloneCaller(caller) && (childSandboxGrantsDirWrite(oldSess.Harness, reincarnateSandbox) || len(profileWriteDirs) > 0) {
-		dirs := appendUniqueDirs([]string{cwd}, gitWriteDirs...)
-		dirs = appendUniqueDirs(dirs, profileWriteDirs...)
-		resolved, ok := requireDirWriteProof(w, r, caller, body.WriteProofToken, dirs)
-		if !ok {
-			return
-		}
-		if resolved != nil {
-			proofToken = strings.TrimSpace(body.WriteProofToken)
-			if v := resolved[cwd]; v != "" {
-				cwd = v
-			}
-			for i, dir := range gitWriteDirs {
-				if v := resolved[dir]; v != "" {
-					gitWriteDirs[i] = v
-				}
-			}
-			for _, dir := range dirs {
-				proofDirs = appendUniqueDirs(proofDirs, resolved[dir])
-			}
-		}
-	}
-	if proofToken != "" {
-		defer cleanupDirWriteProofMarkers(proofToken, proofDirs)
-	}
-	if fail := reassertDirWriteProof(proofDirs); fail != nil {
+	if fail := sandboxProfileCapabilityFailure(oldSess.Harness, reincarnateSandbox, effectiveSandbox); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
-	gitWriteDirs, grantFail := canonicalizeRepositoryWriteDirs(gitWriteDirs, proofDirs, proofToken)
-	if grantFail != nil {
-		writeError(w, grantFail.Status, grantFail.Kind, grantFail.Msg)
-		return
+
+	// Reincarnation refreshes the target's policy through the same resolver as
+	// resume. Persist it before launch so the actor's durable snapshot and the
+	// successor's launch snapshot move together; every failure before identity
+	// rotation restores the predecessor's previous policy and removes any newly
+	// materialized private directories.
+	persistedAgentID := ""
+	if effectiveSandbox != nil {
+		agentID, err := db.AgentIDForConv(target)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", "resolve target agent identity: "+err.Error())
+			return
+		}
+		if agentID != "" {
+			if err := db.SetAgentEffectiveSandboxConfig(agentID, effectiveSandbox); err != nil {
+				writeError(w, http.StatusInternalServerError, "io", "record refreshed sandbox snapshot: "+err.Error())
+				return
+			}
+			persistedAgentID = agentID
+		}
 	}
-	exactGrantPinned := spawnUsesPinnedGitCommonDir(oldSess.Harness, reincarnateSandbox) && proofToken != ""
-	if !exactGrantPinned {
-		gitWriteDirs = nil
-		codexGitCommonDir = ""
+	rollbackSandbox := func(removeUnusedDirs bool) {
+		if persistedAgentID != "" {
+			var previous *sandboxpolicy.Snapshot
+			if relaunchPolicy != nil {
+				previous = relaunchPolicy.Previous
+			}
+			if err := db.SetAgentEffectiveSandboxConfig(persistedAgentID, previous); err != nil {
+				slog.Warn("reincarnate: restore previous sandbox snapshot failed", "agent", persistedAgentID, "error", err)
+			}
+		}
+		if removeUnusedDirs && relaunchPolicy != nil && relaunchPolicy.Previous != nil && effectiveSandbox != nil {
+			if _, err := removeSupersededMaterializedAgentDirectories(*effectiveSandbox, *relaunchPolicy.Previous); err != nil {
+				slog.Warn("reincarnate: remove unused refreshed agent directories failed", "error", err)
+			}
+		}
 	}
 	if err := SpawnDetachedTclaudeNew(clcommon.SpawnArgs{
-		EffectiveSandbox:           effectiveSandbox,
-		Label:                      label,
-		Cwd:                        cwd,
-		CwdWriteProof:              proofToken,
-		Effort:                     effort,
-		Model:                      model,
-		Harness:                    oldSess.Harness,
-		Sandbox:                    reincarnateSandbox,
-		CodexGitCommonDir:          codexGitCommonDir,
-		CodexGitCommonDirPinned:    exactGrantPinned,
-		GitWorktreeWriteDirs:       gitWriteDirs,
-		GitWorktreeWriteDirsPinned: exactGrantPinned,
-		Approval:                   approvalForHarness(oldSess.Harness),
-		AskUserQuestionTimeout:     askTimeoutForRelaunch(target),
-		RemoteControl:              remoteControl,
+		EffectiveSandbox:       effectiveSandbox,
+		Label:                  label,
+		Cwd:                    cwd,
+		Effort:                 effort,
+		Model:                  model,
+		Harness:                oldSess.Harness,
+		Sandbox:                reincarnateSandbox,
+		Approval:               approvalForHarness(oldSess.Harness),
+		AskUserQuestionTimeout: askTimeoutForRelaunch(target),
+		RemoteControl:          remoteControl,
 	}); err != nil {
+		rollbackSandbox(true)
 		writeError(w, http.StatusInternalServerError, "spawn",
 			"failed to launch tclaude session new: "+err.Error())
 		return
@@ -460,8 +449,6 @@ func runReincarnationOrchestration(w http.ResponseWriter, r *http.Request, targe
 	granter := "system:reincarnate"
 	if caller != target {
 		granter = "system:reincarnate:by=" + auditedCaller(caller, perm)
-	} else if grantID, _ := db.LookupActiveSudoGrantID(caller, perm); grantID > 0 {
-		granter = fmt.Sprintf("system:reincarnate:via-sudo:grant-id=%d", grantID)
 	}
 
 	// 4. Advance the actor old → new (db.RotateAgentConv): the agent_id never
@@ -472,6 +459,10 @@ func runReincarnationOrchestration(w http.ResponseWriter, r *http.Request, targe
 	slog.Info("reincarnate: advancing actor to successor conversation",
 		"old", target, "new", newConv, "label", label, "granter", granter)
 	if _, err := db.RotateAgentConv(target, newConv, "reincarnate"); err != nil {
+		// The successor is already running with the refreshed directories, so
+		// restore only the predecessor actor's durable snapshot. Removing paths
+		// here would pull them out from under the orphan successor.
+		rollbackSandbox(false)
 		// db.RotateAgentConv is atomic and fail-closed: an error means NOTHING
 		// committed (no generation link, no pointer advance, no succession edge),
 		// including the case where the actor's pointer could not advance onto the
@@ -603,6 +594,11 @@ func runReincarnationOrchestration(w http.ResponseWriter, r *http.Request, targe
 	// left for a hard kill rather than typed a command it can't parse.
 	if h := harnessForConv(target); h.SupportsSoftExit() {
 		_ = injectSoftExit(target, h.Life.SoftExitCommand(), "reincarnate-exit")
+	}
+	if relaunchPolicy != nil && relaunchPolicy.Previous != nil && effectiveSandbox != nil {
+		if _, err := removeSupersededMaterializedAgentDirectories(*relaunchPolicy.Previous, *effectiveSandbox); err != nil {
+			slog.Warn("reincarnate: remove superseded agent-owned directories failed", "error", err)
+		}
 	}
 
 	resp := map[string]any{

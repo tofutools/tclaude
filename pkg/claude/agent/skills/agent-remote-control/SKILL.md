@@ -47,7 +47,7 @@ tclaude agentd serve   # in a non-sandboxed terminal
 Self remote-control is opt-in. The fastest path is
 `tclaude setup --install-default-agent-permissions`, which grants
 `self.remote-control` (alongside the other self-lifecycle default slugs —
-`self.rename`, `self.compact`, `self.reincarnate`, `self.clone`,
+`self.rename`, `self.compact`, `self.clone`,
 `self.schedule`) as defaults in one shot. Manual alternatives:
 
 **Option 1 — globally for every agent.** Either edit
