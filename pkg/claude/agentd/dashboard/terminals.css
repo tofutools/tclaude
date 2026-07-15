@@ -1,12 +1,12 @@
-/* terminals.css — the standalone /terminals page SHELL (terminals.html +
-   js/terminals.js). Since the multiplexer moved into the dashboard's own
+/* terminals.css — the standalone /terminals page shell (terminals.html +
+   js/terminals.js). Since terminal panes moved into the dashboard's own
    "Terminals" tab, this page exists only for the "⧉ tab" pop-out (?solo=1: one
    terminal in its own window).
 
    Deliberately self-contained: this page is NOT the dashboard SPA, so it does
-   not pull in dashboard.css. The reusable pane / tab / button widgets are
-   shared with the in-dashboard tab via mux.css; this file adds only the
-   full-page shell + empty state + solo tweak. */
+   not pull in dashboard.css. The reusable pane / button widgets are shared
+   with the in-dashboard tab via mux.css; this file adds only the full-page
+   host and empty-state layout. */
 
 * { box-sizing: border-box; }
 
@@ -17,7 +17,8 @@ html, body {
   font-size: 13px;
 }
 
-#mux {
+#terminals-root,
+#terminals-root > .terminal-shell-root {
   display: flex; flex-direction: column;
   height: 100vh; height: 100dvh;
 }
@@ -34,7 +35,3 @@ html, body {
   background: #161b22; border: 1px solid #2a3340; border-radius: 4px;
   padding: 1px 5px; font-family: ui-monospace, monospace; color: #c9d1d9;
 }
-
-/* Solo pop-out: no tab strip, just the one terminal (the core also hides it
-   inline — this is belt-and-suspenders). */
-body.solo .mux-tabs { display: none !important; }
