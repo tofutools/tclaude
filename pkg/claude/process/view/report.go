@@ -36,6 +36,7 @@ type Envelope struct {
 	Graph        *Graph       `json:"graph"`
 	Verification Verification `json:"verification"`
 	Report       Report       `json:"report"`
+	ViewerV2     ViewerV2     `json:"viewerV2"`
 }
 
 type Run struct {
@@ -177,6 +178,7 @@ func NewEnvelope(runID string, verification processverify.Report) Envelope {
 		Graph:        nil,
 		Verification: projectVerification(verification),
 		Report:       NewReport(),
+		ViewerV2:     ProjectViewerV2(ViewerV2Input{RunID: runID}),
 	}
 }
 
@@ -193,6 +195,14 @@ func Build(snapshot store.Snapshot, tmpl *model.Template, verification processve
 	}
 	envelope.Graph = projectGraph(tmpl, snapshot.State)
 	envelope.Report = buildReport(snapshot, tmpl)
+	stateSchemaVersion := 0
+	if snapshot.State != nil {
+		stateSchemaVersion = snapshot.State.StateSchemaVersion
+	}
+	envelope.ViewerV2 = ProjectViewerV2(ViewerV2Input{
+		RunID: snapshot.Run.ID, StateSchemaVersion: stateSchemaVersion,
+		ExactTemplateRef: snapshot.Run.TemplateRef, ExactTemplate: tmpl,
+	})
 	return envelope
 }
 

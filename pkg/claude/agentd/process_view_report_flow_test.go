@@ -77,6 +77,13 @@ func TestProcessRunViewResolvesLegacyPinnedTemplateAndDoesNotMutateHistory(t *te
 	assert.Equal(t, snapshot.Run.TemplateRef, response.Run.TemplateRef)
 	assert.Equal(t, state.RunStatusRunning, response.Verification.EffectiveStatus)
 	assert.Equal(t, processview.SchemaVersion, response.Report.SchemaVersion)
+	assert.Equal(t, processview.ViewerV2Protocol, response.ViewerV2.Protocol)
+	assert.Equal(t, state.StateSchemaVersion, response.ViewerV2.StateSchemaVersion)
+	assert.Equal(t, processview.LegacyV6PathProtocol, response.ViewerV2.PathProtocol)
+	assert.False(t, response.ViewerV2.RoutingAvailable)
+	assert.Equal(t, processview.RoutingUnavailableLegacySchema, response.ViewerV2.RoutingUnavailableReason)
+	assert.Nil(t, response.ViewerV2.Routing, "v6 evidence traversal must not become a path-v1 routing overlay")
+	require.NotNil(t, response.ViewerV2.ExactTopology)
 	assert.Equal(t, 1, response.Report.Nodes["work"].Summary.AttemptCount)
 	require.Equal(t, []processview.TraversedEdge{{
 		From: "work", Outcome: "pass", To: "done", Count: 1, LastAt: at.Add(time.Second),
