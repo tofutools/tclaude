@@ -189,6 +189,17 @@ test('dangling handoff resolves every non-success branch without leaking ownersh
       fetchImpl: async () => new Response('delete refused', { status: 503 }),
       reason: 'http_failed', notice: ['Remove failed: delete refused', true],
     },
+    {
+      name: 'delete HTTP failure with unreadable body',
+      confirm: async () => true,
+      fetchImpl: async () => ({
+        ok: false,
+        status: 503,
+        text: async () => { throw new Error('body stream broke'); },
+      }),
+      reason: 'http_failed',
+      notice: ['Remove failed: HTTP 503 (response body unreadable)', true],
+    },
   ];
   for (const row of cases) {
     await t.test(row.name, async () => {
@@ -210,6 +221,43 @@ test('dangling handoff resolves every non-success branch without leaking ownersh
       assert.equal(state.dialog.value, null);
       const next = state.open({ kind: 'retire-agent', conv: 'next' });
       assert.ok(state.dialog.value, 'every failed/declined handoff releases ownership after resolving');
+      state.close();
+      await next;
+    });
+  }
+});
+
+test('notification failures cannot orphan visual handoff ownership', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createTransactionDialogState }, { createTransactionDialogActions }] = await Promise.all([
+    harness.importDashboardModule('js/transaction-dialog-state.js'),
+    harness.importDashboardModule('js/transaction-dialog-actions.js'),
+  ]);
+  for (const row of [
+    { name: 'normal success', run: (actions) => actions.retireAgent({
+      conv: 'raw-conv', label: 'Target', shutdown: false, deleteWorktree: false,
+    }) },
+    { name: 'dangling decline', run: (actions) => actions.handoffDangling({
+      dangling: true, convID: 'raw-conv', conv: 'raw-conv', label: 'Target',
+    }) },
+  ]) {
+    await t.test(row.name, async () => {
+      const state = createTransactionDialogState();
+      const pending = state.open({ kind: 'retire-agent', conv: 'raw-conv', label: 'Target' });
+      const actions = createTransactionDialogActions({
+        state,
+        fetchImpl: async () => new Response('{}', {
+          status: 200, headers: { 'Content-Type': 'application/json' },
+        }),
+        confirm: async () => false,
+        notify: () => { throw new Error('notification sink unavailable'); },
+        refresh: async () => {},
+      });
+      await row.run(actions);
+      const result = await pending;
+      assert.ok(result?.ok || (result?.dangling && result.removed === false));
+      const next = state.open({ kind: 'retire-agent', conv: 'next' });
+      assert.ok(state.dialog.value, 'notification failure must release transaction ownership');
       state.close();
       await next;
     });
