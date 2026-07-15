@@ -383,7 +383,11 @@ func executionViewFileBounds(t *testing.T, root, runID string) (total, largest i
 	require.NoError(t, json.Unmarshal(runData, &record))
 	_, hash, err := splitTemplateRef(record.TemplateRef)
 	require.NoError(t, err)
-	paths = append(paths, filepath.Join(root, "templates", "demo", "sha256-"+hash, "template.json"))
+	versionDir := filepath.Join(root, "templates", "demo", "sha256-"+hash)
+	paths = append(paths,
+		filepath.Join(versionDir, "template.json"),
+		filepath.Join(versionDir, "template.yaml"),
+	)
 	for _, path := range paths {
 		info, err := os.Stat(path)
 		if errors.Is(err, os.ErrNotExist) {
