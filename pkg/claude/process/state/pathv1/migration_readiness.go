@@ -402,7 +402,14 @@ func activeLegacyIDs(ctx context.Context, st *legacy.State, admins []CheckpointL
 	// wait/timer producer populated the embedded ID. Preserve that decode
 	// compatibility by using the durable map key only when the embedded ID is
 	// empty; a non-empty disagreement is inconsistent authority.
-	for id, wait := range st.Waits {
+	for _, id := range sortedMapKeys(st.Waits) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if id == "" || id != strings.TrimSpace(id) {
+			return nil, fmt.Errorf("legacy wait map key %q is empty or noncanonical", id)
+		}
+		wait := st.Waits[id]
 		if wait.ID != "" && wait.ID != id {
 			return nil, fmt.Errorf("legacy wait map key %q differs from embedded identity %q", id, wait.ID)
 		}
@@ -412,7 +419,14 @@ func activeLegacyIDs(ctx context.Context, st *legacy.State, admins []CheckpointL
 			}
 		}
 	}
-	for id, timer := range st.Timers {
+	for _, id := range sortedMapKeys(st.Timers) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if id == "" || id != strings.TrimSpace(id) {
+			return nil, fmt.Errorf("legacy timer map key %q is empty or noncanonical", id)
+		}
+		timer := st.Timers[id]
 		if timer.ID != "" && timer.ID != id {
 			return nil, fmt.Errorf("legacy timer map key %q differs from embedded identity %q", id, timer.ID)
 		}

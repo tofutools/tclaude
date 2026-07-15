@@ -133,6 +133,41 @@ func TestAssessUpgradeNeededStableCheckpointRejectsWaitTimerIdentityMismatch(t *
 			records: `"waits":{"wait-key":{"id":"wait-record","nodeId":"node","kind":"human","status":"satisfied"}},`,
 			want:    `legacy wait map key "wait-key" differs from embedded identity "wait-record"`,
 		},
+		{
+			name:    "satisfied timer",
+			records: `"timers":{"timer-key":{"id":"timer-record","nodeId":"node","status":"satisfied"}},`,
+			want:    `legacy timer map key "timer-key" differs from embedded identity "timer-record"`,
+		},
+		{
+			name:    "satisfied wait empty key",
+			records: `"waits":{"":{"nodeId":"node","kind":"human","status":"satisfied"}},`,
+			want:    `legacy wait map key "" is empty or noncanonical`,
+		},
+		{
+			name:    "satisfied wait noncanonical key",
+			records: `"waits":{" wait-key ":{"id":" wait-key ","nodeId":"node","kind":"human","status":"satisfied"}},`,
+			want:    `legacy wait map key " wait-key " is empty or noncanonical`,
+		},
+		{
+			name:    "satisfied timer empty key",
+			records: `"timers":{"":{"nodeId":"node","status":"satisfied"}},`,
+			want:    `legacy timer map key "" is empty or noncanonical`,
+		},
+		{
+			name:    "satisfied timer noncanonical key",
+			records: `"timers":{" timer-key ":{"id":" timer-key ","nodeId":"node","status":"satisfied"}},`,
+			want:    `legacy timer map key " timer-key " is empty or noncanonical`,
+		},
+		{
+			name:    "sorted wait traversal",
+			records: `"waits":{"wait-z":{"id":"record-z","nodeId":"node","kind":"human","status":"satisfied"},"wait-a":{"id":"record-a","nodeId":"node","kind":"human","status":"satisfied"}},`,
+			want:    `legacy wait map key "wait-a" differs from embedded identity "record-a"`,
+		},
+		{
+			name:    "sorted timer traversal",
+			records: `"timers":{"timer-z":{"id":"record-z","nodeId":"node","status":"satisfied"},"timer-a":{"id":"record-a","nodeId":"node","status":"satisfied"}},`,
+			want:    `legacy timer map key "timer-a" differs from embedded identity "record-a"`,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fixture := strings.Replace(checkpoint, `"nodes": {},`, `"nodes": {},`+tc.records, 1)
