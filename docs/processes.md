@@ -376,6 +376,19 @@ continues to return the persisted run, state, and verification result unchanged.
       }
     },
     "traversedEdges": []
+  },
+  "viewerV2": {
+    "protocol": "viewer_v2",
+    "stateSchemaVersion": 6,
+    "pathProtocol": "legacy_v6",
+    "routingAvailable": false,
+    "routingUnavailableReason": "legacy_schema",
+    "exactTopology": {
+      "templateRef": "...",
+      "start": "implement.do",
+      "nodes": [],
+      "edges": []
+    }
   }
 }
 ```
@@ -384,6 +397,16 @@ The viewer uses explicit DTOs and never serializes the stored template, state,
 events, run params, performer prompts/commands, or command payloads. The report
 projects narrow persisted metadata and content-addressed artifact references
 only.
+The additive `viewerV2` discriminator does not change the schema-v1 history
+report. It publishes the declared checkpoint schema, the path protocol, an
+exact-template topology with canonical path-v1 edge IDs, and one authoritative
+`routingAvailable` decision. Current schema-v6 runs report `legacy_schema` and
+omit the routing payload. A future schema-7 path-v1 view may expose only a
+bounded overlay derived from a validated checkpoint aggregate; evidence and
+the schema-v1 `traversedEdges` history are never routing fallbacks. Closed
+unavailability reasons are `legacy_schema`, `routing_absent`,
+`unsupported_schema`, `unsupported_protocol`, `over_budget`, and
+`inconsistent`.
 Obligations and blocked nodes include only their recorded wait/contact state;
 missing legacy timestamps and schedules remain absent rather than being
 reconstructed. A conversation reference contains only the durable agent ID

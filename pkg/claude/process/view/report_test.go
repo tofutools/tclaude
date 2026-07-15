@@ -141,7 +141,7 @@ func TestNewEnvelopeHasStableEmptyCollections(t *testing.T) {
 	t.Parallel()
 	data, err := json.Marshal(processview.NewEnvelope("run", processverify.Report{}))
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"run":{"id":"run","effectiveStatus":"inconsistent"},"graph":null,"verification":{"effectiveStatus":"inconsistent","dirty":false,"diagnostics":[]},"report":{"schemaVersion":1,"nodes":{},"traversedEdges":[]}}`, string(data))
+	assert.JSONEq(t, `{"run":{"id":"run","effectiveStatus":"inconsistent"},"graph":null,"verification":{"effectiveStatus":"inconsistent","dirty":false,"diagnostics":[]},"report":{"schemaVersion":1,"nodes":{},"traversedEdges":[]},"viewerV2":{"protocol":"viewer_v2","stateSchemaVersion":0,"routingAvailable":false,"routingUnavailableReason":"unsupported_schema"}}`, string(data))
 }
 
 func TestBuildPreservesAuthoritativelyValidLongIdentifiers(t *testing.T) {
