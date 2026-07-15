@@ -127,6 +127,11 @@ export function AddMemberDialog({ descriptor, state, actions, confirmDiscard }) 
     }
   };
 
+  const retryPool = () => {
+    if (!candidates.length && selectedIndex < 0) setHighlightConv(null);
+    void loadPool();
+  };
+
   useEffect(() => {
     void loadPool();
     return () => { poolRequest.current++; };
@@ -215,7 +220,7 @@ export function AddMemberDialog({ descriptor, state, actions, confirmDiscard }) 
         class="add-member-list" id="add-member-list" ref=${listRef}
         role="listbox" aria-busy=${busy || poolLoading ? 'true' : 'false'}
       >
-        ${poolError ? html`<div class="add-member-empty" role="alert">${poolError} <button id="add-member-pool-retry" type="button" disabled=${poolLoading || busy} onClick=${loadPool}>Retry</button></div>` : null}
+        ${poolError ? html`<div class="add-member-empty" role="alert">${poolError} <button id="add-member-pool-retry" type="button" disabled=${poolLoading || busy} onClick=${retryPool}>Retry</button></div>` : null}
         ${candidates.map((candidate, index) => html`<${CandidateRow}
           key=${candidate.conv_id} candidate=${candidate} index=${index}
           highlighted=${index === selectedIndex} busy=${busy}
