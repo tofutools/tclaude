@@ -2,6 +2,11 @@
 
 Search conversations by meaning, not just keywords. Powered by local embeddings via [Ollama](https://ollama.com) — your data never leaves your machine.
 
+!!! note "Claude Code transcripts only"
+    The semantic index currently reads Claude Code's cwd-indexed `.jsonl`
+    transcripts. Codex conversations appear in normal `conv ls` and text
+    search, but are not yet indexed by `index-embeddings`.
+
 ## Why Semantic Search?
 
 When searching past conversations, you rarely remember exact keywords — you remember the *subject* or *concept* you discussed. Keyword search (`conv search`) requires exact text matches, which often misses what you're looking for.
@@ -189,7 +194,7 @@ Conversations are ranked by the **maximum similarity** across all their chunks, 
 
 ### Storage
 
-Embeddings are stored in `~/.tclaude/db.sqlite` (table `conv_embeddings`). Each chunk stores its text, embedding vector (raw float32 bytes — 1024 dims for qwen3-embedding, 768 for nomic), model name, and creation timestamp.
+Embeddings are stored in `~/.tclaude/data/db.sqlite` (table `conv_embeddings`). Each chunk stores its text, embedding vector (raw float32 bytes — 1024 dims for qwen3-embedding, 768 for nomic), model name, and creation timestamp.
 
 ### Invalidation
 

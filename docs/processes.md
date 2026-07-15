@@ -2,7 +2,7 @@
 
 Processes are an experimental, feature-flagged surface for BPMN-lite repeatable
 workflows. With the feature enabled, `tclaude agentd` continuously advances
-runs in the filesystem store at `~/.tclaude/processes`. The manual CLI remains
+runs in the filesystem store at `~/.tclaude/data/processes`. The manual CLI remains
 available for instantiation, inspection, verification, and repair workflows.
 
 Enable the feature:
@@ -19,7 +19,7 @@ Every command currently needs an explicit filesystem store. Use the agentd
 default when you want the daemon to host the run:
 
 ```bash
-STORE="$HOME/.tclaude/processes"
+STORE="$HOME/.tclaude/data/processes"
 mkdir -p "$STORE"
 ```
 

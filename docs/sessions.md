@@ -1,27 +1,36 @@
 # Session Management 📺
 
-Run Claude Code in persistent tmux sessions with status tracking.
+Run Claude Code, OpenAI Codex CLI, or a plain shell in persistent tmux sessions
+with detach/reattach and live status tracking.
 
 ## Prerequisites
 
 - **tmux** - Required for session management
-- **Run setup** - For status tracking and notifications: `tclaude setup`
+- **Run setup** — `tclaude setup` for Claude Code and `tclaude setup --harness
+  codex` for Codex hooks/status. See [Harnesses](harnesses.md#per-harness-setup).
 
 ## Commands
 
 ### session new
 
-Start Claude in a new tmux session.
+Start a coding harness in a new tmux session. Claude Code is the compatibility
+default; pass `--harness codex` for Codex.
 
 ```bash
 # Start a new session in current directory
 tclaude session new
 
+# Start Codex instead
+tclaude session new --harness codex
+
 # Start in a specific directory
 tclaude session new -C /path/to/project
 
-# Resume an existing conversation
+# Resume a Claude Code conversation
 tclaude session new --resume <conv-id>
+
+# Resume a Codex conversation (this lower-level command needs the harness)
+tclaude session new --harness codex --resume <conv-id>
 
 # Start detached (don't attach immediately)
 tclaude session new -d
@@ -33,10 +42,16 @@ tclaude session new -d
 |--------------------|----------------------------------------------------------|
 | `-d, --detached`   | Start session without attaching                          |
 | `-C, --dir <path>` | Directory to start the session in                       |
-| `--resume <id>`    | Resume an existing conversation                          |
+| `--resume <id>`    | Resume from the selected harness's conversation store     |
 | `--label <name>`   | Custom label for the session                             |
 | `--harness <name>` | Coding harness to launch: `claude` (default) \| `codex` \| `shell` |
 | `-s, --shell`      | Start a plain shell instead of a coding harness (shorthand for `--harness shell`) |
+
+Model, effort, sandbox, approval, and lifecycle options differ by harness. The
+[capability matrix](harnesses.md#capability-matrix) documents the supported
+values and defaults; `tclaude session new --help` is the live flag reference.
+If you do not want to select the harness yourself, `tclaude conv resume <id>`
+looks it up from the conversation index.
 
 ### Shell sessions
 
@@ -194,19 +209,19 @@ Press the same key again to toggle ascending/descending/off.
 
 ## Session Status 🔮
 
-Sessions report their status via Claude hooks:
+Coding sessions report their status through the selected harness's hooks:
 
 | Status                | Color     | Description                          |
 |-----------------------|-----------|--------------------------------------|
-| `idle`                | 🟡 Yellow | Claude is waiting for input          |
-| `working`             | 🟢 Green  | Claude is processing                 |
+| `idle`                | 🟡 Yellow | The harness is waiting for input     |
+| `working`             | 🟢 Green  | The harness is processing            |
 | `running`             | 🟢 Green  | A plain shell session is alive (no hooks, so no finer-grained status) |
 | `awaiting_permission` | 🔴 Red    | Needs permission approval            |
 | `awaiting_input`      | 🔴 Red    | Waiting for user input               |
 | `error`               | 🔴 Red    | Last turn ended in an error          |
 | `exited`              | ⚫ Gray    | Session has ended                    |
 
-## Pre-compact guard
+## Claude Code: pre-compact guard
 
 The pre-compact guard **refuses Claude Code's own automatic compaction until context has grown past a floor.**
 
@@ -214,7 +229,7 @@ It exists because Claude Code can compact *too early*. CC sizes its compaction w
 
 How it works: tclaude installs a `PreCompact` hook that, when the guard is enabled, compares the conversation's used context against a per-window-size floor and returns a `block` decision to Claude Code if it's still below the floor. It is **fail-open** — if the guard is off, the trigger can't be classified, or the context snapshot is missing, compaction proceeds. It only ever *delays* an early compaction; it never forces one. By default it blocks only Claude Code's **automatic** compaction, never a `/compact` you type yourself (set `block_manual` to also guard manual compaction).
 
-Enable it in `~/.tclaude/config.json` or via the dashboard **Config** tab:
+Enable it in `~/.tclaude/data/config.json` or via the dashboard **Config** tab:
 
 ```json
 {
@@ -231,9 +246,9 @@ Enable it in `~/.tclaude/config.json` or via the dashboard **Config** tab:
 
 `thresholds` maps a context-window size (tokens) to the minimum used context (tokens) required before compaction is allowed on that window. Omit `thresholds` to use the built-in defaults shown above (hold off until 150K/200K and 800K/1M). The reported window is matched to the nearest configured size, so a slightly-off window (e.g. 1048576) still resolves to its class.
 
-> Note: the guard refuses an *early* compaction; it does not move CC's trigger point. If CC re-attempts auto-compaction every turn past its boundary, the guard refuses each attempt (and logs it to `~/.tclaude/output.log`) until the floor is reached.
+> Note: the guard refuses an *early* compaction; it does not move CC's trigger point. If CC re-attempts auto-compaction every turn past its boundary, the guard refuses each attempt (and logs it to `~/.tclaude/data/output.log`) until the floor is reached.
 
-## Resume-from-summary prompt
+## Claude Code: resume-from-summary prompt
 
 When you resume a conversation that is **both old and large**, Claude Code shows an interactive *"Resume from summary"* chooser — a multiple-choice prompt offering to compact the session before resuming. That's fine when you're sitting at the keyboard, but it **breaks tclaude's scripted resume**: the daemon (and watch-mode resume) launch a detached `claude --resume` in a tmux pane and drive it with `send-keys`, and a tmux-driven flow can't answer a TUI it didn't expect — so the resume just hangs on the chooser.
 
@@ -245,7 +260,7 @@ Install the default suppression with either flag (idempotent — it skips if you
 tclaude setup --install-resume-threshold-override   # or: --install-all
 ```
 
-That writes a large `threshold_minutes` (≈1000 years) so a resumed session's age can never reach it. Tune it by hand in `~/.tclaude/config.json` or via the dashboard **Config** tab:
+That writes a large `threshold_minutes` (≈1000 years) so a resumed session's age can never reach it. Tune it by hand in `~/.tclaude/data/config.json` or via the dashboard **Config** tab:
 
 ```json
 {
@@ -258,11 +273,11 @@ That writes a large `threshold_minutes` (≈1000 years) so a resumed session's a
 
 Omit a field to leave that threshold on Claude Code's own default; set a small value (e.g. `0`) to make the prompt *always* show. The thresholds are undocumented, version-specific Claude Code knobs (verified against CC 2.1.187), so tclaude treats them as best-effort — if a future CC build renames or drops them the override simply becomes a no-op rather than an error.
 
-## Transcript retention
+## Claude Code: transcript retention
 
 Claude Code sweeps its local storage at startup and **deletes any conversation transcript** (plus other stale session data and orphaned worktrees) that has been *inactive* longer than its `cleanupPeriodDays` setting — **30 days by default**. So a session you haven't touched in a month is gone, and with it tclaude's ability to resume or inspect that conversation.
 
-To keep transcripts longer, set `claude_cleanup_period_days` in `~/.tclaude/config.json` (or via the dashboard **Config** tab, under *General → Transcript retention*):
+To keep transcripts longer, set `claude_cleanup_period_days` in `~/.tclaude/data/config.json` (or via the dashboard **Config** tab, under *General → Transcript retention*):
 
 ```json
 {
@@ -289,7 +304,7 @@ Ctrl+B D
 
 ### Tmux session names
 
-By default a session's tmux name is the first 8 characters of its id — or your `--label`, verbatim. If you switch between sessions with plain tmux (`tmux -L tclaude choose-tree`, status-line tabs), descriptive names help. Opt in via `~/.tclaude/config.json`:
+By default a session's tmux name is the first 8 characters of its id — or your `--label`, verbatim. If you switch between sessions with plain tmux (`tmux -L tclaude choose-tree`, status-line tabs), descriptive names help. Opt in via `~/.tclaude/data/config.json`:
 
 ```json
 {

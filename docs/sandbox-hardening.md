@@ -8,12 +8,19 @@ This guide explains the **one piece of configuration that lives outside
 tclaude** and that tclaude cannot do for you: locking down the Claude Code
 sandbox so agents cannot reach tclaude's daemon state directly.
 
+Codex agents use the setup-managed `tclaude-agent` permission profile by
+default, which applies the equivalent private-state denial while allowing the
+canonical agentd socket. This guide is for Claude Code's `settings.json`
+sandbox path; see [Harnesses](harnesses.md#sandbox-approval-defaults-codex)
+for Codex.
+
 ## Why this matters
 
 `agentd`'s identity and permission layer is a **coordination guardrail,
 not a security boundary**. This is a deliberate, accepted design choice;
-[`plans/agentd.md`](plans/agentd.md) — the `agentd` design doc — covers
-the full reasoning in its security-model discussion.
+the [Agent identity](agent.md#identity) and
+[permission model](agent.md#permission-model) sections describe how callers
+are attributed and gated.
 
 The short version: the daemon resolves *which agent is calling* from the
 caller's process tree and gates sensitive operations behind that identity.
@@ -336,16 +343,14 @@ reasons — check both: the `sandbox.filesystem.allowRead` entry for
   files.
 - **Does not cover:** a process that fully escapes the OS sandbox. The
   sandbox is the security boundary; if it is bypassed, no tclaude-side
-  configuration helps. This is the same residual described in
-  [`plans/agentd.md`](plans/agentd.md) — the trust boundary is the Unix
-  UID, and `agentd` never claimed to contain a hostile same-UID process.
+  configuration helps. The trust boundary is the Unix UID, and `agentd` never
+  claimed to contain a hostile same-UID process.
   This guide closes the *easy* path (direct file edits through ordinary
   agent tooling); it does not turn the guardrail into a boundary.
 
 ## See also
 
-- [`plans/agentd.md`](plans/agentd.md) — `agentd` design and its
-  security-model discussion (guardrail, not boundary), which this guide
-  backs on the operator side.
+- [Agent coordination](agent.md#identity) — caller attribution, operator
+  identity, and the permission guardrail this guide backs on the operator side.
 - Claude Code sandboxing: <https://code.claude.com/docs/en/sandboxing>
 - Claude Code permissions: <https://code.claude.com/docs/en/permissions>

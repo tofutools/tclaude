@@ -1,12 +1,22 @@
 # Git Worktrees
 
-Manage git worktrees for parallel Claude sessions.
+Manage Git worktrees for parallel branches and coding sessions.
+
+!!! note "Automatic launch is currently Claude Code-only"
+    `tclaude worktree add` creates a harness-neutral Git worktree, but its
+    optional automatic session launch still starts Claude Code. For Codex,
+    create the worktree detached and launch the desired harness explicitly:
+
+    ```bash
+    tclaude worktree add feat/my-feature --detached
+    tclaude session new -C ../myrepo-feat--my-feature --harness codex
+    ```
 
 ## Why Worktrees?
 
-Git worktrees allow you to have multiple branches checked out simultaneously in separate directories. Combined with Claude Code sessions, this enables:
+Git worktrees allow you to have multiple branches checked out simultaneously in separate directories. Combined with coding-harness sessions, this enables:
 
-- **Parallel development** - Work on multiple features at once, each with its own Claude session
+- **Parallel development** - Work on multiple features at once, each with its own session
 - **Context isolation** - Each worktree maintains its own conversation history
 - **Quick context switching** - Jump between branches without stashing or committing WIP
 
@@ -14,7 +24,7 @@ Git worktrees allow you to have multiple branches checked out simultaneously in 
 
 | Command                     | Description                                       |
 |------------------------------|---------------------------------------------------|
-| `worktree add <branch>`      | Create a new worktree with a Claude session       |
+| `worktree add <branch>`      | Create a new worktree (and, by default, a Claude session) |
 | `worktree restore <branch>`  | Restore a worktree from a local or remote branch  |
 | `worktree ls`                | List all worktrees                                |
 | `worktree switch <branch>`   | Switch to a worktree (requires shell wrapper)     |
@@ -41,7 +51,7 @@ This will:
 1. Create a new branch (if it doesn't exist)
 2. Create a worktree at `../<repo>-feat--my-feature`
 3. Optionally copy a conversation to the new project
-4. Start a Claude session in the new worktree
+4. Start a Claude Code session in the new worktree unless `--detached` was set
 
 ### Options
 
@@ -50,7 +60,7 @@ This will:
 | `--from-branch`  | Base branch to create from (defaults to main/master)  |
 | `--from-conv`    | Conversation ID to copy to the new worktree           |
 | `--path`         | Custom path for the worktree                          |
-| `-d, --detached` | Don't start a Claude session                          |
+| `-d, --detached` | Don't start the default Claude Code session           |
 | `-g`             | Search globally for conversation (with `--from-conv`) |
 
 ## Listing Worktrees
