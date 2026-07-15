@@ -137,6 +137,24 @@ func (s *FS) WithExecutionView(ctx context.Context, runID string, callback func(
 	if err != nil || template.ID != id || semanticHash != templateHash {
 		return &ExecutionViewInconsistentError{Err: ErrContentMismatch}
 	}
+	templateSource, err := s.getTemplateExactSourceWithBudget(ctx, id, templateHash, budget, &template)
+	if err != nil {
+		if isExecutionBudgetError(err) {
+			return err
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+		return &ExecutionViewInconsistentError{Err: fmt.Errorf("exact template source cannot be read: %w", err)}
+	}
+	parsedSource, err := model.Parse(templateSource)
+	if err != nil {
+		return &ExecutionViewInconsistentError{Err: fmt.Errorf("exact template source is invalid: %w", err)}
+	}
+	if parsedSource.Template == nil || parsedSource.Template.ID != template.ID ||
+		parsedSource.SemanticHash != templateHash || parsedSource.Ref != run.TemplateRef {
+		return &ExecutionViewInconsistentError{Err: fmt.Errorf("exact template source semantics do not match exact template")}
+	}
 	if snapshot.Run.Template != nil {
 		embeddedHash, hashErr := model.SemanticHash(snapshot.Run.Template)
 		if hashErr != nil || snapshot.Run.Template.ID != id || embeddedHash != templateHash {
@@ -160,6 +178,8 @@ func (s *FS) WithExecutionView(ctx context.Context, runID string, callback func(
 	return callback(ExecutionView{
 		Snapshot:               snapshot,
 		Template:               &template,
+		TemplateSourceHash:     parsedSource.SourceHash,
+		LegacyCheckpointJSON:   legacyView.CanonicalJSON,
 		LegacyAdminRecords:     legacyView.AdminRecords,
 		LegacyAdminResolutions: legacyView.AdminResolutions,
 	})

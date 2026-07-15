@@ -375,6 +375,25 @@ func LegacyAdminRecordIdentity(record PathV1AdminRecord) (string, error) {
 	})
 }
 
+// CheckpointLegacyAdminRecordIdentity composes the already-published legacy
+// admin identity with the coherent checkpoint binding. Keeping the legacy
+// digest as an input preserves its canonical bytes while making a migration
+// record unique to the exact checkpoint generation that observed it.
+func CheckpointLegacyAdminRecordIdentity(checkpoint CheckpointBinding, record PathV1AdminRecord) (string, error) {
+	legacyID, err := LegacyAdminRecordIdentity(record)
+	if err != nil {
+		return "", err
+	}
+	if !canonicalDigest(checkpoint.Digest) {
+		return "", fmt.Errorf("checkpoint digest is not canonical")
+	}
+	return canonicalHash("checkpoint-legacy-admin-record/v1", func(e *Encoder) {
+		e.Uint(checkpoint.Generation)
+		e.String(checkpoint.Digest)
+		e.String(legacyID)
+	})
+}
+
 func CheckpointIdentity(basisRunStatus string, basisLastLogSeq uint64, basisLogChecksum string, checkpointProjectionJSON []byte) (string, error) {
 	return canonicalHash("checkpoint/v1", func(e *Encoder) {
 		e.String(basisRunStatus)
