@@ -398,7 +398,14 @@ func activeLegacyIDs(ctx context.Context, st *legacy.State, admins []CheckpointL
 			}
 		}
 	}
+	// The legacy decoder accepts omitted string fields even though every
+	// wait/timer producer populated the embedded ID. Preserve that decode
+	// compatibility by using the durable map key only when the embedded ID is
+	// empty; a non-empty disagreement is inconsistent authority.
 	for id, wait := range st.Waits {
+		if wait.ID != "" && wait.ID != id {
+			return nil, fmt.Errorf("legacy wait map key %q differs from embedded identity %q", id, wait.ID)
+		}
 		if wait.Status == legacy.WaitStatusPending {
 			if err := add(LegacyActiveWait, id); err != nil {
 				return nil, err
@@ -406,6 +413,9 @@ func activeLegacyIDs(ctx context.Context, st *legacy.State, admins []CheckpointL
 		}
 	}
 	for id, timer := range st.Timers {
+		if timer.ID != "" && timer.ID != id {
+			return nil, fmt.Errorf("legacy timer map key %q differs from embedded identity %q", id, timer.ID)
+		}
 		if timer.Status == legacy.WaitStatusPending {
 			if err := add(LegacyActiveTimer, id); err != nil {
 				return nil, err
