@@ -542,20 +542,9 @@
 <!-- Preact-owned combined member editor. Its local draft remains mounted
      across snapshot polling while the Groups rows reconcile independently. -->
 <div id="groups-member-dialog-root"></div>
-<div class="modal-overlay" id="add-member-modal">
-  <div class="add-member-modal" role="dialog" aria-modal="true" aria-labelledby="add-member-title">
-    <h3 id="add-member-title"><span class="theme-copy-regular">Add member to</span><span class="theme-copy-wizard">Invite familiar into party</span> <span class="muted" id="add-member-group"></span></h3>
-    <input id="add-member-search" class="add-member-search" type="text" placeholder="Filter by title / role or class / descr / conv-id…" autocomplete="off" spellcheck="false" />
-    <div class="add-member-list" id="add-member-list"></div>
-    <div class="add-member-foot">
-      <label title="Include archived / never-online conversations in the candidate list">
-        <input id="add-member-all" type="checkbox" /><span class="theme-copy-regular">Include offline / archived</span><span class="theme-copy-wizard">Include slumbering / archived</span>
-      </label>
-      <span class="spacer"></span>
-      <span><kbd>↑↓</kbd> nav · <kbd>Enter</kbd> <span class="theme-copy-regular">add</span><span class="theme-copy-wizard">invite</span> · <kbd>Esc</kbd> close</span>
-    </div>
-  </div>
-</div>
+<!-- Preact-owned add-existing-agent picker. Its search/highlight state remains
+     mounted across snapshot polling and successful add-another operations. -->
+<div id="groups-add-member-dialog-root"></div>
 <!-- Jobs Preact exclusively owns the cron create/edit/duplicate overlays. -->
 <div id="jobs-cron-dialog-root"></div>
 <!-- Human-authored, durable message composer opened from an agent terminal's

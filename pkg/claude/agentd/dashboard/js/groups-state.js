@@ -173,9 +173,11 @@ export function createGroupsState({
   ));
   const viewOpen = signal(false);
   const memberEditor = signal(null);
+  const addMemberDialog = signal(null);
   const renderRevision = signal(0);
   let initialized = false;
   let nextMemberEditorLaunchID = 0;
+  let nextAddMemberLaunchID = 0;
 
   const view = computed(() => {
     renderRevision.value;
@@ -266,11 +268,69 @@ export function createGroupsState({
     memberEditor.value = null;
   }
 
+  function openAddMember(group) {
+    // The dialog owns its search/toggle/highlight transaction until it closes.
+    // Poll publishes update the candidate source without retargeting the group
+    // or remounting that local state.
+    if (addMemberDialog.value || !group?.name) return false;
+    addMemberDialog.value = {
+      launchID: ++nextAddMemberLaunchID,
+      group: String(group.name),
+    };
+    return true;
+  }
+
+  function closeAddMember() {
+    addMemberDialog.value = null;
+  }
+
+  function optimisticAddMember(groupName, candidate) {
+    const current = snapshot.value;
+    const conv = String(candidate?.conv_id || '');
+    if (!current || !conv) return false;
+    let added = false;
+    const groups = (current.groups || []).map((group) => {
+      if (group.name !== groupName) return group;
+      const members = group.members || [];
+      if (members.some((member) => member.conv_id === conv)) return group;
+      added = true;
+      const member = {
+        ...candidate,
+        conv_id: conv,
+        // Plain conversations do not have a stable agent id until the server
+        // promotes them. Keep that field empty so interim row actions use the
+        // same conv-id fallback the membership request used.
+        agent_id: candidate.agent_id || '',
+        role: '',
+        descr: '',
+      };
+      return {
+        ...group,
+        members: [...members, member],
+        online: typeof group.online === 'number' && candidate.online
+          ? group.online + 1
+          : group.online,
+      };
+    });
+    if (!added) return false;
+    snapshot.value = {
+      ...current,
+      groups,
+      ungrouped: (current.ungrouped || []).filter((row) => row.conv_id !== conv),
+      conversations: (current.conversations || []).filter((row) => row.conv_id !== conv),
+      agents: (current.agents || []).map((row) => row.conv_id === conv
+        ? { ...row, groups: [...new Set([...(row.groups || []), groupName])] }
+        : row),
+    };
+    return true;
+  }
+
   return Object.freeze({
-    snapshot, query, visibility, viewOpen, memberEditor, renderRevision,
+    snapshot, query, visibility, viewOpen, memberEditor, addMemberDialog, renderRevision,
     view, columnOptions, deviationCount,
     initialize, publish, setQuery, setVisible, setColumnShown, rerender,
     openMemberEditor, closeMemberEditor,
+    openAddMember, closeAddMember, optimisticAddMember,
   });
 }
 

@@ -46,7 +46,7 @@ import { wizWord } from './slop.js';
 // lastSnapshot is dashboard.js's shared state, written here (rename
 // rollback) via setLastSnapshot. Deliberate benign cycles are TDZ-safe.
 import {
-  refresh, toast, confirmModal, addMemberModal, deleteAgentModal,
+  refresh, toast, confirmModal, deleteAgentModal,
   shutdownScope, powerOnScope, openCleanupModal, openWindowModal,
   openWorktreeCleanup,
   resumeAgentReq, retireAgentInteractive, shutdownConfirm, stopAgentReq,
@@ -743,14 +743,6 @@ function bindRowActions() {
           const choice = await shutdownConfirm({label});
           if (!choice) return;
           await stopAgentReq(agent, label, choice === 'force');
-          return;
-        }
-        case 'add-member': {
-          // Pop the candidate-list overlay. The overlay manages its
-          // own POSTs + optimistic refresh; we just await its
-          // close so the trailing toast/refresh logic doesn't fire
-          // (the overlay already handled that per-add).
-          await addMemberModal(group);
           return;
         }
         case 'spawn-agent': {
