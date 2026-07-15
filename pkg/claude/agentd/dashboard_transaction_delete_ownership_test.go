@@ -90,7 +90,7 @@ func TestDashboardTransactionDeleteExclusiveOwnership(t *testing.T) {
 		rowActions: "case 'delete-generation'",
 		refresh:    "function openDeleteGroupModal(group)",
 		dnd:        "openRetireAgentDialog",
-		html:       `id="delete-group-modal"`,
+		island:     `id="delete-group-modal"`,
 	} {
 		if !strings.Contains(source, required) {
 			t.Errorf("adjacent delete/retire contract disappeared: %q", required)
