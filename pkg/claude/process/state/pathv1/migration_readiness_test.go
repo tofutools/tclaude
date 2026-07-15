@@ -129,6 +129,13 @@ func TestValidateUpgradeNeededRejectsForgedCheckpointAdminProvenance(t *testing.
 			rebind: true,
 		},
 		{
+			name: "positive legacy event sequence rebound",
+			mutate: func(needed *UpgradeNeeded) {
+				needed.CheckpointAdminRecords[0].Record.EventSeq = 1
+			},
+			rebind: true,
+		},
+		{
 			name: "missing admin type",
 			mutate: func(needed *UpgradeNeeded) {
 				needed.CheckpointAdminRecords[0].Record.AdminType = ""

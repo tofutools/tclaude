@@ -21,6 +21,9 @@ func ValidateAdminRecord(record PathV1AdminRecord, legacy bool, resolution *Bloc
 	if legacy && record.Timestamp == "" {
 		return fmt.Errorf("legacy admin record lacks timestamp")
 	}
+	if legacy && record.EventSeq != 0 {
+		return fmt.Errorf("legacy admin record has nonzero event sequence")
+	}
 	if record.EventSeq < 0 {
 		return fmt.Errorf("negative admin event sequence")
 	}
