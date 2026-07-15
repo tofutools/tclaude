@@ -6,7 +6,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  LiveValidation, ValidationScheduler, mapDiagnostics, decorateGraph, splitEdgeTarget, severityGlyph,
+  LiveValidation, ValidationScheduler, diagnosticIdentity, resolveDiagnosticFocus,
+  mapDiagnostics, decorateGraph, splitEdgeTarget, severityGlyph,
 } from '../dashboard/js/process-validation.js';
 import { ProcessEditModel, blankEditView, graphEdgeID } from '../dashboard/js/process-edit-model.js';
 
@@ -79,10 +80,15 @@ test('flush replaces a pending debounce with one immediate validation round', as
 test('issue navigation starts at the expected end and wraps', () => {
   const focused = [];
   const button = { focus() {} };
+  const entries = [
+    { code: 'first', scope: 'template', targetId: '' },
+    { code: 'middle', scope: 'node', targetId: 'work' },
+    { code: 'last', scope: 'edge', targetId: 'start:fail' },
+  ];
   const fake = {
-    mapped: { entries: ['first', 'middle', 'last'] }, issueCursor: -1,
+    mapped: { entries }, issueCursor: -1,
     panel: { open: false }, list: { querySelector: () => button },
-    focusEntry: (entry) => focused.push(entry),
+    focusEntry: (entry) => focused.push(entry.code),
     focusIssueAt: LiveValidation.prototype.focusIssueAt,
   };
   assert.equal(LiveValidation.prototype.focusIssue.call(fake, -1), true);
@@ -104,11 +110,16 @@ test('clicking an issue seeds subsequent next and previous navigation', () => {
   globalThis.document = { createElement: element };
   try {
     const focused = [];
+    const entries = [
+      { code: 'first', scope: 'template', targetId: '' },
+      { code: 'middle', scope: 'node', targetId: 'work' },
+      { code: 'last', scope: 'edge', targetId: 'start:fail' },
+    ];
     const fake = {
       editor: { stage: { append() {} } },
-      mapped: { entries: ['first', 'middle', 'last'] },
+      mapped: { entries },
       issueCursor: -1,
-      focusEntry: (entry) => focused.push(entry),
+      focusEntry: (entry) => focused.push(entry.code),
       focusIssueAt: LiveValidation.prototype.focusIssueAt,
     };
     LiveValidation.prototype.buildPanel.call(fake);
@@ -291,7 +302,34 @@ test('decorateGraph preserves foreign overlay fields and badges', () => {
 
 test('currentIssue returns only the explicitly focused stable diagnostic entry', () => {
   const entry = { code: 'dead_edge', scope: 'edge', targetId: 'start:fail', edge: { from: 'start', outcome: 'fail' } };
-  assert.equal(LiveValidation.prototype.currentIssue.call({ mapped: { entries: [entry] }, issueCursor: -1 }), null);
-  assert.equal(LiveValidation.prototype.currentIssue.call({ mapped: { entries: [entry] }, issueCursor: 0 }), entry);
-  assert.equal(LiveValidation.prototype.currentIssue.call({ mapped: { entries: [entry] }, issueCursor: 2 }), null);
+  const identity = diagnosticIdentity(entry);
+  const focused = { mapped: { entries: [entry] }, issueCursor: 0, focusedIssueIdentity: identity };
+  assert.equal(LiveValidation.prototype.currentIssue.call({ ...focused, issueCursor: -1 }), null);
+  assert.equal(LiveValidation.prototype.currentIssue.call(focused), entry);
+  assert.equal(LiveValidation.prototype.currentIssue.call({ ...focused, issueCursor: 2 }), null);
+
+  const unrelated = { code: 'missing_next', scope: 'node', targetId: 'work' };
+  assert.equal(LiveValidation.prototype.currentIssue.call({
+    mapped: { entries: [unrelated] }, issueCursor: 0, focusedIssueIdentity: identity,
+  }), null, 'an unrelated issue reusing the old array index is never current');
+});
+
+test('focused diagnostics follow stable identity or clear when no longer exact', () => {
+  const selected = { code: 'dead_edge', scope: 'edge', targetId: 'start:fail', message: 'selected' };
+  const other = { code: 'missing_next', scope: 'node', targetId: 'work', message: 'other' };
+  const inserted = { code: 'missing_id', scope: 'template', targetId: '', message: 'inserted' };
+  const identity = diagnosticIdentity(selected);
+
+  assert.equal(resolveDiagnosticFocus([other, selected], { identity }), 1,
+    'reordering preserves the exact focused diagnostic');
+  assert.equal(resolveDiagnosticFocus([inserted, other, selected], { identity }), 2,
+    'insertion before the focused diagnostic preserves identity');
+  assert.equal(resolveDiagnosticFocus([other], { identity }), -1,
+    'removal clears focus instead of reusing the old index');
+
+  const duplicateLooking = { ...selected, message: 'different row with the same stable identity' };
+  assert.equal(resolveDiagnosticFocus([selected, duplicateLooking], { identity }), -1,
+    'duplicate-looking diagnostics clear focus instead of guessing');
+  assert.equal(resolveDiagnosticFocus([selected], { identity, ambiguous: true }), -1,
+    'a focus that began ambiguous stays cleared after results change');
 });
