@@ -91,10 +91,14 @@ function AgentPicker({ descriptor, state, snapshot, confirmDiscard }) {
   const [includeOffline, setIncludeOffline] = useState(false);
   const [highlight, setHighlight] = useState(0);
   const searchRef = useRef(null);
+  const highlightedRef = useRef(null);
   const candidates = agentCandidates(snapshot, { includeOffline, query });
   const activeSudo = sudoByConv(snapshot);
-  const bounded = Math.min(highlight, Math.max(0, candidates.length - 1));
+  const bounded = Math.max(0, Math.min(highlight, Math.max(0, candidates.length - 1)));
+  const activeID = candidates[bounded] ? `cron-pick-target-option-${bounded}` : undefined;
+  const activeKey = candidates[bounded]?.agent_id || candidates[bounded]?.conv_id || '';
   useEffect(() => { if (bounded !== highlight) setHighlight(bounded); }, [bounded, highlight]);
+  useEffect(() => { highlightedRef.current?.scrollIntoView?.({ block: 'nearest' }); }, [bounded, activeKey]);
   const choose = (agent) => state.finishPicker(descriptor.identity === 'conv'
     ? agent.conv_id : (agent.agent_id || agent.conv_id));
   const onKeyDown = (event) => {
@@ -109,10 +113,14 @@ function AgentPicker({ descriptor, state, snapshot, confirmDiscard }) {
     <h3 id="cron-pick-target-title">${descriptor.title} <span class="muted"><${Words} plain="— pick agent" wizard="— pick familiar"/></span></h3>
     <input ref=${searchRef} id="cron-pick-target-search" class="add-member-search" type="text"
       value=${query} placeholder="Filter by title / role / descr / conv-id / group…" autocomplete="off" spellcheck="false"
+      role="combobox" aria-label="Filter agents" aria-controls="cron-pick-target-list" aria-expanded="true"
+      aria-autocomplete="list" aria-activedescendant=${activeID}
       onInput=${(event) => { setQuery(event.currentTarget.value); setHighlight(0); }} onKeyDown=${onKeyDown} />
-    <div class="add-member-list" id="cron-pick-target-list">
+    <div class="add-member-list" id="cron-pick-target-list" role="listbox">
       ${candidates.length === 0 ? html`<div class="add-member-empty">No matching conversations. ${includeOffline ? '(Try a different filter.)' : '(Try ticking “Include offline / archived” for a wider pool.)'}</div>`
         : candidates.map((agent, index) => html`<div key=${agent.agent_id || agent.conv_id}
+          ref=${index === bounded ? highlightedRef : null} id=${`cron-pick-target-option-${index}`}
+          role="option" aria-selected=${index === bounded ? 'true' : 'false'}
           class=${`add-member-row${index === bounded ? ' highlighted' : ''}`} data-i=${index}
           onMouseDown=${() => choose(agent)}>
           <span class=${agent.online ? 'online' : 'offline'} title=${agent.online ? 'online' : 'offline'}>${agent.online ? '●' : '○'}</span>

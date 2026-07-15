@@ -7,7 +7,7 @@ import { wizWord } from './slop.js';
 import { formatJobInterval } from './jobs-format.js';
 import { featureState } from './feature-state-registry.js';
 import { lastSnapshot } from './dashboard.js';
-import { bindBackdropDiscard } from './refresh.js';
+import { bindBackdropDiscard, refresh, toast } from './refresh.js';
 import {
   configureCronTargetPicker, pickAgent, readCronTargetPicker,
   setCronTargetModeListener,
