@@ -53,6 +53,15 @@ type ExactTopologyV2 struct {
 	Edges       []TopologyEdgeV2 `json:"edges"`
 }
 
+// ExactTopologyV2EncodedBytes gives the encoded topology ceiling its own unit
+// so it cannot be confused with the viewer's node, edge, or routing-record
+// cardinality budgets.
+type ExactTopologyV2EncodedBytes uint64
+
+// MaxExactTopologyV2EncodedBytes keeps one exact topology no larger than the
+// path-v1 checkpoint whose routing it can describe.
+const MaxExactTopologyV2EncodedBytes ExactTopologyV2EncodedBytes = pathv1.MaxCheckpointBytes
+
 type TopologyNodeV2 struct {
 	ID   string         `json:"id"`
 	Type model.NodeType `json:"type,omitempty"`
@@ -241,7 +250,84 @@ func projectExactTopology(ref string, tmpl *model.Template) (exactTopologyProjec
 		}
 		return cmp.Compare(a.ID, b.ID)
 	})
+	if !exactTopologyV2FitsEncodedByteBudget(topology) {
+		return exactTopologyProjection{}, RoutingUnavailableOverBudget
+	}
 	return exactTopologyProjection{topology: topology, semanticHash: hash, edges: edgesByID}, ""
+}
+
+type exactTopologyV2EncodedByteBudget struct {
+	used ExactTopologyV2EncodedBytes
+}
+
+func (b *exactTopologyV2EncodedByteBudget) add(parts ...ExactTopologyV2EncodedBytes) bool {
+	for _, part := range parts {
+		if part > MaxExactTopologyV2EncodedBytes-b.used {
+			return false
+		}
+		b.used += part
+	}
+	return true
+}
+
+// exactTopologyV2FitsEncodedByteBudget counts the exact encoding/json object
+// shape without materializing another copy of the topology. All strings have
+// already passed the topology's safe ASCII patterns, so their JSON encoding is
+// exactly their byte length plus the two quote bytes.
+func exactTopologyV2FitsEncodedByteBudget(topology *ExactTopologyV2) bool {
+	if topology == nil {
+		return false
+	}
+	b := exactTopologyV2EncodedByteBudget{}
+	if !b.add(
+		exactTopologyV2LiteralBytes(`{"templateRef":`), exactTopologyV2StringBytes(topology.TemplateRef),
+		exactTopologyV2LiteralBytes(`,"start":`), exactTopologyV2StringBytes(topology.Start),
+		exactTopologyV2LiteralBytes(`,"nodes":[`),
+	) {
+		return false
+	}
+	for i, node := range topology.Nodes {
+		if i > 0 && !b.add(1) {
+			return false
+		}
+		if !b.add(
+			exactTopologyV2LiteralBytes(`{"id":`), exactTopologyV2StringBytes(node.ID),
+			exactTopologyV2LiteralBytes(`,"type":`), exactTopologyV2StringBytes(string(node.Type)),
+			1,
+		) {
+			return false
+		}
+	}
+	if !b.add(exactTopologyV2LiteralBytes(`],"edges":[`)) {
+		return false
+	}
+	for i, edge := range topology.Edges {
+		if i > 0 && !b.add(1) {
+			return false
+		}
+		if !b.add(exactTopologyV2LiteralBytes(`{"id":`), exactTopologyV2StringBytes(edge.ID)) {
+			return false
+		}
+		if edge.From != "" && !b.add(exactTopologyV2LiteralBytes(`,"from":`), exactTopologyV2StringBytes(edge.From)) {
+			return false
+		}
+		if !b.add(
+			exactTopologyV2LiteralBytes(`,"outcome":`), exactTopologyV2StringBytes(edge.Outcome),
+			exactTopologyV2LiteralBytes(`,"to":`), exactTopologyV2StringBytes(edge.To),
+			1,
+		) {
+			return false
+		}
+	}
+	return b.add(2)
+}
+
+func exactTopologyV2LiteralBytes(value string) ExactTopologyV2EncodedBytes {
+	return ExactTopologyV2EncodedBytes(len(value))
+}
+
+func exactTopologyV2StringBytes(value string) ExactTopologyV2EncodedBytes {
+	return ExactTopologyV2EncodedBytes(len(value)) + 2
 }
 
 func projectRoutingOverlay(routing *pathv1.RoutingState, semanticHash string, topologyEdges map[string]TopologyEdgeV2) (*RoutingOverlayV2, bool) {

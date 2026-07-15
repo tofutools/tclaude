@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -127,11 +128,142 @@ func TestViewerV2JSONIsNarrowAndHasNoEvidenceFallback(t *testing.T) {
 	assertViewerV2Unavailable(t, projected, processview.RoutingUnavailableAbsent)
 }
 
+func TestProjectViewerV2ExactTopologyEncodedByteBudget(t *testing.T) {
+	atBound, atBoundRef, adjustableSource, adjustableOutcome, atBoundSourceBytes := denseViewerV2TemplateAtEncodedByteBudget(t)
+	projected := processview.ProjectViewerV2(processview.ViewerV2Input{
+		StateSchemaVersion: processview.PathV1StateSchemaVersion,
+		ExactTemplateRef:   atBoundRef,
+		ExactTemplate:      atBound,
+	})
+	assert.Equal(t, processview.RoutingUnavailableAbsent, projected.RoutingUnavailableReason)
+	require.NotNil(t, projected.ExactTopology)
+	encoded, err := json.Marshal(projected.ExactTopology)
+	require.NoError(t, err)
+	assert.Len(t, encoded, int(processview.MaxExactTopologyV2EncodedBytes))
+	assert.Greater(t, len(encoded), atBoundSourceBytes)
+
+	adjustedNode := atBound.Nodes[adjustableSource]
+	target := adjustedNode.Next[adjustableOutcome]
+	delete(adjustedNode.Next, adjustableOutcome)
+	adjustedNode.Next[adjustableOutcome+"x"] = target
+	overBoundRef := viewerV2TemplateRef(t, atBound)
+	overBoundSourceBytes := assertViewerV2ExactTemplateInputWithinByteBudget(t, atBound)
+	projected = processview.ProjectViewerV2(processview.ViewerV2Input{
+		StateSchemaVersion: processview.PathV1StateSchemaVersion,
+		ExactTemplateRef:   overBoundRef,
+		ExactTemplate:      atBound,
+	})
+	assert.Equal(t, int(processview.MaxExactTopologyV2EncodedBytes)+1, len(encoded)+1)
+	assert.Equal(t, atBoundSourceBytes+1, overBoundSourceBytes)
+	assertViewerV2Unavailable(t, projected, processview.RoutingUnavailableOverBudget)
+	assert.Nil(t, projected.ExactTopology)
+
+	legacy := processview.ProjectViewerV2(processview.ViewerV2Input{
+		StateSchemaVersion: 6,
+		ExactTemplateRef:   overBoundRef,
+		ExactTemplate:      atBound,
+	})
+	assert.Equal(t, processview.RoutingUnavailableLegacySchema, legacy.RoutingUnavailableReason)
+	assert.Nil(t, legacy.ExactTopology)
+
+	wrongRef := processview.ProjectViewerV2(processview.ViewerV2Input{
+		StateSchemaVersion: processview.PathV1StateSchemaVersion,
+		ExactTemplateRef:   "other@sha256:" + strings.Repeat("c", 64),
+		ExactTemplate:      atBound,
+	})
+	assertViewerV2Unavailable(t, wrongRef, processview.RoutingUnavailableInconsistent)
+}
+
 func assertViewerV2Unavailable(t *testing.T, got processview.ViewerV2, reason processview.RoutingUnavailableReason) {
 	t.Helper()
 	assert.False(t, got.RoutingAvailable)
 	assert.Equal(t, reason, got.RoutingUnavailableReason)
 	assert.Nil(t, got.Routing)
+}
+
+// denseViewerV2TemplateAtEncodedByteBudget builds a valid acyclic chain whose
+// 4,096 long source IDs are each repeated across 21 projected edge objects.
+// This keeps the exact template input well below its existing file ceiling
+// while projection overhead supplies most of the encoded topology size. One
+// safe outcome is then extended just enough to land exactly on the bound.
+func denseViewerV2TemplateAtEncodedByteBudget(t *testing.T) (*model.Template, string, string, string, int) {
+	t.Helper()
+	const outgoing = 21
+	sourceIDs := make([]string, pathv1.MaxRoutingList)
+	for i := range sourceIDs {
+		sourceIDs[i] = fmt.Sprintf("source-%04d-%s", i, strings.Repeat("s", 52))
+	}
+	nodes := make(map[string]model.Node, len(sourceIDs)+1)
+	nodes["end"] = model.Node{Type: model.NodeTypeEnd}
+	for i, sourceID := range sourceIDs {
+		next := make(model.Next, outgoing)
+		for branch := 0; branch < outgoing-1; branch++ {
+			next[fmt.Sprintf("branch-%02d", branch)] = "end"
+		}
+		if i+1 < len(sourceIDs) {
+			next["advance"] = sourceIDs[i+1]
+		} else {
+			next["advance"] = "end"
+		}
+		nodes[sourceID] = model.Node{
+			Type:      model.NodeTypeDecision,
+			Performer: &model.Performer{Kind: model.PerformerHuman, Ask: "Choose an outcome"},
+			Next:      next,
+		}
+	}
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion,
+		Kind:       model.Kind,
+		ID:         "viewer-v2-dense-budget",
+		Start:      sourceIDs[0],
+		Nodes:      nodes,
+	}
+	edges := model.NormalizeEdges(tmpl)
+	require.Len(t, edges, len(sourceIDs)*outgoing+1)
+	require.LessOrEqual(t, len(nodes)+len(edges), pathv1.MaxRoutingRecords)
+
+	ref := viewerV2TemplateRef(t, tmpl)
+	baseline := processview.ProjectViewerV2(processview.ViewerV2Input{
+		StateSchemaVersion: processview.PathV1StateSchemaVersion,
+		ExactTemplateRef:   ref,
+		ExactTemplate:      tmpl,
+	})
+	require.Equal(t, processview.RoutingUnavailableAbsent, baseline.RoutingUnavailableReason)
+	require.NotNil(t, baseline.ExactTopology)
+	baselineJSON, err := json.Marshal(baseline.ExactTopology)
+	require.NoError(t, err)
+
+	adjustableOutcome := "branch-00"
+	adjustableSource := sourceIDs[0]
+	fillerBytes := int(processview.MaxExactTopologyV2EncodedBytes) - len(baselineJSON)
+	require.Positive(t, fillerBytes)
+	adjustedNode := nodes[adjustableSource]
+	target := adjustedNode.Next[adjustableOutcome]
+	delete(adjustedNode.Next, adjustableOutcome)
+	adjustableOutcome += strings.Repeat("x", fillerBytes)
+	adjustedNode.Next[adjustableOutcome] = target
+
+	ref = viewerV2TemplateRef(t, tmpl)
+	sourceBytes := assertViewerV2ExactTemplateInputWithinByteBudget(t, tmpl)
+	return tmpl, ref, adjustableSource, adjustableOutcome, sourceBytes
+}
+
+func assertViewerV2ExactTemplateInputWithinByteBudget(t *testing.T, tmpl *model.Template) int {
+	t.Helper()
+	encoded, err := json.Marshal(tmpl)
+	require.NoError(t, err)
+	require.LessOrEqual(t, len(encoded), pathv1.MaxCheckpointBytes)
+	canonical, err := model.CanonicalSemanticJSON(tmpl)
+	require.NoError(t, err)
+	require.LessOrEqual(t, len(canonical), pathv1.MaxCheckpointBytes)
+	return len(encoded)
+}
+
+func viewerV2TemplateRef(t *testing.T, tmpl *model.Template) string {
+	t.Helper()
+	hash, err := model.SemanticHash(tmpl)
+	require.NoError(t, err)
+	return model.TemplateRef(tmpl.ID, hash)
 }
 
 func viewerV2Fixture(t *testing.T) (*model.Template, string, string, pathv1.AggregateView) {
