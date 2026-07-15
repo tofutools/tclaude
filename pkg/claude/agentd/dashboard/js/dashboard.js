@@ -240,6 +240,7 @@ export function sudoBadge(activeSudo, fallbackConvID) {
       confirmDiscard,
       refresh: dashboardActions.refresh,
       notify: toast,
+      words: wizWord,
       openWebWindowPane,
       closeTerminalsForWindowOp,
     }),

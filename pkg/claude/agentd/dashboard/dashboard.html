@@ -565,8 +565,8 @@
      ids remain on rendered overlays so scoped plain/wizard CSS keeps working. -->
 <div id="action-dialog-root"></div>
 <!-- Preact transaction dialogs mount here. Concrete destructive flows move
-     into this single keyed owner atomically; legacy static modals remain live
-     until their corresponding renderer and launch adapter land. -->
+     into this single keyed owner atomically; adjacent legacy static modals
+     remain live until their corresponding renderer and launch adapter land. -->
 <div id="transaction-dialog-root"></div>
 <div class="modal-overlay" id="cleanup-modal">
   <div class="cleanup-modal" role="dialog" aria-modal="true" aria-labelledby="cleanup-title">
@@ -590,32 +590,6 @@
     <div class="modal-buttons">
       <button id="cleanup-cancel" type="button">Cancel</button>
       <button id="cleanup-submit" class="primary" type="button">Clean up</button>
-    </div>
-  </div>
-</div>
-<div class="modal-overlay" id="delete-group-modal">
-  <div class="cleanup-modal" role="dialog" aria-modal="true" aria-labelledby="delete-group-title">
-    <h3 id="delete-group-title">Delete group</h3>
-    <p class="cleanup-hint danger" id="delete-group-hint"></p>
-    <div class="cleanup-toolbar">
-      <span class="cleanup-count" id="delete-group-count"></span>
-    </div>
-    <div class="cleanup-list" id="delete-group-list"></div>
-    <label class="delete-agent-wt" id="delete-group-retire-row">
-      <input type="checkbox" id="delete-group-retire" checked />
-      <span>
-        <span class="delete-group-copy-regular">Retire checked agents before deleting the group</span>
-        <span class="delete-group-copy-wizard">Banish checked familiars before disbanding the party</span>
-        <span class="wt-note">
-          <span class="delete-group-copy-regular">single-group agents are checked by default; agents also in other groups are unchecked by default and only detached unless you tick them</span>
-          <span class="delete-group-copy-wizard">single-party familiars are checked by default; familiars also in other parties are unchecked by default and only detached unless you tick them</span>
-        </span>
-      </span>
-    </label>
-    <div class="cleanup-error" id="delete-group-error"></div>
-    <div class="modal-buttons">
-      <button id="delete-group-cancel" type="button">Cancel</button>
-      <button id="delete-group-submit" class="primary danger" type="button">Delete group</button>
     </div>
   </div>
 </div>
