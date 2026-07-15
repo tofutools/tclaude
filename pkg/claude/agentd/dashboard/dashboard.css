@@ -7758,7 +7758,7 @@ body.wizard #window-modal .cleanup-empty { color: #b39ddb; }
 
 /* Footer: Cancel gets the tarnished-gold secondary treatment; the
    focus/unfocus submit becomes a gilded lever. Its label is JS-set with a live
-   count, and openWindowModal swaps the verb+noun for the theme ("Focus 3 agents"
+   count, and the Preact window dialog swaps the verb+noun for the theme ("Focus 3 agents"
    → "Reveal 3 familiars"), so — unlike the static Summon / Banish levers — the
    CSS only gilds the chrome; the copy swap lives in the JS. The .cleanup-error
    line is deliberately left its base red (a status signal, not chrome). */
