@@ -29,6 +29,38 @@ export function openDeleteAgentDialog(agent, label = '') {
   return openTransactionDialog({ kind: 'delete-agent', agent, label });
 }
 
+// Bulk preview launchers cross the same imperative → keyed owner seam as the
+// single-agent transactions. Candidate identity is conv-keyed even when the
+// ungrouped endpoint later prefers a stable agent selector: conv_id is the
+// snapshot roster key and the only safe dedupe domain at open time.
+export function dedupeRetireCandidates(candidates) {
+  const seen = new Set();
+  const result = [];
+  for (const candidate of candidates || []) {
+    const conv = String(candidate?.conv_id || '').trim();
+    if (!conv || seen.has(conv)) continue;
+    seen.add(conv);
+    result.push({ ...candidate, conv_id: conv });
+  }
+  return result;
+}
+
+export function openGroupRetirePreviewDialog(group, status, candidates) {
+  return openTransactionDialog({
+    kind: 'retire-group-preview',
+    group,
+    status,
+    candidates: dedupeRetireCandidates(candidates),
+  });
+}
+
+export function openUngroupedRetirePreviewDialog(candidates) {
+  return openTransactionDialog({
+    kind: 'retire-ungrouped-preview',
+    candidates: dedupeRetireCandidates(candidates),
+  });
+}
+
 // DnD owns optimistic drag presentation, while the transaction root owns the
 // authoritative mutation refresh. Only results that did not already complete
 // and refresh need the DnD caller to reconcile the cancelled/failed gesture.
