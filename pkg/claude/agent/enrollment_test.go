@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -73,6 +74,24 @@ func TestRunRetire_DefaultsDoBoth(t *testing.T) {
 	assert.Contains(t, out, "sent /exit", "should report the shutdown")
 	assert.Contains(t, out, "worktree + branch will be removed after the agent exits",
 		"should surface the worktree outcome detail")
+}
+
+func TestRunRetirePassesAskHumanToDaemon(t *testing.T) {
+	prevAvail, prevReq := DaemonAvailableImpl, DaemonRequestImpl
+	t.Cleanup(func() { DaemonAvailableImpl, DaemonRequestImpl = prevAvail, prevReq })
+	DaemonAvailableImpl = func() bool { return true }
+
+	var gotOpts DaemonOpts
+	DaemonRequestImpl = func(_, _ string, _, out any, opts DaemonOpts) error {
+		gotOpts = opts
+		return json.Unmarshal([]byte(`{"conv_id":"abcdef0123456789","outcome":{"retired":true}}`), out)
+	}
+
+	var stdout, stderr bytes.Buffer
+	rc := runRetire(&retireParams{Selector: "some-agent", AskHuman: "45s"}, &stdout, &stderr)
+	require.Equal(t, rcOK, rc, "stderr=%q", stderr.String())
+	assert.Equal(t, 45*time.Second, gotOpts.AskHuman)
+	assert.Contains(t, stdout.String(), "Waiting up to 45s for human approval")
 }
 
 // TestRunRetire_NoDeleteWorktree: --no-delete-worktree sends

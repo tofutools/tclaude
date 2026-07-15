@@ -91,6 +91,7 @@ type retireParams struct {
 	Reason           string `long:"reason" short:"r" optional:"true" help:"Why the agent is being retired (recorded in the audit trail)"`
 	NoShutdown       bool   `long:"no-shutdown" help:"Leave the agent's running session alive. By default retire also soft-exits the running tmux session (sends /exit); pass this to keep the process running."`
 	NoDeleteWorktree bool   `long:"no-delete-worktree" help:"Keep the agent's git worktree + branch. By default retire also removes a removable linked worktree (never the main repo or one shared with a live agent) and force-deletes its branch; pass this to leave the worktree untouched."`
+	AskHuman         string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
 }
 
 func retireCmd() *cobra.Command {
@@ -126,6 +127,7 @@ func retireCmd() *cobra.Command {
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *retireParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Selector).SetAlternativesFunc(completeConvSelectors)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
 			return nil
 		},
 		RunFunc: func(p *retireParams, _ *cobra.Command, _ []string) {
@@ -142,6 +144,14 @@ func runRetire(p *retireParams, stdout, stderr io.Writer) int {
 	}
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
+	}
+	ask, err := ParseAskHuman(p.AskHuman)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
+	if ask > 0 {
+		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
 	}
 	// Always send shutdown and delete_worktree explicitly so the request
 	// is unambiguous — the daemon defaults shutdown ON and delete_worktree
@@ -186,7 +196,7 @@ func runRetire(p *retireParams, stdout, stderr io.Writer) int {
 			Detail string `json:"detail"`
 		} `json:"worktree"`
 	}
-	if err := DaemonRequest(http.MethodPost, path, nil, &resp, DaemonOpts{}); err != nil {
+	if err := DaemonRequest(http.MethodPost, path, nil, &resp, DaemonOpts{AskHuman: ask}); err != nil {
 		// A dangling agent entry — an enrollment whose conversation data
 		// is gone — can't be retired (there's no conversation to demote).
 		// Point the human at the only meaningful cleanup instead of the
