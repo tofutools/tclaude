@@ -574,6 +574,36 @@ export function mountTransactionDialogsFeature(dependencies = {}) {
   return mountIslandDescriptor(transactionDialogsDescriptor, dependencies);
 }
 
+const worktreeCleanupDescriptor = createIslandDescriptor({
+  name: 'worktree-cleanup',
+  label: 'Worktree cleanup',
+  hosts: { root: '#worktree-cleanup-root' },
+  primaryHost: 'root',
+  failureClass: 'worktree-cleanup-error',
+  load: async ({ hosts, dependencies }) => {
+    const islandModule = import('./worktree-cleanup-island.js');
+    const stateModule = import('./worktree-cleanup-state.js');
+    const actionsModule = import('./worktree-cleanup-actions.js');
+    const [
+      { mountWorktreeCleanupIsland },
+      { createWorktreeCleanupState },
+      { createWorktreeCleanupActions },
+    ] = await Promise.all([islandModule, stateModule, actionsModule]);
+    const state = createWorktreeCleanupState();
+    const actions = createWorktreeCleanupActions({ ...dependencies });
+    return {
+      state,
+      mount: (registerCleanup) => mountWorktreeCleanupIsland({
+        host: hosts.root, state, actions, registerCleanup,
+      }),
+    };
+  },
+});
+
+export function mountWorktreeCleanupFeature(dependencies = {}) {
+  return mountIslandDescriptor(worktreeCleanupDescriptor, dependencies);
+}
+
 const directoryPickerDescriptor = createIslandDescriptor({
   name: 'directory-picker',
   label: 'Directory picker',

@@ -87,7 +87,7 @@ func TestDashboardTransactionGroupRetireExclusiveOwnership(t *testing.T) {
 		t.Error("the per-group palette command lost its preview launcher")
 	}
 	for _, adjacent := range []string{
-		`id="worktree-cleanup-modal"`,
+		`id="worktree-cleanup-root"`,
 	} {
 		if !strings.Contains(html, adjacent) {
 			t.Errorf("adjacent static workflow changed during retire cutover: %q", adjacent)
@@ -96,7 +96,7 @@ func TestDashboardTransactionGroupRetireExclusiveOwnership(t *testing.T) {
 	for _, adjacent := range []string{
 		"function openDeleteGroupModal(group)",
 		"export async function openCleanupModal(options = {})",
-		"async function openWorktreeCleanup(group = '')",
+		"function openWorktreeCleanup(group = '')",
 	} {
 		if !strings.Contains(refresh, adjacent) {
 			t.Errorf("adjacent imperative owner changed during retire cutover: %q", adjacent)
