@@ -96,6 +96,37 @@ test('management island renders keyed profile list and explicit editor state', a
   cleanups.reverse().forEach((fn) => fn()); assert.equal(host.childElementCount, 0);
 });
 
+test('profile editor saves with Ctrl/Cmd+Enter', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({ kind: 'profile-editor', seed: { name: 'reviewer', harness: 'claude' }, options: {}, catalog });
+  const saves = [];
+  const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
+  mountManagementIsland({ host, state, actions: { async saveProfile(value) { saves.push(value); } }, confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } });
+  await harness.act(() => Promise.resolve());
+  const dialog = host.querySelector('#profile-editor-modal [role="dialog"]');
+
+  const plainEnter = harness.fireEvent(dialog, 'keydown', { key: 'Enter' });
+  assert.equal(plainEnter.defaultPrevented, false, 'plain Enter retains the field default');
+  assert.equal(saves.length, 0);
+
+  for (const modifier of ['ctrlKey', 'metaKey']) {
+    let shortcut;
+    await harness.act(() => { shortcut = harness.fireEvent(dialog, 'keydown', { key: 'Enter', [modifier]: true }); });
+    assert.equal(shortcut.defaultPrevented, true, `${modifier}+Enter is claimed by the editor`);
+  }
+  assert.equal(saves.length, 2, 'both platform shortcuts use the profile save path');
+  assert.equal(saves[0].draft.name, 'reviewer');
+
+  state.busy.value = 'profile-save'; await harness.act(() => Promise.resolve());
+  harness.fireEvent(dialog, 'keydown', { key: 'Enter', ctrlKey: true });
+  assert.equal(saves.length, 2, 'an in-flight save cannot be submitted twice');
+  cleanups.reverse().forEach((fn) => fn());
+});
+
 test('sandbox manager renders included-profile tags with the styled class contract', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
