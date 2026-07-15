@@ -4553,7 +4553,7 @@ body.wizard .directory-picker-modal .modal-buttons { border-top-color: rgba(122,
 .cleanup-modal .modal-buttons button.primary:disabled {
   background: #6e7681; border-color: #6e7681; cursor: default; color: #c9d1d9;
 }
-/* delete-agent modal — the worktree opt-in row. */
+/* Shared worktree choice row used by transaction and cleanup dialogs. */
 .delete-agent-wt {
   display: flex; gap: 6px; align-items: baseline;
   font-size: 12px; color: #c9d1d9; margin: 12px 0 0;
