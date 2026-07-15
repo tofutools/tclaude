@@ -40,7 +40,7 @@ func TestDashboardHTML_CronGroupScopedTargetPicker(t *testing.T) {
 
 	// The group header's "⏰ multicast" button arms the scope; the
 	// shared populateCronForm wires the prefill's scopeGroup through.
-	must("scopeGroup: g.name",
+	must("scopeGroup: name",
 		"the group header cron button must pass scopeGroup")
 	must("configureCronTargetPicker(p)",
 		"populateCronForm must arm/clear target scope through the controller")
