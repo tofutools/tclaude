@@ -3862,7 +3862,7 @@ body.wizard .group-pending-title-wizard { display: inline; }
   background: #1f6feb; border-color: #388bfd; color: white;
 }
 /* The two schedule-mode bodies (chips+custom interval vs cron expression);
-   modal-cron.js's setScheduleMode toggles which one is visible. */
+   the Jobs cron component renders only the active schedule body. */
 .cron-schedule-interval {
   display: flex; flex-direction: column; gap: 6px;
 }
@@ -6997,6 +6997,9 @@ body.wizard #cron-create-modal #cron-create-title::before {
 body.wizard #cron-create-modal.cron-editing #cron-create-title::before {
   content: "⏳ Re-bind the ritual";
 }
+body.wizard #cron-create-modal.cron-duplicating #cron-create-title::before {
+  content: "⏳ Duplicate the ritual";
+}
 body.wizard #cron-create-modal .modal-meta {
   background: #140f28;
   border-left-color: #d9b45a;
@@ -7073,6 +7076,9 @@ body.wizard #cron-create-modal #cron-create-submit::before {
 body.wizard #cron-create-modal.cron-editing #cron-create-submit::before {
   content: "⏳ Re-bind it!";
 }
+body.wizard #cron-create-modal.cron-duplicating #cron-create-submit::before {
+  content: "⏳ Bind the copy!";
+}
 body.wizard #cron-create-modal #cron-create-submit:hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
   box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
@@ -7084,6 +7090,7 @@ body.wizard #cron-create-modal #cron-create-submit:active {
 body.wizard #cron-create-modal #cron-create-submit:disabled { opacity: 0.7; }
 body.wizard #cron-create-modal #cron-create-submit:disabled::before { content: "⏳ Binding…"; }
 body.wizard #cron-create-modal.cron-editing #cron-create-submit:disabled::before { content: "⏳ Re-binding…"; }
+body.wizard #cron-create-modal.cron-duplicating #cron-create-submit:disabled::before { content: "⏳ Binding copy…"; }
 
 /* ─── Wizard missive dialog — "✒ Send a missive" ───────────────────
    The group/agent cog message action reuses .cron-create-modal, so the skin

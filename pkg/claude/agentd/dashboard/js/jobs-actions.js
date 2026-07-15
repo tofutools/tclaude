@@ -1,39 +1,64 @@
 export function createJobsActions({
+  state,
   requestMutation,
   refresh,
   confirm,
   notify,
   download,
-  createCron,
-  editCron,
 } = {}) {
+  if (!state || typeof state.upsertCron !== 'function') {
+    throw new TypeError('jobs actions require state');
+  }
   for (const [name, dependency] of Object.entries({
-    requestMutation, refresh, confirm, notify, download, createCron, editCron,
+    requestMutation, refresh, confirm, notify, download,
   })) {
     if (typeof dependency !== 'function') throw new TypeError(`jobs actions require ${name}`);
   }
+
+  function detail(error) {
+    let value = error?.message || String(error);
+    if (error?.body != null) {
+      const body = typeof error.body === 'string'
+        ? error.body
+        : (error.body.error || error.body.message || JSON.stringify(error.body));
+      if (body) value += `: ${body}`;
+    }
+    return value;
+  }
+
   async function run(label, operation) {
     try {
       await operation();
       if (label) notify(label);
       return true;
     } catch (error) {
-      let detail = error?.message || String(error);
-      if (error?.body != null) {
-        const body = typeof error.body === 'string'
-          ? error.body
-          : (error.body.error || error.body.message || JSON.stringify(error.body));
-        if (body) detail += `: ${body}`;
-      }
-      notify(`Request failed: ${detail}`, true);
+      notify(`Request failed: ${detail(error)}`, true);
       return false;
     }
   }
 
   return Object.freeze({
     refresh,
-    createCron,
-    editCron,
+    openCronCreate: state.openCronCreate,
+    openCronEdit: state.openCronEdit,
+    openCronDuplicate: state.openCronDuplicate,
+    closeCronDialog: state.closeCronDialog,
+    explainCron: (expr) => requestMutation('/api/cron/explain', {
+      body: { expr }, refreshAfter: false,
+    }),
+    saveCron: async ({ path, method, payload }) => {
+      try {
+        const cron = await requestMutation(path, {
+          method, body: payload, refreshAfter: false,
+        });
+        state.upsertCron(cron);
+        notify(`cron ${method === 'PATCH' ? 'saved' : 'created'}: ${cron?.name || ('#' + (cron?.id || ''))}`);
+        void refresh();
+        return cron;
+      } catch (error) {
+        throw new Error(detail(error), { cause: error });
+      }
+    },
     downloadExport: (job) => download(job.id),
     dismissExport: async (job) => {
       const yes = await confirm({

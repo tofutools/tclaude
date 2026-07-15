@@ -4,6 +4,7 @@ import { dashPrefs } from './prefs.js';
 import {
   applySortState, JOBS_ACCESSORS, persistedTableSort, persistTableSort,
 } from './sort.js';
+import { cronJobToPrefill } from './jobs-dialog-model.js';
 
 const FILTER_KEY = 'tclaude.dash.filter.jobs';
 const PAGE_SIZE_KEY = 'tclaude.dash.list.jobs.pagesize';
@@ -32,7 +33,9 @@ export function createJobsState({ snapshot = dashboardState.snapshot, prefs = da
     hasLoaded: false,
     error: null,
   });
+  const dialog = signal(null);
   let initialized = false;
+  let nextLaunchID = 0;
 
   const params = computed(() => {
     const search = new URLSearchParams({
@@ -60,6 +63,8 @@ export function createJobsState({ snapshot = dashboardState.snapshot, prefs = da
       query: query.value,
       sort: sort.value,
       request: request.value,
+      dialog: dialog.value,
+      dashboard: value,
     };
   });
 
@@ -186,18 +191,49 @@ export function createJobsState({ snapshot = dashboardState.snapshot, prefs = da
     const index = rows.findIndex(row => row.kind === 'cron' && row.cron?.id === cron.id);
     const next = { kind: 'cron', cron };
     // Replace only a row already present in this server-selected window. A new
-    // row may not match the active query/page; modal-cron triggers a refetch.
+    // row may not match the active query/page; the Jobs mutation action triggers a refetch.
     if (index < 0) return false;
     rows[index] = next;
     snapshot.value = { ...value, jobs: rows };
     return true;
   }
 
+  function openCronDialog(descriptor) {
+    if (dialog.value) return false;
+    dialog.value = { ...descriptor, launchID: ++nextLaunchID };
+    return true;
+  }
+
+  function openCronCreate(prefill = {}) {
+    return openCronDialog({ kind: 'create', prefill: { ...prefill }, originalExpr: '', originalTarget: '' });
+  }
+
+  function openCronEdit(job = {}) {
+    return openCronDialog({
+      kind: 'edit', id: job.id, job: { ...job }, prefill: cronJobToPrefill(job),
+      originalExpr: job.cron_expr || '',
+      originalTarget: job.target_agent || job.target_conv || '',
+    });
+  }
+
+  function openCronDuplicate(job = {}) {
+    return openCronDialog({
+      kind: 'duplicate', sourceID: job.id, job: { ...job },
+      prefill: cronJobToPrefill(job, { duplicate: true }),
+      originalExpr: '', originalTarget: '',
+    });
+  }
+
+  function closeCronDialog() {
+    dialog.value = null;
+  }
+
   return Object.freeze({
-    query, offset, limit, sort, request, params, view,
+    query, offset, limit, sort, request, dialog, params, view,
     initialize, setQuery, cycleSort, page, setPageSize, syncServedOffset,
     beginRequest, acceptsRequest, invalidateRequest,
     commitRequest, failRequest, discardRequest, upsertCron,
+    openCronCreate, openCronEdit, openCronDuplicate, closeCronDialog,
   });
 }
 

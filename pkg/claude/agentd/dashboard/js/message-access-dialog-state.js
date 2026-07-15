@@ -1,26 +1,13 @@
 import { computed, signal } from '@preact/signals';
 
-function normalizeTarget(prefill = {}) {
-  const mode = prefill.targetMode === 'group' ? 'group' : 'solo';
-  return {
-    mode,
-    target: mode === 'solo' ? String(prefill.target || '') : '',
-    groupName: mode === 'group' ? String(prefill.groupName || '') : '',
-    scopeGroup: String(prefill.scopeGroup || ''),
-  };
-}
-
 export function createMessageAccessDialogState() {
   const dialog = signal(null);
   const picker = signal(null);
-  const cronTarget = signal(normalizeTarget());
   const view = computed(() => ({
     dialog: dialog.value,
     picker: picker.value,
-    cronTarget: cronTarget.value,
   }));
   let pickerResolve = null;
-  let cronModeListener = null;
   let nextLaunchID = 0;
 
   function open(descriptor) {
@@ -56,45 +43,13 @@ export function createMessageAccessDialogState() {
     resolve?.(value || '');
   }
 
-  function configureCronTarget(prefill = {}) {
-    const next = normalizeTarget(prefill);
-    cronTarget.value = next;
-    cronModeListener?.(next.mode);
-  }
-
-  function setCronTargetMode(mode) {
-    const normalized = mode === 'group' ? 'group' : 'solo';
-    if (cronTarget.value.mode === normalized) return;
-    cronTarget.value = { ...cronTarget.value, mode: normalized };
-    cronModeListener?.(normalized);
-  }
-
-  function setCronTargetValue(patch) {
-    cronTarget.value = { ...cronTarget.value, ...patch };
-  }
-
-  function readCronTarget() {
-    const current = cronTarget.value;
-    if (current.mode === 'group') {
-      return { mode: 'group', target: current.groupName ? `group:${current.groupName}` : '' };
-    }
-    return { mode: 'solo', target: current.target.trim() };
-  }
-
-  function setCronTargetModeListener(listener) {
-    cronModeListener = typeof listener === 'function' ? listener : null;
-    cronModeListener?.(cronTarget.value.mode);
-    return () => { if (cronModeListener === listener) cronModeListener = null; };
-  }
-
   function dispose() {
     close();
     finishPicker('');
-    cronModeListener = null;
   }
 
   return Object.freeze({
-    dialog, picker, cronTarget, view,
+    dialog, picker, view,
     openMessage(prefill = {}) {
       return open({ kind: 'message', prefill: { ...prefill } });
     },
@@ -113,8 +68,6 @@ export function createMessageAccessDialogState() {
     openBufferedPermissions(options = {}) {
       return open({ kind: 'permissions', ...options, mode: 'buffer', overrides: { ...(options.overrides || {}) } });
     },
-    close, pickAgent, finishPicker,
-    configureCronTarget, setCronTargetMode, setCronTargetValue,
-    readCronTarget, setCronTargetModeListener, dispose,
+    close, pickAgent, finishPicker, dispose,
   });
 }
