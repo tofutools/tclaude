@@ -29,6 +29,120 @@ export function openDeleteAgentDialog(agent, label = '') {
   return openTransactionDialog({ kind: 'delete-agent', agent, label });
 }
 
+function uniqueStrings(values) {
+  const seen = new Set();
+  const result = [];
+  for (const value of values || []) {
+    const normalized = String(value || '').trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    result.push(normalized);
+  }
+  return result;
+}
+
+// The launcher freezes the running roster the human is choosing from. Candidate
+// identity remains conv-keyed for selection/deduping, while the eventual window
+// request leads with stable agent_id where one exists. Roles and groups are
+// deliberately sets: one agent may occupy several buckets at once.
+export function normalizeWindowSelectionCandidates(candidates) {
+  const positions = new Map();
+  const result = [];
+  for (const candidate of candidates || []) {
+    const conv = String(candidate?.conv_id || '').trim();
+    if (!conv) continue;
+    const normalized = {
+      agent_id: String(candidate?.agent_id || '').trim(),
+      conv_id: conv,
+      title: String(candidate?.title || ''),
+      roles: uniqueStrings(candidate?.roles),
+      groups: uniqueStrings(candidate?.groups),
+    };
+    const position = positions.get(conv);
+    if (position === undefined) {
+      positions.set(conv, result.length);
+      result.push(normalized);
+      continue;
+    }
+    // Duplicate snapshot rows must not duplicate the checkbox, but neither may
+    // dedupe erase a role/group bucket or the only stable selector/title.
+    const existing = result[position];
+    result[position] = {
+      agent_id: existing.agent_id || normalized.agent_id,
+      conv_id: conv,
+      title: existing.title || normalized.title,
+      roles: uniqueStrings([...existing.roles, ...normalized.roles]),
+      groups: uniqueStrings([...existing.groups, ...normalized.groups]),
+    };
+  }
+  return result;
+}
+
+// buildWindowSelectionDescriptor is the snapshot-to-dialog adapter. It runs
+// once per click, before Preact takes ownership, so later poll publishes cannot
+// add, remove, retitle, or retarget candidates under an open picker.
+export function buildWindowSelectionDescriptor(
+  snapshot, scope, groupName = '', webTerminal = false,
+) {
+  const snap = snapshot || {};
+  const group = scope === 'group' ? String(groupName || '') : '';
+  const rolesByConv = new Map();
+  const groupsByConv = new Map();
+  for (const entry of (snap.groups || [])) {
+    for (const member of (entry.members || [])) {
+      const conv = String(member?.conv_id || '').trim();
+      if (!conv) continue;
+      if (!groupsByConv.has(conv)) groupsByConv.set(conv, []);
+      groupsByConv.get(conv).push(entry.name);
+      if (member.role) {
+        if (!rolesByConv.has(conv)) rolesByConv.set(conv, []);
+        rolesByConv.get(conv).push(member.role);
+      }
+    }
+  }
+
+  const candidates = [];
+  if (scope === 'group') {
+    const entry = (snap.groups || []).find((item) => item.name === group);
+    for (const member of (entry?.members || [])) {
+      if (!member?.online) continue;
+      candidates.push({
+        agent_id: member.agent_id || '',
+        conv_id: member.conv_id,
+        title: member.title || '',
+        roles: member.role ? [member.role] : [],
+        groups: [group],
+      });
+    }
+  } else {
+    for (const agent of (snap.agents || [])) {
+      if (!agent?.online) continue;
+      candidates.push({
+        agent_id: agent.agent_id || '',
+        conv_id: agent.conv_id,
+        title: agent.title || '',
+        roles: rolesByConv.get(String(agent.conv_id || '').trim()) || [],
+        groups: groupsByConv.get(String(agent.conv_id || '').trim()) || [],
+      });
+    }
+  }
+  return {
+    kind: 'window-selection',
+    scope: scope === 'group' ? 'group' : 'all',
+    ...(scope === 'group' ? { group } : {}),
+    webTerminal: webTerminal === true,
+    candidates: normalizeWindowSelectionCandidates(candidates),
+  };
+}
+
+export function openWindowSelectionDialog(descriptor) {
+  return openTransactionDialog({
+    ...descriptor,
+    kind: 'window-selection',
+    candidates: normalizeWindowSelectionCandidates(descriptor?.candidates),
+  });
+}
+
 // Bulk preview launchers cross the same imperative → keyed owner seam as the
 // single-agent transactions. Candidate identity is conv-keyed even when the
 // ungrouped endpoint later prefers a stable agent selector: conv_id is the
