@@ -98,12 +98,11 @@ export async function refresh() {
     // pages are stitched back on below.
     //
     // Two gates keep this cheap: (1) all three lists are fetched only on the
-    // Groups tab, and conversations + replaced additionally require their
-    // default-hidden virtual group to be visible. The palette's cross-tab
-    // delete-retired count comes from snapshot.retired_total, so it no longer
-    // needs the full retired request. (2) the Groups filter box value rides
-    // along as the server-side `q` so the filter searches the WHOLE list, not
-    // just the loaded page.
+    // Groups tab and only while their default-hidden virtual group is visible.
+    // The palette's cross-tab delete-retired count comes from
+    // snapshot.retired_total, so it does not need the retired roster poll.
+    // (2) the Groups filter box value rides along as the server-side `q` so the
+    // filter searches the WHOLE list, not just the loaded page.
     //
     // List sub-fetches swallow a network rejection (→ null) so a blip on one
     // degrades to "keep the previous rows" (stitchListPage) rather than failing
@@ -121,7 +120,7 @@ export async function refresh() {
       fetch('/api/snapshot' + (staticVersion
         ? '?static_version=' + encodeURIComponent(staticVersion)
         : ''), { credentials: 'same-origin', cache: 'no-store' }),
-      onGroups ? get('/api/retired?' + listParams('retired', groupsQ)) : Promise.resolve(undefined),
+      (onGroups && groups?.visibility.value.retired) ? get('/api/retired?' + listParams('retired', groupsQ)) : Promise.resolve(undefined),
       (onGroups && groups?.visibility.value.conversations) ? get('/api/conversations?' + listParams('conversations', groupsQ)) : Promise.resolve(undefined),
       (onGroups && groups?.visibility.value.replaced) ? get('/api/replaced?' + listParams('replaced', groupsQ)) : Promise.resolve(undefined),
       jobsActive ? get('/api/jobs?' + jobs.params.value) : Promise.resolve(undefined),

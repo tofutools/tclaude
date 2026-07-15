@@ -108,11 +108,11 @@ function virtualRetiredGroup(retired, paging) {
 }
 
 // retiredVisible reports the "show retired" checkbox state. Defaults
-// to true when the checkbox isn't in the DOM yet — a retired agent
-// must not silently disappear from the Groups tab.
+// to false when the checkbox isn't in the DOM yet — this archival list is
+// opt-in, like conversations and replaced generations.
 function retiredVisible() {
   const el = $('#filter-groups-retired');
-  return el ? el.checked : true;
+  return el ? el.checked : false;
 }
 
 // The virtual "Pending" group — dashboard spawns whose conv-id has not

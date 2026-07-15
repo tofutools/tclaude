@@ -35,11 +35,11 @@ export const GROUP_VIEW_OPTIONS = Object.freeze([
     wizardTitle: `Show the ethereal "Unbound" party at the bottom — familiars not bound to any party. Drag them onto a party to bind them; drag party familiars back onto it to release them.`,
   },
   {
-    key: 'retired', defaultValue: true, pref: 'tclaude.dash.retired.groups',
+    key: 'retired', defaultValue: false, pref: 'tclaude.dash.retired.groups',
     label: 'show retired',
     wizardLabel: 'show banished',
-    title: 'Show the virtual "Retired" group — agents that were demoted back to plain conversations. Retired agents land here instead of vanishing off the tab; click reinstate to bring one back.',
-    wizardTitle: 'Show the ethereal "Banished" party — familiars returned to plain scrolls. Banished familiars land here instead of vanishing; restore one to bring it back.',
+    title: 'Show the virtual "Retired" group — agents that were demoted back to plain conversations. Click reinstate to bring one back.',
+    wizardTitle: 'Show the ethereal "Banished" party — familiars returned to plain scrolls. Restore one to bring it back.',
   },
   {
     key: 'conversations', defaultValue: false, pref: 'tclaude.dash.conversations.groups',

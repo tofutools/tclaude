@@ -5,10 +5,11 @@
 // so a few hundred retired agents meant an ever-growing payload on every tick.
 // They now come from their own paginated endpoints — /api/retired,
 // /api/conversations, /api/replaced — which refresh.js fetches in parallel with
-// the snapshot on each tick and stitches back onto the snapshot object (so the
-// downstream renderers keep reading data.retired / data.conversations /
-// data.replaced unchanged). This module owns the per-list offset/limit those
-// fetches send and renders the pager footer the virtual groups show.
+// the snapshot while the corresponding virtual group is visible, then stitches
+// the page back onto the snapshot object (so downstream renderers keep reading
+// data.retired / data.conversations / data.replaced unchanged). This module
+// owns the per-list offset/limit those fetches send and renders the pager footer
+// the virtual groups show.
 //
 // Modals + cross-tab filters that need the COMPLETE list (bulk delete-retired,
 // the cleanup tool, the add-member promote picker, the Messages-tab prev-gen
