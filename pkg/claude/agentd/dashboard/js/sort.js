@@ -150,6 +150,13 @@ function applySort(tableKey, rows, accessors) {
   return applySortState(rows, accessors, sortState[tableKey]);
 }
 
+// Native table heads read the same module-owned state as applySort. Return a
+// copy so a component cannot mutate the shared sort owner.
+function tableSortState(tableKey) {
+  const value = sortState[tableKey] || persistedTableSort(tableKey);
+  return value ? { ...value } : null;
+}
+
 // applySortState is the renderer-agnostic form used by Preact feature models.
 // Legacy tables still call applySort(tableKey, ...), while an island keeps its
 // active sort in a Signal and supplies that explicit value here.
@@ -362,7 +369,7 @@ const PENDING_ACCESSORS = {
 };
 
 export {
-  cycleSort, sortHead, applySort, applySortState, loadSortState,
+  cycleSort, sortHead, applySort, applySortState, tableSortState, loadSortState,
   persistedTableSort, persistTableSort,
   MEMBER_COLS, MEMBER_ACCESSORS, JOBS_COLS, JOBS_ACCESSORS,
   LINK_COLS, LINK_ACCESSORS,
