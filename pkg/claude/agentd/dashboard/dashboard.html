@@ -604,6 +604,10 @@
 <!-- Small action dialogs are Preact-owned under this stable host. Their legacy
      ids remain on rendered overlays so scoped plain/wizard CSS keeps working. -->
 <div id="action-dialog-root"></div>
+<!-- Preact transaction dialogs mount here. Concrete destructive flows move
+     into this single keyed owner atomically; legacy static modals remain live
+     until their corresponding renderer and launch adapter land. -->
+<div id="transaction-dialog-root"></div>
 <div class="modal-overlay" id="cleanup-modal">
   <div class="cleanup-modal" role="dialog" aria-modal="true" aria-labelledby="cleanup-title">
     <h3 id="cleanup-title">Clean up</h3>

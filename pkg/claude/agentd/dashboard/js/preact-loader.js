@@ -541,6 +541,31 @@ export function mountActionDialogsFeature(dependencies = {}) {
   return mountIslandDescriptor(actionDialogsDescriptor, dependencies);
 }
 
+const transactionDialogsDescriptor = createIslandDescriptor({
+  name: 'transaction-dialogs',
+  label: 'Transaction dialogs',
+  hosts: { root: '#transaction-dialog-root' },
+  primaryHost: 'root',
+  failureClass: 'transaction-dialog-error',
+  load: async ({ hosts }) => {
+    const islandModule = import('./transaction-dialog-island.js');
+    const stateModule = import('./transaction-dialog-state.js');
+    const [{ mountTransactionDialogIsland }, { createTransactionDialogState }] =
+      await Promise.all([islandModule, stateModule]);
+    const state = createTransactionDialogState();
+    return {
+      state,
+      mount: (registerCleanup) => mountTransactionDialogIsland({
+        host: hosts.root, state, registerCleanup,
+      }),
+    };
+  },
+});
+
+export function mountTransactionDialogsFeature(dependencies = {}) {
+  return mountIslandDescriptor(transactionDialogsDescriptor, dependencies);
+}
+
 const directoryPickerDescriptor = createIslandDescriptor({
   name: 'directory-picker',
   label: 'Directory picker',
