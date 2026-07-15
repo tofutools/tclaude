@@ -114,7 +114,7 @@ export function ProcessEditorBoundary({ spec, state, actions, confirmDiscard, op
       config: {
         confirmDiscard,
         onInstantiate: actions?.openInstantiation ? (value) => actions.openInstantiation(value) : undefined,
-        onScribe: actions?.summonScribe ? (value) => actions.summonScribe(value) : undefined,
+        onScribe: actions?.summonScribe ? (value, options) => actions.summonScribe(value, options) : undefined,
         describeActor: actions?.describeActor ? (value) => actions.describeActor(value) : undefined,
         onOpenActor: actions?.openActor ? (value) => actions.openActor(value) : undefined,
       },

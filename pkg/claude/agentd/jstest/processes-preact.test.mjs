@@ -83,6 +83,13 @@ test('process scribe actions send bounded structured scope, exact grants, and re
   const hash = 'a'.repeat(64); const sourceHash = 'b'.repeat(64);
   const result = await actions.summonScribe({
     kind: 'template', id: 'release-flow', currentRef: `release-flow@sha256:${hash}`, sourceHash, isNew: false,
+  }, {
+    prompt: 'Fix the focused validation issue.',
+    context: {
+      version: 1, kind: 'current-diagnostic',
+      template: { templateId: 'release-flow', currentRef: `release-flow@sha256:${hash}`, sourceHash, isNew: false },
+      diagnostic: { identity: { code: 'missing_performer', scope: 'node', targetId: 'build' }, severity: 'error', message: 'performer required', nodeId: 'build' },
+    },
   });
   assert.equal(result.conv_id, 'scribe-conv');
   const request = requests[0]; const body = JSON.parse(request.options.body);
@@ -95,6 +102,9 @@ test('process scribe actions send bounded structured scope, exact grants, and re
     url: 'https://dashboard.example/processes/templates', label: 'process: release-flow',
   });
   assert.match(body.brief, new RegExp(sourceHash));
+  assert.match(body.brief, /BEGIN HUMAN REQUEST.*Fix the focused validation issue.*END HUMAN REQUEST/s);
+  assert.match(body.brief, /BEGIN BOUNDED EDITOR CONTEXT.*missing_performer.*END BOUNDED EDITOR CONTEXT/s);
+  assert.match(body.brief, /never an alternate source of truth.*Reread the canonical template.*CAS-save/s);
   assert.match(state.notice.value, /Reopened process scribe/);
   assert.match(confirmations[0].body, /process\.templates\.read and process\.templates\.manage/);
   assert.match(confirmations[0].body, /never instantiates or runs a process/);
@@ -156,6 +166,38 @@ test('process scribe actions send bounded structured scope, exact grants, and re
   assert.equal(await transitioning.summonScribe({ kind: 'library' }), null);
   assert.match(transitionPrompt.body, /will not be reused or have its permissions changed/);
   assert.equal(transitionPrompt.okLabel, 'Start separate scribe');
+});
+
+test('process scribe preview exposes read-only bounded context and an editable/cancellable request', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { ProcessTemplateEditor } = await harness.importDashboardModule('js/process-editor.js');
+  const fake = { modalDispose: null, abort: new AbortController() };
+  const cancelled = ProcessTemplateEditor.prototype.scribePreviewModal.call(fake, {
+    kind: 'selection', prompt: 'Explain this selection.',
+    context: '{\n  "nodeIds": ["build"]\n}', truncated: true,
+  });
+  const dialog = document.querySelector('.process-scribe-preview');
+  assert.ok(dialog);
+  const textarea = dialog.querySelector('textarea[aria-label="Request for the process scribe"]');
+  const preview = dialog.querySelector('pre[aria-label="Read-only bounded editor context"]');
+  assert.equal(textarea.value, 'Explain this selection.');
+  assert.match(preview.textContent, /"build"/);
+  assert.equal(preview.querySelector('textarea'), null, 'stable context is displayed read-only');
+  assert.match(dialog.querySelector('.process-scribe-context-end').textContent, /visibly truncated.*reread canonical YAML/);
+  textarea.value = 'Changed by the human.';
+  harness.fireEvent(dialog.querySelector('button:not(.primary)'), 'click');
+  assert.equal(await cancelled, null);
+  assert.equal(document.querySelector('.process-scribe-preview'), null);
+
+  const sent = ProcessTemplateEditor.prototype.scribePreviewModal.call(fake, {
+    kind: 'diagnostic', prompt: 'Fix it.', context: '{"code":"missing_start"}', truncated: false,
+  });
+  const next = document.querySelector('.process-scribe-preview');
+  const input = next.querySelector('textarea');
+  input.value = 'Preserve unrelated stages.';
+  harness.fireEvent(next.querySelector('button.primary'), 'click');
+  assert.equal(await sent, 'Preserve unrelated stages.');
+  assert.equal(document.querySelector('.process-scribe-preview'), null);
 });
 
 test('process scribe lifecycle distinguishes stop, retire, and stale recovery', async (t) => {

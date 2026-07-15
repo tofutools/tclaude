@@ -142,7 +142,7 @@ export function createProcessesActions({
     state.setCanvas({ kind: 'editor', id, blank, key: `${id}:${blank}:${Date.now()}` });
     state.setNotice(blank ? 'Blank template scaffold ready.' : `Opening ${id}.`);
   }
-  async function summonScribe(anchor = { kind: 'library' }) {
+  async function summonScribe(anchor = { kind: 'library' }, handoffOptions = {}) {
     try {
       const handoff = processScribeHandoff(anchor);
       const task = processScribeTaskRef(handoff, dashboardOrigin);
@@ -169,7 +169,7 @@ export function createProcessesActions({
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: PROCESS_SCRIBE_NAME, slugs: PROCESS_SCRIBE_SLUGS,
-          exclusive: true, scope: handoff.scope, brief: processScribeBrief(handoff),
+          exclusive: true, scope: handoff.scope, brief: processScribeBrief(handoff, handoffOptions),
           task_ref_url: task.url, task_ref_label: task.label,
         }),
       });

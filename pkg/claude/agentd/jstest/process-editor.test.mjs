@@ -167,21 +167,57 @@ test('process scribe handoff anchors a clean saved editor exactly', async () => 
   const emitted = [];
   const fake = {
     blank: false, dirty: false, savePending: false,
-    model: { template: { id: 'release-flow' }, currentRef: `release-flow@sha256:${'a'.repeat(64)}`, sourceHash: 'b'.repeat(64) },
-    options: { onScribe: async (anchor) => { emitted.push(anchor); return { conv_id: 'scribe' }; } },
+    selection: null, validation: null,
+    model: { template: { id: 'release-flow', nodes: { ship: { type: 'task' } } }, edges: [], currentRef: `release-flow@sha256:${'a'.repeat(64)}`, sourceHash: 'b'.repeat(64) },
+    scribePreviewModal: async (preview) => { assert.match(preview.context, /"kind": "whole-template"/); return 'Refactor safely.'; },
+    options: { onScribe: async (...args) => { emitted.push(args); return { conv_id: 'scribe' }; } },
+    abort: { signal: { aborted: false } },
   };
   assert.equal(await ProcessTemplateEditor.prototype.requestScribe.call(fake), true);
-  assert.deepEqual(emitted, [{
+  assert.deepEqual(emitted[0][0], {
     kind: 'template', id: 'release-flow', currentRef: `release-flow@sha256:${'a'.repeat(64)}`,
     sourceHash: 'b'.repeat(64), isNew: false,
-  }]);
+  });
+  assert.equal(emitted[0][1].prompt, 'Refactor safely.');
+  assert.equal(emitted[0][1].context.template.sourceHash, 'b'.repeat(64));
+});
+
+test('selection and diagnostic scribe handoffs fail visibly without current context', async () => {
+  const statuses = [];
+  const fake = {
+    blank: false, dirty: false, savePending: false, selection: null,
+    model: { template: { id: 'release-flow', nodes: {} }, edges: [], currentRef: `release-flow@sha256:${'a'.repeat(64)}`, sourceHash: 'b'.repeat(64) },
+    validation: { currentIssue: () => null }, abort: { signal: { aborted: false } },
+    options: { onScribe: async () => { throw new Error('must not send'); } },
+    status: (...args) => statuses.push(args),
+  };
+  assert.equal(await ProcessTemplateEditor.prototype.requestScribe.call(fake, 'selection'), false);
+  assert.match(statuses.at(-1)[0], /Select one or more graph items/);
+  assert.equal(await ProcessTemplateEditor.prototype.requestScribe.call(fake, 'diagnostic'), false);
+  assert.match(statuses.at(-1)[0], /Focus a validation issue/);
+});
+
+test('cancelling the scribe preview restores predictable editor focus', async () => {
+  let focused = 0;
+  const fake = {
+    blank: false, dirty: false, savePending: false, selection: null,
+    model: { template: { id: 'release-flow', nodes: {} }, edges: [], currentRef: `release-flow@sha256:${'a'.repeat(64)}`, sourceHash: 'b'.repeat(64) },
+    validation: null, abort: { signal: { aborted: false } },
+    graph: { root: { focus: () => { focused += 1; } } },
+    scribePreviewModal: async () => null,
+    options: { onScribe: async () => { throw new Error('cancel must not send'); } },
+  };
+  assert.equal(await ProcessTemplateEditor.prototype.requestScribe.call(fake), false);
+  assert.equal(focused, 1);
 });
 
 test('dirty process scribe handoff requires an explicit successful resolution', async () => {
   const emitted = [];
   const base = () => ({
     blank: false, dirty: true, savePending: false,
-    model: { template: { id: 'release-flow' }, currentRef: 'old-ref', sourceHash: 'old-hash' },
+    selection: null, validation: null,
+    model: { template: { id: 'release-flow', nodes: {} }, edges: [], currentRef: 'old-ref', sourceHash: 'old-hash' },
+    scribePreviewModal: async () => 'Please help.', abort: { signal: { aborted: false } },
     options: { onScribe: async (anchor) => { emitted.push(anchor); return {}; } },
   });
   const cancelled = { ...base(), choiceModal: async () => null };
@@ -207,7 +243,8 @@ test('dirty process scribe handoff requires an explicit successful resolution', 
     blank: true, dirty: true, savePending: false,
     model: { template: { id: 'new-process' }, sourceHash: '', config: {} },
     options: { onScribe: async (anchor) => { emitted.push(anchor); return {}; } },
-    choiceModal: async () => 'discard', validation: null, refresh() {}, status() {},
+    choiceModal: async () => 'discard', validation: null, refresh() {}, status() {}, selection: null,
+    scribePreviewModal: async () => 'Build it.', abort: { signal: { aborted: false } },
   };
   assert.equal(await ProcessTemplateEditor.prototype.requestScribe.call(discarded), true);
   assert.deepEqual(emitted.at(-1), {

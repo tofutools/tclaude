@@ -302,6 +302,11 @@ export class LiveValidation {
     return this.focusIssueAt(index);
   }
 
+  currentIssue() {
+    const entries = this.mapped?.entries || [];
+    return this.issueCursor >= 0 && this.issueCursor < entries.length ? entries[this.issueCursor] : null;
+  }
+
   focusIssueAt(index, { focusButton = true } = {}) {
     const entries = this.mapped?.entries || [];
     if (!Number.isInteger(index) || index < 0 || index >= entries.length) return false;

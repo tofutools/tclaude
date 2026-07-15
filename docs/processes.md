@@ -490,6 +490,21 @@ commands remain visible with a reason. The global shortcut deliberately does
 not fire while an input, textarea, select, contenteditable, or embedded editor
 owns the keystroke.
 
+The same palette can **Ask agent about selection**, **Ask agent to fix this
+issue**, or **Edit / refactor with agent**. The first two require a live graph
+selection or an explicitly focused validation issue. Before anything is sent,
+the editor shows an editable human request beside clearly delimited, read-only
+context. That context carries the template id, exact ref and source hash, node
+ids, edge identities, and diagnostic code/target as applicable. Large graphs
+and selections are visibly truncated to a bounded preview; retained rows keep
+their stable ids and omitted counts are shown. The preview is orientation only:
+the scoped process scribe must reread canonical YAML immediately before editing
+and again before its validated CAS save. Sending reuses a compatible live
+same-template scribe or safely summons one through the existing least-privilege
+lifecycle, then opens its conversation; cancelling returns focus to the graph.
+Neither path instantiates or runs a process, and no template or prompt text is
+typed into a pane command.
+
 Dragging a node port onto empty canvas opens the same searchable node-type
 vocabulary at the release point. Choose with pointer or arrow keys plus Enter;
 Escape, Cancel, or clicking away leaves the graph unchanged. The chosen node

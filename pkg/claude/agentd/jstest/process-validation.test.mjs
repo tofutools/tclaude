@@ -288,3 +288,10 @@ test('decorateGraph preserves foreign overlay fields and badges', () => {
   assert.equal(work.overlay.status, 'running');
   assert.equal(work.overlay.severity, 'warning');
 });
+
+test('currentIssue returns only the explicitly focused stable diagnostic entry', () => {
+  const entry = { code: 'dead_edge', scope: 'edge', targetId: 'start:fail', edge: { from: 'start', outcome: 'fail' } };
+  assert.equal(LiveValidation.prototype.currentIssue.call({ mapped: { entries: [entry] }, issueCursor: -1 }), null);
+  assert.equal(LiveValidation.prototype.currentIssue.call({ mapped: { entries: [entry] }, issueCursor: 0 }), entry);
+  assert.equal(LiveValidation.prototype.currentIssue.call({ mapped: { entries: [entry] }, issueCursor: 2 }), null);
+});
