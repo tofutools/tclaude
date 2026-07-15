@@ -8009,7 +8009,7 @@ body.wizard #delete-group-modal #delete-group-submit:disabled::after {
 
 /* ─── Wizard terminal picker — "🔮 Open a scrying portal" ────────────
    The which-dir picker that pops before a terminal window is opened for a
-   single agent (termDirModal in refresh.js): pick Current / Worktree / Launch
+   single agent (Preact action dialog): pick Current / Worktree / Launch
    dir, or Cancel. A terminal onto a familiar is a *scrying portal* in the
    palette's voice — the Terminals tab reads "🔮 Scrying", the bulk #window-modal
    above conjures "a scrying portal for each chosen familiar" — so the 🧙 theme
@@ -9244,8 +9244,8 @@ body.wizard #template-duplicate-modal #template-duplicate-submit:disabled { opac
 body.wizard #template-duplicate-modal #template-duplicate-submit:disabled::before { content: "🪞 Mirroring…"; }
 
 /* ─── Wizard clone dialog — the dock card ⚙ → Clone for profiles + roles ──
-   The generic name-selector dialog (#clone-modal, modal-clone.js). Its title /
-   submit copy re-letter to "Mirror" in JS via wizWord; this block gives the
+   The Preact-owned generic name-selector dialog (#clone-modal). Its title /
+   submit copy re-letter to "Mirror" via theme-copy spans; this block gives the
    dialog the same midnight-violet grimoire chrome as its sibling template-mirror
    dialog above, scoped per-#id like every other modal's wizard skin (an
    unstyled dialog would fall back to the plain dark + a browser-white submit).
