@@ -38,15 +38,14 @@ func TestDashboardHTML_EscDismissWired(t *testing.T) {
 	mustNot("export function confirmDiscard() {", "refresh no longer owns a second discard-confirm implementation")
 	must("if (dirty && !(await confirmDiscard())) return;", "a dirty form confirms before an accidental close")
 
-	// refresh.js: editMemberModal is the one editable form dismissed inline
-	// (title / description text, role, owner) — it now dirty-tracks and
-	// confirms on Escape / backdrop instead of silently discarding edits.
-	must("overlay.addEventListener('input', markDirty);", "edit-member marks dirty on typed input")
-	must("overlay.addEventListener('change', markDirty);", "edit-member marks dirty on toggle/select changes")
-	// Its capture-phase Escape handler bails while the stacked discard
-	// confirm is up so confirmModal's own handler cancels only the confirm,
-	// and never re-enters to pop a second one underneath.
-	must("if ($('#confirm-modal').classList.contains('show')) return;", "edit-member yields Escape to a stacked discard confirm")
+	// member-editor-island.js owns a controlled dirty draft. The shared Preact
+	// overlay confirms accidental close, preserves the legacy backdrop-drag
+	// gesture guard, and yields Escape by painted overlay order to both the
+	// stacked permission editor and the discard confirm.
+	must("dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}", "the member editor confirms dirty accidental closes")
+	must("guardBackdropDrag=${true}", "the member editor preserves selection-drag backdrop safety")
+	must("shouldHandle: () => isTopmostOverlay(overlayRef.current)", "stacked Preact overlays give Escape only to the painted topmost dialog")
+	mustNot("function editMemberModal(", "the legacy inline edit-member lifecycle is removed")
 
 	// A representative slice of the form dialogs wired through
 	// bindBackdropDiscard — a sanity net that the coverage table is real.
