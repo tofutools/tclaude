@@ -21,20 +21,6 @@ test('dialog state refuses retargeting and resolves chooser cancellation on ever
   assert.equal(state.dialog.value, null);
 });
 
-test('cron target controller preserves explicit missing identities and scope', async (t) => {
-  const harness = await createPreactHarness(t);
-  const { createMessageAccessDialogState } = await harness.importDashboardModule('js/message-access-dialog-state.js');
-  const state = createMessageAccessDialogState();
-  const modes = [];
-  state.setCronTargetModeListener((mode) => modes.push(mode));
-  state.configureCronTarget({ targetMode: 'group', groupName: 'deleted-group', scopeGroup: '' });
-  assert.deepEqual(state.readCronTarget(), { mode: 'group', target: 'group:deleted-group' });
-  state.configureCronTarget({ targetMode: 'solo', target: 'agt_stable', scopeGroup: 'team' });
-  assert.deepEqual(state.readCronTarget(), { mode: 'solo', target: 'agt_stable' });
-  assert.equal(state.cronTarget.value.scopeGroup, 'team');
-  assert.deepEqual(modes, ['solo', 'group', 'solo']);
-});
-
 test('models keep stable identity, role search, and permission veto/source data', async (t) => {
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/message-access-dialog-model.js');

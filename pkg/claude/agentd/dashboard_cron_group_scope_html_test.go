@@ -5,9 +5,9 @@ import (
 	"testing"
 )
 
-// The cron-create modal keeps scheduling ownership while its shared controlled
-// target root is Preact-owned. This source-shape guard pins the compatibility
-// seam; component/model tests cover the interactive behavior.
+// The Jobs feature owns both the cron draft and its target picker. This
+// source-shape guard pins the scoped-launch contract; component/model tests
+// cover the interactive behavior.
 //
 // The contract: when the cron modal is opened from a group header's
 // "⏰ multicast" button, the shared solo/group target picker is scoped
@@ -25,12 +25,8 @@ func TestDashboardHTML_CronGroupScopedTargetPicker(t *testing.T) {
 		}
 	}
 
-	must("export function configureCronTargetPicker(prefill = {})",
-		"legacy cron configures controlled target state only through the controller")
-	must("export function readCronTargetPicker()",
-		"legacy cron reads controlled target state only through the controller")
 	must("const scope = value.scopeGroup || ''",
-		"the Preact target root derives its group scope from controlled state")
+		"the Jobs target root derives its group scope from component state")
 	must("const members = scope ? groupMembers(snapshot, scope) : []",
 		"scoped solo options come only from the scoped group's live members")
 	must("disabled=${!!scope}",
@@ -38,20 +34,21 @@ func TestDashboardHTML_CronGroupScopedTargetPicker(t *testing.T) {
 	must("value=${value.target}",
 		"the scoped member selection remains controlled")
 
-	// The group header's "⏰ multicast" button arms the scope; the
-	// shared populateCronForm wires the prefill's scopeGroup through.
+	// The native Groups header's "⏰ multicast" button arms the scope; Jobs
+	// state preserves the launcher's scopeGroup in the immutable prefill.
 	must("scopeGroup: name",
 		"the group header cron button must pass scopeGroup")
-	must("configureCronTargetPicker(p)",
-		"populateCronForm must arm/clear target scope through the controller")
+	must("prefill: { ...prefill }",
+		"Jobs state snapshots the launch prefill without writing static DOM")
 
 	// Closing the modal must clear the scope — otherwise a group scope
 	// armed by one open would leak into the next (e.g. a global "+ new
 	// cron job" opened right after a group multicast).
-	must("configureCronTargetPicker({})",
-		"closeCronCreateModal must clear controlled target scope on close")
+	must("dialog.value = null",
+		"closing the Jobs dialog drops the scoped descriptor")
 	if strings.Contains(dashboardAssets, "function bindTargetPicker(") ||
-		strings.Contains(dashboardAssets, "function populateTargetPicker(") {
+		strings.Contains(dashboardAssets, "function populateTargetPicker(") ||
+		strings.Contains(dashboardAssets, "configureCronTargetPicker") {
 		t.Error("legacy cron still owns a shared target-picker writer")
 	}
 }
