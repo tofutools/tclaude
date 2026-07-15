@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"strings"
 )
 
 func EncodeRoutePathsPayload(view MutationReplayView, plan RoutePathsPlan) ([]byte, error) {
@@ -224,11 +223,8 @@ func ValidateRoutePathsCommand(view MutationReplayView, command CommandRecord) e
 	if !ok || settlement.Identity.Kind != CommandSettleAttempt || settlement.Identity.SourceActivationID != plan.SourceActivationID || settlement.Identity.SourceGeneration != plan.SourceGeneration || settlement.Identity.Attempt != plan.Attempt || (settlement.State != CommandObserved && settlement.State != CommandReconciled) {
 		return fmt.Errorf("%w: route plan does not bind its exact observed settlement", ErrMutationInvalid)
 	}
-	outcome := plan.ResultCode
-	if slash := strings.LastIndexByte(outcome, '/'); slash >= 0 {
-		outcome = outcome[slash+1:]
-	}
-	if settlement.Identity.ResultCode != outcome {
+	outcome, exact := exactSettlementResult(plan.ResultCode)
+	if !exact || settlement.Identity.ResultCode != outcome {
 		return fmt.Errorf("%w: route result does not conserve settlement result", ErrMutationInvalid)
 	}
 	pre, err := payload.Plan.Batch.preState(view.Aggregate.Routing, command.ID)

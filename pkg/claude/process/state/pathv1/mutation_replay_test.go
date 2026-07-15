@@ -169,6 +169,20 @@ func TestRoutePathsTypedReplayAppliesOnceAndRejectsDrift(t *testing.T) {
 	}
 	delete(replayView.Aggregate.Commands, badCommand.ID)
 
+	ambiguousPlan := plan
+	ambiguousPlan.ResultCode = "other/pass"
+	ambiguousPayload, err := EncodeRoutePathsPayload(replayView, ambiguousPlan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ambiguousIdentity := identity
+	ambiguousIdentity.PlanDigest = payloadDigest(ambiguousPayload)
+	ambiguousIdentity.ResultCode = ambiguousPlan.ResultCode
+	ambiguousCommand := commandWithPayload(t, ambiguousIdentity, CommandObserved, ambiguousPayload)
+	if err := ValidateRoutePathsCommand(replayView, ambiguousCommand); !errors.Is(err, ErrMutationInvalid) {
+		t.Fatalf("route result with ambiguous prefix error = %v", err)
+	}
+
 	result, err := ReplayRoutePaths(replayView, command)
 	if err != nil {
 		t.Fatal(err)

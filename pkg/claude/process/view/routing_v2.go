@@ -3,11 +3,16 @@ package view
 import (
 	"cmp"
 	"errors"
+	"regexp"
 	"slices"
 
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 )
+
+// Outcome labels are exact template authority, not lowercase node IDs.
+// Preserve ASCII case while retaining the viewer's narrow safe charset.
+var safeExactOutcomePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 const (
 	ViewerV2Protocol         = "viewer_v2"
@@ -210,7 +215,7 @@ func projectExactTopology(ref string, tmpl *model.Template) (exactTopologyProjec
 	}
 	edgesByID := make(map[string]TopologyEdgeV2, len(edges))
 	for _, edge := range edges {
-		if (edge.From != "" && !safeIDPattern.MatchString(edge.From)) || !safeIDPattern.MatchString(edge.Outcome) || !safeIDPattern.MatchString(edge.To) {
+		if (edge.From != "" && !safeIDPattern.MatchString(edge.From)) || !safeExactOutcomePattern.MatchString(edge.Outcome) || !safeIDPattern.MatchString(edge.To) {
 			return exactTopologyProjection{}, RoutingUnavailableInconsistent
 		}
 		id, err := pathv1.EdgeIdentity(hash, edge.From, edge.Outcome, edge.To)

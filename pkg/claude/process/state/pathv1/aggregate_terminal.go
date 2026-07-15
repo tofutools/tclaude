@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"slices"
-	"strings"
 )
 
 // settleAttemptObservationPayload is the narrow typed observation envelope
@@ -148,11 +147,8 @@ func (i *aggregateIndex) validateRouteTerminal(path string, p PathRecord, d Disp
 		return
 	}
 	i.validateSettleAttemptTerminal(path, p, d, settle)
-	outcome := id.ResultCode
-	if slash := strings.LastIndexByte(outcome, '/'); slash >= 0 {
-		outcome = outcome[slash+1:]
-	}
-	if outcome != settle.Identity.ResultCode {
+	outcome, exact := exactSettlementResult(id.ResultCode)
+	if !exact || outcome != settle.Identity.ResultCode {
 		fail("terminal route result %q does not conserve settlement result %q", id.ResultCode, settle.Identity.ResultCode)
 	}
 	payload, err := i.decodeRouteTerminalPayload(p, route)

@@ -127,6 +127,160 @@ nodes:
 	}
 }
 
+func TestDecisionCaseCollisionPreservesExactSettlementAndRouteAuthority(t *testing.T) {
+	source := []byte(`apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: case-distinct-decision
+start: choose
+nodes:
+  choose:
+    type: decision
+    performer: {kind: human, ask: Choose}
+    next: {Go: shipped, go: held}
+  shipped: {type: end}
+  held: {type: end}
+`)
+	type authority struct {
+		observed []byte
+		pending  ExclusiveObservation
+		settle   CommandRecord
+		route    CommandRecord
+		edge     EdgeKey
+	}
+	run := func(t *testing.T, verdict string) authority {
+		t.Helper()
+		observed := observedExclusiveAttemptForTest(t, initializedExclusiveCheckpoint(t, source), source, ExclusiveObservation{
+			Outcome: " " + verdict + " ", Actor: "human:operator",
+		})
+		input, err := VerifyExclusiveInput(t.Context(), observed, source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pending, found, err := PendingExclusiveObservation(t.Context(), input)
+		if err != nil || !found || pending.Outcome != verdict {
+			t.Fatalf("pending verdict = %#v, found=%v err=%v", pending, found, err)
+		}
+		planned, err := PlanExclusiveRoute(t.Context(), input, pending)
+		if err != nil {
+			t.Fatal(err)
+		}
+		transition, err := AdvanceExclusiveRoute(t.Context(), input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, routedBytes, checkpoint, err := ValidateExecutionTransitionForAppend(t.Context(), observed, source, transition)
+		if err != nil {
+			t.Fatal(err)
+		}
+		roundTrip, err := EncodeCheckpointV7(checkpoint)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(routedBytes, roundTrip) {
+			t.Fatal("routed checkpoint audit bytes did not round trip canonically")
+		}
+		decoded, err := DecodeCheckpointV7(roundTrip)
+		if err != nil {
+			t.Fatal(err)
+		}
+		aggregate, err := CurrentAggregateCheckpoint(decoded)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got authority
+		got.observed, got.pending = observed, pending
+		for _, command := range aggregate.Commands {
+			switch {
+			case command.Identity.Kind == CommandSettleAttempt && command.Identity.ResultCode == verdict:
+				got.settle = command
+				var payload settleAttemptObservationPayload
+				if err := decodeExactPayload(command.Payload, &payload); err != nil {
+					t.Fatal(err)
+				}
+				if payload.ResultCode != verdict {
+					t.Fatalf("settlement audit payload verdict = %q, want %q", payload.ResultCode, verdict)
+				}
+			case command.Identity.Kind == CommandRoutePaths && command.Identity.InputDigest == planned.Identity.InputDigest:
+				got.route = command
+			}
+		}
+		if got.settle.ID == "" || got.route.ID == "" || !exactExclusiveCommand(got.route, planned) {
+			t.Fatalf("settlement/route parity failed: settle=%#v route=%#v planned=%#v", got.settle, got.route, planned)
+		}
+		var routePayload mutationPayload[RoutePathsPlan]
+		if err := decodeExactPayload(got.route.Payload, &routePayload); err != nil {
+			t.Fatal(err)
+		}
+		if got.route.Identity.InputDigest != got.settle.ID || got.route.Identity.ResultCode != "exclusive/"+verdict ||
+			routePayload.Plan.SettlementCommandID != got.settle.ID || routePayload.Plan.ResultCode != "exclusive/"+verdict {
+			t.Fatalf("route audit authority did not conserve %q: route=%#v plan=%#v", verdict, got.route.Identity, routePayload.Plan)
+		}
+		for _, path := range aggregate.Routing.Paths {
+			if path.Kind == PathEdge && path.Edge != nil && path.Edge.FromNodeID == "choose" {
+				if got.edge.ID != "" {
+					t.Fatalf("multiple selected decision edges: %#v and %#v", got.edge, *path.Edge)
+				}
+				got.edge = *path.Edge
+			}
+		}
+		if got.edge.Outcome != verdict {
+			t.Fatalf("selected edge outcome = %q, want %q", got.edge.Outcome, verdict)
+		}
+		return got
+	}
+
+	upper := run(t, "Go")
+	lower := run(t, "go")
+	if upper.settle.ID == lower.settle.ID || upper.settle.PayloadHash == lower.settle.PayloadHash ||
+		upper.route.ID == lower.route.ID || upper.route.PayloadHash == lower.route.PayloadHash || upper.edge.ID == lower.edge.ID {
+		t.Fatalf("case-distinct verdict authority collapsed: upper=%#v lower=%#v", upper, lower)
+	}
+	upperInput, err := VerifyExclusiveInput(t.Context(), upper.observed, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReduceExclusiveRoute(t.Context(), upperInput, upper.pending, lower.route); !errors.Is(err, ErrMutationInvalid) {
+		t.Fatalf("cross-case route replay error = %v", err)
+	}
+
+	initial := initializedExclusiveCheckpoint(t, source)
+	input, err := VerifyExclusiveInput(t.Context(), initial, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint, err := DecodeCheckpointV7(initial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aggregate, err := CurrentAggregateCheckpoint(checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanExclusiveAttempt(t.Context(), input, aggregate.Authority.Genesis.OutputPathID, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := ClaimExclusiveAttempt(t.Context(), input, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, claimed, _, err := ValidateExecutionTransitionForAppend(t.Context(), initial, source, claim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimedInput, err := VerifyExclusiveInput(t.Context(), claimed, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovered, found, err := RecoverExclusiveAttempt(t.Context(), claimedInput)
+	if err != nil || !found {
+		t.Fatalf("recover claim: found=%v err=%v", found, err)
+	}
+	if transition, err := ObserveExclusiveAttempt(t.Context(), claimedInput, recovered, ExclusiveObservation{Outcome: "GO", Actor: "human:operator"}, false); !errors.Is(err, ErrExclusiveUnsupported) || transition != nil {
+		t.Fatalf("ambiguous normalized verdict transition=%#v error=%v", transition, err)
+	}
+}
+
 func TestAdvanceExclusiveRouteClosesMultiWayLosersAtomically(t *testing.T) {
 	source := exclusiveFanoutTemplate(5, false)
 	observed := observedExclusiveAttemptForTest(t, initializedExclusiveCheckpoint(t, source), source, ExclusiveObservation{
