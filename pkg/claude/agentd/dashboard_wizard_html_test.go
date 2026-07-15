@@ -874,7 +874,7 @@ func TestDashboardCSS_WizardEditMemberModalScoped(t *testing.T) {
 }
 
 // TestDashboardHTML_WizardTermPickerModal pins the wizard re-skin of the
-// "Open a terminal" which-dir picker (#term-modal — termDirModal in refresh.js),
+// "Open a terminal" which-dir picker (#term-modal — Preact action dialog),
 // the dialog that pops before a single agent's terminal window opens. Like the
 // retire / edit-member re-skins it is a pure-CSS title span swap plus a
 // modal-scoped surface + gilded-primary re-skin, so we string-search the
