@@ -32,8 +32,8 @@ func Cmd() *cobra.Command {
 	var logLevel string
 	cmd := boa.CmdT[session.NewParams]{
 		Use:         "claude",
-		Short:       "Claude Code utilities",
-		Long:        "Claude Code utilities.\n\nWhen run without a subcommand, starts a new Claude session in the current directory.",
+		Short:       "Coding-agent utilities",
+		Long:        "Coding-agent utilities.\n\nWhen run without a subcommand, starts a new coding session in the current directory.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			conv.Cmd(),
@@ -54,12 +54,13 @@ func Cmd() *cobra.Command {
 			remoteaccess.Cmd(),
 		},
 		RunFunc: func(params *session.NewParams, cmd *cobra.Command, args []string) {
-			if err := session.RunNew(params); err != nil {
+			if err := session.RunNewFromCommand(params, cmd); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 		},
 	}.ToCobra()
+	_ = cmd.Flags().MarkHidden("managed-launch")
 	cmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		if err := config.RelocateLegacyState(); err != nil {
 			return fmt.Errorf("relocate legacy tclaude state: %w", err)

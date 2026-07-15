@@ -13,8 +13,9 @@ with detach/reattach and live status tracking.
 
 ### session new
 
-Start a coding harness in a new tmux session. Claude Code is the compatibility
-default; pass `--harness codex` for Codex.
+Start a coding harness in a new tmux session. Pass `--harness claude` or
+`--harness codex` to select one explicitly; fresh-launch defaults are described
+below.
 
 ```bash
 # Start a new session in current directory
@@ -36,6 +37,22 @@ tclaude session new --harness codex --resume <conv-id>
 tclaude session new -d
 ```
 
+For a fresh terminal launch, `tclaude` and `tclaude session new` inherit the
+**harness, model, and effort** from the global default spawn profile selected
+in the dashboard (or with `tclaude agent profiles default set`). An explicit
+`--harness`, `--model`, or `--effort` wins for that field. If no global profile
+field is set, the chosen harness keeps its own default. A selected profile with
+a blank harness retains the profile system's historical Claude meaning. When no
+global profile exists at all and no `--harness` is given, tclaude instead
+chooses an installed harness from `PATH`, preferring Claude Code when both
+Claude and Codex are installed. If neither is installed, the historical Claude
+fallback remains and launch reports the missing executable.
+
+This inheritance is for fresh, human-owned terminal sessions only. Resume and
+agentd-managed launches retain their existing resolved launch shape, and the
+profile's sandbox, approval, identity, and permission fields remain agent-spawn
+policy rather than overrides for a directly attached human session.
+
 **Flags:**
 
 | Flag               | Description                                              |
@@ -44,7 +61,7 @@ tclaude session new -d
 | `-C, --dir <path>` | Directory to start the session in                       |
 | `--resume <id>`    | Resume from the selected harness's conversation store     |
 | `--label <name>`   | Custom label for the session                             |
-| `--harness <name>` | Coding harness to launch: `claude` (default) \| `codex` \| `shell` |
+| `--harness <name>` | Coding harness: `claude` \| `codex` \| `shell` (unset: global profile, then an installed harness; Claude preferred) |
 | `-s, --shell`      | Start a plain shell instead of a coding harness (shorthand for `--harness shell`) |
 
 Model, effort, sandbox, approval, and lifecycle options differ by harness. The

@@ -18,6 +18,18 @@ func TestSessionNewArgs_EffortOmittedWhenUnset(t *testing.T) {
 	}
 }
 
+func TestSessionArgs_ManagedLaunchMarker(t *testing.T) {
+	tests := map[string][]string{
+		"new":    sessionNewArgs(clcommon.SpawnArgs{Label: "lbl", Cwd: "/tmp/x"}),
+		"resume": sessionResumeArgs(clcommon.SpawnArgs{ConvID: "conv-1", Cwd: "/tmp/x"}),
+	}
+	for name, args := range tests {
+		if !slices.Contains(args, "--managed-launch") {
+			t.Fatalf("%s: agentd must mark its already-resolved session launch, got %v", name, args)
+		}
+	}
+}
+
 func TestSessionNewArgs_InternalWriteProofFlags(t *testing.T) {
 	bare := sessionNewArgs(clcommon.SpawnArgs{Label: "lbl", Cwd: "/tmp/x"})
 	if slices.Contains(bare, "--cwd-write-proof") {
