@@ -86,6 +86,9 @@ func processAgentSpawnParams(request processexec.Request) (spawnParams, error) {
 	if profile == nil {
 		return spawnParams{}, fmt.Errorf("spawn profile %q not found", request.Performer.Profile)
 	}
+	if fail := disabledProfileFailure(profile); fail != nil {
+		return spawnParams{}, fmt.Errorf("%s", fail.Msg)
+	}
 	return processSpawnParams(profile, request)
 }
 

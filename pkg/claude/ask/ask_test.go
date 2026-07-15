@@ -445,7 +445,8 @@ func TestResolveAskTarget(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			h, m, e := resolveAskTarget(tc.flagModel, tc.flagEffort, tc.cfg)
+			h, m, e, err := resolveAskTarget(tc.flagModel, tc.flagEffort, tc.cfg)
+			require.NoError(t, err)
 			assert.Equal(t, harness.DefaultName, h, "harness (no profile → default)")
 			assert.Equal(t, tc.wantModel, m, "model")
 			assert.Equal(t, tc.wantEffort, e, "effort")
@@ -479,34 +480,48 @@ func TestResolveAskTarget_Profile(t *testing.T) {
 	}
 
 	t.Run("codex profile supplies harness+model+effort", func(t *testing.T) {
-		h, m, e := resolveAskTarget("", "", cfg("codex-fast"))
+		h, m, e, err := resolveAskTarget("", "", cfg("codex-fast"))
+		require.NoError(t, err)
 		assert.Equal(t, "codex", h)
 		assert.Equal(t, "gpt-5", m)
 		assert.Equal(t, "low", e)
 	})
 	t.Run("flag overrides the codex profile model", func(t *testing.T) {
-		h, m, e := resolveAskTarget("gpt-5-codex", "high", cfg("codex-fast"))
+		h, m, e, err := resolveAskTarget("gpt-5-codex", "high", cfg("codex-fast"))
+		require.NoError(t, err)
 		assert.Equal(t, "codex", h)
 		assert.Equal(t, "gpt-5-codex", m)
 		assert.Equal(t, "high", e)
 	})
 	t.Run("blank codex profile leaves model/effort empty (no Claude default)", func(t *testing.T) {
-		h, m, e := resolveAskTarget("", "", cfg("codex-bare"))
+		h, m, e, err := resolveAskTarget("", "", cfg("codex-bare"))
+		require.NoError(t, err)
 		assert.Equal(t, "codex", h)
 		assert.Empty(t, m, "no haiku leaks into the Codex catalog")
 		assert.Empty(t, e)
 	})
 	t.Run("blank claude profile still gets the Claude fast defaults", func(t *testing.T) {
-		h, m, e := resolveAskTarget("", "", cfg("claude-blank"))
+		h, m, e, err := resolveAskTarget("", "", cfg("claude-blank"))
+		require.NoError(t, err)
 		assert.Equal(t, harness.DefaultName, h)
 		assert.Equal(t, config.DefaultAskModel, m)
 		assert.Equal(t, config.DefaultAskEffort, e)
 	})
 	t.Run("missing profile self-heals to no-profile defaults", func(t *testing.T) {
-		h, m, e := resolveAskTarget("", "", cfg("does-not-exist"))
+		h, m, e, err := resolveAskTarget("", "", cfg("does-not-exist"))
+		require.NoError(t, err)
 		assert.Equal(t, harness.DefaultName, h)
 		assert.Equal(t, config.DefaultAskModel, m)
 		assert.Equal(t, config.DefaultAskEffort, e)
+	})
+	t.Run("disabled profile fails with its stored reason", func(t *testing.T) {
+		_, err := db.CreateSpawnProfile(&db.SpawnProfile{
+			Name: "paused", DisabledReason: "provider outage",
+		})
+		require.NoError(t, err)
+		_, _, _, err = resolveAskTarget("", "", cfg("paused"))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `spawn profile "paused" is disabled: provider outage`)
 	})
 }
 

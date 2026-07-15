@@ -172,7 +172,10 @@ func runFromCLI(p *Params, args []string) error {
 	if err != nil {
 		cfg = config.DefaultConfig()
 	}
-	harnessName, model, effort := resolveAskTarget(p.Model, p.Effort, cfg)
+	harnessName, model, effort, err := resolveAskTarget(p.Model, p.Effort, cfg)
+	if err != nil {
+		return err
+	}
 
 	in := askInput{
 		TermKey:          TerminalKey(),
@@ -257,11 +260,14 @@ func printWhere(cwd string, w io.Writer) error {
 // The returned values are raw strings still validated against the resolved
 // harness's catalog by runAsk. db.ResolveSpawnProfile is the only I/O; a load
 // error degrades to the no-profile path rather than failing the ask.
-func resolveAskTarget(flagModel, flagEffort string, cfg *config.Config) (harnessName, model, effort string) {
+func resolveAskTarget(flagModel, flagEffort string, cfg *config.Config) (harnessName, model, effort string, resolveErr error) {
 	harnessName = harness.DefaultName
 
 	if name := cfg.AskProfileName(); name != "" {
 		if prof, err := db.ResolveSpawnProfile(name); err == nil && prof != nil {
+			if strings.TrimSpace(prof.DisabledReason) != "" {
+				return "", "", "", fmt.Errorf("spawn profile %q is disabled: %s", prof.Name, prof.DisabledReason)
+			}
 			if prof.Harness != "" {
 				harnessName = prof.Harness
 			}
@@ -293,7 +299,7 @@ func resolveAskTarget(flagModel, flagEffort string, cfg *config.Config) (harness
 	if flagEffort != "" {
 		effort = flagEffort
 	}
-	return harnessName, model, effort
+	return harnessName, model, effort, nil
 }
 
 func runAsk(in askInput, aio askIO) error {

@@ -935,6 +935,9 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd stri
 			return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_profile",
 				fmt.Sprintf("references spawn profile %q which no longer exists", ref)}
 		}
+		if fail := disabledProfileFailure(prof); fail != nil {
+			return templateAgentLaunch{}, fail
+		}
 		refProfile = prof
 	}
 	var roleProfile *db.SpawnProfile
@@ -953,6 +956,10 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd stri
 			if prof == nil {
 				return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_profile",
 					fmt.Sprintf("role %q references spawn profile %q which no longer exists", role.Name, ref)}
+			}
+			if fail := disabledProfileFailure(prof); fail != nil {
+				return templateAgentLaunch{}, &spawnFailure{fail.Status, fail.Kind,
+					fmt.Sprintf("role %q: %s", role.Name, fail.Msg)}
 			}
 			roleProfile = prof
 		}
@@ -1305,11 +1312,11 @@ const (
 	// field-by-field validation failure.
 	templateExportFormat = "tclaude-task-force"
 	// templateExportVersion is the highest envelope format version this
-	// build writes and can import. Bump it only on a breaking change to
-	// the envelope (not the inner template — that grows fields freely).
+	// build writes and can import. Bump it when an older reader would lose a
+	// safety-relevant field, even if that field is structurally additive.
 	// Import accepts any version <= this and rejects anything newer with
 	// an "upgrade tclaude" message.
-	templateExportVersion = 1
+	templateExportVersion = 2
 )
 
 // templateExportEnvelope is the portable file shape: a small versioned
@@ -1337,9 +1344,10 @@ type templateExportEnvelope struct {
 	// Import materializes any that are MISSING locally (never overwriting an
 	// existing profile of the same name — same sacred-edits rule as roles); a
 	// reference that stays unresolved is dropped + warned on import, exactly like
-	// today. This field is purely additive: a format_version-1 reader that
-	// predates it simply ignores it and degrades the ref, so the envelope stays
-	// version 1 (no bump).
+	// today. Version 2 additionally guarantees that safety-relevant profile
+	// state such as disabled_reason is preserved; a version-1 reader would
+	// silently recreate such a profile as enabled, so version-2 exports must be
+	// rejected by that older reader.
 	Profiles []spawnProfileJSON `json:"profiles,omitempty"`
 }
 
@@ -1968,6 +1976,9 @@ func resolveTemplateAgentAccess(a db.GroupTemplateAgent, role *db.Role) (bool, [
 		if prof == nil {
 			return false, nil, &spawnFailure{http.StatusBadRequest, "invalid_profile",
 				fmt.Sprintf("references spawn profile %q which no longer exists", ref)}
+		}
+		if fail := disabledProfileFailure(prof); fail != nil {
+			return false, nil, fail
 		}
 		if prof.IsOwner != nil {
 			owner = *prof.IsOwner

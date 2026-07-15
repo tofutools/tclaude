@@ -2,6 +2,8 @@ package agent
 
 import (
 	"bytes"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,6 +59,125 @@ func TestRunProfilesDefaultShow_Unset(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	require.Equal(t, rcOK, runProfilesDefaultShow(&stdout, &stderr))
 	assert.Contains(t, stdout.String(), "no global default spawn profile")
+}
+
+func TestRunProfilesDisableAndEnable(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, func(method, path string) (int, string, string) {
+		switch method {
+		case http.MethodGet:
+			return 200, "", `{"name":"paused","model":"sonnet"}`
+		case http.MethodPatch:
+			if len(calls) > 0 {
+				if body, ok := calls[len(calls)-1].body.(*profileJSON); ok && body.DisabledReason == "" {
+					return 200, "", `{"id":1,"name":"paused","profile":{"name":"paused","model":"sonnet"}}`
+				}
+			}
+			return 200, "", `{"id":1,"name":"paused","profile":{"name":"paused","model":"sonnet","disabled_reason":"provider maintenance"}}`
+		default:
+			return 405, "method", ""
+		}
+	})
+
+	var stdout, stderr bytes.Buffer
+	require.Equal(t, rcOK, runProfilesDisable(&profilesDisableParams{
+		Name: "paused", Reason: "provider maintenance",
+	}, &stdout, &stderr), "stderr=%s", stderr.String())
+	assert.Contains(t, stdout.String(), `Disabled profile "paused": provider maintenance`)
+	require.Len(t, calls, 2)
+	disabled, ok := calls[1].body.(*profileJSON)
+	require.True(t, ok)
+	assert.Equal(t, "provider maintenance", disabled.DisabledReason)
+	assert.Equal(t, "sonnet", disabled.Model, "disable preserves the complete profile")
+
+	calls = nil
+	stdout.Reset()
+	require.Equal(t, rcOK, runProfilesEnable(&profilesEnableParams{Name: "paused"}, &stdout, &stderr))
+	require.Len(t, calls, 2)
+	enabled, ok := calls[1].body.(*profileJSON)
+	require.True(t, ok)
+	assert.Empty(t, enabled.DisabledReason)
+	assert.Contains(t, stdout.String(), `Enabled profile "paused"`)
+}
+
+func TestRunProfilesDisableRequiresReason(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	rc := runProfilesDisable(&profilesDisableParams{Name: "paused"}, &stdout, &stderr)
+	assert.Equal(t, rcInvalidArg, rc)
+	assert.Contains(t, stderr.String(), "--reason is required")
+}
+
+func TestRunProfilesDisableRejectsOldDaemonFalseSuccess(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, func(method, path string) (int, string, string) {
+		if method == http.MethodGet {
+			return 200, "", `{"name":"paused","model":"sonnet"}`
+		}
+		// This is the successful response from a pre-disabled_reason daemon: it
+		// accepted the PATCH but ignored the unknown JSON field.
+		return 200, "", `{"id":1,"name":"paused"}`
+	})
+
+	var stdout, stderr bytes.Buffer
+	rc := runProfilesDisable(&profilesDisableParams{
+		Name: "paused", Reason: "provider maintenance",
+	}, &stdout, &stderr)
+	assert.Equal(t, rcIOFailure, rc)
+	assert.Empty(t, stdout.String(), "must not print a false success")
+	assert.Contains(t, stderr.String(), "does not support disabling spawn profiles")
+}
+
+func TestRunProfilesDisableComparesCanonicalReason(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, func(method, path string) (int, string, string) {
+		if method == http.MethodGet {
+			return 200, "", `{"name":"paused"}`
+		}
+		return 200, "", `{"id":1,"name":"paused","profile":{"name":"paused","disabled_reason":"line 1\nline 2"}}`
+	})
+
+	var stdout, stderr bytes.Buffer
+	rc := runProfilesDisable(&profilesDisableParams{
+		Name: "paused", Reason: "line 1\r\nline 2",
+	}, &stdout, &stderr)
+	require.Equal(t, rcOK, rc, "stderr=%s", stderr.String())
+	require.Len(t, calls, 2)
+	patched, ok := calls[1].body.(*profileJSON)
+	require.True(t, ok)
+	assert.Equal(t, "line 1\nline 2", patched.DisabledReason)
+	assert.Contains(t, stdout.String(), "line 1\nline 2")
+}
+
+func TestRunProfilesCreateAndEditRejectOldDaemonDisabledFalseSuccess(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(io.Reader, io.Writer, io.Writer) int
+	}{
+		{
+			name: "create",
+			run: func(stdin io.Reader, stdout, stderr io.Writer) int {
+				return runProfilesCreate(&profilesCreateParams{File: "-"}, stdin, stdout, stderr)
+			},
+		},
+		{
+			name: "edit",
+			run: func(stdin io.Reader, stdout, stderr io.Writer) int {
+				return runProfilesEdit(&profilesEditParams{Name: "paused", File: "-"}, stdin, stdout, stderr)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls []capturedReq
+			stubDaemon(t, &calls, ok(`{"id":1,"name":"paused"}`))
+			var stdout, stderr bytes.Buffer
+			rc := tc.run(strings.NewReader(
+				`{"name":"paused","disabled_reason":"provider maintenance"}`,
+			), &stdout, &stderr)
+			assert.Equal(t, rcIOFailure, rc)
+			assert.Empty(t, stdout.String(), "must not print a false success")
+			assert.Contains(t, stderr.String(), "does not support disabling spawn profiles")
+		})
+	}
 }
 
 // mergeProfileIntoSpawn is the CLI-side flatten of a spawn profile under the
@@ -262,6 +383,7 @@ func TestPrintProfileHuman(t *testing.T) {
 	var buf bytes.Buffer
 	printProfileHuman(&buf, profileJSON{
 		Name:                "team",
+		DisabledReason:      "provider quota exhausted",
 		Aliases:             []string{"codex-reviewer", "cold-reviewer"},
 		Descr:               "the team default",
 		Harness:             "codex",
@@ -276,6 +398,8 @@ func TestPrintProfileHuman(t *testing.T) {
 	})
 	out := buf.String()
 	assert.Contains(t, out, "Profile: team")
+	assert.Contains(t, out, "status:  disabled")
+	assert.Contains(t, out, "reason:  provider quota exhausted")
 	assert.Contains(t, out, "aliases: codex-reviewer, cold-reviewer")
 	assert.Contains(t, out, "the team default")
 	assert.Contains(t, out, "harness=codex")

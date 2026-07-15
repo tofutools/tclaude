@@ -51,6 +51,21 @@ func TestProcessAgentSpawnParams_ResolvesProfileAlias(t *testing.T) {
 	assert.Equal(t, "gpt-5.6-sol", p.Model)
 }
 
+func TestProcessAgentSpawnParams_RejectsDisabledProfile(t *testing.T) {
+	setupTestDB(t)
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{
+		Name: "paused", DisabledReason: "provider maintenance", Harness: "codex",
+	})
+	require.NoError(t, err)
+	_, err = processAgentSpawnParams(processexec.Request{
+		Command:   plan.Command{ID: "cmd_0123456789abcdef01234567"},
+		Input:     processexec.Input{RunID: "run", NodeID: "review"},
+		Performer: model.Performer{Kind: model.PerformerAgent, Profile: "paused", Prompt: "Review the diff"},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `spawn profile "paused" is disabled: provider maintenance`)
+}
+
 func TestProcessHumanAdapterBlockedContactIsActionable(t *testing.T) {
 	setupTestDB(t)
 	request := processexec.Request{

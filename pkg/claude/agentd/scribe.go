@@ -330,6 +330,10 @@ func summonScribe(name string, overrides map[string]string, brief string, exclus
 	// seeding, never CC's. Every summon is fresh, so every new scribe observes
 	// the profile currently configured by the operator.
 	stampScribeProfileFromConfig(g)
+	spawnHarness, fail := scribeSpawnHarness(g)
+	if fail != nil {
+		return nil, false, fail
+	}
 
 	// Resolve + create the shared scribe workdir and pre-trust it for the
 	// harness this scribe will launch on, so its detached pane comes up without
@@ -338,7 +342,7 @@ func summonScribe(name string, overrides map[string]string, brief string, exclus
 	if fail != nil {
 		return nil, false, fail
 	}
-	seedScribeDirTrust(scribeSpawnHarness(g), cwd)
+	seedScribeDirTrust(spawnHarness, cwd)
 
 	// executeSpawn enrolls the scribe into its group, applies the birth-time
 	// grants (enrollSpawnedConv), delivers the brief to its inbox and —
@@ -485,14 +489,19 @@ func ensureScribeWorkdir() (string, *spawnFailure) {
 // group's default spawn profile, then the global default profile (neither →
 // the default harness). Mirrors executeSpawn → applyDefaultProfile so the dir
 // we pre-trust matches the harness that will read the trust store.
-func scribeSpawnHarness(g *db.AgentGroup) string {
-	if prof := groupDefaultProfile(g); prof != nil {
-		return harnessOrDefault(prof.Harness)
+func scribeSpawnHarness(g *db.AgentGroup) (string, *spawnFailure) {
+	profiles := []*db.SpawnProfile{groupDefaultProfile(g), globalDefaultProfile()}
+	for _, prof := range profiles {
+		if fail := disabledProfileFailure(prof); fail != nil {
+			return "", fail
+		}
 	}
-	if prof := globalDefaultProfile(); prof != nil {
-		return harnessOrDefault(prof.Harness)
+	for _, prof := range profiles {
+		if prof != nil {
+			return harnessOrDefault(prof.Harness), nil
+		}
 	}
-	return harness.DefaultName
+	return harness.DefaultName, nil
 }
 
 // stampScribeProfileFromConfig points the scribe group's default spawn profile

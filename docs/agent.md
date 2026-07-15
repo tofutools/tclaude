@@ -334,6 +334,26 @@ tclaude agent groups links                                 # every link, all gro
 All mutating subcommands take `--ask-human <duration>` (see
 [below](#ad-hoc-human-approval---ask-human)).
 
+### spawn profiles
+
+Spawn profiles are reusable launch and identity presets. They can be paused
+without being deleted:
+
+```bash
+tclaude agent profiles ls
+tclaude agent profiles show <name>
+tclaude agent profiles disable <name> --reason "provider maintenance"
+tclaude agent profiles enable <name>
+```
+
+A disabled profile remains listed, editable, exportable, and referenced by
+aliases, defaults, roles, templates, and process performers. Any spawn that
+would use it fails with `profile_disabled` and the stored reason; `tclaude ask`
+also refuses a disabled selected profile. Neither silently falls through to
+another profile. `enable` clears the reason and reactivates every existing
+reference. Profile writes require
+`profiles.manage`.
+
 ### sandbox profiles
 
 Sandbox profiles are operator-authored, harness-neutral bundles of filesystem

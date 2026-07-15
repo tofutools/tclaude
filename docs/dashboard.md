@@ -264,6 +264,13 @@ anything that should not travel. Import reads a bundle, previews every profile,
 lets you uncheck rows, and handles existing-name conflicts per profile by
 renaming or overwriting.
 
+A profile can be **disabled without deleting it**. Its editor keeps a Disabled
+checkbox and required reason; disabled profiles remain visible, editable,
+exportable, and available in selectors with a disabled marker. Any direct,
+default-, role-, template-, or process-driven spawn that would use one fails
+with the stored reason, as does `tclaude ask` when configured to use it. Clear
+Disabled to make all existing references usable again.
+
 ### Sandbox Profiles
 
 Sandbox profiles are separate, harness-neutral launch policy: absolute

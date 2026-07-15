@@ -45,6 +45,7 @@ func TestSpawnProfilesExportImport_RoundTripSelected(t *testing.T) {
 		map[string]any{
 			"name": "alpha", "aliases": []string{"codex-reviewer"},
 			"model": "sonnet", "role": "lead", "sync_worktree": true,
+			"disabled_reason": "provider maintenance",
 		}).Code)
 	require.Equal(t, http.StatusCreated, profileReq(t, f, http.MethodPost, "/v1/spawn-profiles",
 		map[string]any{"name": "beta", "model": "haiku"}).Code)
@@ -54,12 +55,13 @@ func TestSpawnProfilesExportImport_RoundTripSelected(t *testing.T) {
 	var bundle profileBundle
 	testharness.DecodeJSON(t, rec, &bundle)
 	assert.Equal(t, "tclaude-spawn-profiles", bundle.Format)
-	assert.Equal(t, 2, bundle.FormatVersion)
+	assert.Equal(t, 3, bundle.FormatVersion)
 	assert.NotEmpty(t, bundle.ExportedAt)
 	require.Len(t, bundle.Profiles, 1)
 	assert.Equal(t, "alpha", bundle.Profiles[0].Name)
 	assert.Equal(t, []string{"codex-reviewer"}, bundle.Profiles[0].Aliases)
 	assert.Equal(t, "sonnet", bundle.Profiles[0].Model)
+	assert.Equal(t, "provider maintenance", bundle.Profiles[0].DisabledReason)
 	require.NotNil(t, bundle.Profiles[0].SyncWorktree)
 	assert.True(t, *bundle.Profiles[0].SyncWorktree)
 
@@ -85,6 +87,8 @@ func TestSpawnProfilesExportImport_RoundTripSelected(t *testing.T) {
 	var got wireProfile
 	testharness.DecodeJSON(t, rec, &got)
 	assert.Equal(t, "sonnet", got.Model)
+	assert.Equal(t, "provider maintenance", got.DisabledReason,
+		"portable import must preserve the spawn safety state")
 	assert.Equal(t, []string{"codex-reviewer"}, got.Aliases)
 	require.NotNil(t, got.SyncWorktree)
 	assert.True(t, *got.SyncWorktree)

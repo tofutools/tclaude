@@ -92,7 +92,7 @@ func TestTemplateExportImport_RoundTrip(t *testing.T) {
 	var env exportEnvelope
 	testharness.DecodeJSON(t, rec, &env)
 	assert.Equal(t, "tclaude-task-force", env.Format, "envelope format tag")
-	assert.Equal(t, 1, env.FormatVersion, "envelope format version")
+	assert.Equal(t, 2, env.FormatVersion, "envelope format version")
 	assert.NotEmpty(t, env.ExportedAt, "exported_at provenance stamp")
 	// Machine-local identity is stripped from the blueprint.
 	assert.Empty(t, env.Template.CreatedAt, "created_at stripped from export")

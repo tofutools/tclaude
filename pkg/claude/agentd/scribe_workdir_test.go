@@ -43,7 +43,9 @@ func TestScribeSpawnHarness_DefaultsToClaude_CodexFromProfile(t *testing.T) {
 	require.NoError(t, err)
 	bare, err := db.GetAgentGroupByID(bareID)
 	require.NoError(t, err)
-	assert.Equal(t, harness.DefaultName, scribeSpawnHarness(bare), "bare group defaults to Claude")
+	bareHarness, fail := scribeSpawnHarness(bare)
+	require.Nil(t, fail)
+	assert.Equal(t, harness.DefaultName, bareHarness, "bare group defaults to Claude")
 
 	// A group whose default profile pins Codex → Codex (the summon follows the
 	// group's default, so the dir is pre-trusted for the harness that reads it).
@@ -55,7 +57,9 @@ func TestScribeSpawnHarness_DefaultsToClaude_CodexFromProfile(t *testing.T) {
 	require.NoError(t, err)
 	cx, err := db.GetAgentGroupByID(cxID)
 	require.NoError(t, err)
-	assert.Equal(t, harness.CodexName, scribeSpawnHarness(cx), "codex default profile → codex")
+	cxHarness, fail := scribeSpawnHarness(cx)
+	require.Nil(t, fail)
+	assert.Equal(t, harness.CodexName, cxHarness, "codex default profile → codex")
 }
 
 func TestScribeSpawnHarness_UsesGlobalDefault(t *testing.T) {
@@ -71,8 +75,34 @@ func TestScribeSpawnHarness_UsesGlobalDefault(t *testing.T) {
 	require.NoError(t, err)
 	g, err := db.GetAgentGroupByID(groupID)
 	require.NoError(t, err)
-	assert.Equal(t, harness.CodexName, scribeSpawnHarness(g),
+	got, fail := scribeSpawnHarness(g)
+	require.Nil(t, fail)
+	assert.Equal(t, harness.CodexName, got,
 		"trust seed harness must match the global profile executeSpawn adopts")
+}
+
+func TestScribeSpawnHarness_RejectsDisabledDefault(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+	db.ResetForTest()
+
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{
+		Name: "paused", Harness: harness.CodexName, DisabledReason: "provider maintenance",
+	})
+	require.NoError(t, err)
+	groupID, err := db.CreateAgentGroup("paused-scribe", scribeGroupDescr)
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupDefaultProfile("paused-scribe", "paused")
+	require.NoError(t, err)
+	g, err := db.GetAgentGroupByID(groupID)
+	require.NoError(t, err)
+
+	got, fail := scribeSpawnHarness(g)
+	assert.Empty(t, got)
+	require.NotNil(t, fail)
+	assert.Equal(t, "profile_disabled", fail.Kind)
+	assert.Contains(t, fail.Msg, "provider maintenance")
 }
 
 func TestSeedScribeDirTrust_SeedsThePerHarnessStore(t *testing.T) {

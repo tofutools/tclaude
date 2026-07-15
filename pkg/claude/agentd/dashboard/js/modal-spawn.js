@@ -1418,6 +1418,8 @@ async function submitAgentSpawn() {
     // told about files that aren't there.
     const attachmentPaths = await uploadSpawnAttachments();
     const body = { name, role, descr, initial_message: initMsg, auto_focus: autoFocus, include_group_context: includeGroupContext };
+    const spawnProfile = $('#agent-spawn-load-profile').value;
+    if (spawnProfile) body.profile = spawnProfile;
     if (attachmentPaths.length) body.attachments = attachmentPaths;
     if (effort) body.effort = effort;
     if (model) body.model = model;

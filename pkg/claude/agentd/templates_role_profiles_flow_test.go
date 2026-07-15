@@ -108,6 +108,34 @@ func TestGroupTemplate_PerRoleLaunchProfiles_InlineOverridesProfile(t *testing.T
 	assert.Equal(t, "opus", got, "the inline override wins over the referenced profile")
 }
 
+func TestGroupTemplate_DisabledProfileStaysReferencedButBlocksInstantiate(t *testing.T) {
+	f := newFlow(t)
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "seasonal", "model": "haiku",
+	}).Code)
+	require.Equal(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
+		"name":   "paused-team",
+		"agents": []map[string]any{{"name": "worker", "spawn_profile": "seasonal"}},
+	}).Code)
+
+	// Disable after the reference exists: the template remains editable and the
+	// stable reference remains intact, but runtime use is denied.
+	rec := profileReq(t, f, http.MethodPatch, "/v1/spawn-profiles/seasonal", map[string]any{
+		"name": "seasonal", "model": "haiku", "disabled_reason": "seasonal capacity is offline",
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "disable profile: %s", rec.Body.String())
+
+	rec = humanReq(t, f, http.MethodPost, "/v1/templates/paused-team/instantiate",
+		map[string]any{"group_name": "blocked-team"})
+	require.Equalf(t, http.StatusCreated, rec.Code, "instantiate reports per-agent failure: %s", rec.Body.String())
+	var result instantiateResult
+	testharness.DecodeJSON(t, rec, &result)
+	assert.Equal(t, 0, result.Spawned)
+	assert.Equal(t, 1, result.Failed)
+	require.Len(t, result.Agents, 1)
+	assert.Contains(t, result.Agents[0].Error, `spawn profile "seasonal" is disabled: seasonal capacity is offline`)
+}
+
 // Scenario (TCL-311): template instantiation follows direct spawn's
 // least-surprise doctrine. The explicit harness resolves first, then each
 // foreign-profile field participates independently: a compatible effort is

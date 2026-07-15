@@ -34,6 +34,7 @@ export function profileDraft(seed = null, { editExisting = true, local = null } 
   const defaults = harnessDefaults(h);
   return {
     name: !local && editExisting ? seed?.name || '' : '', aliases_text: (seed?.aliases || []).join(', '), harness,
+    disabled: !!seed?.disabled_reason, disabled_reason: seed?.disabled_reason || '',
     model: seed?.model || '', effort: seed?.effort || '', sandbox: seed?.sandbox || defaults.sandbox,
     approval: seed?.approval || defaults.approval, ask_user_question_timeout: seed?.ask_user_question_timeout || defaults.ask_user_question_timeout,
     trust_dir: triValue(seed?.trust_dir), remote_control: triValue(seed?.remote_control),
@@ -51,6 +52,7 @@ export function profilePayload(draft, original = null, catalog = [], { local = f
     agent_name: draft.agent_name.trim(), role: draft.role.trim(), descr: draft.descr.trim(),
     initial_message: draft.initial_message,
   };
+  if (draft.disabled) body.disabled_reason = draft.disabled_reason.trim();
   const aliases = String(draft.aliases_text || '').split(/[\n,]/).map((value) => value.trim()).filter(Boolean);
   if (aliases.length) body.aliases = [...new Set(aliases)];
   if (h?.can_sandbox && draft.sandbox) body.sandbox = draft.sandbox;
@@ -71,7 +73,7 @@ export function profilePayload(draft, original = null, catalog = [], { local = f
     if (original.auto_review != null) body.auto_review = original.auto_review;
   }
   if (local) {
-    for (const key of ['name', 'aliases', 'agent_name', 'role', 'descr', 'initial_message', 'sync_worktree', 'auto_focus', 'include_group_default_context']) delete body[key];
+    for (const key of ['name', 'aliases', 'disabled_reason', 'agent_name', 'role', 'descr', 'initial_message', 'sync_worktree', 'auto_focus', 'include_group_default_context']) delete body[key];
   }
   return body;
 }

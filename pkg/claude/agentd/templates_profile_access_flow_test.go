@@ -209,9 +209,10 @@ func TestTemplateExportImport_EmbedsAndMaterializesProfile(t *testing.T) {
 	f := newFlow(t)
 
 	require.Equalf(t, http.StatusCreated, createProfile(t, f, map[string]any{
-		"name":     "shipped-kit",
-		"model":    "haiku",
-		"is_owner": true,
+		"name":            "shipped-kit",
+		"model":           "haiku",
+		"is_owner":        true,
+		"disabled_reason": "provider maintenance",
 		"permission_overrides": map[string]any{
 			agentd.PermGroupsSpawn: "grant",
 		},
@@ -222,11 +223,15 @@ func TestTemplateExportImport_EmbedsAndMaterializesProfile(t *testing.T) {
 	}).Code, "create template")
 
 	env := exportRaw(t, f, "shipper")
+	assert.Equal(t, float64(2), env["format_version"],
+		"version 2 prevents older importers from silently enabling disabled profiles")
 	profiles, _ := env["profiles"].([]any)
 	require.Len(t, profiles, 1, "export embeds the referenced profile")
 	p0, _ := profiles[0].(map[string]any)
 	assert.Equal(t, "shipped-kit", p0["name"], "embedded profile carries its definition")
 	assert.Equal(t, true, p0["is_owner"], "embedded profile carries its owner default")
+	assert.Equal(t, "provider maintenance", p0["disabled_reason"],
+		"embedded profile carries its spawn safety state")
 
 	// Simulate importing on a machine that LACKS the profile: delete it here,
 	// then re-import under a fresh name. The importer must materialize it.
@@ -244,10 +249,12 @@ func TestTemplateExportImport_EmbedsAndMaterializesProfile(t *testing.T) {
 	require.NotNil(t, got, "profile materialized on import")
 	require.NotNil(t, got.IsOwner)
 	assert.True(t, *got.IsOwner, "materialized profile keeps its owner default")
+	assert.Equal(t, "provider maintenance", got.DisabledReason,
+		"materialized profile remains disabled")
 	assert.Equal(t, "grant", got.PermissionOverrides[agentd.PermGroupsSpawn], "materialized profile keeps its overrides")
 
-	// The imported template's agent still references the profile by name (the
-	// materialized one), so it is instantiable.
+	// The imported template's agent still references the materialized profile by
+	// name. Its disabled state intentionally blocks instantiation until enabled.
 	tmpl, err := db.GetGroupTemplate("shipper2")
 	require.NoError(t, err)
 	require.NotNil(t, tmpl)

@@ -37,8 +37,9 @@ import (
 // for field, so `show --json` round-trips exactly what the dashboard editor
 // posts. Every field is optional: a blank text field / absent toggle is unset.
 type profileJSON struct {
-	Name    string   `json:"name"`
-	Aliases []string `json:"aliases,omitempty"`
+	Name           string   `json:"name"`
+	Aliases        []string `json:"aliases,omitempty"`
+	DisabledReason string   `json:"disabled_reason,omitempty"`
 
 	// Launch fields.
 	Harness  string `json:"harness,omitempty"`
@@ -95,6 +96,8 @@ func profilesCmd() *cobra.Command {
 			profilesDefaultCmd(),
 			profilesCreateCmd(),
 			profilesEditCmd(),
+			profilesDisableCmd(),
+			profilesEnableCmd(),
 			profilesRmCmd(),
 		},
 	}.ToCobra()
@@ -238,12 +241,16 @@ func runProfilesLs(stdout, stderr io.Writer) int {
 		return rcOK
 	}
 	sort.Slice(profiles, func(i, j int) bool { return profiles[i].Name < profiles[j].Name })
-	fmt.Fprintf(stdout, "%-16s  %-22s  %-8s  %-12s  %-7s  %s\n", "NAME", "ALIASES", "HARNESS", "MODEL", "EFFORT", "DESCR")
-	fmt.Fprintln(stdout, strings.Repeat("─", 106))
+	fmt.Fprintf(stdout, "%-16s  %-22s  %-8s  %-12s  %-7s  %-36s  %s\n", "NAME", "ALIASES", "HARNESS", "MODEL", "EFFORT", "STATUS", "DESCR")
+	fmt.Fprintln(stdout, strings.Repeat("─", 144))
 	for _, p := range profiles {
-		fmt.Fprintf(stdout, "%-16s  %-22s  %-8s  %-12s  %-7s  %s\n",
+		status := "enabled"
+		if p.DisabledReason != "" {
+			status = "disabled: " + profileOneLine(p.DisabledReason)
+		}
+		fmt.Fprintf(stdout, "%-16s  %-22s  %-8s  %-12s  %-7s  %-36s  %s\n",
 			truncate(p.Name, 16), truncate(dash(strings.Join(p.Aliases, ", ")), 22), truncate(dash(p.Harness), 8), truncate(dash(p.Model), 12),
-			truncate(dash(p.Effort), 7), truncate(p.Descr, 30))
+			truncate(dash(p.Effort), 7), truncate(status, 36), truncate(p.Descr, 30))
 	}
 	return rcOK
 }
@@ -347,13 +354,18 @@ func runProfilesCreate(p *profilesCreateParams, stdin io.Reader, stdout, stderr 
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
+	prof.DisabledReason = canonicalProfileDisabledReason(prof.DisabledReason)
 	var resp struct {
-		ID   int64  `json:"id"`
-		Name string `json:"name"`
+		ID      int64        `json:"id"`
+		Name    string       `json:"name"`
+		Profile *profileJSON `json:"profile"`
 	}
 	if err := DaemonRequest(http.MethodPost, "/v1/spawn-profiles", prof, &resp, DaemonOpts{}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
+	}
+	if rc := verifySubmittedDisabledReason(prof.DisabledReason, resp.Profile, stderr); rc != rcOK {
+		return rc
 	}
 	fmt.Fprintf(stdout, "Created profile %q (#%d)\n", resp.Name, resp.ID)
 	return rcOK
@@ -396,13 +408,18 @@ func runProfilesEdit(p *profilesEditParams, stdin io.Reader, stdout, stderr io.W
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
+	prof.DisabledReason = canonicalProfileDisabledReason(prof.DisabledReason)
 	var resp struct {
-		ID   int64  `json:"id"`
-		Name string `json:"name"`
+		ID      int64        `json:"id"`
+		Name    string       `json:"name"`
+		Profile *profileJSON `json:"profile"`
 	}
 	if err := DaemonRequest(http.MethodPatch, "/v1/spawn-profiles/"+url.PathEscape(name), prof, &resp, DaemonOpts{}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
+	}
+	if rc := verifySubmittedDisabledReason(prof.DisabledReason, resp.Profile, stderr); rc != rcOK {
+		return rc
 	}
 	if resp.Name != name {
 		fmt.Fprintf(stdout, "Updated profile %q → renamed to %q\n", name, resp.Name)
@@ -428,6 +445,136 @@ func loadProfileFile(file string, stdin io.Reader, stderr io.Writer) (*profileJS
 		return nil, rcInvalidArg
 	}
 	return &prof, rcOK
+}
+
+// ---- disable / enable ----
+
+type profilesDisableParams struct {
+	Name   string `pos:"true" help:"Profile name or alias to disable."`
+	Reason string `long:"reason" help:"Why this profile is disabled. Shown by listings and spawn errors."`
+}
+
+func profilesDisableCmd() *cobra.Command {
+	return boa.CmdT[profilesDisableParams]{
+		Use:         "disable <name> --reason <text>",
+		Short:       "Disable a spawn profile without deleting it",
+		Long:        "Keeps the profile listed, editable, exportable and referenced, but makes every spawn that would use it fail with the stored reason. Gated on profiles.manage.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *profilesDisableParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Name).SetAlternativesFunc(completeSpawnProfileNames)
+			return nil
+		},
+		RunFunc: func(p *profilesDisableParams, _ *cobra.Command, _ []string) {
+			os.Exit(runProfilesDisable(p, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+type profilesEnableParams struct {
+	Name string `pos:"true" help:"Profile name or alias to re-enable."`
+}
+
+func profilesEnableCmd() *cobra.Command {
+	return boa.CmdT[profilesEnableParams]{
+		Use:         "enable <name>",
+		Short:       "Re-enable a disabled spawn profile",
+		Long:        "Clears the profile's disabled reason so existing references can spawn with it again. Gated on profiles.manage.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *profilesEnableParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Name).SetAlternativesFunc(completeSpawnProfileNames)
+			return nil
+		},
+		RunFunc: func(p *profilesEnableParams, _ *cobra.Command, _ []string) {
+			os.Exit(runProfilesEnable(p, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runProfilesDisable(p *profilesDisableParams, stdout, stderr io.Writer) int {
+	name := strings.TrimSpace(p.Name)
+	reason := canonicalProfileDisabledReason(p.Reason)
+	if name == "" {
+		fmt.Fprintln(stderr, "Error: a profile name is required")
+		return rcInvalidArg
+	}
+	if reason == "" {
+		fmt.Fprintln(stderr, "Error: --reason is required when disabling a profile")
+		return rcInvalidArg
+	}
+	prof, rc := updateProfileDisabledReason(name, reason, stderr)
+	if rc != rcOK {
+		return rc
+	}
+	fmt.Fprintf(stdout, "Disabled profile %q: %s\n", prof.Name, prof.DisabledReason)
+	return rcOK
+}
+
+func runProfilesEnable(p *profilesEnableParams, stdout, stderr io.Writer) int {
+	name := strings.TrimSpace(p.Name)
+	if name == "" {
+		fmt.Fprintln(stderr, "Error: a profile name is required")
+		return rcInvalidArg
+	}
+	prof, rc := updateProfileDisabledReason(name, "", stderr)
+	if rc != rcOK {
+		return rc
+	}
+	fmt.Fprintf(stdout, "Enabled profile %q\n", prof.Name)
+	return rcOK
+}
+
+func updateProfileDisabledReason(name, reason string, stderr io.Writer) (*profileJSON, int) {
+	reason = canonicalProfileDisabledReason(reason)
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return nil, rc
+	}
+	prof, rc := fetchSpawnProfile(name, stderr)
+	if rc != rcOK {
+		return nil, rc
+	}
+	prof.DisabledReason = reason
+	var resp struct {
+		ID      int64        `json:"id"`
+		Name    string       `json:"name"`
+		Profile *profileJSON `json:"profile"`
+	}
+	if err := DaemonRequest(http.MethodPatch, "/v1/spawn-profiles/"+url.PathEscape(name), prof, &resp, DaemonOpts{}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return nil, MapDaemonErrorToRC(err)
+	}
+	// Older daemons accept the full-profile PATCH but silently ignore the
+	// disabled_reason field. Require the updated daemon's canonical profile in
+	// the response so a version-skewed CLI never reports a false success.
+	if resp.Profile == nil {
+		fmt.Fprintln(stderr, "Error: the running tclaude agentd does not support disabling spawn profiles; restart it with the updated tclaude binary")
+		return nil, rcIOFailure
+	}
+	if resp.Profile.DisabledReason != reason {
+		fmt.Fprintln(stderr, "Error: the running tclaude agentd did not persist the requested spawn-profile state")
+		return nil, rcIOFailure
+	}
+	return resp.Profile, rcOK
+}
+
+func canonicalProfileDisabledReason(reason string) string {
+	reason = strings.ReplaceAll(reason, "\r\n", "\n")
+	reason = strings.ReplaceAll(reason, "\r", "\n")
+	return strings.TrimSpace(reason)
+}
+
+func verifySubmittedDisabledReason(reason string, persisted *profileJSON, stderr io.Writer) int {
+	if reason == "" {
+		return rcOK
+	}
+	if persisted == nil {
+		fmt.Fprintln(stderr, "Error: the running tclaude agentd does not support disabling spawn profiles; restart it with the updated tclaude binary")
+		return rcIOFailure
+	}
+	if persisted.DisabledReason != reason {
+		fmt.Fprintln(stderr, "Error: the running tclaude agentd did not persist the requested spawn-profile state")
+		return rcIOFailure
+	}
+	return rcOK
 }
 
 // ---- rm ----
@@ -475,6 +622,10 @@ func runProfilesRm(p *profilesRmParams, stdout, stderr io.Writer) int {
 // in) so it is unit-tested without a daemon. Only set fields are shown.
 func printProfileHuman(w io.Writer, p profileJSON) {
 	fmt.Fprintf(w, "Profile: %s\n", p.Name)
+	if p.DisabledReason != "" {
+		fmt.Fprintln(w, "  status:  disabled")
+		fmt.Fprintf(w, "  reason:  %s\n", p.DisabledReason)
+	}
 	if len(p.Aliases) > 0 {
 		fmt.Fprintf(w, "  aliases: %s\n", strings.Join(p.Aliases, ", "))
 	}
@@ -556,6 +707,10 @@ func printProfileHuman(w io.Writer, p profileJSON) {
 			fmt.Fprintf(w, "    %s\n", line)
 		}
 	}
+}
+
+func profileOneLine(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // boolFlags renders a set of tri-state toggles as "k=on"/"k=off", skipping
