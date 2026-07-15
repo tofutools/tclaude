@@ -112,7 +112,7 @@ func TestDashboardHTML_SingleRetireSpinner(t *testing.T) {
 	// The keyed frame keeps the action mounted while busy, then leaves an
 	// explicit inline Retry after transport/non-dangling HTTP failures.
 	for _, needle := range []string{
-		`aria-busy=${busy ? 'true' : undefined}`,
+		`aria-busy=${busy && busyAction === 'primary' ? 'true' : undefined}`,
 		`<span class="btn-spinner" aria-hidden="true"></span>`,
 		`retrying ? 'Retrying…' : 'Retiring…'`,
 		`primaryLabel=${retrying ? 'Retry' : 'Retire'}`,
