@@ -18,6 +18,14 @@ function Words({ plain, wizard }) {
 
 function errorText(error) { return error?.message || String(error); }
 
+function memberSelectionKeys(member) {
+  return [...new Set([member.agent_id, member.conv_id, member.key].filter(Boolean))];
+}
+
+function memberIsSelected(selection, member) {
+  return memberSelectionKeys(member).some((key) => selection.has(key));
+}
+
 function ErrorLine({ id, value, className = 'cron-create-error' }) {
   return html`<div id=${id} class=${className} role="alert">${value || ''}</div>`;
 }
@@ -154,13 +162,15 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
   const [body, setBody] = useState('');
   const [role, setRole] = useState(initial.role || '');
   const [customized, setCustomized] = useState(false);
-  const [selected, setSelected] = useState(() => new Set(groupMembers(snapshot, scopedGroup).map((member) => member.key)));
+  const [selected, setSelected] = useState(() => new Set(
+    groupMembers(snapshot, scopedGroup).flatMap(memberSelectionKeys),
+  ));
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const [error, setError] = useState('');
   const members = scopedGroup ? groupMembers(snapshot, scopedGroup) : [];
   const groupExists = !scopedGroup || (snapshot?.groups || []).some((group) => group.name === scopedGroup);
-  const selectedMembers = customized ? members.filter((member) => selected.has(member.key)) : members;
+  const selectedMembers = customized ? members.filter((member) => memberIsSelected(selected, member)) : members;
   const initialMode = initial.targetMode === 'group' ? 'group' : 'solo';
   const dirty = from !== (initial.from || '') || !!subject || !!body || role !== (initial.role || '') || customized || (!scopedGroup && (
     target.mode !== initialMode || target.target !== (initial.target || '') || target.groupName !== (initial.groupName || '')
@@ -169,9 +179,11 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
     const picked = await state.pickAgent({ title: 'Pick sender', identity: 'agent' });
     if (picked) setFrom(picked);
   };
-  const toggleMember = (key, checked) => {
-    const next = new Set(customized ? selected : members.map((member) => member.key));
-    if (checked) next.add(key); else next.delete(key);
+  const toggleMember = (member, checked) => {
+    const next = new Set(customized ? selected : members.flatMap(memberSelectionKeys));
+    for (const key of memberSelectionKeys(member)) {
+      if (checked) next.add(key); else next.delete(key);
+    }
     setSelected(next); setCustomized(true);
   };
   const submit = async () => {
@@ -229,8 +241,8 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
         <button type="button" id="message-create-members-none" onClick=${() => { setCustomized(true); setSelected(new Set()); }}>select none</button>
         <span class="spacer"></span><span class="cleanup-count" id="message-create-members-count">${selectedMembers.length} of ${members.length} selected</span></div>
       <div class="cleanup-list" id="message-create-members">${members.length ? members.map((member) => html`<div class="cleanup-row" key=${member.key}><label>
-        <input type="checkbox" data-conv=${member.conv_id} checked=${!customized || selected.has(member.key)}
-          onChange=${(event) => toggleMember(member.key, event.currentTarget.checked)} />
+        <input type="checkbox" data-conv=${member.conv_id} checked=${!customized || memberIsSelected(selected, member)}
+          onChange=${(event) => toggleMember(member, event.currentTarget.checked)} />
         <span class="title">${member.title || '(untitled)'}</span><span class="id" title=${idTooltip(member.agent_id, member.conv_id)}>${shortAgentId(member.agent_id, member.conv_id)}</span>
         ${member.online ? html`<span class="cleanup-badge online">online</span>` : null}
       </label></div>`) : html`<div class="cleanup-empty">no members in this group</div>`}</div>
@@ -438,21 +450,37 @@ export function mountMessageAccessDialogIsland({
     readCronTarget: state.readCronTarget,
     setCronTargetModeListener: state.setCronTargetModeListener,
   };
-  const unregister = registerMessageAccessDialogController(controller);
-  render(html`<${MessageAccessDialogApp} state=${state} actions=${actions} snapshot=${snapshot.value} confirmDiscard=${confirmDiscard}/>` , dialogHost);
-  render(html`<${CronTargetRoot} state=${state} snapshot=${snapshot.value}/>` , cronTargetHost);
-  // Signals referenced by a component trigger Preact updates only when read
-  // during render. The roots above receive snapshot.value, so subscribe once
-  // and rerender both roots through a signal effect owned by this feature.
-  const unsubscribe = snapshot.subscribe((value) => {
-    render(html`<${MessageAccessDialogApp} state=${state} actions=${actions} snapshot=${value} confirmDiscard=${confirmDiscard}/>` , dialogHost);
-    render(html`<${CronTargetRoot} state=${state} snapshot=${value}/>` , cronTargetHost);
-  });
-  registerCleanup(() => {
-    state.dispose();
-    unsubscribe();
-    unregister();
-    render(null, cronTargetHost);
-    render(null, dialogHost);
-  });
+  let unregister = null;
+  let unsubscribe = null;
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    const failures = [];
+    const attempt = (step) => { try { step(); } catch (error) { failures.push(error); } };
+    attempt(() => { unsubscribe?.(); unsubscribe = null; });
+    attempt(() => { unregister?.(); unregister = null; });
+    attempt(() => state.dispose());
+    attempt(() => render(null, cronTargetHost));
+    attempt(() => render(null, dialogHost));
+    if (failures.length) throw new AggregateError(failures, 'message/access dialog cleanup failed');
+    cleaned = true;
+  };
+  try {
+    unregister = registerMessageAccessDialogController(controller);
+    render(html`<${MessageAccessDialogApp} state=${state} actions=${actions} snapshot=${snapshot.value} confirmDiscard=${confirmDiscard}/>` , dialogHost);
+    render(html`<${CronTargetRoot} state=${state} snapshot=${snapshot.value}/>` , cronTargetHost);
+    // Signals referenced by a component trigger Preact updates only when read
+    // during render. The roots above receive snapshot.value, so subscribe once
+    // and rerender both roots through a signal effect owned by this feature.
+    unsubscribe = snapshot.subscribe((value) => {
+      render(html`<${MessageAccessDialogApp} state=${state} actions=${actions} snapshot=${value} confirmDiscard=${confirmDiscard}/>` , dialogHost);
+      render(html`<${CronTargetRoot} state=${state} snapshot=${value}/>` , cronTargetHost);
+    });
+    registerCleanup(cleanup);
+  } catch (error) {
+    try { cleanup(); } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'message/access dialog initialization failed');
+    }
+    throw error;
+  }
 }
