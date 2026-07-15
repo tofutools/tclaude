@@ -140,6 +140,7 @@ func materializeRecord(kind MutationRecordKind, key string, data []byte, command
 				value.ProducedPathIDs[index] = actual
 			}
 		}
+		slices.Sort(value.ProducedPathIDs)
 		if actual, ok := causeDigests[value.ImpossibleCauseDigest]; ok {
 			value.ImpossibleCauseDigest = actual
 		}
