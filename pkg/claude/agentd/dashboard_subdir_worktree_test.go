@@ -45,10 +45,10 @@ func TestDashboardHTML_LocationCellsWired(t *testing.T) {
 		}
 	}
 
-	// The stacked-cell helpers.
-	must("function stackedLoc(", "init/now stacking helper")
-	must("function cwdCell(", "CWD column cell renderer")
-	must("function branchCell(", "Branch column cell renderer")
+	// The native stacked-cell components.
+	must("function StackedLocation(", "init/now stacking component")
+	must("function CwdCell(", "CWD column cell component")
+	must("function BranchCell(", "Branch column cell component")
 	must("loc-pair", "stacked-pair CSS class")
 
 	// The cells read the startup/current split off the snapshot rows.

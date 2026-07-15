@@ -35,7 +35,8 @@ func TestDashboardShellPreactBoundary(t *testing.T) {
 	html := string(htmlBody)
 	loader := read("preact-loader.js")
 	dashboard := read("dashboard.js")
-	renderer := read("render.js")
+	groupsList := read("groups-list.js")
+	memberTable := read("groups-member-table.js")
 	refresh := read("refresh.js")
 	model := read("shell-model.js")
 	island := read("shell-island.js")
@@ -75,7 +76,8 @@ func TestDashboardShellPreactBoundary(t *testing.T) {
 		"function renderGlobalActivity(", "function renderMessagesBadge(",
 		"function renderUsage(", "function renderNotifyGlobal(", "function showStatus(",
 	} {
-		mustNot(renderer, legacy, "the legacy renderer no longer owns migrated shell DOM")
+		mustNot(groupsList, legacy, "the native Groups list does not own migrated shell DOM")
+		mustNot(memberTable, legacy, "the native member table does not own migrated shell DOM")
 	}
 	for _, legacyCall := range []string{
 		"renderGlobalActivity()", "renderMessagesBadge(", "renderUsage(",

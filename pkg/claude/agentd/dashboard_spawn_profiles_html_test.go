@@ -77,8 +77,8 @@ func TestDashboardHTML_SpawnProfilesUI(t *testing.T) {
 	present(`.profile-import-conflict select,`, "profile import conflict select/input controls get dark modal styling")
 
 	// 3. Group default-profile picker: the 🧠 badge is clickable.
-	present(`data-act="set-group-profile"`, "the group default-profile picker action")
-	present(`case 'set-group-profile':`, "the group default-profile handler")
+	present(`'set-group-sandbox-profile' : 'set-group-profile'`, "the group default-profile picker action")
+	present(`actions.setGroupProfile(group, kind, name)`, "the native group default-profile handler")
 
 	// 4. Dashboard default-profile chip replaced the user-default-model chip.
 	present(`id="dashboard-default-profile"`, "the dashboard default-profile chip")
