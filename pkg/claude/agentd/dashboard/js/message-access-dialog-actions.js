@@ -22,6 +22,7 @@ export function createMessageAccessDialogActions({
   fetchImpl = fetch,
   refresh = async () => {},
   notify = () => {},
+  words = (plain) => plain,
 } = {}) {
   async function sendMessage(payload) {
     const response = await requestJSON(fetchImpl, '/api/message', {
@@ -85,7 +86,10 @@ export function createMessageAccessDialogActions({
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ permissions }),
       });
-      notify(`${descriptor.group}: ${permissions.length} group permission grant${permissions.length === 1 ? '' : 's'} saved`);
+      notify(words(
+        `${descriptor.group}: ${permissions.length} group permission grant${permissions.length === 1 ? '' : 's'} saved`,
+        `${descriptor.group}: ${permissions.length} party boon${permissions.length === 1 ? '' : 's'} bound`,
+      ));
       await refresh();
       return response;
     }
