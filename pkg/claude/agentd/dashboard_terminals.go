@@ -15,7 +15,7 @@ var terminalsPageHTML = mustReadFS(dashboardAssetsFS, "terminals.html")
 //     the /api/term-ws and /api/open-window-ws WebSocket endpoints.
 //   - plain /terminals — the dashboard's own "Terminals" TAB under path routing
 //     (TCL-317). Serve the SPA index so the URL /terminals and the visible tab
-//     agree; the multiplexer lives in that tab (js/terminals-tab.js). Before
+//     agree; the Preact terminal shell lives in that tab. Before
 //     TCL-317 a plain /terminals also served the standalone page, but nothing
 //     relies on that — the popout always carries ?solo=1.
 func handleDashboardTerminals(w http.ResponseWriter, r *http.Request) {

@@ -35,14 +35,13 @@ func TestDashboardAuthSessionWrapperLoadsBeforeApp(t *testing.T) {
 		t.Fatal("standalone terminals must load auth-session before its module graph")
 	}
 	termCore := string(mustReadFS(dashboardAssetsFS, "js/terminals-core.js"))
-	for _, want := range []string{"/api/auth/session", "tclaude:auth-expired"} {
-		if !strings.Contains(termCore, want) {
-			t.Fatalf("terminal transport missing auth recovery wiring %q", want)
-		}
+	if !strings.Contains(termCore, "/api/auth/session") {
+		t.Fatal("terminal transport missing authenticated connection preflight")
 	}
-	termEntry := string(mustReadFS(dashboardAssetsFS, "js/terminals.js"))
+	termEntry := string(mustReadFS(dashboardAssetsFS, "js/terminal-standalone.js"))
 	for _, want := range []string{
-		"if (location.hash) history.replaceState",
+		"historyRef.replaceState",
+		"tclaude:auth-expired",
 		"event.detail.returnTo",
 		"#open=",
 	} {
