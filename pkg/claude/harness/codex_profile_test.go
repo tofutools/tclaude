@@ -20,6 +20,10 @@ import (
 func TestCodexAgentProfileContent(t *testing.T) {
 	tmuxBase := t.TempDir()
 	t.Setenv("TMUX_TMPDIR", tmuxBase)
+	canonicalTmuxBase, err := filepath.EvalSymlinks(tmuxBase)
+	if err != nil {
+		t.Fatalf("canonicalize tmux base: %v", err)
+	}
 	sock := "/home/dev/.tclaude/api/agentd.sock"
 	stateDir := "/home/dev/.tclaude/data"
 	got, err := codexAgentProfileContentForNameAndRulesAndNetwork(
@@ -36,7 +40,7 @@ func TestCodexAgentProfileContent(t *testing.T) {
 		`extends = ":workspace"`,
 		`"/home/dev/.tclaude/data" = "none"`,
 		`"/home/dev/.tclaude/api/agentd.sock" = "read"`,
-		fmt.Sprintf(`%q = "none"`, filepath.Join(tmuxBase, fmt.Sprintf("tmux-%d", os.Getuid()))),
+		fmt.Sprintf(`%q = "none"`, filepath.Join(canonicalTmuxBase, fmt.Sprintf("tmux-%d", os.Getuid()))),
 		`[permissions.tclaude-agent.network]`,
 		`enabled = true`,
 		`[permissions.tclaude-agent.network.unix_sockets]`,
@@ -120,7 +124,11 @@ func TestCodexTmuxSocketDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := filepath.Join(base, fmt.Sprintf("tmux-%d", os.Getuid()))
+	canonicalBase, err := filepath.EvalSymlinks(base)
+	if err != nil {
+		t.Fatalf("canonicalize tmux base: %v", err)
+	}
+	want := filepath.Join(canonicalBase, fmt.Sprintf("tmux-%d", os.Getuid()))
 	if got != want {
 		t.Fatalf("tmux socket dir = %q, want %q", got, want)
 	}
