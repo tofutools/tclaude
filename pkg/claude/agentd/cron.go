@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -12,6 +13,15 @@ import (
 // burning CPU; finer-grained jobs aren't a v1 use case (the user's
 // driving example is "every 10 minutes").
 const cronTickInterval = 30 * time.Second
+
+// cronAuthorityMu orders a scheduled side effect against retirement. A cached
+// due row is revalidated while holding this lock; retirement takes the same
+// lock around its durable revocation transaction. Therefore a fire either
+// finishes before retirement can commit, or observes the disabled/retired row
+// and performs no side effect after a successful retirement response.
+var cronAuthorityMu sync.Mutex
+
+var cronAfterDueListForTest func()
 
 // startCronScheduler spins up the agent_cron_jobs scheduler in its
 // own goroutine. The goroutine ticks every cronTickInterval, fires
@@ -52,23 +62,48 @@ func runCronTick(now time.Time) {
 		slog.Warn("cron: list due jobs failed", "error", err)
 		return
 	}
+	if cronAfterDueListForTest != nil {
+		cronAfterDueListForTest()
+	}
 	for _, j := range due {
-		status := fireCronJob(j, now)
-		if err := db.UpdateAgentCronJobLastRun(j.ID, now, status); err != nil {
-			slog.Warn("cron: stamp last_run_at failed", "job", j.ID, "error", err)
-		}
-		// Append a run-history row so `cron logs` can show "last
-		// few executions" without mining slog. Best-effort —
-		// failure here doesn't roll back the fire.
-		if _, err := db.InsertAgentCronRun(&db.AgentCronRun{
-			JobID:   j.ID,
-			FiredAt: now,
-			Status:  status,
-		}); err != nil {
-			slog.Warn("cron: insert run row failed", "job", j.ID, "error", err)
-		}
+		fireScheduledCronJob(j.ID, now)
 	}
 }
+
+func fireScheduledCronJob(jobID int64, now time.Time) {
+	cronAuthorityMu.Lock()
+	defer cronAuthorityMu.Unlock()
+	j, err := db.GetRunnableAgentCronJob(jobID)
+	if err != nil {
+		slog.Warn("cron: revalidate due job failed", "job", jobID, "error", err)
+		return
+	}
+	if j == nil {
+		return
+	}
+	status := fireCronJob(j, now)
+	if err := db.UpdateAgentCronJobLastRun(j.ID, now, status); err != nil {
+		slog.Warn("cron: stamp last_run_at failed", "job", j.ID, "error", err)
+	}
+	// Append a run-history row so `cron logs` can show "last few
+	// executions" without mining slog. Best-effort — failure here doesn't
+	// roll back the fire.
+	if _, err := db.InsertAgentCronRun(&db.AgentCronRun{
+		JobID: j.ID, FiredAt: now, Status: status,
+	}); err != nil {
+		slog.Warn("cron: insert run row failed", "job", j.ID, "error", err)
+	}
+}
+
+// SetCronAfterDueListForTest installs a deterministic scheduler race hook.
+func SetCronAfterDueListForTest(fn func()) func() {
+	old := cronAfterDueListForTest
+	cronAfterDueListForTest = fn
+	return func() { cronAfterDueListForTest = old }
+}
+
+// RunCronTickForTest runs one scheduler sweep synchronously.
+func RunCronTickForTest(now time.Time) { runCronTick(now) }
 
 // sudoGrantsCleanupInterval is how often the housekeeping sweep
 // runs. 1 hour is fine: correctness doesn't depend on prompt

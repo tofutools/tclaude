@@ -92,6 +92,113 @@ func TestAgentCronJob_DueLogic(t *testing.T) {
 	assert.False(t, dueIDs[j4], "j4 (disabled) should never be due")
 }
 
+func TestAgentCronJob_DueLogicExcludesRetiredOwner(t *testing.T) {
+	setupTestDB(t)
+	const conv = "cron-retired-owner"
+	jobID, err := InsertAgentCronJob(&AgentCronJob{
+		Name: "retired-owner", OwnerConv: conv, TargetConv: conv,
+		IntervalSeconds: 60, Body: "must not fire", Enabled: true,
+	})
+	require.NoError(t, err)
+
+	out, err := RetireAgentAuthorizationByConv(conv, "human", "test")
+	require.NoError(t, err)
+	require.True(t, out.Retired)
+	require.Equal(t, int64(1), out.CronDisabled)
+
+	// The supported writer refuses to restore scheduled authority. The due
+	// query is an independent defense against a stale/hand-edited row.
+	require.ErrorContains(t, SetAgentCronJobEnabled(jobID, true), "owner agent is retired")
+	enabled := true
+	n, err := UpdateAgentCronJobFields(jobID, UpdateCronPatch{Enabled: &enabled})
+	require.NoError(t, err)
+	assert.Zero(t, n, "patch writer cannot restore a retired owner's job")
+	d, err := Open()
+	require.NoError(t, err)
+	_, err = d.Exec(`UPDATE agent_cron_jobs SET enabled = 1 WHERE id = ?`, jobID)
+	require.NoError(t, err)
+	due, err := ListDueAgentCronJobs(time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	assert.Empty(t, due)
+}
+
+func TestRetireRestampsAlreadyPausedOwnedCronJob(t *testing.T) {
+	setupTestDB(t)
+	const conv = "cron-paused-owner"
+	groupID, err := CreateAgentGroup("paused-cron-group", "")
+	require.NoError(t, err)
+	jobID, err := InsertAgentCronJob(&AgentCronJob{
+		Name: "already-group-paused", OwnerConv: conv, TargetKind: CronTargetGroup,
+		GroupID: groupID, IntervalSeconds: 60, Body: "must stay paused", Enabled: false,
+	})
+	require.NoError(t, err)
+	d, err := Open()
+	require.NoError(t, err)
+	_, err = d.Exec(`UPDATE agent_cron_jobs SET disabled_reason = ? WHERE id = ?`,
+		CronDisabledReasonGroupRetired, jobID)
+	require.NoError(t, err)
+
+	out, err := RetireAgentAuthorizationByConv(conv, "human", "test")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), out.CronDisabled, "marker restamp is a durable authority change")
+	job, err := GetAgentCronJob(jobID)
+	require.NoError(t, err)
+	require.NotNil(t, job)
+	assert.Equal(t, CronDisabledReasonAgentRetired, job.DisabledReason)
+	_, err = d.Exec(`UPDATE agent_cron_jobs SET disabled_reason = ? WHERE id = ?`,
+		CronDisabledReasonGroupRetired, jobID)
+	require.NoError(t, err)
+	n, err := ReenableGroupRetiredCronJobs(groupID)
+	require.NoError(t, err)
+	assert.Zero(t, n, "group resume requires a live owner")
+	_, err = d.Exec(`UPDATE agent_cron_jobs SET disabled_reason = ? WHERE id = ?`,
+		CronDisabledReasonAgentRetired, jobID)
+	require.NoError(t, err)
+
+	reinstated, err := ReinstateAgent(conv)
+	require.NoError(t, err)
+	require.True(t, reinstated)
+	n, err = ReenableGroupRetiredCronJobs(groupID)
+	require.NoError(t, err)
+	assert.Zero(t, n, "reinstatement/group resume cannot implicitly restore an owned retired job")
+	job, err = GetAgentCronJob(jobID)
+	require.NoError(t, err)
+	require.NotNil(t, job)
+	assert.False(t, job.Enabled, "reinstatement must durably preserve the retired job's disabled state")
+}
+
+func TestExplicitCronDisableClearsAutomaticReasonAndSurvivesGroupResume(t *testing.T) {
+	setupTestDB(t)
+	groupID, err := CreateAgentGroup("explicit-disable", "")
+	require.NoError(t, err)
+	jobID, err := InsertAgentCronJob(&AgentCronJob{
+		Name: "human-disabled", TargetKind: CronTargetGroup, GroupID: groupID,
+		IntervalSeconds: 60, Body: "stay disabled", Enabled: true,
+	})
+	require.NoError(t, err)
+	n, err := DisableGroupTargetCronJobsForRetire(groupID)
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+
+	disabled := false
+	n, err = UpdateAgentCronJobFields(jobID, UpdateCronPatch{Enabled: &disabled})
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+	job, err := GetAgentCronJob(jobID)
+	require.NoError(t, err)
+	require.NotNil(t, job)
+	assert.False(t, job.Enabled)
+	assert.Empty(t, job.DisabledReason, "explicit disable supersedes the automatic pause marker")
+
+	n, err = ReenableGroupRetiredCronJobs(groupID)
+	require.NoError(t, err)
+	assert.Zero(t, n, "group resume must not resurrect a human-disabled job")
+	job, err = GetAgentCronJob(jobID)
+	require.NoError(t, err)
+	require.NotNil(t, job)
+	assert.False(t, job.Enabled)
+}
+
 // pinCronTimes rewrites a job's created_at (and optionally last_run_at)
 // directly, so due-logic tests control every timestamp the check reads and
 // never race a wall-clock minute boundary.

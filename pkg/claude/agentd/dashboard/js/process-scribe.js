@@ -144,6 +144,17 @@ export function processScribeTaskRef(handoff, origin = globalThis.location?.orig
   });
 }
 
+function trustedTaskURL(value) {
+  const raw = String(value || '');
+  if (!raw) return '';
+  try {
+    const parsed = new URL(raw);
+    return (parsed.protocol === 'http:' || parsed.protocol === 'https:') && parsed.host ? raw : '';
+  } catch {
+    return '';
+  }
+}
+
 // Only daemon-created scribe groups and strictly validated scope descriptions
 // become lifecycle controls. Human-edited free text is never reflected into a
 // selector, URL, command, or pane input path.
@@ -159,10 +170,11 @@ export function processScribeSessions(snapshot) {
     const convId = String(member?.conv_id || '');
     if (!agentId || !convId) return [];
     const scope = Object.freeze({ kind: PROCESS_SCRIBE_SCOPE_KIND, ...(id ? { id } : {}) });
+    const taskURL = trustedTaskURL(member.task_ref_url);
     return [Object.freeze({
       agentId, convId, name: String(member.title || 'process scribe'), scope,
       scopeLabel: processScribeScopeLabel(scope), online: member.online === true,
-      taskURL: String(member.task_ref_url || ''), taskLabel: String(member.task_ref_label || ''),
+      taskURL, taskLabel: taskURL ? String(member.task_ref_label || '') : '',
     })];
   });
 }

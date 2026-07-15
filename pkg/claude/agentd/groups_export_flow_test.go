@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -446,6 +447,292 @@ func TestGroupImport_CrossHomePathRewrite(t *testing.T) {
 	assert.NotContains(t, got, srcCwd, "no trace of the source cwd")
 	assert.Contains(t, got, res.TargetDir+"/main.go", "source cwd rewritten to the import target")
 	assert.Contains(t, got, home+"/.config/tclaude/x", "source home rewritten to the local home")
+}
+
+func TestGroupImport_MissingConversationLateFileCollisionRollsBack(t *testing.T) {
+	f := newFlow(t)
+	const convID = "88888888-dead-beef-cafe-000000000000"
+	const targetCwd = "/tmp/missing-race"
+	exp := &groupexport.Export{
+		FormatVersion: groupexport.FormatVersion,
+		SourceGroup:   "missing-race",
+		Members:       []groupexport.Member{{ConvID: convID, Role: "lead"}},
+		Convs:         []groupexport.Conv{{ConvID: convID, Missing: true}},
+	}
+	archive, err := groupexport.Marshal(exp)
+	require.NoError(t, err)
+	dst := convJSONLPath(f.World.HomeDir, targetCwd, convID)
+	restore := agentd.SetGroupImportAfterCollisionCheckForTest(func() {
+		require.NoError(t, os.MkdirAll(filepath.Dir(dst), 0o755))
+		require.NoError(t, os.WriteFile(dst, []byte("late local conversation"), 0o600))
+	})
+	t.Cleanup(restore)
+
+	rec := importArchive(f, archive, targetCwd, "")
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	got, err := os.ReadFile(dst)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("late local conversation"), got)
+	group, err := db.GetAgentGroupByName("missing-race")
+	require.NoError(t, err)
+	assert.Nil(t, group, "filesystem collision happens before the DB import")
+}
+
+func TestGroupImport_LatePlainConversationIndexCollisionRollsBackAuthority(t *testing.T) {
+	f := newFlow(t)
+	const convID = "77777777-dead-beef-cafe-000000000000"
+	const targetCwd = "/tmp/index-race"
+	const foreignPath = "/tmp/other-project/77777777-dead-beef-cafe-000000000000.jsonl"
+	exp := &groupexport.Export{
+		FormatVersion: groupexport.FormatVersion,
+		SourceGroup:   "index-race",
+		Members:       []groupexport.Member{{ConvID: convID, Role: "lead"}},
+		Owners:        []groupexport.Owner{{ConvID: convID, GrantedBy: "human"}},
+		Permissions: []groupexport.Permission{{
+			ConvID: convID, Slug: "groups.spawn", Effect: db.PermEffectGrant, GrantedBy: "human",
+		}},
+		SudoGrants: []groupexport.SudoGrant{{
+			ConvID: convID, Slug: "human.notify", GrantedAt: "2026-01-01T00:00:00Z",
+			ExpiresAt: "2099-01-01T00:00:00Z", GrantedBy: "human",
+		}},
+		CronJobs: []groupexport.CronJob{{
+			ID: 1, Name: "authority", OwnerConv: convID, TargetConv: convID,
+			IntervalSeconds: 60, Body: "must not attach", Enabled: 1,
+		}},
+		Convs: []groupexport.Conv{{ConvID: convID, Missing: true}},
+	}
+	archive, err := groupexport.Marshal(exp)
+	require.NoError(t, err)
+
+	// Deterministically create a non-agent conversation in another project
+	// after the daemon's collision preflight. The import transaction must see
+	// this SQLite identity and abort before replaying any archived authority.
+	restore := agentd.SetGroupImportAfterCollisionCheckForTest(func() {
+		require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
+			ConvID: convID, ProjectDir: "/tmp/other-project", FullPath: foreignPath,
+		}))
+	})
+	t.Cleanup(restore)
+
+	rec := importArchive(f, archive, targetCwd, "")
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "import conversation collision")
+
+	row, err := db.GetConvIndex(convID)
+	require.NoError(t, err)
+	require.NotNil(t, row, "late local conversation remains indexed")
+	assert.Equal(t, foreignPath, row.FullPath, "import does not rewrite the local identity")
+	group, err := db.GetAgentGroupByName("index-race")
+	require.NoError(t, err)
+	assert.Nil(t, group, "collision rolls back the imported group")
+	groups, err := db.ListGroupsForConv(convID)
+	require.NoError(t, err)
+	assert.Empty(t, groups, "membership and ownership authority are not attached")
+	agent, err := db.GetAgentByConv(convID)
+	require.NoError(t, err)
+	assert.Nil(t, agent, "plain conversation is not enrolled as the imported actor")
+	overrides, err := db.ListAgentPermissionOverridesForConv(convID)
+	require.NoError(t, err)
+	assert.Empty(t, overrides, "permanent authority is not attached")
+	sudo, err := db.ListActiveSudoGrants(convID)
+	require.NoError(t, err)
+	assert.Empty(t, sudo, "sudo authority is not attached")
+	jobs, err := db.ListAgentCronJobs()
+	require.NoError(t, err)
+	for _, job := range jobs {
+		assert.NotEqual(t, convID, job.OwnerConv, "scheduled authority is not attached")
+	}
+	_, err = os.Stat(convJSONLPath(f.World.HomeDir, targetCwd, convID))
+	assert.ErrorIs(t, err, os.ErrNotExist, "missing-conversation reservation is cleaned up")
+}
+
+func TestGroupImport_PresentConversationSucceedsWithLiveIndexMonitor(t *testing.T) {
+	f := newFlow(t)
+	const convID = "66666666-dead-beef-cafe-000000000000"
+	const targetCwd = "/tmp/monitor-present"
+	dst := convJSONLPath(f.World.HomeDir, targetCwd, convID)
+	require.NoError(t, os.MkdirAll(filepath.Dir(dst), 0o755))
+	monitor := agentd.StartConvMonitorForTest(t, 5*time.Millisecond)
+	if monitor == nil {
+		t.Skip("fsnotify watcher unavailable")
+	}
+	agentd.WaitForConvMonitorStartupForTest(t, monitor)
+
+	exp := &groupexport.Export{
+		FormatVersion: groupexport.FormatVersion,
+		SourceGroup:   "monitor-present",
+		Members:       []groupexport.Member{{ConvID: convID, Role: "lead"}},
+		Convs: []groupexport.Conv{{
+			ConvID: convID, Content: []byte(`{"type":"summary","summary":"imported"}` + "\n"),
+		}},
+	}
+	archive, err := groupexport.Marshal(exp)
+	require.NoError(t, err)
+	res := importArchiveOK(t, f, archive, targetCwd, "")
+	assert.Equal(t, "monitor-present", res.Group)
+	require.Eventually(t, func() bool {
+		row, _ := db.GetConvIndex(convID)
+		return row != nil && row.FullPath == dst
+	}, 3*time.Second, 10*time.Millisecond, "the live monitor indexes the import-owned path")
+}
+
+func TestGroupImport_MissingConversationSucceedsWithLiveIndexMonitor(t *testing.T) {
+	f := newFlow(t)
+	const convID = "55555555-dead-beef-cafe-000000000000"
+	const targetCwd = "/tmp/monitor-missing"
+	dst := convJSONLPath(f.World.HomeDir, targetCwd, convID)
+	require.NoError(t, os.MkdirAll(filepath.Dir(dst), 0o755))
+	monitor := agentd.StartConvMonitorForTest(t, 5*time.Millisecond)
+	if monitor == nil {
+		t.Skip("fsnotify watcher unavailable")
+	}
+	agentd.WaitForConvMonitorStartupForTest(t, monitor)
+
+	exp := &groupexport.Export{
+		FormatVersion: groupexport.FormatVersion,
+		SourceGroup:   "monitor-missing",
+		Members:       []groupexport.Member{{ConvID: convID, Role: "lead"}},
+		Convs:         []groupexport.Conv{{ConvID: convID, Missing: true}},
+	}
+	archive, err := groupexport.Marshal(exp)
+	require.NoError(t, err)
+	res := importArchiveOK(t, f, archive, targetCwd, "")
+	assert.Equal(t, "monitor-missing", res.Group)
+	require.Len(t, res.FileWarnings, 1)
+	_, err = os.Stat(dst)
+	assert.ErrorIs(t, err, os.ErrNotExist, "missing reservation is removed after commit")
+}
+
+func TestGroupImport_RejectsMalformedMissingConversationIDBeforeFilesystem(t *testing.T) {
+	f := newFlow(t)
+	exp := &groupexport.Export{
+		FormatVersion: groupexport.FormatVersion,
+		SourceGroup:   "bad-conv-id",
+		Convs:         []groupexport.Conv{{ConvID: "../escape/aaaaaaaa-1111-2222-3333-444444444444", Missing: true}},
+	}
+	archive, err := groupexport.Marshal(exp)
+	require.NoError(t, err)
+	rec := importArchive(f, archive, "/tmp/bad-conv-id", "")
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "not a canonical UUID")
+	group, err := db.GetAgentGroupByName("bad-conv-id")
+	require.NoError(t, err)
+	assert.Nil(t, group)
+}
+
+func TestGroupImport_RemapsOmittedSuccessionEndpointWithoutRedirectingLocalConv(t *testing.T) {
+	f := newFlow(t)
+	const localConv = "33333333-dead-beef-cafe-000000000000"
+	const importedConv = "22222222-dead-beef-cafe-000000000000"
+	const localPath = "/tmp/local-succession/33333333-dead-beef-cafe-000000000000.jsonl"
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID: localConv, ProjectDir: "/tmp/local-succession", FullPath: localPath,
+	}))
+	exp := &groupexport.Export{
+		FormatVersion: groupexport.FormatVersion,
+		SourceGroup:   "succession-remap",
+		Members:       []groupexport.Member{{ConvID: importedConv, Role: "lead"}},
+		Convs:         []groupexport.Conv{{ConvID: importedConv, Missing: true}},
+		Successions: []groupexport.Succession{{
+			OldConvID: localConv, NewConvID: importedConv, Reason: "reincarnate",
+		}},
+	}
+	archive, err := groupexport.Marshal(exp)
+	require.NoError(t, err)
+	res := importArchiveOK(t, f, archive, "/tmp/succession-remap", "")
+	remappedOld := res.ConvRemaps[localConv]
+	require.NotEmpty(t, remappedOld, "omitted historical endpoint is collision-remapped")
+	assert.NotEqual(t, localConv, remappedOld)
+	successor, err := db.GetConvSuccessor(localConv)
+	require.NoError(t, err)
+	assert.Empty(t, successor, "import cannot redirect the unrelated local conversation")
+	successor, err = db.GetConvSuccessor(remappedOld)
+	require.NoError(t, err)
+	assert.Equal(t, importedConv, successor, "the imported history keeps its remapped edge")
+	row, err := db.GetConvIndex(localConv)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, localPath, row.FullPath)
+}
+
+func TestGroupImport_LateOmittedSuccessionCollisionRollsBackAllSideEffects(t *testing.T) {
+	f := newFlow(t)
+	const lateConv = "11111111-dead-beef-cafe-000000000000"
+	const importedConv = "00000000-dead-beef-cafe-000000000001"
+	exp := &groupexport.Export{
+		FormatVersion: groupexport.FormatVersion,
+		SourceGroup:   "succession-race",
+		Members:       []groupexport.Member{{ConvID: importedConv, Role: "lead"}},
+		Owners:        []groupexport.Owner{{ConvID: importedConv, GrantedBy: "human"}},
+		Permissions: []groupexport.Permission{{
+			ConvID: importedConv, Slug: "groups.spawn", Effect: db.PermEffectGrant,
+		}},
+		SudoGrants: []groupexport.SudoGrant{{
+			ConvID: importedConv, Slug: "human.notify", GrantedAt: "2026-01-01T00:00:00Z",
+			ExpiresAt: "2099-01-01T00:00:00Z",
+		}},
+		CronJobs: []groupexport.CronJob{{
+			ID: 1, Name: "must-rollback", OwnerConv: importedConv, TargetConv: importedConv,
+			IntervalSeconds: 60, Body: "no side effect", Enabled: 1,
+		}},
+		Convs: []groupexport.Conv{{ConvID: importedConv, Missing: true}},
+		Successions: []groupexport.Succession{{
+			OldConvID: lateConv, NewConvID: importedConv, Reason: "reincarnate",
+		}},
+	}
+	archive, err := groupexport.Marshal(exp)
+	require.NoError(t, err)
+	restore := agentd.SetGroupImportAfterCollisionCheckForTest(func() {
+		require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
+			ConvID: lateConv, ProjectDir: "/tmp/late-succession",
+			FullPath: "/tmp/late-succession/11111111-dead-beef-cafe-000000000000.jsonl",
+		}))
+	})
+	t.Cleanup(restore)
+
+	rec := importArchive(f, archive, "/tmp/succession-race", "")
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	group, err := db.GetAgentGroupByName("succession-race")
+	require.NoError(t, err)
+	assert.Nil(t, group)
+	successor, err := db.GetConvSuccessor(lateConv)
+	require.NoError(t, err)
+	assert.Empty(t, successor, "late collision cannot install a redirect")
+	agent, err := db.GetAgentByConv(importedConv)
+	require.NoError(t, err)
+	assert.Nil(t, agent, "actor and membership roll back")
+	overrides, err := db.ListAgentPermissionOverridesForConv(importedConv)
+	require.NoError(t, err)
+	assert.Empty(t, overrides)
+	sudo, err := db.ListActiveSudoGrants(importedConv)
+	require.NoError(t, err)
+	assert.Empty(t, sudo)
+	jobs, err := db.ListAgentCronJobs()
+	require.NoError(t, err)
+	for _, job := range jobs {
+		assert.NotEqual(t, importedConv, job.OwnerConv)
+	}
+}
+
+func TestGroupImport_RejectsMalformedOmittedSuccessionEndpoint(t *testing.T) {
+	f := newFlow(t)
+	const importedConv = "99999999-dead-beef-cafe-000000000001"
+	exp := &groupexport.Export{
+		FormatVersion: groupexport.FormatVersion,
+		SourceGroup:   "bad-succession-id",
+		Convs:         []groupexport.Conv{{ConvID: importedConv, Missing: true}},
+		Successions: []groupexport.Succession{{
+			OldConvID: "../escape", NewConvID: importedConv,
+		}},
+	}
+	archive, err := groupexport.Marshal(exp)
+	require.NoError(t, err)
+	rec := importArchive(f, archive, "/tmp/bad-succession-id", "")
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "not a canonical UUID")
+	group, err := db.GetAgentGroupByName("bad-succession-id")
+	require.NoError(t, err)
+	assert.Nil(t, group)
 }
 
 // TestGroupImport_FailedImportLeavesNothing forces a mid-import failure

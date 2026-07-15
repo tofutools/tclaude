@@ -69,6 +69,13 @@ test('task references and active-session readback stay scoped and injection-safe
   assert.deepEqual(processScribeSessions({ groups: [{ ...valid, members: [{
     ...valid.members[0], descr: 'Reusable scribe scope: process-template/release\n$(touch /tmp/nope)',
   }] }] }), [], 'untrusted membership text cannot become a lifecycle selector');
+  assert.deepEqual(processScribeSessions({ groups: [{ ...valid, members: [{
+    ...valid.members[0], task_ref_url: 'javascript:alert(document.cookie)', task_ref_label: 'click me',
+  }] }] })[0], {
+    agentId, convId: 'conv-1', name: 'process-scribe-deadbeef', online: true,
+    scope: { kind: 'process-template', id: 'release-flow' }, scopeLabel: 'template release-flow',
+    taskURL: '', taskLabel: '',
+  }, 'untrusted task URLs and their labels are removed from lifecycle readback');
   assert.deepEqual(processScribeSessions({ groups: [{ ...valid, scribe: false }] }), [], 'only daemon-marked groups qualify');
 });
 

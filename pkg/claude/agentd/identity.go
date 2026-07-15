@@ -358,26 +358,39 @@ const (
 //
 // Nothing matched => permUndecided.
 func resolvePermission(convID, slug string) permResolution {
+	resolution, _ := resolvePermissionWithSudoGrantID(convID, slug)
+	return resolution
+}
+
+// resolvePermissionWithSudoGrantID evaluates the same precedence as
+// resolvePermission while carrying the exact sudo row that made the decision.
+// Callers writing an audit record can therefore preserve decision-time
+// provenance without re-querying a grant that may expire or be replaced.
+func resolvePermissionWithSudoGrantID(convID, slug string) (permResolution, int64) {
 	if convID == "" {
-		return permUndecided
+		return permUndecided, 0
 	}
-	if ok, err := db.HasActiveSudoGrant(convID, slug); err == nil && ok {
-		return permAllow
+	state, err := db.AgentState(convID)
+	if err != nil || state == db.AgentStateRetired {
+		return permUndecided, 0
+	}
+	if grantID, err := db.LookupActiveSudoGrantID(convID, slug); err == nil && grantID != 0 {
+		return permAllow, grantID
 	}
 	if effect, ok, err := db.AgentPermissionOverride(convID, slug); err == nil && ok {
 		if effect == db.PermEffectDeny {
-			return permDeny
+			return permDeny, 0
 		}
-		return permAllow
+		return permAllow, 0
 	}
 	if ok, err := db.HasAgentGroupPermission(convID, slug); err == nil && ok {
-		return permAllow
+		return permAllow, 0
 	}
 	cfg, _ := config.Load()
 	if cfg.HasDefaultPermission(slug) {
-		return permAllow
+		return permAllow, 0
 	}
-	return permUndecided
+	return permUndecided, 0
 }
 
 // requirePermission gates an endpoint behind a named agent permission.
@@ -447,6 +460,15 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ow
 	}
 	slog.Debug("requirePermission: resolved caller",
 		"conv", p.ConvID, "row_present", row != nil, "title", title, "perm", perm)
+	state, err := db.AgentState(p.ConvID)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "auth", "could not verify caller agent state")
+		return "", false
+	}
+	if state == db.AgentStateRetired {
+		writeError(w, http.StatusForbidden, "auth", "caller is a retired agent")
+		return "", false
+	}
 	// Defaults, per-conv grant/deny overrides, and sudo grants all
 	// resolve in resolvePermission. A permAllow passes; a permUndecided
 	// may still pass via the structural owner bypass; permDeny is

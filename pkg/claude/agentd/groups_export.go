@@ -332,6 +332,9 @@ func inspectGroupImport(archive []byte, asName string) (*importInspection, int, 
 	if err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
 	}
+	if err := validateImportedConvIDs(exp); err != nil {
+		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
+	}
 
 	insp := &importInspection{
 		SourceGroup:    exp.SourceGroup,
@@ -365,12 +368,13 @@ func inspectGroupImport(archive []byte, asName string) (*importInspection, int, 
 		}
 	}
 
-	// Conv-id collisions: the same per-conv check runGroupImport applies
-	// when it builds convRemap. Walk Convs (not Members) so a conv with
-	// no membership row is still surfaced — identical iteration to the
-	// importer's remap loop.
+	// Conv-id collisions: surface every file-bearing Conv plus historical
+	// succession endpoints, matching the importer's identity remap set. The
+	// latter may legitimately be absent from current membership/Conv stubs.
+	seenImportIDs := make(map[string]bool, len(exp.Convs))
 	for i := range exp.Convs {
 		c := &exp.Convs[i]
+		seenImportIDs[c.ConvID] = true
 		if c.Missing {
 			insp.MissingConvs++
 		}
@@ -384,6 +388,16 @@ func inspectGroupImport(archive []byte, asName string) (*importInspection, int, 
 				Title:  title,
 			})
 		}
+	}
+	for _, convID := range importedIdentityConvIDs(exp) {
+		if seenImportIDs[convID] || !convExistsLocally(convID) {
+			continue
+		}
+		seenImportIDs[convID] = true
+		insp.ConvCollisions = append(insp.ConvCollisions, convCollision{
+			ConvID: convID,
+			Title:  agent.FreshTitle(convID),
+		})
 	}
 	return insp, http.StatusOK, nil
 }
@@ -428,15 +442,26 @@ func handleGroupImportInspect(w http.ResponseWriter, r *http.Request) {
 // HTTP code the failure should map to.
 //
 // Atomicity: the transformed .jsonl files are written to a staging
-// directory first; then db.ImportGroup runs the entire DB write — every
-// row plus the audit-log entry — in one transaction. Only after that
-// transaction commits are the staged files moved into ~/.claude/projects.
-// A failure before or during the transaction wipes the staging directory
-// and leaves the system exactly as it was: no group, no rows, no files,
-// no log entry.
+// directory first, then placed with O_EXCL so a post-preflight local file can
+// never be overwritten. Missing archive conversations reserve their actual
+// destination path through commit. db.ImportGroup then writes every DB row and
+// the audit entry in one transaction. A failure removes only paths this import
+// created and leaves no group, rows, files, or log entry.
+var groupImportAfterCollisionCheckForTest func()
+
+// SetGroupImportAfterCollisionCheckForTest installs a deterministic file-race hook.
+func SetGroupImportAfterCollisionCheckForTest(fn func()) func() {
+	old := groupImportAfterCollisionCheckForTest
+	groupImportAfterCollisionCheckForTest = fn
+	return func() { groupImportAfterCollisionCheckForTest = old }
+}
+
 func runGroupImport(archive []byte, into, asName, caller string) (*importResponse, int, error) {
 	exp, err := groupexport.Unmarshal(archive)
 	if err != nil {
+		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
+	}
+	if err := validateImportedConvIDs(exp); err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
 	}
 
@@ -493,6 +518,33 @@ func runGroupImport(archive []byte, into, asName, caller string) (*importRespons
 			convRemap[c.ConvID] = c.ConvID
 		}
 	}
+	// Succession edges are global selector redirects, and legitimate exports
+	// may carry a historical endpoint that is not a current member/Conv stub.
+	// Give every such endpoint the same collision/remap treatment as Convs so
+	// an archive cannot graft an imported edge onto an unrelated local identity.
+	for _, convID := range importedIdentityConvIDs(exp) {
+		if _, resolved := convRemap[convID]; resolved {
+			continue
+		}
+		if convExistsLocally(convID) {
+			convRemap[convID] = uuid.NewString()
+		} else {
+			convRemap[convID] = convID
+		}
+	}
+	if groupImportAfterCollisionCheckForTest != nil {
+		groupImportAfterCollisionCheckForTest()
+	}
+	targetProjectDir := convops.GetClaudeProjectPath(targetCwd)
+	destinationPaths := make(map[string]string, len(exp.Convs))
+	for i := range exp.Convs {
+		finalID := convRemap[exp.Convs[i].ConvID]
+		dst, err := importConversationPath(targetProjectDir, finalID)
+		if err != nil {
+			return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
+		}
+		destinationPaths[finalID] = dst
+	}
 
 	// --- stage the transformed .jsonl files ---
 	stagingDir := filepath.Join(targetHome, ".claude", ".tclaude-import-staging-"+uuid.NewString())
@@ -528,45 +580,78 @@ func runGroupImport(archive []byte, into, asName, caller string) (*importRespons
 		staged[finalID] = stagedPath
 	}
 
+	// Reserve/place every destination with no-clobber semantics before the DB
+	// transaction. This closes the preflight/file-placement TOCTOU: a conv file
+	// that appeared meanwhile aborts the import instead of being overwritten or
+	// silently attached to the imported actor. Any later DB failure removes only
+	// files this import created.
+	if err := os.MkdirAll(targetProjectDir, 0o755); err != nil {
+		_ = os.RemoveAll(stagingDir)
+		return nil, http.StatusInternalServerError, fmt.Errorf("import: create target project dir: %w", err)
+	}
+	placed := make([]string, 0, len(staged))
+	reservedMissing := make([]string, 0)
+	claimedConversationPaths := make(map[string]string, len(exp.Convs))
+	cleanupPlaced := func() {
+		for _, path := range placed {
+			_ = os.Remove(path)
+		}
+		for _, path := range reservedMissing {
+			_ = os.Remove(path)
+		}
+	}
+	for finalID, stagedPath := range staged {
+		dst := destinationPaths[finalID]
+		if err := moveFile(stagedPath, dst); err != nil {
+			cleanupPlaced()
+			_ = os.RemoveAll(stagingDir)
+			return nil, http.StatusConflict,
+				fmt.Errorf("import: reserve conversation %s: %w", finalID, err)
+		}
+		placed = append(placed, dst)
+		claimedConversationPaths[finalID] = dst
+	}
+	for i := range exp.Convs {
+		c := &exp.Convs[i]
+		if !c.Missing {
+			continue
+		}
+		finalID := convRemap[c.ConvID]
+		dst := destinationPaths[finalID]
+		if err := reserveFile(dst); err != nil {
+			cleanupPlaced()
+			_ = os.RemoveAll(stagingDir)
+			return nil, http.StatusConflict,
+				fmt.Errorf("import: reserve missing conversation %s: %w", finalID, err)
+		}
+		reservedMissing = append(reservedMissing, dst)
+		claimedConversationPaths[finalID] = dst
+	}
+
 	// --- the transactional DB write ---
 	result, err := db.ImportGroup(db.GroupImportPlan{
-		Export:     exp,
-		TargetName: targetName,
-		TargetCwd:  targetCwd,
-		ConvRemap:  convRemap,
-		ByConv:     caller,
+		Export:                   exp,
+		TargetName:               targetName,
+		TargetCwd:                targetCwd,
+		ConvRemap:                convRemap,
+		ClaimedConversationPaths: claimedConversationPaths,
+		ByConv:                   caller,
 	})
 	if err != nil {
+		cleanupPlaced()
 		_ = os.RemoveAll(stagingDir)
-		if errors.Is(err, db.ErrGroupNameTaken) {
+		if errors.Is(err, db.ErrGroupNameTaken) || errors.Is(err, db.ErrImportConversationCollision) {
 			return nil, http.StatusConflict, fmt.Errorf("import: %w", err)
 		}
 		return nil, http.StatusInternalServerError, fmt.Errorf("import: %w", err)
 	}
-
-	// --- move staged files into place (post-commit) ---
-	// The DB transaction has committed; the import has logically
-	// succeeded. Moving the .jsonl files is a set of same-filesystem
-	// renames into a pre-created directory — about as reliable as a
-	// filesystem op gets. A rare per-file failure is reported as a
-	// warning rather than failing the whole import, since the group and
-	// its rows are already durably in place.
-	targetProjectDir := convops.GetClaudeProjectPath(targetCwd)
-	if err := os.MkdirAll(targetProjectDir, 0o755); err != nil {
-		slog.Error("import: create target project dir failed",
-			"dir", targetProjectDir, "error", err)
-		fileWarnings = append(fileWarnings, "target project directory could not be created: "+err.Error())
-	} else {
-		for finalID, stagedPath := range staged {
-			dst := filepath.Join(targetProjectDir, finalID+".jsonl")
-			if err := moveFile(stagedPath, dst); err != nil {
-				slog.Error("import: move staged conv failed",
-					"conv", finalID, "error", err)
-				fileWarnings = append(fileWarnings,
-					fmt.Sprintf("%s: conversation file could not be placed: %v", finalID, err))
-			}
+	for _, path := range reservedMissing {
+		if err := os.Remove(path); err != nil {
+			fileWarnings = append(fileWarnings,
+				fmt.Sprintf("%s: missing-conversation reservation could not be removed: %v", filepath.Base(path), err))
 		}
 	}
+
 	_ = os.RemoveAll(stagingDir)
 
 	// Best-effort: refresh conv_index for the target project dir so the
@@ -598,6 +683,45 @@ func runGroupImport(archive []byte, into, asName, caller string) (*importRespons
 		SkippedAliases: result.HeadAliasesSkipped,
 		FileWarnings:   fileWarnings,
 	}, http.StatusOK, nil
+}
+
+func validateImportedConvIDs(exp *groupexport.Export) error {
+	for _, convID := range importedIdentityConvIDs(exp) {
+		parsed, err := uuid.Parse(convID)
+		if err != nil || parsed == uuid.Nil || parsed.String() != convID {
+			return fmt.Errorf("conversation id %q is not a canonical UUID", convID)
+		}
+	}
+	return nil
+}
+
+func importedIdentityConvIDs(exp *groupexport.Export) []string {
+	seen := make(map[string]bool, len(exp.Convs)+2*len(exp.Successions))
+	ids := make([]string, 0, len(exp.Convs)+2*len(exp.Successions))
+	add := func(id string) {
+		if id == "" || seen[id] {
+			return
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	for _, conv := range exp.Convs {
+		add(conv.ConvID)
+	}
+	for _, succession := range exp.Successions {
+		add(succession.OldConvID)
+		add(succession.NewConvID)
+	}
+	return ids
+}
+
+func importConversationPath(projectDir, convID string) (string, error) {
+	dst := filepath.Join(projectDir, convID+".jsonl")
+	rel, err := filepath.Rel(projectDir, dst)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("conversation id %q escapes the target project directory", convID)
+	}
+	return dst, nil
 }
 
 // --- transfer log ---
@@ -885,20 +1009,52 @@ func cwdFromJSONL(content []byte) string {
 	return ""
 }
 
-// moveFile renames src to dst, falling back to a copy+remove when the
-// two are on different filesystems (rename returns EXDEV).
+// moveFile copies src into a newly-created destination and never replaces an
+// existing path. O_EXCL is the filesystem-side collision guard for the window
+// after import preflight.
 func moveFile(src, dst string) error {
-	if err := os.Rename(src, dst); err == nil {
-		return nil
-	}
-	data, err := os.ReadFile(src) //nolint:gosec // src is a daemon-staged file
+	return moveFileWithRemove(src, dst, os.Remove)
+}
+
+func moveFileWithRemove(src, dst string, remove func(string) error) error {
+	in, err := os.Open(src) //nolint:gosec // src is a daemon-staged file
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(dst, data, 0o600); err != nil {
+	defer func() { _ = in.Close() }()
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // dst is derived from a server-minted UUID
+	if err != nil {
 		return err
 	}
-	_ = os.Remove(src)
+	ok := false
+	defer func() {
+		_ = out.Close()
+		if !ok {
+			_ = os.Remove(dst)
+		}
+	}()
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	if err := remove(src); err != nil {
+		return err
+	}
+	ok = true
+	return nil
+}
+
+func reserveFile(dst string) error {
+	f, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // dst is a validated imported conv id
+	if err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(dst)
+		return err
+	}
 	return nil
 }
 
