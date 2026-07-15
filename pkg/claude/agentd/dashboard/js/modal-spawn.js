@@ -1764,7 +1764,7 @@ function bindAgentSpawnModal() {
 }
 
 // Renaming an agent is no longer a modal of its own — it folded into
-// the per-agent edit panel (editMemberModal, refresh.js) and the
+// the Preact per-agent edit panel (member-editor-island.js) and the
 // click-to-edit name cell (the rename-name handler, row-actions.js).
 // Both POST /api/agents/{conv}/rename, same as this modal once did.
 

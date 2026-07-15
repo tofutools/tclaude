@@ -47,7 +47,7 @@ import { wizWord } from './slop.js';
 // rollback) via setLastSnapshot. Deliberate benign cycles are TDZ-safe.
 import {
   refresh, toast, confirmModal, addMemberModal, deleteAgentModal,
-  editMemberModal, shutdownScope, powerOnScope, openCleanupModal, openWindowModal,
+  shutdownScope, powerOnScope, openCleanupModal, openWindowModal,
   openWorktreeCleanup,
   resumeAgentReq, retireAgentInteractive, shutdownConfirm, stopAgentReq,
   openDeleteGroupModal,
@@ -717,119 +717,6 @@ function bindRowActions() {
           if (!ok) { toast(`Delete failed: ${await r.text()}`, true); break; }
           toast(`deleted generation: ${label}`);
           refresh();
-          return;
-        }
-        case 'edit-role':
-        case 'edit-descr':
-        case 'edit-member': {
-          // The single per-agent edit panel: title (incl. the "auto"
-          // self-rename), group role, group description, agent tags, the
-          // group-owner toggle, and a Permissions… button. The same panel
-          // backs three entry points: the ⚙ "edit" button (focuses Title),
-          // the click-to-edit role cell (data-act="edit-role", focuses
-          // Role), and the click-to-edit description cell
-          // (data-act="edit-descr", focuses Description). The modal yields
-          // up to FOUR independent edits — a rename (conv title, injected
-          // via tmux), a membership PATCH (role / descr), an agent-tags
-          // replace (agent-level, its own endpoint), and an owner
-          // grant/revoke. They hit different endpoints, so apply each on
-          // its own: one failing must not silently swallow the others.
-          const result = await editMemberModal({
-            label: `${label} → ${group}`,
-            title: btn.getAttribute('data-current') || '',
-            role: btn.getAttribute('data-role') || '',
-            descr: btn.getAttribute('data-descr') || '',
-            tags: btn.getAttribute('data-tags') || '',
-            owner: btn.getAttribute('data-owner') === '1',
-            focusRole: act === 'edit-role',
-            focusDescr: act === 'edit-descr',
-            // openPermEditModal pre-fills from the conv-keyed permissions
-            // snapshot, so it keeps the conv-id (the agent-id keying of the
-            // permissions surface is D3); the rename / membership / owner
-            // writes below route by the stable `agent`.
-            openPerms: () => openPermEditModal(conv, label),
-          });
-          if (result === null) return; // cancelled
-          if (result === 'noop') {
-            toast('no changes');
-            return;
-          }
-          let anyOk = false;
-          if (result.rename) {
-            const r = await fetch(`/api/agents/${encodeURIComponent(agent)}/rename`, {
-              method: 'POST', credentials: 'same-origin',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(result.rename),
-            });
-            if (r.ok) {
-              anyOk = true;
-              toast(result.rename.auto
-                ? `auto-rename nudge sent: ${label}`
-                : `renaming ${label} → ${result.rename.title}`);
-            } else {
-              toast(`rename failed: ${await r.text()}`, true);
-            }
-          }
-          if ('role' in result || 'descr' in result) {
-            const body = {};
-            if ('role' in result) body.role = result.role;
-            if ('descr' in result) body.descr = result.descr;
-            const r = await fetch(`/api/groups/${encodeURIComponent(group)}/members/${encodeURIComponent(agent)}`, {
-              method: 'PATCH', credentials: 'same-origin',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(body),
-            });
-            if (r.ok) {
-              anyOk = true;
-              toast(`updated ${label}`);
-            } else {
-              toast(`edit failed: ${await r.text()}`, true);
-            }
-          }
-          if ('tags' in result) {
-            // Tags are AGENT-level (keyed on the stable agent-id), not a
-            // membership column — route the replace-set to the dedicated
-            // agent-tags endpoint, independent of the role/descr PATCH so
-            // a bad tag rejects only the tags write. result.tags is the
-            // already-parsed array (empty = clear).
-            const r = await fetch(`/api/agents/${encodeURIComponent(agent)}/tags`, {
-              method: 'POST', credentials: 'same-origin',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ tags: result.tags }),
-            });
-            if (r.ok) {
-              anyOk = true;
-              toast(`tags updated: ${label}`);
-            } else {
-              toast(`tags update failed: ${await r.text()}`, true);
-            }
-          }
-          if ('owner' in result) {
-            // Owner is structural, not a membership column — route the
-            // toggle to the owners grant (POST) / revoke (DELETE)
-            // endpoints, the same ones the ⚙ make/revoke-owner buttons
-            // use. Unlike the cog's revoke button there's no extra
-            // confirm here: ticking the box + clicking Save IS the
-            // deliberate gesture.
-            const r = result.owner
-              ? await fetch(`/api/groups/${encodeURIComponent(group)}/owners`, {
-                  method: 'POST', credentials: 'same-origin',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ conv: agent }),
-                })
-              : await fetch(`/api/groups/${encodeURIComponent(group)}/owners/${encodeURIComponent(agent)}`, {
-                  method: 'DELETE', credentials: 'same-origin',
-                });
-            if (r.ok) {
-              anyOk = true;
-              toast(result.owner
-                ? `${label} is now an owner of ${group}`
-                : `${label} is no longer an owner of ${group}`);
-            } else {
-              toast(`owner change failed: ${await r.text()}`, true);
-            }
-          }
-          if (anyOk) refresh();
           return;
         }
         case 'dot-toggle': {
