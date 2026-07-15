@@ -1,6 +1,6 @@
 import { h } from 'preact';
+import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { trustedHTMLToVNodes } from './html-vnodes.js';
 import {
   applySort, tableSortState, RETIRED_COLS, RETIRED_ACCESSORS,
   CONVERSATIONS_COLS, CONVERSATIONS_ACCESSORS, REPLACED_COLS, REPLACED_ACCESSORS,
@@ -15,11 +15,10 @@ import { hoveredGroupKey } from './group-hover-state.js';
 import {
   buildGroupTree, groupMembersView, realGroupOpen, virtualGroupOpen,
 } from './groups-view-model.js';
+import { ActionMenu, InlineEditor, useGroupsInteractions } from './groups-interactions.js';
+import { MemberTable } from './groups-member-table.js';
 
 const html = htm.bind(h);
-const EMPTY_PRESENTATION = Object.freeze({
-  memberTable: () => '',
-});
 
 function ThemeText({ regular, wizard }) {
   return html`<span class="theme-copy-regular">${regular}</span><span class="theme-copy-wizard">${wizard}</span>`;
@@ -57,19 +56,13 @@ function GroupActivity({ members, snapshot }) {
   >${summary.present.map((variant) => html`<${ActivityBot} key=${variant} variant=${variant} count=${summary.counts[variant]} style=${mode.style} wizard=${mode.wizard} />`)}</span>`)}</span>`;
 }
 
-function SharedActionMenu({ kind, children }) {
-  return html`<span class=${kind === 'group-menu' ? 'group-actions group-header-cog' : undefined}>
-    <button type="button" class="cog-btn" data-act=${kind} aria-haspopup="menu" aria-expanded="false" title="More actions" aria-label="More actions"><span class="cog-glyph">⚙︎</span></button>
-    <div class="action-menu" role="menu">${children}</div>
-  </span>`;
-}
-
 function MenuButton({ regular, wizard = regular, className, ...props }) {
   return h('button', { role: 'menuitem', class: className || undefined, ...props },
     h(ThemeText, { regular, wizard }));
 }
 
 function GroupMenuItems({ group, members, snapshot }) {
+  const interactions = useGroupsInteractions();
   const name = group.name;
   const shared = { 'data-group': name, 'data-label': name };
   const contextLength = group.default_context?.length || 0;
@@ -107,7 +100,11 @@ function GroupMenuItems({ group, members, snapshot }) {
     <${MenuButton} ...${shared} data-act="toggle-group-notify" data-enabled=${notify ? '1' : '0'} title=${notifyTitle} regular=${notify ? '🔔 notifications: on' : '🔕 notifications: muted'} wizard=${notify ? '🔔 omens: on' : '🔕 omens: silent'} />
     <button role="menuitem" ...${shared} data-act="set-group-remote-control" data-policy=${policy} data-next=${nextPolicy} title=${remoteTitle}>${policy === 'deny' ? '🚫' : '📱'} remote policy: ${policy === 'optin' ? 'opt-in' : policy}</button>
     ${quickFold ? html`<button role="menuitem" ...${shared} data-act="toggle-quick-pin" data-pinned=${pinned ? '1' : '0'} title=${quickPinTitle}>${pinned ? '📌 unpin quick options' : '📌 pin quick options open'}</button>` : null}
-    <${MenuButton} ...${shared} data-act="rename-group" title=${wizardMode ? 'Rename this party' : 'Rename this group'} regular="rename" wizard="rename party" />
+    <${MenuButton} ...${shared} data-act="rename-group" title=${wizardMode ? 'Rename this party' : 'Rename this group'} regular="rename" wizard="rename party" onClick=${(event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      interactions.beginEditor(`group:${name}:name`);
+    }} />
     <${MenuButton} ...${shared} data-act="nest-group" title=${wizardMode ? 'Nest this party under another party on the board — layout only' : 'Nest this group under another so it draws inside it on the board — collapse the parent to tuck the subgroup away. Board layout only.'} regular="📂 nest under…" wizard="📂 nest party under…" />
     ${group.parent ? html`<${MenuButton} ...${shared} data-act="unnest-group" data-parent=${group.parent} title=${`Move this ${wizardMode ? 'party' : 'group'} back to the top level (currently nested under ${group.parent}).`} regular=${`📂 un-nest (under ${group.parent})`} wizard=${`📂 un-nest party (under ${group.parent})`} />` : null}
     <${MenuButton} ...${shared} data-act="clone-group" title=${wizardMode ? 'Mirror this party — copy its lore, boons, owners, and optionally its familiars into a new party' : 'Clone this group — copy every setting (directory, description, startup context, default profile, group permissions, max-members, notify) and the owners into a new group. Optionally clone the member agents too.'} regular="⧉ clone…" wizard="⧉ mirror party…" />
@@ -163,25 +160,116 @@ function Pager({ kind, paging }) {
   </div>`;
 }
 
-// Temporary TCL-465 boundary: this is the only opaque renderer left in the
-// Groups list. trustedHTMLToVNodes promotes each tr[data-key] to a keyed VNode,
-// preserving live editors and drag sources while TCL-465 replaces the whole
-// shared member table/row/cell/action layer.
-function LegacyMemberTableAdapter({ members, group, ungrouped = false, presentation }) {
-  return trustedHTMLToVNodes(presentation.memberTable(members, ungrouped ? { ungrouped: true } : { group }));
+function EditableGroupChip({ group, actions, field, value, className, action, title, children, type = 'text', inputClass, placeholder, inputProps, normalize = (next) => next.trim(), message }) {
+  const editorKey = `group:${group.name}:${field}`;
+  return html`<${InlineEditor}
+    editorKey=${editorKey} value=${value} type=${type} className=${inputClass} placeholder=${placeholder}
+    inputProps=${inputProps}
+    onCommit=${async (raw) => {
+      const next = normalize(raw);
+      if (next === value) return false;
+      await actions.patchGroup(group, field, next, message);
+      return true;
+    }}
+    triggerProps=${{
+      class: className, tabindex: '0', role: 'button', 'data-act': action,
+      'data-group': group.name, 'data-label': group.name, 'data-editor-key': editorKey, title,
+    }}
+  >${children}<//>`;
 }
 
-function GroupSummaryChip({ className, action, group, title, children, attrs = {} }) {
-  return h('span', {
-    class: className,
-    tabindex: '0',
-    role: 'button',
-    'data-act': action,
-    'data-group': group.name,
-    'data-label': group.name,
-    title,
-    ...attrs,
-  }, children);
+const NEW_PROFILE = '/new-profile';
+
+function GroupProfileChip({ group, actions, kind }) {
+  const interactions = useGroupsInteractions();
+  const sandbox = kind === 'sandbox';
+  const editorKey = `group:${group.name}:${sandbox ? 'sandbox_profile' : 'default_profile'}`;
+  const active = interactions.editorKey === editorKey;
+  const current = sandbox ? (group.sandbox_profile || '') : (group.default_profile || '');
+  const [choices, setChoices] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const [error, setError] = useState('');
+  const selectRef = useRef(null);
+  useLayoutEffect(() => {
+    if (!active) return;
+    let live = true;
+    setBusy(true);
+    busyRef.current = true;
+    setError('');
+    actions.groupProfileChoices(kind).then((items) => {
+      if (live) setChoices(items);
+    }).catch((err) => {
+      if (live) setError((err && err.message) || String(err));
+    }).finally(() => {
+      if (live) {
+        setBusy(false);
+        busyRef.current = false;
+        queueMicrotask(() => selectRef.current?.focus());
+      }
+    });
+    return () => { live = false; };
+  }, [active, kind]);
+  if (active) {
+    const missing = current && !choices.some((choice) => choice.value === current);
+    return html`<select
+      ref=${selectRef} class="group-default-profile-select" value=${current} disabled=${busy}
+      aria-invalid=${error ? 'true' : undefined} title=${error || undefined}
+      onKeyDown=${(event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          interactions.endEditor(editorKey);
+        }
+      }}
+      onBlur=${() => { if (!busyRef.current) interactions.endEditor(editorKey); }}
+      onChange=${async (event) => {
+        const name = event.currentTarget.value;
+        if (name === NEW_PROFILE) {
+          interactions.endEditor(editorKey);
+          actions.openNewGroupProfile(kind, (created) => actions.setGroupProfile(group, kind, created));
+          return;
+        }
+        if (name === current) {
+          interactions.endEditor(editorKey);
+          return;
+        }
+        busyRef.current = true;
+        setBusy(true);
+        setError('');
+        try {
+          await actions.setGroupProfile(group, kind, name);
+          interactions.endEditor(editorKey);
+        } catch (err) {
+          setError((err && err.message) || String(err));
+          busyRef.current = false;
+          setBusy(false);
+        }
+      }}
+    >
+      <option value=${NEW_PROFILE}>${sandbox ? '＋ new sandbox profile…' : (isWizardActive() ? '＋ new pattern…' : '＋ new profile…')}</option>
+      <option value="">${sandbox ? '(inherit)' : '(none)'}</option>
+      ${choices.map((choice) => html`<option key=${choice.value} value=${choice.value}>${choice.label}</option>`)}
+      ${missing ? html`<option value=${current}>${current} (missing)</option>` : null}
+    </select>`;
+  }
+  const className = sandbox
+    ? `group-sandbox-profile${current ? '' : ' unset'}`
+    : `group-default-model${current ? '' : ' unset'}`;
+  const title = sandbox
+    ? current ? `Sandbox profile for ${group.name}: ${current} — composes after the global sandbox profile for newly launched agents. Click to change.` : 'No group sandbox profile — newly launched agents get the global one only. Click to set one.'
+    : current ? `Default spawn profile for agents spawned into this group: ${current} — fills blank launch fields at spawn. Click to change.` : 'No default spawn profile — click to set one. (Spawns use their own fields until set.)';
+  return html`<span
+    class=${className} tabindex="0" role="button"
+    data-act=${sandbox ? 'set-group-sandbox-profile' : 'set-group-profile'}
+    data-group=${group.name} data-label=${group.name}
+    data-profile=${sandbox ? undefined : current} data-sandbox-profile=${sandbox ? current : undefined}
+    data-editor-key=${editorKey} title=${title}
+    onClick=${(event) => { event.preventDefault(); event.stopPropagation(); interactions.beginEditor(editorKey); }}
+    onKeyDown=${(event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault(); interactions.beginEditor(editorKey);
+    }}
+  >${sandbox ? '🛡' : '🧠'}<span class="qo-text">${current ? ` ${current}` : ''}</span></span>`;
 }
 
 function ProcessChip({ group }) {
@@ -213,7 +301,8 @@ function GroupLinkChips({ group, snapshot }) {
   return html`<span class="group-link-chips" tabindex="0" role="button" data-act="links-manage" title="Inter-group links — click to manage">🔗<span class="qo-text">${outgoing.map((link) => chip(link, 'out'))}${incoming.map((link) => chip(link, 'in'))}</span></span>`;
 }
 
-function RealGroupSummary({ group, activity, membersView, snapshot }) {
+function RealGroupSummary({ group, activity, membersView, snapshot, actions }) {
+  const interactions = useGroupsInteractions();
   const { members, hiddenOffline } = membersView;
   const online = group.online || 0;
   const full = !!group.max_members && members.length >= group.max_members;
@@ -222,36 +311,50 @@ function RealGroupSummary({ group, activity, membersView, snapshot }) {
   const titleParts = [`${members.length} member${members.length === 1 ? '' : 's'} (${online} online)`, group.max_members ? `cap ${group.max_members}` : 'no cap'];
   if (full) titleParts.push('group is full, spawns refused');
   if (hiddenOffline) titleParts.push(`${hiddenOffline} offline hidden in this view`);
-  return html`<summary draggable=${true} data-group-reorder=${group.name} title="Drag this header to reorder the group">
-    <strong class="group-name" data-group-name=${group.name}>${group.name}</strong>
+  const groupEditing = interactions.editorKey.startsWith(`group:${group.name}:`);
+  const renameKey = `group:${group.name}:name`;
+  const maxValue = group.max_members || 0;
+  return html`<summary draggable=${!groupEditing} data-group-reorder=${group.name} title="Drag this header to reorder the group">
+    ${interactions.editorKey === renameKey ? html`<${InlineEditor}
+      editorKey=${renameKey} value=${group.name} className="group-rename-input"
+      onCommit=${(value) => actions.renameGroup(group, value)}
+      triggerProps=${{}}
+    >${group.name}<//>` : html`<strong class="group-name" data-group-name=${group.name}>${group.name}</strong>`}
     <${GroupActivity} members=${activity} snapshot=${snapshot} />
     <${ProcessChip} group=${group} />
     ${group.waves?.pending_waves ? html`<span class="group-waves-chip" title=${`Staged spawn — ${group.waves.pending_agents} agent(s) in ${group.waves.pending_waves} more wave(s) will spawn as each wave settles${group.waves.deadline_at ? `\nnext wave by ${group.waves.deadline_at} at the latest` : ''}`}>🌊 wave ${group.waves.current_wave}/${group.waves.total_waves} pending</span>` : null}
     ${group.pending?.length ? html`<span class="group-pending-chip" title=${`${group.pending.length} pending spawn${group.pending.length === 1 ? '' : 's'} waiting for startup`}>⏳ ${group.pending.length} pending spawn${group.pending.length === 1 ? '' : 's'}</span>` : null}
-    <${SharedActionMenu} kind="group-menu"><${GroupMenuItems} group=${group} members=${members} snapshot=${snapshot} /><//>
-    <${GroupSummaryChip}
-      className=${`group-descr${group.descr ? '' : ' unset'}`} action="set-group-descr" group=${group}
+    <${ActionMenu} menuKey=${`group:${group.name}`} kind="group-menu" wrapperClass="group-actions group-header-cog"><${GroupMenuItems} group=${group} members=${members} snapshot=${snapshot} /><//>
+    <${EditableGroupChip}
+      className=${`group-descr${group.descr ? '' : ' unset'}`} action="set-group-descr" group=${group} actions=${actions}
+      field="descr" value=${group.descr || ''} inputClass="group-descr-input" placeholder="group description — empty clears it"
       title=${group.descr ? 'Group description — click to edit' : 'No description — click to set one'}
-      attrs=${{ 'data-descr': group.descr || '' }}
+      message=${(value) => value ? `${group.name}: description → ${value}` : `${group.name}: description cleared`}
     >📝<span class="qo-text"> ${group.descr || 'no description'}</span><//>
-    <${GroupSummaryChip}
-      className=${`group-default-cwd${group.default_cwd ? '' : ' unset'}`} action="set-group-dir" group=${group}
+    <${EditableGroupChip}
+      className=${`group-default-cwd${group.default_cwd ? '' : ' unset'}`} action="set-group-dir" group=${group} actions=${actions}
+      field="default_cwd" value=${group.default_cwd || ''} inputClass="group-default-cwd-input" placeholder="absolute path (~ OK) — empty clears the default"
       title=${group.default_cwd ? `Default spawn directory: ${group.default_cwd} — click the text to edit, the 📁 to browse` : 'No default spawn directory — click the text to type one, the 📁 to browse'}
-      attrs=${{ 'data-cwd': group.default_cwd || '' }}
-    ><span class="gdc-pick" tabindex="0" role="button" data-act="pick-group-dir" data-group=${group.name} data-label=${group.name} data-cwd=${group.default_cwd || ''} title="Browse for a directory with a native picker">📁</span><span class="qo-text"> ${group.default_cwd ? shortCwd(group.default_cwd) : 'no default dir'}</span><//>
-    <${GroupSummaryChip}
-      className=${`group-max-members${full ? ' full' : ''}${group.max_members ? '' : ' unset'}`} action="set-group-max-members" group=${group}
+      message=${(value) => value ? `${group.name}: default dir → ${value}` : `${group.name}: default dir cleared`}
+    ><span class="gdc-pick" tabindex="0" role="button" data-act="pick-group-dir" data-group=${group.name} data-label=${group.name} data-cwd=${group.default_cwd || ''} title="Browse for a directory with a native picker" onClick=${(event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      void actions.pickGroupDirectory(group).catch((error) => actions.reportError(error));
+    }}>📁</span><span class="qo-text"> ${group.default_cwd ? shortCwd(group.default_cwd) : 'no default dir'}</span><//>
+    <${EditableGroupChip}
+      className=${`group-max-members${full ? ' full' : ''}${group.max_members ? '' : ' unset'}`} action="set-group-max-members" group=${group} actions=${actions}
+      field="max_members" value=${maxValue} type="number" inputClass="group-max-members-input"
+      inputProps=${{ min: '0', step: '1', title: '0 clears the cap (unlimited)' }}
+      normalize=${(raw) => {
+        const value = Number.parseInt(raw, 10);
+        if (!Number.isInteger(value) || value < 0) throw new Error('max members must be a non-negative integer (0 = unlimited)');
+        return value;
+      }}
       title=${`${titleParts.join(' · ')}${group.max_members ? ' — click to edit cap' : ' — click to set a cap'}`}
-      attrs=${{ 'data-max': group.max_members || 0 }}
+      message=${(value) => value > 0 ? `${group.name}: member cap → ${value}` : `${group.name}: member cap cleared`}
     >👥 ${count}<//>
-    <${GroupSummaryChip} className=${`group-default-model${group.default_profile ? '' : ' unset'}`} action="set-group-profile" group=${group}
-      title=${group.default_profile ? `Default spawn profile for agents spawned into this group: ${group.default_profile} — fills blank launch fields at spawn. Click to change.` : 'No default spawn profile — click to set one. (Spawns use their own fields until set.)'}
-      attrs=${{ 'data-profile': group.default_profile || '' }}
-    >🧠<span class="qo-text">${group.default_profile ? ` ${group.default_profile}` : ''}</span><//>
-    <${GroupSummaryChip} className=${`group-sandbox-profile${group.sandbox_profile ? '' : ' unset'}`} action="set-group-sandbox-profile" group=${group}
-      title=${group.sandbox_profile ? `Sandbox profile for ${group.name}: ${group.sandbox_profile} — composes after the global sandbox profile for newly launched agents. Click to change.` : 'No group sandbox profile — newly launched agents get the global one only. Click to set one.'}
-      attrs=${{ 'data-sandbox-profile': group.sandbox_profile || '' }}
-    >🛡<span class="qo-text">${group.sandbox_profile ? ` ${group.sandbox_profile}` : ''}</span><//>
+    <${GroupProfileChip} group=${group} actions=${actions} kind="profile" />
+    <${GroupProfileChip} group=${group} actions=${actions} kind="sandbox" />
     <${GroupLinkChips} group=${group} snapshot=${snapshot} />
   </summary>`;
 }
@@ -318,7 +421,7 @@ function GroupLinksSection({ group, snapshot }) {
   </div>`;
 }
 
-function RealGroup({ node, presentation, snapshot }) {
+function RealGroup({ node, snapshot, actions }) {
   const { group } = node;
   const view = groupMembersView(group, groupShowOffline(group.name));
   const quickPinned = dashPrefs.getItem(`tclaude.dash.quickpin.${group.name}`) === '1';
@@ -330,9 +433,9 @@ function RealGroup({ node, presentation, snapshot }) {
     class=${classes || undefined} data-group-key=${group.name} data-dnd-target-group=${group.name}
     open=${realGroupOpen(group, dashPrefs)}
   >
-    <${RealGroupSummary} group=${group} activity=${node.activity} membersView=${view} snapshot=${snapshot} />
+    <${RealGroupSummary} group=${group} activity=${node.activity} membersView=${view} snapshot=${snapshot} actions=${actions} />
     <div class="subtable">
-      ${node.children.length ? html`<div class="group-subgroups">${node.children.map((child) => html`<${GroupNode} key=${child.key} node=${child} presentation=${presentation} snapshot=${snapshot} />`)}</div>` : null}
+      ${node.children.length ? html`<div class="group-subgroups">${node.children.map((child) => html`<${GroupNode} key=${child.key} node=${child} snapshot=${snapshot} actions=${actions} />`)}</div>` : null}
       ${group.pending?.length ? html`<div class="group-pending-block"><div class="group-pending-title"><span class="group-pending-title-regular">Pending spawns</span><span class="group-pending-title-wizard">Currently summoning...</span></div><${PendingTable} rows=${group.pending} /></div>` : null}
       <div class="group-header-actions"><${GroupActions} group=${group} /></div>
       <${ForceBlock} group=${group} />
@@ -340,7 +443,7 @@ function RealGroup({ node, presentation, snapshot }) {
         ? html`<div class="muted">(no members yet)</div>`
         : !view.visible.length
           ? html`<div class="muted">(${view.hiddenOffline} offline member${view.hiddenOffline === 1 ? '' : 's'} hidden — toggle "show offline" to see ${view.hiddenOffline === 1 ? 'it' : 'them'})</div>`
-          : html`<${LegacyMemberTableAdapter} members=${view.visible} group=${group} presentation=${presentation} />`}
+          : html`<${MemberTable} members=${view.visible} group=${group} snapshot=${snapshot} actions=${actions} SortHead=${SortHead} />`}
       <${GroupLinksSection} group=${group} snapshot=${snapshot} />
     </div>
   </details>`;
@@ -363,7 +466,7 @@ function VirtualBadge({ regularTitle, wizardTitle }) {
   return html`<span class="group-virtual-badge" title=${isWizardActive() ? wizardTitle : regularTitle}><${ThemeText} regular="virtual" wizard="ethereal" /></span>`;
 }
 
-function VirtualUngrouped({ group, presentation, snapshot }) {
+function VirtualUngrouped({ group, snapshot, actions }) {
   const view = groupMembersView(group, offlineDefault('groups'));
   const summary = html`<strong class="group-name"><${ThemeText} regular=${group.name} wizard="Unbound" /></strong>
     <${GroupActivity} members=${view.members} snapshot=${snapshot} />
@@ -379,7 +482,7 @@ function VirtualUngrouped({ group, presentation, snapshot }) {
         regular=${`(${view.hiddenOffline} offline agent${view.hiddenOffline === 1 ? '' : 's'} hidden — toggle "show offline" to see ${view.hiddenOffline === 1 ? 'it' : 'them'})`}
         wizard=${`(${view.hiddenOffline} slumbering familiar${view.hiddenOffline === 1 ? '' : 's'} hidden — enable "show slumbering" to reveal ${view.hiddenOffline === 1 ? 'it' : 'them'})`}
       /></div>`
-      : html`<${LegacyMemberTableAdapter} members=${view.visible} ungrouped=${true} presentation=${presentation} />`;
+      : html`<${MemberTable} members=${view.visible} ungrouped=${true} snapshot=${snapshot} actions=${actions} SortHead=${SortHead} />`;
   return html`<${VirtualShell} group=${group} target="ungrouped" summary=${summary}>${body}<//>`;
 }
 
@@ -462,18 +565,18 @@ const VIRTUAL_NAMES = {
   },
 };
 
-function GroupNode({ node, presentation, snapshot }) {
+function GroupNode({ node, snapshot, actions }) {
   const group = node.group;
-  if (!group.virtual) return html`<${RealGroup} node=${node} presentation=${presentation} snapshot=${snapshot} />`;
+  if (!group.virtual) return html`<${RealGroup} node=${node} snapshot=${snapshot} actions=${actions} />`;
   if (group.conversations) return html`<${VirtualList} group=${group} kind="conversations" Table=${ConversationsTable} names=${VIRTUAL_NAMES.conversations} />`;
   if (group.retired) return html`<${VirtualList} group=${group} kind="retired" Table=${RetiredTable} names=${VIRTUAL_NAMES.retired} target="retired" />`;
   if (group.replaced) return html`<${VirtualList} group=${group} kind="replaced" Table=${ReplacedTable} names=${VIRTUAL_NAMES.replaced} />`;
   if (group.pending) return html`<${VirtualList} group=${group} kind="pending" Table=${PendingTable} names=${VIRTUAL_NAMES.pending} />`;
-  return html`<${VirtualUngrouped} group=${group} presentation=${presentation} snapshot=${snapshot} />`;
+  return html`<${VirtualUngrouped} group=${group} snapshot=${snapshot} actions=${actions} />`;
 }
 
-export function GroupsNativeList({ groups, presentation = EMPTY_PRESENTATION, snapshot }) {
+export function GroupsNativeList({ groups, snapshot, actions }) {
   if (!groups?.length) return html`<div class="empty">No groups yet. Create one with the <strong><span class="group-create-label-regular">+ new group</span><span class="group-create-label-wizard">⚔ Form a party</span></strong> button above.</div>`;
   const tree = buildGroupTree(groups, (group) => realGroupOpen(group, dashPrefs));
-  return tree.map((node) => html`<${GroupNode} key=${node.key} node=${node} presentation=${presentation} snapshot=${snapshot} />`);
+  return tree.map((node) => html`<${GroupNode} key=${node.key} node=${node} snapshot=${snapshot} actions=${actions} />`);
 }
