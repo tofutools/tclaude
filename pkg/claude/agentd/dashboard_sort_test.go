@@ -26,7 +26,7 @@ func TestDashboardHTML_SortableColumnsWired(t *testing.T) {
 		t.Error("retired global sort delegation remains")
 	}
 
-	// Every primary table opts in by rendering a sortHead(...) header.
+	// Every primary table opts in by rendering the native SortHead component.
 	// The virtual sub-tables (Retired / Conversations / Pending / Replaced
 	// generations) are included: they're the "non-real" groups that gained
 	// the same clickable headers as real groups.
@@ -34,9 +34,9 @@ func TestDashboardHTML_SortableColumnsWired(t *testing.T) {
 		"members",
 		"retired", "conversations", "pending", "replaced",
 	} {
-		must("sortHead('"+table+"'", table+" table renders a sortable header")
+		must(`SortHead} table="`+table+`"`, table+" table renders a sortable header")
 	}
-	must("shortAgentId(p.agent_id, '') || p.label", "pending ID cell leads with its reserved stable id and preserves the full legacy label")
+	must("shortAgentId(row.agent_id, '') || row.label", "pending ID cell leads with its reserved stable id and preserves the full legacy label")
 	must("LINK_COLS.map(", "Links island uses the shared Links column specification")
 	// Jobs is the Preact pilot: its component maps the same JOBS_COLS spec to
 	// interactive keyed headers instead of emitting legacy sortHead HTML.

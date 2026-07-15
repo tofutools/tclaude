@@ -10,7 +10,7 @@ import (
 // TestDashboardAssets_GroupActivityWired guards the group activity-bot
 // indicator, whose pieces live in four files that must stay in lockstep:
 // the pure aggregation module (group-activity.js), its use in the group
-// <summary> (render.js) + the Preact-owned top-bar global slot
+// <summary> (groups-list.js) + the Preact-owned top-bar global slot
 // (shell-model.js/shell-island.js), the bot/animation CSS (dashboard.css),
 // and the explicit shell host (dashboard.html). A
 // rename in any one silently breaks the feature in the browser — there's
@@ -30,10 +30,11 @@ func TestDashboardAssets_GroupActivityWired(t *testing.T) {
 		"export function styledBotsHTML(",
 		"export function aggregateActivity(",
 		"export function groupActivityPlacement(", // nested folded-group rollup
-		// render.js — still wired into each legacy group summary.
-		"groupActivityChip(activityMembers)", // leaf-most visible group summary
-		"groupActivityPlacement(groups, realGroupIsOpen)",
-		"function activityStyles(",   // reads the per-mode styles
+		// groups-list.js — native summary component reads the aggregated members
+		// and per-mode styles from the accepted snapshot.
+		"function GroupActivity({ members, snapshot })",
+		"<${GroupActivity} members=${activity} snapshot=${snapshot} />",
+		"const configured = snapshot?.activity_bots || {};",
 		// shell-model.js derives the global view from the accepted snapshot.
 		"export function globalActivityView(snapshot, wizard = false, visibility = {})",
 		"const groups = snapshot.groups || []",
@@ -65,8 +66,8 @@ func TestDashboardAssets_GroupActivityWired(t *testing.T) {
 		`id="cfg-dashboard-activity-bots-regular"`,
 		`id="cfg-dashboard-activity-bots-slop"`,
 		`id="cfg-dashboard-activity-bots-wizard"`,
-		"lastSnapshot.activity_bots", // render reads the snapshot styles
-		"activity_bots",              // assemble/populate in config.js
+		"snapshot?.activity_bots", // native summary reads the snapshot styles
+		"activity_bots",           // assemble/populate in config.js
 	}
 	for _, needle := range needles {
 		if !strings.Contains(dashboardAssets, needle) {
