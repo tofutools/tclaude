@@ -277,11 +277,9 @@ func reconcileCheckpointCommands(view CompletionReplayView) error {
 			return fmt.Errorf("%w: checkpoint command %q is invalid: %v", ErrMutationInconsistent, id, validationErr)
 		}
 		checkpointCommands[id] = command
-		if command.State.Active() {
-			stored, ok := view.Aggregate.Commands[id]
-			if !ok || !canonicalEqual(stored, command) {
-				return fmt.Errorf("%w: active checkpoint command %q is absent or different in aggregate", ErrMutationInconsistent, id)
-			}
+		stored, ok := view.Aggregate.Commands[id]
+		if !ok || !canonicalEqual(stored, command) {
+			return fmt.Errorf("%w: checkpoint-retained command %q is absent or different in aggregate", ErrMutationInconsistent, id)
 		}
 	}
 	for id, command := range view.Aggregate.Commands {

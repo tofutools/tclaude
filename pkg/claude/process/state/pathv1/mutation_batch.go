@@ -349,7 +349,8 @@ func (b MutationBatch) validateOwnedSentinels() error {
 				_ = decodeExactPayload(mutation.Before, &before)
 			}
 			_ = decodeExactPayload(mutation.After, &after)
-			if before.State != after.State && after.ClosedByCommandID != MutationCommandPlaceholder {
+			openCreate := len(mutation.Before) == 0 && after.State == ScopeOpen
+			if before.State != after.State && !openCreate && after.ClosedByCommandID != MutationCommandPlaceholder {
 				return fmt.Errorf("%w: command-owned scope close lacks sentinel", ErrMutationInvalid)
 			}
 		case MutationReservation:
@@ -358,7 +359,8 @@ func (b MutationBatch) validateOwnedSentinels() error {
 				_ = decodeExactPayload(mutation.Before, &before)
 			}
 			_ = decodeExactPayload(mutation.After, &after)
-			if before.State != after.State && after.CommandID != MutationCommandPlaceholder {
+			openCreate := len(mutation.Before) == 0 && after.State == ReservationOpen
+			if before.State != after.State && !openCreate && after.CommandID != MutationCommandPlaceholder {
 				return fmt.Errorf("%w: command-owned reservation transition lacks sentinel", ErrMutationInvalid)
 			}
 			if after.CloseReceipt != nil && !canonicalEqual(before.CloseReceipt, after.CloseReceipt) {

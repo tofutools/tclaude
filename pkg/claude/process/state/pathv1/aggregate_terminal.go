@@ -175,6 +175,9 @@ func (i *aggregateIndex) decodeRouteTerminalPayload(current PathRecord, route Co
 		if plan.SettlementCommandID != id.InputDigest || plan.SourceActivationID != id.SourceActivationID || plan.SourceGeneration != id.SourceGeneration || plan.SourcePathID != id.SourcePathID || plan.Attempt != id.Attempt || plan.CauseDigest != id.CauseDigest || plan.ResultCode != id.ResultCode {
 			return routeTerminalPayload{}, fmt.Errorf("typed route plan differs from command identity")
 		}
+		if _, err := plan.Batch.preState(i.view.Routing, route.ID); err != nil {
+			return routeTerminalPayload{}, fmt.Errorf("typed route plan does not prove the complete durable transition: %w", err)
+		}
 		materialized, err := plan.Batch.materialize(route.ID)
 		if err != nil {
 			return routeTerminalPayload{}, fmt.Errorf("typed route plan materialization: %w", err)

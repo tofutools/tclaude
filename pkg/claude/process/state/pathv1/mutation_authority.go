@@ -38,6 +38,14 @@ func validateRouteMutationSet(pre RoutingState, plan RoutePathsPlan, sourceAfter
 		if path.ParentPathID != plan.SourcePathID {
 			return fmt.Errorf("%w: produced path %q is not a child of the routed source", ErrMutationInvalid, pathID)
 		}
+		if path.Kind == PathImpossibleEdge {
+			if path.ImpossibleCauseDigest == "" {
+				return fmt.Errorf("%w: produced impossible path %q lacks its exact cause set", ErrMutationInvalid, pathID)
+			}
+			if err := authorizeCauseSet(pre, plan.Batch, allowed, path.ImpossibleCauseDigest); err != nil {
+				return err
+			}
+		}
 		allowed[mutationTarget{kind: MutationPath, key: pathID}] = struct{}{}
 		if _, exists := pre.Scopes[path.ScopeID]; !exists && path.ScopeID != "" {
 			producedScopes[path.ScopeID] = struct{}{}
@@ -84,7 +92,10 @@ func validateRouteMutationSet(pre RoutingState, plan RoutePathsPlan, sourceAfter
 			allowed[mutationTarget{kind: MutationCauseRecord, key: sourceAfter.TerminalCauseID}] = struct{}{}
 		}
 	}
-	return validateExactMutationTargets(plan.Batch, allowed)
+	if err := validateExactMutationTargets(plan.Batch, allowed); err != nil {
+		return err
+	}
+	return validateRouteEventSeq(plan.Batch)
 }
 
 func authorizeCauseSet(pre RoutingState, batch MutationBatch, allowed map[mutationTarget]struct{}, digest CauseDigest) error {
@@ -99,6 +110,10 @@ func authorizeCauseSet(pre RoutingState, batch MutationBatch, allowed map[mutati
 		}
 		allowed[mutationTarget{kind: MutationCauseSet, key: digest}] = struct{}{}
 	}
+	wantDigest, err := CauseSetIdentity(set.CauseIDs)
+	if err != nil || wantDigest != digest {
+		return fmt.Errorf("%w: cause set %q bytes do not match its digest", ErrMutationInvalid, digest)
+	}
 	for _, causeID := range set.CauseIDs {
 		if _, exists := pre.CauseRecords[causeID]; exists {
 			continue
@@ -110,6 +125,54 @@ func authorizeCauseSet(pre RoutingState, batch MutationBatch, allowed map[mutati
 		allowed[mutationTarget{kind: MutationCauseRecord, key: causeID}] = struct{}{}
 	}
 	return nil
+}
+
+func validateRouteEventSeq(batch MutationBatch) error {
+	want := batch.EventSeq
+	for _, mutation := range batch.Mutations {
+		if len(mutation.After) == 0 {
+			continue
+		}
+		switch mutation.Kind {
+		case MutationPath:
+			var record PathRecord
+			if err := decodeExactPayload(mutation.After, &record); err != nil {
+				return err
+			}
+			if record.UpdatedSeq != want || (len(mutation.Before) == 0 && record.CreatedSeq != want) || (record.Disposition != nil && record.Disposition.CommandID == MutationCommandPlaceholder && record.Disposition.EventSeq != want) {
+				return routeEventSeqError(mutation, want)
+			}
+		case MutationScope:
+			var record ScopeRecord
+			if err := decodeExactPayload(mutation.After, &record); err != nil {
+				return err
+			}
+			if len(mutation.Before) != 0 || record.EventSeq != want {
+				return routeEventSeqError(mutation, want)
+			}
+		case MutationReservation:
+			var record ActivationReservation
+			if err := decodeExactPayload(mutation.After, &record); err != nil {
+				return err
+			}
+			if len(mutation.Before) != 0 || record.EventSeq != want || (record.CloseReceipt != nil && record.CloseReceipt.EventSeq != want) {
+				return routeEventSeqError(mutation, want)
+			}
+		case MutationCauseRecord:
+			var record CauseRecord
+			if err := decodeExactPayload(mutation.After, &record); err != nil {
+				return err
+			}
+			if len(mutation.Before) != 0 || record.EventSeq != want || record.SourceCommandID != MutationCommandPlaceholder {
+				return routeEventSeqError(mutation, want)
+			}
+		}
+	}
+	return nil
+}
+
+func routeEventSeqError(mutation RecordMutation, want int64) error {
+	return fmt.Errorf("%w: route-owned post record %s/%s is not coupled to reducer event %d", ErrMutationInvalid, mutation.Kind, mutation.Key, want)
 }
 
 func validateActivationMutationSet(pre RoutingState, plan ActivateGenerationPlan, before, after ActivationReservation) error {

@@ -244,6 +244,252 @@ func TestRoutePathsTypedTerminalReplayAndStrictEnvelope(t *testing.T) {
 	}
 }
 
+func TestRouteMutationAuthorityImpossibleCauseClosureAndForkEvent(t *testing.T) {
+	makeSource := func() RoutingState {
+		state := NewRoutingState()
+		state.Scopes["root"] = ScopeRecord{ID: "root", RunID: "run", Generation: 1, ExpectedBranchEdgeIDs: []EdgeID{}, State: ScopeOpen, EventSeq: 1}
+		state.Paths["source"] = PathRecord{ID: "source", Kind: PathActivationOutput, State: PathLive, SourceActivation: ActivationRef{ID: "activation", Generation: 1}, ScopeID: "root", CandidateLineage: []CandidateLineageFrame{}, CreatedSeq: 1, UpdatedSeq: 1}
+		return state
+	}
+	finishSource := func(after *RoutingState, state PathState, produced []PathID) PathRecord {
+		source := after.Paths["source"]
+		source.State = state
+		source.ProducedPathIDs = produced
+		source.UpdatedSeq = 5
+		dispositionID, _ := DispositionReceiptIdentity(source.ID, PathLive, state, "route", MutationCommandPlaceholder, "", 5)
+		source.Disposition = &DispositionReceipt{ID: dispositionID, PathID: source.ID, FromState: PathLive, ToState: state, ReasonCode: "route", CommandID: MutationCommandPlaceholder, EventSeq: 5}
+		after.Paths[source.ID] = source
+		return source
+	}
+	makePlan := func(t *testing.T, before, after RoutingState, produced []PathID) (RoutePathsPlan, PathRecord) {
+		t.Helper()
+		batch, err := NewMutationBatch(&before, &after, 5)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return RoutePathsPlan{SourcePathID: "source", ProducedPathIDs: produced, Batch: batch}, after.Paths["source"]
+	}
+
+	t.Run("impossible_cause_closure", func(t *testing.T) {
+		before := makeSource()
+		before.Reservations["reservation"] = ActivationReservation{ID: "reservation", RunID: "run", NodeID: "target", ScopeID: "root", Generation: 1, JoinPolicy: JoinExclusive, Candidates: []CandidateRecord{}, PossibleSlots: []PossibleSlotRecord{}, State: ReservationOpen, EventSeq: 1}
+		after := Clone(before)
+		causeID, _ := CauseIdentity("", TerminalFailed, "impossible_edge", "", MutationCommandPlaceholder, "", 5)
+		causeDigest, _ := CauseSetIdentity([]CauseID{causeID})
+		edge := EdgeKey{TemplateRef: "template", FromNodeID: "source", Outcome: "missing", ToNodeID: "target"}
+		edge.ID, _ = EdgeIdentity(edge.TemplateRef, edge.FromNodeID, edge.Outcome, edge.ToNodeID)
+		childID, _ := ImpossibleEdgePathIdentity(causeDigest, edge.ID, "reservation")
+		after.CauseRecords[causeID] = CauseRecord{ID: causeID, TerminalKind: TerminalFailed, DispositionReason: "impossible_edge", SourceCommandID: MutationCommandPlaceholder, EventSeq: 5}
+		after.CauseSets[causeDigest] = CauseSetRecord{Digest: causeDigest, CauseIDs: []CauseID{causeID}}
+		after.Paths[childID] = PathRecord{ID: childID, Kind: PathImpossibleEdge, State: PathImpossible, ParentPathID: "source", SourceActivation: ActivationRef{ID: "activation", Generation: 1}, Edge: &edge, TargetReservationID: "reservation", ScopeID: "root", CandidateLineage: []CandidateLineageFrame{}, ImpossibleCauseDigest: causeDigest, CreatedSeq: 5, UpdatedSeq: 5}
+		finishSource(&after, PathRouted, []PathID{childID})
+		plan, sourceAfter := makePlan(t, before, after, []PathID{childID})
+		if err := validateRouteMutationSet(before, plan, sourceAfter); err != nil {
+			t.Fatalf("valid impossible-edge route: %v", err)
+		}
+
+		aggregate, arrivedPathID, _ := validOpenArrivalFixture(t)
+		otherReservationID := addOpenAuthorityReservation(t, &aggregate, "other-target")
+		otherReservation := aggregate.Routing.Reservations[otherReservationID]
+		otherCandidate := otherReservation.Candidates[0]
+		otherEdge := EdgeKey{TemplateRef: aggregate.TemplateRef, FromNodeID: "start", Outcome: "pass", ToNodeID: "other-target"}
+		otherEdge.ID, _ = EdgeIdentity(otherEdge.TemplateRef, otherEdge.FromNodeID, otherEdge.Outcome, otherEdge.ToNodeID)
+		otherLineageID, _ := CandidateLineageIdentity("", otherReservationID, otherCandidate.ID)
+		arrived := aggregate.Routing.Paths[arrivedPathID]
+		parentID := arrived.ParentPathID
+		oldRouteID := aggregate.Routing.Paths[parentID].Disposition.CommandID
+		delete(aggregate.Commands, oldRouteID)
+		fullBefore := Clone(*aggregate.Routing)
+		delete(fullBefore.Paths, arrivedPathID)
+		fullParent := fullBefore.Paths[parentID]
+		fullParent.State = PathLive
+		fullParent.ProducedPathIDs = nil
+		fullParent.Disposition = nil
+		fullParent.UpdatedSeq = 1
+		fullBefore.Paths[parentID] = fullParent
+		fullAfter := Clone(fullBefore)
+		fullAfter.Paths[arrived.ID] = arrived
+		fullCauseID, _ := CauseIdentity("", TerminalImpossible, "condition_false", "", MutationCommandPlaceholder, "", 2)
+		fullCauseDigest, _ := CauseSetIdentity([]CauseID{fullCauseID})
+		fullImpossibleID, _ := ImpossibleEdgePathIdentity(fullCauseDigest, otherEdge.ID, otherReservationID)
+		impossible := PathRecord{
+			ID: fullImpossibleID, Kind: PathImpossibleEdge, State: PathImpossible,
+			ParentPathID: parentID, SourceActivation: arrived.SourceActivation, Edge: &otherEdge,
+			TargetReservationID: otherReservationID, CandidateID: otherCandidate.ID, ScopeID: arrived.ScopeID,
+			CandidateLineage:   []CandidateLineageFrame{{ID: otherLineageID, ReservationID: otherReservationID, CandidateID: otherCandidate.ID}},
+			CandidateLineageID: otherLineageID, LineageDepth: 1, ImpossibleCauseDigest: fullCauseDigest,
+			CreatedSeq: 2, UpdatedSeq: 2,
+		}
+		fullAfter.Paths[impossible.ID] = impossible
+		fullParent = fullAfter.Paths[parentID]
+		fullParent.State = PathRouted
+		fullParent.ProducedPathIDs = []PathID{arrived.ID, impossible.ID}
+		slices.Sort(fullParent.ProducedPathIDs)
+		fullParent.UpdatedSeq = 2
+		fullDispositionID, _ := DispositionReceiptIdentity(parentID, PathLive, PathRouted, "route", MutationCommandPlaceholder, "", 2)
+		fullParent.Disposition = &DispositionReceipt{ID: fullDispositionID, PathID: parentID, FromState: PathLive, ToState: PathRouted, ReasonCode: "route", CommandID: MutationCommandPlaceholder, EventSeq: 2}
+		fullAfter.Paths[parentID] = fullParent
+		fullAfter.CauseRecords[fullCauseID] = CauseRecord{ID: fullCauseID, TerminalKind: TerminalImpossible, DispositionReason: "condition_false", SourceCommandID: MutationCommandPlaceholder, EventSeq: 2}
+		fullAfter.CauseSets[fullCauseDigest] = CauseSetRecord{Digest: fullCauseDigest, CauseIDs: []CauseID{fullCauseID}}
+		fullBatch, err := NewMutationBatch(&fullBefore, &fullAfter, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		settlement := makeTestCommand(t, CommandIdentity{
+			RunID: aggregate.RunID, Kind: CommandSettleAttempt, PayloadSchema: 1,
+			SourceActivationID: fullParent.SourceActivation.ID, SourceGeneration: 1, Attempt: 1,
+			InputDigest: "perform", PlanDigest: "observation", ResultCode: "pass",
+		}, CommandObserved)
+		aggregate.Commands[settlement.ID] = settlement
+		aggregate.Routing = &fullBefore
+		fullView := MutationReplayView{Aggregate: aggregate, Checkpoint: CheckpointBinding{Generation: 13, Digest: strings.Repeat("d", 64)}}
+		fullPlan := RoutePathsPlan{
+			SettlementCommandID: settlement.ID, SourceActivationID: fullParent.SourceActivation.ID,
+			SourceGeneration: 1, SourcePathID: parentID, Attempt: 1, CauseDigest: fullCauseDigest,
+			ResultCode: "exclusive/pass", ProducedPathIDs: fullParent.ProducedPathIDs, Batch: fullBatch,
+		}
+		fullPayload, err := EncodeRoutePathsPayload(fullView, fullPlan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fullIdentity := CommandIdentity{
+			RunID: aggregate.RunID, Kind: CommandRoutePaths, PayloadSchema: 1,
+			SourceActivationID: fullParent.SourceActivation.ID, SourceGeneration: 1, SourcePathID: parentID, Attempt: 1,
+			InputDigest: settlement.ID, CauseDigest: fullCauseDigest, PlanDigest: payloadDigest(fullPayload), ResultCode: "exclusive/pass",
+		}
+		fullCommand := commandWithPayload(t, fullIdentity, CommandObserved, fullPayload)
+		fullView.Aggregate.Commands[fullCommand.ID] = fullCommand
+		if result, err := ReplayRoutePaths(fullView, fullCommand); err != nil || result.Disposition != ReplayApplied {
+			t.Fatalf("full impossible-edge route replay = %q, %v", result.Disposition, err)
+		}
+
+		missing := Clone(after)
+		delete(missing.CauseSets, causeDigest)
+		delete(missing.CauseRecords, causeID)
+		missingPlan, missingSource := makePlan(t, before, missing, []PathID{childID})
+		if err := validateRouteMutationSet(before, missingPlan, missingSource); !errors.Is(err, ErrMutationInvalid) {
+			t.Fatalf("missing impossible cause closure error = %v", err)
+		}
+
+		extra := Clone(after)
+		extraDigest, _ := CauseSetIdentity(nil)
+		extra.CauseSets[extraDigest] = CauseSetRecord{Digest: extraDigest, CauseIDs: []CauseID{}}
+		extraPlan, extraSource := makePlan(t, before, extra, []PathID{childID})
+		if err := validateRouteMutationSet(before, extraPlan, extraSource); !errors.Is(err, ErrMutationInvalid) {
+			t.Fatalf("extra impossible cause set error = %v", err)
+		}
+	})
+
+	t.Run("fork_event_sequences", func(t *testing.T) {
+		before := makeSource()
+		makeAfter := func(scopeSeq, reservationSeq int64) RoutingState {
+			after := Clone(before)
+			childID := PathID("fork-child")
+			after.Paths[childID] = PathRecord{ID: childID, Kind: PathEdge, State: PathLive, ParentPathID: "source", SourceActivation: ActivationRef{ID: "activation", Generation: 1}, ScopeID: "fork-scope", CandidateLineage: []CandidateLineageFrame{}, CreatedSeq: 5, UpdatedSeq: 5}
+			after.Scopes["fork-scope"] = ScopeRecord{ID: "fork-scope", RunID: "run", ParentScopeID: "root", ForkOutputPathID: "source", Generation: 1, ExpectedBranchEdgeIDs: []EdgeID{}, JoinReservationID: "fork-reservation", State: ScopeOpen, EventSeq: scopeSeq}
+			after.Reservations["fork-reservation"] = ActivationReservation{ID: "fork-reservation", RunID: "run", NodeID: "join", ScopeID: "root", Generation: 1, JoinPolicy: JoinExclusive, Candidates: []CandidateRecord{}, PossibleSlots: []PossibleSlotRecord{}, State: ReservationOpen, EventSeq: reservationSeq}
+			finishSource(&after, PathSplit, []PathID{childID})
+			return after
+		}
+		valid := makeAfter(5, 5)
+		plan, sourceAfter := makePlan(t, before, valid, []PathID{"fork-child"})
+		if err := validateRouteMutationSet(before, plan, sourceAfter); err != nil {
+			t.Fatalf("valid fork route: %v", err)
+		}
+		for _, test := range []struct {
+			name                     string
+			scopeSeq, reservationSeq int64
+		}{
+			{name: "wrong_scope", scopeSeq: 4, reservationSeq: 5},
+			{name: "negative_scope", scopeSeq: -1, reservationSeq: 5},
+			{name: "wrong_reservation", scopeSeq: 5, reservationSeq: 4},
+			{name: "negative_reservation", scopeSeq: 5, reservationSeq: -1},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				after := makeAfter(test.scopeSeq, test.reservationSeq)
+				plan, sourceAfter := makePlan(t, before, after, []PathID{"fork-child"})
+				if err := validateRouteMutationSet(before, plan, sourceAfter); !errors.Is(err, ErrMutationInvalid) {
+					t.Fatalf("fork event sequence error = %v", err)
+				}
+			})
+		}
+	})
+}
+
+func TestTypedTerminalRouteRequiresCompleteBatchPostState(t *testing.T) {
+	view := validGenesisFixture(t)
+	pathID := view.Authority.Genesis.OutputPathID
+	path := view.Routing.Paths[pathID]
+	settlement := addTerminalAttemptCommands(t, &view, path.SourceActivation.ID, path.SourceActivation.Generation, 1, "pass", "", "observed")
+	before := Clone(*view.Routing)
+	beforePath := before.Paths[path.ID]
+	beforePath.State = PathLive
+	beforePath.UpdatedSeq = 1
+	before.Paths[beforePath.ID] = beforePath
+	afterTemplate := Clone(before)
+	path.State = PathEnded
+	path.UpdatedSeq = 2
+	dispositionID, _ := DispositionReceiptIdentity(path.ID, PathLive, PathEnded, "completed", MutationCommandPlaceholder, "", 2)
+	path.Disposition = &DispositionReceipt{ID: dispositionID, PathID: path.ID, FromState: PathLive, ToState: PathEnded, ReasonCode: "completed", CommandID: MutationCommandPlaceholder, EventSeq: 2}
+	afterTemplate.Paths[path.ID] = path
+	extraDigest, _ := CauseSetIdentity(nil)
+	afterTemplate.CauseSets[extraDigest] = CauseSetRecord{Digest: extraDigest, CauseIDs: []CauseID{}}
+	batch, err := NewMutationBatch(&before, &afterTemplate, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view.Routing = &before
+	replayView := MutationReplayView{Aggregate: view, Checkpoint: CheckpointBinding{Generation: 12, Digest: strings.Repeat("c", 64)}}
+	plan := RoutePathsPlan{
+		SettlementCommandID: settlement.ID, SourceActivationID: path.SourceActivation.ID,
+		SourceGeneration: path.SourceActivation.Generation, SourcePathID: path.ID, Attempt: 1,
+		CauseDigest: "complete-route", ResultCode: "pass", ProducedPathIDs: []PathID{}, Batch: batch,
+	}
+	payload, err := EncodeRoutePathsPayload(replayView, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := CommandIdentity{
+		RunID: view.RunID, Kind: CommandRoutePaths, PayloadSchema: 1,
+		SourceActivationID: path.SourceActivation.ID, SourceGeneration: path.SourceActivation.Generation,
+		SourcePathID: path.ID, Attempt: 1, InputDigest: settlement.ID,
+		CauseDigest: plan.CauseDigest, PlanDigest: payloadDigest(payload), ResultCode: plan.ResultCode,
+	}
+	command := commandWithPayload(t, identity, CommandObserved, payload)
+	replayView.Aggregate.Commands[command.ID] = command
+	routing, disposition, err := batch.replay(&before, command.ID)
+	if err != nil || disposition != ReplayApplied {
+		t.Fatalf("full typed terminal batch application = %q, %v", disposition, err)
+	}
+	post := replayView.Aggregate
+	post.Routing = &routing
+	if report := ValidateAggregate(post); !report.Valid() {
+		t.Fatalf("complete typed terminal batch diagnostics: %#v", report.Diagnostics)
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*RoutingState)
+	}{
+		{name: "missing_non_source_record", mutate: func(state *RoutingState) { delete(state.CauseSets, extraDigest) }},
+		{name: "different_non_source_record", mutate: func(state *RoutingState) {
+			set := state.CauseSets[extraDigest]
+			set.CauseIDs = []CauseID{"different"}
+			state.CauseSets[extraDigest] = set
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			partial := Clone(routing)
+			test.mutate(&partial)
+			aggregate := post
+			aggregate.Routing = &partial
+			report := ValidateAggregate(aggregate)
+			if !reportHasCode(report, "terminal_command_provenance") {
+				t.Fatalf("partial typed terminal batch diagnostics: %#v", report.Diagnostics)
+			}
+		})
+	}
+}
+
 func TestActivateAnyRealCandidateBoundaryAndMutationFormula(t *testing.T) {
 	makePlan := func(count int) ActivateGenerationPlan {
 		candidates := make([]CandidateRecord, count)
@@ -810,6 +1056,29 @@ func TestCompleteRunClaimObservationAndRecovery(t *testing.T) {
 	}
 	if _, err := RecoverCompleteRun(ghost); !errors.Is(err, ErrMutationInconsistent) {
 		t.Fatalf("completion recovery ignored checkpoint-only active command: %v", err)
+	}
+	checkpointOnlyTerminal := ghostCommand
+	checkpointOnlyTerminal.State = CommandObserved
+	terminalOnly := pre
+	terminalOnly.CheckpointJSON = completionCheckpoint(t, "running", 1, "sum-1", map[string]CommandRecord{checkpointOnlyTerminal.ID: checkpointOnlyTerminal})
+	bindCompletionCheckpoint(t, &terminalOnly)
+	if _, err := PlanCompleteRun(terminalOnly); !errors.Is(err, ErrMutationInconsistent) {
+		t.Fatalf("completion planned with checkpoint-only terminal command: %v", err)
+	}
+
+	driftCheckpoint := checkpointOnlyTerminal
+	driftAggregate := checkpointOnlyTerminal
+	driftAggregate.State = CommandReconciled
+	drift := pre
+	drift.Aggregate.Commands = cloneMap(pre.Aggregate.Commands)
+	drift.Aggregate.Commands[driftAggregate.ID] = driftAggregate
+	drift.CheckpointJSON = completionCheckpoint(t, "running", 1, "sum-1", map[string]CommandRecord{driftCheckpoint.ID: driftCheckpoint})
+	bindCompletionCheckpoint(t, &drift)
+	if err := validateCompletionView(drift); !errors.Is(err, ErrMutationInconsistent) {
+		t.Fatalf("checkpoint/aggregate terminal command byte drift error = %v", err)
+	}
+	if err := validateCompletionView(pre); err != nil {
+		t.Fatalf("aggregate-only terminal command history rejected: %v", err)
 	}
 	for _, status := range []string{"paused", "dirty", "inconsistent", "completed"} {
 		unsafe := pre
