@@ -13,13 +13,24 @@ import (
 )
 
 type fixedMigrationAuthority struct {
-	needed pathv1.UpgradeNeeded
-	calls  int
+	needed            pathv1.UpgradeNeeded
+	coherent          pathv1.UpgradeNeeded
+	calls             int
+	confirmationCalls int
 }
 
 func (a *fixedMigrationAuthority) UpgradeNeeded(context.Context, string) (pathv1.UpgradeNeeded, error) {
 	a.calls++
 	return a.needed, nil
+}
+
+func (a *fixedMigrationAuthority) ConfirmUpgradeNeeded(_ context.Context, _ string, supplied pathv1.UpgradeNeeded) error {
+	a.confirmationCalls++
+	return pathv1.RequireExactUpgradeNeeded(supplied, a.coherent)
+}
+
+func newFixedMigrationAuthority(needed pathv1.UpgradeNeeded) *fixedMigrationAuthority {
+	return &fixedMigrationAuthority{needed: needed, coherent: needed}
 }
 
 func TestDecideBeforePlanningUsesOnlyTypedUpgradeNeeded(t *testing.T) {
@@ -36,13 +47,13 @@ func TestDecideBeforePlanningUsesOnlyTypedUpgradeNeeded(t *testing.T) {
 		{name: "upgrade", needed: upgrade, want: PrePlanningUpgrade},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			authority := &fixedMigrationAuthority{needed: tc.needed}
+			authority := newFixedMigrationAuthority(tc.needed)
 			decision, err := DecideBeforePlanning(t.Context(), authority, "run")
 			if err != nil {
 				t.Fatal(err)
 			}
-			if decision.Action != tc.want || authority.calls != 1 {
-				t.Fatalf("decision = %#v, calls = %d", decision, authority.calls)
+			if decision.Action != tc.want || authority.calls != 1 || authority.confirmationCalls != 1 {
+				t.Fatalf("decision = %#v, calls = %d, confirmations = %d", decision, authority.calls, authority.confirmationCalls)
 			}
 		})
 	}
@@ -73,7 +84,7 @@ func TestDecideBeforePlanningRejectsForgedAuthority(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			needed := validUpgradeNeeded()
 			tc.mutate(&needed)
-			_, err := DecideBeforePlanning(t.Context(), &fixedMigrationAuthority{needed: needed}, "run")
+			_, err := DecideBeforePlanning(t.Context(), newFixedMigrationAuthority(needed), "run")
 			if err == nil {
 				t.Fatal("forged authority was accepted")
 			}
@@ -271,10 +282,29 @@ func TestDecideBeforePlanningRejectsForgedCheckpointAdminProvenance(t *testing.T
 			} else if test.rebind {
 				rebindCheckpointAdminIdentity(t, &needed)
 			}
-			if _, err := DecideBeforePlanning(t.Context(), &fixedMigrationAuthority{needed: needed}, "run"); err == nil {
+			if _, err := DecideBeforePlanning(t.Context(), newFixedMigrationAuthority(needed), "run"); err == nil {
 				t.Fatal("forged checkpoint admin provenance was accepted")
 			}
 		})
+	}
+}
+
+func TestDecideBeforePlanningRequiresCoherentSourceConfirmation(t *testing.T) {
+	coherent := validUpgradeNeededWithCheckpointAdmin(t)
+	forged := coherent
+	forged.ActiveLegacyIDs = nil
+	forged.CheckpointAdminRecords = nil
+	forged.Reason = pathv1.UpgradeMigrationRequired
+	if err := pathv1.ValidateUpgradeNeeded(forged); err != nil {
+		t.Fatalf("total-omission forgery should be structurally valid: %v", err)
+	}
+	authority := &fixedMigrationAuthority{needed: forged, coherent: coherent}
+	decision, err := DecideBeforePlanning(t.Context(), authority, "run")
+	if err == nil {
+		t.Fatalf("total-omission forgery selected decision %#v", decision)
+	}
+	if authority.calls != 1 || authority.confirmationCalls != 1 || decision.Action == PrePlanningUpgrade {
+		t.Fatalf("decision = %#v, calls = %d, confirmations = %d", decision, authority.calls, authority.confirmationCalls)
 	}
 }
 

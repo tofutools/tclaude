@@ -336,6 +336,35 @@ func TestAssessUpgradeNeededCarriesBoundAdminResolution(t *testing.T) {
 	}
 }
 
+func TestAssessUpgradeNeededClassifiesNonResolutionAdminAsDrain(t *testing.T) {
+	ref := "demo@sha256:" + strings.Repeat("a", 64)
+	st := legacy.New("run", ref, ref, nil)
+	record := PathV1AdminRecord{
+		RunID: "run", AdminType: string(legacy.EventAdminRepairRecorded), Actor: "human:operator",
+		ReasonCode: "repaired", EvidenceRef: "ticket:TCL-507", Timestamp: "2026-07-15T00:00:00Z",
+	}
+	var err error
+	record.ID, err = LegacyAdminRecordIdentity(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	needed, err := AssessUpgradeNeeded(
+		t.Context(), []byte(`{"checkpoint":true}`), &st, ref, strings.Repeat("c", 64),
+		map[string]PathV1AdminRecord{record.ID: record}, nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if needed.Reason != UpgradeLegacyDrainRequired || len(needed.ActiveLegacyIDs) != 1 ||
+		needed.ActiveLegacyIDs[0] != (LegacyActiveID{Kind: LegacyActiveAdminRecord, ID: needed.CheckpointAdminRecords[0].ID}) {
+		t.Fatalf("nonresolution admin classification = %#v", needed)
+	}
+	if err := ValidateUpgradeNeeded(needed); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func validUpgradeNeededWithCheckpointAdmin(t *testing.T) UpgradeNeeded {
 	t.Helper()
 	resolution := BlockResolution{

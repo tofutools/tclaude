@@ -8,10 +8,13 @@ import (
 )
 
 // MigrationReadinessAuthority is the dormant pre-planning seam for the later
-// v7 release gate. The live v6 Host deliberately does not hold or call this
-// capability in TCL-502.
+// v7 release gate. UpgradeNeeded returns a detached candidate; before any
+// decision, ConfirmUpgradeNeeded must rederive authority from a coherent
+// source view and require an exact match with that candidate. The live v6 Host
+// deliberately does not hold or call this capability in TCL-502.
 type MigrationReadinessAuthority interface {
 	UpgradeNeeded(context.Context, string) (pathv1.UpgradeNeeded, error)
+	ConfirmUpgradeNeeded(context.Context, string, pathv1.UpgradeNeeded) error
 }
 
 type PrePlanningAction string
@@ -41,6 +44,9 @@ func DecideBeforePlanning(ctx context.Context, authority MigrationReadinessAutho
 	}
 	if needed.RunID != runID {
 		return PrePlanningDecision{}, fmt.Errorf("migration readiness authority returned an invalid binding")
+	}
+	if err := authority.ConfirmUpgradeNeeded(ctx, runID, needed); err != nil {
+		return PrePlanningDecision{}, fmt.Errorf("migration readiness authority confirmation failed: %w", err)
 	}
 	action := PrePlanningUpgrade
 	if len(needed.ActiveLegacyIDs) > 0 {

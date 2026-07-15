@@ -50,6 +50,7 @@ func (r UpgradeNeededReason) Valid() bool {
 type LegacyActiveKind string
 
 const (
+	LegacyActiveAdminRecord     LegacyActiveKind = "admin_record"
 	LegacyActiveCommand         LegacyActiveKind = "command"
 	LegacyActiveAttempt         LegacyActiveKind = "attempt"
 	LegacyActiveWait            LegacyActiveKind = "wait"
@@ -63,7 +64,7 @@ const (
 
 func (k LegacyActiveKind) Valid() bool {
 	switch k {
-	case LegacyActiveCommand, LegacyActiveAttempt, LegacyActiveWait, LegacyActiveTimer,
+	case LegacyActiveAdminRecord, LegacyActiveCommand, LegacyActiveAttempt, LegacyActiveWait, LegacyActiveTimer,
 		LegacyActiveContact, LegacyActiveObligation, LegacyActiveBlockedNode,
 		LegacyActiveBlockResolution, LegacyActiveSideEffect:
 		return true
@@ -197,15 +198,16 @@ func ValidateUpgradeNeeded(needed UpgradeNeeded) error {
 	if len(needed.CheckpointAdminRecords) > MaxLegacyAdminRecordCount {
 		return &UpgradeNeededOverBudgetError{Limit: "legacy_admin_records", Value: len(needed.CheckpointAdminRecords), Maximum: MaxLegacyAdminRecordCount}
 	}
-	if needed.Reason == UpgradeMigrationRequired && len(needed.CheckpointAdminRecords) != 0 {
-		return fmt.Errorf("upgrade-needed migration classification has checkpoint admin provenance")
-	}
 	for i, admin := range needed.CheckpointAdminRecords {
 		if err := validateCheckpointAdminRecord(needed.RunID, needed.Checkpoint, admin); err != nil {
 			return fmt.Errorf("upgrade-needed checkpoint admin record %d: %w", i, err)
 		}
-		if admin.Resolution != nil && !hasActiveLegacyID(needed.ActiveLegacyIDs, LegacyActiveID{Kind: LegacyActiveBlockResolution, ID: admin.ID}) {
-			return fmt.Errorf("upgrade-needed checkpoint admin record %d resolution is absent from active legacy ids", i)
+		activeKind := LegacyActiveAdminRecord
+		if admin.Resolution != nil {
+			activeKind = LegacyActiveBlockResolution
+		}
+		if !hasActiveLegacyID(needed.ActiveLegacyIDs, LegacyActiveID{Kind: activeKind, ID: admin.ID}) {
+			return fmt.Errorf("upgrade-needed checkpoint admin record %d is absent from active legacy ids as %q", i, activeKind)
 		}
 		if i > 0 && strings.Compare(needed.CheckpointAdminRecords[i-1].ID, admin.ID) >= 0 {
 			return fmt.Errorf("upgrade-needed checkpoint admin records are not strictly sorted")
@@ -429,14 +431,17 @@ func activeLegacyIDs(ctx context.Context, st *legacy.State, admins []CheckpointL
 	adminByLegacyID := make(map[string]string, len(admins))
 	for _, admin := range admins {
 		adminByLegacyID[admin.LegacyID] = admin.ID
+		kind := LegacyActiveAdminRecord
+		if _, ok := adminResolutions[admin.LegacyID]; ok {
+			kind = LegacyActiveBlockResolution
+		}
+		if err := add(kind, admin.ID); err != nil {
+			return nil, err
+		}
 	}
 	for legacyID := range adminResolutions {
-		id, ok := adminByLegacyID[legacyID]
-		if !ok {
+		if _, ok := adminByLegacyID[legacyID]; !ok {
 			return nil, fmt.Errorf("legacy admin resolution %q has no admin record", legacyID)
-		}
-		if err := add(LegacyActiveBlockResolution, id); err != nil {
-			return nil, err
 		}
 	}
 
