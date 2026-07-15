@@ -38,6 +38,18 @@ type processTemplateListView struct {
 	Versions      []processTemplateVersionView `json:"versions"`
 }
 
+// processTemplateHeadView is the bounded polling shape plus provenance for
+// that exact committed generation. Attribution stays optional: legacy or
+// hand-written versions may have none, and callers must not infer an identity.
+// Ref + SourceHash remain the generation authority.
+type processTemplateHeadView struct {
+	ID         string         `json:"id"`
+	Ref        string         `json:"ref"`
+	SourceHash string         `json:"sourceHash"`
+	Actor      state.ActorRef `json:"actor,omitempty"`
+	AuthoredAt *time.Time     `json:"authoredAt,omitempty"`
+}
+
 // processTemplateEditView is the editor's lossless wire model. Template holds
 // semantic fields only; layout stays separate because it is authoring metadata
 // and deliberately does not contribute to SemanticHash. Edges are normalized
@@ -162,7 +174,29 @@ func handleProcessTemplateHeads(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "process_template_heads", err.Error())
 		return
 	}
-	writeProcessJSON(w, http.StatusOK, map[string]any{"heads": heads})
+	views := make([]processTemplateHeadView, 0, len(heads))
+	for _, head := range heads {
+		view := processTemplateHeadView{ID: head.ID, Ref: head.Ref, SourceHash: head.SourceHash}
+		snapshot, snapshotErr := fs.GetTemplateAuthoringSnapshot(r.Context(), head.Ref)
+		if snapshotErr != nil {
+			writeError(w, http.StatusInternalServerError, "process_template_head", snapshotErr.Error())
+			return
+		}
+		// One semantic ref may carry several layout/source-only generations.
+		// Match both fields so this actor describes the polled committed head,
+		// not merely the last event attached to the semantic version.
+		for i := len(snapshot.Authorship) - 1; i >= 0; i-- {
+			authorship := snapshot.Authorship[i]
+			if authorship.Ref != head.Ref || authorship.SourceHash != head.SourceHash {
+				continue
+			}
+			view.Actor = authorship.Actor
+			view.AuthoredAt = &authorship.AuthoredAt
+			break
+		}
+		views = append(views, view)
+	}
+	writeProcessJSON(w, http.StatusOK, map[string]any{"heads": views})
 }
 
 func handleProcessTemplate(w http.ResponseWriter, r *http.Request) {

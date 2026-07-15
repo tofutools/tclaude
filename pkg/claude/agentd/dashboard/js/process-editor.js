@@ -31,7 +31,8 @@ import { openNodeDialog } from './process-node-dialog.js';
 import { openProcessParamsDialog } from './process-params-dialog.js';
 import { LiveValidation } from './process-validation.js';
 import {
-  NO_EXTERNAL_CHANGE, keepExternalChange, reconcileExternalChange,
+  NO_EXTERNAL_CHANGE, attachExternalReview, keepExternalChange, reconcileExternalChange,
+  sameTemplateGeneration, templateHeadFromEditView,
 } from './process-external-change.js';
 import {
   makeSelection, selectionContains, selectionItems, toggleSelection,
@@ -88,6 +89,7 @@ export class ProcessTemplateEditor {
       nodeEditable: options.nodeEditable,
       edgeEditable: options.edgeEditable,
     });
+    this.loadedView = structuredClone(view);
     this.blank = !!options.blank;
     this.selection = null;
     this.pendingMove = null;
@@ -98,6 +100,8 @@ export class ProcessTemplateEditor {
     this.externalReloadPending = false;
     this.externalDecisionPending = false;
     this.externalReloadSeq = 0;
+    this.externalReviewSeq = 0;
+    this.externalReviewPending = false;
     this.externalChange = NO_EXTERNAL_CHANGE;
     this.abort = new AbortController();
     this.buildDOM();
@@ -167,12 +171,21 @@ export class ProcessTemplateEditor {
       this.settingsButton, this.paramsButton, this.undoButton, this.redoButton, this.paletteButton, this.commandsButton, this.scribeButton, this.instantiateButton, this.saveButton,
     );
 
-    this.externalMessage = h('span', { class: 'process-editor-external-message', text: 'Template changed externally (new version)' });
+    this.externalMessage = h('span', { class: 'process-editor-external-message', text: 'A new version is available' });
+    this.externalReviewButton = h('button', { class: 'process-action', type: 'button', text: 'Review changes' });
     this.externalReloadButton = h('button', { class: 'process-action primary', type: 'button', text: 'Reload' });
     this.externalKeepButton = h('button', { class: 'process-action', type: 'button', text: 'Keep editing' });
+    this.externalActorButton = h('button', { class: 'process-action process-external-actor', type: 'button', hidden: '', text: 'Open agent' });
+    this.externalGraphSummary = h('div', { class: 'process-external-graph-summary' });
+    this.externalSourceSummary = h('pre', { class: 'process-external-source-summary' });
+    this.externalReviewPanel = h('div', { class: 'process-external-review', hidden: '' },
+      this.externalGraphSummary, this.externalSourceSummary);
+    const externalBar = h('div', { class: 'process-editor-external-bar' },
+      this.externalMessage, h('span', { class: 'spacer' }), this.externalActorButton,
+      this.externalReviewButton, this.externalReloadButton, this.externalKeepButton);
     this.externalBanner = h('div', {
       class: 'process-editor-external', role: 'status', hidden: '',
-    }, this.externalMessage, h('span', { class: 'spacer' }), this.externalReloadButton, this.externalKeepButton);
+    }, externalBar, this.externalReviewPanel);
 
     this.palette = this.buildPalette();
     this.stageHost = h('div', { class: 'process-editor-canvas-host' });
@@ -218,6 +231,8 @@ export class ProcessTemplateEditor {
     this.scribeButton.addEventListener('click', () => this.requestScribe(), { signal });
     this.externalReloadButton.addEventListener('click', () => this.reloadExternalChange(), { signal });
     this.externalKeepButton.addEventListener('click', () => this.keepExternalChange(), { signal });
+    this.externalReviewButton.addEventListener('click', () => this.toggleExternalReview(), { signal });
+    this.externalActorButton.addEventListener('click', () => this.options.onOpenActor?.(this.externalChange.actor), { signal });
     this.undoButton.addEventListener('click', () => this.applyHistory('undo'), { signal });
     this.redoButton.addEventListener('click', () => this.applyHistory('redo'), { signal });
     this.settingsButton.addEventListener('click', () => this.setSelection({ type: 'template' }), { signal });
@@ -271,9 +286,11 @@ export class ProcessTemplateEditor {
     // the request generation is the authoritative stale-response guard.
     this.saveSeq += 1;
     this.externalReloadSeq += 1;
+    this.externalReviewSeq += 1;
     this.savePending = false;
     this.externalReloadPending = false;
     this.externalDecisionPending = false;
+    this.externalReviewPending = false;
     this.abort.abort();
     this.nodeChooserDispose?.();
     this.nodeChooserDispose = null;
@@ -314,7 +331,8 @@ export class ProcessTemplateEditor {
     if (this.externalChange?.ref) {
       this.externalChange = reconcileExternalChange(this.externalChange, {
         loadedRef: model.currentRef, loadedSourceHash: model.sourceHash,
-        currentRef: this.externalChange.ref, currentSourceHash: this.externalChange.sourceHash, dirty: this.dirty,
+        currentRef: this.externalChange.ref, currentSourceHash: this.externalChange.sourceHash,
+        actor: this.externalChange.actor, authoredAt: this.externalChange.authoredAt, dirty: this.dirty,
       });
     }
     this.titleLabel.textContent = model.template.name
@@ -352,21 +370,106 @@ export class ProcessTemplateEditor {
     const externalPending = externalInteractionPending(this);
     this.externalBanner.hidden = !visible;
     this.externalBanner.classList.toggle('is-dirty', this.externalChange.kind === 'dirty');
+    const version = shortHash(String(this.externalChange.ref || '').split('@sha256:').at(-1));
+    const actor = this.options.describeActor?.(this.externalChange.actor) || null;
+    this.externalMessage.textContent = actor
+      ? `${actor.label} saved version ${version}${this.externalChange.kind === 'dirty' ? '; your local edits are untouched' : ''}`
+      : `Version ${version} is available${this.externalChange.kind === 'dirty' ? '; your local edits are untouched' : ''}`;
+    this.externalMessage.title = this.externalChange.authoredAt || this.externalChange.ref || '';
+    this.externalActorButton.hidden = !actor?.live;
+    this.externalActorButton.textContent = actor?.live ? `Open ${actor.label}` : 'Open agent';
     this.externalKeepButton.hidden = this.externalChange.kind !== 'dirty';
+    this.externalReloadButton.textContent = this.externalChange.kind === 'dirty' ? 'Reload & discard' : 'Apply update';
     this.externalReloadButton.disabled = externalPending || this.savePending;
     this.externalKeepButton.disabled = externalPending || this.savePending;
+    this.externalReviewButton.disabled = externalPending || this.externalReviewPending;
+    this.externalReviewButton.textContent = this.externalReviewPending ? 'Loading review…'
+      : this.externalReviewPanel.hidden ? 'Review changes' : 'Hide review';
+    const summary = this.externalChange.review?.summary;
+    if (summary) {
+      const parts = [];
+      if (summary.addedNodes.length) parts.push(`+${summary.addedNodes.length} node${summary.addedNodes.length === 1 ? '' : 's'} (${summary.addedNodes.join(', ')})`);
+      if (summary.removedNodes.length) parts.push(`−${summary.removedNodes.length} node${summary.removedNodes.length === 1 ? '' : 's'} (${summary.removedNodes.join(', ')})`);
+      if (summary.changedNodes.length) parts.push(`${summary.changedNodes.length} changed node${summary.changedNodes.length === 1 ? '' : 's'} (${summary.changedNodes.join(', ')})`);
+      if (summary.addedEdges) parts.push(`+${summary.addedEdges} edge${summary.addedEdges === 1 ? '' : 's'}`);
+      if (summary.removedEdges) parts.push(`−${summary.removedEdges} edge${summary.removedEdges === 1 ? '' : 's'}`);
+      if (summary.metadataChanged) parts.push('template settings changed');
+      this.externalGraphSummary.textContent = parts.length ? `Graph: ${parts.join(' · ')}` : 'Graph: no semantic changes (layout/source only)';
+      const source = summary.source;
+      this.externalSourceSummary.textContent = source
+        ? [`Source near line ${source.firstLine}: −${source.removedLines} / +${source.addedLines}`,
+          ...source.before.map((line) => `− ${line}`), ...source.after.map((line) => `+ ${line}`),
+          ...(source.truncated ? ['… concise preview truncated'] : []),
+          ...(this.externalChange.kind === 'dirty' ? ['Keep editing preserves this draft; Save still uses CAS and will stop on a 409 conflict.'] : []),
+        ].join('\n')
+        : (this.externalChange.kind === 'dirty'
+          ? 'Canonical source preview is unavailable. Keep editing preserves this draft; Save still uses CAS and will stop on a 409 conflict.'
+          : 'Canonical source preview is unavailable; the graph summary remains authoritative.');
+    } else {
+      this.externalGraphSummary.textContent = this.externalReviewPending
+        ? 'Loading the exact polled generation…' : 'Change summary unavailable; retry Review changes.';
+      this.externalSourceSummary.textContent = this.externalChange.kind === 'dirty'
+        ? 'Your local edits remain untouched. Keep editing preserves this draft; Save still uses CAS and will stop on a 409 conflict.' : '';
+    }
     if (this.body) this.body.inert = externalPending;
     if (this.inspector) this.inspector.inert = externalPending;
     this.root?.classList.toggle('is-reloading', externalPending);
   }
 
-  observeExternalHead({ ref: currentRef, sourceHash: currentSourceHash } = {}) {
+  observeExternalHead({ ref: currentRef, sourceHash: currentSourceHash, actor, authoredAt } = {}) {
+    const previous = this.externalChange;
     this.externalChange = reconcileExternalChange(this.externalChange, {
       loadedRef: this.model.currentRef, loadedSourceHash: this.model.sourceHash,
-      currentRef, currentSourceHash, dirty: this.dirty,
+      currentRef, currentSourceHash, actor, authoredAt, dirty: this.dirty,
     });
     this.renderExternalChange();
+    if ((this.externalChange.kind === 'clean' || this.externalChange.kind === 'dirty')
+        && (!sameTemplateGeneration(previous, this.externalChange) || !this.externalChange.review)) {
+      void this.loadExternalReview();
+    }
     return this.externalChange;
+  }
+
+  toggleExternalReview() {
+    if (this.externalReviewPending || externalInteractionPending(this)) return false;
+    this.externalReviewPanel.hidden = !this.externalReviewPanel.hidden;
+    if (!this.externalReviewPanel.hidden && !this.externalChange.review) void this.loadExternalReview();
+    this.renderExternalChange();
+    return true;
+  }
+
+  async loadExternalReview() {
+    const target = { ref: this.externalChange.ref, sourceHash: this.externalChange.sourceHash };
+    if (!target.ref || !target.sourceHash || this.abort.signal.aborted) return false;
+    const model = this.model; const loadedRef = model.currentRef; const loadedSourceHash = model.sourceHash;
+    const requestSeq = ++this.externalReviewSeq;
+    this.externalReviewPending = true;
+    this.renderExternalChange();
+    try {
+      const view = await fetchEditView(model.template.id);
+      if (requestSeq !== this.externalReviewSeq || this.abort.signal.aborted || this.model !== model
+          || model.currentRef !== loadedRef || model.sourceHash !== loadedSourceHash) return false;
+      // The head poll owns ordering. A GET for an older/newer generation may
+      // finish after another save; never let that response replace or clear
+      // the polled target. The next bounded poll will coalesce to the latest.
+      if (!sameTemplateGeneration(target, view)) return false;
+      const head = templateHeadFromEditView(view);
+      this.externalChange = reconcileExternalChange(this.externalChange, {
+        loadedRef, loadedSourceHash, currentRef: head.ref, currentSourceHash: head.sourceHash,
+        actor: head.actor, authoredAt: head.authoredAt, dirty: this.dirty,
+      });
+      if (this.externalChange.kind !== 'clean' && this.externalChange.kind !== 'dirty') return false;
+      this.externalChange = attachExternalReview(this.externalChange, view, this.loadedView);
+      return !!this.externalChange.review;
+    } catch (error) {
+      if (requestSeq === this.externalReviewSeq && !this.abort.signal.aborted) this.status(`Change review failed: ${error.message}`, true);
+      return false;
+    } finally {
+      if (requestSeq === this.externalReviewSeq) {
+        this.externalReviewPending = false;
+        this.renderExternalChange();
+      }
+    }
   }
 
   keepExternalChange() {
@@ -423,31 +526,41 @@ export class ProcessTemplateEditor {
       }
     }
     if (!decisionCurrent()) return false;
-    // A dirty node-dialog draft belongs to the old model. The shared discard
-    // confirmation above approved its loss, so close it before swapping models.
-    decision.modal?.(null);
-    if (this.modalDispose === decision.modal) this.modalDispose = null;
-    if (decision.inline) this.closeInline?.(false);
-    this.pendingMove = null;
-    this.removeBand?.();
     const guardedModel = this.model;
     const guardedRev = guardedModel.rev;
-    const guardedModal = this.modalDispose;
-    const guardedInline = this.inlineCommit;
     const requestSeq = ++this.externalReloadSeq;
     this.externalDecisionPending = false;
     this.externalReloadPending = true;
     this.updateChrome?.();
     try {
-      const view = await fetchEditView(guardedModel.template.id);
+      const reviewed = this.externalChange.review?.view;
+      const view = sameTemplateGeneration(this.externalChange, reviewed)
+        ? reviewed : await fetchEditView(guardedModel.template.id);
       if (requestSeq !== this.externalReloadSeq || this.abort.signal.aborted) return false;
       if (this.model !== guardedModel || guardedModel.rev !== guardedRev || this.savePending
-          || this.modalDispose !== guardedModal || this.inlineCommit !== guardedInline
+          || this.modalDispose !== decision.modal || this.inlineCommit !== decision.inline
           || this.pendingMove || this.band) {
         this.status('Reload cancelled because the editor changed while the new version was loading.');
         return false;
       }
+      if (!sameTemplateGeneration({ ref: targetRef, sourceHash: targetSourceHash }, this.externalChange)) {
+        this.status('Reload cancelled because a newer external version is now available.');
+        return false;
+      }
+      if (!sameTemplateGeneration({ ref: targetRef, sourceHash: targetSourceHash }, view)) {
+        this.status('The fetched version no longer matches the polled head. Waiting for the next refresh before applying.');
+        return false;
+      }
+      // A dirty node-dialog draft belongs to the old model. The confirmation
+      // approved its loss, but close it only after an exact target view is in
+      // hand so a stale/newer response cannot discard local UI state by itself.
+      decision.modal?.(null);
+      if (this.modalDispose === decision.modal) this.modalDispose = null;
+      if (decision.inline) this.closeInline?.(false);
+      this.pendingMove = null;
+      this.removeBand?.();
       this.model = new ProcessEditModel(view, this.model.config);
+      this.loadedView = structuredClone(view);
       this.blank = false;
       this.retainLiveSelection();
       // ProcessGraph#setGraph keeps its current pan/zoom when fit is false;
@@ -1253,6 +1366,7 @@ export class ProcessTemplateEditor {
             }
           }
           this.model = new ProcessEditModel(view, this.model.config);
+          this.loadedView = structuredClone(view);
           this.blank = originalBlank && !view.sourceHash;
           this.selection = null;
           this.validation?.applyDiagnostics(view.diagnostics || []);
@@ -1281,10 +1395,11 @@ export class ProcessTemplateEditor {
     // The canvas stays interactive during the POST: capture the rev the
     // payload was built at, so edits made in flight keep the model dirty.
     const savedAtRev = this.model.rev;
+    const savedView = this.model.saveBody();
     const response = await fetch(`/v1/process/templates/${encodeURIComponent(id)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(this.model.saveBody()),
+      body: JSON.stringify(savedView),
     });
     const body = await response.json().catch(() => ({}));
     // A newer editor request/lifecycle generation owns the model now. Never
@@ -1304,6 +1419,10 @@ export class ProcessTemplateEditor {
     this.model.template.id = savedID;
     this.idInput.value = savedID;
     this.model.markSaved(body, savedAtRev);
+    this.loadedView = {
+      ...savedView, currentRef: body.ref || '', sourceHash: body.sourceHash || '',
+      semanticHash: body.semanticHash || '', diagnostics: body.diagnostics || [],
+    };
     // Sync the validation controller with the save verdict: a failed
     // debounced round deliberately keeps prior diagnostics, so without this
     // the badges/panel stay stale until the next mutation. The follow-up
@@ -1342,6 +1461,7 @@ export class ProcessTemplateEditor {
         const view = await fetchEditView(this.model.template.id);
         if (requestSeq !== this.saveSeq) return;
         this.model = new ProcessEditModel(view, this.model.config);
+        this.loadedView = structuredClone(view);
         this.blank = false;
         this.selection = null;
         this.refresh({ fit: true });

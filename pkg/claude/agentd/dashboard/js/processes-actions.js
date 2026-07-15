@@ -1,8 +1,28 @@
 import { buildWorklistAction, isDestructiveAction, mintUUID, retainedActionKey } from './process-worklist-core.js';
 import { templateHeadSignature } from './process-external-change.js';
+import { dashboardState } from './snapshot-store.js';
 import {
   PROCESS_SCRIBE_NAME, PROCESS_SCRIBE_SLUGS, processScribeBrief, processScribeHandoff,
 } from './process-scribe.js';
+
+export function processActorPresentation(snapshot, actor) {
+  const ref = String(actor || '');
+  if (ref === 'human:operator') return { label: 'the operator', live: false, agentId: '' };
+  if (!/^agent:agt_[A-Za-z0-9]+$/.test(ref)) return null;
+  const agentId = ref.slice('agent:'.length);
+  const stableAgentId = /^agt_[0-9a-f]{32}$/.test(agentId) ? agentId : '';
+  const candidates = [
+    ...(snapshot?.agents || []),
+    ...(snapshot?.groups || []).flatMap((group) => group.members || []),
+  ];
+  const row = stableAgentId ? candidates.find((candidate) => candidate.agent_id === stableAgentId) : null;
+  const short = `${agentId.slice(0, 12)}…`;
+  return {
+    label: row?.title ? `agent ${row.title}` : `agent ${short}`,
+    live: !!row?.online,
+    agentId: stableAgentId,
+  };
+}
 
 export async function processJSON(path, fetchImpl = fetch) {
   const response = await fetchImpl(path, { credentials: 'same-origin' });
@@ -66,6 +86,8 @@ export function createProcessesActions({
         const rows = body.templates || [];
         const heads = rows.map((template) => ({
           id: template.id, ref: template.latestVersion?.ref || '', sourceHash: template.latestVersion?.sourceHash || '',
+          ...(template.latestVersion?.actor ? { actor: template.latestVersion.actor } : {}),
+          ...(template.latestVersion?.authoredAt ? { authoredAt: template.latestVersion.authoredAt } : {}),
         }));
         listedHeadsSignature = templateHeadSignature(heads);
         publishMatchingHead(generation, heads);
@@ -143,6 +165,29 @@ export function createProcessesActions({
       state.setNotice(`Process scribe unavailable: ${message}`);
       notify(`Could not open a process scribe: ${message}. Check the agent daemon and Scribe defaults, then retry.`, true);
       return null;
+    }
+  }
+  function describeActor(actor) {
+    return processActorPresentation(dashboardState.snapshot.value, actor);
+  }
+  async function openActor(actor) {
+    const presentation = describeActor(actor);
+    if (!presentation?.live || !presentation.agentId) return false;
+    try {
+      const response = await fetchImpl(`/api/open-window/${encodeURIComponent(presentation.agentId)}`, {
+        method: 'POST', credentials: 'same-origin',
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
+      if (result.mode === 'browser' && result.ws) {
+        const { openTermModal } = await import('./modal-term.js');
+        openTermModal({ wsPath: result.ws, label: presentation.label, hideConv: presentation.agentId });
+      }
+      state.setNotice(`Opened ${presentation.label}.`);
+      return true;
+    } catch (error) {
+      state.setNotice(`Could not open ${presentation.label}: ${error.message}`);
+      return false;
     }
   }
   async function openInstantiation({ id, ref, template = null } = {}) {
@@ -240,7 +285,7 @@ export function createProcessesActions({
 
   function refreshActive() { return load(state.subtab.value); }
   return Object.freeze({
-    load, observeTemplateHeads, activateSubtab, openEditor, summonScribe, openInstantiation, closeInstantiation,
+    load, observeTemplateHeads, activateSubtab, openEditor, summonScribe, describeActor, openActor, openInstantiation, closeInstantiation,
     submitInstantiation, openViewer, closeCanvas, openRunInList, submitWorklistAction, refreshActive,
   });
 }

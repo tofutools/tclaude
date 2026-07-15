@@ -100,6 +100,8 @@ export function ProcessEditorBoundary({ spec, state, actions, confirmDiscard, op
         confirmDiscard,
         onInstantiate: actions?.openInstantiation ? (value) => actions.openInstantiation(value) : undefined,
         onScribe: actions?.summonScribe ? (value) => actions.summonScribe(value) : undefined,
+        describeActor: actions?.describeActor ? (value) => actions.describeActor(value) : undefined,
+        onOpenActor: actions?.openActor ? (value) => actions.openActor(value) : undefined,
       },
     }).then((value) => { editor = value; if (disposed) editor?.destroy?.(); else state.setEditor(editor); }).catch((error) => { if (!disposed) { setError(error.message); state.setNotice(`Could not open editor: ${error.message}`); } });
     return () => { disposed = true; state.setEditor(null); editor?.destroy?.(); };
