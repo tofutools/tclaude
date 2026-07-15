@@ -67,7 +67,12 @@ func TestRunProfilesDisableAndEnable(t *testing.T) {
 		case http.MethodGet:
 			return 200, "", `{"name":"paused","model":"sonnet"}`
 		case http.MethodPatch:
-			return 200, "", `{"id":1,"name":"paused"}`
+			if len(calls) > 0 {
+				if body, ok := calls[len(calls)-1].body.(*profileJSON); ok && body.DisabledReason == "" {
+					return 200, "", `{"id":1,"name":"paused","profile":{"name":"paused","model":"sonnet"}}`
+				}
+			}
+			return 200, "", `{"id":1,"name":"paused","profile":{"name":"paused","model":"sonnet","disabled_reason":"provider maintenance"}}`
 		default:
 			return 405, "method", ""
 		}
@@ -99,6 +104,26 @@ func TestRunProfilesDisableRequiresReason(t *testing.T) {
 	rc := runProfilesDisable(&profilesDisableParams{Name: "paused"}, &stdout, &stderr)
 	assert.Equal(t, rcInvalidArg, rc)
 	assert.Contains(t, stderr.String(), "--reason is required")
+}
+
+func TestRunProfilesDisableRejectsOldDaemonFalseSuccess(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, func(method, path string) (int, string, string) {
+		if method == http.MethodGet {
+			return 200, "", `{"name":"paused","model":"sonnet"}`
+		}
+		// This is the successful response from a pre-disabled_reason daemon: it
+		// accepted the PATCH but ignored the unknown JSON field.
+		return 200, "", `{"id":1,"name":"paused"}`
+	})
+
+	var stdout, stderr bytes.Buffer
+	rc := runProfilesDisable(&profilesDisableParams{
+		Name: "paused", Reason: "provider maintenance",
+	}, &stdout, &stderr)
+	assert.Equal(t, rcIOFailure, rc)
+	assert.Empty(t, stdout.String(), "must not print a false success")
+	assert.Contains(t, stderr.String(), "does not support disabling spawn profiles")
 }
 
 // mergeProfileIntoSpawn is the CLI-side flatten of a spawn profile under the

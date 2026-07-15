@@ -907,6 +907,36 @@ func TestScribeSummon_AppliesConfiguredProfile(t *testing.T) {
 	assert.Equal(t, "editor-prof", g.DefaultProfile, "config.scribe.profile stamped as the group default")
 }
 
+func TestScribeSummon_DisabledConfiguredProfileRejectsBeforeTrustSeed(t *testing.T) {
+	f := newFlow(t)
+	stubScribeTerminal(t)
+
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{
+		Name: "paused-scribe", Harness: harness.CodexName,
+		DisabledReason: "provider maintenance",
+	})
+	require.NoError(t, err)
+	require.NoError(t, config.Save(&config.Config{
+		Scribe: &config.ScribeConfig{Profile: "paused-scribe"},
+	}))
+
+	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe",
+		map[string]any{
+			"name":  "circle-scribe",
+			"slugs": []string{agentd.PermTemplatesManage},
+			"brief": "Edit summoning circles.",
+		})))
+	require.Equalf(t, http.StatusConflict, rec.Code, "summon body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "provider maintenance")
+
+	_, err = os.Stat(filepath.Join(f.World.HomeDir, ".tclaude", "scribe"))
+	assert.True(t, os.IsNotExist(err), "a rejected summon must not create the scribe workdir")
+	_, err = os.Stat(filepath.Join(f.World.HomeDir, ".codex", "config.toml"))
+	assert.True(t, os.IsNotExist(err), "a rejected summon must not seed Codex trust")
+	_, err = os.Stat(filepath.Join(f.World.HomeDir, ".claude.json"))
+	assert.True(t, os.IsNotExist(err), "a rejected summon must not seed Claude trust")
+}
+
 // Scenario (JOH-371 coupling to JOH-369): a Codex scribe profile makes the
 // summon launch on Codex AND pre-seed the CODEX dir-trust store (not CC's) for
 // the scribe workdir — the trust seed follows the harness the spawn actually

@@ -509,7 +509,7 @@ func handleSpawnProfileFromAgent(w http.ResponseWriter, r *http.Request) {
 
 const (
 	profileExportFormat  = "tclaude-spawn-profiles"
-	profileExportVersion = 2
+	profileExportVersion = 3
 )
 
 type profileExportEnvelope struct {
@@ -1031,7 +1031,11 @@ func handleSpawnProfileByName(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"id": p.ID, "name": p.Name})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"id":      p.ID,
+			"name":    p.Name,
+			"profile": profileToJSON(p),
+		})
 	case http.MethodDelete:
 		if _, ok := requirePermission(w, r, PermProfilesManage); !ok {
 			return

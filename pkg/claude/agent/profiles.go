@@ -523,15 +523,26 @@ func updateProfileDisabledReason(name, reason string, stderr io.Writer) (*profil
 	}
 	prof.DisabledReason = reason
 	var resp struct {
-		ID   int64  `json:"id"`
-		Name string `json:"name"`
+		ID      int64        `json:"id"`
+		Name    string       `json:"name"`
+		Profile *profileJSON `json:"profile"`
 	}
 	if err := DaemonRequest(http.MethodPatch, "/v1/spawn-profiles/"+url.PathEscape(name), prof, &resp, DaemonOpts{}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return nil, MapDaemonErrorToRC(err)
 	}
-	prof.Name = resp.Name
-	return prof, rcOK
+	// Older daemons accept the full-profile PATCH but silently ignore the
+	// disabled_reason field. Require the updated daemon's canonical profile in
+	// the response so a version-skewed CLI never reports a false success.
+	if resp.Profile == nil {
+		fmt.Fprintln(stderr, "Error: the running tclaude agentd does not support disabling spawn profiles; restart it with the updated tclaude binary")
+		return nil, rcIOFailure
+	}
+	if resp.Profile.DisabledReason != reason {
+		fmt.Fprintln(stderr, "Error: the running tclaude agentd did not persist the requested spawn-profile state")
+		return nil, rcIOFailure
+	}
+	return resp.Profile, rcOK
 }
 
 // ---- rm ----

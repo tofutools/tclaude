@@ -53,6 +53,12 @@ func TestSpawnProfiles_DisabledReasonRoundTrip(t *testing.T) {
 
 	rec = profileReq(t, f, http.MethodPatch, "/v1/spawn-profiles/paused", map[string]any{"name": "paused"})
 	require.Equalf(t, http.StatusOK, rec.Code, "enable body=%s", rec.Body.String())
+	var patched struct {
+		Profile wireProfile `json:"profile"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &patched))
+	assert.Equal(t, "paused", patched.Profile.Name)
+	assert.Empty(t, patched.Profile.DisabledReason)
 	rec = profileReq(t, f, http.MethodGet, "/v1/spawn-profiles/paused", nil)
 	got = wireProfile{}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
