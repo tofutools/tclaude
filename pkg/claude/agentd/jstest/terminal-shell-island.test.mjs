@@ -101,7 +101,9 @@ test('dashboard terminal feature owns three hosts while preserving opaque xterm 
   assert.equal(host.querySelectorAll('[role="tab"]').length, 1);
   assert.equal(fake.widgets.length, 1);
   const opaqueChild = fake.widgets[0].child;
-  assert.equal(opaqueChild.parentElement.classList.contains('mux-pane-xterm'), true);
+  assert.equal(opaqueChild.parentElement.classList.contains('mux-pane-xterm-fit'), true);
+  assert.equal(opaqueChild.parentElement.parentElement.classList.contains('mux-pane-xterm'), true,
+    'the fit host fills the padded visual host content box');
 
   const firstActivationEdges = fake.widgets[0].activeEdges.length;
   await harness.act(async () => {
