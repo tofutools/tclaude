@@ -471,34 +471,6 @@
   <button class="access-banner-review" id="access-banner-review" type="button">Review</button>
 </div>
 <div id="shell-confirm-root"></div>
-<div class="modal-overlay" id="retire-modal">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="retire-title">
-    <!-- Title copy swaps per theme (pure-CSS span swap, the wizard twin of the
-         spawn dialog's .spawn-title-* pair): a plain "Retire this agent?"
-         normally, an arcane "Banish this familiar?" in 🧙 wizard mode — the
-         antonym of the spawn dialog's "Summon a new familiar". -->
-    <h3 id="retire-title"><span class="retire-title-regular">Retire this agent?</span><span class="retire-title-wizard">Banish this familiar?</span></h3>
-    <p><span class="theme-copy-regular">Demotes the agent to a plain conversation: revokes its group memberships and
-      permission grants so it stops being an agent. The conversation itself stays on
-      disk and can be reinstated later — this is the non-destructive soft-delete.</span><span class="theme-copy-wizard">Returns the familiar to a plain conversation: revokes its party memberships and
-      boons so it stops being a familiar. The conversation scroll stays on disk and
-      can be restored later — banishment is not destruction.</span></p>
-    <div class="modal-meta" id="retire-meta"></div>
-    <label class="delete-agent-wt" id="retire-shutdown-row">
-      <input type="checkbox" id="retire-shutdown" checked />
-      <span>Also shut down the running session
-        <span class="wt-note">soft-exits the tmux pane (/exit) — the conversation is kept either way</span></span>
-    </label>
-    <label class="delete-agent-wt" id="retire-wt-row" style="display:none">
-      <input type="checkbox" id="retire-wt" />
-      <span id="retire-wt-label"></span>
-    </label>
-    <div class="modal-buttons">
-      <button id="retire-cancel">Cancel</button>
-      <button id="retire-ok" class="confirm-danger">Retire</button>
-    </div>
-  </div>
-</div>
 <div class="modal-overlay" id="shutdown-modal">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="shutdown-title">
     <h3 id="shutdown-title">Shut down agent?</h3>
