@@ -31,13 +31,18 @@ assuming every Claude Code control has a Codex equivalent (or vice versa).
 ## Choosing a harness
 
 The primary launch surfaces (`tclaude`, `session new`, and `agent spawn`) take a
-`--harness` flag. It defaults to `claude`, so existing commands keep their
-behavior unless you ask for Codex. Saved spawn profiles and group/global profile
-defaults can also select a harness; an explicit flag wins.
+`--harness` flag. For a fresh raw terminal session (`tclaude` or `tclaude
+session new`), an omitted flag inherits the dashboard's global default spawn
+profile. With no global profile, tclaude chooses a harness installed on `PATH`,
+preferring Claude Code when both Claude and Codex are available; with neither
+installed, it retains the historical Claude fallback so launch reports the
+missing executable. An explicit flag always wins. Agent/group launches use
+saved profiles and their fuller precedence described in [Agent
+Coordination](agent.md#spawn-profiles).
 
 ```bash
-# Start a Claude Code session (the default — --harness claude is implied)
-tclaude session new
+# Start Claude Code explicitly, regardless of the global profile
+tclaude session new --harness claude
 
 # Start a Codex CLI session
 tclaude session new --harness codex

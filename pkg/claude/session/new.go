@@ -24,6 +24,9 @@ import (
 )
 
 type NewParams struct {
+	// ManagedLaunch marks agentd's forked session wrapper. The daemon already
+	// resolved profile precedence, so the child must use the exact passed shape.
+	ManagedLaunch         bool   `long:"managed-launch" help:"Internal: launch parameters were resolved by agentd"`
 	SandboxSnapshotPath   string `short:"U" long:"sandbox-snapshot-path" optional:"true" help:"Internal: private effective sandbox snapshot handoff"`
 	SandboxSnapshotDigest string `short:"V" long:"sandbox-snapshot-digest" optional:"true" help:"Internal: expected effective sandbox snapshot digest"`
 	Dir                   string `short:"C" long:"dir" optional:"true" help:"Directory to start session in (defaults to current directory)"`
@@ -50,20 +53,22 @@ type NewParams struct {
 	Detached                   bool     `long:"detached" short:"d" help:"Start detached (don't attach to session)"`
 	WaitForRateLimit           bool     `long:"wait-for-rate-limit" short:"w" help:"Wait for rate limit (5-hour and 7-day) to reset before starting session"`
 
-	// Effort sets Claude Code's reasoning effort for the session via
-	// `claude --effort <level>`. Empty (the default) omits the flag so
-	// claude uses its own default; a non-empty value is normalised and
-	// validated against clcommon.ValidEffortLevels in runNew.
-	Effort string `long:"effort" optional:"true" help:"Claude reasoning effort: low|medium|high|xhigh|max. Unset = claude's own default (no flag passed)"`
+	// Effort sets the chosen harness's reasoning effort. A fresh human launch
+	// fills an omitted value from the global default spawn profile; if that is
+	// also blank the harness receives no override. A non-empty value is
+	// normalized and validated by the harness catalog in runNew.
+	Effort string `long:"effort" optional:"true" help:"Reasoning effort: low|medium|high|xhigh|max. Unset = global profile, then the harness default"`
 
-	// Model picks the Claude model for the session via `claude --model
-	// <alias>`. Empty (the default) omits the flag so claude uses its
-	// own default; a non-empty value is normalised and validated
-	// against clcommon.ValidModels in runNew.
-	Model string `long:"model" optional:"true" help:"Claude model: fable|fable[1m]|opus|opus[1m]|sonnet|sonnet[1m]|haiku|opusplan, or a full model ID (e.g. claude-fable-5). Unset = claude's own default (no flag passed)"`
+	// Model picks the model for the chosen harness. A fresh human launch fills
+	// an omitted value from the global default spawn profile; if that is also
+	// blank the harness receives no override. A non-empty value is normalized
+	// and validated by the harness catalog in runNew.
+	Model string `long:"model" optional:"true" help:"Harness model or alias. Unset = global profile, then the harness default"`
 
-	// Harness selects the coding tool this session runs (default
-	// "claude"). "codex" launches OpenAI Codex CLI in the tmux pane via
+	// Harness selects the coding tool this session runs. A fresh human launch
+	// fills an omitted value from the global default spawn profile, or chooses an
+	// installed harness when no profile exists (Claude preferred). "codex"
+	// launches OpenAI Codex CLI in the tmux pane via
 	// the codex Spawner. The chosen harness's ModelCatalog validates
 	// --model/--effort and its Spawner builds the launch command, so the
 	// rest of runNew stays harness-agnostic. The special value "shell"
@@ -71,7 +76,7 @@ type NewParams struct {
 	// ephemeral interactive shell instead (no conversation, no hooks, no
 	// model/sandbox/approval), handled by runNewShell before any harness
 	// resolution happens. See shell.go.
-	Harness string `long:"harness" optional:"true" help:"Coding harness to launch: claude (default) | codex | shell (a plain, ephemeral shell — no conversation)"`
+	Harness string `long:"harness" optional:"true" help:"Coding harness to launch: claude | codex | shell. Unset = global profile, then an installed harness (claude preferred)"`
 
 	// Shell is shorthand for --harness shell: it sets Harness to
 	// ShellHarnessName in runNew before any harness resolution happens.
@@ -181,11 +186,11 @@ type NewParams struct {
 func NewCmd() *cobra.Command {
 	cmd := boa.CmdT[NewParams]{
 		Use:         "new",
-		Short:       "Start a new Claude Code session",
-		Long:        "Start a new Claude Code session in a tmux session. Attaches by default (Ctrl+B D to detach).",
+		Short:       "Start a new coding session",
+		Long:        "Start a new coding-harness session in tmux. Attaches by default (Ctrl+B D to detach).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(params *NewParams, cmd *cobra.Command, args []string) {
-			if err := runNew(params); err != nil {
+			if err := RunNewFromCommand(params, cmd); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
@@ -194,6 +199,7 @@ func NewCmd() *cobra.Command {
 
 	// Allow arbitrary args so post-'--' args pass through to claude without cobra rejecting them.
 	cmd.Args = cobra.ArbitraryArgs
+	_ = cmd.Flags().MarkHidden("managed-launch")
 	_ = cmd.Flags().MarkHidden("cwd-write-proof")
 	_ = cmd.Flags().MarkHidden("dir-write-proof")
 	_ = cmd.Flags().MarkHidden("codex-git-common-dir")
@@ -232,11 +238,6 @@ func RegisterJoinGroupCompletion(cmd *cobra.Command) {
 		}
 		return out, cobra.ShellCompDirectiveNoFileComp
 	})
-}
-
-// RunNew is the exported entry point for running the new session command
-func RunNew(params *NewParams) error {
-	return runNew(params)
 }
 
 // sandboxDescr returns the human-facing launch-containment descriptor for the

@@ -4463,7 +4463,7 @@ func SpawnDetachedTclaudeResume(args clcommon.SpawnArgs) error {
 // default. Kept pure so it can be unit-tested without forking a
 // subprocess.
 func sessionNewArgs(a clcommon.SpawnArgs) []string {
-	args := []string{"session", "new", "-d", "--global", "--label", a.Label}
+	args := []string{"session", "new", "--managed-launch", "-d", "--global", "--label", a.Label}
 	if a.Cwd != "" {
 		args = append(args, "-C", a.Cwd)
 	}
@@ -4548,7 +4548,7 @@ func appendRemoteControlFlag(args []string, remoteControl bool) []string {
 // was chosen, so "" keeps claude on its own default. Kept pure so it
 // can be unit-tested without forking a subprocess.
 func sessionResumeArgs(a clcommon.SpawnArgs) []string {
-	args := []string{"session", "new", "-r", a.ConvID, "-d", "--global"}
+	args := []string{"session", "new", "--managed-launch", "-r", a.ConvID, "-d", "--global"}
 	if a.Cwd != "" {
 		args = append(args, "-C", a.Cwd)
 	}

@@ -3,7 +3,18 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"fmt"
+	"strconv"
+	"strings"
 	"time"
+)
+
+// DashboardDefaultSpawnProfile*PrefKey are the durable halves of the
+// dashboard/global default spawn-profile reference. The stable row id is
+// authoritative; the name is retained for compatibility with older versions.
+const (
+	DashboardDefaultSpawnProfileNamePrefKey = "tclaude.dash.default_profile"
+	DashboardDefaultSpawnProfileIDPrefKey   = "tclaude.dash.default_profile_id"
 )
 
 // dashboard_prefs is a flat key→value store for the browser dashboard's
@@ -59,6 +70,33 @@ func GetDashboardPref(key string) (string, bool, error) {
 		return "", false, err
 	}
 	return value, true, nil
+}
+
+// GlobalDefaultSpawnProfile resolves the spawn profile selected by the
+// dashboard-wide default picker. A deleted profile is a graceful nil result.
+// When only the legacy name preference exists, it remains supported.
+func GlobalDefaultSpawnProfile() (*SpawnProfile, error) {
+	idText, idOK, err := GetDashboardPref(DashboardDefaultSpawnProfileIDPrefKey)
+	if err != nil {
+		return nil, err
+	}
+	if idOK {
+		id, err := strconv.ParseInt(strings.TrimSpace(idText), 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid global default spawn profile id %q: %w", idText, err)
+		}
+		return GetSpawnProfileByID(id)
+	}
+
+	name, ok, err := GetDashboardPref(DashboardDefaultSpawnProfileNamePrefKey)
+	if err != nil {
+		return nil, err
+	}
+	name = strings.TrimSpace(name)
+	if !ok || name == "" {
+		return nil, nil
+	}
+	return ResolveSpawnProfile(name)
 }
 
 // SetDashboardProfileRef atomically stores the durable profile id used by the
