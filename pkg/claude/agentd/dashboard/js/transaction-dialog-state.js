@@ -49,10 +49,20 @@ export function createTransactionDialogState() {
     resolve?.(result);
   }
 
+  function handoff() {
+    // A follow-up shell dialog can take visual/focus ownership without
+    // completing the destructive transaction. Keep resolveCurrent live so a
+    // second launcher is refused until the follow-up reaches a final outcome.
+    if (!resolveCurrent || !dialog.value) return false;
+    dialog.value = null;
+    return true;
+  }
+
   return Object.freeze({
     dialog,
     view,
     open,
+    handoff,
     finish,
     close: () => finish(null),
     dispose: () => finish(null),

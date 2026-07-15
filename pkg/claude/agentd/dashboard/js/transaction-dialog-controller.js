@@ -16,3 +16,14 @@ function requireController() {
 export function openTransactionDialog(descriptor) {
   return requireController().open(descriptor);
 }
+
+export function openRetireAgentDialog(conv, label = '') {
+  return openTransactionDialog({ kind: 'retire-agent', conv, label });
+}
+
+// DnD owns optimistic drag presentation, while the transaction root owns the
+// authoritative mutation refresh. Only results that did not already complete
+// and refresh need the DnD caller to reconcile the cancelled/failed gesture.
+export function retireResultNeedsReconcile(result) {
+  return !(result?.ok || (result?.dangling && result.removed));
+}

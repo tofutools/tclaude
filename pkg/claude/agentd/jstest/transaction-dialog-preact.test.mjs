@@ -166,3 +166,28 @@ test('transaction controller unregisters without orphaning callers', async (t) =
     /transaction dialogs are not ready/,
   );
 });
+
+test('visual handoff unpaints without resolving or admitting a new transaction', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createTransactionDialogState } = await harness.importDashboardModule(
+    'js/transaction-dialog-state.js',
+  );
+  const state = createTransactionDialogState();
+  let settled = false;
+  const pending = state.open({ kind: 'retire-agent', conv: 'raw-conv' });
+  pending.finally(() => { settled = true; });
+  assert.equal(state.handoff(), true);
+  assert.equal(state.dialog.value, null, 'painted transaction is cleared for the next focus owner');
+  await Promise.resolve();
+  assert.equal(settled, false, 'handoff retains the original compatibility resolver');
+  assert.equal(await state.open({ kind: 'retire-agent', conv: 'foreign' }), null,
+    'a handed-off transaction continues blocking replacement opens');
+  const result = { dangling: true, removed: false, reason: 'declined' };
+  state.finish(result);
+  assert.deepEqual(await pending, result);
+
+  const disposed = state.open({ kind: 'retire-agent', conv: 'dispose-me' });
+  state.handoff();
+  state.dispose();
+  assert.equal(await disposed, null, 'disposal cannot leak a handed-off resolver');
+});
