@@ -29,7 +29,13 @@ html { overflow-y: scroll; }
    leaves a visible bottom-right remnant beside xterm even when the page cannot
    scroll. Keep its gutter width reserved so entering/leaving Terminals never
    shifts the right-aligned chrome or changes the fitted terminal columns. */
-html:has(#tab-terminals.active) { scrollbar-color: transparent transparent; }
+html:has(#tab-terminals.active) {
+  /* Percentage app-shell sizing below resolves against this scrollbar-adjusted
+     content height. Unlike 100vh, it shrinks when a classic horizontal page
+     scrollbar consumes part of the viewport. */
+  height: 100%;
+  scrollbar-color: transparent transparent;
+}
 /* scrollbar-color inherits. Restore normal chrome at body so nested scrollers
    such as the terminal tab strip and any open modal remain visible. */
 html:has(#tab-terminals.active) body { scrollbar-color: auto; }
@@ -5292,12 +5298,16 @@ body.hide-terminals nav [data-tab="terminals"],
 body.hide-terminals #tab-terminals { display: none; }
 
 /* The Terminals tab is a full-height app-shell like Messages: flex the
-   body → main → section column to 100vh so the pane stack fills the space below
-   the chrome (same :has() trick, self-correcting, no JS). main's default
-   padding is dropped so the terminal grid sits edge-to-edge like the standalone
-   page. See the Messages block above for why the chrome rows are frozen. */
+   body → main → section column through the document's content height so the
+   pane stack fills the space below the chrome (same :has() trick,
+   self-correcting, no JS). The percentage deliberately resolves after classic
+   scrollbar space is removed; 100vh would stay a scrollbar-height too tall
+   during horizontal page overflow and let the raised footer cover xterm.
+   main's default padding is dropped so the terminal grid sits edge-to-edge
+   like the standalone page. See the Messages block above for why the chrome
+   rows are frozen. */
 body:has(#tab-terminals.active) {
-  height: 100vh;
+  height: 100%;
   display: flex; flex-direction: column;
 }
 body:has(#tab-terminals.active) main,
