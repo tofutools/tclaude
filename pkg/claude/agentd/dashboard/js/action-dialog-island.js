@@ -396,10 +396,14 @@ function TaskLinkDialog({ descriptor, actions, confirmDiscard }) {
     finally { setBusy(false); }
   };
 
-  // Enter is a save shortcut only inside the text fields, and never while an IME
+  // Enter saves only from inside the text fields, and never while an IME
   // composition is active (Enter then commits the candidate, not the form).
+  // Modifiers are allowed so a Ctrl/⌘+Enter from a field still saves, matching
+  // the legacy controller. There is deliberately no global submit hotkey: one
+  // would fire regardless of target (e.g. from Cancel) and without the
+  // composition guard, bypassing this field-only/IME contract.
   const onFieldKeyDown = (event) => {
-    if (event.key === 'Enter' && !event.isComposing && !event.ctrlKey && !event.metaKey) {
+    if (event.key === 'Enter' && !event.isComposing) {
       event.preventDefault();
       submit();
     }
@@ -411,7 +415,6 @@ function TaskLinkDialog({ descriptor, actions, confirmDiscard }) {
       dialogClass="modal"
       labelledby="task-link-title"
       onClose=${actions.close}
-      onSubmitHotkey=${submit}
       dirty=${dirty}
       blocked=${busy}
       confirmDiscard=${confirmDiscard}
