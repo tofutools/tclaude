@@ -439,6 +439,8 @@ function DeleteAgentDialog({ descriptor, actions, confirmDiscard }) {
       agent: descriptor.agent,
       label: descriptor.label,
       deleteWorktree: worktree?.removable === true && deleteWorktree === true,
+      ...(worktree?.removable === true && deleteWorktree === true
+        ? { expectedWorktree: worktree.path } : {}),
     });
     if (!submittedRequest) {
       submittedRef.current = request;
