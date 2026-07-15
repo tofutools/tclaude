@@ -127,8 +127,14 @@ func TestTerminalShellPreactAtomicOwnership(t *testing.T) {
 		}
 	}
 	dashboard := readDashboardJS(t, "dashboard.js")
-	if !strings.Contains(dashboard, "mountTerminalsFeature({ confirm: confirmModal })") {
-		t.Error("dashboard does not mount the terminal ownership unit")
+	for _, needle := range []string{
+		"mountTerminalsFeature({",
+		"confirm: confirmModal",
+		"onComposeMessage: (seed) => openOperatorMessageModal",
+	} {
+		if !strings.Contains(dashboard, needle) {
+			t.Errorf("dashboard terminal ownership mount missing %q", needle)
+		}
 	}
 	for _, retired := range []string{"bindTermModal", "initTerminalsTab", "modal-term.js"} {
 		if strings.Contains(dashboard, retired) {
