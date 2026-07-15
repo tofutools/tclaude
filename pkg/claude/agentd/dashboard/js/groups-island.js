@@ -2,7 +2,7 @@ import { h, render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { GROUP_VIEW_OPTIONS } from './groups-state.js';
-import { trustedHTMLToVNodes } from './html-vnodes.js';
+import { GroupsNativeList } from './groups-list.js';
 import { syncBotAnimations, syncWizardOrbit } from './helpers.js';
 import { isWizardActive } from './slop.js';
 
@@ -188,10 +188,9 @@ export function GroupsControls({ state, actions }) {
   `;
 }
 
-export function GroupsList({ host, state, actions, renderGroupsHTML }) {
+export function GroupsList({ host, state, actions, presentation }) {
   useWizardTheme();
   const current = state.view.value;
-  const markup = renderGroupsHTML(current.groups);
 
   useEffect(() => {
     syncBotAnimations();
@@ -224,11 +223,11 @@ export function GroupsList({ host, state, actions, renderGroupsHTML }) {
     };
   }, [host]);
 
-  return trustedHTMLToVNodes(markup);
+  return html`<${GroupsNativeList} groups=${current.groups} presentation=${presentation} snapshot=${state.snapshot.value} />`;
 }
 
 export function mountGroupsIsland({
-  filterHost, listHost, state, actions, renderGroupsHTML, registerCleanup,
+  filterHost, listHost, state, actions, presentation, registerCleanup,
 }) {
   state.initialize();
   render(html`<${GroupsControls} state=${state} actions=${actions} />`, filterHost);
@@ -238,7 +237,7 @@ export function mountGroupsIsland({
       host=${listHost}
       state=${state}
       actions=${actions}
-      renderGroupsHTML=${renderGroupsHTML}
+      presentation=${presentation}
     />
   `, listHost);
   registerCleanup(() => render(null, listHost));
