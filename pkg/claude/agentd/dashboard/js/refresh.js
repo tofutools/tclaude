@@ -1,5 +1,6 @@
 // refresh.js — the auto-refresh loop, tab / copy / sort wiring, the
-// shared confirm / window / cleanup / agent-action modals, and toast.
+// shared legacy confirm / cleanup / agent-action modals, Preact window-dialog
+// launch adapters, and toast.
 //
 // Extracted from dashboard.js in the Stage 2 module split. refresh() is
 // the 2-second snapshot poll that re-renders every tab.
@@ -23,9 +24,7 @@ import { renderDock } from './dock.js';
 // row-actions picker rollback). All deliberate, benign cycles are TDZ-safe —
 // no top-level code reads a cyclic import.
 import { renameEditing } from './row-actions.js';
-import {
-  closeTerminalsForWindowOp, openWebWindowPane, reconcileTerminalsForAgentRoster,
-} from './terminals-tab.js';
+import { reconcileTerminalsForAgentRoster } from './terminals-tab.js';
 import { lastSnapshot, setLastSnapshot, webTerminalDefault } from './dashboard.js';
 import { setVegasRegularMode, isWizardActive, wizWord } from './slop.js';
 import { setHScrollFollow } from './hscroll.js';
@@ -43,8 +42,9 @@ import { isTopmostOverlay } from './overlay-stack.js';
 import { disclosurePreference } from './group-tree-activity.js';
 import { hoveredGroupKey, setHoveredGroupKey } from './group-hover-state.js';
 import {
-  openDeleteRetiredPreviewDialog, openGroupRetirePreviewDialog,
-  openUngroupedRetirePreviewDialog,
+  buildWindowSelectionDescriptor, openDeleteRetiredPreviewDialog,
+  openGroupRetirePreviewDialog, openUngroupedRetirePreviewDialog,
+  openWindowSelectionDialog,
 } from './transaction-dialog-controller.js';
 
 // refreshSuspended() is the single source of truth for whether the
@@ -1452,349 +1452,24 @@ async function openWorktreeCleanup(group = '') {
   await load(false);
 }
 
-// openWindowModal drives the bulk window focus/unfocus feature. One
-// trigger per scope — a group-level button and the top-bar button —
-// opens this modal. Inside it the human picks the DIRECTION (focus
-// vs unfocus) and the agent SELECTION: every running agent in scope
-// is listed and ticked by default, and can be narrowed by group chip,
-// by role chip, by individual checkbox, or by the text filter. Submit
-// POSTs the explicit conv-id list to /api/agent-windows. The group and
-// role filter rows are always present — a single group (or role) still
-// earns its chip, so the common one-group dashboard can bulk-toggle by
-// group.
-//
-// It is terminal-view-only: focus opens/raises native terminal windows, or web
-// terminal panes when dashboard.default_terminal="web"; unfocus detaches the
-// selected live-session clients. Neither touches an agent process — the agents
-// keep running. scope is "group" (groupName set) or "all".
+// openWindowModal is now only the snapshot launcher. It freezes the exact
+// running roster and terminal preference before handing exclusive visual/state
+// ownership to the keyed Preact transaction root.
 function openWindowModal(scope, groupName) {
-  const snap = lastSnapshot || {};
-  const where = scope === 'group' ? `group "${groupName}"` : 'the dashboard';
-  const wizardWhere = scope === 'group' ? `party "${groupName}"` : 'the tower';
-  const NO_ROLE = '(no role)';
-  const NO_GROUP = '(no group)';
-
-  // An agent's roles come from its group memberships — a top-level
-  // agent row carries no role of its own, so the all-scope modal
-  // collects them across every group.
-  const rolesByConv = {};
-  // The groups each agent belongs to — the all-scope modal's group
-  // chips bucket by these. Like roles, an agent can be a member of more
-  // than one group, so this is a list per conv.
-  const groupsByConv = {};
-  for (const g of (snap.groups || [])) {
-    for (const m of (g.members || [])) {
-      const gs = groupsByConv[m.conv_id] || (groupsByConv[m.conv_id] = []);
-      if (!gs.includes(g.name)) gs.push(g.name);
-      if (!m.role) continue;
-      const rs = rolesByConv[m.conv_id] || (rolesByConv[m.conv_id] = []);
-      if (!rs.includes(m.role)) rs.push(m.role);
-    }
-  }
-  // Candidates — RUNNING agents only: an offline agent has no window
-  // to focus or detach. Each carries its own `checked` flag so the
-  // text filter can re-render the list without losing the selection.
-  const candidates = [];
-  if (scope === 'group') {
-    const g = (snap.groups || []).find(x => x.name === groupName);
-    for (const m of (g && g.members || [])) {
-      if (!m.online) continue;
-      // A group-scoped modal is already one group, so the candidate
-      // carries only that group — its group filter row shows a single
-      // chip for it (a redundant-but-consistent twin of select-all).
-      candidates.push({ agent_id: m.agent_id || '', conv_id: m.conv_id, title: m.title || '',
-        roles: m.role ? [m.role] : [], groups: [groupName], checked: true });
-    }
-  } else {
-    for (const a of (snap.agents || [])) {
-      if (!a.online) continue;
-      candidates.push({ agent_id: a.agent_id || '', conv_id: a.conv_id, title: a.title || '',
-        roles: rolesByConv[a.conv_id] || [], groups: groupsByConv[a.conv_id] || [],
-        checked: true });
-    }
-  }
-  if (candidates.length === 0) {
+  const descriptor = buildWindowSelectionDescriptor(
+    lastSnapshot, scope, groupName, webTerminalDefault(),
+  );
+  if (descriptor.candidates.length === 0) {
+    const where = scope === 'group' ? `group "${groupName}"` : 'the dashboard';
+    const wizardWhere = scope === 'group' ? `party "${groupName}"` : 'the tower';
     toast(wizWord(
       `agent windows: no running agents in ${where}`,
       `scrying portals: no channeling familiars in ${wizardWhere}`,
     ));
-    return;
+    return null;
   }
-  // roleKeys(c) — the role buckets a candidate belongs to (for the
-  // chips). An agent with no role lands in the synthetic NO_ROLE
-  // bucket so it stays reachable by a chip.
-  const roleKeys = (c) => c.roles.length ? c.roles : [NO_ROLE];
-  const allRoleKeys = [];
-  for (const c of candidates) {
-    for (const k of roleKeys(c)) {
-      if (!allRoleKeys.includes(k)) allRoleKeys.push(k);
-    }
-  }
-  allRoleKeys.sort((a, b) => (a === NO_ROLE) - (b === NO_ROLE) || a.localeCompare(b));
-
-  // groupKeys(c) — the group buckets a candidate belongs to (for the
-  // group chips). An ungrouped agent lands in the synthetic NO_GROUP
-  // bucket so it stays reachable by a chip, mirroring NO_ROLE.
-  const groupKeys = (c) => c.groups.length ? c.groups : [NO_GROUP];
-  const allGroupKeys = [];
-  for (const c of candidates) {
-    for (const k of groupKeys(c)) {
-      if (!allGroupKeys.includes(k)) allGroupKeys.push(k);
-    }
-  }
-  allGroupKeys.sort((a, b) => (a === NO_GROUP) - (b === NO_GROUP) || a.localeCompare(b));
-
-  const overlay = $('#window-modal');
-  const hintEl = $('#window-hint');
-  const groupsEl = $('#window-groups');
-  const rolesEl = $('#window-roles');
-  const listEl = $('#window-list');
-  const countEl = $('#window-count');
-  const errEl = $('#window-error');
-  const searchEl = $('#window-search');
-  const submitBtn = $('#window-submit');
-  const cancelBtn = $('#window-cancel');
-  const selAllBtn = $('#window-select-all');
-  const selNoneBtn = $('#window-select-none');
-  const dirRadios = overlay.querySelectorAll('input[name=window-direction]');
-
-  // Reset transient state on every open.
-  errEl.textContent = '';
-  searchEl.value = '';
-  for (const r of dirRadios) r.checked = (r.value === 'focus');
-  for (const c of candidates) c.checked = true;
-
-  const direction = () => {
-    for (const r of dirRadios) if (r.checked) return r.value;
-    return 'focus';
-  };
-  const checkedCount = () => candidates.filter(c => c.checked).length;
-  const matchesFilter = (c) => {
-    const q = searchEl.value.trim().toLowerCase();
-    if (!q) return true;
-    return c.title.toLowerCase().includes(q) || c.conv_id.toLowerCase().includes(q);
-  };
-
-  function renderHint() {
-    // In 🧙 wizard mode the copy re-flavours to the palette's scrying-portal
-    // voice (focus → Reveal, unfocus → Veil); the CSS-swapped direction labels
-    // and this JS-set hint move together. Read live so a mid-modal wizard toggle
-    // (the tclaude:wizard re-render below) picks the right voice.
-    const wiz = isWizardActive();
-    if (direction() === 'focus') {
-      hintEl.textContent = wiz
-        ? `Conjure a scrying portal for each chosen channeling familiar in ${wizardWhere}.`
-        : webTerminalDefault()
-          ? `Open or focus a web terminal pane for each selected running agent in ${where}.`
-          : `Open or raise a terminal window for each selected running agent in ${where}.`;
-    } else {
-      hintEl.textContent = wiz
-        ? `Draw the veil over the chosen familiars' scrying portals in ${wizardWhere} so the `
-          + `desktop is decluttered. The familiars keep channeling — only the portals are dismissed.`
-        : webTerminalDefault()
-          ? `Detach the web terminal panes of the selected running agents in ${where}. `
-            + `The agents keep running — only the terminal views are dismissed.`
-          : `Detach the terminal windows of the selected running agents in ${where} so the `
-            + `desktop is decluttered. The agents keep running — only the windows are dismissed.`;
-    }
-  }
-  function renderGroups() {
-    // The group filter is always shown when there's at least one agent
-    // in scope — even a single group earns its chip, so a one-group
-    // dashboard (the common case) can still bulk-toggle by group. The
-    // synthetic NO_GROUP bucket appears whenever an ungrouped agent is
-    // in scope, sorted last.
-    let html = `<span class="roles-label">${themeWords('groups', 'parties')}</span>`;
-    for (const k of allGroupKeys) {
-      const inK = candidates.filter(c => groupKeys(c).includes(k));
-      const on = inK.filter(c => c.checked).length;
-      const cls = on === 0 ? '' : (on === inK.length ? ' on' : ' partial');
-      html += `<button type="button" class="window-role-chip${cls}" data-group-chip="${esc(k)}">`
-        + `${esc(k)} (${on}/${inK.length})</button>`;
-    }
-    groupsEl.innerHTML = html;
-  }
-  function renderRoles() {
-    // Like the group filter, the role filter is always shown — even a
-    // single role (or the synthetic NO_ROLE bucket alone) earns its
-    // chip, so the two filter rows are consistently present.
-    let html = `<span class="roles-label">${themeWords('roles', 'classes')}</span>`;
-    for (const k of allRoleKeys) {
-      const inK = candidates.filter(c => roleKeys(c).includes(k));
-      const on = inK.filter(c => c.checked).length;
-      const cls = on === 0 ? '' : (on === inK.length ? ' on' : ' partial');
-      html += `<button type="button" class="window-role-chip${cls}" data-role="${esc(k)}">`
-        + `${esc(k)} (${on}/${inK.length})</button>`;
-    }
-    rolesEl.innerHTML = html;
-  }
-  function renderList() {
-    const rows = candidates.filter(matchesFilter);
-    if (rows.length === 0) {
-      listEl.innerHTML = `<div class="cleanup-empty">${themeWords('no agents match the filter', 'no familiars match the filter')}</div>`;
-      return;
-    }
-    listEl.innerHTML = rows.map(c => {
-      const badges = c.roles.map(r => `<span class="cleanup-badge">${esc(r)}</span>`).join('');
-      return `<div class="cleanup-row"><label>`
-        + `<input type="checkbox" data-conv="${esc(c.conv_id)}"${c.checked ? ' checked' : ''} />`
-        + `<span class="title">${esc(c.title || '(untitled)')}</span>`
-        + `<span class="id">${esc(c.conv_id.slice(0, 8))}</span>`
-        + `${badges}</label></div>`;
-    }).join('');
-  }
-  function renderFooter() {
-    const n = checkedCount();
-    countEl.textContent = `${n} of ${candidates.length} selected`;
-    // The submit lever's live-count label swaps verb + noun for the theme:
-    // "Focus 3 agents" → "Reveal 3 familiars" (focus) / "Veil 3 familiars"
-    // (unfocus). Both nouns just take a trailing "s" in the plural.
-    const wiz = isWizardActive();
-    const verb = direction() === 'focus' ? (wiz ? 'Reveal' : 'Focus') : (wiz ? 'Veil' : 'Unfocus');
-    const noun = wiz ? 'familiar' : 'agent';
-    submitBtn.textContent = n === 1 ? `${verb} 1 ${noun}` : `${verb} ${n} ${noun}s`;
-    submitBtn.disabled = n === 0;
-  }
-  function render() { renderHint(); renderGroups(); renderRoles(); renderList(); renderFooter(); }
-
-  const findCandidate = (conv) => candidates.find(c => c.conv_id === conv);
-
-  const onListChange = (e) => {
-    const cb = e.target.closest('input[type=checkbox]');
-    if (!cb) return;
-    const c = findCandidate(cb.getAttribute('data-conv'));
-    if (c) c.checked = cb.checked;
-    renderGroups(); renderRoles(); renderFooter();
-  };
-  const onGroupsClick = (e) => {
-    const chip = e.target.closest('.window-role-chip');
-    if (!chip) return;
-    const k = chip.getAttribute('data-group-chip');
-    const inK = candidates.filter(c => groupKeys(c).includes(k));
-    // Toggle: if every agent in this group is already selected, clear
-    // them; otherwise select them all.
-    const allOn = inK.every(c => c.checked);
-    for (const c of inK) c.checked = !allOn;
-    render();
-  };
-  const onRolesClick = (e) => {
-    const chip = e.target.closest('.window-role-chip');
-    if (!chip) return;
-    const k = chip.getAttribute('data-role');
-    const inK = candidates.filter(c => roleKeys(c).includes(k));
-    // Toggle: if every agent in this role is already selected, clear
-    // them; otherwise select them all.
-    const allOn = inK.every(c => c.checked);
-    for (const c of inK) c.checked = !allOn;
-    render();
-  };
-  const onDirChange = () => { renderHint(); renderFooter(); };
-  const onSearch = () => renderList();
-  const onSelectAll = () => { for (const c of candidates) c.checked = true; render(); };
-  const onSelectNone = () => { for (const c of candidates) c.checked = false; render(); };
-  // A +W / palette wizard toggle while the modal is open re-skins the CSS-swapped
-  // direction labels instantly; re-render so the JS-set hint + submit verb follow.
-  const onWizard = () => render();
-
-  const cleanup = () => {
-    overlay.classList.remove('show');
-    listEl.removeEventListener('change', onListChange);
-    groupsEl.removeEventListener('click', onGroupsClick);
-    rolesEl.removeEventListener('click', onRolesClick);
-    for (const r of dirRadios) r.removeEventListener('change', onDirChange);
-    searchEl.removeEventListener('input', onSearch);
-    selAllBtn.removeEventListener('click', onSelectAll);
-    selNoneBtn.removeEventListener('click', onSelectNone);
-    submitBtn.removeEventListener('click', onSubmit);
-    cancelBtn.removeEventListener('click', cleanup);
-    overlay.removeEventListener('click', onOverlay);
-    document.removeEventListener('keydown', onKey);
-    document.removeEventListener('tclaude:wizard', onWizard);
-  };
-  const onOverlay = (e) => { if (e.target === overlay) cleanup(); };
-  const onKey = (e) => { if (e.key === 'Escape') cleanup(); };
-
-  async function onSubmit() {
-    // Lead with the stable agent_id (the BE resolves it back to the conv-id
-    // the universe is keyed on), falling back to conv_id for a candidate
-    // with no actor id.
-    const selected = candidates.filter(c => c.checked);
-    const convs = selected.map(c => c.agent_id || c.conv_id);
-    if (convs.length === 0) return;
-    const dir = direction();
-    // The default-terminal setting applies to this bulk focus just like it does
-    // to the per-agent focus action. Each helper call opens (or deduplicates and
-    // focuses) one live-session pane in the dashboard's Terminals tab. Skip the
-    // native-only /api/agent-windows focus path entirely: it cannot open browser
-    // panes and reports only that a best-effort desktop focus was dispatched.
-    // Bulk unfocus still uses the endpoint below so it reliably detaches the
-    // selected tmux clients and closes their matching web panes.
-    if (dir === 'focus' && webTerminalDefault()) {
-      cleanup();
-      for (const c of selected) {
-        openWebWindowPane(c.agent_id || c.conv_id, c.title || c.conv_id.slice(0, 8));
-      }
-      toast(`focus web terminals: ${selected.length} focused`);
-      return;
-    }
-    const payload = { direction: dir, scope, convs };
-    if (scope === 'group') payload.group = groupName;
-    submitBtn.disabled = true;
-    errEl.textContent = '';
-    let r;
-    try {
-      r = await fetch('/api/agent-windows', {
-        method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-    } catch (e) {
-      errEl.textContent = `request failed: ${e && e.message || e}`;
-      renderFooter();
-      return;
-    }
-    if (!r.ok) {
-      errEl.textContent = await r.text();
-      renderFooter();
-      return;
-    }
-    const out = await r.json().catch(() => null);
-    cleanup();
-    if (!out) { toast('agent windows: done'); return; }
-    if (dir === 'focus') {
-      const extra = out.failed ? `, ${out.failed} failed` : '';
-      toast(`focus windows (${out.targeted} targeted): ${out.focused} focused${extra}`, out.failed > 0);
-    } else {
-      // Close the multiplexer panes of exactly the agents this subset unfocus
-      // detached (out.agents), so their terminal tabs don't linger showing
-      // "disconnected". Precise — agents outside the ticked selection are
-      // untouched.
-      closeTerminalsForWindowOp(out.agents);
-      const parts = [`${out.detached} detached`];
-      if (out.no_window) parts.push(`${out.no_window} had no window`);
-      if (out.failed) parts.push(`${out.failed} failed`);
-      toast(`unfocus windows (${out.targeted} targeted): ${parts.join(', ')}`, out.failed > 0);
-    }
-  }
-
-  listEl.addEventListener('change', onListChange);
-  groupsEl.addEventListener('click', onGroupsClick);
-  rolesEl.addEventListener('click', onRolesClick);
-  for (const r of dirRadios) r.addEventListener('change', onDirChange);
-  searchEl.addEventListener('input', onSearch);
-  selAllBtn.addEventListener('click', onSelectAll);
-  selNoneBtn.addEventListener('click', onSelectNone);
-  submitBtn.addEventListener('click', onSubmit);
-  cancelBtn.addEventListener('click', cleanup);
-  overlay.addEventListener('click', onOverlay);
-  document.addEventListener('keydown', onKey);
-  document.addEventListener('tclaude:wizard', onWizard);
-
-  render();
-  overlay.classList.add('show');
-  setTimeout(() => submitBtn.focus(), 0);
+  return openWindowSelectionDialog(descriptor);
 }
-
 function groupDeletePlan(group) {
   const snap = lastSnapshot || {};
   const groups = Array.isArray(snap.groups) ? snap.groups : [];

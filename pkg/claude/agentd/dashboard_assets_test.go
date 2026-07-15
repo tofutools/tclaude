@@ -615,7 +615,7 @@ func TestDashboardAssets_QuickChipKeyboardOperability(t *testing.T) {
 //   - terminals-tab.js owns the shared openWebWindowPane / openWebTermPane
 //     pane-openers the web buttons AND the routed actions both call;
 //   - row-actions.js routes jump / open-window / term / term-dir / msg-focus;
-//   - refresh.js routes the bulk windows-modal focus;
+//   - transaction-dialog-actions.js routes the bulk windows-modal focus;
 //   - the shell palette injects the snapshot preference into palette.js's
 //     command/action boundary;
 //   - config.js + dashboard.html expose the Config-tab checkbox.
@@ -635,10 +635,10 @@ func TestDashboardAssets_DefaultTerminalWired(t *testing.T) {
 		// palette.js — the shell-owned command palette passes the snapshot-derived
 		// preference into the command's "focus window" action.
 		"if (preferWebTerminal) { openWebWindowPane(conv, label); toast(",
-		// refresh.js — bulk focus opens every selected agent as a web pane and
+		// transaction-dialog-actions.js — bulk focus opens every selected agent as a web pane and
 		// skips the native-only /api/agent-windows focus endpoint.
-		"if (dir === 'focus' && webTerminalDefault()) {",
-		"openWebWindowPane(c.agent_id || c.conv_id, c.title || c.conv_id.slice(0, 8));",
+		"if (request.direction === 'focus' && request.webTerminal) {",
+		"openWebWindowPane(target.selector, target.label);",
 		// config.js — load + gather the Config-tab checkbox.
 		"#cfg-dashboard-default-web-terminal",
 		"dashboard.default_terminal = 'web'",

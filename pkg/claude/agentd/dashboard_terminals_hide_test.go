@@ -57,7 +57,7 @@ func TestTerminalsTab_ExportsHideClosers(t *testing.T) {
 // TestHidePathsClosePanes pins that every "hide from outside the terminal shell"
 // path notifies the Terminals tab to close the matching pane: the per-agent eye
 // button (row-actions.js), the palette per-agent hide + bulk unfocus
-// (palette.js), and the window-picker modal's unfocus (refresh.js).
+// (palette.js), and the Preact window-picker action adapter.
 func TestHidePathsClosePanes(t *testing.T) {
 	cases := []struct {
 		file, needle, why string
@@ -68,7 +68,7 @@ func TestHidePathsClosePanes(t *testing.T) {
 			"the palette per-agent hide must close that agent's terminal pane"},
 		{"palette.js", "closeTerminalsForWindowOp(out.agents)",
 			"the palette bulk unfocus must close the detached agents' terminal panes"},
-		{"refresh.js", "closeTerminalsForWindowOp(out.agents)",
+		{"transaction-dialog-actions.js", "closeTerminalsForWindowOp(result.agents)",
 			"the window-picker modal's unfocus must close the detached agents' terminal panes"},
 	}
 	for _, c := range cases {

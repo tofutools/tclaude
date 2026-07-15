@@ -913,8 +913,8 @@ function bindRowActions() {
           return;
         }
         case 'window-modal-group': {
-          // openWindowModal owns its modal, POST and toast — return
-          // so the default toast/refresh doesn't fire.
+          // The compatibility launcher freezes this clicked group scope, then
+          // hands state/rendering to Preact and effects to plain adapters.
           openWindowModal('group', group);
           return;
         }
