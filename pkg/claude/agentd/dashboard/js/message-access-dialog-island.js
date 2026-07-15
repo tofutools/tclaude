@@ -425,18 +425,8 @@ export function MessageAccessDialogApp({ state, actions, snapshot, confirmDiscar
     descriptor=${current.picker} state=${state} snapshot=${snapshot} confirmDiscard=${confirmDiscard}/>`}</${Fragment}>`;
 }
 
-function CronTargetRoot({ state, snapshot }) {
-  const value = state.cronTarget.value;
-  const change = (next) => {
-    if (next.mode !== value.mode) state.setCronTargetMode(next.mode);
-    state.setCronTargetValue(next);
-  };
-  return html`<${TargetPicker} prefix="cron-create" value=${value} onChange=${change} snapshot=${snapshot}
-    pickAgent=${(options) => state.pickAgent({ ...options, title: 'Pick target' })}/>`;
-}
-
 export function mountMessageAccessDialogIsland({
-  dialogHost, cronTargetHost, state, actions, snapshot, confirmDiscard, registerCleanup,
+  dialogHost, state, actions, snapshot, confirmDiscard, registerCleanup,
 }) {
   const controller = {
     openMessage: state.openMessage,
@@ -446,9 +436,6 @@ export function mountMessageAccessDialogIsland({
     openGroupPermissions: state.openGroupPermissions,
     openBufferedPermissions: state.openBufferedPermissions,
     pickAgent: state.pickAgent,
-    configureCronTarget: state.configureCronTarget,
-    readCronTarget: state.readCronTarget,
-    setCronTargetModeListener: state.setCronTargetModeListener,
   };
   let unregister = null;
   let unsubscribe = null;
@@ -460,7 +447,6 @@ export function mountMessageAccessDialogIsland({
     attempt(() => { unsubscribe?.(); unsubscribe = null; });
     attempt(() => { unregister?.(); unregister = null; });
     attempt(() => state.dispose());
-    attempt(() => render(null, cronTargetHost));
     attempt(() => render(null, dialogHost));
     if (failures.length) throw new AggregateError(failures, 'message/access dialog cleanup failed');
     cleaned = true;
@@ -468,13 +454,11 @@ export function mountMessageAccessDialogIsland({
   try {
     unregister = registerMessageAccessDialogController(controller);
     render(html`<${MessageAccessDialogApp} state=${state} actions=${actions} snapshot=${snapshot.value} confirmDiscard=${confirmDiscard}/>` , dialogHost);
-    render(html`<${CronTargetRoot} state=${state} snapshot=${snapshot.value}/>` , cronTargetHost);
     // Signals referenced by a component trigger Preact updates only when read
-    // during render. The roots above receive snapshot.value, so subscribe once
-    // and rerender both roots through a signal effect owned by this feature.
+    // during render. The root above receives snapshot.value, so subscribe once
+    // and rerender it through a signal effect owned by this feature.
     unsubscribe = snapshot.subscribe((value) => {
       render(html`<${MessageAccessDialogApp} state=${state} actions=${actions} snapshot=${value} confirmDiscard=${confirmDiscard}/>` , dialogHost);
-      render(html`<${CronTargetRoot} state=${state} snapshot=${value}/>` , cronTargetHost);
     });
     registerCleanup(cleanup);
   } catch (error) {

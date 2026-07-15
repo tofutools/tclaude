@@ -117,14 +117,12 @@ test('mounted island registers the launcher seam and snapshot subscription prese
   const state = stateModule.createMessageAccessDialogState();
   const snapshotSignal = harness.signals.signal(snapshot({ members: [member('a')] }));
   const dialogHost = harness.document.body.appendChild(harness.document.createElement('div'));
-  const cronTargetHost = harness.document.body.appendChild(harness.document.createElement('div'));
   const cleanups = [];
   const actions = { sendMessage: async () => {}, replyHuman: async () => {}, grantSudo: async () => {}, savePermissions: async () => {} };
   await harness.act(() => island.mountMessageAccessDialogIsland({
-    dialogHost, cronTargetHost, state, actions, snapshot: snapshotSignal,
+    dialogHost, state, actions, snapshot: snapshotSignal,
     confirmDiscard: async () => true, registerCleanup: (cleanup) => cleanups.push(cleanup),
   }));
-  assert.ok(cronTargetHost.querySelector('#cron-create-target-picker'));
   await harness.act(() => { controller.openMessageCreateModal({ from: 'agt_sender', targetMode: 'group', groupName: 'team' }); });
   const body = dialogHost.querySelector('#message-create-body');
   await harness.input(body, 'retained by subscription');
@@ -139,9 +137,7 @@ test('mounted island registers the launcher seam and snapshot subscription prese
   await harness.act(() => { cleanups.reverse().forEach((cleanup) => cleanup()); });
   assert.equal(await canceled, '', 'island teardown cancels an outstanding chooser promise');
   assert.equal(dialogHost.childElementCount, 0);
-  assert.equal(cronTargetHost.childElementCount, 0);
   dialogHost.remove();
-  cronTargetHost.remove();
 });
 
 test('partial island initialization rolls back the controller and permits a clean remount', async (t) => {
@@ -152,12 +148,10 @@ test('partial island initialization rolls back the controller and permits a clea
     harness.importDashboardModule('js/message-access-dialog-controller.js'),
   ]);
   const dialogHost = harness.document.body.appendChild(harness.document.createElement('div'));
-  const cronTargetHost = harness.document.body.appendChild(harness.document.createElement('div'));
   const actions = { sendMessage: async () => {}, replyHuman: async () => {}, grantSudo: async () => {}, savePermissions: async () => {} };
   const failedCleanups = [];
   assert.throws(() => island.mountMessageAccessDialogIsland({
     dialogHost,
-    cronTargetHost,
     state: stateModule.createMessageAccessDialogState(),
     actions,
     snapshot: {
@@ -169,7 +163,6 @@ test('partial island initialization rolls back the controller and permits a clea
   }), /snapshot subscription failed/);
   assert.equal(failedCleanups.length, 0, 'failed initialization never publishes a page cleanup');
   assert.equal(dialogHost.childElementCount, 0);
-  assert.equal(cronTargetHost.childElementCount, 0);
   assert.throws(() => controller.openMessageCreateModal(), /dialogs are not ready/,
     'failed initialization releases the global launcher seam');
 
@@ -177,7 +170,6 @@ test('partial island initialization rolls back the controller and permits a clea
   const state = stateModule.createMessageAccessDialogState();
   await harness.act(() => island.mountMessageAccessDialogIsland({
     dialogHost,
-    cronTargetHost,
     state,
     actions,
     snapshot: harness.signals.signal(snapshot({ members: [] })),
@@ -188,7 +180,6 @@ test('partial island initialization rolls back the controller and permits a clea
   assert.ok(dialogHost.querySelector('#message-create-modal'));
   await harness.act(() => { cleanups.reverse().forEach((cleanup) => cleanup()); });
   dialogHost.remove();
-  cronTargetHost.remove();
 });
 
 test('scoped message follows live-all membership and sends exact group role payload', async (t) => {
