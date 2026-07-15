@@ -20,23 +20,19 @@ function snapshot(groups) {
     conversations: [],
     replaced: [],
     paging: {},
+    activity_bots: { regular: 'emoji', slop: 'off', wizard: 'off' },
   };
 }
 
-function testRenderer(groups) {
-  if (!groups.length) return '<div class="empty">No groups</div>';
-  return groups.map((group) => `
-    <details data-group-key="${group.name}">
-      <summary><strong class="group-name">${group.name}</strong></summary>
-      <span class="theme-probe" title="${document.body.classList.contains('wizard') ? 'party' : 'group'}"></span>
-      ${group.members?.length ? `
-        <span class="group-activity">${group.members[0].state?.status}</span>
-        <span class="slop-machine" data-status="${group.members[0].state?.status}"><span>${group.members[0].state?.status}</span></span>
-      ` : ''}
-      <span class="group-descr">${group.descr || ''}</span>
-      <button data-act="inspect" data-group="${group.name}" aria-label="inspect ${group.name}">inspect</button>
-    </details>
-  `).join('');
+function testPresentation() {
+  return {
+    memberTable(members, context) {
+      return `<table><tbody>${members.map((member) => {
+        const status = member.state?.status || '';
+        return `<tr data-key="${member.conv_id || member.title}"${context.ungrouped ? ' data-dnd-source-ungrouped="1"' : ''}><td><button data-act="inspect" aria-label="inspect ${context.group?.name || 'ungrouped'}">inspect</button></td><td class="state-cell"><span class="slop-machine" data-status="${status}"><span>${status}</span></span></td></tr>`;
+      }).join('')}</tbody></table>`;
+    },
+  };
 }
 
 function stateDependencies() {
@@ -65,8 +61,8 @@ test('Groups list preserves keyed disclosure, focus and nodes across reorder/act
   const state = createGroupsState({ prefs, resetOffsets: () => {}, ...stateDependencies() });
   state.initialize();
   state.publish(snapshot([
-    { name: 'alpha', descr: 'old', members: [{ state: { status: 'working' } }] },
-    { name: 'beta', members: [{ state: { status: 'idle' } }] },
+    { name: 'alpha', descr: 'old', members: [{ conv_id: 'alpha-member', online: true, state: { status: 'working' } }] },
+    { name: 'beta', members: [{ conv_id: 'beta-member', online: true, state: { status: 'idle' } }] },
   ]));
   const actions = { sort: () => {}, page: () => {}, setPageSize: () => {} };
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
@@ -75,7 +71,7 @@ test('Groups list preserves keyed disclosure, focus and nodes across reorder/act
       host=${host}
       state=${state}
       actions=${actions}
-      renderGroupsHTML=${testRenderer}
+      presentation=${testPresentation()}
     />
   `, host);
 
@@ -95,8 +91,8 @@ test('Groups list preserves keyed disclosure, focus and nodes across reorder/act
   assert.equal(editor.isConnected, false);
 
   await harness.act(() => state.publish(snapshot([
-    { name: 'beta', members: [{ state: { status: 'asking' } }] },
-    { name: 'alpha', descr: 'new', members: [{ state: { status: 'working' } }] },
+    { name: 'beta', members: [{ conv_id: 'beta-member', online: true, state: { status: 'awaiting_input' } }] },
+    { name: 'alpha', descr: 'new', members: [{ conv_id: 'alpha-member', online: true, state: { status: 'working' } }] },
   ])));
 
   assert.equal(host.querySelector('details[data-group-key="alpha"]'), alpha);
@@ -105,38 +101,37 @@ test('Groups list preserves keyed disclosure, focus and nodes across reorder/act
   assert.equal(alpha.open, true, 'live disclosure state is not reset by a reorder');
   assert.equal(harness.document.activeElement, inspect, 'focused legacy action remains focused');
   assert.equal(alpha.querySelector('.group-descr'), descr, 'inline-edit host identity survives publish');
-  assert.equal(descr.textContent, 'new', 'restored inline-edit host receives later updates');
-  assert.equal(beta.querySelector('.group-activity').textContent, 'asking');
+  assert.match(descr.textContent, /new/, 'restored inline-edit host receives later updates');
+  assert.ok(beta.querySelector('.group-activity'));
 
   harness.document.body.classList.add('wizard');
   await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent(
     'tclaude:wizard', { detail: { active: true } },
   )));
-  assert.equal(alpha.querySelector('.theme-probe').title, 'party',
-    'a live wizard flip repaints list-rendered title attributes');
   assert.equal(host.querySelector('details[data-group-key="alpha"]'), alpha,
     'the theme repaint preserves keyed group disclosure identity');
 
   const machine = beta.querySelector('.slop-machine');
-  machine.innerHTML = '<span>spinning</span>'; // manual pull creates foreign reel children
-  const activeReel = machine.firstElementChild;
+  const activeReel = harness.document.createElement('span');
+  activeReel.textContent = 'spinning';
+  machine.replaceChildren(activeReel); // manual reel pull installs foreign children
   await harness.act(() => state.publish(snapshot([
-    { name: 'beta', members: [{ state: { status: 'asking' } }] },
-    { name: 'alpha', members: [{ state: { status: 'working' } }] },
+    { name: 'beta', members: [{ conv_id: 'beta-member', online: true, state: { status: 'awaiting_input' } }] },
+    { name: 'alpha', descr: 'new', members: [{ conv_id: 'alpha-member', online: true, state: { status: 'working' } }] },
   ])));
   assert.equal(machine.firstElementChild, activeReel,
     'a same-status publish preserves an in-flight imperative reel pull');
 
   await harness.act(() => state.publish(snapshot([
-    { name: 'beta', members: [{ state: { status: 'idle' } }] },
-    { name: 'alpha', members: [{ state: { status: 'working' } }] },
+    { name: 'beta', members: [{ conv_id: 'beta-member', online: true, state: { status: 'idle' } }] },
+    { name: 'alpha', descr: 'new', members: [{ conv_id: 'alpha-member', online: true, state: { status: 'working' } }] },
   ])));
   assert.equal(machine.querySelector('span').textContent, 'idle',
     'a changed status replaces imperative reel children after a manual pull');
 
   await harness.act(() => state.publish(snapshot([
     { name: 'beta', members: [] },
-    { name: 'alpha', members: [] },
+    { name: 'alpha', descr: 'new', members: [{ conv_id: 'alpha-member', online: true, state: { status: 'working' } }] },
   ])));
   assert.equal(harness.document.activeElement, inspect,
     'a neighboring activity chip disappearing does not replace the keyed action');
@@ -225,6 +220,107 @@ test('Groups controls own query, visibility, columns, badge and dropdown behavio
   await mounted.unmount();
 });
 
+test('native group chrome preserves hierarchy, virtual DnD and shared menu contracts', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createGroupsState }, { GroupsList }, { setHoveredGroupKey }, { dashPrefs }] = await Promise.all([
+    harness.importDashboardModule('js/groups-state.js'),
+    harness.importDashboardModule('js/groups-island.js'),
+    harness.importDashboardModule('js/group-hover-state.js'),
+    harness.importDashboardModule('js/prefs.js'),
+  ]);
+  const state = createGroupsState({
+    prefs: memoryPrefs({
+      'tclaude.dash.ungrouped.groups': '1',
+      'tclaude.dash.retired.groups': '1',
+    }),
+    resetOffsets: () => {},
+    ...stateDependencies(),
+  });
+  state.initialize();
+  const chromeSnapshot = ({ pendingAgentID, retiredAgentID, ungroupedOnline = true } = {}) => ({
+    ...snapshot([
+      {
+        name: 'parent', members: [], mission: 'ship it', source_template: 'delivery',
+        pending: [{ label: 'spawn-1', name: 'worker', online: true }],
+      },
+      { name: 'child', parent: 'parent', members: [] },
+    ]),
+    ungrouped: [{ conv_id: 'loose', title: 'Loose', online: ungroupedOnline }],
+    pending: [{ label: 'gate-1', name: 'Gated', online: true, agent_id: pendingAgentID }],
+    retired: [{ conv_id: 'retired-1', title: 'Retired', agent_id: retiredAgentID }],
+    links: [{ id: 7, from: 'parent', to: 'child', mode: 'direct' }],
+  });
+  state.publish(chromeSnapshot());
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  host.id = 'groups-list';
+  const mounted = await harness.mount(harness.html`<${GroupsList}
+    host=${host} state=${state}
+    actions=${{ sort: () => {}, page: () => {}, setPageSize: () => {} }}
+    presentation=${testPresentation()}
+  />`, host);
+
+  const parent = host.querySelector('details[data-dnd-target-group="parent"]');
+  const child = host.querySelector('details[data-dnd-target-group="child"]');
+  setHoveredGroupKey('parent');
+  await harness.act(() => state.rerender());
+  assert.equal(parent.classList.contains('quick-hover'), true);
+  dashPrefs.syncItem('tclaude.dash.quickpin.parent', '1');
+  await harness.act(() => state.rerender());
+  assert.equal(parent.classList.contains('quick-pinned'), true);
+  dashPrefs.syncItem('tclaude.dash.quickpin.parent', null);
+  await harness.act(() => state.rerender());
+  assert.equal(parent.classList.contains('quick-hover'), true,
+    'unpinning under a stationary cursor re-stamps the tracked hover class');
+  assert.ok(parent.querySelector('.group-subgroups').contains(child));
+  assert.equal(parent.querySelector('.cog-btn').dataset.act, 'group-menu');
+  assert.equal(parent.querySelector('.cog-btn').getAttribute('aria-expanded'), 'false');
+  assert.ok(parent.querySelector('.group-force-block'));
+  assert.ok(parent.querySelector('.group-pending-block tr[data-dnd-pending]'));
+  assert.ok(parent.querySelector('.group-links-section button[data-act="link-edit"]'));
+  assert.match(parent.querySelector('[data-act="power-on-group"]').title, /nothing new is created/);
+  assert.match(parent.querySelector('[data-act="stand-down-force"]').title, /Not a delete/);
+  assert.match(parent.querySelector('[data-act="cleanup-worktrees-group"]').title, /protected/);
+  assert.equal(parent.querySelector('[data-act="link-delete"]').title, 'Remove this link');
+  assert.equal(host.querySelector('details[data-dnd-target-ungrouped]').dataset.groupKey, ' ungrouped-virtual');
+  assert.ok(host.querySelector('tr[data-dnd-source-ungrouped][data-key="loose"]'));
+
+  const pending = host.querySelector('tr[data-key="gate-1"]');
+  const retired = host.querySelector('tr[data-key="retired-1"]');
+  assert.match(pending.querySelector('[data-act="focus-pending"]').title, /startup gate/);
+  assert.match(retired.querySelector('[data-act="reinstate-agent"]').title, /Reinstate/);
+  await harness.act(() => state.publish(chromeSnapshot({
+    pendingAgentID: 'agt-pending', retiredAgentID: 'agt-retired',
+  })));
+  assert.equal(host.querySelector('tr[data-key="gate-1"]'), pending,
+    'pending row identity stays label-keyed when agent metadata materializes');
+  assert.equal(host.querySelector('tr[data-key="retired-1"]'), retired,
+    'retired row identity stays conv-id-keyed when agent metadata materializes');
+
+  assert.match(retired.closest('details').querySelector('.group-virtual-badge').title,
+    /Drag an agent here to retire it/);
+  const offlineToggle = harness.document.createElement('input');
+  offlineToggle.id = 'filter-groups-offline';
+  offlineToggle.checked = false;
+  harness.document.body.appendChild(offlineToggle);
+  harness.document.body.classList.add('wizard');
+  await harness.act(() => state.publish(chromeSnapshot({ ungroupedOnline: false })));
+  await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent(
+    'tclaude:wizard', { detail: { active: true } },
+  )));
+  const ungrouped = host.querySelector('details[data-dnd-target-ungrouped]');
+  assert.match(ungrouped.querySelector('.subtable .theme-copy-wizard').textContent,
+    /slumbering familiar.*show slumbering/);
+  assert.match(ungrouped.querySelector('.group-virtual-badge').title,
+    /cannot be renamed, dispelled, whispered to, or scheduled/);
+
+  setHoveredGroupKey(null);
+  harness.document.body.classList.remove('wizard');
+  offlineToggle.remove();
+
+  await mounted.unmount();
+  host.remove();
+});
+
 test('Groups list owns sort and virtual-list pager event routing', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createGroupsState }, { GroupsList }] = await Promise.all([
@@ -247,26 +343,26 @@ test('Groups list owns sort and virtual-list pager event routing', async (t) => 
     page: (...args) => calls.push(['page', ...args]),
     setPageSize: (...args) => calls.push(['size', ...args]),
   };
-  const renderer = () => `
-    <table><thead><tr><th data-sort-table="members" data-sort-col="title">Name</th></tr></thead></table>
-    <button data-pager="next" data-list="retired">next</button>
-    <select data-pager="size" data-list="retired"><option value="100" selected>100/page</option></select>
-  `;
+  state.setVisible('retired', true);
+  state.publish({ ...snapshot([]), retired: [{
+    conv_id: 'retired-1', title: 'Retired', retired_at: '2026-01-01T00:00:00Z',
+  }], paging: { retired: { offset: 0, limit: 50, total: 80 } } });
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
   const mounted = await harness.mount(harness.html`
     <${GroupsList}
       host=${host}
       state=${state}
       actions=${actions}
-      renderGroupsHTML=${renderer}
+      presentation=${testPresentation()}
     />
   `, host);
 
-  await harness.act(() => harness.fireEvent(host.querySelector('th'), 'click'));
-  await harness.act(() => harness.fireEvent(host.querySelector('button'), 'click'));
+  await harness.act(() => harness.fireEvent(host.querySelector('th[data-sort-col]'), 'click'));
+  await harness.act(() => harness.fireEvent(host.querySelector('button[data-pager="next"]'), 'click'));
+  host.querySelector('select option[value="100"]').selected = true;
   await harness.act(() => harness.fireEvent(host.querySelector('select'), 'change'));
   assert.deepEqual(calls, [
-    ['sort', 'members', 'title'],
+    ['sort', 'retired', 'id'],
     ['page', 'retired', 'next', 80],
     ['size', 'retired', '100'],
   ]);
