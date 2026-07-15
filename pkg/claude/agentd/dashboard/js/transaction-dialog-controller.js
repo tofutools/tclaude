@@ -272,6 +272,130 @@ export function openDeleteRetiredPreviewDialog(candidates) {
   });
 }
 
+export const CLEANUP_CATEGORIES = Object.freeze(['agent', 'retired', 'conversation']);
+
+function normalizeCleanupCandidate(candidate) {
+  const category = CLEANUP_CATEGORIES.includes(candidate?.category)
+    ? candidate.category : 'conversation';
+  return {
+    agent_id: String(candidate?.agent_id || '').trim(),
+    conv_id: String(candidate?.conv_id || '').trim(),
+    title: String(candidate?.title || ''),
+    category,
+    online: candidate?.online === true,
+    lastActivity: String(candidate?.lastActivity || ''),
+    owner: candidate?.owner === true,
+    groups: uniqueStrings(candidate?.groups),
+  };
+}
+
+// Cleanup spans three separately sourced rosters. Collapse an impossible
+// duplicate conv defensively before it reaches checkbox identity, then keep the
+// legacy oldest-first ordering (missing/invalid activity sorts as oldest).
+export function normalizeCleanupCandidates(candidates) {
+  const seen = new Set();
+  const result = [];
+  for (const source of candidates || []) {
+    const candidate = normalizeCleanupCandidate(source);
+    if (!candidate.conv_id || seen.has(candidate.conv_id)) continue;
+    seen.add(candidate.conv_id);
+    result.push(candidate);
+  }
+  const activityTime = (candidate) => {
+    if (!candidate.lastActivity) return 0;
+    const parsed = Date.parse(candidate.lastActivity);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  };
+  result.sort((left, right) => activityTime(left) - activityTime(right));
+  return result;
+}
+
+function cleanupCategories(categories) {
+  if (!Array.isArray(categories)) return [...CLEANUP_CATEGORIES];
+  return CLEANUP_CATEGORIES.filter((category) => categories.includes(category));
+}
+
+// buildCleanupDescriptor is the only snapshot/list -> cleanup-plan adapter.
+// It runs once per launcher click, before the keyed owner mounts, so polling or
+// list pagination cannot change the human's candidate universe mid-dialog.
+export function buildCleanupDescriptor(
+  snapshot, options = {}, { retired = [], conversations = [] } = {},
+) {
+  const mode = options.mode === 'group' ? 'group' : 'agents';
+  const group = mode === 'group' ? String(options.group || '') : '';
+  const candidates = [];
+  if (mode === 'group') {
+    const entry = (snapshot?.groups || []).find((candidate) => candidate?.name === group);
+    for (const member of (entry?.members || [])) {
+      if (member?.online) continue;
+      candidates.push({
+        agent_id: member?.agent_id,
+        conv_id: member?.conv_id,
+        title: member?.title,
+        category: 'agent',
+        online: false,
+        lastActivity: member?.state?.last_hook,
+        owner: member?.owner === true,
+        groups: [],
+      });
+    }
+  } else {
+    for (const agent of (snapshot?.agents || [])) {
+      candidates.push({
+        agent_id: agent?.agent_id,
+        conv_id: agent?.conv_id,
+        title: agent?.title,
+        category: 'agent',
+        online: agent?.online === true,
+        lastActivity: agent?.state?.last_hook,
+        owner: (agent?.owned_groups || []).length > 0,
+        groups: agent?.groups || [],
+      });
+    }
+    for (const agent of retired || []) {
+      candidates.push({
+        agent_id: agent?.agent_id,
+        conv_id: agent?.conv_id,
+        title: agent?.title,
+        category: 'retired',
+        online: agent?.online === true,
+        lastActivity: agent?.retired_at,
+        groups: [],
+      });
+    }
+    for (const conversation of conversations || []) {
+      candidates.push({
+        conv_id: conversation?.conv_id,
+        title: conversation?.title,
+        category: 'conversation',
+        online: conversation?.online === true,
+        lastActivity: conversation?.modified,
+        groups: [],
+      });
+    }
+  }
+
+  const validTiers = new Set(['unjoin', 'retire', 'delete', 'reinstate']);
+  const requestedTier = String(options.tier || '');
+  return {
+    kind: 'cleanup',
+    mode,
+    ...(mode === 'group' ? { group } : {}),
+    tier: mode === 'group' ? 'unjoin'
+      : validTiers.has(requestedTier) ? requestedTier : 'delete',
+    categories: mode === 'group' ? ['agent'] : cleanupCategories(options.categories),
+    candidates: normalizeCleanupCandidates(candidates),
+  };
+}
+
+export function openCleanupDialog(descriptor) {
+  return openTransactionDialog({
+    ...descriptor,
+    kind: 'cleanup',
+    candidates: normalizeCleanupCandidates(descriptor?.candidates),
+  });
+}
+
 // DnD owns optimistic drag presentation, while the transaction root owns the
 // authoritative mutation refresh. Only results that did not already complete
 // and refresh need the DnD caller to reconcile the cancelled/failed gesture.

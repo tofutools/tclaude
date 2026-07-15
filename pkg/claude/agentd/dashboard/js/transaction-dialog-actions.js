@@ -39,6 +39,7 @@ export function createTransactionDialogActions({
   confirm = async () => false,
   openWebWindowPane = () => {},
   closeTerminalsForWindowOp = () => {},
+  openWorktreeCleanup = async () => {},
 }) {
   // A request object is the immutable identity of one visible delete-group
   // plan. Phase progress lives outside Preact render state so retries cannot
@@ -279,6 +280,62 @@ export function createTransactionDialogActions({
       const payload = await responsePayload(response);
       if (!response.ok) throw responseError(response, payload);
       return payload;
+    },
+
+    async cleanup(request) {
+      const groupMode = request.mode === 'group';
+      const url = groupMode ? '/api/cleanup/group' : '/api/cleanup/agents';
+      const payload = groupMode ? {
+        group: request.group,
+        members: request.targets,
+        include_owners: !!request.includeOwners,
+      } : {
+        agents: request.targets,
+        mode: request.tier,
+        include_owners: !!request.includeOwners,
+        include_online: !!request.includeOnline,
+        delete_worktrees: !!request.deleteWorktrees,
+        shutdown: !!request.shutdown,
+      };
+      let response;
+      try {
+        response = await fetchImpl(url, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } catch (cause) {
+        throw new Error(`Request failed: ${cause?.message || cause}`);
+      }
+      const result = await responsePayload(response);
+      if (!response.ok) throw responseError(response, result);
+      return result;
+    },
+
+    async finishCleanup(response) {
+      // Accepted cleanup outcomes are a stable, read-only phase. Reconcile the
+      // dashboard only after Done/Escape/backdrop dismisses that exact result.
+      const result = { kind: 'cleanup', response };
+      state.handoff();
+      try { await refresh(); } finally { state.finish(result); }
+      return result;
+    },
+
+    async handoffCleanupWorktrees(descriptor = {}) {
+      // The legacy janitor remains the next visual owner for now. Unpaint the
+      // keyed cleanup transaction first, let opener focus restore, then launch
+      // the exact follow-up descriptor without admitting a competing dialog.
+      const followup = Object.freeze({ group: String(descriptor.group || '') });
+      const result = { kind: 'cleanup-worktrees', descriptor: followup };
+      state.handoff();
+      await Promise.resolve();
+      try {
+        await openWorktreeCleanup(followup.group);
+      } finally {
+        state.finish(result);
+      }
+      return result;
     },
 
     async deleteGroupPlan(request) {
