@@ -201,6 +201,9 @@ func ValidateUpgradeNeeded(needed UpgradeNeeded) error {
 		if err := validateCheckpointAdminRecord(needed.RunID, needed.Checkpoint, admin); err != nil {
 			return fmt.Errorf("upgrade-needed checkpoint admin record %d: %w", i, err)
 		}
+		if admin.Resolution != nil && !hasActiveLegacyID(needed.ActiveLegacyIDs, LegacyActiveID{Kind: LegacyActiveBlockResolution, ID: admin.ID}) {
+			return fmt.Errorf("upgrade-needed checkpoint admin record %d resolution is absent from active legacy ids", i)
+		}
 		if i > 0 && strings.Compare(needed.CheckpointAdminRecords[i-1].ID, admin.ID) >= 0 {
 			return fmt.Errorf("upgrade-needed checkpoint admin records are not strictly sorted")
 		}
@@ -265,6 +268,9 @@ func validateCheckpointAdminRecord(runID string, checkpoint CheckpointBinding, a
 	if err := ValidateAdminRecord(admin.Record, true, admin.Resolution); err != nil {
 		return err
 	}
+	if err := validateCheckpointAdminSemantics(admin); err != nil {
+		return err
+	}
 	legacyID, err := LegacyAdminRecordIdentity(admin.Record)
 	if err != nil || legacyID != admin.LegacyID {
 		return fmt.Errorf("legacy identity mismatch")
@@ -274,6 +280,59 @@ func validateCheckpointAdminRecord(runID string, checkpoint CheckpointBinding, a
 		return fmt.Errorf("checkpoint identity mismatch")
 	}
 	return nil
+}
+
+func validateCheckpointAdminSemantics(admin CheckpointLegacyAdminRecord) error {
+	record := admin.Record
+	switch record.AdminType {
+	case string(legacy.EventBlockResolutionRecorded):
+		if admin.Resolution == nil {
+			return fmt.Errorf("block-resolution admin record lacks resolution")
+		}
+	case string(legacy.EventAdminRepairRecorded), string(legacy.EventAdminProgramsAllowed):
+		if admin.Resolution != nil {
+			return fmt.Errorf("admin type %q cannot carry block resolution", record.AdminType)
+		}
+		return nil
+	default:
+		return fmt.Errorf("legacy admin type %q is invalid", record.AdminType)
+	}
+
+	resolution := *admin.Resolution
+	if resolution.BlockedAttempt == 0 {
+		return fmt.Errorf("block resolution lacks blocked attempt")
+	}
+	if resolution.NodeID == "" || resolution.NodeID != strings.TrimSpace(resolution.NodeID) {
+		return fmt.Errorf("block resolution node id is empty or noncanonical")
+	}
+	actor := legacy.ActorRef(resolution.Actor)
+	if !legacy.ValidateActorRef(actor) || legacy.IsEngineActor(actor) {
+		return fmt.Errorf("block resolution requires a valid non-engine actor")
+	}
+	if resolution.Reason == "" || resolution.Reason != strings.TrimSpace(resolution.Reason) {
+		return fmt.Errorf("block resolution reason is empty or noncanonical")
+	}
+	if resolution.EvidenceRef == "" || resolution.EvidenceRef != strings.TrimSpace(resolution.EvidenceRef) {
+		return fmt.Errorf("block resolution evidence ref is empty or noncanonical")
+	}
+	if resolution.Timestamp == "" {
+		return fmt.Errorf("block resolution lacks timestamp")
+	}
+	if record.Actor != resolution.Actor || record.ReasonCode != resolution.Reason ||
+		record.EvidenceRef != resolution.EvidenceRef || record.Timestamp != resolution.Timestamp {
+		return fmt.Errorf("block-resolution admin authority does not match resolution payload")
+	}
+	return nil
+}
+
+func hasActiveLegacyID(active []LegacyActiveID, target LegacyActiveID) bool {
+	_, found := slices.BinarySearchFunc(active, target, func(a, b LegacyActiveID) int {
+		if n := strings.Compare(string(a.Kind), string(b.Kind)); n != 0 {
+			return n
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	return found
 }
 
 func activeLegacyIDs(ctx context.Context, st *legacy.State, admins []CheckpointLegacyAdminRecord, adminResolutions map[string]BlockResolution) ([]LegacyActiveID, error) {
