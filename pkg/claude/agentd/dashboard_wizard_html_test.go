@@ -224,11 +224,11 @@ func TestDashboardHTML_WizardLinksDialogs(t *testing.T) {
 		}
 	}
 
-	must(`class="theme-copy-wizard">Arcane channels between parties</span>`, "the links browser has wizard-mode title copy")
-	must(`class="theme-copy-wizard">+ weave channel</span>`, "the new-link action has wizard-mode copy")
-	must("themeWords('Add inter-group link', 'Weave an arcane channel')", "the create dialog title follows the active theme")
-	must("themeWords('Edit link mode', 'Rebind an arcane channel')", "the edit dialog title follows the active theme")
-	must("wizWord('Remove this link?', 'Sever this arcane channel?')", "the destructive confirmation keeps wizard-mode vocabulary")
+	must(`plain="Inter-group links" wizard="Arcane channels between parties"`, "the links browser has wizard-mode title copy")
+	must(`plain="+ new link" wizard="+ weave channel"`, "the new-link action has wizard-mode copy")
+	must("plain=${edit ? 'Edit link mode' : 'Add inter-group link'}", "the create/edit dialog keeps plain vocabulary")
+	must("wizard=${edit ? 'Rebind an arcane channel' : 'Weave an arcane channel'}", "the create/edit dialog keeps wizard vocabulary")
+	must("words('Remove this link?', 'Sever this arcane channel?')", "the destructive confirmation keeps wizard-mode vocabulary")
 	must(`<strong>+ new link</strong>`, "the plain empty state keeps its emphasized action label")
 	must("body.wizard #links-manage-modal .manage-modal", "the links browser surface is re-skinned")
 	must("body.wizard #links-manage-modal #links-list th", "the links table is re-skinned")
