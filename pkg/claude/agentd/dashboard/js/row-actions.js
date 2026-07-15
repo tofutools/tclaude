@@ -19,7 +19,7 @@ import {
 } from './sandbox-profiles.js';
 import { renderDashDefaultProfile, renderDashSandboxProfile } from './toolbar-profile-renderers.js';
 import { openCronCreateModal } from './jobs-controller.js';
-import { openGroupCreateModal } from './modal-message.js';
+import { openGroupCreateModal } from './group-create-controller.js';
 import {
   openGroupPermEditor, openHumanReplyModal, openMessageCreateModal,
   openPermEditModal, openSudoGrantModal,

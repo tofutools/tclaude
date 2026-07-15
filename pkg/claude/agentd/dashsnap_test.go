@@ -1547,6 +1547,20 @@ document.dispatchEvent(new CustomEvent('tclaude:wizard', {detail:{active:true}})
 			SettleMS: 350,
 		},
 		{
+			Key:      "group-create-blank",
+			Title:    "Group create — blank",
+			Caption:  "TCL-455: the Preact-owned empty-group form keeps native controls, populated editable fields, validation surface and scoped plain/wizard chrome at one viewport.",
+			JS:       groupCreateDashSnapJS(false),
+			SettleMS: 300,
+		},
+		{
+			Key:      "group-create-template",
+			Title:    "Group create — template + mirror",
+			Caption:  "TCL-455: a seeded circle shows its roster, task, mirrored group defaults and subgroup choice under the same Preact owner in both visual themes.",
+			JS:       groupCreateDashSnapJS(true),
+			SettleMS: 300,
+		},
+		{
 			Key:      "template-manager",
 			Title:    "Template manager",
 			Caption:  "The Preact template manager with native filter controls, roster summaries and live deployed-force readback.",
@@ -1583,6 +1597,47 @@ document.dispatchEvent(new CustomEvent('tclaude:wizard', {detail:{active:true}})
 		},
 	}
 	return append(states, processGraphStates()...)
+}
+
+func groupCreateDashSnapJS(withTemplate bool) string {
+	preset := ""
+	if withTemplate {
+		preset = tfTemplate
+	}
+	return fmt.Sprintf(`return (async function(){
+  document.querySelector('nav [data-tab="groups"]').click();
+  var controller = await import('/static/js/group-create-controller.js');
+  controller.openGroupCreateModal(%q);
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var modal = document.querySelector('#group-create-modal.show');
+  if (!modal || document.querySelectorAll('#group-create-modal').length !== 1) throw new Error('group-create ownership failed');
+  var name = modal.querySelector('#group-create-name');
+  name.value = %q;
+  name.dispatchEvent(new Event('input', {bubbles:true}));
+  var cwd = modal.querySelector('#group-create-cwd');
+  if (%t) {
+    var source = modal.querySelector('#group-create-source');
+    source.value = %q;
+    source.dispatchEvent(new Event('change', {bubbles:true}));
+    var nested = modal.querySelector('#group-create-parent');
+    nested.checked = true;
+    nested.dispatchEvent(new Event('change', {bubbles:true}));
+    var task = modal.querySelector('#group-create-task');
+    task.value = 'Ship the dashboard migration and report verification.';
+    task.dispatchEvent(new Event('input', {bubbles:true}));
+    if (!modal.querySelector('#group-create-template-preview .tp-row')) throw new Error('group-create roster preview missing');
+    if (modal.querySelector('#group-create-task-row').hidden) throw new Error('group-create template fields hidden');
+  } else {
+    cwd.value = '/workspace/tclaude';
+    cwd.dispatchEvent(new Event('input', {bubbles:true}));
+    var cap = modal.querySelector('#group-create-max-members');
+    cap.value = '6';
+    cap.dispatchEvent(new Event('input', {bubbles:true}));
+    if (modal.querySelector('#group-create-max-members-row').hidden) throw new Error('group-create blank cap hidden');
+  }
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  if (document.activeElement !== name) name.focus();
+})();`, preset, map[bool]string{false: "new-dashboard-group", true: "dashboard-party"}[withTemplate], withTemplate, otherGroup)
 }
 
 func directoryPickerDashSnapJS() string {
