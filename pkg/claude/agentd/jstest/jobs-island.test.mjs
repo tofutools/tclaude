@@ -45,7 +45,8 @@ test('Jobs island renders reactively and preserves keyed DOM/focus across polls'
   const calls = [];
   const actions = {
     refresh: async () => { calls.push('refresh'); },
-    createCron: () => calls.push('create'), editCron: () => calls.push('edit'),
+    openCronCreate: () => calls.push('create'), openCronEdit: () => calls.push('edit'),
+    openCronDuplicate: () => calls.push('duplicate'),
     runCron: () => calls.push('run'), toggleCron: () => calls.push('toggle'),
     deleteCron: () => calls.push('delete'), downloadExport: () => calls.push('download'),
     dismissExport: () => calls.push('dismiss'),
@@ -85,6 +86,9 @@ test('Jobs island renders reactively and preserves keyed DOM/focus across polls'
 
   await harness.act(() => harness.fireEvent(edit, 'click'));
   assert.ok(calls.includes('edit'));
+  const duplicate = getByRole(cronRow, 'button', { name: 'duplicate' });
+  await harness.act(() => harness.fireEvent(duplicate, 'click'));
+  assert.ok(calls.includes('duplicate'));
   const kindHeader = [...mounted.container.querySelectorAll('th')]
     .find((header) => header.textContent.includes('Kind'));
   await harness.act(() => harness.fireEvent(kindHeader, 'keydown', { key: 'Enter' }));
@@ -125,7 +129,7 @@ test('Jobs island exposes loading, empty, badge, and retry states', async (t) =>
   state.initialize();
   state.beginRequest(1);
   const actions = {
-    refresh: () => {}, createCron: () => {}, editCron: () => {}, runCron: () => {},
+    refresh: () => {}, openCronCreate: () => {}, openCronEdit: () => {}, openCronDuplicate: () => {}, runCron: () => {},
     toggleCron: () => {}, deleteCron: () => {}, downloadExport: () => {}, dismissExport: () => {},
   };
   const mounted = await harness.mount(harness.html`<${JobsApp} state=${state} actions=${actions} />`);
@@ -152,15 +156,26 @@ test('production loader dynamically mounts and unmounts the Jobs feature graph',
   host.id = 'jobs-root';
   const badgeHost = harness.document.body.appendChild(harness.document.createElement('span'));
   badgeHost.id = 'jobs-badge-root';
-  const { mountJobsFeature } = await harness.importDashboardModule('js/preact-loader.js');
+  const dialogHost = harness.document.body.appendChild(harness.document.createElement('div'));
+  dialogHost.id = 'jobs-cron-dialog-root';
+  const [{ mountJobsFeature }, { openCronCreateModal }] = await Promise.all([
+    harness.importDashboardModule('js/preact-loader.js'),
+    harness.importDashboardModule('js/jobs-controller.js'),
+  ]);
   const cleanup = await mountJobsFeature({
     requestMutation: async () => {}, refresh: async () => {}, confirm: async () => true,
-    notify: () => {}, download: () => {}, createCron: () => {}, editCron: () => {},
+    notify: () => {}, download: () => {}, confirmDiscard: async () => true,
   });
   assert.equal(typeof cleanup, 'function');
   assert.ok(host.querySelector('#filter-jobs'));
   assert.ok(badgeHost.querySelector('#jobs-badge'));
+  assert.equal(dialogHost.childElementCount, 0);
+  await harness.act(() => openCronCreateModal({
+    targetMode: 'solo', target: 'agt_one', interval: '5m', body: 'hello',
+  }));
+  assert.ok(dialogHost.querySelector('#cron-create-modal'), 'launcher-only controller opens the Jobs-owned dialog');
   cleanup();
   assert.equal(host.childElementCount, 0);
   assert.equal(badgeHost.childElementCount, 0);
+  assert.equal(dialogHost.childElementCount, 0);
 });
