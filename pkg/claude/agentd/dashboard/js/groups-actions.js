@@ -9,6 +9,10 @@ import { openProfileEditor } from './modal-profiles.js';
 import { loadSandboxProfiles, openSandboxProfileEditor, refreshSpawnSandboxProfileUI } from './sandbox-profiles.js';
 import { pickDirectory } from './helpers.js';
 import { saveMemberEditorRequests } from './member-editor-actions.js';
+import {
+  addExistingMemberRequest,
+  loadAddMemberPromotionPool,
+} from './add-member-actions.js';
 
 async function responseError(response, fallback) {
   return (await response.text()) || fallback || `HTTP ${response.status}`;
@@ -31,6 +35,25 @@ export function createGroupsActions({
     },
     closeMemberEditor() {
       state.closeMemberEditor();
+    },
+    openAddMember(group) {
+      return state.openAddMember(group);
+    },
+    closeAddMember() {
+      state.closeAddMember();
+    },
+    loadAddMemberPromotionPool() {
+      return loadAddMemberPromotionPool({ fetchImpl });
+    },
+    async addExistingMember(descriptor, candidate) {
+      await addExistingMemberRequest({
+        group: descriptor.group,
+        candidate,
+        fetchImpl,
+      });
+      state.optimisticAddMember(descriptor.group, candidate);
+      notify(`added ${candidate.title || candidate.conv_id} to ${descriptor.group}`);
+      return true;
     },
     openMemberPermissions(descriptor) {
       return openMemberPermissions(descriptor.conv, descriptor.label);

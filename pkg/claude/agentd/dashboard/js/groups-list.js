@@ -61,7 +61,7 @@ function MenuButton({ regular, wizard = regular, className, ...props }) {
     h(ThemeText, { regular, wizard }));
 }
 
-function GroupMenuItems({ group, members, snapshot }) {
+function GroupMenuItems({ group, members, snapshot, actions }) {
   const interactions = useGroupsInteractions();
   const name = group.name;
   const shared = { 'data-group': name, 'data-label': name };
@@ -87,7 +87,12 @@ function GroupMenuItems({ group, members, snapshot }) {
     ? (pinned ? 'Quick options are pinned open for this party — click to let its enchanted header chips fold again.' : "Pin this party's quick options open so its enchanted header chips stay expanded.")
     : (pinned ? 'Quick options are pinned open for this group — its header chips stay expanded even though auto-fold is on. Click to let them fold to icons again.' : "Pin this group's quick options open — its header chips stay expanded (not folded to icons) even while auto-fold is on. Click to fold them with the rest.");
   return html`
-    <${MenuButton} ...${shared} data-act="add-member" title=${wizardMode ? 'Invite an existing conversation to become a familiar in this party' : 'Add an existing conversation to this group'} regular="+ add member" wizard="+ add familiar" />
+    <${MenuButton} ...${shared} data-act="add-member" title=${wizardMode ? 'Invite an existing conversation to become a familiar in this party' : 'Add an existing conversation to this group'} regular="+ add member" wizard="+ add familiar" onClick=${(event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      interactions.closeMenu(true);
+      actions.openAddMember(group);
+    }} />
     <${MenuButton} data-act="cron-new" data-prefill=${JSON.stringify({ targetMode: 'group', groupName: name, scopeGroup: name })} data-label=${name} title=${wizardMode ? `Bind a recurring ritual to party ${name} — multicast every familiar, or nudge one` : `Schedule a recurring cron job scoped to ${name} — multicast the whole group, or nudge a single member`} regular="⏰ multicast" wizard="⏳ bind ritual" />
     <${MenuButton} data-act="message-new" data-prefill=${JSON.stringify({ targetMode: 'group', groupName: name })} data-label=${name} title=${wizardMode ? `Send a missive to party ${name} — every familiar, or a chosen subset` : `Send a one-shot message to ${name} — the whole group, or a ticked subset of its members`} regular="✉ message" wizard="✒ missive" />
     <${MenuButton} ...${shared} data-act="view-group-messages" title=${wizardMode ? "Open this party's missives in the Messages tab" : "Open this group's messages in the Messages tab — every message touching a member (sent or received) plus the group's own multicasts"} regular="🗂 view messages" wizard="🗂 view missives" />
@@ -340,7 +345,7 @@ function RealGroupSummary({ group, activity, membersView, snapshot, actions }) {
     <${ProcessChip} group=${group} />
     ${group.waves?.pending_waves ? html`<span class="group-waves-chip" title=${`Staged spawn — ${group.waves.pending_agents} agent(s) in ${group.waves.pending_waves} more wave(s) will spawn as each wave settles${group.waves.deadline_at ? `\nnext wave by ${group.waves.deadline_at} at the latest` : ''}`}>🌊 wave ${group.waves.current_wave}/${group.waves.total_waves} pending</span>` : null}
     ${group.pending?.length ? html`<span class="group-pending-chip" title=${`${group.pending.length} pending spawn${group.pending.length === 1 ? '' : 's'} waiting for startup`}>⏳ ${group.pending.length} pending spawn${group.pending.length === 1 ? '' : 's'}</span>` : null}
-    <${ActionMenu} menuKey=${`group:${group.name}`} kind="group-menu" wrapperClass="group-actions group-header-cog"><${GroupMenuItems} group=${group} members=${members} snapshot=${snapshot} /><//>
+    <${ActionMenu} menuKey=${`group:${group.name}`} kind="group-menu" wrapperClass="group-actions group-header-cog"><${GroupMenuItems} group=${group} members=${members} snapshot=${snapshot} actions=${actions} /><//>
     <${EditableGroupChip}
       className=${`group-descr${group.descr ? '' : ' unset'}`} action="set-group-descr" group=${group} actions=${actions}
       field="descr" value=${group.descr || ''} inputClass="group-descr-input" placeholder="group description — empty clears it"
