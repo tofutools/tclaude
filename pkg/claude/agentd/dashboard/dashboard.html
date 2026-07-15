@@ -471,18 +471,6 @@
   <button class="access-banner-review" id="access-banner-review" type="button">Review</button>
 </div>
 <div id="shell-confirm-root"></div>
-<div class="modal-overlay" id="shutdown-modal">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="shutdown-title">
-    <h3 id="shutdown-title">Shut down agent?</h3>
-    <p>Soft exit injects <code>/exit</code> into the tmux pane. Conv jsonl is preserved; in-flight tool calls are interrupted.</p>
-    <div class="modal-meta" id="shutdown-meta"></div>
-    <div class="modal-buttons">
-      <button id="shutdown-cancel">Cancel</button>
-      <button id="shutdown-force" class="confirm-danger" title="tmux kill-session — unrecoverable for the current pane">Force kill</button>
-      <button id="shutdown-soft">Soft exit</button>
-    </div>
-  </div>
-</div>
 <!-- Preact owns the fallback browser-terminal modal shell. Its xterm host is
      created as a stable opaque ref inside the mounted component. -->
 <div id="terminal-session-root"></div>

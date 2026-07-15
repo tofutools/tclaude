@@ -764,6 +764,8 @@ test('native member rows preserve the legacy field, capability and selector matr
   const dot = richRow.querySelector('.status-dot');
   assert.equal(dot.dataset.act, 'dot-toggle');
   assert.equal(dot.dataset.online, '1');
+  assert.equal(dot.dataset.agent, 'agt-rich');
+  assert.equal(dot.dataset.conv, 'conv-rich');
   assert.match(dot.title, /Claude Code · Opus 4\.8/);
   const harnessLine = richRow.querySelector('.agent-harness');
   assert.match(harnessLine.textContent, /CC·O4\.8 1Mhigh<1¢≈\$0\.42📱/);
