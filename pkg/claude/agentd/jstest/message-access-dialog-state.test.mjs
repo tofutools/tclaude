@@ -63,4 +63,3 @@ test('models keep stable identity, role search, and permission veto/source data'
   assert.deepEqual(profile.find((row) => row.slug === 'groups.spawn').sources, [],
     'a reusable profile invents no destination group source');
 });
-
