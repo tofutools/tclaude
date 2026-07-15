@@ -18,16 +18,16 @@ func TestDashboardHTML_AgentTagsWired(t *testing.T) {
 		}
 	}
 
-	// helpers.js: the chip + description-cell renderers.
-	must("function tagChips(", "tag chips renderer")
-	must("function descrCell(", "the Description cell renderer (text + chips + click-to-edit)")
+	// groups-member-table.js: the native chip + description-cell components.
+	must("function TagChips(", "tag chips component")
+	must("function DescrCell(", "the Description cell component (text + chips + click-to-edit)")
 	must("agent-tag-tf", "the tf:<template> task-force chip gets a distinct class")
 	must(`data-act="edit-descr"`, "the descr cell is click-to-edit")
 	must("descr-add", "the empty descr+tags cell shows a discoverable hint")
 
-	// render.js: the descr cell renders through descrCell (not raw esc'd text).
-	must("descrCell(m, ctx.group)", "the descr column renders through descrCell")
-	must("descrCell,", "render.js imports descrCell from helpers")
+	// The native column maps through DescrCell rather than raw text.
+	must("<${DescrCell} member=${member} group=${group} />", "the descr column renders through DescrCell")
+	must("case 'descr':", "the member-column switch owns the description cell")
 
 	// row-actions.js: the descr entry point + the independent tags write.
 	must("case 'edit-descr':", "the descr cell opens the edit-member modal")
