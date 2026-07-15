@@ -52,7 +52,10 @@ export function createMessageAccessDialogActions({
     notify(response.held
       ? `reply queued for ${label} — it’s mid-prompt, will see it when it resumes`
       : `reply sent to ${label}`);
-    await refresh();
+    // The mutation is already accepted. Let the component close immediately;
+    // a slow or stalled snapshot refresh must not leave this non-idempotent
+    // reply surface busy and invite a duplicate retry.
+    void refresh();
     return response;
   }
 
@@ -65,7 +68,9 @@ export function createMessageAccessDialogActions({
     const failed = (response.grants || []).length - ok;
     notify(`Granted ${ok} slug${ok === 1 ? '' : 's'} to ${(response.agent_id || response.conv_id || conv).slice(0, 12)}` +
       (failed > 0 ? ` (${failed} failed)` : ''));
-    await refresh();
+    // Match the legacy close-before-refresh behavior. Grant completion is
+    // independent from the next dashboard snapshot arriving.
+    void refresh();
     return response;
   }
 
