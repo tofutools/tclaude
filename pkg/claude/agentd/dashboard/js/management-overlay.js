@@ -68,6 +68,8 @@ export function ManagementOverlay({
         if (
           onSubmitEnter &&
           event.key === 'Enter' &&
+          !event.isComposing &&
+          event.keyCode !== 229 &&
           !event.ctrlKey &&
           !event.metaKey
         ) {
@@ -78,6 +80,8 @@ export function ManagementOverlay({
         if (
           onSubmitHotkey &&
           event.key === 'Enter' &&
+          !event.isComposing &&
+          event.keyCode !== 229 &&
           (event.ctrlKey || event.metaKey)
         ) {
           event.preventDefault();

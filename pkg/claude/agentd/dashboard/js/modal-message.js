@@ -10,7 +10,6 @@ import { dashPrefs } from './prefs.js';
 import { recordGroupInteraction } from './last-group.js';
 import {
   bindTargetPicker, populateTargetPicker, readTargetPicker, pickCronTargetModal,
-  closeSudoGrantModal, submitSudoGrant,
 } from './modal-cron.js';
 // lastSnapshot lives in dashboard.js; refresh() / toast / openCleanupModal
 // in refresh.js. Imported back — benign cycles (see render.js); TDZ-safe.
@@ -23,6 +22,11 @@ import { refresh, toast, openCleanupModal, openDeleteRetiredPreview, bindBackdro
 // 🧙 wizard mode in the JS-rendered spots (dropdown options, toasts).
 import { openTemplatesManageModal, templateReadbackBadges, templateRosterRowsHTML } from './modal-templates.js';
 import { wizWord } from './slop.js';
+
+// Transitional no-op names keep the now-unbound legacy sudo binder parseable
+// until the static writer block is deleted in the next checkpoint.
+const closeSudoGrantModal = () => {};
+const submitSudoGrant = async () => {};
 
 
 // --- one-shot message modal -----------------------------------------

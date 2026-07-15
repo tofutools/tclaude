@@ -1,205 +1,17 @@
-// modal-cron.js — the sudo-grant and cron-job modals.
-//
-// The sudo-grant modal, the cron create/edit modal, and the shared
-// group/member target picker (used by this modal and the message
-// modal). Extracted from dashboard.js in the Stage 2 module split.
+// modal-cron.js — the legacy cron create/edit modal. Its shared target
+// picker and agent chooser are Preact-owned; this module talks to them only
+// through the dependency-free message/access dialog controller.
 
 import { $, $$, esc, themeWords, shortAgentId, idTooltip } from './helpers.js';
 import { wizWord } from './slop.js';
 import { formatJobInterval } from './jobs-format.js';
 import { featureState } from './feature-state-registry.js';
-// lastSnapshot / sudoBadge live in dashboard.js; refresh() / toast and
-// the sudo state (sudoGrantBlocklist, sudoByConv) live in refresh.js.
-// Imported back here — deliberate, benign cycles (see render.js).
-// TDZ-safe: no top-level code reads them; the modal functions touch
-// them only when invoked, after every module has finished evaluating.
-import { lastSnapshot, sudoBadge } from './dashboard.js';
-import { refresh, toast, sudoGrantBlocklist, sudoByConv, bindBackdropDiscard } from './refresh.js';
-
-// openSudoGrantModal: builds the slug picker from the snapshot's
-// registry, restores the conv field from a per-page memory so
-// reopening keeps focus, and traps Escape to close. Submission
-// hits POST /api/sudo and falls through to refresh() on success
-// so the new grant lands on the list immediately.
-function openSudoGrantModal(prefillConv) {
-  const slugs = (lastSnapshot && lastSnapshot.slugs) || [];
-  const wrap = $('#sudo-grant-slugs');
-  wrap.innerHTML = slugs.map(s => {
-    const blocked = sudoGrantBlocklist.includes(s.slug);
-    return `<label class="${blocked ? 'blocked' : ''}" title="${esc(s.descr || '')}">
-      <input type="checkbox" value="${esc(s.slug)}"${blocked ? ' disabled' : ''}>
-      ${esc(s.slug)}
-    </label>`;
-  }).join('');
-  wrap.querySelectorAll('input[type=checkbox]').forEach(cb => {
-    cb.addEventListener('change', () => {
-      cb.parentElement.classList.toggle('checked', cb.checked);
-    });
-  });
-  if (prefillConv != null) $('#sudo-grant-conv').value = prefillConv;
-  $('#sudo-grant-error').textContent = '';
-  $('#sudo-grant-modal').classList.add('show');
-  setTimeout(() => $('#sudo-grant-conv').focus(), 0);
-}
-function closeSudoGrantModal() {
-  $('#sudo-grant-modal').classList.remove('show');
-}
-
-async function submitSudoGrant() {
-  const conv = $('#sudo-grant-conv').value.trim();
-  const slugs = $$('#sudo-grant-slugs input[type=checkbox]:checked').map(cb => cb.value);
-  const duration = $('#sudo-grant-duration').value.trim();
-  const reason = $('#sudo-grant-reason').value.trim();
-  const errEl = $('#sudo-grant-error');
-  errEl.textContent = '';
-  if (!conv) { errEl.textContent = 'Conv is required.'; return; }
-  if (!slugs.length) { errEl.textContent = 'Pick at least one slug.'; return; }
-  const btn = $('#sudo-grant-submit');
-  btn.disabled = true;
-  try {
-    const r = await fetch('/api/sudo', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ conv, slugs, duration, reason }),
-    });
-    if (!r.ok) {
-      const text = await r.text();
-      errEl.textContent = text || ('HTTP ' + r.status);
-      return;
-    }
-    const resp = await r.json();
-    const ok = (resp.grants || []).filter(g => g.id > 0).length;
-    const failed = (resp.grants || []).length - ok;
-    toast(`Granted ${ok} slug${ok === 1 ? '' : 's'} to ${shortAgentId(resp.agent_id, resp.conv_id) || conv}` +
-      (failed > 0 ? ` (${failed} failed)` : ''));
-    closeSudoGrantModal();
-    await refresh();
-  } catch (e) {
-    errEl.textContent = 'Network error: ' + (e.message || e);
-  } finally {
-    btn.disabled = false;
-  }
-}
-
-// Per-row sudo revoke is owned by the Access Preact island.
-// The Grant modal hooks into bindSudoModal below.
-
-// pickSudoAgentModal opens a filtered agent picker and resolves to
-// the chosen conv-id (or "" on cancel). Reuses the .add-member-modal
-// CSS shape so the look matches the existing "Add member" overlay.
-// Simpler than addMemberModal: no per-group "exclude existing" — the
-// daemon's policy already handles policy enforcement on submit.
-function pickSudoAgentModal() {
-  return new Promise(resolve => {
-    const overlay = $('#sudo-pick-agent-modal');
-    const search = $('#sudo-pick-agent-search');
-    const list = $('#sudo-pick-agent-list');
-    const includeAll = $('#sudo-pick-agent-all');
-    search.value = '';
-    includeAll.checked = false;
-    let highlight = 0;
-    let candidates = [];
-
-    function buildCandidates() {
-      const out = [];
-      const seen = new Set();
-      for (const a of (lastSnapshot?.agents || [])) {
-        if (!a.conv_id || seen.has(a.conv_id)) continue;
-        if (!includeAll.checked && !a.online) continue;
-        seen.add(a.conv_id);
-        out.push(a);
-      }
-      out.sort((a, b) => {
-        if (!!b.online !== !!a.online) return (b.online ? 1 : 0) - (a.online ? 1 : 0);
-        return (a.title || '').localeCompare(b.title || '');
-      });
-      return out;
-    }
-
-    function applyFilter(rows, q) {
-      if (!q) return rows;
-      const needle = q.toLowerCase();
-      return rows.filter(a =>
-        (a.title || '').toLowerCase().includes(needle) ||
-        (a.conv_id || '').toLowerCase().includes(needle) ||
-        (a.agent_id || '').toLowerCase().includes(needle) ||
-        (a.groups || []).some(g => g.toLowerCase().includes(needle)));
-    }
-
-    function render() {
-      candidates = applyFilter(buildCandidates(), search.value);
-      if (highlight >= candidates.length) highlight = Math.max(0, candidates.length - 1);
-      if (highlight < 0) highlight = 0;
-      if (!candidates.length) {
-        list.innerHTML = '<div class="add-member-empty">No matching conversations. ' +
-          (includeAll.checked
-            ? '(Try a different filter.)'
-            : '(Try ticking "Include offline / archived" for a wider pool.)') +
-          '</div>';
-        return;
-      }
-      list.innerHTML = candidates.map((a, i) => {
-        const dot = a.online
-          ? '<span class="online" title="online">●</span>'
-          : '<span class="offline" title="offline">○</span>';
-        const groups = (a.groups || []).length
-          ? `<span class="groups-tag">in: ${esc((a.groups || []).join(', '))}</span>`
-          : '';
-        // Surface the 🔓 badge inline so the human can see who
-        // already holds active grants while picking — useful for
-        // "extend alice's window" without a tab switch.
-        const badge = sudoBadge(sudoByConv[a.conv_id], a.conv_id);
-        return `<div class="add-member-row${i === highlight ? ' highlighted' : ''}" data-i="${i}">` +
-               `${dot}<span class="rowname">${esc(a.title || '(unnamed)')}</span>` +
-               `<span class="id" title="${esc(idTooltip(a.agent_id, a.conv_id))}">${esc(shortAgentId(a.agent_id, a.conv_id))}</span>${badge}${groups}` +
-               `</div>`;
-      }).join('');
-      const hl = list.querySelector('.add-member-row.highlighted');
-      if (hl) hl.scrollIntoView({block: 'nearest'});
-    }
-
-    function close(convID) {
-      overlay.classList.remove('show');
-      document.removeEventListener('keydown', onKey, true);
-      resolve(convID || '');
-    }
-
-    function onKey(e) {
-      if (!overlay.classList.contains('show')) return;
-      // Capture-phase + stopImmediatePropagation so Escape closes only
-      // this picker — never the form modal underneath that opened it.
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        close('');
-      }
-      else if (e.key === 'ArrowDown') { e.preventDefault(); highlight++; render(); }
-      else if (e.key === 'ArrowUp') { e.preventDefault(); highlight--; render(); }
-      else if (e.key === 'Enter') {
-        e.preventDefault();
-        const c = candidates[highlight];
-        if (c) close(c.conv_id);
-      }
-    }
-
-    list.onclick = (e) => {
-      const row = e.target.closest('.add-member-row');
-      if (!row) return;
-      const i = parseInt(row.dataset.i, 10);
-      const c = candidates[i];
-      if (c) close(c.conv_id);
-    };
-    search.oninput = () => { highlight = 0; render(); };
-    includeAll.onchange = render;
-    overlay.onclick = (e) => { if (e.target === overlay) close(''); };
-    document.addEventListener('keydown', onKey, true);
-
-    overlay.classList.add('show');
-    render();
-    setTimeout(() => search.focus(), 0);
-  });
-}
+import { lastSnapshot } from './dashboard.js';
+import { bindBackdropDiscard } from './refresh.js';
+import {
+  configureCronTargetPicker, pickAgent, readCronTargetPicker,
+  setCronTargetModeListener,
+} from './message-access-dialog-controller.js';
 
 // -- Cron create / edit form ----------------------------------------
 //
@@ -341,8 +153,7 @@ function populateCronForm(p) {
   // that group: the dropdown cannot retarget, and Solo mode offers
   // only that group's members. Absent (global "+ new cron job", a
   // member ⏰, an edit) → the picker is unrestricted, as before.
-  setTargetPickerScope('cron-create', p.scopeGroup);
-  populateTargetPicker('cron-create', p);
+  configureCronTargetPicker(p);
   // Role filter (JOH-244): prefill then let setTargetPickerMode (fired inside
   // populateTargetPicker) reveal/hide the row for the target mode.
   $('#cron-create-role').value = p.role || '';
@@ -621,7 +432,6 @@ function closeCronCreateModal() {
   cronScopeGroup = '';
   // Drop the scope so the registry's lifetime matches the modal's;
   // the next open re-arms it from its prefill regardless.
-  setTargetPickerScope('cron-create', null);
   // Orphan any in-flight explain so a late response can't write into
   // the (hidden) box the next open would otherwise inherit.
   cronExplainSeq++;
@@ -636,7 +446,7 @@ async function submitCronForm(keepOpen) {
   errEl.textContent = '';
   const name = $('#cron-create-name').value.trim();
   const owner = $('#cron-create-owner').value.trim();
-  const { mode, target } = readTargetPicker('cron-create');
+  const { mode, target } = readCronTargetPicker();
   // Role filter (JOH-244) applies only to a group target.
   const role = mode === 'group' ? $('#cron-create-role').value.trim() : '';
   const interval = $('#cron-create-interval').value.trim();
@@ -895,8 +705,13 @@ function bindCronModal() {
   $('#cron-create-submit').addEventListener('click', () => submitCronForm(false));
   $('#cron-create-save-another').addEventListener('click', () => submitCronForm(true));
   bindBackdropDiscard('cron-create-modal', closeCronCreateModal);
-  // Solo/group target picker — markup + mode radios + 🔍 button.
-  bindTargetPicker('cron-create');
+  // Preact owns the shared target picker. This legacy form retains only the
+  // role row associated with group fan-out and follows mode through the
+  // controller rather than observing picker DOM.
+  setCronTargetModeListener((mode) => {
+    const roleRow = $('#cron-create-role-row');
+    if (roleRow) roleRow.style.display = mode === 'group' ? '' : 'none';
+  });
   document.addEventListener('tclaude:wizard', () => {
     if ($('#cron-create-modal').classList.contains('show')) renderCronTitle();
   });
@@ -922,13 +737,12 @@ function bindCronModal() {
   // picker's own 🔍 is wired by bindTargetPicker above).
   $('#cron-create-owner-pick').addEventListener('click', async () => {
     // Owner is also addressed by the stable agent_id the picker returns.
-    const picked = await pickCronTargetModal();
+    const picked = await pickAgent({ title: 'Pick owner', identity: 'agent' });
     if (picked) $('#cron-create-owner').value = picked;
   });
 }
 
 export {
-  openSudoGrantModal, closeSudoGrantModal, submitSudoGrant, pickSudoAgentModal,
-  openCronCreateModal, openCronEditModal, pickCronTargetModal, bindCronModal,
-  bindTargetPicker, populateTargetPicker, readTargetPicker,
+  openCronCreateModal, openCronEditModal, bindCronModal,
+  pickCronTargetModal, bindTargetPicker, populateTargetPicker, readTargetPicker,
 };
