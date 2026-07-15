@@ -44,7 +44,7 @@ import {
 } from './modal-message.js';
 import { bindOperatorMessageModal } from './modal-operator-message.js';
 import {
-  openSudoGrantModal, openSpawnPermEditor, pickAgent,
+  openPermEditModal, openSudoGrantModal, openSpawnPermEditor, pickAgent,
 } from './message-access-dialog-controller.js';
 import {
   bindTemplatesUI, bindGroupImportModal, summonTemplateScribe,
