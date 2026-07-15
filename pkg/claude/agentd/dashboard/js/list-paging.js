@@ -19,7 +19,7 @@ import { dashPrefs } from './prefs.js';
 
 // Page sizes the per-list selector offers; mirrors the Mail / Audit tabs.
 // Every value stays at or below the server's 500 cap.
-const PAGE_SIZES = [25, 50, 100, 200];
+export const PAGE_SIZES = [25, 50, 100, 200];
 const DEFAULT_PAGE_SIZE = 50;
 
 // limit is persisted per list (sticky across reloads); offset is session state
