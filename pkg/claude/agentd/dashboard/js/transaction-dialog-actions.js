@@ -99,11 +99,25 @@ export function createTransactionDialogActions({
       );
     },
 
-    async deleteAgent({ agent, label, deleteWorktree }) {
+    async deleteAgent({ agent, label, deleteWorktree, expectedWorktree }) {
       // Only the exact frozen opt-in boolean adds the destructive worktree
-      // query. The permanent-delete endpoint intentionally receives no body.
-      const choice = Object.freeze({ deleteWorktree: deleteWorktree === true });
-      const query = choice.deleteWorktree ? '?delete_worktree=1' : '';
+      // query. Freeze the exact probed path into a server-authoritative
+      // precondition so a moved agent cannot redirect deletion to another
+      // worktree between probe and confirmation. Permanent delete has no body.
+      const choice = Object.freeze({
+        deleteWorktree: deleteWorktree === true,
+        expectedWorktree: deleteWorktree === true && typeof expectedWorktree === 'string'
+          ? expectedWorktree : '',
+      });
+      if (choice.deleteWorktree && !choice.expectedWorktree) {
+        throw new Error('delete worktree requires a freshly probed worktree path');
+      }
+      const params = new URLSearchParams();
+      if (choice.deleteWorktree) {
+        params.set('delete_worktree', '1');
+        params.set('expected_worktree', choice.expectedWorktree);
+      }
+      const query = params.size ? `?${params}` : '';
       const response = await fetchImpl(
         `/api/agents/${encodeURIComponent(agent)}${query}`,
         { method: 'DELETE', credentials: 'same-origin' },
