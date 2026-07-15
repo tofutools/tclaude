@@ -164,6 +164,27 @@ nodes:
 		if err != nil {
 			t.Fatal(err)
 		}
+		observedAggregate, err := CurrentAggregateCheckpoint(input.checkpoint)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var plannedPayload mutationPayload[RoutePathsPlan]
+		if err := decodeExactPayload(planned.Payload, &plannedPayload); err != nil {
+			t.Fatal(err)
+		}
+		barePlan := plannedPayload.Plan
+		barePlan.ResultCode = verdict
+		barePayload, err := EncodeRoutePathsPayload(MutationReplayView{Aggregate: observedAggregate.View(), Checkpoint: input.binding}, barePlan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		bareIdentity := planned.Identity
+		bareIdentity.PlanDigest = payloadDigest(barePayload)
+		bareIdentity.ResultCode = verdict
+		bareRoute := commandWithPayload(t, bareIdentity, CommandObserved, barePayload)
+		if err := ValidateRoutePathsCommand(MutationReplayView{Aggregate: observedAggregate.View(), Checkpoint: input.binding}, bareRoute); !errors.Is(err, ErrMutationInvalid) {
+			t.Fatalf("exclusive route with bare verdict %q error = %v", verdict, err)
+		}
 		transition, err := AdvanceExclusiveRoute(t.Context(), input)
 		if err != nil {
 			t.Fatal(err)

@@ -103,7 +103,8 @@ func TestRoutePathsTypedReplayAppliesOnceAndRejectsDrift(t *testing.T) {
 	afterTemplate := Clone(*postView.Routing)
 	afterParent := afterTemplate.Paths[parentID]
 	afterParent.Disposition.CommandID = MutationCommandPlaceholder
-	afterParent.Disposition.ID, _ = DispositionReceiptIdentity(parentID, PathLive, PathRouted, "route", MutationCommandPlaceholder, "", 2)
+	afterParent.Disposition.ReasonCode = "exclusive_route"
+	afterParent.Disposition.ID, _ = DispositionReceiptIdentity(parentID, PathLive, PathRouted, "exclusive_route", MutationCommandPlaceholder, "", 2)
 	afterTemplate.Paths[parentID] = afterParent
 	batch, err := NewMutationBatch(&before, &afterTemplate, 2)
 	if err != nil {
@@ -168,6 +169,20 @@ func TestRoutePathsTypedReplayAppliesOnceAndRejectsDrift(t *testing.T) {
 		t.Fatalf("route unrelated scope mutation error = %v", err)
 	}
 	delete(replayView.Aggregate.Commands, badCommand.ID)
+
+	barePlan := plan
+	barePlan.ResultCode = "pass"
+	barePayload, err := EncodeRoutePathsPayload(replayView, barePlan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bareIdentity := identity
+	bareIdentity.PlanDigest = payloadDigest(barePayload)
+	bareIdentity.ResultCode = barePlan.ResultCode
+	bareCommand := commandWithPayload(t, bareIdentity, CommandObserved, barePayload)
+	if err := ValidateRoutePathsCommand(replayView, bareCommand); !errors.Is(err, ErrMutationInvalid) {
+		t.Fatalf("exclusive route with bare result error = %v", err)
+	}
 
 	ambiguousPlan := plan
 	ambiguousPlan.ResultCode = "other/pass"
@@ -381,8 +396,8 @@ func TestRouteMutationAuthorityImpossibleCauseClosureAndForkEvent(t *testing.T) 
 		fullParent.ProducedPathIDs = []PathID{arrived.ID, impossible.ID}
 		slices.Sort(fullParent.ProducedPathIDs)
 		fullParent.UpdatedSeq = 2
-		fullDispositionID, _ := DispositionReceiptIdentity(parentID, PathLive, PathRouted, "route", MutationCommandPlaceholder, "", 2)
-		fullParent.Disposition = &DispositionReceipt{ID: fullDispositionID, PathID: parentID, FromState: PathLive, ToState: PathRouted, ReasonCode: "route", CommandID: MutationCommandPlaceholder, EventSeq: 2}
+		fullDispositionID, _ := DispositionReceiptIdentity(parentID, PathLive, PathRouted, "exclusive_route", MutationCommandPlaceholder, "", 2)
+		fullParent.Disposition = &DispositionReceipt{ID: fullDispositionID, PathID: parentID, FromState: PathLive, ToState: PathRouted, ReasonCode: "exclusive_route", CommandID: MutationCommandPlaceholder, EventSeq: 2}
 		fullAfter.Paths[parentID] = fullParent
 		fullAfter.CauseSets[fullCauseDigest] = CauseSetRecord{Digest: fullCauseDigest, CauseIDs: fullCauseIDs}
 		fullBatch, err := NewMutationBatch(&fullBefore, &fullAfter, 2)

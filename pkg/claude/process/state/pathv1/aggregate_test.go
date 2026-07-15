@@ -1425,6 +1425,23 @@ func TestEndedTerminalRouteBindsSettlementAndPlan(t *testing.T) {
 	if report := ValidateAggregate(view); !report.Valid() {
 		t.Fatalf("valid ended route diagnostics: %#v", report.Diagnostics)
 	}
+	prefixedPayload, err := json.Marshal(routeTerminalPayload{TemplateRef: view.TemplateRef, SettlementCommandID: settle.ID, SourceActivationID: p.SourceActivation.ID, SourceGeneration: p.SourceActivation.Generation, SourcePathID: p.ID, Attempt: 1, ResultCode: "exclusive/pass", ReasonCode: "completed", ProducedPathIDs: []PathID{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefixed := makeTestCommandPayload(t, CommandIdentity{RunID: view.RunID, Kind: CommandRoutePaths, PayloadSchema: 1, SourceActivationID: p.SourceActivation.ID, SourceGeneration: p.SourceActivation.Generation, SourcePathID: p.ID, Attempt: 1, InputDigest: settle.ID, CauseDigest: "terminal", PlanDigest: payloadDigest(prefixedPayload), ResultCode: "exclusive/pass"}, CommandObserved, prefixedPayload)
+	view.Commands[prefixed.ID] = prefixed
+	p.Disposition.CommandID = prefixed.ID
+	p.Disposition.ID, _ = DispositionReceiptIdentity(p.ID, PathLive, PathEnded, "completed", prefixed.ID, "", 2)
+	view.Routing.Paths[p.ID] = p
+	if report := ValidateAggregate(view); !reportHasCode(report, "terminal_command_provenance") {
+		t.Fatalf("prefixed ended result diagnostics: %#v", report.Diagnostics)
+	}
+	delete(view.Commands, prefixed.ID)
+	p.Disposition.CommandID = route.ID
+	p.Disposition.ID, _ = DispositionReceiptIdentity(p.ID, PathLive, PathEnded, "completed", route.ID, "", 2)
+	view.Routing.Paths[p.ID] = p
+
 	forgedIdentity := route.Identity
 	forgedIdentity.PlanDigest = strings.Repeat("e", 64)
 	forged := makeTestCommandPayload(t, forgedIdentity, CommandObserved, route.Payload)

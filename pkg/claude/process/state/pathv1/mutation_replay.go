@@ -223,10 +223,6 @@ func ValidateRoutePathsCommand(view MutationReplayView, command CommandRecord) e
 	if !ok || settlement.Identity.Kind != CommandSettleAttempt || settlement.Identity.SourceActivationID != plan.SourceActivationID || settlement.Identity.SourceGeneration != plan.SourceGeneration || settlement.Identity.Attempt != plan.Attempt || (settlement.State != CommandObserved && settlement.State != CommandReconciled) {
 		return fmt.Errorf("%w: route plan does not bind its exact observed settlement", ErrMutationInvalid)
 	}
-	outcome, exact := exactSettlementResult(plan.ResultCode)
-	if !exact || settlement.Identity.ResultCode != outcome {
-		return fmt.Errorf("%w: route result does not conserve settlement result", ErrMutationInvalid)
-	}
 	pre, err := payload.Plan.Batch.preState(view.Aggregate.Routing, command.ID)
 	if err != nil {
 		return err
@@ -248,6 +244,10 @@ func ValidateRoutePathsCommand(view MutationReplayView, command CommandRecord) e
 	}
 	if !slices.Equal(after.ProducedPathIDs, plan.ProducedPathIDs) || after.Disposition == nil || after.Disposition.CommandID != MutationCommandPlaceholder || after.UpdatedSeq != plan.Batch.EventSeq {
 		return fmt.Errorf("%w: route post-state differs from exact output/command/event plan", ErrMutationInvalid)
+	}
+	outcome, exact := exactSettlementResult(plan.ResultCode, after.Disposition.ReasonCode == "exclusive_route")
+	if !exact || settlement.Identity.ResultCode != outcome {
+		return fmt.Errorf("%w: route result form does not conserve settlement result for transition %q", ErrMutationInvalid, after.Disposition.ReasonCode)
 	}
 	return validateRouteMutationSet(pre, plan, after)
 }

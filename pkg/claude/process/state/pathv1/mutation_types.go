@@ -129,12 +129,13 @@ const (
 	ReplayAlreadyApplied ReplayDisposition = "already_applied"
 )
 
-func exactSettlementResult(resultCode string) (string, bool) {
-	// Exclusive route results add one protocol-owned prefix. Strip exactly
-	// that prefix so case and any separators inside the verdict remain
-	// settlement authority; arbitrary suffix-matching prefixes fail closed.
-	if outcome, ok := strings.CutPrefix(resultCode, "exclusive/"); ok {
-		return outcome, outcome != ""
+func exactSettlementResult(resultCode string, exclusive bool) (string, bool) {
+	// Exclusive routes own exactly one protocol prefix; all other routes own
+	// the bare settlement result. Keep case exact and reject a valid payload
+	// whose result uses the form belonging to a different transition kind.
+	if exclusive {
+		outcome, ok := strings.CutPrefix(resultCode, "exclusive/")
+		return outcome, ok && outcome != ""
 	}
 	if resultCode == "" || strings.Contains(resultCode, "/") {
 		return "", false

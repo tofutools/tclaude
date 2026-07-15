@@ -147,7 +147,7 @@ func (i *aggregateIndex) validateRouteTerminal(path string, p PathRecord, d Disp
 		return
 	}
 	i.validateSettleAttemptTerminal(path, p, d, settle)
-	outcome, exact := exactSettlementResult(id.ResultCode)
+	outcome, exact := exactSettlementResult(id.ResultCode, false)
 	if !exact || outcome != settle.Identity.ResultCode {
 		fail("terminal route result %q does not conserve settlement result %q", id.ResultCode, settle.Identity.ResultCode)
 	}
