@@ -621,7 +621,7 @@ func TestDashboardAssets_DefaultTerminalWired(t *testing.T) {
 		"export function openWebTermPane(",
 		// row-actions.js — the routed per-row actions (native → web branches).
 		"if (webTerminalDefault()) { openWebWindowPane(agent, label); toast(",
-		"if (webTerminalDefault()) { openWebTermPane(agent, label, termDirModal({ label })); return; }",
+		"if (webTerminalDefault()) { openWebTermPane(agent, label, chooseTerminalDirectory(label)); return; }",
 		"if (webTerminalDefault()) { openWebWindowPane(agent, label); return; }",
 		"if (webTerminalDefault()) { openWebTermPane(agent, label, which); return; }",
 		// palette.js — the shell-owned command palette passes the snapshot-derived
