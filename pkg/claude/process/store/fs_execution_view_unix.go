@@ -55,6 +55,16 @@ func (s *FS) WithExecutionView(ctx context.Context, runID string, callback func(
 	if s.executionRunLockedHook != nil {
 		s.executionRunLockedHook()
 	}
+	return s.withExecutionViewRunLocked(ctx, runID, callback)
+}
+
+// withExecutionViewRunLocked performs the coherent execution-view read while
+// the caller holds the append/run lock. It preserves the public lock order by
+// acquiring the immutable template lock exactly once and never re-entering
+// WithExecutionView. Dormant schema migration uses this helper so proof
+// re-derivation and the final atomic replacement share one run critical
+// section.
+func (s *FS) withExecutionViewRunLocked(ctx context.Context, runID string, callback func(ExecutionView) error) error {
 	baseline, err := s.executionAnchorObservationAt(ctx, runID)
 	if err != nil {
 		return err

@@ -44,6 +44,9 @@ type FS struct {
 	executionRunLockedHook        func()
 	executionTemplateLockedHook   func()
 	executionReobserveHook        func()
+	pathV1InitializeBeforeCommit  func() error
+	pathV1InitializeAfterCommit   func() error
+	pathV1InitializeDirSync       func() error
 }
 
 var processLocks sync.Map
@@ -112,6 +115,26 @@ func (s *FS) SetExecutionViewHooksForTest(runLocked, templateLocked, reobserve f
 	return func() {
 		s.executionRunLockedHook, s.executionTemplateLockedHook, s.executionReobserveHook = oldRun, oldTemplate, oldReobserve
 	}
+}
+
+// SetPathV1InitializeHooksForTest installs deterministic crash-boundary hooks
+// around the dormant schema-7 atomic replacement. Install before concurrent
+// use. An after-commit error models an ambiguous acknowledgement after rename.
+func (s *FS) SetPathV1InitializeHooksForTest(beforeCommit, afterCommit func() error) func() {
+	oldBefore, oldAfter := s.pathV1InitializeBeforeCommit, s.pathV1InitializeAfterCommit
+	s.pathV1InitializeBeforeCommit, s.pathV1InitializeAfterCommit = beforeCommit, afterCommit
+	return func() {
+		s.pathV1InitializeBeforeCommit, s.pathV1InitializeAfterCommit = oldBefore, oldAfter
+	}
+}
+
+// SetPathV1InitializeDirSyncHookForTest injects the durability result for the
+// schema-transition parent-directory fsync. Exact replay must repeat this step
+// before acknowledging an already-installed checkpoint.
+func (s *FS) SetPathV1InitializeDirSyncHookForTest(hook func() error) func() {
+	old := s.pathV1InitializeDirSync
+	s.pathV1InitializeDirSync = hook
+	return func() { s.pathV1InitializeDirSync = old }
 }
 
 func (s *FS) PutTemplate(ctx context.Context, tmpl *model.Template) (TemplateRecord, error) {
