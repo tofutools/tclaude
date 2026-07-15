@@ -12,18 +12,18 @@ import (
 // empty mux avoids prompting during ordinary dashboard navigation and avoids
 // unnecessarily disabling Firefox's back/forward cache.
 func TestTerminalsCore_UnloadGuardTracksOpenPanes(t *testing.T) {
-	src := readDashboardJS(t, "terminals-core.js")
+	src := readDashboardJS(t, "terminal-shell-island.js")
 	for _, needle := range []string{
-		"function confirmTerminalUnload(e)",
-		"e.preventDefault()",
-		"e.returnValue = true",
-		"function updateUnloadGuard(n)",
-		"const shouldArm = n > 0",
-		"window[shouldArm ? 'addEventListener' : 'removeEventListener']('beforeunload', confirmTerminalUnload)",
-		"updateUnloadGuard(n)",
+		"const confirmUnload = (event) =>",
+		"event.preventDefault()",
+		"event.returnValue = true",
+		"if (!hasPanes) return undefined",
+		"window.addEventListener('beforeunload', confirmUnload)",
+		"window.removeEventListener('beforeunload', confirmUnload)",
+		"window.addEventListener('tclaude:auth-expired', disarmForAuth)",
 	} {
 		if !strings.Contains(src, needle) {
-			t.Errorf("terminals-core.js missing %q — open terminals must guard accidental page unloads", needle)
+			t.Errorf("terminal-shell-island.js missing %q — open terminals must guard accidental page unloads", needle)
 		}
 	}
 }

@@ -9,8 +9,8 @@
      handshake mirrors tclaude's agent-coordination theme. -->
 <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text x="50" y="52" font-size="78" text-anchor="middle" dominant-baseline="central">🤝</text></svg>'>
 <link rel="stylesheet" href="/static/dashboard.css">
-<!-- Vendored (not CDN, like every other dashboard asset) — backs the
-     in-browser terminal modal (js/modal-term.js). -->
+<!-- Vendored (not CDN, like every other dashboard asset) — backs the opaque
+     xterm hosts mounted inside the Preact terminal shell. -->
 <link rel="stylesheet" href="/static/vendor/xterm/xterm.min.css">
 <!-- Shared terminal-multiplexer widget styles, used by the in-SPA "Terminals"
      tab (#tab-terminals) and the standalone /terminals pop-out page. -->
@@ -124,7 +124,7 @@
   <!-- Terminals — the in-SPA multiplexer (js/terminals-tab.js). CSS-hidden via
        body.hide-terminals until "web term" / "web window" opens the first pane;
        the badge counts the live terminals. -->
-  <a data-tab="terminals" href="/terminals" title="Live in-browser terminals — appears while ≥1 web terminal / window is open. Each can be popped out into its own browser window."><span class="tab-label-regular">Terminals</span><span class="tab-label-wizard">🔮 Scrying</span><span id="terminals-badge" class="tab-badge count" hidden></span></a>
+  <a data-tab="terminals" href="/terminals" title="Live in-browser terminals — appears while ≥1 web terminal / window is open. Each can be popped out into its own browser window."><span class="tab-label-regular">Terminals</span><span class="tab-label-wizard">🔮 Scrying</span><span id="terminals-badge-root"></span></a>
   <a data-tab="jobs" href="/jobs" title="Jobs — agent export jobs (live progress; finished ones stay until dismissed) and recurring cron schedules"><span class="tab-label-regular">Jobs</span><span class="tab-label-wizard">⚒ Labours</span><span id="jobs-badge-root"></span></a>
   <a data-tab="processes" href="/processes" title="Processes — reusable graph templates, instantiated runs, and human work"><span class="tab-label-regular">Processes</span><span class="tab-label-wizard">🕸 Rites</span></a>
   <a data-tab="plugins" href="/plugins"><span class="tab-label-regular">Plugins</span><span class="tab-label-wizard">🔧 Contraptions</span><span id="plugins-badge-root"></span></a>
@@ -192,14 +192,11 @@
       </span>
     </aside>
   </section>
-  <!-- The in-SPA terminal multiplexer. js/terminals-tab.js mounts the shared
-       pane core (js/terminals-core.js) onto these containers; dashboard.css
-       flexes this section to full height (the same :has() app-shell trick the
-       Messages tab uses). The section + its nav button are CSS-hidden via
-       body.hide-terminals until the first pane opens. -->
+  <!-- Preact owns the in-SPA terminal pane chrome and leaves each xterm host as
+       an opaque imperative subtree. The section + its nav button are hidden
+       via body.hide-terminals until the first pane opens. -->
   <section id="tab-terminals">
-    <div id="term-tab-tabs" class="mux-tabs" role="tablist" aria-label="Open terminals"></div>
-    <div id="term-tab-panes" class="mux-panes"></div>
+    <div id="terminals-root"></div>
   </section>
   <!-- The Jobs tab: the old Cron tab, extended into ONE unified job listing —
        per-agent export jobs (async "📋 summary…" work; the nav badge counts
@@ -514,31 +511,9 @@
     </div>
   </div>
 </div>
-<!-- term-session-modal: the in-browser xterm.js terminal, opened when
-     /api/term or /api/open-window reports mode:"browser" (no native
-     window available — headless agentd or no terminal emulator
-     installed). Distinct from the Preact-owned #term-modal directory chooser,
-     which runs BEFORE this. See js/modal-term.js. -->
-<div class="modal-overlay" id="term-session-modal">
-  <div class="term-session-modal" role="dialog" aria-modal="true" aria-labelledby="term-session-title">
-    <div class="term-session-header">
-      <h3 id="term-session-title">Terminal</h3>
-      <span class="term-session-status" id="term-session-status" role="status"
-        aria-live="polite" aria-atomic="true"></span>
-      <span class="terminal-interaction-hint">Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C</span>
-      <button type="button" class="term-session-action" id="term-session-copy">Copy</button>
-      <button type="button" class="term-session-detach" id="term-session-detach"
-        aria-label="Detach" title="Detach — drop this view now; the agent keeps running, reopen to reattach">Detach</button>
-      <button type="button" class="term-session-pop" id="term-session-pop"
-        title="Move this terminal to the dashboard's Terminals tab, where several can be open at once">⧉ tab</button>
-      <button type="button" class="term-session-close" id="term-session-close"
-        aria-label="Close" title="Close — asks first; the agent keeps running, reopen to reattach">&times;</button>
-    </div>
-    <div class="term-session-xterm" id="term-session-xterm">
-      <div class="term-session-xterm-fit" id="term-session-xterm-fit"></div>
-    </div>
-  </div>
-</div>
+<!-- Preact owns the fallback browser-terminal modal shell. Its xterm host is
+     created as a stable opaque ref inside the mounted component. -->
+<div id="terminal-session-root"></div>
 <!-- Preact-owned combined member editor. Its local draft remains mounted
      across snapshot polling while the Groups rows reconcile independently. -->
 <div id="groups-member-dialog-root"></div>
@@ -1109,7 +1084,7 @@
 <div id="directory-picker-root"></div>
 
 <!-- Vendored xterm.js, classic (non-module) scripts so they run before
-     dashboard.js's module graph (which includes modal-term.js) — they
+     dashboard.js's module graph mounts the terminal shell — they
      attach plain globals (Terminal, FitAddon, WebLinksAddon), not ES exports. -->
 <!-- Install the auth-aware fetch wrapper before any feature code captures
      window.fetch. When agentd says the HttpOnly session is no longer valid,
