@@ -48,8 +48,8 @@ func TestDashboardTransactionUngroupedRetireExclusiveOwnership(t *testing.T) {
 	}
 	for _, required := range []string{
 		`kind === 'retire-ungrouped-preview'`,
-		`agents: selectedCandidates.map((candidate) => candidate.agent_id || candidate.conv_id)`,
-		`plain="Retire ungrouped agents"`, `wizard="Banish unbound familiars"`,
+		`agents: Object.freeze(selectedCandidates.map((candidate) => candidate.agent_id || candidate.conv_id))`,
+		`: 'Retire ungrouped agents';`, `: 'Banish unbound familiars';`,
 	} {
 		if !strings.Contains(island, required) {
 			t.Errorf("transaction island is missing ungrouped-retire contract %q", required)
