@@ -41,9 +41,9 @@ func TestDashboardTransactionGroupRetireExclusiveOwnership(t *testing.T) {
 		`id="retire-preview-search"`, `id="retire-preview-select-all"`,
 		`id="retire-preview-select-none"`, `id="retire-preview-shutdown"`,
 		`id="retire-preview-wt"`, `id="retire-preview-list"`,
-		`id="retire-preview-submit"`,
+		`submitID="retire-preview-submit"`,
 		`<${Words} plain=${regularTitle} wizard=${wizardTitle} />`,
-		`convs: selectedCandidates.map((candidate) => candidate.conv_id)`,
+		`convs: Object.freeze(selectedCandidates.map((candidate) => candidate.conv_id))`,
 	} {
 		if !strings.Contains(island, required) {
 			t.Errorf("transaction island is missing group-retire contract %q", required)
