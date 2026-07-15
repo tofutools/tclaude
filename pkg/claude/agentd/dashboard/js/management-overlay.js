@@ -21,9 +21,11 @@ export function ManagementOverlay({
   confirmDiscard,
   resizeKey = '',
   fitContent = true,
+  guardBackdropDrag = false,
   children,
 }) {
   const overlayRef = useRef(null);
+  const pressedOnBackdrop = useRef(false);
   const close = async () => {
     if (blocked) return;
     if (!dirty || (await confirmDiscard())) onClose();
@@ -56,8 +58,17 @@ export function ManagementOverlay({
     class=${`${manage ? 'manage-overlay show' : 'modal-overlay show'}${overlayClass ? ` ${overlayClass}` : ''}`}
     id=${id}
     onMouseDown=${(event) => {
-      if (event.target === event.currentTarget) void close();
+      if (guardBackdropDrag) {
+        pressedOnBackdrop.current = event.target === event.currentTarget;
+      } else if (event.target === event.currentTarget) {
+        void close();
+      }
     }}
+    onClick=${guardBackdropDrag ? (event) => {
+      const dismiss = event.target === event.currentTarget && pressedOnBackdrop.current;
+      pressedOnBackdrop.current = false;
+      if (dismiss) void close();
+    } : undefined}
   >
     <div
       ref=${dialogRef}

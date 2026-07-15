@@ -172,8 +172,10 @@ export function createGroupsState({
     GROUP_VIEW_OPTIONS.map((option) => [option.key, option.defaultValue]),
   ));
   const viewOpen = signal(false);
+  const memberEditor = signal(null);
   const renderRevision = signal(0);
   let initialized = false;
+  let nextMemberEditorLaunchID = 0;
 
   const view = computed(() => {
     renderRevision.value;
@@ -239,10 +241,36 @@ export function createGroupsState({
     renderRevision.value++;
   }
 
+  function openMemberEditor(member, group, focus = 'title') {
+    // A live editor owns its frozen baseline until it closes. Poll publishes
+    // may replace the row objects underneath it, but cannot retarget or reset
+    // the draft; repeated launch gestures are ignored for the same reason.
+    if (memberEditor.value || !member || !group?.name) return false;
+    memberEditor.value = {
+      launchID: ++nextMemberEditorLaunchID,
+      conv: String(member.conv_id || ''),
+      agent: String(member.agent_id || member.conv_id || ''),
+      label: String(member.title || member.conv_id || ''),
+      group: String(group.name),
+      title: String(member.title || ''),
+      role: String(member.role || ''),
+      descr: String(member.descr || ''),
+      tags: Array.isArray(member.tags) ? [...member.tags] : [],
+      owner: !!member.owner,
+      focus: ['role', 'descr'].includes(focus) ? focus : 'title',
+    };
+    return true;
+  }
+
+  function closeMemberEditor() {
+    memberEditor.value = null;
+  }
+
   return Object.freeze({
-    snapshot, query, visibility, viewOpen, renderRevision,
+    snapshot, query, visibility, viewOpen, memberEditor, renderRevision,
     view, columnOptions, deviationCount,
     initialize, publish, setQuery, setVisible, setColumnShown, rerender,
+    openMemberEditor, closeMemberEditor,
   });
 }
 

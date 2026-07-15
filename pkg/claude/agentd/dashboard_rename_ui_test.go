@@ -8,7 +8,7 @@ import (
 // Agent rename used to be a standalone "rename" button + its own modal.
 // It folded into two surfaces, both of which POST the SAME request to
 // /api/agents/{conv}/rename:
-//   - the per-agent edit panel (the "edit" button → editMemberModal),
+//   - the Preact per-agent edit panel (the direct "edit" button launch),
 //     which gained a Title field and an "auto" self-rename checkbox;
 //   - the click-to-edit agent-name cell (the .rowname-text span → a keyed
 //     native InlineEditor owned by the Groups interaction provider).
@@ -45,6 +45,8 @@ func TestDashboardRenameUI_FoldedIntoEditAndNameCell(t *testing.T) {
 	present(`act="edit-member"`, "the per-agent edit button is still wired")
 	present(`id="edit-member-title-input"`, "the edit panel has a Title field")
 	present(`id="edit-member-auto"`, "the edit panel has the auto self-rename checkbox")
+	present(`id="groups-member-dialog-root"`, "the static page retains only the Preact member-editor host")
+	absent("function editMemberModal(", "the legacy edit-member lifecycle was removed")
 
 	// Change 2 — the agent-name cell is click-to-edit, routed through the keyed
 	// native editor; row DnD is disabled only while that editor is active.
@@ -55,6 +57,6 @@ func TestDashboardRenameUI_FoldedIntoEditAndNameCell(t *testing.T) {
 
 	// Both new surfaces POST to the one rename endpoint — the edit
 	// panel's Save and the inline name handler issue this exact fetch.
-	present("`/api/agents/${encodeURIComponent(agent)}/rename`",
+	present("`/api/agents/${encodeURIComponent(descriptor.agent)}/rename`",
 		"a rename surface POSTs to /api/agents/{agent}/rename")
 }
