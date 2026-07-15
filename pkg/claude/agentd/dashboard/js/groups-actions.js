@@ -8,12 +8,16 @@ import { loadProfiles, profileChoices } from './profiles.js';
 import { openProfileEditor } from './modal-profiles.js';
 import { loadSandboxProfiles, openSandboxProfileEditor, refreshSpawnSandboxProfileUI } from './sandbox-profiles.js';
 import { pickDirectory } from './helpers.js';
+import { saveMemberEditorRequests } from './member-editor-actions.js';
 
 async function responseError(response, fallback) {
   return (await response.text()) || fallback || `HTTP ${response.status}`;
 }
 
-export function createGroupsActions({ state, refresh, notify = () => {} }) {
+export function createGroupsActions({
+  state, refresh, notify = () => {}, fetchImpl = fetch,
+  openMemberPermissions = () => { throw new Error('permissions editor is not ready'); },
+}) {
   if (!state) throw new TypeError('groups actions require state');
   if (typeof refresh !== 'function') throw new TypeError('groups actions require refresh');
 
@@ -21,6 +25,21 @@ export function createGroupsActions({ state, refresh, notify = () => {} }) {
     refresh,
     reportError(error) {
       notify((error && error.message) || String(error), true);
+    },
+    openMemberEditor(member, group, focus = 'title') {
+      return state.openMemberEditor(member, group, focus);
+    },
+    closeMemberEditor() {
+      state.closeMemberEditor();
+    },
+    openMemberPermissions(descriptor) {
+      return openMemberPermissions(descriptor.conv, descriptor.label);
+    },
+    noMemberChanges() {
+      notify('no changes');
+    },
+    async saveMemberEditor(descriptor, changes) {
+      return saveMemberEditorRequests({ descriptor, changes, fetchImpl, notify, refresh });
     },
     sort(table, column) {
       cycleSort(table, column);
