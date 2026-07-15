@@ -15,8 +15,8 @@ func TestDashboardMessageAccessDialogsHaveSingleOwner(t *testing.T) {
 	if got := strings.Count(html, `id="message-access-dialog-root"`); got != 1 {
 		t.Fatalf("message/access island host count = %d, want 1", got)
 	}
-	if got := strings.Count(html, `id="cron-create-target-mount"`); got != 1 {
-		t.Fatalf("controlled cron-target host count = %d, want 1", got)
+	if strings.Contains(html, `id="cron-create-target-mount"`) {
+		t.Fatal("message/access still ships the retired cron-target host")
 	}
 	for _, id := range []string{
 		"sudo-pick-agent-modal", "sudo-grant-modal", "perm-edit-modal",
@@ -36,18 +36,6 @@ func TestDashboardMessageAccessDialogsHaveSingleOwner(t *testing.T) {
 			t.Errorf("modal-message.js still contains migrated writer %q", forbidden)
 		}
 	}
-	cronLegacy := string(mustReadFS(dashboardAssetsFS, "js/modal-cron.js"))
-	if !strings.Contains(cronLegacy, "import { bindBackdropDiscard, refresh, toast } from './refresh.js';") {
-		t.Error("modal-cron.js lost retained success-path refresh/toast dependencies")
-	}
-	for _, forbidden := range []string{
-		"function bindTargetPicker", "function populateTargetPicker",
-		"function readTargetPicker", "function pickCronTargetModal",
-	} {
-		if strings.Contains(cronLegacy, forbidden) {
-			t.Errorf("modal-cron.js still contains migrated shared writer %q", forbidden)
-		}
-	}
 	if _, err := fs.Stat(dashboardAssetsFS, "js/modal-human-reply.js"); err == nil {
 		t.Error("legacy modal-human-reply.js still ships")
 	} else if !errors.Is(err, fs.ErrNotExist) {
@@ -58,6 +46,8 @@ func TestDashboardMessageAccessDialogsHaveSingleOwner(t *testing.T) {
 		"bindMessageModal, bindSudoModal",
 		"pickCronTargetModal, bindTargetPicker",
 		"sudoGrantBlocklist",
+		"configureCronTargetPicker", "readCronTargetPicker", "setCronTargetModeListener",
+		"cronTargetHost", "cronTarget.value", "configureCronTarget",
 	} {
 		if strings.Contains(dashboardAssets, forbidden) {
 			t.Errorf("dashboard assets retain migrated legacy import/wiring %q", forbidden)
@@ -66,9 +56,6 @@ func TestDashboardMessageAccessDialogsHaveSingleOwner(t *testing.T) {
 	for _, required := range []string{
 		"registerMessageAccessDialogController(controller)",
 		"mountMessageAccessDialogsFeature({",
-		"if (messageAccessDialogsMounted) bindCronModal();",
-		"configureCronTargetPicker(p)",
-		"readCronTargetPicker()",
 	} {
 		if !dashboardSourceContains(dashboardAssets, required) {
 			t.Errorf("dashboard assets missing controller ownership seam %q", required)
