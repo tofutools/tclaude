@@ -234,7 +234,12 @@ export function sudoBadge(activeSudo, fallbackConvID) {
       downloadExport: triggerExportDownload,
       getSnapshot: () => lastSnapshot,
     }),
-    mountTransactionDialogsFeature(),
+    mountTransactionDialogsFeature({
+      confirm: confirmModal,
+      confirmDiscard,
+      refresh: dashboardActions.refresh,
+      notify: toast,
+    }),
   ]);
   pageCleanups.push(...featureCleanups);
 
