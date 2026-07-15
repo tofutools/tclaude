@@ -14,20 +14,20 @@ func TestDashboardJS_ExportModalWired(t *testing.T) {
 		`data-act="export-summary"`,      // ⚙-menu button (helpers.js)
 		"function exportAgentButton(",    // its builder (helpers.js)
 		"case 'export-summary'",          // row-action dispatch (row-actions.js)
-		"openExportModal(agent, label)",  // dispatch opens the modal (row-actions.js)
-		"function bindExportModal(",      // modal binder (modal-export.js)
-		"bindExportModal();",             // boot wires it (dashboard.js)
+		"openAgentExportDialog(agent, label)", // dispatch opens the Preact dialog
+		"descriptor.kind === 'agent-export'",  // action-dialog island owner
+		"openExport: state.openExport",         // plain action/state boundary
 		`id="export-agent-modal"`,        // modal element (dashboard.html)
 		`id="export-agent-instructions"`, // instructions field (dashboard.html)
-		"/api/export-jobs/",              // poll/download endpoint (modal-export.js)
+		"/api/export-jobs/",              // poll/download endpoint (plain actions)
 		`id="export-agent-history"`,      // history panel (dashboard.html)
-		"function loadExportHistory(",    // history loader (modal-export.js)
+		"async loadExportHistory(",       // history loader (plain actions)
 		"/exports",                       // list/clear endpoint (modal-export.js)
 		`data-export-act="delete"`,       // per-entry delete control (modal-export.js)
 		// The working-phase step checklist (export-progress.js).
 		`id="export-agent-checklist"`,     // checklist mount (dashboard.html)
 		"function renderExportChecklist(", // modal checklist renderer (export-progress.js)
-		"function updateChecklist(",       // status-change repaint (modal-export.js)
+		"function ExportChecklist(",       // Preact checklist renderer
 		// The Jobs tab's unified job table (exports + cron).
 		`data-tab="jobs"`,                       // the extended Cron→Jobs nav tab (dashboard.html)
 		`id="jobs-root"`,                        // Preact feature mount (dashboard.html)
