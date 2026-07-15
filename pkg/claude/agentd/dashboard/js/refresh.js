@@ -2615,42 +2615,6 @@ function openDeleteGroupModal(group) {
   setTimeout(() => submitBtn.focus(), 0);
 }
 
-// shutdownConfirm pops a 3-button confirm: Soft exit (default),
-// Force kill (destructive), Cancel. Resolves to "soft" / "force" /
-// null. Mirrors the existing confirmModal but with two distinct
-// confirm paths so the human can pick blast radius.
-function shutdownConfirm({label}) {
-  return new Promise(resolve => {
-    const overlay = $('#shutdown-modal');
-    $('#shutdown-meta').textContent = label || '';
-    $('#shutdown-meta').style.display = label ? 'block' : 'none';
-    const softBtn = $('#shutdown-soft');
-    const forceBtn = $('#shutdown-force');
-    const cancelBtn = $('#shutdown-cancel');
-    const cleanup = (result) => {
-      overlay.classList.remove('show');
-      softBtn.removeEventListener('click', onSoft);
-      forceBtn.removeEventListener('click', onForce);
-      cancelBtn.removeEventListener('click', onCancel);
-      overlay.removeEventListener('click', onOverlay);
-      document.removeEventListener('keydown', onKey);
-      resolve(result);
-    };
-    const onSoft = () => cleanup('soft');
-    const onForce = () => cleanup('force');
-    const onCancel = () => cleanup(null);
-    const onOverlay = (e) => { if (e.target === overlay) cleanup(null); };
-    const onKey = (e) => { if (e.key === 'Escape') cleanup(null); };
-    softBtn.addEventListener('click', onSoft);
-    forceBtn.addEventListener('click', onForce);
-    cancelBtn.addEventListener('click', onCancel);
-    overlay.addEventListener('click', onOverlay);
-    document.addEventListener('keydown', onKey);
-    overlay.classList.add('show');
-    softBtn.focus();
-  });
-}
-
 // deleteAgentModal is the per-row "delete forever" confirm. Beyond
 // confirm/cancel it offers an opt-in to also remove the agent's git
 // worktree. The worktree's status is fetched async from
@@ -3401,43 +3365,13 @@ async function resumeAgentReq(conv, label, recreate) {
   return true;
 }
 
-// stopAgentReq POSTs the stop endpoint with the given blast radius
-// (force=false → soft /exit, force=true → tmux kill), toasts the
-// outcome, and refreshes on success. Driven by the online status-dot
-// click (via the 3-way shutdown confirm). Returns true on success.
-async function stopAgentReq(conv, label, force) {
-  let r;
-  try {
-    r = await fetch(`/api/agents/${encodeURIComponent(conv)}/stop`, {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({force: !!force}),
-    });
-  } catch (e) {
-    toast(`shutdown failed: ${e && e.message || e}`, true);
-    return false;
-  }
-  if (!r.ok) {
-    toast(`shutdown failed: ${await r.text()}`, true);
-    return false;
-  }
-  try {
-    const out = await r.json();
-    toast(`shutdown ${label}: ${out.action || 'ok'}`);
-  } catch (_) {
-    toast(`shutdown ${label}: ok`);
-  }
-  refresh();
-  return true;
-}
-
 export {
   bindTabs, bindTabHotkeys, bindDetailsPersistence, bindGroupTitleToggle, bindGroupQuickHover,
   toast, confirmModal, confirmDiscard,
-  shutdownScope, powerOnScope, openWindowModal, shutdownConfirm,
+  shutdownScope, powerOnScope, openWindowModal,
   openRetirePreview, openRetireUngroupedPreview, openDeleteRetiredPreview, openWorktreeCleanup,
   openDeleteGroupModal,
   groupMembersByStatus, countGroupMembersByStatus, countUngroupedAgents,
   deleteAgentModal,
-  resumeAgentReq, stopAgentReq,
+  resumeAgentReq,
 };

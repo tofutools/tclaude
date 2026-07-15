@@ -165,12 +165,13 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	// to the same calls the dashboard's Shutdown / Power-on buttons and
 	// per-row status dots make — global + per-group reuse
 	// shutdownScope/powerOnScope (the /api/shutdown + /api/power-on
-	// endpoints), per-agent reuses stopAgentReq/resumeAgentReq behind the
-	// 3-way shutdownConfirm. Every variant is gated on a live count or the
+	// endpoints), per-agent stop opens the transaction dialog while resume
+	// remains non-destructive. Every variant is gated on a live count or the
 	// agent's current state so the palette never offers a no-op or the
 	// wrong verb.
-	must("shutdownScope, powerOnScope, shutdownConfirm, stopAgentReq, resumeAgentReq",
-		"palette imports the existing power-control ops from refresh.js")
+	must("shutdownScope, powerOnScope, resumeAgentReq",
+		"palette imports the remaining bulk/resume power-control ops from refresh.js")
+	must("openShutdownAgentDialog", "palette imports the Preact shutdown transaction launcher")
 	// Each presented label is a wiz(plain, arcane) pair — the plain wording in
 	// the default/slop theme, the 🧙 Slumber/Awaken wording under body.wizard —
 	// pinned in one needle so dropping either copy fails CI. The plain verbs
@@ -187,8 +188,8 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	must("powerOnScope('group', g.name)", "per-group power-on reuses powerOnScope")
 	// Per-agent, state-gated.
 	must("wiz(`Stop agent: ${label}`, `Slumber familiar: ${label}`)", "the palette offers a per-agent stop (plain + arcane label)")
-	must("stopAgentInteractive(sel, label)",
-		"per-agent stop reuses the 3-way shutdownConfirm then stopAgentReq")
+	must("openShutdownAgentDialog(sel, label)",
+		"per-agent stop opens the frozen Preact shutdown transaction")
 	must("wiz(`Resume agent: ${label}`, `Awaken familiar: ${label}`)", "the palette offers a per-agent resume (plain + arcane label)")
 	must("resumeAgentReq(sel, label)", "per-agent resume reuses resumeAgentReq")
 
