@@ -53,12 +53,12 @@ func TestFocusJumpsToOpenPane(t *testing.T) {
 // branch must precede the payload + fetch and open every checked candidate via
 // the same helper as the dedicated "web window" action.
 func TestBulkFocusUsesWebPanesByDefault(t *testing.T) {
-	refresh := readDashboardJS(t, "refresh.js")
-	branch := strings.Index(refresh, "if (dir === 'focus' && webTerminalDefault()) {")
-	open := strings.Index(refresh, "openWebWindowPane(c.agent_id || c.conv_id")
-	fetch := strings.Index(refresh, "fetch('/api/agent-windows'")
+	actions := readDashboardJS(t, "transaction-dialog-actions.js")
+	branch := strings.Index(actions, "if (request.direction === 'focus' && request.webTerminal) {")
+	open := strings.Index(actions, "openWebWindowPane(target.selector, target.label)")
+	fetch := strings.Index(actions, "fetchImpl('/api/agent-windows'")
 	if branch < 0 || open < branch || fetch < open {
-		t.Fatal("refresh.js bulk focus must open each selected web pane before the native-only " +
+		t.Fatal("transaction actions must open each selected web pane before the native-only " +
 			"/api/agent-windows path when web terminals are the default")
 	}
 }

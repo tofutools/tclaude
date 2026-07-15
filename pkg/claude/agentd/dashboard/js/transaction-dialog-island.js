@@ -113,6 +113,214 @@ function Words({ plain, wizard }) {
   return html`<span class="theme-copy-regular">${plain}</span><span class="theme-copy-wizard">${wizard}</span>`;
 }
 
+const NO_WINDOW_ROLE = '(no role)';
+const NO_WINDOW_GROUP = '(no group)';
+
+function windowBucketKeys(candidates, field, emptyKey) {
+  const keys = [];
+  for (const candidate of candidates) {
+    const values = candidate[field]?.length ? candidate[field] : [emptyKey];
+    for (const value of values) {
+      if (!keys.includes(value)) keys.push(value);
+    }
+  }
+  keys.sort((left, right) =>
+    (left === emptyKey) - (right === emptyKey) || left.localeCompare(right));
+  return keys;
+}
+
+function WindowSelectionDialog({ descriptor, actions, confirmDiscard }) {
+  const candidates = descriptor.candidates || [];
+  const [direction, setDirection] = useState('focus');
+  const [query, setQuery] = useState('');
+  const [selected, setSelected] = useState(
+    () => new Set(candidates.map((candidate) => candidate.conv_id)),
+  );
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [submittedRequest, setSubmittedRequest] = useState(null);
+  const activeRef = useRef(true);
+  useEffect(() => () => { activeRef.current = false; }, []);
+
+  const normalizedQuery = query.trim().toLowerCase();
+  const visibleCandidates = candidates.filter((candidate) => !normalizedQuery
+    || candidate.title.toLowerCase().includes(normalizedQuery)
+    || candidate.conv_id.toLowerCase().includes(normalizedQuery));
+  const selectedCandidates = candidates.filter((candidate) => selected.has(candidate.conv_id));
+  const locked = !!submittedRequest;
+  const groupKeys = windowBucketKeys(candidates, 'groups', NO_WINDOW_GROUP);
+  const roleKeys = windowBucketKeys(candidates, 'roles', NO_WINDOW_ROLE);
+  const where = descriptor.scope === 'group'
+    ? `group "${descriptor.group}"` : 'the dashboard';
+  const wizardWhere = descriptor.scope === 'group'
+    ? `party "${descriptor.group}"` : 'the tower';
+
+  const bucketCandidates = (field, key, emptyKey) => candidates.filter((candidate) => {
+    const values = candidate[field]?.length ? candidate[field] : [emptyKey];
+    return values.includes(key);
+  });
+  const updateBucket = (field, key, emptyKey) => {
+    if (busy || locked) return;
+    const members = bucketCandidates(field, key, emptyKey);
+    const next = new Set(selected);
+    const allOn = members.every((candidate) => next.has(candidate.conv_id));
+    for (const candidate of members) {
+      if (allOn) next.delete(candidate.conv_id);
+      else next.add(candidate.conv_id);
+    }
+    setSelected(next);
+  };
+  const updateAll = (checked) => {
+    if (busy || locked) return;
+    setSelected(checked
+      ? new Set(candidates.map((candidate) => candidate.conv_id))
+      : new Set());
+  };
+  const updateCandidate = (candidate, checked) => {
+    if (busy || locked) return;
+    const next = new Set(selected);
+    if (checked) next.add(candidate.conv_id);
+    else next.delete(candidate.conv_id);
+    setSelected(next);
+  };
+  const submit = async () => {
+    if (busy || selectedCandidates.length === 0) return;
+    const request = submittedRequest || Object.freeze({
+      direction,
+      scope: descriptor.scope,
+      ...(descriptor.scope === 'group' ? { group: descriptor.group } : {}),
+      convs: Object.freeze(selectedCandidates.map(
+        (candidate) => candidate.agent_id || candidate.conv_id,
+      )),
+      webTerminal: descriptor.webTerminal === true,
+      targets: Object.freeze(selectedCandidates.map((candidate) => Object.freeze({
+        selector: candidate.agent_id || candidate.conv_id,
+        label: candidate.title || candidate.conv_id.slice(0, 8),
+      }))),
+    });
+    if (!submittedRequest) setSubmittedRequest(request);
+    setError('');
+    setBusy(true);
+    try {
+      await actions.selectAgentWindows(request);
+    } catch (cause) {
+      if (activeRef.current) setError(cause?.message || String(cause));
+    } finally {
+      if (activeRef.current) setBusy(false);
+    }
+  };
+
+  const retrying = !!submittedRequest;
+  const plainHint = direction === 'focus'
+    ? descriptor.webTerminal
+      ? `Open or focus a web terminal pane for each selected running agent in ${where}.`
+      : `Open or raise a terminal window for each selected running agent in ${where}.`
+    : descriptor.webTerminal
+      ? `Detach the web terminal panes of the selected running agents in ${where}. The agents keep running — only the terminal views are dismissed.`
+      : `Detach the terminal windows of the selected running agents in ${where} so the desktop is decluttered. The agents keep running — only the windows are dismissed.`;
+  const wizardHint = direction === 'focus'
+    ? `Conjure a scrying portal for each chosen channeling familiar in ${wizardWhere}.`
+    : `Draw the veil over the chosen familiars' scrying portals in ${wizardWhere} so the desktop is decluttered. The familiars keep channeling — only the portals are dismissed.`;
+  const plainVerb = direction === 'focus' ? 'Focus' : 'Unfocus';
+  const wizardVerb = direction === 'focus' ? 'Reveal' : 'Veil';
+  const count = selectedCandidates.length;
+  return html`<${TransactionDialogFrame}
+    id="window-modal"
+    labelledby="window-title"
+    title=${html`<span class="window-title-regular">Agent windows</span><span class="window-title-wizard">Familiars' windows</span>`}
+    dialogClass="cleanup-modal"
+    busy=${busy}
+    error=${error}
+    errorID="window-error"
+    primaryLabel=${html`<${Words}
+      plain=${`${retrying ? 'Retry ' : ''}${plainVerb} ${count} agent${count === 1 ? '' : 's'}`}
+      wizard=${`${retrying ? 'Retry ' : ''}${wizardVerb} ${count} familiar${count === 1 ? '' : 's'}`}
+    />`}
+    busyLabel=${html`<span class="btn-spinner" aria-hidden="true"></span><${Words}
+      plain=${retrying ? 'Retrying…' : `${plainVerb}ing…`}
+      wizard=${retrying ? 'Retrying…' : `${wizardVerb}ing…`}
+    />`}
+    primaryClass="primary"
+    submitDisabled=${count === 0}
+    cancelID="window-cancel"
+    submitID="window-submit"
+    onClose=${actions.close}
+    onSubmit=${submit}
+    confirmDiscard=${confirmDiscard}
+  >
+    <p class="cleanup-hint" id="window-hint"><${Words} plain=${plainHint} wizard=${wizardHint} /></p>
+    <div class="window-direction" id="window-direction" role="radiogroup" aria-label="Window action">
+      <label><input
+        type="radio" name="window-direction" value="focus"
+        checked=${direction === 'focus'} disabled=${busy || locked}
+        onChange=${() => setDirection('focus')}
+      />
+        <span class="window-dir-label-regular">Focus</span><span class="window-dir-label-wizard">👁 Reveal</span>
+        <span class="opt-note"><span class="window-dir-note-regular">— open or focus a terminal for each selected agent</span><span class="window-dir-note-wizard">— conjure a scrying portal for each chosen familiar</span></span>
+      </label>
+      <label><input
+        type="radio" name="window-direction" value="unfocus"
+        checked=${direction === 'unfocus'} disabled=${busy || locked}
+        onChange=${() => setDirection('unfocus')}
+      />
+        <span class="window-dir-label-regular">Unfocus</span><span class="window-dir-label-wizard">🌫 Veil</span>
+        <span class="opt-note"><span class="window-dir-note-regular">— detach the terminal views so the dashboard or desktop is decluttered. Detach-only: a window or tab tclaude opened closes itself, other tabs are untouched. The agents keep running — never the agent process.</span><span class="window-dir-note-wizard">— draw the veil over the chosen familiars' scrying portals so the desktop is decluttered. Veil-only: a window or tab tclaude opened closes itself, other tabs are untouched. The familiars keep channeling — never the familiar itself.</span></span>
+      </label>
+    </div>
+    <div class="cleanup-toolbar">
+      <button type="button" id="window-select-all" disabled=${busy || locked} onClick=${() => updateAll(true)}>select all</button>
+      <button type="button" id="window-select-none" disabled=${busy || locked} onClick=${() => updateAll(false)}>select none</button>
+      <input
+        type="search" id="window-search" placeholder="filter title / id…"
+        aria-label="Filter agents" value=${query} disabled=${busy || locked}
+        onInput=${(event) => setQuery(event.currentTarget.value)}
+      />
+      <span class="spacer"></span>
+      <span class="cleanup-count" id="window-count">${count} of ${candidates.length} selected</span>
+    </div>
+    <div class="window-groups" id="window-groups">
+      <span class="roles-label"><${Words} plain="groups" wizard="parties" /></span>
+      ${groupKeys.map((key) => {
+        const members = bucketCandidates('groups', key, NO_WINDOW_GROUP);
+        const on = members.filter((candidate) => selected.has(candidate.conv_id)).length;
+        const stateClass = on === 0 ? '' : on === members.length ? ' on' : ' partial';
+        return html`<button
+          type="button" key=${key} class=${`window-role-chip${stateClass}`}
+          data-group-chip=${key} disabled=${busy || locked}
+          onClick=${() => updateBucket('groups', key, NO_WINDOW_GROUP)}
+        >${key} (${on}/${members.length})</button>`;
+      })}
+    </div>
+    <div class="window-roles" id="window-roles">
+      <span class="roles-label"><${Words} plain="roles" wizard="classes" /></span>
+      ${roleKeys.map((key) => {
+        const members = bucketCandidates('roles', key, NO_WINDOW_ROLE);
+        const on = members.filter((candidate) => selected.has(candidate.conv_id)).length;
+        const stateClass = on === 0 ? '' : on === members.length ? ' on' : ' partial';
+        return html`<button
+          type="button" key=${key} class=${`window-role-chip${stateClass}`}
+          data-role=${key} disabled=${busy || locked}
+          onClick=${() => updateBucket('roles', key, NO_WINDOW_ROLE)}
+        >${key} (${on}/${members.length})</button>`;
+      })}
+    </div>
+    <div class="cleanup-list" id="window-list">
+      ${visibleCandidates.length ? visibleCandidates.map((candidate) => html`
+        <div class="cleanup-row" key=${candidate.conv_id}><label>
+          <input
+            type="checkbox" data-conv=${candidate.conv_id}
+            checked=${selected.has(candidate.conv_id)} disabled=${busy || locked}
+            onChange=${(event) => updateCandidate(candidate, event.currentTarget.checked)}
+          />
+          <span class="title">${candidate.title || '(untitled)'}</span>
+          <span class="id">${candidate.conv_id.slice(0, 8)}</span>
+          ${candidate.roles.map((role) => html`<span class="cleanup-badge" key=${role}>${role}</span>`)}
+        </label></div>
+      `) : html`<div class="cleanup-empty"><${Words} plain="no agents match the filter" wizard="no familiars match the filter" /></div>`}
+    </div>
+  </${TransactionDialogFrame}>`;
+}
+
 function BulkRetireResult({ descriptor, response }) {
   const group = descriptor.kind === 'retire-group-preview';
   const rows = group ? (response?.members || []) : (response?.outcomes || []);
@@ -1007,6 +1215,14 @@ export function TransactionDialogApp({ state, actions, confirmDiscard }) {
   }
   if (current.descriptor.kind === 'delete-agent') {
     return html`<${DeleteAgentDialog}
+      key=${current.key}
+      descriptor=${current.descriptor}
+      actions=${actions}
+      confirmDiscard=${confirmDiscard}
+    />`;
+  }
+  if (current.descriptor.kind === 'window-selection') {
+    return html`<${WindowSelectionDialog}
       key=${current.key}
       descriptor=${current.descriptor}
       actions=${actions}

@@ -88,7 +88,6 @@ func TestDashboardTransactionGroupRetireExclusiveOwnership(t *testing.T) {
 	}
 	for _, adjacent := range []string{
 		`id="delete-group-modal"`, `id="worktree-cleanup-modal"`,
-		`id="window-modal"`,
 	} {
 		if !strings.Contains(html, adjacent) {
 			t.Errorf("adjacent static workflow changed during retire cutover: %q", adjacent)
@@ -96,7 +95,6 @@ func TestDashboardTransactionGroupRetireExclusiveOwnership(t *testing.T) {
 	}
 	for _, adjacent := range []string{
 		"function openDeleteGroupModal(group)",
-		"function openWindowModal(scope, groupName)",
 		"export async function openCleanupModal(opts)",
 		"async function openWorktreeCleanup(group = '')",
 	} {

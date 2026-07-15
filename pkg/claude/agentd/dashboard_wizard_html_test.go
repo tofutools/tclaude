@@ -1438,12 +1438,13 @@ func TestDashboardHTML_WizardWindowModal(t *testing.T) {
 	must(".window-dir-label-wizard, .window-dir-note-wizard { display: none; }", "the wizard direction copy is hidden outside wizard mode")
 	must("body.wizard #window-modal .window-dir-label-wizard,", "wizard reveals the arcane direction labels")
 
-	// The submit lever's JS-set live-count label swaps verb+noun for the theme —
+	// The submit lever's Preact-owned live-count label swaps verb+noun for the theme —
 	// "Focus 3 agents" → "Reveal 3 familiars" (focus) / "Veil 3 familiars" (unfocus).
-	// The chrome is gilded in CSS; the copy swap lives in openWindowModal's JS.
+	// The chrome is gilded in CSS; the controlled copy lives in the transaction island.
 	must("body.wizard #window-modal #window-submit {", "the submit button gets the gilded lever chrome")
-	must("direction() === 'focus' ? (wiz ? 'Reveal' : 'Focus') : (wiz ? 'Veil' : 'Unfocus')", "the submit verb swaps to Reveal/Veil in wizard mode")
-	must("const noun = wiz ? 'familiar' : 'agent';", "the submit count noun swaps to familiar in wizard mode")
+	must("const plainVerb = direction === 'focus' ? 'Focus' : 'Unfocus';", "the plain submit verb tracks direction")
+	must("const wizardVerb = direction === 'focus' ? 'Reveal' : 'Veil';", "the wizard submit verb swaps to Reveal/Veil")
+	must("wizard=${`${retrying ? 'Retry ' : ''}${wizardVerb} ${count} familiar", "the submit count noun swaps to familiar in wizard mode")
 	// Cancel gets the tarnished-gold secondary treatment (scoped away from the submit).
 	must("body.wizard #window-modal .modal-buttons button:not(#window-submit)", "Cancel gets the secondary arcane skin")
 }
