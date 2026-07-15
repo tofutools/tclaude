@@ -156,7 +156,8 @@ func TestEnrollment_RetireDemotesAndRevokes(t *testing.T) {
 // its agent-owned directory bindings without touching another agent's root.
 func TestEnrollment_RetireDeletesAgentOwnedDirectories(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
-	cacheHome := t.TempDir()
+	cacheHome, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	t.Setenv("XDG_CACHE_HOME", cacheHome)
 	f := newFlow(t)
 	mux := agentd.BuildDashboardHandlerForTest()
