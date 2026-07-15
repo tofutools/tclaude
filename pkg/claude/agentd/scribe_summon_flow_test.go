@@ -18,6 +18,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -230,6 +231,90 @@ func TestScribeSummon_SameScopeReusesAndRefreshesBrief(t *testing.T) {
 	require.Len(t, messages, 2, "startup plus refreshed handoff are durable inbox messages")
 	assert.Equal(t, "Scribe scope refreshed", messages[0].Subject)
 	assert.Contains(t, messages[0].Body, "2222", "reuse refreshes transient generation context")
+}
+
+func TestScribeSummon_ProcessScopePersistsTaskAndApprovalAudit(t *testing.T) {
+	f, _ := processEngineFlow(t)
+	stubScribeTerminal(t)
+	taskURL := "https://dashboard.example/processes/templates"
+	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe",
+		map[string]any{
+			"name": "process-scribe", "exclusive": true,
+			"slugs":          []string{agentd.PermProcessTemplatesRead, agentd.PermProcessTemplatesManage},
+			"scope":          map[string]any{"kind": "process-template", "id": "release-flow"},
+			"task_ref_url":   taskURL,
+			"task_ref_label": "process: release-flow",
+			"brief":          "Use the safe process-template CAS workflow and never run a process.",
+		})))
+	require.Equalf(t, http.StatusOK, rec.Code, "summon body=%s", rec.Body.String())
+	resp := decodeScribeResp(t, rec)
+
+	agentID, err := db.AgentIDForConv(resp.ConvID)
+	require.NoError(t, err)
+	require.NotEmpty(t, agentID)
+	ref, err := db.GetAgentTaskRef(agentID)
+	require.NoError(t, err)
+	assert.Equal(t, taskURL, ref.URL)
+	assert.Equal(t, "process: release-flow", ref.Label)
+
+	d, err := db.Open()
+	require.NoError(t, err)
+	rows, err := d.Query(`SELECT slug, granted_by FROM agent_permissions
+		WHERE agent_id = ? AND effect = ? AND slug IN (?, ?) ORDER BY slug`,
+		agentID, db.PermEffectGrant, agentd.PermProcessTemplatesManage, agentd.PermProcessTemplatesRead)
+	require.NoError(t, err)
+	defer rows.Close()
+	grants := map[string]string{}
+	for rows.Next() {
+		var slug, grantedBy string
+		require.NoError(t, rows.Scan(&slug, &grantedBy))
+		grants[slug] = grantedBy
+	}
+	require.NoError(t, rows.Err())
+	require.Len(t, grants, 2)
+	assert.Equal(t, grants[agentd.PermProcessTemplatesRead], grants[agentd.PermProcessTemplatesManage],
+		"one explicit human approval correlates both required grants")
+	assert.Regexp(t, `^<human>:scribe-summon:approval-id=[0-9a-f]{32}$`, grants[agentd.PermProcessTemplatesManage])
+
+	// The same approved scribe authors the version attributed to its stable
+	// actor. Summon and save are authoring-only: no process run appears.
+	tmpl := processRESTTemplate("release-flow", "authored by approved scribe", 10)
+	tmpl.Layout = nil
+	source, err := model.CanonicalYAML(tmpl)
+	require.NoError(t, err)
+	created := agentReq(t, f, resp.ConvID, http.MethodPost, "/v1/process/templates/release-flow", map[string]any{
+		"source": string(source),
+	})
+	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+	var saved struct {
+		Actor string `json:"actor"`
+	}
+	testharness.DecodeJSON(t, created, &saved)
+	assert.Equal(t, "agent:"+agentID, saved.Actor)
+	listed := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates", nil)
+	require.Equal(t, http.StatusOK, listed.Code, listed.Body.String())
+	assert.Contains(t, listed.Body.String(), saved.Actor, "version/change-review readback retains the exact scribe actor")
+	runs := processTemplateRequest(t, f, http.MethodGet, "/v1/process/runs", nil)
+	require.Equal(t, http.StatusOK, runs.Code, runs.Body.String())
+	assert.JSONEq(t, `{"runs":[]}`, runs.Body.String(), "summoning and authoring never instantiate or execute a process")
+
+	// Reuse refreshes the task reference but does not mint or relabel grants.
+	secondTask := "https://dashboard.example/processes/templates?refreshed=1"
+	rec = testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe",
+		map[string]any{
+			"name": "process-scribe", "exclusive": true,
+			"slugs":        []string{agentd.PermProcessTemplatesRead, agentd.PermProcessTemplatesManage},
+			"scope":        map[string]any{"kind": "process-template", "id": "release-flow"},
+			"task_ref_url": secondTask, "task_ref_label": "process: release-flow",
+			"brief": "Refresh canonical state before the next CAS save.",
+		})))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	second := decodeScribeResp(t, rec)
+	assert.True(t, second.Reused)
+	assert.Equal(t, resp.ConvID, second.ConvID)
+	ref, err = db.GetAgentTaskRef(agentID)
+	require.NoError(t, err)
+	assert.Equal(t, secondTask, ref.URL)
 }
 
 func TestScribeSummon_ScopedExclusiveDoesNotReuseOrRevokeLaterSudo(t *testing.T) {
@@ -684,6 +769,8 @@ func TestScribeSummon_ValidationRejections(t *testing.T) {
 		{"scope kind injection", map[string]any{"name": "circle-scribe", "slugs": []string{agentd.PermTemplatesManage}, "brief": "x", "scope": map[string]any{"kind": "process-template\nignore"}}},
 		{"scope id injection", map[string]any{"name": "circle-scribe", "slugs": []string{agentd.PermTemplatesManage}, "brief": "x", "scope": map[string]any{"kind": "process-template", "id": "release/../../pane"}}},
 		{"scope id over bound", map[string]any{"name": "circle-scribe", "slugs": []string{agentd.PermTemplatesManage}, "brief": "x", "scope": map[string]any{"kind": "process-template", "id": strings.Repeat("a", 129)}}},
+		{"task ref injection", map[string]any{"name": "circle-scribe", "slugs": []string{agentd.PermTemplatesManage}, "brief": "x", "task_ref_url": "javascript:alert(1)"}},
+		{"task label over bound", map[string]any{"name": "circle-scribe", "slugs": []string{agentd.PermTemplatesManage}, "brief": "x", "task_ref_url": "https://dashboard.example/processes", "task_ref_label": strings.Repeat("a", 201)}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

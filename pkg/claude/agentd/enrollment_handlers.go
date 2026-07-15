@@ -46,19 +46,25 @@ type retireConvOutcome struct {
 // warning; the /v1 handler ignores them.
 func retireAgentConv(convID, by, reason string) (retireConvOutcome, []int64, error) {
 	var out retireConvOutcome
+	n, err := db.RevokeAllAgentPermissionsForConv(convID)
+	if err != nil {
+		return out, nil, fmt.Errorf("revoke permission grants: %w", err)
+	}
+	out.PermsRevoked = n
+	n, err = db.RevokeSudoGrantsByConv(convID)
+	if err != nil {
+		return out, nil, fmt.Errorf("revoke sudo grants: %w", err)
+	}
+	out.SudoRevoked = n
 	// Unjoin every group, owner rows included — a retired conv keeps
-	// no group ties. unjoinConvFromAllGroups lives in dashboard_cleanup.go.
+	// no group ties. Revocation comes first so a revocation failure leaves
+	// the still-active agent's ownership path intact for a safe retry.
+	// unjoinConvFromAllGroups lives in dashboard_cleanup.go.
 	removed, _, ownerGroups, err := unjoinConvFromAllGroups(convID, true)
 	if err != nil {
 		return out, nil, fmt.Errorf("unjoin groups: %w", err)
 	}
 	out.GroupsLeft = removed
-	if n, rerr := db.RevokeAllAgentPermissionsForConv(convID); rerr == nil {
-		out.PermsRevoked = n
-	}
-	if n, rerr := db.RevokeSudoGrantsByConv(convID); rerr == nil {
-		out.SudoRevoked = n
-	}
 	did, err := db.RetireAgent(convID, by, reason)
 	if err != nil {
 		return out, ownerGroups, fmt.Errorf("retire: %w", err)

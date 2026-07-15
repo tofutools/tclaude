@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  PROCESS_SCRIBE_SLUGS, processScribeBrief, processScribeHandoff,
+  PROCESS_SCRIBE_SLUGS, processScribeBrief, processScribeHandoff, processScribeSessions, processScribeTaskRef,
 } from '../dashboard/js/process-scribe.js';
 
 const hex = (char) => char.repeat(64);
@@ -44,4 +44,28 @@ test('untrusted or unbounded handoff fields are rejected before the daemon call'
     { sourceHash: '$(touch /tmp/nope)' },
   ]) assert.throws(() => processScribeHandoff({ ...valid, ...mutation }), /template id|exact ref\/source hash/);
   assert.throws(() => processScribeHandoff({ kind: 'template', id: 'new-process', isNew: true, currentRef: 'invented' }), /new-template/);
+});
+
+test('task references and active-session readback stay scoped and injection-safe', () => {
+  const handoff = processScribeHandoff({ kind: 'template', id: 'release-flow', isNew: true });
+  assert.deepEqual(processScribeTaskRef(handoff, 'https://dash.example:9443'), {
+    url: 'https://dash.example:9443/processes/templates', label: 'process: release-flow',
+  });
+  const agentId = `agt_${'a'.repeat(32)}`;
+  const valid = {
+    name: 'process-scribe', scribe: true, members: [{
+      agent_id: agentId, conv_id: 'conv-1', title: 'process-scribe-deadbeef', online: true,
+      descr: 'Reusable scribe scope: process-template/release-flow',
+      task_ref_url: 'https://dash.example/processes/templates', task_ref_label: 'process: release-flow',
+    }],
+  };
+  assert.deepEqual(processScribeSessions({ groups: [valid] })[0], {
+    agentId, convId: 'conv-1', name: 'process-scribe-deadbeef', online: true,
+    scope: { kind: 'process-template', id: 'release-flow' }, scopeLabel: 'template release-flow',
+    taskURL: 'https://dash.example/processes/templates', taskLabel: 'process: release-flow',
+  });
+  assert.deepEqual(processScribeSessions({ groups: [{ ...valid, members: [{
+    ...valid.members[0], descr: 'Reusable scribe scope: process-template/release\n$(touch /tmp/nope)',
+  }] }] }), [], 'untrusted membership text cannot become a lifecycle selector');
+  assert.deepEqual(processScribeSessions({ groups: [{ ...valid, scribe: false }] }), [], 'only daemon-marked groups qualify');
 });

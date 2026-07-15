@@ -40,7 +40,7 @@ type memberOpResult struct {
 	AgentID string `json:"agent_id,omitempty"`
 	ConvID  string `json:"conv_id"`
 	Title   string `json:"title,omitempty"`
-	Action  string `json:"action"`           // "soft_stopped", "killed", "resumed", "skipped:already_online", "skipped:no_conv_id", "error"
+	Action  string `json:"action"`           // "soft_stopped", "killed", "killed_no_soft_exit", "resumed", "skipped:already_online", "skipped:no_conv_id", "error"
 	Detail  string `json:"detail,omitempty"` // human-readable note (e.g. error message)
 	TmuxSes string `json:"tmux_session,omitempty"`
 	// Worktree is the optional worktree+branch cleanup outcome attached by

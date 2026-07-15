@@ -65,13 +65,16 @@ test('Processes actions preserve API routes, single-flight loads, comment gate, 
 
 test('process scribe actions send bounded structured scope, exact grants, and recover visibly', async (t) => {
   const harness = await createPreactHarness(t);
-  const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([
+  const [{ createProcessesState }, { createProcessesActions }, { dashboardState }] = await Promise.all([
     harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
+    harness.importDashboardModule('js/snapshot-store.js'),
   ]);
+  dashboardState.snapshot.value = { groups: [] };
   const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
-  const requests = []; const notices = [];
+  const requests = []; const notices = []; const confirmations = [];
   const actions = createProcessesActions({
-    state, notify: (...args) => notices.push(args),
+    state, dashboardOrigin: 'https://dashboard.example', notify: (...args) => notices.push(args),
+    confirm: async (options) => { confirmations.push(options); return true; },
     fetchImpl: async (path, options) => {
       requests.push({ path, options });
       return { ok: true, json: async () => ({ name: 'process-scribe-12345678', conv_id: 'scribe-conv', reused: true, focus_mode: 'native' }) };
@@ -88,17 +91,155 @@ test('process scribe actions send bounded structured scope, exact grants, and re
   assert.deepEqual(body.scope, { kind: 'process-template', id: 'release-flow' });
   assert.deepEqual(body.slugs, ['process.templates.read', 'process.templates.manage']);
   assert.equal(body.exclusive, true, 'the two process-template grants are the complete effective capability set');
+  assert.deepEqual({ url: body.task_ref_url, label: body.task_ref_label }, {
+    url: 'https://dashboard.example/processes/templates', label: 'process: release-flow',
+  });
   assert.match(body.brief, new RegExp(sourceHash));
   assert.match(state.notice.value, /Reopened process scribe/);
+  assert.match(confirmations[0].body, /process\.templates\.read and process\.templates\.manage/);
+  assert.match(confirmations[0].body, /never instantiates or runs a process/);
+
+  dashboardState.snapshot.value = { groups: [{
+    name: 'process-scribe', scribe: true, members: [{
+      agent_id: `agt_${'f'.repeat(32)}`, conv_id: 'same-scope-conv', title: 'same-scope-scribe', online: true,
+      descr: 'Reusable scribe scope: process-template/release-flow',
+    }],
+  }] };
+  let reusePrompt;
+  const compatibilityFallback = createProcessesActions({
+    state, dashboardOrigin: 'https://dashboard.example', notify() {},
+    confirm: async (options) => { reusePrompt = options; return true; },
+    fetchImpl: async () => ({ ok: true, json: async () => ({
+      name: 'process-scribe-fresh', conv_id: 'fresh-conv', reused: false, focus_mode: 'native',
+    }) }),
+  });
+  assert.equal((await compatibilityFallback.summonScribe({
+    kind: 'template', id: 'release-flow', currentRef: `release-flow@sha256:${hash}`, sourceHash, isNew: false,
+  })).reused, false);
+  assert.equal(reusePrompt.title, 'Reuse or replace process scribe?');
+  assert.equal(reusePrompt.okLabel, 'Reuse or summon');
+  assert.match(reusePrompt.body, /reuses a live same-scope scribe only when its exact permissions match.*no active temporary elevation/);
+  assert.match(reusePrompt.body, /otherwise this approval creates a fresh scribe.*leaving the existing scribe unchanged/);
+
+  const deniedRequests = [];
+  const denied = createProcessesActions({
+    state, dashboardOrigin: 'https://dashboard.example', confirm: async () => false,
+    fetchImpl: async (...args) => { deniedRequests.push(args); throw new Error('must not fetch'); },
+  });
+  assert.equal(await denied.summonScribe({ kind: 'library' }), null);
+  assert.equal(deniedRequests.length, 0, 'denying the explicit grant prompt performs no retry or mutation');
+  assert.match(state.notice.value, /no permissions or sessions changed/);
 
   const failed = createProcessesActions({
-    state, notify: (...args) => notices.push(args),
+    state, dashboardOrigin: 'https://dashboard.example', notify: (...args) => notices.push(args),
+    confirm: async () => true,
     fetchImpl: async () => ({ ok: false, status: 503, statusText: 'Unavailable', json: async () => ({ message: 'spawn binary missing' }) }),
   });
   assert.equal(await failed.summonScribe({ kind: 'library' }), null);
   assert.match(state.notice.value, /Process scribe unavailable: spawn binary missing/);
   assert.match(notices.at(-1)[0], /Check the agent daemon and Scribe defaults, then retry/);
   assert.equal(notices.at(-1)[1], true);
+
+  const existingAgent = `agt_${'c'.repeat(32)}`;
+  dashboardState.snapshot.value = { groups: [{
+    name: 'process-scribe', scribe: true, members: [{
+      agent_id: existingAgent, conv_id: 'existing-conv', title: 'existing-scribe', online: true,
+      descr: 'Reusable scribe scope: process-template/other-flow',
+    }],
+  }] };
+  let transitionPrompt;
+  const transitioning = createProcessesActions({
+    state, dashboardOrigin: 'https://dashboard.example',
+    confirm: async (options) => { transitionPrompt = options; return false; },
+    fetchImpl: async () => { throw new Error('must not cross scope after denied transition'); },
+  });
+  assert.equal(await transitioning.summonScribe({ kind: 'library' }), null);
+  assert.match(transitionPrompt.body, /will not be reused or have its permissions changed/);
+  assert.equal(transitionPrompt.okLabel, 'Start separate scribe');
+});
+
+test('process scribe lifecycle distinguishes stop, retire, and stale recovery', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const agentId = `agt_${'d'.repeat(32)}`;
+  const scribe = { agentId, convId: 'scribe-conv', name: 'process-scribe-12345678', online: true, scopeLabel: 'template release-flow' };
+  const requests = []; const prompts = [];
+  const actions = createProcessesActions({
+    state, confirm: async (options) => { prompts.push(options); return true; }, notify() {},
+    fetchImpl: async (path, options = {}) => {
+      requests.push({ path, options });
+      if (path.endsWith('/stop')) return { ok: true, json: async () => ({ action: 'soft_stopped' }) };
+      if (path.includes('/retire?')) return { ok: true, json: async () => ({ outcome: { retired: true }, shutdown: { action: 'soft_stopped' } }) };
+      if (path.startsWith('/api/open-window/')) return { ok: true, json: async () => ({ mode: 'native' }) };
+      throw new Error(`unexpected ${path}`);
+    },
+  });
+  assert.equal(await actions.openScribe(scribe), true);
+  assert.equal(await actions.stopScribe(scribe), true);
+  assert.equal(await actions.retireScribe(scribe), true);
+  assert.equal(requests[0].path, `/api/open-window/${agentId}`);
+  assert.deepEqual(JSON.parse(requests[1].options.body), { force: false });
+  assert.match(prompts[0].body, /does not delete process templates.*conversation.*permissions.*local editor work/);
+  assert.match(requests[2].path, new RegExp(`/api/agents/${agentId}/retire\\?`));
+  const retireURL = new URL(requests[2].path, 'https://dashboard.example');
+  assert.equal(retireURL.searchParams.get('delete_worktree'), '0');
+  assert.equal(retireURL.searchParams.get('shutdown'), '1');
+  assert.match(prompts[1].body, /revokes its permissions/);
+  assert.match(prompts[1].body, /process templates, versions, and local editor work are not deleted/);
+  assert.match(state.notice.value, /stop was requested but is not yet confirmed.*Refresh Processes.*force-stop.*Agents/);
+
+  const stale = createProcessesActions({
+    state, confirm: async () => true,
+    fetchImpl: async () => ({ ok: false, status: 404, statusText: 'Not Found', json: async () => ({ message: 'agent already retired' }) }),
+  });
+  assert.equal(await stale.retireScribe(scribe), false);
+  assert.match(state.notice.value, /Refresh Processes.*already retired.*summon a new scribe/);
+  assert.equal(await stale.stopScribe({ ...scribe, online: false }), false);
+  assert.match(state.notice.value, /already stopped.*summon a fresh scribe/);
+
+  const stopError = createProcessesActions({
+    state, confirm: async () => true,
+    fetchImpl: async () => ({ ok: true, json: async () => ({ action: 'error', detail: 'tmux pane did not accept exit' }) }),
+  });
+  assert.equal(await stopError.stopScribe(scribe), false);
+  assert.match(state.notice.value, /Could not stop.*tmux pane did not accept exit/);
+  assert.doesNotMatch(state.notice.value, /Stopped process-scribe/);
+
+  const alreadyOffline = createProcessesActions({
+    state, confirm: async () => true,
+    fetchImpl: async () => ({ ok: true, json: async () => ({ action: 'skipped:already_offline' }) }),
+  });
+  assert.equal(await alreadyOffline.stopScribe(scribe), true);
+  assert.match(state.notice.value, /was already stopped.*permissions.*unchanged.*Retire it or summon a fresh scribe/);
+
+  const gracefulStop = createProcessesActions({
+    state, confirm: async () => true, notify() {},
+    fetchImpl: async () => ({ ok: true, json: async () => ({ action: 'soft_stopped' }) }),
+  });
+  assert.equal(await gracefulStop.stopScribe(scribe), true);
+  assert.match(state.notice.value, /Asked.*to stop.*confirm it is offline.*force-stop it from Agents.*permissions.*unchanged/);
+  assert.doesNotMatch(state.notice.value, /^Stopped/);
+
+  const hardFallback = createProcessesActions({
+    state, confirm: async () => true, notify() {},
+    fetchImpl: async () => ({ ok: true, json: async () => ({ action: 'killed_no_soft_exit' }) }),
+  });
+  assert.equal(await hardFallback.stopScribe(scribe), true);
+  assert.match(state.notice.value, /^Stopped.*templates and editor work are unchanged/);
+
+  const retirementNotices = [];
+  const retiredButRunning = createProcessesActions({
+    state, confirm: async () => true, notify: (...args) => retirementNotices.push(args),
+    fetchImpl: async () => ({ ok: true, json: async () => ({
+      outcome: { retired: true }, shutdown: { action: 'error', detail: 'soft exit timed out' },
+    }) }),
+  });
+  assert.equal(await retiredButRunning.retireScribe(scribe), true, 'access revocation succeeds even when shutdown fails');
+  assert.match(state.notice.value, /Retired.*revoked its access.*session may still be running.*soft exit timed out.*Stop the conversation from Agents/);
+  assert.equal(retirementNotices.at(-1)[1], true, 'partial shutdown failure is surfaced as an error notification');
 });
 
 test('process actor presentation renders only validated attribution and marks navigation only for a live match', async (t) => {
@@ -712,6 +853,45 @@ test('process template library renders both-skin scribe entry and sends library 
   assert.match(button.querySelector('.process-scribe-wizard').textContent, /process scribe/);
   harness.fireEvent(button, 'click');
   assert.deepEqual(scopes, [{ kind: 'library' }]);
+  await mounted.unmount();
+});
+
+test('Processes surfaces scoped scribe lifecycle and latest-version actor attribution', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { ProcessesApp }, { dashboardState }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-island.js'),
+    harness.importDashboardModule('js/snapshot-store.js'),
+  ]);
+  const agentId = `agt_${'e'.repeat(32)}`;
+  dashboardState.snapshot.value = {
+    agents: [{ agent_id: agentId, title: 'release-scribe', online: true }],
+    groups: [{ name: 'process-scribe', scribe: true, members: [{
+      agent_id: agentId, conv_id: 'scribe-conv', title: 'release-scribe', online: true,
+      descr: 'Reusable scribe scope: process-template/release-flow',
+      task_ref_url: 'https://dash.example/processes/templates', task_ref_label: 'process: release-flow',
+    }] }],
+  };
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  state.templatesRequest.commitRequest(state.templatesRequest.beginRequest(), { templates: [{
+    id: 'release-flow', latestVersion: { semanticHash: 'abcdef123456', actor: `agent:${agentId}` }, versionCount: 2,
+  }] });
+  const called = [];
+  const actions = {
+    refreshActive() {}, load() {}, observeTemplateHeads() {}, activateSubtab() {}, openEditor() {}, closeCanvas() {},
+    openInstantiation() {}, summonScribe() {}, describeActor: () => ({ label: 'agent release-scribe' }),
+    openScribe: (scribe) => called.push(['open', scribe.agentId]),
+    stopScribe: (scribe) => called.push(['stop', scribe.agentId]),
+    retireScribe: (scribe) => called.push(['retire', scribe.agentId]),
+  };
+  const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
+  const status = mounted.container.querySelector(`[data-process-scribe="${agentId}"]`);
+  assert.ok(status);
+  assert.match(status.textContent, /active.*release-scribe.*template release-flow.*process: release-flow.*stop.*retire/s);
+  assert.match(mounted.container.querySelector('.process-version-actor').textContent, /by agent release-scribe/);
+  harness.fireEvent(status.querySelector('.wl-link'), 'click');
+  harness.fireEvent(status.querySelector('[data-process-scribe-action="stop"]'), 'click');
+  harness.fireEvent(status.querySelector('[data-process-scribe-action="retire"]'), 'click');
+  assert.deepEqual(called, [['open', agentId], ['stop', agentId], ['retire', agentId]]);
   await mounted.unmount();
 });
 

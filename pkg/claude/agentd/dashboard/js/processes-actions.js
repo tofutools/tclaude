@@ -3,6 +3,7 @@ import { templateHeadSignature } from './process-external-change.js';
 import { dashboardState } from './snapshot-store.js';
 import {
   PROCESS_SCRIBE_NAME, PROCESS_SCRIBE_SLUGS, processScribeBrief, processScribeHandoff,
+  processScribeScopeLabel, processScribeSessions, processScribeTaskRef,
 } from './process-scribe.js';
 
 export function processActorPresentation(snapshot, actor) {
@@ -37,6 +38,7 @@ export function createProcessesActions({
   confirm = async () => true,
   confirmDiscard = async () => true,
   notify = () => {},
+  dashboardOrigin = globalThis.location?.origin || '',
   dispatchNavigated = () => document.dispatchEvent(new CustomEvent('tclaude:navigated')),
   mintAttemptID = mintUUID,
 } = {}) {
@@ -143,11 +145,32 @@ export function createProcessesActions({
   async function summonScribe(anchor = { kind: 'library' }) {
     try {
       const handoff = processScribeHandoff(anchor);
+      const task = processScribeTaskRef(handoff, dashboardOrigin);
+      const scribes = processScribeSessions(dashboardState.snapshot.value);
+      const exactLive = scribes.find((scribe) => scribe.online
+        && scribe.scope.id === handoff.scope.id);
+      const incompatible = scribes.filter((scribe) => scribe.online
+        && scribe.scope.id !== handoff.scope.id);
+      const target = processScribeScopeLabel(handoff.scope);
+      const transition = incompatible.length
+        ? ` ${incompatible.length === 1 ? `The live scribe scoped to ${incompatible[0].scopeLabel}` : `${incompatible.length} live scribes with other scopes`} will not be reused or have its permissions changed; this starts a separate, explicitly scoped conversation.`
+        : '';
+      const approved = await confirm({
+        title: exactLive ? 'Reuse or replace process scribe?' : 'Grant process-scribe access?',
+        body: `Scope: ${target}. The daemon reuses a live same-scope scribe only when its exact permissions match and it has no active temporary elevation; otherwise this approval creates a fresh scribe receiving only process.templates.read and process.templates.manage while leaving the existing scribe unchanged. Every other registered capability is explicitly denied. Manage allows validated CAS saves, but summoning never instantiates or runs a process.${transition}`,
+        meta: 'process.templates.read + process.templates.manage',
+        okLabel: exactLive ? 'Reuse or summon' : incompatible.length ? 'Start separate scribe' : 'Grant & summon',
+      });
+      if (!approved) {
+        state.setNotice('Process scribe cancelled; no permissions or sessions changed.');
+        return null;
+      }
       const response = await fetchImpl('/api/scribe', {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: PROCESS_SCRIBE_NAME, slugs: PROCESS_SCRIBE_SLUGS,
           exclusive: true, scope: handoff.scope, brief: processScribeBrief(handoff),
+          task_ref_url: task.url, task_ref_label: task.label,
         }),
       });
       const result = await response.json().catch(() => ({}));
@@ -170,23 +193,111 @@ export function createProcessesActions({
   function describeActor(actor) {
     return processActorPresentation(dashboardState.snapshot.value, actor);
   }
-  async function openActor(actor) {
-    const presentation = describeActor(actor);
-    if (!presentation?.live || !presentation.agentId) return false;
+  async function openAgent(agentId, label) {
+    if (!agentId) return false;
     try {
-      const response = await fetchImpl(`/api/open-window/${encodeURIComponent(presentation.agentId)}`, {
+      const response = await fetchImpl(`/api/open-window/${encodeURIComponent(agentId)}`, {
         method: 'POST', credentials: 'same-origin',
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
       if (result.mode === 'browser' && result.ws) {
         const { openTermModal } = await import('./modal-term.js');
-        openTermModal({ wsPath: result.ws, label: presentation.label, hideConv: presentation.agentId });
+        openTermModal({ wsPath: result.ws, label, hideConv: agentId });
       }
-      state.setNotice(`Opened ${presentation.label}.`);
+      state.setNotice(`Opened ${label}.`);
       return true;
     } catch (error) {
-      state.setNotice(`Could not open ${presentation.label}: ${error.message}`);
+      state.setNotice(`Could not open ${label}: ${error.message}. Refresh Processes and summon a new scribe if this session is stale.`);
+      return false;
+    }
+  }
+  async function openActor(actor) {
+    const presentation = describeActor(actor);
+    if (!presentation?.live || !presentation.agentId) return false;
+    return openAgent(presentation.agentId, presentation.label);
+  }
+  async function openScribe(scribe) {
+    if (!scribe?.online) {
+      state.setNotice(`${scribe?.name || 'Process scribe'} is stopped. Retire it or summon a fresh scribe for this scope.`);
+      return false;
+    }
+    return openAgent(scribe.agentId, scribe.name);
+  }
+  async function stopScribe(scribe) {
+    if (!scribe?.online) {
+      state.setNotice(`${scribe?.name || 'Process scribe'} is already stopped. Its conversation and permissions remain; retire it or summon a fresh scribe.`);
+      return false;
+    }
+    const approved = await confirm({
+      title: 'Stop process scribe?',
+      body: `This soft-stops ${scribe.name}. It does not delete process templates, versions, the conversation, task reference, permissions, or local editor work. Summon again to continue in a fresh live session.`,
+      meta: scribe.scopeLabel, okLabel: 'Stop scribe',
+    });
+    if (!approved) return false;
+    try {
+      const response = await fetchImpl(`/api/agents/${encodeURIComponent(scribe.agentId)}/stop`, {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: false }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
+      if (result.action === 'skipped:already_offline') {
+        state.setNotice(`${scribe.name} was already stopped; templates, permissions, and editor work are unchanged. Retire it or summon a fresh scribe.`);
+        return true;
+      }
+      if (result.action === 'soft_stopped') {
+        state.setNotice(`Asked ${scribe.name} to stop; refresh Processes to confirm it is offline. If it remains active, force-stop it from Agents. Templates, permissions, and editor work are unchanged.`);
+        notify(`requested stop for process scribe ${scribe.name}`);
+        return true;
+      }
+      if (result.action !== 'killed_no_soft_exit') {
+        throw new Error(result.detail || `the daemon returned ${result.action || 'no lifecycle result'}; the session may still be running`);
+      }
+      state.setNotice(`Stopped ${scribe.name}; templates and editor work are unchanged. Summon a new scribe to continue.`);
+      notify(`stopped process scribe ${scribe.name}`);
+      return true;
+    } catch (error) {
+      state.setNotice(`Could not stop ${scribe.name}: ${error.message}. Refresh Processes; it may already be stopped or retired.`);
+      return false;
+    }
+  }
+  async function retireScribe(scribe) {
+    if (!scribe?.agentId) return false;
+    const approved = await confirm({
+      title: 'Retire process scribe?',
+      body: `This stops ${scribe.name}, revokes its permissions, and removes its agent-group memberships. The conversation remains reinstatable; process templates, versions, and local editor work are not deleted.`,
+      meta: scribe.scopeLabel, okLabel: 'Retire scribe',
+    });
+    if (!approved) return false;
+    try {
+      const query = new URLSearchParams({ shutdown: '1', delete_worktree: '0', reason: `process scribe retired from ${scribe.scopeLabel}` });
+      const response = await fetchImpl(`/api/agents/${encodeURIComponent(scribe.agentId)}/retire?${query}`, {
+        method: 'POST', credentials: 'same-origin',
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
+      if (result.outcome?.retired !== true) {
+        throw new Error('the daemon did not confirm retirement; refresh Processes before retrying');
+      }
+      const shutdownAction = result.shutdown?.action;
+      if (!['soft_stopped', 'skipped:already_offline', 'killed_no_soft_exit'].includes(shutdownAction)) {
+        const detail = result.shutdown?.detail || `the daemon returned ${shutdownAction || 'no shutdown result'}`;
+        state.setNotice(`Retired ${scribe.name} and revoked its access, but its session may still be running: ${detail}. Stop the conversation from Agents; process templates and editor work are unchanged.`);
+        notify(`retired process scribe ${scribe.name}, but its session may still be running`, true);
+        return true;
+      }
+      if (shutdownAction === 'soft_stopped') {
+        state.setNotice(`Retired ${scribe.name} and revoked its access; its stop was requested but is not yet confirmed. Refresh Processes to confirm it is offline, then force-stop the conversation from Agents if needed. Process templates remain unchanged.`);
+        notify(`retired process scribe ${scribe.name}; stop requested`);
+        return true;
+      }
+      const stopped = shutdownAction === 'skipped:already_offline' ? 'its session was already stopped' : 'its session was stopped';
+      state.setNotice(`Retired ${scribe.name}; access was revoked, ${stopped}, and process templates remain unchanged. Summon a new scribe when needed.`);
+      notify(`retired process scribe ${scribe.name}`);
+      return true;
+    } catch (error) {
+      state.setNotice(`Could not retire ${scribe.name}: ${error.message}. Refresh Processes; if it was already retired, summon a new scribe.`);
       return false;
     }
   }
@@ -285,7 +396,8 @@ export function createProcessesActions({
 
   function refreshActive() { return load(state.subtab.value); }
   return Object.freeze({
-    load, observeTemplateHeads, activateSubtab, openEditor, summonScribe, describeActor, openActor, openInstantiation, closeInstantiation,
+    load, observeTemplateHeads, activateSubtab, openEditor, summonScribe, describeActor, openActor,
+    openScribe, stopScribe, retireScribe, openInstantiation, closeInstantiation,
     submitInstantiation, openViewer, closeCanvas, openRunInList, submitWorklistAction, refreshActive,
   });
 }

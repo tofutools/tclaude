@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -109,6 +111,76 @@ func TestRetire_WithoutShutdownKeepsSessionAlive(t *testing.T) {
 	require.NotNil(t, row, "the retired agent must appear in retired[]")
 	assert.True(t, row.Online, "retire --no-shutdown must leave the session alive")
 	assert.True(t, f.World.Tmux.IsAlive(tmuxSes), "the tmux session must still be running")
+}
+
+// Revocation is the security boundary of retirement: if either permanent or
+// temporary grants cannot be removed, the daemon must not demote the agent or
+// return a success response that lets a caller claim its access is gone.
+func TestRetire_RevocationFailureDoesNotDemoteAgent(t *testing.T) {
+	tests := []struct {
+		name       string
+		prepare    func(*testing.T, string)
+		triggerSQL string
+		wantError  string
+		assertKept func(*testing.T, string)
+	}{
+		{
+			name: "permanent permission",
+			prepare: func(t *testing.T, conv string) {
+				require.NoError(t, db.GrantAgentPermission(conv, agentd.PermProcessTemplatesManage, "test"))
+			},
+			triggerSQL: `CREATE TRIGGER fail_permission_revoke BEFORE DELETE ON agent_permissions
+				BEGIN SELECT RAISE(FAIL, 'forced permission revoke failure'); END`,
+			wantError: "revoke permission grants",
+			assertKept: func(t *testing.T, conv string) {
+				overrides, err := db.ListAgentPermissionOverridesForConv(conv)
+				require.NoError(t, err)
+				assert.Equal(t, "grant", overrides[agentd.PermProcessTemplatesManage])
+			},
+		},
+		{
+			name: "sudo grant",
+			prepare: func(t *testing.T, conv string) {
+				_, err := db.InsertSudoGrant(&db.SudoGrant{
+					ConvID: conv, Slug: agentd.PermProcessTemplatesManage,
+					GrantedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour),
+					GrantedBy: "test", Reason: "retirement failure coverage",
+				})
+				require.NoError(t, err)
+			},
+			triggerSQL: `CREATE TRIGGER fail_sudo_revoke BEFORE UPDATE OF revoked_at ON agent_sudo_grants
+				BEGIN SELECT RAISE(FAIL, 'forced sudo revoke failure'); END`,
+			wantError: "revoke sudo grants",
+			assertKept: func(t *testing.T, conv string) {
+				active, err := db.ListActiveSudoGrants(conv)
+				require.NoError(t, err)
+				assert.Len(t, active, 1)
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+			f := newFlow(t)
+			const conv = "revf-1111-2222-3333-4444"
+			f.HaveConvWithTitle(conv, "revocation-failure-worker")
+			f.HaveEnrolledAgent(conv)
+			tt.prepare(t, conv)
+			d, err := db.Open()
+			require.NoError(t, err)
+			_, err = d.Exec(tt.triggerSQL)
+			require.NoError(t, err)
+
+			rec := testharness.Serve(agentd.BuildDashboardHandlerForTest(),
+				testharness.JSONRequest(t, http.MethodPost, "/api/agents/"+conv+"/retire?shutdown=1&delete_worktree=0", nil))
+			assert.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
+			assert.Contains(t, rec.Body.String(), tt.wantError)
+			live, err := db.IsLiveAgentConv(conv)
+			require.NoError(t, err)
+			assert.True(t, live, "revocation failure must leave the agent active for a safe retry")
+			tt.assertKept(t, conv)
+		})
+	}
 }
 
 // Scenario: an absent shutdown param defaults to ON. Every retire

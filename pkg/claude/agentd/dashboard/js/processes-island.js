@@ -31,10 +31,25 @@ function Templates({ current, actions }) {
     <div id="process-templates-list" class="process-list" aria-busy=${current.requests.templates.phase === 'loading'}>
       <${RequestBody} request=${current.requests.templates} label="templates" retry=${() => actions.load('templates')}>
         ${rows.length === 0 ? html`<div class="process-placeholder"><h3>No process templates yet</h3><p>Create a blank template to start shaping a repeatable graph.</p></div>` : html`<table><thead><tr><th>Template</th><th>Description</th><th>Latest</th><th>Versions</th><th></th></tr></thead><tbody>
-          ${rows.map((template) => { const latest = template.latestVersion || {}; const hash = (latest.semanticHash || '').slice(0, 10); return html`<tr key=${template.id} data-process-template=${template.id}><td><strong>${template.name || template.id}</strong><div class="process-secondary">${template.id}</div></td><td class="process-description">${template.description || '—'}</td><td><span class="process-hash" title=${latest.semanticHash || ''}>${hash || '—'}</span></td><td>${template.versionCount || 0}</td><td class="process-actions"><button class="process-action" data-process-action="edit" data-id=${template.id} type="button" onClick=${() => actions.openEditor(template.id)}>open</button><button class="process-action" data-process-action="instantiate" data-id=${template.id} type="button" onClick=${() => actions.openInstantiation({ id: template.id, ref: latest.ref })}>instantiate</button></td></tr>`; })}
+          ${rows.map((template) => { const latest = template.latestVersion || {}; const hash = (latest.semanticHash || '').slice(0, 10); const actor = actions.describeActor(latest.actor); return html`<tr key=${template.id} data-process-template=${template.id}><td><strong>${template.name || template.id}</strong><div class="process-secondary">${template.id}</div></td><td class="process-description">${template.description || '—'}</td><td><span class="process-hash" title=${latest.semanticHash || ''}>${hash || '—'}</span>${actor && html`<div class="process-secondary process-version-actor">by ${actor.label}</div>`}</td><td>${template.versionCount || 0}</td><td class="process-actions"><button class="process-action" data-process-action="edit" data-id=${template.id} type="button" onClick=${() => actions.openEditor(template.id)}>open</button><button class="process-action" data-process-action="instantiate" data-id=${template.id} type="button" onClick=${() => actions.openInstantiation({ id: template.id, ref: latest.ref })}>instantiate</button></td></tr>`; })}
         </tbody></table>`}
       </${RequestBody}>
     </div>
+  </div>`;
+}
+
+function ScribeStatus({ scribes, actions }) {
+  if (!scribes.length) return null;
+  return html`<div class="process-scribe-status" role="status" aria-label="Process scribe sessions">
+    <strong>Process ${scribes.length === 1 ? 'scribe' : 'scribes'}</strong>
+    ${scribes.map((scribe) => html`<div key=${scribe.agentId} class="process-scribe-session" data-process-scribe=${scribe.agentId}>
+      <span class=${`process-scribe-state ${scribe.online ? 'online' : 'stopped'}`}>${scribe.online ? 'active' : 'stopped'}</span>
+      <button class="wl-link" type="button" disabled=${!scribe.online} title=${scribe.online ? 'Open the responsible conversation' : 'This session is stopped'} onClick=${() => actions.openScribe(scribe)}>${scribe.name}</button>
+      <span class="process-secondary">${scribe.scopeLabel}</span>
+      ${/^https?:\/\//i.test(scribe.taskURL) && html`<a class="process-scribe-task" href=${scribe.taskURL} title=${scribe.taskURL}>${scribe.taskLabel || 'task'}</a>`}
+      ${scribe.online && html`<button class="process-action" type="button" data-process-scribe-action="stop" onClick=${() => actions.stopScribe(scribe)}>stop</button>`}
+      <button class="process-action process-action-danger" type="button" data-process-scribe-action="retire" onClick=${() => actions.retireScribe(scribe)}>retire</button>
+    </div>`)}
   </div>`;
 }
 
@@ -185,6 +200,7 @@ export function ProcessesApp({ state, actions, confirmDiscard }) {
     if (spec?.kind === 'viewer') viewerBackRef.current?.focus({ preventScroll: true });
   }, [spec?.key]);
   return html`<div class="processes-island"><div class="process-subnav" role="tablist" aria-label="Process views">${['templates', 'runs', 'worklist'].map((name) => html`<a key=${name} class=${`process-subtab${current.subtab === name ? ' active' : ''}`} data-process-subtab=${name} href=${`/processes/${name}`} role="tab" aria-selected=${current.subtab === name} onClick=${(event) => navigate(event, name)} onKeyDown=${subtabKey}>${name[0].toUpperCase() + name.slice(1)}${name === 'worklist' && html`<span id="process-worklist-badge" class="tab-badge warn" hidden=${current.actionable === 0}>${current.actionable}</span>`}</a>`)}<span class="spacer"></span><span id="process-notice" class="process-notice" role="status">${current.notice}</span></div>
+    <${ScribeStatus} scribes=${current.scribes || []} actions=${actions} />
     ${spec ? html`<div id=${spec.kind === 'editor' ? 'process-editor-view' : 'process-viewer-view'} class="process-canvas-view"><button ref=${spec.kind === 'viewer' ? viewerBackRef : undefined} class="process-action" data-process-close-view type="button" onClick=${actions.closeCanvas}>← ${current.subtab}</button>${spec.kind === 'editor' ? html`<${ProcessEditorBoundary} spec=${spec} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} />` : html`<div id="process-viewer-canvas" class="process-canvas-mount" data-process-mount="viewer"><h3>Run: ${spec.id}</h3><p>Live viewer mount point. The viewer ticket takes over this canvas.</p></div>`}</div>` : current.subtab === 'templates' ? html`<${Templates} current=${current} actions=${actions} />` : current.subtab === 'runs' ? html`<${Runs} current=${current} actions=${actions} />` : html`<${Worklist} current=${current} actions=${actions} />`}
     ${current.instantiation && html`<${InstantiateDialog} key=${current.instantiation.key} spec=${current.instantiation} busy=${current.mutation.busy} actions=${actions} />`}
   </div>`;

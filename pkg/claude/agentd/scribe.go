@@ -48,11 +48,6 @@ import (
 // explains why the ad-hoc agents are grouped together.
 const scribeGroupDescr = "Ad-hoc scribe agent — summoned from the dashboard to edit tclaude state by chat (JOH-361)."
 
-// scribeGranter is the audit label for the birth-time permission
-// grants a summon applies, distinct from <human-dashboard> so a forensic query
-// can tell a scribe's auto-grant apart from a hand-typed dashboard grant.
-const scribeGranter = "<scribe-summon>"
-
 // scribeSummonRequest is the wire body of POST /api/scribe and its /v1 twin.
 type scribeSummonRequest struct {
 	// Name is the base display name and the name of the scribe-kind group. Each
@@ -74,6 +69,11 @@ type scribeSummonRequest struct {
 	// non-empty ID is one exact resource. The canonical scope is persisted on
 	// the scribe's membership; refreshed ref/hash context remains in Brief.
 	Scope *scribeReuseScope `json:"scope,omitempty"`
+	// TaskURL / TaskLabel give the scoped conversation a durable, clickable
+	// task reference. The URL passes the same http(s)-only validation as a
+	// regular spawn/task edit before it can reach the dashboard snapshot.
+	TaskURL   string `json:"task_ref_url,omitempty"`
+	TaskLabel string `json:"task_ref_label,omitempty"`
 	// Brief is the pre-briefing delivered to the scribe's inbox — the concept
 	// pointer + scope anchor the human's chat starts from. Same charset/length
 	// rule as any spawn initial_message.
@@ -203,8 +203,22 @@ func handleScribeSummon(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "scope", scopeErr)
 		return
 	}
+	taskURL := strings.TrimSpace(body.TaskURL)
+	taskLabel := strings.TrimSpace(body.TaskLabel)
+	if taskURL != "" {
+		if err := validateTaskRefURL(taskURL); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_task_url", err.Error())
+			return
+		}
+		if err := validateTaskRefLabel(taskLabel); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_task_label", err.Error())
+			return
+		}
+	}
 
-	out, reused, fail := summonScribe(name, overrides, brief, body.Exclusive, scopeKey)
+	approvalID := newApprovalID()
+	granter := scribeApprovalGranter(r, spawnerConvID, approvalID)
+	out, reused, fail := summonScribe(name, overrides, brief, body.Exclusive, scopeKey, taskURL, taskLabel, granter)
 	if fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
@@ -228,6 +242,17 @@ func handleScribeSummon(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// scribeApprovalGranter records the trusted actor class and one server-minted
+// approval id on every birth-time permission row. The id is audit correlation,
+// not an authorization token, and no caller-supplied value enters it.
+func scribeApprovalGranter(r *http.Request, spawnerConvID, approvalID string) string {
+	actor := granterLabel(spawnerConvID)
+	if p := peerFromContext(r.Context()); p != nil && p.DashboardHuman {
+		actor = dashboardGranter
+	}
+	return actor + ":scribe-summon:approval-id=" + approvalID
 }
 
 // canonicalScribeScope validates and canonicalises the structured reuse key.
@@ -269,7 +294,7 @@ var scribeSummonMu sync.Mutex
 // summonScribe is the reusable core: ensure the scribe-kind group, reuse one
 // exact compatible structured scope when requested, or spawn a fresh uniquely
 // named agent in the shared pre-trusted workdir with birth-time grants.
-func summonScribe(name string, overrides map[string]string, brief string, exclusive bool, scopeKey string) (*scribeOutcome, bool, *spawnFailure) {
+func summonScribe(name string, overrides map[string]string, brief string, exclusive bool, scopeKey, taskURL, taskLabel, granter string) (*scribeOutcome, bool, *spawnFailure) {
 	scribeSummonMu.Lock()
 	defer scribeSummonMu.Unlock()
 
@@ -283,7 +308,7 @@ func summonScribe(name string, overrides map[string]string, brief string, exclus
 	// group and continues its independent editing task.
 	pruneDeadScribes(g)
 	if scopeKey != "" {
-		if reused, reuseFail := reuseScopedScribe(g, scopeKey, overrides, brief); reused != nil || reuseFail != nil {
+		if reused, reuseFail := reuseScopedScribe(g, scopeKey, overrides, brief, taskURL, taskLabel); reused != nil || reuseFail != nil {
 			return reused, reused != nil, reuseFail
 		}
 	}
@@ -314,6 +339,8 @@ func summonScribe(name string, overrides map[string]string, brief string, exclus
 		Name:                uniqueScribeName(name),
 		Role:                scribeScopeRole(scopeKey),
 		Descr:               scribeScopeDescr(scopeKey),
+		TaskURL:             taskURL,
+		TaskLabel:           taskLabel,
 		Cwd:                 cwd,
 		InitialMessage:      brief,
 		AutoFocus:           !exclusive,
@@ -324,7 +351,7 @@ func summonScribe(name string, overrides map[string]string, brief string, exclus
 		return nil, false, spawnFail
 	}
 	if exclusive {
-		if err := enforceExclusiveScribeOverrides(outcome.ConvID, overrides); err != nil {
+		if err := enforceExclusiveScribeOverrides(outcome.ConvID, overrides, granter); err != nil {
 			killScribeSession(outcome.ConvID)
 			return nil, false, &spawnFailure{http.StatusInternalServerError, "permission",
 				"capability-reducing scribe stopped after permission override failure: " + err.Error()}
@@ -357,7 +384,7 @@ func scribeScopeDescr(scopeKey string) string {
 // reuseScopedScribe returns the one alive, active, permission-compatible
 // scribe for scopeKey. The caller holds scribeSummonMu, making lookup plus
 // potential spawn idempotent across concurrent clicks.
-func reuseScopedScribe(g *db.AgentGroup, scopeKey string, overrides map[string]string, brief string) (*scribeOutcome, *spawnFailure) {
+func reuseScopedScribe(g *db.AgentGroup, scopeKey string, overrides map[string]string, brief, taskURL, taskLabel string) (*scribeOutcome, *spawnFailure) {
 	members, err := db.ListAgentGroupMembers(g.ID)
 	if err != nil {
 		return nil, &spawnFailure{http.StatusInternalServerError, "group", "list reusable scribes: " + err.Error()}
@@ -382,6 +409,15 @@ func reuseScopedScribe(g *db.AgentGroup, scopeKey string, overrides map[string]s
 		activeSudo, err := db.ListActiveSudoGrants(member.ConvID)
 		if err != nil || len(activeSudo) != 0 {
 			continue
+		}
+		if taskURL != "" {
+			agentID, err := db.AgentIDForConv(member.ConvID)
+			if err != nil || agentID == "" {
+				return nil, &spawnFailure{http.StatusInternalServerError, "task_ref", "resolve reusable scribe task reference"}
+			}
+			if _, err := db.SetAgentTaskRef(agentID, taskURL, taskLabel); err != nil {
+				return nil, &spawnFailure{http.StatusInternalServerError, "task_ref", "refresh reusable scribe task reference: " + err.Error()}
+			}
 		}
 		_, err = db.InsertAgentMessage(&db.AgentMessage{
 			GroupID:      g.ID,
@@ -597,11 +633,11 @@ func pruneDeadScribes(g *db.AgentGroup) {
 
 // enforceExclusiveScribeOverrides pins the complete capability set after
 // enrollment. Exclusive sandbox scribes fail closed on any write error.
-func enforceExclusiveScribeOverrides(convID string, overrides map[string]string) error {
+func enforceExclusiveScribeOverrides(convID string, overrides map[string]string, granter string) error {
 	if _, err := db.RevokeSudoGrantsByConv(convID); err != nil {
 		return fmt.Errorf("revoke active sudo grants: %w", err)
 	}
-	if err := db.ApplyAgentPermissionOverrides(convID, overrides, scribeGranter, false, false); err != nil {
+	if err := db.ApplyAgentPermissionOverrides(convID, overrides, granter, false, false); err != nil {
 		slog.Warn("scribe: apply permission overrides failed", "conv", short8(convID), "error", err)
 		return fmt.Errorf("apply permission overrides: %w", err)
 	}
