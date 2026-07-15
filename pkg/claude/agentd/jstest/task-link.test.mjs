@@ -185,7 +185,7 @@ test('dirty task-link dialog confirms discard and restores the invoker', async (
   assert.equal(harness.document.activeElement, invoker, 'closing restores the edit-pencil invoker');
 });
 
-test('Enter saves from a field but never during IME composition', async (t) => {
+test('Enter saves only from a field, never composing, never via a global hotkey', async (t) => {
   const mounted = await mountTaskLink(t, {
     conv: 'c', agentLabel: 'alice', url: 'https://example.com/x', taskLabel: 'X',
   });
@@ -193,18 +193,40 @@ test('Enter saves from a field but never during IME composition', async (t) => {
   await harness.act(() => new Promise((r) => setTimeout(r, 0)));
   await harness.input(host.querySelector('#task-link-label'), 'Renamed');
   const label = host.querySelector('#task-link-label');
+  const fieldEnter = (init = {}) => {
+    const event = new harness.window.Event('keydown', { bubbles: true, cancelable: true });
+    Object.defineProperties(event, {
+      key: { value: 'Enter' },
+      isComposing: { value: !!init.isComposing },
+      ctrlKey: { value: !!init.ctrlKey },
+      metaKey: { value: !!init.metaKey },
+    });
+    return event;
+  };
 
-  // A composing Enter commits the IME candidate, not the form.
-  const composing = new harness.window.Event('keydown', { bubbles: true, cancelable: true });
-  Object.defineProperties(composing, { key: { value: 'Enter' }, isComposing: { value: true } });
-  label.dispatchEvent(composing);
+  // Plain and modified Enter while composing commit the IME candidate, not the
+  // form — the composition guard must hold for Ctrl/⌘+Enter too.
+  for (const modifier of [{}, { ctrlKey: true }, { metaKey: true }]) {
+    const composing = fieldEnter({ isComposing: true, ...modifier });
+    label.dispatchEvent(composing);
+    await harness.act(() => Promise.resolve());
+    assert.equal(composing.defaultPrevented, false);
+  }
+  assert.equal(calls.length, 0, 'no composing Enter submits');
+
+  // Ctrl/⌘+Enter outside the fields must not submit: there is no global submit
+  // hotkey that fires regardless of target. Dispatch from the heading rather
+  // than a button so this assertion tests bubbling without LinkeDOM's synthetic
+  // button-activation behavior getting involved.
+  const nonFieldHotkey = fieldEnter({ ctrlKey: true });
+  host.querySelector('#task-link-title').dispatchEvent(nonFieldHotkey);
   await harness.act(() => Promise.resolve());
-  assert.equal(composing.defaultPrevented, false);
-  assert.equal(calls.length, 0);
+  assert.equal(nonFieldHotkey.defaultPrevented, false);
+  assert.equal(calls.length, 0, 'a hotkey outside the fields does not submit');
 
-  // A committed Enter in a text field saves.
-  const enter = new harness.window.Event('keydown', { bubbles: true, cancelable: true });
-  Object.defineProperty(enter, 'key', { value: 'Enter' });
+  // A committed Ctrl/⌘+Enter originating in a text field saves (matching the
+  // legacy controller, which ignored modifiers on a field Enter).
+  const enter = fieldEnter({ ctrlKey: true });
   label.dispatchEvent(enter);
   await harness.act(() => Promise.resolve());
   assert.equal(enter.defaultPrevented, true);
