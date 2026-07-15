@@ -34,6 +34,7 @@ const (
 // catch concurrent growth after stat and check cancellation between chunks.
 type viewBudget struct {
 	ctx        context.Context
+	typed      bool
 	maxFile    int64
 	maxTotal   int64
 	maxRecords int
@@ -59,6 +60,12 @@ func (s *FS) newViewBudget(ctx context.Context) *viewBudget {
 	if s.viewerMaxDirectoryEntries > 0 {
 		budget.maxEntries = s.viewerMaxDirectoryEntries
 	}
+	return budget
+}
+
+func (s *FS) newExecutionViewBudget(ctx context.Context) *viewBudget {
+	budget := s.newViewBudget(ctx)
+	budget.typed = true
 	return budget
 }
 
@@ -222,6 +229,12 @@ func (s *FS) hasTemplateExactView(id, hash string) (bool, error) {
 // to a no-follow run directory. Append holds the same run lock, and every
 // consumed component is opened with O_NOFOLLOW before its type is checked.
 func (s *FS) loadRunViewSnapshotAt(ctx context.Context, runID string) (Snapshot, error) {
+	return s.loadRunViewSnapshotAtWith(ctx, runID, s.newViewBudget(ctx), nil, state.DecodeContext)
+}
+
+type viewStateDecoder func(context.Context, []byte) (*state.State, error)
+
+func (s *FS) loadRunViewSnapshotAtWith(ctx context.Context, runID string, budget *viewBudget, preloadedRun *RunRecord, decodeState viewStateDecoder) (Snapshot, error) {
 	if err := safeSegment(runID); err != nil {
 		return Snapshot{}, err
 	}
@@ -249,18 +262,20 @@ func (s *FS) loadRunViewSnapshotAt(ctx context.Context, runID string) (Snapshot,
 	if err := ctx.Err(); err != nil {
 		return Snapshot{}, err
 	}
-	budget := s.newViewBudget(ctx)
-
-	runData, err := readViewRegularAt(budget, runDir, "run.json", false)
-	if err != nil {
-		return Snapshot{}, classifyRequiredViewFile("run record", err)
-	}
 	var run RunRecord
-	if err := runViewDecode(ctx, budget.decodeHook, "run", func() error { return decodeViewJSON(ctx, runData, &run, false) }); err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return Snapshot{}, err
+	if preloadedRun != nil {
+		run = *preloadedRun
+	} else {
+		runData, err := readViewRegularAt(budget, runDir, "run.json", false)
+		if err != nil {
+			return Snapshot{}, classifyRequiredViewFile("run record", err)
 		}
-		return Snapshot{}, &DecodeError{Component: "run record", Err: err}
+		if err := runViewDecode(ctx, budget.decodeHook, "run", func() error { return decodeViewJSON(ctx, runData, &run, false) }); err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return Snapshot{}, err
+			}
+			return Snapshot{}, &DecodeError{Component: "run record", Err: err}
+		}
 	}
 	if run.ID != runID {
 		return Snapshot{}, &DecodeError{Component: "run identity", Err: errors.New("record id does not match directory")}
@@ -273,7 +288,7 @@ func (s *FS) loadRunViewSnapshotAt(ctx context.Context, runID string) (Snapshot,
 	var st *state.State
 	err = runViewDecode(ctx, budget.decodeHook, "state", func() error {
 		var decodeErr error
-		st, decodeErr = state.DecodeContext(ctx, stateData)
+		st, decodeErr = decodeState(ctx, stateData)
 		return decodeErr
 	})
 	if err != nil {
@@ -327,7 +342,7 @@ func readViewLogsAt(budget *viewBudget, runDir *os.File) ([]evidence.NodeLog, er
 				budget.entries += len(batch)
 				if budget.entries > budget.maxEntries {
 					nodes.Close()
-					return nil, ErrViewerResourceLimit
+					return nil, budget.over("directory_entries", "nodes", int64(budget.entries), int64(budget.maxEntries))
 				}
 				names = append(names, batch...)
 			}
@@ -468,8 +483,11 @@ func readViewRegularAt(budget *viewBudget, parent *os.File, name string, missing
 		return nil, ErrUnsafeRunPath
 	}
 	remaining := budget.maxTotal - budget.bytes
-	if info.Size() > budget.maxFile || info.Size() > remaining || remaining < 0 {
-		return nil, ErrViewerResourceLimit
+	if info.Size() > budget.maxFile {
+		return nil, budget.over("file_bytes", name, info.Size(), budget.maxFile)
+	}
+	if info.Size() > remaining || remaining < 0 {
+		return nil, budget.over("total_bytes", name, budget.bytes+info.Size(), budget.maxTotal)
 	}
 	allowed := min(budget.maxFile, remaining)
 	data := make([]byte, 0, min(info.Size(), allowed))
@@ -483,7 +501,7 @@ func readViewRegularAt(budget *viewBudget, parent *os.File, name string, missing
 		limitPlusOne := allowed + 1
 		remainingRead := limitPlusOne - int64(len(data))
 		if remainingRead <= 0 {
-			return nil, ErrViewerResourceLimit
+			return nil, budget.readGrowthError(name, int64(len(data))+1, remaining)
 		}
 		readSize := min(int64(len(chunk)), remainingRead)
 		n, readErr := file.Read(chunk[:readSize])
@@ -493,7 +511,7 @@ func readViewRegularAt(budget *viewBudget, parent *os.File, name string, missing
 				budget.readHook(name, int64(len(data)))
 			}
 			if int64(len(data)) > allowed {
-				return nil, ErrViewerResourceLimit
+				return nil, budget.readGrowthError(name, int64(len(data)), remaining)
 			}
 		}
 		if errors.Is(readErr, os.ErrClosed) {
@@ -537,6 +555,10 @@ func hasViewRegularAt(parent *os.File, name string) (bool, error) {
 // template-tree symlink. Missing content remains a data condition; unsafe or
 // ordinary I/O remains an infrastructure error for the HTTP boundary.
 func (s *FS) getTemplateExactBody(ctx context.Context, id, hash string) ([]byte, error) {
+	return s.getTemplateExactBodyWithBudget(ctx, id, hash, s.newViewBudget(ctx))
+}
+
+func (s *FS) getTemplateExactBodyWithBudget(ctx context.Context, id, hash string, budget *viewBudget) ([]byte, error) {
 	root, err := openViewDir(s.root)
 	if err != nil {
 		return nil, err
@@ -566,7 +588,7 @@ func (s *FS) getTemplateExactBody(ctx context.Context, id, hash string) ([]byte,
 		return nil, err
 	}
 	defer version.Close()
-	return readViewRegularAt(s.newViewBudget(ctx), version, "template.json", false)
+	return readViewRegularAt(budget, version, "template.json", false)
 }
 
 func (b *viewBudget) addRecords(data []byte) error {
@@ -583,12 +605,26 @@ func (b *viewBudget) addRecords(data []byte) error {
 		if len(bytes.TrimSpace(data[start:start+end])) > 0 {
 			b.records++
 			if b.records > b.maxRecords {
-				return ErrViewerResourceLimit
+				return b.over("records", "evidence", int64(b.records), int64(b.maxRecords))
 			}
 		}
 		start += end
 	}
 	return nil
+}
+
+func (b *viewBudget) over(limit, component string, value, maximum int64) error {
+	if !b.typed {
+		return ErrViewerResourceLimit
+	}
+	return &ExecutionViewOverBudgetError{Limit: limit, Component: component, Value: value, Maximum: maximum}
+}
+
+func (b *viewBudget) readGrowthError(name string, bytesRead, totalRemaining int64) error {
+	if b.maxFile <= totalRemaining {
+		return b.over("file_bytes", name, bytesRead, b.maxFile)
+	}
+	return b.over("total_bytes", name, b.bytes+bytesRead, b.maxTotal)
 }
 
 func runViewDecode(ctx context.Context, hook func(string), component string, decode func() error) error {

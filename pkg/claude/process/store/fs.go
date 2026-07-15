@@ -41,6 +41,9 @@ type FS struct {
 	viewerMaxTotalBytes           int64
 	viewerMaxRecords              int
 	viewerMaxDirectoryEntries     int
+	executionRunLockedHook        func()
+	executionTemplateLockedHook   func()
+	executionReobserveHook        func()
 }
 
 var processLocks sync.Map
@@ -99,6 +102,16 @@ func (s *FS) SetViewerIOHooksForTest(read func(string, int64), decode func(strin
 	oldRead, oldDecode := s.viewerReadChunkHook, s.viewerDecodeHook
 	s.viewerReadChunkHook, s.viewerDecodeHook = read, decode
 	return func() { s.viewerReadChunkHook, s.viewerDecodeHook = oldRead, oldDecode }
+}
+
+// SetExecutionViewHooksForTest installs deterministic critical-section and
+// bounded re-observation synchronization points. Install before concurrent use.
+func (s *FS) SetExecutionViewHooksForTest(runLocked, templateLocked, reobserve func()) func() {
+	oldRun, oldTemplate, oldReobserve := s.executionRunLockedHook, s.executionTemplateLockedHook, s.executionReobserveHook
+	s.executionRunLockedHook, s.executionTemplateLockedHook, s.executionReobserveHook = runLocked, templateLocked, reobserve
+	return func() {
+		s.executionRunLockedHook, s.executionTemplateLockedHook, s.executionReobserveHook = oldRun, oldTemplate, oldReobserve
+	}
 }
 
 func (s *FS) PutTemplate(ctx context.Context, tmpl *model.Template) (TemplateRecord, error) {
