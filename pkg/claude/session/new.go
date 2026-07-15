@@ -969,10 +969,15 @@ func sandboxSnapshotProofDirs(snapshot *sandboxpolicy.Snapshot, access sandboxpo
 	for _, name := range snapshot.Effective.AgentDirectories {
 		agentDirectoryNames[name] = true
 	}
+	// A materialized agent directory is recognized either as its own env-var'd
+	// path (the per-directory grant mode) or as the shared parent root that
+	// contains it (the mount-parent grant mode, features.agent_dirs_mount_parent).
+	// Both are daemon-created and must skip the caller-marker proof.
 	agentDirectoryPaths := make(map[string]bool, len(agentDirectoryNames))
 	for _, entry := range snapshot.Effective.Environment {
 		if agentDirectoryNames[entry.Name] {
 			agentDirectoryPaths[entry.Value] = true
+			agentDirectoryPaths[filepath.Dir(entry.Value)] = true
 		}
 	}
 	for _, grant := range snapshot.Effective.Filesystem {

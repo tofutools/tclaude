@@ -11,8 +11,37 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
+// withAgentDirsMountParent isolates the config home for the test and writes the
+// experimental features.agent_dirs_mount_parent flag. Passing false only
+// isolates HOME (flag absent = off), keeping grant-shape assertions independent
+// of the developer's real ~/.tclaude/data/config.json.
+func withAgentDirsMountParent(t *testing.T, enabled bool) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if !enabled {
+		return
+	}
+	dataDir := filepath.Join(home, ".tclaude", "data")
+	require.NoError(t, os.MkdirAll(dataDir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "config.json"),
+		[]byte(`{"features":{"agent_dirs_mount_parent":true}}`), 0o600))
+}
+
+// agentDirWriteGrants returns the write grants from a materialized snapshot.
+func agentDirWriteGrants(snapshot sandboxpolicy.Snapshot) []sandboxpolicy.FilesystemGrant {
+	var out []sandboxpolicy.FilesystemGrant
+	for _, grant := range snapshot.Effective.Filesystem {
+		if grant.Access == sandboxpolicy.AccessWrite {
+			out = append(out, grant)
+		}
+	}
+	return out
+}
+
 func TestMaterializeAgentDirectoriesCreatesPrivateFrozenBindings(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	withAgentDirsMountParent(t, false)
 	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Global: &sandboxpolicy.Profile{
 		Name: "cache", AgentDirectories: []string{"GOCACHE", "GOLANGCI_LINT_CACHE"},
 	}})
@@ -94,6 +123,7 @@ func TestEnsureAgentDirectoriesRejectsFrozenBindingOutsideCacheRoot(t *testing.T
 
 func TestReconcileAgentDirectoriesForResumeRetainsExistingAndAddsStableBinding(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	withAgentDirsMountParent(t, false)
 	oldEffective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Global: &sandboxpolicy.Profile{
 		Name: "old", AgentDirectories: []string{"GOCACHE"},
 	}})
@@ -121,4 +151,110 @@ func TestReconcileAgentDirectoriesForResumeRetainsExistingAndAddsStableBinding(t
 	assert.Equal(t, oldPath, bindings["GOCACHE"])
 	assert.Contains(t, bindings["GOLANGCI_LINT_CACHE"], filepath.Join("agent-dirs", "agt_resume_test"))
 	assert.DirExists(t, bindings["GOLANGCI_LINT_CACHE"])
+}
+
+func TestMaterializeAgentDirectoriesMountsParentRoot(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	withAgentDirsMountParent(t, true)
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Global: &sandboxpolicy.Profile{
+		Name: "cache", AgentDirectories: []string{"GOCACHE", "GOLANGCI_LINT_CACHE"},
+	}})
+	require.NoError(t, err)
+
+	got, cleanup, err := materializeAgentDirectories(sandboxpolicy.NewSnapshot(effective, nil), "spwn-mountparent")
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+
+	// Env vars still point at each per-name subdir, and each subdir exists.
+	require.Len(t, got.Effective.Environment, 2)
+	for _, entry := range got.Effective.Environment {
+		assert.Equal(t, entry.Name, filepath.Base(entry.Value))
+		assert.DirExists(t, entry.Value)
+	}
+	// But exactly one write grant is issued: the shared parent root, so the
+	// agent can create, rewrite, and delete its own env-var'd directories.
+	writeGrants := agentDirWriteGrants(got)
+	require.Len(t, writeGrants, 1)
+	parent := filepath.Dir(got.Effective.Environment[0].Value)
+	assert.Equal(t, parent, writeGrants[0].Path)
+	for _, entry := range got.Effective.Environment {
+		assert.Equal(t, parent, filepath.Dir(entry.Value))
+	}
+	_, err = sandboxpolicy.RevalidateSnapshot(got)
+	require.NoError(t, err)
+
+	// Relaunch recreates the subdirs (and thus the parent) at their frozen paths.
+	require.NoError(t, os.RemoveAll(parent))
+	recreated, err := ensureAgentDirectoriesForRelaunch(got)
+	require.NoError(t, err)
+	for _, entry := range recreated.Effective.Environment {
+		assert.DirExists(t, entry.Value)
+	}
+}
+
+func TestMaterializeAgentDirectoriesCloneDropsSourceParentGrant(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	withAgentDirsMountParent(t, true)
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Global: &sandboxpolicy.Profile{
+		Name: "cache", AgentDirectories: []string{"GOCACHE"},
+	}})
+	require.NoError(t, err)
+	source, cleanup, err := materializeAgentDirectories(sandboxpolicy.NewSnapshot(effective, nil), "spwn-source")
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+	sourceParent := filepath.Dir(source.Effective.Environment[0].Value)
+
+	// A clone carries the source's materialized snapshot; the source's parent-root
+	// grant must be stripped and replaced by the clone's own root — never leaked.
+	clone, cloneCleanup, err := materializeAgentDirectories(source, "spwn-clone")
+	require.NoError(t, err)
+	t.Cleanup(cloneCleanup)
+	cloneParent := filepath.Dir(clone.Effective.Environment[0].Value)
+	assert.NotEqual(t, sourceParent, cloneParent)
+	for _, grant := range clone.Effective.Filesystem {
+		assert.NotEqual(t, sourceParent, grant.Path, "source parent-root grant leaked into clone")
+	}
+	writeGrants := agentDirWriteGrants(clone)
+	require.Len(t, writeGrants, 1)
+	assert.Equal(t, cloneParent, writeGrants[0].Path)
+}
+
+func TestReconcileAgentDirectoriesForResumeMountsParentPerRoot(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	withAgentDirsMountParent(t, true)
+	oldEffective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Global: &sandboxpolicy.Profile{
+		Name: "old", AgentDirectories: []string{"GOCACHE"},
+	}})
+	require.NoError(t, err)
+	previous, cleanup, err := materializeAgentDirectories(sandboxpolicy.NewSnapshot(oldEffective, nil), "spwn-original")
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+	oldPath := previous.Effective.Environment[0].Value
+
+	currentEffective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Global: &sandboxpolicy.Profile{
+		Name: "current", AgentDirectories: []string{"GOCACHE", "GOLANGCI_LINT_CACHE"},
+	}})
+	require.NoError(t, err)
+	resumed, err := reconcileAgentDirectoriesForResume(sandboxpolicy.NewSnapshot(currentEffective, nil), previous, "agt_resume_mount")
+	require.NoError(t, err)
+
+	bindings := map[string]string{}
+	for _, entry := range resumed.Effective.Environment {
+		bindings[entry.Name] = entry.Value
+	}
+	// The retained binding sits under the original root; the new binding under the
+	// resumed root. Mount-parent grants each distinct parent once (deduped).
+	assert.Equal(t, oldPath, bindings["GOCACHE"])
+	wantParents := map[string]bool{
+		filepath.Dir(bindings["GOCACHE"]):             true,
+		filepath.Dir(bindings["GOLANGCI_LINT_CACHE"]): true,
+	}
+	gotParents := map[string]bool{}
+	for _, grant := range agentDirWriteGrants(resumed) {
+		gotParents[grant.Path] = true
+	}
+	assert.Equal(t, wantParents, gotParents)
+	assert.Len(t, wantParents, 2, "existing and new bindings should live under different roots")
+	_, err = sandboxpolicy.RevalidateSnapshot(resumed)
+	require.NoError(t, err)
 }

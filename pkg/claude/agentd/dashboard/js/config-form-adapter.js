@@ -423,6 +423,7 @@ function populateConfigForm(cfg) {
   // Experimental feature flags — opt-in toggles for in-development features
   // (config features.*). Default off.
   $('#cfg-feature-processes').checked = !!(cfg.features && cfg.features.processes);
+  $('#cfg-feature-agent-dirs-mount-parent').checked = !!(cfg.features && cfg.features.agent_dirs_mount_parent);
 
   // Activity bots — per-mode style of the deduped robot indicator.
   // Defaults: regular + wizard emoji, slop sprites (mirrors the Go resolvers).
@@ -650,6 +651,7 @@ function assembleConfig() {
   // marshal a spurious "features": {} diff.
   const feats = (cfg.features && typeof cfg.features === 'object') ? cfg.features : {};
   if ($('#cfg-feature-processes').checked) feats.processes = true; else delete feats.processes;
+  if ($('#cfg-feature-agent-dirs-mount-parent').checked) feats.agent_dirs_mount_parent = true; else delete feats.agent_dirs_mount_parent;
   if (Object.keys(feats).length) cfg.features = feats; else delete cfg.features;
 
   // slop is an optional block — its volumes/channel (owned by the header
