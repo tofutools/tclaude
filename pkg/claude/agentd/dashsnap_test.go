@@ -624,7 +624,7 @@ func baseStates() []dashsnap.State {
   document.querySelector('.filter-bar-cog .cog-btn').click();
   document.querySelector('#links-manage-open').click();
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
-  var host = document.querySelector('#links-filter-root[data-island-owner="links"]');
+  var host = document.querySelector('#links-feature-root[data-island-owner="links"]');
   var create = host && host.querySelector('#link-new-open');
   var empty = document.querySelector('#links-list .empty');
   if (!host || !create || !empty) throw new Error('links-management: bounded Links surface did not render');
