@@ -170,7 +170,9 @@ test('standalone Preact shell renders solo chrome around an opaque active widget
   assert.equal(host.querySelector('[title="Move this terminal to its own browser tab"]'), null);
   assert.equal(host.querySelector('#mux-empty'), null);
   assert.equal(fake.widgets.length, 1);
-  assert.equal(fake.widgets[0].child.parentElement.classList.contains('mux-pane-xterm'), true);
+  assert.equal(fake.widgets[0].child.parentElement.classList.contains('mux-pane-xterm-fit'), true);
+  assert.equal(fake.widgets[0].child.parentElement.parentElement.classList.contains('mux-pane-xterm'), true,
+    'standalone xterm uses the same inner fit host inside the padded visual shell');
   assert.equal(fake.widgets[0].activeEdges.at(-1), true);
   assert.equal(fake.widgets[0].connectCount, 1);
   assert.equal(harness.document.title, 'solo terminal — tclaude terminals');
