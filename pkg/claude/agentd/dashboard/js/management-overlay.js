@@ -22,6 +22,7 @@ export function ManagementOverlay({
   resizeKey = '',
   fitContent = true,
   guardBackdropDrag = false,
+  initialFocusRef = null,
   children,
 }) {
   const overlayRef = useRef(null);
@@ -32,6 +33,7 @@ export function ManagementOverlay({
   };
   const { dialogRef } = useDialogFocus({
     open: true,
+    initialFocusRef,
     onEscape: () => {
       void close();
     },
