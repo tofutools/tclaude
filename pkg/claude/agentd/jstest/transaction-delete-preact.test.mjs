@@ -252,6 +252,7 @@ test('delete mutation failure retries the same frozen worktree choice', async (t
   await harness.act(() => Promise.resolve());
   assert.equal(requests.length, 1, 'the frame lock rejects same-render duplicate submits');
   assert.equal(requests[0].deleteWorktree, true);
+  assert.equal(requests[0].expectedWorktree, '/repo/wt');
   assert.ok(Object.isFrozen(requests[0]));
   first.reject(new Error('server refused delete'));
   await harness.act(() => first.promise.catch(() => {}));
