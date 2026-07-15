@@ -836,6 +836,61 @@ func TestCreateRunConflictIsSerialized(t *testing.T) {
 	}
 }
 
+func TestCreateRunRejectsTimestampLessInitialAdminRecordsWithoutWrite(t *testing.T) {
+	at := time.Date(2026, 7, 16, 1, 45, 0, 0, time.UTC)
+	resolution := &state.BlockResolution{
+		NodeID: "implement", BlockedAttempt: 1, Decision: state.BlockDecisionSkip,
+		Actor: "human:operator", Reason: "waived", EvidenceRef: "ticket:TCL-523", Timestamp: at,
+	}
+	for _, tc := range []struct {
+		name, runID, want string
+		record            state.AdminRecord
+	}{
+		{
+			name: "repair", runID: "run_initial_repair",
+			record: state.AdminRecord{Type: state.EventAdminRepairRecorded, Actor: "human:operator", Reason: "repair"},
+			want:   "admin_repair_recorded requires a timestamp for new writes",
+		},
+		{
+			name: "program opt-in", runID: "run_initial_programs",
+			record: state.AdminRecord{Type: state.EventAdminProgramsAllowed, Actor: "human:operator", Reason: "opt in"},
+			want:   "admin_programs_allowed requires a timestamp for new writes",
+		},
+		{
+			name: "block resolution record", runID: "run_initial_resolution_record",
+			record: state.AdminRecord{Type: state.EventBlockResolutionRecorded, Actor: "human:operator", Reason: "waived", Resolution: resolution},
+			want:   "block_resolution_recorded requires a timestamp for new writes",
+		},
+		{
+			name: "block resolution payload", runID: "run_initial_resolution_payload",
+			record: state.AdminRecord{
+				Type: state.EventBlockResolutionRecorded, Actor: "human:operator", Reason: "waived", Timestamp: at,
+				Resolution: &state.BlockResolution{
+					NodeID: "implement", BlockedAttempt: 1, Decision: state.BlockDecisionSkip,
+					Actor: "human:operator", Reason: "waived", EvidenceRef: "ticket:TCL-523",
+				},
+			},
+			want: "block_resolution_recorded requires a resolution timestamp for new writes",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			fs := newStoreAt(t, root)
+			template, err := fs.PutTemplate(t.Context(), storetest.Template())
+			require.NoError(t, err)
+			initial := state.New(tc.runID, template.Ref, template.Ref, []state.NodeInit{{ID: "implement"}})
+			initial.AdminRecords = []state.AdminRecord{tc.record}
+
+			_, err = fs.CreateRun(t.Context(), store.RunRecord{ID: tc.runID, TemplateRef: template.Ref}, initial)
+			require.ErrorContains(t, err, tc.want)
+			_, statErr := os.Stat(filepath.Join(root, "runs", tc.runID))
+			require.ErrorIs(t, statErr, os.ErrNotExist)
+			_, loadErr := fs.GetRun(t.Context(), tc.runID)
+			require.ErrorIs(t, loadErr, store.ErrNotFound)
+		})
+	}
+}
+
 func TestListRuns(t *testing.T) {
 	ctx := t.Context()
 	fs := newStore(t)

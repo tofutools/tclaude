@@ -1340,6 +1340,9 @@ func (s *FS) CreateRun(ctx context.Context, run RunRecord, initial state.State) 
 	if strings.TrimSpace(run.TemplateRef) == "" {
 		return RunRecord{}, fmt.Errorf("templateRef is required")
 	}
+	if err := validateInitialAdminWrites(initial.AdminRecords); err != nil {
+		return RunRecord{}, err
+	}
 	pinnedTemplate, err := s.GetTemplate(ctx, run.TemplateRef)
 	if err != nil {
 		return RunRecord{}, fmt.Errorf("pin run template %q: %w", run.TemplateRef, err)
@@ -1702,6 +1705,23 @@ func validateLegacyAdminWrite(event state.Event) error {
 	case state.EventAdminRepairRecorded, state.EventAdminProgramsAllowed:
 		if event.At.IsZero() {
 			return fmt.Errorf("%s requires a timestamp for new writes", event.Type)
+		}
+	}
+	return nil
+}
+
+// validateInitialAdminWrites closes the other legacy checkpoint creation
+// boundary. CreateRun accepts materialized state rather than events, so it must
+// validate the persisted record and resolution timestamps before creating the
+// run directory. Already-persisted checkpoints continue through predecode.
+func validateInitialAdminWrites(records []state.AdminRecord) error {
+	for i, record := range records {
+		if record.Timestamp.IsZero() {
+			return fmt.Errorf("initial admin record %d: %s requires a timestamp for new writes", i, record.Type)
+		}
+		if record.Type == state.EventBlockResolutionRecorded &&
+			(record.Resolution == nil || record.Resolution.Timestamp.IsZero()) {
+			return fmt.Errorf("initial admin record %d: block_resolution_recorded requires a resolution timestamp for new writes", i)
 		}
 	}
 	return nil
