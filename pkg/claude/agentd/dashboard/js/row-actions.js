@@ -25,7 +25,9 @@ import {
 import { openMessageCreateModal, openPermEditModal, openGroupPermEditor, openGroupCreateModal } from './modal-message.js';
 import { openHumanReplyModal } from './modal-human-reply.js';
 import { openGroupContextModal, openGroupCloneModal, openFromGroupModal } from './modal-templates.js';
-import { openLinkModal, openLinksManageModal } from './modal-link-wt.js';
+import {
+  deleteLink, openLinkCreate, openLinkEdit, openLinksManager,
+} from './links-controller.js';
 import {
   chooseTerminalDirectory, openAgentExportDialog, openCloneAgentDialog,
   openNestGroupDialog, openReincarnateAgentDialog, openTaskLinkDialog,
@@ -1571,21 +1573,21 @@ function bindRowActions() {
           // From per-group "+ link" button: preset FROM to the
           // current group so the user only has to pick TO.
           const from = btn.getAttribute('data-from') || '';
-          openLinkModal({ mode: 'create', preset: { from } });
+          openLinkCreate({ from });
           return;
         }
         case 'links-manage': {
           // From a group-header link chip: open the full cross-group
           // Links… management overlay (the former Links tab).
-          openLinksManageModal();
+          openLinksManager();
           return;
         }
         case 'link-edit': {
           const id = btn.getAttribute('data-id');
           const from = btn.getAttribute('data-from') || '';
           const to = btn.getAttribute('data-to') || '';
-          const linkMode = btn.getAttribute('data-mode') || '';
-          openLinkModal({ mode: 'edit', linkID: id, preset: { from, to, linkMode } });
+          const mode = btn.getAttribute('data-mode') || '';
+          openLinkEdit({ id, from, to, mode });
           return;
         }
         case 'link-delete': {
@@ -1597,22 +1599,8 @@ function bindRowActions() {
           // available, otherwise fall back to the explicit data-group
           // attribute.
           const scope = btn.getAttribute('data-group') || from || to;
-          const confirmed = await confirmModal({
-            title: wizWord('Remove this link?', 'Sever this arcane channel?'),
-            body: wizWord(
-              'Members of FROM lose the ability to message members of TO via this edge. Other groups / links are unaffected. This can\'t be undone — recreate to restore.',
-              'Familiars of FROM lose the ability to whisper to familiars of TO via this channel. Other parties / channels are unaffected. This can\'t be undone — weave it anew to restore.',
-            ),
-            meta: `#${id} · ${from} → ${to}`,
-            okLabel: wizWord('Remove link', 'Sever channel'),
-          });
-          if (!confirmed) return;
-          const r = await fetch(`/api/groups/${encodeURIComponent(scope)}/links/${encodeURIComponent(id)}`, {
-            method: 'DELETE', credentials: 'same-origin',
-          });
-          ok = r.ok;
-          if (!ok) toast(`${wizWord('Remove link', 'Sever channel')} failed: ${await r.text()}`, true);
-          break;
+          await deleteLink({ id, from, to, scope });
+          return;
         }
         case 'msg-focus': {
           // Focus the sending agent's terminal AND mark the message read — the

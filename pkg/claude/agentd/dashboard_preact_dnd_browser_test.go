@@ -30,7 +30,7 @@ func TestDashboardPreactDnDChrome(t *testing.T) {
 	outDir := filepath.Join(dashSnapOutRoot(t), "preact-dnd-"+time.Now().Format("20060102-150405.000"))
 	states := []dashsnap.State{
 		groupMenuPublishState(),
-		legacyLinkModalPublishState(),
+		preactLinkEditorPublishState(),
 		inlineRenameSuspensionState(),
 		dockMenuPublishState(false),
 		dockMenuPublishState(true),
@@ -105,16 +105,17 @@ if (document.activeElement !== window.__tcl362GroupItem) throw new Error('publis
 	}
 }
 
-func legacyLinkModalPublishState() dashsnap.State {
+func preactLinkEditorPublishState() dashsnap.State {
 	return dashsnap.State{
-		Key:     "legacy-link-modal-publish",
-		Title:   "Legacy modal form survives publish",
-		Caption: "The static link modal remains open and retains selected form values and focus while refresh continues behind it.",
+		Key:     "preact-link-editor-publish",
+		Title:   "Preact Links editor survives publish",
+		Caption: "The stacked Preact editor remains open and retains controlled form values and focus while its management list receives a live snapshot publish.",
 		JS: `
 return (async function(){
 document.querySelector('nav [data-tab="groups"]').click();
 document.querySelector('.filter-bar-cog .cog-btn').click();
 document.querySelector('#links-manage-open').click();
+await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
 document.querySelector('#link-new-open').click();
 await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
 var from = document.querySelector('#link-modal-from');
@@ -123,9 +124,13 @@ var mode = document.querySelector('#link-modal-mode');
 var bidir = document.querySelector('#link-modal-bidir');
 if (!document.querySelector('#link-modal.show') || !from || !to || !mode || !bidir) throw new Error('link modal did not open');
 from.value = 'frontend-squad';
+from.dispatchEvent(new Event('change', {bubbles:true}));
 to.value = 'infra-crew';
+to.dispatchEvent(new Event('change', {bubbles:true}));
 mode.value = 'owners->members';
+mode.dispatchEvent(new Event('change', {bubbles:true}));
 bidir.checked = true;
+bidir.dispatchEvent(new Event('change', {bubbles:true}));
 mode.focus();
 window.__tcl362LinkForm = {from:from, to:to, mode:mode, bidir:bidir};
 })();
@@ -134,12 +139,12 @@ window.__tcl362LinkForm = {from:from, to:to, mode:mode, bidir:bidir};
 			{Kind: "eval", JS: waitForSnapshotPublishJS},
 			{Kind: "eval", JS: `
 var form = window.__tcl362LinkForm;
-if (!document.querySelector('#link-modal.show')) throw new Error('publish closed legacy link modal');
-if (document.querySelector('#link-modal-from') !== form.from || document.querySelector('#link-modal-to') !== form.to || document.querySelector('#link-modal-mode') !== form.mode) throw new Error('publish replaced legacy form controls');
-if (form.from.value !== 'frontend-squad' || form.to.value !== 'infra-crew' || form.mode.value !== 'owners->members' || !form.bidir.checked) throw new Error('publish changed legacy form state: ' + JSON.stringify({from:form.from.value,to:form.to.value,mode:form.mode.value,bidir:form.bidir.checked}));
-if (document.activeElement !== form.mode) throw new Error('publish dropped legacy modal focus');
+if (!document.querySelector('#link-modal.show')) throw new Error('publish closed Preact link editor');
+if (document.querySelector('#link-modal-from') !== form.from || document.querySelector('#link-modal-to') !== form.to || document.querySelector('#link-modal-mode') !== form.mode) throw new Error('publish replaced Preact form controls');
+if (form.from.value !== 'frontend-squad' || form.to.value !== 'infra-crew' || form.mode.value !== 'owners->members' || !form.bidir.checked) throw new Error('publish changed Preact form state: ' + JSON.stringify({from:form.from.value,to:form.to.value,mode:form.mode.value,bidir:form.bidir.checked}));
+if (document.activeElement !== form.mode) throw new Error('publish dropped Preact editor focus');
+document.querySelector('#link-modal-cancel').click();
 `},
-			{Kind: "key", Key: "Escape"},
 		},
 	}
 }
