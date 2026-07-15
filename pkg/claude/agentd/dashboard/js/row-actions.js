@@ -19,11 +19,12 @@ import {
   loadSandboxProfiles, openSandboxProfileEditor, refreshSpawnSandboxProfileUI,
 } from './sandbox-profiles.js';
 import { renderDashDefaultProfile, renderDashSandboxProfile } from './render.js';
+import { openCronCreateModal } from './modal-cron.js';
+import { openGroupCreateModal } from './modal-message.js';
 import {
-  openSudoGrantModal, openCronCreateModal,
-} from './modal-cron.js';
-import { openMessageCreateModal, openPermEditModal, openGroupPermEditor, openGroupCreateModal } from './modal-message.js';
-import { openHumanReplyModal } from './modal-human-reply.js';
+  openGroupPermEditor, openHumanReplyModal, openMessageCreateModal,
+  openPermEditModal, openSudoGrantModal,
+} from './message-access-dialog-controller.js';
 import { openGroupContextModal, openGroupCloneModal, openFromGroupModal } from './modal-templates.js';
 import {
   deleteLink, openLinkCreate, openLinkEdit, openLinksManager,
