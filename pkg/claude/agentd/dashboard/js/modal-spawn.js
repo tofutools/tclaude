@@ -19,7 +19,7 @@ import { slopJackpot } from './slop-fx.js';
 import { wizardSummon } from './wizard-fx.js';
 import { openTermModal } from './modal-term.js';
 import { recordGroupInteraction } from './last-group.js';
-import { openSpawnPermEditor } from './modal-message.js';
+import { openSpawnPermEditor } from './message-access-dialog-controller.js';
 import { refreshSpawnSandboxProfileUI } from './sandbox-profiles.js';
 
 // Birth-time permission overrides the human set in the stacked Permissions…
