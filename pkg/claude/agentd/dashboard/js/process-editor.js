@@ -29,7 +29,7 @@ import {
 } from './process-edit-model.js';
 import { openNodeDialog } from './process-node-dialog.js';
 import { openProcessParamsDialog } from './process-params-dialog.js';
-import { LiveValidation } from './process-validation.js';
+import { diagnosticIdentity, LiveValidation } from './process-validation.js';
 import {
   NO_EXTERNAL_CHANGE, attachExternalReview, keepExternalChange, reconcileExternalChange,
   sameTemplateGeneration, templateHeadFromEditView,
@@ -1393,11 +1393,12 @@ export class ProcessTemplateEditor {
       isNew: this.blank && !this.model.sourceHash,
     };
     let context;
+    const focusedDiagnostic = kind === 'diagnostic' ? this.validation?.currentIssue?.() || null : null;
     try {
       const handoff = processScribeHandoff(anchor);
       context = processScribeEditorContext({
         kind, handoff, template: this.model.template, edges: this.model.edges,
-        selection: selectionItems(this.selection), diagnostic: this.validation?.currentIssue?.() || null,
+        selection: selectionItems(this.selection), diagnostic: focusedDiagnostic,
       });
     } catch (error) {
       this.status(error.message, true);
@@ -1410,6 +1411,15 @@ export class ProcessTemplateEditor {
     if (prompt == null || this.abort?.signal.aborted) {
       this.graph?.root?.focus?.({ preventScroll: true });
       return false;
+    }
+    if (kind === 'diagnostic') {
+      const currentDiagnostic = this.validation?.currentIssue?.() || null;
+      if (!focusedDiagnostic || !currentDiagnostic
+          || diagnosticIdentity(currentDiagnostic) !== diagnosticIdentity(focusedDiagnostic)) {
+        this.status('Scribe handoff cancelled because the focused diagnostic changed while the preview was open.');
+        this.graph?.root?.focus?.({ preventScroll: true });
+        return false;
+      }
     }
     return !!(await this.options.onScribe(anchor, { context, prompt }));
   }

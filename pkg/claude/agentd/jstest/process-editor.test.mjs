@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ProcessTemplateEditor, isProcessEditorFormControl } from '../dashboard/js/process-editor.js';
 import { ProcessEditModel } from '../dashboard/js/process-edit-model.js';
-import { LiveValidation } from '../dashboard/js/process-validation.js';
+import { diagnosticIdentity, LiveValidation } from '../dashboard/js/process-validation.js';
 
 test('Delete dispatches against the current visible editor selection', () => {
   const selected = { type: 'node', id: 'highlighted' };
@@ -225,6 +225,83 @@ test('diagnostic scribe handoff fails closed for production-shaped duplicate ide
   };
   assert.equal(await ProcessTemplateEditor.prototype.requestScribe.call(fake, 'diagnostic'), false);
   assert.match(statuses.at(-1)[0], /Focus a validation issue/);
+});
+
+test('diagnostic send rechecks exact unique focus after the human preview', async () => {
+  const selected = {
+    code: 'missing_performer', scope: 'node', targetId: 'build', node: 'build',
+    severity: 'error', message: 'build needs a performer',
+  };
+  const other = {
+    code: 'missing_next', scope: 'node', targetId: 'ship', node: 'ship',
+    severity: 'warning', message: 'ship needs a next edge',
+  };
+  const cases = [
+    {
+      name: 'removed', mutate(validation) {
+        validation.mapped.entries = [];
+        validation.issueCursor = -1;
+        validation.focusedIssueIdentity = '';
+      }, sends: 0,
+    },
+    {
+      name: 'ambiguous', mutate(validation) {
+        validation.mapped.entries.push({ ...selected, message: 'a second issue with the same stable identity' });
+        validation.focusedIssueAmbiguous = true;
+      }, sends: 0,
+    },
+    {
+      name: 'changed identity', mutate(validation) {
+        validation.mapped.entries = [other];
+        validation.issueCursor = 0;
+        validation.focusedIssueIdentity = diagnosticIdentity(other);
+      }, sends: 0,
+    },
+    {
+      name: 'harmless reorder', mutate(validation) {
+        validation.mapped.entries = [other, selected];
+        validation.issueCursor = 1;
+      }, sends: 1,
+    },
+  ];
+
+  for (const scenario of cases) {
+    const validation = {
+      mapped: { entries: [selected, other] }, issueCursor: 0,
+      focusedIssueIdentity: diagnosticIdentity(selected), focusedIssueAmbiguous: false,
+      currentIssue: LiveValidation.prototype.currentIssue,
+    };
+    const emitted = [];
+    const statuses = [];
+    let focused = 0;
+    const fake = {
+      blank: false, dirty: false, savePending: false, selection: null, validation,
+      model: {
+        template: { id: 'release-flow', nodes: { build: { type: 'task' }, ship: { type: 'task' } } }, edges: [],
+        currentRef: `release-flow@sha256:${'a'.repeat(64)}`, sourceHash: 'b'.repeat(64),
+      },
+      abort: { signal: { aborted: false } },
+      graph: { root: { focus: () => { focused += 1; } } },
+      scribePreviewModal: async (preview) => {
+        assert.match(preview.context, /missing_performer/, `${scenario.name}: preview keeps the approved snapshot`);
+        scenario.mutate(validation);
+        return 'Fix this issue.';
+      },
+      options: { onScribe: async (...args) => { emitted.push(args); return {}; } },
+      status: (...args) => statuses.push(args),
+    };
+    assert.equal(await ProcessTemplateEditor.prototype.requestScribe.call(fake, 'diagnostic'), scenario.sends === 1,
+      scenario.name);
+    assert.equal(emitted.length, scenario.sends, `${scenario.name}: stale or ambiguous context is never sent`);
+    if (scenario.sends) {
+      assert.deepEqual(emitted[0][1].context.diagnostic.identity,
+        { code: 'missing_performer', scope: 'node', targetId: 'build' });
+      assert.equal(focused, 0, `${scenario.name}: accepted send keeps focus behavior unchanged`);
+    } else {
+      assert.match(statuses.at(-1)[0], /changed while the preview was open/);
+      assert.equal(focused, 1, `${scenario.name}: cancelled send returns focus to the graph`);
+    }
+  }
 });
 
 test('cancelling the scribe preview restores predictable editor focus', async () => {
