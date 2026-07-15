@@ -84,12 +84,12 @@ func TestDashboardJS_DragToRetireBinWired(t *testing.T) {
 // to pin the load-bearing pieces against a silent refactor break.
 func TestDashboardJS_PendingDeleteWired(t *testing.T) {
 	for _, c := range []struct{ needle, why string }{
-		// render.js: the per-row button + the draggable pending row tagged so
+		// groups-list.js: the per-row button + the draggable pending row tagged so
 		// dnd.js recognises it as a pending source.
 		{`data-act="delete-pending"`,
-			"render.js emits the per-row 🗑 delete button"},
+			"groups-list.js emits the per-row 🗑 delete button"},
 		{`data-dnd-pending="1"`,
-			"render.js tags the pending row as a draggable pending source"},
+			"groups-list.js tags the pending row as a draggable pending source"},
 		// row-actions.js: the button handler POSTs to the delete endpoint.
 		{`case 'delete-pending':`,
 			"row-actions.js handles the delete-pending click"},

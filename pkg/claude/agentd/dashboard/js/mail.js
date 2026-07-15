@@ -1129,7 +1129,7 @@ async function decideAccess(id, decision) {
 
 // renderAccessRequests updates the global attention affordances each snapshot
 // tick: the non-blocking top banner with a "Review" deep link when approvals
-// are pending. The blinking Messages-tab badge is driven from render.js's
+// are pending. The blinking Messages-tab badge is driven from the shell model's
 // renderMessagesBadge; the cards themselves repaint via renderMailTab.
 function renderAccessRequests(list, pending) {
   const banner = $('#access-banner');
