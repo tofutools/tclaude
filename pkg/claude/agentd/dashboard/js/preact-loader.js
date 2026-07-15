@@ -188,9 +188,11 @@ export function mountDockFeature(dependencies = {}) {
 const jobsDescriptor = createIslandDescriptor({
     name: 'jobs',
     label: 'Jobs',
-    hosts: { host: '#jobs-root', badgeHost: '#jobs-badge-root' },
+    hosts: {
+      host: '#jobs-root', badgeHost: '#jobs-badge-root', dialogHost: '#jobs-cron-dialog-root',
+    },
     failureClass: 'jobs-error',
-    load: async ({ hosts: { host, badgeHost }, dependencies: actionDependencies }) => {
+    load: async ({ hosts: { host, badgeHost, dialogHost }, dependencies: actionDependencies }) => {
       // Keep import() behind named promises: the repository's intentionally
       // small module-graph scanner recognizes dynamic imports in expressions,
       // while a bare import(...) line is intentionally rejected as ambiguous.
@@ -199,11 +201,12 @@ const jobsDescriptor = createIslandDescriptor({
       const actionsModule = import('./jobs-actions.js');
       const [{ mountJobsIsland }, { jobsState }, { createJobsActions }] =
         await Promise.all([islandModule, stateModule, actionsModule]);
-      const jobsActions = createJobsActions(actionDependencies);
+      const jobsActions = createJobsActions({ state: jobsState, ...actionDependencies });
       return {
         state: jobsState,
         mount: (registerCleanup) => mountJobsIsland({
-          host, badgeHost, state: jobsState, actions: jobsActions, registerCleanup,
+          host, badgeHost, dialogHost, state: jobsState, actions: jobsActions,
+          confirmDiscard: actionDependencies.confirmDiscard, registerCleanup,
         }),
       };
     },
@@ -290,7 +293,6 @@ const messageAccessDialogsDescriptor = createIslandDescriptor({
   label: 'Message and access dialogs',
   hosts: {
     dialogHost: '#message-access-dialog-root',
-    cronTargetHost: '#cron-create-target-mount',
   },
   failureClass: 'message-access-dialog-error',
   load: async ({ hosts, dependencies }) => {

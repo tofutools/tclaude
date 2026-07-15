@@ -58,7 +58,11 @@ func TestDashboardHTML_EscDismissWired(t *testing.T) {
 	must(`id="role-editor-modal"`, "the role editor uses the shared Preact dismissal boundary")
 	must(`id="profile-editor-modal"`, "the profile editor uses the shared Preact dismissal boundary")
 	must("bindBackdropDiscard('agent-spawn-modal', closeAgentSpawnModal);", "the spawn dialog confirms before discarding")
-	must("bindBackdropDiscard('cron-create-modal', closeCronCreateModal);", "the cron-create dialog confirms before discarding")
+	must(`id="cron-create-modal"`, "the cron editor uses the shared Preact overlay")
+	must("overlayClass=${editing ? 'cron-editing' : descriptor.kind === 'duplicate' ? 'cron-duplicating' : ''}",
+		"component mode controls only the overlay presentation class")
+	must("onSubmitHotkey=${busy ? null : () => submit(false)} dirty=${dirty} blocked=${busy}",
+		"the cron editor confirms dirty dismissal and blocks close while saving")
 	must(`id="human-reply-modal" labelledby="human-reply-title"`, "the human-reply dialog uses the shared Preact overlay")
 	must("onClose=${state.close} dirty=${!!body} blocked=${busy} confirmDiscard=${confirmDiscard}", "the Preact human-reply dialog confirms before discarding")
 	must("bindBackdropDiscard('group-create-modal', closeGroupCreateModal);", "the group-create dialog confirms before discarding")
