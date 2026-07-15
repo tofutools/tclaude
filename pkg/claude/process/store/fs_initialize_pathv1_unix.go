@@ -271,6 +271,12 @@ func (s *FS) validatePathV1ReplayTemplateRunLocked(ctx context.Context, runID st
 	if err != nil {
 		return nil, fmt.Errorf("%w: installed exact template ref is invalid", pathv1.ErrInitializationInconsistent)
 	}
+	if run.Template != nil {
+		embeddedHash, hashErr := model.SemanticHash(run.Template)
+		if hashErr != nil || run.Template.ID != id || embeddedHash != hash {
+			return nil, fmt.Errorf("%w: embedded run template does not match installed exact template ref", pathv1.ErrInitializationInconsistent)
+		}
+	}
 	unlockTemplate, err := s.lockTemplateView(ctx, id)
 	if err != nil {
 		return nil, err
