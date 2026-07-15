@@ -31,7 +31,7 @@ func TestDashboardHTML_NotifyBellsWired(t *testing.T) {
 	// The per-agent + per-group notify controls render as ⚙ options-menu
 	// rows; the global bell and popover are rendered by their bounded island.
 	must("function NotifyMenuItem({ member })", "per-agent notify menu-item component is defined")
-	must("function GroupMenuItems({ group, members, snapshot })", "per-group menu component is defined")
+	must("function GroupMenuItems({ group, members, snapshot, actions })", "per-group menu component is defined")
 	must(`act="toggle-agent-notify"`, "agent menu item carries the agent-toggle action")
 	must(`data-act="toggle-group-notify"`, "group menu item carries the group-toggle action")
 
