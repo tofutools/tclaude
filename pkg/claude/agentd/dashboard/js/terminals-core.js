@@ -156,7 +156,7 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
 
   function activate(key) {
     const p = panes.get(key);
-    if (!p) return;
+    if (!p) return false;
     activeKey = key;
     for (const [k, q] of panes) {
       const on = k === key;
@@ -175,6 +175,16 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
     if (manageTitle) {
       document.title = (p.label ? p.label + ' — ' : '') + 'tclaude terminals';
     }
+    return true;
+  }
+
+  // activePaneDescriptor is the small ownership seam used by the integrated
+  // Terminals tab's page-level Ctrl/Cmd+M shortcut. Keep the live pane object
+  // private; callers only need its stable key (to restore focus after the
+  // composer closes) and seed (to identify the mailbox recipient).
+  function activePaneDescriptor() {
+    const p = panes.get(activeKey);
+    return p ? { key: p.key, seed: p.seed } : null;
   }
 
   function fit(p) {
@@ -530,6 +540,7 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
     closeForHide,
     closeForAgents,
     findPaneKey,
+    activePaneDescriptor,
     activatePane: activate,
     count: () => panes.size,
   };

@@ -79,6 +79,32 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 			t.Errorf("mux terminal header missing persistent guidance %q", needle)
 		}
 	}
+
+	tab := readDashboardJS(t, "terminals-tab.js")
+	for _, needle := range []string{
+		"import { terminalComposeShortcutAction } from './terminal-compose-route.js';",
+		"const pane = mux?.activePaneDescriptor();",
+		"if (!pane?.seed?.agent) return false;",
+		"restoreFocus: () => mux?.activatePane(pane.key)",
+		"operatorModalOpen: document.getElementById('operator-message-modal')?.classList.contains('show'),",
+		"blockingOverlayOpen: Boolean($$('.modal-overlay.show, .manage-overlay.show').length),",
+		"if (action === 'ignore') return;",
+		"document.addEventListener('keydown', onTerminalsComposeShortcut, true);",
+		"event.stopPropagation();",
+	} {
+		if !strings.Contains(tab, needle) {
+			t.Errorf("integrated terminals shortcut missing %q", needle)
+		}
+	}
+	for _, needle := range []string{
+		"function activePaneDescriptor()",
+		"return p ? { key: p.key, seed: p.seed } : null;",
+		"activePaneDescriptor,",
+	} {
+		if !strings.Contains(core, needle) {
+			t.Errorf("terminal mux active-pane API missing %q", needle)
+		}
+	}
 	for _, needle := range []string{
 		`id="operator-message-modal"`,
 		`id="operator-message-attach-input"`,

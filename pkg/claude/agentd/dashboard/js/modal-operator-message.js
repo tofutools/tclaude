@@ -11,6 +11,7 @@ let target = null;
 let files = [];
 let pending = false;
 let dismissGuard = null;
+let restoreFocus = null;
 
 const el = (id) => document.getElementById(id);
 
@@ -55,10 +56,19 @@ function addFiles(incoming) {
 
 function close() {
   if (pending) return;
-  el('operator-message-modal')?.classList.remove('show');
+  const modal = el('operator-message-modal');
+  const focus = restoreFocus;
+  restoreFocus = null;
+  modal?.classList.remove('show');
   files = [];
   target = null;
   renderFiles();
+  // Run after the dismissing click/key has completed so its native focus
+  // behavior cannot steal focus back from xterm. A newer modal open cancels
+  // restoration by making this overlay visible again.
+  setTimeout(() => {
+    if (!modal?.classList.contains('show')) focus?.();
+  }, 0);
 }
 
 async function upload(batch) {
@@ -131,7 +141,8 @@ async function submit() {
 
 export function openOperatorMessageModal(nextTarget) {
   if (pending || !nextTarget || !nextTarget.agent) return;
-  target = nextTarget;
+  target = { agent: nextTarget.agent, label: nextTarget.label };
+  restoreFocus = typeof nextTarget.restoreFocus === 'function' ? nextTarget.restoreFocus : null;
   files = [];
   pending = false;
   el('operator-message-to').textContent = nextTarget.label || nextTarget.agent;

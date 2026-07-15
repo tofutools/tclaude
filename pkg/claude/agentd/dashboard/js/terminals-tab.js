@@ -19,9 +19,43 @@ import { $, $$ } from './helpers.js';
 import { createAgentRosterReconciler, mountMux, normalizeSeed } from './terminals-core.js';
 import { dashboardState } from './snapshot-store.js';
 import { openOperatorMessageModal } from './modal-operator-message.js';
+import { terminalComposeShortcutAction } from './terminal-compose-route.js';
 
 let mux = null;
+let composeShortcutBound = false;
 const reconcileAgentRoster = createAgentRosterReconciler();
+
+function openMessageForActiveTerminal() {
+  const pane = mux?.activePaneDescriptor();
+  if (!pane?.seed?.agent) return false;
+  openOperatorMessageModal({
+    agent: pane.seed.agent,
+    label: pane.seed.label,
+    // Closing the composer must return keyboard ownership to the exact pane
+    // that opened it. activatePane also fits the xterm and focuses its hidden
+    // textarea; if the pane disappeared while the modal was open it is a safe
+    // no-op.
+    restoreFocus: () => mux?.activatePane(pane.key),
+  });
+  return true;
+}
+
+function onTerminalsComposeShortcut(event) {
+  const section = document.getElementById('tab-terminals');
+  const pane = mux?.activePaneDescriptor();
+  const action = terminalComposeShortcutAction(event, {
+    tabActive: section?.classList.contains('active'),
+    operatorModalOpen: document.getElementById('operator-message-modal')?.classList.contains('show'),
+    // Do not retarget or open a hidden composer beneath either of the
+    // dashboard's two dialog overlay families.
+    blockingOverlayOpen: Boolean($$('.modal-overlay.show, .manage-overlay.show').length),
+    eligiblePane: Boolean(pane?.seed?.agent),
+  });
+  if (action === 'ignore') return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (action === 'open') openMessageForActiveTerminal();
+}
 
 // initTerminalsTab mounts the multiplexer onto the #tab-terminals section.
 // Called once at boot from dashboard.js.
@@ -34,8 +68,15 @@ export function initTerminalsTab() {
   mux = mountMux({
     tabsEl, panesEl, solo: false, manageTitle: false,
     onCount: applyTerminalsTabVisibility,
-    onComposeMessage: (seed) => openOperatorMessageModal({ agent: seed.agent, label: seed.label }),
+    onComposeMessage: openMessageForActiveTerminal,
   });
+  // Capture before xterm's textarea sees the key. This makes Ctrl/Cmd+M a
+  // Terminals-tab command even when focus is on its tab strip or header, while
+  // leaving the standalone terminal page and every other dashboard tab alone.
+  if (!composeShortcutBound) {
+    composeShortcutBound = true;
+    document.addEventListener('keydown', onTerminalsComposeShortcut, true);
+  }
   applyTerminalsTabVisibility(0);
 }
 
