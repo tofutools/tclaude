@@ -141,7 +141,7 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 			rawDirs = appendUniqueDirs(rawDirs, grant.profileWriteDirs...)
 		}
 		if len(rawDirs) > 0 {
-			resolved, ok := requireDirWriteProof(w, caller, body.WriteProofToken, rawDirs)
+			resolved, ok := requireDirWriteProof(w, r, caller, body.WriteProofToken, rawDirs)
 			if !ok {
 				return
 			}

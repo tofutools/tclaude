@@ -1,9 +1,14 @@
 package agentd
 
 import (
+	"bytes"
+	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -62,10 +67,28 @@ const (
 var dirWriteProofTTL = 2 * time.Minute
 
 type dirWriteChallenge struct {
-	convID  string
-	dirs    []string // symlink-resolved, deduped, sorted
-	expires time.Time
+	convID       string
+	dirs         []string // symlink-resolved, deduped, sorted
+	expires      time.Time
+	continuation *writeProofApprovalContinuation
 }
+
+// writeProofApprovalContinuation carries a one-shot human approval across the
+// write-proof challenge/retry handshake. The challenge is only minted after
+// the first request has passed its permission gate. Binding the continuation
+// to the caller, resolved authorization target, permission, endpoint, and
+// canonical body (excluding only the proof token) lets the proved retry skip a
+// duplicate popup without widening the approval to another operation.
+type writeProofApprovalContinuation struct {
+	perm        string
+	authTarget  string
+	method      string
+	path        string
+	rawQuery    string
+	fingerprint [sha256.Size]byte
+}
+
+type writeProofApprovalContextKey struct{}
 
 var (
 	dirWriteChallengeMu sync.Mutex
@@ -75,7 +98,7 @@ var (
 // mintDirWriteChallenge registers a fresh single-use challenge for convID
 // over the (already resolved) dirs and returns its token. "" on the
 // crypto/rand failure path — callers turn that into a 500.
-func mintDirWriteChallenge(convID string, dirs []string) string {
+func mintDirWriteChallenge(convID string, dirs []string, continuation *writeProofApprovalContinuation) string {
 	buf := make([]byte, 16)
 	if _, err := rand.Read(buf); err != nil {
 		return ""
@@ -105,11 +128,91 @@ func mintDirWriteChallenge(convID string, dirs []string) string {
 		delete(dirWriteChallenges, oldest)
 	}
 	dirWriteChallenges[token] = dirWriteChallenge{
-		convID:  convID,
-		dirs:    dirs,
-		expires: now.Add(dirWriteProofTTL),
+		convID:       convID,
+		dirs:         dirs,
+		expires:      now.Add(dirWriteProofTTL),
+		continuation: continuation,
 	}
 	return token
+}
+
+// markWriteProofHumanApproval annotates a request after the human approves it.
+// If the handler subsequently emits a write-proof challenge, the challenge
+// inherits this tightly scoped continuation. Non-proof-gated handlers simply
+// ignore the annotation.
+func markWriteProofHumanApproval(r *http.Request, perm, authTarget string) {
+	continuation, _, ok := writeProofContinuationForRequest(r, perm, authTarget)
+	if !ok {
+		return
+	}
+	*r = *r.WithContext(context.WithValue(r.Context(), writeProofApprovalContextKey{}, continuation))
+}
+
+// hasWriteProofApprovalContinuation reports whether this proved retry is the
+// exact operation the human already approved before the daemon challenged for
+// directory write access. It deliberately peeks rather than consumes: the
+// proof gate later consumes and validates the same single-use token and files.
+func hasWriteProofApprovalContinuation(r *http.Request, convID, perm, authTarget string) bool {
+	continuation, token, ok := writeProofContinuationForRequest(r, perm, authTarget)
+	if !ok || token == "" {
+		return false
+	}
+	dirWriteChallengeMu.Lock()
+	defer dirWriteChallengeMu.Unlock()
+	challenge, ok := dirWriteChallenges[token]
+	if !ok || challenge.convID != convID || time.Now().After(challenge.expires) || challenge.continuation == nil {
+		return false
+	}
+	return *challenge.continuation == *continuation
+}
+
+// writeProofContinuationForRequest canonicalises a JSON request after removing
+// only write_proof_token. The client adds that field between the challenge and
+// proved retry; every human-visible/action-bearing field must remain identical.
+// The body is restored byte-for-byte for the permission preview and handler.
+func writeProofContinuationForRequest(r *http.Request, perm, authTarget string) (*writeProofApprovalContinuation, string, bool) {
+	if r == nil || r.Body == nil {
+		return nil, "", false
+	}
+	// Proof-gated CLI operations use bounded JSON bodies. Do not inspect
+	// streaming or non-JSON payloads here: permission gates also protect binary
+	// attachment uploads, whose body must remain untouched until the endpoint's
+	// own size/timeout-aware reader consumes it.
+	contentType := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type")))
+	if (contentType != "application/json" && !strings.HasPrefix(contentType, "application/json;")) ||
+		r.ContentLength < 0 || r.ContentLength > maxApprovalRestoreBody {
+		return nil, "", false
+	}
+	original := r.Body
+	body, err := io.ReadAll(io.LimitReader(original, maxApprovalRestoreBody+1))
+	_ = original.Close()
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	if err != nil || len(body) > maxApprovalRestoreBody {
+		return nil, "", false
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil || fields == nil {
+		return nil, "", false
+	}
+	token := ""
+	if raw, ok := fields["write_proof_token"]; ok {
+		if err := json.Unmarshal(raw, &token); err != nil {
+			return nil, "", false
+		}
+		delete(fields, "write_proof_token")
+	}
+	canonical, err := json.Marshal(fields)
+	if err != nil {
+		return nil, "", false
+	}
+	return &writeProofApprovalContinuation{
+		perm:        perm,
+		authTarget:  authTarget,
+		method:      r.Method,
+		path:        r.URL.Path,
+		rawQuery:    r.URL.RawQuery,
+		fingerprint: sha256.Sum256(canonical),
+	}, strings.TrimSpace(token), true
 }
 
 // takeDirWriteChallenge consumes a token: every lookup removes it, so a
@@ -199,7 +302,7 @@ func childSandboxGrantsDirWrite(harnessName, mode string) bool {
 // challenge (code "write_proof_required", with token / filename / dirs for
 // the client to act on), a 403 refusal when the proof file is missing, or a
 // 400/500 on resolution errors.
-func requireDirWriteProof(w http.ResponseWriter, callerConvID, token string, rawDirs []string) (map[string]string, bool) {
+func requireDirWriteProof(w http.ResponseWriter, r *http.Request, callerConvID, token string, rawDirs []string) (map[string]string, bool) {
 	exempt, err := dirWriteProofCallerExempt(callerConvID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "dir write-proof: "+err.Error())
@@ -215,7 +318,7 @@ func requireDirWriteProof(w http.ResponseWriter, callerConvID, token string, raw
 	}
 	token = strings.TrimSpace(token)
 	if token == "" {
-		writeDirWriteProofChallenge(w, callerConvID, resolved)
+		writeDirWriteProofChallenge(w, r, callerConvID, resolved)
 		return nil, false
 	}
 	ch, ok := takeDirWriteChallenge(token)
@@ -223,7 +326,7 @@ func requireDirWriteProof(w http.ResponseWriter, callerConvID, token string, raw
 		!slices.Equal(ch.dirs, resolved) {
 		// Unknown, expired, foreign, or dir-set-mismatched token — issue a
 		// fresh challenge rather than leaking WHY the old one was refused.
-		writeDirWriteProofChallenge(w, callerConvID, resolved)
+		writeDirWriteProofChallenge(w, r, callerConvID, resolved)
 		return nil, false
 	}
 
@@ -381,7 +484,7 @@ func defaultSiblingWorktreeTrust(harnessName, cwd, gitCommonDir string) (bool, e
 // template roster mixes harnesses, and proving the shared launch dirs once is
 // simpler and strictly safe. A caller that can write the dirs (the common
 // "deploy into my project" case) clears it transparently via the CLI.
-func requireTemplateDirWriteProof(w http.ResponseWriter, caller, token, cwd, worktreePath, repo, perAgentWorktreeParent, codexGitCommonDir string) (resolvedCwd, resolvedWorktree, resolvedRepo, resolvedCodexGitCommonDir string, proofDirs []string, ok bool) {
+func requireTemplateDirWriteProof(w http.ResponseWriter, r *http.Request, caller, token, cwd, worktreePath, repo, perAgentWorktreeParent, codexGitCommonDir string) (resolvedCwd, resolvedWorktree, resolvedRepo, resolvedCodexGitCommonDir string, proofDirs []string, ok bool) {
 	if caller == "" {
 		return cwd, worktreePath, repo, codexGitCommonDir, nil, true
 	}
@@ -400,7 +503,7 @@ func requireTemplateDirWriteProof(w http.ResponseWriter, caller, token, cwd, wor
 	if home, err := os.UserHomeDir(); err == nil {
 		dirs = appendUniqueDirs(dirs, harness.GitWorktreeWriteDirs(cwd, codexGitCommonDir, home)...)
 	}
-	resolved, proofOK := requireDirWriteProof(w, caller, token, dirs)
+	resolved, proofOK := requireDirWriteProof(w, r, caller, token, dirs)
 	if !proofOK {
 		return "", "", "", "", nil, false
 	}
@@ -448,8 +551,9 @@ func requireTemplateDirWriteProof(w http.ResponseWriter, caller, token, cwd, wor
 // that carries it. The body is self-describing on purpose: a raw caller (an
 // LLM agent driving the HTTP API without the CLI) can read the instructions
 // and answer the challenge without any other documentation.
-func writeDirWriteProofChallenge(w http.ResponseWriter, convID string, dirs []string) {
-	token := mintDirWriteChallenge(convID, dirs)
+func writeDirWriteProofChallenge(w http.ResponseWriter, r *http.Request, convID string, dirs []string) {
+	continuation, _ := r.Context().Value(writeProofApprovalContextKey{}).(*writeProofApprovalContinuation)
+	token := mintDirWriteChallenge(convID, dirs, continuation)
 	if token == "" {
 		writeError(w, http.StatusInternalServerError, "io", "dir write-proof: mint challenge token")
 		return

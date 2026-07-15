@@ -218,7 +218,7 @@ func handleWhoamiReincarnate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	runReincarnationOrchestration(w, caller, caller, PermSelfReincarnate, body)
+	runReincarnationOrchestration(w, r, caller, caller, PermSelfReincarnate, body)
 }
 
 // handleAgentReincarnate handles POST /v1/agent/{conv}/reincarnate
@@ -237,7 +237,7 @@ func handleAgentReincarnate(w http.ResponseWriter, r *http.Request, targetConv s
 	if !ok {
 		return
 	}
-	runReincarnationOrchestration(w, targetConv, caller, PermAgentReincarnate, body)
+	runReincarnationOrchestration(w, r, targetConv, caller, PermAgentReincarnate, body)
 }
 
 type reincarnateBody struct {
@@ -307,7 +307,7 @@ func decodeReincarnateBody(w http.ResponseWriter, r *http.Request) (reincarnateB
 //     auditedCaller to annotate via-sudo grants in the audit trail.
 //
 // Writes the JSON response (or error) directly to w.
-func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm string, body reincarnateBody) {
+func runReincarnationOrchestration(w http.ResponseWriter, r *http.Request, target, caller, perm string, body reincarnateBody) {
 	followUp := body.FollowUp
 	// 1. Snapshot target conv state. We require an alive tmux session
 	// for the target — that's the cwd source and the target of the
@@ -364,7 +364,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	if !isHumanCloneCaller(caller) && (childSandboxGrantsDirWrite(oldSess.Harness, reincarnateSandbox) || len(profileWriteDirs) > 0) {
 		dirs := appendUniqueDirs([]string{cwd}, gitWriteDirs...)
 		dirs = appendUniqueDirs(dirs, profileWriteDirs...)
-		resolved, ok := requireDirWriteProof(w, caller, body.WriteProofToken, dirs)
+		resolved, ok := requireDirWriteProof(w, r, caller, body.WriteProofToken, dirs)
 		if !ok {
 			return
 		}

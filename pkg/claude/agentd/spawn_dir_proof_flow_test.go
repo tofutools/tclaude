@@ -180,6 +180,84 @@ func TestSpawnDirProof_ChallengeThenVerifiedSpawn(t *testing.T) {
 	assert.True(t, os.IsNotExist(statErr), "daemon must consume the proof file")
 }
 
+// Regression: an ungranted sandboxed agent uses --ask-human to spawn. The
+// first approved POST reaches the dir write-proof challenge; the proved retry
+// is the same logical operation and must reuse that one-shot approval instead
+// of raising a second access request with a new popup ID.
+func TestSpawnDirProof_AskHumanApprovalContinuesAcrossProvedRetry(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	approvalCalls, restoreApproval := agentd.StubCountingApprovalForTest(true)
+	t.Cleanup(restoreApproval)
+
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parent = "parent-askh-aaaa-bbbb-cccc-111111111111"
+	f.HaveMember("alpha", parent)
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID:          "sess-parent-askh",
+		TmuxSession: "tmux-parent-askh",
+		ConvID:      parent,
+		Cwd:         f.World.HomeDir,
+		Status:      "running",
+		Harness:     harness.DefaultName,
+		SandboxMode: harness.ClaudeSandboxInherit,
+	}))
+
+	dir := t.TempDir()
+	body := map[string]any{"name": "worker", "cwd": dir}
+	firstReq := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/groups/alpha/spawn", body), parent)
+	firstReq.Header.Set("X-Tclaude-Ask-Human", "30s")
+	first := testharness.Serve(f.Mux, firstReq)
+	challenge := decodeWriteProofChallenge(t, first)
+	require.Equal(t, int32(1), approvalCalls(), "initial permission gate should ask once")
+
+	answerChallenge(t, challenge)
+	body["write_proof_token"] = challenge.WriteProof.Token
+	retryReq := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/groups/alpha/spawn", body), parent)
+	retryReq.Header.Set("X-Tclaude-Ask-Human", "30s")
+	retry := testharness.Serve(f.Mux, retryReq)
+	require.Equalf(t, http.StatusOK, retry.Code, "proved retry must spawn; body=%s", retry.Body.String())
+	assert.Equal(t, int32(1), approvalCalls(), "proved retry must reuse the original one-shot approval")
+}
+
+// The continuation is not a generic permission token: changing an
+// action-bearing field between the challenge and retry must run the human gate
+// again, even when the proof token and directory set are otherwise valid.
+func TestSpawnDirProof_AskHumanContinuationRejectsChangedOperation(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	approvalCalls, restoreApproval := agentd.StubCountingApprovalForTest(true)
+	t.Cleanup(restoreApproval)
+
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parent = "parent-askh-change-bbbb-cccc-111111111111"
+	f.HaveMember("alpha", parent)
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID:          "sess-parent-askh-change",
+		TmuxSession: "tmux-parent-askh-change",
+		ConvID:      parent,
+		Cwd:         f.World.HomeDir,
+		Status:      "running",
+		Harness:     harness.DefaultName,
+		SandboxMode: harness.ClaudeSandboxInherit,
+	}))
+
+	dir := t.TempDir()
+	body := map[string]any{"name": "approved-worker", "cwd": dir}
+	firstReq := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/groups/alpha/spawn", body), parent)
+	firstReq.Header.Set("X-Tclaude-Ask-Human", "30s")
+	challenge := decodeWriteProofChallenge(t, testharness.Serve(f.Mux, firstReq))
+	answerChallenge(t, challenge)
+
+	body["name"] = "changed-worker"
+	body["write_proof_token"] = challenge.WriteProof.Token
+	retryReq := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/groups/alpha/spawn", body), parent)
+	retryReq.Header.Set("X-Tclaude-Ask-Human", "30s")
+	retry := testharness.Serve(f.Mux, retryReq)
+	require.Equalf(t, http.StatusOK, retry.Code, "changed request may proceed only after fresh approval; body=%s", retry.Body.String())
+	assert.Equal(t, int32(2), approvalCalls(), "changed operation must not inherit the first request's approval")
+}
+
 // Scenario: the agent obtains a challenge but cannot (or does not) create
 // the proof file — the exact posture of a sandboxed agent aiming a child at
 // a directory outside its own write set. The retry is refused.

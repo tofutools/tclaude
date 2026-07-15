@@ -457,7 +457,7 @@ func handleWhoamiClone(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	runCloneOrchestration(w, caller, caller, PermSelfClone, body)
+	runCloneOrchestration(w, r, caller, caller, PermSelfClone, body)
 }
 
 // handleAgentClone handles POST /v1/agent/{conv}/clone (cross-agent).
@@ -475,7 +475,7 @@ func handleAgentClone(w http.ResponseWriter, r *http.Request, targetConv string)
 	if !ok {
 		return
 	}
-	runCloneOrchestration(w, targetConv, caller, PermAgentClone, body)
+	runCloneOrchestration(w, r, targetConv, caller, PermAgentClone, body)
 }
 
 // cloneBody is the decoded, validated POST body shared by the clone
@@ -544,7 +544,7 @@ func decodeCloneBody(w http.ResponseWriter, r *http.Request) (cloneBody, bool) {
 //     before use; a bad value fails the whole clone with a 400. An
 //     AGENT caller must additionally pass the dir write-proof for it
 //     (see below).
-func runCloneOrchestration(w http.ResponseWriter, target, caller, perm string, body cloneBody) {
+func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, caller, perm string, body cloneBody) {
 	followUp, noCopyConv, cwdOverride := body.FollowUp, body.NoCopyConv, body.Cwd
 	// 1. Snapshot target state. Same shape as reincarnate's snapshot
 	// pass.
@@ -596,7 +596,7 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm string, b
 		dirs := appendUniqueDirs([]string{cwd}, gitWriteDirs...)
 		dirs = appendUniqueDirs(dirs, profileWriteDirs...)
 		if len(dirs) > 0 {
-			proofed, ok := requireDirWriteProof(w, caller, body.WriteProofToken, dirs)
+			proofed, ok := requireDirWriteProof(w, r, caller, body.WriteProofToken, dirs)
 			if !ok {
 				return
 			}
