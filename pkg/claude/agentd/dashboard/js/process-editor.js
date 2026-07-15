@@ -40,6 +40,8 @@ import {
 import { requestCommandPalette } from './command-registry.js';
 import { openProcessNodeTypeChooser } from './process-node-chooser.js';
 import { PROCESS_NODE_TYPES } from './process-node-types.js';
+import { bindDialogFocus } from './dialog-focus-core.js';
+import { isTopmostOverlay } from './overlay-stack.js';
 import {
   PROCESS_SCRIBE_PROMPT_MAX, processScribeContextPreview, processScribeEditorContext,
   processScribeHandoff, processScribePrompt,
@@ -1449,7 +1451,10 @@ export class ProcessTemplateEditor {
       truncated: !!context.truncation,
     });
     if (prompt == null || this.abort?.signal.aborted) {
-      this.graph?.root?.focus?.({ preventScroll: true });
+      const active = globalThis.document?.activeElement;
+      if (!active || !this.root?.contains?.(active)) {
+        this.graph?.root?.focus?.({ preventScroll: true });
+      }
       return false;
     }
     if (!freshnessGuard()) return false;
@@ -1605,6 +1610,7 @@ export class ProcessTemplateEditor {
       const input = h('textarea', {
         class: 'process-scribe-prompt', rows: '4', maxlength: PROCESS_SCRIBE_PROMPT_MAX,
         'aria-label': 'Request for the process scribe', spellcheck: 'true',
+        'data-select-on-focus': 'true',
       });
       input.value = prompt;
       const count = h('span', { class: 'process-scribe-prompt-count' });
@@ -1630,23 +1636,40 @@ export class ProcessTemplateEditor {
             text: truncated ? 'END BOUNDED EDITOR CONTEXT · visibly truncated; the scribe must reread canonical YAML'
               : 'END BOUNDED EDITOR CONTEXT · the scribe must reread canonical YAML' }),
           h('div', { class: 'modal-buttons' }, cancel, send)));
+      const dialog = overlay.querySelector('.process-scribe-preview');
+      // The focus loop owns ordinary keyboard navigation. Inerting the editor
+      // surface closes the remaining programmatic-focus/default-action gap so
+      // a graph control behind this body-level overlay cannot be activated.
+      const editorSurface = this.root;
+      const editorWasInert = editorSurface?.inert === true || editorSurface?.hasAttribute('inert');
+      let releaseDialogFocus = () => {};
       const done = (result) => {
         overlay.remove();
-        document.removeEventListener('keydown', onKey, true);
+        if (editorSurface) {
+          editorSurface.inert = editorWasInert;
+          editorSurface.toggleAttribute('inert', editorWasInert);
+        }
+        releaseDialogFocus();
         if (this.modalDispose === done) this.modalDispose = null;
         resolve(result);
-      };
-      const onKey = (event) => {
-        if (event.key !== 'Escape') return;
-        event.preventDefault(); event.stopImmediatePropagation(); done(null);
       };
       send.addEventListener('click', () => done(input.value.trim()));
       cancel.addEventListener('click', () => done(null));
       overlay.addEventListener('click', (event) => { if (event.target === overlay) done(null); });
-      document.addEventListener('keydown', onKey, true);
       this.modalDispose = done;
+      // Capture the invoker before inerting its editor ancestor. Browsers may
+      // blur a focused descendant as soon as inert is applied.
+      releaseDialogFocus = bindDialogFocus({
+        dialog,
+        initialFocus: input,
+        onEscape: () => done(null),
+        shouldHandle: () => isTopmostOverlay(overlay),
+      });
+      if (editorSurface) {
+        editorSurface.inert = true;
+        editorSurface.setAttribute('inert', '');
+      }
       document.body.append(overlay);
-      input.focus(); input.select?.();
     });
   }
 }
