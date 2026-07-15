@@ -121,11 +121,11 @@ func codexAgentProfilePath(name string) (string, error) {
 //     tclaude's tmux server socket directory. Denying the socket is the actual
 //     host-control boundary: hiding the tmux binary alone would still permit a
 //     copied client or direct protocol implementation to control the server;
-//   - maps an explicit Internet/offline network posture to Codex's native
-//     network boundary. Linux uses its network namespace for offline mode,
-//     because the managed proxy's post-setup seccomp filter would prevent the
-//     agent from opening agentd's Unix socket. macOS uses the managed proxy's
-//     deny-by-default policy so Seatbelt can carry the agentd socket exception;
+//   - maps an explicit Internet/offline network posture to Codex's network
+//     boundary. Linux offline is currently rejected because both its native
+//     restricted-network seccomp and managed proxy prevent the agent from
+//     opening agentd's Unix socket. macOS uses the managed proxy's
+//     deny-by-default policy so Seatbelt can carry the socket exception;
 //   - sets `default_permissions` so `codex -p <name>` activates the profile —
 //     the TUI/exec have no `-P` flag, so selection is via default_permissions.
 func codexAgentProfileContent(socketPath, privateStateDir, homeDir, gitCommonDir string) (string, error) {
