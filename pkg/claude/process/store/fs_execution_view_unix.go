@@ -151,8 +151,9 @@ func (s *FS) WithExecutionView(ctx context.Context, runID string, callback func(
 	if err != nil {
 		return &ExecutionViewInconsistentError{Err: fmt.Errorf("exact template source is invalid: %w", err)}
 	}
-	if parsedSource.Template == nil || parsedSource.Template.ID != template.ID {
-		return &ExecutionViewInconsistentError{Err: fmt.Errorf("exact template source id does not match exact template")}
+	if parsedSource.Template == nil || parsedSource.Template.ID != template.ID ||
+		parsedSource.SemanticHash != templateHash || parsedSource.Ref != run.TemplateRef {
+		return &ExecutionViewInconsistentError{Err: fmt.Errorf("exact template source semantics do not match exact template")}
 	}
 	if snapshot.Run.Template != nil {
 		embeddedHash, hashErr := model.SemanticHash(snapshot.Run.Template)

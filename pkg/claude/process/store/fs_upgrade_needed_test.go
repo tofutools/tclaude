@@ -54,6 +54,18 @@ func TestUpgradeNeededCancellationAndSourceMismatchFailClosed(t *testing.T) {
 	require.NoError(t, os.WriteFile(sourcePath, []byte("id: unrelated\n"), 0o644))
 	_, err = fs.UpgradeNeeded(t.Context(), runID)
 	assert.ErrorIs(t, err, store.ErrRunInconsistent)
+
+	semanticTamper := []byte(`apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: demo
+start: other
+nodes:
+  other:
+    type: end
+`)
+	require.NoError(t, os.WriteFile(sourcePath, semanticTamper, 0o644))
+	_, err = fs.UpgradeNeeded(t.Context(), runID)
+	assert.ErrorIs(t, err, store.ErrRunInconsistent)
 }
 
 func TestUpgradeNeededLegacyTemplateSourceFallbackIsBounded(t *testing.T) {
