@@ -33,7 +33,7 @@ import {
   openNestGroupDialog, openReincarnateAgentDialog, openTaskLinkDialog,
 } from './action-dialog-controller.js';
 import {
-  openRetireAgentDialog, openShutdownAgentDialog,
+  openDeleteAgentDialog, openRetireAgentDialog, openShutdownAgentDialog,
 } from './transaction-dialog-controller.js';
 import { openTermModal } from './terminals-tab.js';
 import {
@@ -49,7 +49,7 @@ import { wizWord } from './slop.js';
 // lastSnapshot is dashboard.js's shared state, written here (rename
 // rollback) via setLastSnapshot. Deliberate benign cycles are TDZ-safe.
 import {
-  refresh, toast, confirmModal, deleteAgentModal,
+  refresh, toast, confirmModal,
   shutdownScope, powerOnScope, openCleanupModal, openWindowModal,
   openWorktreeCleanup,
   resumeAgentReq,
@@ -653,26 +653,7 @@ function bindRowActions() {
           break;
         }
         case 'delete-agent': {
-          const choice = await deleteAgentModal(agent, label);
-          if (!choice) return;
-          const q = choice.deleteWorktree ? '?delete_worktree=1' : '';
-          const r = await fetch(`/api/agents/${encodeURIComponent(agent)}${q}`, {
-            method: 'DELETE', credentials: 'same-origin',
-          });
-          ok = r.ok;
-          if (!ok) {
-            toast(`Delete failed: ${await r.text()}`, true);
-            break;
-          }
-          // Surface the worktree outcome when one was requested —
-          // the DELETE returns 200 + JSON in that case.
-          try {
-            const out = await r.json();
-            toast(out.worktree ? `deleted ${label} · ${out.worktree}` : `deleted ${label}`);
-          } catch (_) {
-            toast(`deleted ${label}`);
-          }
-          refresh();
+          await openDeleteAgentDialog(agent, label);
           return;
         }
         case 'copy-generation-id': {
