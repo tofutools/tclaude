@@ -46,13 +46,17 @@ func TestDashboardTransactionDeleteExclusiveOwnership(t *testing.T) {
 		t.Error("transaction controller is missing stable-agent permanent delete launcher")
 	}
 	for _, required := range []string{
-		"async deleteAgent({ agent, label, deleteWorktree })",
+		"async deleteAgent({ agent, label, deleteWorktree, expectedWorktree })",
 		"deleteWorktree === true",
-		"'?delete_worktree=1'",
+		"params.set('delete_worktree', '1')",
+		"params.set('expected_worktree', choice.expectedWorktree)",
 	} {
 		if !strings.Contains(actions, required) {
 			t.Errorf("delete transaction action is missing %q", required)
 		}
+	}
+	if !strings.Contains(island, "expectedWorktree: worktree.path") {
+		t.Error("delete transaction does not freeze the probed worktree path")
 	}
 	if !strings.Contains(memberTable,
 		`member=${member} act="delete-agent" className="danger" regular="delete" wizard="erase familiar"`) {
