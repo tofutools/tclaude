@@ -22,6 +22,12 @@ type settleAttemptObservationPayload struct {
 	Attempt            uint64       `json:"attempt"`
 	ResultCode         string       `json:"resultCode"`
 	ReasonCode         string       `json:"reasonCode,omitempty"`
+	Actor              string       `json:"actor,omitempty"`
+	EvidenceRef        string       `json:"evidenceRef,omitempty"`
+	EvidenceHash       string       `json:"evidenceHash,omitempty"`
+	ResolutionDigest   string       `json:"resolutionDigest,omitempty"`
+	ExternalRef        string       `json:"externalRef,omitempty"`
+	Feedback           string       `json:"feedback,omitempty"`
 }
 
 type routeTerminalPayload struct {
@@ -123,7 +129,10 @@ func (i *aggregateIndex) validateSettleAttemptTerminal(path string, p PathRecord
 	if p.State != PathEnded {
 		wantPayload.ReasonCode = d.ReasonCode
 	}
-	if payload != wantPayload || id.PlanDigest != payloadDigest(settle.Payload) || id.PlanDigest != settle.PayloadHash {
+	if payload.TemplateRef != wantPayload.TemplateRef || payload.SourceCommandID != wantPayload.SourceCommandID ||
+		payload.SourceActivationID != wantPayload.SourceActivationID || payload.SourceGeneration != wantPayload.SourceGeneration ||
+		payload.Attempt != wantPayload.Attempt || payload.ResultCode != wantPayload.ResultCode || payload.ReasonCode != wantPayload.ReasonCode ||
+		id.PlanDigest != payloadDigest(settle.Payload) || id.PlanDigest != settle.PayloadHash {
 		fail("settlement observation digest does not bind the exact source, attempt, result, and reason")
 	}
 }

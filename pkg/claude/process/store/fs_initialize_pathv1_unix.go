@@ -80,9 +80,17 @@ func (s *FS) InitializePathV1(ctx context.Context, runID string, supplied pathv1
 		if err != nil {
 			return PathV1InitializationResult{}, fmt.Errorf("%w: rebuild installed initialization: %v", pathv1.ErrInitializationInconsistent, err)
 		}
-		expectedBytes, err := pathv1.EncodeCheckpointV7(expected)
-		if err != nil || !bytes.Equal(data, expectedBytes) {
-			return PathV1InitializationResult{}, fmt.Errorf("%w: installed initialization differs from deterministic exact-template replay", pathv1.ErrInitializationInconsistent)
+		if checkpoint.Execution == nil {
+			expectedBytes, err := pathv1.EncodeCheckpointV7(expected)
+			if err != nil || !bytes.Equal(data, expectedBytes) {
+				return PathV1InitializationResult{}, fmt.Errorf("%w: installed initialization differs from deterministic exact-template replay", pathv1.ErrInitializationInconsistent)
+			}
+		} else {
+			installedAnchor, installedDigest, installedErr := pathv1.CanonicalInitializationAnchor(checkpoint)
+			expectedAnchor, expectedDigest, expectedErr := pathv1.CanonicalInitializationAnchor(expected)
+			if installedErr != nil || expectedErr != nil || installedDigest != expectedDigest || !bytes.Equal(installedAnchor, expectedAnchor) {
+				return PathV1InitializationResult{}, fmt.Errorf("%w: mutable checkpoint initialization anchor differs from deterministic exact-template replay", pathv1.ErrInitializationInconsistent)
+			}
 		}
 		if err := s.syncPathV1InitializationDir(runDir); err != nil {
 			return PathV1InitializationResult{}, err

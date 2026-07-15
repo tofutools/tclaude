@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 
@@ -40,6 +41,11 @@ type ExclusiveObservation struct {
 	Attempt          uint64
 	Outcome          string
 	ResolutionDigest string
+	Actor            string
+	EvidenceRef      string
+	EvidenceHash     string
+	ExternalRef      string
+	Feedback         string
 }
 
 type ExclusiveDisposition string
@@ -133,7 +139,11 @@ func VerifyExclusiveInput(ctx context.Context, checkpointBytes, templateSource [
 	if parsed.Ref != event.UpgradeNeeded.TemplateRef || parsed.SemanticHash != event.TemplateHash || parsed.SourceHash != event.UpgradeNeeded.TemplateSourceHash {
 		return nil, fmt.Errorf("%w: exact template ref/source binding mismatch", ErrExclusiveInputInvalid)
 	}
-	view := event.Aggregate.View()
+	current, err := CurrentAggregateCheckpoint(checkpoint)
+	if err != nil {
+		return nil, fmt.Errorf("%w: current aggregate: %v", ErrExclusiveInputInvalid, err)
+	}
+	view := current.View()
 	if view.RunID != event.UpgradeNeeded.RunID || view.TemplateRef != parsed.SemanticHash || view.TemplateSourceHash != parsed.SourceHash {
 		return nil, fmt.Errorf("%w: exact run/template aggregate binding mismatch", ErrExclusiveInputInvalid)
 	}
@@ -145,10 +155,7 @@ func VerifyExclusiveInput(ctx context.Context, checkpointBytes, templateSource [
 		templateSource:  sourceCopy,
 		checkpoint:      checkpoint,
 		template:        parsed.Template,
-		binding: CheckpointBinding{
-			Generation: uint64(event.EventSeq),
-			Digest:     checkpoint.Digest,
-		},
+		binding:         CurrentCheckpointBinding(checkpoint),
 	}, nil
 }
 
@@ -173,7 +180,11 @@ func ClassifyExclusiveObservation(ctx context.Context, input *VerifiedExclusiveI
 	if input == nil || input.checkpoint == nil || input.template == nil {
 		return "", fmt.Errorf("%w: sealed input is required", ErrExclusiveInputInvalid)
 	}
-	return classifyExclusiveObservation(input.checkpoint.Initialize.Aggregate.View(), input.template, observation)
+	current, err := CurrentAggregateCheckpoint(input.checkpoint)
+	if err != nil {
+		return "", err
+	}
+	return classifyExclusiveObservation(current.View(), input.template, observation)
 }
 
 // ReduceExclusiveRoute is the sole apply path for a planned exclusive route.
@@ -423,12 +434,14 @@ type exclusiveEndDraft struct {
 }
 
 type performAttemptPayload struct {
-	TemplateRef        string `json:"templateRef"`
-	TemplateSourceHash string `json:"templateSourceHash"`
-	NodeID             string `json:"nodeId"`
-	SourceActivationID string `json:"sourceActivationId"`
-	SourceGeneration   uint64 `json:"sourceGeneration"`
-	Attempt            uint64 `json:"attempt"`
+	TemplateRef        string            `json:"templateRef"`
+	TemplateSourceHash string            `json:"templateSourceHash"`
+	NodeID             string            `json:"nodeId"`
+	SourceActivationID string            `json:"sourceActivationId"`
+	SourceGeneration   uint64            `json:"sourceGeneration"`
+	Attempt            uint64            `json:"attempt"`
+	Performer          *model.Performer  `json:"performer,omitempty"`
+	Params             map[string]string `json:"params,omitempty"`
 }
 
 func buildExclusiveRouteDraft(ctx context.Context, input *VerifiedExclusiveInput, observation ExclusiveObservation) (exclusiveRouteDraft, error) {
@@ -442,7 +455,7 @@ func buildExclusiveRouteDraft(ctx context.Context, input *VerifiedExclusiveInput
 		return exclusiveRouteDraft{}, fmt.Errorf("%w: incomplete exclusive observation", ErrMutationInvalid)
 	}
 
-	aggregate, err := cloneAggregateCheckpoint(input.checkpoint.Initialize.Aggregate)
+	aggregate, err := CurrentAggregateCheckpoint(input.checkpoint)
 	if err != nil {
 		return exclusiveRouteDraft{}, err
 	}
@@ -462,6 +475,10 @@ func buildExclusiveRouteDraft(ctx context.Context, input *VerifiedExclusiveInput
 	node, ok := input.template.Nodes[sourceReservation.NodeID]
 	if !ok {
 		return exclusiveRouteDraft{}, fmt.Errorf("%w: source node is absent from exact template", ErrExclusiveInputInvalid)
+	}
+	observation.Outcome, err = canonicalExclusiveOutcome(node, observation.Outcome)
+	if err != nil {
+		return exclusiveRouteDraft{}, err
 	}
 	disposition, err := classifyExclusiveObservation(view, input.template, observation)
 	if err != nil {
@@ -485,7 +502,10 @@ func buildExclusiveRouteDraft(ctx context.Context, input *VerifiedExclusiveInput
 		return exclusiveRouteDraft{}, err
 	}
 
-	eventSeq := int64(input.binding.Generation + 1)
+	if CurrentLastLogSeq(input.checkpoint) >= math.MaxInt64 {
+		return exclusiveRouteDraft{}, &OverBudgetError{Limit: "log_entries", Value: math.MaxInt64, Maximum: math.MaxInt64 - 1}
+	}
+	eventSeq := int64(CurrentLastLogSeq(input.checkpoint) + 1)
 	before := Clone(*view.Routing)
 	after := Clone(before)
 	authority := cloneExclusiveAuthority(view.Authority)
@@ -596,7 +616,7 @@ func buildExclusiveRouteDraft(ctx context.Context, input *VerifiedExclusiveInput
 	plan := RoutePathsPlan{
 		SettlementCommandID: settle.ID, SourceActivationID: source.SourceActivation.ID,
 		SourceGeneration: source.SourceActivation.Generation, SourcePathID: source.ID,
-		Attempt: observation.Attempt, CauseDigest: causeDigest, ResultCode: "exclusive/" + strings.ToLower(strings.TrimSpace(observation.Outcome)),
+		Attempt: observation.Attempt, CauseDigest: causeDigest, ResultCode: "exclusive/" + observation.Outcome,
 		ProducedPathIDs: produced, Batch: batch,
 	}
 	payload, err := EncodeRoutePathsPayload(replayView, plan)
@@ -1340,12 +1360,23 @@ func resolvePassTarget(next model.Next, outcome string) (string, error) {
 }
 
 func isFailOutcome(value string) bool {
-	switch value {
-	case "fail", "failed", "failure", "error", "timeout", "rejected":
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "fail", "failed", "failure", "error", "timeout", "rejected", "cancel", "canceled", "cancelled":
 		return true
 	default:
 		return false
 	}
+}
+
+func canonicalExclusiveOutcome(node model.Node, outcome string) (string, error) {
+	outcome = strings.TrimSpace(outcome)
+	if outcome == "" {
+		return "", fmt.Errorf("%w: empty exclusive outcome", ErrMutationInvalid)
+	}
+	if node.Type == model.NodeTypeDecision {
+		return outcome, nil
+	}
+	return strings.ToLower(outcome), nil
 }
 
 func exactOutgoingEdges(templateRef, nodeID string, next model.Next) ([]EdgeKey, error) {
@@ -1469,6 +1500,25 @@ func candidateForID(reservation ActivationReservation, candidateID CandidateID) 
 }
 
 func observedAttemptCommands(view AggregateView, nodeID string, node model.Node, source PathRecord, observation ExclusiveObservation) (CommandRecord, CommandRecord, SideEffectIdentity, error) {
+	var existingPerform, existingSettle CommandRecord
+	for _, candidate := range view.Commands {
+		identity := candidate.Identity
+		if identity.SourceActivationID != source.SourceActivation.ID || identity.SourceGeneration != source.SourceActivation.Generation || identity.Attempt != observation.Attempt {
+			continue
+		}
+		switch identity.Kind {
+		case CommandPerformAttempt:
+			if existingPerform.ID != "" {
+				return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, fmt.Errorf("%w: performer attempt has multiple source commands", ErrMutationInconsistent)
+			}
+			existingPerform = cloneCommandRecord(candidate)
+		case CommandSettleAttempt:
+			if existingSettle.ID != "" {
+				return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, fmt.Errorf("%w: performer attempt has multiple settlement commands", ErrMutationInconsistent)
+			}
+			existingSettle = cloneCommandRecord(candidate)
+		}
+	}
 	performPayload, err := json.Marshal(performAttemptPayload{
 		TemplateRef: view.TemplateRef, TemplateSourceHash: view.TemplateSourceHash, NodeID: nodeID,
 		SourceActivationID: source.SourceActivation.ID, SourceGeneration: source.SourceActivation.Generation, Attempt: observation.Attempt,
@@ -1481,14 +1531,24 @@ func observedAttemptCommands(view AggregateView, nodeID string, node model.Node,
 		SourceActivationID: source.SourceActivation.ID, SourceGeneration: source.SourceActivation.Generation,
 		Attempt: observation.Attempt, PlanDigest: payloadDigest(performPayload),
 	}
-	perform, err := observedCommand(performIdentity, performPayload)
+	perform := existingPerform
+	if perform.ID == "" {
+		perform, err = observedCommand(performIdentity, performPayload)
+		if err != nil {
+			return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, err
+		}
+	} else if perform.State != CommandObserved && perform.State != CommandReconciled {
+		return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, fmt.Errorf("%w: performer attempt remains active", ErrMutationInconsistent)
+	}
+	outcome, err := canonicalExclusiveOutcome(node, observation.Outcome)
 	if err != nil {
 		return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, err
 	}
-	outcome := strings.ToLower(strings.TrimSpace(observation.Outcome))
 	settlePayload, err := json.Marshal(settleAttemptObservationPayload{
 		TemplateRef: view.TemplateRef, SourceCommandID: perform.ID, SourceActivationID: source.SourceActivation.ID,
 		SourceGeneration: source.SourceActivation.Generation, Attempt: observation.Attempt, ResultCode: outcome,
+		Actor: observation.Actor, EvidenceRef: observation.EvidenceRef, EvidenceHash: observation.EvidenceHash,
+		ResolutionDigest: observation.ResolutionDigest, ExternalRef: observation.ExternalRef, Feedback: observation.Feedback,
 	})
 	if err != nil {
 		return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, err
@@ -1498,9 +1558,14 @@ func observedAttemptCommands(view AggregateView, nodeID string, node model.Node,
 		SourceActivationID: source.SourceActivation.ID, SourceGeneration: source.SourceActivation.Generation,
 		Attempt: observation.Attempt, InputDigest: perform.ID, PlanDigest: payloadDigest(settlePayload), ResultCode: outcome,
 	}
-	settle, err := observedCommand(settleIdentity, settlePayload)
-	if err != nil {
-		return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, err
+	settle := existingSettle
+	if settle.ID == "" {
+		settle, err = observedCommand(settleIdentity, settlePayload)
+		if err != nil {
+			return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, err
+		}
+	} else if settle.State != CommandObserved && settle.State != CommandReconciled {
+		return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, fmt.Errorf("%w: settlement remains active", ErrMutationInconsistent)
 	}
 	effect := SideEffectIdentity{Kind: SideEffectAttempt, RunID: view.RunID, ActivationID: source.SourceActivation.ID, Attempt: observation.Attempt, State: "observed"}
 	if node.Type == model.NodeTypeWait {
