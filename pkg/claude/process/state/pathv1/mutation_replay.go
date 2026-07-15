@@ -105,8 +105,9 @@ func (p SettleDetachedSinkPlan) Validate() error {
 	if err := p.Batch.Validate(); err != nil {
 		return err
 	}
-	if len(p.Batch.Mutations) != 1 || p.Batch.Mutations[0].Kind != MutationPath || p.Batch.Mutations[0].Key != p.SourcePathID || len(p.Batch.Mutations[0].Before) != 0 || len(p.Batch.Mutations[0].After) == 0 {
-		return fmt.Errorf("%w: detached-sink command must own exactly one atomic arrived-to-sink path create", ErrMutationInvalid)
+	mutation, ok := findMutation(p.Batch, MutationPath, p.SourcePathID)
+	if len(p.Batch.Mutations) != 2 || !ok || len(mutation.Before) != 0 || len(mutation.After) == 0 {
+		return fmt.Errorf("%w: detached-sink command must own exactly its routed parent update and arrived-to-sink child create", ErrMutationInvalid)
 	}
 	return nil
 }
@@ -252,7 +253,7 @@ func ValidateRoutePathsCommand(view MutationReplayView, command CommandRecord) e
 	if !slices.Equal(after.ProducedPathIDs, plan.ProducedPathIDs) || after.Disposition == nil || after.Disposition.CommandID != MutationCommandPlaceholder || after.UpdatedSeq != plan.Batch.EventSeq {
 		return fmt.Errorf("%w: route post-state differs from exact output/command/event plan", ErrMutationInvalid)
 	}
-	return nil
+	return validateRouteMutationSet(pre, plan, after)
 }
 
 func ValidateActivateGenerationCommand(view MutationReplayView, command CommandRecord) error {
@@ -302,6 +303,9 @@ func ValidateActivateGenerationCommand(view MutationReplayView, command CommandR
 		}
 	default:
 		return fmt.Errorf("%w: reservation post-state is not terminal", ErrMutationInvalid)
+	}
+	if err := validateActivationMutationSet(pre, plan, reservation, afterReservation); err != nil {
+		return err
 	}
 	if plan.JoinPolicy == JoinAny {
 		return validateAnyPlan(pre, plan)
@@ -492,11 +496,11 @@ func ValidatePropagateClosureCommand(view MutationReplayView, command CommandRec
 			}
 		}
 	}
-	return nil
+	return validatePropagationMutationSet(pre, plan, intents)
 }
 
 func ValidateSettleDetachedSinkCommand(view MutationReplayView, command CommandRecord) error {
-	payload, err := decodeMutationCommand[SettleDetachedSinkPlan](view, command, CommandSettleDetachedSink, false)
+	payload, err := decodeMutationCommand[SettleDetachedSinkPlan](view, command, CommandSettleDetachedSink, true)
 	if err != nil {
 		return err
 	}
@@ -519,9 +523,21 @@ func ValidateSettleDetachedSinkCommand(view MutationReplayView, command CommandR
 	if !ok || reservation.State != ReservationActivated || reservation.Generation != plan.Generation {
 		return fmt.Errorf("%w: detached sink reservation is not closed by activation", ErrMutationInvalid)
 	}
+	childMutation, _ := findMutation(plan.Batch, MutationPath, plan.SourcePathID)
 	var after PathRecord
-	if err := decodeExactPayload(plan.Batch.Mutations[0].After, &after); err != nil {
+	if err := decodeExactPayload(childMutation.After, &after); err != nil {
 		return err
+	}
+	parentMutation, ok := findMutation(plan.Batch, MutationPath, after.ParentPathID)
+	if !ok || len(parentMutation.Before) == 0 || len(parentMutation.After) == 0 {
+		return fmt.Errorf("%w: detached sink lacks its atomic parent route transition", ErrMutationInvalid)
+	}
+	var parentAfter PathRecord
+	if err := decodeExactPayload(parentMutation.After, &parentAfter); err != nil {
+		return err
+	}
+	if parentAfter.State != PathRouted || !slices.Equal(parentAfter.ProducedPathIDs, []PathID{after.ID}) || parentAfter.Disposition == nil || parentAfter.Disposition.CommandID != MutationCommandPlaceholder || parentAfter.UpdatedSeq != plan.Batch.EventSeq {
+		return fmt.Errorf("%w: detached sink parent route differs from the exact child event", ErrMutationInvalid)
 	}
 	key, _ := DetachmentKeyIdentity(plan.ReservationID, after.CandidateID)
 	detachment, ok := pre.Detachments[key]

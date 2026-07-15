@@ -112,6 +112,31 @@ func TestRoutePathsTypedReplayAppliesOnceAndRejectsDrift(t *testing.T) {
 	command := commandWithPayload(t, identity, CommandObserved, payload)
 	replayView.Aggregate.Commands[command.ID] = command
 
+	badAfter := Clone(afterTemplate)
+	for scopeID, scope := range badAfter.Scopes {
+		scope.EventSeq++
+		badAfter.Scopes[scopeID] = scope
+		break
+	}
+	badBatch, err := NewMutationBatch(&before, &badAfter, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	badPlan := plan
+	badPlan.Batch = badBatch
+	badPayload, err := EncodeRoutePathsPayload(replayView, badPlan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	badIdentity := identity
+	badIdentity.PlanDigest = payloadDigest(badPayload)
+	badCommand := commandWithPayload(t, badIdentity, CommandObserved, badPayload)
+	replayView.Aggregate.Commands[badCommand.ID] = badCommand
+	if err := ValidateRoutePathsCommand(replayView, badCommand); !errors.Is(err, ErrMutationInvalid) {
+		t.Fatalf("route unrelated scope mutation error = %v", err)
+	}
+	delete(replayView.Aggregate.Commands, badCommand.ID)
+
 	result, err := ReplayRoutePaths(replayView, command)
 	if err != nil {
 		t.Fatal(err)
@@ -376,6 +401,32 @@ func TestPropagateClosureReplayBindsRootFrontierAndIntent(t *testing.T) {
 	}
 	command := commandWithPayload(t, identity, CommandObserved, payload)
 	replayView.Aggregate.Commands[command.ID] = command
+
+	badAfter := Clone(afterTemplate)
+	for scopeID, scope := range badAfter.Scopes {
+		scope.EventSeq++
+		badAfter.Scopes[scopeID] = scope
+		break
+	}
+	badBatch, err := NewMutationBatch(&before, &badAfter, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	badPlan := plan
+	badPlan.Batch = badBatch
+	badPayload, err := EncodePropagateClosurePayload(replayView, badPlan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	badIdentity := identity
+	badIdentity.PlanDigest = payloadDigest(badPayload)
+	badCommand := commandWithPayload(t, badIdentity, CommandObserved, badPayload)
+	replayView.Aggregate.Commands[badCommand.ID] = badCommand
+	if err := ValidatePropagateClosureCommand(replayView, badCommand); !errors.Is(err, ErrMutationInvalid) {
+		t.Fatalf("propagation unrelated scope mutation error = %v", err)
+	}
+	delete(replayView.Aggregate.Commands, badCommand.ID)
+
 	result, err := ReplayPropagateClosure(replayView, command)
 	if err != nil {
 		t.Fatal(err)
@@ -404,7 +455,17 @@ func TestSettleDetachedSinkCreatesLateArrivalAtomically(t *testing.T) {
 	}
 	before := Clone(*postView.Routing)
 	delete(before.Paths, late.ID)
+	parent := before.Paths[late.ParentPathID]
+	parent.State = PathLive
+	parent.ProducedPathIDs = nil
+	parent.Disposition = nil
+	parent.UpdatedSeq = parent.CreatedSeq
+	before.Paths[parent.ID] = parent
 	afterTemplate := Clone(*postView.Routing)
+	afterParent := afterTemplate.Paths[late.ParentPathID]
+	afterParent.Disposition.CommandID = MutationCommandPlaceholder
+	afterParent.Disposition.ID, _ = DispositionReceiptIdentity(afterParent.ID, PathLive, PathRouted, afterParent.Disposition.ReasonCode, MutationCommandPlaceholder, "", uint64(afterParent.UpdatedSeq))
+	afterTemplate.Paths[afterParent.ID] = afterParent
 	templatePath := afterTemplate.Paths[late.ID]
 	templatePath.Disposition.CommandID = MutationCommandPlaceholder
 	templatePath.Disposition.ID, _ = DispositionReceiptIdentity(templatePath.ID, PathArrived, PathDetachedSink, "late_any_arrival", MutationCommandPlaceholder, "", uint64(templatePath.UpdatedSeq))
@@ -415,6 +476,7 @@ func TestSettleDetachedSinkCreatesLateArrivalAtomically(t *testing.T) {
 		t.Fatal(err)
 	}
 	postView.Routing = &before
+	delete(postView.Commands, late.Disposition.CommandID)
 	replayView := MutationReplayView{Aggregate: postView, Checkpoint: CheckpointBinding{Generation: 8, Digest: strings.Repeat("8", 64)}}
 	plan := SettleDetachedSinkPlan{
 		SourcePathID: late.ID, ReservationID: late.TargetReservationID, Generation: late.SourceActivation.Generation,
@@ -428,10 +490,22 @@ func TestSettleDetachedSinkCreatesLateArrivalAtomically(t *testing.T) {
 	identity := CommandIdentity{
 		RunID: postView.RunID, Kind: CommandSettleDetachedSink, PayloadSchema: 1,
 		SourcePathID: late.ID, TargetReservationID: late.TargetReservationID, TargetGeneration: late.SourceActivation.Generation,
-		InputDigest: late.DetachmentSetID, ResultCode: "detached",
+		InputDigest: late.DetachmentSetID, PlanDigest: payloadDigest(payload), ResultCode: "detached",
 	}
 	command := commandWithPayload(t, identity, CommandObserved, payload)
 	replayView.Aggregate.Commands[command.ID] = command
+	alternateView := replayView
+	alternateView.Checkpoint = CheckpointBinding{Generation: replayView.Checkpoint.Generation + 1, Digest: strings.Repeat("7", 64)}
+	alternatePayload, err := EncodeSettleDetachedSinkPayload(alternateView, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alternateIdentity := identity
+	alternateIdentity.PlanDigest = payloadDigest(alternatePayload)
+	alternateCommand := commandWithPayload(t, alternateIdentity, CommandObserved, alternatePayload)
+	if alternateCommand.ID == command.ID || alternateCommand.IdempotencyKey == command.IdempotencyKey {
+		t.Fatal("distinct detached-sink checkpoint bindings collided")
+	}
 	result, err := ReplaySettleDetachedSink(replayView, command)
 	if err != nil {
 		t.Fatal(err)
@@ -454,6 +528,7 @@ func TestCompleteRunClaimObservationAndRecovery(t *testing.T) {
 		CheckpointJSON: completionCheckpoint(t, "running", 1, "sum-1", nil),
 		RunStatus:      "running", LastLogSeq: 1, LogChecksum: "sum-1",
 	}
+	bindCompletionCheckpoint(t, &pre)
 	planned, err := PlanCompleteRun(pre)
 	if err != nil {
 		t.Fatal(err)
@@ -461,6 +536,11 @@ func TestCompleteRunClaimObservationAndRecovery(t *testing.T) {
 	recovery, err := RecoverCompleteRun(pre)
 	if err != nil || recovery.Phase != CompletionReadyToClaim || !canonicalEqual(recovery.Command, planned) {
 		t.Fatalf("preclaim recovery = %#v, %v", recovery, err)
+	}
+	nonderived := pre
+	nonderived.Checkpoint = CheckpointBinding{Generation: pre.Checkpoint.Generation + 1, Digest: strings.Repeat("e", 64)}
+	if _, err := PlanCompleteRun(nonderived); !errors.Is(err, ErrMutationInvalid) {
+		t.Fatalf("completion non-derived planning checkpoint error = %v", err)
 	}
 
 	claimed := pre
@@ -472,6 +552,27 @@ func TestCompleteRunClaimObservationAndRecovery(t *testing.T) {
 	recovery, err = RecoverCompleteRun(claimed)
 	if err != nil || recovery.Phase != CompletionReadyToObserve {
 		t.Fatalf("claim recovery = %#v, %v", recovery, err)
+	}
+	foreignRun := claimed
+	foreignRun.Aggregate.RunID = "another-run"
+	if _, err := ValidateCompleteRunCommand(foreignRun, planned); !errors.Is(err, ErrMutationInvalid) {
+		t.Fatalf("foreign-run completion error = %v", err)
+	}
+	var forgedPayload CompleteRunCommandPayload
+	if err := json.Unmarshal(planned.Payload, &forgedPayload); err != nil {
+		t.Fatal(err)
+	}
+	forgedPayload.Checkpoint = nonderived.Checkpoint
+	forgedBytes, err := json.Marshal(forgedPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forged := commandWithPayload(t, planned.Identity, planned.State, forgedBytes)
+	forgedView := claimed
+	forgedView.Aggregate.Commands = cloneMap(claimed.Aggregate.Commands)
+	forgedView.Aggregate.Commands[forged.ID] = forged
+	if _, err := ValidateCompleteRunCommand(forgedView, forged); !errors.Is(err, ErrMutationInvalid) {
+		t.Fatalf("same-identity different completion checkpoint error = %v", err)
 	}
 
 	observedCommand := planned
@@ -546,6 +647,19 @@ func commandWithPayload(t *testing.T, identity CommandIdentity, state CommandSta
 	}
 	sum := sha256.Sum256(payload)
 	return CommandRecord{ID: id, IdempotencyKey: CommandIdempotencyKey(identity.Kind, id), Identity: identity, Payload: payload, PayloadHash: hex.EncodeToString(sum[:]), State: state}
+}
+
+func bindCompletionCheckpoint(t *testing.T, view *CompletionReplayView) {
+	t.Helper()
+	basis, err := computeCompletionBasis(*view, CompletionBasis{
+		BasisRunStatus:   view.RunStatus,
+		BasisLastLogSeq:  view.LastLogSeq,
+		BasisLogChecksum: view.LogChecksum,
+	}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	view.Checkpoint = completionBasisCheckpoint(basis)
 }
 
 func firstAnyReservation(view AggregateView) ActivationReservation {

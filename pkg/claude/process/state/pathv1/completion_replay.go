@@ -28,6 +28,9 @@ func PlanCompleteRun(view CompletionReplayView) (CommandRecord, error) {
 	if err != nil {
 		return CommandRecord{}, err
 	}
+	if view.Checkpoint != completionBasisCheckpoint(basis) {
+		return CommandRecord{}, fmt.Errorf("%w: completion checkpoint is not the deterministic basis projection", ErrMutationInvalid)
+	}
 	identity := CommandIdentity{
 		RunID:         view.Aggregate.RunID,
 		Kind:          CommandCompleteRun,
@@ -44,7 +47,7 @@ func PlanCompleteRun(view CompletionReplayView) (CommandRecord, error) {
 	payload, err := json.Marshal(CompleteRunCommandPayload{
 		TemplateRef:        view.Aggregate.TemplateRef,
 		TemplateSourceHash: view.Aggregate.TemplateSourceHash,
-		Checkpoint:         view.Checkpoint,
+		Checkpoint:         completionBasisCheckpoint(basis),
 		Basis:              basis,
 	})
 	if err != nil {
@@ -119,6 +122,9 @@ func ValidateCompleteRunCommand(view CompletionReplayView, command CommandRecord
 	if err := validateCompleteRunCommandPrimitive(command); err != nil {
 		return payload, err
 	}
+	if command.Identity.RunID != view.Aggregate.RunID {
+		return payload, fmt.Errorf("%w: completion command run differs from aggregate", ErrMutationInvalid)
+	}
 	stored, ok := view.Aggregate.Commands[command.ID]
 	if !ok || !canonicalEqual(stored, command) {
 		return payload, fmt.Errorf("%w: completion command is not byte-exact in aggregate", ErrMutationInvalid)
@@ -126,8 +132,8 @@ func ValidateCompleteRunCommand(view CompletionReplayView, command CommandRecord
 	if err := decodeExactPayload(command.Payload, &payload); err != nil {
 		return payload, fmt.Errorf("%w: complete_run typed payload: %v", ErrMutationInvalid, err)
 	}
-	if payload.TemplateRef == "" || payload.TemplateSourceHash == "" || payload.TemplateRef != view.Aggregate.TemplateRef || payload.TemplateSourceHash != view.Aggregate.TemplateSourceHash || payload.Checkpoint != view.Checkpoint {
-		return payload, fmt.Errorf("%w: completion template/checkpoint binding mismatch", ErrMutationInvalid)
+	if payload.TemplateRef == "" || payload.TemplateSourceHash == "" || payload.TemplateRef != view.Aggregate.TemplateRef || payload.TemplateSourceHash != view.Aggregate.TemplateSourceHash {
+		return payload, fmt.Errorf("%w: completion template binding mismatch", ErrMutationInvalid)
 	}
 	basis := payload.Basis
 	if basis.SelfCommandID != command.ID || basis.BasisRunStatus == "" || basis.BasisLogChecksum == "" {
@@ -139,6 +145,9 @@ func ValidateCompleteRunCommand(view CompletionReplayView, command CommandRecord
 	}
 	if recomputed != basis {
 		return payload, fmt.Errorf("%w: completion basis digest/result drift", ErrMutationInconsistent)
+	}
+	if payload.Checkpoint != completionBasisCheckpoint(recomputed) || view.Checkpoint != payload.Checkpoint {
+		return payload, fmt.Errorf("%w: completion checkpoint is not the deterministic basis projection", ErrMutationInvalid)
 	}
 	if command.Identity.InputDigest != basis.AggregateDigest || command.Identity.PlanDigest != basis.ActiveCommandDigest || command.Identity.ResultCode != basis.Result {
 		return payload, fmt.Errorf("%w: completion command identity differs from basis", ErrMutationInvalid)
@@ -167,6 +176,10 @@ func ValidateCompleteRunCommand(view CompletionReplayView, command CommandRecord
 		return payload, fmt.Errorf("%w: invalid completion command state %q", ErrMutationInconsistent, command.State)
 	}
 	return payload, nil
+}
+
+func completionBasisCheckpoint(basis CompletionBasis) CheckpointBinding {
+	return CheckpointBinding{Generation: basis.BasisLastLogSeq, Digest: basis.CheckpointDigest}
 }
 
 func validateCompleteRunCommandPrimitive(command CommandRecord) error {
