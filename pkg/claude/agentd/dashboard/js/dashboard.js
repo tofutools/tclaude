@@ -177,7 +177,7 @@ export function sudoBadge(activeSudo, fallbackConvID) {
       confirmDiscard,
       words: wizWord,
     }),
-    mountGroupsFeature({ refresh: dashboardActions.refresh }),
+    mountGroupsFeature({ refresh: dashboardActions.refresh, notify: toast }),
     mountLinksFeature({
       refresh: dashboardActions.refresh,
       confirm: confirmModal,

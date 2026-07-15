@@ -299,7 +299,7 @@ async function openProfilePicker(chipEl, current, onCommit, opts = {}) {
 // about to be display:none'd — hands focus back to that cog so it
 // doesn't fall to <body> and get lost.
 function closeAllActionMenus() {
-  $$('.action-menu.open').forEach((menu) => {
+  $$('.action-menu.open:not([data-preact-menu])').forEach((menu) => {
     const cog = menu.parentElement
       && menu.parentElement.querySelector('.cog-btn');
     const focusInside = menu.contains(document.activeElement);
@@ -325,7 +325,7 @@ function bindRowActions() {
     // only the .open class is dropped); a click anywhere OUTSIDE every
     // menu closes them too (click-away). A click on a menu's own
     // padding — inside a menu but not on an item — leaves it open.
-    const onCog = act === 'row-menu' || act === 'group-menu' || act === 'filter-bar-menu';
+    const onCog = act === 'filter-bar-menu';
     const inMenu = !!e.target.closest('.action-menu');
     // Menus self-dismiss on any click that lands on a button inside
     // them. data-act items are caught by the `btn` check below, but
@@ -1724,8 +1724,6 @@ function bindRowActions() {
           refresh();
           return;
         }
-        case 'row-menu':
-        case 'group-menu':
         case 'filter-bar-menu': {
           // The ⚙ cog: toggle this row's / group's / filter-bar's
           // options menu. The menu is the cog's sibling inside the
@@ -1771,7 +1769,7 @@ function bindRowActions() {
   // the owning cog when focus sat inside the menu.
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    if (!document.querySelector('.action-menu.open')) return;
+    if (!document.querySelector('.action-menu.open:not([data-preact-menu])')) return;
     e.preventDefault();
     closeAllActionMenus();
   });
