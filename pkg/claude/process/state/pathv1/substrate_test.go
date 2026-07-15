@@ -147,10 +147,10 @@ func TestOperationalBoundsAndCheckedFormulas(t *testing.T) {
 	if _, err := MutationCountAny(MaxAnyCandidates+1, 0); err == nil {
 		t.Fatal("any candidate bound+1 accepted")
 	}
-	if n, err := MutationCountExclusive(MaxOutgoingOrAllCandidates); err != nil || n != 4093 {
+	if n, err := MutationCountExclusive(MaxExclusiveOutgoing); err != nil || n != 4*MaxExclusiveOutgoing-1 {
 		t.Fatalf("M_exclusive max = %d, %v", n, err)
 	}
-	if _, err := MutationCountExclusive(MaxOutgoingOrAllCandidates + 1); err == nil {
+	if _, err := MutationCountExclusive(MaxExclusiveOutgoing + 1); err == nil {
 		t.Fatal("outgoing bound+1 accepted")
 	}
 	if _, err := Decode(make([]byte, MaxCheckpointBytes+1)); err == nil {
