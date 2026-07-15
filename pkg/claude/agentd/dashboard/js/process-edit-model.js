@@ -229,6 +229,34 @@ export class ProcessEditModel {
     return nodeID;
   }
 
+  // addConnectedNode is the connector-drop transaction: validate every
+  // insertion/edge constraint before begin(), then add both topology records
+  // behind one undo snapshot. Exactly one of connectFrom (existing → new) or
+  // connectTo (new → existing) identifies the side of the dragged port.
+  addConnectedNode(type, { x, y, connectFrom = '', connectTo = '' } = {}) {
+    this.assertCanInsert();
+    if (!!connectFrom === !!connectTo) throw new Error('connected node requires exactly one existing endpoint');
+    const existingID = connectFrom || connectTo;
+    if (!this.template.nodes[existingID]) throw new Error(`unknown node ${existingID}`);
+    const nodeType = NODE_TYPES.has(type) ? type : 'task';
+    const nodeID = this.uniqueNodeID(nodeType);
+    const from = connectFrom || nodeID;
+    const to = connectTo || nodeID;
+    const fromNode = from === nodeID ? { type: nodeType } : this.template.nodes[from];
+    if (fromNode.type === 'end') throw new Error('end node must not have outgoing edges');
+    const outcome = this.freeOutcome(from, 'pass');
+    const edge = { from, outcome, to };
+    this.assertEdgeEditable(edge);
+
+    this.begin();
+    const node = { type: nodeType };
+    if (nodeType === 'end') node.result = 'success';
+    this.template.nodes[nodeID] = node;
+    if (Number.isFinite(x) && Number.isFinite(y)) this.layout.nodes[nodeID] = { x, y };
+    this.edges.push(edge);
+    return { id: nodeID, edge };
+  }
+
   // deleteNode removes the node, its layout pin, and every touching edge.
   // With rewire=true each incoming edge is redirected to the deleted node's
   // primary successor (its first outgoing edge in stable outcome order) instead

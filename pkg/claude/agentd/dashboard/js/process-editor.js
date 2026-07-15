@@ -37,6 +37,8 @@ import {
   makeSelection, selectionContains, selectionItems, toggleSelection,
 } from './process-selection.js';
 import { requestCommandPalette } from './command-registry.js';
+import { openProcessNodeTypeChooser } from './process-node-chooser.js';
+import { PROCESS_NODE_TYPES } from './process-node-types.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 // Custom drag payload MIME (dock-dnd idiom): withholding text/plain keeps
@@ -90,6 +92,7 @@ export class ProcessTemplateEditor {
     this.selection = null;
     this.pendingMove = null;
     this.band = null;
+    this.nodeChooserDispose = null;
     this.savePending = false;
     this.saveSeq = 0;
     this.externalReloadPending = false;
@@ -272,6 +275,8 @@ export class ProcessTemplateEditor {
     this.externalReloadPending = false;
     this.externalDecisionPending = false;
     this.abort.abort();
+    this.nodeChooserDispose?.();
+    this.nodeChooserDispose = null;
     this.closeInline(false);
     this.validation?.destroy();
     this.validation = null;
@@ -745,6 +750,8 @@ export class ProcessTemplateEditor {
   }
 
   onPortDragStart({ nodeId, port, point }) {
+    this.nodeChooserDispose?.();
+    this.nodeChooserDispose = null;
     this.removeBand();
     const start = this.portPoint(nodeId, port);
     const band = document.createElementNS(SVG_NS, 'path');
@@ -762,10 +769,14 @@ export class ProcessTemplateEditor {
     this.band.element.setAttribute('d', `M ${this.band.start.x} ${this.band.start.y} L ${point.x} ${point.y}`);
   }
 
-  onPortDragEnd({ nodeId, port, targetNodeId, targetPort, cancelled }) {
+  onPortDragEnd({ nodeId, port, point, targetNodeId, targetPort, emptyCanvas, cancelled, event }) {
     const source = this.band?.source || { nodeId, port };
     this.removeBand();
-    if (cancelled || !targetNodeId) return;
+    if (cancelled) return;
+    if (!targetNodeId) {
+      if (emptyCanvas) this.openConnectedNodeChooser(source, point, event);
+      return;
+    }
     // A plain CLICK on a port arrives here too (the core starts a port drag on
     // pointerdown and hit-tests on pointerup): source and target are the same
     // port. Never treat that as an edge gesture — without this, clicking an
@@ -798,6 +809,67 @@ export class ProcessTemplateEditor {
     if (!created) return;
     this.setSelection({ type: 'edge', from, outcome });
     this.openInlineOutcomeEdit(from, outcome);
+  }
+
+  openConnectedNodeChooser(source, point, event) {
+    const sourceNode = this.model.node(source?.nodeId);
+    if (!sourceNode) {
+      this.status(`unknown node ${source?.nodeId || ''}`.trim(), true);
+      return false;
+    }
+    if (source.port !== 'in' && source.port !== 'out') {
+      this.status('Connect an output to an input: one end must be an out port.', true);
+      return false;
+    }
+    if (!this.model.config.canInsert) {
+      this.status('adding nodes is not allowed in this view', true);
+      return false;
+    }
+    if (source.port === 'out' && sourceNode.type === 'end') {
+      this.status('end node must not have outgoing edges', true);
+      return false;
+    }
+
+    this.nodeChooserDispose?.();
+    const stageRect = this.stage.getBoundingClientRect();
+    const svgRect = this.graph.svg.getBoundingClientRect();
+    const clientX = Number.isFinite(event?.clientX)
+      ? event.clientX : svgRect.left + this.graph.view.x + point.x * this.graph.view.k;
+    const clientY = Number.isFinite(event?.clientY)
+      ? event.clientY : svgRect.top + this.graph.view.y + point.y * this.graph.view.k;
+    const dropPoint = { x: point.x, y: point.y };
+    const dispose = openProcessNodeTypeChooser({
+      host: this.stage,
+      anchor: { x: clientX - stageRect.left, y: clientY - stageRect.top },
+      restoreFocus: () => this.graph.root.focus({ preventScroll: true }),
+      onChoose: (type) => this.addConnectedNodeType(type, source, dropPoint),
+      onClose: () => {
+        if (this.nodeChooserDispose === dispose) this.nodeChooserDispose = null;
+      },
+    });
+    this.nodeChooserDispose = dispose;
+    return true;
+  }
+
+  addConnectedNodeType(type, source, point) {
+    const connection = source.port === 'in'
+      ? { connectTo: source.nodeId } : { connectFrom: source.nodeId };
+    const created = this.mutate(() => this.model.addConnectedNode(type, {
+      x: point.x, y: point.y, ...connection,
+    }));
+    if (!created) {
+      queueMicrotask(() => this.graph.root.focus({ preventScroll: true }));
+      return false;
+    }
+    this.setSelection({ type: 'node', id: created.id });
+    this.status(`Added ${type} node ${created.id} and connected it from ${created.edge.from}.`);
+    const nodeType = PROCESS_NODE_TYPES.find((candidate) => candidate.type === type);
+    if (nodeType?.requiresConfiguration) {
+      void this.openNodeSettings(created.id);
+    } else {
+      queueMicrotask(() => this.graph.focusNode(created.id));
+    }
+    return created.id;
   }
 
   removeBand() {

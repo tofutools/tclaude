@@ -182,6 +182,12 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"export const PROCESS_NODE_TYPES",
 		"type: 'task'", "type: 'decision'", "type: 'wait'", "type: 'start'", "type: 'end'",
 	)
+	chooser := read("js/process-node-chooser.js")
+	mustContain("process-node-chooser.js", chooser,
+		"buildProcessNodeTypeCommands", "rankCommands", "role: 'combobox'",
+		"role: 'listbox'", "role: 'option'", "aria-activedescendant",
+		"event.key === 'Escape'", "onOutsidePointerDown",
+	)
 	if strings.Contains(validation, "innerHTML") {
 		t.Error("process-validation.js must not use innerHTML; diagnostic text is untrusted at render time")
 	}

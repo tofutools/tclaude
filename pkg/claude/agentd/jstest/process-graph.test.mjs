@@ -140,6 +140,36 @@ test('pointercancel ends a port drag cancelled, with no hit-testing', () => {
   assert.equal(ends.length, 1, 'a second cancel for the cleared pointer is a no-op');
 });
 
+test('empty-canvas port release reports the exact pan/zoom graph coordinate', () => {
+  const previousDocument = globalThis.document;
+  const hit = {};
+  globalThis.document = { elementFromPoint: () => hit };
+  try {
+    const ended = [];
+    const fake = {
+      pointer: { id: 17, mode: 'port', nodeID: 'source', port: 'out' },
+      view: { x: 20, y: -10, k: 2 }, dragMoved: true,
+      svg: {
+        getBoundingClientRect: () => ({ left: 100, top: 50 }),
+        releasePointerCapture() {},
+        contains: (candidate) => candidate === hit,
+      },
+      options: { onPortDragEnd: (value) => ended.push(value) },
+      eventTarget: () => ({ node: null, edge: null, port: null }),
+      clientToGraph: ProcessGraph.prototype.clientToGraph,
+    };
+    ProcessGraph.prototype.onPointerUp.call(fake, {
+      pointerId: 17, clientX: 180, clientY: 140,
+    });
+    assert.deepEqual(ended[0].point, { x: 30, y: 50 });
+    assert.equal(ended[0].targetNodeId, null);
+    assert.equal(ended[0].emptyCanvas, true);
+  } finally {
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+  }
+});
+
 test('pointercancel snaps a node drag home instead of committing it', () => {
   const snapped = [];
   const fake = {

@@ -44,6 +44,78 @@ test('palette drop and contextual create command share addNodeType', () => {
   assert.deepEqual(calls, [['decision', { x: 12, y: 34 }]]);
 });
 
+test('only a valid empty-canvas port release opens the connected chooser', () => {
+  const opened = [];
+  const fake = {
+    band: null,
+    removeBand() {},
+    openConnectedNodeChooser: (...args) => opened.push(args),
+  };
+  const point = { x: 12.5, y: -8 };
+  const event = { clientX: 440, clientY: 220 };
+  ProcessTemplateEditor.prototype.onPortDragEnd.call(fake, {
+    nodeId: 'a', port: 'out', point, targetNodeId: null, targetPort: null, emptyCanvas: true, event,
+  });
+  assert.deepEqual(opened, [[{ nodeId: 'a', port: 'out' }, point, event]]);
+
+  ProcessTemplateEditor.prototype.onPortDragEnd.call(fake, {
+    nodeId: 'a', port: 'out', point, targetNodeId: null, emptyCanvas: true, cancelled: true, event,
+  });
+  assert.equal(opened.length, 1, 'pointer cancellation never opens a chooser');
+
+  ProcessTemplateEditor.prototype.onPortDragEnd.call(fake, {
+    nodeId: 'a', port: 'out', point, targetNodeId: null, emptyCanvas: false, event,
+  });
+  assert.equal(opened.length, 1, 'release over an edge, control, or outside the SVG is not empty canvas');
+});
+
+test('connected-node selection preserves direction and opens required configuration', async () => {
+  const calls = [];
+  const fake = {
+    model: {
+      addConnectedNode(type, options) {
+        calls.push(['add', type, options]);
+        const from = options.connectFrom || type;
+        const to = options.connectTo || type;
+        return { id: `${type}-id`, edge: { from, outcome: 'pass', to } };
+      },
+    },
+    mutate(operation) { return operation(); },
+    setSelection(value) { calls.push(['selection', value]); },
+    status(value) { calls.push(['status', value]); },
+    openNodeSettings(id) { calls.push(['settings', id]); return true; },
+    graph: { root: { focus() {} }, focusNode(id) { calls.push(['focus', id]); } },
+  };
+
+  assert.equal(ProcessTemplateEditor.prototype.addConnectedNodeType.call(
+    fake, 'task', { nodeId: 'origin', port: 'out' }, { x: 40, y: 55 },
+  ), 'task-id');
+  assert.deepEqual(calls[0], ['add', 'task', { x: 40, y: 55, connectFrom: 'origin' }]);
+  assert.ok(calls.some((entry) => entry[0] === 'settings' && entry[1] === 'task-id'));
+  assert.ok(calls.some((entry) => entry[0] === 'selection' && entry[1].id === 'task-id'));
+
+  calls.length = 0;
+  ProcessTemplateEditor.prototype.addConnectedNodeType.call(
+    fake, 'start', { nodeId: 'existing', port: 'in' }, { x: -3, y: 7 },
+  );
+  await Promise.resolve();
+  assert.deepEqual(calls[0], ['add', 'start', { x: -3, y: 7, connectTo: 'existing' }]);
+  assert.ok(calls.some((entry) => entry[0] === 'focus' && entry[1] === 'start-id'));
+  assert.equal(calls.some((entry) => entry[0] === 'settings'), false);
+});
+
+test('invalid end-node origin is rejected before the chooser opens', () => {
+  const statuses = [];
+  const fake = {
+    model: { node: () => ({ type: 'end' }), config: { canInsert: true } },
+    status: (...args) => statuses.push(args),
+  };
+  assert.equal(ProcessTemplateEditor.prototype.openConnectedNodeChooser.call(
+    fake, { nodeId: 'done', port: 'out' }, { x: 1, y: 2 }, {},
+  ), false);
+  assert.deepEqual(statuses, [['end node must not have outgoing edges', true]]);
+});
+
 test('command context reflects selection, editability, dirty state, and validation issues', () => {
   const edge = { from: 'a', outcome: 'pass', to: 'b' };
   const fake = {
