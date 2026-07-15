@@ -47,6 +47,23 @@ export function listParams(kind, q) {
   return s;
 }
 
+// fetchVisibleGroupListPages starts the windowed roster requests owned by the
+// Groups tab. Keeping the visibility gate beside the request construction makes
+// the no-poll contract directly testable: a hidden virtual group must not even
+// invoke get(). The returned tuple mirrors refresh.js's retired / conversations
+// / replaced Promise.all slots; disabled slots resolve to undefined so the
+// stitcher preserves the previous page without special casing.
+export function fetchVisibleGroupListPages(groups, onGroups, q, get) {
+  if (typeof get !== 'function') throw new TypeError('group list polling requires get');
+  const visible = groups?.visibility.value || {};
+  const request = (kind) => get('/api/' + kind + '?' + listParams(kind, q));
+  return [
+    (onGroups && visible.retired) ? request('retired') : Promise.resolve(undefined),
+    (onGroups && visible.conversations) ? request('conversations') : Promise.resolve(undefined),
+    (onGroups && visible.replaced) ? request('replaced') : Promise.resolve(undefined),
+  ];
+}
+
 // resetListOffsets zeroes every list's offset — used when the Groups-tab filter
 // query changes, so a search starts on the first page of its (server-filtered)
 // results rather than a stale deep page.

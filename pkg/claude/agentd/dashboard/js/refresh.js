@@ -6,7 +6,9 @@
 
 import { $, $$, isModifiedClick, esc, themeWords, shortId, relTime } from './helpers.js';
 import { dashPrefs } from './prefs.js';
-import { listParams, syncServedOffset, fetchListFull } from './list-paging.js';
+import {
+  fetchListFull, fetchVisibleGroupListPages, syncServedOffset,
+} from './list-paging.js';
 import { recordGroupInteraction } from './last-group.js';
 import {
   renderDashDefaultProfile, renderDashSandboxProfile,
@@ -116,13 +118,16 @@ export async function refresh() {
     // snapshot's export_jobs_active count regardless.
     const get = (path) => fetch(path, { credentials: 'same-origin' }).catch(() => null);
     const staticVersion = lastSnapshot?.static_version || '';
+    const [retiredRequest, convRequest, replacedRequest] = fetchVisibleGroupListPages(
+      groups, onGroups, groupsQ, get,
+    );
     const [snapR, retiredR, convR, replacedR, jobsR] = await Promise.all([
       fetch('/api/snapshot' + (staticVersion
         ? '?static_version=' + encodeURIComponent(staticVersion)
         : ''), { credentials: 'same-origin', cache: 'no-store' }),
-      (onGroups && groups?.visibility.value.retired) ? get('/api/retired?' + listParams('retired', groupsQ)) : Promise.resolve(undefined),
-      (onGroups && groups?.visibility.value.conversations) ? get('/api/conversations?' + listParams('conversations', groupsQ)) : Promise.resolve(undefined),
-      (onGroups && groups?.visibility.value.replaced) ? get('/api/replaced?' + listParams('replaced', groupsQ)) : Promise.resolve(undefined),
+      retiredRequest,
+      convRequest,
+      replacedRequest,
       jobsActive ? get('/api/jobs?' + jobs.params.value) : Promise.resolve(undefined),
     ]);
     // agentd answered this poll (any HTTP status) — we're connected. Clear the
