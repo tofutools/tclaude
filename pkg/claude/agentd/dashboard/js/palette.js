@@ -49,7 +49,7 @@ import {
 import {
   openRetireAgentDialog, openShutdownAgentDialog,
 } from './transaction-dialog-controller.js';
-import { openAgentSpawnModal } from './modal-spawn.js';
+import { openAgentSpawnModal } from './agent-spawn-controller.js';
 import { openProfilesManageModal } from './modal-profiles.js';
 import { openRolesManageModal } from './modal-roles.js';
 import { openGroupCreateModal } from './group-create-controller.js';

@@ -5,12 +5,8 @@ import (
 	"testing"
 )
 
-// The spawn modal's "Sync worktree branch with name" checkbox lives
-// entirely in dashboard.html's embedded JS — there's no server code
-// path to exercise with a flow test. This guards the markup/JS against
-// being silently dropped in a future refactor of that file: it asserts
-// the checkbox exists and defaults on, the sync helpers are present,
-// and the events that drive (and detach) the sync are actually wired.
+// The spawn island's "Sync worktree branch with name" checkbox has no server
+// path, so pin the controlled field and its pure model transitions.
 func TestDashboardHTML_WorktreeNameSyncWired(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
@@ -20,35 +16,28 @@ func TestDashboardHTML_WorktreeNameSyncWired(t *testing.T) {
 	}
 
 	// The checkbox exists and is auto-checked.
-	must(`<input id="agent-spawn-wt-sync" type="checkbox" checked />`,
+	must(`<input id="agent-spawn-wt-sync" type="checkbox" checked=${draft.syncWorktree}`,
 		"name-sync checkbox renders, default-on")
 
-	// Sync helpers.
-	must("function applyWtSync(", "checkbox -> worktree picker bridge")
-	must("function spawnWtLoad(", "picker reload that re-applies the sync")
+	// The default lives in the draft and all synchronization is pure.
+	must("syncWorktree: true", "draft defaults synchronization on")
+	must("export function syncSpawnWorktree(", "checkbox -> worktree picker bridge")
 
 	// The sync only works against a usable git repo — the checkbox is
 	// disabled to match the worktree <select>.
-	must("syncEl.disabled = !usable;", "checkbox gated on a valid CWD/repo")
+	must("disabled=${busy || !worktreeUsable}", "checkbox gated on a valid CWD/repo")
 
 	// Editing the name mirrors into the worktree branch; toggling the
 	// checkbox re-applies the sync.
-	must("$('#agent-spawn-name').addEventListener('input', applyWtSync);",
+	must("syncSpawnWorktree({ ...before, name: value }, worktrees.isRepo)",
 		"name edits drive the sync")
-	must("$('#agent-spawn-wt-sync').addEventListener('change', applyWtSync);",
+	must("syncSpawnWorktree({ ...before, syncWorktree: event.currentTarget.checked }, worktreeUsable)",
 		"toggling the checkbox re-applies the sync")
 
 	// Hand-editing the branch or picking a worktree by hand detaches
 	// the sync so it stops clobbering the human's choice.
-	must("$('#agent-spawn-wt-branch').addEventListener('input', () => {",
+	must("worktreeBranch: event.currentTarget.value, syncWorktree: false",
 		"manual branch edit turns the sync off")
-	must("if (e.target.value !== WT_NEW) $('#agent-spawn-wt-sync').checked = false;",
+	must("syncWorktree: value === WT_NEW ? draft.syncWorktree : false",
 		"manual worktree choice turns the sync off")
-
-	// Every spawn-side picker reload goes through spawnWtLoad so the
-	// checkbox state stays consistent — the only wtLoad('agent-spawn')
-	// left is the one inside spawnWtLoad itself.
-	if n := strings.Count(dashboardAssets, "wtLoad('agent-spawn'"); n != 1 {
-		t.Errorf("dashboard.html: want exactly 1 wtLoad('agent-spawn', ...) (inside spawnWtLoad); got %d — other spawn reloads must go through spawnWtLoad", n)
-	}
 }
