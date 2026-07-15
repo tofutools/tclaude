@@ -593,100 +593,6 @@
     </div>
   </div>
 </div>
-<div class="modal-overlay" id="sudo-pick-agent-modal">
-  <div class="add-member-modal" role="dialog" aria-modal="true" aria-labelledby="sudo-pick-agent-title">
-    <h3 id="sudo-pick-agent-title">Grant sudo to <span class="muted"><span class="theme-copy-regular">— pick agent</span><span class="theme-copy-wizard">— pick familiar</span></span></h3>
-    <input id="sudo-pick-agent-search" class="add-member-search" type="text" placeholder="Filter by title / role / descr / conv-id…" autocomplete="off" spellcheck="false" />
-    <div class="add-member-list" id="sudo-pick-agent-list"></div>
-    <div class="add-member-foot">
-      <label title="Include offline / archived agents (the daemon will still grant; the agent will see the slug on next wake)">
-        <input id="sudo-pick-agent-all" type="checkbox" />Include offline / archived
-      </label>
-      <span class="spacer"></span>
-      <span><kbd>↑↓</kbd> nav · <kbd>Enter</kbd> pick · <kbd>Esc</kbd> close</span>
-    </div>
-  </div>
-</div>
-<div class="modal-overlay" id="sudo-grant-modal">
-  <div class="sudo-grant-modal" role="dialog" aria-modal="true" aria-labelledby="sudo-grant-title">
-    <h3 id="sudo-grant-title">Grant sudo</h3>
-    <p class="sudo-grant-hint"><span class="theme-copy-regular">Proactively elevate an agent for a bounded window.</span><span class="theme-copy-wizard">Bestow a bounded sudo boon on a familiar.</span> Same blocklist + duration cap as the agent-initiated path; granted_by records <code>&lt;human-dashboard&gt;:proactive</code> on the audit row.</p>
-    <label class="sudo-grant-row">
-      <span class="sudo-grant-label">Conv</span>
-      <input id="sudo-grant-conv" type="text" placeholder="title / conv-id / 8+-char prefix" autocomplete="off" spellcheck="false" />
-    </label>
-    <label class="sudo-grant-row">
-      <span class="sudo-grant-label">Slugs</span>
-      <div class="sudo-grant-slugs-wrap">
-        <div class="sudo-grant-slugs-toolbar">
-          <button type="button" id="sudo-grant-select-all" title="Select every slug except blocklisted ones">all</button>
-          <button type="button" id="sudo-grant-select-none" title="Clear the slug selection">none</button>
-        </div>
-        <div id="sudo-grant-slugs" class="sudo-grant-slugs"></div>
-      </div>
-    </label>
-    <label class="sudo-grant-row">
-      <span class="sudo-grant-label">Duration</span>
-      <input id="sudo-grant-duration" type="text" placeholder="5m (default), 30m, 1h" autocomplete="off" spellcheck="false" />
-    </label>
-    <label class="sudo-grant-row">
-      <span class="sudo-grant-label">Reason</span>
-      <input id="sudo-grant-reason" type="text" placeholder="optional — surfaced in the audit row" autocomplete="off" spellcheck="false" />
-    </label>
-    <div class="sudo-grant-error" id="sudo-grant-error"></div>
-    <div class="modal-buttons">
-      <button id="sudo-grant-cancel">Cancel</button>
-      <button id="sudo-grant-submit" class="primary">Grant</button>
-    </div>
-  </div>
-</div>
-<div class="modal-overlay" id="perm-edit-modal">
-  <div class="perm-edit-modal" role="dialog" aria-modal="true" aria-labelledby="perm-edit-title">
-    <!-- Title copy swaps per theme (pure-CSS span swap, same mechanism as the
-         Enchant dialog's title). #694 gave this editor its arcane chrome; this
-         adds the naming: a plain "Edit permanent permissions" normally, an
-         arcane "📕 The Grimoire" in 🧙 wizard mode — the tome this modal's opener
-         ("Grimoire…" on the Enchant dialog) promises. -->
-    <h3 id="perm-edit-title"><span class="perm-edit-title-regular">Edit permanent permissions</span><span class="perm-edit-title-wizard">📕 The Grimoire</span></h3>
-    <div class="perm-edit-banner" id="perm-edit-banner">
-      <strong>PERMANENT</strong> — these per-agent overrides persist until you change
-      them again. They are <em>not</em> the time-bounded “+ sudo” elevation: a sudo grant
-      expires on its own, an override here does not. <strong>Grant</strong> adds a slug,
-      <strong>Deny</strong> blocks one the global defaults would otherwise give, and
-      <strong>Default</strong> inherits the global default.
-    </div>
-    <p class="perm-edit-subtitle" id="perm-edit-subtitle"></p>
-    <div class="perm-edit-owner-note" id="perm-edit-owner-note" hidden></div>
-    <div class="perm-edit-toolbar">
-      <input id="perm-edit-filter" type="text" placeholder="Filter slugs…" autocomplete="off" spellcheck="false" />
-      <button type="button" id="perm-edit-reset" title="Set every slug back to Default (inherit)"><span class="pe-btn-regular">all default</span><span class="pe-btn-wizard">unbind all</span></button>
-    </div>
-    <div id="perm-edit-list" class="perm-edit-list"></div>
-    <div class="sudo-grant-error" id="perm-edit-error"></div>
-    <!-- Secondary button labels swap per theme (same span-swap as the title):
-         all default → unbind all, Cancel → Dispel under body.wizard. The Save
-         primary (already a gilded lever from #694) is re-lettered to "✒ Bind!"
-         via a ::before glyph (see the wizard CSS block). -->
-    <div class="modal-buttons">
-      <button id="perm-edit-cancel"><span class="pe-btn-regular">Cancel</span><span class="pe-btn-wizard">Dispel</span></button>
-      <button id="perm-edit-submit" class="primary">Save</button>
-    </div>
-  </div>
-</div>
-<div class="modal-overlay" id="cron-pick-target-modal">
-  <div class="add-member-modal" role="dialog" aria-modal="true" aria-labelledby="cron-pick-target-title">
-    <h3 id="cron-pick-target-title">Pick target <span class="muted"><span class="theme-copy-regular">— agent</span><span class="theme-copy-wizard">— familiar</span></span></h3>
-    <input id="cron-pick-target-search" class="add-member-search" type="text" placeholder="Filter by title / role / descr / conv-id / group…" autocomplete="off" spellcheck="false" />
-    <div class="add-member-list" id="cron-pick-target-list"></div>
-    <div class="add-member-foot">
-      <label title="Include offline / archived agents in the candidate pool">
-        <input id="cron-pick-target-all" type="checkbox" />Include offline / archived
-      </label>
-      <span class="spacer"></span>
-      <span><kbd>↑↓</kbd> nav · <kbd>Enter</kbd> pick · <kbd>Esc</kbd> close</span>
-    </div>
-  </div>
-</div>
 <div class="modal-overlay" id="cron-create-modal">
   <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="cron-create-title">
     <h3 id="cron-create-title">Schedule a cron job</h3>
@@ -706,8 +612,8 @@
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Target</span>
-      <!-- Solo/group target picker — markup mounted by the shared
-           targetPicker module (see bindTargetPicker('cron-create')). -->
+      <!-- Preact-owned controlled solo/group target picker. Legacy cron keeps
+           scheduling ownership and talks to this root only via the controller. -->
       <div class="cron-create-target" id="cron-create-target-mount"></div>
     </label>
     <label class="cron-create-row" id="cron-create-role-row" style="display:none">
@@ -754,91 +660,6 @@
       <span class="spacer"></span>
       <button id="cron-create-save-another" class="secondary" type="button" title="Save and reset the form so you can create another in the same sitting">Save &amp; create another</button>
       <button id="cron-create-submit" class="primary" type="button">Create</button>
-    </div>
-  </div>
-</div>
-<div class="modal-overlay" id="message-create-modal">
-  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="message-create-title">
-    <h3 id="message-create-title">Send a message</h3>
-    <p id="message-create-desc" class="modal-hint"><span class="theme-copy-regular">Delivers one immediate message to a single agent, or multicasts it to every member of a group.</span><span class="theme-copy-wizard">Delivers one immediate missive to a familiar, or multicasts it to every familiar in a party.</span></p>
-    <label class="cron-create-row">
-      <span class="cron-create-label">From</span>
-      <div class="cron-create-target">
-        <div class="cron-target-input-row">
-          <input id="message-create-from" type="text" placeholder="sender — title / conv-id / 8+-char prefix" autocomplete="off" spellcheck="false" />
-          <button type="button" id="message-create-from-pick" title="Pick from the agent / familiar list">🔍</button>
-        </div>
-      </div>
-    </label>
-    <label class="cron-create-row" id="message-create-target-row">
-      <span class="cron-create-label"><span class="theme-copy-regular">Target</span><span class="theme-copy-wizard">Recipient</span></span>
-      <!-- Solo/group target picker — markup mounted by the shared
-           targetPicker module (see bindTargetPicker('message-create')). -->
-      <div class="cron-create-target" id="message-create-target-mount"></div>
-    </label>
-    <!-- Group-scoped recipient selector. Shown instead of the Target
-         picker when the modal is opened from a specific group's ✉
-         button: the modal locks to that group and lists its members
-         as checkboxes, all ticked by default so "message the whole
-         group" stays one click. Unticking narrows the send to the
-         chosen subset (see submitMessageForm). -->
-    <div class="cron-create-row" id="message-create-group-row" style="display:none">
-      <span class="cron-create-label">Recipients</span>
-      <div class="cron-create-target">
-        <p class="cleanup-hint" id="message-create-group-hint"></p>
-        <div class="cleanup-toolbar">
-          <button type="button" id="message-create-members-all">select all</button>
-          <button type="button" id="message-create-members-none">select none</button>
-          <span class="spacer"></span>
-          <span class="cleanup-count" id="message-create-members-count"></span>
-        </div>
-        <div class="cleanup-list" id="message-create-members"></div>
-      </div>
-    </div>
-    <label class="cron-create-row">
-      <span class="cron-create-label">Subject</span>
-      <input id="message-create-subject" type="text" placeholder="optional, shows in inbox listings" maxlength="100" autocomplete="off" spellcheck="false" />
-    </label>
-    <label class="cron-create-row">
-      <span class="cron-create-label"><span class="theme-copy-regular">Body</span><span class="theme-copy-wizard">Missive</span></span>
-      <textarea id="message-create-body" rows="4" placeholder="message text (required)" spellcheck="false"></textarea>
-    </label>
-    <div class="cron-create-error" id="message-create-error"></div>
-    <div class="modal-buttons">
-      <button id="message-create-cancel" type="button"><span class="theme-copy-regular">Cancel</span><span class="theme-copy-wizard">Dispel</span></button>
-      <span class="spacer"></span>
-      <button id="message-create-submit" class="primary" type="button"><span class="theme-copy-regular">Send</span><span class="theme-copy-wizard">✒ Send missive</span></button>
-    </div>
-  </div>
-</div>
-<!-- Reply-to-a-human-notification dialog. Opened from the Messages tab's
-     Human folder reader (the `reply` button → row-actions.js msg-reply →
-     modal-human-reply.js). Sends the operator's answer back to the agent
-     that raised the notification. The title swaps to the arcane
-     "✒ Answer the familiar" in wizard mode via the pure-CSS span pair,
-     the same idiom as the group-create / Summon dialog titles. -->
-<div class="modal-overlay" id="human-reply-modal">
-  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="human-reply-title">
-    <h3 id="human-reply-title"><span class="human-reply-title-regular">Reply to agent</span><span class="human-reply-title-wizard">✒ Answer the familiar</span></h3>
-    <p id="human-reply-desc" style="margin:4px 0; font-size:12px; color:#7d8590">Sends your answer to this agent's inbox and nudges its terminal. Delivered as a message from you, the operator.</p>
-    <label class="cron-create-row">
-      <span class="cron-create-label">To</span>
-      <div class="cron-create-target">
-        <div id="human-reply-to"></div>
-        <!-- Live sender online/offline state — modal-human-reply.js paints
-             it (and gates Send on it) on open and every snapshot tick. -->
-        <div id="human-reply-status" class="human-reply-status"></div>
-      </div>
-    </label>
-    <label class="cron-create-row">
-      <span class="cron-create-label">Reply</span>
-      <textarea id="human-reply-body" rows="4" placeholder="your reply (required) — ⌘/Ctrl+Enter to send" spellcheck="false"></textarea>
-    </label>
-    <div class="cron-create-error" id="human-reply-error"></div>
-    <div class="modal-buttons">
-      <button id="human-reply-cancel" type="button">Cancel</button>
-      <span class="spacer"></span>
-      <button id="human-reply-submit" class="primary" type="button">Send reply</button>
     </div>
   </div>
 </div>
