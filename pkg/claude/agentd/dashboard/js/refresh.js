@@ -2615,89 +2615,6 @@ function openDeleteGroupModal(group) {
   setTimeout(() => submitBtn.focus(), 0);
 }
 
-// deleteAgentModal is the per-row "delete forever" confirm. Beyond
-// confirm/cancel it offers an opt-in to also remove the agent's git
-// worktree. The worktree's status is fetched async from
-// /api/agents/{conv}/worktree: a removable worktree gets a checked,
-// enabled checkbox; a main-repo or shared worktree gets a disabled,
-// greyed one explaining why it's kept; an agent with no worktree
-// shows no row at all. Resolves to null (cancelled) or
-// {deleteWorktree: bool}.
-function deleteAgentModal(conv, label) {
-  return new Promise(resolve => {
-    const overlay = $('#delete-agent-modal');
-    const wtRow = $('#delete-agent-wt-row');
-    const wtCb = $('#delete-agent-wt');
-    const wtLabel = $('#delete-agent-wt-label');
-    const okBtn = $('#delete-agent-ok');
-    const cancelBtn = $('#delete-agent-cancel');
-    $('#delete-agent-body').innerHTML = themeWords(
-      'Wipes the conversation history (.jsonl) from disk and drops every group / membership / ownership / permission row for this agent. This cannot be undone.',
-      'Burns the conversation scroll (.jsonl) and erases every party membership, ownership mark, and boon bound to this familiar. This cannot be undone.',
-    );
-    $('#delete-agent-meta').textContent = label || conv;
-    // Worktree row hidden until the fetch tells us there is one.
-    wtRow.style.display = 'none';
-    wtRow.classList.remove('disabled');
-    wtCb.checked = false;
-    wtCb.disabled = false;
-
-    // active guards the background worktree fetch below: once the modal
-    // is closed (and possibly reopened for another agent) a late
-    // response must not mutate the now-foreign modal DOM.
-    let active = true;
-    const cleanup = (result) => {
-      active = false;
-      overlay.classList.remove('show');
-      okBtn.removeEventListener('click', onOk);
-      cancelBtn.removeEventListener('click', onCancel);
-      overlay.removeEventListener('click', onOverlay);
-      document.removeEventListener('keydown', onKey);
-      resolve(result);
-    };
-    const onOk = () => cleanup({ deleteWorktree: wtCb.checked && !wtCb.disabled });
-    const onCancel = () => cleanup(null);
-    const onOverlay = (e) => { if (e.target === overlay) cleanup(null); };
-    const onKey = (e) => { if (e.key === 'Escape') cleanup(null); };
-    okBtn.addEventListener('click', onOk);
-    cancelBtn.addEventListener('click', onCancel);
-    overlay.addEventListener('click', onOverlay);
-    document.addEventListener('keydown', onKey);
-    overlay.classList.add('show');
-    okBtn.focus();
-
-    // Resolve the worktree in the background — the modal is already
-    // usable (delete works) before this lands. If the human clicks
-    // through before it resolves the worktree is simply kept, the
-    // safe default.
-    fetch(`/api/agents/${encodeURIComponent(conv)}/worktree`, { credentials: 'same-origin' })
-      .then(r => r.ok ? r.json() : null)
-      .then(wt => {
-        if (!active) return;
-        if (!wt || wt.kind === 'none' || !wt.path) return;
-        wtRow.style.display = '';
-        const pathTxt = wt.path + (wt.branch ? ' · ' + wt.branch : '');
-        if (wt.removable) {
-          wtCb.checked = true;
-          wtCb.disabled = false;
-          wtRow.classList.remove('disabled');
-          wtLabel.innerHTML = 'Also delete the git worktree '
-            + `<span class="wt-note">${esc(pathTxt)} — directory removed, branch kept</span>`;
-        } else {
-          wtCb.checked = false;
-          wtCb.disabled = true;
-          wtRow.classList.add('disabled');
-          const why = wt.kind === 'main' ? 'the repo’s main worktree, never removed'
-            : wt.shared ? 'shared with another agent'
-            : 'not removable';
-          wtLabel.innerHTML = 'Git worktree kept '
-            + `<span class="wt-note">${esc(pathTxt)} — ${esc(why)}</span>`;
-        }
-      })
-      .catch(() => {});
-  });
-}
-
 // ---- 🧹 Cleanup modal ---------------------------------------------
 //
 // CLEANUP_CATS — the three conversation categories the 'agents'-mode
@@ -3372,6 +3289,5 @@ export {
   openRetirePreview, openRetireUngroupedPreview, openDeleteRetiredPreview, openWorktreeCleanup,
   openDeleteGroupModal,
   groupMembersByStatus, countGroupMembersByStatus, countUngroupedAgents,
-  deleteAgentModal,
   resumeAgentReq,
 };
