@@ -32,7 +32,7 @@ import {
   chooseTerminalDirectory, openAgentExportDialog, openCloneAgentDialog,
   openNestGroupDialog, openReincarnateAgentDialog, openTaskLinkDialog,
 } from './action-dialog-controller.js';
-import { openTermModal } from './modal-term.js';
+import { openTermModal } from './terminals-tab.js';
 import {
   openTerminalPane, closeTerminalsForConvs, focusTerminalForConv,
   openWebWindowPane, openWebTermPane, openGroupWebTermPane,
