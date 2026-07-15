@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -58,6 +59,131 @@ func TestAssessUpgradeNeededClassifiesAndSortsLegacyDrainBlockers(t *testing.T) 
 		if needed.ActiveLegacyIDs[i].Kind != want {
 			t.Fatalf("active ID %d kind = %q, want %q", i, needed.ActiveLegacyIDs[i].Kind, want)
 		}
+	}
+}
+
+func TestAssessUpgradeNeededStableCheckpointWaitTimerIdentityCompatibility(t *testing.T) {
+	const checkpoint = `{
+  "stateSchemaVersion": 6,
+  "runId": "run",
+  "status": "running",
+  "originalTemplateRef": "demo@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "currentTemplateRef": "demo@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "nodes": {},
+  "waits": {
+    "wait-b": {"nodeId": "node-b", "kind": "human", "status": "pending"},
+    "wait-a": {"id": "", "nodeId": "node-a", "kind": "agent", "status": "pending"}
+  },
+  "timers": {
+    "timer-b": {"nodeId": "node-b", "status": "pending"},
+    "timer-a": {"id": "", "nodeId": "node-a", "status": "pending"}
+  },
+  "lastLogSeq": 0,
+  "logChecksum": ""
+}`
+	decoded, err := PredecodeLegacyState([]byte(checkpoint))
+	if err != nil {
+		t.Fatal(err)
+	}
+	needed, err := AssessUpgradeNeeded(
+		t.Context(), decoded.CanonicalJSON, decoded.State,
+		"demo@sha256:"+strings.Repeat("a", 64), strings.Repeat("b", 64),
+		decoded.AdminRecords, decoded.AdminResolutions,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []LegacyActiveID{
+		{Kind: LegacyActiveTimer, ID: "timer-a"},
+		{Kind: LegacyActiveTimer, ID: "timer-b"},
+		{Kind: LegacyActiveWait, ID: "wait-a"},
+		{Kind: LegacyActiveWait, ID: "wait-b"},
+	}
+	if !slices.Equal(needed.ActiveLegacyIDs, want) {
+		t.Fatalf("active IDs = %#v, want %#v", needed.ActiveLegacyIDs, want)
+	}
+}
+
+func TestAssessUpgradeNeededStableCheckpointRejectsWaitTimerIdentityMismatch(t *testing.T) {
+	const checkpoint = `{
+  "stateSchemaVersion": 6,
+  "runId": "run",
+  "status": "running",
+  "originalTemplateRef": "demo@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "currentTemplateRef": "demo@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "nodes": {},
+  "lastLogSeq": 0,
+  "logChecksum": ""
+}`
+	for _, tc := range []struct {
+		name, records, want string
+	}{
+		{
+			name:    "wait",
+			records: `"waits":{"wait-key":{"id":"wait-record","nodeId":"node","kind":"human","status":"pending"}},`,
+			want:    `legacy wait map key "wait-key" differs from embedded identity "wait-record"`,
+		},
+		{
+			name:    "timer",
+			records: `"timers":{"timer-key":{"id":"timer-record","nodeId":"node","status":"pending"}},`,
+			want:    `legacy timer map key "timer-key" differs from embedded identity "timer-record"`,
+		},
+		{
+			name:    "satisfied wait",
+			records: `"waits":{"wait-key":{"id":"wait-record","nodeId":"node","kind":"human","status":"satisfied"}},`,
+			want:    `legacy wait map key "wait-key" differs from embedded identity "wait-record"`,
+		},
+		{
+			name:    "satisfied timer",
+			records: `"timers":{"timer-key":{"id":"timer-record","nodeId":"node","status":"satisfied"}},`,
+			want:    `legacy timer map key "timer-key" differs from embedded identity "timer-record"`,
+		},
+		{
+			name:    "satisfied wait empty key",
+			records: `"waits":{"":{"nodeId":"node","kind":"human","status":"satisfied"}},`,
+			want:    `legacy wait map key "" is empty or noncanonical`,
+		},
+		{
+			name:    "satisfied wait noncanonical key",
+			records: `"waits":{" wait-key ":{"id":" wait-key ","nodeId":"node","kind":"human","status":"satisfied"}},`,
+			want:    `legacy wait map key " wait-key " is empty or noncanonical`,
+		},
+		{
+			name:    "satisfied timer empty key",
+			records: `"timers":{"":{"nodeId":"node","status":"satisfied"}},`,
+			want:    `legacy timer map key "" is empty or noncanonical`,
+		},
+		{
+			name:    "satisfied timer noncanonical key",
+			records: `"timers":{" timer-key ":{"id":" timer-key ","nodeId":"node","status":"satisfied"}},`,
+			want:    `legacy timer map key " timer-key " is empty or noncanonical`,
+		},
+		{
+			name:    "sorted wait traversal",
+			records: `"waits":{"wait-z":{"id":"record-z","nodeId":"node","kind":"human","status":"satisfied"},"wait-a":{"id":"record-a","nodeId":"node","kind":"human","status":"satisfied"}},`,
+			want:    `legacy wait map key "wait-a" differs from embedded identity "record-a"`,
+		},
+		{
+			name:    "sorted timer traversal",
+			records: `"timers":{"timer-z":{"id":"record-z","nodeId":"node","status":"satisfied"},"timer-a":{"id":"record-a","nodeId":"node","status":"satisfied"}},`,
+			want:    `legacy timer map key "timer-a" differs from embedded identity "record-a"`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := strings.Replace(checkpoint, `"nodes": {},`, `"nodes": {},`+tc.records, 1)
+			decoded, err := PredecodeLegacyState([]byte(fixture))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = AssessUpgradeNeeded(
+				t.Context(), decoded.CanonicalJSON, decoded.State,
+				"demo@sha256:"+strings.Repeat("a", 64), strings.Repeat("b", 64),
+				decoded.AdminRecords, decoded.AdminResolutions,
+			)
+			if err == nil || err.Error() != tc.want {
+				t.Fatalf("error = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 
