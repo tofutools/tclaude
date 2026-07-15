@@ -80,6 +80,39 @@ test('Config load populates representative fields, conditions, notices, and roun
   await mounted.unmount();
 });
 
+test('Config treats agent directory parent mounting as default-on with an explicit opt-out', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createConfigState }, { ConfigApp }, adapter] = await Promise.all([
+    harness.importDashboardModule('js/config-state.js'),
+    harness.importDashboardModule('js/config-island.js'),
+    harness.importDashboardModule('js/config-form-adapter.js'),
+  ]);
+  let raw = '{}';
+  const state = createConfigState({ activeTab: harness.signals.signal('groups') });
+  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} dependencies=${{
+    fetchImpl: async () => ({ ok: true, json: async () => ({ raw }) }),
+  }} />`);
+
+  await adapter.loadConfigTab();
+  const checkbox = mounted.container.querySelector('#cfg-feature-agent-dirs-mount-parent');
+  assert.equal(checkbox.checked, true, 'absent key loads as checked');
+  assert.equal(adapter.assembleConfig().features?.agent_dirs_mount_parent, undefined,
+    'checked default stays omitted');
+
+  raw = JSON.stringify({ features: { agent_dirs_mount_parent: false } });
+  await adapter.loadConfigTab();
+  assert.equal(checkbox.checked, false, 'explicit false loads as unchecked');
+  assert.equal(adapter.assembleConfig().features.agent_dirs_mount_parent, false,
+    'unchecked persists the explicit opt-out');
+
+  raw = JSON.stringify({ features: { agent_dirs_mount_parent: true } });
+  await adapter.loadConfigTab();
+  assert.equal(checkbox.checked, true, 'explicit true loads as checked');
+  assert.equal(adapter.assembleConfig().features?.agent_dirs_mount_parent, undefined,
+    'checked canonicalizes explicit true to the omitted default');
+  await mounted.unmount();
+});
+
 test('Config save validates, confirms, writes against its baseline, and clears dirty state', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createConfigState }, { ConfigApp }, adapter] = await Promise.all([

@@ -532,7 +532,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       <div class="cfg-field">
         <span class="cfg-label">Agent dirs: mount parent</span>
         <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-feature-agent-dirs-mount-parent" /> mount the shared parent root of <strong>agent-owned directories</strong> read-write</label>
-        <span class="cfg-hint">Changes how a profile's <code>agent_directories</code> are granted to the sandbox. Off: each directory is granted individually — the agent can write inside each but cannot delete it. On: the shared parent root is granted once, so the agent can create, rewrite, and delete its own env-var'd directories. Takes effect on the next launch/resume. Stored as <code>features.agent_dirs_mount_parent</code>.</span>
+        <span class="cfg-hint">On by default: the shared parent root is granted once, so the agent can create, rewrite, and delete its own env-var'd directories. Uncheck to opt out and restore per-directory grants — the agent can write inside each directory but cannot delete it. Takes effect on the next launch/resume. Stored as <code>features.agent_dirs_mount_parent</code>.</span>
       </div>
     </div>
 
