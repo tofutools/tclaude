@@ -54,4 +54,3 @@ export function readCronTargetPicker() {
 export function setCronTargetModeListener(listener) {
   return requireController().setCronTargetModeListener(listener);
 }
-
