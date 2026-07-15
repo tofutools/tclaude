@@ -151,6 +151,40 @@ function RetireWorktreeChoice({ worktree, shutdown, checked, disabled, onChange 
   `;
 }
 
+function DeleteWorktreeChoice({ worktree, checked, disabled, onChange }) {
+  if (!worktree?.path || worktree.kind === 'none') return null;
+  const path = worktreePath(worktree);
+  if (!worktree.removable) {
+    let reason = html`not removable`;
+    if (worktree.kind === 'main') reason = html`the repo’s main worktree, never removed`;
+    else if (worktree.shared) {
+      reason = html`<${Words} plain="shared with another agent" wizard="shared with another familiar"/>`;
+    }
+    return html`
+      <label class="delete-agent-wt disabled" id="delete-agent-wt-row">
+        <input type="checkbox" id="delete-agent-wt" checked=${false} disabled />
+        <span id="delete-agent-wt-label">Git worktree kept${' '}
+          <span class="wt-note">${path} — ${reason}</span>
+        </span>
+      </label>
+    `;
+  }
+  return html`
+    <label class=${`delete-agent-wt${disabled ? ' disabled' : ''}`} id="delete-agent-wt-row">
+      <input
+        type="checkbox"
+        id="delete-agent-wt"
+        checked=${checked}
+        disabled=${disabled}
+        onChange=${onChange}
+      />
+      <span id="delete-agent-wt-label">Also delete the git worktree${' '}
+        <span class="wt-note">${path} — directory removed, branch kept</span>
+      </span>
+    </label>
+  `;
+}
+
 function RetireAgentDialog({ descriptor, actions, confirmDiscard }) {
   const [shutdown, setShutdown] = useState(true);
   const [deleteWorktree, setDeleteWorktree] = useState(false);
@@ -346,6 +380,128 @@ function ShutdownAgentDialog({ descriptor, actions, confirmDiscard }) {
   `;
 }
 
+function DeleteAgentDialog({ descriptor, actions, confirmDiscard }) {
+  const [worktree, setWorktree] = useState(null);
+  const [deleteWorktree, setDeleteWorktree] = useState(false);
+  const [probing, setProbing] = useState(true);
+  const [probeError, setProbeError] = useState('');
+  const [probeVersion, setProbeVersion] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [mutationError, setMutationError] = useState('');
+  const [submittedRequest, setSubmittedRequest] = useState(null);
+  const activeRef = useRef(true);
+  const submittedRef = useRef(null);
+  const probeGeneration = useRef(0);
+  const probeAbort = useRef(null);
+  submittedRef.current = submittedRequest;
+
+  useEffect(() => () => { activeRef.current = false; }, []);
+  useEffect(() => {
+    const generation = ++probeGeneration.current;
+    const controller = new AbortController();
+    probeAbort.current = controller;
+    setProbing(true);
+    setProbeError('');
+    setWorktree(null);
+    setDeleteWorktree(false);
+    actions.loadAgentWorktree(descriptor.agent, { signal: controller.signal }).then(
+      (next) => {
+        if (!activeRef.current || controller.signal.aborted
+          || generation !== probeGeneration.current || submittedRef.current) return;
+        setWorktree(next || null);
+        setDeleteWorktree(next?.removable === true);
+        setProbing(false);
+      },
+      (cause) => {
+        if (!activeRef.current || controller.signal.aborted
+          || generation !== probeGeneration.current || submittedRef.current) return;
+        setWorktree(null);
+        setDeleteWorktree(false);
+        setProbing(false);
+        if (cause?.name !== 'AbortError') {
+          setProbeError(`Worktree check failed: ${cause?.message || cause}`);
+        }
+      },
+    );
+    return () => {
+      controller.abort();
+      if (probeAbort.current === controller) probeAbort.current = null;
+    };
+  }, [descriptor.agent, probeVersion]);
+
+  const retryProbe = () => {
+    if (busy || probing || submittedRequest) return;
+    setProbeVersion((current) => current + 1);
+  };
+  const submit = async () => {
+    if (busy) return;
+    const request = submittedRequest || Object.freeze({
+      agent: descriptor.agent,
+      label: descriptor.label,
+      deleteWorktree: worktree?.removable === true && deleteWorktree === true,
+    });
+    if (!submittedRequest) {
+      submittedRef.current = request;
+      setSubmittedRequest(request);
+      probeAbort.current?.abort();
+    }
+    setProbeError('');
+    setMutationError('');
+    setBusy(true);
+    try {
+      await actions.deleteAgent(request);
+    } catch (cause) {
+      if (activeRef.current) setMutationError(cause?.message || String(cause));
+    } finally {
+      if (activeRef.current) setBusy(false);
+    }
+  };
+
+  const retrying = !!submittedRequest;
+  const title = html`<span class="theme-copy-regular">Permanently delete this agent?</span><span class="theme-copy-wizard">Permanently erase this familiar?</span>`;
+  const initialLabel = html`<span class="theme-copy-regular">Delete forever</span><span class="theme-copy-wizard">Erase forever</span>`;
+  return html`
+    <${TransactionDialogFrame}
+      id="delete-agent-modal"
+      labelledby="delete-agent-title"
+      title=${title}
+      meta=${descriptor.label || descriptor.agent}
+      metaID="delete-agent-meta"
+      error=${mutationError || probeError}
+      errorID="delete-agent-error"
+      busy=${busy}
+      primaryLabel=${retrying ? 'Retry delete' : initialLabel}
+      busyLabel=${html`<span class="btn-spinner" aria-hidden="true"></span>${retrying ? 'Retrying delete…' : 'Deleting…'}`}
+      submitID="delete-agent-ok"
+      cancelID="delete-agent-cancel"
+      onClose=${actions.close}
+      onSubmit=${submit}
+      confirmDiscard=${confirmDiscard}
+    >
+      <p><${Words}
+        plain="Wipes the conversation history (.jsonl) from disk and drops every group / membership / ownership / permission row for this agent. This cannot be undone."
+        wizard="Burns the conversation scroll (.jsonl) and erases every party membership, ownership mark, and boon bound to this familiar. This cannot be undone."
+      /></p>
+      <${DeleteWorktreeChoice}
+        worktree=${worktree}
+        checked=${deleteWorktree}
+        disabled=${busy || retrying}
+        onChange=${(event) => {
+          if (!busy && !retrying) setDeleteWorktree(event.currentTarget.checked);
+        }}
+      />
+      ${probeError && !retrying ? html`<div class="transaction-probe-retry">
+        <button
+          id="delete-agent-wt-retry"
+          type="button"
+          disabled=${probing || busy}
+          onClick=${retryProbe}
+        >Retry worktree check</button>
+      </div>` : null}
+    </${TransactionDialogFrame}>
+  `;
+}
+
 export function TransactionDialogApp({ state, actions, confirmDiscard }) {
   const current = state.dialog.value;
   if (!current) return null;
@@ -359,6 +515,14 @@ export function TransactionDialogApp({ state, actions, confirmDiscard }) {
   }
   if (current.descriptor.kind === 'shutdown-agent') {
     return html`<${ShutdownAgentDialog}
+      key=${current.key}
+      descriptor=${current.descriptor}
+      actions=${actions}
+      confirmDiscard=${confirmDiscard}
+    />`;
+  }
+  if (current.descriptor.kind === 'delete-agent') {
+    return html`<${DeleteAgentDialog}
       key=${current.key}
       descriptor=${current.descriptor}
       actions=${actions}
