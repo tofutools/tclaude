@@ -1,6 +1,6 @@
 // group-activity.js — the deduped "activity bot" indicator.
 //
-// A group's <summary> header (render.js) and the top bar (the
+// A group's <summary> header (groups-list.js) and the top bar (the
 // #global-activity slot) both want a glanceable answer to "is anything
 // happening in here?" — especially when a group is FOLDED, where the
 // per-member rows (and their state pills) are hidden behind the
@@ -22,7 +22,7 @@
 // below emit ONLY fixed class names, emoji and integer counts — never any
 // caller-supplied string — so the output needs no escaping and stays
 // injection-safe by construction. Group names (used in the global
-// tooltip) are joined in render.js and assigned via the .title DOM
+// tooltip) are joined in groups-list.js and assigned via the .title DOM
 // property, which never parses HTML.
 
 // VARIANT_ORDER is both the dedup key set AND the left-to-right / loudest
@@ -79,7 +79,7 @@ export function variantLabel(variant, n, theme) {
 
 // themedSummaryText renders a summary's per-variant breakdown as one tooltip
 // line ("2 working · 1 idle", or the wizard flavour). This is the production
-// render path for both tooltip sites (render.js calls it for every theme,
+// render path for both tooltip sites (groups-list.js calls it for every theme,
 // blank included), so the line can re-flavour when the theme flips;
 // activitySummary's cached `.summaryText` is the regular-only convenience
 // twin. Empty when nothing is present.
@@ -295,7 +295,7 @@ export function styledBotsHTML(summary, style, theme) {
   return style === 'sprites' ? spriteBotsHTML(summary, theme) : activityBotsHTML(summary, theme);
 }
 
-// groupActivityHTML is the one-shot helper render.js drops into a group
+// groupActivityHTML is the one-shot helper the shell compatibility path uses;
 // <summary>. It emits a regular-mode wrapper (.ga-regular), a slop-mode
 // wrapper (.ga-slop) AND a wizard-mode wrapper (.ga-wizard), each rendered
 // in its configured style — CSS shows exactly one per active theme
