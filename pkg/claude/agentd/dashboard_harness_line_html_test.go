@@ -100,7 +100,7 @@ func TestDashboardHTML_HarnessBadgeAndSandboxWired(t *testing.T) {
 	// MemberName: the rename affordance is gated on the harness capability —
 	// a non-renameable harness gets a fixed (non-editable) name.
 	must("function harnessCanRename(snapshot, name)", "rename-capability lookup is defined")
-	must("function MemberName({ member, snapshot, actions, grants })", "the name cell switches on rename capability")
+	must("function MemberName({ member, snapshot, actions, grants, editorKey })", "the name cell switches on rename capability")
 	must("harnessCanRename(snapshot, state.harness)", "the name cell gates rename on the agent's harness")
 	must("rowname-fixed", "a non-renameable harness gets a fixed-name span")
 
