@@ -26,6 +26,7 @@ type sandboxProfileJSON struct {
 	Filesystem       []sandboxpolicy.FilesystemGrant  `json:"filesystem"`
 	Environment      []sandboxpolicy.EnvironmentEntry `json:"environment"`
 	AgentDirectories []string                         `json:"agent_directories,omitempty"`
+	NetworkAccess    sandboxpolicy.NetworkAccess      `json:"network_access,omitempty"`
 	Includes         []string                         `json:"includes,omitempty"`
 	CreatedAt        string                           `json:"created_at,omitempty"`
 	UpdatedAt        string                           `json:"updated_at,omitempty"`
@@ -40,8 +41,8 @@ func sandboxProfilesCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
 		Use:         "sandbox-profiles",
 		Aliases:     []string{"sandbox-profile"},
-		Short:       "Manage filesystem and environment sandbox profiles",
-		Long:        "Manage the operator-authored sandbox-profile library. Sandbox profiles grant or deny filesystem access and add non-secret environment values without changing a harness's launch posture. Payload reads and all writes require sandbox-profiles.manage.",
+		Short:       "Manage filesystem, environment, and network sandbox profiles",
+		Long:        "Manage the operator-authored sandbox-profile library. Sandbox profiles grant or deny filesystem access, add non-secret environment values, and can select an explicit network posture without changing a harness's launch posture. Payload reads and all writes require sandbox-profiles.manage.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			sandboxProfilesLsCmd(), sandboxProfilesShowCmd(), sandboxProfilesCreateCmd(),
@@ -81,10 +82,14 @@ func runSandboxProfilesLs(p *sandboxProfilesLsParams, stdout, stderr io.Writer) 
 		fmt.Fprintln(stdout, "(no sandbox profiles)")
 		return rcOK
 	}
-	fmt.Fprintf(stdout, "%-24s  %10s  %11s  %10s  %8s\n", "NAME", "FILESYSTEM", "ENVIRONMENT", "AGENT DIRS", "INCLUDES")
-	fmt.Fprintln(stdout, strings.Repeat("─", 73))
+	fmt.Fprintf(stdout, "%-24s  %10s  %11s  %10s  %8s  %8s\n", "NAME", "FILESYSTEM", "ENVIRONMENT", "AGENT DIRS", "INCLUDES", "NETWORK")
+	fmt.Fprintln(stdout, strings.Repeat("─", 83))
 	for _, profile := range profiles {
-		fmt.Fprintf(stdout, "%-24s  %10d  %11d  %10d  %8d\n", truncate(profile.Name, 24), len(profile.Filesystem), len(profile.Environment), len(profile.AgentDirectories), len(profile.Includes))
+		network := string(profile.NetworkAccess)
+		if network == "" {
+			network = "inherit"
+		}
+		fmt.Fprintf(stdout, "%-24s  %10d  %11d  %10d  %8d  %8s\n", truncate(profile.Name, 24), len(profile.Filesystem), len(profile.Environment), len(profile.AgentDirectories), len(profile.Includes), network)
 	}
 	return rcOK
 }
@@ -124,6 +129,11 @@ func runSandboxProfilesShow(p *sandboxProfilesShowParams, stdout, stderr io.Writ
 
 func printSandboxProfileHuman(w io.Writer, profile sandboxProfileJSON) {
 	fmt.Fprintf(w, "Sandbox profile: %s\n", profile.Name)
+	network := string(profile.NetworkAccess)
+	if network == "" {
+		network = "inherit"
+	}
+	fmt.Fprintf(w, "  network: %s\n", network)
 	if len(profile.Includes) > 0 {
 		// Order matters: later includes — and then this profile's own entries —
 		// override same-path/same-name values from earlier ones.

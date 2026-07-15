@@ -42,11 +42,16 @@ func sandboxProfileCapabilityFailure(harnessName, sandboxMode string, snapshot *
 	if err != nil {
 		return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_filesystem", err.Error()}
 	}
-	if len(filesystem) == 0 && len(snapshot.Effective.AgentDirectories) == 0 {
+	hasNetworkPolicy := snapshot.Effective.NetworkAccess != sandboxpolicy.NetworkAccessInherit
+	if len(filesystem) == 0 && len(snapshot.Effective.AgentDirectories) == 0 && !hasNetworkPolicy {
 		return nil
 	}
 	switch harnessOrDefault(harnessName) {
 	case harness.DefaultName:
+		if hasNetworkPolicy {
+			return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_network",
+				"Claude launches cannot represent sandbox profile network access; use the Codex managed sandbox"}
+		}
 		if strings.TrimSpace(sandboxMode) != harness.ClaudeSandboxOn && filesystemHasDeny(filesystem) {
 			return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_filesystem",
 				fmt.Sprintf("Claude filesystem deny rules require sandbox %q; sandbox %q cannot guarantee enforcement", harness.ClaudeSandboxOn, sandboxMode)}
@@ -55,6 +60,10 @@ func sandboxProfileCapabilityFailure(harnessName, sandboxMode string, snapshot *
 	case harness.CodexName:
 		if strings.TrimSpace(sandboxMode) == harness.SandboxManagedProfile {
 			return nil
+		}
+		if hasNetworkPolicy {
+			return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_network",
+				fmt.Sprintf("Codex network rules require sandbox %q; sandbox %q cannot represent them", harness.SandboxManagedProfile, sandboxMode)}
 		}
 		return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_filesystem",
 			fmt.Sprintf("Codex filesystem rules require sandbox %q; sandbox %q cannot represent them", harness.SandboxManagedProfile, sandboxMode)}

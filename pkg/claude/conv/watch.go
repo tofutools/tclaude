@@ -2264,6 +2264,7 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		return "", nil, fmt.Errorf("load effective sandbox snapshot for conversation %s: %w", convID, err)
 	}
 	var readDirs, writeDirs, denyDirs []string
+	networkAccess := sandboxpolicy.NetworkAccessInherit
 	if effectiveSandbox != nil {
 		validated, err := sandboxpolicy.RevalidateSnapshot(*effectiveSandbox)
 		if err != nil {
@@ -2272,6 +2273,7 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		for _, entry := range validated.Effective.Environment {
 			resumeEnv[entry.Name] = entry.Value
 		}
+		networkAccess = validated.Effective.NetworkAccess
 		launchFilesystem, err := sandboxpolicy.FilesystemForLaunch(validated.Effective)
 		if err != nil {
 			return "", nil, fmt.Errorf("sandbox_profile_changed: %w", err)
@@ -2295,6 +2297,12 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	if h.Name == harness.DefaultName && len(denyDirs) > 0 && sandboxMode != harness.ClaudeSandboxOn {
 		return "", nil, fmt.Errorf("unsupported_sandbox_profile_filesystem: Claude filesystem deny rules require sandbox %s", harness.ClaudeSandboxOn)
 	}
+	if networkAccess != sandboxpolicy.NetworkAccessInherit && h.Name != harness.CodexName {
+		return "", nil, fmt.Errorf("unsupported_sandbox_profile_network: network policies are currently supported only by the Codex managed sandbox")
+	}
+	if networkAccess != sandboxpolicy.NetworkAccessInherit && sandboxMode != harness.SandboxManagedProfile {
+		return "", nil, fmt.Errorf("unsupported_sandbox_profile_network: codex network rules require sandbox %s", harness.SandboxManagedProfile)
+	}
 	if (h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile) ||
 		(h.Name == harness.DefaultName && sandboxMode != harness.ClaudeSandboxOff) {
 		gitWriteDirs, err := resumeGitWorktreeWriteDirs(resumeCwd)
@@ -2314,7 +2322,7 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	}
 	cleanupPath := ""
 	if h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile {
-		profileName, profilePath, err := harness.EnsureCodexAgentLaunchProfileWithRules(readDirs, writeDirs, denyDirs, session.GenerateSessionID())
+		profileName, profilePath, err := harness.EnsureCodexAgentLaunchProfileWithRulesAndNetwork(readDirs, writeDirs, denyDirs, networkAccess, session.GenerateSessionID())
 		if err != nil {
 			return "", nil, fmt.Errorf("prepare managed Codex resume profile: %w", err)
 		}

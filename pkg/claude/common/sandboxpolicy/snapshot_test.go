@@ -20,6 +20,31 @@ func TestSnapshotDistinguishesResolvedEmptyFromMissing(t *testing.T) {
 	require.ErrorContains(t, err, "unsupported sandbox snapshot version")
 }
 
+func TestRevalidateSnapshotUpgradesLegacyVersion(t *testing.T) {
+	legacy := EmptySnapshot()
+	legacy.Version = 1
+	got, err := RevalidateSnapshot(legacy)
+	require.NoError(t, err)
+	assert.Equal(t, SnapshotVersion, got.Version)
+	assert.Equal(t, NetworkAccessInherit, got.Effective.NetworkAccess)
+}
+
+func TestNormalizeSnapshotVersionDoesNotRevalidateFilesystem(t *testing.T) {
+	legacy := Snapshot{
+		Version: 1,
+		Effective: EffectiveProfile{Filesystem: []FilesystemGrant{{
+			Path: "/path/that/need/not/exist", Access: AccessRead,
+		}}},
+	}
+	got, err := NormalizeSnapshotVersion(legacy)
+	require.NoError(t, err)
+	assert.Equal(t, SnapshotVersion, got.Version)
+	assert.Equal(t, legacy.Effective, got.Effective)
+
+	_, err = NormalizeSnapshotVersion(Snapshot{Version: 99})
+	require.ErrorContains(t, err, "unsupported sandbox snapshot version")
+}
+
 func TestSnapshotFileRoundTripAndTamperRejection(t *testing.T) {
 	snapshot := EmptySnapshot()
 	snapshot.Effective.Environment = []EnvironmentEntry{{Name: "LITERAL", Value: "$(touch nope); `echo nope`\n'quoted'"}}
@@ -84,6 +109,17 @@ func TestRequireContainedUsesPathCoverageAccessAndExactEnvironment(t *testing.T)
 		require.NoError(t, RequireContained(parent, makeAgentDirectorySnapshot("GOLANGCI_LINT_CACHE")))
 		require.NoError(t, RequireContained(EmptySnapshot(), makeAgentDirectorySnapshot("GOCACHE")))
 		assert.False(t, HasCapabilities(makeAgentDirectorySnapshot("GOCACHE")))
+	})
+	t.Run("network authority cannot widen", func(t *testing.T) {
+		makeNetworkSnapshot := func(access NetworkAccess) Snapshot {
+			effective, err := Resolve(Scopes{Global: &Profile{Name: "p", NetworkAccess: access}})
+			require.NoError(t, err)
+			return NewSnapshot(effective, nil)
+		}
+		require.NoError(t, RequireContained(makeNetworkSnapshot(NetworkAccessInternet), makeNetworkSnapshot(NetworkAccessNone)))
+		require.ErrorContains(t, RequireContained(makeNetworkSnapshot(NetworkAccessNone), makeNetworkSnapshot(NetworkAccessInternet)), "network access")
+		require.ErrorContains(t, RequireContained(makeNetworkSnapshot(NetworkAccessInternet), EmptySnapshot()), "network access")
+		require.NoError(t, RequireContained(EmptySnapshot(), makeNetworkSnapshot(NetworkAccessInternet)))
 	})
 }
 

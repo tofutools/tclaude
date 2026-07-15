@@ -40,6 +40,16 @@ func TestNormalizeFilesystemCanonicalizesFoldsAndSorts(t *testing.T) {
 	assert.Equal(t, alias, in.Filesystem[1].Path, "caller input must not be mutated")
 }
 
+func TestNormalizeNetworkAccess(t *testing.T) {
+	for _, access := range []NetworkAccess{NetworkAccessInherit, NetworkAccessInternet, NetworkAccessNone} {
+		got, err := Normalize(Profile{Name: "p", NetworkAccess: access})
+		require.NoError(t, err)
+		assert.Equal(t, access, got.NetworkAccess)
+	}
+	_, err := Normalize(Profile{Name: "p", NetworkAccess: "local-only"})
+	require.ErrorContains(t, err, "network_access")
+}
+
 func TestNormalizeFilesystemWriteWinsInEitherOrder(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

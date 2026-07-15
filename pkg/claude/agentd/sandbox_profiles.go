@@ -14,7 +14,7 @@ import (
 
 const (
 	sandboxProfileExportFormat  = "tclaude-sandbox-profiles"
-	sandboxProfileExportVersion = 1
+	sandboxProfileExportVersion = 2
 )
 
 // sandboxProfileBeforeMkdir is a test seam for exercising substitutions in
@@ -27,6 +27,7 @@ type sandboxProfileJSON struct {
 	Filesystem       []sandboxpolicy.FilesystemGrant  `json:"filesystem"`
 	Environment      []sandboxpolicy.EnvironmentEntry `json:"environment"`
 	AgentDirectories []string                         `json:"agent_directories,omitempty"`
+	NetworkAccess    sandboxpolicy.NetworkAccess      `json:"network_access,omitempty"`
 	Includes         []string                         `json:"includes,omitempty"`
 	CreatedAt        string                           `json:"created_at,omitempty"`
 	UpdatedAt        string                           `json:"updated_at,omitempty"`
@@ -57,7 +58,7 @@ type sandboxProfilePreviewJSON struct {
 
 func sandboxProfileToJSON(p *db.SandboxProfile, localFields bool) sandboxProfileJSON {
 	out := sandboxProfileJSON{
-		Name: p.Name, Filesystem: p.Filesystem, Environment: p.Environment, AgentDirectories: p.AgentDirectories, Includes: p.Includes,
+		Name: p.Name, Filesystem: p.Filesystem, Environment: p.Environment, AgentDirectories: p.AgentDirectories, NetworkAccess: p.NetworkAccess, Includes: p.Includes,
 	}
 	if localFields {
 		if !p.CreatedAt.IsZero() {
@@ -72,25 +73,25 @@ func sandboxProfileToJSON(p *db.SandboxProfile, localFields bool) sandboxProfile
 
 func buildSandboxProfile(body sandboxProfileJSON) (*db.SandboxProfile, []string, error) {
 	normalized, missing, err := sandboxpolicy.NormalizeForPersistence(sandboxpolicy.Profile{
-		Name: body.Name, Filesystem: body.Filesystem, Environment: body.Environment, AgentDirectories: body.AgentDirectories, Includes: body.Includes,
+		Name: body.Name, Filesystem: body.Filesystem, Environment: body.Environment, AgentDirectories: body.AgentDirectories, NetworkAccess: body.NetworkAccess, Includes: body.Includes,
 	})
 	if err != nil {
 		return nil, nil, err
 	}
 	return &db.SandboxProfile{
-		Name: normalized.Name, Filesystem: normalized.Filesystem, Environment: normalized.Environment, AgentDirectories: normalized.AgentDirectories, Includes: normalized.Includes,
+		Name: normalized.Name, Filesystem: normalized.Filesystem, Environment: normalized.Environment, AgentDirectories: normalized.AgentDirectories, NetworkAccess: normalized.NetworkAccess, Includes: normalized.Includes,
 	}, missing, nil
 }
 
 func buildSandboxProfileForImport(body sandboxProfileJSON) (*db.SandboxProfile, []string, error) {
 	normalized, missing, err := sandboxpolicy.NormalizeForImport(sandboxpolicy.Profile{
-		Name: body.Name, Filesystem: body.Filesystem, Environment: body.Environment, AgentDirectories: body.AgentDirectories, Includes: body.Includes,
+		Name: body.Name, Filesystem: body.Filesystem, Environment: body.Environment, AgentDirectories: body.AgentDirectories, NetworkAccess: body.NetworkAccess, Includes: body.Includes,
 	})
 	if err != nil {
 		return nil, nil, err
 	}
 	return &db.SandboxProfile{
-		Name: normalized.Name, Filesystem: normalized.Filesystem, Environment: normalized.Environment, AgentDirectories: normalized.AgentDirectories, Includes: normalized.Includes,
+		Name: normalized.Name, Filesystem: normalized.Filesystem, Environment: normalized.Environment, AgentDirectories: normalized.AgentDirectories, NetworkAccess: normalized.NetworkAccess, Includes: normalized.Includes,
 	}, missing, nil
 }
 
@@ -547,7 +548,7 @@ func handleSandboxProfilesImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "not valid sandbox-profile JSON: "+err.Error())
 		return
 	}
-	if env.Format != sandboxProfileExportFormat || env.FormatVersion != sandboxProfileExportVersion {
+	if !supportedSandboxProfileExport(env.Format, env.FormatVersion) {
 		writeError(w, http.StatusBadRequest, "invalid_format", fmt.Sprintf(
 			"unsupported sandbox-profile export %q version %d", env.Format, env.FormatVersion))
 		return
@@ -608,7 +609,7 @@ func handleSandboxProfilesImportInspect(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid_arg", "not valid sandbox-profile JSON: "+err.Error())
 		return
 	}
-	if env.Format != sandboxProfileExportFormat || env.FormatVersion != sandboxProfileExportVersion {
+	if !supportedSandboxProfileExport(env.Format, env.FormatVersion) {
 		writeError(w, http.StatusBadRequest, "invalid_format", fmt.Sprintf(
 			"unsupported sandbox-profile export %q version %d", env.Format, env.FormatVersion))
 		return
@@ -662,4 +663,12 @@ func handleSandboxProfilesImportInspect(w http.ResponseWriter, r *http.Request) 
 		includeErrors["skip"] = inspection.SkipError
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"profiles": profiles, "warnings": warnings, "include_errors": includeErrors})
+}
+
+// Version 2 adds network_access. Keeping v1 readable preserves imports from
+// older installations; exporting only v2 prevents an older importer from
+// silently dropping a security-significant offline policy as an unknown JSON
+// field.
+func supportedSandboxProfileExport(format string, version int) bool {
+	return format == sandboxProfileExportFormat && (version == 1 || version == sandboxProfileExportVersion)
 }

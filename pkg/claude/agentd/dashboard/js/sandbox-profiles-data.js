@@ -33,5 +33,6 @@ export function sandboxProfileSummary(profile) {
   if (inc.length) parts.push(`${inc.length} include${inc.length === 1 ? '' : 's'}`);
   if (env.length) parts.push(`${env.length} env key${env.length === 1 ? '' : 's'}`);
   if (own.length) parts.push(`${own.length} agent dir${own.length === 1 ? '' : 's'}`);
+  if (profile.network_access) parts.push(`network ${profile.network_access}`);
   return parts.join(' · ') || 'no sandbox rules';
 }

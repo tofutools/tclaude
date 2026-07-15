@@ -77,6 +77,20 @@ func TestFlattenLaterIncludeOverridesEarlier(t *testing.T) {
 	assert.Equal(t, []EnvironmentEntry{{Name: "SHARED", Value: "second"}}, got.Environment)
 }
 
+func TestFlattenNetworkAccessUsesLastExplicitLayer(t *testing.T) {
+	registry := map[string]*Profile{
+		"internet": {Name: "internet", NetworkAccess: NetworkAccessInternet},
+		"inherit":  {Name: "inherit"},
+		"offline":  {Name: "offline", NetworkAccess: NetworkAccessNone},
+	}
+	got, err := Flatten(Profile{Name: "top", Includes: []string{"internet", "inherit", "offline"}}, registryLookup(registry))
+	require.NoError(t, err)
+	assert.Equal(t, NetworkAccessNone, got.NetworkAccess)
+	got, err = Flatten(Profile{Name: "top", Includes: []string{"offline"}, NetworkAccess: NetworkAccessInternet}, registryLookup(registry))
+	require.NoError(t, err)
+	assert.Equal(t, NetworkAccessInternet, got.NetworkAccess)
+}
+
 func TestFlattenAgentDirectoriesParticipateInEnvironmentOverrideOrder(t *testing.T) {
 	registry := map[string]*Profile{
 		"generated": {Name: "generated", AgentDirectories: []string{"CACHE", "GENERATED_ONLY"}},

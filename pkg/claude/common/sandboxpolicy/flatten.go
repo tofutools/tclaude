@@ -75,6 +75,7 @@ func Flatten(in Profile, lookup LookupProfile) (Profile, error) {
 		Filesystem:       make([]FilesystemGrant, 0, len(parts.filesystem)),
 		Environment:      make([]EnvironmentEntry, 0, len(parts.environment)),
 		AgentDirectories: make([]string, 0, len(parts.agentDirectories)),
+		NetworkAccess:    parts.networkAccess,
 	}
 	for _, grant := range parts.filesystem {
 		out.Filesystem = append(out.Filesystem, grant)
@@ -95,6 +96,7 @@ type flattenedParts struct {
 	filesystem       map[string]FilesystemGrant
 	environment      map[string]EnvironmentEntry
 	agentDirectories map[string]struct{}
+	networkAccess    NetworkAccess
 }
 
 type flattener struct {
@@ -179,6 +181,9 @@ func (f *flattener) compose(p Profile) *flattenedParts {
 			delete(out.environment, name)
 			out.agentDirectories[name] = struct{}{}
 		}
+		if parts.networkAccess != NetworkAccessInherit {
+			out.networkAccess = parts.networkAccess
+		}
 	}
 	for _, grant := range p.Filesystem {
 		out.filesystem[grant.Path] = grant
@@ -190,6 +195,9 @@ func (f *flattener) compose(p Profile) *flattenedParts {
 	for _, name := range p.AgentDirectories {
 		delete(out.environment, name)
 		out.agentDirectories[name] = struct{}{}
+	}
+	if p.NetworkAccess != NetworkAccessInherit {
+		out.networkAccess = p.NetworkAccess
 	}
 	return out
 }

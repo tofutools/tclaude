@@ -27,7 +27,8 @@ func TestResolveComposesScopesWithProvenance(t *testing.T) {
 	require.NoError(t, err)
 
 	global := &Profile{
-		Name: " global ",
+		Name:          " global ",
+		NetworkAccess: NetworkAccessInternet,
 		Filesystem: []FilesystemGrant{
 			{Path: a, Access: AccessRead},
 			{Path: b, Access: AccessWrite},
@@ -43,9 +44,10 @@ func TestResolveComposesScopesWithProvenance(t *testing.T) {
 		Environment: []EnvironmentEntry{{Name: "SHARED", Value: "group"}, {Name: "GROUP_ONLY", Value: "yes"}},
 	}
 	explicit := &Profile{
-		Name:        "explicit",
-		Filesystem:  []FilesystemGrant{{Path: b, Access: AccessRead}},
-		Environment: []EnvironmentEntry{{Name: "SHARED", Value: "explicit"}},
+		Name:          "explicit",
+		Filesystem:    []FilesystemGrant{{Path: b, Access: AccessRead}},
+		Environment:   []EnvironmentEntry{{Name: "SHARED", Value: "explicit"}},
+		NetworkAccess: NetworkAccessNone,
 	}
 
 	got, err := Resolve(Scopes{Global: global, Group: group, Explicit: explicit})
@@ -75,6 +77,9 @@ func TestResolveComposesScopesWithProvenance(t *testing.T) {
 	}, got.Provenance.Filesystem[canonicalB], "later read does not weaken an earlier write")
 	assert.Equal(t, ProfileSource{Scope: ScopeExplicit, Profile: "explicit"}, got.Provenance.Environment["SHARED"])
 	assert.Equal(t, ProfileSource{Scope: ScopeGlobal, Profile: "global"}, got.Provenance.Environment["GLOBAL_ONLY"])
+	assert.Equal(t, NetworkAccessNone, got.NetworkAccess)
+	require.NotNil(t, got.Provenance.Network)
+	assert.Equal(t, ProfileSource{Scope: ScopeExplicit, Profile: "explicit"}, *got.Provenance.Network)
 	assert.Equal(t, " global ", global.Name, "resolution does not mutate inputs")
 }
 

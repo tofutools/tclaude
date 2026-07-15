@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-const SnapshotVersion = 1
+const SnapshotVersion = 2
 
 // AppliedProfile preserves stable registry provenance without making the
 // registry row authoritative after resolution. The effective values in the
@@ -82,7 +82,22 @@ func RequireContained(parent, child Snapshot) error {
 			return fmt.Errorf("environment variable %q is new or changed from the parent snapshot", entry.Name)
 		}
 	}
+	if !networkAccessContained(parent.Effective.NetworkAccess, child.Effective.NetworkAccess) {
+		return fmt.Errorf("network access %q is not contained by parent access %q", child.Effective.NetworkAccess, parent.Effective.NetworkAccess)
+	}
 	return nil
+}
+
+func networkAccessContained(parent, child NetworkAccess) bool {
+	// Inherit means the harness default, which is the broadest authority: it
+	// may include ordinary IP networking and arbitrary local Unix sockets.
+	if parent == NetworkAccessInherit {
+		return true
+	}
+	if child == NetworkAccessInherit {
+		return false
+	}
+	return parent == NetworkAccessInternet || child == NetworkAccessNone
 }
 
 // HasCapabilities reports whether a resolved snapshot adds inherited host
@@ -137,13 +152,16 @@ func EmptySnapshot() Snapshot {
 // symlink/rename retarget that changes the normalized bytes is rejected rather
 // than silently redirecting authority.
 func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
-	if in.Version != SnapshotVersion {
-		return Snapshot{}, fmt.Errorf("unsupported sandbox snapshot version %d", in.Version)
+	var err error
+	in, err = NormalizeSnapshotVersion(in)
+	if err != nil {
+		return Snapshot{}, err
 	}
 	normalized, _, err := NormalizeForPersistence(Profile{
-		Name:        "effective-sandbox-snapshot",
-		Filesystem:  in.Effective.Filesystem,
-		Environment: in.Effective.Environment,
+		Name:          "effective-sandbox-snapshot",
+		Filesystem:    in.Effective.Filesystem,
+		Environment:   in.Effective.Environment,
+		NetworkAccess: in.Effective.NetworkAccess,
 	})
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("revalidate effective sandbox snapshot: %w", err)
@@ -153,6 +171,9 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 	}
 	if !reflect.DeepEqual(normalized.Environment, in.Effective.Environment) {
 		return Snapshot{}, fmt.Errorf("effective sandbox environment changed since resolution")
+	}
+	if normalized.NetworkAccess != in.Effective.NetworkAccess {
+		return Snapshot{}, fmt.Errorf("effective sandbox network access changed since resolution")
 	}
 	agentDirectories, err := normalizeAgentDirectories(in.Effective.AgentDirectories, nil)
 	if err != nil {
@@ -164,6 +185,20 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 	out := NewSnapshot(in.Effective, in.Applied)
 	out.ResolutionGroupID = in.ResolutionGroupID
 	return out, nil
+}
+
+// NormalizeSnapshotVersion upgrades a structurally compatible legacy
+// snapshot without touching the filesystem. Persistence readers use it before
+// returning bookkeeping rows; authority-use boundaries must still call
+// RevalidateSnapshot before applying the result.
+func NormalizeSnapshotVersion(in Snapshot) (Snapshot, error) {
+	switch in.Version {
+	case 1, SnapshotVersion:
+		in.Version = SnapshotVersion
+		return in, nil
+	default:
+		return Snapshot{}, fmt.Errorf("unsupported sandbox snapshot version %d", in.Version)
+	}
 }
 
 // FilesystemForLaunch returns the rules safe to hand to a harness now. Missing
@@ -198,11 +233,13 @@ func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 		Filesystem:       append([]FilesystemGrant{}, in.Filesystem...),
 		Environment:      append([]EnvironmentEntry{}, in.Environment...),
 		AgentDirectories: append([]string{}, in.AgentDirectories...),
+		NetworkAccess:    in.NetworkAccess,
 		Provenance: ResolutionProvenance{
 			Applied:          append([]ProfileSource(nil), in.Provenance.Applied...),
 			Filesystem:       make(map[string][]ProfileSource, len(in.Provenance.Filesystem)),
 			Environment:      make(map[string]ProfileSource, len(in.Provenance.Environment)),
 			AgentDirectories: make(map[string][]ProfileSource, len(in.Provenance.AgentDirectories)),
+			Network:          nil,
 		},
 	}
 	for path, sources := range in.Provenance.Filesystem {
@@ -213,6 +250,10 @@ func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 	}
 	for name, sources := range in.Provenance.AgentDirectories {
 		out.Provenance.AgentDirectories[name] = append([]ProfileSource(nil), sources...)
+	}
+	if in.Provenance.Network != nil {
+		source := *in.Provenance.Network
+		out.Provenance.Network = &source
 	}
 	sort.Slice(out.Filesystem, func(i, j int) bool { return out.Filesystem[i].Path < out.Filesystem[j].Path })
 	sort.Slice(out.Environment, func(i, j int) bool { return out.Environment[i].Name < out.Environment[j].Name })

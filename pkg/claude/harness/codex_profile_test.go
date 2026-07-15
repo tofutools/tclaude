@@ -9,17 +9,22 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/pelletier/go-toml/v2"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
-// TestCodexAgentProfileContent pins the managed profile's TOML shape — the
-// exact form verified end-to-end against codex-cli 0.144.0 (extends
-// :workspace, denies the private-state subtree ~/.tclaude/data, allowlists the
-// agent-reachable agentd socket under ~/.tclaude/api, and sets
-// default_permissions so `codex -p <name>` activates it).
+// TestCodexAgentProfileContent pins the explicit Internet posture: ordinary
+// networking and agentd remain available while the tclaude tmux server socket
+// directory is denied.
 func TestCodexAgentProfileContent(t *testing.T) {
+	tmuxBase := t.TempDir()
+	t.Setenv("TMUX_TMPDIR", tmuxBase)
 	sock := "/home/dev/.tclaude/api/agentd.sock"
 	stateDir := "/home/dev/.tclaude/data"
-	got, err := codexAgentProfileContent(sock, stateDir, "/home/dev", "")
+	got, err := codexAgentProfileContentForNameAndRulesAndNetwork(
+		CodexAgentProfile, sock, stateDir, nil, nil, nil, sandboxpolicy.NetworkAccessInternet,
+	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -29,6 +34,7 @@ func TestCodexAgentProfileContent(t *testing.T) {
 		`extends = ":workspace"`,
 		`"/home/dev/.tclaude/data" = "none"`,
 		`"/home/dev/.tclaude/api/agentd.sock" = "read"`,
+		fmt.Sprintf(`%q = "none"`, filepath.Join(tmuxBase, fmt.Sprintf("tmux-%d", os.Getuid()))),
 		`[permissions.tclaude-agent.network]`,
 		`enabled = true`,
 		`[permissions.tclaude-agent.network.unix_sockets]`,
@@ -37,6 +43,97 @@ func TestCodexAgentProfileContent(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("profile content missing %q\n--- got ---\n%s", want, got)
 		}
+	}
+	if strings.Contains(got, "[features.network_proxy]") || strings.Contains(got, ".network.domains]") {
+		t.Fatalf("profile must not enable Codex's managed proxy:\n%s", got)
+	}
+
+	// Pin the parsed hierarchy too: a syntactically valid TOML table emitted in
+	// the wrong order could silently nest the feature switch under another table
+	// and leave the Unix-socket allowlist unenforced.
+	var parsed struct {
+		DefaultPermissions string `toml:"default_permissions"`
+		Permissions        map[string]struct {
+			Network struct {
+				Enabled     bool              `toml:"enabled"`
+				UnixSockets map[string]string `toml:"unix_sockets"`
+			} `toml:"network"`
+		} `toml:"permissions"`
+	}
+	if err := toml.Unmarshal([]byte(got), &parsed); err != nil {
+		t.Fatalf("parse generated profile: %v\n%s", err, got)
+	}
+	network := parsed.Permissions[CodexAgentProfile].Network
+	if parsed.DefaultPermissions != CodexAgentProfile || !network.Enabled || network.UnixSockets[sock] != "allow" {
+		t.Fatalf("generated profile did not parse to the enforced socket policy: %+v", parsed)
+	}
+}
+
+func TestCodexAgentProfileContentNetworkPostures(t *testing.T) {
+	t.Setenv("TMUX_TMPDIR", "/tmp")
+	const sock = "/tmp/agentd.sock"
+	baseline, err := codexAgentProfileContentForNameAndRulesAndNetworkForOS(
+		"test", sock, "/tmp/private", nil, nil, nil, sandboxpolicy.NetworkAccessInherit, "linux",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(baseline, "enabled = true") || strings.Contains(baseline, "[features.network_proxy]") {
+		t.Fatalf("inherited network policy must retain ordinary networking without a managed proxy:\n%s", baseline)
+	}
+	offline, err := codexAgentProfileContentForNameAndRulesAndNetworkForOS(
+		"test", sock, "/tmp/private", nil, nil, nil, sandboxpolicy.NetworkAccessNone, "linux",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"enabled = false", `"/tmp/agentd.sock" = "allow"`} {
+		if !strings.Contains(offline, want) {
+			t.Fatalf("offline profile missing %q:\n%s", want, offline)
+		}
+	}
+	if strings.Contains(offline, "[features.network_proxy]") || strings.Contains(offline, ".network.domains]") {
+		t.Fatalf("offline profile must use the native network sandbox, not the managed proxy:\n%s", offline)
+	}
+
+	offlineMac, err := codexAgentProfileContentForNameAndRulesAndNetworkForOS(
+		"test", sock, "/tmp/private", nil, nil, nil, sandboxpolicy.NetworkAccessNone, "darwin",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"[features]", "network_proxy = true", "enabled = true", `"/tmp/agentd.sock" = "allow"`} {
+		if !strings.Contains(offlineMac, want) {
+			t.Fatalf("macOS offline profile missing %q:\n%s", want, offlineMac)
+		}
+	}
+	if strings.Contains(offlineMac, ".network.domains]") {
+		t.Fatalf("macOS offline proxy must keep Codex's deny-by-default empty domain policy:\n%s", offlineMac)
+	}
+	if strings.Contains(offlineMac, "[features.network_proxy]") {
+		t.Fatalf("macOS offline profile must replace inherited proxy config with a scalar feature switch:\n%s", offlineMac)
+	}
+	var parsedMac map[string]any
+	if err := toml.Unmarshal([]byte(offlineMac), &parsedMac); err != nil {
+		t.Fatalf("parse generated macOS offline profile: %v\n%s", err, offlineMac)
+	}
+}
+
+func TestCodexTmuxSocketDir(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("TMUX_TMPDIR", base)
+	got, err := codexTmuxSocketDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(base, fmt.Sprintf("tmux-%d", os.Getuid()))
+	if got != want {
+		t.Fatalf("tmux socket dir = %q, want %q", got, want)
+	}
+
+	t.Setenv("TMUX_TMPDIR", "relative")
+	if _, err := codexTmuxSocketDir(); err == nil {
+		t.Fatal("relative TMUX_TMPDIR must be rejected")
 	}
 }
 

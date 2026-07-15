@@ -37,8 +37,8 @@ const SandboxManagedProfile = CodexAgentProfile
 
 // codexSandbox is Codex's SandboxCatalog. The default is the managed
 // permission profile (SandboxManagedProfile) — workspace-write containment
-// (cwd + /tmp + $TMPDIR writable, $HOME read-only, network denied) plus the
-// agentd-socket allowlist — so a tclaude-spawned Codex agent gets the
+// (cwd + /tmp + $TMPDIR writable, $HOME read-only) plus the agentd socket
+// declaration — so a tclaude-spawned Codex agent gets the
 // guardrail-integrity property *and* stays able to coordinate via `tclaude
 // agent`. The three raw `--sandbox` modes remain selectable for callers that
 // want Codex's native containment without the managed profile.

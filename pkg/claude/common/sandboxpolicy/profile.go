@@ -46,9 +46,21 @@ type EnvironmentEntry struct {
 	Value string `json:"value"`
 }
 
+// NetworkAccess is the operator-authored network posture. The empty value
+// inherits the harness's existing behavior. Internet and None both request
+// an enforced IP-network posture; the Codex adapter uses its native network
+// sandbox switch while retaining the agentd control socket.
+type NetworkAccess string
+
+const (
+	NetworkAccessInherit  NetworkAccess = ""
+	NetworkAccessInternet NetworkAccess = "internet"
+	NetworkAccessNone     NetworkAccess = "none"
+)
+
 // Profile is the harness-neutral, operator-authored capability bundle. It is
-// deliberately limited to filesystem and environment configuration;
-// harness launch posture belongs to spawn profiles instead.
+// NetworkAccess is optional so existing profiles keep their harness's current
+// network behavior. Harness launch posture belongs to spawn profiles instead.
 //
 // Includes composes other profiles by name, recursively: included profiles
 // apply first in listed order, then the profile's own entries override any
@@ -61,6 +73,7 @@ type Profile struct {
 	Filesystem       []FilesystemGrant  `json:"filesystem,omitempty"`
 	Environment      []EnvironmentEntry `json:"environment,omitempty"`
 	AgentDirectories []string           `json:"agent_directories,omitempty"`
+	NetworkAccess    NetworkAccess      `json:"network_access,omitempty"`
 	Includes         []string           `json:"includes,omitempty"`
 }
 
@@ -131,7 +144,22 @@ func normalize(in Profile, allowMissing bool) (Profile, []string, error) {
 	if err != nil {
 		return Profile{}, nil, err
 	}
-	return Profile{Name: name, Filesystem: filesystem, Environment: environment, AgentDirectories: agentDirectories, Includes: includes}, missing, nil
+	networkAccess, err := NormalizeNetworkAccess(in.NetworkAccess)
+	if err != nil {
+		return Profile{}, nil, err
+	}
+	return Profile{Name: name, Filesystem: filesystem, Environment: environment, AgentDirectories: agentDirectories, NetworkAccess: networkAccess, Includes: includes}, missing, nil
+}
+
+// NormalizeNetworkAccess validates one network posture without requiring a
+// complete profile. Harness adapters use it at their final rendering seam.
+func NormalizeNetworkAccess(in NetworkAccess) (NetworkAccess, error) {
+	switch in {
+	case NetworkAccessInherit, NetworkAccessInternet, NetworkAccessNone:
+		return in, nil
+	default:
+		return "", fmt.Errorf("network_access %q is invalid (want internet, none, or omitted to inherit)", in)
+	}
 }
 
 // normalizeIncludes validates include references syntactically. Whether each
