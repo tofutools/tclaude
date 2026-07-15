@@ -340,6 +340,20 @@ func StubApprovalForTest(decision bool) func() {
 	return func() { RequestHumanApprovalImpl = prev }
 }
 
+// StubCountingApprovalForTest swaps the human-approval popup with an immediate
+// decision and returns a counter accessor plus restore function. It lets flow
+// tests distinguish one logical approval from duplicate popup invocations
+// without exporting approvalRequest.
+func StubCountingApprovalForTest(decision bool) (func() int32, func()) {
+	prev := RequestHumanApprovalImpl
+	var calls atomic.Int32
+	RequestHumanApprovalImpl = func(*approvalRequest, string) bool {
+		calls.Add(1)
+		return decision
+	}
+	return calls.Load, func() { RequestHumanApprovalImpl = prev }
+}
+
 // SetGroupCloneAfterProofForTest installs a one-shot observation seam between
 // an agent group-clone's proof snapshot and member loop.
 func SetGroupCloneAfterProofForTest(fn func()) func() {

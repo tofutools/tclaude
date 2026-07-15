@@ -475,13 +475,17 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ow
 	// authoritative and (like an undecided with no bypass) falls through
 	// to the popup-or-403 path below.
 	allowed := false
-	switch resolvePermission(p.ConvID, perm) {
-	case permAllow:
+	if hasWriteProofApprovalContinuation(r, p.ConvID, perm) {
 		allowed = true
-	case permUndecided:
-		allowed = ownerBypass != nil && ownerBypass(p.ConvID)
-	case permDeny:
-		// Authoritative deny — suppresses the owner bypass.
+	} else {
+		switch resolvePermission(p.ConvID, perm) {
+		case permAllow:
+			allowed = true
+		case permUndecided:
+			allowed = ownerBypass != nil && ownerBypass(p.ConvID)
+		case permDeny:
+			// Authoritative deny — suppresses the owner bypass.
+		}
 	}
 	if !allowed {
 		// Permission denied. If the caller asked for a human-override
@@ -525,6 +529,7 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ow
 				extend:          make(chan time.Duration, 1),
 			}
 			if requestHumanApproval(req, popupBaseURL) {
+				markWriteProofHumanApproval(r, perm)
 				return p.ConvID, true
 			}
 			writeError(w, http.StatusForbidden, "permission",

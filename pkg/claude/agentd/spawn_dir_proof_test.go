@@ -12,7 +12,7 @@ import (
 )
 
 func TestDirWriteChallenge_SingleUse(t *testing.T) {
-	tok := mintDirWriteChallenge("conv-a", []string{"/x"})
+	tok := mintDirWriteChallenge("conv-a", []string{"/x"}, nil)
 	require.NotEmpty(t, tok)
 
 	ch, ok := takeDirWriteChallenge(tok)
@@ -27,7 +27,7 @@ func TestDirWriteChallenge_SingleUse(t *testing.T) {
 func TestDirWriteChallenge_ExpiryPruned(t *testing.T) {
 	prev := dirWriteProofTTL
 	dirWriteProofTTL = -time.Second // already expired at mint
-	tok := mintDirWriteChallenge("conv-exp", []string{"/x"})
+	tok := mintDirWriteChallenge("conv-exp", []string{"/x"}, nil)
 	dirWriteProofTTL = prev
 	require.NotEmpty(t, tok)
 
@@ -38,7 +38,7 @@ func TestDirWriteChallenge_ExpiryPruned(t *testing.T) {
 	}
 
 	// Minting again prunes expired leftovers rather than growing the table.
-	tok2 := mintDirWriteChallenge("conv-exp", []string{"/x"})
+	tok2 := mintDirWriteChallenge("conv-exp", []string{"/x"}, nil)
 	require.NotEmpty(t, tok2)
 	takeDirWriteChallenge(tok2)
 }
@@ -46,7 +46,7 @@ func TestDirWriteChallenge_ExpiryPruned(t *testing.T) {
 func TestDirWriteChallenge_PerConvCapEvictsOldest(t *testing.T) {
 	tokens := make([]string, 0, dirWriteProofMaxPerConv+1)
 	for i := 0; i <= dirWriteProofMaxPerConv; i++ {
-		tok := mintDirWriteChallenge("conv-cap", []string{"/x"})
+		tok := mintDirWriteChallenge("conv-cap", []string{"/x"}, nil)
 		require.NotEmpty(t, tok)
 		tokens = append(tokens, tok)
 	}

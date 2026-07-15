@@ -287,7 +287,7 @@ func handleGroupResume(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	grants, proofToken, proofDirs, proofOK := requireResumeWriteProofs(w, caller, body.WriteProofToken, memberConvIDs(members))
+	grants, proofToken, proofDirs, proofOK := requireResumeWriteProofs(w, r, caller, body.WriteProofToken, memberConvIDs(members))
 	if !proofOK {
 		return
 	}
@@ -508,7 +508,7 @@ func memberConvIDs(members []*db.AgentGroupMember) []string {
 	return ids
 }
 
-func requireResumeWriteProofs(w http.ResponseWriter, caller, token string, convIDs []string) (map[string]*resumeGrant, string, []string, bool) {
+func requireResumeWriteProofs(w http.ResponseWriter, r *http.Request, caller, token string, convIDs []string) (map[string]*resumeGrant, string, []string, bool) {
 	if isHumanCloneCaller(caller) {
 		return nil, "", nil, true
 	}
@@ -566,7 +566,7 @@ func requireResumeWriteProofs(w http.ResponseWriter, caller, token string, convI
 	if len(dirs) == 0 {
 		return grants, "", nil, true
 	}
-	resolved, ok := requireDirWriteProof(w, caller, token, dirs)
+	resolved, ok := requireDirWriteProof(w, r, caller, token, dirs)
 	if !ok {
 		return nil, "", nil, false
 	}
@@ -1481,7 +1481,7 @@ func handleAgentResume(w http.ResponseWriter, r *http.Request, targetConv string
 			return
 		}
 	}
-	grants, proofToken, proofDirs, proofOK := requireResumeWriteProofs(w, caller, body.WriteProofToken, []string{targetConv})
+	grants, proofToken, proofDirs, proofOK := requireResumeWriteProofs(w, r, caller, body.WriteProofToken, []string{targetConv})
 	if !proofOK {
 		return
 	}
@@ -2096,7 +2096,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 				dirs = appendUniqueDirs(dirs, proofDir)
 			}
 		}
-		resolved, ok := requireDirWriteProof(w, spawnerConvID, body.WriteProofToken, dirs)
+		resolved, ok := requireDirWriteProof(w, r, spawnerConvID, body.WriteProofToken, dirs)
 		if !ok {
 			return
 		}

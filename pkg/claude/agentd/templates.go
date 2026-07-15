@@ -2145,7 +2145,7 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	cwd, worktreePath, resolvedRepo, codexGitCommonDir, proofDirs, ok = requireTemplateDirWriteProof(w, caller, body.WriteProofToken, cwd, worktreePath,
+	cwd, worktreePath, resolvedRepo, codexGitCommonDir, proofDirs, ok = requireTemplateDirWriteProof(w, r, caller, body.WriteProofToken, cwd, worktreePath,
 		templateRepoAnchor(perAgentWorktrees), templatePerAgentWorktreeParent(perAgentWorktrees), codexGitCommonDir)
 	if !ok {
 		return
@@ -2863,7 +2863,7 @@ func handleTemplateDeploy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	cwd, worktreePath, resolvedRepo, codexGitCommonDir, proofDirs, ok = requireTemplateDirWriteProof(w, caller, body.WriteProofToken, cwd, worktreePath,
+	cwd, worktreePath, resolvedRepo, codexGitCommonDir, proofDirs, ok = requireTemplateDirWriteProof(w, r, caller, body.WriteProofToken, cwd, worktreePath,
 		templateRepoAnchor(perAgentWorktrees), templatePerAgentWorktreeParent(perAgentWorktrees), codexGitCommonDir)
 	if !ok {
 		return
@@ -3029,7 +3029,7 @@ func handleTemplateReinforce(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	cwd, worktreePath, resolvedRepo, codexGitCommonDir, proofDirs, ok = requireTemplateDirWriteProof(w, caller, body.WriteProofToken, cwd, worktreePath,
+	cwd, worktreePath, resolvedRepo, codexGitCommonDir, proofDirs, ok = requireTemplateDirWriteProof(w, r, caller, body.WriteProofToken, cwd, worktreePath,
 		templateRepoAnchor(perAgentWorktrees), templatePerAgentWorktreeParent(perAgentWorktrees), codexGitCommonDir)
 	if !ok {
 		return
