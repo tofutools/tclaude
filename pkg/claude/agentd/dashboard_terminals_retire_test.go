@@ -12,21 +12,24 @@ import (
 // wiring and the mux boundary.
 func TestRetiredAgentClosesAllOwnedTerminalPanes(t *testing.T) {
 	core := readDashboardJS(t, "terminals-core.js")
+	actions := readDashboardJS(t, "terminal-shell-actions.js")
 	for _, needle := range []string{
 		"export function departedAgentSelectors(",
 		"export function createAgentRosterReconciler(",
-		"function closeForAgents(",
-		"const agent = p.seed && p.seed.agent",
-		"closeForAgents,",
 	} {
 		if !strings.Contains(core, needle) {
 			t.Errorf("terminals-core.js missing %q — retired-agent pane cleanup is broken", needle)
 		}
 	}
+	for _, needle := range []string{"function closeForAgents(", "pane.seed.agent && wanted.has(pane.seed.agent)", "closeForAgents,"} {
+		if !strings.Contains(actions, needle) {
+			t.Errorf("terminal-shell-actions.js missing %q — retired-agent pane cleanup is broken", needle)
+		}
+	}
 
 	tab := readDashboardJS(t, "terminals-tab.js")
 	if !strings.Contains(tab, "export function reconcileTerminalsForAgentRoster(") ||
-		!strings.Contains(tab, "mux.closeForAgents(departed)") {
+		!strings.Contains(tab, "controller?.closeForAgents(departed)") {
 		t.Error("terminals-tab.js must reconcile active-roster departures through closeForAgents")
 	}
 

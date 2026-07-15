@@ -5,7 +5,7 @@
 import { esc } from './helpers.js';
 import { lastSnapshot } from './dashboard.js';
 import { managementController } from './management-controller.js';
-import { openTermModal } from './modal-term.js';
+import { openTermModal } from './terminals-tab.js';
 import { cachedProfiles, profileSummary, findProfileByHandle } from './profiles.js';
 import { toast } from './refresh.js';
 import { wizWord } from './slop.js';
