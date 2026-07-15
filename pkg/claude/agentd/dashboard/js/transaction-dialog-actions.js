@@ -21,6 +21,15 @@ function retireNotice(label, choice, response) {
   return message;
 }
 
+function lifecycleError(response, payload) {
+  const message = payload?.detail || payload?.error || payload?.message
+    || `shutdown failed: ${payload?.action || `HTTP ${response.status}`}`;
+  const error = new Error(String(message));
+  error.status = response.status;
+  error.payload = payload;
+  return error;
+}
+
 export function createTransactionDialogActions({
   state,
   fetchImpl = fetch,
@@ -37,6 +46,18 @@ export function createTransactionDialogActions({
     } catch (_) {}
   };
 
+  const finishSuccess = async (result, message) => {
+    // The mutation is authoritative once the daemon accepts it. Unpaint the
+    // dialog before snapshot reconciliation, then resolve the compatibility
+    // promise even if the advisory refresh itself fails. Request failures never
+    // reach this seam, so their frozen descriptor remains mounted for an
+    // explicit renderer-owned retry.
+    state.handoff();
+    report(message);
+    try { await refresh(); } finally { state.finish(result); }
+    return result;
+  };
+
   return Object.freeze({
     close: state.close,
 
@@ -48,6 +69,53 @@ export function createTransactionDialogActions({
       const payload = await responsePayload(response);
       if (!response.ok) throw responseError(response, payload);
       return payload;
+    },
+
+    async shutdownAgent({ agent, label, force }) {
+      const choice = Object.freeze({ force: !!force });
+      const response = await fetchImpl(
+        `/api/agents/${encodeURIComponent(agent)}/stop`,
+        {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(choice),
+        },
+      );
+      const payload = await responsePayload(response);
+      if (!response.ok) throw responseError(response, payload);
+      // stopOneConv reports lifecycle failures inside an HTTP-200 envelope.
+      // Treat that result as a failed transaction so the mounted dialog can
+      // surface it inline and retry the same frozen target and force choice.
+      if (payload?.action === 'error') throw lifecycleError(response, payload);
+      const result = {
+        ok: true,
+        action: String(payload?.action || 'ok'),
+        response: payload,
+      };
+      return finishSuccess(
+        result,
+        `shutdown ${label || agent}: ${result.action}`,
+      );
+    },
+
+    async deleteAgent({ agent, label, deleteWorktree }) {
+      // Only the exact frozen opt-in boolean adds the destructive worktree
+      // query. The permanent-delete endpoint intentionally receives no body.
+      const choice = Object.freeze({ deleteWorktree: deleteWorktree === true });
+      const query = choice.deleteWorktree ? '?delete_worktree=1' : '';
+      const response = await fetchImpl(
+        `/api/agents/${encodeURIComponent(agent)}${query}`,
+        { method: 'DELETE', credentials: 'same-origin' },
+      );
+      const payload = await responsePayload(response);
+      if (!response.ok) throw responseError(response, payload);
+      const result = { ok: true, response: payload };
+      const worktree = payload?.worktree;
+      const notice = worktree
+        ? `deleted ${label || agent} · ${worktree}`
+        : `deleted ${label || agent}`;
+      return finishSuccess(result, notice);
     },
 
     async retireAgent({ conv, label, shutdown, deleteWorktree }) {
