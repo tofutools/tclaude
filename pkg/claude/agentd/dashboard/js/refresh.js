@@ -58,9 +58,6 @@ function refreshSuspended() {
   if (renameEditing) return true;
   return false;
 }
-// sudoGrantBlocklist: slugs the sudo-grant modal refuses to offer.
-// Read by modal-cron's openSudoGrantModal; re-seeded on each refresh.
-export let sudoGrantBlocklist = ['permissions.grant', 'permissions.revoke'];
 // sudoByConv: conv-id → list of active grants. Built from
 // snapshot.sudo on every refresh so any renderer (Agents, Groups
 // members) can consult it for the 🔓 badge without a server-side
@@ -214,13 +211,6 @@ export async function refresh() {
     reconcileTerminalsForAgentRoster(data.agents, data.agent_roster_authoritative);
     setLastSnapshot(data);
     syncDashDefaultProfile(data.spawn_profile_default);
-    // Refresh the proactive-grant blocklist hint from the snapshot
-    // when present; falls back to the v1 hardcoded pair otherwise.
-    // (Snapshot doesn't carry the resolved blocklist directly; the
-    // server returns 403 on submit if the picker missed one — the
-    // UI just dims the well-known pair so the common case is
-    // self-explanatory.)
-    sudoGrantBlocklist = ['permissions.grant', 'permissions.revoke'];
     sudoByConv = {};
     (data.sudo || []).forEach(g => {
       if (!sudoByConv[g.conv_id]) sudoByConv[g.conv_id] = [];
