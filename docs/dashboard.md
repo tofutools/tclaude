@@ -645,6 +645,10 @@ drag-and-drop, and pasted screenshots; **Ctrl/Cmd+Enter** sends. The message is
 stored in the agent's mailbox and handed to its normal asynchronous delivery
 queue rather than typed through xterm, so terminal output and agent nudges
 cannot race with the operator's draft. Offline and busy agents keep it queued.
+The composer can be resized from its lower-right corner and remembers that
+size. After any text or attachment change, backdrop click, Escape, and Cancel
+ask before discarding the draft. Wizard mode gives the composer the same
+missive-themed purple-and-gold treatment as the rest of the dashboard.
 
 Every dashboard **Browse…** directory action uses one shared chooser. On a
 loopback/localhost dashboard it opens the host's native OS dialog by default.

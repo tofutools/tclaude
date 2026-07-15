@@ -2,10 +2,14 @@
 // bodies never enter xterm; submit uploads files, then enqueues one durable
 // senderless inbox row through /api/operator-message.
 
+import { makeModalResizable } from './helpers.js';
+import { bindBackdropDiscard } from './refresh.js';
+
 let bound = false;
 let target = null;
 let files = [];
 let pending = false;
+let dismissGuard = null;
 
 const el = (id) => document.getElementById(id);
 
@@ -26,16 +30,22 @@ function renderFiles() {
     remove.className = 'att-remove';
     remove.textContent = '✕';
     remove.setAttribute('aria-label', `Remove ${name.textContent}`);
-    remove.addEventListener('click', () => { files.splice(index, 1); renderFiles(); });
+    remove.addEventListener('click', () => {
+      files.splice(index, 1);
+      dismissGuard?.markDirty();
+      renderFiles();
+    });
     li.append(name, size, remove);
     list.append(li);
   });
 }
 
 function addFiles(incoming) {
+  const before = files.length;
   for (const file of incoming || []) {
     if (file && files.length < 8) files.push(file);
   }
+  if (files.length !== before) dismissGuard?.markDirty();
   renderFiles();
 }
 
@@ -69,7 +79,9 @@ async function submit() {
   pending = true;
   const button = el('operator-message-submit');
   button.disabled = true;
-  button.textContent = 'Queueing…';
+  el('operator-message-cancel').disabled = true;
+  button.querySelector('.theme-copy-regular').textContent = 'Queueing…';
+  button.querySelector('.theme-copy-wizard').textContent = '✒ Sending missive…';
   el('operator-message-error').textContent = '';
   try {
     const attachmentToken = await upload();
@@ -92,7 +104,9 @@ async function submit() {
     pending = false;
   } finally {
     button.disabled = false;
-    button.textContent = 'Send';
+    el('operator-message-cancel').disabled = false;
+    button.querySelector('.theme-copy-regular').textContent = 'Send';
+    button.querySelector('.theme-copy-wizard').textContent = '✒ Send missive';
   }
 }
 
@@ -106,6 +120,8 @@ export function openOperatorMessageModal(nextTarget) {
   el('operator-message-subject').value = '';
   el('operator-message-body').value = '';
   el('operator-message-error').textContent = '';
+  el('operator-message-submit').querySelector('.theme-copy-regular').textContent = 'Send';
+  el('operator-message-submit').querySelector('.theme-copy-wizard').textContent = '✒ Send missive';
   renderFiles();
   el('operator-message-modal').classList.add('show');
   setTimeout(() => el('operator-message-body').focus(), 0);
@@ -114,7 +130,8 @@ export function openOperatorMessageModal(nextTarget) {
 export function bindOperatorMessageModal() {
   if (bound || !el('operator-message-modal')) return;
   bound = true;
-  el('operator-message-cancel').addEventListener('click', close);
+  dismissGuard = bindBackdropDiscard('operator-message-modal', close, () => !pending);
+  el('operator-message-cancel').addEventListener('click', () => { void dismissGuard.tryDismiss(); });
   el('operator-message-submit').addEventListener('click', submit);
   el('operator-message-attach-btn').addEventListener('click', () => el('operator-message-attach-input').click());
   el('operator-message-attach-input').addEventListener('change', (event) => {
@@ -123,7 +140,6 @@ export function bindOperatorMessageModal() {
   });
   const modal = el('operator-message-modal');
   modal.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') { event.preventDefault(); close(); return; }
     if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
       void submit();
@@ -144,5 +160,8 @@ export function bindOperatorMessageModal() {
     event.preventDefault();
     addFiles(dropped);
   });
-  modal.addEventListener('click', (event) => { if (event.target === modal) close(); });
+  makeModalResizable(
+    modal.querySelector('.cron-create-modal'),
+    'tclaude.dash.modalSize.operator-message',
+  );
 }

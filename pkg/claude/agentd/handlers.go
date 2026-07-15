@@ -1219,7 +1219,6 @@ func messageInlineText(m *db.AgentMessage) (string, bool) {
 			fmt.Fprintf(&b, " %s (%s);", a.Filename, a.StoragePath)
 		}
 	}
-	b.WriteString(" Respond only in your regular chat/output; human.notify is optional extra feedback when permitted.")
 	text := b.String()
 	if len([]rune(text)) > limit {
 		return "", false
