@@ -3,6 +3,7 @@ import { dashboardState } from './snapshot-store.js';
 import { dashPrefs } from './prefs.js';
 import { createRequestLifecycle } from './request-lifecycle.js';
 import { WORKLIST_VIEWS, actionableCount, viewCounts, viewItems } from './process-worklist-core.js';
+import { processScribeSessions } from './process-scribe.js';
 
 const VIEW_PREF_KEY = 'tclaude.dash.worklist.view';
 
@@ -64,6 +65,7 @@ export function createProcessesState({ activeTab = dashboardState.activeTab, pre
     return {
       active: activeTab.value === 'processes', subtab: subtab.value, canvas: canvas.value,
       highlightedRun: highlightedRun.value, notice: notice.value,
+      scribes: processScribeSessions(dashboardState.snapshot.value),
       templates: templates.value?.templates || [], runs: runs.value?.runs || [],
       worklist: work, worklistView: worklistView.value,
       instantiation: instantiation.value,

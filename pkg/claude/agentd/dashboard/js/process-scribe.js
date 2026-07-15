@@ -5,6 +5,7 @@
 export const PROCESS_SCRIBE_NAME = 'process-scribe';
 export const PROCESS_SCRIBE_SLUGS = ['process.templates.read', 'process.templates.manage'];
 export const PROCESS_SCRIBE_SCOPE_KIND = 'process-template';
+export const PROCESS_SCRIBE_SCOPE_PREFIX = `Reusable scribe scope: ${PROCESS_SCRIBE_SCOPE_KIND}/`;
 
 const TEMPLATE_ID = /^[a-z0-9][a-z0-9._-]*$/;
 const SOURCE_HASH = /^[a-f0-9]{64}$/;
@@ -35,6 +36,46 @@ export function processScribeHandoff({ kind = 'library', id = '', currentRef = '
   return Object.freeze({
     scope: { kind: PROCESS_SCRIBE_SCOPE_KIND, id: templateId },
     anchor: { kind: 'template', templateId, currentRef: ref, sourceHash: hash, isNew: !!isNew },
+  });
+}
+
+export function processScribeScopeLabel(scope = {}) {
+  if (scope.kind !== PROCESS_SCRIBE_SCOPE_KIND) return '';
+  return scope.id ? `template ${scope.id}` : 'process-template library';
+}
+
+export function processScribeTaskRef(handoff, origin = globalThis.location?.origin || '') {
+  const base = String(origin || '');
+  if (!/^https?:\/\/[^/]+$/i.test(base)) throw new Error('dashboard origin is unavailable for the scribe task reference');
+  const scope = handoff?.scope || {};
+  const label = processScribeScopeLabel(scope);
+  if (!label) throw new Error('process scribe scope is invalid');
+  return Object.freeze({
+    url: `${base}/processes/templates`,
+    label: scope.id ? `process: ${scope.id}` : 'process templates',
+  });
+}
+
+// Only daemon-created scribe groups and strictly validated scope descriptions
+// become lifecycle controls. Human-edited free text is never reflected into a
+// selector, URL, command, or pane input path.
+export function processScribeSessions(snapshot) {
+  const group = (snapshot?.groups || []).find((candidate) => candidate?.scribe === true && candidate?.name === PROCESS_SCRIBE_NAME);
+  if (!group) return [];
+  return (group.members || []).flatMap((member) => {
+    const descr = String(member?.descr || '');
+    if (!descr.startsWith(PROCESS_SCRIBE_SCOPE_PREFIX)) return [];
+    const id = descr.slice(PROCESS_SCRIBE_SCOPE_PREFIX.length);
+    if (id && (id.length > MAX_TEMPLATE_ID || !TEMPLATE_ID.test(id))) return [];
+    const agentId = /^agt_[0-9a-f]{32}$/.test(member?.agent_id || '') ? member.agent_id : '';
+    const convId = String(member?.conv_id || '');
+    if (!agentId || !convId) return [];
+    const scope = Object.freeze({ kind: PROCESS_SCRIBE_SCOPE_KIND, ...(id ? { id } : {}) });
+    return [Object.freeze({
+      agentId, convId, name: String(member.title || 'process scribe'), scope,
+      scopeLabel: processScribeScopeLabel(scope), online: member.online === true,
+      taskURL: String(member.task_ref_url || ''), taskLabel: String(member.task_ref_label || ''),
+    })];
   });
 }
 

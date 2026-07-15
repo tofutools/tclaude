@@ -265,7 +265,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"name === 'templates' && (requestBusy(lifecycle) || headObservationPending)",
 		"'/v1/process/template-heads'",
 		"export function processActorPresentation(",
-		"`/api/open-window/${encodeURIComponent(presentation.agentId)}`",
+		"`/api/open-window/${encodeURIComponent(agentId)}`",
 		"async function openInstantiation(",
 		"mintAttemptID = mintUUID",
 		"const runId = `${id}-${mintAttemptID()}`",

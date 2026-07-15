@@ -5107,6 +5107,16 @@ body.hide-processes #tab-processes { display: none; }
 .process-scribe-wizard { display: none; }
 body.wizard #tab-processes .process-scribe-plain { display: none; }
 body.wizard #tab-processes .process-scribe-wizard { display: inline; }
+.process-scribe-status {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: -2px 0 12px;
+  padding: 8px 10px; border: 1px solid #30363d; border-radius: 7px; background: #0d1117;
+}
+.process-scribe-session { display: flex; align-items: center; gap: 7px; padding-left: 8px; border-left: 1px solid #30363d; }
+.process-scribe-state { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.process-scribe-state.online { color: #3fb950; }
+.process-scribe-state.stopped { color: #d29922; }
+.process-scribe-session .process-action { padding: 3px 7px; font-size: 12px; }
+.process-scribe-task { color: #79c0ff; font-size: 12px; }
 .process-notice { color: #8b949e; font-size: 12px; }
 .process-list table { width: 100%; border-collapse: collapse; }
 .process-list th, .process-list td { padding: 9px 10px; border-bottom: 1px solid #21262d; text-align: left; vertical-align: top; }
