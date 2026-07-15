@@ -2,6 +2,35 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
 
+// Mount the Preact-owned action-dialog root with a task-link descriptor already
+// open, an invoker focused so restoration is observable, and a recording
+// setTaskLink mock. Domain/HTTP behavior is covered separately against the real
+// action module below.
+async function mountTaskLink(t, descriptor, { confirmDiscard = async () => false, ...overrides } = {}) {
+  const harness = await createPreactHarness(t);
+  const [{ createActionDialogState }, { ActionDialogApp }] = await Promise.all([
+    harness.importDashboardModule('js/action-dialog-state.js'),
+    harness.importDashboardModule('js/action-dialog-island.js'),
+  ]);
+  const state = createActionDialogState();
+  const calls = [];
+  const actions = {
+    openTaskLink: state.openTaskLink,
+    close: state.close,
+    setTaskLink: async (value) => { calls.push(value); },
+    ...overrides,
+  };
+  const invoker = harness.document.body.appendChild(harness.document.createElement('button'));
+  invoker.id = 'task-invoker';
+  invoker.focus();
+  state.openTaskLink(descriptor);
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const mounted = await harness.mount(harness.html`
+    <${ActionDialogApp} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} />
+  `, host);
+  return { harness, host, state, actions, calls, invoker, cleanup: () => mounted.unmount() };
+}
+
 test('task cells separate navigation from editing and retain raw edit values', async (t) => {
   const harness = await createPreactHarness(t);
   const { taskCell } = await harness.importDashboardModule('js/helpers.js');
@@ -32,145 +61,220 @@ test('task cells separate navigation from editing and retain raw edit values', a
   assert.match(unsafe, /task-edit-icon/, 'an unsafe legacy value remains editable');
 });
 
-test('task-link dialog prefills URL and explicit label, then returns both', async (t) => {
-  const harness = await createPreactHarness(t);
-  harness.window.location = { search: '' };
-  harness.document.body.innerHTML = `
-    <button id="task-link-invoker"></button>
-    <div id="task-link-modal">
-      <div class="modal">
-        <div id="task-link-meta"></div>
-        <input id="task-link-url" data-select-on-focus />
-        <input id="task-link-label" />
-        <div id="task-link-error"></div>
-        <button id="task-link-cancel"></button>
-        <button id="task-link-save"></button>
-      </div>
-    </div>
-  `;
-  await harness.replaceDashboardModule('js/dashboard.js', `
-    export let lastSnapshot = null;
-    export function setLastSnapshot(value) { lastSnapshot = value; }
-    export function webTerminalDefault() { return false; }
-    export function sudoBadge() { return ''; }
-  `);
-  const { taskLinkModal } = await harness.importDashboardModule('js/refresh.js');
-
-  const invoker = harness.document.querySelector('#task-link-invoker');
-  invoker.focus();
-  const result = taskLinkModal({
-    agentLabel: 'alice',
-    url: 'https://linear.app/acme/issue/JOH-42/work',
-    taskLabel: 'Launch task',
+test('task-link dialog prefills, selects the URL, and submits the changed pair', async (t) => {
+  const mounted = await mountTaskLink(t, {
+    conv: 'agt-alice', agentLabel: 'alice',
+    url: 'https://linear.app/acme/issue/JOH-42/work', taskLabel: 'Launch task',
   });
-  await Promise.resolve(); // bindDialogFocus's initial-focus microtask
-  assert.equal(harness.document.querySelector('#task-link-meta').textContent, 'alice');
-  assert.equal(harness.document.querySelector('#task-link-url').value,
-    'https://linear.app/acme/issue/JOH-42/work');
-  assert.equal(harness.document.querySelector('#task-link-label').value, 'Launch task');
-  assert.equal(harness.document.activeElement, harness.document.querySelector('#task-link-url'));
+  const { harness, host, calls } = mounted;
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
 
-  // The shared form is single-instance. A programmatic/repeated open neither
-  // overwrites the first agent's values nor leaves a second pending Promise.
-  assert.equal(await taskLinkModal({
-    agentLabel: 'bob', url: 'https://example.com/bob', taskLabel: 'Bob task',
-  }), null);
-  assert.equal(harness.document.querySelector('#task-link-meta').textContent, 'alice');
+  assert.equal(host.querySelector('#task-link-meta').textContent, 'alice');
+  const url = host.querySelector('#task-link-url');
+  assert.equal(url.value, 'https://linear.app/acme/issue/JOH-42/work');
+  assert.equal(host.querySelector('#task-link-label').value, 'Launch task');
+  // The shared dialog lifecycle focuses the first control and honours
+  // data-select-on-focus, so the prefilled URL is focused for quick replacement.
+  assert.equal(harness.document.activeElement, url);
 
-  // Tab from the last control wraps to the first instead of reaching the page
-  // behind the aria-modal overlay.
-  harness.document.querySelector('#task-link-save').focus();
-  const tab = new harness.window.Event('keydown', { bubbles: true });
-  Object.defineProperty(tab, 'key', { value: 'Tab' });
-  harness.document.dispatchEvent(tab);
-  assert.equal(harness.document.activeElement, harness.document.querySelector('#task-link-url'));
-
-  harness.document.querySelector('#task-link-label').value = 'Release task';
-  // Enter is a save shortcut only in the text fields. It must not override
-  // native button activation or commit while an IME composition is active.
-  const cancel = harness.document.querySelector('#task-link-cancel');
-  cancel.focus();
-  const cancelEnter = new harness.window.Event('keydown', { bubbles: true, cancelable: true });
-  Object.defineProperty(cancelEnter, 'key', { value: 'Enter' });
-  cancel.dispatchEvent(cancelEnter);
-  assert.equal(cancelEnter.defaultPrevented, false);
-  assert.ok(harness.document.querySelector('#task-link-modal').classList.contains('show'));
-
-  const composingEnter = new harness.window.Event('keydown', { bubbles: true, cancelable: true });
-  Object.defineProperties(composingEnter, {
-    key: { value: 'Enter' },
-    isComposing: { value: true },
+  await harness.input(host.querySelector('#task-link-label'), 'Release task');
+  host.querySelector('#task-link-save').click();
+  await harness.act(() => Promise.resolve());
+  assert.deepEqual(calls[0], {
+    conv: 'agt-alice', label: 'alice',
+    url: 'https://linear.app/acme/issue/JOH-42/work', taskLabel: 'Release task', changed: true,
   });
-  harness.document.querySelector('#task-link-label').dispatchEvent(composingEnter);
-  assert.equal(composingEnter.defaultPrevented, false);
-  assert.ok(harness.document.querySelector('#task-link-modal').classList.contains('show'));
-
-  harness.document.querySelector('#task-link-save').click();
-  assert.deepEqual(await result, {
-    url: 'https://linear.app/acme/issue/JOH-42/work',
-    taskLabel: 'Release task',
-  });
-  assert.equal(harness.document.activeElement, invoker, 'close restores the edit-pencil invoker');
-
-  const invalid = taskLinkModal({agentLabel: 'alice', url: '', taskLabel: ''});
-  harness.document.querySelector('#task-link-url').value = 'javascript:alert(1)';
-  harness.document.querySelector('#task-link-save').click();
-  assert.match(harness.document.querySelector('#task-link-error').textContent, /http:\/\//);
-  assert.ok(harness.document.querySelector('#task-link-modal').classList.contains('show'));
-  harness.document.querySelector('#task-link-cancel').click();
-  assert.equal(await invalid, null);
+  await mounted.cleanup();
 });
 
-test('dirty task-link dialog contains accidental dismissal and confirms discard', async (t) => {
-  const harness = await createPreactHarness(t);
-  harness.window.location = { search: '' };
-  harness.document.body.innerHTML = `
-    <button id="invoker"></button>
-    <div id="task-link-modal"><div class="modal">
-      <div id="task-link-meta"></div><input id="task-link-url" />
-      <input id="task-link-label" /><div id="task-link-error"></div>
-      <button id="task-link-cancel"></button><button id="task-link-save"></button>
-    </div></div>
-  `;
-  await harness.replaceDashboardModule('js/dashboard.js', `
-    export let lastSnapshot = null;
-    export function setLastSnapshot(value) { lastSnapshot = value; }
-    export function webTerminalDefault() { return false; }
-    export function sudoBadge() { return ''; }
-  `);
-  const { taskLinkModal } = await harness.importDashboardModule('js/refresh.js');
+test('a repeated open cannot overwrite the live draft or retarget save', async (t) => {
+  const mounted = await mountTaskLink(t, {
+    conv: 'agt-alice', agentLabel: 'alice', url: 'https://example.com/alice', taskLabel: '',
+  });
+  const { harness, host, state, calls } = mounted;
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+
+  // Edit the draft, then a second open for a *different* agent arrives (a
+  // repeated pencil click or a programmatic launch). The legacy controller
+  // refused this so it could neither clobber the draft nor retarget Save.
+  await harness.input(host.querySelector('#task-link-url'), 'https://example.com/alice-edited');
+  state.openTaskLink({ conv: 'agt-bob', agentLabel: 'bob', url: 'https://example.com/bob', taskLabel: 'Bob' });
+  await harness.act(() => Promise.resolve());
+
+  assert.equal(state.dialog.value.conv, 'agt-alice');
+  assert.equal(host.querySelector('#task-link-meta').textContent, 'alice');
+  assert.equal(host.querySelector('#task-link-url').value, 'https://example.com/alice-edited');
+
+  host.querySelector('#task-link-save').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(calls[0].conv, 'agt-alice');
+  assert.equal(calls[0].url, 'https://example.com/alice-edited');
+  await mounted.cleanup();
+});
+
+test('task-link dialog enforces url rules, no-ops, and clears', async (t) => {
+  // A display name without a URL has nothing to attach to.
+  {
+    const m = await mountTaskLink(t, { conv: 'c', agentLabel: 'a', url: '', taskLabel: '' });
+    await m.harness.act(() => new Promise((r) => setTimeout(r, 0)));
+    await m.harness.input(m.host.querySelector('#task-link-label'), 'orphan label');
+    m.host.querySelector('#task-link-save').click();
+    await m.harness.act(() => Promise.resolve());
+    assert.match(m.host.querySelector('#task-link-error').textContent, /Enter a URL/);
+    assert.equal(m.calls.length, 0, 'an invalid submit is not routed to the action');
+    await m.cleanup();
+  }
+  // Only http(s) URLs persist; a stored javascript: value cannot be re-saved.
+  {
+    const m = await mountTaskLink(t, { conv: 'c', agentLabel: 'a', url: '', taskLabel: '' });
+    await m.harness.act(() => new Promise((r) => setTimeout(r, 0)));
+    await m.harness.input(m.host.querySelector('#task-link-url'), 'javascript:alert(1)');
+    m.host.querySelector('#task-link-save').click();
+    await m.harness.act(() => Promise.resolve());
+    assert.match(m.host.querySelector('#task-link-error').textContent, /http:\/\//);
+    assert.equal(m.calls.length, 0);
+    await m.cleanup();
+  }
+  // An unchanged submit routes as a no-op the action can short-circuit.
+  {
+    const m = await mountTaskLink(t, { conv: 'c', agentLabel: 'a', url: 'https://example.com/x', taskLabel: 'X' });
+    await m.harness.act(() => new Promise((r) => setTimeout(r, 0)));
+    m.host.querySelector('#task-link-save').click();
+    await m.harness.act(() => Promise.resolve());
+    assert.deepEqual(m.calls[0], { conv: 'c', label: 'a', url: 'https://example.com/x', taskLabel: 'X', changed: false });
+    await m.cleanup();
+  }
+  // Emptying both fields clears the reference (changed, but no URL).
+  {
+    const m = await mountTaskLink(t, { conv: 'c', agentLabel: 'a', url: 'https://example.com/x', taskLabel: 'X' });
+    await m.harness.act(() => new Promise((r) => setTimeout(r, 0)));
+    await m.harness.input(m.host.querySelector('#task-link-url'), '');
+    await m.harness.input(m.host.querySelector('#task-link-label'), '');
+    m.host.querySelector('#task-link-save').click();
+    await m.harness.act(() => Promise.resolve());
+    assert.deepEqual(m.calls[0], { conv: 'c', label: 'a', url: '', taskLabel: '', changed: true });
+    await m.cleanup();
+  }
+});
+
+test('dirty task-link dialog confirms discard and restores the invoker', async (t) => {
   const decisions = [false, true];
   let confirmations = 0;
-  harness.document.querySelector('#invoker').focus();
-  const result = taskLinkModal(
-    {agentLabel: 'alice', url: 'https://example.com/old', taskLabel: ''},
-    {confirmDiscardFn: async () => { confirmations += 1; return decisions.shift(); }},
-  );
-  await Promise.resolve();
-  const overlay = harness.document.querySelector('#task-link-modal');
-  const url = harness.document.querySelector('#task-link-url');
-  url.value = 'https://example.com/new';
+  const mounted = await mountTaskLink(t, {
+    conv: 'c', agentLabel: 'alice', url: 'https://example.com/old', taskLabel: '',
+  }, { confirmDiscard: async () => { confirmations += 1; return decisions.shift(); } });
+  const { harness, host, invoker } = mounted;
+  await harness.act(() => new Promise((r) => setTimeout(r, 0)));
 
-  // A selection drag beginning in the field and releasing on the backdrop is
-  // not a backdrop click and must not lose the edit.
-  url.dispatchEvent(new harness.window.Event('mousedown', { bubbles: true }));
-  overlay.dispatchEvent(new harness.window.Event('click', { bubbles: true }));
-  await Promise.resolve();
-  assert.ok(overlay.classList.contains('show'));
-  assert.equal(confirmations, 0);
-
+  await harness.input(host.querySelector('#task-link-url'), 'https://example.com/new');
   const escape = () => {
     const event = new harness.window.Event('keydown', { bubbles: true });
     Object.defineProperty(event, 'key', { value: 'Escape' });
     harness.document.dispatchEvent(event);
   };
+
   escape();
-  await Promise.resolve();
-  await Promise.resolve();
-  assert.ok(overlay.classList.contains('show'), 'denied discard keeps the dirty dialog open');
+  await harness.act(() => new Promise((r) => setTimeout(r, 0)));
+  assert.ok(host.querySelector('#task-link-modal'), 'a denied discard keeps the dirty dialog open');
   assert.equal(confirmations, 1);
+
   escape();
-  assert.equal(await result, null);
+  await harness.act(() => new Promise((r) => setTimeout(r, 0)));
+  assert.equal(host.querySelector('#task-link-modal'), null, 'a confirmed discard closes the dialog');
   assert.equal(confirmations, 2);
-  assert.equal(harness.document.activeElement, harness.document.querySelector('#invoker'));
+  assert.equal(harness.document.activeElement, invoker, 'closing restores the edit-pencil invoker');
+});
+
+test('Enter saves only from a field, never composing, never via a global hotkey', async (t) => {
+  const mounted = await mountTaskLink(t, {
+    conv: 'c', agentLabel: 'alice', url: 'https://example.com/x', taskLabel: 'X',
+  });
+  const { harness, host, calls } = mounted;
+  await harness.act(() => new Promise((r) => setTimeout(r, 0)));
+  await harness.input(host.querySelector('#task-link-label'), 'Renamed');
+  const label = host.querySelector('#task-link-label');
+  const fieldEnter = (init = {}) => {
+    const event = new harness.window.Event('keydown', { bubbles: true, cancelable: true });
+    Object.defineProperties(event, {
+      key: { value: 'Enter' },
+      isComposing: { value: !!init.isComposing },
+      ctrlKey: { value: !!init.ctrlKey },
+      metaKey: { value: !!init.metaKey },
+    });
+    return event;
+  };
+
+  // Plain and modified Enter while composing commit the IME candidate, not the
+  // form — the composition guard must hold for Ctrl/⌘+Enter too.
+  for (const modifier of [{}, { ctrlKey: true }, { metaKey: true }]) {
+    const composing = fieldEnter({ isComposing: true, ...modifier });
+    label.dispatchEvent(composing);
+    await harness.act(() => Promise.resolve());
+    assert.equal(composing.defaultPrevented, false);
+  }
+  assert.equal(calls.length, 0, 'no composing Enter submits');
+
+  // Ctrl/⌘+Enter outside the fields must not submit: there is no global submit
+  // hotkey that fires regardless of target. Dispatch from the heading rather
+  // than a button so this assertion tests bubbling without LinkeDOM's synthetic
+  // button-activation behavior getting involved.
+  const nonFieldHotkey = fieldEnter({ ctrlKey: true });
+  host.querySelector('#task-link-title').dispatchEvent(nonFieldHotkey);
+  await harness.act(() => Promise.resolve());
+  assert.equal(nonFieldHotkey.defaultPrevented, false);
+  assert.equal(calls.length, 0, 'a hotkey outside the fields does not submit');
+
+  // A committed Ctrl/⌘+Enter originating in a text field saves (matching the
+  // legacy controller, which ignored modifiers on a field Enter).
+  const enter = fieldEnter({ ctrlKey: true });
+  label.dispatchEvent(enter);
+  await harness.act(() => Promise.resolve());
+  assert.equal(enter.defaultPrevented, true);
+  assert.equal(calls[0].taskLabel, 'Renamed');
+  assert.equal(calls[0].changed, true);
+  await mounted.cleanup();
+});
+
+test('setTaskLink posts, clears, no-ops, notifies, and refreshes', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createActionDialogState }, { createActionDialogActions }] = await Promise.all([
+    harness.importDashboardModule('js/action-dialog-state.js'),
+    harness.importDashboardModule('js/action-dialog-actions.js'),
+  ]);
+  const state = createActionDialogState();
+  const requests = [];
+  const notices = [];
+  let refreshes = 0;
+  const fetchImpl = async (url, options) => {
+    requests.push([url, options]);
+    return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+  const actions = createActionDialogActions({
+    state, fetchImpl,
+    notify: (...args) => notices.push(args),
+    refresh: async () => { refreshes += 1; },
+  });
+
+  // Update: the daemon owns label derivation, so a blank label is sent blank.
+  state.openTaskLink({ conv: 'agt-1', agentLabel: 'alice' });
+  await actions.setTaskLink({ conv: 'agt-1', label: 'alice', url: 'https://example.com/x', taskLabel: 'X', changed: true });
+  assert.equal(requests[0][0], '/api/agents/agt-1/task');
+  assert.equal(requests[0][1].method, 'POST');
+  assert.deepEqual(JSON.parse(requests[0][1].body), { url: 'https://example.com/x', label: 'X' });
+  assert.deepEqual(notices[0], ['task link updated: alice']);
+  assert.equal(state.dialog.value, null);
+
+  // Clear: an empty URL persists {clear:true}.
+  state.openTaskLink({ conv: 'agt-1', agentLabel: 'alice' });
+  await actions.setTaskLink({ conv: 'agt-1', label: 'alice', url: '', taskLabel: '', changed: true });
+  assert.deepEqual(JSON.parse(requests[1][1].body), { clear: true });
+  assert.deepEqual(notices[1], ['task link cleared: alice']);
+
+  // No-op: no request, and no refresh.
+  state.openTaskLink({ conv: 'agt-1', agentLabel: 'alice' });
+  await actions.setTaskLink({ conv: 'agt-1', label: 'alice', url: 'https://example.com/x', taskLabel: 'X', changed: false });
+  assert.equal(requests.length, 2, 'a no-op submit performs no request');
+  assert.deepEqual(notices[2], ['no changes']);
+  assert.equal(state.dialog.value, null);
+  assert.equal(refreshes, 2, 'only real mutations refresh');
 });
