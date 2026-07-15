@@ -26,7 +26,7 @@ import (
 // terminal emulator installed at all. Rather than erroring out,
 // handleDashboardTermAPI / handleDashboardOpenWindowAPI point the
 // dashboard at one of the WS routes below, which stream a real PTY
-// straight into the page (js/modal-term.js + vendored xterm.js).
+// straight into the page (the Preact terminal shell + vendored xterm.js).
 //
 // Ported from the former standalone `tclaude web` handleWS implementation,
 // generalised to run an arbitrary `sh -c` command instead of a hardcoded tmux
