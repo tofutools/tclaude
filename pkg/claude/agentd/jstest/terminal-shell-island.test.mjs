@@ -101,6 +101,17 @@ test('dashboard terminal feature owns three hosts while preserving opaque xterm 
   const opaqueChild = fake.widgets[0].child;
   assert.equal(opaqueChild.parentElement.classList.contains('mux-pane-xterm'), true);
 
+  const firstActivationEdges = fake.widgets[0].activeEdges.length;
+  await harness.act(async () => {
+    controller.openTerminalPane({ ws: '/one', key: 'one', label: 'one', agent: 'agt_one' });
+    await Promise.resolve();
+  });
+  assert.equal(fake.widgets.length, 1, 'revealing the active pane does not remount its widget');
+  assert.equal(fake.widgets[0].disposeCount, 0);
+  assert.equal(fake.widgets[0].activeEdges.length, firstActivationEdges + 1);
+  assert.equal(fake.widgets[0].activeEdges.at(-1), true, 'revealing the active pane refocuses xterm');
+  assert.equal(fake.widgets[0].child, opaqueChild);
+
   await harness.act(() => fake.widgets[0].options.onStatus('copied'));
   assert.equal(host.querySelector('.mux-pane-status').textContent, 'copied');
   assert.equal(fake.widgets[0].child, opaqueChild, 'a chrome rerender never reconciles xterm descendants');
@@ -119,6 +130,12 @@ test('dashboard terminal feature owns three hosts while preserving opaque xterm 
   assert.equal(fake.widgets[1].activeEdges.at(-1), true);
   await harness.act(() => controller.focusTerminalForConv(['agt_one']));
   assert.equal(fake.widgets[0].activeEdges.at(-1), true);
+  const activeEdges = fake.widgets[0].activeEdges.length;
+  const inactiveEdges = fake.widgets[1].activeEdges.length;
+  await harness.act(() => controller.focusTerminalForConv(['agt_one']));
+  assert.equal(fake.widgets[0].activeEdges.length, activeEdges + 1);
+  assert.equal(fake.widgets[0].activeEdges.at(-1), true);
+  assert.equal(fake.widgets[1].activeEdges.length, inactiveEdges, 'reveal does not touch inactive widgets');
 
   const closeOne = getByRole(host, 'button', { name: 'Close one' });
   await harness.act(() => harness.fireEvent(closeOne, 'click'));
