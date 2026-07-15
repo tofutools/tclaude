@@ -28,6 +28,9 @@ func TestDashboardPreactReconciliationWired(t *testing.T) {
 
 	// Recurring snapshot surfaces use feature-local state and stable keys.
 	present("function GroupsList(", "Groups has a Preact owner")
+	present("function GroupsNativeList(", "Groups renders native group and virtual-group shells")
+	present("function LegacyMemberTableAdapter(", "the temporary TCL-465 member-row boundary is explicit")
+	present("return trustedHTMLToVNodes(presentation.memberTable(", "only the member-table fragment crosses the temporary HTML adapter")
 	present("element.getAttribute('data-group-key')", "Groups promotes stable identities to Preact keys")
 	present("function LinksList(", "Links has a Preact owner")
 	present("key=${String(link.id)}", "Links rows carry stable Preact keys")
@@ -63,6 +66,20 @@ func TestDashboardPreactReconciliationWired(t *testing.T) {
 		if strings.Contains(dashboardAssets, forbidden) {
 			t.Errorf("dashboard assets retain recurring wholesale write %q", forbidden)
 		}
+	}
+
+	groupsList, err := fs.ReadFile(dashboardAssetsFS, "js/groups-list.js")
+	if err != nil {
+		t.Fatalf("read native Groups list: %v", err)
+	}
+	groupsSource := string(groupsList)
+	for _, forbidden := range []string{"renderGroupsHTML", "dangerouslySetInnerHTML", ".innerHTML", "useState("} {
+		if strings.Contains(groupsSource, forbidden) {
+			t.Errorf("native Groups list retains forbidden renderer seam %q", forbidden)
+		}
+	}
+	if got := strings.Count(groupsSource, "trustedHTMLToVNodes("); got != 1 {
+		t.Errorf("native Groups list has %d trusted HTML adapters, want exactly the named member-table boundary", got)
 	}
 }
 
