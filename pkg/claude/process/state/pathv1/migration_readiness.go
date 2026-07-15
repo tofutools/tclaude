@@ -197,6 +197,9 @@ func ValidateUpgradeNeeded(needed UpgradeNeeded) error {
 	if len(needed.CheckpointAdminRecords) > MaxLegacyAdminRecordCount {
 		return &UpgradeNeededOverBudgetError{Limit: "legacy_admin_records", Value: len(needed.CheckpointAdminRecords), Maximum: MaxLegacyAdminRecordCount}
 	}
+	if needed.Reason == UpgradeMigrationRequired && len(needed.CheckpointAdminRecords) != 0 {
+		return fmt.Errorf("upgrade-needed migration classification has checkpoint admin provenance")
+	}
 	for i, admin := range needed.CheckpointAdminRecords {
 		if err := validateCheckpointAdminRecord(needed.RunID, needed.Checkpoint, admin); err != nil {
 			return fmt.Errorf("upgrade-needed checkpoint admin record %d: %w", i, err)

@@ -230,6 +230,30 @@ func TestValidateUpgradeNeededRejectsForgedCheckpointAdminProvenance(t *testing.
 			rebind: true,
 		},
 		{
+			name: "repair type swap clears resolution authority rebound",
+			mutate: func(needed *UpgradeNeeded) {
+				admin := &needed.CheckpointAdminRecords[0]
+				admin.Record.AdminType = "admin_repair_recorded"
+				admin.Record.ResolutionDigest = ""
+				admin.Resolution = nil
+				needed.ActiveLegacyIDs = nil
+				needed.Reason = UpgradeMigrationRequired
+			},
+			rebind: true,
+		},
+		{
+			name: "programs-allowed type swap clears resolution authority rebound",
+			mutate: func(needed *UpgradeNeeded) {
+				admin := &needed.CheckpointAdminRecords[0]
+				admin.Record.AdminType = "admin_programs_allowed"
+				admin.Record.ResolutionDigest = ""
+				admin.Resolution = nil
+				needed.ActiveLegacyIDs = nil
+				needed.Reason = UpgradeMigrationRequired
+			},
+			rebind: true,
+		},
+		{
 			name: "unknown nonresolution admin type rebound",
 			mutate: func(needed *UpgradeNeeded) {
 				admin := &needed.CheckpointAdminRecords[0]
