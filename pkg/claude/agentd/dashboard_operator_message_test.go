@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -39,4 +40,26 @@ func TestConsumeOperatorAttachmentBatchRejectsForgedPathToken(t *testing.T) {
 	_, _, err := consumeOperatorAttachmentBatch("../outside")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid attachment token")
+}
+
+func TestAttachmentReconcilePreservesFreshUnreferencedCopy(t *testing.T) {
+	setupTestDB(t)
+	durable := t.TempDir()
+	previousDurable := operatorMessageAttachmentsBase
+	operatorMessageAttachmentsBase = durable
+	t.Cleanup(func() { operatorMessageAttachmentsBase = previousDurable })
+
+	fresh := filepath.Join(durable, "fresh")
+	stale := filepath.Join(durable, "stale")
+	require.NoError(t, os.WriteFile(fresh, []byte("copying"), 0o600))
+	require.NoError(t, os.WriteFile(stale, []byte("orphan"), 0o600))
+	old := time.Now().Add(-2 * agentMessageAttachmentOrphanGrace)
+	require.NoError(t, os.Chtimes(stale, old, old))
+
+	reconcileAgentMessageAttachments()
+
+	_, err := os.Stat(fresh)
+	require.NoError(t, err, "fresh file may still be in the copy-to-commit window")
+	_, err = os.Stat(stale)
+	assert.ErrorIs(t, err, os.ErrNotExist, "aged crash orphan should be removed")
 }

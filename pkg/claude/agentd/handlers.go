@@ -1194,8 +1194,8 @@ func messageInlineMaxChars() int {
 // bytes from becoming tmux control/input syntax while eliminating the inbox
 // round trip for the common short instruction.
 func messageInlineText(m *db.AgentMessage) (string, bool) {
-	cap := messageInlineMaxChars()
-	if cap <= 0 || !db.IsOperatorAgentMessage(m.ID) || strings.TrimSpace(m.Body) == "" {
+	limit := messageInlineMaxChars()
+	if limit <= 0 || !db.IsOperatorAgentMessage(m.ID) || strings.TrimSpace(m.Body) == "" {
 		return "", false
 	}
 	for _, r := range m.Body + m.Subject {
@@ -1221,7 +1221,7 @@ func messageInlineText(m *db.AgentMessage) (string, bool) {
 	}
 	b.WriteString(" Respond only in your regular chat/output; human.notify is optional extra feedback when permitted.")
 	text := b.String()
-	if len([]rune(text)) > cap {
+	if len([]rune(text)) > limit {
 		return "", false
 	}
 	return text, true
@@ -1279,17 +1279,14 @@ func nudgeIfAlive(msgID int64, toID string) deliveryOutcome {
 		// empty so a later flush retries.
 		return outcomeQueued
 	}
-	// delivered_at is internal bookkeeping; the nudge itself already
-	// landed, so log on failure rather than failing the whole call.
-	if err := db.MarkAgentMessageDelivered(msgID); err != nil {
-		slog.Warn("failed to record delivered_at", "error", err, "msg_id", msgID)
-	}
+	consumed := false
 	if m, _ := db.GetAgentMessage(msgID); m != nil {
-		if _, inlined := messageInlineText(m); inlined {
-			if err := db.MarkAgentMessageRead(msgID); err != nil {
-				slog.Warn("failed to record inline message read_at", "error", err, "msg_id", msgID)
-			}
-		}
+		_, consumed = messageInlineText(m)
+	}
+	// Delivery bookkeeping is one write so an inline message cannot be marked
+	// delivered but left unread if the daemon exits between updates.
+	if err := db.MarkAgentMessageDeliveredState(msgID, consumed); err != nil {
+		slog.Warn("failed to record delivery state", "error", err, "msg_id", msgID)
 	}
 	return outcomeDelivered
 }

@@ -2306,12 +2306,25 @@ func FindAgentMembersBySelector(selector string) ([]*AgentGroupMember, error) {
 
 // MarkAgentMessageDelivered sets delivered_at = now for the given message ID.
 func MarkAgentMessageDelivered(id int64) error {
+	return MarkAgentMessageDeliveredState(id, false)
+}
+
+// MarkAgentMessageDeliveredState records direct delivery. Inline delivery also
+// marks the archival inbox copy read in the same write, so a crash cannot leave
+// an unread reminder for content already injected into the pane.
+func MarkAgentMessageDeliveredState(id int64, consumed bool) error {
 	db, err := Open()
 	if err != nil {
 		return err
 	}
-	_, err = db.Exec(`UPDATE agent_messages SET delivered_at = ?, nudge_claimed_at = '' WHERE id = ?`,
-		time.Now().Format(time.RFC3339Nano), id)
+	now := time.Now().Format(time.RFC3339Nano)
+	readAt := ""
+	if consumed {
+		readAt = now
+	}
+	_, err = db.Exec(`UPDATE agent_messages
+		SET delivered_at = ?, read_at = CASE WHEN ? != '' THEN ? ELSE read_at END, nudge_claimed_at = ''
+		WHERE id = ?`, now, readAt, readAt, id)
 	return err
 }
 

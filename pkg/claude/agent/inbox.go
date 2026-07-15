@@ -403,10 +403,13 @@ func actorID(agentID, convID string) string {
 // actorHeader renders a message actor as "name (agent_id)" for an
 // inbox-read From header, or just the id when no title is indexed.
 func actorHeader(title, agentID, convID string) string {
-	if title == "" && agentID == "" && convID == "" {
+	id := actorID(agentID, convID)
+	if id == "" {
+		if title != "" {
+			return title
+		}
 		return "human operator"
 	}
-	id := actorID(agentID, convID)
 	if title == "" {
 		return id
 	}

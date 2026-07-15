@@ -9,7 +9,13 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
-const agentMessageAttachmentCleanupInterval = 10 * time.Minute
+const (
+	agentMessageAttachmentCleanupInterval = 10 * time.Minute
+	// Attachment bytes are copied into the reconciled directory immediately
+	// before their metadata transaction commits. Keep fresh, unreferenced files
+	// long enough that a concurrent cleanup cannot remove an in-flight copy.
+	agentMessageAttachmentOrphanGrace = 10 * time.Minute
+)
 
 func startAgentMessageAttachmentCleanup(stop <-chan struct{}) {
 	reconcileAgentMessageAttachments()
@@ -52,6 +58,9 @@ func reconcileAgentMessageAttachments() {
 			return nil
 		}
 		if !referenced[filepath.Clean(path)] {
+			if info, err := entry.Info(); err == nil && time.Since(info.ModTime()) < agentMessageAttachmentOrphanGrace {
+				return nil // request may still be copying bytes or committing metadata
+			}
 			_ = os.Remove(path)
 		}
 		return nil

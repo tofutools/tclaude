@@ -268,8 +268,8 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   // (it reveals itself once "web term" / "web window" opens the first pane).
   initTerminalsTab();
   bindMessageModal();
-	bindHumanReplyModal();
-	bindOperatorMessageModal();
+  bindHumanReplyModal();
+  bindOperatorMessageModal();
   bindGroupCreateModal();
   bindTemplatesUI();
   bindProfilesUI();
