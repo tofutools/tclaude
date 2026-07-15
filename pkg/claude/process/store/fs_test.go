@@ -1102,6 +1102,50 @@ func TestBatchedAppendValidationFailureDoesNotPartiallyCommit(t *testing.T) {
 	}
 }
 
+func TestAppendTimestampRequirementsInventoryLegacyAdminWrites(t *testing.T) {
+	for _, eventType := range []state.EventType{
+		state.EventAdminRepairRecorded,
+		state.EventAdminProgramsAllowed,
+	} {
+		t.Run(string(eventType), func(t *testing.T) {
+			fs, runID := initializedRun(t)
+			entry := storetest.AdminLogEntry(runID, "implement", 0)
+			entry.Scope = evidence.Scope{Kind: evidence.ScopeRun}
+			entry.Event.Type = eventType
+			entry.Event.At = time.Time{}
+			// The envelope timestamp cannot substitute for the authority timestamp
+			// that the legacy reducer persists into AdminRecords.
+			require.False(t, entry.At.IsZero())
+
+			_, err := fs.Append(t.Context(), runID, 0, []evidence.LogEntry{entry})
+			require.ErrorContains(t, err, string(eventType)+" requires a timestamp for new writes")
+			manifest, readErr := fs.ReadManifest(t.Context(), runID)
+			require.NoError(t, readErr)
+			runLog, readErr := fs.ReadRunLog(t.Context(), runID)
+			require.NoError(t, readErr)
+			checkpoint, readErr := fs.LoadRunState(t.Context(), runID)
+			require.NoError(t, readErr)
+			assert.Empty(t, manifest)
+			assert.Empty(t, runLog)
+			assert.Empty(t, checkpoint.AdminRecords)
+		})
+	}
+
+	t.Run("block resolution remains strict", func(t *testing.T) {
+		fs, runID := initializedRun(t)
+		entry := storetest.AdminLogEntry(runID, "implement", 0)
+		entry.Event = &state.Event{Type: state.EventBlockResolutionRecorded, Resolution: &state.BlockResolution{
+			NodeID: "implement", BlockedAttempt: 1, Decision: state.BlockDecisionSkip,
+			Actor: "human:operator", Reason: "waived", EvidenceRef: "ticket:TCL-523",
+		}}
+		_, err := fs.Append(t.Context(), runID, 0, []evidence.LogEntry{entry})
+		require.ErrorContains(t, err, "block resolution requires timestamp")
+		manifest, readErr := fs.ReadManifest(t.Context(), runID)
+		require.NoError(t, readErr)
+		assert.Empty(t, manifest)
+	})
+}
+
 func TestRunScopeLogRoundTrip(t *testing.T) {
 	ctx := t.Context()
 	fs, runID := initializedRun(t)

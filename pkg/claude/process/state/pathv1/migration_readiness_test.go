@@ -491,6 +491,51 @@ func TestAssessUpgradeNeededClassifiesNonResolutionAdminAsDrain(t *testing.T) {
 	}
 }
 
+func TestAssessUpgradeNeededCheckpointBindsTimestampLessLegacyAdmin(t *testing.T) {
+	ref := "demo@sha256:" + strings.Repeat("a", 64)
+	st := legacy.New("run", ref, ref, nil)
+	record := PathV1AdminRecord{
+		RunID: "run", AdminType: string(legacy.EventAdminProgramsAllowed), Actor: "human:operator",
+		ReasonCode: "historical opt-in", EvidenceRef: "ticket:TCL-523",
+	}
+	var err error
+	record.ID, err = LegacyAdminRecordIdentity(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	needed, err := AssessUpgradeNeeded(
+		t.Context(), []byte(`{"checkpoint":true}`), &st, ref, strings.Repeat("c", 64),
+		map[string]PathV1AdminRecord{record.ID: record}, nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if needed.Reason != UpgradeLegacyDrainRequired || len(needed.CheckpointAdminRecords) != 1 {
+		t.Fatalf("timestamp-less admin readiness = %#v", needed)
+	}
+	admin := needed.CheckpointAdminRecords[0]
+	if admin.Record.Timestamp != "" || admin.LegacyID != record.ID || admin.ID == record.ID {
+		t.Fatalf("checkpoint-bound timestamp-less admin = %#v", admin)
+	}
+	if needed.ActiveLegacyIDs[0] != (LegacyActiveID{Kind: LegacyActiveAdminRecord, ID: admin.ID}) {
+		t.Fatalf("active legacy IDs = %#v", needed.ActiveLegacyIDs)
+	}
+	if err := ValidateUpgradeNeeded(needed); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateUpgradeNeededClassifiesUnsupportedTimestampLessAdmin(t *testing.T) {
+	needed := validUpgradeNeededWithCheckpointAdmin(t)
+	admin := &needed.CheckpointAdminRecords[0]
+	admin.Record.Timestamp = ""
+	rebindCheckpointAdminIdentity(t, &needed)
+	if err := ValidateUpgradeNeeded(needed); !errors.Is(err, ErrLegacyAdminTimestampMissing) {
+		t.Fatalf("error = %v, want %v", err, ErrLegacyAdminTimestampMissing)
+	}
+}
+
 func validUpgradeNeededWithCheckpointAdmin(t *testing.T) UpgradeNeeded {
 	t.Helper()
 	resolution := BlockResolution{

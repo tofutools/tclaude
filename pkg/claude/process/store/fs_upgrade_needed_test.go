@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/process/evidence"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
+	"github.com/tofutools/tclaude/pkg/claude/process/state"
 	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	"github.com/tofutools/tclaude/pkg/claude/process/store/storetest"
@@ -58,6 +59,51 @@ func TestConfirmUpgradeNeededRejectsTotalAdminOmission(t *testing.T) {
 	require.NoError(t, pathv1.ValidateUpgradeNeeded(forged))
 	err = fs.ConfirmUpgradeNeeded(t.Context(), runID, forged)
 	require.ErrorIs(t, err, pathv1.ErrInitializationInconsistent)
+}
+
+func TestUpgradeNeededBindsHistoricalTimestampLessAdminCheckpoint(t *testing.T) {
+	root := t.TempDir()
+	fs, runID := initializedRunAt(t, root)
+	snapshot, err := fs.LoadRun(t.Context(), runID)
+	require.NoError(t, err)
+	replayed, err := state.Apply(*snapshot.State, state.Event{
+		Type: state.EventAdminRepairRecorded, Actor: "human:operator", Reason: "historical repair", EvidenceRef: "ticket:TCL-523",
+	})
+	require.NoError(t, err)
+	data, err := state.Encode(&replayed)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "runs", runID, "state.json"), data, 0o644))
+
+	needed, err := fs.UpgradeNeeded(t.Context(), runID)
+	require.NoError(t, err)
+	require.Equal(t, pathv1.UpgradeLegacyDrainRequired, needed.Reason)
+	require.Len(t, needed.CheckpointAdminRecords, 1)
+	admin := needed.CheckpointAdminRecords[0]
+	assert.Empty(t, admin.Record.Timestamp)
+	assert.Equal(t, pathv1.LegacyActiveID{Kind: pathv1.LegacyActiveAdminRecord, ID: admin.ID}, needed.ActiveLegacyIDs[0])
+	require.NoError(t, pathv1.ValidateUpgradeNeeded(needed))
+	require.NoError(t, fs.ConfirmUpgradeNeeded(t.Context(), runID, needed))
+}
+
+func TestUpgradeNeededClassifiesUnsupportedTimestampLessAdminCheckpoint(t *testing.T) {
+	root := t.TempDir()
+	fs, runID := initializedRunAt(t, root)
+	snapshot, err := fs.LoadRun(t.Context(), runID)
+	require.NoError(t, err)
+	snapshot.State.AdminRecords = append(snapshot.State.AdminRecords, state.AdminRecord{
+		Type: state.EventBlockResolutionRecorded, Actor: "human:operator", Reason: "forged resolution", EvidenceRef: "ticket:TCL-523",
+	})
+	data, err := state.Encode(snapshot.State)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "runs", runID, "state.json"), data, 0o644))
+
+	_, err = fs.UpgradeNeeded(t.Context(), runID)
+	require.ErrorIs(t, err, store.ErrRunInconsistent)
+	require.ErrorIs(t, err, pathv1.ErrLegacyAdminTimestampMissing)
+	var missing *pathv1.LegacyAdminTimestampMissingError
+	require.ErrorAs(t, err, &missing)
+	assert.Equal(t, string(state.EventBlockResolutionRecorded), missing.AdminType)
+	assert.Contains(t, err.Error(), "restore its authoritative timestamp before migration")
 }
 
 func TestUpgradeNeededCancellationAndSourceMismatchFailClosed(t *testing.T) {

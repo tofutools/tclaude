@@ -234,7 +234,8 @@ func isExecutionBudgetError(err error) bool {
 }
 
 func isExecutionDataDisagreement(err error) bool {
-	if IsDecodeError(err) || errors.Is(err, pathv1.ErrLegacyTimestampMalformed) || errors.Is(err, ErrNotFound) {
+	if IsDecodeError(err) || errors.Is(err, pathv1.ErrLegacyTimestampMalformed) ||
+		errors.Is(err, pathv1.ErrLegacyAdminTimestampMissing) || errors.Is(err, ErrNotFound) {
 		return true
 	}
 	var readErr *evidence.ReadError

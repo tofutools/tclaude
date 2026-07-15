@@ -1,6 +1,35 @@
 package pathv1
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+
+	legacy "github.com/tofutools/tclaude/pkg/claude/process/state"
+)
+
+var ErrLegacyAdminTimestampMissing = errors.New("inconsistent:legacy_admin_timestamp_missing")
+
+// LegacyAdminTimestampMissingError classifies a timestamp-less legacy admin
+// shape that cannot be bound under the narrow historical compatibility rule.
+// Callers can direct an operator to restore authoritative provenance instead
+// of inventing a timestamp during migration.
+type LegacyAdminTimestampMissingError struct {
+	AdminType          string
+	OriginalArrayIndex uint64
+	HasResolution      bool
+}
+
+func (e *LegacyAdminTimestampMissingError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return fmt.Sprintf(
+		"%v: adminRecords[%d] type %q is not a producer-valid timestamp-less non-resolution record; restore its authoritative timestamp before migration",
+		ErrLegacyAdminTimestampMissing, e.OriginalArrayIndex, e.AdminType,
+	)
+}
+
+func (e *LegacyAdminTimestampMissingError) Unwrap() error { return ErrLegacyAdminTimestampMissing }
 
 func ValidateBlockResolution(resolution BlockResolution) (string, error) {
 	if resolution.NodeID == "" || resolution.Actor == "" {
@@ -8,6 +37,9 @@ func ValidateBlockResolution(resolution BlockResolution) (string, error) {
 	}
 	if resolution.Decision != "retry" && resolution.Decision != "skip" && resolution.Decision != "cancel" {
 		return "", fmt.Errorf("invalid block resolution decision %q", resolution.Decision)
+	}
+	if resolution.Timestamp == "" {
+		return "", fmt.Errorf("block resolution lacks timestamp")
 	}
 	if _, err := ParseCanonicalTimestamp(resolution.Timestamp); err != nil {
 		return "", err
@@ -18,8 +50,10 @@ func ValidateAdminRecord(record PathV1AdminRecord, legacy bool, resolution *Bloc
 	if record.RunID == "" || record.AdminType == "" || record.Actor == "" {
 		return fmt.Errorf("admin record lacks required authority tuple")
 	}
-	if legacy && record.Timestamp == "" {
-		return fmt.Errorf("legacy admin record lacks timestamp")
+	if legacy {
+		if err := validateLegacyAdminTimestamp(record, resolution != nil); err != nil {
+			return err
+		}
 	}
 	if legacy && record.EventSeq != 0 {
 		return fmt.Errorf("legacy admin record has nonzero event sequence")
@@ -60,4 +94,25 @@ func ValidateAdminRecord(record PathV1AdminRecord, legacy bool, resolution *Bloc
 		return fmt.Errorf("admin record identity mismatch")
 	}
 	return nil
+}
+
+func validateLegacyAdminTimestamp(record PathV1AdminRecord, hasResolution bool) error {
+	if record.Timestamp != "" || timestampLessLegacyAdminCompatible(record.AdminType, hasResolution) {
+		return nil
+	}
+	return &LegacyAdminTimestampMissingError{
+		AdminType: record.AdminType, OriginalArrayIndex: record.OriginalArrayIndex, HasResolution: hasResolution,
+	}
+}
+
+func timestampLessLegacyAdminCompatible(adminType string, hasResolution bool) bool {
+	if hasResolution {
+		return false
+	}
+	switch adminType {
+	case string(legacy.EventAdminRepairRecorded), string(legacy.EventAdminProgramsAllowed):
+		return true
+	default:
+		return false
+	}
 }

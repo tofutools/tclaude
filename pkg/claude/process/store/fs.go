@@ -1648,6 +1648,9 @@ func (s *FS) Append(ctx context.Context, runID string, expectedSeq int64, entrie
 			event := *entry.Event
 			event.Seq = entry.Seq
 			event.LogChecksum = ""
+			if err := validateLegacyAdminWrite(event); err != nil {
+				return AppendResult{}, fmt.Errorf("validate event seq %d: %w", entry.Seq, err)
+			}
 			entry.Event = &event
 		}
 		manifestEntry, err := evidence.ManifestEntryForLog(entry, previousChecksum)
@@ -1689,6 +1692,19 @@ func (s *FS) Append(ctx context.Context, runID string, expectedSeq int64, entrie
 		return AppendResult{}, err
 	}
 	return AppendResult{Entries: appendedEntries, Manifest: appendedManifest, State: &nextState}, nil
+}
+
+// validateLegacyAdminWrite is the durable producer boundary. The reducer must
+// continue accepting zero-At historical repair/program-opt-in events so old
+// logs remain replayable, but no new append may create another such record.
+func validateLegacyAdminWrite(event state.Event) error {
+	switch event.Type {
+	case state.EventAdminRepairRecorded, state.EventAdminProgramsAllowed:
+		if event.At.IsZero() {
+			return fmt.Errorf("%s requires a timestamp for new writes", event.Type)
+		}
+	}
+	return nil
 }
 
 type plannedAppend struct {

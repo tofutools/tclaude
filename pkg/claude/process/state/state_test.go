@@ -1157,6 +1157,34 @@ func TestEnginePauseAndResumeAreDurableReducerState(t *testing.T) {
 	}
 }
 
+func TestTimestampLessLegacyAdminReplayInventory(t *testing.T) {
+	base := New("run", "demo@sha256:x", "demo@sha256:x", nil)
+	for _, eventType := range []EventType{EventAdminRepairRecorded, EventAdminProgramsAllowed} {
+		t.Run(string(eventType), func(t *testing.T) {
+			replayed, err := ApplyAll(base, []Event{{
+				Type: eventType, Seq: 1, Actor: "human:operator", Reason: "historical audit",
+			}})
+			if err != nil {
+				t.Fatalf("historical replay failed: %v", err)
+			}
+			if len(replayed.AdminRecords) != 1 || replayed.AdminRecords[0].Type != eventType || !replayed.AdminRecords[0].Timestamp.IsZero() {
+				t.Fatalf("replayed admin records = %#v", replayed.AdminRecords)
+			}
+		})
+	}
+
+	_, err := ApplyAll(base, []Event{{
+		Type: EventBlockResolutionRecorded, Seq: 1,
+		Resolution: &BlockResolution{
+			NodeID: "work", BlockedAttempt: 1, Decision: BlockDecisionSkip,
+			Actor: "human:operator", Reason: "waived", EvidenceRef: "ticket:TCL-523",
+		},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "requires timestamp") {
+		t.Fatalf("timestamp-less block resolution error = %v", err)
+	}
+}
+
 func TestEnginePauseValidation(t *testing.T) {
 	st := stateWithNodes(map[string]NodeState{"work": {Type: model.NodeTypeTask, Status: NodeStatusRunning}})
 	for name, pause := range map[string]PauseState{

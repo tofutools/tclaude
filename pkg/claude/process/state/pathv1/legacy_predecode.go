@@ -598,6 +598,11 @@ func deriveLegacyAdminProvenance(st *legacy.State) (map[string]PathV1AdminRecord
 			EvidenceRef:        source.EvidenceRef,
 			Timestamp:          CanonicalTimestamp(source.Timestamp),
 		}
+		// Check the compatibility classification before resolution decoding so
+		// every unsupported missing timestamp has the same actionable type.
+		if err := validateLegacyAdminTimestamp(record, source.Resolution != nil); err != nil {
+			return nil, nil, err
+		}
 		var resolution *BlockResolution
 		if source.Resolution != nil {
 			if source.Resolution.BlockedAttempt < 0 {
