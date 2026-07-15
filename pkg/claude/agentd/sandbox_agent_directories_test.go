@@ -13,24 +13,25 @@ import (
 	tclcommon "github.com/tofutools/tclaude/pkg/common"
 )
 
-// withAgentDirsMountParent isolates the config home for the test and writes the
-// experimental features.agent_dirs_mount_parent flag. Passing false only
-// isolates HOME (flag absent = off), keeping grant-shape assertions independent
-// of the developer's real ~/.tclaude/data/config.json.
+// withAgentDirsMountParent isolates the config home for the test and writes an
+// explicit features.agent_dirs_mount_parent value, keeping grant-shape
+// assertions independent of both the default and the developer's real
+// ~/.tclaude/data/config.json.
 func withAgentDirsMountParent(t *testing.T, enabled bool) {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	if !enabled {
-		return
-	}
 	dataDir := filepath.Join(home, ".tclaude", "data")
 	require.NoError(t, os.MkdirAll(dataDir, 0o700))
+	value := "false"
+	if enabled {
+		value = "true"
+	}
 	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "config.json"),
-		[]byte(`{"features":{"agent_dirs_mount_parent":true}}`), 0o600))
+		[]byte(`{"features":{"agent_dirs_mount_parent":`+value+`}}`), 0o600))
 }
 
-// setAgentDirsMountParent writes or removes the flag in the already-isolated
+// setAgentDirsMountParent writes an explicit flag in the already-isolated
 // config home ($HOME/.tclaude/data/config.json), so a test can flip modes
 // between successive materialize calls (e.g. a cross-mode clone).
 func setAgentDirsMountParent(t *testing.T, enabled bool) {
@@ -38,14 +39,12 @@ func setAgentDirsMountParent(t *testing.T, enabled bool) {
 	dataDir := filepath.Join(os.Getenv("HOME"), ".tclaude", "data")
 	require.NoError(t, os.MkdirAll(dataDir, 0o700))
 	path := filepath.Join(dataDir, "config.json")
-	if !enabled {
-		if err := os.Remove(path); err != nil {
-			require.True(t, os.IsNotExist(err))
-		}
-		return
+	value := "false"
+	if enabled {
+		value = "true"
 	}
 	require.NoError(t, os.WriteFile(path,
-		[]byte(`{"features":{"agent_dirs_mount_parent":true}}`), 0o600))
+		[]byte(`{"features":{"agent_dirs_mount_parent":`+value+`}}`), 0o600))
 }
 
 // agentDirWriteGrants returns the write grants from a materialized snapshot.

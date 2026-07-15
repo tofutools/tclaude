@@ -18,10 +18,10 @@ import (
 
 var agentDirectoryLaunchKeyRE = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
-// agentDirsMountParentEnabled reports whether the experimental
-// features.agent_dirs_mount_parent flag is set. A failed load degrades to the
-// default (individual per-directory grants). Read at materialization/resume so
-// flipping the flag takes effect on the next launch without a daemon restart.
+// agentDirsMountParentEnabled reports whether shared-parent grants are enabled.
+// A failed load fails closed to individual per-directory grants. Read at
+// materialization/resume so flipping the setting takes effect on the next
+// launch without a daemon restart.
 func agentDirsMountParentEnabled() bool {
 	cfg, err := config.Load()
 	return err == nil && cfg.AgentDirsMountParentEnabled()

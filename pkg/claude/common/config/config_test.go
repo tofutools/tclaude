@@ -1127,3 +1127,26 @@ func TestFeaturesConfig_RoundTrips(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(none), "features")
 }
+
+// AgentDirsMountParentEnabled defaults on while preserving explicit true and
+// false values. The pointer's omitempty shape keeps the default absent but
+// persists an opt-out through JSON.
+func TestAgentDirsMountParentEnabled(t *testing.T) {
+	var nilCfg *Config
+	assert.True(t, nilCfg.AgentDirsMountParentEnabled(), "nil config → true")
+	assert.True(t, (&Config{}).AgentDirsMountParentEnabled(), "no features block → true")
+	assert.True(t, (&Config{Features: &FeaturesConfig{}}).AgentDirsMountParentEnabled(), "features block, flag unset → true")
+	assert.False(t, (&Config{Features: &FeaturesConfig{AgentDirsMountParent: new(false)}}).AgentDirsMountParentEnabled(), "explicit false → false")
+	assert.True(t, (&Config{Features: &FeaturesConfig{AgentDirsMountParent: new(true)}}).AgentDirsMountParentEnabled(), "explicit true → true")
+
+	clean, err := json.Marshal(&Config{Features: &FeaturesConfig{}})
+	require.NoError(t, err)
+	assert.NotContains(t, string(clean), "agent_dirs_mount_parent", "nil pointer omits the key")
+
+	data, err := json.Marshal(&Config{Features: &FeaturesConfig{AgentDirsMountParent: new(false)}})
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"agent_dirs_mount_parent":false`)
+	var out Config
+	require.NoError(t, json.Unmarshal(data, &out))
+	assert.False(t, out.AgentDirsMountParentEnabled(), "explicit false survives round-trip")
+}
