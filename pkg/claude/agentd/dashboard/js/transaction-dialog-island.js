@@ -10,7 +10,8 @@ const html = htm.bind(h);
 // worktree-cleanup dialogs. Feature components keep their own controlled form
 // state, while this frame supplies the transaction invariants: one focus
 // boundary, dirty confirmation, guarded backdrop drags, blocked busy dismissal,
-// non-dismissible request errors, and a retry-capable primary action.
+// non-dismissible request errors, and one shared lock across the primary plus
+// an optional alternate mutation action.
 export function TransactionDialogFrame({
   id,
   labelledby,
@@ -23,12 +24,20 @@ export function TransactionDialogFrame({
   busyLabel = primaryLabel,
   primaryClass = 'confirm-danger',
   submitDisabled = false,
+  alternateLabel = '',
+  alternateBusyLabel = alternateLabel,
+  alternateClass = 'confirm-danger',
+  alternateDisabled = false,
+  alternateID = '',
+  alternateTitle = '',
+  busyAction = 'primary',
   metaID = '',
   errorID = '',
   cancelID = '',
   submitID = '',
   onClose,
   onSubmit,
+  onAlternateSubmit,
   confirmDiscard,
   children,
 }) {
@@ -42,10 +51,14 @@ export function TransactionDialogFrame({
     // events in one render cannot start parallel requests.
     if (!busy) submitLock.current = false;
   }, [busy]);
-  const submit = () => {
-    if (busy || submitDisabled || submitLock.current) return;
+  const submit = (action = 'primary') => {
+    const alternate = action === 'alternate';
+    if (busy || submitLock.current
+      || (alternate ? alternateDisabled : submitDisabled)) return;
+    const handler = alternate ? onAlternateSubmit : onSubmit;
+    if (!handler) return;
     submitLock.current = true;
-    onSubmit?.();
+    handler();
   };
   const close = () => {
     if (!busy) onClose?.();
@@ -55,7 +68,7 @@ export function TransactionDialogFrame({
       id=${id}
       labelledby=${labelledby}
       onClose=${close}
-      onSubmitHotkey=${submit}
+      onSubmitHotkey=${() => submit('primary')}
       dirty=${dirty}
       blocked=${busy}
       confirmDiscard=${confirmDiscard}
@@ -70,15 +83,24 @@ export function TransactionDialogFrame({
       <div class="modal-buttons">
         <button id=${cancelID || `${baseID}-cancel`} type="button" disabled=${busy} onClick=${close}>Cancel</button>
         <span class="spacer"></span>
+        ${alternateLabel ? html`<button
+          id=${alternateID || `${baseID}-alternate`}
+          class=${alternateClass}
+          type="button"
+          title=${alternateTitle || undefined}
+          disabled=${busy || alternateDisabled}
+          aria-busy=${busy && busyAction === 'alternate' ? 'true' : undefined}
+          onClick=${() => submit('alternate')}
+        >${busy && busyAction === 'alternate' ? alternateBusyLabel : alternateLabel}</button>` : null}
         <button
           ref=${submitRef}
           id=${submitID || `${baseID}-submit`}
           class=${primaryClass}
           type="button"
           disabled=${busy || submitDisabled}
-          aria-busy=${busy ? 'true' : undefined}
-          onClick=${submit}
-        >${busy ? busyLabel : primaryLabel}</button>
+          aria-busy=${busy && busyAction === 'primary' ? 'true' : undefined}
+          onClick=${() => submit('primary')}
+        >${busy && busyAction === 'primary' ? busyLabel : primaryLabel}</button>
       </div>
     </${Overlay}>
   `;
@@ -263,11 +285,80 @@ function RetireAgentDialog({ descriptor, actions, confirmDiscard }) {
   `;
 }
 
+function ShutdownAgentDialog({ descriptor, actions, confirmDiscard }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [submittedRequest, setSubmittedRequest] = useState(null);
+  const activeRef = useRef(true);
+  useEffect(() => () => { activeRef.current = false; }, []);
+
+  const submit = async (force) => {
+    if (busy) return;
+    const request = submittedRequest || Object.freeze({
+      agent: descriptor.agent,
+      label: descriptor.label,
+      force: force === true,
+    });
+    if (submittedRequest && submittedRequest.force !== (force === true)) return;
+    if (!submittedRequest) setSubmittedRequest(request);
+    setError('');
+    setBusy(true);
+    try {
+      await actions.shutdownAgent(request);
+    } catch (cause) {
+      if (activeRef.current) setError(cause?.message || String(cause));
+    } finally {
+      if (activeRef.current) setBusy(false);
+    }
+  };
+
+  const retrying = !!submittedRequest;
+  const forceChoice = submittedRequest?.force === true;
+  return html`
+    <${TransactionDialogFrame}
+      id="shutdown-modal"
+      labelledby="shutdown-title"
+      title="Shut down agent?"
+      meta=${descriptor.label || ''}
+      metaID="shutdown-meta"
+      error=${error}
+      errorID="shutdown-error"
+      busy=${busy}
+      busyAction=${forceChoice ? 'alternate' : 'primary'}
+      primaryLabel=${retrying && !forceChoice ? 'Retry soft exit' : 'Soft exit'}
+      busyLabel=${html`<span class="btn-spinner" aria-hidden="true"></span>${retrying ? 'Retrying soft exit…' : 'Soft exiting…'}`}
+      primaryClass=""
+      submitDisabled=${retrying && forceChoice}
+      submitID="shutdown-soft"
+      alternateLabel=${retrying && forceChoice ? 'Retry force kill' : 'Force kill'}
+      alternateBusyLabel=${html`<span class="btn-spinner" aria-hidden="true"></span>${retrying ? 'Retrying force kill…' : 'Force killing…'}`}
+      alternateDisabled=${retrying && !forceChoice}
+      alternateID="shutdown-force"
+      alternateTitle="Immediately kills the tmux session; use if soft exit is stuck"
+      cancelID="shutdown-cancel"
+      onClose=${actions.close}
+      onSubmit=${() => submit(false)}
+      onAlternateSubmit=${() => submit(true)}
+      confirmDiscard=${confirmDiscard}
+    >
+      <p>Soft exit injects /exit into tmux pane. Conv jsonl is preserved; in-flight tool calls are interrupted.</p>
+    </${TransactionDialogFrame}>
+  `;
+}
+
 export function TransactionDialogApp({ state, actions, confirmDiscard }) {
   const current = state.dialog.value;
   if (!current) return null;
   if (current.descriptor.kind === 'retire-agent') {
     return html`<${RetireAgentDialog}
+      key=${current.key}
+      descriptor=${current.descriptor}
+      actions=${actions}
+      confirmDiscard=${confirmDiscard}
+    />`;
+  }
+  if (current.descriptor.kind === 'shutdown-agent') {
+    return html`<${ShutdownAgentDialog}
       key=${current.key}
       descriptor=${current.descriptor}
       actions=${actions}
