@@ -260,7 +260,9 @@ test('native group chrome preserves hierarchy, virtual DnD and shared menu contr
       },
       { name: 'child', parent: 'parent', members: [] },
     ]),
-    ungrouped: [{ conv_id: 'loose', title: 'Loose', online: ungroupedOnline }],
+    ungrouped: [{
+      conv_id: 'loose', agent_id: 'agt-loose', title: 'Loose', online: ungroupedOnline,
+    }],
     pending: [{ label: 'gate-1', name: 'Gated', online: true, agent_id: pendingAgentID }],
     retired: [{ conv_id: 'retired-1', title: 'Retired', agent_id: retiredAgentID }],
     links: [{ id: 7, from: 'parent', to: 'child', mode: 'direct' }],
@@ -299,8 +301,13 @@ test('native group chrome preserves hierarchy, virtual DnD and shared menu contr
   const loose = host.querySelector('tr[data-dnd-source-ungrouped][data-key="loose"]');
   assert.ok(loose);
   assert.equal(loose.querySelector('.rowname-text').dataset.editorKey,
-    'member:virtual:ungrouped:loose:name',
+    'member:virtual:ungrouped:agt-loose:name',
     'virtual member tables contribute their own interaction identity');
+  const permanentDelete = loose.querySelector('[data-act="delete-agent"]');
+  assert.equal(permanentDelete.dataset.agent, 'agt-loose');
+  assert.equal(permanentDelete.dataset.conv, 'loose');
+  assert.equal(permanentDelete.dataset.label, 'Loose');
+  assert.equal(permanentDelete.querySelector('.theme-copy-wizard').textContent, 'erase familiar');
 
   const pending = host.querySelector('tr[data-key="gate-1"]');
   const retired = host.querySelector('tr[data-key="retired-1"]');
