@@ -502,43 +502,14 @@ func AdvanceExclusiveRoute(ctx context.Context, input *VerifiedExclusiveInput) (
 }
 
 func advanceExclusiveRoute(ctx context.Context, input *VerifiedExclusiveInput, observation ExclusiveObservation) (*ExecutionTransition, error) {
-	route, err := PlanExclusiveRoute(ctx, input, observation)
+	sequence, err := PlanExclusiveRouteSequence(ctx, input, observation)
 	if err != nil {
 		return nil, err
 	}
-	routeDraft, err := buildExclusiveRouteDraft(ctx, input, observation)
-	if err != nil {
-		return nil, err
-	}
-	var closure, dead CommandRecord
-	if len(routeDraft.outgoing) == 2 {
-		closure, err = PlanExclusiveDeadPath(ctx, input, observation, route)
-		if err != nil {
-			return nil, err
-		}
-		dead, err = PlanExclusiveDeadReservation(ctx, input, observation, route, closure)
-		if err != nil {
-			return nil, err
-		}
-	}
-	activation, err := PlanExclusiveActivation(ctx, input, observation, route, closure, dead)
-	if err != nil {
-		return nil, err
-	}
-	projection, err := ReduceExclusiveActivation(ctx, input, observation, route, closure, dead, activation)
-	if err != nil {
-		return nil, err
-	}
-	reservation := projection.aggregate.Routing.Reservations[activation.Identity.TargetReservationID]
-	if node, ok := input.template.Nodes[reservation.NodeID]; ok && node.Type == model.NodeTypeEnd {
-		end, endErr := PlanExclusiveEnd(ctx, input, observation, route, closure, dead, activation)
-		if endErr != nil {
-			return nil, endErr
-		}
-		projection, err = ReduceExclusiveEnd(ctx, input, observation, route, closure, dead, activation, end)
-		if err != nil {
-			return nil, err
-		}
+	commands := sequence.Commands()
+	projection := &ExclusiveProjection{
+		aggregate: sequence.final, binding: input.binding,
+		command: commands[len(commands)-1], dispose: ReplayApplied,
 	}
 	lastLogSeq, err := aggregateLogicalLastSeq(projection.aggregate)
 	if err != nil {

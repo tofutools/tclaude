@@ -15,6 +15,11 @@ const (
 	MaxCommandPayloadBytes     = 16 << 20
 	MaxCheckpointBytes         = 16 << 20
 	MaxPropagationShards       = 98
+	// Complete exclusive sequences repeatedly clone, hash, encode, and validate
+	// the growing aggregate. Keep their operational fan-out well below the
+	// larger cardinality-only substrate ceilings; MutationCountExclusive still
+	// enforces the independent 4N-1 per-command mutation formula beneath it.
+	MaxExclusiveOutgoing = 32
 )
 
 type Usage struct {
@@ -54,10 +59,14 @@ func (u Usage) Validate() error {
 }
 
 func MutationCountExclusive(n int) (int, error) {
-	if n < 0 || n > MaxOutgoingOrAllCandidates {
+	if n < 1 || n > MaxExclusiveOutgoing {
 		return 0, fmt.Errorf("exclusive candidate count %d out of range", n)
 	}
-	return 2*n + 1, nil
+	mutations := 4*n - 1
+	if mutations > MaxRoutingMutations {
+		return 0, &OverBudgetError{Limit: "mutations", Value: mutations, Maximum: MaxRoutingMutations}
+	}
+	return mutations, nil
 }
 func MutationCountSplit(n int) (int, error) {
 	if n < 2 || n > MaxOutgoingOrAllCandidates {

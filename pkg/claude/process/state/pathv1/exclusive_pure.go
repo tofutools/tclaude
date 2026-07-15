@@ -487,25 +487,35 @@ func buildExclusiveRouteDraft(ctx context.Context, input *VerifiedExclusiveInput
 	if disposition != ExclusiveRouteReady {
 		return exclusiveRouteDraft{}, fmt.Errorf("%w: %s", ErrExclusiveNotRoutable, disposition)
 	}
+	// Reject mutation and command overages before allocating or expanding the
+	// canonical outgoing edge and command sequences.
+	if _, err := MutationCountExclusive(len(node.Next)); err != nil {
+		return exclusiveRouteDraft{}, err
+	}
+	if _, err := ExclusiveRouteSequenceCommandBound(len(node.Next)); err != nil {
+		return exclusiveRouteDraft{}, err
+	}
 	outgoing, err := exactOutgoingEdges(view.TemplateRef, sourceReservation.NodeID, node.Next)
 	if err != nil {
 		return exclusiveRouteDraft{}, err
 	}
-	if len(outgoing) > 2 {
-		return exclusiveRouteDraft{}, fmt.Errorf("%w: exclusive fan-out %d requires bounded multi-way DPE", ErrExclusiveUnsupported, len(outgoing))
-	}
-	if _, err := MutationCountExclusive(len(outgoing)); err != nil {
+	maximumCommands, err := ExclusiveRouteSequenceCommandBound(len(outgoing))
+	if err != nil {
 		return exclusiveRouteDraft{}, err
+	}
+	if maximumCommands > MaxRoutingLogEntries {
+		return exclusiveRouteDraft{}, &OverBudgetError{Limit: "log_entries", Value: maximumCommands, Maximum: MaxRoutingLogEntries}
+	}
+	lastLogSeq := CurrentLastLogSeq(input.checkpoint)
+	if lastLogSeq > math.MaxInt64 || uint64(maximumCommands) > uint64(math.MaxInt64)-lastLogSeq {
+		return exclusiveRouteDraft{}, &OverBudgetError{Limit: "log_entries", Value: math.MaxInt, Maximum: math.MaxInt - 1}
 	}
 	selectedIndex, err := resolveExclusiveEdge(node, observation.Outcome, outgoing)
 	if err != nil {
 		return exclusiveRouteDraft{}, err
 	}
 
-	if CurrentLastLogSeq(input.checkpoint) >= math.MaxInt64 {
-		return exclusiveRouteDraft{}, &OverBudgetError{Limit: "log_entries", Value: math.MaxInt64, Maximum: math.MaxInt64 - 1}
-	}
-	eventSeq := int64(CurrentLastLogSeq(input.checkpoint) + 1)
+	eventSeq := int64(lastLogSeq + 1)
 	before := Clone(*view.Routing)
 	after := Clone(before)
 	authority := cloneExclusiveAuthority(view.Authority)
@@ -551,7 +561,10 @@ func buildExclusiveRouteDraft(ctx context.Context, input *VerifiedExclusiveInput
 			continue
 		}
 
-		reason := "exclusive_unselected/" + outgoing[selectedIndex].ID
+		// The loser edge is part of the reason so every unselected candidate
+		// receives distinct authoritative provenance even when several routes
+		// lose to the same selected edge in the same event.
+		reason := "exclusive_unselected/" + outgoing[selectedIndex].ID + "/" + edge.ID
 		causeID, err := CauseIdentity("", TerminalImpossible, reason, "", MutationCommandPlaceholder, "", uint64(eventSeq))
 		if err != nil {
 			return exclusiveRouteDraft{}, err

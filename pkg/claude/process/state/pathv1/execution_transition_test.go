@@ -127,6 +127,38 @@ nodes:
 	}
 }
 
+func TestAdvanceExclusiveRouteClosesMultiWayLosersAtomically(t *testing.T) {
+	source := exclusiveFanoutTemplate(5, false)
+	observed := observedExclusiveAttemptForTest(t, initializedExclusiveCheckpoint(t, source), source, ExclusiveObservation{
+		Outcome: exclusiveOutcome(3), Actor: "human:operator",
+	})
+	input, err := VerifyExclusiveInput(t.Context(), observed, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transition, err := AdvanceExclusiveRoute(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, checkpoint, err := ValidateExecutionTransitionForAppend(t.Context(), observed, source, transition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aggregate, err := CurrentAggregateCheckpoint(checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := 0
+	for _, reservation := range aggregate.Routing.Reservations {
+		if reservation.State == ReservationClosedNoActivation {
+			closed++
+		}
+	}
+	if closed != 4 || len(aggregate.Routing.CandidateClosures) != 4 {
+		t.Fatalf("transition closed=%d closures=%d", closed, len(aggregate.Routing.CandidateClosures))
+	}
+}
+
 func TestExclusiveSettlementPreservesBlockResolutionAuthority(t *testing.T) {
 	source := []byte(`apiVersion: tclaude.dev/v1alpha1
 kind: ProcessTemplate

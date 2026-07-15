@@ -194,7 +194,7 @@ nodes:
 	}
 }
 
-func TestPureExclusiveRejectsThreeWayFanOut(t *testing.T) {
+func TestPureExclusivePlansThreeWayFanOut(t *testing.T) {
 	source := []byte(`apiVersion: tclaude.dev/v1alpha1
 kind: ProcessTemplate
 id: exclusive-three-way
@@ -216,8 +216,26 @@ nodes:
 		SourcePathID: input.checkpoint.Initialize.Aggregate.Authority.Genesis.OutputPathID,
 		Attempt:      1, Outcome: "one",
 	}
-	if _, err := PlanExclusiveRoute(t.Context(), input, observation); !errors.Is(err, ErrExclusiveUnsupported) {
-		t.Fatalf("three-way route error = %v", err)
+	sequence, err := PlanExclusiveRouteSequence(t.Context(), input, observation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commands := sequence.Commands()
+	if len(commands) != 7 { // route + two loser closures + two dead reservations + activation + end
+		t.Fatalf("three-way command count = %d", len(commands))
+	}
+	projection, err := ReduceExclusiveRouteSequence(t.Context(), input, observation, commands)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := 0
+	for _, reservation := range projection.Routing().Reservations {
+		if reservation.State == ReservationClosedNoActivation {
+			closed++
+		}
+	}
+	if closed != 2 {
+		t.Fatalf("three-way closed loser reservations = %d", closed)
 	}
 }
 
@@ -678,6 +696,7 @@ func TestPureExclusiveAPIRemainsStructurallyDormant(t *testing.T) {
 				}
 				switch selector.Sel.Name {
 				case "VerifyExclusiveInput", "PlanExclusiveRoute", "ReduceExclusiveRoute", "PlanExclusiveDeadPath", "ReduceExclusiveDeadPath", "PlanExclusiveDeadReservation", "ReduceExclusiveDeadReservation", "PlanExclusiveActivation", "ReduceExclusiveActivation", "PlanExclusiveEnd", "ReduceExclusiveEnd", "PlanExclusiveCompletion", "ReduceExclusiveCompletion", "ClassifyExclusiveObservation",
+					"ExclusiveRouteSequenceCommandBound", "PlanExclusiveRouteSequence", "RecoverExclusiveRouteSequence", "ReduceExclusiveRouteSequence",
 					"WithPathV1ExecutionView", "AppendPathV1", "PlanExclusiveAttempt", "ClaimExclusiveAttempt", "RecoverExclusiveAttempt", "ObserveExclusiveAttempt", "PendingExclusiveObservation", "AdvanceExclusiveRoute", "AdvanceExclusiveStart", "ClaimExclusiveCompletion", "ObserveExclusiveCompletion", "ProjectCurrentPathV1ViewerV2", "NewExclusiveV7":
 					t.Errorf("active package %s references dormant pure API %s", directory, selector.Sel.Name)
 				}
