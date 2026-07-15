@@ -631,39 +631,6 @@
     </div>
   </div>
 </div>
-<div class="modal-overlay" id="window-modal">
-  <div class="cleanup-modal" role="dialog" aria-modal="true" aria-labelledby="window-title">
-    <h3 id="window-title"><span class="window-title-regular">Agent windows</span><span class="window-title-wizard">Familiars' windows</span></h3>
-    <p class="cleanup-hint" id="window-hint"></p>
-    <div class="window-direction" id="window-direction" role="radiogroup" aria-label="Window action">
-      <!-- Focus / Unfocus re-letter to the palette's "👁 Reveal" / "🌫 Veil"
-           scrying-portal voice in 🧙 wizard mode via a per-theme span swap (CSS
-           picks the active twin). aria-label above carries the plain "Window
-           action" so a11y stays legible in both themes. -->
-      <label><input type="radio" name="window-direction" value="focus" checked />
-        <span class="window-dir-label-regular">Focus</span><span class="window-dir-label-wizard">👁 Reveal</span>
-        <span class="opt-note"><span class="window-dir-note-regular">— open or focus a terminal for each selected agent</span><span class="window-dir-note-wizard">— conjure a scrying portal for each chosen familiar</span></span></label>
-      <label><input type="radio" name="window-direction" value="unfocus" />
-        <span class="window-dir-label-regular">Unfocus</span><span class="window-dir-label-wizard">🌫 Veil</span>
-        <span class="opt-note"><span class="window-dir-note-regular">— detach the terminal views so the dashboard or desktop is decluttered. Detach-only: a window or tab tclaude opened closes itself, other tabs are untouched. The agents keep running — never the agent process.</span><span class="window-dir-note-wizard">— draw the veil over the chosen familiars' scrying portals so the desktop is decluttered. Veil-only: a window or tab tclaude opened closes itself, other tabs are untouched. The familiars keep channeling — never the familiar itself.</span></span></label>
-    </div>
-    <div class="cleanup-toolbar">
-      <button type="button" id="window-select-all">select all</button>
-      <button type="button" id="window-select-none">select none</button>
-      <input type="search" id="window-search" placeholder="filter title / id…" aria-label="Filter agents" />
-      <span class="spacer"></span>
-      <span class="cleanup-count" id="window-count"></span>
-    </div>
-    <div class="window-groups" id="window-groups"></div>
-    <div class="window-roles" id="window-roles"></div>
-    <div class="cleanup-list" id="window-list"></div>
-    <div class="cleanup-error" id="window-error"></div>
-    <div class="modal-buttons">
-      <button id="window-cancel" type="button">Cancel</button>
-      <button id="window-submit" class="primary" type="button">Focus</button>
-    </div>
-  </div>
-</div>
 <div class="modal-overlay" id="delete-group-modal">
   <div class="cleanup-modal" role="dialog" aria-modal="true" aria-labelledby="delete-group-title">
     <h3 id="delete-group-title">Delete group</h3>
