@@ -603,35 +603,11 @@
      ids remain on rendered overlays so scoped plain/wizard CSS keeps working. -->
 <div id="action-dialog-root"></div>
 <!-- Preact transaction dialogs mount here. Concrete destructive flows move
-     into this single keyed owner atomically; adjacent legacy static modals
-     remain live until their corresponding renderer and launch adapter land. -->
+     into this single keyed owner atomically. -->
 <div id="transaction-dialog-root"></div>
-<div class="modal-overlay" id="worktree-cleanup-modal">
-  <div class="cleanup-modal" role="dialog" aria-modal="true" aria-labelledby="worktree-cleanup-title">
-    <h3 id="worktree-cleanup-title">Clean up worktrees</h3>
-    <p class="cleanup-hint" id="worktree-cleanup-hint"></p>
-    <div class="cleanup-toolbar">
-      <button type="button" id="worktree-cleanup-select-all">select all</button>
-      <button type="button" id="worktree-cleanup-select-none">select none</button>
-      <button type="button" id="worktree-cleanup-rescan" title="Re-scan the repo for worktrees right now (live state can shift as agents come and go)">⟳ rescan</button>
-      <input type="search" id="worktree-cleanup-search" placeholder="filter path / branch…" aria-label="Filter worktrees" />
-      <span class="spacer"></span>
-      <span class="cleanup-count" id="worktree-cleanup-count"></span>
-    </div>
-    <div class="cleanup-toolbar cleanup-categories" id="worktree-cleanup-categories"></div>
-    <div class="cleanup-list" id="worktree-cleanup-list"></div>
-    <label class="delete-agent-wt" id="worktree-cleanup-branches-row">
-      <input type="checkbox" id="worktree-cleanup-branches" checked />
-      <span>Also delete the feature branch
-        <span class="wt-note">force-deletes each removed worktree's local branch — <code>main</code>/<code>master</code> are always kept</span></span>
-    </label>
-    <div class="cleanup-error" id="worktree-cleanup-error"></div>
-    <div class="modal-buttons">
-      <button id="worktree-cleanup-cancel" type="button"><span class="theme-copy-regular">Cancel</span><span class="theme-copy-wizard">Dispel</span></button>
-      <button id="worktree-cleanup-submit" class="primary danger" type="button"><span class="theme-copy-regular">Remove</span><span class="theme-copy-wizard">Prune</span></button>
-    </div>
-  </div>
-</div>
+<!-- Worktree cleanup selection, rescan, retry, and result phases are one
+     Preact-owned visual lifetime under this stable host. -->
+<div id="worktree-cleanup-root"></div>
 <!-- Preact renders the Plugins create/edit dialog here so the overlay is not
      hidden with the tab section while open. -->
 <div id="plugins-modal-root"></div>
