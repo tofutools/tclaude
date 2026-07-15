@@ -304,11 +304,11 @@ function MenuSeparator() {
   return html`<div class="menu-sep" role="separator"></div>`;
 }
 
-function MemberMenu({ member, group, snapshot, ungrouped }) {
+function MemberMenu({ member, group, snapshot, actions, ungrouped }) {
+  const interactions = useGroupsInteractions();
   const label = member.title || member.conv_id;
   const canRemote = harnessCanRemoteControl(snapshot, member.state?.harness);
   const prefill = JSON.stringify({ targetMode: 'solo', target: member.agent_id || member.conv_id, owner: member.agent_id || member.conv_id });
-  const editAttrs = { 'data-current': member.title || '', 'data-role': member.role || '', 'data-descr': member.descr || '', 'data-tags': Array.isArray(member.tags) ? member.tags.join(', ') : '', 'data-owner': member.owner ? '1' : '0' };
   return html`
     <${MenuButton} member=${member} act="view-agent-messages" regular="view messages" wizard="view missives" title=${wizardCopy("Open this agent's messages in the Messages tab", "Open this familiar's missives in the Messages tab")} />
     <${MenuButton} member=${member} act="term" regular="term" wizard="scrying portal" title=${wizardCopy("Open a terminal in this agent's working directory", "Open a scrying portal in this familiar's working directory")} />
@@ -317,7 +317,12 @@ function MemberMenu({ member, group, snapshot, ungrouped }) {
     <${MenuButton} member=${member} act="web-open-window" regular="web window" wizard="web portal" title=${wizardCopy("Open a terminal attached to this agent's live session (its Claude Code TUI), in the browser (always a web terminal — never a native window)", "Reveal a browser scrying portal onto this familiar's live session")} />
     <${MenuButton} member=${member} act="export-summary" regular="summary…" wizard="inscribe scroll…" disabled=${!member.online} title=${member.online ? wizardCopy('Ask this agent to produce a shareable export of the conversation (a summary / report) and download it here. Multiple files are zipped automatically.', 'Ask this familiar to inscribe a shareable account of its conversation and bring it here. Multiple scrolls are bundled automatically.') : wizardCopy('Export needs a running agent — it produces the file in its own session. Unavailable while the agent is offline.', 'The familiar must be channeling to inscribe an export. Unavailable while it slumbers.')} />
     <${MenuSeparator} />
-    ${!ungrouped ? html`<${MenuButton} member=${member} group=${group} act="edit-member" attrs=${editAttrs} regular="edit" wizard="enchant" title=${wizardCopy('Edit this agent — title, role, description, ownership, permissions', 'Enchant this familiar — title, class, description, party ownership, and grimoire')} />
+    ${!ungrouped ? html`<${MenuButton} member=${member} group=${group} act="edit-member" attrs=${{ onClick: (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      interactions.closeMenu(true);
+      actions.openMemberEditor(member, group, 'title');
+    } }} regular="edit" wizard="enchant" title=${wizardCopy('Edit this agent — title, role, description, ownership, permissions', 'Enchant this familiar — title, class, description, party ownership, and grimoire')} />
       <${MenuButton} member=${member} group=${group} act=${member.owner ? 'revoke-owner' : 'grant-owner'} className=${member.owner ? 'warn' : undefined} regular=${member.owner ? 'revoke owner' : 'make owner'} wizard=${member.owner ? 'revoke party owner' : 'make party owner'} title=${wizardCopy(member.owner ? 'Revoke group owner status' : 'Make this agent an owner of the group', member.owner ? 'Revoke party owner status' : 'Make this familiar an owner of the party')} />` : null}
     <${MenuButton} member=${member} selector="conv" act="perm-edit" regular="permissions" wizard="grimoire" title=${wizardCopy("Edit this agent's permanent permissions (grant / deny / inherit-default)", "Open this familiar's grimoire of permanent boons and bindings")} />
     <${MenuButton} member=${member} selector="conv" act="sudo-grant" regular="+ sudo" wizard="+ sudo" title=${wizardCopy('Grant a time-bounded sudo elevation to this agent', 'Grant this familiar a time-bounded sudo boon')} />
@@ -334,13 +339,13 @@ function MemberMenu({ member, group, snapshot, ungrouped }) {
   `;
 }
 
-function MemberActions({ member, group, snapshot, ungrouped, menuKey }) {
+function MemberActions({ member, group, snapshot, actions, ungrouped, menuKey }) {
   const offlineWhy = member.online ? '' : ' — unavailable while the agent is offline';
   return html`<div class="row-actions">
     <button class="icon-btn" data-act="jump" ...${memberAttrs(member)} disabled=${!member.online} title=${`Focus this agent's terminal window${offlineWhy}`} aria-label="Focus window"><${EyeIcon} /></button>
     <button class="icon-btn" data-act="hide" ...${memberAttrs(member)} disabled=${!member.online} title=${`Hide this agent's terminal window — detaches its tmux client. The agent keeps running.${offlineWhy}`} aria-label="Hide window"><${EyeIcon} hidden=${true} /></button>
     <button class="icon-btn warn" data-act="retire-agent" data-conv=${member.conv_id} data-label=${member.title || member.conv_id} title="Retire this agent — demote it back to a plain conversation, revoking its group memberships and permission grants. Reversible via reinstate (stripped grants are not restored)." aria-label="Retire agent"><${TrashIcon} /></button>
-    <${ActionMenu} menuKey=${menuKey} kind="row-menu"><${MemberMenu} member=${member} group=${group} snapshot=${snapshot} ungrouped=${ungrouped} /><//>
+    <${ActionMenu} menuKey=${menuKey} kind="row-menu"><${MemberMenu} member=${member} group=${group} snapshot=${snapshot} actions=${actions} ungrouped=${ungrouped} /><//>
   </div>`;
 }
 
@@ -368,21 +373,32 @@ function MemberName({ member, snapshot, actions, grants, editorKey }) {
   >${member.title || '(unnamed)'}<//><${SudoBadge} grants=${grants} conv=${member.conv_id} /></div>`;
 }
 
-function editMemberAttrs(member, group, act) {
+function openMemberCellEditor(event, actions, member, group, focus) {
+  event.preventDefault();
+  event.stopPropagation();
+  event.currentTarget.focus();
+  actions.openMemberEditor(member, group, focus);
+}
+
+function editableMemberCellAttrs(member, group, actions, act, focus) {
   return {
     'data-act': act, 'data-group': group.name, ...memberAttrs(member),
-    'data-current': member.title || '', 'data-role': member.role || '',
-    'data-descr': member.descr || '', 'data-tags': Array.isArray(member.tags) ? member.tags.join(', ') : '',
-    'data-owner': member.owner ? '1' : '0',
+    role: 'button', tabindex: '0',
+    onClick: (event) => openMemberCellEditor(event, actions, member, group, focus),
+    onKeyDown: (event) => {
+      if (event.isComposing || event.keyCode === 229) return;
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      openMemberCellEditor(event, actions, member, group, focus);
+    },
   };
 }
 
-function RoleCell({ member, group }) {
+function RoleCell({ member, group, actions }) {
   const hasRole = member.role && member.role !== 'owner';
   const owner = member.owner ? html`<span class="owner-badge">owner</span>` : null;
   const pureOwner = member.owner && member.role === 'owner';
   if (!group || pureOwner) return member.owner ? html`${hasRole ? member.role : null}${hasRole ? ' ' : null}${owner}` : (member.role || '');
-  return html`<span class="role-edit" ...${editMemberAttrs(member, group, 'edit-role')} title="Edit role, ownership and permissions">${hasRole ? member.role : null}${hasRole && member.owner ? ' ' : null}${owner || (!hasRole ? html`<span class="role-add">+ role</span>` : null)}</span>`;
+  return html`<span class="role-edit" ...${editableMemberCellAttrs(member, group, actions, 'edit-role', 'role')} title="Edit role, ownership and permissions">${hasRole ? member.role : null}${hasRole && member.owner ? ' ' : null}${owner || (!hasRole ? html`<span class="role-add">+ role</span>` : null)}</span>`;
 }
 
 function TagChips({ tags }) {
@@ -390,12 +406,12 @@ function TagChips({ tags }) {
   return html`<span class="agent-tags">${tags.map((tag) => html`<span key=${tag} class=${tag.startsWith('tf:') ? 'agent-tag agent-tag-tf' : 'agent-tag'} title=${tag.startsWith('tf:') ? `task force: ${tag.slice(3)}` : `tag: ${tag}`}>${tag}</span>`)}</span>`;
 }
 
-function DescrCell({ member, group }) {
+function DescrCell({ member, group, actions }) {
   const text = String(member.descr || '').trim();
   const body = html`${text ? html`<span class="descr-text">${text}</span>` : null}<${TagChips} tags=${member.tags} />`;
   const pureOwner = member.owner && member.role === 'owner';
   if (!group || pureOwner) return text || member.tags?.length ? body : html`<span class="muted">—</span>`;
-  return html`<span class="descr-edit" ...${editMemberAttrs(member, group, 'edit-descr')} title="Edit description and tags">${text || member.tags?.length ? body : html`<span class="descr-add">+ descr / tags</span>`}</span>`;
+  return html`<span class="descr-edit" ...${editableMemberCellAttrs(member, group, actions, 'edit-descr', 'descr')} title="Edit description and tags">${text || member.tags?.length ? body : html`<span class="descr-add">+ descr / tags</span>`}</span>`;
 }
 
 function StackedLocation({ start, current, differ }) {
@@ -454,7 +470,7 @@ function TaskCell({ member }) {
 function MemberCell({ column, member, group, snapshot, actions, grants, ungrouped, menuKey, editorKey }) {
   const state = member.state || {};
   switch (column.key) {
-    case 'ctl': return html`<td><div class="agent-ctl"><${AgentStatusDot} member=${member} /><${MemberActions} member=${member} group=${group} snapshot=${snapshot} ungrouped=${ungrouped} menuKey=${menuKey} /></div><${HarnessLine} member=${member} /><${SandboxBadge} member=${member} /></td>`;
+    case 'ctl': return html`<td><div class="agent-ctl"><${AgentStatusDot} member=${member} /><${MemberActions} member=${member} group=${group} snapshot=${snapshot} actions=${actions} ungrouped=${ungrouped} menuKey=${menuKey} /></div><${HarnessLine} member=${member} /><${SandboxBadge} member=${member} /></td>`;
     case 'id': return html`<td class="id" title=${idTooltip(member.agent_id, member.conv_id)}>${shortAgentId(member.agent_id, member.conv_id)}</td>`;
     case 'title': return html`<td class="name-cell"><${MemberName} member=${member} snapshot=${snapshot} actions=${actions} grants=${grants} editorKey=${editorKey} /></td>`;
     case 'state': return html`<${StateCell} member=${member} />`;
@@ -462,9 +478,9 @@ function MemberCell({ column, member, group, snapshot, actions, grants, ungroupe
     case 'age': return html`<td><span class="last-hook" title=${member.created_at || ''}>${relTime(member.created_at)}</span></td>`;
     case 'cwd': return html`<td><${CwdCell} member=${member} /></td>`;
     case 'branch': return html`<td><${BranchCell} member=${member} /></td>`;
-    case 'role': return html`<td><${RoleCell} member=${member} group=${group} /></td>`;
+    case 'role': return html`<td><${RoleCell} member=${member} group=${group} actions=${actions} /></td>`;
     case 'task': return html`<td class="task-cell"><${TaskCell} member=${member} /></td>`;
-    case 'descr': return html`<td class="descr-cell"><${DescrCell} member=${member} group=${group} /></td>`;
+    case 'descr': return html`<td class="descr-cell"><${DescrCell} member=${member} group=${group} actions=${actions} /></td>`;
     default: return html`<td></td>`;
   }
 }
