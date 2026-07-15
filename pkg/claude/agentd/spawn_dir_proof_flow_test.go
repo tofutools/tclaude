@@ -964,12 +964,15 @@ func TestSpawnDirProof_CloneCwdOverride(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	require.NotEmpty(t, resp.NewConv)
-	resolvedDir, err := filepath.EvalSymlinks(dir)
-	require.NoError(t, err)
 	sess, err := db.FindSessionByConvID(resp.NewConv)
 	require.NoError(t, err)
 	require.NotNil(t, sess)
-	assert.Equal(t, resolvedDir, sess.Cwd, "clone must land in the verified resolved dir")
+	wantInfo, err := os.Stat(dir)
+	require.NoError(t, err)
+	gotInfo, err := os.Stat(sess.Cwd)
+	require.NoError(t, err)
+	assert.True(t, os.SameFile(wantInfo, gotInfo),
+		"clone must land on the verified directory inode (got %s, want %s)", sess.Cwd, dir)
 }
 
 func TestSpawnDirProof_InheritedLifecycleAuthorityNeedsNoProof(t *testing.T) {
