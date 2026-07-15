@@ -2,6 +2,7 @@ import { h, render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { relTime } from './helpers.js';
 import { registerTransactionDialogController } from './transaction-dialog-controller.js';
 
 const html = htm.bind(h);
@@ -363,6 +364,228 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
         />
         <span><${Words} plain="Also delete each agent’s git worktree + branch" wizard="Also dissolve each familiar’s git worktree + branch" />
           <span class="wt-note">The main worktree is never removed; a worktree shared with a surviving agent is kept. Removal happens only after its agent exits and requires shutdown; deleting a linked worktree also deletes its branch.</span>
+        </span>
+      </label>
+    `}
+  </${TransactionDialogFrame}>`;
+}
+
+function deleteRetiredAgeDays(candidate) {
+  if (!candidate.retired_at) return Infinity;
+  const retiredAt = Date.parse(candidate.retired_at);
+  if (Number.isNaN(retiredAt)) return Infinity;
+  return (Date.now() - retiredAt) / 86400000;
+}
+
+function DeleteRetiredResult({ response }) {
+  const outcomes = response?.outcomes || [];
+  return html`<div class="cleanup-list" id="delete-retired-list">
+    ${outcomes.length ? outcomes.map((outcome) => html`
+      <div class="cleanup-row" key=${outcome.conv_id}>
+        <span class=${`cleanup-badge ${outcome.result || ''}`}>${outcome.result || 'unknown'}</span>
+        <span class="title">${outcome.title || String(outcome.conv_id || '').slice(0, 8)}</span>
+        <span class="id">${String(outcome.conv_id || '').slice(0, 8)}</span>
+        <span class="meta">${outcome.detail || ''}</span>
+      </div>
+    `) : html`<div class="cleanup-empty">Nothing to do.</div>`}
+  </div>`;
+}
+
+function deleteRetiredSummary(response) {
+  const parts = [];
+  if (response?.deleted) parts.push(`${response.deleted} deleted`);
+  if (response?.skipped) parts.push(`${response.skipped} skipped`);
+  if (response?.failed) parts.push(`${response.failed} failed`);
+  return parts.join(' · ') || 'nothing to do';
+}
+
+function DeleteRetiredDialog({ descriptor, actions, confirmDiscard }) {
+  const candidates = descriptor.candidates || [];
+  const [query, setQuery] = useState('');
+  const [minAge, setMinAge] = useState('0');
+  const [selected, setSelected] = useState(
+    () => new Set(candidates.map((candidate) => candidate.conv_id)),
+  );
+  const [deleteWorktrees, setDeleteWorktrees] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [failedAttempt, setFailedAttempt] = useState(false);
+  const [result, setResult] = useState(null);
+  const activeRef = useRef(true);
+  useEffect(() => () => { activeRef.current = false; }, []);
+
+  const normalizedQuery = query.trim().toLowerCase();
+  const minAgeDays = Math.max(0, Number.parseFloat(minAge) || 0);
+  const matchesFilter = (candidate) => {
+    if (normalizedQuery
+      && !candidate.title.toLowerCase().includes(normalizedQuery)
+      && !candidate.conv_id.toLowerCase().includes(normalizedQuery)) return false;
+    // Missing and invalid timestamps are deliberately infinitely old. At the
+    // show-all value (0), future timestamps also stay visible despite their
+    // negative computed age.
+    return minAgeDays <= 0 || deleteRetiredAgeDays(candidate) >= minAgeDays;
+  };
+  const visibleCandidates = candidates.filter(matchesFilter);
+  const visibleSelected = visibleCandidates.filter(
+    (candidate) => selected.has(candidate.conv_id),
+  );
+  const dirty = !result && (
+    query !== '' || minAge !== '0' || selected.size !== candidates.length
+    || deleteWorktrees || failedAttempt
+  );
+
+  const updateVisible = (checked) => {
+    if (busy || result) return;
+    setSelected((current) => {
+      const next = new Set(current);
+      for (const candidate of visibleCandidates) {
+        if (checked) next.add(candidate.conv_id);
+        else next.delete(candidate.conv_id);
+      }
+      return next;
+    });
+  };
+  const updateCandidate = (candidate, checked) => {
+    if (busy || result) return;
+    setSelected((current) => {
+      const next = new Set(current);
+      if (checked) next.add(candidate.conv_id);
+      else next.delete(candidate.conv_id);
+      return next;
+    });
+  };
+
+  const finishResult = async () => {
+    if (!result || busy) return;
+    setBusy(true);
+    try {
+      await actions.finishDeleteRetired({ kind: descriptor.kind, response: result });
+    } catch (_) {
+      // Accepted mutation plus advisory refresh: the action always releases
+      // transaction ownership, so no error remains to paint after unmount.
+    }
+  };
+  const close = () => {
+    if (result) void finishResult();
+    else actions.close();
+  };
+  const submit = async () => {
+    if (busy) return;
+    if (result) {
+      await finishResult();
+      return;
+    }
+    if (visibleSelected.length === 0) return;
+    // Freeze this click's visible-and-checked stable selectors. A failed
+    // attempt returns to an editable phase, where the human may change filters,
+    // selection, or worktree choice before creating a new frozen attempt.
+    const request = Object.freeze({
+      agents: Object.freeze(visibleSelected.map(
+        (candidate) => candidate.agent_id || candidate.conv_id,
+      )),
+      deleteWorktrees,
+    });
+    setError('');
+    setBusy(true);
+    try {
+      const response = await actions.deleteRetiredPreview(request);
+      if (activeRef.current) setResult(response || {});
+    } catch (cause) {
+      if (activeRef.current) {
+        setError(cause?.message || String(cause));
+        setFailedAttempt(true);
+      }
+    } finally {
+      if (activeRef.current) setBusy(false);
+    }
+  };
+
+  const warning = result && (result.warnings || []).length
+    ? `⚠ ${result.warnings.join('  ⚠ ')}` : '';
+  const hint = result
+    ? `Delete complete — ${deleteRetiredSummary(result)}.`
+    : 'Permanently deletes the ticked retired agents — wipes each conversation from disk '
+      + 'and drops every agent / group / permission row. Only agents that are both ticked '
+      + 'AND visible under the current filters are deleted. This cannot be undone.';
+  return html`<${TransactionDialogFrame}
+    id="delete-retired-modal"
+    labelledby="delete-retired-title"
+    title="Delete retired agents"
+    dialogClass="cleanup-modal"
+    busy=${busy}
+    dirty=${dirty}
+    error=${result ? warning : error}
+    errorID="delete-retired-error"
+    primaryLabel=${result ? 'Done' : failedAttempt ? 'Retry delete'
+      : visibleSelected.length === 1 ? 'Delete 1 agent' : `Delete ${visibleSelected.length} agents`}
+    busyLabel=${html`<span class="btn-spinner" aria-hidden="true"></span>${result ? 'Refreshing…' : failedAttempt ? 'Retrying…' : 'Deleting…'}`}
+    primaryClass=${result ? 'primary' : 'primary danger'}
+    submitDisabled=${!result && visibleSelected.length === 0}
+    hideCancel=${!!result}
+    cancelID="delete-retired-cancel"
+    submitID="delete-retired-submit"
+    onClose=${close}
+    onSubmit=${submit}
+    confirmDiscard=${confirmDiscard}
+  >
+    <p class=${`cleanup-hint${result ? '' : ' danger'}`} id="delete-retired-hint">${hint}</p>
+    ${result ? html`<${DeleteRetiredResult} response=${result} />` : html`
+      <div class="cleanup-toolbar">
+        <button type="button" id="delete-retired-select-all" disabled=${busy} onClick=${() => updateVisible(true)}>select all</button>
+        <button type="button" id="delete-retired-select-none" disabled=${busy} onClick=${() => updateVisible(false)}>select none</button>
+        <span title="Hide retired agents younger than this — only those retired at least this many days ago stay in the list (and so can be deleted). 0 shows them all.">
+          retired ≥ <input
+            type="number"
+            id="delete-retired-age"
+            min="0"
+            step="1"
+            value=${minAge}
+            disabled=${busy}
+            onInput=${(event) => setMinAge(event.currentTarget.value)}
+          /> d
+        </span>
+        <input
+          type="search"
+          id="delete-retired-search"
+          placeholder="filter title / id…"
+          aria-label="Filter retired agents"
+          value=${query}
+          disabled=${busy}
+          onInput=${(event) => setQuery(event.currentTarget.value)}
+        />
+        <span class="spacer"></span>
+        <span class="cleanup-count" id="delete-retired-count">${visibleSelected.length} of ${candidates.length} selected</span>
+      </div>
+      <div class="cleanup-list" id="delete-retired-list">
+        ${visibleCandidates.length ? visibleCandidates.map((candidate) => {
+          const age = candidate.retired_at
+            ? `retired ${relTime(candidate.retired_at)}` : 'retired (unknown)';
+          return html`<div class="cleanup-row" key=${candidate.conv_id}><label>
+            <input
+              type="checkbox"
+              data-conv=${candidate.conv_id}
+              checked=${selected.has(candidate.conv_id)}
+              disabled=${busy}
+              onChange=${(event) => updateCandidate(candidate, event.currentTarget.checked)}
+            />
+            <span class="title">${candidate.title || '(untitled)'}</span>
+            <span class="id">${candidate.conv_id.slice(0, 8)}</span>
+            <span class="seen">${age}</span>
+            ${candidate.online ? html`<span class="cleanup-badge online">online — will skip</span>` : null}
+            ${candidate.retired_by ? html`<span class="cleanup-badge">by ${candidate.retired_by}</span>` : null}
+          </label></div>`;
+        }) : html`<div class="cleanup-empty">no retired agents match the filter</div>`}
+      </div>
+      <label class="delete-agent-wt" id="delete-retired-wt-row">
+        <input
+          type="checkbox"
+          id="delete-retired-wt"
+          checked=${deleteWorktrees}
+          disabled=${busy}
+          onChange=${(event) => setDeleteWorktrees(event.currentTarget.checked)}
+        />
+        <span>Also delete each agent's git worktree + branch
+          <span class="wt-note">removes the worktree directory and force-deletes its branch — the main repo and worktrees shared with a surviving agent are always kept</span>
         </span>
       </label>
     `}
@@ -793,6 +1016,14 @@ export function TransactionDialogApp({ state, actions, confirmDiscard }) {
   if (current.descriptor.kind === 'retire-group-preview'
     || current.descriptor.kind === 'retire-ungrouped-preview') {
     return html`<${BulkRetireDialog}
+      key=${current.key}
+      descriptor=${current.descriptor}
+      actions=${actions}
+      confirmDiscard=${confirmDiscard}
+    />`;
+  }
+  if (current.descriptor.kind === 'delete-retired-preview') {
+    return html`<${DeleteRetiredDialog}
       key=${current.key}
       descriptor=${current.descriptor}
       actions=${actions}
