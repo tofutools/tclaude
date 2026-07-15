@@ -53,9 +53,7 @@ import {
 import { bindProfilesUI } from './modal-profiles.js';
 import { bindSandboxProfilesUI, refreshSpawnSandboxProfileUI, summonSandboxScribe } from './sandbox-profiles.js';
 import { bindRolesUI } from './modal-roles.js';
-import { bindCloneModal } from './modal-clone.js';
 import { bindLinkModal, openLinkModal } from './modal-link-wt.js';
-import { bindExportModal } from './modal-export.js';
 import {
   bindAgentSpawnModal,
 } from './modal-spawn.js';
@@ -218,6 +216,7 @@ export function sudoBadge(activeSudo, fallbackConvID) {
       confirmDiscard,
       refresh: dashboardActions.refresh,
       notify: toast,
+      downloadExport: triggerExportDownload,
       getSnapshot: () => lastSnapshot,
     }),
   ]);
@@ -273,10 +272,8 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   bindProfilesUI();
   bindSandboxProfilesUI();
   bindRolesUI();
-  bindCloneModal();
   bindGroupImportModal();
   bindLinkModal();
-  bindExportModal();
   bindAgentSpawnModal();
   bindRemoteAdmin();
   document.querySelector('nav [data-tab="config"]')?.addEventListener('click', () => { void loadRemoteAdmin(); });
