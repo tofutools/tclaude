@@ -12,9 +12,8 @@ import (
 // The button dispatches the SAME retire-agent path and pops the SAME
 // retireConfirm modal as the drag, so both ask the identical question.
 //
-// The wiring spans three embedded JS modules — the button template
-// (helpers.js), its inclusion in both active-agent menu builders
-// (helpers.js), and the dispatcher case that routes it through the
+// The wiring spans the native MemberMenu/MemberActions components and the
+// dispatcher case that routes it through the
 // retireConfirm modal (row-actions.js). The repo has no JS test runner,
 // so — following the established dashboard_*_test.go structural guards
 // (dnd-confirm, agents-tab, slop-machine) — this pins the shape of that
@@ -25,7 +24,7 @@ import (
 
 // helpersFuncBody returns the source span of a column-0 function in the
 // embedded dashboard JS — from its `function <name>(` keyword to its own
-// closing brace. helpers.js is a native ES module, so its functions sit
+// closing brace. Dashboard modules are native ES modules, so functions sit
 // at column 0 and the next `\nfunction ` bounds the span; the trailing
 // LastIndex("\n}") trims back to this function's own closing brace,
 // excluding the next function's doc comment.
@@ -48,26 +47,17 @@ func helpersFuncBody(t *testing.T, name string) string {
 }
 
 func TestDashboardHTML_RetireButtonWired(t *testing.T) {
-	// 1. The button template exists and dispatches the retire-agent path
-	//    with the conv + label the dispatcher reads.
-	tmpl := helpersFuncBody(t, "retireMemberButton")
+	// 1. The native menu dispatches the retire-agent path with the conv-keyed
+	// selector + label the dispatcher reads in both grouped and ungrouped arms.
+	tmpl := helpersFuncBody(t, "MemberMenu")
 	for _, needle := range []string{
-		`data-act="retire-agent"`,
-		`data-conv="`,
-		`data-label="`,
+		`selector="conv" act="retire-agent"`,
+		`className="warn" regular="retire" wizard="banish"`,
+		`group=${group} act="remove-member"`,
+		`act="delete-agent" className="danger"`,
 	} {
 		if !strings.Contains(tmpl, needle) {
-			t.Errorf("retireMemberButton: missing %q", needle)
-		}
-	}
-
-	// 2. Both active-agent menu builders include the retire button. These
-	//    are the only two renderers for an agent that can be retired (a
-	//    real-group member and a virtual-Ungrouped row); the retired and
-	//    conversation renderers must NOT offer it.
-	for _, fn := range []string{"memberActions", "ungroupedMemberActions"} {
-		if !strings.Contains(helpersFuncBody(t, fn), "retireMemberButton(m)") {
-			t.Errorf("%s: missing retireMemberButton(m) — the retire option is not in this menu", fn)
+			t.Errorf("MemberMenu: missing %q", needle)
 		}
 	}
 
@@ -133,13 +123,13 @@ func TestDashboardHTML_RetireButtonWired(t *testing.T) {
 // pins the icon's shape + its mount in both active-agent row renderers so a
 // refactor can't silently drop it or key it wrong.
 func TestDashboardHTML_RetireIconButtonWired(t *testing.T) {
-	tmpl := helpersFuncBody(t, "retireIconButton")
+	tmpl := helpersFuncBody(t, "MemberActions")
 	for _, needle := range []string{
 		`data-act="retire-agent"`,
-		`data-conv="`,
-		`data-label="`,
+		`data-conv=${member.conv_id}`,
+		`data-label=${member.title || member.conv_id}`,
 		`class="icon-btn warn"`, // reversible-demotion semantics (warn), not danger
-		`${TRASH_SVG}`,          // renders the trash glyph, not a text label
+		`<${TrashIcon} />`,      // renders the trash glyph, not a text label
 		`aria-label="Retire agent"`,
 	} {
 		if !strings.Contains(tmpl, needle) {
@@ -150,7 +140,7 @@ func TestDashboardHTML_RetireIconButtonWired(t *testing.T) {
 	// referenced above via ${TRASH_SVG}. Pin its definition + the CSS hook
 	// so the icon can't silently become an empty span.
 	for _, needle := range []string{
-		`const TRASH_SVG =`,
+		`function TrashIcon()`,
 		`class="trash-ico"`,
 		`<svg`,
 	} {
@@ -165,19 +155,10 @@ func TestDashboardHTML_RetireIconButtonWired(t *testing.T) {
 	if strings.Contains(tmpl, "data-agent=") {
 		t.Error("retireIconButton: must stay conv-keyed (no data-agent) — see retireMemberButton / JOH-322")
 	}
-	// Both active-agent row renderers mount the icon next to the cog. These
-	// are the same two renderers that carry the menu retire item; the icon
-	// is additive, not a replacement.
-	for _, fn := range []string{"memberActions", "ungroupedMemberActions"} {
-		body := helpersFuncBody(t, fn)
-		if !strings.Contains(body, "retireIconButton(m)") {
-			t.Errorf("%s: missing retireIconButton(m) — the top-level retire icon is not in this row", fn)
-		}
-		// Belt-and-braces: the menu twin must still be there too (the icon
-		// promotes retire to a shortcut, it does not remove the menu entry).
-		if !strings.Contains(body, "retireMemberButton(m)") {
-			t.Errorf("%s: retireMemberButton(m) went missing — the menu retire twin must stay", fn)
-		}
+	// The same native row action component serves grouped and ungrouped rows,
+	// and its ActionMenu retains the menu twin.
+	if !strings.Contains(tmpl, "<${ActionMenu}") || !strings.Contains(tmpl, "<${MemberMenu}") {
+		t.Error("MemberActions: the menu retire twin must stay beside the top-level shortcut")
 	}
 }
 

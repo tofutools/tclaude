@@ -10,7 +10,7 @@ import { $, $$ } from './helpers.js';
 import { renderGroupsTab } from './tabs.js';
 // refresh()/toast()/confirmModal/retireConfirm/retireToast live in refresh.js;
 // lastSnapshot is dashboard.js's shared state (read-only here).
-// Deliberate benign cycles (see render.js); TDZ-safe.
+// Deliberate benign module cycles; TDZ-safe.
 import { refresh, toast, confirmModal, retireConfirm, retireToast, maybeHandleDanglingRetire } from './refresh.js';
 import { lastSnapshot } from './dashboard.js';
 

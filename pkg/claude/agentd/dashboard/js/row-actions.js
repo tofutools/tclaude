@@ -1,13 +1,12 @@
 // row-actions.js — bindRowActions, the delegated click router for every
 // per-row action button across the dashboard's tables.
 //
-// Extracted from dashboard.js in the Stage 2 module split. Owns
-// renameEditing — the inline-rename-open flag refreshSuspended consults.
+// Extracted from dashboard.js in the Stage 2 module split. Owns the remaining
+// imperative toolbar profile-picker lifecycle flag that refreshSuspended reads.
 
-import { $, $$, shortId, groupOfflineOverride, pickDirectory } from './helpers.js';
+import { $, $$, shortId, groupOfflineOverride } from './helpers.js';
 import { renderGroupsTab } from './tabs.js';
 import { featureState } from './feature-state-registry.js';
-import { mountTransientSiblingEditor } from './transient-editor.js';
 import { dashPrefs } from './prefs.js';
 import { loadProfiles, setDashDefaultProfile, findProfileByHandle, profileChoices } from './profiles.js';
 import { openProfileEditor } from './modal-profiles.js';
@@ -18,7 +17,7 @@ import { openProfileEditor } from './modal-profiles.js';
 import {
   loadSandboxProfiles, openSandboxProfileEditor, refreshSpawnSandboxProfileUI,
 } from './sandbox-profiles.js';
-import { renderDashDefaultProfile, renderDashSandboxProfile } from './render.js';
+import { renderDashDefaultProfile, renderDashSandboxProfile } from './toolbar-profile-renderers.js';
 import { openCronCreateModal } from './modal-cron.js';
 import { openGroupCreateModal } from './modal-message.js';
 import {
@@ -45,8 +44,7 @@ import { openMailbox } from './mail-bridge.js';
 import { wizWord } from './slop.js';
 // refresh()/toast() and the shared action modals live in refresh.js;
 // lastSnapshot is dashboard.js's shared state, written here (rename
-// rollback) via setLastSnapshot. Deliberate benign cycles (see
-// render.js); TDZ-safe.
+// rollback) via setLastSnapshot. Deliberate benign cycles are TDZ-safe.
 import {
   refresh, toast, confirmModal, addMemberModal, deleteAgentModal,
   editMemberModal, shutdownScope, powerOnScope, openCleanupModal, openWindowModal,
@@ -57,136 +55,9 @@ import {
 } from './refresh.js';
 import { lastSnapshot, setLastSnapshot, webTerminalDefault } from './dashboard.js';
 
-// True while an inline rename input is open; suspends the auto-
-// refresh so the 2s tick doesn't blow the input away mid-edit.
+// Historical name: true only while a legacy toolbar profile <select> is open;
+// native Groups menus/editors remain keyed and never suspend snapshot publish.
 let renameEditing = false;
-
-// inlineEdit turns a static element into a one-field click-to-edit:
-// it temporarily hides `el` and mounts a focused sibling <input>, commits on
-// Enter, and reverts
-// on Esc / blur. The 2s auto-refresh is suspended (renameEditing) for
-// the input's whole lifetime so a poll can't blow it away mid-edit;
-// if the host row is a drag source its draggable attr is parked too,
-// so selecting text in the input can't accidentally start a row drag.
-//
-// Keeping the original node connected is important for Preact-owned lists:
-// replacing it would detach the DOM node referenced by Preact's VNode. The
-// editor is always removed and the managed host revealed before a rerender.
-//
-// onSave(value) is the caller's commit, invoked with the input still in the
-// DOM. It returns one of:
-//   'saved'  — the daemon accepted the change; inlineEdit restores the host,
-//              then calls refresh().
-//   'revert' — nothing to persist (value unchanged) or the caller
-//              already toasted a failure; restore the original element.
-// A thrown error is caught, toasted, and treated as 'revert'.
-//
-// This is the canonical inline-edit primitive for agent names and group-header
-// chips alike.
-function inlineEdit({
-  el, value, type = 'text', inputClass, placeholder, listId, configureInput, onSave,
-}) {
-  const prevSnapshot = lastSnapshot;
-  renameEditing = true;
-  // Park the host row's drag source while the input is open — an
-  // <input> inside a draggable <tr> otherwise hands text-selection
-  // drags to the row-drag machinery. Restored before every exit path.
-  const dragRow = el.closest('[draggable="true"]');
-  if (dragRow) dragRow.setAttribute('draggable', 'false');
-  const input = document.createElement('input');
-  input.type = type;
-  if (inputClass) input.className = inputClass;
-  input.value = value;
-  if (placeholder) input.placeholder = placeholder;
-  // Optional <datalist> suggestions (e.g. the model-alias list) —
-  // free text stays allowed, the list is just one click away.
-  if (listId) input.setAttribute('list', listId);
-  input.spellcheck = false;
-  input.autocomplete = 'off';
-  if (configureInput) configureInput(input);
-  const restoreEditor = mountTransientSiblingEditor(el, input);
-  input.focus();
-  input.select();
-  // Datalist-backed editor: pop the suggestion list open right away —
-  // the click that opened the editor is the user reaching for a value,
-  // so make them visible without hunting for the input's tiny arrow.
-  // showPicker() needs transient user activation (the opening click
-  // provides it) and isn't supported everywhere; failure just means
-  // the list opens on typing/arrow-down as before. Typing afterwards
-  // keeps filtering the list normally. Note Chromium filters the list
-  // against the current value, so a chip with an existing value shows
-  // the matching subset until the text is replaced.
-  if (listId) {
-    try { input.showPicker(); } catch (_) { /* no activation / unsupported — fine */ }
-  }
-  // phase: editing → committing (during the await) → done. Guards
-  // against a blur firing mid-commit and against a double Enter.
-  let phase = 'editing';
-  const teardownRestore = () => {
-    renameEditing = false;
-    restoreEditor();
-    if (dragRow) dragRow.setAttribute('draggable', 'true');
-    setLastSnapshot(prevSnapshot);
-  };
-  const revert = (restoreFocus = false) => {
-    if (phase !== 'editing') return;
-    phase = 'done';
-    teardownRestore();
-    if (restoreFocus) el.focus();
-  };
-  const commit = async () => {
-    if (phase !== 'editing') return;
-    phase = 'committing';
-    let outcome;
-    try {
-      outcome = await onSave(input.value);
-    } catch (err) {
-      toast(`save failed: ${(err && err.message) || err}`, true);
-      outcome = 'revert';
-    }
-    phase = 'done';
-    if (outcome === 'saved') {
-      renameEditing = false;
-      restoreEditor();
-      if (dragRow) dragRow.setAttribute('draggable', 'true');
-      refresh();
-    } else {
-      teardownRestore();
-    }
-  };
-  input.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Enter') {
-      // Datalist-backed editor: this Enter may be ACCEPTING a
-      // highlighted suggestion — the browser applies the replacement
-      // as the keydown's default action, i.e. after this handler. So
-      // don't preventDefault (that can cancel the acceptance) and
-      // commit on the next tick, once the final value is in place.
-      // One Enter then both accepts and saves. The phase guard inside
-      // commit() absorbs the case where the pick's `input` event
-      // below already committed.
-      if (listId) { setTimeout(commit, 0); return; }
-      ev.preventDefault(); commit();
-    } else if (ev.key === 'Escape') { ev.preventDefault(); revert(true); }
-  });
-  // Picking a datalist suggestion with the MOUSE saves immediately —
-  // the user clicked a concrete choice, and requiring a follow-up
-  // Enter reads as the click not working. Typed edits keep the
-  // explicit-Enter contract: a pick arrives as an `input` event whose
-  // inputType is 'insertReplacementText' (Chromium) or undefined
-  // (Firefox/Safari), never the per-keystroke 'insertText' — and only
-  // counts when the value matches one of the list's options exactly.
-  if (listId) {
-    const list = document.getElementById(listId);
-    input.addEventListener('input', (ev) => {
-      const picked = ev.inputType === undefined || ev.inputType === 'insertReplacementText';
-      if (!picked || !list) return;
-      if ([...list.options].some(o => o.value === input.value)) commit();
-    });
-  }
-  // Blur cancels rather than commits — explicit Enter to save, same
-  // contract as the group-header chips.
-  input.addEventListener('blur', () => revert(false));
-}
 
 // openProfilePicker turns a 🧠 spawn-profile chip into a one-shot <select>
 // of the saved profile names (+ a leading "(none)" to clear), suspending the
@@ -194,8 +65,9 @@ function inlineEdit({
 // away. Picking an option (or pressing it then leaving) restores the chip
 // element and calls onCommit(name) — which performs the persistence and any
 // repaint and resolves to true on success, false (or throws) to revert.
-// Escape / blur cancel. Shared by the group-default and dashboard-default
-// pickers, which differ only in onCommit. The profile list is fetched
+// Escape / blur cancel. This is now used only by the dashboard toolbar's
+// profile and sandbox-profile chips; group defaults are native keyed editors.
+// The profile list is fetched
 // (loadProfiles) so a freshly-created profile shows up; a current value no
 // longer in the list is kept as a "(missing)" option so it's still visible
 // and changeable.
@@ -290,11 +162,9 @@ async function openProfilePicker(chipEl, current, onCommit, opts = {}) {
   select.addEventListener('blur', () => cancel());
 }
 
-// closeAllActionMenus collapses every open ⚙ options menu. Called on
-// any non-cog click — outside-click dismissal and menu-item dismissal
-// alike — by the cog toggle, and by the Escape handler, so at most one
-// menu is ever open. Keyed Preact ownership retains the menu across snapshot
-// publishes. This helper also keeps
+// Legacy non-Groups menus still use the delegated action path below. Native
+// Groups menus are owned by GroupsInteractionProvider and remain keyed across
+// snapshot publishes. This helper also keeps
 // the cog's aria-expanded in sync and — when focus sat inside a menu
 // about to be display:none'd — hands focus back to that cog so it
 // doesn't fall to <body> and get lost.
@@ -1029,36 +899,6 @@ function bindRowActions() {
           openAgentExportDialog(agent, label);
           return;
         }
-        case 'rename-name': {
-          // Inline click-to-edit of an agent's title: the .rowname-text
-          // span swaps to an <input>, Enter POSTs /api/agents/{conv}/
-          // rename {title}, Esc / blur cancels. Same endpoint the edit
-          // modal's Save uses for an explicit-title rename. data-act
-          // lives on the span itself, so btn IS the click target.
-          const oldTitle = btn.getAttribute('data-current') || '';
-          inlineEdit({
-            el: btn,
-            value: oldTitle,
-            inputClass: 'rowname-input',
-            placeholder: '1-64 chars: A-Za-z0-9 _ - [ ] { } ( ) — Enter saves, Esc cancels',
-            onSave: async (raw) => {
-              const title = raw.trim();
-              if (title === '' || title === oldTitle) return 'revert';
-              const r = await fetch(`/api/agents/${encodeURIComponent(agent)}/rename`, {
-                method: 'POST', credentials: 'same-origin',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ title }),
-              });
-              if (!r.ok) {
-                toast(`rename failed: ${await r.text()}`, true);
-                return 'revert';
-              }
-              toast(`renaming ${label} → ${title}`);
-              return 'saved';
-            },
-          });
-          return;
-        }
         case 'edit-task': {
           // Operator-only edit of an existing agent's task-reference URL and
           // optional display label. Empty cells expose attach; populated cells
@@ -1076,248 +916,10 @@ function bindRowActions() {
           });
           return;
         }
-        case 'rename-group': {
-          // The rename button lives in the group ⚙ menu, which sits in
-          // the expanded .subtable — a SIBLING of <summary>, not a
-          // descendant (moved there in #212). So we can't walk up to the
-          // <summary>; instead climb to the enclosing group <details>
-          // and query the (single) .group-name it contains. This is the
-          // real group render, whose .group-name lives in its summary.
-          const details = btn.closest('details');
-          const nameEl = details && details.querySelector('.group-name');
-          if (!nameEl) {
-            toast('rename: could not locate group name element', true);
-            return;
-          }
-          const oldName = group;
-          inlineEdit({
-            el: nameEl,
-            value: oldName,
-            inputClass: 'group-rename-input',
-            onSave: async (raw) => {
-              const newName = raw.trim();
-              if (!newName || newName === oldName) return 'revert';
-              const r = await fetch(`/api/groups/${encodeURIComponent(oldName)}/rename`, {
-                method: 'POST', credentials: 'same-origin',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ new_name: newName }),
-              });
-              if (!r.ok) {
-                toast(`rename failed: ${await r.text()}`, true);
-                return 'revert';
-              }
-              // Move either persisted disclosure state onto the new key so an
-              // explicitly folded default-open pending group stays folded too.
-              const disclosure = dashPrefs.getItem('tclaude.dash.group.' + oldName);
-              dashPrefs.removeItem('tclaude.dash.group.' + oldName);
-              if (disclosure !== null) {
-                dashPrefs.setItem('tclaude.dash.group.' + newName, disclosure);
-              }
-              toast(`renamed: ${oldName} → ${newName}`);
-              return 'saved';
-            },
-          });
-          return;
-        }
-        case 'pick-group-dir': {
-          // Click the 📁 icon → open the daemon's native directory
-          // picker and save the choice as the group's default spawn dir
-          // (PATCH /api/groups/{name}). The text beside it stays a
-          // click-to-edit text field via set-group-dir below.
-          const startDir = btn.getAttribute('data-cwd') || '';
-          const res = await pickDirectory({ startDir, title: `Default spawn directory for "${group}"` });
-          if (res.canceled) return;
-          if (res.error) { toast(`pick dir failed: ${res.error}`, true); return; }
-          const r = await fetch(`/api/groups/${encodeURIComponent(group)}`, {
-            method: 'PATCH', credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ default_cwd: res.path }),
-          });
-          if (!r.ok) { toast(`set dir failed: ${await r.text()}`, true); return; }
-          toast(`${group}: default dir → ${res.path}`);
-          refresh();
-          return;
-        }
-        case 'set-group-dir': {
-          // Inline edit of the group's default spawn directory. Fall back to a
-          // summary lookup in case the click landed on a descendant.
-          const cwdEl = btn.classList.contains('group-default-cwd')
-            ? btn
-            : (btn.closest('summary') && btn.closest('summary').querySelector('.group-default-cwd'));
-          if (!cwdEl) {
-            toast('start dir: could not locate the dir element', true);
-            return;
-          }
-          const oldCwd = cwdEl.getAttribute('data-cwd') || '';
-          inlineEdit({
-            el: cwdEl,
-            value: oldCwd,
-            inputClass: 'group-default-cwd-input',
-            placeholder: 'absolute path (~ OK) — empty clears the default',
-            onSave: async (raw) => {
-              const newCwd = raw.trim();
-              if (newCwd === oldCwd) return 'revert';
-              const r = await fetch(`/api/groups/${encodeURIComponent(group)}`, {
-                method: 'PATCH', credentials: 'same-origin',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ default_cwd: newCwd }),
-              });
-              if (!r.ok) {
-                toast(`set dir failed: ${await r.text()}`, true);
-                return 'revert';
-              }
-              toast(newCwd ? `${group}: default dir → ${newCwd}` : `${group}: default dir cleared`);
-              return 'saved';
-            },
-          });
-          return;
-        }
-        case 'set-group-descr': {
-          // Inline edit of the group's own description (the 📝 chip).
-          const descrEl = btn.classList.contains('group-descr')
-            ? btn
-            : (btn.closest('summary') && btn.closest('summary').querySelector('.group-descr'));
-          if (!descrEl) {
-            toast('description: could not locate the description element', true);
-            return;
-          }
-          const oldDescr = descrEl.getAttribute('data-descr') || '';
-          inlineEdit({
-            el: descrEl,
-            value: oldDescr,
-            inputClass: 'group-descr-input',
-            placeholder: 'group description — empty clears it',
-            onSave: async (raw) => {
-              const newDescr = raw.trim();
-              if (newDescr === oldDescr) return 'revert';
-              const r = await fetch(`/api/groups/${encodeURIComponent(group)}`, {
-                method: 'PATCH', credentials: 'same-origin',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ descr: newDescr }),
-              });
-              if (!r.ok) {
-                toast(`set description failed: ${await r.text()}`, true);
-                return 'revert';
-              }
-              toast(newDescr ? `${group}: description → ${newDescr}` : `${group}: description cleared`);
-              return 'saved';
-            },
-          });
-          return;
-        }
-        case 'set-group-max-members': {
-          // Inline edit of the group's hard member cap (the 👥 chip).
-          const capEl = btn.classList.contains('group-max-members')
-            ? btn
-            : (btn.closest('summary') && btn.closest('summary').querySelector('.group-max-members'));
-          if (!capEl) {
-            toast('max members: could not locate the cap element', true);
-            return;
-          }
-          const oldMax = parseInt(capEl.getAttribute('data-max') || '0', 10) || 0;
-          inlineEdit({
-            el: capEl,
-            value: String(oldMax),
-            type: 'number',
-            inputClass: 'group-max-members-input',
-            configureInput: (input) => {
-              input.min = '0';
-              input.step = '1';
-              input.title = '0 clears the cap (unlimited)';
-            },
-            onSave: async (raw) => {
-              const newMax = parseInt(raw, 10);
-              if (!Number.isInteger(newMax) || newMax < 0) {
-                toast('max members must be a non-negative integer (0 = unlimited)', true);
-                return 'revert';
-              }
-              if (newMax === oldMax) return 'revert';
-              const r = await fetch(`/api/groups/${encodeURIComponent(group)}`, {
-                method: 'PATCH', credentials: 'same-origin',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ max_members: newMax }),
-              });
-              if (!r.ok) {
-                toast(`set max members failed: ${await r.text()}`, true);
-                return 'revert';
-              }
-              toast(newMax > 0 ? `${group}: member cap → ${newMax}` : `${group}: member cap cleared`);
-              return 'saved';
-            },
-          });
-          return;
-        }
         case 'set-group-permissions': {
           const snapshot = (lastSnapshot?.groups || []).find(g => g.name === group);
           openGroupPermEditor(group, snapshot?.permissions || []);
           return;
-        }
-        case 'set-group-profile': {
-          // The group 🧠 chip: pick the group's default spawn profile from a
-          // <select> of saved profiles (+ "(none)"). PATCH /api/groups/{name}
-          // {default_profile}, then refresh() so the badge repaints. The chip
-          // span is the click target; fall back to a summary lookup if the
-          // click landed on a descendant.
-          const chipEl = btn.classList.contains('group-default-model')
-            ? btn
-            : (btn.closest('summary') && btn.closest('summary').querySelector('.group-default-model'));
-          if (!chipEl) {
-            toast('default profile: could not locate the chip', true);
-            return;
-          }
-          const current = chipEl.getAttribute('data-profile') || '';
-          await openProfilePicker(chipEl, current, async (name) => {
-            const r = await fetch(`/api/groups/${encodeURIComponent(group)}`, {
-              method: 'PATCH', credentials: 'same-origin',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ default_profile: name }),
-            });
-            if (!r.ok) {
-              toast(`set default profile failed: ${await r.text()}`, true);
-              return false;
-            }
-            toast(name ? `${group}: default profile → ${name}` : `${group}: default profile cleared`);
-            refresh();
-            return true;
-          });
-          return; // openProfilePicker owns the refresh.
-        }
-        case 'set-group-sandbox-profile': {
-          // The group 🛡 chip: pick the group's sandbox profile from a
-          // <select> of saved sandbox profiles (+ "(inherit)" to clear back
-          // to the global default alone). Same chip→one-shot-picker lifecycle
-          // as the 🧠 chip above, retargeted at the sandbox-profile registry;
-          // PUT/DELETE /api/groups/{name}/sandbox-profile, then refresh() so
-          // the chip repaints and the spawn-modal preview recomposes.
-          const chipEl = btn.classList.contains('group-sandbox-profile')
-            ? btn
-            : (btn.closest('summary') && btn.closest('summary').querySelector('.group-sandbox-profile'));
-          if (!chipEl) {
-            toast('sandbox profile: could not locate the chip', true);
-            return;
-          }
-          const current = chipEl.getAttribute('data-sandbox-profile') || '';
-          await openProfilePicker(chipEl, current, async (name) => {
-            const r = await fetch(`/api/groups/${encodeURIComponent(group)}/sandbox-profile`, {
-              method: name ? 'PUT' : 'DELETE', credentials: 'same-origin',
-              headers: { 'Content-Type': 'application/json' },
-              body: name ? JSON.stringify({ name }) : undefined,
-            });
-            if (!r.ok) {
-              toast(`set sandbox profile failed: ${await r.text()}`, true);
-              return false;
-            }
-            toast(name ? `${group} sandbox profile: ${name}` : `${group} sandbox profile cleared`);
-            refresh();
-            void refreshSpawnSandboxProfileUI($('#agent-spawn-group').value);
-            return true;
-          }, {
-            loadList: loadSandboxProfiles,
-            noneLabel: '(inherit)',
-            newLabel: '＋ new sandbox profile…',
-            openNewEditor: (onSaved) => openSandboxProfileEditor(null, { onCreate: onSaved }),
-          });
-          return; // openProfilePicker owns the refresh.
         }
         case 'set-group-remote-control': {
           // The group remote-control-policy chip: cycle the group's
