@@ -171,7 +171,99 @@ func validateActivationMutationSet(pre RoutingState, plan ActivateGenerationPlan
 			return err
 		}
 	}
-	return validateExactMutationTargets(plan.Batch, allowed)
+	if err := validateExactMutationTargets(plan.Batch, allowed); err != nil {
+		return err
+	}
+	return validateActivationEventSeq(plan.Batch)
+}
+
+func validateActivationEventSeq(batch MutationBatch) error {
+	want := batch.EventSeq
+	for _, mutation := range batch.Mutations {
+		if len(mutation.After) == 0 {
+			continue
+		}
+		switch mutation.Kind {
+		case MutationPath:
+			var record PathRecord
+			if err := decodeExactPayload(mutation.After, &record); err != nil {
+				return err
+			}
+			if record.UpdatedSeq != want || (len(mutation.Before) == 0 && record.CreatedSeq != want) {
+				return activationEventSeqError(mutation, want)
+			}
+			if record.Disposition != nil && record.Disposition.CommandID == MutationCommandPlaceholder && record.Disposition.EventSeq != want {
+				return activationEventSeqError(mutation, want)
+			}
+			if record.DetachedSink != nil && record.DetachedSink.CommandID == MutationCommandPlaceholder && record.DetachedSink.EventSeq != want {
+				return activationEventSeqError(mutation, want)
+			}
+		case MutationScope:
+			var record ScopeRecord
+			if err := decodeExactPayload(mutation.After, &record); err != nil {
+				return err
+			}
+			if record.ClosedByCommandID == MutationCommandPlaceholder && record.EventSeq != want {
+				return activationEventSeqError(mutation, want)
+			}
+		case MutationReservation:
+			var record ActivationReservation
+			if err := decodeExactPayload(mutation.After, &record); err != nil {
+				return err
+			}
+			if record.CommandID != MutationCommandPlaceholder || record.EventSeq != want {
+				return activationEventSeqError(mutation, want)
+			}
+			if record.CloseReceipt != nil && (record.CloseReceipt.CommandID != MutationCommandPlaceholder || record.CloseReceipt.EventSeq != want) {
+				return activationEventSeqError(mutation, want)
+			}
+		case MutationActivation:
+			var record ActivationRecord
+			if err := decodeExactPayload(mutation.After, &record); err != nil {
+				return err
+			}
+			if record.CommandID != MutationCommandPlaceholder || record.EventSeq != want || record.Receipt.CommandID != MutationCommandPlaceholder || record.Receipt.EventSeq != want {
+				return activationEventSeqError(mutation, want)
+			}
+		case MutationCandidateClosure:
+			var record CandidateClosure
+			if err := decodeExactPayload(mutation.After, &record); err != nil {
+				return err
+			}
+			if record.CommandID == MutationCommandPlaceholder && record.EventSeq != want {
+				return activationEventSeqError(mutation, want)
+			}
+		case MutationCauseRecord:
+			var record CauseRecord
+			if err := decodeExactPayload(mutation.After, &record); err != nil {
+				return err
+			}
+			if record.SourceCommandID == MutationCommandPlaceholder && record.EventSeq != want {
+				return activationEventSeqError(mutation, want)
+			}
+		case MutationDetachment:
+			var record DetachmentRecord
+			if err := decodeExactPayload(mutation.After, &record); err != nil {
+				return err
+			}
+			if record.CommandID != MutationCommandPlaceholder || record.EventSeq != want || record.ActivatedSeq != want {
+				return activationEventSeqError(mutation, want)
+			}
+		case MutationPropagation:
+			var record PropagationIntent
+			if err := decodeExactPayload(mutation.After, &record); err != nil {
+				return err
+			}
+			if record.CommandID == MutationCommandPlaceholder && record.EventSeq != want {
+				return activationEventSeqError(mutation, want)
+			}
+		}
+	}
+	return nil
+}
+
+func activationEventSeqError(mutation RecordMutation, want int64) error {
+	return fmt.Errorf("%w: activation-owned post record %s/%s is not coupled to reducer event %d", ErrMutationInvalid, mutation.Kind, mutation.Key, want)
 }
 
 func validatePropagationMutationSet(pre RoutingState, plan PropagateClosurePlan, intents []PropagationIntent) error {

@@ -12,8 +12,8 @@ func PlanCompleteRun(view CompletionReplayView) (CommandRecord, error) {
 	if err := validateCompletionView(view); err != nil {
 		return CommandRecord{}, err
 	}
-	if terminalRunStatus(view.RunStatus) {
-		return CommandRecord{}, fmt.Errorf("%w: cannot plan completion for terminal run", ErrMutationInconsistent)
+	if !completionRunStatusAllowsExecution(view.RunStatus) {
+		return CommandRecord{}, fmt.Errorf("%w: cannot plan completion while run status is %q", ErrMutationInconsistent, view.RunStatus)
 	}
 	for _, command := range view.Aggregate.Commands {
 		if command.Identity.Kind == CommandCompleteRun {
@@ -139,6 +139,18 @@ func ValidateCompleteRunCommand(view CompletionReplayView, command CommandRecord
 	if basis.SelfCommandID != command.ID || basis.BasisRunStatus == "" || basis.BasisLogChecksum == "" {
 		return payload, fmt.Errorf("%w: completion basis lacks exact self/anchor binding", ErrMutationInvalid)
 	}
+	if !completionRunStatusAllowsExecution(basis.BasisRunStatus) {
+		return payload, fmt.Errorf("%w: completion basis status %q is not executable", ErrMutationInconsistent, basis.BasisRunStatus)
+	}
+	if basis.BasisLastLogSeq != view.LastLogSeq || basis.BasisLogChecksum != view.LogChecksum {
+		return payload, fmt.Errorf("%w: completion basis log anchors differ from current durable run", ErrMutationInconsistent)
+	}
+	if command.State.Active() && basis.BasisRunStatus != view.RunStatus {
+		return payload, fmt.Errorf("%w: active completion basis status %q differs from current run status %q", ErrMutationInconsistent, basis.BasisRunStatus, view.RunStatus)
+	}
+	if command.State == CommandObserved && (!terminalRunStatus(view.RunStatus) || view.RunStatus != basis.Result) {
+		return payload, fmt.Errorf("%w: observed completion result %q differs from current terminal run status %q", ErrMutationInconsistent, basis.Result, view.RunStatus)
+	}
 	recomputed, err := computeCompletionBasis(view, basis, command.ID)
 	if err != nil {
 		return payload, err
@@ -224,6 +236,17 @@ func validateCompletionView(view CompletionReplayView) error {
 	}
 	if _, err := parseJCS(view.CheckpointJSON); err != nil {
 		return fmt.Errorf("%w: invalid completion checkpoint JSON: %v", ErrMutationInvalid, err)
+	}
+	var anchors struct {
+		Status      string `json:"status"`
+		LastLogSeq  uint64 `json:"lastLogSeq"`
+		LogChecksum string `json:"logChecksum"`
+	}
+	if err := json.Unmarshal(view.CheckpointJSON, &anchors); err != nil {
+		return fmt.Errorf("%w: invalid completion checkpoint anchors: %v", ErrMutationInvalid, err)
+	}
+	if anchors.Status != view.RunStatus || anchors.LastLogSeq != view.LastLogSeq || anchors.LogChecksum != view.LogChecksum {
+		return fmt.Errorf("%w: checkpoint anchors differ from current durable run", ErrMutationInconsistent)
 	}
 	return nil
 }
@@ -332,4 +355,13 @@ func computeCompletionBasis(view CompletionReplayView, anchors CompletionBasis, 
 
 func terminalRunStatus(status string) bool {
 	return status == "completed" || status == "failed" || status == "canceled"
+}
+
+func completionRunStatusAllowsExecution(status string) bool {
+	switch status {
+	case "pending", "running", "blocked":
+		return true
+	default:
+		return false
+	}
 }

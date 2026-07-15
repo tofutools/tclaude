@@ -341,6 +341,83 @@ func TestActivateAnyReplayIsAtomicAndIdempotent(t *testing.T) {
 	}
 }
 
+func TestActivateExclusiveRejectsBatchEventSeqDrift(t *testing.T) {
+	postView, inputPathID, reservationID := validOpenArrivalFixture(t)
+	activateOpenArrival(t, &postView, inputPathID, reservationID)
+	postReservation := postView.Routing.Reservations[reservationID]
+	activation := postView.Routing.Activations[postReservation.Activation.ID]
+	delete(postView.Commands, postReservation.CommandID)
+
+	before := Clone(*postView.Routing)
+	delete(before.Activations, activation.ID)
+	delete(before.Paths, activation.OutputPathID)
+	input := before.Paths[inputPathID]
+	input.State = PathArrived
+	input.ConsumedBy = nil
+	input.Disposition = nil
+	input.UpdatedSeq = input.ArrivedSeq
+	before.Paths[input.ID] = input
+	reservation := before.Reservations[reservationID]
+	reservation.State = ReservationOpen
+	reservation.Activation = nil
+	reservation.CommandID = ""
+	reservation.EventSeq = 0
+	before.Reservations[reservation.ID] = reservation
+
+	afterTemplate := Clone(*postView.Routing)
+	input = afterTemplate.Paths[inputPathID]
+	input.Disposition.CommandID = MutationCommandPlaceholder
+	input.Disposition.ID, _ = DispositionReceiptIdentity(input.ID, input.Disposition.FromState, input.Disposition.ToState, input.Disposition.ReasonCode, MutationCommandPlaceholder, "", uint64(input.Disposition.EventSeq))
+	afterTemplate.Paths[input.ID] = input
+	postReservation = afterTemplate.Reservations[reservationID]
+	postReservation.CommandID = MutationCommandPlaceholder
+	afterTemplate.Reservations[postReservation.ID] = postReservation
+	activation = afterTemplate.Activations[activation.ID]
+	activation.CommandID = MutationCommandPlaceholder
+	activation.Receipt.CommandID = MutationCommandPlaceholder
+	activation.Receipt.ID, _ = ActivationReceiptIdentity(activation.ID, activation.ReservationID, activation.InputSetDigest, activation.OutputPathID, MutationCommandPlaceholder, uint64(activation.Receipt.EventSeq))
+	afterTemplate.Activations[activation.ID] = activation
+	batch, err := NewMutationBatch(&before, &afterTemplate, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foldDigest, arrivals, causeDigest, err := activationFold(before, reservation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := ActivateGenerationPlan{
+		ReservationID: reservation.ID, Generation: reservation.Generation, InputDigest: foldDigest, CauseDigest: causeDigest, JoinPolicy: JoinExclusive,
+		InputPathIDs: arrivals, Candidates: reservation.Candidates, PossibleSlots: reservation.PossibleSlots, Batch: batch,
+	}
+	postView.Routing = &before
+	replayView := MutationReplayView{Aggregate: postView, Checkpoint: CheckpointBinding{Generation: 5, Digest: strings.Repeat("5", 64)}}
+	makeCommand := func(plan ActivateGenerationPlan) CommandRecord {
+		payload, encodeErr := EncodeActivateGenerationPayload(replayView, plan)
+		if encodeErr != nil {
+			t.Fatal(encodeErr)
+		}
+		identity := CommandIdentity{
+			RunID: postView.RunID, Kind: CommandActivateGeneration, PayloadSchema: 1,
+			TargetReservationID: reservation.ID, TargetGeneration: reservation.Generation,
+			InputDigest: plan.InputDigest, CauseDigest: plan.CauseDigest, PlanDigest: payloadDigest(payload),
+		}
+		return commandWithPayload(t, identity, CommandObserved, payload)
+	}
+	command := makeCommand(plan)
+	replayView.Aggregate.Commands[command.ID] = command
+	if _, err := ReplayActivateGeneration(replayView, command); err != nil {
+		t.Fatalf("valid exclusive activation replay: %v", err)
+	}
+
+	driftedPlan := plan
+	driftedPlan.Batch.EventSeq = 99
+	driftedCommand := makeCommand(driftedPlan)
+	replayView.Aggregate.Commands[driftedCommand.ID] = driftedCommand
+	if _, err := ReplayActivateGeneration(replayView, driftedCommand); !errors.Is(err, ErrMutationInvalid) {
+		t.Fatalf("exclusive activation batch EventSeq drift error = %v", err)
+	}
+}
+
 func TestPropagationDuplicateShardDeterminism(t *testing.T) {
 	frontier := []CandidateClosureKey{"key-a", "key-b"}
 	planDigest, _ := PropagationPlanIdentity("reservation", "candidate", "cause", 0, frontier)
@@ -542,13 +619,19 @@ func TestCompleteRunClaimObservationAndRecovery(t *testing.T) {
 	if _, err := PlanCompleteRun(nonderived); !errors.Is(err, ErrMutationInvalid) {
 		t.Fatalf("completion non-derived planning checkpoint error = %v", err)
 	}
+	for _, status := range []string{"paused", "dirty", "inconsistent", "completed"} {
+		unsafe := pre
+		unsafe.RunStatus = status
+		unsafe.CheckpointJSON = completionCheckpoint(t, status, unsafe.LastLogSeq, unsafe.LogChecksum, nil)
+		if _, err := PlanCompleteRun(unsafe); !errors.Is(err, ErrMutationInconsistent) {
+			t.Fatalf("completion planned from unsafe status %q: %v", status, err)
+		}
+	}
 
 	claimed := pre
 	claimed.Aggregate.Commands = cloneMap(pre.Aggregate.Commands)
 	claimed.Aggregate.Commands[planned.ID] = planned
-	claimed.CheckpointJSON = completionCheckpoint(t, "running", 2, "sum-2", map[string]CommandRecord{planned.ID: planned})
-	claimed.LastLogSeq = 2
-	claimed.LogChecksum = "sum-2"
+	claimed.CheckpointJSON = completionCheckpoint(t, "running", 1, "sum-1", map[string]CommandRecord{planned.ID: planned})
 	recovery, err = RecoverCompleteRun(claimed)
 	if err != nil || recovery.Phase != CompletionReadyToObserve {
 		t.Fatalf("claim recovery = %#v, %v", recovery, err)
@@ -574,6 +657,23 @@ func TestCompleteRunClaimObservationAndRecovery(t *testing.T) {
 	if _, err := ValidateCompleteRunCommand(forgedView, forged); !errors.Is(err, ErrMutationInvalid) {
 		t.Fatalf("same-identity different completion checkpoint error = %v", err)
 	}
+	for _, status := range []string{"dirty", "inconsistent"} {
+		unsafe := claimed
+		unsafe.RunStatus = status
+		unsafe.LastLogSeq = 2
+		unsafe.LogChecksum = "sum-2"
+		unsafe.CheckpointJSON = completionCheckpoint(t, status, 2, "sum-2", map[string]CommandRecord{planned.ID: planned})
+		if _, err := RecoverCompleteRun(unsafe); !errors.Is(err, ErrMutationInconsistent) {
+			t.Fatalf("completion recovered across %s durable drift: %v", status, err)
+		}
+	}
+	drifted := claimed
+	drifted.LastLogSeq = 2
+	drifted.LogChecksum = "sum-2"
+	drifted.CheckpointJSON = completionCheckpoint(t, "running", 2, "sum-2", map[string]CommandRecord{planned.ID: planned})
+	if _, err := RecoverCompleteRun(drifted); !errors.Is(err, ErrMutationInconsistent) {
+		t.Fatalf("completion recovered across log-anchor drift: %v", err)
+	}
 
 	observedCommand := planned
 	observedCommand.State = CommandObserved
@@ -581,9 +681,7 @@ func TestCompleteRunClaimObservationAndRecovery(t *testing.T) {
 	observed.Aggregate.Commands = cloneMap(claimed.Aggregate.Commands)
 	observed.Aggregate.Commands[planned.ID] = observedCommand
 	observed.RunStatus = planned.Identity.ResultCode
-	observed.LastLogSeq = 3
-	observed.LogChecksum = "sum-3"
-	observed.CheckpointJSON = completionCheckpoint(t, observed.RunStatus, 3, "sum-3", map[string]CommandRecord{planned.ID: observedCommand})
+	observed.CheckpointJSON = completionCheckpoint(t, observed.RunStatus, 1, "sum-1", map[string]CommandRecord{planned.ID: observedCommand})
 	recovery, err = RecoverCompleteRun(observed)
 	if err != nil || recovery.Phase != CompletionRecovered || recovery.Result != "completed" {
 		t.Fatalf("observed recovery = %#v, %v", recovery, err)
