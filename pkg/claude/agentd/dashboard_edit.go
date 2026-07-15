@@ -425,8 +425,22 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 	// BEFORE the purge — DeleteConvByID wipes the session rows the
 	// resolution reads from. The repo's main worktree and any worktree
 	// a surviving agent still uses are left alone (worktree_cleanup.go).
-	delWorktree := r.URL.Query().Get("delete_worktree") == "1" ||
-		r.URL.Query().Get("delete_worktree") == "true"
+	query := r.URL.Query()
+	delWorktree := query.Get("delete_worktree") == "1" ||
+		query.Get("delete_worktree") == "true"
+	_, hasExpectedWorktree := query["expected_worktree"]
+	if hasExpectedWorktree && !delWorktree {
+		http.Error(w, "expected_worktree requires delete_worktree=1", http.StatusBadRequest)
+		return
+	}
+	var expectedWorktreePath string
+	if hasExpectedWorktree {
+		expectedWorktreePath = query.Get("expected_worktree")
+		if expectedWorktreePath == "" {
+			http.Error(w, "expected_worktree must not be empty", http.StatusBadRequest)
+			return
+		}
+	}
 	var wt agentWorktreeView
 	if delWorktree {
 		// DeleteAgentAllGenerations sweeps EVERY generation of this actor, not
@@ -445,6 +459,17 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		wt = captureAgentWorktreeClaims().resolve(convID, excluding)
+		// A Preact opt-in freezes the exact removable path returned by its
+		// earlier probe. Re-check that precondition at DELETE time, before
+		// stopping the pane or purging any state. Older callers that omit the
+		// precondition retain the established delete_worktree contract.
+		if hasExpectedWorktree &&
+			(wt.Path != expectedWorktreePath || !wt.Removable()) {
+			http.Error(w,
+				"worktree changed since confirmation; refresh and retry",
+				http.StatusConflict)
+			return
+		}
 	}
 
 	// Dashboard deletes always force-kill any alive tmux session for

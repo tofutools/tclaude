@@ -133,7 +133,8 @@ test('delete action sends the optional query only for the frozen opt-in choice',
     {
       name: 'opted in',
       deleteWorktree: true,
-      url: '/api/agents/agt_delete?delete_worktree=1',
+      expectedWorktree: '/repo/worktrees/feature & review?#',
+      url: '/api/agents/agt_delete?delete_worktree=1&expected_worktree=%2Frepo%2Fworktrees%2Ffeature+%26+review%3F%23',
       payload: { conv_id: 'current-conv', worktree: 'worktree removed' },
     },
   ]) {
@@ -160,6 +161,7 @@ test('delete action sends the optional query only for the frozen opt-in choice',
 
       const result = await actions.deleteAgent({
         agent: 'agt_delete', label: 'Delete target', deleteWorktree: row.deleteWorktree,
+        ...(row.expectedWorktree ? { expectedWorktree: row.expectedWorktree } : {}),
       });
       assert.equal(requests[0][0], row.url);
       assert.equal(requests[0][1].method, 'DELETE');
@@ -182,15 +184,28 @@ test('delete failures preserve descriptor and retry ownership', async (t) => {
     kind: 'delete-agent', agent: 'agt_delete', label: 'Frozen delete target',
   });
   const descriptor = state.dialog.value.descriptor;
+  const urls = [];
   const actions = actionsModule.createTransactionDialogActions({
     state,
-    fetchImpl: async () => new Response('delete refused', { status: 409 }),
+    fetchImpl: async (url) => {
+      urls.push(url);
+      return new Response('worktree changed; refresh and retry', { status: 409 });
+    },
     refresh: async () => {},
     notify: () => {},
   });
-  await assert.rejects(actions.deleteAgent({
-    agent: descriptor.agent, label: descriptor.label, deleteWorktree: true,
-  }), /delete refused/);
+  const frozenRequest = Object.freeze({
+    agent: descriptor.agent,
+    label: descriptor.label,
+    deleteWorktree: true,
+    expectedWorktree: '/repo/frozen & exact',
+  });
+  await assert.rejects(actions.deleteAgent(frozenRequest), /worktree changed/);
+  await assert.rejects(actions.deleteAgent(frozenRequest), /worktree changed/);
+  assert.deepEqual(urls, [
+    '/api/agents/agt_delete?delete_worktree=1&expected_worktree=%2Frepo%2Ffrozen+%26+exact',
+    '/api/agents/agt_delete?delete_worktree=1&expected_worktree=%2Frepo%2Ffrozen+%26+exact',
+  ], 'explicit retry reuses the exact frozen selector, choice, and worktree path');
   assert.equal(state.dialog.value.descriptor, descriptor);
   state.close();
   assert.equal(await pending, null);
