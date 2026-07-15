@@ -353,6 +353,10 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
 
     const term = new Terminal({
       cursorBlink: true, fontSize: 13,
+      // The harness owns history: Claude Code renders its own off-screen
+      // content, while Codex scrolling is handled by tmux. A second xterm
+      // scroll buffer only adds a redundant scrollbar and width reservation.
+      scrollback: 0,
       fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
       theme: terminalThemeFor(wizardActive()), allowProposedApi: true,
       // xterm uses Option (not Shift) to force browser selection on macOS,

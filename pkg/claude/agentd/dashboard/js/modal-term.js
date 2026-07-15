@@ -86,9 +86,12 @@ export function openTermModal({ wsPath, label, hideConv: hc }) {
     term = new Terminal({
       cursorBlink: true,
       fontSize: 13,
+      scrollback: 0,
       fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
       theme: terminalThemeFor(document.body.classList.contains('wizard')),
       allowProposedApi: true,
+      // Claude Code owns its off-screen rendering and Codex delegates scrolling
+      // to tmux, so xterm scrollback would only add duplicate chrome/state.
       // xterm uses Option (not Shift) to force browser selection on macOS,
       // and ignores Option unless this is explicitly enabled.
       macOptionClickForcesSelection: true,

@@ -29,8 +29,8 @@ func TestDashboardTerminalFitContainerWiring(t *testing.T) {
 			}
 			css := string(data)
 			hostRule := regexp.MustCompile(regexp.QuoteMeta(tt.host) + `\s*\{([^}]*)\}`).FindStringSubmatch(css)
-			if hostRule == nil || !strings.Contains(hostRule[1], "padding: 6px") {
-				t.Errorf("%s base visual host must retain the 6px inset", tt.asset)
+			if hostRule == nil || !strings.Contains(hostRule[1], "padding: 6px 6px 0") {
+				t.Errorf("%s base visual host must retain only the top/side 6px inset", tt.asset)
 			}
 			fitRule := regexp.MustCompile(regexp.QuoteMeta(tt.fit) + `\s*,\s*` + regexp.QuoteMeta(tt.fit) + `\s+\.xterm\s*\{([^}]*)\}`).FindStringSubmatch(css)
 			if fitRule == nil || !strings.Contains(fitRule[1], "height: 100%") {
@@ -39,8 +39,40 @@ func TestDashboardTerminalFitContainerWiring(t *testing.T) {
 		})
 	}
 
+	muxCSS, err := fs.ReadFile(dashboardAssetsFS, "mux.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		".mux-pane-xterm .xterm-viewport { scrollbar-width: none; }",
+		".mux-pane-xterm .xterm-viewport::-webkit-scrollbar { display: none; }",
+		".mux-pane-xterm .xterm-scrollable-element > .scrollbar { display: none; }",
+	} {
+		if !strings.Contains(string(muxCSS), want) {
+			t.Errorf("terminal multiplexer missing hidden-scrollbar rule %q", want)
+		}
+	}
+	dashboardCSS, err := fs.ReadFile(dashboardAssetsFS, "dashboard.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"html:has(#tab-terminals.active) { scrollbar-color: transparent transparent; }",
+		"html:has(#tab-terminals.active) body { scrollbar-color: auto; }",
+		"html:has(#tab-terminals.active)::-webkit-scrollbar-button,",
+		"background: transparent; border-color: transparent; color: transparent;",
+		".term-session-xterm .xterm-viewport { scrollbar-width: none; }",
+		".term-session-xterm .xterm-viewport::-webkit-scrollbar { display: none; }",
+		".term-session-xterm .xterm-scrollable-element > .scrollbar { display: none; }",
+	} {
+		if !strings.Contains(string(dashboardCSS), want) {
+			t.Errorf("dashboard terminal missing hidden-scrollbar rule %q", want)
+		}
+	}
+
 	core := readDashboardJS(t, "terminals-core.js")
 	for _, want := range []string{
+		"scrollback: 0",
 		"fitHost.className = 'mux-pane-xterm-fit'",
 		"host.append(fitHost)",
 		"term.open(fitHost)",
@@ -53,6 +85,7 @@ func TestDashboardTerminalFitContainerWiring(t *testing.T) {
 
 	modal := readDashboardJS(t, "modal-term.js")
 	for _, want := range []string{
+		"scrollback: 0",
 		"term.open($('#term-session-xterm-fit'))",
 		".observe($('#term-session-xterm-fit'))",
 	} {

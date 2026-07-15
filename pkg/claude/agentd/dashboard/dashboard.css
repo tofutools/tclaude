@@ -24,6 +24,22 @@
    scrollbars (macOS) float and never caused the reflow, so this is harmless
    there. */
 html { overflow-y: scroll; }
+/* The Terminals tab owns all scrolling inside xterm. Make the otherwise forced,
+   inactive document scrollbar transparent on this full-height app shell; it
+   leaves a visible bottom-right remnant beside xterm even when the page cannot
+   scroll. Keep its gutter width reserved so entering/leaving Terminals never
+   shifts the right-aligned chrome or changes the fitted terminal columns. */
+html:has(#tab-terminals.active) { scrollbar-color: transparent transparent; }
+/* scrollbar-color inherits. Restore normal chrome at body so nested scrollers
+   such as the terminal tab strip and any open modal remain visible. */
+html:has(#tab-terminals.active) body { scrollbar-color: auto; }
+html:has(#tab-terminals.active)::-webkit-scrollbar,
+html:has(#tab-terminals.active)::-webkit-scrollbar-track,
+html:has(#tab-terminals.active)::-webkit-scrollbar-thumb,
+html:has(#tab-terminals.active)::-webkit-scrollbar-button,
+html:has(#tab-terminals.active)::-webkit-scrollbar-corner {
+  background: transparent; border-color: transparent; color: transparent;
+}
 body {
   margin: 0;
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -2811,12 +2827,18 @@ details[data-group-key][open] > summary .group-sandbox-profile {
   font-family: ui-monospace, monospace;
 }
 .term-session-detach:hover { background: #2d333b; border-color: #3d4450; }
-.term-session-xterm { flex: 1; padding: 6px; overflow: hidden; min-height: 0; }
+.term-session-xterm { flex: 1; padding: 6px 6px 0; overflow: hidden; min-height: 0; }
 /* FitAddon measures .xterm's direct parent. Size that inner parent to the
-   padded host's content box so the modal keeps its original visual inset while
-   fitting only rows and columns that are actually drawable. */
+   padded host's content box so the modal keeps its top/side visual inset while
+   fitting only rows and columns that are actually drawable. The whole-row
+   remainder supplies the bottom spacing, so the host adds none there. */
 .term-session-xterm-fit,
 .term-session-xterm-fit .xterm { height: 100%; }
+/* modal-term.js disables xterm scrollback; hide the still-created scrollbar
+   DOM so its inactive edge cannot leak into the modal. */
+.term-session-xterm .xterm-viewport { scrollbar-width: none; }
+.term-session-xterm .xterm-viewport::-webkit-scrollbar { display: none; }
+.term-session-xterm .xterm-scrollable-element > .scrollbar { display: none; }
 /* The "auto" self-rename checkbox sits under the Title input in the
    same .field — strip the text-input styling .modal .field input
    would otherwise smear onto a checkbox. The selectors carry the

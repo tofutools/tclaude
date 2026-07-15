@@ -75,13 +75,22 @@
 .mux-palette-toggle[hidden] { display: none; }
 .mux-palette-toggle input { margin: 0; accent-color: #8b6dd6; cursor: pointer; }
 
-.mux-pane-xterm { flex: 1; min-height: 0; padding: 6px; overflow: hidden; }
+.mux-pane-xterm { flex: 1; min-height: 0; padding: 6px 6px 0; overflow: hidden; }
 /* FitAddon measures .xterm's direct parent. The inner box fills the host's
-   CONTENT area, so the outer visual inset is excluded from row/column sizing
-   without becoming xterm padding (which draws a black frame and displaces its
-   scrollbar). */
+   CONTENT area, so the top/side visual inset is excluded from row/column
+   sizing without becoming xterm padding (which draws a black frame and
+   displaces its scrollbar). There is deliberately no bottom host padding:
+   xterm's whole-row remainder already supplies the correct bottom breathing
+   room, and another 6px made it drop a row too early. */
 .mux-pane-xterm-fit,
 .mux-pane-xterm-fit .xterm { height: 100%; }
+/* xterm scrollback is disabled in the pane constructor: Claude Code owns its
+   off-screen rendering and Codex delegates scrolling to tmux. xterm still
+   creates native/custom scrollbar DOM, so suppress that redundant chrome too;
+   otherwise an inactive sliver remains at the pane's bottom-right edge. */
+.mux-pane-xterm .xterm-viewport { scrollbar-width: none; }
+.mux-pane-xterm .xterm-viewport::-webkit-scrollbar { display: none; }
+.mux-pane-xterm .xterm-scrollable-element > .scrollbar { display: none; }
 
 /* Wizard multiplexer chrome. This lives in the shared widget sheet so a
    terminal popped into its own browser tab keeps the same portal frame. The
