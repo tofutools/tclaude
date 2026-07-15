@@ -3,7 +3,7 @@
 // module retains the independent launch-policy preview and scribe boundary.
 import { $, esc, syncSelectTitle } from './helpers.js';
 import { toast } from './refresh.js';
-import { openTermModal } from './modal-term.js';
+import { openTermModal } from './terminals-tab.js';
 import { createSandboxDraftQueue } from './sandbox-draft-queue.js';
 import { managementController } from './management-controller.js';
 
