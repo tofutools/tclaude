@@ -575,7 +575,9 @@ func buildParallelSplitDraft(ctx context.Context, input *VerifiedParallelInput, 
 	if err := insertExactCommand(view.Commands, settle); err != nil {
 		return parallelSplitDraft{}, err
 	}
-	view.SideEffects[effect.ID] = effect
+	if err := insertExactParallelSideEffect(view.SideEffects, effect); err != nil {
+		return parallelSplitDraft{}, err
+	}
 	view.Routing = &before
 	replayView := MutationReplayView{Aggregate: view, Checkpoint: input.base.binding}
 	causeDigest, err := CauseSetIdentity(nil)
@@ -786,6 +788,25 @@ func parallelCandidateForEdge(reservation ActivationReservation, edgeID EdgeID) 
 
 func observedParallelCommands(view AggregateView, nodeID string, source PathRecord) (CommandRecord, CommandRecord, SideEffectIdentity, error) {
 	const attempt uint64 = 1
+	var existingPerform, existingSettle CommandRecord
+	for _, candidate := range view.Commands {
+		identity := candidate.Identity
+		if identity.SourceActivationID != source.SourceActivation.ID || identity.SourceGeneration != source.SourceActivation.Generation || identity.Attempt != attempt {
+			continue
+		}
+		switch identity.Kind {
+		case CommandPerformAttempt:
+			if existingPerform.ID != "" {
+				return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, fmt.Errorf("%w: parallel attempt has multiple source commands", ErrMutationInconsistent)
+			}
+			existingPerform = cloneCommandRecord(candidate)
+		case CommandSettleAttempt:
+			if existingSettle.ID != "" {
+				return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, fmt.Errorf("%w: parallel attempt has multiple settlement commands", ErrMutationInconsistent)
+			}
+			existingSettle = cloneCommandRecord(candidate)
+		}
+	}
 	performPayload, err := json.Marshal(performAttemptPayload{
 		TemplateRef: view.TemplateRef, TemplateSourceHash: view.TemplateSourceHash, NodeID: nodeID,
 		SourceActivationID: source.SourceActivation.ID, SourceGeneration: source.SourceActivation.Generation, Attempt: attempt,
@@ -793,13 +814,20 @@ func observedParallelCommands(view AggregateView, nodeID string, source PathReco
 	if err != nil {
 		return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, err
 	}
-	perform, err := observedCommand(CommandIdentity{
+	expectedPerform, err := observedCommand(CommandIdentity{
 		RunID: view.RunID, Kind: CommandPerformAttempt, PayloadSchema: 1,
 		SourceActivationID: source.SourceActivation.ID, SourceGeneration: source.SourceActivation.Generation,
 		Attempt: attempt, PlanDigest: payloadDigest(performPayload),
 	}, performPayload)
 	if err != nil {
 		return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, err
+	}
+	perform := expectedPerform
+	if existingPerform.ID != "" {
+		if !exactParallelSettledCommand(existingPerform, expectedPerform) {
+			return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, fmt.Errorf("%w: existing parallel perform command differs from deterministic observation", ErrMutationInconsistent)
+		}
+		perform = existingPerform
 	}
 	settlePayload, err := json.Marshal(settleAttemptObservationPayload{
 		TemplateRef: view.TemplateRef, SourceCommandID: perform.ID, SourceActivationID: source.SourceActivation.ID,
@@ -808,7 +836,7 @@ func observedParallelCommands(view AggregateView, nodeID string, source PathReco
 	if err != nil {
 		return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, err
 	}
-	settle, err := observedCommand(CommandIdentity{
+	expectedSettle, err := observedCommand(CommandIdentity{
 		RunID: view.RunID, Kind: CommandSettleAttempt, PayloadSchema: 1,
 		SourceActivationID: source.SourceActivation.ID, SourceGeneration: source.SourceActivation.Generation,
 		Attempt: attempt, InputDigest: perform.ID, PlanDigest: payloadDigest(settlePayload), ResultCode: "parallel",
@@ -816,13 +844,40 @@ func observedParallelCommands(view AggregateView, nodeID string, source PathReco
 	if err != nil {
 		return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, err
 	}
+	settle := expectedSettle
+	if existingSettle.ID != "" {
+		if !exactParallelSettledCommand(existingSettle, expectedSettle) {
+			return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, fmt.Errorf("%w: existing parallel settlement differs from deterministic observation", ErrMutationInconsistent)
+		}
+		settle = existingSettle
+	}
 	effect := SideEffectIdentity{Kind: SideEffectAttempt, RunID: view.RunID, ActivationID: source.SourceActivation.ID, Attempt: attempt, State: "observed"}
 	effect.ID, err = AttemptIdentity(effect.RunID, effect.ActivationID, effect.Attempt)
 	if err != nil {
 		return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, err
 	}
+	if existing, ok := view.SideEffects[effect.ID]; ok && existing != effect {
+		return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, fmt.Errorf("%w: existing parallel attempt side effect differs from deterministic observation", ErrMutationInconsistent)
+	}
 	return perform, settle, effect, nil
 }
+
+func exactParallelSettledCommand(existing, expected CommandRecord) bool {
+	if existing.State != CommandObserved && existing.State != CommandReconciled {
+		return false
+	}
+	existing.State = expected.State
+	return exactExclusiveCommand(existing, expected)
+}
+
+func insertExactParallelSideEffect(effects map[string]SideEffectIdentity, effect SideEffectIdentity) error {
+	if existing, ok := effects[effect.ID]; ok && existing != effect {
+		return fmt.Errorf("%w: side-effect identity collision", ErrMutationInconsistent)
+	}
+	effects[effect.ID] = effect
+	return nil
+}
+
 func validateParallelSplitConservation(post AggregateView, draft parallelSplitDraft) error {
 	parent, ok := post.Routing.Paths[draft.sourcePathID]
 	if !ok || parent.State != PathSplit || parent.Disposition == nil || parent.Disposition.ReasonCode != "parallel_split" || !slices.Equal(parent.ProducedPathIDs, materializedProducedIDs(post, parent.ID)) {

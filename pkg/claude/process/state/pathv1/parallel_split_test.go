@@ -1,6 +1,7 @@
 package pathv1
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -104,6 +105,103 @@ func TestParallelSplitConservesTokensAndExactReservations(t *testing.T) {
 	if _, replayErr := ReplayRoutePaths(MutationReplayView{Aggregate: partial.View(), Checkpoint: projection.binding}, first); !errors.Is(replayErr, ErrMutationInconsistent) {
 		t.Fatalf("partial post-state replay = %v", replayErr)
 	}
+}
+
+func TestParallelSplitRejectsAttemptEvidenceCollisions(t *testing.T) {
+	t.Parallel()
+	t.Run("conflicting settlement", func(t *testing.T) {
+		input, pathID := parallelInputWithAttemptEvidence(t, func(aggregate *AggregateCheckpoint, perform, _ CommandRecord, effect SideEffectIdentity) {
+			aggregate.Commands[perform.ID] = perform
+			conflict := failedParallelSettlement(t, aggregate.View(), perform)
+			aggregate.Commands[conflict.ID] = conflict
+			aggregate.SideEffects[effect.ID] = effect
+		})
+		if _, err := PlanParallelSplit(t.Context(), input, pathID); !errors.Is(err, ErrMutationInconsistent) {
+			t.Fatalf("conflicting settlement error = %v", err)
+		}
+	})
+	for _, state := range []string{"failed", "canceled"} {
+		t.Run(state+" side effect", func(t *testing.T) {
+			input, pathID := parallelInputWithAttemptEvidence(t, func(aggregate *AggregateCheckpoint, perform, settle CommandRecord, effect SideEffectIdentity) {
+				aggregate.Commands[perform.ID] = perform
+				aggregate.Commands[settle.ID] = settle
+				effect.State = state
+				aggregate.SideEffects[effect.ID] = effect
+			})
+			if _, err := PlanParallelSplit(t.Context(), input, pathID); !errors.Is(err, ErrMutationInconsistent) {
+				t.Fatalf("%s side-effect collision error = %v", state, err)
+			}
+		})
+	}
+	for _, state := range []CommandState{CommandObserved, CommandReconciled} {
+		t.Run("exact "+string(state)+" evidence", func(t *testing.T) {
+			input, pathID := parallelInputWithAttemptEvidence(t, func(aggregate *AggregateCheckpoint, perform, settle CommandRecord, effect SideEffectIdentity) {
+				perform.State = state
+				settle.State = state
+				aggregate.Commands[perform.ID] = perform
+				aggregate.Commands[settle.ID] = settle
+				aggregate.SideEffects[effect.ID] = effect
+			})
+			if _, err := PlanParallelSplit(t.Context(), input, pathID); err != nil {
+				t.Fatalf("exact %s evidence rejected: %v", state, err)
+			}
+		})
+	}
+}
+
+func parallelInputWithAttemptEvidence(t *testing.T, mutate func(*AggregateCheckpoint, CommandRecord, CommandRecord, SideEffectIdentity)) (*VerifiedParallelInput, PathID) {
+	t.Helper()
+	source := parallelSplitSource(2)
+	checkpointBytes := initializedExclusiveCheckpoint(t, source)
+	checkpoint, err := DecodeCheckpointV7(checkpointBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aggregate, err := CurrentAggregateCheckpoint(checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pathID := aggregate.Authority.Genesis.OutputPathID
+	path := aggregate.Routing.Paths[pathID]
+	perform, settle, effect, err := observedParallelCommands(aggregate.View(), "fork", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutate(&aggregate, perform, settle, effect)
+	next, err := advanceCheckpointV7PreservingLog(checkpoint, aggregate, CurrentRunStatus(checkpoint))
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextBytes, err := EncodeCheckpointV7(next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := VerifyParallelInput(t.Context(), nextBytes, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return input, pathID
+}
+
+func failedParallelSettlement(t *testing.T, view AggregateView, perform CommandRecord) CommandRecord {
+	t.Helper()
+	payload, err := json.Marshal(settleAttemptObservationPayload{
+		TemplateRef: view.TemplateRef, SourceCommandID: perform.ID,
+		SourceActivationID: perform.Identity.SourceActivationID, SourceGeneration: perform.Identity.SourceGeneration,
+		Attempt: perform.Identity.Attempt, ResultCode: "failed", ReasonCode: "performer_failed", Actor: "system:parallel",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	command, err := observedCommand(CommandIdentity{
+		RunID: view.RunID, Kind: CommandSettleAttempt, PayloadSchema: 1,
+		SourceActivationID: perform.Identity.SourceActivationID, SourceGeneration: perform.Identity.SourceGeneration,
+		Attempt: perform.Identity.Attempt, InputDigest: perform.ID, PlanDigest: payloadDigest(payload), ResultCode: "failed",
+	}, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return command
 }
 
 func TestParallelSplitBatchCountIsExactForSupportedDegrees(t *testing.T) {
