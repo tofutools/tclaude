@@ -146,7 +146,7 @@ func TestCronSoloSuccession_DirectInbox_FollowsChain(t *testing.T) {
 	findCronMsg(t, newY, "remember to check the build")
 }
 
-func TestCronSolo_OfflineTargetQueuesDurably(t *testing.T) {
+func TestCronSolo_OfflineTargetIsDiscardedUnlessJobOptsIntoQueue(t *testing.T) {
 	f := newFlow(t)
 	const target = "csol-offl-aaaa-bbbb-cccc-000000000001"
 	f.HaveConvWithTitle(target, "offline-worker")
@@ -155,11 +155,21 @@ func TestCronSolo_OfflineTargetQueuesDurably(t *testing.T) {
 	id, err := db.InsertAgentCronJob(&db.AgentCronJob{
 		Name: "offline-nudge", OwnerConv: target,
 		TargetKind: db.CronTargetConv, TargetConv: target,
-		IntervalSeconds: 600, Body: "check this after resume", Enabled: true,
+		IntervalSeconds: 600, Body: "discard stale tick", Enabled: true,
 	})
 	require.NoError(t, err)
 
-	require.Equal(t, "ok", fireCronNow(t, f, id))
+	require.Equal(t, "skipped_offline", fireCronNow(t, f, id))
+	assert.Zero(t, msgRowCount(t, target), "default offline tick creates no inbox debt")
+
+	queuedID, err := db.InsertAgentCronJob(&db.AgentCronJob{
+		Name: "offline-durable", OwnerConv: target,
+		TargetKind: db.CronTargetConv, TargetConv: target,
+		IntervalSeconds: 600, Body: "check this after resume", Enabled: true,
+		QueueWhenOffline: true,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "ok", fireCronNow(t, f, queuedID))
 	msg := findCronMsg(t, target, "check this after resume")
 	assert.True(t, msg.DeliveredAt.IsZero(), "offline delivery remains queued")
 }

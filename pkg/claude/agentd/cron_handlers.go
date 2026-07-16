@@ -44,22 +44,23 @@ import (
 // struct but uses ISO timestamps and seconds-as-string for human
 // friendliness.
 type jobJSON struct {
-	ID              int64  `json:"id"`
-	Name            string `json:"name,omitempty"`
-	OwnerAgent      string `json:"owner_agent,omitempty"`
-	OwnerConv       string `json:"owner_conv"`
-	TargetKind      string `json:"target_kind"`
-	TargetAgent     string `json:"target_agent,omitempty"`
-	TargetConv      string `json:"target_conv"`
-	GroupID         int64  `json:"group_id,omitempty"`
-	GroupName       string `json:"group_name,omitempty"`
-	TargetRole      string `json:"target_role,omitempty"`
-	IntervalSeconds int64  `json:"interval_seconds"`
-	CronExpr        string `json:"cron_expr,omitempty"`
-	Subject         string `json:"subject,omitempty"`
-	Body            string `json:"body"`
-	Enabled         bool   `json:"enabled"`
-	RunImmediately  bool   `json:"run_immediately"`
+	ID               int64  `json:"id"`
+	Name             string `json:"name,omitempty"`
+	OwnerAgent       string `json:"owner_agent,omitempty"`
+	OwnerConv        string `json:"owner_conv"`
+	TargetKind       string `json:"target_kind"`
+	TargetAgent      string `json:"target_agent,omitempty"`
+	TargetConv       string `json:"target_conv"`
+	GroupID          int64  `json:"group_id,omitempty"`
+	GroupName        string `json:"group_name,omitempty"`
+	TargetRole       string `json:"target_role,omitempty"`
+	IntervalSeconds  int64  `json:"interval_seconds"`
+	CronExpr         string `json:"cron_expr,omitempty"`
+	Subject          string `json:"subject,omitempty"`
+	Body             string `json:"body"`
+	Enabled          bool   `json:"enabled"`
+	RunImmediately   bool   `json:"run_immediately"`
+	QueueWhenOffline bool   `json:"queue_when_offline"`
 	// DisabledReason marks WHY a disabled job is disabled (schema v94): "" for
 	// a normal human enable/disable, or "group-retired" when a retire that
 	// emptied the target group auto-paused it. Surfaced so a reader can tell a
@@ -74,23 +75,24 @@ type jobJSON struct {
 
 func toJobJSON(j *db.AgentCronJob) jobJSON {
 	out := jobJSON{
-		ID:              j.ID,
-		Name:            j.Name,
-		OwnerAgent:      j.OwnerAgent,
-		OwnerConv:       j.OwnerConv,
-		TargetKind:      j.TargetKind,
-		TargetAgent:     j.TargetAgent,
-		TargetConv:      j.TargetConv,
-		GroupID:         j.GroupID,
-		TargetRole:      j.TargetRole,
-		IntervalSeconds: j.IntervalSeconds,
-		CronExpr:        j.CronExpr,
-		Subject:         j.Subject,
-		Body:            j.Body,
-		Enabled:         j.Enabled,
-		RunImmediately:  j.RunImmediately,
-		DisabledReason:  j.DisabledReason,
-		LastRunStatus:   j.LastRunStatus,
+		ID:               j.ID,
+		Name:             j.Name,
+		OwnerAgent:       j.OwnerAgent,
+		OwnerConv:        j.OwnerConv,
+		TargetKind:       j.TargetKind,
+		TargetAgent:      j.TargetAgent,
+		TargetConv:       j.TargetConv,
+		GroupID:          j.GroupID,
+		TargetRole:       j.TargetRole,
+		IntervalSeconds:  j.IntervalSeconds,
+		CronExpr:         j.CronExpr,
+		Subject:          j.Subject,
+		Body:             j.Body,
+		Enabled:          j.Enabled,
+		RunImmediately:   j.RunImmediately,
+		QueueWhenOffline: j.QueueWhenOffline,
+		DisabledReason:   j.DisabledReason,
+		LastRunStatus:    j.LastRunStatus,
 	}
 	// For a group-target job, resolve the group's display name so the
 	// CLI and dashboard can render "group:<name>" without a second
@@ -351,17 +353,18 @@ func jobVisibleTo(j *db.AgentCronJob, callerConv string) bool {
 
 func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name           string `json:"name"`
-		Target         string `json:"target"`
-		Owner          string `json:"owner"`     // optional; humans may attribute the job to a specific conv (default: target)
-		Interval       string `json:"interval"`  // e.g. "10m", "1h" — parsed via time.ParseDuration
-		CronExpr       string `json:"cron_expr"` // alternative schedule: a cronexpr expression; mutually exclusive with interval
-		Subject        string `json:"subject"`
-		Body           string `json:"body"`
-		Enabled        *bool  `json:"enabled,omitempty"` // optional; defaults to true
-		RunImmediately bool   `json:"run_immediately"`   // optional; defaults false
-		GroupID        int64  `json:"group_id"`          // optional explicit override; auto-inferred from shared groups when 0
-		Role           string `json:"role,omitempty"`    // optional role filter for a group target ("" / "all" = whole group)
+		Name             string `json:"name"`
+		Target           string `json:"target"`
+		Owner            string `json:"owner"`     // optional; humans may attribute the job to a specific conv (default: target)
+		Interval         string `json:"interval"`  // e.g. "10m", "1h" — parsed via time.ParseDuration
+		CronExpr         string `json:"cron_expr"` // alternative schedule: a cronexpr expression; mutually exclusive with interval
+		Subject          string `json:"subject"`
+		Body             string `json:"body"`
+		Enabled          *bool  `json:"enabled,omitempty"`  // optional; defaults to true
+		RunImmediately   bool   `json:"run_immediately"`    // optional; defaults false
+		QueueWhenOffline bool   `json:"queue_when_offline"` // optional; defaults false
+		GroupID          int64  `json:"group_id"`           // optional explicit override; auto-inferred from shared groups when 0
+		Role             string `json:"role,omitempty"`     // optional role filter for a group target ("" / "all" = whole group)
 	}
 	if r.ContentLength == 0 {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "missing request body")
@@ -436,13 +439,14 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	job := &db.AgentCronJob{
-		Name:            body.Name,
-		IntervalSeconds: intervalSeconds,
-		CronExpr:        cronSpec,
-		Subject:         body.Subject,
-		Body:            body.Body,
-		Enabled:         enabled,
-		RunImmediately:  body.RunImmediately,
+		Name:             body.Name,
+		IntervalSeconds:  intervalSeconds,
+		CronExpr:         cronSpec,
+		Subject:          body.Subject,
+		Body:             body.Body,
+		Enabled:          enabled,
+		RunImmediately:   body.RunImmediately,
+		QueueWhenOffline: body.QueueWhenOffline,
 	}
 
 	if ct.Kind == db.CronTargetGroup {
@@ -669,7 +673,7 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 	}
 	// Serialize flag transitions with scheduled delivery. Re-read after taking
 	// the lock so two concurrent false→true PATCHes cannot both observe false.
-	if patch.RunImmediately != nil || patch.Enabled != nil {
+	if patch.RunImmediately != nil || patch.Enabled != nil || patch.QueueWhenOffline != nil {
 		if cronBeforeAuthorityLockForTest != nil {
 			cronBeforeAuthorityLockForTest("patch")
 		}
@@ -745,17 +749,18 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 // empty patch — handleCronPatch then no-ops cleanly.
 func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (db.UpdateCronPatch, bool) {
 	var body struct {
-		Name           *string `json:"name,omitempty"`
-		Target         *string `json:"target,omitempty"`
-		Owner          *string `json:"owner,omitempty"`
-		Interval       *string `json:"interval,omitempty"`
-		CronExpr       *string `json:"cron_expr,omitempty"`
-		Subject        *string `json:"subject,omitempty"`
-		Body           *string `json:"body,omitempty"`
-		Enabled        *bool   `json:"enabled,omitempty"`
-		RunImmediately *bool   `json:"run_immediately,omitempty"`
-		GroupID        *int64  `json:"group_id,omitempty"`
-		Role           *string `json:"role,omitempty"`
+		Name             *string `json:"name,omitempty"`
+		Target           *string `json:"target,omitempty"`
+		Owner            *string `json:"owner,omitempty"`
+		Interval         *string `json:"interval,omitempty"`
+		CronExpr         *string `json:"cron_expr,omitempty"`
+		Subject          *string `json:"subject,omitempty"`
+		Body             *string `json:"body,omitempty"`
+		Enabled          *bool   `json:"enabled,omitempty"`
+		RunImmediately   *bool   `json:"run_immediately,omitempty"`
+		QueueWhenOffline *bool   `json:"queue_when_offline,omitempty"`
+		GroupID          *int64  `json:"group_id,omitempty"`
+		Role             *string `json:"role,omitempty"`
 	}
 	if r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -764,12 +769,13 @@ func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (db.UpdateCronP
 		}
 	}
 	patch := db.UpdateCronPatch{
-		Name:           body.Name,
-		Subject:        body.Subject,
-		Body:           body.Body,
-		Enabled:        body.Enabled,
-		RunImmediately: body.RunImmediately,
-		GroupID:        body.GroupID,
+		Name:             body.Name,
+		Subject:          body.Subject,
+		Body:             body.Body,
+		Enabled:          body.Enabled,
+		RunImmediately:   body.RunImmediately,
+		QueueWhenOffline: body.QueueWhenOffline,
+		GroupID:          body.GroupID,
 	}
 	// Role filter (JOH-244): normalize "all" → "" (whole group) so the stored
 	// value drives the fan-out's empty-filter path.

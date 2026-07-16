@@ -16,6 +16,11 @@ import (
 
 func createCronAsHuman(t *testing.T, f *testharness.Flow, body map[string]any) *db.AgentCronJob {
 	t.Helper()
+	// These tests exercise immediate/cadence semantics, not offline policy.
+	// Preserve durable delivery without requiring a live pane in every case.
+	if _, ok := body["queue_when_offline"]; !ok {
+		body["queue_when_offline"] = true
+	}
 	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(
 		testharness.JSONRequest(t, http.MethodPost, "/v1/cron", body)))
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())

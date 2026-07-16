@@ -267,7 +267,7 @@ func collectCronJobs(d *sql.DB, groupID int64) ([]groupexport.CronJob, []string,
 	rows, err := d.Query(`
 		SELECT j.id, j.name, j.target_kind, COALESCE(ow.current_conv_id, ''), COALESCE(tg.current_conv_id, ''),
 		       j.interval_seconds, j.subject, j.body,
-		       j.enabled, j.run_immediately, j.created_at, j.last_run_at, j.last_run_status
+		       j.enabled, j.run_immediately, j.queue_when_offline, j.created_at, j.last_run_at, j.last_run_status
 		FROM agent_cron_jobs j
 		LEFT JOIN agents ow ON ow.agent_id = j.owner_agent
 		LEFT JOIN agents tg ON tg.agent_id = j.target_agent
@@ -281,7 +281,7 @@ func collectCronJobs(d *sql.DB, groupID int64) ([]groupexport.CronJob, []string,
 	for rows.Next() {
 		var j groupexport.CronJob
 		if err := rows.Scan(&j.ID, &j.Name, &j.TargetKind, &j.OwnerConv, &j.TargetConv,
-			&j.IntervalSeconds, &j.Subject, &j.Body, &j.Enabled, &j.RunImmediately, &j.CreatedAt,
+			&j.IntervalSeconds, &j.Subject, &j.Body, &j.Enabled, &j.RunImmediately, &j.QueueWhenOffline, &j.CreatedAt,
 			&j.LastRunAt, &j.LastRunStatus); err != nil {
 			return nil, nil, fmt.Errorf("scan cron job: %w", err)
 		}
@@ -1098,10 +1098,10 @@ func (c *importCtx) cronJobsAndRuns() error {
 		res, err := c.tx.Exec(`
 			INSERT INTO agent_cron_jobs
 				(name, target_kind, owner_agent, target_agent, group_id, interval_seconds,
-				 subject, body, enabled, run_immediately, created_at, last_run_at, last_run_status)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				 subject, body, enabled, run_immediately, queue_when_offline, created_at, last_run_at, last_run_status)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			j.Name, kind, ownerAgent, targetAgent, c.newGroupID,
-			j.IntervalSeconds, j.Subject, j.Body, j.Enabled, j.RunImmediately, j.CreatedAt,
+			j.IntervalSeconds, j.Subject, j.Body, j.Enabled, j.RunImmediately, j.QueueWhenOffline, j.CreatedAt,
 			j.LastRunAt, j.LastRunStatus)
 		if err != nil {
 			return fmt.Errorf("import: cron job %q: %w", j.Name, err)

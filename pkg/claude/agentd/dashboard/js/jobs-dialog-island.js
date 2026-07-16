@@ -310,6 +310,10 @@ export function CronDialog({ descriptor, snapshot, actions, confirmDiscard }) {
         <input id="cron-create-run-immediately" type="checkbox" checked=${draft.runImmediately}
           onChange=${(event) => update({ runImmediately: event.currentTarget.checked })} /> Run immediately once
       </label>
+      <label class="cron-create-enabled" title="By default, a tick is discarded when its target has no live agent pane. Enable this only when stale reminders should be retained until the target returns.">
+        <input id="cron-create-queue-when-offline" type="checkbox" checked=${draft.queueWhenOffline}
+          onChange=${(event) => update({ queueWhenOffline: event.currentTarget.checked })} /> Queue while offline
+      </label>
       <div class="cron-create-error" id="cron-create-error" role="alert">${error}</div>
       <div class="modal-buttons"><button id="cron-create-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
         <span class="spacer"></span>${!editing && html`<button id="cron-create-save-another" class="secondary" type="button" disabled=${busy}

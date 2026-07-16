@@ -29,13 +29,14 @@ func TestCronPatch_PartialFields(t *testing.T) {
 	f.HaveConvWithTitle(convB, "target")
 
 	id, err := db.InsertAgentCronJob(&db.AgentCronJob{
-		Name:            "before",
-		OwnerConv:       convA,
-		TargetConv:      convB,
-		IntervalSeconds: 600,
-		Subject:         "subj",
-		Body:            "body-pre",
-		Enabled:         true,
+		Name:             "before",
+		OwnerConv:        convA,
+		TargetConv:       convB,
+		IntervalSeconds:  600,
+		Subject:          "subj",
+		Body:             "body-pre",
+		Enabled:          true,
+		QueueWhenOffline: true,
 	})
 	require.NoError(t, err, "InsertAgentCronJob")
 
@@ -47,12 +48,21 @@ func TestCronPatch_PartialFields(t *testing.T) {
 	got, _ := db.GetAgentCronJob(id)
 	require.NotNil(t, got, "job vanished after PATCH")
 	assert.False(t, got.Enabled, "expected enabled=false after PATCH")
+	assert.True(t, got.QueueWhenOffline, "unmentioned queue_when_offline is preserved")
 	assert.Equal(t, "before", got.Name, "name")
 	assert.Equal(t, "subj", got.Subject, "subject")
 	assert.Equal(t, "body-pre", got.Body, "body")
 	assert.EqualValues(t, 600, got.IntervalSeconds, "interval")
 	assert.Equal(t, convA, got.OwnerConv, "owner")
 	assert.Equal(t, convB, got.TargetConv, "target")
+
+	r = agentd.AsHumanPeer(testharness.JSONRequest(t,
+		http.MethodPatch, "/v1/cron/"+strconv.FormatInt(id, 10),
+		map[string]any{"queue_when_offline": false}))
+	rec = testharness.Serve(f.Mux, r)
+	require.Equal(t, http.StatusOK, rec.Code, "PATCH queue policy body=%s", rec.Body.String())
+	got, _ = db.GetAgentCronJob(id)
+	assert.False(t, got.QueueWhenOffline, "queue_when_offline can be disabled independently")
 }
 
 // Scenario: PATCH that touches `interval` must NOT bump last_run_at.
