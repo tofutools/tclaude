@@ -12482,15 +12482,24 @@ body.wizard .process-node-readonly-badge { color: #d4af37; border-color: #d4af37
 #spawn-harness-policy-modal .manage-intro {
   margin: 0; color: #7d8590; font-size: 12px; line-height: 1.45;
 }
+/* Two harnesses fit without a horizontal scrollbar at the natural size. More
+   harnesses retain fixed, equal target columns and can use either the matrix's
+   own scrollbar or the dialog's persisted bottom-right resize grip. */
+#spawn-harness-policy-modal .cron-create-modal {
+  width: min(760px, calc(100vw - 32px));
+  resize: both; overflow: auto;
+}
 .spawn-harness-matrix-wrap {
   overflow: auto; max-height: min(62vh, 620px);
   border: 1px solid #2a3340; border-radius: 5px;
   scrollbar-width: thin; scrollbar-color: #3a4553 #0d1117;
 }
-.spawn-harness-matrix { min-width: 620px; table-layout: fixed; }
+.spawn-harness-matrix { width: max-content; min-width: 100%; table-layout: fixed; }
+.spawn-harness-matrix col.spawn-harness-axis { width: 180px; }
+.spawn-harness-matrix col.spawn-harness-target { width: 220px; }
 .spawn-harness-matrix th { text-align: left; vertical-align: top; background: #0d1117; }
 .spawn-harness-matrix thead th:first-child { white-space: normal; line-height: 1.3; }
-.spawn-harness-matrix td { min-width: 220px; vertical-align: top; }
+.spawn-harness-matrix td { vertical-align: top; }
 .spawn-harness-cell select,
 .spawn-harness-cell textarea {
   width: 100%; min-width: 0; box-sizing: border-box;

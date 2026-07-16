@@ -173,13 +173,18 @@ function SpawnHarnessPolicyDialog({ descriptor, close, confirmDiscard, notify })
   return html`
     <${Overlay} id="spawn-harness-policy-modal" labelledby="spawn-harness-policy-title"
       onClose=${close} onSubmitHotkey=${submit} dirty=${dirty} blocked=${busy}
-      confirmDiscard=${confirmDiscard} registerClose=${registerClose}>
+      confirmDiscard=${confirmDiscard} registerClose=${registerClose}
+      resizeKey="tclaude.dash.modalSize.spawn-harness-policy">
       <h3 id="spawn-harness-policy-title">${copy.title}</h3>
       <p class="manage-intro">${copy.intro} ${copy.scope}</p>
       ${busy && !view ? html`<div class="empty">${copy.loading}</div>` : null}
       ${view ? html`
         <div class="spawn-harness-matrix-wrap">
           <table class="spawn-harness-matrix">
+            <colgroup>
+              <col class="spawn-harness-axis" />
+              ${view.harnesses.map((target) => html`<col key=${target.name} class="spawn-harness-target" />`)}
+            </colgroup>
             <thead><tr><th>${copy.axes}</th>${view.harnesses.map((target) => html`<th key=${target.name}>${target.display_name || target.name}</th>`)}</tr></thead>
             <tbody>${view.harnesses.map((source) => html`
               <tr key=${source.name}><th>${source.display_name || source.name}</th>

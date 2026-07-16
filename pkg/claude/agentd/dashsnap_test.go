@@ -772,6 +772,36 @@ func baseStates() []dashsnap.State {
   if (!textarea) throw new Error('spawn-harness-policy: denial reason control did not render');
   var surface = getComputedStyle(modal);
   var control = getComputedStyle(select);
+  var matrixWrap = document.querySelector('#spawn-harness-policy-modal .spawn-harness-matrix-wrap');
+  var targetHeaders = Array.from(document.querySelectorAll('#spawn-harness-policy-modal thead th')).slice(1);
+  var targetWidths = targetHeaders.map(function(header){ return Math.round(header.getBoundingClientRect().width); });
+  if (getComputedStyle(modal).resize !== 'both') throw new Error('spawn-harness-policy: dialog is not resizable');
+  if (matrixWrap.scrollWidth > matrixWrap.clientWidth + 1) throw new Error('spawn-harness-policy: two-harness matrix scrolls at its natural width');
+  if (new Set(targetWidths).size !== 1) throw new Error('spawn-harness-policy: target columns differ: ' + targetWidths.join(', '));
+  var colgroup = document.querySelector('#spawn-harness-policy-modal colgroup');
+  var fakeCol = document.createElement('col');
+  fakeCol.className = 'spawn-harness-target';
+  colgroup.appendChild(fakeCol);
+  var fakeHeader = document.createElement('th');
+  fakeHeader.textContent = 'Third harness';
+  document.querySelector('#spawn-harness-policy-modal thead tr').appendChild(fakeHeader);
+  var fakeCells = [];
+  document.querySelectorAll('#spawn-harness-policy-modal tbody tr').forEach(function(row){
+    var cell = document.createElement('td');
+    cell.className = 'spawn-harness-same';
+    cell.textContent = 'always allowed';
+    row.appendChild(cell);
+    fakeCells.push(cell);
+  });
+  await new Promise(function(resolve){ requestAnimationFrame(resolve); });
+  var manyWidths = Array.from(document.querySelectorAll('#spawn-harness-policy-modal thead th')).slice(1)
+    .map(function(header){ return Math.round(header.getBoundingClientRect().width); });
+  if (new Set(manyWidths).size !== 1) throw new Error('spawn-harness-policy: 3-harness target columns differ: ' + manyWidths.join(', '));
+  if (matrixWrap.scrollWidth <= matrixWrap.clientWidth + 1) throw new Error('spawn-harness-policy: 3-harness matrix does not expose horizontal scrolling');
+  fakeCells.forEach(function(cell){ cell.remove(); });
+  fakeHeader.remove();
+  fakeCol.remove();
+  await new Promise(function(resolve){ requestAnimationFrame(resolve); });
   if (wizard) {
     if (title.textContent.trim() !== 'Global cross-realm summons') throw new Error('spawn-harness-policy: wizard title missing');
     if (!surface.backgroundImage.includes('gradient')) throw new Error('spawn-harness-policy: wizard surface lacks gradient chrome');
@@ -781,6 +811,29 @@ func baseStates() []dashsnap.State {
     if (surface.backgroundImage !== 'none') throw new Error('spawn-harness-policy: wizard chrome leaked into regular mode');
     if (control.backgroundColor !== 'rgb(13, 17, 23)') throw new Error('spawn-harness-policy: regular select is ' + control.backgroundColor);
   }
+})();`,
+			SettleMS: 250,
+		},
+		{
+			Key:     "spawn-harness-policy-narrow",
+			Title:   "Cross-harness spawn policy — narrow viewport",
+			Caption: "At 560px the dialog remains inside the viewport while the fixed-width matrix becomes a usable horizontal scroll region.",
+			Width:   560,
+			Height:  900,
+			JS: showGroups + `return (async function(){
+  document.querySelector('.filter-bar-cog .cog-btn').click();
+  document.querySelector('#spawn-harness-policy-open').click();
+  var deadline = Date.now() + 3000;
+  while (!document.querySelector('#spawn-harness-policy-modal select') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 30); });
+  }
+  var modal = document.querySelector('#spawn-harness-policy-modal .cron-create-modal');
+  var matrixWrap = document.querySelector('#spawn-harness-policy-modal .spawn-harness-matrix-wrap');
+  if (!modal || !matrixWrap) throw new Error('spawn-harness-policy-narrow: dialog did not render');
+  if (window.innerWidth !== 560) throw new Error('spawn-harness-policy-narrow: viewport is ' + window.innerWidth);
+  var rect = modal.getBoundingClientRect();
+  if (rect.left < -1 || rect.right > window.innerWidth + 1) throw new Error('spawn-harness-policy-narrow: dialog escapes viewport');
+  if (matrixWrap.clientWidth < 1 || matrixWrap.scrollWidth <= matrixWrap.clientWidth) throw new Error('spawn-harness-policy-narrow: matrix is not a usable scroll region');
 })();`,
 			SettleMS: 250,
 		},

@@ -20,8 +20,9 @@ function choose(select, value) {
 
 test('policy dialog preserves its draft while live wizard copy changes', async (t) => {
   const harness = await createPreactHarness(t);
-  const [{ mountSpawnHarnessPolicyIsland }] = await Promise.all([
+  const [{ mountSpawnHarnessPolicyIsland }, { dashPrefs }] = await Promise.all([
     harness.importDashboardModule('js/spawn-harness-policy-island.js'),
+    harness.importDashboardModule('js/prefs.js'),
   ]);
   const view = {
     scope: 'global',
@@ -40,6 +41,9 @@ test('policy dialog preserves its draft while live wizard copy changes', async (
 
   const opener = harness.document.body.appendChild(harness.document.createElement('button'));
   opener.id = 'spawn-harness-policy-open';
+  const resizeKey = 'tclaude.dash.modalSize.spawn-harness-policy';
+  dashPrefs.setItem(resizeKey, JSON.stringify({ w: 900, h: 650 }));
+  t.after(() => dashPrefs.removeItem(resizeKey));
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
   const cleanups = [];
   await harness.act(() => mountSpawnHarnessPolicyIsland({
@@ -53,6 +57,32 @@ test('policy dialog preserves its draft while live wizard copy changes', async (
   await flush(harness);
   assert.equal(host.querySelector('#spawn-harness-policy-title').textContent,
     'Global cross-harness spawn policy');
+  const dialog = host.querySelector('#spawn-harness-policy-modal .cron-create-modal');
+  assert.equal(dialog.style.width, '900px', 'the policy-specific persisted width is restored');
+  assert.equal(dialog.style.height, '650px', 'the policy-specific persisted height is restored');
+  assert.equal(host.querySelectorAll('col.spawn-harness-target').length, 2,
+    'every destination harness receives the same target-column contract');
+  let measuredWidth = 900;
+  let measuredHeight = 650;
+  Object.defineProperties(dialog, {
+    offsetWidth: { configurable: true, get: () => measuredWidth },
+    offsetHeight: { configurable: true, get: () => measuredHeight },
+  });
+  harness.fireEvent(dialog, 'pointerdown');
+  measuredWidth = 980;
+  measuredHeight = 700;
+  harness.fireEvent(dialog, 'pointerup');
+  assert.deepEqual(JSON.parse(dashPrefs.getItem(resizeKey)), { w: 980, h: 700 },
+    'a genuine policy-dialog resize writes its new dimensions');
+
+  await harness.act(() => harness.fireEvent(
+    harness.getByRole(host, 'button', { name: 'Cancel' }), 'click',
+  ));
+  await harness.act(() => harness.fireEvent(opener, 'click'));
+  await flush(harness);
+  const reopened = host.querySelector('#spawn-harness-policy-modal .cron-create-modal');
+  assert.equal(reopened.style.width, '980px', 'the newly persisted width survives reopen');
+  assert.equal(reopened.style.height, '700px', 'the newly persisted height survives reopen');
   const select = host.querySelector('select[aria-label="claude to codex decision"]');
   assert.ok(select);
   choose(select, 'deny');
