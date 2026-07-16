@@ -497,11 +497,24 @@ func TestProcessTemplateRawSchemaAliasBudgetIsStableAndRejectsSave(t *testing.T)
 	validate := processTemplateRequest(t, f, http.MethodPost, "/v1/process/validate", map[string]any{"source": string(source)})
 	require.Equal(t, http.StatusOK, validate.Code, validate.Body.String())
 	assert.Contains(t, validate.Body.String(), `"code":"template_schema_budget"`)
+	assert.LessOrEqual(t, validate.Body.Len(), model.MaxProcessTemplateSourceBytes, "encoded editor diagnostics stay inside the public wire scale")
+	assert.Equal(t, 1, strings.Count(validate.Body.String(), `"code":"template_schema_budget"`))
 
 	save := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/schema-budget", map[string]any{"source": string(source)})
 	require.Equal(t, http.StatusUnprocessableEntity, save.Code, save.Body.String())
 	assert.Contains(t, save.Body.String(), `"code":"process_template_invalid"`)
 	assert.Contains(t, save.Body.String(), `"code":"template_schema_budget"`)
+}
+
+func TestProcessTemplateDuplicateFloodResponseIsBounded(t *testing.T) {
+	f, _ := processEngineFlow(t)
+	source := processDuplicateMetadataSource(100_000)
+	require.Less(t, len(source), model.MaxProcessTemplateSourceBytes)
+	rec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/validate", map[string]any{"source": string(source)})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"code":"duplicate_key"`)
+	assert.Equal(t, 1, strings.Count(rec.Body.String(), `"code":"template_schema_budget"`))
+	assert.LessOrEqual(t, rec.Body.Len(), model.MaxProcessTemplateSourceBytes)
 }
 
 func TestProcessValidateReturnsEditorScopedAdvisoryDiagnostics(t *testing.T) {
@@ -782,8 +795,17 @@ func processSchemaAliasSource(nodeCount int) []byte {
 		}
 		source.WriteString("&shared\n    type: task\n    performer: {kind: agent, prompt: work}\n    checks:\n")
 		for check := range 4 {
-			fmt.Fprintf(&source, "      - id: check-%d\n        performer: {kind: program, run: echo}\n        unknown: value\n", check)
+			fmt.Fprintf(&source, "      - id: check-%d\n        performer: {kind: program, run: echo}\n        unknown<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<: value\n", check)
 		}
+	}
+	return []byte(source.String())
+}
+
+func processDuplicateMetadataSource(duplicates int) []byte {
+	var source strings.Builder
+	source.WriteString("apiVersion: tclaude.dev/v1alpha1\nkind: ProcessTemplate\nid: duplicate-budget\nstart: n000\nnodes:\n  n000:\n    type: task\n    performer: {kind: agent, prompt: work}\n    metadata:\n")
+	for range duplicates {
+		source.WriteString("      repeated: value\n")
 	}
 	return []byte(source.String())
 }

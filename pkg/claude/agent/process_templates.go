@@ -335,7 +335,7 @@ func loadProcessTemplateYAML(file string, stdin io.Reader, stderr io.Writer) (st
 		fmt.Fprintf(stderr, "Error: read process-template YAML: %v\n", err)
 		return "", rcIOFailure
 	}
-	if len(data) > 4<<20 {
+	if len(data) > model.MaxProcessTemplateSourceBytes {
 		fmt.Fprintln(stderr, "Error: process-template YAML exceeds the 4 MiB limit")
 		return "", rcInvalidArg
 	}

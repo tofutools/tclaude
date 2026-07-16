@@ -255,7 +255,7 @@ func TestSchemaAliasTraversalAndDiagnosticsAreBounded(t *testing.T) {
 		require.NoError(t, err)
 		assert.Nil(t, parsed.Template, "schema resource rejection must stop before Decode")
 		require.NotEmpty(t, parsed.Diagnostics)
-		assert.LessOrEqual(t, len(parsed.Diagnostics), MaxTemplateSchemaDiagnostics+1)
+		assert.LessOrEqual(t, len(parsed.Diagnostics), MaxTemplateAuthoringDiagnostics)
 		assert.Equal(t, "nodes.n000.checks[0].unknown-000", parsed.Diagnostics[0].Path)
 		assert.Equal(t, DiagnosticCodeSchemaBudget, parsed.Diagnostics[len(parsed.Diagnostics)-1].Code)
 		assert.Less(t, testing.AllocsPerRun(1, func() {
@@ -267,15 +267,101 @@ func TestSchemaAliasTraversalAndDiagnosticsAreBounded(t *testing.T) {
 	})
 
 	t.Run("huge unknown key cannot amplify path or message", func(t *testing.T) {
-		hugeKey := strings.Repeat("k", MaxTemplateSchemaDiagnosticBytes/2+1)
+		hugeKey := strings.Repeat("k", MaxTemplateDiagnosticWireBytes/2+1)
 		root := &yaml.Node{Kind: yaml.MappingNode, Content: []*yaml.Node{
 			{Kind: yaml.ScalarNode, Value: hugeKey}, {Kind: yaml.ScalarNode, Value: "value"},
 		}}
-		diagnostics := unknownFieldDiagnostics(root)
+		diagnostics := unknownFieldDiagnostics(root, &templateDiagnosticBudget{})
 		require.Len(t, diagnostics, 1)
 		assert.Equal(t, DiagnosticCodeSchemaBudget, diagnostics[0].Code)
 		assert.Less(t, len(diagnostics[0].Message)+len(diagnostics[0].Path), 512)
 	})
+}
+
+func TestPreDecodeDiagnosticBudgetIncludesDuplicateAndSchemaFindings(t *testing.T) {
+	t.Run("freeform duplicate flood fails closed", func(t *testing.T) {
+		source := duplicateMetadataTemplateYAML(100_000, false)
+		require.Less(t, len(source), MaxProcessTemplateSourceBytes)
+		parsed, err := Parse(source)
+		require.NoError(t, err)
+		assert.Nil(t, parsed.Template)
+		require.NotEmpty(t, parsed.Diagnostics)
+		assert.LessOrEqual(t, len(parsed.Diagnostics), MaxTemplateAuthoringDiagnostics)
+		assert.Equal(t, "duplicate_key", parsed.Diagnostics[0].Code)
+		assert.Equal(t, DiagnosticCodeSchemaBudget, parsed.Diagnostics[len(parsed.Diagnostics)-1].Code)
+		assert.Equal(t, 1, countDiagnosticCode(parsed.Diagnostics, DiagnosticCodeSchemaBudget))
+	})
+
+	t.Run("mixed findings preserve deterministic prefix", func(t *testing.T) {
+		source := duplicateMetadataTemplateYAML(3, true)
+		parsed, err := Parse(source)
+		require.NoError(t, err)
+		require.NotEmpty(t, parsed.Diagnostics)
+		assert.Equal(t, []string{"duplicate_key", "duplicate_key", "unknown_field"}, diagnosticCodes(parsed.Diagnostics[:3]))
+		assert.Equal(t, "nodes.n000.checks[0].unknown-000", parsed.Diagnostics[2].Path)
+		assert.Equal(t, DiagnosticCodeSchemaBudget, parsed.Diagnostics[len(parsed.Diagnostics)-1].Code)
+		assert.Equal(t, 1, countDiagnosticCode(parsed.Diagnostics, DiagnosticCodeSchemaBudget))
+	})
+}
+
+func TestTemplateDiagnosticBudgetExactCountBoundaryAndWireBound(t *testing.T) {
+	t.Run("count", func(t *testing.T) {
+		budget := &templateDiagnosticBudget{}
+		var diagnostics Diagnostics
+		diagnostic := diagError("x", "", "")
+		for range MaxTemplateAuthoringDiagnostics - 1 {
+			require.True(t, budget.append(&diagnostics, diagnostic))
+		}
+		assert.False(t, budget.append(&diagnostics, diagnostic), "boundary plus one must saturate")
+		diagnostics = append(diagnostics, schemaBudgetDiagnostic())
+		assert.Len(t, diagnostics, MaxTemplateAuthoringDiagnostics)
+		assert.Equal(t, 1, countDiagnosticCode(diagnostics, DiagnosticCodeSchemaBudget))
+		assertDiagnosticWireBudget(t, budget)
+	})
+
+	t.Run("wire bytes", func(t *testing.T) {
+		budget := &templateDiagnosticBudget{}
+		var diagnostics Diagnostics
+		sentinel := schemaBudgetDiagnostic()
+		ordinaryLimit := MaxTemplateDiagnosticWireBytes - templateDiagnosticWireCost(len(sentinel.Code), len(sentinel.Path), len(sentinel.Message))
+		messageBytes := (ordinaryLimit-templateDiagnosticFixedWireBytes)/templateDiagnosticJSONExpansion - len("x")
+		require.True(t, budget.append(&diagnostics, diagError("x", "", strings.Repeat("<", messageBytes))))
+		assert.False(t, budget.append(&diagnostics, diagError("x", "", "x")), "wire boundary plus one must saturate")
+		diagnostics = append(diagnostics, sentinel)
+		assert.Equal(t, 1, countDiagnosticCode(diagnostics, DiagnosticCodeSchemaBudget))
+		assertDiagnosticWireBudget(t, budget)
+	})
+}
+
+func TestTemplateDiagnosticWireCostCoversJSONEscaping(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+	}{
+		{"html", strings.Repeat("<>&", 100)},
+		{"quotes backslashes and controls", strings.Repeat("\"\\\n\r\t", 100)},
+		{"invalid UTF-8 replacement", string([]byte{0xff, 0xfe, 0xfd})},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			payload, err := json.Marshal(map[string]string{
+				"scope": "node", "targetId": test.value, "severity": "error",
+				"code": "unknown_field", "message": test.value,
+			})
+			require.NoError(t, err)
+			cost := templateDiagnosticWireCost(len("unknown_field"), len(test.value), len(test.value))
+			assert.GreaterOrEqual(t, cost, len(payload))
+		})
+	}
+}
+
+func assertDiagnosticWireBudget(t *testing.T, budget *templateDiagnosticBudget) {
+	t.Helper()
+	sentinel := schemaBudgetDiagnostic()
+	assert.LessOrEqual(t,
+		budget.wireBytes+templateDiagnosticWireCost(len(sentinel.Code), len(sentinel.Path), len(sentinel.Message)),
+		MaxTemplateDiagnosticWireBytes,
+	)
 }
 
 func TestRawGraphAliasInspectionDefersMalformedAndCyclicValuesToDecode(t *testing.T) {
@@ -434,6 +520,31 @@ func schemaAliasedNodeTemplateYAML(nodeCount, checks, unknownFields int) []byte 
 		}
 	}
 	return []byte(source.String())
+}
+
+func duplicateMetadataTemplateYAML(duplicates int, appendSchemaFlood bool) []byte {
+	var source strings.Builder
+	source.WriteString("apiVersion: tclaude.dev/v1alpha1\nkind: ProcessTemplate\nid: duplicate-budget\nstart: n000\nnodes:\n  n000:\n    type: task\n    performer: {kind: agent, prompt: work}\n    metadata:\n")
+	for range duplicates {
+		source.WriteString("      repeated: value\n")
+	}
+	if appendSchemaFlood {
+		source.WriteString("    checks: &checks\n")
+		for check := range MaxTemplateAuthoringDiagnostics {
+			fmt.Fprintf(&source, "      - id: check-%04d\n        performer: {kind: program, run: echo}\n        unknown-000: value\n", check)
+		}
+	}
+	return []byte(source.String())
+}
+
+func countDiagnosticCode(diagnostics Diagnostics, code string) int {
+	count := 0
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Code == code {
+			count++
+		}
+	}
+	return count
 }
 
 func diagnosticCodes(diagnostics Diagnostics) []string {

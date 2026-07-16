@@ -625,13 +625,16 @@ aliases, checks a materialized template again before allocating normalized
 edges, and performs the exact post-normalization check before scope,
 reachability, cycle, layout, canonicalization, or hashing work.
 
-Schema inspection memoizes an aliased source subtree by its YAML-node and
-schema context, then instantiates occurrence-specific paths within a global
-budget of 6,144 findings and 4 MiB of diagnostic path/message text. Saturating
-either ceiling stops before decode with `template_schema_budget`; it never
-silently drops unknown fields. The finding count is the node-plus-edge graph
-work scale, while the byte ceiling matches the public source/request cap so a
-single accepted request cannot amplify into a larger diagnostic payload.
+Pre-decode duplicate-key and schema inspection share a global budget of 6,144
+findings and a conservative encoded-wire ceiling just below 4 MiB. Wire
+accounting reserves the terminal response envelope and charges fixed JSON
+object overhead, worst-case escaping, and a possible second copy of a path as
+an editor target. Schema inspection memoizes an aliased source subtree by its
+YAML-node and schema context, then instantiates occurrence-specific paths only
+within that shared budget. Saturation stops before decode with exactly one
+`template_schema_budget`; it never silently drops unknown or duplicate fields.
+The finding count is the node-plus-edge graph-work scale, while the wire ceiling
+keeps one accepted request from amplifying into a larger editor/API response.
 
 The node/edge budget bounds the authored graph used by validation and editor
 projection. It does not replace the independent execution limits: the path-v1

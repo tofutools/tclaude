@@ -19,11 +19,16 @@ const (
 	// staying aligned with the 4,096-entry routing/viewer operational scale.
 	MaxNormalizedEdges = 2 * MaxNormalizedNodes
 
-	// Schema findings are bounded at the same aggregate graph-work scale. The
-	// byte ceiling matches the public process-template source/request cap so a
-	// diagnostic response cannot amplify one accepted request beyond that size.
-	MaxTemplateSchemaDiagnostics     = MaxNormalizedNodes + MaxNormalizedEdges
-	MaxTemplateSchemaDiagnosticBytes = 4 << 20
+	// Authoring findings are bounded at the same aggregate graph-work scale.
+	// Wire accounting reserves a small response envelope inside the same 4 MiB
+	// public source/request scale, then charges worst-case JSON expansion and a
+	// possible second copy of the path as an editor target.
+	MaxProcessTemplateSourceBytes   = 4 << 20
+	MaxTemplateAuthoringDiagnostics = MaxNormalizedNodes + MaxNormalizedEdges
+	MaxTemplateDiagnosticWireBytes  = MaxProcessTemplateSourceBytes - (4 << 10)
+
+	templateDiagnosticJSONExpansion  = 6
+	templateDiagnosticFixedWireBytes = 256
 
 	DiagnosticCodeNormalizedNodeLimit = "normalized_node_limit"
 	DiagnosticCodeNormalizedEdgeLimit = "normalized_edge_limit"
@@ -63,8 +68,52 @@ func schemaBudgetDiagnostic() Diagnostic {
 	return diagError(
 		DiagnosticCodeSchemaBudget,
 		"",
-		fmt.Sprintf("process template schema diagnostics exceed the bounded authoring budget (%d findings or %d bytes)", MaxTemplateSchemaDiagnostics, MaxTemplateSchemaDiagnosticBytes),
+		fmt.Sprintf("process template source diagnostics exceed the bounded authoring budget (%d findings or %d encoded bytes)", MaxTemplateAuthoringDiagnostics, MaxTemplateDiagnosticWireBytes),
 	)
+}
+
+type templateDiagnosticBudget struct {
+	count     int
+	wireBytes int
+	exhausted bool
+}
+
+func (b *templateDiagnosticBudget) fits(codeBytes, pathBytes, messageBytes int) bool {
+	if b == nil || b.exhausted || b.count >= MaxTemplateAuthoringDiagnostics-1 {
+		if b != nil {
+			b.exhausted = true
+		}
+		return false
+	}
+	cost := templateDiagnosticWireCost(codeBytes, pathBytes, messageBytes)
+	sentinel := schemaBudgetDiagnostic()
+	sentinelCost := templateDiagnosticWireCost(len(sentinel.Code), len(sentinel.Path), len(sentinel.Message))
+	if cost > MaxTemplateDiagnosticWireBytes-sentinelCost-b.wireBytes {
+		b.exhausted = true
+		return false
+	}
+	return true
+}
+
+func (b *templateDiagnosticBudget) append(diagnostics *Diagnostics, diagnostic Diagnostic) bool {
+	if !b.fits(len(diagnostic.Code), len(diagnostic.Path), len(diagnostic.Message)) {
+		return false
+	}
+	*diagnostics = append(*diagnostics, diagnostic)
+	b.count++
+	b.wireBytes += templateDiagnosticWireCost(len(diagnostic.Code), len(diagnostic.Path), len(diagnostic.Message))
+	return true
+}
+
+func templateDiagnosticWireCost(codeBytes, pathBytes, messageBytes int) int {
+	maximum := MaxTemplateDiagnosticWireBytes + 1
+	textBytes := saturatingAdd(codeBytes, saturatingAdd(pathBytes, pathBytes, maximum), maximum)
+	textBytes = saturatingAdd(textBytes, messageBytes, maximum)
+	expanded := maximum
+	if textBytes <= maximum/templateDiagnosticJSONExpansion {
+		expanded = textBytes * templateDiagnosticJSONExpansion
+	}
+	return saturatingAdd(templateDiagnosticFixedWireBytes, expanded, maximum)
 }
 
 // NormalizedGraphBudgetError prevents direct canonicalization/hash callers

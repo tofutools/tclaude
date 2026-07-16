@@ -37,25 +37,44 @@ func parseSource(data []byte, authoring bool) (*ParsedTemplate, error) {
 		return nil, fmt.Errorf("parse process template YAML: %w", err)
 	}
 
-	diagnostics := duplicateKeyDiagnostics(&root)
-	pruneDuplicateKeys(&root)
-	cardinality, cardinalityStatus, structuralDiagnostics := rawNormalizedGraphCardinality(&root)
-	if cardinalityStatus == rawGraphAliasUnsafe {
+	diagnosticBudget := &templateDiagnosticBudget{}
+	diagnostics := duplicateKeyDiagnostics(&root, diagnosticBudget)
+	if diagnosticBudget.exhausted {
 		return &ParsedTemplate{
-			Diagnostics: append(diagnostics, graphAliasLimitDiagnostic()),
+			Diagnostics: append(diagnostics, schemaBudgetDiagnostic()),
 			SourceHash:  hashBytes(data),
 		}, nil
 	}
+	pruneDuplicateKeys(&root)
+	cardinality, cardinalityStatus, structuralDiagnostics := rawNormalizedGraphCardinality(&root)
+	if cardinalityStatus == rawGraphAliasUnsafe {
+		if !diagnosticBudget.append(&diagnostics, graphAliasLimitDiagnostic()) {
+			diagnostics = append(diagnostics, schemaBudgetDiagnostic())
+		}
+		return &ParsedTemplate{Diagnostics: diagnostics, SourceHash: hashBytes(data)}, nil
+	}
 	if cardinalityStatus == rawGraphRejected {
+		for _, diagnostic := range structuralDiagnostics {
+			if !diagnosticBudget.append(&diagnostics, diagnostic) {
+				diagnostics = append(diagnostics, schemaBudgetDiagnostic())
+				break
+			}
+		}
 		return &ParsedTemplate{
-			Diagnostics: append(diagnostics, structuralDiagnostics...),
+			Diagnostics: diagnostics,
 			SourceHash:  hashBytes(data),
 		}, nil
 	}
 	if cardinalityStatus == rawGraphCounted {
 		if cardinalityDiagnostics := normalizedGraphCardinalityDiagnostics(cardinality); cardinalityDiagnostics.HasErrors() {
+			for _, diagnostic := range cardinalityDiagnostics {
+				if !diagnosticBudget.append(&diagnostics, diagnostic) {
+					diagnostics = append(diagnostics, schemaBudgetDiagnostic())
+					break
+				}
+			}
 			return &ParsedTemplate{
-				Diagnostics: append(diagnostics, cardinalityDiagnostics...),
+				Diagnostics: diagnostics,
 				SourceHash:  hashBytes(data),
 			}, nil
 		}
@@ -63,7 +82,7 @@ func parseSource(data []byte, authoring bool) (*ParsedTemplate, error) {
 	// Schema traversal resolves aliases recursively. Keep it behind the
 	// saturating graph walk so repeated references cannot amplify diagnostic
 	// work before the normalized-cardinality allocation guard has run.
-	schemaDiagnostics := unknownFieldDiagnostics(&root)
+	schemaDiagnostics := unknownFieldDiagnostics(&root, diagnosticBudget)
 	diagnostics = append(diagnostics, schemaDiagnostics...)
 	if schemaDiagnostics.HasNormalizedGraphBudgetError() {
 		return &ParsedTemplate{Diagnostics: diagnostics, SourceHash: hashBytes(data)}, nil
@@ -605,11 +624,11 @@ func sortAnyValues(values []any) {
 	})
 }
 
-func duplicateKeyDiagnostics(root *yaml.Node) Diagnostics {
+func duplicateKeyDiagnostics(root *yaml.Node, budget *templateDiagnosticBudget) Diagnostics {
 	var diagnostics Diagnostics
 	var walk func(node *yaml.Node, path string)
 	walk = func(node *yaml.Node, path string) {
-		if node == nil {
+		if node == nil || budget.exhausted {
 			return
 		}
 		if node.Kind == yaml.DocumentNode && len(node.Content) > 0 {
@@ -619,12 +638,15 @@ func duplicateKeyDiagnostics(root *yaml.Node) Diagnostics {
 		if node.Kind == yaml.MappingNode {
 			seen := map[string]struct{}{}
 			for i := 0; i < len(node.Content); i += 2 {
+				if budget.exhausted {
+					break
+				}
 				key := node.Content[i]
 				value := node.Content[i+1]
 				id := mappingKeyID(key)
 				keyPath := joinPath(path, key.Value)
 				if _, ok := seen[id]; ok {
-					diagnostics = append(diagnostics, diagErrorAt("duplicate_key", keyPath, "duplicate YAML mapping key", key))
+					budget.append(&diagnostics, diagErrorAt("duplicate_key", keyPath, "duplicate YAML mapping key", key))
 				}
 				seen[id] = struct{}{}
 				walk(value, keyPath)

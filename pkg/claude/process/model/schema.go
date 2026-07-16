@@ -50,16 +50,14 @@ type schemaWalk struct {
 	maximumAliasSteps int
 	memo              map[schemaMemoKey]Diagnostics
 	active            map[schemaMemoKey]struct{}
-	definitionCount   int
-	definitionBytes   int
+	definitionBudget  templateDiagnosticBudget
 	compositionCount  int
-	compositionBytes  int
-	outputCount       int
-	outputBytes       int
+	compositionWire   int
+	outputBudget      *templateDiagnosticBudget
 	exhausted         bool
 }
 
-func unknownFieldDiagnostics(root *yaml.Node) Diagnostics {
+func unknownFieldDiagnostics(root *yaml.Node, outputBudget *templateDiagnosticBudget) Diagnostics {
 	if root == nil {
 		return nil
 	}
@@ -67,10 +65,11 @@ func unknownFieldDiagnostics(root *yaml.Node) Diagnostics {
 		maximumAliasSteps: yamlTreeNodeCount(root),
 		memo:              make(map[schemaMemoKey]Diagnostics),
 		active:            make(map[schemaMemoKey]struct{}),
+		outputBudget:      outputBudget,
 	}
 	relative := walk.inspect(root, schemaTemplate)
 	diagnostics := walk.instantiate("", relative)
-	if walk.exhausted {
+	if walk.exhausted || outputBudget.exhausted {
 		diagnostics = append(diagnostics, schemaBudgetDiagnostic())
 	}
 	return diagnostics
@@ -146,10 +145,15 @@ func (w *schemaWalk) inspectKnown(node *yaml.Node, schema schemaID) Diagnostics 
 		}
 		if _, ok := allowed[key.Value]; !ok {
 			messageBytes := len(`unknown field ""`) + len(key.Value)
-			if !w.reserveDefinition(len(key.Value), messageBytes) {
+			if !w.definitionBudget.fits(len("unknown_field"), len(key.Value), messageBytes) {
+				w.exhausted = true
 				break
 			}
-			diagnostics = append(diagnostics, diagErrorAt("unknown_field", key.Value, fmt.Sprintf("unknown field %q", key.Value), key))
+			diagnostic := diagErrorAt("unknown_field", key.Value, fmt.Sprintf("unknown field %q", key.Value), key)
+			if !w.definitionBudget.append(&diagnostics, diagnostic) {
+				w.exhausted = true
+				break
+			}
 			continue
 		}
 		if child, ok := schemaChild(schema, key.Value); ok {
@@ -206,37 +210,23 @@ func (w *schemaWalk) inspectNext(node *yaml.Node) Diagnostics {
 }
 
 func (w *schemaWalk) makeDiagnostic(code, path, message string, node *yaml.Node) Diagnostics {
-	if !w.reserveDefinition(len(path), len(message)) {
+	var diagnostics Diagnostics
+	if !w.definitionBudget.append(&diagnostics, diagErrorAt(code, path, message, node)) {
+		w.exhausted = true
 		return nil
 	}
-	return Diagnostics{diagErrorAt(code, path, message, node)}
-}
-
-func (w *schemaWalk) reserveDefinition(pathBytes, messageBytes int) bool {
-	if w.definitionCount >= MaxTemplateSchemaDiagnostics ||
-		pathBytes > MaxTemplateSchemaDiagnosticBytes-w.definitionBytes ||
-		messageBytes > MaxTemplateSchemaDiagnosticBytes-w.definitionBytes-pathBytes {
-		w.exhausted = true
-		return false
-	}
-	w.definitionCount++
-	w.definitionBytes += pathBytes + messageBytes
-	return true
+	return diagnostics
 }
 
 func (w *schemaWalk) instantiate(prefix string, relative Diagnostics) Diagnostics {
 	var diagnostics Diagnostics
 	for _, diagnostic := range relative {
 		path := prefixSchemaPath(prefix, diagnostic.Path)
-		bytes := len(path) + len(diagnostic.Message)
-		if w.outputCount >= MaxTemplateSchemaDiagnostics || bytes > MaxTemplateSchemaDiagnosticBytes-w.outputBytes {
+		diagnostic.Path = path
+		if !w.outputBudget.append(&diagnostics, diagnostic) {
 			w.exhausted = true
 			break
 		}
-		diagnostic.Path = path
-		diagnostics = append(diagnostics, diagnostic)
-		w.outputCount++
-		w.outputBytes += bytes
 	}
 	return diagnostics
 }
@@ -245,8 +235,8 @@ func (w *schemaWalk) prefixRelative(prefix string, diagnostics Diagnostics) Diag
 	if prefix == "" || len(diagnostics) == 0 {
 		return diagnostics
 	}
-	maximumCompositionSteps := MaxTemplateSchemaDiagnostics * int(schemaCount)
-	maximumCompositionBytes := MaxTemplateSchemaDiagnosticBytes * int(schemaCount)
+	maximumCompositionSteps := MaxTemplateAuthoringDiagnostics * int(schemaCount)
+	maximumCompositionWire := MaxTemplateDiagnosticWireBytes * int(schemaCount)
 	out := make(Diagnostics, 0, min(len(diagnostics), maximumCompositionSteps-w.compositionCount))
 	for _, diagnostic := range diagnostics {
 		separatorBytes := 1
@@ -254,17 +244,17 @@ func (w *schemaWalk) prefixRelative(prefix string, diagnostics Diagnostics) Diag
 			separatorBytes = 0
 		}
 		pathBytes := len(prefix) + separatorBytes + len(diagnostic.Path)
-		bytes := pathBytes + len(diagnostic.Message)
-		if bytes > MaxTemplateSchemaDiagnosticBytes ||
+		wireBytes := templateDiagnosticWireCost(len(diagnostic.Code), pathBytes, len(diagnostic.Message))
+		if wireBytes > MaxTemplateDiagnosticWireBytes ||
 			w.compositionCount >= maximumCompositionSteps ||
-			bytes > maximumCompositionBytes-w.compositionBytes {
+			wireBytes > maximumCompositionWire-w.compositionWire {
 			w.exhausted = true
 			break
 		}
 		diagnostic.Path = prefixSchemaPath(prefix, diagnostic.Path)
 		out = append(out, diagnostic)
 		w.compositionCount++
-		w.compositionBytes += bytes
+		w.compositionWire += wireBytes
 	}
 	return out
 }

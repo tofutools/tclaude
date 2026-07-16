@@ -18,7 +18,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 )
 
-const maxProcessEditBody = 4 << 20
+const maxProcessEditBody = model.MaxProcessTemplateSourceBytes
 
 type processTemplateVersionView struct {
 	Ref          string         `json:"ref"`
