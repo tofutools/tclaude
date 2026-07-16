@@ -12475,13 +12475,100 @@ body.wizard .process-node-select:focus { border-color: #d4af37; }
 body.wizard .process-node-close:hover { border-color: #d4af37; }
 body.wizard .process-performer-editor { border-left-color: #4a3d6b; }
 body.wizard .process-node-readonly-badge { color: #d4af37; border-color: #d4af37; }
-.spawn-harness-matrix-wrap { overflow: auto; max-height: min(62vh, 620px); }
+/* Cross-harness spawn policy matrix. This form is deliberately table-shaped,
+   so its controls do not live in the shared .cron-create-row wrapper. Give
+   them the same dark form chrome explicitly instead of leaving native selects
+   and textareas to fall back to a white browser default. */
+#spawn-harness-policy-modal .manage-intro {
+  margin: 0; color: #7d8590; font-size: 12px; line-height: 1.45;
+}
+.spawn-harness-matrix-wrap {
+  overflow: auto; max-height: min(62vh, 620px);
+  border: 1px solid #2a3340; border-radius: 5px;
+  scrollbar-width: thin; scrollbar-color: #3a4553 #0d1117;
+}
 .spawn-harness-matrix { min-width: 620px; table-layout: fixed; }
-.spawn-harness-matrix th { text-align: left; vertical-align: top; }
+.spawn-harness-matrix th { text-align: left; vertical-align: top; background: #0d1117; }
+.spawn-harness-matrix thead th:first-child { white-space: normal; line-height: 1.3; }
 .spawn-harness-matrix td { min-width: 220px; vertical-align: top; }
-.spawn-harness-cell select, .spawn-harness-cell textarea { width: 100%; box-sizing: border-box; }
-.spawn-harness-cell textarea { margin-top: .45rem; resize: vertical; }
-.spawn-harness-cell.deny { background: color-mix(in srgb, var(--danger, #c33) 8%, transparent); }
-.spawn-harness-same { color: var(--muted); font-size: .9em; }
+.spawn-harness-cell select,
+.spawn-harness-cell textarea {
+  width: 100%; min-width: 0; box-sizing: border-box;
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 6px 10px; color: #c9d1d9; font-size: 13px; font-family: inherit;
+}
+.spawn-harness-cell select { cursor: pointer; text-overflow: ellipsis; }
+.spawn-harness-cell textarea {
+  margin-top: .45rem; min-height: 64px; resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.spawn-harness-cell select:focus,
+.spawn-harness-cell textarea:focus { outline: none; border-color: #58a6ff; }
+.spawn-harness-cell select:disabled,
+.spawn-harness-cell textarea:disabled { cursor: default; opacity: .65; }
+.spawn-harness-cell textarea::placeholder { color: #8b949e; }
+.spawn-harness-cell.deny { background: rgba(248, 81, 73, 0.08); }
+.spawn-harness-same { color: #7d8590; font-size: .9em; background: #0d1117; }
 .spawn-harness-cell small { display: block; margin-top: .4rem; white-space: normal; }
+
+/* Wizard cross-realm ward book. Keep the skin scoped to this overlay: it uses
+   the generic cron modal shell shared by unrelated operational dialogs. */
+body.wizard #spawn-harness-policy-modal .cron-create-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35), 0 8px 24px rgba(0, 0, 0, 0.5);
+  color: #e7d9f5;
+}
+body.wizard #spawn-harness-policy-modal h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #spawn-harness-policy-modal .manage-intro,
+body.wizard #spawn-harness-policy-modal .empty { color: #b39ddb; }
+body.wizard #spawn-harness-policy-modal .spawn-harness-matrix-wrap {
+  border-color: rgba(122, 93, 176, 0.55);
+  scrollbar-color: #5a4385 #140f28;
+}
+body.wizard #spawn-harness-policy-modal .spawn-harness-matrix th {
+  background: #1c1436; color: #d9b45a;
+  border-bottom-color: rgba(122, 93, 176, 0.45);
+}
+body.wizard #spawn-harness-policy-modal .spawn-harness-matrix td {
+  border-bottom-color: rgba(122, 93, 176, 0.35);
+}
+body.wizard #spawn-harness-policy-modal .spawn-harness-cell select,
+body.wizard #spawn-harness-policy-modal .spawn-harness-cell textarea {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.55); color: #f3e6c0;
+}
+body.wizard #spawn-harness-policy-modal .spawn-harness-cell select:focus,
+body.wizard #spawn-harness-policy-modal .spawn-harness-cell textarea:focus { border-color: #a97bd6; }
+body.wizard #spawn-harness-policy-modal .spawn-harness-cell select option {
+  color: #1a1330; background: #e7d9f5;
+}
+body.wizard #spawn-harness-policy-modal .spawn-harness-cell textarea::placeholder { color: #b39ddb; }
+body.wizard #spawn-harness-policy-modal .spawn-harness-cell.deny {
+  background: rgba(180, 73, 91, 0.16);
+}
+body.wizard #spawn-harness-policy-modal .spawn-harness-same {
+  background: rgba(20, 15, 40, 0.72); color: #b39ddb;
+}
+body.wizard #spawn-harness-policy-modal .muted { color: #b39ddb; }
+body.wizard #spawn-harness-policy-modal .danger-text { color: #ef9a9a; }
+body.wizard #spawn-harness-policy-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
+body.wizard #spawn-harness-policy-modal .modal-buttons button {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #spawn-harness-policy-modal .modal-buttons button:hover:not(:disabled) { background: #3a2a63; }
+body.wizard #spawn-harness-policy-modal .modal-buttons button.primary {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  border: 2px solid #d9b45a;
+  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
+  letter-spacing: .5px; font-weight: 700;
+}
+body.wizard #spawn-harness-policy-modal .modal-buttons button.primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
+}
 .danger-text { color: var(--danger, #c33); }

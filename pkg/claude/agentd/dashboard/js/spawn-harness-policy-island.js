@@ -6,6 +6,7 @@ import {
   useGuardedOverlayClose,
 } from './management-overlay.js';
 import { registerSpawnHarnessPolicyController } from './spawn-harness-policy-controller.js';
+import { isWizardActive } from './slop.js';
 
 const html = htm.bind(h);
 
@@ -57,8 +58,21 @@ function effectiveGlobal(view, source, target) {
   return rule || { decision: 'allow', reason: '' };
 }
 
+function useWizardTheme() {
+  const [wizard, setWizard] = useState(isWizardActive());
+  useEffect(() => {
+    const update = (event) => setWizard(
+      event.detail?.active == null ? isWizardActive() : Boolean(event.detail.active),
+    );
+    document.addEventListener('tclaude:wizard', update);
+    return () => document.removeEventListener('tclaude:wizard', update);
+  }, []);
+  return wizard;
+}
+
 function SpawnHarnessPolicyDialog({ descriptor, close, confirmDiscard, notify }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
+  const wizard = useWizardTheme();
   const [view, setView] = useState(null);
   const [draft, setDraft] = useState({});
   const [baseline, setBaseline] = useState('');
@@ -82,9 +96,49 @@ function SpawnHarnessPolicyDialog({ descriptor, close, confirmDiscard, notify })
 
   const dirty = baseline !== '' && JSON.stringify(draft) !== baseline;
   const groupScope = view?.scope === 'group';
-  const title = descriptor.group
-    ? `Cross-harness spawn policy · ${descriptor.group}`
-    : 'Global cross-harness spawn policy';
+  const copy = wizard ? {
+    title: descriptor.group
+      ? `Cross-realm summons · party ${descriptor.group}`
+      : 'Global cross-realm summons',
+    intro: 'Governs familiar-initiated summons after patterns and defaults reveal the destination realm. Archmage-cast and same-realm summons are unaffected.',
+    scope: groupScope
+      ? 'Inherit follows the global ward for that passage.'
+      : 'Unmarked passages are permitted by default.',
+    loading: 'Consulting the realm wards…',
+    axes: 'Summoner realm ↓ / familiar realm →',
+    same: 'always permitted',
+    inherit: 'inherit global ward',
+    allow: 'permit',
+    deny: 'forbid',
+    reason: 'Reason revealed to the summoning familiar',
+    effective: 'Global ward',
+    cancel: 'Dismiss',
+    save: 'Inscribe wards',
+    saved: descriptor.group
+      ? `inscribed cross-realm wards for party ${descriptor.group}`
+      : 'inscribed global cross-realm wards',
+  } : {
+    title: descriptor.group
+      ? `Cross-harness spawn policy · ${descriptor.group}`
+      : 'Global cross-harness spawn policy',
+    intro: 'Controls agent-initiated delegation after profiles and defaults resolve the target harness. Human-initiated spawns and same-harness spawns are unaffected.',
+    scope: groupScope
+      ? 'Inherit defers this edge to the global matrix.'
+      : 'Unset edges allow by default.',
+    loading: 'Loading spawn matrix…',
+    axes: 'Spawner ↓ / child →',
+    same: 'always allowed',
+    inherit: 'inherit global',
+    allow: 'allow',
+    deny: 'deny',
+    reason: 'Reason returned to the spawning agent',
+    effective: 'Effective',
+    cancel: 'Cancel',
+    save: 'Save policy',
+    saved: descriptor.group
+      ? `saved cross-harness spawn policy for ${descriptor.group}`
+      : 'saved global cross-harness spawn policy',
+  };
   const update = (key, patch) => setDraft((current) => ({
     ...current, [key]: { ...current[key], ...patch },
   }));
@@ -99,16 +153,16 @@ function SpawnHarnessPolicyDialog({ descriptor, close, confirmDiscard, notify })
       }));
     const missing = rules.find((rule) => rule.decision === 'deny' && !rule.reason);
     if (missing) {
-      setError(`Add a reason for ${missing.source} → ${missing.target}; agents receive this text when denied.`);
+      setError(wizard
+        ? `Inscribe a reason for ${missing.source} → ${missing.target}; the summoning familiar receives it when forbidden.`
+        : `Add a reason for ${missing.source} → ${missing.target}; agents receive this text when denied.`);
       return;
     }
     setBusy(true);
     setError('');
     try {
       await savePolicy(descriptor.group, rules);
-      notify?.(descriptor.group
-        ? `saved cross-harness spawn policy for ${descriptor.group}`
-        : 'saved global cross-harness spawn policy');
+      notify?.(copy.saved);
       close();
     } catch (cause) {
       setError(errorMessage(cause));
@@ -120,37 +174,40 @@ function SpawnHarnessPolicyDialog({ descriptor, close, confirmDiscard, notify })
     <${Overlay} id="spawn-harness-policy-modal" labelledby="spawn-harness-policy-title"
       onClose=${close} onSubmitHotkey=${submit} dirty=${dirty} blocked=${busy}
       confirmDiscard=${confirmDiscard} registerClose=${registerClose}>
-      <h3 id="spawn-harness-policy-title">${title}</h3>
-      <p class="manage-intro">
-        Controls agent-initiated delegation after profiles and defaults resolve the target harness.
-        Human-initiated spawns and same-harness spawns are unaffected.
-        ${groupScope ? 'Inherit defers this edge to the global matrix.' : 'Unset edges allow by default.'}
-      </p>
-      ${busy && !view ? html`<div class="empty">Loading spawn matrix…</div>` : null}
+      <h3 id="spawn-harness-policy-title">${copy.title}</h3>
+      <p class="manage-intro">${copy.intro} ${copy.scope}</p>
+      ${busy && !view ? html`<div class="empty">${copy.loading}</div>` : null}
       ${view ? html`
         <div class="spawn-harness-matrix-wrap">
           <table class="spawn-harness-matrix">
-            <thead><tr><th>Spawner ↓ / child →</th>${view.harnesses.map((target) => html`<th key=${target.name}>${target.display_name || target.name}</th>`)}</tr></thead>
+            <thead><tr><th>${copy.axes}</th>${view.harnesses.map((target) => html`<th key=${target.name}>${target.display_name || target.name}</th>`)}</tr></thead>
             <tbody>${view.harnesses.map((source) => html`
               <tr key=${source.name}><th>${source.display_name || source.name}</th>
                 ${view.harnesses.map((target) => {
-                  if (source.name === target.name) return html`<td key=${target.name} class="spawn-harness-same">always allowed</td>`;
+                  if (source.name === target.name) return html`<td key=${target.name} class="spawn-harness-same">${copy.same}</td>`;
                   const key = edgeKey(source.name, target.name);
                   const edge = draft[key];
                   const inherited = groupScope ? effectiveGlobal(view, source.name, target.name) : null;
                   return html`<td key=${target.name} class=${`spawn-harness-cell ${edge?.decision || ''}`}>
                     <select value=${edge?.decision || 'allow'} disabled=${busy}
-                      aria-label=${`${source.name} to ${target.name} decision`}
+                      aria-label=${wizard
+                        ? `${source.name} to ${target.name} summoning ward`
+                        : `${source.name} to ${target.name} decision`}
                       onChange=${(event) => update(key, { decision: event.currentTarget.value })}>
-                      ${groupScope ? html`<option value="inherit">inherit global</option>` : null}
-                      <option value="allow">allow</option>
-                      <option value="deny">deny</option>
+                      ${groupScope ? html`<option value="inherit">${copy.inherit}</option>` : null}
+                      <option value="allow">${copy.allow}</option>
+                      <option value="deny">${copy.deny}</option>
                     </select>
                     ${edge?.decision === 'deny' ? html`<textarea rows="3" maxlength="1000"
-                      placeholder="Reason returned to the spawning agent" value=${edge.reason}
+                      aria-label=${wizard
+                        ? `${source.name} to ${target.name} forbidden-summon reason`
+                        : `${source.name} to ${target.name} denial reason`}
+                      placeholder=${copy.reason} value=${edge.reason}
                       disabled=${busy} onInput=${(event) => update(key, { reason: event.currentTarget.value })}></textarea>` : null}
                     ${edge?.decision === 'inherit' ? html`<small class=${inherited.decision === 'deny' ? 'danger-text' : 'muted'}>
-                      Effective: ${inherited.decision}${inherited.reason ? ` — ${inherited.reason}` : ''}
+                      ${copy.effective}: ${wizard
+                        ? (inherited.decision === 'deny' ? copy.deny : copy.allow)
+                        : inherited.decision}${inherited.reason ? ` — ${inherited.reason}` : ''}
                     </small>` : null}
                   </td>`;
                 })}
@@ -161,9 +218,9 @@ function SpawnHarnessPolicyDialog({ descriptor, close, confirmDiscard, notify })
       ` : null}
       <div class="cron-create-error" role="alert">${error}</div>
       <div class="modal-buttons">
-        <button type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
+        <button type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>${copy.cancel}</button>
         <span class="spacer"></span>
-        <button type="button" class="primary" disabled=${busy || !view} onClick=${submit}>Save policy</button>
+        <button type="button" class="primary" disabled=${busy || !view} onClick=${submit}>${copy.save}</button>
       </div>
     </${Overlay}>
   `;
