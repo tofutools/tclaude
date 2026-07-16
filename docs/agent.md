@@ -752,6 +752,7 @@ loses a scheduled nudge.
 
 ```bash
 tclaude agent cron add --interval 10m --body "status check?" [--target SEL --name N]
+tclaude agent cron add --interval 10m --run-immediately --body "start now, then repeat"
 tclaude agent cron add --cron "0 9 * * 1-5" --body "morning standup"   # cron expression instead of interval
 tclaude agent cron ls
 tclaude agent cron disable <id>      # pause without deleting
@@ -764,6 +765,13 @@ tclaude agent cron rm <id>
 Cron jobs default to self-targeted; `--target group:<name>`
 multicasts. Managing your own jobs needs `self.schedule`; managing
 another agent's needs `agent.schedule` (or group ownership).
+
+New jobs wait for their first scheduled due time. `--run-immediately` opts
+into one immediate first delivery and then preserves the normal cadence from
+that fire. The persisted setting is also editable in the dashboard: changing
+it from off to on fires once; saving it on again is inert, and turning it off
+does not fire. `run-now` remains the explicit one-off action independent of
+that setting. Daemon restarts never replay the immediate opt-in.
 
 ### permissions / sudo
 

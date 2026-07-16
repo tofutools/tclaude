@@ -59,6 +59,7 @@ type jobJSON struct {
 	Subject         string `json:"subject,omitempty"`
 	Body            string `json:"body"`
 	Enabled         bool   `json:"enabled"`
+	RunImmediately  bool   `json:"run_immediately"`
 	// DisabledReason marks WHY a disabled job is disabled (schema v94): "" for
 	// a normal human enable/disable, or "group-retired" when a retire that
 	// emptied the target group auto-paused it. Surfaced so a reader can tell a
@@ -87,6 +88,7 @@ func toJobJSON(j *db.AgentCronJob) jobJSON {
 		Subject:         j.Subject,
 		Body:            j.Body,
 		Enabled:         j.Enabled,
+		RunImmediately:  j.RunImmediately,
 		DisabledReason:  j.DisabledReason,
 		LastRunStatus:   j.LastRunStatus,
 	}
@@ -181,6 +183,8 @@ func handleCronSetEnabled(w http.ResponseWriter, r *http.Request, id int64, enab
 	if _, ok := authCronJob(w, r, job); !ok {
 		return
 	}
+	cronAuthorityMu.Lock()
+	defer cronAuthorityMu.Unlock()
 	if err := db.SetAgentCronJobEnabled(id, enabled); err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "update: "+err.Error())
 		return
@@ -205,21 +209,37 @@ func handleCronRunNow(w http.ResponseWriter, r *http.Request, id int64) {
 	if _, ok := authCronJob(w, r, job); !ok {
 		return
 	}
-	now := time.Now()
-	status := fireCronJob(job, now)
-	if err := db.UpdateAgentCronJobLastRun(id, now, status); err != nil {
+	if cronBeforeAuthorityLockForTest != nil {
+		cronBeforeAuthorityLockForTest("run-now")
+	}
+	cronAuthorityMu.Lock()
+	defer cronAuthorityMu.Unlock()
+	// Refresh under the scheduler lock so a cached due candidate and this
+	// manual fire agree on the latest cadence anchor.
+	job, err = db.GetLiveOwnerAgentCronJob(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "refresh before fire: "+err.Error())
+		return
+	}
+	if job == nil {
+		current, lookupErr := db.GetAgentCronJob(id)
+		if lookupErr != nil {
+			writeError(w, http.StatusInternalServerError, "io", "refresh before fire: "+lookupErr.Error())
+			return
+		}
+		if current == nil {
+			writeError(w, http.StatusNotFound, "not_found", "job "+strconv.FormatInt(id, 10)+" not found")
+			return
+		}
+		writeError(w, http.StatusConflict, "not_runnable",
+			"job owner retired before the manual fire could run")
+		return
+	}
+	status, err := fireCronJobAndRecord(job, time.Now())
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "stamp: "+err.Error())
 		return
 	}
-	// Run-history insert is best-effort: the fire already succeeded,
-	// and the denorm last_run_status gives callers their primary
-	// signal. Don't 500 the response just because we couldn't append
-	// the audit row.
-	_, _ = db.InsertAgentCronRun(&db.AgentCronRun{
-		JobID:   id,
-		FiredAt: now,
-		Status:  status,
-	})
 	writeJSON(w, http.StatusOK, map[string]any{"status": status})
 }
 
@@ -331,16 +351,17 @@ func jobVisibleTo(j *db.AgentCronJob, callerConv string) bool {
 
 func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name     string `json:"name"`
-		Target   string `json:"target"`
-		Owner    string `json:"owner"`     // optional; humans may attribute the job to a specific conv (default: target)
-		Interval string `json:"interval"`  // e.g. "10m", "1h" — parsed via time.ParseDuration
-		CronExpr string `json:"cron_expr"` // alternative schedule: a cronexpr expression; mutually exclusive with interval
-		Subject  string `json:"subject"`
-		Body     string `json:"body"`
-		Enabled  *bool  `json:"enabled,omitempty"` // optional; defaults to true
-		GroupID  int64  `json:"group_id"`          // optional explicit override; auto-inferred from shared groups when 0
-		Role     string `json:"role,omitempty"`    // optional role filter for a group target ("" / "all" = whole group)
+		Name           string `json:"name"`
+		Target         string `json:"target"`
+		Owner          string `json:"owner"`     // optional; humans may attribute the job to a specific conv (default: target)
+		Interval       string `json:"interval"`  // e.g. "10m", "1h" — parsed via time.ParseDuration
+		CronExpr       string `json:"cron_expr"` // alternative schedule: a cronexpr expression; mutually exclusive with interval
+		Subject        string `json:"subject"`
+		Body           string `json:"body"`
+		Enabled        *bool  `json:"enabled,omitempty"` // optional; defaults to true
+		RunImmediately bool   `json:"run_immediately"`   // optional; defaults false
+		GroupID        int64  `json:"group_id"`          // optional explicit override; auto-inferred from shared groups when 0
+		Role           string `json:"role,omitempty"`    // optional role filter for a group target ("" / "all" = whole group)
 	}
 	if r.ContentLength == 0 {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "missing request body")
@@ -409,6 +430,11 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 	if body.Enabled != nil {
 		enabled = *body.Enabled
 	}
+	if body.RunImmediately && !enabled {
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			"run_immediately requires enabled=true so the requested first run is not contradictory")
+		return
+	}
 	job := &db.AgentCronJob{
 		Name:            body.Name,
 		IntervalSeconds: intervalSeconds,
@@ -416,6 +442,7 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 		Subject:         body.Subject,
 		Body:            body.Body,
 		Enabled:         enabled,
+		RunImmediately:  body.RunImmediately,
 	}
 
 	if ct.Kind == db.CronTargetGroup {
@@ -488,6 +515,13 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 		job.OwnerConv = owner
 	}
 
+	if job.RunImmediately {
+		if cronBeforeAuthorityLockForTest != nil {
+			cronBeforeAuthorityLockForTest("create-immediate")
+		}
+		cronAuthorityMu.Lock()
+		defer cronAuthorityMu.Unlock()
+	}
 	id, err := db.InsertAgentCronJob(job)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "insert: "+err.Error())
@@ -497,6 +531,14 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 	if row == nil {
 		writeJSON(w, http.StatusOK, map[string]any{"id": id})
 		return
+	}
+	if row.RunImmediately {
+		_, fireErr := fireCronJobAndRecord(row, time.Now())
+		if fireErr != nil {
+			writeError(w, http.StatusInternalServerError, "io", "immediate fire: "+fireErr.Error())
+			return
+		}
+		row, _ = db.GetAgentCronJob(id)
 	}
 	writeJSON(w, http.StatusOK, toJobJSON(row))
 }
@@ -606,8 +648,8 @@ func validateCronName(name string) error {
 
 // handleCronPatch applies a partial update to one job. Validation
 // mirrors handleCronCreate; only fields explicitly present in the
-// JSON body are touched. last_run_at is never modified — see
-// db.UpdateAgentCronJobFields docstring.
+// JSON body are touched. A run_immediately false→true transition triggers one
+// fire and stamps last_run_at; true→true and true→false do not fire.
 func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 	job, err := db.GetAgentCronJob(id)
 	if err != nil {
@@ -625,6 +667,30 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 	if !ok {
 		return
 	}
+	// Serialize flag transitions with scheduled delivery. Re-read after taking
+	// the lock so two concurrent false→true PATCHes cannot both observe false.
+	if patch.RunImmediately != nil || patch.Enabled != nil {
+		if cronBeforeAuthorityLockForTest != nil {
+			cronBeforeAuthorityLockForTest("patch")
+		}
+		cronAuthorityMu.Lock()
+		defer cronAuthorityMu.Unlock()
+		job, err = db.GetAgentCronJob(id)
+		if err != nil || job == nil {
+			writeError(w, http.StatusNotFound, "not_found", "job "+strconv.FormatInt(id, 10)+" not found")
+			return
+		}
+	}
+	triggerImmediate := patch.RunImmediately != nil && *patch.RunImmediately && !job.RunImmediately
+	effectiveEnabled := job.Enabled
+	if patch.Enabled != nil {
+		effectiveEnabled = *patch.Enabled
+	}
+	if triggerImmediate && !effectiveEnabled {
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			"run_immediately requires enabled=true so the requested run is not contradictory")
+		return
+	}
 	n, err := db.UpdateAgentCronJobFields(id, patch)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "update: "+err.Error())
@@ -639,7 +705,7 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 	// moment of the edit — are what a human expects. Interval edits keep
 	// their long-standing behaviour (never bump last_run_at; one catch-up
 	// fire after a long idle is semantically true for "every N").
-	if n > 0 && patch.CronExpr != nil && *patch.CronExpr != "" {
+	if n > 0 && !triggerImmediate && patch.CronExpr != nil && *patch.CronExpr != "" {
 		if err := db.UpdateAgentCronJobLastRun(id, time.Now(), job.LastRunStatus); err != nil {
 			writeError(w, http.StatusInternalServerError, "io", "re-anchor: "+err.Error())
 			return
@@ -663,6 +729,13 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 		writeJSON(w, http.StatusOK, map[string]any{"id": id})
 		return
 	}
+	if triggerImmediate {
+		if _, err := fireCronJobAndRecord(row, time.Now()); err != nil {
+			writeError(w, http.StatusInternalServerError, "io", "immediate fire: "+err.Error())
+			return
+		}
+		row, _ = db.GetAgentCronJob(id)
+	}
 	writeJSON(w, http.StatusOK, toJobJSON(row))
 }
 
@@ -672,16 +745,17 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 // empty patch — handleCronPatch then no-ops cleanly.
 func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (db.UpdateCronPatch, bool) {
 	var body struct {
-		Name     *string `json:"name,omitempty"`
-		Target   *string `json:"target,omitempty"`
-		Owner    *string `json:"owner,omitempty"`
-		Interval *string `json:"interval,omitempty"`
-		CronExpr *string `json:"cron_expr,omitempty"`
-		Subject  *string `json:"subject,omitempty"`
-		Body     *string `json:"body,omitempty"`
-		Enabled  *bool   `json:"enabled,omitempty"`
-		GroupID  *int64  `json:"group_id,omitempty"`
-		Role     *string `json:"role,omitempty"`
+		Name           *string `json:"name,omitempty"`
+		Target         *string `json:"target,omitempty"`
+		Owner          *string `json:"owner,omitempty"`
+		Interval       *string `json:"interval,omitempty"`
+		CronExpr       *string `json:"cron_expr,omitempty"`
+		Subject        *string `json:"subject,omitempty"`
+		Body           *string `json:"body,omitempty"`
+		Enabled        *bool   `json:"enabled,omitempty"`
+		RunImmediately *bool   `json:"run_immediately,omitempty"`
+		GroupID        *int64  `json:"group_id,omitempty"`
+		Role           *string `json:"role,omitempty"`
 	}
 	if r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -690,11 +764,12 @@ func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (db.UpdateCronP
 		}
 	}
 	patch := db.UpdateCronPatch{
-		Name:    body.Name,
-		Subject: body.Subject,
-		Body:    body.Body,
-		Enabled: body.Enabled,
-		GroupID: body.GroupID,
+		Name:           body.Name,
+		Subject:        body.Subject,
+		Body:           body.Body,
+		Enabled:        body.Enabled,
+		RunImmediately: body.RunImmediately,
+		GroupID:        body.GroupID,
 	}
 	// Role filter (JOH-244): normalize "all" → "" (whole group) so the stored
 	// value drives the fan-out's empty-filter path.
@@ -814,6 +889,11 @@ func handleCronDelete(w http.ResponseWriter, r *http.Request, id int64) {
 	if _, ok := authCronJob(w, r, job); !ok {
 		return
 	}
+	if cronBeforeAuthorityLockForTest != nil {
+		cronBeforeAuthorityLockForTest("delete")
+	}
+	cronAuthorityMu.Lock()
+	defer cronAuthorityMu.Unlock()
 	if err := db.DeleteAgentCronJob(id); err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "delete: "+err.Error())
 		return

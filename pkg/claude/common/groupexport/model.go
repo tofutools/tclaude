@@ -231,6 +231,7 @@ type CronJob struct {
 	Subject         string `json:"subject"`
 	Body            string `json:"body"`
 	Enabled         int64  `json:"enabled"`
+	RunImmediately  int64  `json:"run_immediately,omitempty"`
 	CreatedAt       string `json:"created_at"`
 	LastRunAt       string `json:"last_run_at"`
 	LastRunStatus   string `json:"last_run_status"`

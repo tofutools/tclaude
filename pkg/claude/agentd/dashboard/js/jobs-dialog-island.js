@@ -306,6 +306,10 @@ export function CronDialog({ descriptor, snapshot, actions, confirmDiscard }) {
           onInput=${(event) => update({ body: event.currentTarget.value })}></textarea></label>
       <label class="cron-create-enabled"><input id="cron-create-enabled" type="checkbox" checked=${draft.enabled}
         onChange=${(event) => update({ enabled: event.currentTarget.checked })} /> Enabled</label>
+      <label class="cron-create-enabled" title="On create, or when changed from off to on during an edit, fire exactly once now. The normal cadence continues from that fire.">
+        <input id="cron-create-run-immediately" type="checkbox" checked=${draft.runImmediately}
+          onChange=${(event) => update({ runImmediately: event.currentTarget.checked })} /> Run immediately once
+      </label>
       <div class="cron-create-error" id="cron-create-error" role="alert">${error}</div>
       <div class="modal-buttons"><button id="cron-create-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
         <span class="spacer"></span>${!editing && html`<button id="cron-create-save-another" class="secondary" type="button" disabled=${busy}

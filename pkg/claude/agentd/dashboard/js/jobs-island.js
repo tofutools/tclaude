@@ -44,10 +44,13 @@ function CronTarget({ job }) {
 }
 
 function CronSchedule({ job }) {
+  const immediate = job.run_immediately
+    ? html`<div class="muted" title="This job opted into an immediate run on create or when the setting was turned on">immediate opt-in</div>`
+    : null;
   if (job.cron_expr) {
-    return html`<span class="id" title=${job.cron_desc || ''}>cron: ${job.cron_expr}</span>`;
+    return html`<${Fragment}><span class="id" title=${job.cron_desc || ''}>cron: ${job.cron_expr}</span>${immediate}</${Fragment}>`;
   }
-  return html`<span class="id">every ${formatJobInterval(job.interval_seconds)}</span>`;
+  return html`<${Fragment}><span class="id">every ${formatJobInterval(job.interval_seconds)}</span>${immediate}</${Fragment}>`;
 }
 
 function CronStatus({ status }) {

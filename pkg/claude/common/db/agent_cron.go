@@ -67,6 +67,11 @@ type AgentCronJob struct {
 	Subject         string
 	Body            string
 	Enabled         bool
+	// RunImmediately is the persisted creation/edit preference. It is acted on
+	// only by the write path: create=true and a PATCH false→true each trigger
+	// one fire. The scheduler never consumes it, so restarts cannot replay the
+	// opt-in delivery.
+	RunImmediately bool
 	// DisabledReason marks WHY a job is disabled (schema v94): '' for a normal,
 	// human-managed enable/disable, or CronDisabledReasonGroupRetired for a
 	// group-target job tclaude auto-paused when a retire emptied its group. A
@@ -74,7 +79,7 @@ type AgentCronJob struct {
 	// for an enabled job.
 	DisabledReason string
 	CreatedAt      time.Time
-	LastRunAt      time.Time // zero → interval jobs: "never run, due immediately"; expr jobs: due at first match after CreatedAt
+	LastRunAt      time.Time // zero → never run; both modes anchor first due time on CreatedAt
 	LastRunStatus  string
 }
 
@@ -119,14 +124,14 @@ func cronConvToAgent(convID string) (string, error) {
 // CURRENT conv so OwnerConv / TargetConv present (and the fire path delivers to)
 // the live generation. LEFT JOIN + COALESCE so a group-target job (target_agent
 // ”) or an owner-less job keeps an empty string rather than dropping the row.
-// The 18 projected columns match scanAgentCronJob's field order. owner_agent /
+// The 19 projected columns match scanAgentCronJob's field order. owner_agent /
 // target_agent are projected raw (the stable keys) alongside the LEFT-JOIN-
 // resolved current convs.
 const cronSelect = `SELECT j.id, j.name,
 	COALESCE(ow.current_conv_id, ''), j.target_kind, COALESCE(tg.current_conv_id, ''),
 	j.group_id, j.interval_seconds, j.subject, j.body, j.enabled, j.created_at,
 	j.last_run_at, j.last_run_status, j.owner_agent, j.target_agent, j.cron_expr, j.target_role,
-	j.disabled_reason
+	j.disabled_reason, j.run_immediately
 	FROM agent_cron_jobs j
 	LEFT JOIN agents ow ON ow.agent_id = j.owner_agent
 	LEFT JOIN agents tg ON tg.agent_id = j.target_agent`
@@ -153,13 +158,14 @@ func InsertAgentCronJob(j *AgentCronJob) (int64, error) {
 	}
 	res, err := d.Exec(`INSERT INTO agent_cron_jobs
 		(name, owner_agent, target_kind, target_agent, group_id, target_role, interval_seconds,
-		 cron_expr, subject, body, enabled, created_at, last_run_at, last_run_status)
-		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ''
+		 cron_expr, subject, body, enabled, run_immediately, created_at, last_run_at, last_run_status)
+		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ''
 		WHERE ? = '' OR EXISTS (
 			SELECT 1 FROM agents WHERE agent_id = ? AND retired_at = ''
 		)`,
 		j.Name, ownerAgent, kind, targetAgent, j.GroupID, j.TargetRole, j.IntervalSeconds,
-		j.CronExpr, j.Subject, j.Body, boolToInt(j.Enabled), now, ownerAgent, ownerAgent)
+		j.CronExpr, j.Subject, j.Body, boolToInt(j.Enabled), boolToInt(j.RunImmediately), now,
+		ownerAgent, ownerAgent)
 	if err != nil {
 		return 0, err
 	}
@@ -200,6 +206,24 @@ func GetRunnableAgentCronJob(id int64) (*AgentCronJob, error) {
 	return j, err
 }
 
+// GetLiveOwnerAgentCronJob returns a job only while its owner still has
+// authority. Unlike GetRunnableAgentCronJob it deliberately permits disabled
+// rows: a manual run-now is independent of the recurring enabled toggle, but
+// must still fail closed after owner retirement.
+func GetLiveOwnerAgentCronJob(id int64) (*AgentCronJob, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	row := d.QueryRow(cronSelect+` WHERE j.id = ?
+		AND (j.owner_agent = '' OR ow.retired_at = '')`, id)
+	j, err := scanAgentCronJob(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return j, err
+}
+
 // ListAgentCronJobs returns every job, ordered by ID asc.
 func ListAgentCronJobs() ([]*AgentCronJob, error) {
 	d, err := Open()
@@ -228,11 +252,9 @@ func listAgentCronJobs(d *sql.DB, query string) ([]*AgentCronJob, error) {
 
 // ListDueAgentCronJobs returns enabled jobs whose next-fire time has passed.
 //
-// Interval jobs are due when now >= last_run_at + interval; a never-run
-// interval job (last_run_at empty) is always due. Expression jobs are due
-// when the expression's next match after last_run_at has passed — and a
-// never-run expression job anchors on created_at instead, so "Mondays at 9"
-// waits for its first Monday rather than firing the moment it is created.
+// Both schedule modes anchor a never-run job on created_at. Thus a new job
+// waits for its first interval/expression match; an optional immediate fire is
+// an explicit write-path action, not an implicit scheduler special case.
 func ListDueAgentCronJobs(now time.Time) ([]*AgentCronJob, error) {
 	d, err := Open()
 	if err != nil {
@@ -252,32 +274,30 @@ func ListDueAgentCronJobs(now time.Time) ([]*AgentCronJob, error) {
 		if !j.Enabled {
 			continue
 		}
-		if j.CronExpr != "" {
-			base := j.LastRunAt
-			if base.IsZero() {
-				base = j.CreatedAt
-			}
-			next, err := cronexpr.Next(j.CronExpr, base)
-			if err != nil || next.IsZero() {
-				// Unparseable (write paths validate, so only reachable via a
-				// hand-edited row) or never-fires-again: never due, never an
-				// abort — one bad row must not stall the whole sweep.
-				continue
-			}
-			if !next.After(now) {
-				out = append(out, j)
-			}
-			continue
-		}
-		if j.LastRunAt.IsZero() {
-			out = append(out, j)
-			continue
-		}
-		if now.Sub(j.LastRunAt) >= time.Duration(j.IntervalSeconds)*time.Second {
+		if j.IsDue(now) {
 			out = append(out, j)
 		}
 	}
 	return out, nil
+}
+
+// IsDue reports whether the job's next scheduled fire is at or before now.
+// Callers separately enforce enabled/authority. The scheduler uses this both
+// when listing candidates and again under cronAuthorityMu immediately before
+// delivery, closing the race with run-now and immediate edit fires.
+func (j *AgentCronJob) IsDue(now time.Time) bool {
+	base := j.LastRunAt
+	if base.IsZero() {
+		base = j.CreatedAt
+	}
+	if j.CronExpr != "" {
+		next, err := cronexpr.Next(j.CronExpr, base)
+		return err == nil && !next.IsZero() && !next.After(now)
+	}
+	if j.IntervalSeconds <= 0 || base.IsZero() {
+		return false
+	}
+	return !base.Add(time.Duration(j.IntervalSeconds) * time.Second).After(now)
 }
 
 // DeleteAgentCronJob removes a job by ID. Idempotent.
@@ -430,6 +450,7 @@ type UpdateCronPatch struct {
 	Subject         *string
 	Body            *string
 	Enabled         *bool
+	RunImmediately  *bool
 }
 
 // UpdateAgentCronJobFields applies a partial update to one row. Only
@@ -509,6 +530,10 @@ func UpdateAgentCronJobFields(id int64, p UpdateCronPatch) (int, error) {
 		// human explicitly kept disabled.
 		sets = append(sets, "enabled = ?", "disabled_reason = ''")
 		args = append(args, boolToInt(*p.Enabled))
+	}
+	if p.RunImmediately != nil {
+		sets = append(sets, "run_immediately = ?")
+		args = append(args, boolToInt(*p.RunImmediately))
 	}
 	if len(sets) == 0 {
 		return 0, nil
@@ -613,12 +638,12 @@ func ListAgentCronRunsForJob(jobID int64, limit int) ([]*AgentCronRun, error) {
 
 func scanAgentCronJob(s rowScanner) (*AgentCronJob, error) {
 	var j AgentCronJob
-	var enabled int
+	var enabled, runImmediately int
 	var created, lastRun string
 	err := s.Scan(&j.ID, &j.Name, &j.OwnerConv, &j.TargetKind, &j.TargetConv, &j.GroupID,
 		&j.IntervalSeconds, &j.Subject, &j.Body, &enabled, &created,
 		&lastRun, &j.LastRunStatus, &j.OwnerAgent, &j.TargetAgent, &j.CronExpr, &j.TargetRole,
-		&j.DisabledReason)
+		&j.DisabledReason, &runImmediately)
 	if err != nil {
 		return nil, err
 	}
@@ -626,6 +651,7 @@ func scanAgentCronJob(s rowScanner) (*AgentCronJob, error) {
 		j.TargetKind = CronTargetConv
 	}
 	j.Enabled = enabled != 0
+	j.RunImmediately = runImmediately != 0
 	j.CreatedAt = parseTimeOrZero(created)
 	j.LastRunAt = parseTimeOrZero(lastRun)
 	return &j, nil

@@ -549,8 +549,11 @@ work-pattern broadcast target — so you cannot create a role called `all`.)
 
 ### Cron
 
-The scheduled-job table — name, owner, target, interval, last run, status pill,
-and body summary. Per-row buttons: enable/disable, **run now**, edit, delete.
+The scheduled-job table — name, owner, target, interval, immediate-run opt-in,
+last run, status pill, and body summary. Per-row buttons: enable/disable,
+**run now**, edit, delete. New jobs wait for their first scheduled due time by
+default. The create/edit form can opt into one immediate run; on edit, only an
+off→on transition fires, so repeat saves and daemon restarts cannot replay it.
 **+ new cron job** opens a create form (also reachable pre-filled from the ⏰
 buttons on the Groups tab). See
 [Agent Coordination → cron](agent.md#cron) for what cron jobs do.

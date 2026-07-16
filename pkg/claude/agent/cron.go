@@ -55,6 +55,7 @@ type cronJobJSON struct {
 	Subject         string `json:"subject,omitempty"`
 	Body            string `json:"body"`
 	Enabled         bool   `json:"enabled"`
+	RunImmediately  bool   `json:"run_immediately"`
 	DisabledReason  string `json:"disabled_reason,omitempty"`
 	CreatedAt       string `json:"created_at,omitempty"`
 	LastRunAt       string `json:"last_run_at,omitempty"`
@@ -92,14 +93,18 @@ func runCronLs(stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "(no scheduled cron jobs)")
 		return rcOK
 	}
-	fmt.Fprintf(stdout, "%-4s  %-14s  %-9s  %-16s  %-9s  %s\n",
-		"ID", "SCHEDULE", "ENABLED", "TARGET", "LAST", "NAME / BODY")
-	fmt.Fprintln(stdout, strings.Repeat("─", 80))
+	fmt.Fprintf(stdout, "%-4s  %-14s  %-9s  %-9s  %-16s  %-9s  %s\n",
+		"ID", "SCHEDULE", "ENABLED", "IMMEDIATE", "TARGET", "LAST", "NAME / BODY")
+	fmt.Fprintln(stdout, strings.Repeat("─", 92))
 	for _, j := range resp.Jobs {
 		interval := cronScheduleLabel(j)
 		enabled := "yes"
 		if !j.Enabled {
 			enabled = "no"
+		}
+		immediate := "no"
+		if j.RunImmediately {
+			immediate = "yes"
 		}
 		last := j.LastRunStatus
 		if j.LastRunAt != "" && last == "" {
@@ -112,8 +117,8 @@ func runCronLs(stdout, stderr io.Writer) int {
 		if desc == "" {
 			desc = truncate(j.Body, 40)
 		}
-		fmt.Fprintf(stdout, "%-4d  %-14s  %-9s  %-16s  %-9s  %s\n",
-			j.ID, interval, enabled, cronTargetLabel(j), last, desc)
+		fmt.Fprintf(stdout, "%-4d  %-14s  %-9s  %-9s  %-16s  %-9s  %s\n",
+			j.ID, interval, enabled, immediate, cronTargetLabel(j), last, desc)
 	}
 	return rcOK
 }
@@ -150,21 +155,22 @@ func cronTargetLabel(j cronJobJSON) string {
 // ---- add ----
 
 type cronAddParams struct {
-	Target   string `long:"target" optional:"true" help:"Selector for the conv that receives the cron message, or group:NAME to multicast to every member of a group. Defaults to self when omitted."`
-	Interval string `long:"interval" optional:"true" help:"Recurrence interval as a Go duration (e.g. 10m, 1h, 30s). Minimum 30s (the scheduler tick). Mutually exclusive with --cron."`
-	Cron     string `long:"cron" optional:"true" help:"Recurrence as a cron expression (e.g. '*/5 * * * *', '@daily', 'CRON_TZ=UTC 0 9 * * 1'). Evaluated in the daemon's local timezone unless CRON_TZ is given. Mutually exclusive with --interval."`
-	Body     string `long:"body" optional:"true" help:"Message body the cron job sends each tick. Required unless --file is given."`
-	File     string `long:"file" short:"f" optional:"true" help:"Read the message body from this file instead of --body ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing bodies. Mutually exclusive with --body."`
-	Subject  string `long:"subject" optional:"true" help:"Optional subject. Auto-prefixed with [cron:<name>] when delivered."`
-	Name     string `long:"name" optional:"true" help:"Short label for the job (used in dashboard + log lines)."`
-	Role     string `long:"role" optional:"true" help:"For a group:NAME target only: deliver only to members whose role matches (resolved at fire time). 'all' or empty = whole group."`
+	Target         string `long:"target" optional:"true" help:"Selector for the conv that receives the cron message, or group:NAME to multicast to every member of a group. Defaults to self when omitted."`
+	Interval       string `long:"interval" optional:"true" help:"Recurrence interval as a Go duration (e.g. 10m, 1h, 30s). Minimum 30s (the scheduler tick). Mutually exclusive with --cron."`
+	Cron           string `long:"cron" optional:"true" help:"Recurrence as a cron expression (e.g. '*/5 * * * *', '@daily', 'CRON_TZ=UTC 0 9 * * 1'). Evaluated in the daemon's local timezone unless CRON_TZ is given. Mutually exclusive with --interval."`
+	Body           string `long:"body" optional:"true" help:"Message body the cron job sends each tick. Required unless --file is given."`
+	File           string `long:"file" short:"f" optional:"true" help:"Read the message body from this file instead of --body ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing bodies. Mutually exclusive with --body."`
+	Subject        string `long:"subject" optional:"true" help:"Optional subject. Auto-prefixed with [cron:<name>] when delivered."`
+	Name           string `long:"name" optional:"true" help:"Short label for the job (used in dashboard + log lines)."`
+	Role           string `long:"role" optional:"true" help:"For a group:NAME target only: deliver only to members whose role matches (resolved at fire time). 'all' or empty = whole group."`
+	RunImmediately bool   `long:"run-immediately" optional:"true" help:"Fire the new job once immediately, then continue on its normal cadence. Omitted jobs wait until the first scheduled due time."`
 }
 
 func cronAddCmd() *cobra.Command {
 	return boa.CmdT[cronAddParams]{
 		Use:         "add",
 		Short:       "Schedule a new recurring cron job",
-		Long:        "Creates a job that fires on a schedule and delivers a message body to --target. The schedule is either --interval (a fixed Go duration, e.g. 10m) or --cron (a cron expression, e.g. '*/5 * * * *' or '@daily'; evaluated in the daemon's local timezone unless prefixed with CRON_TZ=<zone>) — exactly one of the two. A --cron job that has never fired waits for the expression's first match after creation; an --interval job fires on the next tick. Defaults to self-targeted when --target is omitted. Give the body inline with --body, or with --file <path> (or --file - to read stdin) — the file form sidesteps shell quoting, including backticks the shell would otherwise eat from an inline string. Pass --target group:NAME to multicast each tick to every current member of a group (membership is resolved at fire time).",
+		Long:        "Creates a job that fires on a schedule and delivers a message body to --target. The schedule is either --interval (a fixed Go duration, e.g. 10m) or --cron (a cron expression, e.g. '*/5 * * * *' or '@daily'; evaluated in the daemon's local timezone unless prefixed with CRON_TZ=<zone>) — exactly one of the two. New jobs wait for their first scheduled due time by default; pass --run-immediately for exactly one immediate first fire followed by the normal cadence. Defaults to self-targeted when --target is omitted. Give the body inline with --body, or with --file <path> (or --file - to read stdin) — the file form sidesteps shell quoting, including backticks the shell would otherwise eat from an inline string. Pass --target group:NAME to multicast each tick to every current member of a group (membership is resolved at fire time).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *cronAddParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Target).SetAlternativesFunc(completeConvSelectors)
@@ -205,8 +211,9 @@ func runCronAdd(p *cronAddParams, stdin io.Reader, stdout, stderr io.Writer) int
 		return rc
 	}
 	body := map[string]any{
-		"target": target,
-		"body":   jobBody,
+		"target":          target,
+		"body":            jobBody,
+		"run_immediately": p.RunImmediately,
 	}
 	if cronExpr != "" {
 		body["cron_expr"] = cronExpr
@@ -232,7 +239,12 @@ func runCronAdd(p *cronAddParams, stdin io.Reader, stdout, stderr io.Writer) int
 			resp.ID, resp.CronExpr, cronTargetLabel(resp))
 	} else {
 		fmt.Fprintf(stdout, "Scheduled job #%d every %s → %s\n",
-			resp.ID, (time.Duration(resp.IntervalSeconds)*time.Second).String(), cronTargetLabel(resp))
+			resp.ID, (time.Duration(resp.IntervalSeconds) * time.Second).String(), cronTargetLabel(resp))
+	}
+	if resp.RunImmediately {
+		fmt.Fprintln(stdout, "  Immediate first run requested; later runs follow the schedule above.")
+	} else {
+		fmt.Fprintln(stdout, "  First run waits until the schedule is due.")
 	}
 	switch {
 	case resp.TargetKind == "group":

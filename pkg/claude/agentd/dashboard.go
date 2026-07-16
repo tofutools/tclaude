@@ -1223,6 +1223,7 @@ type dashboardCronJob struct {
 	Subject         string `json:"subject,omitempty"`
 	Body            string `json:"body"`
 	Enabled         bool   `json:"enabled"`
+	RunImmediately  bool   `json:"run_immediately"`
 	CreatedAt       string `json:"created_at,omitempty"`
 	LastRunAt       string `json:"last_run_at,omitempty"`
 	LastRunStatus   string `json:"last_run_status,omitempty"`
@@ -2533,6 +2534,7 @@ func cronJobToView(j *db.AgentCronJob, groupNames map[int64]string) dashboardCro
 		Subject:         j.Subject,
 		Body:            j.Body,
 		Enabled:         j.Enabled,
+		RunImmediately:  j.RunImmediately,
 		LastRunStatus:   j.LastRunStatus,
 	}
 	if j.TargetConv != "" {
@@ -2560,10 +2562,7 @@ func cronJobToView(j *db.AgentCronJob, groupNames map[int64]string) dashboardCro
 		row.LastRunAt = j.LastRunAt.Format(time.RFC3339)
 	}
 	// Next-due mirrors the scheduler's due check in db.ListDueAgentCronJobs:
-	// interval jobs project last_run + interval (never-run = due now, so no
-	// timestamp to show); expression jobs project the next match after
-	// last_run — or after created_at for a job that hasn't fired yet, which
-	// unlike an interval job has a well-defined first fire worth showing.
+	// both modes anchor never-run jobs at created_at, matching the scheduler.
 	if j.CronExpr != "" {
 		base := j.LastRunAt
 		if base.IsZero() {
@@ -2572,9 +2571,15 @@ func cronJobToView(j *db.AgentCronJob, groupNames map[int64]string) dashboardCro
 		if next, err := cronexpr.Next(j.CronExpr, base); err == nil && !next.IsZero() {
 			row.NextDueAt = next.Format(time.RFC3339)
 		}
-	} else if !j.LastRunAt.IsZero() {
-		next := j.LastRunAt.Add(time.Duration(j.IntervalSeconds) * time.Second)
-		row.NextDueAt = next.Format(time.RFC3339)
+	} else {
+		base := j.LastRunAt
+		if base.IsZero() {
+			base = j.CreatedAt
+		}
+		if !base.IsZero() && j.IntervalSeconds > 0 {
+			next := base.Add(time.Duration(j.IntervalSeconds) * time.Second)
+			row.NextDueAt = next.Format(time.RFC3339)
+		}
 	}
 	return row
 }
