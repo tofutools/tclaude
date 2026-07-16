@@ -613,11 +613,8 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 		defer cleanupDirWriteProofMarkers(proofToken, proofDirs)
 	}
 
-	// Snapshot group membership up-front — before the rate-limit claim
-	// and the spawn. It decides how the handoff follow-up is delivered
-	// (grouped → inbox, solo → send-keys) and therefore which charset
-	// rule applies; doing it here means a follow-up the solo pane can't
-	// carry is rejected without burning a rate-limit slot.
+	// Snapshot group membership up-front — before the rate-limit claim and
+	// spawn — so the clone can inherit the source's identity consistently.
 	oldGroups, err := db.ListGroupsForConv(target)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io",

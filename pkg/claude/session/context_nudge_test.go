@@ -38,9 +38,8 @@ func TestNextNudgeTarget(t *testing.T) {
 	}
 }
 
-// formatContextNudgeMessage is the text typed into the pane. Pin the
-// shape: includes the threshold % and the suggestion (so a future
-// reader of the agent transcript can tell it's a context nudge).
+// formatContextNudgeMessage is typed directly into the pane. Pin the envelope
+// so a future transcript still identifies it as a system-generated reminder.
 func TestFormatContextNudgeMessage(t *testing.T) {
 	msg := formatContextNudgeMessage(50)
 	assert.Truef(t, strings.HasPrefix(msg, "[system: "), "message must start with [system: ...]; got %q", msg)

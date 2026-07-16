@@ -157,8 +157,7 @@ func waitForConvAlive(newConv string) bool {
 //  4. Optionally enqueue follow-up as an agent_messages row addressed
 //     to the new conv. Background goroutine waits for the new pane to
 //     come online and runs flush() to deliver via the existing nudge
-//     pipeline. Solo agents (no group) get a direct send-keys
-//     injection of the follow-up text instead.
+//     pipeline, including solo agents via direct group_id 0 mail.
 //  5. Soft-stop the old pane via /exit.
 //
 // Identity is preserved; task state is *not* migrated — the agent is

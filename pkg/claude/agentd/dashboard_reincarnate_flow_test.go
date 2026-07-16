@@ -82,13 +82,13 @@ func TestDashboardReincarnate_SelfMode_DeliversInstructionWithFocusHint(t *testi
 		Mode      string `json:"mode"`
 		ConvID    string `json:"conv_id"`
 		MessageID int64  `json:"message_id"`
-		Delivered bool   `json:"delivered"`
+		Queued    bool   `json:"queued"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp), "body=%s", rec.Body.String())
 	assert.Equal(t, "self", resp.Mode)
 	assert.Equal(t, conv, resp.ConvID)
 	assert.Greater(t, resp.MessageID, int64(0))
-	assert.True(t, resp.Delivered, "an alive target is nudged immediately")
+	assert.True(t, resp.Queued, "delivery is owned by the async mailbox queue")
 
 	// Real surface: the agent's inbox has exactly one message — the
 	// reincarnate-yourself instruction, with the focus hint folded in.

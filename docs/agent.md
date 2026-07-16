@@ -260,22 +260,31 @@ tclaude agent reply <id> "got it"
 For direct messages the sender and target must share a group (or be
 bridged by an inter-group [link](#groups)), otherwise the daemon
 refuses with `not in a shared group`. For multicast (`group:<name>`
-target) the sender must be a member of that group. If the target's
-tmux session is alive they get a system-style nudge; otherwise the
-message queues in their inbox until they `inbox ls`.
+target) the sender must be a member of that group.
+
+All durable post-startup agent mail enters the same asynchronous per-agent
+delivery queue. That queue resolves the current agent generation, waits while
+its input is blocked, retries transient tmux failures, and chooses inline or
+inbox-pointer delivery. Callers choose attribution, recipients, subject, and
+body; they do not choose a separate tmux transport. An offline target keeps the
+message until it is ready. Ephemeral context nudges, unread reminders, and
+lifecycle controls do not create mailbox rows, but they share the same
+cross-process pane-input lock with queued mail so their multi-command tmux
+sequences cannot interleave.
+Startup greetings and briefings are the intentional exception: the harness
+launch prompt owns their first delivery.
 
 Short printable messages are included directly in that nudge and their
 archival inbox copy is atomically marked delivered/read. Newlines and tabs are
 preserved through a bounded bracketed paste; other control-bearing bodies use
 the stable `inbox read <id>` pointer. Configure the rune threshold with
 `agent.message_inline_max_chars` (default 2000; `0` disables regular-message
-inlining). Human-authored dashboard mail is explicitly labelled **human
-operator**. Its inline form contains only the system metadata followed by the
-operator's own body (and attachment paths when present). Pointer nudges contain
-only the message ID and fetch command. `inbox read` explicitly reports whether
-the message is replyable; operator-authored mail is not, while agent-authored
-mail includes the normal reply address and command. Attachments are listed by
-durable, agent-readable absolute path in `inbox read` output.
+inlining). Agent-authored inline mail names the sender and includes the normal
+reply command; senderless system mail uses the same envelope without inventing
+a sender. Human-authored dashboard mail is explicitly labelled **human
+operator** and is not replyable. Pointer nudges contain only the message ID and
+fetch command. Attachments are listed by durable, agent-readable absolute path
+in both eligible inline delivery and `inbox read` output.
 
 ```bash
 tclaude agent inbox ls                # last 20, all
@@ -719,9 +728,10 @@ of `groups stop` / `groups resume`, and require `agent.stop` /
 
 ### cron
 
-Recurring scheduled nudges. The daemon's scheduler ticks every 30s and
-fires due jobs by delivering a message (or a direct keystroke for solo
-targets).
+Recurring scheduled nudges. The daemon's scheduler ticks every 30s and fires
+due jobs through the same durable inbox and delivery queue as peer, operator,
+and system messages. This includes solo jobs, so an offline target no longer
+loses a scheduled nudge.
 
 ```bash
 tclaude agent cron add --interval 10m --body "status check?" [--target SEL --name N]

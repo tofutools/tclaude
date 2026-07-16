@@ -111,20 +111,16 @@ func TestCronSoloSuccession_StaleRef_DeliversToLiveHead(t *testing.T) {
 	assert.Zero(t, msgRowCount(t, oldX), "no message delivered to the superseded conv")
 }
 
-// Scenario B: the solo (group_id=0, direct send-keys) delivery
-// sub-path is succession-safe too. A solo job whose target_conv is a
-// superseded conv-id sends keys into the LIVE successor's pane — before
-// the fix it called pickAliveSession on the dead conv, found no pane,
-// and silently no-op'd as "no_target".
-func TestCronSoloSuccession_SoloSendKeys_FollowsChain(t *testing.T) {
+// Scenario B: direct group_id=0 inbox delivery is succession-safe too. A solo
+// job whose target_conv is superseded queues mail for the live successor.
+func TestCronSoloSuccession_DirectInbox_FollowsChain(t *testing.T) {
 	f := newFlow(t)
 
 	const oldX = "css2-oldx-aaaa-bbbb-cccc-000000000001"
 	const newY = "css2-newy-aaaa-bbbb-cccc-000000000002"
 
 	// A solo, self-targeted cron job stored against the conv-id that is
-	// about to be superseded. group_id 0 → the scheduler send-keys
-	// directly into the target's pane.
+	// about to be superseded. group_id 0 means direct inbox mail.
 	id, err := db.InsertAgentCronJob(&db.AgentCronJob{
 		Name:            "self-nudge",
 		OwnerConv:       oldX,
@@ -147,6 +143,25 @@ func TestCronSoloSuccession_SoloSendKeys_FollowsChain(t *testing.T) {
 	// The body was send-keys'd into the LIVE successor's pane.
 	f.AssertSentContains("tclaude-spwn-css2-newy:0.0",
 		"remember to check the build", 2*time.Second)
+	findCronMsg(t, newY, "remember to check the build")
+}
+
+func TestCronSolo_OfflineTargetQueuesDurably(t *testing.T) {
+	f := newFlow(t)
+	const target = "csol-offl-aaaa-bbbb-cccc-000000000001"
+	f.HaveConvWithTitle(target, "offline-worker")
+	f.HaveEnrolledAgent(target)
+
+	id, err := db.InsertAgentCronJob(&db.AgentCronJob{
+		Name: "offline-nudge", OwnerConv: target,
+		TargetKind: db.CronTargetConv, TargetConv: target,
+		IntervalSeconds: 600, Body: "check this after resume", Enabled: true,
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, "ok", fireCronNow(t, f, id))
+	msg := findCronMsg(t, target, "check this after resume")
+	assert.True(t, msg.DeliveredAt.IsZero(), "offline delivery remains queued")
 }
 
 // Scenario C: the end-to-end happy path — reincarnate the target

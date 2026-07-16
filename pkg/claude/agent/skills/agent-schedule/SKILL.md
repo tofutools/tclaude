@@ -2,9 +2,9 @@
 name: agent-schedule
 description: >-
   Schedule recurring nudges and check-ins via `tclaude agent cron {ls, add, rm,
-  logs}`. The agentd scheduler ticks every 30s and fires due jobs as
-  agent_messages (when sender + target share a group) or direct tmux send-keys
-  (solo target). Use to set up periodic status pings to peer agents (e.g. a
+  logs}`. The agentd scheduler ticks every 30s and fires due jobs through the
+  durable agent-message delivery queue for both grouped and solo targets. Use
+  to set up periodic status pings to peer agents (e.g. a
   Product Owner agent pinging workers every 10 minutes), self-check-ins, or any
   task that's currently a `/loop` or external cron. Self-targeted scheduling
   needs `self.schedule` (default-granted alongside the other self-lifecycle
@@ -17,9 +17,9 @@ description: >-
 You can ask the agentd scheduler to fire a message at a regular
 interval — to yourself or to a peer in a shared group — without
 spinning your own /loop. The scheduler ticks every 30 seconds, picks
-up due jobs, and delivers them via the same paths you use manually
-(agent_messages + flush nudge for grouped targets, direct send-keys
-for solo targets).
+up due jobs, and delivers them through the same durable inbox queue used by
+manual messages. Offline and temporarily blocked targets keep the nudge until
+they can receive it.
 
 ## Verbs
 
@@ -72,8 +72,7 @@ You're a Product Owner agent in group `team-alpha` with two workers
 10 minutes so you can keep momentum without babysitting:
 
 ```bash
-# Self-pings the workers via the daemon — both are in your group, so
-# routing goes through agent_messages + flush nudge.
+# Self-pings the workers via the daemon's durable message queue.
 tclaude agent cron add \
   --target backend-worker \
   --interval 10m \

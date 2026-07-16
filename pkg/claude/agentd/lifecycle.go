@@ -1505,7 +1505,7 @@ func handleAgentResume(w http.ResponseWriter, r *http.Request, targetConv string
 }
 
 // pickAliveSession returns the most-recent session row for convID
-// whose tmux session is still alive. Same selector as nudgeIfAlive.
+// whose tmux session is still alive. Same selector as queued mail delivery.
 func pickAliveSession(convID string) *db.SessionRow {
 	candidates, err := db.FindSessionsByConvID(convID)
 	if err != nil {
@@ -3864,7 +3864,7 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 			GroupID:      spawnGroupID(g),
 			FromConv:     replyToConv,
 			ToConv:       convID,
-			Subject:      "Startup context",
+			Subject:      db.StartupContextSubject,
 			Body:         spawnContext,
 			ToRecipients: []string{convID},
 		}

@@ -848,9 +848,9 @@ func replySubjectFor(orig string) string {
 // browser passes only the message id + text), so a reply can only route
 // to the notification's real sender. It is delivered as a sender-less
 // operator message — the same universal-inbox transport the dashboard's
-// self-reincarnate request and the spawn brief use (FromConv ""): a live
-// target is nudged immediately; the mail UI renders a sender-less row as
-// the human/operator, which is exactly what this is.
+// self-reincarnate request uses (FromConv ""). The async dispatcher owns
+// readiness and retries; the mail UI renders a sender-less row as the
+// human/operator, which is exactly what this is.
 //
 // The operator asked that a reply be BLOCKED when the agent is offline —
 // an offline agent has no live session, and answering a question into the
@@ -944,12 +944,9 @@ func handleDashboardHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "offline", "the agent is offline — it has no live session to receive a reply")
 		return
 	}
-	// Deliver as a sender-less operator message on the universal inbox
-	// (FromConv "", group_id 0 = a direct message), then nudge if the pane
-	// is ready. nudgeIfAlive may HOLD delivery when the agent is mid-prompt
-	// (awaiting human input) — the row still lands in its inbox and flushes
-	// when it resumes; we surface that as "held" so the toast can say so.
-	id, err := db.InsertAgentMessage(&db.AgentMessage{
+	// Deliver as a sender-less operator message on the universal inbox.
+	// The async worker owns readiness/hold checks, retries, and consumption.
+	id, err := queueAgentMessage(&db.AgentMessage{
 		GroupID:          0,
 		FromConv:         "",
 		ToConv:           target,
@@ -962,7 +959,6 @@ func handleDashboardHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "io", "queue reply: "+err.Error())
 		return
 	}
-	outcome := nudgeIfAlive(id, target)
 	// Replying means the operator has handled this notification — mark the
 	// original read (idempotent; opening it in the reader usually already
 	// did). Best-effort: a failure here must not fail the delivered reply.
@@ -972,8 +968,8 @@ func handleDashboardHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"message_id": id,
 		"conv_id":    target,
-		"delivered":  outcome.delivered(),
-		"held":       outcome.held(),
+		"queued":     true,
+		"pending":    queueDepthFor(target, false),
 	})
 }
 

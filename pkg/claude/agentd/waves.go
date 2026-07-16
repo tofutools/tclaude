@@ -454,7 +454,7 @@ func deliverWorkPattern(g *db.AgentGroup, pattern []db.WorkPatternEntry, templat
 		}
 		subject := fmt.Sprintf("[work-pattern %d/%d] %s", i+1, len(pattern), templateName)
 		for _, conv := range targets {
-			if _, err := db.InsertAgentMessage(&db.AgentMessage{
+			if _, err := queueAgentMessage(&db.AgentMessage{
 				GroupID:      g.ID,
 				FromConv:     caller,
 				ToConv:       conv,
@@ -467,7 +467,6 @@ func deliverWorkPattern(g *db.AgentGroup, pattern []db.WorkPatternEntry, templat
 				continue
 			}
 			delivered++
-			enqueueDeliveryForConv(conv)
 		}
 	}
 	return delivered, errs

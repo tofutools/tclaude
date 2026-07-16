@@ -14,7 +14,7 @@ import (
 // implementation is realFlushSender; tests inject a stub so the
 // claim/iteration logic in `flush` can be exercised without a real
 // tmux session.
-type flushSender func(m *db.AgentMessage) (delivered bool)
+type flushSender func(m *db.AgentMessage, nudge string) (delivered bool)
 
 // flushMinInterval is how often a single conv-id is allowed to
 // trigger a flush. Five seconds keeps the cost amortised when an
@@ -122,7 +122,7 @@ func flushAgent(agentID string) int {
 	return flushQueue("agent:"+agentID,
 		func() ([]*db.AgentMessage, error) { return db.ListUndeliveredForAgent(agentID) },
 		func() bool { return deliverablePane(head) },
-		func(m *db.AgentMessage) bool { return sendNudgeBracket(head, m.ID) })
+		func(m *db.AgentMessage, nudge string) bool { return sendNudgeBracket(head, m.ID, nudge) })
 }
 
 // flush drains the exact-conv queue for convID: undelivered messages that
@@ -191,9 +191,10 @@ func flushQueue(label string, list func() ([]*db.AgentMessage, error), canDelive
 		// may span many historical rows; process-local ownership closes the
 		// lease-expiry window without weakening restart recovery.
 		registerActiveNudge(m.ID, token)
+		nudge, consumed := messageNudgeTextFor(m)
 		completed := func() bool {
 			defer unregisterActiveNudge(m.ID, token)
-			if !send(m) {
+			if !send(m, nudge) {
 				if released, rerr := db.ReleaseAgentMessageNudge(m.ID, token); rerr != nil || !released {
 					slog.Warn("flush: failed to release nudge claim",
 						"error", rerr, "released", released, "msg_id", m.ID)
@@ -204,7 +205,6 @@ func flushQueue(label string, list func() ([]*db.AgentMessage, error), canDelive
 					"retry_in", nudgeRetryDelay(m.NudgeAttempts+1))
 				return false
 			}
-			_, consumed := messageInlineText(m)
 			stamped, err := db.CompleteAgentMessageNudgeState(m.ID, token, time.Now(), consumed)
 			if err != nil || !stamped {
 				// The pane may have received the nudge, but without the durable
@@ -258,18 +258,18 @@ func nudgeRetryDelay(attempts int) time.Duration {
 // nudge into its CC pane. Returns false (no error) if no alive session is
 // found — the message stays in the inbox; the recipient will see it on next
 // `inbox ls`.
-func realFlushSender(m *db.AgentMessage) bool {
-	return sendNudgeBracket(m.ToConv, m.ID)
+func realFlushSender(m *db.AgentMessage, nudge string) bool {
+	return sendNudgeBracket(m.ToConv, m.ID, nudge)
 }
 
 // sendNudgeBracket finds an alive tmux session for toConv and sends
 // the bracketed nudge for msgID. Shares injectTextAndSubmit with
-// nudgeIfAlive / injectSlashCommand — see that helper for why the
+// lifecycle/ephemeral injectors — see that helper for why the
 // text and the submit Enter are split with a sleep.
 //
 // Caller is responsible for marking delivered_at; this function
 // only does the tmux work.
-func sendNudgeBracket(toConv string, msgID int64) bool {
+func sendNudgeBracket(toConv string, msgID int64, nudge string) bool {
 	sess := pickNudgeSession(toConv)
 	if sess == nil || isAwaitingHumanInput(sess.Status) {
 		return false
@@ -279,7 +279,6 @@ func sendNudgeBracket(toConv string, msgID int64) bool {
 	// may have entered a human-input dialog meanwhile. A narrow TOCTOU window
 	// remains while we wait for the pane lock; closing that would require the
 	// injection primitive itself to understand persisted session status.
-	nudge := messageNudgeText(msgID)
 	if err := injectTextAndSubmit(sess.TmuxSession+":0.0", nudge); err != nil {
 		slog.Warn("nudge bracket failed", "error", err, "tmux", sess.TmuxSession)
 		return false

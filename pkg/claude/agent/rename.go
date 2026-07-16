@@ -45,7 +45,7 @@ func renameCmd() *cobra.Command {
 type renameParams struct {
 	Title    string `pos:"true" optional:"true" help:"New conversation title (1-64 chars, [A-Za-z0-9_\\-\\[\\]{}() ] only; single spaces OK, no doubles). Omit when --auto is set."`
 	Target   string `long:"target" optional:"true" help:"Rename ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires the agent.rename permission, or being an owner of a group containing the target."`
-	Auto     bool   `long:"auto" help:"Ask the agent to choose its own title — injects a bracketed [system: ...] nudge prompting it to call 'tclaude agent rename' with a 3-4-word kebab-case slug. Mutually exclusive with the positional title."`
+	Auto     bool   `long:"auto" help:"Ask the agent to choose its own title — queues an inbox instruction prompting it to call 'tclaude agent rename' with a 3-4-word kebab-case slug. Mutually exclusive with the positional title."`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny. Self-target only."`
 }
 

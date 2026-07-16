@@ -48,6 +48,33 @@ var (
 	nudgeState = map[string]*nudgeWork{}
 )
 
+// queueAgentMessage is the single post-startup message entry point: persist
+// the durable inbox row first, then hand its recipient to the async delivery
+// dispatcher. Callers choose attribution, subject, body, audiences, and other
+// message policy on the row; they do not select a tmux transport.
+//
+// Startup briefings deliberately use db.InsertAgentMessage directly because
+// their first delivery is owned by the harness launch seed/welcome. Clone and
+// reincarnate handoffs also insert directly, then enqueue after their ordered
+// post-spawn rename has settled.
+func queueAgentMessage(m *db.AgentMessage) (int64, error) {
+	id, err := db.InsertAgentMessage(m)
+	if err != nil {
+		return 0, err
+	}
+	enqueueDeliveryForConv(m.ToConv)
+	return id, nil
+}
+
+func queueAgentMessageWithAttachments(m *db.AgentMessage, attachments []db.AgentMessageAttachment) (int64, error) {
+	id, err := db.InsertAgentMessageWithAttachments(m, attachments)
+	if err != nil {
+		return 0, err
+	}
+	enqueueDeliveryForConv(m.ToConv)
+	return id, nil
+}
+
 // enqueueDeliveryForConv routes a recipient conv-id to the right drain(s): the
 // agent-keyed drain when the conv is an enrolled agent (head-following mail),
 // AND the conv-keyed drain (pinned-to-this-conv / non-actor mail). It is the

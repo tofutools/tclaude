@@ -1,40 +1,17 @@
 package agent
 
 import (
-	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"strings"
 	"unicode"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
-	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/common"
 )
-
-// nudgeFn is a seam so tests can stub the tmux side-effect.
-type nudgeFn func(tmuxSession, msg string) error
-
-// defaultNudge mirrors task/run.go's send pattern: a textual line followed
-// by Enter. It targets pane :0.0 — the same pane CC's input box lives in.
-func defaultNudge(tmuxSession, msg string) error {
-	target := clcommon.ExactTarget(tmuxSession) + ":0.0"
-	if err := clcommon.TmuxCommand("send-keys", "-t", target, msg, "Enter").Run(); err != nil {
-		return err
-	}
-	return nil
-}
-
-// messageDeps lets tests override DB lookups + the tmux nudge. Production
-// path uses the package-level functions directly.
-type messageDeps struct {
-	nudge nudgeFn
-}
 
 // queuedState renders the async delivery state shown to the sender (JOH-310).
 // pending is the recipient's queue depth INCLUDING this message, so pending-1
@@ -64,8 +41,8 @@ func messageCmd() *cobra.Command {
 		Use:     "message",
 		Aliases: []string{"msg", "send"},
 		Short:   "Send a message to another agent (or 'group:<name|id>' to broadcast)",
-		Long: "Persists the message in SQLite and, if the target has a live tmux session, injects a `[system: …]` nudge so the receiving agent sees it on its next turn. " +
-			"A target prefixed with 'group:' fans out: one row per non-sender member, nudging each one online. The group can be named ('group:reviewers'), given by numeric id ('group:7'), or left empty ('group:') to mean your own group — the latter is an error unless you are a member of exactly one group. " +
+		Long: "Persists the message in SQLite and hands it to the daemon's durable per-agent delivery queue, which nudges a ready pane or retains it until the recipient can receive it. " +
+			"A target prefixed with 'group:' fans out: one row per non-sender member, queueing each for delivery. The group can be named ('group:reviewers'), given by numeric id ('group:7'), or left empty ('group:') to mean your own group — the latter is an error unless you are a member of exactly one group. " +
 			"The sender must be a member or owner of the group to broadcast. Add --role to broadcast only to members holding a given role.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *messageParams, _ *cobra.Command) error {
@@ -75,12 +52,12 @@ func messageCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *messageParams, _ *cobra.Command, _ []string) {
-			os.Exit(runMessage(p, &messageDeps{nudge: defaultNudge}, os.Stdout, os.Stderr, os.Stdin))
+			os.Exit(runMessage(p, os.Stdout, os.Stderr, os.Stdin))
 		},
 	}.ToCobra()
 }
 
-func runMessage(p *messageParams, d *messageDeps, stdout, stderr io.Writer, stdin io.Reader) int {
+func runMessage(p *messageParams, stdout, stderr io.Writer, stdin io.Reader) int {
 	// --role only narrows a group: multicast. On a 1:1 target there is
 	// no member set to filter — fail fast with a clear message before
 	// the daemon round-trip (the daemon enforces the same rule).
@@ -107,7 +84,6 @@ func runMessage(p *messageParams, d *messageDeps, stdout, stderr io.Writer, stdi
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	_ = d // direct path is exercised by tests via runMessageDirect.
 	return runMessageDaemon(p, body, stdout, stderr)
 }
 
@@ -235,88 +211,6 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 			resp.ID, via, state, short(resp.RedirectedFrom))
 	} else {
 		fmt.Fprintf(stdout, "Sent message #%d %s (%s)\n", resp.ID, via, state)
-	}
-	return rcOK
-}
-
-func runMessageDirect(p *messageParams, d *messageDeps, body string, stdout, stderr io.Writer) int {
-	fromID, err := currentConvID()
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcNotFound
-	}
-
-	target, matches, err := resolveSelector(p.Target)
-	if errors.Is(err, errAmbiguous) {
-		printAmbiguous(stderr, p.Target, matches)
-		return rcAmbiguous
-	}
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcNotFound
-	}
-	if target.ConvID == fromID {
-		fmt.Fprintf(stderr, "Error: cannot message self\n")
-		return rcInvalidArg
-	}
-
-	// Authorisation: must share at least one group.
-	shared, err := db.SharedGroupsForConvs(fromID, target.ConvID)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcIOFailure
-	}
-	if len(shared) == 0 {
-		fmt.Fprintf(stderr, "Error: not in a shared group with target %s\n", short(target.ConvID))
-		return rcAuth
-	}
-	via := shared[0] // first by name; deterministic per design
-
-	// Persist.
-	id, err := db.InsertAgentMessage(&db.AgentMessage{
-		GroupID:  via.ID,
-		FromConv: fromID,
-		ToConv:   target.ConvID,
-		Subject:  p.Subject,
-		Body:     body,
-	})
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcIOFailure
-	}
-
-	// Nudge target's tmux pane if it has a live session.
-	delivered := false
-	if d != nil && d.nudge != nil {
-		if sess, err := db.FindSessionByConvID(target.ConvID); err == nil && sess != nil && sess.TmuxSession != "" {
-			if session.IsTmuxSessionAlive(sess.TmuxSession) {
-				fromAgent, _ := db.AgentIDForConv(fromID)
-				sender := MessageSenderLabel(fromID, fromAgent)
-				replySel := shortAgentID(fromAgent, fromID)
-				subjectClause := ""
-				if p.Subject != "" {
-					subjectClause = fmt.Sprintf(" subject=%q", p.Subject)
-				}
-				nudge := fmt.Sprintf(
-					"[system: new agent message #%d from %s in group %q.%s read with: tclaude agent inbox read %d. reply with: tclaude agent message %s \"...\".]",
-					id, sender, via.Name, subjectClause, id, replySel,
-				)
-				if err := d.nudge(sess.TmuxSession, nudge); err != nil {
-					slog.Warn("failed to nudge target tmux session", "error", err, "session", sess.TmuxSession, "module", "agent")
-				} else {
-					delivered = true
-					if err := db.MarkAgentMessageDelivered(id); err != nil {
-						slog.Warn("failed to record delivered_at", "error", err, "msg_id", id, "module", "agent")
-					}
-				}
-			}
-		}
-	}
-
-	if delivered {
-		fmt.Fprintf(stdout, "Sent message #%d to %s via group %q (delivered)\n", id, short(target.ConvID), via.Name)
-	} else {
-		fmt.Fprintf(stdout, "Sent message #%d to %s via group %q (queued; target not online)\n", id, short(target.ConvID), via.Name)
 	}
 	return rcOK
 }

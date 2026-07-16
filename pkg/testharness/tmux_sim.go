@@ -161,6 +161,11 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 		return exec.Command(falseBin)
 	case len(args) >= 4 && args[0] == "send-keys" && args[1] == "-t":
 		t.routeSendKeys(args[2], args[3])
+	case len(args) >= 5 && args[0] == "send-keys" && args[1] == "-l" && args[2] == "-t":
+		// Literal mode prevents text such as "Enter" or "C-c" from being
+		// interpreted as tmux key names. The pane simulator already treats
+		// routed text literally; account for the extra production flag here.
+		t.routeSendKeys(args[3], args[4])
 	case len(args) >= 3 && args[0] == "set-buffer":
 		t.setBuffer(args[1:])
 	case len(args) >= 3 && args[0] == "paste-buffer":

@@ -21,6 +21,7 @@ import (
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/notify"
+	"github.com/tofutools/tclaude/pkg/claude/common/paneinput"
 	"github.com/tofutools/tclaude/pkg/claude/common/ratelimit"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/common"
@@ -609,7 +610,6 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 						signalExists = false
 						msg := fmt.Sprintf("Verification failed (attempt %d/%d), please fix the issue and try again:\n```\n%s\n```\n", attempts, opts.verifyMaxRetries, output)
 						sendTmuxMessage(tmuxSession, msg)
-						sendTmuxEnter(tmuxSession)
 						continue
 					}
 					// Retries exhausted
@@ -667,7 +667,6 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 								signalExists = false
 								msg := fmt.Sprintf("%s\n%s", opts.reviewPrefix, reviewOutput)
 								sendTmuxMessage(tmuxSession, msg)
-								sendTmuxEnter(tmuxSession)
 								attempts = 0 // reset verify attempts for post-review changes
 								continue
 							}
@@ -998,15 +997,13 @@ func runReviewAgent(ctx context.Context, reviewSkill, diff, cwd string, timeout 
 }
 
 func sendTmuxMessage(tmuxSession, message string) {
-	cmd := clcommon.TmuxCommand("send-keys", "-t", clcommon.ExactTarget(tmuxSession)+":", message, "Enter")
-	if err := cmd.Run(); err != nil {
+	if err := paneinput.InjectTextAndSubmit(tmuxSession+":0.0", message, paneinput.Options{}); err != nil {
 		slog.Warn("failed to send tmux message", "session", tmuxSession, "error", err, "module", "task")
 	}
 }
 
 func sendTmuxEnter(tmuxSession string) {
-	cmd := clcommon.TmuxCommand("send-keys", "-t", clcommon.ExactTarget(tmuxSession)+":", "Enter")
-	if err := cmd.Run(); err != nil {
+	if err := paneinput.SendKeys(tmuxSession+":0.0", paneinput.Options{}, "Enter"); err != nil {
 		slog.Warn("failed to send tmux enter", "session", tmuxSession, "error", err, "module", "task")
 	}
 }

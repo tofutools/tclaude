@@ -534,6 +534,12 @@ func RevokeAllAgentPermissionsForConv(convID string) (int64, error) {
 // shows in "All agent messages" even though its sender is now retired.
 const ReincarnationHandoffSubject = "reincarnation handoff"
 
+// StartupContextSubject identifies the one mailbox row whose delivery is
+// owned by the harness launch path rather than the regular post-startup nudge
+// pipeline. Keep this marker central: regular-message inlining must never race
+// the CLI-argument seed/welcome and duplicate a spawned agent's briefing.
+const StartupContextSubject = "Startup context"
+
 // AgentMessage is a row in agent_messages. Body is stored inline.
 // ParentID is the message this one is a reply to, or 0 for top-of-thread.
 //

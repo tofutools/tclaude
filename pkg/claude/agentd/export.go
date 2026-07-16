@@ -333,25 +333,26 @@ func runExportClone(jobID int64, originalConv, cwd, effort, model string, sameGr
 		slog.Warn("export clone: mark requested failed", "job", jobID, "error", err)
 	}
 
-	// 6. Inject the fixed-format pointer nudge into the CLONE's pane — only the
-	// integer job id is interpolated, so no arbitrary text rides send-keys.
-	sess := pickAliveSession(newConv)
-	if sess == nil {
-		slog.Warn("export clone: pane vanished before nudge", "job", jobID, "conv", newConv)
-		failExportJobAndReap(jobID, newConv, "the export clone's pane was not reachable to start the export")
-		return
-	}
-	nudge := fmt.Sprintf(
-		"[system: the human requested an export of this conversation (request #%d). "+
-			"Run: tclaude agent export show %d — it explains what to produce and how to deliver it.]",
+	// 6. Queue the request through the universal inbox. A transient pane or
+	// input failure now follows the normal durable retry path instead of
+	// destroying the export job and clone after one send-keys attempt.
+	body := fmt.Sprintf(
+		"The human requested an export of this conversation (request #%d). "+
+			"Run: tclaude agent export show %d — it explains what to produce and how to deliver it.",
 		jobID, jobID)
-	if err := injectTextAndSubmit(sess.TmuxSession+":0.0", nudge); err != nil {
-		slog.Warn("export clone: nudge failed", "job", jobID, "tmux", sess.TmuxSession, "error", err)
-		failExportJobAndReap(jobID, newConv, "could not reach the export clone's pane to start the export")
+	if _, err := queueAgentMessage(&db.AgentMessage{
+		FromConv:         "",
+		ToConv:           newConv,
+		Subject:          "Conversation export request",
+		Body:             body,
+		ToRecipients:     []string{newConv},
+		OperatorAuthored: true,
+	}); err != nil {
+		slog.Warn("export clone: queue request failed", "job", jobID, "conv", newConv, "error", err)
+		failExportJobAndReap(jobID, newConv, "could not queue the export request for its clone")
 		return
 	}
-	slog.Info("export clone ready to summarize", "job", jobID, "orig", originalConv,
-		"clone", newConv, "tmux", sess.TmuxSession)
+	slog.Info("export clone ready to summarize", "job", jobID, "orig", originalConv, "clone", newConv)
 }
 
 // exportCloneTitle is the clone's title: `<original-title>-summary-writer-clone`,

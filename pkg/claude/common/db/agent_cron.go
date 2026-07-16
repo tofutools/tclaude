@@ -16,7 +16,7 @@ import (
 const (
 	// CronTargetConv — target_conv is the recipient; group_id (when >0)
 	// is the routing group a conv-targeted message is sent through, or 0
-	// for a direct tmux send-keys. The long-standing job shape.
+	// for direct group_id 0 mailbox delivery. The long-standing job shape.
 	CronTargetConv = "conv"
 	// CronTargetGroup — group_id IS the target group; the scheduler
 	// resolves that group's membership at fire time and delivers the
@@ -56,7 +56,7 @@ type AgentCronJob struct {
 	OwnerConv   string
 	TargetKind  string // CronTargetConv | CronTargetGroup
 	TargetConv  string // recipient when TargetKind == CronTargetConv
-	GroupID     int64  // conv-kind: routing group (0 → solo send-keys). group-kind: the target group.
+	GroupID     int64  // conv-kind: routing group (0 → direct inbox). group-kind: the target group.
 	// TargetRole filters a group-target job to the members whose role matches,
 	// resolved at fire time against the live roster (JOH-244). "" or "all" =
 	// the whole group. Unused for a conv-target job. A first-class cron

@@ -1229,11 +1229,9 @@ func dashboardReincarnateAgent(w http.ResponseWriter, r *http.Request, convSelec
 // non-empty it is folded into the message as guidance (NOT a command).
 // When blank, the agent just writes a general handoff.
 //
-// The request rides the universal inbox (db.InsertAgentMessage +
-// nudgeIfAlive) — the same transport reincarnate's own handoff uses. A
-// live target is nudged immediately; an offline / busy one picks the
-// message up from its inbox when it next comes online (the daemon
-// flushes undelivered messages on the agent's next request). The
+// The request rides the universal inbox and async delivery dispatcher — the
+// same transport reincarnate's own handoff uses. A live target drains promptly;
+// an offline / busy one picks the message up when it becomes deliverable. The
 // target's tmux session is left running — nothing is force-killed.
 //
 // Unlike the force path, this does NOT go through requireCrossAgentPermission:
@@ -1258,46 +1256,29 @@ func dashboardAskSelfReincarnate(w http.ResponseWriter, target, focusHint string
 	// not a peer-to-peer send — the same shape reincarnate's own handoff
 	// uses when triggered from the dashboard. group_id 0 is a direct
 	// message, the universal-inbox transport.
-	id, err := db.InsertAgentMessage(&db.AgentMessage{
-		GroupID:      0,
-		FromConv:     "",
-		ToConv:       target,
-		Subject:      subject,
-		Body:         instruction,
-		ToRecipients: []string{target},
+	id, err := queueAgentMessage(&db.AgentMessage{
+		GroupID:          0,
+		FromConv:         "",
+		ToConv:           target,
+		Subject:          subject,
+		Body:             instruction,
+		ToRecipients:     []string{target},
+		OperatorAuthored: true,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io",
 			"queue self-reincarnate request: "+err.Error())
 		return
 	}
-	outcome := nudgeIfAlive(id, target)
-	delivered := outcome.delivered()
-	note := fmt.Sprintf("asked %s to reincarnate itself; instruction delivered to its inbox as "+
+	note := fmt.Sprintf("asked %s to reincarnate itself; instruction queued in its inbox as "+
 		"message #%d — it will write its own handoff and reincarnate at a clean point",
 		short8(target), id)
-	if !delivered {
-		// Two distinct not-delivered cases: offline (picks it up when it
-		// next comes online) vs held because the target is mid-question with
-		// a human (it IS online — picks it up when it resumes). Tailor both
-		// the reason and the closing clause so the held line doesn't read as
-		// "offline".
-		reason := "target offline or busy"
-		tail := "comes online"
-		if outcome.held() {
-			reason = "target is waiting on human input; held in its mailbox"
-			tail = "resumes"
-		}
-		note = fmt.Sprintf("asked %s to reincarnate itself; instruction queued in its inbox as "+
-			"message #%d (%s) — it will pick the request up when it next %s",
-			short8(target), id, reason, tail)
-	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"mode":       reincarnateModeSelf,
 		"conv_id":    target,
 		"message_id": id,
-		"delivered":  delivered,
-		"held":       outcome.held(),
+		"queued":     true,
+		"pending":    queueDepthFor(target, false),
 		"note":       note,
 	})
 }

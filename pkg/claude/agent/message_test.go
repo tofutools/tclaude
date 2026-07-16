@@ -3,7 +3,6 @@ package agent
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"strings"
 	"testing"
 
@@ -11,56 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
-
-func TestRunMessage_HappyPath(t *testing.T) {
-	setupTestDB(t)
-	upsertConvIndex(t, "aaaaaaaa-2222-3333-4444-555555555555", "planner", "", "")
-	upsertConvIndex(t, "bbbbbbbb-2222-3333-4444-555555555555", "reviewer", "", "")
-
-	gID, err := db.CreateAgentGroup("alpha", "")
-	require.NoError(t, err, "CreateAgentGroup")
-	for _, c := range []string{"aaaaaaaa-2222-3333-4444-555555555555", "bbbbbbbb-2222-3333-4444-555555555555"} {
-		require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: c}), "AddAgentGroupMember")
-	}
-	t.Setenv("TCLAUDE_SESSION_ID", "aaaaaaaa-2222-3333-4444-555555555555")
-
-	var captured struct {
-		called  bool
-		session string
-		msg     string
-	}
-	deps := &messageDeps{
-		nudge: func(s, m string) error {
-			captured.called = true
-			captured.session = s
-			captured.msg = m
-			return nil
-		},
-	}
-
-	var stdout, stderr bytes.Buffer
-	rc := runMessageDirect(&messageParams{
-		Target:  "reviewer",
-		Body:    "hello there",
-		Subject: "ping",
-	}, deps, "hello there", &stdout, &stderr)
-	require.Equal(t, rcOK, rc, "stderr = %q", stderr.String())
-
-	// The target has no live tmux session row, so the nudge isn't called
-	// in this test; we still expect persistence + queued status.
-	require.False(t, captured.called, "nudge should not fire without an alive tmux session: %+v", captured)
-	assert.Contains(t, stdout.String(), "queued")
-
-	msgs, err := db.ListAgentMessagesForConv("bbbbbbbb-2222-3333-4444-555555555555", 0)
-	require.NoError(t, err, "ListAgentMessagesForConv")
-	require.Len(t, msgs, 1)
-	got := msgs[0]
-	assert.Equal(t, "hello there", got.Body)
-	assert.Equal(t, "ping", got.Subject)
-	assert.Equal(t, gID, got.GroupID, "group_id")
-	// `delivered_at` should remain unset since no tmux session ran.
-	assert.True(t, got.DeliveredAt.IsZero(), "expected delivered_at unset, got %v", got.DeliveredAt)
-}
 
 func TestRunInboxReadDaemonShowsReplyability(t *testing.T) {
 	prev := DaemonRequestImpl
@@ -84,43 +33,6 @@ func TestRunInboxReadDaemonShowsReplyability(t *testing.T) {
 	assert.Contains(t, stdout.String(), "Replyable:  false")
 	assert.NotContains(t, stdout.String(), "Reply-To:")
 	assert.NotContains(t, stdout.String(), "Reply-Cmd:")
-}
-
-func TestRunMessage_RefusesWithoutSharedGroup(t *testing.T) {
-	setupTestDB(t)
-	upsertConvIndex(t, "aaaaaaaa-2222-3333-4444-555555555555", "planner", "", "")
-	upsertConvIndex(t, "bbbbbbbb-2222-3333-4444-555555555555", "reviewer", "", "")
-
-	gID, _ := db.CreateAgentGroup("alpha", "")
-	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "aaaaaaaa-2222-3333-4444-555555555555"}), "AddAgentGroupMember")
-	// reviewer is not in any group with planner.
-
-	t.Setenv("TCLAUDE_SESSION_ID", "aaaaaaaa-2222-3333-4444-555555555555")
-
-	var stdout, stderr bytes.Buffer
-	rc := runMessageDirect(&messageParams{
-		Target: "reviewer",
-		Body:   "hello",
-	}, &messageDeps{nudge: func(string, string) error { return nil }}, "hello",
-		&stdout, &stderr)
-	require.Equal(t, rcAuth, rc, "stderr = %q", stderr.String())
-	assert.Contains(t, stderr.String(), "shared group")
-}
-
-func TestRunMessage_RefusesSelfMessage(t *testing.T) {
-	setupTestDB(t)
-	upsertConvIndex(t, "aaaaaaaa-2222-3333-4444-555555555555", "planner", "", "")
-
-	t.Setenv("TCLAUDE_SESSION_ID", "aaaaaaaa-2222-3333-4444-555555555555")
-
-	var stdout, stderr bytes.Buffer
-	rc := runMessageDirect(&messageParams{
-		Target: "planner",
-		Body:   "hi self",
-	}, &messageDeps{nudge: func(string, string) error { return nil }}, "hi self",
-		&stdout, &stderr)
-	require.Equal(t, rcInvalidArg, rc)
-	assert.Contains(t, stderr.String(), "cannot message self")
 }
 
 func TestReadBody(t *testing.T) {
@@ -240,4 +152,3 @@ func itoa(i int64) string {
 
 // Sanity check that resolveSelector still returns the AmbiguousByTitle
 // sentinel error when called from message-level code.
-var _ = errors.Is

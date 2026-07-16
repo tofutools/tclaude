@@ -433,7 +433,7 @@ func reuseScopedScribe(g *db.AgentGroup, scopeKey string, overrides map[string]s
 				return nil, &spawnFailure{http.StatusInternalServerError, "task_ref", "refresh reusable scribe task reference: " + err.Error()}
 			}
 		}
-		_, err = db.InsertAgentMessage(&db.AgentMessage{
+		_, err = queueAgentMessage(&db.AgentMessage{
 			GroupID:      g.ID,
 			FromConv:     "",
 			ToConv:       member.ConvID,
@@ -444,7 +444,6 @@ func reuseScopedScribe(g *db.AgentGroup, scopeKey string, overrides map[string]s
 		if err != nil {
 			return nil, &spawnFailure{http.StatusInternalServerError, "brief", "refresh reusable scribe context: " + err.Error()}
 		}
-		enqueueDeliveryForConv(member.ConvID)
 		out := &scribeOutcome{Name: agent.FreshTitle(member.ConvID), ConvID: member.ConvID}
 		openScribeWindow(member.ConvID, out)
 		return out, nil

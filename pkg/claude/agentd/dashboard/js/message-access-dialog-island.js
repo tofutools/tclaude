@@ -412,11 +412,11 @@ function HumanReplyDialog({ descriptor, state, actions, snapshot, confirmDiscard
     onClose=${state.close} dirty=${!!body} blocked=${busy} confirmDiscard=${confirmDiscard}
     registerClose=${registerClose}>
     <h3 id="human-reply-title"><span class="human-reply-title-regular">Reply to agent</span><span class="human-reply-title-wizard">✒ Answer the familiar</span></h3>
-    <p id="human-reply-desc" class="modal-hint">Sends your answer to this agent's inbox and nudges its terminal. Delivered as a message from you, the operator.</p>
+    <p id="human-reply-desc" class="modal-hint">Queues your answer in this agent's inbox for delivery when its pane is ready. Delivered as a message from you, the operator.</p>
     <label class="cron-create-row"><span class="cron-create-label">To</span><div class="cron-create-target"><div id="human-reply-to">
       <div class="human-reply-to-name">${label}</div>${context.subject ? html`<div class="human-reply-to-subject">re: ${context.subject}</div>` : null}
     </div><div id="human-reply-status" class=${`human-reply-status ${online ? 'online' : 'offline'}`}>${online
-      ? '🟢 Online — your reply is delivered to its inbox and its terminal is nudged.'
+      ? '🟢 Online — your reply will be queued and delivered when its pane is ready.'
       : '⚫ Offline — this agent has no live session, so it can’t receive a reply. Replying is disabled until it’s back online.'}</div></div></label>
     <label class="cron-create-row"><span class="cron-create-label">Reply</span><textarea id="human-reply-body" rows="4" value=${body}
       placeholder="your reply (required) — ⌘/Ctrl+Enter to send" spellcheck="false" onInput=${(event) => setBody(event.currentTarget.value)} onKeyDown=${fieldSubmit(submit)}></textarea></label>

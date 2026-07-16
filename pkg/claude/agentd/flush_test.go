@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -114,7 +115,7 @@ func TestFlush_DeliversUndeliveredOldestFirst(t *testing.T) {
 	})
 
 	var got []int64
-	send := func(m *db.AgentMessage) bool {
+	send := func(m *db.AgentMessage, _ string) bool {
 		got = append(got, m.ID)
 		return true
 	}
@@ -144,8 +145,8 @@ func TestFlush_InlineOperatorMessageIsConsumedAtomically(t *testing.T) {
 	})
 	require.NoError(t, err)
 	var nudge string
-	assert.Equal(t, 1, drainExactConv("me", func(m *db.AgentMessage) bool {
-		nudge = messageNudgeText(m.ID)
+	assert.Equal(t, 1, drainExactConv("me", func(_ *db.AgentMessage, text string) bool {
+		nudge = text
 		return true
 	}))
 	assert.Contains(t, nudge, "from the human operator")
@@ -159,6 +160,42 @@ func TestFlush_InlineOperatorMessageIsConsumedAtomically(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, m.DeliveredAt.IsZero())
 	assert.False(t, m.ReadAt.IsZero(), "inline archival copy is consumed in queue completion")
+}
+
+func TestFlush_InlineAgentMessagePreservesSenderReplyAndConsumes(t *testing.T) {
+	setupTestDB(t)
+	id, err := db.InsertAgentMessage(&db.AgentMessage{
+		FromConv: "peer-aaaa-bbbb-cccc", ToConv: "me", Subject: "review",
+		Body: "Please inspect the failing test.",
+	})
+	require.NoError(t, err)
+	var nudge string
+	assert.Equal(t, 1, drainExactConv("me", func(_ *db.AgentMessage, text string) bool {
+		nudge = text
+		return true
+	}))
+	assert.Contains(t, nudge, "new agent message")
+	assert.Contains(t, nudge, "from peer-aaa")
+	assert.Contains(t, nudge, "; subject: review")
+	assert.Contains(t, nudge, fmt.Sprintf("reply with: tclaude agent reply %d", id))
+	assert.Contains(t, nudge, "] Please inspect the failing test.")
+	assert.NotContains(t, nudge, "inbox read")
+	m, err := db.GetAgentMessage(id)
+	require.NoError(t, err)
+	assert.False(t, m.DeliveredAt.IsZero())
+	assert.False(t, m.ReadAt.IsZero(), "inline agent mail is consumed like operator mail")
+}
+
+func TestStartupContextNeverUsesRegularMessageInlining(t *testing.T) {
+	setupTestDB(t)
+	id, err := db.InsertAgentMessage(&db.AgentMessage{
+		FromConv: "peer", ToConv: "me", Subject: db.StartupContextSubject,
+		Body: "short launch briefing",
+	})
+	require.NoError(t, err)
+	nudge := messageNudgeText(id)
+	assert.Contains(t, nudge, "inbox read")
+	assert.NotContains(t, nudge, "short launch briefing")
 }
 
 func TestInlineOperatorMessageKeepsExplicitSubjectInMetadata(t *testing.T) {
@@ -180,8 +217,8 @@ func TestFlush_MultilineOperatorMessageIsInlinedAndConsumed(t *testing.T) {
 	})
 	require.NoError(t, err)
 	var nudge string
-	assert.Equal(t, 1, drainExactConv("me", func(m *db.AgentMessage) bool {
-		nudge = messageNudgeText(m.ID)
+	assert.Equal(t, 1, drainExactConv("me", func(_ *db.AgentMessage, text string) bool {
+		nudge = text
 		return true
 	}))
 	assert.NotContains(t, nudge, "tclaude agent inbox read")
@@ -219,7 +256,7 @@ func TestOperatorMessagePointerOmitsReplyInstructions(t *testing.T) {
 func TestFlush_NoMessagesNoCalls(t *testing.T) {
 	setupTestDB(t)
 	calls := 0
-	send := func(*db.AgentMessage) bool { calls++; return true }
+	send := func(*db.AgentMessage, string) bool { calls++; return true }
 	assert.Equal(t, 0, drainExactConv("nobody", send), "flush of empty queue")
 	assert.Equal(t, 0, calls, "send call count")
 }
@@ -234,7 +271,7 @@ func TestFlush_FailedSendReleasesClaimAndBacksOff(t *testing.T) {
 		GroupID: g, FromConv: "peer", ToConv: "me", Body: "x",
 	})
 
-	send := func(*db.AgentMessage) bool { return false }
+	send := func(*db.AgentMessage, string) bool { return false }
 	assert.Equal(t, 0, drainExactConv("me", send), "failed delivery is not counted")
 	m, _ := db.GetAgentMessage(id)
 	if assert.NotNil(t, m) {
@@ -312,7 +349,7 @@ func TestFlush_ConcurrentClaimsAreRaceFree(t *testing.T) {
 
 	var mu sync.Mutex
 	delivered := map[int64]int{}
-	send := func(m *db.AgentMessage) bool {
+	send := func(m *db.AgentMessage, _ string) bool {
 		mu.Lock()
 		delivered[m.ID]++
 		mu.Unlock()

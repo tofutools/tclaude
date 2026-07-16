@@ -115,4 +115,3 @@ func inboxCount(t *testing.T, mux http.Handler, convID string) int {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out), "decode inbox: body=%s", rec.Body.String())
 	return len(out)
 }
-

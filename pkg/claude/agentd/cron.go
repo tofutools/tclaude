@@ -166,16 +166,13 @@ func runSudoGrantsCleanup(now time.Time) {
 // fireCronJob delivers a single job's payload. Returns the status
 // tag stored in last_run_status (visible in the dashboard).
 //
-// Three delivery paths, keyed off the job's target:
+// Two routing shapes, one delivery path:
 //   - group target → fan the body out to every CURRENT member of the
 //     target group (fireCronGroupJob). Membership is resolved at fire
 //     time so a recurring job tracks the live roster.
-//   - conv target, GroupID > 0 → insert one agent_messages row, let
-//     the existing flush nudge pipeline pick it up next time the
-//     target is alive. Reliable across target offline windows.
-//   - conv target, GroupID == 0 → direct tmux send-keys into the
-//     target's pane. Requires the target to be alive RIGHT NOW;
-//     "no_target" status when no live pane is found.
+//   - conv target → insert one agent_messages row (group-routed or direct)
+//     and let the shared async delivery pipeline handle online/offline,
+//     contention, retries, and inline-vs-pointer policy.
 //
 // For a conv target the stored conv is walked to its live successor
 // before delivery (walkSuccession), so a job whose target has since
@@ -208,41 +205,16 @@ func fireCronJob(j *db.AgentCronJob, now time.Time) string {
 	// when a redirect actually happened.
 	targetConv, originalTo := walkSuccession(j.TargetConv)
 
-	if j.GroupID > 0 {
-		_, err := db.InsertAgentMessage(&db.AgentMessage{
-			GroupID:        j.GroupID,
-			FromConv:       j.OwnerConv,
-			ToConv:         targetConv,
-			OriginalToConv: originalTo,
-			Subject:        subject,
-			Body:           j.Body,
-		})
-		if err != nil {
-			slog.Warn("cron: insert message failed", "job", j.ID, "error", err)
-			return "send_failed"
-		}
-		// Best-effort nudge via the per-agent dispatcher — delivers if the
-		// target is alive right now, otherwise the message sits in the inbox
-		// until the next agent_messages-aware request from the target.
-		// enqueueDeliveryForConv backgrounds + coalesces the drain itself.
-		enqueueDeliveryForConv(targetConv)
-		return "ok"
-	}
-
-	// Solo path: send the body directly via tmux. Subject is dropped
-	// since there's no message envelope.
-	sess := pickAliveSession(targetConv)
-	if sess == nil {
-		return "no_target"
-	}
-	target := sess.TmuxSession + ":0.0"
-	// Route through injectTextAndSubmit rather than hand-rolling the
-	// text→Enter→Enter sequence: it shares the per-pane injection lock
-	// (JOH-310), so a solo cron fire can't interleave its send-keys with a
-	// concurrent nudge / slash / export injection into the same pane, and
-	// the paste-mode settle reasoning stays in one place.
-	if err := injectTextAndSubmit(target, j.Body); err != nil {
-		slog.Warn("cron: solo send failed", "job", j.ID, "error", err)
+	if _, err := queueAgentMessage(&db.AgentMessage{
+		GroupID:        j.GroupID,
+		FromConv:       j.OwnerConv,
+		ToConv:         targetConv,
+		OriginalToConv: originalTo,
+		Subject:        subject,
+		Body:           j.Body,
+		ToRecipients:   []string{targetConv},
+	}); err != nil {
+		slog.Warn("cron: queue message failed", "job", j.ID, "error", err)
 		return "send_failed"
 	}
 	return "ok"

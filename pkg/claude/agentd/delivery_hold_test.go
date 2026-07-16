@@ -36,23 +36,3 @@ func TestIsAwaitingHumanInput(t *testing.T) {
 		}
 	}
 }
-
-func TestDeliveryOutcome_Predicates(t *testing.T) {
-	cases := []struct {
-		o             deliveryOutcome
-		wantDelivered bool
-		wantHeld      bool
-	}{
-		{outcomeQueued, false, false},
-		{outcomeDelivered, true, false},
-		{outcomeHeld, false, true},
-	}
-	for _, c := range cases {
-		if c.o.delivered() != c.wantDelivered {
-			t.Errorf("outcome %d delivered()=%v, want %v", c.o, c.o.delivered(), c.wantDelivered)
-		}
-		if c.o.held() != c.wantHeld {
-			t.Errorf("outcome %d held()=%v, want %v", c.o, c.o.held(), c.wantHeld)
-		}
-	}
-}
