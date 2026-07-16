@@ -849,8 +849,8 @@ func TestDashboardAssets_FeatureFlagsWired(t *testing.T) {
 }
 
 // TestDashboardAssets_ProcessesTabWired pins the feature-gated tab shell and
-// the stable editor/viewer mount contract consumed by the follow-on graph UI
-// tickets. The module has no build step, so literal asset pins catch a renamed
+// the stable editor/viewer mount contract and checkpoint-only rich viewer.
+// The module has no build step, so literal asset pins catch a renamed
 // DOM id or route before it becomes a browser-only failure.
 func TestDashboardAssets_ProcessesTabWired(t *testing.T) {
 	for _, needle := range []string{
@@ -861,6 +861,13 @@ func TestDashboardAssets_ProcessesTabWired(t *testing.T) {
 		`data-process-mount="editor"`,
 		`id="process-viewer-canvas"`,
 		`data-process-mount="viewer"`,
+		"ProcessViewerBoundary",
+		"loadRunView",
+		"detailOffset",
+		"detailLimit",
+		"data-process-viewer-graph",
+		"Timeline only — never topology or overlay authority",
+		"graph topology is the exact pinned template",
 		"templates: '/v1/process/templates'",
 		"'/v1/process/template-heads'",
 		"runs: '/v1/process/runs'",

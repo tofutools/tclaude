@@ -362,6 +362,10 @@ export function createProcessesActions({
     }
   }
   function openViewer(id) { state.setCanvas({ kind: 'viewer', id, key: id }); state.setNotice(`Opening run ${id}.`); }
+  function loadRunView(id, offset = 0, limit = 25) {
+    const query = new URLSearchParams({ detailOffset: String(offset), detailLimit: String(limit) });
+    return processJSON(`/v1/process/runs/${encodeURIComponent(id)}/view?${query}`, fetchImpl);
+  }
   async function closeCanvas() {
     if (!(await canLeaveEditor())) return false;
     state.setEditor(null); state.setCanvas(null); await load(state.subtab.value); return true;
@@ -409,6 +413,6 @@ export function createProcessesActions({
   return Object.freeze({
     load, observeTemplateHeads, activateSubtab, openEditor, summonScribe, describeActor, openActor,
     openScribe, stopScribe, retireScribe, openInstantiation, closeInstantiation,
-    submitInstantiation, openViewer, closeCanvas, openRunInList, submitWorklistAction, refreshActive,
+    submitInstantiation, openViewer, loadRunView, closeCanvas, openRunInList, submitWorklistAction, refreshActive,
   });
 }

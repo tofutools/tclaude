@@ -38,6 +38,9 @@ test('Processes actions preserve API routes, single-flight loads, comment gate, 
   resolveOld({ ok: true, json: async () => ({ templates: [{ id: 'old' }] }) }); await stale;
   await actions.load('templates');
   assert.equal(state.view.value.templates[0].id, 'fresh');
+  await actions.loadRunView('run/with space', 25, 25);
+  assert.equal(requests.at(-1).path, '/v1/process/runs/run%2Fwith%20space/view?detailOffset=25&detailLimit=25');
+  assert.equal(requests.at(-1).options.credentials, 'same-origin');
   const item = { id: 'i/1', run: 'r', node: 'n', kind: 'decision', status: 'pending', summary: 'Choose', availableActions: ['approve'] };
   state.worklistRequest.commitRequest(state.worklistRequest.beginRequest(), { items: [item], degradedRuns: [] });
   assert.equal(await actions.submitWorklistAction(item.id, 'approve'), false); assert.equal(state.missingComments.value.has(item.id), true);
@@ -963,7 +966,10 @@ test('canvas views retain their parent Processes subtab selection', async (t) =>
   ]);
   const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
   state.setSubtab('runs'); state.setCanvas({ kind: 'viewer', id: 'run-1', key: 'run-1' });
-  const actions = { refreshActive() {}, load() {}, activateSubtab() {}, closeCanvas() {} };
+  const actions = {
+    refreshActive() {}, load() {}, activateSubtab() {}, closeCanvas() {},
+    loadRunView: async () => ({ run: { id: 'run-1' }, viewerV2: { routingAvailable: false, routingUnavailableReason: 'routing_absent' }, report: { nodes: {} } }),
+  };
   const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
   assert.equal(mounted.container.querySelector('[data-process-subtab="runs"]').getAttribute('aria-selected'), 'true');
   assert.equal(mounted.container.querySelectorAll('[role="tab"][aria-selected="true"]').length, 1);

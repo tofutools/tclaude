@@ -49,6 +49,7 @@ export const KIND_META = {
   'review-needed': { glyph: '🔍', label: 'review' },
   'blocked': { glyph: '⛔', label: 'blocked' },
   'agent-obligation': { glyph: '🤖', label: 'agent' },
+  'waiting': { glyph: '◷', label: 'checkpoint wait' },
 };
 
 export function kindMeta(kind) {
