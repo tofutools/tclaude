@@ -251,6 +251,7 @@ test('natural top-down geometry snaps every node shape to its fixed port anchors
   const shapes = [
     { type: 'task', width: 168, height: 68 },
     { type: 'decision', width: 108, height: 108 },
+    { type: 'parallel', width: 108, height: 108 },
     { type: 'wait', width: 78, height: 78 },
     { type: 'start', width: 58, height: 58 },
     { type: 'end', width: 62, height: 62 },

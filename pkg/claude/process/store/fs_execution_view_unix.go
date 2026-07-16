@@ -157,7 +157,7 @@ func (s *FS) withExecutionViewRunLocked(ctx context.Context, runID string, callb
 		}
 		return &ExecutionViewInconsistentError{Err: fmt.Errorf("exact template source cannot be read: %w", err)}
 	}
-	parsedSource, err := model.Parse(templateSource)
+	parsedSource, err := model.ParseExactSource(templateSource)
 	if err != nil {
 		return &ExecutionViewInconsistentError{Err: fmt.Errorf("exact template source is invalid: %w", err)}
 	}

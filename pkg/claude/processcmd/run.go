@@ -64,7 +64,7 @@ func runRun(cmd *cobra.Command, p *runParams, out io.Writer) error {
 	templateRef := loaded.Ref
 	if templateRef == "" {
 		if err := processengine.ValidateInstantiation(loaded.Template, processengine.InstantiateRequest{
-			RunID: p.RunID, Params: params, Now: now,
+			RunID: p.RunID, Params: params, Now: now, EngineCapabilities: processengine.FoundationEngineCapabilities(),
 		}); err != nil {
 			return err
 		}
@@ -75,10 +75,11 @@ func runRun(cmd *cobra.Command, p *runParams, out io.Writer) error {
 		templateRef = record.Ref
 	}
 	run, err := processengine.Instantiate(cmd.Context(), fs, processengine.InstantiateRequest{
-		TemplateRef: templateRef,
-		RunID:       p.RunID,
-		Params:      params,
-		Now:         now,
+		TemplateRef:        templateRef,
+		RunID:              p.RunID,
+		Params:             params,
+		Now:                now,
+		EngineCapabilities: processengine.FoundationEngineCapabilities(),
 	})
 	if err != nil {
 		return err

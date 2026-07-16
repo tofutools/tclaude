@@ -752,7 +752,7 @@ export class ProcessTemplateEditor {
           h('option', { value: '', text: 'join: unset' }),
           h('option', { value: 'all', text: 'join: all' }),
           h('option', { value: 'any', text: 'join: any' }));
-        joinSelect.value = node.metadata?.join || '';
+        joinSelect.value = node.join || '';
         joinSelect.addEventListener('change', () => {
           this.mutate(() => this.model.setJoin(sel.id, joinSelect.value || null));
         });

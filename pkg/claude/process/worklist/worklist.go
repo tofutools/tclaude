@@ -106,7 +106,7 @@ func DerivePathV1(ctx context.Context, snapshot store.PathV1RunSnapshot, lookup 
 	if _, err := pathv1.VerifyExclusiveInput(ctx, snapshot.CheckpointJSON, snapshot.TemplateSource); err != nil {
 		return nil, err
 	}
-	parsed, err := model.Parse(snapshot.TemplateSource)
+	parsed, err := model.ParseExactSource(snapshot.TemplateSource)
 	if err != nil || parsed.Diagnostics.HasErrors() {
 		return nil, fmt.Errorf("schema-7 worklist template is invalid")
 	}

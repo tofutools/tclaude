@@ -11,6 +11,11 @@ import (
 var paramRefPattern = regexp.MustCompile(`\{\{\s*params\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}`)
 var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
 
+// MaxNormalizedDegree is the authoring ceiling derived from the path-v1
+// aggregate mutation budget. Execution reducers recheck their own tighter
+// capability-specific bounds before append.
+const MaxNormalizedDegree = 2_046
+
 func Validate(tmpl *Template, edges []Edge) Diagnostics {
 	var diagnostics Diagnostics
 	if tmpl == nil {
@@ -21,6 +26,8 @@ func Validate(tmpl *Template, edges []Edge) Diagnostics {
 	diagnostics = append(diagnostics, validateNodes(tmpl)...)
 	diagnostics = append(diagnostics, validateExpansionCollisions(tmpl)...)
 	diagnostics = append(diagnostics, validateEdges(tmpl, edges)...)
+	diagnostics = append(diagnostics, validateJoinAndDegree(tmpl, edges)...)
+	diagnostics = append(diagnostics, validateParallelScopePlan(tmpl, edges)...)
 	diagnostics = append(diagnostics, validateOutcomeRouting(tmpl)...)
 	diagnostics = append(diagnostics, validateLoopBudgets(tmpl)...)
 	diagnostics = append(diagnostics, validatePoisonEscalations(tmpl)...)
@@ -136,6 +143,13 @@ func validateNodes(tmpl *Template) Diagnostics {
 				diagnostics = append(diagnostics, diagError("end_has_next", path+".next", "end node must not have outgoing edges"))
 			}
 			diagnostics = append(diagnostics, validateEndResult(node.Result, path+".result")...)
+		case NodeTypeParallel:
+			if len(node.Next) < 2 {
+				diagnostics = append(diagnostics, diagError("parallel_degree", path+".next", "parallel node requires at least two outgoing edges"))
+			}
+			if node.Performer != nil || node.Plan != nil || len(node.Checks) > 0 || node.Review != nil || node.Retry != nil || node.Wait != nil || !isBlank(node.Result) || len(node.Captures) > 0 {
+				diagnostics = append(diagnostics, diagError("parallel_fields", path, "parallel node cannot declare performer, plan, checks, review, retry, wait, result, or captures"))
+			}
 		default:
 			diagnostics = append(diagnostics, diagError("invalid_node_type", path+".type", fmt.Sprintf("unsupported node type %q", node.Type)))
 		}

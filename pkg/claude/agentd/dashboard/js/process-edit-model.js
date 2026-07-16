@@ -30,7 +30,7 @@ export const START_OUTCOME = 'start';
 
 export const PALETTE_PRIMITIVES = PROCESS_NODE_TYPES;
 
-const NODE_TYPES = new Set(['task', 'decision', 'wait', 'start', 'end']);
+const NODE_TYPES = new Set(['task', 'decision', 'parallel', 'wait', 'start', 'end']);
 
 function clone(value) {
   return value === undefined ? undefined : structuredClone(value);
@@ -417,19 +417,19 @@ export class ProcessEditModel {
     else delete node.name;
   }
 
-  // setJoin records fan-in semantics on the TARGET node (design §8a). The v1
-  // engine treats joins as deferred, so this persists as advisory authoring
-  // intent in the node's freeform metadata.
+  // setJoin records typed fan-in semantics on the TARGET node. A recognized
+  // legacy metadata.join is removed so editor saves converge on canonical
+  // first-class authoring instead of carrying two competing fields.
   setJoin(id, join) {
     const node = this.template.nodes[id];
     if (!node) throw new Error(`unknown node ${id}`);
     this.assertNodeEditable(id);
     if (join && join !== 'all' && join !== 'any') throw new Error(`invalid join ${join}`);
-    if ((node.metadata?.join || null) === (join || null)) return;
+    if ((node.join || null) === (join || null) && !Object.hasOwn(node.metadata || {}, 'join')) return;
     this.begin();
-    if (join) {
-      node.metadata = { ...(node.metadata || {}), join };
-    } else if (node.metadata) {
+    if (join) node.join = join;
+    else delete node.join;
+    if (node.metadata) {
       delete node.metadata.join;
       if (!Object.keys(node.metadata).length) delete node.metadata;
     }
@@ -578,7 +578,7 @@ export class ProcessEditModel {
     for (const edge of this.edges) {
       if (edge.from === '') continue;
       if (!this.template.nodes[edge.from] || !this.template.nodes[edge.to]) continue;
-      const join = this.template.nodes[edge.to]?.metadata?.join;
+      const join = this.template.nodes[edge.to]?.join;
       edges.push({
         id: graphEdgeID(edge.from, edge.outcome),
         from: edge.from,

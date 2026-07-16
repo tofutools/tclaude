@@ -185,7 +185,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 	nodeTypes := read("js/process-node-types.js")
 	mustContain("process-node-types.js", nodeTypes,
 		"export const PROCESS_NODE_TYPES",
-		"type: 'task'", "type: 'decision'", "type: 'wait'", "type: 'start'", "type: 'end'",
+		"type: 'task'", "type: 'decision'", "type: 'parallel'", "type: 'wait'", "type: 'start'", "type: 'end'",
 	)
 	chooser := read("js/process-node-chooser.js")
 	mustContain("process-node-chooser.js", chooser,

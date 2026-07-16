@@ -309,7 +309,7 @@ func (s *FS) validatePathV1ReplayTemplateRunLocked(ctx context.Context, runID st
 	if err != nil {
 		return nil, err
 	}
-	parsed, err := model.Parse(source)
+	parsed, err := model.ParseExactSource(source)
 	if err != nil || parsed.Template == nil || parsed.Ref != proof.TemplateRef || parsed.SourceHash != proof.TemplateSourceHash {
 		return nil, fmt.Errorf("%w: installed checkpoint exact template/source mismatch", pathv1.ErrInitializationInconsistent)
 	}

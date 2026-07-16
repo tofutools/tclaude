@@ -198,6 +198,15 @@ function renderShape(parent, node) {
         points: `0,${-node.height / 2} ${node.width / 2},0 0,${node.height / 2} ${-node.width / 2},0`,
       }));
       break;
+    case 'parallel':
+      parent.append(svgElement('polygon', {
+        class: 'process-node-shape process-shape-parallel',
+        points: `0,${-node.height / 2} ${node.width / 2},0 0,${node.height / 2} ${-node.width / 2},0`,
+      }));
+      parent.append(
+        svgElement('path', { class: 'process-parallel-mark', d: 'M -16 0 H 16 M 0 -16 V 16' }),
+      );
+      break;
     case 'wait':
       parent.append(svgElement('circle', { class: 'process-node-shape process-shape-wait', cx: 0, cy: 0, r: node.width / 2 }));
       renderClock(parent);

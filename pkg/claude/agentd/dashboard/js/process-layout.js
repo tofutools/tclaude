@@ -15,6 +15,7 @@ export const PROCESS_LAYOUT_DEFAULTS = Object.freeze({
 const TYPE_SIZES = Object.freeze({
   task: [168, 68],
   decision: [108, 108],
+  parallel: [108, 108],
   wait: [78, 78],
   start: [58, 58],
   end: [62, 62],
@@ -280,7 +281,7 @@ function assignCoordinates(nodes, layers, options) {
 function boundaryPoint(node, toward, outgoing) {
   const dx = toward.x - node.x;
   const dy = toward.y - node.y;
-  if (node.type === 'decision') {
+  if (node.type === 'decision' || node.type === 'parallel') {
     const scale = 1 / ((Math.abs(dx) / (node.width / 2)) + (Math.abs(dy) / (node.height / 2)) || 1);
     return { x: node.x + dx * scale, y: node.y + dy * scale };
   }

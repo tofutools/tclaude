@@ -128,7 +128,7 @@ func VerifyExclusiveInput(ctx context.Context, checkpointBytes, templateSource [
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrExclusiveInputInvalid, err)
 	}
-	parsed, err := model.Parse(sourceCopy)
+	parsed, err := model.ParseExactSource(sourceCopy)
 	if err != nil {
 		return nil, fmt.Errorf("%w: parse exact template: %v", ErrExclusiveInputInvalid, err)
 	}

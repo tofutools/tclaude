@@ -15,6 +15,14 @@ const (
 	NodeTypeWait     NodeType = "wait"
 	NodeTypeStart    NodeType = "start"
 	NodeTypeEnd      NodeType = "end"
+	NodeTypeParallel NodeType = "parallel"
+)
+
+type JoinPolicy string
+
+const (
+	JoinAll JoinPolicy = "all"
+	JoinAny JoinPolicy = "any"
 )
 
 type PerformerKind string
@@ -49,6 +57,7 @@ type Param struct {
 
 type Node struct {
 	Type        NodeType     `json:"type" yaml:"type"`
+	Join        JoinPolicy   `json:"join,omitempty" yaml:"join,omitempty"`
 	Name        string       `json:"name,omitempty" yaml:"name,omitempty"`
 	Description string       `json:"description,omitempty" yaml:"description,omitempty"`
 	Doc         string       `json:"doc,omitempty" yaml:"doc,omitempty"`
