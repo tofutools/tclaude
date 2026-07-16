@@ -14,9 +14,10 @@ function bindToolbarActionsMenu() {
   if (!host || !cog || !menu) return () => {};
 
   const close = (restoreFocus = false) => {
+    const focusInside = menu.contains(document.activeElement);
     menu.classList.remove('open');
     cog.setAttribute('aria-expanded', 'false');
-    if (restoreFocus) cog.focus();
+    if (restoreFocus || focusInside) cog.focus();
   };
   const onCogClick = (event) => {
     event.preventDefault();

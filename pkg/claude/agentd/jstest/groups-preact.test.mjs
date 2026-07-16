@@ -102,6 +102,16 @@ test('opaque slop host safely retakes nested-root ownership after an imperative 
   assert.equal(machine.querySelector('.slop-pull-reel'), null,
     'no imperative pull DOM survives the ownership hand-back');
 
+  // Exercise the old pull's complete 900ms settle + 1800ms restore window.
+  // Neither delayed callback may overwrite the newer status/conv identity.
+  await new Promise((resolve) => setTimeout(resolve, 2850));
+  assert.equal(machine.dataset.status, 'idle');
+  assert.equal(machine.dataset.conv, 'new-conv');
+  assert.equal(machine.querySelectorAll('.slop-reels-root').length, 1);
+  assert.equal(machine.querySelectorAll('.slop-reel').length, 3);
+  assert.equal(machine.querySelector('.slop-pull-reel'), null,
+    'all stale pull timers leave the newer nested root untouched');
+
   await assert.doesNotReject(() => mounted.unmount());
   assert.equal(mounted.container.querySelector('.slop-machine'), null);
   assert.equal(mounted.container.querySelector('.slop-pull-reel'), null,

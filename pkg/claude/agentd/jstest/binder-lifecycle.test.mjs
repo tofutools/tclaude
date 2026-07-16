@@ -104,8 +104,19 @@ test('static toolbar menu owns its persistent nodes across idempotent reinstalls
   harness.fireEvent(cog, 'click', { button: 0 });
   assert.equal(menu.classList.contains('open'), true);
   assert.equal(cog.getAttribute('aria-expanded'), 'true');
+  const item = harness.document.querySelector('#toolbar-item');
+  item.focus();
   harness.fireEvent(harness.document.querySelector('#outside'), 'click', { button: 0 });
   assert.equal(menu.classList.contains('open'), false, 'light dismissal is menu-owned');
+  assert.equal(harness.document.activeElement, cog,
+    'click-away returns focus when it was still inside the dismissed menu');
+
+  harness.fireEvent(cog, 'click', { button: 0 });
+  item.focus();
+  harness.fireEvent(item, 'click', { button: 0 });
+  assert.equal(menu.classList.contains('open'), false, 'menu items dismiss their menu');
+  assert.equal(harness.document.activeElement, cog,
+    'menu-item dismissal returns focus from the hidden menu to its cog');
 
   first();
   const second = bindToolbarActionsMenu();
