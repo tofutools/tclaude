@@ -98,6 +98,15 @@ async function settle() {
   await Promise.resolve();
 }
 
+async function waitForSelector(document, selector) {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const match = document.querySelector(selector);
+    if (match) return match;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  assert.fail(`timed out waiting for ${selector}`);
+}
+
 test('Delete then Enter confirms a simple selection deletion from the focused destructive action', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ ProcessEditModel }, { ProcessTemplateEditor }] = await Promise.all([
@@ -107,7 +116,7 @@ test('Delete then Enter confirms a simple selection deletion from the focused de
   const editor = deletionEditor(ProcessTemplateEditor, ProcessEditModel, { type: 'node', id: 'done' });
 
   pressDelete(harness, ProcessTemplateEditor, editor);
-  const overlay = harness.document.querySelector('.process-editor-modal');
+  const overlay = await waitForSelector(harness.document, '.process-editor-modal');
   const destructive = harness.getByRole(overlay, 'button', { name: 'Delete selection' });
   assert.equal(harness.document.activeElement, destructive);
   assert.notEqual(harness.document.activeElement.textContent, 'Cancel');
@@ -128,7 +137,7 @@ test('Delete then Enter keeps the primary rewire choice for a mid-graph node', a
   const editor = deletionEditor(ProcessTemplateEditor, ProcessEditModel, { type: 'node', id: 'work' });
 
   pressDelete(harness, ProcessTemplateEditor, editor);
-  const overlay = harness.document.querySelector('.process-editor-modal');
+  const overlay = await waitForSelector(harness.document, '.process-editor-modal');
   const rewire = harness.getByRole(overlay, 'button', { name: 'Delete + rewire through' });
   assert.equal(harness.document.activeElement, rewire);
   assert.match(rewire.className, /\bprimary\b/);
@@ -150,10 +159,10 @@ test('selection deletion Escape, Cancel, and backdrop remain non-destructive', a
     const selection = { type: 'node', id: 'done' };
     const editor = deletionEditor(ProcessTemplateEditor, ProcessEditModel, selection);
     pressDelete(harness, ProcessTemplateEditor, editor);
-    const overlay = harness.document.querySelector('.process-editor-modal');
+    const overlay = await waitForSelector(harness.document, '.process-editor-modal');
     if (gesture === 'Escape') harness.fireEvent(harness.document.activeElement, 'keydown', { key: 'Escape' });
     else if (gesture === 'Cancel') harness.fireEvent(harness.getByRole(overlay, 'button', { name: 'Cancel' }), 'click');
-    else harness.fireEvent(overlay, 'click');
+    else harness.fireEvent(overlay, 'mousedown');
     await editor.pendingDeletion;
     assert.ok(editor.model.node('done'), `${gesture} keeps the selected node`);
     assert.equal(editor.model.dirty, false, `${gesture} does not create an edit`);
@@ -169,7 +178,7 @@ test('choice dialogs without an explicit or primary focus keep the existing Canc
     title: 'Unrelated choice', body: 'No action is designated as the default.',
     choices: [{ key: 'continue', label: 'Continue' }],
   });
-  const overlay = harness.document.querySelector('.process-editor-modal');
+  const overlay = await waitForSelector(harness.document, '.process-editor-modal');
   assert.equal(harness.document.activeElement, harness.getByRole(overlay, 'button', { name: 'Cancel' }));
   harness.fireEvent(harness.document.activeElement, 'click');
   assert.equal(await pending, null);
@@ -256,6 +265,7 @@ test('dirty Escape awaits discard confirmation: reject keeps the draft, accept c
   input.value = 'Unsaved';
   harness.fireEvent(input, 'change');
   harness.fireEvent(overlay.querySelector('.process-node-input'), 'keydown', { key: 'Escape' });
+  await settle();
   assert.equal(decisions.length, 1, 'Escape requests the shared asynchronous discard decision');
   assert.equal(overlay.inert, true, 'the underlying node dialog is inert while confirmation owns focus');
   assert.equal(overlay.getAttribute('aria-hidden'), 'true');
@@ -272,6 +282,7 @@ test('dirty Escape awaits discard confirmation: reject keeps the draft, accept c
   assert.equal(dispose.isDirty(), true);
 
   harness.fireEvent(harness.document.querySelector('.process-node-save'), 'keydown', { key: 'Escape' });
+  await settle();
   assert.equal(decisions.length, 1);
   decisions.shift()(true);
   await settle();
@@ -279,6 +290,67 @@ test('dirty Escape awaits discard confirmation: reject keeps the draft, accept c
   assert.equal(model.node('work').name, 'Original');
   assert.equal(model.undoStack.length, 0, 'discard never creates a history entry');
   assert.equal(model.dirty, false);
+});
+
+test('Escape and backdrop flush an active raw node field before deciding whether to discard', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ ProcessEditModel }, { openNodeDialog }] = await Promise.all([
+    harness.importDashboardModule('js/process-edit-model.js'),
+    harness.importDashboardModule('js/process-node-dialog.js'),
+  ]);
+  for (const gesture of ['Escape', 'backdrop']) {
+    let confirmations = 0;
+    const model = new ProcessEditModel(view());
+    openNodeDialog({
+      model, nodeId: 'work',
+      confirmDiscard: async () => { confirmations += 1; return true; },
+    });
+    const overlay = harness.document.querySelector('.process-node-modal');
+    const input = overlay.querySelector('.process-node-input');
+    input.focus();
+    input.value = `Unblurred ${gesture}`;
+    harness.fireEvent(input, 'input');
+    if (gesture === 'Escape') harness.fireEvent(input, 'keydown', { key: 'Escape' });
+    else harness.fireEvent(overlay, 'mousedown');
+    await settle();
+    assert.equal(confirmations, 1, `${gesture} flushes the raw field before the dirty check`);
+    assert.equal(harness.document.querySelector('.process-node-modal'), null);
+    assert.equal(model.node('work').name, 'Original', `${gesture} discards the staged edit atomically`);
+    assert.equal(model.undoStack.length, 0);
+  }
+});
+
+test('discard confirmation rejection is contained for gesture and programmatic node dismissal', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ ProcessEditModel }, { openNodeDialog }] = await Promise.all([
+    harness.importDashboardModule('js/process-edit-model.js'),
+    harness.importDashboardModule('js/process-node-dialog.js'),
+  ]);
+  let attempts = 0;
+  const model = new ProcessEditModel(view());
+  const dispose = openNodeDialog({
+    model, nodeId: 'work',
+    confirmDiscard: async () => { attempts += 1; throw new Error('confirmation service unavailable'); },
+  });
+  const overlay = harness.document.querySelector('.process-node-modal');
+  const input = overlay.querySelector('.process-node-input');
+  input.value = 'Unsaved';
+  harness.fireEvent(input, 'change');
+
+  harness.fireEvent(input, 'keydown', { key: 'Escape' });
+  await settle();
+  assert.equal(attempts, 1);
+  assert.equal(harness.document.querySelector('.process-node-modal'), overlay,
+    'a rejected gesture confirmation keeps the dialog mounted');
+  assert.match(overlay.querySelector('.process-node-status').textContent,
+    /Discard confirmation failed: confirmation service unavailable/);
+  assert.equal(overlay.inert, false);
+  assert.equal(await dispose.requestClose(), false, 'programmatic replacement receives a contained false result');
+  await settle();
+  assert.equal(attempts, 2);
+  assert.equal(harness.document.querySelector('.process-node-modal'), overlay);
+  assert.equal(model.node('work').name, 'Original');
+  dispose(null);
 });
 
 test('rejected raw input stays dirty: Save remains open and Cancel confirms', async (t) => {
@@ -299,6 +371,7 @@ test('rejected raw input stays dirty: Save remains open and Cancel confirms', as
   secondID.focus();
   secondID.value = 'lint';
   harness.fireEvent(overlay.querySelector('.process-node-save'), 'click');
+  await settle();
   assert.ok(harness.document.querySelector('.process-node-modal'), 'Save cannot close over a rejected DOM value');
   assert.equal(model.node('work').checks[1].id, 'test', 'the previous staged draft is not committed');
   assert.equal(model.undoStack.length, 0);
@@ -310,6 +383,7 @@ test('rejected raw input stays dirty: Save remains open and Cancel confirms', as
   label.focus();
   label.value = 'Renamed';
   harness.fireEvent(label, 'change');
+  await settle();
   assert.equal(label.value, 'Work', 'a second edit is reverted immediately instead of disappearing on a later render');
   assert.equal(label.hasAttribute('aria-invalid'), false, 'the unchanged field is not misrepresented as invalid');
   assert.match(overlay.querySelector('.process-node-status').textContent, /change was not applied/);
@@ -382,6 +456,7 @@ test('node dialog restores and persists its own resize without bypassing dirty f
   const planToggle = dialog.querySelector('.process-node-toggle');
   planToggle.checked = true;
   harness.fireEvent(planToggle, 'change');
+  await settle();
   assert.equal(overlay.querySelector('.process-node-dialog'), dialog,
     'dynamic stage fields rerender inside the same resizable card');
   assert.equal(dialog.style.width, '920px');
@@ -416,6 +491,7 @@ test('node dialog restores and persists its own resize without bypassing dirty f
   label.value = 'Still guarded after resize';
   harness.fireEvent(label, 'change');
   harness.fireEvent(harness.document.activeElement, 'keydown', { key: 'Escape' });
+  await settle();
   assert.equal(decisions.length, 1, 'resize wiring leaves dirty Escape behind confirmation');
   decisions.shift()(false);
   await settle();
@@ -423,6 +499,7 @@ test('node dialog restores and persists its own resize without bypassing dirty f
     'rejecting discard keeps the resized draft open');
 
   harness.fireEvent(overlay.querySelector('.process-node-cancel'), 'click');
+  await settle();
   decisions.shift()(true);
   await settle();
   assert.equal(harness.document.querySelector('.process-node-modal'), null);
@@ -462,6 +539,31 @@ test('opening another node settings dialog cannot replace a rejected dirty draft
   editor.modalDispose(null);
 });
 
+test('programmatic node-dialog replacement contains a rejected discard promise', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ ProcessEditModel }, { ProcessTemplateEditor }] = await Promise.all([
+    harness.importDashboardModule('js/process-edit-model.js'),
+    harness.importDashboardModule('js/process-editor.js'),
+  ]);
+  const editor = {
+    model: new ProcessEditModel(view()), modalDispose: null,
+    options: { confirmDiscard: async () => { throw new Error('confirmation service unavailable'); } },
+    abort: new AbortController(), refresh() {},
+  };
+  assert.equal(await ProcessTemplateEditor.prototype.openNodeSettings.call(editor, 'work'), true);
+  const overlay = harness.document.querySelector('.process-node-modal');
+  const input = overlay.querySelector('.process-node-input');
+  input.value = 'Dirty';
+  harness.fireEvent(input, 'change');
+  assert.equal(await ProcessTemplateEditor.prototype.openNodeSettings.call(editor, 'done'), false);
+  await settle();
+  assert.equal(harness.document.querySelector('.process-node-modal'), overlay);
+  assert.equal(overlay.querySelector('[role="dialog"]').getAttribute('aria-label'), 'Node work');
+  assert.match(overlay.querySelector('.process-node-status').textContent,
+    /Discard confirmation failed: confirmation service unavailable/);
+  editor.modalDispose(null);
+});
+
 test('params dialog edits identifiers, typed defaults, descriptions, and required state atomically', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ ProcessEditModel }, { openProcessParamsDialog }] = await Promise.all([
@@ -479,7 +581,8 @@ test('params dialog edits identifiers, typed defaults, descriptions, and require
   openProcessParamsDialog({ model, onMutated: () => { mutations += 1; } });
   const overlay = harness.document.querySelector('.process-param-modal');
   assert.equal(overlay.querySelectorAll('.process-param-row').length, 3);
-  assert.equal(overlay.querySelector('[data-process-param="issue"] .process-param-required').checked, true);
+  const required = overlay.querySelector('[data-process-param="issue"] .process-param-required');
+  assert.equal(typeof required.checked === 'boolean' ? required.checked : required.hasAttribute('checked'), true);
   assert.equal(overlay.querySelector('[data-process-param="retries"] .process-param-default').value, '2');
   assert.equal(overlay.querySelector('[data-process-param="legacy"] .process-param-type').value, 'custom-kind', 'unknown types remain editable');
 
@@ -533,6 +636,7 @@ test('params dialog rejects invalid edited number and boolean defaults without a
     input.value = value;
     harness.fireEvent(input, 'input');
     harness.fireEvent(overlay.querySelector('.modal-buttons .primary'), 'click');
+    await settle();
 
     assert.equal(harness.document.querySelector('.process-param-modal'), overlay, `${label}: dialog remains open`);
     const alert = overlay.querySelector('[role="alert"]');
@@ -592,6 +696,7 @@ test('params dialog restores focus near removed rows and to Add after the final 
     const remove = overlay.querySelector(`[data-process-param="${removed}"] .process-action-danger`);
     remove.focus();
     harness.fireEvent(remove, 'click');
+    await settle();
 
     const expected = focusedName
       ? overlay.querySelector(`[data-process-param="${focusedName}"] .process-param-name`)
@@ -657,6 +762,31 @@ test('params dialog reports every raw staged field and structural edit as dirty'
     assert.equal(model.dirty, false, `${label} remains atomic before Apply`);
     dispose(null);
   }
+});
+
+test('params dialog contains rejected discard confirmation and reports programmatic close failure', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ ProcessEditModel }, { openProcessParamsDialog }] = await Promise.all([
+    harness.importDashboardModule('js/process-edit-model.js'),
+    harness.importDashboardModule('js/process-params-dialog.js'),
+  ]);
+  const loaded = view();
+  loaded.template.params = { issue: { type: 'string' } };
+  const model = new ProcessEditModel(loaded);
+  const dispose = openProcessParamsDialog({
+    model,
+    confirmDiscard: async () => { throw new Error('confirmation service unavailable'); },
+  });
+  const overlay = harness.document.querySelector('.process-param-modal');
+  harness.fireEvent(overlay.querySelector('.process-param-toolbar button'), 'click');
+  assert.equal(await dispose.requestClose(), false);
+  await settle();
+  assert.equal(harness.document.querySelector('.process-param-modal'), overlay);
+  assert.match(overlay.querySelector('[role="alert"]').textContent,
+    /Discard confirmation failed: confirmation service unavailable/);
+  assert.equal(overlay.inert, false);
+  assert.deepEqual(model.template.params, { issue: { type: 'string' } });
+  dispose(null);
 });
 
 test('dirty params participate in navigation and rejected modal replacement guards', async (t) => {
@@ -728,6 +858,7 @@ test('params dialog traps Tab and restores focus on every close path without pro
     const overlay = harness.document.querySelector('.process-param-modal');
     const add = overlay.querySelector('.process-param-toolbar button');
     harness.fireEvent(add, 'click');
+    await settle();
     const first = overlay.querySelector('.process-param-name');
     const apply = overlay.querySelector('.modal-buttons .primary');
     apply.focus();
@@ -737,7 +868,7 @@ test('params dialog traps Tab and restores focus on every close path without pro
 
     if (gesture === 'cancel') harness.fireEvent(overlay.querySelector('.modal-buttons button'), 'click');
     else if (gesture === 'escape') harness.fireEvent(first, 'keydown', { key: 'Escape' });
-    else if (gesture === 'backdrop') harness.fireEvent(overlay, 'click');
+    else if (gesture === 'backdrop') harness.fireEvent(overlay, 'mousedown');
     else dispose(null);
     await settle();
     assert.equal(confirmations, gesture === 'forced' ? 0 : 1, `${gesture}: confirmation count`);
@@ -792,7 +923,7 @@ test('Cancel, backdrop, and close affordance discard only after confirmation', a
     harness.fireEvent(input, 'change');
     const target = gesture === 'cancel' ? overlay.querySelector('.process-node-cancel')
       : gesture === 'close' ? overlay.querySelector('.process-node-close') : overlay;
-    harness.fireEvent(target, 'click');
+    harness.fireEvent(target, gesture === 'backdrop' ? 'mousedown' : 'click');
     await settle();
     assert.equal(confirmations, 1, `${gesture} confirms a dirty discard`);
     assert.equal(harness.document.querySelector('.process-node-modal'), null);
