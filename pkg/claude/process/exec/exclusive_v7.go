@@ -316,8 +316,10 @@ func (e *ExclusiveV7Executor) recordObservation(ctx context.Context, runID, node
 	if err := validateObservation(observation); err != nil {
 		return nil, "", err
 	}
-	if observation.ExternalRef == "" {
-		observation.ExternalRef = observation.EvidenceRef
+	var err error
+	observation, err = e.materializeObservationEvidence(ctx, runID, observation)
+	if err != nil {
+		return nil, "", err
 	}
 	for retry := 0; retry < maxObservationCASAttempts; retry++ {
 		var attempt *pathv1.ExclusiveAttemptPlan
@@ -424,21 +426,13 @@ func (e *ExclusiveV7Executor) appendExclusiveObservation(ctx context.Context, ru
 	if err := validateObservation(observation); err != nil {
 		return nil, false, fmt.Errorf("record path-v1 command %q observation: %w", attempt.Command().ID, err)
 	}
-	if observation.Evidence != nil {
-		artifact, err := e.Store.PutArtifact(ctx, runID, observation.Evidence.Name, bytes.NewReader(observation.Evidence.Data))
-		if err != nil {
-			return nil, false, err
-		}
-		if observation.EvidenceHash != "" && observation.EvidenceHash != artifact.SHA256 {
-			return nil, false, fmt.Errorf("path-v1 observation evidence hash %q does not match stored artifact %q", observation.EvidenceHash, artifact.SHA256)
-		}
-		observation.EvidenceRef, observation.EvidenceHash = artifact.Ref, artifact.SHA256
-	}
-	if observation.ExternalRef == "" {
-		observation.ExternalRef = observation.EvidenceRef
+	var err error
+	observation, err = e.materializeObservationEvidence(ctx, runID, observation)
+	if err != nil {
+		return nil, false, err
 	}
 	var transition *pathv1.ExecutionTransition
-	err := e.Store.WithPathV1ExecutionView(ctx, runID, func(view store.PathV1ExecutionView) error {
+	err = e.Store.WithPathV1ExecutionView(ctx, runID, func(view store.PathV1ExecutionView) error {
 		current, found, err := pathv1.RecoverExclusiveAttempt(ctx, view.Input)
 		if err != nil {
 			return err
@@ -460,4 +454,22 @@ func (e *ExclusiveV7Executor) appendExclusiveObservation(ctx context.Context, ru
 		return nil, false, err
 	}
 	return appended.Checkpoint, false, nil
+}
+
+func (e *ExclusiveV7Executor) materializeObservationEvidence(ctx context.Context, runID string, observation Observation) (Observation, error) {
+	if observation.Evidence != nil {
+		artifact, err := e.Store.PutArtifact(ctx, runID, observation.Evidence.Name, bytes.NewReader(observation.Evidence.Data))
+		if err != nil {
+			return Observation{}, err
+		}
+		if observation.EvidenceHash != "" && observation.EvidenceHash != artifact.SHA256 {
+			return Observation{}, fmt.Errorf("path-v1 observation evidence hash %q does not match stored artifact %q", observation.EvidenceHash, artifact.SHA256)
+		}
+		observation.EvidenceRef, observation.EvidenceHash = artifact.Ref, artifact.SHA256
+		observation.Evidence = nil
+	}
+	if observation.ExternalRef == "" {
+		observation.ExternalRef = observation.EvidenceRef
+	}
+	return observation, nil
 }

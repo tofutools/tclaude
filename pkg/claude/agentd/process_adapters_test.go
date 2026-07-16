@@ -9,6 +9,9 @@ import (
 	processexec "github.com/tofutools/tclaude/pkg/claude/process/exec"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/plan"
+	"github.com/tofutools/tclaude/pkg/claude/process/state"
+	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
+	"github.com/tofutools/tclaude/pkg/claude/process/store"
 )
 
 func TestProcessSpawnParams_ExplicitFalseBlocksGlobalTrue(t *testing.T) {
@@ -106,4 +109,67 @@ func TestProcessHumanAdapterBlockedContactIsActionable(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, performerReminder)
 	assert.Equal(t, "Waiting on process release-42 node implement.test.tests (command cmd_1123456789abcdef01234567).", performerReminder.Body)
+}
+
+func TestProcessHumanAdapterCrashBeforeDispatchRedispatchesDurableClaim(t *testing.T) {
+	setupTestDB(t)
+	fs, err := store.NewFS(t.TempDir())
+	require.NoError(t, err)
+	performer := &model.Performer{Kind: model.PerformerHuman, Ask: "Approve the release?"}
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "human-recovery", Start: "work",
+		Nodes: map[string]model.Node{
+			"work":   {Type: model.NodeTypeTask, Performer: performer, Next: model.Next{"pass": "done", "fail": "failed"}},
+			"done":   {Type: model.NodeTypeEnd, Result: "completed"},
+			"failed": {Type: model.NodeTypeEnd, Result: "failed"},
+		},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	require.NoError(t, err)
+	const runID = "human-crash-before-dispatch"
+	checkpoint := state.New(runID, record.Ref, record.Ref, []state.NodeInit{
+		{ID: "work", Type: model.NodeTypeTask, Status: state.NodeStatusReady},
+		{ID: "done", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+		{ID: "failed", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+	})
+	checkpoint.Status = state.RunStatusRunning
+	_, err = fs.CreateRun(t.Context(), store.RunRecord{ID: runID, TemplateRef: record.Ref}, checkpoint)
+	require.NoError(t, err)
+	proof, err := fs.UpgradeNeeded(t.Context(), runID)
+	require.NoError(t, err)
+	_, err = fs.InitializePathV1(t.Context(), runID, proof)
+	require.NoError(t, err)
+
+	var claim *pathv1.ExecutionTransition
+	require.NoError(t, fs.WithPathV1ExecutionView(t.Context(), runID, func(view store.PathV1ExecutionView) error {
+		aggregate, aggregateErr := pathv1.CurrentAggregateCheckpoint(view.Checkpoint)
+		if aggregateErr != nil {
+			return aggregateErr
+		}
+		attempt, planErr := pathv1.PlanExclusiveAttempt(t.Context(), view.Input, aggregate.Authority.Genesis.OutputPathID, 1, view.Run.Params)
+		if planErr != nil {
+			return planErr
+		}
+		claim, planErr = pathv1.ClaimExclusiveAttempt(t.Context(), view.Input, attempt)
+		return planErr
+	}))
+	_, err = fs.AppendPathV1(t.Context(), runID, claim)
+	require.NoError(t, err, "the durable claim models a crash before adapter dispatch")
+
+	executor := processexec.NewExclusiveV7(fs, map[model.PerformerKind]processexec.Adapter{
+		model.PerformerHuman: processHumanAdapter{},
+	})
+	_, err = executor.Drive(t.Context(), runID)
+	require.NoError(t, err)
+	messages, err := db.ListHumanMessages()
+	require.NoError(t, err)
+	require.Len(t, messages, 1, "missing production obligation must be redispatched")
+	assert.Equal(t, "Process obligation", messages[0].Subject)
+	assert.Equal(t, runID, messages[0].ProcessRunID)
+
+	_, err = executor.Drive(t.Context(), runID)
+	require.NoError(t, err)
+	messages, err = db.ListHumanMessages()
+	require.NoError(t, err)
+	assert.Len(t, messages, 1, "discoverable obligation must remain in flight without duplication")
 }

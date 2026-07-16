@@ -312,6 +312,28 @@ func TestExclusiveV7AmbiguousObservationRecoversWithoutReperform(t *testing.T) {
 	assert.Equal(t, 1, adapter.count())
 }
 
+func TestExclusiveV7InlineEvidenceExactReplayAfterAmbiguousCommit(t *testing.T) {
+	fs, runID := exclusiveV7Run(t)
+	executor := NewExclusiveV7(fs, nil)
+	commandID := claimExclusiveAttemptForTest(t, fs, runID, 1)
+	observation := Observation{
+		Actor:    "agent:agt_test1",
+		Verdict:  "pass",
+		Feedback: "inline evidence",
+		Evidence: &Artifact{Name: "result.txt", Data: []byte("durable result")},
+	}
+
+	injected := errors.New("ambiguous inline observation")
+	restore := fs.SetPathV1AppendHooksForTest(nil, func() error { return injected })
+	_, err := executor.RecordObservation(t.Context(), runID, "work", commandID, observation)
+	restore()
+	assert.ErrorIs(t, err, injected)
+
+	checkpoint, err := executor.RecordObservation(t.Context(), runID, "work", commandID, observation)
+	require.NoError(t, err, "inline evidence must canonicalize to the stored ref/hash on exact replay")
+	assert.NotNil(t, checkpoint)
+}
+
 func TestExclusiveV7ReportReplayBindsExactLatestAttempt(t *testing.T) {
 	fs, runID := exclusiveV7RunWithRetry(t)
 	executor := NewExclusiveV7(fs, nil)
