@@ -1680,7 +1680,7 @@ const DefaultMessageInlineMaxChars = DefaultSpawnInlineMaxChars
 // 90. So MinPct=30 + IntervalPct=10 → fires at 30, 40, 50, 60, 70,
 // 80, 90. MinPct=50 + IntervalPct=20 → 50, 70, 90.
 //
-// The daemon tracks per-session "highest threshold already fired"
+// tclaude tracks per-session "highest threshold already fired"
 // in sessions.nudged_pct so flicker around a boundary doesn't
 // re-fire. ResetCompact zeroes it so a compacted session can be
 // re-nudged on its next climb.

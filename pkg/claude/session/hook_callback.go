@@ -940,11 +940,7 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 		// gate the injection on the harness actually understanding those
 		// commands, or a Codex pane would be typed a hint it can't act on.
 		// Harness-aware nudging is future work (Codex Lifecycle).
-		targetConv := input.ConvID
-		if targetConv == "" {
-			targetConv = state.ConvID
-		}
-		handleContextNudge(envSessionID, targetConv)
+		handleContextNudge(envSessionID)
 	}
 
 	state.Updated = time.Now()
@@ -1673,19 +1669,20 @@ func nextNudgeTarget(pct float64, minPct, intervalPct int) int {
 	return target
 }
 
-// formatContextNudgeMessage is the context instruction stored in the target's
-// universal inbox when a threshold crosses.
+// formatContextNudgeMessage is the text typed into the pane when a threshold
+// crosses. It reads as a system tap-on-shoulder rather than human input.
 //
 // Pure for unit testing.
 func formatContextNudgeMessage(target int) string {
-	return fmt.Sprintf("Context is at %d%%. Consider /reincarnate at the next breakpoint to avoid running out of room mid-task — the fresh agent inherits identity but starts with a clean window.", target)
+	return fmt.Sprintf("[system: context at %d%%. Consider /reincarnate at the next breakpoint to avoid running out of room mid-task — the fresh agent inherits identity but starts with a clean window.]", target)
 }
 
 // handleContextNudge fires an opt-in "consider reincarnating" hint
 // when the agent's context crosses a configured threshold. Runs in the
-// Stop-hook path, reads the stored context_pct, and persists a senderless
-// agent_messages row. Agentd's ordinary alive-session sweep hands that row to
-// the same async delivery queue as peer/operator/process mail.
+// Stop-hook path, reads the stored context_pct, and delivers directly through
+// the shared contention-safe pane injector. It intentionally remains
+// daemon-independent: hooks can run when agentd is not running, and this
+// ephemeral reminder does not need mailbox durability.
 //
 // Skips when:
 //   - the feature isn't enabled in config
@@ -1693,8 +1690,8 @@ func formatContextNudgeMessage(target int) string {
 //   - context_pct is below the configured min
 //   - the same-or-higher threshold has already been fired
 //     (sessions.nudged_pct; ResetCompact zeroes it so post-compact climbs re-arm)
-func handleContextNudge(sessionID, convID string) {
-	if sessionID == "" || convID == "" {
+func handleContextNudge(sessionID string) {
+	if sessionID == "" {
 		return
 	}
 
@@ -1730,20 +1727,23 @@ func handleContextNudge(sessionID, convID string) {
 		return
 	}
 
+	tmuxSession := GetCurrentTmuxSession()
+	if tmuxSession == "" {
+		// No pane can receive this ephemeral hint. Stamp the threshold so a
+		// later hook does not deliver a stale reminder for the same climb.
+		_ = db.SetNudgedPct(sessionID, float64(target))
+		return
+	}
+
 	msg := formatContextNudgeMessage(target)
-	slog.Info("context-nudge: queueing hint",
-		"session_id", sessionID, "conv_id", convID,
+	slog.Info("context-nudge: typing hint into pane",
+		"session_id", sessionID, "tmux_session", tmuxSession,
 		"context_pct", contextPct, "target", target,
 		"min_pct", minPct, "interval_pct", intervalPct,
 		"module", "hooks")
-	if _, err := db.InsertAgentMessage(&db.AgentMessage{
-		FromConv:     "",
-		ToConv:       convID,
-		Subject:      fmt.Sprintf("Context window at %d%%", target),
-		Body:         msg,
-		ToRecipients: []string{convID},
-	}); err != nil {
-		slog.Warn("context-nudge: queue failed", "error", err, "module", "hooks")
+	if err := paneinput.InjectTextAndSubmit(tmuxSession+":0.0", msg, paneinput.Options{}); err != nil {
+		slog.Warn("context-nudge: pane injection failed",
+			"error", err, "module", "hooks")
 		return
 	}
 	if err := db.SetNudgedPct(sessionID, float64(target)); err != nil {

@@ -1,6 +1,8 @@
 package paneinput
 
 import (
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -9,21 +11,15 @@ import (
 )
 
 func TestInjectTextAndSubmitSerializesIndependentCallers(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	firstStarted := make(chan struct{})
 	releaseFirst := make(chan struct{})
-	secondRan := make(chan struct{}, 1)
 	var once sync.Once
 
 	firstRun := func(args ...string) error {
 		if args[0] == "send-keys" && args[len(args)-1] == "first" {
 			once.Do(func() { close(firstStarted) })
 			<-releaseFirst
-		}
-		return nil
-	}
-	secondRun := func(args ...string) error {
-		if args[0] == "send-keys" && args[len(args)-1] == "second" {
-			secondRan <- struct{}{}
 		}
 		return nil
 	}
@@ -41,21 +37,55 @@ func TestInjectTextAndSubmitSerializesIndependentCallers(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("first caller did not acquire the pane lock")
 	}
-	secondDone := make(chan error, 1)
 	// The exact-match prefix is presentation, not identity: callers using the
 	// raw and already-exact spellings must still contend for one pane lock.
-	go func() { secondDone <- InjectTextAndSubmit("=pane-serialize:0.0", "second", opts(secondRun)) }()
-	select {
-	case <-secondRan:
-		t.Fatal("second caller wrote while first caller held the pane lock")
-	case <-time.After(25 * time.Millisecond):
-	}
+	secondCalled := false
+	secondOpts := opts(func(args ...string) error {
+		secondCalled = true
+		return nil
+	})
+	secondOpts.LockTimeout = 10 * time.Millisecond
+	err := InjectTextAndSubmit("=pane-serialize:0.0", "second", secondOpts)
+	require.ErrorIs(t, err, ErrLockTimeout)
+	require.False(t, secondCalled, "second caller wrote while first caller held the pane lock")
+
 	close(releaseFirst)
 	require.NoError(t, <-firstDone)
-	require.NoError(t, <-secondDone)
-	select {
-	case <-secondRan:
-	default:
-		t.Fatal("second caller never wrote after the lock was released")
-	}
+	require.NoError(t, InjectTextAndSubmit("=pane-serialize:0.0", "second", opts(func(args ...string) error {
+		secondCalled = true
+		return nil
+	})))
+	require.True(t, secondCalled, "second caller never wrote after the lock was released")
+}
+
+func TestInjectTextAndSubmitUsesLiteralModeForSingleLineText(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	var commands [][]string
+	err := InjectTextAndSubmit("pane-literal:0.0", "Enter", Options{
+		Run: func(args ...string) error {
+			commands = append(commands, append([]string(nil), args...))
+			return nil
+		},
+		SettleDelay: 0, SettleDelaySet: true,
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{"send-keys", "-l", "-t", "=pane-literal:0.0", "Enter"}, commands[0])
+}
+
+func TestPaneLockPathUsesPrivateDataDirectory(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path, err := paneLockPath("=pane-private:0.0")
+	require.NoError(t, err)
+	dir := filepath.Dir(path)
+	require.Equal(t, filepath.Join(home, ".tclaude", "data", "pane-input-locks"), dir)
+	info, err := os.Stat(dir)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o700), info.Mode().Perm())
+
+	require.NoError(t, os.RemoveAll(dir))
+	require.NoError(t, os.Symlink(t.TempDir(), dir))
+	_, err = paneLockPath("=pane-private:0.0")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not a directory")
 }

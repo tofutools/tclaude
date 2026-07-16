@@ -1,6 +1,7 @@
 package session
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -37,11 +38,11 @@ func TestNextNudgeTarget(t *testing.T) {
 	}
 }
 
-// formatContextNudgeMessage becomes the body of a senderless inbox message.
-// The delivery formatter owns the surrounding [system: ...] envelope.
+// formatContextNudgeMessage is typed directly into the pane. Pin the envelope
+// so a future transcript still identifies it as a system-generated reminder.
 func TestFormatContextNudgeMessage(t *testing.T) {
 	msg := formatContextNudgeMessage(50)
-	assert.NotContainsf(t, msg, "[system:", "body must not duplicate the delivery envelope; got %q", msg)
+	assert.Truef(t, strings.HasPrefix(msg, "[system: "), "message must start with [system: ...]; got %q", msg)
 	assert.Containsf(t, msg, "50%", "message must include the threshold; got %q", msg)
 	assert.Containsf(t, msg, "/reincarnate", "message must suggest /reincarnate; got %q", msg)
 }

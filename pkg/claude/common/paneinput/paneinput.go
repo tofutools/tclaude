@@ -18,10 +18,12 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/gofrs/flock"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	tclcommon "github.com/tofutools/tclaude/pkg/common"
 )
 
 // Runner executes one tmux command (without the leading tmux binary/socket
@@ -113,7 +115,7 @@ func InjectTextAndSubmit(tmuxTarget, text string, opts Options) error {
 			if err := run("paste-buffer", "-d", "-p", "-r", "-b", buffer, "-t", target); err != nil {
 				return fmt.Errorf("paste-buffer text: %w", err)
 			}
-		} else if err := run("send-keys", "-t", target, text); err != nil {
+		} else if err := run("send-keys", "-l", "-t", target, text); err != nil {
 			return fmt.Errorf("send-keys text: %w", err)
 		}
 		time.Sleep(opts.SettleDelay)
@@ -137,9 +139,27 @@ func SendKeys(tmuxTarget string, opts Options, keys ...string) error {
 }
 
 func paneLockPath(tmuxTarget string) (string, error) {
-	dir := filepath.Join(os.TempDir(), fmt.Sprintf("tclaude-pane-input-%d", os.Getuid()))
+	dataDir := tclcommon.TclaudeDataDir()
+	if dataDir == "" {
+		return "", errors.New("resolve tclaude data directory for pane input lock")
+	}
+	dir := filepath.Join(dataDir, "pane-input-locks")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("create pane input lock directory: %w", err)
+	}
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return "", fmt.Errorf("inspect pane input lock directory: %w", err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("pane input lock path is not a directory: %s", dir)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || int(stat.Uid) != os.Getuid() {
+		return "", fmt.Errorf("pane input lock directory is not owned by uid %d: %s", os.Getuid(), dir)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return "", fmt.Errorf("secure pane input lock directory: %w", err)
 	}
 	sum := sha256.Sum256([]byte(tmuxTarget))
 	return filepath.Join(dir, fmt.Sprintf("%x.lock", sum[:16])), nil

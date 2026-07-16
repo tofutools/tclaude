@@ -73,6 +73,17 @@ func TestTmuxSim_SendKeys_NormalizedLogAndExactRouting(t *testing.T) {
 	assert.Equal(t, "hello", sent[0].Text)
 }
 
+func TestTmuxSim_SendKeysLiteralMode(t *testing.T) {
+	sim := newTmuxSim()
+	sim.MarkAlive("myrepo-2")
+
+	sim.Command("send-keys", "-l", "-t", "=myrepo-2:0.0", "Enter")
+	sent := sim.Sent()
+	assert.Len(t, sent, 1)
+	assert.Equal(t, "myrepo-2:0.0", sent[0].Target)
+	assert.Equal(t, "Enter", sent[0].Text)
+}
+
 // Pane-typed commands (send-keys, display-message, capture-pane) parse a
 // COLON-LESS target into the pane slot, where real tmux never strips the
 // '=' — "=name" hunts a pane literally named "=name" and matches nothing.

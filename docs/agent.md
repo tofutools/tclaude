@@ -267,9 +267,10 @@ delivery queue. That queue resolves the current agent generation, waits while
 its input is blocked, retries transient tmux failures, and chooses inline or
 inbox-pointer delivery. Callers choose attribution, recipients, subject, and
 body; they do not choose a separate tmux transport. An offline target keeps the
-message until it is ready. Ephemeral unread reminders and lifecycle controls do
-not create mailbox rows, but they share the same cross-process pane-input lock
-with queued mail so their multi-command tmux sequences cannot interleave.
+message until it is ready. Ephemeral context nudges, unread reminders, and
+lifecycle controls do not create mailbox rows, but they share the same
+cross-process pane-input lock with queued mail so their multi-command tmux
+sequences cannot interleave.
 Startup greetings and briefings are the intentional exception: the harness
 launch prompt owns their first delivery.
 

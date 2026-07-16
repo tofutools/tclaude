@@ -10,7 +10,7 @@ function response(status, body) {
   };
 }
 
-test('message/reply actions preserve exact wire payloads and held feedback', async (t) => {
+test('message/reply actions preserve exact wire payloads and queued feedback', async (t) => {
   const harness = await createPreactHarness(t);
   const { createMessageAccessDialogActions } = await harness.importDashboardModule('js/message-access-dialog-actions.js');
   const calls = [];
@@ -19,7 +19,7 @@ test('message/reply actions preserve exact wire payloads and held feedback', asy
   const fetchImpl = async (url, options) => {
     calls.push({ url, method: options.method, body: JSON.parse(options.body) });
     if (url === '/api/message') return response(200, { via_group: 'team', recipients: [{ queued: true }, { queued: false }] });
-    return response(200, { held: true });
+    return response(200, { queued: true });
   };
   const actions = createMessageAccessDialogActions({
     fetchImpl, notify: (message) => notices.push(message), refresh: async () => { refreshes++; },
@@ -32,7 +32,7 @@ test('message/reply actions preserve exact wire payloads and held feedback', asy
     { url: '/api/human-messages/reply', method: 'POST', body: { id: 17, body: 'answer' } },
   ]);
   assert.equal(notices[0], 'multicast queued for 1 member of team');
-  assert.match(notices[1], /mid-prompt/);
+  assert.equal(notices[1], 'reply queued for worker');
   assert.equal(refreshes, 1);
 });
 
@@ -79,7 +79,7 @@ test('accepted reply and sudo mutations do not await snapshot refresh before com
   const actions = createMessageAccessDialogActions({
     fetchImpl: async (url) => response(200, url === '/api/sudo'
       ? { agent_id: 'agt_worker', grants: [{ id: 1 }] }
-      : { held: false }),
+      : { queued: true }),
     refresh: () => {
       refreshes++;
       return { then() { throw new Error('accepted mutation awaited snapshot refresh'); } };

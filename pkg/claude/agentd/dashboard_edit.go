@@ -1257,12 +1257,13 @@ func dashboardAskSelfReincarnate(w http.ResponseWriter, target, focusHint string
 	// uses when triggered from the dashboard. group_id 0 is a direct
 	// message, the universal-inbox transport.
 	id, err := queueAgentMessage(&db.AgentMessage{
-		GroupID:      0,
-		FromConv:     "",
-		ToConv:       target,
-		Subject:      subject,
-		Body:         instruction,
-		ToRecipients: []string{target},
+		GroupID:          0,
+		FromConv:         "",
+		ToConv:           target,
+		Subject:          subject,
+		Body:             instruction,
+		ToRecipients:     []string{target},
+		OperatorAuthored: true,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io",

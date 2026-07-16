@@ -54,6 +54,7 @@ func (r *commandRecordingTmux) snapshot() [][]string {
 }
 
 func TestInjectTextAndSubmit_MultilineUsesBracketedPaste(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	t.Cleanup(SetInjectSettleDelayForTest(0))
 	rt := &commandRecordingTmux{}
 	prev := clcommon.Default
@@ -106,6 +107,7 @@ func (r *recordingTmux) snapshot() []string {
 // is the first released. Each injector's [text, Enter, Enter] triple must stay
 // contiguous.
 func TestInjectTextAndSubmit_SerializesPerPane(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	t.Cleanup(SetInjectSettleDelayForTest(0))
 	firstTextStarted := make(chan struct{})
 	releaseFirstText := make(chan struct{})
@@ -272,6 +274,7 @@ func (b *barrierTmux) ListSessions() (map[string]struct{}, error) {
 // lock would wedge the second one on Lock() and the rendezvous would
 // time out.
 func TestInjectTextAndSubmit_DifferentPanesConcurrent(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	defer SetInjectSettleDelayForTest(0)()
 	const n = 2
 	arrived := make(chan struct{}, n)
