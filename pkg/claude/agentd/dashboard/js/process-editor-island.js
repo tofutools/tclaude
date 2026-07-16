@@ -315,6 +315,7 @@ function EditorModal({ controller, descriptor }) {
   if (descriptor.kind === 'choice') return html`<${ChoiceDialog} descriptor=${descriptor} complete=${complete} />`;
   if (descriptor.kind === 'scribe') return html`<${ScribeDialog} descriptor=${descriptor} complete=${complete} />`;
   if (descriptor.kind === 'node') return html`<${NodeDialog}
+    key=${descriptor.generation}
     model=${controller.model} nodeId=${descriptor.nodeId} mode=${descriptor.mode}
     onMutated=${() => controller.refresh()} complete=${complete}
     confirmDiscard=${controller.options.confirmDiscard || (async () => false)}

@@ -337,3 +337,46 @@ test('production node and params dialogs stay inside the editor island root', as
   await harness.act(() => editor.modalDispose(null));
   editor.destroy();
 });
+
+test('production node dialog generations isolate forced same-turn descriptor replacement', async (t) => {
+  const { harness, host, editor } = await openBlank(t);
+  const nodeA = editor.model.template.start;
+  const nodeB = Object.keys(editor.model.template.nodes).find((id) => id !== nodeA);
+  const originalA = structuredClone(editor.model.node(nodeA));
+  const originalB = structuredClone(editor.model.node(nodeB));
+
+  await harness.act(() => editor.openNodeSettings(nodeA));
+  const draftA = host.querySelector('.process-node-detail > .process-node-section .process-node-input');
+  draftA.value = 'private node A draft';
+  await harness.act(() => harness.fireEvent(draftA, 'change'));
+  assert.equal(editor.modalDispose.isDirty(), true, 'node A owns an unsaved private draft');
+
+  let guardedReplacement;
+  await harness.act(async () => {
+    guardedReplacement = await editor.openNodeSettings(nodeB);
+  });
+  assert.equal(guardedReplacement, false, 'ordinary replacement still honors dirty-close rejection');
+  assert.equal(host.querySelector('[role="dialog"]').getAttribute('aria-label'), `Node ${nodeA}`);
+  assert.equal(draftA.value, 'private node A draft', 'dirty-close rejection preserves node A draft');
+
+  await harness.act(() => {
+    editor.openModal({ kind: 'node', nodeId: nodeB, mode: 'edit' });
+  });
+  const replacement = host.querySelector('.process-node-modal');
+  const replacementDraft = replacement.querySelector(
+    '.process-node-detail > .process-node-section .process-node-input',
+  );
+  assert.equal(replacement.querySelector('[role="dialog"]').getAttribute('aria-label'), `Node ${nodeB}`);
+  assert.equal(replacementDraft.value, originalB.name || '',
+    'node B displays its own canonical draft after the forced replacement');
+
+  await harness.act(() => harness.fireEvent(replacement.querySelector('.process-node-save'), 'click'));
+  assert.deepEqual(editor.model.node(nodeA), originalA, 'node A draft was never committed');
+  assert.deepEqual(editor.model.node(nodeB), originalB, 'saving node B cannot receive node A draft state');
+
+  await harness.act(() => editor.openNodeSettings(nodeA));
+  assert.equal(host.querySelector('.process-node-detail > .process-node-section .process-node-input').value,
+    originalA.name || '', 'ordinary sequential editing still starts from node A canonical state');
+  await harness.act(() => editor.modalDispose(null));
+  editor.destroy();
+});
