@@ -2,12 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
-const phase = (name, p50 = 2) => ({
+const phase = (name, p50 = 2, children = []) => ({
   name,
+  latest_ms: p50,
   p50_ms: p50,
   p90_ms: p50 * 2,
   p99_ms: p50 * 3,
   max_ms: p50 * 4,
+  children,
 });
 
 const endpoint = (name, total, phases = []) => ({
@@ -118,7 +120,10 @@ test('Debug island keys endpoint and phase DOM and owns only an active 10s timer
   let token = state.beginRequest();
   state.commitRequest(token, payload([
     endpoint('/api/z-last', 8),
-    endpoint('/api/snapshot', 4, [phase('sessions'), phase('tmux', 3)]),
+    endpoint('/api/snapshot', 4, [
+      phase('sessions', 2, [phase('session_rows', 1)]),
+      phase('tmux', 3),
+    ]),
   ]));
 
   const loads = [];
@@ -150,6 +155,14 @@ test('Debug island keys endpoint and phase DOM and owns only an active 10s timer
   const snapshotCard = cards[0];
   const phaseRow = snapshotCard.querySelector('tr[data-key="phase-sessions"]');
   assert.ok(phaseRow);
+  assert.equal(snapshotCard.querySelector('tr[data-key="phase-sessions.session_rows"]'), null);
+  await harness.act(() => harness.fireEvent(
+    getByRole(snapshotCard, 'button', { name: /Expand sessions phase breakdown/ }),
+    'click',
+  ));
+  const childRow = snapshotCard.querySelector('tr[data-key="phase-sessions.session_rows"]');
+  assert.ok(childRow, 'phase children expand on demand');
+  assert.equal(childRow.getAttribute('data-depth'), '1');
   const spark = getByRole(snapshotCard, 'img', { name: /latency sparkline/ });
   assert.match(spark.querySelector('title').textContent, /latest 4.00 ms/);
   assert.equal(snapshotCard.querySelectorAll('.debug-legend-item').length, 2);
@@ -170,12 +183,17 @@ test('Debug island keys endpoint and phase DOM and owns only an active 10s timer
   await harness.act(() => {
     token = state.beginRequest();
     state.commitRequest(token, payload([
-      endpoint('/api/snapshot', 5, [phase('sessions', 4), phase('tmux', 5)]),
+      endpoint('/api/snapshot', 5, [
+        phase('sessions', 4, [phase('session_rows', 3)]),
+        phase('tmux', 5),
+      ]),
       endpoint('/api/z-last', 9),
     ], '2026-07-13T12:00:10Z'));
   });
   assert.equal(mounted.container.querySelector('[data-key="debug-/api/snapshot"]'), snapshotCard);
   assert.equal(snapshotCard.querySelector('tr[data-key="phase-sessions"]'), phaseRow);
+  assert.equal(phaseRow.children[1].textContent, '4.00 ms', 'phase latest value refreshes in-place');
+  assert.equal(childRow.children[1].textContent, '3.00 ms', 'expanded child values refresh in-place');
   assert.equal(harness.document.activeElement, snapshotCard);
 
   await harness.act(() => { activeTab.value = 'groups'; });

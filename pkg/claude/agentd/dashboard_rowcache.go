@@ -65,7 +65,13 @@ type convRowBundle struct {
 // row: one undecodable session row is skipped, not fatal — so a single corrupt
 // effective_sandbox_config can never blank liveness/state for the ENTIRE poll
 // (it would if the loader aborted and we discarded its error here).
-func newSnapshotRowCache(convIDs []string, alive map[string]struct{}) *snapshotRowCache {
+// record receives the named loader timings in declaration order; nil disables
+// publication while retaining the same load path.
+func newSnapshotRowCache(
+	convIDs []string,
+	alive map[string]struct{},
+	record func([]perfPhase),
+) *snapshotRowCache {
 	rc := &snapshotRowCache{
 		alive: alive,
 		memo:  make(map[string]*convRowBundle, len(convIDs)),
@@ -74,17 +80,18 @@ func newSnapshotRowCache(convIDs []string, alive map[string]struct{}) *snapshotR
 	// These tables are independent WAL reads. Running them concurrently keeps
 	// preload wall-clock bounded by the slowest batch instead of summing six
 	// SQLite round trips on every 2-second dashboard poll.
-	runSnapshotLoads(
-		func() { rc.convIndex, _ = db.GetConvIndexBatch(convIDs) },
-		func() { rc.sessions, _ = db.FindSessionsByConvIDs(convIDs) },
-		func() { rc.workdirs, _ = db.ListAgentWorkdirsByConv(convIDs) },
-		func() { rc.workspaces, _ = db.ListAgentWorkspacesByConv(convIDs) },
-		func() { rc.agents, _ = db.AgentsByConv(convIDs) },
+	phases := runSnapshotNamedLoads(
+		snapshotNamedLoad{"conv_index", func() { rc.convIndex, _ = db.GetConvIndexBatch(convIDs) }},
+		snapshotNamedLoad{"sessions", func() { rc.sessions, _ = db.FindSessionsByConvIDs(convIDs) }},
+		snapshotNamedLoad{"workdirs", func() { rc.workdirs, _ = db.ListAgentWorkdirsByConv(convIDs) }},
+		snapshotNamedLoad{"workspaces", func() { rc.workspaces, _ = db.ListAgentWorkspacesByConv(convIDs) }},
+		snapshotNamedLoad{"agents", func() { rc.agents, _ = db.AgentsByConv(convIDs) }},
 	)
 
 	// Precompute every conv's location so we know which (dir, branch) pairs the
 	// branch-link lookups will key on, then load all their git_cache rows in one
 	// batch. Deduped so a shared repo/branch across many agents is one key.
+	locationsStart := time.Now()
 	keySet := make(map[string]struct{}, len(convIDs))
 	for _, convID := range convIDs {
 		loc := rc.computeLoc(convID)
@@ -100,7 +107,13 @@ func newSnapshotRowCache(convIDs []string, alive map[string]struct{}) *snapshotR
 	for k := range keySet {
 		keys = append(keys, k)
 	}
+	phases = append(phases, perfPhase{Name: "locations", Ms: durMs(time.Since(locationsStart))})
+	gitCacheStart := time.Now()
 	rc.gitCache, _ = db.LoadGitCacheBatch(keys)
+	phases = append(phases, perfPhase{Name: "git_cache", Ms: durMs(time.Since(gitCacheStart))})
+	if record != nil {
+		record(phases)
+	}
 	return rc
 }
 

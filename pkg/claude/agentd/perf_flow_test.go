@@ -32,17 +32,20 @@ type perfEndpointJSON struct {
 }
 
 type perfPhaseJSON struct {
-	Name  string  `json:"name"`
-	Count int     `json:"count"`
-	MaxMs float64 `json:"max_ms"`
+	Name     string          `json:"name"`
+	Count    int             `json:"count"`
+	LatestMs float64         `json:"latest_ms"`
+	MaxMs    float64         `json:"max_ms"`
+	Children []perfPhaseJSON `json:"children"`
 }
 
 type perfSampleJSON struct {
 	At      string  `json:"at"`
 	TotalMs float64 `json:"total_ms"`
 	Phases  []struct {
-		Name string  `json:"name"`
-		Ms   float64 `json:"ms"`
+		Name     string          `json:"name"`
+		Ms       float64         `json:"ms"`
+		Children []perfPhaseJSON `json:"children"`
 	} `json:"phases"`
 }
 
@@ -103,6 +106,11 @@ func TestDashboardPerf_RecordsPollTimings(t *testing.T) {
 	// Aggregates carry one row per phase, covering both samples.
 	require.Len(t, snap.Phases, len(wantPhases))
 	assert.Equal(t, 2, snap.Phases[0].Count)
+	preload := snap.Phases[1]
+	require.NotEmpty(t, preload.Children, "preload exposes its concurrent reads as nested phases")
+	assert.Equal(t, 2, preload.Children[0].Count)
+	collectors := snap.Phases[6]
+	require.NotEmpty(t, collectors.Children, "collectors expose their nested operations")
 
 	retired := perfEndpointNamed(t, perf, "/api/retired")
 	assert.Equal(t, 1, retired.Count)
@@ -118,11 +126,13 @@ func TestDashboardPerf_RecordsPollTimings(t *testing.T) {
 	}
 	assert.Equal(t, wantRetiredPhases, gotRetiredPhases)
 
-	// ?limit trims the raw samples served, never the aggregates.
+	// ?limit selects one coherent sample window for both raw samples and all
+	// endpoint/phase aggregates.
 	limited := fetchPerf(t, dash, "/api/perf?limit=1")
 	snapLimited := perfEndpointNamed(t, limited, "/api/snapshot")
-	assert.Equal(t, 2, snapLimited.Count)
+	assert.Equal(t, 1, snapLimited.Count)
 	require.Len(t, snapLimited.Samples, 1)
+	assert.Equal(t, 1, snapLimited.Phases[0].Count)
 }
 
 func TestDashboardPerf_Gzip(t *testing.T) {

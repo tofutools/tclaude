@@ -1399,6 +1399,18 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   padding: 3px 14px 3px 0; border-bottom: 1px solid #1b2029; white-space: nowrap;
 }
 .debug-table td .debug-legend-chip { margin-right: 6px; }
+.debug-phase-toggle,
+.debug-phase-toggle-placeholder {
+  display: inline-grid; place-items: center; width: 18px; height: 18px;
+  margin: -3px 2px -3px -5px;
+}
+.debug-phase-toggle {
+  padding: 0; border: 0; background: transparent; color: #7d8590;
+  cursor: pointer; font: inherit;
+}
+.debug-phase-toggle:hover { color: #d4d4d4; }
+.debug-phase-toggle:focus-visible { outline: 1px solid #58a6ff; outline-offset: 1px; }
+.debug-phase-child td { color: #9da7b3; background: rgba(255, 255, 255, 0.012); }
 /* Logs tab — the read-only viewer over ~/.tclaude/output.log (JSON lines).
    The message column is greedy + monospace; When / Level shrink to fit.
    Warn/error rows get a faint tinted gutter so they catch the eye. */
