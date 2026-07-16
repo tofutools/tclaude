@@ -206,14 +206,14 @@ test('profile editor saves with Ctrl/Cmd+Enter', async (t) => {
   cleanups.reverse().forEach((fn) => fn());
 });
 
-test('sandbox manager renders included-profile tags with the styled class contract', async (t) => {
+test('sandbox manager renders included profiles and static environment bindings', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
     harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
   ]);
   const state = createManagementState();
   state.sandboxRequest.commitRequest(state.sandboxRequest.beginRequest(), [{
-    name: 'child', filesystem: [], environment: [], includes: ['base'], agent_directories: [],
+    name: 'child', filesystem: [], environment: [{ name: 'GOCACHE', value: '/var/cache/go build' }], includes: ['base'], agent_directories: [],
   }]);
   state.openManager('sandbox');
   const actions = { load() {}, openSandboxEditor() {}, removeSandbox() {}, configureSandboxWithAgent() {} };
@@ -224,6 +224,10 @@ test('sandbox manager renders included-profile tags with the styled class contra
   assert.ok(tag, 'include tag uses the CSS-owned class');
   assert.equal(tag.textContent, 'include');
   assert.equal(tag.nextElementSibling.title, 'base');
+  const env = host.querySelector('.sbx-cap-env');
+  assert.equal(env.textContent, 'env');
+  assert.equal(env.nextElementSibling.textContent, 'GOCACHE → /var/cache/go build');
+  assert.equal(env.nextElementSibling.title, 'GOCACHE → /var/cache/go build');
   cleanups.reverse().forEach((fn) => fn());
 });
 
