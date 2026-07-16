@@ -167,11 +167,11 @@ func rawNormalizedGraphCardinality(root *yaml.Node) (NormalizedGraphCardinality,
 		return NormalizedGraphCardinality{}, keyStatus, nil
 	}
 	if start != nil {
-		start, startStatus := structuralNode(start, aliasSteps)
+		startValue, startStatus := structuralMappingKey(start, aliasSteps)
 		if startStatus == rawGraphAliasUnsafe {
 			return NormalizedGraphCardinality{}, startStatus, nil
 		}
-		if startStatus == rawGraphCounted && start.Kind == yaml.ScalarNode && start.Value != "" {
+		if startStatus == rawGraphCounted && startValue != "" {
 			counts.Edges = 1
 		}
 	}
@@ -314,10 +314,11 @@ func structuralMappingKey(key *yaml.Node, maximumAliasSteps int) (string, rawGra
 	if status != rawGraphCounted {
 		return "", status
 	}
-	if key.Kind != yaml.ScalarNode {
+	value, ok := decodedStructuralScalar(key)
+	if !ok {
 		return "", rawGraphUncountable
 	}
-	return key.Value, rawGraphCounted
+	return value, rawGraphCounted
 }
 
 func structuralNode(node *yaml.Node, maximumSteps int) (*yaml.Node, rawGraphCardinalityStatus) {
@@ -413,7 +414,45 @@ func mappingKeyID(node *yaml.Node) string {
 	if node == nil {
 		return ""
 	}
+	if value, ok := decodedStructuralScalar(node); ok {
+		return value
+	}
 	return node.Value
+}
+
+// decodedStructuralScalar mirrors yaml.v3's Decode-to-string semantics for
+// Template.Start and string-keyed graph maps. It follows scalar aliases with
+// cycle protection; complex/wrong-kind keys remain the decoder's error.
+func decodedStructuralScalar(node *yaml.Node) (string, bool) {
+	if node == nil {
+		return "", false
+	}
+	if node.Kind != yaml.AliasNode {
+		if node.Kind != yaml.ScalarNode {
+			return "", false
+		}
+		var value string
+		if err := node.Decode(&value); err != nil {
+			return "", false
+		}
+		return value, true
+	}
+	seen := make(map[*yaml.Node]struct{})
+	for node != nil && node.Kind == yaml.AliasNode {
+		if _, cycle := seen[node]; cycle {
+			return "", false
+		}
+		seen[node] = struct{}{}
+		node = node.Alias
+	}
+	if node == nil || node.Kind != yaml.ScalarNode {
+		return "", false
+	}
+	var value string
+	if err := node.Decode(&value); err != nil {
+		return "", false
+	}
+	return value, true
 }
 
 func pruneDuplicateKeys(root *yaml.Node) {
@@ -644,7 +683,7 @@ func duplicateKeyDiagnostics(root *yaml.Node, budget *templateDiagnosticBudget) 
 				key := node.Content[i]
 				value := node.Content[i+1]
 				id := mappingKeyID(key)
-				keyPath := joinPath(path, key.Value)
+				keyPath := joinPath(path, id)
 				if _, ok := seen[id]; ok {
 					budget.append(&diagnostics, diagErrorAt("duplicate_key", keyPath, "duplicate YAML mapping key", key))
 				}

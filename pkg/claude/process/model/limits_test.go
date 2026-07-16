@@ -1,6 +1,7 @@
 package model
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -145,6 +146,40 @@ func TestParseRejectsCompactAliasedNextMapsBeforeDecodeAndHash(t *testing.T) {
 		assert.Contains(t, parsed.Diagnostics[0].Message, "counted at least 4097")
 	})
 
+	t.Run("exact edge boundary with null start", func(t *testing.T) {
+		for _, test := range []struct{ name, value string }{
+			{"null", "null"}, {"tilde", "~"}, {"empty", ""}, {"quoted empty", `""`}, {"explicit null", "!!null null"},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				source := strings.Replace(string(aliasedNextTemplateYAML(64, 64, false)), "start: n000", "start: "+test.value, 1)
+				parsed, err := Parse([]byte(source))
+				require.NoError(t, err)
+				require.NotNil(t, parsed.Template)
+				assert.Empty(t, parsed.Template.Start)
+				assert.Len(t, parsed.Edges, MaxNormalizedEdges)
+				assert.NotContains(t, diagnosticCodes(parsed.Diagnostics), DiagnosticCodeNormalizedEdgeLimit)
+				assert.Contains(t, diagnosticCodes(parsed.Diagnostics), "missing_start")
+			})
+		}
+	})
+
+	t.Run("null start boundary plus one", func(t *testing.T) {
+		source := strings.Replace(string(aliasedNextTemplateYAML(64, 64, false)), "start: n000", "start: null", 1)
+		source += "  extra:\n    type: decision\n    next:\n      pass: n000\n"
+		parsed, err := Parse([]byte(source))
+		require.NoError(t, err)
+		assert.Nil(t, parsed.Template)
+		assert.Equal(t, []string{DiagnosticCodeNormalizedEdgeLimit}, diagnosticCodes(parsed.Diagnostics))
+	})
+
+	t.Run("explicit string null is non-empty", func(t *testing.T) {
+		source := strings.Replace(string(aliasedNextTemplateYAML(64, 64, false)), "start: n000", "start: !!str null", 1)
+		parsed, err := Parse([]byte(source))
+		require.NoError(t, err)
+		assert.Nil(t, parsed.Template)
+		assert.Equal(t, []string{DiagnosticCodeNormalizedEdgeLimit}, diagnosticCodes(parsed.Diagnostics))
+	})
+
 	t.Run("large alias amplification saturates", func(t *testing.T) {
 		parsed, err := Parse(aliasedNextTemplateYAML(200, 200, false))
 		require.NoError(t, err)
@@ -238,6 +273,101 @@ nodes:
 			assert.NotContains(t, diagnosticCodes(parsed.Diagnostics), DiagnosticCodeGraphAliasLimit)
 		})
 	}
+}
+
+func TestRawGraphKeyIdentityMatchesDecodedNullLastWins(t *testing.T) {
+	source := []byte(`apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: null-keys
+start: target
+nodes:
+  source:
+    type: decision
+    next:
+      null: target
+      ~: target
+  target: {type: end}
+`)
+	parsed, err := Parse(source)
+	require.NoError(t, err)
+	require.NotNil(t, parsed.Template)
+	assert.Len(t, parsed.Template.Nodes["source"].Next, 1)
+	assert.Len(t, parsed.Edges, 2, "one start edge plus one decoded empty-outcome edge")
+	assert.NotContains(t, diagnosticCodes(parsed.Diagnostics), DiagnosticCodeNormalizedEdgeLimit)
+}
+
+func TestRawGraphNullKeyIdentityAtExactEdgeBoundary(t *testing.T) {
+	source := strings.Replace(string(aliasedNextTemplateYAML(64, 64, false)), "start: n000", "start: null", 1)
+	source = strings.Replace(source, "      outcome-000: n000\n", "      null: n000\n", 1)
+	source = strings.Replace(source, "      outcome-001: n000\n", "      ~: n000\n", 1)
+	source = strings.Replace(source, "  n001:\n", "      extra: n000\n  n001:\n", 1)
+	parsed, err := Parse([]byte(source))
+	require.NoError(t, err)
+	require.NotNil(t, parsed.Template)
+	assert.Len(t, parsed.Edges, MaxNormalizedEdges)
+	assert.NotContains(t, diagnosticCodes(parsed.Diagnostics), DiagnosticCodeNormalizedEdgeLimit)
+	assert.Contains(t, diagnosticCodes(parsed.Diagnostics), "duplicate_key")
+	assert.True(t, hasDiagnosticPath(parsed.Diagnostics, "duplicate_key", "nodes.n000.next."))
+
+	source += "  extra:\n    type: decision\n    next:\n      pass: n000\n"
+	parsed, err = Parse([]byte(source))
+	require.NoError(t, err)
+	assert.Nil(t, parsed.Template)
+	assert.Equal(t, []string{"duplicate_key", DiagnosticCodeNormalizedEdgeLimit}, diagnosticCodes(parsed.Diagnostics))
+}
+
+func TestDecodedStructuralScalarMatchesYAMLStringDecode(t *testing.T) {
+	for _, test := range []struct{ name, scalar string }{
+		{"null", "null"}, {"tilde", "~"}, {"empty", ""}, {"quoted empty", `""`},
+		{"explicit null", "!!null null"}, {"explicit string null", "!!str null"},
+		{"integer", "42"}, {"boolean", "true"}, {"quoted integer", `"42"`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var root yaml.Node
+			require.NoError(t, yaml.Unmarshal([]byte("value: "+test.scalar+"\n"), &root))
+			node := root.Content[0].Content[1]
+			var decoded string
+			require.NoError(t, node.Decode(&decoded))
+			resolved, ok := decodedStructuralScalar(node)
+			require.True(t, ok)
+			assert.Equal(t, decoded, resolved)
+		})
+	}
+
+	var aliasRoot yaml.Node
+	require.NoError(t, yaml.Unmarshal([]byte("anchor: &value !!null null\nvalue: *value\n"), &aliasRoot))
+	alias := aliasRoot.Content[0].Content[3]
+	resolved, ok := decodedStructuralScalar(alias)
+	require.True(t, ok)
+	assert.Empty(t, resolved)
+
+	for _, kind := range []yaml.Kind{yaml.MappingNode, yaml.SequenceNode} {
+		_, ok := decodedStructuralScalar(&yaml.Node{Kind: kind})
+		assert.False(t, ok)
+	}
+}
+
+func TestRawGraphWrongKindStartDefersToDecoder(t *testing.T) {
+	for _, value := range []string{"[one]", "{target: one}"} {
+		source := []byte("apiVersion: tclaude.dev/v1alpha1\nkind: ProcessTemplate\nid: wrong-start\nstart: " + value + "\nnodes:\n  one: {type: end}\n")
+		_, err := Parse(source)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "decode process template")
+	}
+}
+
+func TestRawGraphNullStartJSONParityAtExactBoundary(t *testing.T) {
+	tmpl := templateWithEdgeCount(MaxNormalizedEdges + 1)
+	tmpl.Start = ""
+	source, err := json.Marshal(tmpl)
+	require.NoError(t, err)
+	source = bytes.Replace(source, []byte(`"start":""`), []byte(`"start":null`), 1)
+	parsed, err := Parse(source)
+	require.NoError(t, err)
+	require.NotNil(t, parsed.Template)
+	assert.Empty(t, parsed.Template.Start)
+	assert.Len(t, parsed.Edges, MaxNormalizedEdges)
+	assert.NotContains(t, diagnosticCodes(parsed.Diagnostics), DiagnosticCodeNormalizedEdgeLimit)
 }
 
 func TestSchemaAliasTraversalAndDiagnosticsAreBounded(t *testing.T) {

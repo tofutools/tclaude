@@ -143,21 +143,22 @@ func (w *schemaWalk) inspectKnown(node *yaml.Node, schema schemaID) Diagnostics 
 				"merge keys (<<) are not supported; declare fields explicitly", key)...)
 			continue
 		}
-		if _, ok := allowed[key.Value]; !ok {
-			messageBytes := len(`unknown field ""`) + len(key.Value)
-			if !w.definitionBudget.fits(len("unknown_field"), len(key.Value), messageBytes) {
+		keyValue := mappingKeyID(key)
+		if _, ok := allowed[keyValue]; !ok {
+			messageBytes := len(`unknown field ""`) + len(keyValue)
+			if !w.definitionBudget.fits(len("unknown_field"), len(keyValue), messageBytes) {
 				w.exhausted = true
 				break
 			}
-			diagnostic := diagErrorAt("unknown_field", key.Value, fmt.Sprintf("unknown field %q", key.Value), key)
+			diagnostic := diagErrorAt("unknown_field", keyValue, fmt.Sprintf("unknown field %q", keyValue), key)
 			if !w.definitionBudget.append(&diagnostics, diagnostic) {
 				w.exhausted = true
 				break
 			}
 			continue
 		}
-		if child, ok := schemaChild(schema, key.Value); ok {
-			diagnostics = append(diagnostics, w.prefixRelative(key.Value, w.inspect(value, child))...)
+		if child, ok := schemaChild(schema, keyValue); ok {
+			diagnostics = append(diagnostics, w.prefixRelative(keyValue, w.inspect(value, child))...)
 		}
 	}
 	return diagnostics
@@ -175,7 +176,7 @@ func (w *schemaWalk) inspectMapValues(node *yaml.Node, child schemaID) Diagnosti
 				"merge keys (<<) are not supported; declare fields explicitly", key)...)
 			continue
 		}
-		diagnostics = append(diagnostics, w.prefixRelative(key.Value, w.inspect(value, child))...)
+		diagnostics = append(diagnostics, w.prefixRelative(mappingKeyID(key), w.inspect(value, child))...)
 	}
 	return diagnostics
 }

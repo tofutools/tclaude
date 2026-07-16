@@ -78,7 +78,10 @@ func (n *Next) UnmarshalYAML(value *yaml.Node) error {
 			if keyNode.ShortTag() == mergeTag {
 				continue
 			}
-			key := keyNode.Value
+			key, ok := decodedStructuralScalar(keyNode)
+			if !ok {
+				return fmt.Errorf("next outcome key must decode to a string")
+			}
 			var target string
 			if err := value.Content[i+1].Decode(&target); err != nil {
 				return fmt.Errorf("next.%s: %w", key, err)
