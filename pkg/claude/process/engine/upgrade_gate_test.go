@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -499,47 +500,67 @@ func TestEnabledHostRecoversAfterCommittedAmbiguousInitialization(t *testing.T) 
 }
 
 func TestEnabledHostFallsBackToLegacyForProgressedQuiescentRun(t *testing.T) {
-	fs, err := store.NewFS(filepath.Join(t.TempDir(), "store"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	tmpl := &model.Template{
-		APIVersion: model.APIVersion, Kind: model.Kind, ID: "release-progressed", Start: "work",
-		Nodes: map[string]model.Node{
-			"work":   {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "work"}, Next: model.Next{"pass": "done", "fail": "failed"}},
-			"done":   {Type: model.NodeTypeEnd, Result: "completed"},
-			"failed": {Type: model.NodeTypeEnd, Result: "failed"},
-		},
-	}
-	record, err := fs.PutTemplate(t.Context(), tmpl)
-	if err != nil {
-		t.Fatal(err)
-	}
-	const runID = "run-v6-progressed"
-	checkpoint := state.New(runID, record.Ref, record.Ref, []state.NodeInit{
-		{ID: "work", Type: model.NodeTypeTask, Status: state.NodeStatusReady},
-		{ID: "done", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
-		{ID: "failed", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
-	})
-	checkpoint.Status = state.RunStatusRunning
-	if _, err := fs.CreateRun(t.Context(), store.RunRecord{ID: runID, TemplateRef: record.Ref}, checkpoint); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fs.Append(t.Context(), runID, 0, []evidence.LogEntry{storetest.AdminLogEntry(runID, "work", 0)}); err != nil {
-		t.Fatal(err)
-	}
+	for legacySchema := 1; legacySchema <= pathv1.LegacyMaxSchemaVersion; legacySchema++ {
+		t.Run(fmt.Sprintf("schema-%d", legacySchema), func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "store")
+			fs, err := store.NewFS(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tmpl := &model.Template{
+				APIVersion: model.APIVersion, Kind: model.Kind, ID: "release-progressed", Start: "work",
+				Nodes: map[string]model.Node{
+					"work":   {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "work"}, Next: model.Next{"pass": "done", "fail": "failed"}},
+					"done":   {Type: model.NodeTypeEnd, Result: "completed"},
+					"failed": {Type: model.NodeTypeEnd, Result: "failed"},
+				},
+			}
+			record, err := fs.PutTemplate(t.Context(), tmpl)
+			if err != nil {
+				t.Fatal(err)
+			}
+			runID := fmt.Sprintf("run-v%d-progressed", legacySchema)
+			checkpoint := state.New(runID, record.Ref, record.Ref, []state.NodeInit{
+				{ID: "work", Type: model.NodeTypeTask, Status: state.NodeStatusReady},
+				{ID: "done", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+				{ID: "failed", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+			})
+			checkpoint.Status = state.RunStatusRunning
+			if _, err := fs.CreateRun(t.Context(), store.RunRecord{ID: runID, TemplateRef: record.Ref}, checkpoint); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := fs.Append(t.Context(), runID, 0, []evidence.LogEntry{storetest.AdminLogEntry(runID, "work", 0)}); err != nil {
+				t.Fatal(err)
+			}
+			progressed, err := fs.LoadRun(t.Context(), runID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			progressed.State.StateSchemaVersion = legacySchema
+			encoded, err := state.Encode(progressed.State)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "runs", runID, "state.json"), encoded, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if schema, err := fs.RunStateSchemaVersion(t.Context(), runID); err != nil || schema != legacySchema {
+				t.Fatalf("fixture schema = %d, %v", schema, err)
+			}
 
-	host := New(fs, "test:release-progressed", map[model.PerformerKind]processexec.Adapter{model.PerformerAgent: releaseGateAdapter{}})
-	if err := host.EnableExclusiveV7(); err != nil {
-		t.Fatal(err)
-	}
-	results, err := host.Tick(t.Context())
-	if err != nil || len(results) != 1 || results[0].Error != "" || results[0].Status != state.RunStatusCompleted {
-		t.Fatalf("progressed legacy fallback tick = %#v, %v", results, err)
-	}
-	schema, err := fs.RunStateSchemaVersion(t.Context(), runID)
-	if err != nil || schema != state.StateSchemaVersion {
-		t.Fatalf("progressed legacy schema = %d, %v", schema, err)
+			host := New(fs, "test:release-progressed", map[model.PerformerKind]processexec.Adapter{model.PerformerAgent: releaseGateAdapter{}})
+			if err := host.EnableExclusiveV7(); err != nil {
+				t.Fatal(err)
+			}
+			results, err := host.Tick(t.Context())
+			if err != nil || len(results) != 1 || results[0].Error != "" || results[0].Status != state.RunStatusCompleted {
+				t.Fatalf("progressed legacy fallback tick = %#v, %v", results, err)
+			}
+			schema, err := fs.RunStateSchemaVersion(t.Context(), runID)
+			if err != nil || schema <= 0 || schema > pathv1.LegacyMaxSchemaVersion {
+				t.Fatalf("progressed run left legacy compatibility: schema = %d, %v", schema, err)
+			}
+		})
 	}
 }
 
