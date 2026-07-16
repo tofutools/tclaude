@@ -201,6 +201,30 @@ func TestProcessRunViewRejectsUnavailableOrMismatchedPinnedTemplates(t *testing.
 		assert.Empty(t, response.Report.TraversedEdges)
 	})
 
+	t.Run("legacy pinned trailing JSON is a content mismatch", func(t *testing.T) {
+		f, root := processEngineFlow(t)
+		fsStore := createEngineRun(t, root, "viewer-pinned-trailing", viewerFlowTemplate("viewer-pinned-trailing"), false)
+		snapshot, err := fsStore.LoadRun(t.Context(), "viewer-pinned-trailing")
+		require.NoError(t, err)
+		snapshot.Run.Template = nil
+		writeRunRecord(t, root, snapshot.Run)
+		path := pinnedTemplateBodyPath(t, root, snapshot.Run.TemplateRef)
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(path, append(data, []byte(`{"ignored":"TRAILING_TEMPLATE_SECRET"}`)...), 0o644))
+
+		rec := processEngineGet(t, f, "/v1/process/runs/viewer-pinned-trailing/view")
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var response processRunViewResponse
+		testharness.DecodeJSON(t, rec, &response)
+		assert.Nil(t, response.Graph)
+		assert.Equal(t, state.RunStatusInconsistent, response.Verification.EffectiveStatus)
+		assert.True(t, hasProcessDiagnostic(response.Verification, "pinned_template_mismatch"))
+		assert.Empty(t, response.Report.TraversedEdges)
+		assert.NotContains(t, rec.Body.String(), "TRAILING_TEMPLATE_SECRET")
+		assert.NotContains(t, rec.Body.String(), root)
+	})
+
 	t.Run("legacy unsafe pinned ref is persisted mismatch", func(t *testing.T) {
 		f, root := processEngineFlow(t)
 		fsStore := createEngineRun(t, root, "viewer-unsafe-template-ref", viewerFlowTemplate("viewer-unsafe-template-ref"), false)
@@ -257,6 +281,29 @@ func TestProcessRunViewDegradesOnlyConfirmedExistingRuns(t *testing.T) {
 		assert.Empty(t, response.Report.Nodes)
 		assert.Empty(t, response.Report.TraversedEdges)
 		assert.NotContains(t, rec.Body.String(), secret)
+		assert.NotContains(t, rec.Body.String(), root)
+	})
+
+	t.Run("trailing run JSON document", func(t *testing.T) {
+		f, root := processEngineFlow(t)
+		createEngineRun(t, root, "viewer-run-trailing", viewerFlowTemplate("viewer-run-trailing"), false)
+		path := filepath.Join(root, "runs", "viewer-run-trailing", "run.json")
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(path, append(data, []byte(`{"ignored":"TRAILING_RUN_SECRET"}`)...), 0o644))
+
+		rec := processEngineGet(t, f, "/v1/process/runs/viewer-run-trailing/view")
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var response processRunViewResponse
+		testharness.DecodeJSON(t, rec, &response)
+		assert.Equal(t, "viewer-run-trailing", response.Run.ID)
+		assert.Nil(t, response.Graph)
+		assert.Equal(t, state.RunStatusInconsistent, response.Verification.EffectiveStatus)
+		require.Len(t, response.Verification.Diagnostics, 1)
+		assert.Equal(t, "snapshot_unreadable", response.Verification.Diagnostics[0].Code)
+		assert.Empty(t, response.Report.Nodes)
+		assert.Empty(t, response.Report.TraversedEdges)
+		assert.NotContains(t, rec.Body.String(), "TRAILING_RUN_SECRET")
 		assert.NotContains(t, rec.Body.String(), root)
 	})
 

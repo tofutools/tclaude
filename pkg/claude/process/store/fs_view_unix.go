@@ -699,7 +699,17 @@ func decodeViewJSON(ctx context.Context, data []byte, dst any, disallowUnknown b
 	if disallowUnknown {
 		dec.DisallowUnknownFields()
 	}
-	return dec.Decode(dst)
+	if err := dec.Decode(dst); err != nil {
+		return err
+	}
+	var trailing struct{}
+	if err := dec.Decode(&trailing); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		return fmt.Errorf("decode trailing JSON data: %w", err)
+	}
+	return errors.New("unexpected trailing JSON value")
 }
 
 type viewDecodeReader struct {

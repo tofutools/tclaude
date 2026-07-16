@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -171,6 +172,110 @@ func TestWithExecutionViewStableAndChangingEvidenceDisagreement(t *testing.T) {
 		})
 		require.ErrorIs(t, err, store.ErrWriterInProgress)
 		assert.NotErrorIs(t, err, store.ErrRunInconsistent)
+	})
+}
+
+func TestWithExecutionViewRequiresSingleRunJSONDocument(t *testing.T) {
+	for _, tc := range executionJSONSuffixCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			fs, runID := initializedRunAt(t, root)
+			path := filepath.Join(root, "runs", runID, "run.json")
+			data, err := os.ReadFile(path)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(path, append(data, tc.suffix...), 0o644))
+
+			called := false
+			err = fs.WithExecutionView(t.Context(), runID, func(store.ExecutionView) error {
+				called = true
+				return nil
+			})
+			if tc.accept {
+				require.NoError(t, err)
+				assert.True(t, called)
+				return
+			}
+			require.ErrorIs(t, err, store.ErrRunInconsistent)
+			assert.False(t, called)
+			var decodeErr *store.DecodeError
+			require.ErrorAs(t, err, &decodeErr)
+			assert.Equal(t, "run record", decodeErr.Component)
+		})
+	}
+}
+
+func TestWithExecutionViewRequiresSingleTemplateJSONDocument(t *testing.T) {
+	for _, tc := range executionJSONSuffixCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			fs, runID := initializedRunAt(t, root)
+			path := exactTemplateBodyPathForRun(t, root, runID)
+			data, err := os.ReadFile(path)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(path, append(data, tc.suffix...), 0o644))
+
+			called := false
+			err = fs.WithExecutionView(t.Context(), runID, func(store.ExecutionView) error {
+				called = true
+				return nil
+			})
+			if tc.accept {
+				require.NoError(t, err)
+				assert.True(t, called)
+				return
+			}
+			require.ErrorIs(t, err, store.ErrRunInconsistent)
+			assert.False(t, called)
+			assert.False(t, store.IsDecodeError(err), "exact-template decode classification changed")
+			assert.NotErrorIs(t, err, store.ErrContentMismatch, "semantic hashing ran before trailing data was rejected")
+			assert.Contains(t, err.Error(), "exact template cannot be decoded")
+		})
+	}
+}
+
+func TestExecutionViewTrailingJSONDecodePrecedence(t *testing.T) {
+	t.Run("run suffix precedes identity validation", func(t *testing.T) {
+		root := t.TempDir()
+		fs, runID := initializedRunAt(t, root)
+		path := filepath.Join(root, "runs", runID, "run.json")
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		var run store.RunRecord
+		require.NoError(t, json.Unmarshal(data, &run))
+		run.ID = "wrong-id"
+		data, err = json.Marshal(run)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(path, append(data, []byte(`{}`)...), 0o644))
+
+		err = fs.WithExecutionView(t.Context(), runID, func(store.ExecutionView) error {
+			t.Fatal("callback ran for invalid run JSON")
+			return nil
+		})
+		var decodeErr *store.DecodeError
+		require.ErrorAs(t, err, &decodeErr)
+		assert.Equal(t, "run record", decodeErr.Component)
+	})
+
+	t.Run("template field validation precedes suffix validation", func(t *testing.T) {
+		root := t.TempDir()
+		fs, runID := initializedRunAt(t, root)
+		path := exactTemplateBodyPathForRun(t, root, runID)
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		var fields map[string]any
+		require.NoError(t, json.Unmarshal(data, &fields))
+		fields["unexpected"] = true
+		data, err = json.Marshal(fields)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(path, append(data, []byte(`{}`)...), 0o644))
+
+		err = fs.WithExecutionView(t.Context(), runID, func(store.ExecutionView) error {
+			t.Fatal("callback ran for invalid template JSON")
+			return nil
+		})
+		require.ErrorIs(t, err, store.ErrRunInconsistent)
+		assert.Contains(t, err.Error(), `unknown field "unexpected"`)
+		assert.NotContains(t, err.Error(), "unexpected trailing JSON value")
 	})
 }
 
@@ -398,4 +503,37 @@ func executionViewFileBounds(t *testing.T, root, runID string) (total, largest i
 		largest = max(largest, info.Size())
 	}
 	return total, largest
+}
+
+func executionJSONSuffixCases() []struct {
+	name   string
+	suffix string
+	accept bool
+} {
+	return []struct {
+		name   string
+		suffix string
+		accept bool
+	}{
+		{name: "JSON whitespace", suffix: " \t\r\n", accept: true},
+		{name: "large bounded JSON whitespace", suffix: strings.Repeat(" \t\r\n", 16<<10), accept: true},
+		{name: "second object", suffix: "\n{}"},
+		{name: "second array", suffix: "\n[]"},
+		{name: "second scalar", suffix: "\n42"},
+		{name: "second null", suffix: "\nnull"},
+		{name: "same-line concatenation", suffix: `{}`},
+		{name: "trailing garbage", suffix: "\ngarbage"},
+		{name: "malformed suffix", suffix: "\n{\"truncated\":"},
+	}
+}
+
+func exactTemplateBodyPathForRun(t *testing.T, root, runID string) string {
+	t.Helper()
+	runData, err := os.ReadFile(filepath.Join(root, "runs", runID, "run.json"))
+	require.NoError(t, err)
+	var run store.RunRecord
+	require.NoError(t, json.Unmarshal(runData, &run))
+	id, hash, err := splitTemplateRef(run.TemplateRef)
+	require.NoError(t, err)
+	return filepath.Join(root, "templates", id, "sha256-"+hash, "template.json")
 }
