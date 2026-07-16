@@ -1967,16 +1967,26 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	rc := newSnapshotRowCache(convIDs, aliveSessions, func(phases []perfPhase) {
 		span.addChildren("preload", phases...)
 	})
+	visibleAgentIDs := make([]string, 0, len(rc.agents))
+	visibleAgentSet := make(map[string]struct{}, len(rc.agents))
+	for _, actor := range rc.agents {
+		if actor.AgentID == "" {
+			continue
+		}
+		if _, seen := visibleAgentSet[actor.AgentID]; seen {
+			continue
+		}
+		visibleAgentSet[actor.AgentID] = struct{}{}
+		visibleAgentIDs = append(visibleAgentIDs, actor.AgentID)
+	}
 	span.addChildren("preload", runSnapshotNamedLoads(
-		snapshotNamedLoad{"task_refs", func() { taskRefs, _ = db.ListAgentTaskRefs() }},
+		snapshotNamedLoad{"task_refs", func() {
+			taskRefs, _ = db.ListAgentTaskRefsByAgentIDs(visibleAgentIDs)
+		}},
 		snapshotNamedLoad{"presented_prs", func() { presentedPRs = preloadPresentedPRsForDashboard(time.Now()) }},
 		snapshotNamedLoad{"tags", func() { allTags, _ = db.ListAllAgentTags() }},
 	)...)
 
-	// Preload every agent's task-reference link once (a single query)
-	// rather than a lookup per member/agent in this 2s-polled path.
-	// Keyed by agent_id; callers pass the row's cached agent_id (from rc)
-	// so no per-row AgentIDForConv query is needed.
 	taskRefFor := func(agentID string) taskRefView {
 		return taskRefViewFor(taskRefs[agentID])
 	}

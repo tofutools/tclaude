@@ -121,3 +121,33 @@ func TestListAgentTaskRefs(t *testing.T) {
 	_, hasB := m["agt_b"]
 	assert.False(t, hasB, "agent with no task link is omitted")
 }
+
+func TestListAgentTaskRefsByAgentIDs(t *testing.T) {
+	setupTestDB(t)
+	d, err := Open()
+	require.NoError(t, err, "Open")
+	for _, row := range []struct {
+		agentID string
+		convID  string
+	}{
+		{"agt_visible_linked", "conv-visible-linked"},
+		{"agt_visible_unlinked", "conv-visible-unlinked"},
+		{"agt_hidden_linked", "conv-hidden-linked"},
+	} {
+		mustExec(t, d, `INSERT INTO agents (agent_id, current_conv_id, created_at) VALUES (?, ?, '2026-07-02T00:00:00Z')`, row.agentID, row.convID)
+	}
+	_, err = SetAgentTaskRef("agt_visible_linked", "https://linear.app/a/issue/TCL-1", "TCL-1")
+	require.NoError(t, err)
+	_, err = SetAgentTaskRef("agt_hidden_linked", "https://linear.app/a/issue/TCL-2", "TCL-2")
+	require.NoError(t, err)
+
+	refs, err := ListAgentTaskRefsByAgentIDs([]string{"agt_visible_linked", "agt_visible_unlinked"})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]AgentTaskRef{
+		"agt_visible_linked": {URL: "https://linear.app/a/issue/TCL-1", Label: "TCL-1"},
+	}, refs)
+
+	refs, err = ListAgentTaskRefsByAgentIDs(nil)
+	require.NoError(t, err)
+	assert.Empty(t, refs)
+}
