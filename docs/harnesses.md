@@ -241,6 +241,16 @@ or remove all guardrails. The OS sandbox (above) and the permission mode are
 > Codex's approval axis (`--ask-for-approval`) is still CLI/profile-only — it is
 > not surfaced as a dialog dropdown yet; only Claude Code's permission modes are.
 
+Agent-initiated spawns also enforce approval lineage: a parent cannot choose a
+child posture with broader automatic command acceptance than its recorded
+launch posture. Because Claude Code also consumes parent-writable project
+settings, only an explicitly `bypassPermissions` Claude parent may delegate a
+child. Non-bypass Claude modes also cannot delegate to Codex because Codex
+auto-executes actions inside its OS sandbox that Claude may still prompt for,
+deny, or classify. Codex-to-Codex delegation remains available under both the
+approval and sandbox lineage checks. See [Agent coordination](agent.md#spawn)
+for the capability matrix.
+
 ## What stays the same across harnesses
 
 Everything tclaude owns is harness-agnostic and works identically for both:

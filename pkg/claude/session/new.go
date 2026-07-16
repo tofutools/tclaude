@@ -451,6 +451,13 @@ func runNew(params *NewParams) error {
 	if err != nil {
 		return err
 	}
+	recordedApprovalPolicy := approvalPolicy
+	if h.Name == harness.DefaultName && recordedApprovalPolicy == "" {
+		// No Claude flag means the inherit posture exactly. Persist the sentinel
+		// even though command emission still omits it, so approval-lineage checks
+		// can distinguish a known inherit launch from a legacy unknown row.
+		recordedApprovalPolicy = harness.ClaudePermissionInherit
+	}
 	params.Approval = approvalPolicy
 
 	// Gate --auto-review the same way: it is allowed only for a harness with an
@@ -822,8 +829,10 @@ func runNew(params *NewParams) error {
 		// path) — the profile name. "" for a harness with no launch sandbox
 		// flag (Claude Code). Stored verbatim, never coalesced; this is the
 		// only write of the column, so it can't be re-derived later.
-		SandboxMode:      sandboxDescr(sandboxMode, params.PermissionProfile),
-		EffectiveSandbox: effectiveSandbox,
+		SandboxMode:        sandboxDescr(sandboxMode, params.PermissionProfile),
+		EffectiveSandbox:   effectiveSandbox,
+		ApprovalPolicy:     recordedApprovalPolicy,
+		ApprovalAutoReview: autoReview,
 		// Record the resolved AskUserQuestion idle-timeout so a relaunch (resume /
 		// clone / reincarnate) can PRESERVE it — inherit/5m/never carried across
 		// the handoff instead of reverting to global settings.json (schema v97).

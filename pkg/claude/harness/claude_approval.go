@@ -37,6 +37,11 @@ const (
 	claudePermBypass  = "bypassPermissions"
 )
 
+// ClaudePermissionInherit is the public spelling of tclaude's inherit
+// sentinel. Session persistence and authorization layers use it without
+// duplicating a harness-owned policy token.
+const ClaudePermissionInherit = claudePermInherit
+
 // claudeApproval is Claude Code's ApprovalCatalog. The default is `inherit`:
 // like the sandbox default, a tclaude-spawned Claude agent keeps whatever
 // permission posture the operator configured in settings.json (the agentd

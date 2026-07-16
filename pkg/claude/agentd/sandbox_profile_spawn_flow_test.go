@@ -29,7 +29,7 @@ func TestSandboxProfileSpawnRefreshesExplicitValuesOnResumeAndSelectionIsHumanOn
 	require.NoError(t, err)
 
 	spawn := f.AsHuman().SpawnWith("crew", map[string]any{
-		"name": "worker", "sandbox_profile": "literal-env",
+		"name": "worker", "sandbox_profile": "literal-env", "approval": "bypassPermissions",
 	})
 	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
 	snapshot, ok := f.World.SpawnSandboxPolicy(spawn.ConvID)
@@ -58,7 +58,7 @@ func TestSandboxProfileSpawnRefreshesExplicitValuesOnResumeAndSelectionIsHumanOn
 	require.NoError(t, db.GrantAgentPermission(spawn.ConvID, agentd.PermGroupsSpawn, "test"))
 	require.NoError(t, db.GrantAgentPermission(spawn.ConvID, agentd.PermSandboxProfilesManage, "test"))
 	denied := f.AsAgent(spawn.ConvID).SpawnWith("crew", map[string]any{
-		"name": "child", "sandbox_profile": "literal-env",
+		"name": "child", "sandbox_profile": "literal-env", "approval": "default",
 	})
 	require.Equal(t, http.StatusForbidden, denied.Code)
 	assert.Contains(t, string(denied.Raw), "sandbox_profile_restricted")
@@ -104,6 +104,9 @@ func TestSandboxProfileResumeRefreshesComposedPolicyAndCanSpawnChild(t *testing.
 				for key, value := range harnessCase.body {
 					parentBody[key] = value
 				}
+				if harnessCase.name == "claude" {
+					parentBody["approval"] = "bypassPermissions"
+				}
 				parent := f.AsHuman().SpawnWith("crew", parentBody)
 				require.Equalf(t, http.StatusOK, parent.Code, "spawn body=%s", parent.Raw)
 				require.NoError(t, db.GrantAgentPermission(parent.ConvID, agentd.PermGroupsSpawn, "test"))
@@ -145,6 +148,9 @@ func TestSandboxProfileResumeRefreshesComposedPolicyAndCanSpawnChild(t *testing.
 				childBody := map[string]any{"name": "child", "cwd": t.TempDir()}
 				for key, value := range harnessCase.body {
 					childBody[key] = value
+				}
+				if harnessCase.name == "claude" {
+					childBody["approval"] = "default"
 				}
 				child := f.AsAgent(parent.ConvID).SpawnWith("crew", childBody)
 				require.Equalf(t, http.StatusOK, child.Code, "child spawn body=%s", child.Raw)
@@ -311,7 +317,9 @@ func TestSandboxProfileSpawnRejectsAmbientCapabilityWideningAfterParentLaunch(t 
 		t.Run(scope, func(t *testing.T) {
 			f := newFlow(t)
 			f.HaveGroup("crew")
-			parent := f.AsHuman().SpawnWith("crew", map[string]any{"name": "parent"})
+			parent := f.AsHuman().SpawnWith("crew", map[string]any{
+				"name": "parent", "approval": "bypassPermissions",
+			})
 			require.Equalf(t, http.StatusOK, parent.Code, "spawn body=%s", parent.Raw)
 			require.NoError(t, db.GrantAgentPermission(parent.ConvID, agentd.PermGroupsSpawn, "test"))
 
@@ -331,7 +339,7 @@ func TestSandboxProfileSpawnRejectsAmbientCapabilityWideningAfterParentLaunch(t 
 			}
 
 			denied := f.AsAgent(parent.ConvID).SpawnWith("crew", map[string]any{
-				"name": "child", "cwd": t.TempDir(),
+				"name": "child", "cwd": t.TempDir(), "approval": "default",
 			})
 			require.Equal(t, http.StatusForbidden, denied.Code)
 			assert.Contains(t, string(denied.Raw), "sandbox_profile_restricted")
@@ -410,7 +418,7 @@ func TestSandboxProfileWriteRootParticipatesInAgentSpawnProof(t *testing.T) {
 	require.NoError(t, err)
 
 	parent := f.AsHuman().SpawnWith("crew", map[string]any{
-		"name": "parent", "cwd": t.TempDir(),
+		"name": "parent", "cwd": t.TempDir(), "approval": "bypassPermissions",
 	})
 	require.Equalf(t, http.StatusOK, parent.Code, "spawn body=%s", parent.Raw)
 	require.NoError(t, db.GrantAgentPermission(parent.ConvID, agentd.PermGroupsSpawn, "test"))
@@ -419,7 +427,7 @@ func TestSandboxProfileWriteRootParticipatesInAgentSpawnProof(t *testing.T) {
 	require.NoError(t, err)
 	rec := agentReq(t, f, parent.ConvID, http.MethodPost,
 		"/v1/groups/"+url.PathEscape("crew")+"/spawn",
-		map[string]any{"name": "child", "cwd": childCwd})
+		map[string]any{"name": "child", "cwd": childCwd, "approval": "default"})
 	challenge := decodeWriteProofChallenge(t, rec)
 	assert.ElementsMatch(t, []string{childCwd, writeRoot}, challenge.WriteProof.Dirs)
 
@@ -446,7 +454,7 @@ func TestMissingSandboxProfileWriteRootProofsNearestExistingAncestor(t *testing.
 	require.NoError(t, err)
 
 	parent := f.AsHuman().SpawnWith("crew", map[string]any{
-		"name": "parent", "cwd": t.TempDir(),
+		"name": "parent", "cwd": t.TempDir(), "approval": "bypassPermissions",
 	})
 	require.Equalf(t, http.StatusOK, parent.Code, "spawn body=%s", parent.Raw)
 	require.NoError(t, db.GrantAgentPermission(parent.ConvID, agentd.PermGroupsSpawn, "test"))
@@ -455,7 +463,7 @@ func TestMissingSandboxProfileWriteRootProofsNearestExistingAncestor(t *testing.
 	require.NoError(t, err)
 	rec := agentReq(t, f, parent.ConvID, http.MethodPost,
 		"/v1/groups/"+url.PathEscape("crew")+"/spawn",
-		map[string]any{"name": "child", "cwd": childCwd})
+		map[string]any{"name": "child", "cwd": childCwd, "approval": "default"})
 	challenge := decodeWriteProofChallenge(t, rec)
 	assert.ElementsMatch(t, []string{childCwd, writeParent}, challenge.WriteProof.Dirs)
 	assert.NotContains(t, challenge.WriteProof.Dirs, missingWriteRoot)

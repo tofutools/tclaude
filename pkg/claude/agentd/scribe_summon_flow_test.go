@@ -619,6 +619,13 @@ func TestScribeSummon_AgentGatedLikeSpawn(t *testing.T) {
 	f := newFlow(t)
 	stubScribeTerminal(t)
 	f.HaveGroup("callers")
+	recordBypassParent := func(conv string) {
+		require.NoError(t, db.SaveSession(&db.SessionRow{
+			ID: "sess-" + conv, ConvID: conv, Cwd: f.World.HomeDir, Status: "running",
+			Harness: harness.DefaultName, SandboxMode: harness.ClaudeSandboxOff,
+			ApprovalPolicy: "bypassPermissions",
+		}))
+	}
 
 	post := func(conv string) *httptest.ResponseRecorder {
 		req := testharness.JSONRequest(t, http.MethodPost, "/v1/scribe", map[string]any{
@@ -646,6 +653,7 @@ func TestScribeSummon_AgentGatedLikeSpawn(t *testing.T) {
 	// (c) An agent holding both slugs is allowed — same bar the spawn path sets.
 	const granter = "good-1111-2222-3333-4444"
 	f.HaveMember("callers", granter)
+	recordBypassParent(granter)
 	require.NoError(t, db.GrantAgentPermission(granter, agentd.PermGroupsSpawn, "test"))
 	require.NoError(t, db.GrantAgentPermission(granter, agentd.PermPermissionsGrant, "test"))
 	rec := post(granter)
@@ -658,6 +666,7 @@ func TestScribeSummon_AgentGatedLikeSpawn(t *testing.T) {
 	// exact sudo row lineage in addition to the server-minted summon id.
 	const elevated = "sudo-1111-2222-3333-4444"
 	f.HaveMember("callers", elevated)
+	recordBypassParent(elevated)
 	require.NoError(t, db.GrantAgentPermission(elevated, agentd.PermGroupsSpawn, "test"))
 	sudoID, err := db.InsertSudoGrant(&db.SudoGrant{
 		ConvID: elevated, Slug: agentd.PermPermissionsGrant,

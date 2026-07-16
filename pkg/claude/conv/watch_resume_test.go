@@ -5,6 +5,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // JOH-217 — the watch-mode resume (createSessionForConv) used to hardcode
@@ -31,6 +33,25 @@ func TestResumeLaunchCmd_Codex(t *testing.T) {
 	assert.Contains(t, cmd, "codex resume "+resumeConvCodex, "Codex resume uses the `codex resume <id>` subcommand")
 	assert.NotContains(t, cmd, "claude --resume", "the old hardcoded Claude form must be gone for a Codex conv")
 	assert.Contains(t, cmd, "TCLAUDE_SESSION_ID="+resumeConvCodex[:8], "identity env still carried, like the spawn path")
+	assert.Contains(t, cmd, "--ask-for-approval never", "a legacy row is pinned to the daemon-safe default")
+}
+
+func TestResumeLaunchCmd_PreservesRecordedApprovalPosture(t *testing.T) {
+	setupTestDB(t)
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "resume-approval-source", ConvID: resumeConvCodex, Harness: harness.CodexName,
+		ApprovalPolicy: harness.ApprovalOnRequest, ApprovalAutoReview: true,
+	}))
+
+	cmd, h, err := resumeLaunchCmd(harness.CodexName, resumeConvCodex[:8], resumeConvCodex, nil)
+	require.NoError(t, err)
+	assert.Contains(t, cmd, "--ask-for-approval on-request")
+	assert.Contains(t, cmd, `approvals_reviewer="auto_review"`)
+
+	policy, autoReview, err := resumeApprovalState(h, resumeConvCodex)
+	require.NoError(t, err)
+	assert.Equal(t, harness.ApprovalOnRequest, policy)
+	assert.True(t, autoReview)
 }
 
 // A Claude conv keeps its existing `claude --resume <id>` launch unchanged.

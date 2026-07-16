@@ -111,9 +111,10 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 		codexGitCommonDirPinned = false
 	}
 	// Preserve the source's per-agent AskUserQuestion timeout onto the sibling
-	// (schema v97) — unlike sandbox/approval, which re-default. "" for a source
+	// (schema v97). "" for a source
 	// that recorded none (a non-Claude or pre-column source).
 	askTimeout := askTimeoutForRelaunch(sourceConv)
+	approval, autoReview := approvalForRelaunch(sourceConv, srcHarness)
 	if noCopyConv {
 		label = generateSpawnLabel()
 		agentDirectoryCleanup := func() {}
@@ -125,11 +126,9 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 			effectiveSandbox = &materialized
 			agentDirectoryCleanup = cleanup
 		}
-		// A clone is a relaunch, not a fresh opt-in, so it never engages the
-		// experimental auto-review guardian (autoReview=false) nor pre-trusts the
-		// cwd (trustDir=false — that edits ~/.codex/config.toml and is an explicit
-		// fresh-spawn opt-in) — same rationale as approvalForHarness re-defaulting
-		// rather than carrying per-conv state.
+		// A clone preserves recorded approval and auto-review authority, but does
+		// not pre-trust the cwd (that edits ~/.codex/config.toml and remains a
+		// fresh-spawn opt-in).
 		if fail := reassertFail(); fail != nil {
 			agentDirectoryCleanup()
 			return "", "", "", "", fail
@@ -152,7 +151,8 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 		proofArgs.CodexGitCommonDirPinned = codexGitCommonDirPinned
 		proofArgs.GitWorktreeWriteDirs = gitWriteDirs
 		proofArgs.GitWorktreeWriteDirsPinned = exactGrantPinned
-		proofArgs.Approval = approvalForHarness(srcHarness)
+		proofArgs.Approval = approval
+		proofArgs.AutoReview = autoReview
 		proofArgs.AskUserQuestionTimeout = askTimeout
 		proofArgs.RemoteControl = remoteControl
 		if err := SpawnDetachedTclaudeNew(proofArgs); err != nil {
@@ -227,7 +227,8 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 	proofArgs.CodexGitCommonDirPinned = codexGitCommonDirPinned
 	proofArgs.GitWorktreeWriteDirs = gitWriteDirs
 	proofArgs.GitWorktreeWriteDirsPinned = exactGrantPinned
-	proofArgs.Approval = approvalForHarness(srcHarness)
+	proofArgs.Approval = approval
+	proofArgs.AutoReview = autoReview
 	proofArgs.AskUserQuestionTimeout = askTimeout
 	proofArgs.RemoteControl = remoteControl
 	if err := SpawnDetachedTclaudeResume(proofArgs); err != nil {

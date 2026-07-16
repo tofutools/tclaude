@@ -292,6 +292,34 @@ The provenance tag reads `explicit`, `profile "<name>"`,
 `profile "codex-kit" model ignored (not valid for claude)`. If a field shows a
 profile tier you didn't intend, re-spawn with the explicit flag.
 
+Agent callers are also bound by **approval lineage** after the whole profile
+stack resolves: a child may not automatically accept a broader class of
+commands than its parent. The capability matrix is:
+
+- non-bypass Claude modes (`inherit`, `plan`, `default`, `dontAsk`,
+  `acceptEdits`, and `auto`) may not delegate a child;
+- Codex `untrusted` without auto-review may spawn only the same posture;
+- Codex `on-failure`, `on-request`, or `never` without active classifier review
+  may spawn Codex without active classifier review;
+- Codex `untrusted` with active classifier review may spawn `untrusted` Codex
+  with the classifier on or off;
+- Codex `on-failure` or `on-request` with active classifier review may spawn
+  any Codex posture;
+- Claude `bypassPermissions` may spawn any posture.
+
+`acceptEdits` and classifier review are intentionally incomparable: each can
+automatically approve actions the other may reject. Only an explicitly
+`bypassPermissions` Claude parent may delegate any child, because Claude also
+loads permission rules, hooks, and sandbox settings from files the parent may
+write in the child cwd. Codex is not treated as a baseline workaround: it
+automatically executes actions inside its OS sandbox that non-bypass Claude
+modes may still prompt for, deny, or classify. A refusal is
+`403 approval_restricted`. Do not work around it by selecting another harness;
+choose a contained posture, or ask the human to spawn the child when broader
+authority is genuinely intended. A human spawn remains the trust-root bypass.
+Codex `never` plus `auto_review=true` has no active classifier because `never`
+generates no approval request for the reviewer to decide.
+
 ## Etiquette
 
 - **One message, one purpose.** If you have multiple unrelated asks,

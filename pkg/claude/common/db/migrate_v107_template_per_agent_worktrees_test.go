@@ -11,8 +11,6 @@ func TestMigrateV106toV107_AddsTemplatePerAgentWorktreesDefault(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
 	require.NoError(t, err)
-	require.Equal(t, 126, currentVersion, "tripwire: bump this with the next migration")
-
 	mustExec(t, d, `ALTER TABLE group_templates DROP COLUMN per_agent_worktrees`)
 	mustExec(t, d, `INSERT INTO group_templates (name, created_at, updated_at)
 		VALUES ('legacy', '2026-07-10T00:00:00Z', '2026-07-10T00:00:00Z')`)

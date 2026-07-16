@@ -59,6 +59,11 @@ type SessionState struct {
 	// is stored verbatim. The dashboard renders it as a per-agent badge.
 	SandboxMode      string                  `json:"sandboxMode,omitempty"`
 	EffectiveSandbox *sandboxpolicy.Snapshot `json:"effectiveSandbox,omitempty"`
+	// ApprovalPolicy and ApprovalAutoReview preserve the resolved launch-time
+	// approval posture across hook load/mutate/save cycles. They are recorded
+	// for authorization and re-applied when the conversation is resumed.
+	ApprovalPolicy     string `json:"approvalPolicy,omitempty"`
+	ApprovalAutoReview bool   `json:"approvalAutoReview,omitempty"`
 	// AskUserQuestionTimeout is the resolved Claude Code AskUserQuestion
 	// idle-timeout (inherit|never|60s|5m|10m) the session was spawned under.
 	// Set once at spawn by `session new` and carried through toRow/fromRow so
@@ -178,6 +183,8 @@ func toRow(s *SessionState) *db.SessionRow {
 		Harness:                s.Harness,
 		SandboxMode:            s.SandboxMode,
 		EffectiveSandbox:       s.EffectiveSandbox,
+		ApprovalPolicy:         s.ApprovalPolicy,
+		ApprovalAutoReview:     s.ApprovalAutoReview,
 		AskUserQuestionTimeout: s.AskUserQuestionTimeout,
 	}
 }
@@ -200,6 +207,8 @@ func fromRow(r *db.SessionRow) *SessionState {
 		Harness:                r.Harness,
 		SandboxMode:            r.SandboxMode,
 		EffectiveSandbox:       r.EffectiveSandbox,
+		ApprovalPolicy:         r.ApprovalPolicy,
+		ApprovalAutoReview:     r.ApprovalAutoReview,
 		AskUserQuestionTimeout: r.AskUserQuestionTimeout,
 	}
 }

@@ -1017,7 +1017,7 @@ func profileHandleConflict(p *db.SpawnProfile, allowedProfileID int64) (string, 
 // seedProfileFromConv traces a live conv's observable launch config + granted
 // permissions into an UNSAVED spawn-profile seed. It reuses the exact per-agent
 // capture snapshotGroupTemplate applies to a group's roster — traceMemberLaunch
-// (harness/model/effort/sandbox, each blank when it matches the harness default)
+// (harness/model/effort/sandbox/approval/auto-review)
 // plus ListAgentPermissionsForConv (granted slugs → "grant" overrides) —
 // projected onto the profile wire shape. Name is left blank: every field is a
 // pre-fill the editor lets the human review + name before saving, never a
@@ -1025,10 +1025,15 @@ func profileHandleConflict(p *db.SpawnProfile, allowedProfileID int64) (string, 
 func seedProfileFromConv(convID string) spawnProfileJSON {
 	launch := traceMemberLaunch(convID)
 	seed := spawnProfileJSON{
-		Harness: launch.Harness,
-		Model:   launch.Model,
-		Effort:  launch.Effort,
-		Sandbox: launch.Sandbox,
+		Harness:  launch.Harness,
+		Model:    launch.Model,
+		Effort:   launch.Effort,
+		Sandbox:  launch.Sandbox,
+		Approval: launch.Approval,
+	}
+	if launch.AutoReviewSet {
+		autoReview := launch.AutoReview
+		seed.AutoReview = &autoReview
 	}
 	if perms, _ := db.ListAgentPermissionsForConv(convID); len(perms) > 0 {
 		overrides := make(map[string]string, len(perms))

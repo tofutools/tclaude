@@ -10,9 +10,8 @@ import (
 
 // These scenarios pin AskUserQuestion idle-timeout PRESERVATION across the
 // lifecycle verbs that mint a successor CC instance: reincarnate, clone (both
-// the fresh and the jsonl-copy path) and resume. Unlike sandbox/approval —
-// which the daemon re-DEFAULTS on every relaunch (sandboxForHarness /
-// approvalForHarness) — the operator wants a per-agent timeout CARRIED across
+// the fresh and the jsonl-copy path) and resume. Like approval posture, the
+// operator wants a per-agent timeout CARRIED across
 // the handoff: an agentic worker set to auto-continue at 5m must come back on
 // 5m, not revert to the global settings.json. The predecessor's recorded value
 // lives on sessions.ask_user_question_timeout (schema v97); the relaunch reads
