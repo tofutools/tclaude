@@ -169,6 +169,7 @@ type codexRuntimeScanState struct {
 	contextReset         bool
 	interruptedSubagents map[string]struct{}
 	followupCallIDs      map[string]struct{}
+	checkpointLedgerRev  uint64
 }
 
 func newCodexRuntimeScanState() codexRuntimeScanState {
@@ -184,6 +185,7 @@ func (s codexRuntimeScanState) clone() codexRuntimeScanState {
 		contextReset:         s.contextReset,
 		interruptedSubagents: make(map[string]struct{}, len(s.interruptedSubagents)),
 		followupCallIDs:      make(map[string]struct{}, len(s.followupCallIDs)),
+		checkpointLedgerRev:  s.checkpointLedgerRev,
 	}
 	for id := range s.interruptedSubagents {
 		out.interruptedSubagents[id] = struct{}{}
@@ -215,7 +217,10 @@ func (s *codexRuntimeScanState) consumeLine(line []byte) bool {
 			return false
 		}
 		if call.Type == "function_call" && call.Name == "followup_task" && call.CallID != "" {
-			s.followupCallIDs[call.CallID] = struct{}{}
+			if _, exists := s.followupCallIDs[call.CallID]; !exists {
+				s.followupCallIDs[call.CallID] = struct{}{}
+				s.checkpointLedgerRev++
+			}
 		}
 		return true
 	}
@@ -250,14 +255,26 @@ func (s *codexRuntimeScanState) consumeLine(line []byte) bool {
 		}
 		switch ev.Kind {
 		case "started":
-			delete(s.interruptedSubagents, ev.AgentThreadID)
+			if _, exists := s.interruptedSubagents[ev.AgentThreadID]; exists {
+				delete(s.interruptedSubagents, ev.AgentThreadID)
+				s.checkpointLedgerRev++
+			}
 		case "interacted":
 			if _, resumes := s.followupCallIDs[ev.EventID]; resumes {
-				delete(s.interruptedSubagents, ev.AgentThreadID)
+				if _, exists := s.interruptedSubagents[ev.AgentThreadID]; exists {
+					delete(s.interruptedSubagents, ev.AgentThreadID)
+					s.checkpointLedgerRev++
+				}
 			}
-			delete(s.followupCallIDs, ev.EventID)
+			if _, exists := s.followupCallIDs[ev.EventID]; exists {
+				delete(s.followupCallIDs, ev.EventID)
+				s.checkpointLedgerRev++
+			}
 		case "interrupted":
-			s.interruptedSubagents[ev.AgentThreadID] = struct{}{}
+			if _, exists := s.interruptedSubagents[ev.AgentThreadID]; !exists {
+				s.interruptedSubagents[ev.AgentThreadID] = struct{}{}
+				s.checkpointLedgerRev++
+			}
 		}
 	}
 	return true

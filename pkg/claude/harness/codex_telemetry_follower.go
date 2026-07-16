@@ -42,6 +42,9 @@ type CodexTelemetryFollower struct {
 	checkpointInode   uint64
 	checkpointAnchor  []byte
 	restored          bool
+
+	checkpointTooLarge          bool
+	checkpointTooLargeLedgerRev uint64
 }
 
 // codexTelemetryCheckpoint is the durable form of the follower's cursor and
@@ -112,6 +115,7 @@ func (f *CodexTelemetryFollower) RestoreCheckpoint(data []byte) error {
 	f.checkpointInode = cp.Inode
 	f.checkpointAnchor = append([]byte(nil), cp.Anchor...)
 	f.restored = true
+	f.checkpointTooLarge = false
 	return nil
 }
 
@@ -121,6 +125,12 @@ func (f *CodexTelemetryFollower) Checkpoint() ([]byte, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.path == "" || f.offset <= 0 || f.checkpointSize < f.offset || len(f.checkpointAnchor) == 0 {
+		return nil, false, nil
+	}
+	// An oversized checkpoint is driven by the variable-size collaboration
+	// ledgers. Avoid rebuilding, sorting, and marshaling the same multi-MB state
+	// every dashboard poll; retry only after one of those ledgers changes.
+	if f.checkpointTooLarge && f.checkpointTooLargeLedgerRev == f.state.checkpointLedgerRev {
 		return nil, false, nil
 	}
 	cp := codexTelemetryCheckpoint{
@@ -144,8 +154,11 @@ func (f *CodexTelemetryFollower) Checkpoint() ([]byte, bool, error) {
 		return nil, false, fmt.Errorf("encode Codex telemetry checkpoint: %w", err)
 	}
 	if len(data) > maxCodexTelemetryCheckpointBytes {
+		f.checkpointTooLarge = true
+		f.checkpointTooLargeLedgerRev = f.state.checkpointLedgerRev
 		return nil, false, fmt.Errorf("%w: %d bytes", ErrCodexTelemetryCheckpointTooLarge, len(data))
 	}
+	f.checkpointTooLarge = false
 	return data, true, nil
 }
 
@@ -290,6 +303,7 @@ func (f *CodexTelemetryFollower) fullScan(path string, info os.FileInfo) (CodexR
 		f.info = metadata.info
 		f.snapshot = state.snapshot()
 		f.applyCheckpoint(metadata)
+		f.checkpointTooLarge = false
 		return f.snapshot, nil
 	}
 	return CodexRuntimeSnapshot{}, fmt.Errorf("codex rollout %s changed repeatedly while scanning", path)
@@ -343,6 +357,7 @@ func (f *CodexTelemetryFollower) clearCursor() {
 	f.checkpointInode = 0
 	f.checkpointAnchor = nil
 	f.restored = false
+	f.checkpointTooLarge = false
 }
 
 func (f *CodexTelemetryFollower) restoreMatches(path string, info os.FileInfo) bool {

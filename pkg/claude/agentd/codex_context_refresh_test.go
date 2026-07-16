@@ -181,6 +181,16 @@ func TestCodexContextRefreshDeletesCheckpointThatGrowsTooLarge(t *testing.T) {
 	checkpoint, err = db.LoadCodexTelemetryCheckpoint(sessionID)
 	require.NoError(t, err)
 	assert.Nil(t, checkpoint, "an unrestorable oversized checkpoint must not survive in the DB")
+
+	resetCodexRefreshThrottleForTest(sessionID)
+	refreshCodexContextSnapshotOnRead(sess, true)
+	codexContextRefreshMu.Lock()
+	follower := codexContextRefreshMu.last[sessionID].follower
+	codexContextRefreshMu.Unlock()
+	checkpointData, ok, checkpointErr := follower.Checkpoint()
+	assert.NoError(t, checkpointErr, "a second unchanged refresh must not re-encode the oversized state")
+	assert.False(t, ok)
+	assert.Nil(t, checkpointData)
 }
 
 func TestCodexContextRefreshDeletesCheckpointWhenRolloutDisappears(t *testing.T) {
