@@ -353,8 +353,12 @@ func deriveParallelTopology(tmpl *model.Template, templateRef string) (parallelT
 	if tmpl == nil || !canonicalDigest(templateRef) {
 		return parallelTopology{}, fmt.Errorf("exact template and semantic ref are required")
 	}
-	edges := make([]EdgeKey, 0)
-	for _, edge := range model.NormalizeEdges(tmpl) {
+	normalizedEdges, cardinalityDiagnostics := model.NormalizeEdgesWithinBudget(tmpl)
+	if cardinalityDiagnostics.HasErrors() {
+		return parallelTopology{}, fmt.Errorf("exact template exceeds normalized graph budget")
+	}
+	edges := make([]EdgeKey, 0, len(normalizedEdges))
+	for _, edge := range normalizedEdges {
 		if edge.From == "" || model.IsPoisonEscalationRetryEdge(tmpl, edge) {
 			continue
 		}

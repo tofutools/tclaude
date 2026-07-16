@@ -200,18 +200,17 @@ func assertViewerV2Unavailable(t *testing.T, got processview.ViewerV2, reason pr
 	assert.Nil(t, got.Routing)
 }
 
-// denseViewerV2TemplateAtEncodedByteBudget builds a valid acyclic chain whose
-// 4,096 long source IDs are each repeated across 21 projected edge objects.
-// Branch targets are sharded so no normalized inbound candidate set exceeds
-// the authoring model's 2,046 ceiling.
+// denseViewerV2TemplateAtEncodedByteBudget builds a valid acyclic chain at the
+// 2,048 normalized-node ceiling. Its 2,000 long source IDs are repeated across
+// two projected edge objects; branch targets are sharded across 48 sinks.
 // This keeps the exact template input well below its existing file ceiling
 // while projection overhead supplies most of the encoded topology size. One
 // safe outcome is then extended just enough to land exactly on the bound.
 func denseViewerV2TemplateAtEncodedByteBudget(t *testing.T) (*model.Template, string, string, string, int) {
 	t.Helper()
-	const outgoing = 21
-	const sinks = 64
-	sourceIDs := make([]string, pathv1.MaxRoutingList)
+	const outgoing = 2
+	const sinks = 48
+	sourceIDs := make([]string, model.MaxNormalizedNodes-sinks)
 	for i := range sourceIDs {
 		sourceIDs[i] = fmt.Sprintf("source-%04d-%s", i, strings.Repeat("s", 52))
 	}

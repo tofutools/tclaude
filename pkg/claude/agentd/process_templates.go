@@ -18,7 +18,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 )
 
-const maxProcessEditBody = 4 << 20
+const maxProcessEditBody = model.MaxProcessTemplateSourceBytes
 
 type processTemplateVersionView struct {
 	Ref          string         `json:"ref"`
@@ -81,6 +81,14 @@ type processEditModelError struct{ err error }
 
 func (e *processEditModelError) Error() string { return e.err.Error() }
 func (e *processEditModelError) Unwrap() error { return e.err }
+
+type processTemplateStoredValidationError struct {
+	diagnostics model.Diagnostics
+}
+
+func (e *processTemplateStoredValidationError) Error() string {
+	return "stored process template is incompatible with current validation limits"
+}
 
 func handleProcessTemplates(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requirePermission(w, r, PermProcessTemplatesRead); !ok {
@@ -231,6 +239,15 @@ func handleProcessTemplateGet(w http.ResponseWriter, r *http.Request, fs *store.
 		return
 	}
 	view, err := loadProcessTemplateEditView(r, fs, record.Ref, includeAuthorship)
+	var storedValidationErr *processTemplateStoredValidationError
+	if errors.As(err, &storedValidationErr) {
+		writeProcessJSON(w, http.StatusUnprocessableEntity, map[string]any{
+			"error":       storedValidationErr.Error(),
+			"code":        "process_template_invalid",
+			"diagnostics": diagnosticsForEditor(storedValidationErr.diagnostics, nil),
+		})
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "process_template", err.Error())
 		return
@@ -272,7 +289,9 @@ func handleProcessTemplateSave(w http.ResponseWriter, r *http.Request, fs *store
 		writeProcessEditParseError(w, err)
 		return
 	}
-	if rawSource && parsed.Diagnostics.HasErrors() {
+	cardinalityErrors := model.PreflightNormalizedGraphCardinality(parsed.Template).HasErrors()
+	resourceErrors := parsed.Diagnostics.HasNormalizedGraphBudgetError()
+	if (rawSource && parsed.Diagnostics.HasErrors()) || cardinalityErrors || resourceErrors {
 		writeProcessJSON(w, http.StatusUnprocessableEntity, map[string]any{
 			"error":       "process template has validation errors; run process-templates validate and fix them before saving",
 			"code":        "process_template_invalid",
@@ -360,6 +379,12 @@ func parseProcessEditView(body *processTemplateEditView) (*model.ParsedTemplate,
 	}
 	if err := assembleProcessEditModel(body); err != nil {
 		return nil, &processEditModelError{err: err}
+	}
+	edges, cardinalityDiagnostics := model.NormalizeEdgesWithinBudget(body.Template)
+	if cardinalityDiagnostics.HasErrors() {
+		return &model.ParsedTemplate{
+			Template: body.Template, Edges: edges, Diagnostics: cardinalityDiagnostics,
+		}, nil
 	}
 	canonical, err := model.CanonicalYAML(body.Template)
 	if err != nil {
@@ -477,6 +502,9 @@ func loadProcessTemplateEditView(r *http.Request, fs *store.FS, ref string, incl
 	if err != nil {
 		return nil, err
 	}
+	if parsed.Template == nil || parsed.Diagnostics.HasNormalizedGraphBudgetError() {
+		return nil, &processTemplateStoredValidationError{diagnostics: parsed.Diagnostics}
+	}
 	semantic := *parsed.Template
 	semantic.Layout = nil
 	return &processTemplateEditView{
@@ -576,6 +604,14 @@ func diagnosticsForEditor(diagnostics model.Diagnostics, tmpl *model.Template) [
 			Scope: scope, TargetID: target, Severity: diagnostic.Severity,
 			Code: diagnostic.Code, Message: diagnostic.Message,
 		})
+	}
+	encoded, err := json.Marshal(out)
+	if err != nil || len(encoded) > model.MaxTemplateDiagnosticWireBytes {
+		sentinel := model.TemplateDiagnosticBudgetDiagnostic()
+		return []processEditDiag{{
+			Scope: "template", Severity: sentinel.Severity,
+			Code: sentinel.Code, Message: sentinel.Message,
+		}}
 	}
 	return out
 }

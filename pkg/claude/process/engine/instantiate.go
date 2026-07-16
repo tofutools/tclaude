@@ -103,7 +103,11 @@ func Instantiate(ctx context.Context, st store.Store, request InstantiateRequest
 }
 
 func prepareInstantiation(tmpl *model.Template, request InstantiateRequest) (map[string]string, string, bool, error) {
-	if diagnostics := model.Validate(tmpl, model.NormalizeEdges(tmpl)); diagnostics.HasErrors() {
+	edges, cardinalityDiagnostics := model.NormalizeEdgesWithinBudget(tmpl)
+	if cardinalityDiagnostics.HasErrors() {
+		return nil, "", false, &InstantiateInputError{Err: fmt.Errorf("template has validation errors")}
+	}
+	if diagnostics := model.Validate(tmpl, edges); diagnostics.HasErrors() {
 		return nil, "", false, &InstantiateInputError{Err: fmt.Errorf("template has validation errors")}
 	}
 	if err := requireInstantiationCapabilities(tmpl, request.EngineCapabilities); err != nil {

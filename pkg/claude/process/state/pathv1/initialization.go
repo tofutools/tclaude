@@ -146,7 +146,11 @@ func BuildInitialization(ctx context.Context, needed UpgradeNeeded, tmpl *model.
 	if tmpl == nil || tmpl.Start == "" || tmpl.Nodes[tmpl.Start].Type == "" {
 		return nil, fmt.Errorf("%w: exact template has no valid start node", ErrInitializationInvalid)
 	}
-	if diagnostics := model.Validate(tmpl, model.NormalizeEdges(tmpl)); diagnostics.HasErrors() {
+	edges, cardinalityDiagnostics := model.NormalizeEdgesWithinBudget(tmpl)
+	if cardinalityDiagnostics.HasErrors() {
+		return nil, fmt.Errorf("%w: exact template is invalid", ErrInitializationInvalid)
+	}
+	if diagnostics := model.Validate(tmpl, edges); diagnostics.HasErrors() {
 		return nil, fmt.Errorf("%w: exact template is invalid", ErrInitializationInvalid)
 	}
 	id, templateHash, ok := splitExactTemplateRef(needed.TemplateRef)

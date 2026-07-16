@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -150,6 +151,65 @@ func TestProcessTemplateRESTListGetSaveAndConflict(t *testing.T) {
 	assert.NotEqual(t, latestRecord.Ref, saved.Ref)
 	assert.NotEqual(t, edit.SourceHash, saved.SourceHash)
 	assert.NotEmpty(t, saved.SemanticHash)
+}
+
+func TestProcessTemplateGetRejectsLegacyOverBudgetSourceWithoutPanic(t *testing.T) {
+	f, root := processEngineFlow(t)
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	record, err := fs.PutTemplate(t.Context(), processRESTTemplate("legacy-large", "legacy source", 10))
+	require.NoError(t, err)
+
+	// Simulate a version written before normalized graph cardinality was an
+	// explicit store invariant. The immutable semantic record still selects the
+	// version, while the authoring source contains compact alias amplification.
+	source := processAliasedNextSource(64, 64)
+	sourcePath := filepath.Join(root, "templates", record.ID, "sha256-"+record.SemanticHash, "template.yaml")
+	require.NoError(t, os.WriteFile(sourcePath, source, 0o644))
+
+	rec := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates/legacy-large", nil)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	var response struct {
+		Code        string            `json:"code"`
+		Diagnostics []processEditDiag `json:"diagnostics"`
+	}
+	testharness.DecodeJSON(t, rec, &response)
+	assert.Equal(t, "process_template_invalid", response.Code)
+	require.Len(t, response.Diagnostics, 1)
+	assert.Equal(t, model.DiagnosticCodeNormalizedEdgeLimit, response.Diagnostics[0].Code)
+	assert.Equal(t, "template", response.Diagnostics[0].Scope)
+}
+
+func TestProcessTemplateGetRejectsLegacyMalformedGraphKeyWithTypedDiagnostic(t *testing.T) {
+	f, root := processEngineFlow(t)
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	record, err := fs.PutTemplate(t.Context(), processRESTTemplate("legacy-malformed", "legacy source", 10))
+	require.NoError(t, err)
+
+	source := []byte(`apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: legacy-malformed
+nodes:
+  ? [malformed]
+  : {type: end}
+`)
+	sourcePath := filepath.Join(root, "templates", record.ID, "sha256-"+record.SemanticHash, "template.yaml")
+	require.NoError(t, os.WriteFile(sourcePath, source, 0o644))
+
+	rec := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates/legacy-malformed", nil)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	var response struct {
+		Code        string            `json:"code"`
+		Diagnostics []processEditDiag `json:"diagnostics"`
+	}
+	testharness.DecodeJSON(t, rec, &response)
+	assert.Equal(t, "process_template_invalid", response.Code)
+	require.Len(t, response.Diagnostics, 1)
+	assert.Equal(t, model.DiagnosticCodeInvalidGraphKey, response.Diagnostics[0].Code)
+	assert.Equal(t, "template", response.Diagnostics[0].Scope)
+	assert.Empty(t, response.Diagnostics[0].TargetID)
+	assert.Less(t, rec.Body.Len(), 1024)
 }
 
 func TestProcessTemplateSaveStoreFailureIsInternalError(t *testing.T) {
@@ -463,6 +523,71 @@ func TestProcessTemplateRawSourceValidationPreservesYAMLDiagnostics(t *testing.T
 	assert.NotContains(t, list.Body.String(), `"id":"raw"`)
 }
 
+func TestProcessTemplateRawSchemaAliasBudgetIsStableAndRejectsSave(t *testing.T) {
+	f, _ := processEngineFlow(t)
+	source := processSchemaAliasSource(model.MaxNormalizedNodes)
+	validate := processTemplateRequest(t, f, http.MethodPost, "/v1/process/validate", map[string]any{"source": string(source)})
+	require.Equal(t, http.StatusOK, validate.Code, validate.Body.String())
+	assert.Contains(t, validate.Body.String(), `"code":"template_diagnostic_budget"`)
+	assert.LessOrEqual(t, validate.Body.Len(), model.MaxProcessTemplateSourceBytes, "encoded editor diagnostics stay inside the public wire scale")
+	assert.Equal(t, 1, strings.Count(validate.Body.String(), `"code":"template_diagnostic_budget"`))
+
+	save := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/schema-budget", map[string]any{"source": string(source)})
+	require.Equal(t, http.StatusUnprocessableEntity, save.Code, save.Body.String())
+	assert.Contains(t, save.Body.String(), `"code":"process_template_invalid"`)
+	assert.Contains(t, save.Body.String(), `"code":"template_diagnostic_budget"`)
+}
+
+func TestProcessTemplateDuplicateFloodResponseIsBounded(t *testing.T) {
+	f, _ := processEngineFlow(t)
+	source := processDuplicateMetadataSource(100_000)
+	require.Less(t, len(source), model.MaxProcessTemplateSourceBytes)
+	rec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/validate", map[string]any{"source": string(source)})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"code":"duplicate_key"`)
+	assert.Equal(t, 1, strings.Count(rec.Body.String(), `"code":"template_diagnostic_budget"`))
+	assert.LessOrEqual(t, rec.Body.Len(), model.MaxProcessTemplateSourceBytes)
+}
+
+func TestProcessTemplateSemanticDiagnosticFloodIsBoundedAndRejectsSave(t *testing.T) {
+	f, root := processEngineFlow(t)
+	tmpl := semanticDiagnosticFloodProcessTemplate()
+
+	validate := processTemplateRequest(t, f, http.MethodPost, "/v1/process/validate", map[string]any{"template": tmpl})
+	require.Equal(t, http.StatusOK, validate.Code, validate.Body.String())
+	assert.Contains(t, validate.Body.String(), `"code":"undeclared_param_ref"`)
+	assert.Equal(t, 1, strings.Count(validate.Body.String(), `"code":"template_diagnostic_budget"`))
+	assert.LessOrEqual(t, validate.Body.Len(), model.MaxProcessTemplateSourceBytes)
+
+	save := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/semantic-budget", map[string]any{"template": tmpl})
+	require.Equal(t, http.StatusUnprocessableEntity, save.Code, save.Body.String())
+	assert.Contains(t, save.Body.String(), `"code":"process_template_invalid"`)
+	assert.Equal(t, 1, strings.Count(save.Body.String(), `"code":"template_diagnostic_budget"`))
+	assert.LessOrEqual(t, save.Body.Len(), model.MaxProcessTemplateSourceBytes)
+
+	copyTemplate := semanticDiagnosticFloodProcessTemplate()
+	copyTemplate.ID = "" // The editor's copy flow lets the destination path supply the new id.
+	copyResponse := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/semantic-budget-copy", map[string]any{"template": copyTemplate})
+	require.Equal(t, http.StatusUnprocessableEntity, copyResponse.Code, copyResponse.Body.String())
+	assert.Equal(t, 1, strings.Count(copyResponse.Body.String(), `"code":"template_diagnostic_budget"`))
+	assert.LessOrEqual(t, copyResponse.Body.Len(), model.MaxProcessTemplateSourceBytes)
+
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	record, err := fs.PutTemplate(t.Context(), processRESTTemplate("legacy-semantic-budget", "legacy source", 10))
+	require.NoError(t, err)
+	tmpl.ID = "legacy-semantic-budget"
+	source, err := model.CanonicalYAML(tmpl)
+	require.NoError(t, err)
+	sourcePath := filepath.Join(root, "templates", record.ID, "sha256-"+record.SemanticHash, "template.yaml")
+	require.NoError(t, os.WriteFile(sourcePath, source, 0o644))
+
+	legacy := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates/legacy-semantic-budget", nil)
+	require.Equal(t, http.StatusUnprocessableEntity, legacy.Code, legacy.Body.String())
+	assert.Equal(t, 1, strings.Count(legacy.Body.String(), `"code":"template_diagnostic_budget"`))
+	assert.LessOrEqual(t, legacy.Body.Len(), model.MaxProcessTemplateSourceBytes)
+}
+
 func TestProcessValidateReturnsEditorScopedAdvisoryDiagnostics(t *testing.T) {
 	f, _ := processEngineFlow(t)
 	tmpl := processRESTTemplate("validate-me", "invalid edge", 10)
@@ -490,6 +615,95 @@ func TestProcessValidateReturnsEditorScopedAdvisoryDiagnostics(t *testing.T) {
 	saveRec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/validate-me", body)
 	require.Equal(t, http.StatusCreated, saveRec.Code, saveRec.Body.String())
 	assert.Contains(t, saveRec.Body.String(), "unknown_target")
+}
+
+func TestProcessValidateReturnsStableCardinalityDiagnosticsAndSaveRejects(t *testing.T) {
+	f, _ := processEngineFlow(t)
+	tmpl := overBudgetProcessTemplate("cardinality")
+	body := map[string]any{"template": tmpl}
+
+	rec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/validate", body)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var response struct {
+		SemanticHash string            `json:"semanticHash"`
+		Diagnostics  []processEditDiag `json:"diagnostics"`
+	}
+	testharness.DecodeJSON(t, rec, &response)
+	assert.Empty(t, response.SemanticHash, "over-budget validation must not hash the graph")
+	require.Len(t, response.Diagnostics, 2)
+	assert.Equal(t, model.DiagnosticCodeNormalizedNodeLimit, response.Diagnostics[0].Code)
+	assert.Equal(t, model.DiagnosticCodeNormalizedEdgeLimit, response.Diagnostics[1].Code)
+	for _, diagnostic := range response.Diagnostics {
+		assert.Equal(t, "template", diagnostic.Scope)
+		assert.Empty(t, diagnostic.TargetID)
+		assert.Less(t, len(diagnostic.Message), 160, "resource diagnostics stay bounded")
+	}
+
+	save := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/cardinality", body)
+	require.Equal(t, http.StatusUnprocessableEntity, save.Code, save.Body.String())
+	assert.Contains(t, save.Body.String(), `"code":"process_template_invalid"`)
+	assert.Contains(t, save.Body.String(), `"code":"normalized_node_limit"`)
+	assert.Contains(t, save.Body.String(), `"code":"normalized_edge_limit"`)
+	list := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates", nil)
+	require.Equal(t, http.StatusOK, list.Code, list.Body.String())
+	assert.NotContains(t, list.Body.String(), `"id":"cardinality"`)
+}
+
+func TestProcessValidateRejectsHostileStructuredEdgeWireBeforeCanonicalization(t *testing.T) {
+	f, _ := processEngineFlow(t)
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "edge-wire", Start: "target",
+		Nodes: map[string]model.Node{"target": {Type: model.NodeTypeEnd}},
+	}
+	edges := []model.Edge{{From: "", Outcome: "start", To: "target"}}
+	for sourceIndex := 0; len(edges) < model.MaxNormalizedEdges+1; sourceIndex++ {
+		sourceID := fmt.Sprintf("source-%d", sourceIndex)
+		tmpl.Nodes[sourceID] = model.Node{Type: model.NodeTypeDecision}
+		for outcome := 0; outcome < model.MaxNormalizedDegree && len(edges) < model.MaxNormalizedEdges+1; outcome++ {
+			edges = append(edges, model.Edge{From: sourceID, Outcome: fmt.Sprintf("outcome-%04d", outcome), To: "target"})
+		}
+	}
+	rec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/validate", processEditResponse{
+		Template: tmpl, Edges: edges,
+	})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var response struct {
+		Diagnostics []processEditDiag `json:"diagnostics"`
+	}
+	testharness.DecodeJSON(t, rec, &response)
+	require.Len(t, response.Diagnostics, 1)
+	assert.Equal(t, model.DiagnosticCodeNormalizedEdgeLimit, response.Diagnostics[0].Code)
+}
+
+func overBudgetProcessTemplate(id string) *model.Template {
+	nodes := make(map[string]model.Node, model.MaxNormalizedNodes+1)
+	for index := 0; index < model.MaxNormalizedNodes+1; index++ {
+		nodes[fmt.Sprintf("node-%04d", index)] = model.Node{Type: model.NodeTypeEnd}
+	}
+	first := nodes["node-0000"]
+	first.Next = make(model.Next, model.MaxNormalizedEdges)
+	for index := 0; index < model.MaxNormalizedEdges; index++ {
+		first.Next[fmt.Sprintf("edge-%04d", index)] = "node-0000"
+	}
+	nodes["node-0000"] = first
+	return &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: id, Start: "node-0000", Nodes: nodes,
+	}
+}
+
+func semanticDiagnosticFloodProcessTemplate() *model.Template {
+	return &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "semantic-budget", Start: "source",
+		Nodes: map[string]model.Node{
+			"source": {
+				Type: model.NodeTypeTask,
+				Performer: &model.Performer{Kind: model.PerformerAgent,
+					Prompt: strings.Repeat("{{ params.missing }}", 100_000)},
+				Next: model.Next{"pass": "target"},
+			},
+			"target": {Type: model.NodeTypeEnd},
+		},
+	}
 }
 
 // TestProcessValidateSurfacesSection8aDiagnostics posts a deliberately broken
@@ -637,6 +851,49 @@ func processRESTTemplate(id, description string, x float64) *model.Template {
 			"begin": {X: x, Y: 30}, "done": {X: x + 200, Y: 30},
 		}},
 	}
+}
+
+func processAliasedNextSource(nodeCount, outcomes int) []byte {
+	var source strings.Builder
+	source.WriteString("apiVersion: tclaude.dev/v1alpha1\nkind: ProcessTemplate\nid: legacy-large\nstart: n000\nnodes:\n")
+	for nodeIndex := range nodeCount {
+		fmt.Fprintf(&source, "  n%03d:\n    type: end\n    next: ", nodeIndex)
+		if nodeIndex == 0 {
+			source.WriteString("&shared\n")
+			for outcome := range outcomes {
+				fmt.Fprintf(&source, "      outcome-%03d: n000\n", outcome)
+			}
+		} else {
+			source.WriteString("*shared\n")
+		}
+	}
+	return []byte(source.String())
+}
+
+func processSchemaAliasSource(nodeCount int) []byte {
+	var source strings.Builder
+	source.WriteString("apiVersion: tclaude.dev/v1alpha1\nkind: ProcessTemplate\nid: schema-budget\nstart: n000\nnodes:\n")
+	for nodeIndex := range nodeCount {
+		fmt.Fprintf(&source, "  n%03d: ", nodeIndex)
+		if nodeIndex > 0 {
+			source.WriteString("*shared\n")
+			continue
+		}
+		source.WriteString("&shared\n    type: task\n    performer: {kind: agent, prompt: work}\n    checks:\n")
+		for check := range 4 {
+			fmt.Fprintf(&source, "      - id: check-%d\n        performer: {kind: program, run: echo}\n        unknown<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<: value\n", check)
+		}
+	}
+	return []byte(source.String())
+}
+
+func processDuplicateMetadataSource(duplicates int) []byte {
+	var source strings.Builder
+	source.WriteString("apiVersion: tclaude.dev/v1alpha1\nkind: ProcessTemplate\nid: duplicate-budget\nstart: n000\nnodes:\n  n000:\n    type: task\n    performer: {kind: agent, prompt: work}\n    metadata:\n")
+	for range duplicates {
+		source.WriteString("      repeated: value\n")
+	}
+	return []byte(source.String())
 }
 
 func semanticProcessTemplate(tmpl *model.Template) *model.Template {
