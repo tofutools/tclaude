@@ -219,7 +219,11 @@ function pullStillOwns(machine, token, phase, conv) {
 }
 
 function releasePull(machine, token) {
-  if (pullingNodes.get(machine) === token) pullingNodes.delete(machine);
+  // Only the current generation may clean up its imperative win class. A
+  // delayed callback from an older generation must not strip a newer jackpot.
+  if (pullingNodes.get(machine) !== token) return;
+  machine.classList.remove('slop-pull-win');
+  pullingNodes.delete(machine);
 }
 
 function pullReelHTML() {
@@ -301,7 +305,6 @@ function manualPull(machine, opts) {
     }
     setTimeout(() => {
       if (pullStillOwns(machine, token, 'pull-stopped', conv)) {
-        machine.classList.remove('slop-pull-win');
         machine.setAttribute('data-status', originalStatus);
         machine.innerHTML = originalHTML;
       }
