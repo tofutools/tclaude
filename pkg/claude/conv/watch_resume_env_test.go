@@ -116,6 +116,26 @@ func TestResumeLaunchCmd_CodexFilesystemRequiresManagedProfile(t *testing.T) {
 	assert.True(t, strings.Contains(cmd, "codex resume"), cmd)
 }
 
+func TestResumeLaunchCmd_CodexPinsActorEnvironmentForToolCommands(t *testing.T) {
+	setupTestDB(t)
+	privateGOBIN := filepath.Join(t.TempDir(), "GOBIN")
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Global: &sandboxpolicy.Profile{
+		Name:        "resume-environment",
+		Environment: []sandboxpolicy.EnvironmentEntry{{Name: "GOBIN", Value: privateGOBIN}},
+	}})
+	require.NoError(t, err)
+	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
+	agentID, _, err := db.EnsureAgentForConv(resumeConvCodex, "test")
+	require.NoError(t, err)
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &snapshot))
+
+	cmd, _, err := resumeLaunchCmd(harness.CodexName, resumeConvCodex[:8], resumeConvCodex, nil)
+	require.NoError(t, err)
+	assert.Contains(t, cmd, "GOBIN="+privateGOBIN, "Codex itself must receive the actor environment")
+	assert.Contains(t, cmd, `shell_environment_policy.set.GOBIN="`+privateGOBIN+`"`,
+		"Codex tool commands must retain the actor environment after shell initialization")
+}
+
 func TestResumeLaunchCmd_CodexManagedProfileIncludesGitWorktreeGrants(t *testing.T) {
 	setupTestDB(t)
 	if _, err := exec.LookPath("git"); err != nil {

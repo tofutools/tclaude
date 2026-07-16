@@ -94,6 +94,22 @@ func (codexSpawner) BuildCommand(spec SpawnSpec) string {
 		// Experimental/undocumented upstream, hence opt-in (JOH-200 part 2).
 		cmd += " -c " + clcommon.ShellQuoteArg(codexApprovalsReviewerKey+`="`+codexApprovalsReviewerAuto+`"`)
 	}
+	if len(spec.ShellEnvironment) > 0 {
+		// Codex may build tool-command environments from a saved user-shell
+		// snapshot. Pin sandbox-profile values in the documented "always wins"
+		// layer as well as exporting them into the Codex process, otherwise a
+		// profile assignment such as GOBIN can replace an agent-owned binding.
+		// Sort the map so launch commands and their tests stay deterministic.
+		names := make([]string, 0, len(spec.ShellEnvironment))
+		for name := range spec.ShellEnvironment {
+			names = append(names, name)
+		}
+		slices.Sort(names)
+		for _, name := range names {
+			override := "shell_environment_policy.set." + name + "=" + codexTOMLString(spec.ShellEnvironment[name])
+			cmd += " -c " + clcommon.ShellQuoteArg(override)
+		}
+	}
 	if spec.Model != "" {
 		// `--model` is accepted both on a fresh `codex` and on
 		// `codex resume <id>` (shared option).
@@ -130,6 +146,41 @@ func (codexSpawner) BuildCommand(spec SpawnSpec) string {
 		cmd += " " + clcommon.ShellQuoteArg(spec.InitialPrompt)
 	}
 	return cmd
+}
+
+// codexTOMLString renders an arbitrary validated sandbox-profile environment
+// value as a TOML basic string for Codex's -c parser. Profile values may carry
+// whitespace and control characters other than NUL, so escaping only quotes
+// and backslashes is insufficient here.
+func codexTOMLString(value string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range value {
+		switch r {
+		case '\b':
+			b.WriteString(`\b`)
+		case '\t':
+			b.WriteString(`\t`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\f':
+			b.WriteString(`\f`)
+		case '\r':
+			b.WriteString(`\r`)
+		case '"':
+			b.WriteString(`\"`)
+		case '\\':
+			b.WriteString(`\\`)
+		default:
+			if r < 0x20 || r == 0x7f {
+				fmt.Fprintf(&b, `\u%04X`, r)
+			} else {
+				b.WriteRune(r)
+			}
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
 }
 
 // codexModels is the ModelCatalog for Codex (JOH-154/155). It offers a small

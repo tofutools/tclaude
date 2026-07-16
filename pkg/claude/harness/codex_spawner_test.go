@@ -86,6 +86,29 @@ func TestCodexSpawner_BypassHookTrust(t *testing.T) {
 	}
 }
 
+func TestCodexSpawner_PinsSandboxEnvironmentForToolCommands(t *testing.T) {
+	got := codexSpawner{}.BuildCommand(SpawnSpec{ShellEnvironment: map[string]string{
+		"GOTMPDIR": "/private/go tmp",
+		"GOBIN":    "/private/gobin",
+	}})
+
+	gobin := `shell_environment_policy.set.GOBIN="/private/gobin"`
+	gotmp := `shell_environment_policy.set.GOTMPDIR="/private/go tmp"`
+	if !strings.Contains(got, gobin) || !strings.Contains(got, gotmp) {
+		t.Fatalf("sandbox environment must be pinned through Codex's shell policy, got %q", got)
+	}
+	if strings.Index(got, gobin) > strings.Index(got, gotmp) {
+		t.Fatalf("shell environment overrides must be emitted deterministically, got %q", got)
+	}
+
+	got = codexSpawner{}.BuildCommand(SpawnSpec{ShellEnvironment: map[string]string{
+		"COMPLEX": "quote\" slash\\ newline\n escape\x1b",
+	}})
+	if !strings.Contains(got, `shell_environment_policy.set.COMPLEX="quote\" slash\\ newline\n escape\u001B"`) {
+		t.Fatalf("shell environment override must be valid escaped TOML, got %q", got)
+	}
+}
+
 // TestCodexSpawner_InitialPrompt covers the JOH-205 first-turn seed: a fresh
 // launch appends InitialPrompt as the trailing positional [PROMPT], shell-
 // quoted as a single arg, so Codex self-submits its first turn (materialising

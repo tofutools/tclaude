@@ -12,6 +12,13 @@ type SpawnSpec struct {
 	// any pass-through), so the Spawner stays agnostic about which vars
 	// matter to which harness.
 	EnvExports string
+	// ShellEnvironment contains environment values that must remain authoritative
+	// in commands the harness launches after startup. Codex can initialize tool
+	// commands from a saved user-shell snapshot, which may otherwise replace an
+	// EnvExports value (for example GOBIN). Its adapter renders these entries as
+	// per-launch shell_environment_policy.set overrides. Other harnesses ignore
+	// the field because their command environments inherit EnvExports directly.
+	ShellEnvironment map[string]string
 	// ResumeID is the full conversation id to resume, or "" to start a
 	// fresh session. The flag/sub-command form is harness-specific
 	// (`claude --resume <id>` vs `codex resume <id>`).
