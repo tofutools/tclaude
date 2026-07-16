@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -490,6 +491,80 @@ func TestProcessValidateReturnsEditorScopedAdvisoryDiagnostics(t *testing.T) {
 	saveRec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/validate-me", body)
 	require.Equal(t, http.StatusCreated, saveRec.Code, saveRec.Body.String())
 	assert.Contains(t, saveRec.Body.String(), "unknown_target")
+}
+
+func TestProcessValidateReturnsStableCardinalityDiagnosticsAndSaveRejects(t *testing.T) {
+	f, _ := processEngineFlow(t)
+	tmpl := overBudgetProcessTemplate("cardinality")
+	body := map[string]any{"template": tmpl}
+
+	rec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/validate", body)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var response struct {
+		SemanticHash string            `json:"semanticHash"`
+		Diagnostics  []processEditDiag `json:"diagnostics"`
+	}
+	testharness.DecodeJSON(t, rec, &response)
+	assert.Empty(t, response.SemanticHash, "over-budget validation must not hash the graph")
+	require.Len(t, response.Diagnostics, 2)
+	assert.Equal(t, model.DiagnosticCodeNormalizedNodeLimit, response.Diagnostics[0].Code)
+	assert.Equal(t, model.DiagnosticCodeNormalizedEdgeLimit, response.Diagnostics[1].Code)
+	for _, diagnostic := range response.Diagnostics {
+		assert.Equal(t, "template", diagnostic.Scope)
+		assert.Empty(t, diagnostic.TargetID)
+		assert.Less(t, len(diagnostic.Message), 160, "resource diagnostics stay bounded")
+	}
+
+	save := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/cardinality", body)
+	require.Equal(t, http.StatusUnprocessableEntity, save.Code, save.Body.String())
+	assert.Contains(t, save.Body.String(), `"code":"process_template_invalid"`)
+	assert.Contains(t, save.Body.String(), `"code":"normalized_node_limit"`)
+	assert.Contains(t, save.Body.String(), `"code":"normalized_edge_limit"`)
+	list := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates", nil)
+	require.Equal(t, http.StatusOK, list.Code, list.Body.String())
+	assert.NotContains(t, list.Body.String(), `"id":"cardinality"`)
+}
+
+func TestProcessValidateRejectsHostileStructuredEdgeWireBeforeCanonicalization(t *testing.T) {
+	f, _ := processEngineFlow(t)
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "edge-wire", Start: "target",
+		Nodes: map[string]model.Node{"target": {Type: model.NodeTypeEnd}},
+	}
+	edges := []model.Edge{{From: "", Outcome: "start", To: "target"}}
+	for sourceIndex := 0; len(edges) < model.MaxNormalizedEdges+1; sourceIndex++ {
+		sourceID := fmt.Sprintf("source-%d", sourceIndex)
+		tmpl.Nodes[sourceID] = model.Node{Type: model.NodeTypeDecision}
+		for outcome := 0; outcome < model.MaxNormalizedDegree && len(edges) < model.MaxNormalizedEdges+1; outcome++ {
+			edges = append(edges, model.Edge{From: sourceID, Outcome: fmt.Sprintf("outcome-%04d", outcome), To: "target"})
+		}
+	}
+	rec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/validate", processEditResponse{
+		Template: tmpl, Edges: edges,
+	})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var response struct {
+		Diagnostics []processEditDiag `json:"diagnostics"`
+	}
+	testharness.DecodeJSON(t, rec, &response)
+	require.Len(t, response.Diagnostics, 1)
+	assert.Equal(t, model.DiagnosticCodeNormalizedEdgeLimit, response.Diagnostics[0].Code)
+}
+
+func overBudgetProcessTemplate(id string) *model.Template {
+	nodes := make(map[string]model.Node, model.MaxNormalizedNodes+1)
+	for index := 0; index < model.MaxNormalizedNodes+1; index++ {
+		nodes[fmt.Sprintf("node-%04d", index)] = model.Node{Type: model.NodeTypeEnd}
+	}
+	first := nodes["node-0000"]
+	first.Next = make(model.Next, model.MaxNormalizedEdges)
+	for index := 0; index < model.MaxNormalizedEdges; index++ {
+		first.Next[fmt.Sprintf("edge-%04d", index)] = "node-0000"
+	}
+	nodes["node-0000"] = first
+	return &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: id, Start: "node-0000", Nodes: nodes,
+	}
 }
 
 // TestProcessValidateSurfacesSection8aDiagnostics posts a deliberately broken

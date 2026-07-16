@@ -243,6 +243,25 @@ test('mapDiagnostics drops anchors for targets missing from the current model', 
   assert.equal(mapped.entries.length, 3);
 });
 
+test('normalized graph cardinality diagnostics remain template-scoped and stable', () => {
+  const mapped = mapDiagnostics([
+    {
+      scope: 'template', severity: 'error', code: 'normalized_node_limit',
+      message: 'normalized node count exceeds 2048 (counted at least 2049)',
+    },
+    {
+      scope: 'template', severity: 'error', code: 'normalized_edge_limit',
+      message: 'normalized edge count exceeds 4096 (counted at least 4097)',
+    },
+  ], modelWithEdge());
+  assert.deepEqual(mapped.entries.map((entry) => entry.code), [
+    'normalized_edge_limit', 'normalized_node_limit',
+  ]);
+  assert.ok(mapped.entries.every((entry) => entry.scope === 'template'));
+  assert.equal(mapped.nodes.size, 0);
+  assert.equal(mapped.edges.size, 0);
+});
+
 test('decorateGraph sets node overlays and edge badges (never color-only)', () => {
   const model = modelWithEdge();
   const mapped = mapDiagnostics([

@@ -168,7 +168,10 @@ type Edge struct {
 
 // ParsedTemplate is the result of parsing a process template source file.
 // Callers must reject templates when Diagnostics.HasErrors reports true; hashes
-// are still populated for invalid templates so tools can compare/edit sources.
+// are populated for semantically invalid templates so tools can compare/edit
+// sources. Resource-boundary rejection intentionally omits the decoded
+// template and semantic hash to avoid alias materialization and graph-wide
+// canonicalization after the limit is known to be exceeded.
 type ParsedTemplate struct {
 	Template     *Template
 	Edges        []Edge

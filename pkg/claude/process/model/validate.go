@@ -11,15 +11,16 @@ import (
 var paramRefPattern = regexp.MustCompile(`\{\{\s*params\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}`)
 var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
 
-// MaxNormalizedDegree is the authoring ceiling derived from the path-v1
-// aggregate mutation budget. Execution reducers recheck their own tighter
-// capability-specific bounds before append.
-const MaxNormalizedDegree = 2_046
-
 func Validate(tmpl *Template, edges []Edge) Diagnostics {
 	var diagnostics Diagnostics
 	if tmpl == nil {
 		return Diagnostics{diagError("nil_template", "", "process template is nil")}
+	}
+	if diagnostics := normalizedGraphCardinalityDiagnostics(NormalizedGraphCardinality{
+		Nodes: saturatingCount(len(tmpl.Nodes), MaxNormalizedNodes),
+		Edges: saturatingCount(len(edges), MaxNormalizedEdges),
+	}); diagnostics.HasErrors() {
+		return diagnostics
 	}
 
 	diagnostics = append(diagnostics, validateHeader(tmpl)...)

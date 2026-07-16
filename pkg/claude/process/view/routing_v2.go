@@ -410,6 +410,13 @@ func projectExactTopology(ref string, tmpl *model.Template) (exactTopologyProjec
 	if tmpl == nil || ref == "" {
 		return exactTopologyProjection{}, RoutingUnavailableInconsistent
 	}
+	edges, cardinalityDiagnostics := model.NormalizeEdgesWithinBudget(tmpl)
+	if cardinalityDiagnostics.HasErrors() {
+		return exactTopologyProjection{}, RoutingUnavailableOverBudget
+	}
+	if diagnostics := model.Validate(tmpl, edges); diagnostics.HasErrors() {
+		return exactTopologyProjection{}, RoutingUnavailableInconsistent
+	}
 	edgeCount := 1
 	for _, node := range tmpl.Nodes {
 		if len(node.Next) > pathv1.MaxRoutingList || edgeCount > pathv1.MaxRoutingRecords-len(node.Next) {
@@ -424,11 +431,6 @@ func projectExactTopology(ref string, tmpl *model.Template) (exactTopologyProjec
 	if err != nil || model.TemplateRef(tmpl.ID, hash) != ref {
 		return exactTopologyProjection{}, RoutingUnavailableInconsistent
 	}
-	edges := model.NormalizeEdges(tmpl)
-	if diagnostics := model.Validate(tmpl, edges); diagnostics.HasErrors() {
-		return exactTopologyProjection{}, RoutingUnavailableInconsistent
-	}
-
 	nodeIDs := make([]string, 0, len(tmpl.Nodes))
 	for id := range tmpl.Nodes {
 		if !safeIDPattern.MatchString(id) {

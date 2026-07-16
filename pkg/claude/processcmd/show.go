@@ -228,7 +228,8 @@ func pathV1RoutingStates(aggregate pathv1.AggregateCheckpoint) map[string]string
 
 func renderPathV1Mermaid(out io.Writer, tmpl *model.Template) {
 	fmt.Fprintln(out, "graph TD")
-	for _, edge := range model.NormalizeEdges(tmpl) {
+	edges, _ := model.NormalizeEdgesWithinBudget(tmpl)
+	for _, edge := range edges {
 		from := edge.From
 		if from == "" {
 			from = "__start"
@@ -265,7 +266,8 @@ func sortedContactIDs(values map[string]state.ContactState) []string {
 
 func renderMermaid(out io.Writer, snapshot store.Snapshot, tmpl *model.Template) {
 	fmt.Fprintln(out, "graph TD")
-	for _, edge := range model.NormalizeEdges(tmpl) {
+	edges, _ := model.NormalizeEdgesWithinBudget(tmpl)
+	for _, edge := range edges {
 		from := edge.From
 		if from == "" {
 			from = "__start"

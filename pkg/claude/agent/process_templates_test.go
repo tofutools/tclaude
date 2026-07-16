@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -81,6 +82,49 @@ func TestRunProcessTemplatesValidatePostsRawSourceAndFailsOnErrors(t *testing.T)
 	assert.Equal(t, processTemplateYAML, body.Source)
 	assert.Contains(t, stdout.String(), "ERROR broken [node:begin] fix it")
 	assert.Contains(t, stdout.String(), "sourceHash=src")
+}
+
+func TestRunProcessTemplatesValidateRendersStableCardinalityCode(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, ok(`{"sourceHash":"src","semanticHash":"","diagnostics":[{"scope":"template","severity":"error","code":"normalized_edge_limit","message":"normalized edge count exceeds 4096 (counted at least 4097, including the synthetic start edge when present)"}]}`))
+	var stdout, stderr bytes.Buffer
+
+	rc := runProcessTemplatesValidate(&processTemplatesValidateParams{File: "-"}, strings.NewReader(processTemplateYAML), &stdout, &stderr)
+
+	assert.Equal(t, rcInvalidArg, rc)
+	assert.Contains(t, stdout.String(), "ERROR normalized_edge_limit [template]")
+	assert.NotContains(t, stdout.String(), "node-")
+}
+
+func TestRunProcessTemplatesSaveRejectsCompactAliasCardinalityLocally(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, ok(`{}`))
+	var stdout, stderr bytes.Buffer
+	source := compactAliasProcessTemplate(64, 64)
+	require.Less(t, len(source), 4<<20)
+
+	rc := runProcessTemplatesSave(&processTemplatesSaveParams{File: "-"}, strings.NewReader(source), &stdout, &stderr)
+
+	assert.Equal(t, rcInvalidArg, rc)
+	assert.Empty(t, calls, "local raw guard rejects before contacting agentd")
+	assert.Contains(t, stderr.String(), "ERROR normalized_edge_limit [template]")
+}
+
+func compactAliasProcessTemplate(nodeCount, outcomes int) string {
+	var source strings.Builder
+	source.WriteString("apiVersion: tclaude.dev/v1alpha1\nkind: ProcessTemplate\nid: aliases\nstart: n000\nnodes:\n")
+	for nodeIndex := 0; nodeIndex < nodeCount; nodeIndex++ {
+		fmt.Fprintf(&source, "  n%03d:\n    type: end\n    next: ", nodeIndex)
+		if nodeIndex == 0 {
+			source.WriteString("&shared\n")
+			for outcome := 0; outcome < outcomes; outcome++ {
+				fmt.Fprintf(&source, "      outcome-%03d: n000\n", outcome)
+			}
+		} else {
+			source.WriteString("*shared\n")
+		}
+	}
+	return source.String()
 }
 
 func TestRunProcessTemplatesSaveSendsCASAndAskHuman(t *testing.T) {

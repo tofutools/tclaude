@@ -230,6 +230,13 @@ func runProcessTemplatesSave(p *processTemplatesSaveParams, stdin io.Reader, std
 		fmt.Fprintf(stderr, "Error: --file is not parseable process-template YAML: %v\n", err)
 		return rcInvalidArg
 	}
+	if renderLocalGraphCardinalityDiagnostics(parsed.Diagnostics, stderr) {
+		return rcInvalidArg
+	}
+	if parsed.Template == nil {
+		fmt.Fprintln(stderr, "Error: --file could not be decoded as a process template")
+		return rcInvalidArg
+	}
 	id := strings.TrimSpace(parsed.Template.ID)
 	if id == "" {
 		fmt.Fprintln(stderr, "Error: process-template YAML must declare id")
@@ -263,6 +270,18 @@ func runProcessTemplatesSave(p *processTemplatesSaveParams, stdin io.Reader, std
 	fmt.Fprintf(stdout, "Saved process template %q.\nref=%s\nsourceHash=%s\nsemanticHash=%s\nactor=%s\n",
 		id, response.Ref, response.SourceHash, response.SemanticHash, response.Actor)
 	return rcOK
+}
+
+func renderLocalGraphCardinalityDiagnostics(diagnostics model.Diagnostics, out io.Writer) bool {
+	found := false
+	for _, diagnostic := range diagnostics {
+		switch diagnostic.Code {
+		case model.DiagnosticCodeNormalizedNodeLimit, model.DiagnosticCodeNormalizedEdgeLimit, model.DiagnosticCodeGraphAliasLimit:
+			fmt.Fprintf(out, "%s %s [template] %s\n", strings.ToUpper(string(diagnostic.Severity)), diagnostic.Code, diagnostic.Message)
+			found = true
+		}
+	}
+	return found
 }
 
 func renderProcessTemplateConflict(err error, id string, stderr io.Writer) bool {

@@ -265,7 +265,11 @@ func projectGraph(tmpl *model.Template, st *state.State) *Graph {
 		}
 		graph.Nodes = append(graph.Nodes, node)
 	}
-	for _, edge := range model.NormalizeEdges(tmpl) {
+	edges, cardinalityDiagnostics := model.NormalizeEdgesWithinBudget(tmpl)
+	if cardinalityDiagnostics.HasErrors() {
+		return nil
+	}
+	for _, edge := range edges {
 		if (edge.From != "" && !safeIDPattern.MatchString(edge.From)) || !safeIDPattern.MatchString(edge.Outcome) || !safeIDPattern.MatchString(edge.To) {
 			return nil
 		}

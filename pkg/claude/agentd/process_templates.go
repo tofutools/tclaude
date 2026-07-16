@@ -272,7 +272,8 @@ func handleProcessTemplateSave(w http.ResponseWriter, r *http.Request, fs *store
 		writeProcessEditParseError(w, err)
 		return
 	}
-	if rawSource && parsed.Diagnostics.HasErrors() {
+	cardinalityErrors := model.PreflightNormalizedGraphCardinality(parsed.Template).HasErrors()
+	if (rawSource && parsed.Diagnostics.HasErrors()) || cardinalityErrors {
 		writeProcessJSON(w, http.StatusUnprocessableEntity, map[string]any{
 			"error":       "process template has validation errors; run process-templates validate and fix them before saving",
 			"code":        "process_template_invalid",
@@ -360,6 +361,12 @@ func parseProcessEditView(body *processTemplateEditView) (*model.ParsedTemplate,
 	}
 	if err := assembleProcessEditModel(body); err != nil {
 		return nil, &processEditModelError{err: err}
+	}
+	edges, cardinalityDiagnostics := model.NormalizeEdgesWithinBudget(body.Template)
+	if cardinalityDiagnostics.HasErrors() {
+		return &model.ParsedTemplate{
+			Template: body.Template, Edges: edges, Diagnostics: cardinalityDiagnostics,
+		}, nil
 	}
 	canonical, err := model.CanonicalYAML(body.Template)
 	if err != nil {

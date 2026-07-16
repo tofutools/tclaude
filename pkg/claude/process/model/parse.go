@@ -40,6 +40,24 @@ func parseSource(data []byte, authoring bool) (*ParsedTemplate, error) {
 	diagnostics := duplicateKeyDiagnostics(&root)
 	diagnostics = append(diagnostics, unknownFieldDiagnostics(&root)...)
 	pruneDuplicateKeys(&root)
+	cardinality, cardinalityStatus := rawNormalizedGraphCardinality(&root)
+	if cardinalityStatus == rawGraphAliasUnsafe {
+		return &ParsedTemplate{
+			Diagnostics: append(diagnostics, graphAliasLimitDiagnostic()),
+			SourceHash:  hashBytes(data),
+		}, nil
+	}
+	if cardinalityStatus == rawGraphRejected {
+		return &ParsedTemplate{Diagnostics: diagnostics, SourceHash: hashBytes(data)}, nil
+	}
+	if cardinalityStatus == rawGraphCounted {
+		if cardinalityDiagnostics := normalizedGraphCardinalityDiagnostics(cardinality); cardinalityDiagnostics.HasErrors() {
+			return &ParsedTemplate{
+				Diagnostics: append(diagnostics, cardinalityDiagnostics...),
+				SourceHash:  hashBytes(data),
+			}, nil
+		}
+	}
 
 	var tmpl Template
 	if err := root.Decode(&tmpl); err != nil {
@@ -51,7 +69,14 @@ func parseSource(data []byte, authoring bool) (*ParsedTemplate, error) {
 	if authoring {
 		diagnostics = append(diagnostics, promoteLegacyJoins(&tmpl)...)
 	}
-	edges := NormalizeEdges(&tmpl)
+	edges, cardinalityDiagnostics := NormalizeEdgesWithinBudget(&tmpl)
+	diagnostics = append(diagnostics, cardinalityDiagnostics...)
+	if cardinalityDiagnostics.HasErrors() {
+		return &ParsedTemplate{
+			Template: &tmpl, Edges: edges, Diagnostics: diagnostics,
+			SourceHash: hashBytes(data),
+		}, nil
+	}
 	diagnostics = append(diagnostics, Validate(&tmpl, edges)...)
 
 	semanticHash, err := SemanticHash(&tmpl)
@@ -69,6 +94,169 @@ func parseSource(data []byte, authoring bool) (*ParsedTemplate, error) {
 		Ref:          TemplateRef(tmpl.ID, semanticHash),
 	}
 	return parsed, nil
+}
+
+// rawNormalizedGraphCardinality inspects only the structural graph fields of
+// the already-pruned YAML tree. It runs before Decode so a compact anchored
+// next map cannot be materialized once per referring node beyond the graph
+// budget. Uncountable wrong-kind shapes defer to Decode; alias-resolution
+// exhaustion and cycles fail closed instead of bypassing the allocation guard.
+type rawGraphCardinalityStatus uint8
+
+const (
+	rawGraphUncountable rawGraphCardinalityStatus = iota
+	rawGraphCounted
+	rawGraphAliasUnsafe
+	rawGraphRejected
+)
+
+func rawNormalizedGraphCardinality(root *yaml.Node) (NormalizedGraphCardinality, rawGraphCardinalityStatus) {
+	aliasSteps := yamlTreeNodeCount(root)
+	root, status := structuralNode(root, aliasSteps)
+	if status != rawGraphCounted {
+		return NormalizedGraphCardinality{}, status
+	}
+	if root.Kind == yaml.DocumentNode {
+		if len(root.Content) != 1 {
+			return NormalizedGraphCardinality{}, rawGraphUncountable
+		}
+		root, status = structuralNode(root.Content[0], aliasSteps)
+	}
+	if status != rawGraphCounted {
+		return NormalizedGraphCardinality{}, status
+	}
+	if root.Kind != yaml.MappingNode {
+		return NormalizedGraphCardinality{}, rawGraphUncountable
+	}
+	if mappingHasMerge(root) {
+		return NormalizedGraphCardinality{}, rawGraphRejected
+	}
+
+	counts := NormalizedGraphCardinality{}
+	if start := mappingValue(root, "start"); start != nil {
+		start, startStatus := structuralNode(start, aliasSteps)
+		if startStatus == rawGraphAliasUnsafe {
+			return NormalizedGraphCardinality{}, startStatus
+		}
+		if startStatus == rawGraphCounted && start.Kind == yaml.ScalarNode && start.Value != "" {
+			counts.Edges = 1
+		}
+	}
+	nodes := mappingValue(root, "nodes")
+	if nodes == nil {
+		return counts, rawGraphCounted
+	}
+	nodes, status = structuralNode(nodes, aliasSteps)
+	if status != rawGraphCounted {
+		return NormalizedGraphCardinality{}, status
+	}
+	if nodes.Kind != yaml.MappingNode {
+		return NormalizedGraphCardinality{}, rawGraphUncountable
+	}
+	for index := 0; index+1 < len(nodes.Content); index += 2 {
+		if nodes.Content[index].ShortTag() == mergeTag {
+			return NormalizedGraphCardinality{}, rawGraphRejected
+		}
+		counts.Nodes = saturatingAdd(counts.Nodes, 1, MaxNormalizedNodes)
+		node, nodeStatus := structuralNode(nodes.Content[index+1], aliasSteps)
+		if nodeStatus == rawGraphAliasUnsafe {
+			return NormalizedGraphCardinality{}, nodeStatus
+		}
+		if nodeStatus != rawGraphCounted || node.Kind != yaml.MappingNode {
+			continue
+		}
+		if mappingHasMerge(node) {
+			return NormalizedGraphCardinality{}, rawGraphRejected
+		}
+		next := mappingValue(node, "next")
+		if next == nil {
+			continue
+		}
+		next, nextStatus := structuralNode(next, aliasSteps)
+		if nextStatus == rawGraphAliasUnsafe {
+			return NormalizedGraphCardinality{}, nextStatus
+		}
+		if nextStatus != rawGraphCounted || next.Kind != yaml.MappingNode {
+			continue
+		}
+		for edgeIndex := 0; edgeIndex+1 < len(next.Content); edgeIndex += 2 {
+			if next.Content[edgeIndex].ShortTag() == mergeTag {
+				// Next.UnmarshalYAML deliberately skips merge entries after the
+				// raw schema emits merge_key_unsupported, so they contribute no
+				// normalized edge and cannot amplify allocation here.
+				continue
+			}
+			counts.Edges = saturatingAdd(counts.Edges, 1, MaxNormalizedEdges)
+			if counts.Edges > MaxNormalizedEdges {
+				break
+			}
+		}
+		if counts.Nodes > MaxNormalizedNodes && counts.Edges > MaxNormalizedEdges {
+			break
+		}
+	}
+	return counts, rawGraphCounted
+}
+
+func mappingHasMerge(mapping *yaml.Node) bool {
+	if mapping == nil || mapping.Kind != yaml.MappingNode {
+		return false
+	}
+	for index := 0; index+1 < len(mapping.Content); index += 2 {
+		if mapping.Content[index].ShortTag() == mergeTag {
+			return true
+		}
+	}
+	return false
+}
+
+func mappingValue(mapping *yaml.Node, key string) *yaml.Node {
+	if mapping == nil || mapping.Kind != yaml.MappingNode {
+		return nil
+	}
+	for index := 0; index+1 < len(mapping.Content); index += 2 {
+		if mapping.Content[index].Value == key {
+			return mapping.Content[index+1]
+		}
+	}
+	return nil
+}
+
+func structuralNode(node *yaml.Node, maximumSteps int) (*yaml.Node, rawGraphCardinalityStatus) {
+	seen := make(map[*yaml.Node]struct{})
+	for steps := 0; node != nil && node.Kind == yaml.AliasNode; steps++ {
+		if steps >= maximumSteps {
+			return nil, rawGraphAliasUnsafe
+		}
+		if _, duplicate := seen[node]; duplicate {
+			return nil, rawGraphAliasUnsafe
+		}
+		seen[node] = struct{}{}
+		node = node.Alias
+	}
+	if node == nil {
+		return nil, rawGraphUncountable
+	}
+	return node, rawGraphCounted
+}
+
+func yamlTreeNodeCount(root *yaml.Node) int {
+	if root == nil {
+		return 0
+	}
+	count := 0
+	stack := []*yaml.Node{root}
+	for len(stack) > 0 {
+		last := len(stack) - 1
+		node := stack[last]
+		stack = stack[:last]
+		if node == nil {
+			continue
+		}
+		count++
+		stack = append(stack, node.Content...)
+	}
+	return count
 }
 
 // promoteLegacyJoins is deliberately confined to Parse, the authoring-source
@@ -162,6 +350,9 @@ func pruneDuplicateKeys(root *yaml.Node) {
 	walk(root)
 }
 
+// NormalizeEdges is the low-level deterministic projection. Production entry
+// points must call NormalizeEdgesWithinBudget so compact/direct input is
+// rejected before allocating this slice.
 func NormalizeEdges(tmpl *Template) []Edge {
 	if tmpl == nil {
 		return nil
@@ -202,6 +393,9 @@ func CanonicalSemanticJSON(tmpl *Template) ([]byte, error) {
 	if tmpl == nil {
 		return nil, fmt.Errorf("nil process template")
 	}
+	if err := requireNormalizedGraphBudget(tmpl); err != nil {
+		return nil, err
+	}
 
 	semantic := cloneTemplate(tmpl)
 	semantic.Layout = nil
@@ -217,6 +411,9 @@ func CanonicalSemanticJSON(tmpl *Template) ([]byte, error) {
 func CanonicalYAML(tmpl *Template) ([]byte, error) {
 	if tmpl == nil {
 		return nil, fmt.Errorf("nil process template")
+	}
+	if err := requireNormalizedGraphBudget(tmpl); err != nil {
+		return nil, err
 	}
 	clone := cloneTemplate(tmpl)
 	normalizeTemplate(&clone)
