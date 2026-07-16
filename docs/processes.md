@@ -379,15 +379,45 @@ continues to return the persisted run, state, and verification result unchanged.
   },
   "viewerV2": {
     "protocol": "viewer_v2",
-    "stateSchemaVersion": 6,
-    "pathProtocol": "legacy_v6",
-    "routingAvailable": false,
-    "routingUnavailableReason": "legacy_schema",
+    "stateSchemaVersion": 7,
+    "pathProtocol": "path_v1",
+    "routingAvailable": true,
     "exactTopology": {
       "templateRef": "...",
-      "start": "implement.do",
-      "nodes": [],
-      "edges": []
+      "start": "fork",
+      "nodes": [{"id":"accepted","type":"end","join":"any"}],
+      "edges": [{"id":"...","from":"primary-review","outcome":"pass","to":"accepted"}]
+    },
+    "routing": {
+      "protocol": "path_v1",
+      "encoding": 1,
+      "edges": [{"edgeId":"...","state":"arrived","count":1}],
+      "joins": [{
+        "reservationId":"...","nodeId":"accepted","scopeId":"...",
+        "policy":"any","state":"activated","generation":1,
+        "winnerPathId":"...","detached":1,"arrived":1,"open":1,
+        "impossible":0,"failed":0,"skipped":0,"canceled":0
+      }],
+      "stateCounts": {
+        "paths":[{"state":"arrived","count":1}],
+        "scopes":[{"state":"open","count":1}],
+        "reservations":[{"state":"activated","count":3}],
+        "propagation":[],"detachedPathCount":1,"detachedSinkCount":0
+      },
+      "details": {
+        "generations":{"page":{"offset":0,"limit":25,"total":3,"hasMore":false},"items":[]},
+        "scopes":{"page":{"offset":0,"limit":25,"total":1,"hasMore":false},"items":[]},
+        "closures":{"page":{"offset":0,"limit":25,"total":0,"hasMore":false},"items":[]},
+        "causeSets":{"page":{"offset":0,"limit":25,"total":0,"hasMore":false},"items":[]},
+        "causes":{"page":{"offset":0,"limit":25,"total":0,"hasMore":false},"items":[]},
+        "detachments":{"page":{"offset":0,"limit":25,"total":1,"hasMore":false},"items":[]},
+        "detachedSinks":{"page":{"offset":0,"limit":25,"total":0,"hasMore":false},"items":[]}
+      },
+      "aggregate": {
+        "paths":8,"scopes":2,"reservations":4,"activations":4,
+        "closures":0,"propagation":0,"causeRecords":0,"causeSets":0,
+        "detachments":1,"detachedSinks":0,"settled":false
+      }
     }
   }
 }
@@ -400,17 +430,45 @@ only.
 The additive `viewerV2` discriminator does not change the schema-v1 history
 report. It publishes the declared checkpoint schema, the path protocol, an
 exact-template topology with canonical path-v1 edge IDs, and one authoritative
-`routingAvailable` decision. Schema-v6 runs report `legacy_schema` and omit the
-routing payload. Eligible quiescent runs migrate atomically before new planning
-to the exclusive schema-7 path-v1 executor; runs with active legacy commands or
-waits drain on schema 6 first. Schema-7 views expose only a bounded overlay
-derived from the validated checkpoint aggregate. Evidence and the schema-v1
-`traversedEdges` history are never routing fallbacks. Closed
-unavailability reasons are `legacy_schema`, `routing_absent`,
-`unsupported_schema`, `unsupported_protocol`, `over_budget`, and
-`inconsistent`. Before an exact topology is exposed, its encoded JSON shape is
-measured without constructing a second encoded copy and capped at 16 MiB;
-larger valid topologies are classified as `over_budget`.
+`routingAvailable` decision. Schema-7 routing includes unpaged graph edges,
+join policy/winner/count summaries, aggregate counts, and state counts. Rich
+generations, scopes, candidate closures, complete cause sets and causes,
+reservation-relative detachments, and detached sinks are typed pages. Request
+one stable window for every detail table with:
+
+```http
+GET /v1/process/runs/change-1/view?detailOffset=25&detailLimit=25
+```
+
+`detailOffset` must be a non-negative integer. `detailLimit` must be 1–100;
+omitting it uses 50. Invalid values return a sanitized `400 invalid_arg`.
+Totals, state counts, topology, and edge/join overlays remain complete and do
+not shrink with the selected detail page. The complete routing DTO is capped at
+16 MiB, independently of the exact topology's 16-MiB encoded ceiling.
+
+Schema-v6 runs report `legacy_schema` and omit the routing payload. Eligible
+quiescent runs migrate atomically before new planning to the schema-7 path-v1
+executor; runs with active legacy commands, waits, obligations, or blocks drain
+on their legacy schema first. Schema-7 views expose only a bounded overlay
+derived from the validated current checkpoint aggregate. Evidence and the
+schema-v1 `traversedEdges` history are never routing fallbacks. Evidence may be
+absent, reordered, or extended without changing viewer topology or overlays;
+the dashboard renders its sanitized projection only as a separate timeline.
+
+Every unavailable condition is explicit and fail-closed:
+
+| Reason | Condition | Safe result |
+| --- | --- | --- |
+| `legacy_schema` | State schema is 1–6. | Show a verified exact topology when available; never infer routing from history. |
+| `routing_absent` | A schema-7 aggregate has no routing state. | Show exact topology without an overlay. |
+| `unsupported_schema` | State schema is unknown or newer than this viewer. | Omit topology/routing claims that cannot be interpreted safely. |
+| `unsupported_protocol` | Routing protocol or encoding is not the supported path-v1 pair. | Preserve exact topology; omit the routing overlay. |
+| `over_budget` | Exact topology, aggregate, or encoded routing DTO exceeds its limit. | Omit the over-budget surface instead of returning a partial view. |
+| `inconsistent` | Template binding, identities, record relationships, safe codes, or aggregate validation disagree. | Omit routing claims until the run is repaired. |
+
+The dashboard names the reason, keeps topology and overlay authority visible,
+offers next/previous controls for the typed pages, and uses the same semantics
+in its regular and wizard skins.
 
 The schema-7 release supports direct task and decision performers, retries,
 start/end routing, and duration, `until`, and signal waits. Timer schedules and
@@ -425,6 +483,12 @@ missing legacy timestamps and schedules remain absent rather than being
 reconstructed. A conversation reference contains only the durable agent ID
 recorded on the process command. The dashboard separately decides whether that
 agent currently has an online conversation.
+
+Schema-7 worklist rows are derived from verified performer commands and real
+wait/obligation/block side effects. A live parallel-any loser remains visible
+when it still has an outstanding external wait; the row is marked `detached`
+with its reservation-relative detachment count. A join reservation is routing
+state, not work, so the worklist never invents a synthetic join task.
 
 The graph is derived only from the exact template matching `templateRef`. A
 legacy run that did not embed its template resolves that content-addressed
@@ -453,6 +517,53 @@ HTTP response remains a sanitized 500 rather than returning a partial graph.
 Decode work is synchronous and cooperatively checks cancellation, so it cannot
 outlive the viewer request and accumulate after the coherent lock is released.
 
+## Execution capability and migration matrix
+
+Engine capabilities are supplied by the trusted host; neither a template nor a
+run-creation request can grant one. The rollout is monotonic and ordered:
+`foundation_v1` → `parallel_all_v1` → `parallel_any_v1`. `parallel_all_v1`
+requires the foundation, and `parallel_any_v1` requires both earlier
+capabilities. There is deliberately no fan-out-only capability: admitting a
+fork without the matching reducer, durable terminal propagation, viewer, and
+worklist semantics would create runs the engine could not explain or settle.
+
+| Host capability set | Serial/exclusive template | Parallel + `join: all` | Parallel + `join: any` |
+| --- | --- | --- | --- |
+| `foundation_v1` | admitted | rejected | rejected |
+| `foundation_v1`, `parallel_all_v1` | admitted | admitted in the executable schema-7 subset | rejected |
+| `foundation_v1`, `parallel_all_v1`, `parallel_any_v1` (production) | admitted | admitted in the executable schema-7 subset | admitted in the executable schema-7 subset |
+
+Production rejects incoherent capability combinations and parallel templates
+outside the released executor subset before creating a run. The supported
+subset includes direct task/decision performers (agent or human), exact waits,
+retries, start/end routing, nested forks that the reducer can poison safely,
+complete innermost-scope reductions, terminal cause propagation, all joins, and
+any joins with winner/detachment semantics. Compound nodes, program performers,
+contact schedules on schema-7 performer nodes, and unsafe nested-fork shapes
+remain outside that parallel subset and are rejected rather than silently
+falling back.
+
+Migration is checkpoint-bound:
+
+- New production runs that match the executable subset initialize schema 7
+  before their first path-v1 plan.
+- A pristine or completely drained eligible schema-1–6 run upgrades atomically
+  to a bound schema-7 checkpoint. Exact template ref, template-source hash,
+  generation, routing authority, commands, and side effects move together.
+- A legacy run with active commands, waits, obligations, blocks, admin work, or
+  ambiguous progress remains on its legacy executor until those records drain.
+  It is never partially converted and never uses viewer evidence as migration
+  input.
+- Unsupported templates continue on their compatible legacy path when that is
+  safe; new parallel syntax that the production capability/subset gate cannot
+  execute is rejected at instantiation.
+
+The runnable parallel-any example is
+[`parallel-any-review`](examples/parallel-any-review.yaml). It starts two cold
+review agents and reduces at an `any` end join. The first passing arrival is the
+winner. An already-dispatched loser is detached rather than fictionally
+canceled; any real outstanding wait remains visible in the worklist.
+
 ## Notes
 
 - `advance` runs `verify` first and refuses dirty or inconsistent runs.
@@ -467,19 +578,15 @@ outlive the viewer request and accumulate after the coherent lock is released.
 - A manual `advance` of another ready node while a run is paused is an
   intentional human override; the paused command's own running node remains
   protected from manual advancement.
-- Execution currently treats each selected outgoing edge as an exclusive
-  branch. The authoring model and editor accept an instantaneous
-  `type: parallel` gateway and typed target-node `join: all | any`, but the
-  production engine advertises only `foundation_v1` and rejects templates
-  containing a parallel gateway at instantiation. No fan-out or join execution
-  is enabled yet.
+- Production advertises the complete foundation/all/any capability chain and
+  admits only the corresponding executable schema-7 subset described above.
 - End nodes default to completed runs; set `result: failed` on a failure
   terminal node when that path should fail the run.
 - A poison-resolution `cancel` settles the run directly; the authored canceled
   end marker remains pending until the resolution command grows a typed
   terminal-node target in a later phase.
 
-### Parallel/join authoring (execution disabled)
+### Parallel/join authoring and execution
 
 Parallel gateways have no performer, wait, retry, result, capture, or compound
 stage fields and require 2–2,046 normalized outgoing edges. A typed join is set

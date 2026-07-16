@@ -15,6 +15,12 @@ import (
 // Its only routing authority is the exact validated current checkpoint; it has
 // no evidence input and therefore cannot reconstruct or fall back to history.
 func ProjectCurrentPathV1ViewerV2(ctx context.Context, checkpointJSON, templateSource []byte) (ViewerV2, error) {
+	return ProjectCurrentPathV1ViewerV2Page(ctx, checkpointJSON, templateSource, RoutingPageRequestV2{})
+}
+
+// ProjectCurrentPathV1ViewerV2Page retains the same checkpoint/template-only
+// authority seam while selecting a bounded window for each rich detail table.
+func ProjectCurrentPathV1ViewerV2Page(ctx context.Context, checkpointJSON, templateSource []byte, page RoutingPageRequestV2) (ViewerV2, error) {
 	if _, err := pathv1.VerifyExecutionInput(ctx, checkpointJSON, templateSource); err != nil {
 		return ViewerV2{}, err
 	}
@@ -34,7 +40,7 @@ func ProjectCurrentPathV1ViewerV2(ctx context.Context, checkpointJSON, templateS
 	result := ProjectViewerV2(ViewerV2Input{
 		RunID: view.RunID, StateSchemaVersion: pathv1.CheckpointStateSchemaVersion,
 		ExactTemplateRef: checkpoint.Initialize.UpgradeNeeded.TemplateRef, ExactTemplate: parsed.Template,
-		TemplateSourceHash: parsed.SourceHash, Aggregate: &view,
+		TemplateSourceHash: parsed.SourceHash, Aggregate: &view, Page: page,
 	})
 	return result, nil
 }
@@ -44,10 +50,17 @@ func ProjectCurrentPathV1ViewerV2(ctx context.Context, checkpointJSON, templateS
 // present and empty for API compatibility; routing authority comes only from
 // the exact checkpoint and template source.
 func BuildCurrentPathV1Envelope(ctx context.Context, snapshot store.PathV1RunSnapshot) (Envelope, error) {
+	return BuildCurrentPathV1EnvelopePage(ctx, snapshot, RoutingPageRequestV2{})
+}
+
+// BuildCurrentPathV1EnvelopePage builds the live envelope with one explicitly
+// bounded detail window. Graph topology and aggregate state counts are stable
+// across pages.
+func BuildCurrentPathV1EnvelopePage(ctx context.Context, snapshot store.PathV1RunSnapshot, page RoutingPageRequestV2) (Envelope, error) {
 	if snapshot.Checkpoint == nil {
 		return Envelope{}, fmt.Errorf("schema-7 checkpoint is required")
 	}
-	viewer, err := ProjectCurrentPathV1ViewerV2(ctx, snapshot.CheckpointJSON, snapshot.TemplateSource)
+	viewer, err := ProjectCurrentPathV1ViewerV2Page(ctx, snapshot.CheckpointJSON, snapshot.TemplateSource, page)
 	if err != nil {
 		return Envelope{}, err
 	}

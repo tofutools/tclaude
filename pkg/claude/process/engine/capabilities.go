@@ -7,8 +7,8 @@ import (
 )
 
 // ExecutionCapability is the monotonic process-engine capability vocabulary.
-// No public constructor exposes parallel capabilities in this authoring-only
-// slice: production callers can negotiate foundation_v1 only.
+// Production advertises the complete foundation -> all -> any chain; embedded
+// callers can deliberately retain the foundation-only compatibility surface.
 type ExecutionCapability string
 
 const (

@@ -5248,6 +5248,124 @@ body:has(#tab-processes.active #process-editor-view) .process-canvas-mount {
 /* Overdue/due-soon: a left accent bar + tinted due cell; the ⚠/"in Nh" text
    in the cell carries the meaning for color-blind readers. */
 .wl-row.wl-overdue td:first-child { box-shadow: inset 3px 0 0 #f85149; }
+.wl-row.wl-detached td:first-child { box-shadow: inset 3px 0 0 #a371f7; }
+.wl-detached-badge {
+  display: inline-block; margin-left: 4px; padding: 1px 5px; border: 1px solid #6e40c9;
+  border-radius: 9px; color: #d2a8ff; background: #21143a; font-size: 10px; white-space: nowrap;
+}
+
+/* Live process viewer (TCL-447). The graph reads exact-template topology plus
+   checkpoint overlays; rich records are separately paged and evidence is a
+   visibly segregated timeline. All controls are explicitly dark-themed. */
+#process-viewer-canvas.process-viewer {
+  min-height: 640px; padding: 0; overflow: hidden; color: #c9d1d9;
+  background: #0d1117; border: 1px solid #30363d; border-style: solid;
+}
+.process-viewer-header {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 18px;
+  padding: 14px 16px; border-bottom: 1px solid #30363d; background: #161b22;
+}
+.process-viewer-header h3 { margin: 2px 0 3px; color: #f0f6fc; font-size: 20px; }
+.process-viewer-kicker { color: #79c0ff; font-size: 10px; font-weight: 750; letter-spacing: .09em; text-transform: uppercase; }
+.process-viewer-ref { max-width: 66vw; overflow: hidden; color: #8b949e; font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.process-viewer-run-state { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 7px; color: #8b949e; font-size: 11px; }
+.process-viewer-authority-strip {
+  padding: 8px 16px; border-bottom: 1px solid #274666; background: #101d2b;
+  color: #9fc5e8; font-size: 12px;
+}
+.process-viewer-unavailable {
+  display: flex; align-items: flex-start; gap: 10px; margin: 12px 16px 0; padding: 10px 12px;
+  border: 1px solid #9e6a03; border-radius: 7px; color: #e3b341; background: #2d2305;
+}
+.process-viewer-unavailable.reason-inconsistent,
+.process-viewer-unavailable.reason-over_budget { border-color: #b62324; color: #ffb3ad; background: #2b1516; }
+.process-viewer-unavailable p { margin: 3px 0; color: inherit; font-size: 12px; }
+.process-viewer-unavailable code { color: #8b949e; font-size: 10px; }
+.process-viewer-unavailable-glyph { font-size: 17px; }
+.process-viewer-state-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 16px 0; }
+.process-viewer-state-chips > span {
+  padding: 4px 8px; border: 1px solid #30363d; border-radius: 12px; color: #aeb7c1;
+  background: #161b22; font-size: 10px;
+}
+.process-viewer-state-chips strong { color: #e6edf3; }
+.process-viewer-main { display: grid; grid-template-columns: minmax(420px, 1.2fr) minmax(390px, .8fr); gap: 12px; padding: 12px 16px; }
+.process-viewer-graph-panel, .process-viewer-details {
+  min-width: 0; overflow: hidden; border: 1px solid #30363d; border-radius: 8px; background: #11161d;
+}
+.process-viewer-graph-panel { display: block; }
+.process-viewer-graph { min-height: 470px; height: 100%; }
+.process-viewer-graph .process-graph { min-height: 470px; border: 0; border-radius: 0; }
+.process-viewer-graph .process-port-layer { display: none; }
+.process-viewer-details { display: flex; min-height: 470px; flex-direction: column; }
+.process-viewer-section-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  padding: 10px 12px; border-bottom: 1px solid #30363d; background: #161b22;
+  color: #8b949e; font-size: 11px;
+}
+.process-viewer-section-head h4 { margin: 0; color: #e6edf3; font-size: 13px; }
+.process-viewer-tabs { display: flex; gap: 4px; padding: 8px; overflow-x: auto; border-bottom: 1px solid #21262d; }
+.process-viewer-tabs button {
+  display: inline-flex; align-items: center; gap: 5px; flex: none; padding: 4px 7px;
+  border: 1px solid #30363d; border-radius: 5px; color: #aeb7c1; background: #161b22;
+  font: 11px/1.3 inherit; cursor: pointer;
+}
+.process-viewer-tabs button:hover { border-color: #58a6ff; }
+.process-viewer-tabs button.active { color: #fff; border-color: #388bfd; background: #1f6feb; }
+.process-viewer-tabs button span { min-width: 14px; text-align: center; color: #8b949e; font-size: 9px; }
+.process-viewer-tabs button.active span { color: #c6dbff; }
+.process-viewer-detail-summary { display: flex; align-items: center; gap: 6px; padding: 7px 9px; color: #8b949e; font-size: 10px; }
+.process-viewer-detail-summary .process-action { padding: 3px 7px; font-size: 10px; }
+.process-viewer-detail-summary .process-action:disabled { opacity: .4; cursor: default; }
+.process-viewer-table-wrap { flex: 1; max-height: 370px; overflow: auto; }
+.process-viewer-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.process-viewer-table th, .process-viewer-table td { padding: 7px 8px; border-top: 1px solid #21262d; text-align: left; vertical-align: top; }
+.process-viewer-table th { position: sticky; top: 0; z-index: 1; color: #8b949e; background: #161b22; font-size: 9px; letter-spacing: .04em; text-transform: uppercase; }
+.process-viewer-id { color: #79c0ff; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; cursor: help; }
+.process-viewer-empty { padding: 18px !important; color: #8b949e; text-align: center !important; }
+.process-viewer-timeline { display: block; margin: 0 16px 16px; overflow: hidden; border: 1px solid #30363d; border-radius: 8px; background: #11161d; }
+.process-viewer-timeline ol { max-height: 190px; margin: 0; padding: 0; overflow: auto; list-style: none; }
+.process-viewer-timeline li { display: flex; align-items: baseline; flex-wrap: wrap; gap: 9px; padding: 7px 11px; border-top: 1px solid #21262d; color: #aeb7c1; font-size: 11px; }
+.process-viewer-timeline li:first-child { border-top: 0; }
+.process-viewer-timeline li strong { color: #e6edf3; }
+.process-viewer-seq { min-width: 40px; color: #8b949e; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.process-viewer-authority { color: #79c0ff; }
+
+/* The wizard skin changes the full viewer chrome—not just accents—while
+   preserving the same DTOs, labels, warning glyphs, and pagination controls. */
+body.wizard #process-viewer-canvas.process-viewer { color: #eadff8; background: #100c1b; border-color: #4a3d6b; }
+body.wizard .process-viewer-header,
+body.wizard .process-viewer-section-head { background: #211832; border-color: #4a3d6b; }
+body.wizard .process-viewer-header h3,
+body.wizard .process-viewer-section-head h4,
+body.wizard .process-viewer-state-chips strong,
+body.wizard .process-viewer-timeline li strong { color: #f3e6c0; }
+body.wizard .process-viewer-kicker,
+body.wizard .process-viewer-authority,
+body.wizard .process-viewer-id { color: #d4af37; }
+body.wizard .process-viewer-authority-strip { color: #d7c9ff; background: #1a1430; border-color: #6d54a3; }
+body.wizard .process-viewer-state-chips > span,
+body.wizard .process-viewer-tabs button { color: #c9b8f0; background: #211832; border-color: #4a3d6b; }
+body.wizard .process-viewer-tabs button.active { color: #1a1325; background: #d4af37; border-color: #f0cf67; }
+body.wizard .process-viewer-tabs button.active span { color: #4a3610; }
+body.wizard .process-viewer-graph-panel,
+body.wizard .process-viewer-details,
+body.wizard .process-viewer-timeline { background: #171021; border-color: #4a3d6b; }
+body.wizard .process-viewer-tabs,
+body.wizard .process-viewer-table th,
+body.wizard .process-viewer-table td,
+body.wizard .process-viewer-timeline li { border-color: #3a2f57; }
+body.wizard .process-viewer-table th { color: #b39ddb; background: #211832; }
+body.wizard .wl-detached-badge { color: #f3e6c0; background: #2c2042; border-color: #a28bd4; }
+@media (max-width: 980px) {
+  .process-viewer-main { grid-template-columns: 1fr; }
+  .process-viewer-graph, .process-viewer-graph .process-graph { min-height: 390px; }
+}
+@media (max-width: 620px) {
+  .process-viewer-header { flex-direction: column; }
+  .process-viewer-run-state { justify-content: flex-start; }
+  .process-viewer-main { padding: 10px; }
+  .process-viewer-timeline { margin: 0 10px 10px; }
+}
 .wl-row.wl-overdue .wl-due { color: #f85149; font-weight: 600; }
 .wl-row.wl-due-soon td:first-child { box-shadow: inset 3px 0 0 #e3b341; }
 .wl-row.wl-due-soon .wl-due { color: #e3b341; }
@@ -11816,6 +11934,7 @@ body.wizard #agent-dock .dock-card-menu-item.danger:hover {
 }
 .process-edge-badge-error { fill: var(--pg-error); }
 .process-edge-badge-warning { fill: var(--pg-warn); }
+.process-edge-badge-info { fill: var(--pg-accent); }
 .process-graph-controls { position: absolute; top: 10px; right: 10px; display: flex; gap: 6px; }
 .process-fit-button {
   appearance: none;

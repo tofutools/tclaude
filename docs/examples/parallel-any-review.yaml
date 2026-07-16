@@ -1,0 +1,40 @@
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: parallel-any-review
+name: First reviewer wins
+description: Run two independent cold reviews and continue after the first passing result.
+params:
+  issue:
+    type: string
+    required: true
+start: fork
+nodes:
+  fork:
+    type: parallel
+    next:
+      primary: primary-review
+      independent: independent-review
+  primary-review:
+    type: task
+    performer:
+      kind: agent
+      profile: reviewer
+      prompt: Cold-review the change for {{ params.issue }}.
+    retry:
+      maxAttempts: 2
+    next:
+      pass: accepted
+  independent-review:
+    type: task
+    performer:
+      kind: agent
+      profile: codex-reviewer
+      prompt: Independently review the change for {{ params.issue }}.
+    retry:
+      maxAttempts: 2
+    next:
+      pass: accepted
+  accepted:
+    type: end
+    join: any
+    result: completed

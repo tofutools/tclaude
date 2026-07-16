@@ -130,6 +130,23 @@ func TestViewerV2JSONIsNarrowAndHasNoEvidenceFallback(t *testing.T) {
 	assertViewerV2Unavailable(t, projected, processview.RoutingUnavailableAbsent)
 }
 
+func TestProjectViewerV2ReturnsBoundedPageMetadataWithUnpagedAggregates(t *testing.T) {
+	t.Parallel()
+	tmpl, ref, sourceHash, aggregate := viewerV2Fixture(t)
+	projected := processview.ProjectViewerV2(processview.ViewerV2Input{
+		RunID: aggregate.RunID, StateSchemaVersion: processview.PathV1StateSchemaVersion,
+		ExactTemplateRef: ref, ExactTemplate: tmpl, TemplateSourceHash: sourceHash, Aggregate: &aggregate,
+		Page: processview.RoutingPageRequestV2{Offset: 1, Limit: 1},
+	})
+	require.True(t, projected.RoutingAvailable)
+	require.NotNil(t, projected.Routing)
+	assert.Equal(t, processview.RoutingPageV2{Offset: 1, Limit: 1, Total: 2}, projected.Routing.Details.Generations.Page)
+	require.Len(t, projected.Routing.Details.Generations.Items, 1)
+	assert.Equal(t, "work", projected.Routing.Details.Generations.Items[0].NodeID)
+	assert.Equal(t, 2, projected.Routing.Aggregate.Reservations, "aggregate totals must not shrink with the detail page")
+	assert.Equal(t, []processview.RoutingStateCountV2{{State: string(pathv1.PathArrived), Count: 1}, {State: string(pathv1.PathRouted), Count: 1}}, projected.Routing.StateCounts.Paths)
+}
+
 func TestProjectViewerV2ExactTopologyEncodedByteBudget(t *testing.T) {
 	atBound, atBoundRef, adjustableSource, adjustableOutcome, atBoundSourceBytes := denseViewerV2TemplateAtEncodedByteBudget(t)
 	projected := processview.ProjectViewerV2(processview.ViewerV2Input{

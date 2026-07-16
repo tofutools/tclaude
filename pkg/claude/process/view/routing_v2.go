@@ -2,6 +2,7 @@ package view
 
 import (
 	"cmp"
+	"encoding/json"
 	"errors"
 	"regexp"
 	"slices"
@@ -14,11 +15,23 @@ import (
 // Preserve ASCII case while retaining the viewer's narrow safe charset.
 var safeExactOutcomePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
+// Routing reasons are engine-authored codes. Exclusive impossibility reasons
+// deliberately bind two full edge identities with slash separators, so they
+// need a wider (still control-free) vocabulary than the short API code regex.
+var safeRoutingReasonPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]{0,511}$`)
+
 const (
 	ViewerV2Protocol         = "viewer_v2"
 	LegacyV6PathProtocol     = "legacy_v6"
 	PathV1StateSchemaVersion = 7
+	DefaultRoutingPageLimit  = 50
+	MaxRoutingPageLimit      = 100
 )
+
+// MaxRoutingOverlayV2EncodedBytes bounds the complete additive routing DTO.
+// The exact topology has an independent ceiling because it is independently
+// useful when a checkpoint overlay is unavailable.
+const MaxRoutingOverlayV2EncodedBytes = pathv1.MaxCheckpointBytes
 
 // RoutingUnavailableReason is a closed, stable explanation for why a
 // checkpoint-derived path overlay was not projected.
@@ -63,8 +76,9 @@ type ExactTopologyV2EncodedBytes uint64
 const MaxExactTopologyV2EncodedBytes ExactTopologyV2EncodedBytes = pathv1.MaxCheckpointBytes
 
 type TopologyNodeV2 struct {
-	ID   string         `json:"id"`
-	Type model.NodeType `json:"type,omitempty"`
+	ID   string           `json:"id"`
+	Type model.NodeType   `json:"type,omitempty"`
+	Join model.JoinPolicy `json:"join,omitempty"`
 }
 
 type TopologyEdgeV2 struct {
@@ -75,13 +89,88 @@ type TopologyEdgeV2 struct {
 }
 
 type RoutingOverlayV2 struct {
-	Protocol  string                    `json:"protocol"`
-	Encoding  uint32                    `json:"encoding"`
-	Edges     []RoutingEdgeOverlayV2    `json:"edges"`
-	Scopes    []RoutingScopeOverlayV2   `json:"scopes,omitempty"`
-	Joins     []RoutingJoinOverlayV2    `json:"joins,omitempty"`
-	Closures  []RoutingClosureOverlayV2 `json:"closures,omitempty"`
-	Aggregate RoutingAggregateOverlayV2 `json:"aggregate"`
+	Protocol    string                    `json:"protocol"`
+	Encoding    uint32                    `json:"encoding"`
+	Edges       []RoutingEdgeOverlayV2    `json:"edges"`
+	Scopes      []RoutingScopeOverlayV2   `json:"scopes,omitempty"`
+	Joins       []RoutingJoinOverlayV2    `json:"joins,omitempty"`
+	Closures    []RoutingClosureOverlayV2 `json:"closures,omitempty"`
+	StateCounts RoutingStateCountsV2      `json:"stateCounts"`
+	Details     RoutingDetailsV2          `json:"details"`
+	Aggregate   RoutingAggregateOverlayV2 `json:"aggregate"`
+}
+
+// RoutingPageRequestV2 applies one stable window to each rich detail table.
+// Keeping aggregation and graph edges outside this window lets every page
+// retain the same truthful overview while clients page one detail tab.
+type RoutingPageRequestV2 struct {
+	Offset int
+	Limit  int
+}
+
+func (r RoutingPageRequestV2) normalized() RoutingPageRequestV2 {
+	if r.Offset < 0 {
+		r.Offset = 0
+	}
+	if r.Limit <= 0 {
+		r.Limit = DefaultRoutingPageLimit
+	}
+	if r.Limit > MaxRoutingPageLimit {
+		r.Limit = MaxRoutingPageLimit
+	}
+	return r
+}
+
+type RoutingPageV2 struct {
+	Offset  int  `json:"offset"`
+	Limit   int  `json:"limit"`
+	Total   int  `json:"total"`
+	HasMore bool `json:"hasMore"`
+}
+
+type RoutingDetailsV2 struct {
+	Generations   RoutingGenerationPageV2   `json:"generations"`
+	Scopes        RoutingScopePageV2        `json:"scopes"`
+	Closures      RoutingClosurePageV2      `json:"closures"`
+	CauseSets     RoutingCauseSetPageV2     `json:"causeSets"`
+	Causes        RoutingCausePageV2        `json:"causes"`
+	Detachments   RoutingDetachmentPageV2   `json:"detachments"`
+	DetachedSinks RoutingDetachedSinkPageV2 `json:"detachedSinks"`
+}
+
+type RoutingGenerationPageV2 struct {
+	Page  RoutingPageV2                `json:"page"`
+	Items []RoutingGenerationOverlayV2 `json:"items"`
+}
+
+type RoutingScopePageV2 struct {
+	Page  RoutingPageV2          `json:"page"`
+	Items []RoutingScopeDetailV2 `json:"items"`
+}
+
+type RoutingClosurePageV2 struct {
+	Page  RoutingPageV2            `json:"page"`
+	Items []RoutingClosureDetailV2 `json:"items"`
+}
+
+type RoutingCauseSetPageV2 struct {
+	Page  RoutingPageV2              `json:"page"`
+	Items []RoutingCauseSetOverlayV2 `json:"items"`
+}
+
+type RoutingCausePageV2 struct {
+	Page  RoutingPageV2           `json:"page"`
+	Items []RoutingCauseOverlayV2 `json:"items"`
+}
+
+type RoutingDetachmentPageV2 struct {
+	Page  RoutingPageV2                `json:"page"`
+	Items []RoutingDetachmentOverlayV2 `json:"items"`
+}
+
+type RoutingDetachedSinkPageV2 struct {
+	Page  RoutingPageV2                  `json:"page"`
+	Items []RoutingDetachedSinkOverlayV2 `json:"items"`
 }
 
 // RoutingEdgeOverlayV2 deliberately collapses path records to an exact
@@ -101,12 +190,44 @@ type RoutingScopeOverlayV2 struct {
 	CloseReason       pathv1.ScopeCloseReason `json:"closeReason,omitempty"`
 }
 
+type RoutingGenerationOverlayV2 struct {
+	ReservationID    string                         `json:"reservationId"`
+	ActivationID     string                         `json:"activationId,omitempty"`
+	NodeID           string                         `json:"nodeId"`
+	ScopeID          string                         `json:"scopeId"`
+	Generation       uint64                         `json:"generation"`
+	Policy           pathv1.JoinPolicy              `json:"policy"`
+	ReservationState pathv1.ReservationState        `json:"reservationState"`
+	ReceiptResult    pathv1.ActivationReceiptResult `json:"receiptResult,omitempty"`
+	InputCount       int                            `json:"inputCount"`
+	OutputPathID     string                         `json:"outputPathId,omitempty"`
+	WinnerPathID     string                         `json:"winnerPathId,omitempty"`
+}
+
+type RoutingScopeDetailV2 struct {
+	ID                    string                  `json:"id"`
+	ParentScopeID         string                  `json:"parentScopeId,omitempty"`
+	ParentBranchEdgeID    string                  `json:"parentBranchEdgeId,omitempty"`
+	ForkActivationID      string                  `json:"forkActivationId,omitempty"`
+	ForkOutputPathID      string                  `json:"forkOutputPathId,omitempty"`
+	Generation            uint64                  `json:"generation"`
+	ExpectedBranchEdgeIDs []string                `json:"expectedBranchEdgeIds"`
+	JoinNodeID            string                  `json:"joinNodeId,omitempty"`
+	JoinReservationID     string                  `json:"joinReservationId,omitempty"`
+	State                 pathv1.ScopeState       `json:"state"`
+	CloseReason           pathv1.ScopeCloseReason `json:"closeReason,omitempty"`
+}
+
 type RoutingJoinOverlayV2 struct {
 	ReservationID string                  `json:"reservationId"`
 	NodeID        string                  `json:"nodeId"`
 	ScopeID       string                  `json:"scopeId"`
 	Policy        pathv1.JoinPolicy       `json:"policy"`
 	State         pathv1.ReservationState `json:"state"`
+	Generation    uint64                  `json:"generation"`
+	ActivationID  string                  `json:"activationId,omitempty"`
+	WinnerPathID  string                  `json:"winnerPathId,omitempty"`
+	Detached      int                     `json:"detached"`
 	Arrived       int                     `json:"arrived"`
 	Open          int                     `json:"open"`
 	Impossible    int                     `json:"impossible"`
@@ -119,17 +240,75 @@ type RoutingClosureOverlayV2 struct {
 	ReservationID string              `json:"reservationId"`
 	CandidateID   string              `json:"candidateId"`
 	TerminalKind  pathv1.TerminalKind `json:"terminalKind"`
+	CauseDigest   string              `json:"causeDigest"`
+}
+
+type RoutingClosureDetailV2 = RoutingClosureOverlayV2
+
+type RoutingCauseSetOverlayV2 struct {
+	Digest   string   `json:"digest"`
+	CauseIDs []string `json:"causeIds"`
+}
+
+type RoutingCauseOverlayV2 struct {
+	ID                 string              `json:"id"`
+	TerminalKind       pathv1.TerminalKind `json:"terminalKind"`
+	DispositionReason  string              `json:"dispositionReason"`
+	SourcePathID       string              `json:"sourcePathId,omitempty"`
+	SourceActivationID string              `json:"sourceActivationId,omitempty"`
+	EventSeq           int64               `json:"eventSeq"`
+}
+
+type RoutingDetachmentOverlayV2 struct {
+	ID                       string `json:"id"`
+	ReservationID            string `json:"reservationId"`
+	CandidateID              string `json:"candidateId"`
+	WinnerPathID             string `json:"winnerPathId"`
+	JoinActivationID         string `json:"joinActivationId"`
+	JoinActivationGeneration uint64 `json:"joinActivationGeneration"`
+	ReasonCode               string `json:"reasonCode"`
+	ActivatedSeq             int64  `json:"activatedSeq"`
+}
+
+type RoutingDetachedSinkOverlayV2 struct {
+	PathID              string           `json:"pathId"`
+	SourceActivationID  string           `json:"sourceActivationId"`
+	SourceGeneration    uint64           `json:"sourceGeneration"`
+	TargetReservationID string           `json:"targetReservationId"`
+	CandidateID         string           `json:"candidateId"`
+	DetachmentID        string           `json:"detachmentId"`
+	ReasonCode          string           `json:"reasonCode"`
+	State               pathv1.PathState `json:"state"`
+	EventSeq            int64            `json:"eventSeq"`
+}
+
+type RoutingStateCountV2 struct {
+	State string `json:"state"`
+	Count int    `json:"count"`
+}
+
+type RoutingStateCountsV2 struct {
+	Paths             []RoutingStateCountV2 `json:"paths"`
+	Scopes            []RoutingStateCountV2 `json:"scopes"`
+	Reservations      []RoutingStateCountV2 `json:"reservations"`
+	Propagation       []RoutingStateCountV2 `json:"propagation"`
+	DetachedPathCount int                   `json:"detachedPathCount"`
+	DetachedSinkCount int                   `json:"detachedSinkCount"`
 }
 
 type RoutingAggregateOverlayV2 struct {
-	Paths        int    `json:"paths"`
-	Scopes       int    `json:"scopes"`
-	Reservations int    `json:"reservations"`
-	Activations  int    `json:"activations"`
-	Closures     int    `json:"closures"`
-	Propagation  int    `json:"propagation"`
-	Settled      bool   `json:"settled"`
-	Result       string `json:"result,omitempty"`
+	Paths         int    `json:"paths"`
+	Scopes        int    `json:"scopes"`
+	Reservations  int    `json:"reservations"`
+	Activations   int    `json:"activations"`
+	Closures      int    `json:"closures"`
+	Propagation   int    `json:"propagation"`
+	CauseRecords  int    `json:"causeRecords"`
+	CauseSets     int    `json:"causeSets"`
+	Detachments   int    `json:"detachments"`
+	DetachedSinks int    `json:"detachedSinks"`
+	Settled       bool   `json:"settled"`
+	Result        string `json:"result,omitempty"`
 }
 
 // ViewerV2Input is the complete input to the pure viewer-v2 projector.
@@ -142,6 +321,7 @@ type ViewerV2Input struct {
 	ExactTemplate      *model.Template
 	TemplateSourceHash string
 	Aggregate          *pathv1.AggregateView
+	Page               RoutingPageRequestV2
 }
 
 type exactTopologyProjection struct {
@@ -216,9 +396,9 @@ func ProjectViewerV2(input ViewerV2Input) ViewerV2 {
 		return result
 	}
 
-	overlay, ok := projectRoutingOverlay(*aggregate, topology.semanticHash, topology.edges)
-	if !ok {
-		result.RoutingUnavailableReason = RoutingUnavailableInconsistent
+	overlay, reason := projectRoutingOverlay(*aggregate, topology.semanticHash, topology.edges, input.Page)
+	if reason != "" {
+		result.RoutingUnavailableReason = reason
 		return result
 	}
 	result.RoutingAvailable = true
@@ -263,7 +443,11 @@ func projectExactTopology(ref string, tmpl *model.Template) (exactTopologyProjec
 		if !validNodeType(nodeType) {
 			return exactTopologyProjection{}, RoutingUnavailableInconsistent
 		}
-		topology.Nodes = append(topology.Nodes, TopologyNodeV2{ID: id, Type: nodeType})
+		join := tmpl.Nodes[id].Join
+		if join != "" && join != model.JoinAll && join != model.JoinAny {
+			return exactTopologyProjection{}, RoutingUnavailableInconsistent
+		}
+		topology.Nodes = append(topology.Nodes, TopologyNodeV2{ID: id, Type: nodeType, Join: join})
 	}
 	edgesByID := make(map[string]TopologyEdgeV2, len(edges))
 	for _, edge := range edges {
@@ -336,8 +520,13 @@ func exactTopologyV2FitsEncodedByteBudget(topology *ExactTopologyV2) bool {
 		if !b.add(
 			exactTopologyV2LiteralBytes(`{"id":`), exactTopologyV2StringBytes(node.ID),
 			exactTopologyV2LiteralBytes(`,"type":`), exactTopologyV2StringBytes(string(node.Type)),
-			1,
 		) {
+			return false
+		}
+		if node.Join != "" && !b.add(exactTopologyV2LiteralBytes(`,"join":`), exactTopologyV2StringBytes(string(node.Join))) {
+			return false
+		}
+		if !b.add(1) {
 			return false
 		}
 	}
@@ -378,7 +567,7 @@ type routingArrivalKey struct {
 	candidateID   pathv1.CandidateID
 }
 
-func projectRoutingOverlay(aggregate pathv1.AggregateView, semanticHash string, topologyEdges map[string]TopologyEdgeV2) (*RoutingOverlayV2, bool) {
+func projectRoutingOverlay(aggregate pathv1.AggregateView, semanticHash string, topologyEdges map[string]TopologyEdgeV2, request RoutingPageRequestV2) (*RoutingOverlayV2, RoutingUnavailableReason) {
 	routing := aggregate.Routing
 	type overlayKey struct {
 		edgeID string
@@ -392,7 +581,7 @@ func projectRoutingOverlay(aggregate pathv1.AggregateView, semanticHash string, 
 		}
 		edge, ok := topologyEdges[path.Edge.ID]
 		if !ok || path.Edge.TemplateRef != semanticHash || path.Edge.FromNodeID != edge.From || path.Edge.Outcome != edge.Outcome || path.Edge.ToNodeID != edge.To || !path.State.Valid() {
-			return nil, false
+			return nil, RoutingUnavailableInconsistent
 		}
 		counts[overlayKey{edgeID: edge.ID, state: path.State}]++
 		if path.Kind == pathv1.PathEdge && (path.State == pathv1.PathArrived || path.State == pathv1.PathConsumed) {
@@ -413,13 +602,14 @@ func projectRoutingOverlay(aggregate pathv1.AggregateView, semanticHash string, 
 		overlay.Scopes = append(overlay.Scopes, RoutingScopeOverlayV2{ID: scope.ID, ParentScopeID: scope.ParentScopeID, JoinReservationID: scope.JoinReservationID, State: scope.State, CloseReason: scope.CloseReason})
 	}
 	slices.SortFunc(overlay.Scopes, func(a, b RoutingScopeOverlayV2) int { return cmp.Compare(a.ID, b.ID) })
-	joins, ok := projectRoutingJoins(routing, arrivals)
+	detachmentCounts := indexRoutingDetachmentsByReservation(routing.Detachments)
+	joins, ok := projectRoutingJoins(routing, arrivals, detachmentCounts)
 	if !ok {
-		return nil, false
+		return nil, RoutingUnavailableInconsistent
 	}
 	overlay.Joins = joins
 	for _, closure := range routing.CandidateClosures {
-		overlay.Closures = append(overlay.Closures, RoutingClosureOverlayV2{ReservationID: closure.Key.ReservationID, CandidateID: closure.Key.CandidateID, TerminalKind: closure.TerminalKind})
+		overlay.Closures = append(overlay.Closures, RoutingClosureOverlayV2{ReservationID: closure.Key.ReservationID, CandidateID: closure.Key.CandidateID, TerminalKind: closure.TerminalKind, CauseDigest: closure.CauseDigest})
 	}
 	slices.SortFunc(overlay.Closures, func(a, b RoutingClosureOverlayV2) int {
 		if n := cmp.Compare(a.ReservationID, b.ReservationID); n != 0 {
@@ -427,23 +617,66 @@ func projectRoutingOverlay(aggregate pathv1.AggregateView, semanticHash string, 
 		}
 		return cmp.Compare(a.CandidateID, b.CandidateID)
 	})
-	overlay.Aggregate = RoutingAggregateOverlayV2{Paths: len(routing.Paths), Scopes: len(routing.Scopes), Reservations: len(routing.Reservations), Activations: len(routing.Activations), Closures: len(routing.CandidateClosures), Propagation: len(routing.Propagation)}
+	details, sinks, ok := projectRoutingDetails(routing, request)
+	if !ok {
+		return nil, RoutingUnavailableInconsistent
+	}
+	overlay.Details = details
+	overlay.StateCounts = projectRoutingStateCounts(routing)
+	overlay.Aggregate = RoutingAggregateOverlayV2{
+		Paths: len(routing.Paths), Scopes: len(routing.Scopes), Reservations: len(routing.Reservations),
+		Activations: len(routing.Activations), Closures: len(routing.CandidateClosures), Propagation: len(routing.Propagation),
+		CauseRecords: len(routing.CauseRecords), CauseSets: len(routing.CauseSets),
+		Detachments: len(routing.Detachments), DetachedSinks: sinks,
+	}
 	if completion, err := pathv1.AssessAggregateCompletion(aggregate); err == nil {
 		overlay.Aggregate.Settled = true
 		overlay.Aggregate.Result = completion.Result
 	} else if !errors.Is(err, pathv1.ErrAggregateUnsettled) {
-		return nil, false
+		return nil, RoutingUnavailableInconsistent
 	}
-	return overlay, true
+	encoded, err := json.Marshal(overlay)
+	if err != nil {
+		return nil, RoutingUnavailableInconsistent
+	}
+	if len(encoded) > MaxRoutingOverlayV2EncodedBytes {
+		return nil, RoutingUnavailableOverBudget
+	}
+	return overlay, ""
 }
 
-func projectRoutingJoins(routing *pathv1.RoutingState, arrivals map[routingArrivalKey]struct{}) ([]RoutingJoinOverlayV2, bool) {
+func indexRoutingDetachmentsByReservation(detachments map[pathv1.DetachmentKey]pathv1.DetachmentRecord) map[pathv1.ReservationID]int {
+	counts := make(map[pathv1.ReservationID]int, len(detachments))
+	for _, detachment := range detachments {
+		counts[detachment.ReservationID]++
+	}
+	return counts
+}
+
+func projectRoutingJoins(routing *pathv1.RoutingState, arrivals map[routingArrivalKey]struct{}, detachmentCounts map[pathv1.ReservationID]int) ([]RoutingJoinOverlayV2, bool) {
 	joins := make([]RoutingJoinOverlayV2, 0)
 	for _, reservation := range routing.Reservations {
 		if reservation.JoinPolicy != pathv1.JoinAll && reservation.JoinPolicy != pathv1.JoinAny {
 			continue
 		}
-		join := RoutingJoinOverlayV2{ReservationID: reservation.ID, NodeID: reservation.NodeID, ScopeID: reservation.ScopeID, Policy: reservation.JoinPolicy, State: reservation.State}
+		join := RoutingJoinOverlayV2{
+			ReservationID: reservation.ID, NodeID: reservation.NodeID, ScopeID: reservation.ScopeID,
+			Policy: reservation.JoinPolicy, State: reservation.State, Generation: reservation.Generation,
+			Detached: detachmentCounts[reservation.ID],
+		}
+		if reservation.Activation != nil {
+			activation, exists := routing.Activations[reservation.Activation.ID]
+			if !exists || activation.Ref != *reservation.Activation || activation.ReservationID != reservation.ID {
+				return nil, false
+			}
+			join.ActivationID = activation.ID
+			if reservation.JoinPolicy == pathv1.JoinAny && activation.Receipt.Result == pathv1.ReceiptActivated {
+				if len(activation.InputPathIDs) != 1 {
+					return nil, false
+				}
+				join.WinnerPathID = activation.InputPathIDs[0]
+			}
+		}
 		for _, candidate := range reservation.Candidates {
 			if _, arrived := arrivals[routingArrivalKey{reservationID: reservation.ID, candidateID: candidate.ID}]; arrived {
 				join.Arrived++
@@ -475,4 +708,196 @@ func projectRoutingJoins(routing *pathv1.RoutingState, arrivals map[routingArriv
 	}
 	slices.SortFunc(joins, func(a, b RoutingJoinOverlayV2) int { return cmp.Compare(a.ReservationID, b.ReservationID) })
 	return joins, true
+}
+
+func projectRoutingDetails(routing *pathv1.RoutingState, request RoutingPageRequestV2) (RoutingDetailsV2, int, bool) {
+	request = request.normalized()
+	generations := make([]RoutingGenerationOverlayV2, 0, len(routing.Reservations))
+	for _, reservation := range routing.Reservations {
+		item := RoutingGenerationOverlayV2{
+			ReservationID: reservation.ID, NodeID: reservation.NodeID, ScopeID: reservation.ScopeID,
+			Generation: reservation.Generation, Policy: reservation.JoinPolicy, ReservationState: reservation.State,
+		}
+		if reservation.Activation != nil {
+			activation, ok := routing.Activations[reservation.Activation.ID]
+			if !ok || activation.Ref != *reservation.Activation || activation.ReservationID != reservation.ID {
+				return RoutingDetailsV2{}, 0, false
+			}
+			item.ActivationID = activation.ID
+			item.ReceiptResult = activation.Receipt.Result
+			item.InputCount = len(activation.InputPathIDs)
+			item.OutputPathID = activation.OutputPathID
+			if reservation.JoinPolicy == pathv1.JoinAny && activation.Receipt.Result == pathv1.ReceiptActivated {
+				if len(activation.InputPathIDs) != 1 {
+					return RoutingDetailsV2{}, 0, false
+				}
+				item.WinnerPathID = activation.InputPathIDs[0]
+			}
+		}
+		generations = append(generations, item)
+	}
+	slices.SortFunc(generations, func(a, b RoutingGenerationOverlayV2) int {
+		if n := cmp.Compare(a.NodeID, b.NodeID); n != 0 {
+			return n
+		}
+		if n := cmp.Compare(a.Generation, b.Generation); n != 0 {
+			return n
+		}
+		return cmp.Compare(a.ReservationID, b.ReservationID)
+	})
+
+	scopes := make([]RoutingScopeDetailV2, 0, len(routing.Scopes))
+	for _, scope := range routing.Scopes {
+		scopes = append(scopes, RoutingScopeDetailV2{
+			ID: scope.ID, ParentScopeID: scope.ParentScopeID, ParentBranchEdgeID: scope.ParentBranchEdgeID,
+			ForkActivationID: scope.ForkActivationID, ForkOutputPathID: scope.ForkOutputPathID,
+			Generation: scope.Generation, ExpectedBranchEdgeIDs: append([]string(nil), scope.ExpectedBranchEdgeIDs...),
+			JoinNodeID: scope.JoinNodeID, JoinReservationID: scope.JoinReservationID,
+			State: scope.State, CloseReason: scope.CloseReason,
+		})
+	}
+	slices.SortFunc(scopes, func(a, b RoutingScopeDetailV2) int { return cmp.Compare(a.ID, b.ID) })
+
+	closures := make([]RoutingClosureDetailV2, 0, len(routing.CandidateClosures))
+	for _, closure := range routing.CandidateClosures {
+		closures = append(closures, RoutingClosureDetailV2{
+			ReservationID: closure.Key.ReservationID, CandidateID: closure.Key.CandidateID,
+			TerminalKind: closure.TerminalKind, CauseDigest: closure.CauseDigest,
+		})
+	}
+	slices.SortFunc(closures, func(a, b RoutingClosureDetailV2) int {
+		if n := cmp.Compare(a.ReservationID, b.ReservationID); n != 0 {
+			return n
+		}
+		return cmp.Compare(a.CandidateID, b.CandidateID)
+	})
+
+	causeSets := make([]RoutingCauseSetOverlayV2, 0, len(routing.CauseSets))
+	for _, set := range routing.CauseSets {
+		for _, causeID := range set.CauseIDs {
+			if _, ok := routing.CauseRecords[causeID]; !ok {
+				return RoutingDetailsV2{}, 0, false
+			}
+		}
+		causeSets = append(causeSets, RoutingCauseSetOverlayV2{Digest: set.Digest, CauseIDs: append([]string(nil), set.CauseIDs...)})
+	}
+	slices.SortFunc(causeSets, func(a, b RoutingCauseSetOverlayV2) int { return cmp.Compare(a.Digest, b.Digest) })
+
+	causes := make([]RoutingCauseOverlayV2, 0, len(routing.CauseRecords))
+	for _, cause := range routing.CauseRecords {
+		if !safeRoutingReasonPattern.MatchString(cause.DispositionReason) {
+			return RoutingDetailsV2{}, 0, false
+		}
+		causes = append(causes, RoutingCauseOverlayV2{
+			ID: cause.ID, TerminalKind: cause.TerminalKind, DispositionReason: cause.DispositionReason,
+			SourcePathID: cause.SourcePathID, SourceActivationID: cause.SourceActivationID, EventSeq: cause.EventSeq,
+		})
+	}
+	slices.SortFunc(causes, func(a, b RoutingCauseOverlayV2) int { return cmp.Compare(a.ID, b.ID) })
+
+	detachments := make([]RoutingDetachmentOverlayV2, 0, len(routing.Detachments))
+	for _, detachment := range routing.Detachments {
+		if !safeRoutingReasonPattern.MatchString(detachment.ReasonCode) {
+			return RoutingDetailsV2{}, 0, false
+		}
+		detachments = append(detachments, RoutingDetachmentOverlayV2{
+			ID: detachment.ID, ReservationID: detachment.ReservationID, CandidateID: detachment.CandidateID,
+			WinnerPathID: detachment.WinnerPathID, JoinActivationID: detachment.JoinActivation.ID,
+			JoinActivationGeneration: detachment.JoinActivation.Generation,
+			ReasonCode:               detachment.ReasonCode, ActivatedSeq: detachment.ActivatedSeq,
+		})
+	}
+	slices.SortFunc(detachments, func(a, b RoutingDetachmentOverlayV2) int { return cmp.Compare(a.ID, b.ID) })
+
+	sinks := make([]RoutingDetachedSinkOverlayV2, 0)
+	for _, path := range routing.Paths {
+		if path.State != pathv1.PathDetachedSink {
+			continue
+		}
+		if path.DetachedSink == nil || !safeRoutingReasonPattern.MatchString(path.DetachedSink.ReasonCode) {
+			return RoutingDetailsV2{}, 0, false
+		}
+		sinks = append(sinks, RoutingDetachedSinkOverlayV2{
+			PathID: path.ID, SourceActivationID: path.SourceActivation.ID,
+			SourceGeneration: path.SourceActivation.Generation, TargetReservationID: path.TargetReservationID,
+			CandidateID: path.CandidateID, DetachmentID: path.DetachedSink.DetachmentID,
+			ReasonCode: path.DetachedSink.ReasonCode, State: path.State, EventSeq: path.DetachedSink.EventSeq,
+		})
+	}
+	slices.SortFunc(sinks, func(a, b RoutingDetachedSinkOverlayV2) int { return cmp.Compare(a.PathID, b.PathID) })
+
+	return RoutingDetailsV2{
+		Generations:   RoutingGenerationPageV2{Page: routingPage(len(generations), request), Items: routingPageItems(generations, request)},
+		Scopes:        RoutingScopePageV2{Page: routingPage(len(scopes), request), Items: routingPageItems(scopes, request)},
+		Closures:      RoutingClosurePageV2{Page: routingPage(len(closures), request), Items: routingPageItems(closures, request)},
+		CauseSets:     RoutingCauseSetPageV2{Page: routingPage(len(causeSets), request), Items: routingPageItems(causeSets, request)},
+		Causes:        RoutingCausePageV2{Page: routingPage(len(causes), request), Items: routingPageItems(causes, request)},
+		Detachments:   RoutingDetachmentPageV2{Page: routingPage(len(detachments), request), Items: routingPageItems(detachments, request)},
+		DetachedSinks: RoutingDetachedSinkPageV2{Page: routingPage(len(sinks), request), Items: routingPageItems(sinks, request)},
+	}, len(sinks), true
+}
+
+func routingPage(total int, request RoutingPageRequestV2) RoutingPageV2 {
+	request = request.normalized()
+	end := request.Offset + request.Limit
+	if end < request.Offset || end > total {
+		end = total
+	}
+	return RoutingPageV2{Offset: request.Offset, Limit: request.Limit, Total: total, HasMore: end < total}
+}
+
+func routingPageItems[T any](items []T, request RoutingPageRequestV2) []T {
+	request = request.normalized()
+	if request.Offset >= len(items) {
+		return []T{}
+	}
+	end := request.Offset + request.Limit
+	if end < request.Offset || end > len(items) {
+		end = len(items)
+	}
+	return append([]T(nil), items[request.Offset:end]...)
+}
+
+func projectRoutingStateCounts(routing *pathv1.RoutingState) RoutingStateCountsV2 {
+	pathCounts := make(map[string]int)
+	scopeCounts := make(map[string]int)
+	reservationCounts := make(map[string]int)
+	propagationCounts := make(map[string]int)
+	detachedPaths, detachedSinks := 0, 0
+	for _, path := range routing.Paths {
+		pathCounts[string(path.State)]++
+		if path.DetachmentSetID != "" {
+			detachedPaths++
+		}
+		if path.State == pathv1.PathDetachedSink {
+			detachedSinks++
+		}
+	}
+	for _, scope := range routing.Scopes {
+		scopeCounts[string(scope.State)]++
+	}
+	for _, reservation := range routing.Reservations {
+		reservationCounts[string(reservation.State)]++
+	}
+	for _, propagation := range routing.Propagation {
+		propagationCounts[string(propagation.State)]++
+	}
+	return RoutingStateCountsV2{
+		Paths: routingStateCounts(pathCounts), Scopes: routingStateCounts(scopeCounts),
+		Reservations: routingStateCounts(reservationCounts), Propagation: routingStateCounts(propagationCounts),
+		DetachedPathCount: detachedPaths, DetachedSinkCount: detachedSinks,
+	}
+}
+
+func routingStateCounts(counts map[string]int) []RoutingStateCountV2 {
+	states := make([]string, 0, len(counts))
+	for state := range counts {
+		states = append(states, state)
+	}
+	slices.Sort(states)
+	result := make([]RoutingStateCountV2, 0, len(states))
+	for _, state := range states {
+		result = append(result, RoutingStateCountV2{State: state, Count: counts[state]})
+	}
+	return result
 }
