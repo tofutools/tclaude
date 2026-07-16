@@ -13,15 +13,16 @@ func TestAgentCronJob_InsertGetList(t *testing.T) {
 	setupTestDB(t)
 
 	id, err := InsertAgentCronJob(&AgentCronJob{
-		Name:            "po-pings",
-		OwnerConv:       "po-conv",
-		TargetConv:      "worker-conv",
-		GroupID:         42,
-		IntervalSeconds: 600,
-		Subject:         "status check",
-		Body:            "What's the latest?",
-		Enabled:         true,
-		RunImmediately:  true,
+		Name:             "po-pings",
+		OwnerConv:        "po-conv",
+		TargetConv:       "worker-conv",
+		GroupID:          42,
+		IntervalSeconds:  600,
+		Subject:          "status check",
+		Body:             "What's the latest?",
+		Enabled:          true,
+		RunImmediately:   true,
+		QueueWhenOffline: true,
 	})
 	require.NoError(t, err, "InsertAgentCronJob")
 	require.Greater(t, id, int64(0), "expected positive id")
@@ -45,6 +46,7 @@ func TestAgentCronJob_InsertGetList(t *testing.T) {
 	assert.Equal(t, int64(600), got.IntervalSeconds, "interval")
 	assert.True(t, got.Enabled, "expected enabled=true")
 	assert.True(t, got.RunImmediately, "run_immediately round-trip")
+	assert.True(t, got.QueueWhenOffline, "queue_when_offline round-trip")
 	assert.False(t, got.CreatedAt.IsZero(), "created_at should be stamped on insert")
 	assert.True(t, got.LastRunAt.IsZero(), "last_run_at should be zero before any fire")
 

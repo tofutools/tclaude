@@ -224,17 +224,18 @@ type CronJob struct {
 	// (db.CronTargetConv / db.CronTargetGroup). Carried so a group-target job
 	// round-trips as one; empty in older archives, where the importer defaults
 	// it to "conv" (the v41 column default).
-	TargetKind      string `json:"target_kind,omitempty"`
-	OwnerConv       string `json:"owner_conv"`
-	TargetConv      string `json:"target_conv"`
-	IntervalSeconds int64  `json:"interval_seconds"`
-	Subject         string `json:"subject"`
-	Body            string `json:"body"`
-	Enabled         int64  `json:"enabled"`
-	RunImmediately  int64  `json:"run_immediately,omitempty"`
-	CreatedAt       string `json:"created_at"`
-	LastRunAt       string `json:"last_run_at"`
-	LastRunStatus   string `json:"last_run_status"`
+	TargetKind       string `json:"target_kind,omitempty"`
+	OwnerConv        string `json:"owner_conv"`
+	TargetConv       string `json:"target_conv"`
+	IntervalSeconds  int64  `json:"interval_seconds"`
+	Subject          string `json:"subject"`
+	Body             string `json:"body"`
+	Enabled          int64  `json:"enabled"`
+	RunImmediately   int64  `json:"run_immediately,omitempty"`
+	QueueWhenOffline int64  `json:"queue_when_offline,omitempty"`
+	CreatedAt        string `json:"created_at"`
+	LastRunAt        string `json:"last_run_at"`
+	LastRunStatus    string `json:"last_run_status"`
 }
 
 // CronRun is an agent_cron_runs row. JobID is the SOURCE cron-job id;

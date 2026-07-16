@@ -434,17 +434,12 @@ type sendReq struct {
 // one entry per non-sender member.
 type sendResp struct {
 	ID int64 `json:"id,omitempty"`
-	// Queued is true once the message row is persisted and handed to the
-	// async per-agent delivery queue (JOH-310). Under the async model the
-	// send call returns immediately, BEFORE the worker decides
-	// delivered/held, so Queued — not Delivered/Held — is the success
-	// signal on a direct send. Pending carries the queue depth.
+	// Queued is true once the durable inbox row is persisted. The send returns
+	// before the best-effort nudge worker runs, so this does not promise a tmux
+	// notification. Pending carries the regular-message backlog depth.
 	Queued bool `json:"queued,omitempty"`
-	// Pending is the recipient's queue depth at send time — how many
-	// undelivered nudges are now waiting for them, including this one. It is
-	// the "queue length" the sender CLI surfaces. 0 is a valid value (e.g. a
-	// non-actor target whose count we don't track), so it is informational
-	// only, never a failure signal.
+	// Pending is the recipient's unprocessed regular-message backlog at send
+	// time, including this row. It is informational, never a failure signal.
 	Pending int `json:"pending,omitempty"`
 	// Delivered/Held are retained for response back-compat but are no longer
 	// set on the async send path (delivery + the JOH-308 human-input hold are
@@ -480,11 +475,17 @@ type recipient struct {
 	AgentID   string `json:"agent_id,omitempty"`
 	Title     string `json:"title,omitempty"`
 	MessageID int64  `json:"message_id"`
-	// Queued is true once this recipient's row is persisted and handed to the
-	// async delivery queue (JOH-310) — the per-recipient analogue of
-	// sendResp.Queued. Pending is this recipient's queue depth.
+	// Queued is true once this recipient's durable row is persisted — the
+	// per-recipient analogue of sendResp.Queued. Pending is its unprocessed
+	// regular-message backlog depth.
 	Queued  bool `json:"queued,omitempty"`
 	Pending int  `json:"pending,omitempty"`
+	// QueueFull identifies a per-recipient backpressure rejection in a
+	// multicast/CC response. Error carries the actionable retry hint and Limit
+	// makes the overload threshold machine-readable to API callers.
+	QueueFull bool   `json:"queue_full,omitempty"`
+	Limit     int    `json:"limit,omitempty"`
+	Error     string `json:"error,omitempty"`
 	// Delivered/Held are retained for back-compat but no longer set on the
 	// async path (the worker decides them after the send returns).
 	Delivered bool `json:"delivered"`
@@ -690,7 +691,7 @@ func dispatchSend(w http.ResponseWriter, fromID string, req *sendReq) {
 		return
 	}
 
-	id, err := queueAgentMessage(&db.AgentMessage{
+	id, pending, err := queueRegularAgentMessage(&db.AgentMessage{
 		GroupID:        groupID,
 		FromConv:       fromID,
 		ToConv:         finalConv,
@@ -704,6 +705,10 @@ func dispatchSend(w http.ResponseWriter, fromID string, req *sendReq) {
 		PinGen:       pinGen,
 	})
 	if err != nil {
+		if full, ok := agentMessageQueueFull(err); ok {
+			writeQueueFull(w, finalConv, full)
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
@@ -712,7 +717,7 @@ func dispatchSend(w http.ResponseWriter, fromID string, req *sendReq) {
 	writeJSON(w, http.StatusOK, sendResp{
 		ID:             id,
 		Queued:         true,
-		Pending:        queueDepthFor(finalConv, pinGen),
+		Pending:        pending,
 		ViaGroup:       viaName,
 		RedirectedFrom: originalTo,
 	})
@@ -818,7 +823,7 @@ func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv, primaryOri
 	// Insert + nudge primary first so the response order matches the
 	// "To:, CC: ..." header order in inbox read.
 	primaryTitle := agent.TitleFor(primaryConv)
-	primaryID, err := queueAgentMessage(&db.AgentMessage{
+	primaryID, primaryPending, err := queueRegularAgentMessage(&db.AgentMessage{
 		GroupID:        primaryGroupID,
 		FromConv:       fromID,
 		ToConv:         primaryConv,
@@ -829,21 +834,33 @@ func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv, primaryOri
 		CcRecipients:   ccRecipients,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "io", err.Error())
-		return
+		if full, ok := agentMessageQueueFull(err); ok {
+			out.Recipients = append(out.Recipients, recipient{
+				ConvID: primaryConv, AgentID: peerAgentID(primaryConv), Title: primaryTitle,
+				Pending: full.Pending, QueueFull: true, Limit: full.Limit,
+				Error: queueFullHint(full.Pending, full.Limit), RedirectedFrom: primaryOriginalTo,
+			})
+		} else {
+			slog.Warn("multi-recipient: primary insert failed", "to", primaryConv, "error", err)
+			out.Recipients = append(out.Recipients, recipient{
+				ConvID: primaryConv, AgentID: peerAgentID(primaryConv), Title: primaryTitle,
+				Error: "failed to queue message: " + err.Error(), RedirectedFrom: primaryOriginalTo,
+			})
+		}
+	} else {
+		out.Recipients = append(out.Recipients, recipient{
+			ConvID:         primaryConv,
+			AgentID:        peerAgentID(primaryConv),
+			Title:          primaryTitle,
+			MessageID:      primaryID,
+			Queued:         true,
+			Pending:        primaryPending,
+			RedirectedFrom: primaryOriginalTo,
+		})
 	}
-	out.Recipients = append(out.Recipients, recipient{
-		ConvID:         primaryConv,
-		AgentID:        peerAgentID(primaryConv),
-		Title:          primaryTitle,
-		MessageID:      primaryID,
-		Queued:         true,
-		Pending:        queueDepthFor(primaryConv, false),
-		RedirectedFrom: primaryOriginalTo,
-	})
 
 	for _, r := range resolved {
-		id, err := queueAgentMessage(&db.AgentMessage{
+		id, pending, err := queueRegularAgentMessage(&db.AgentMessage{
 			GroupID:        r.GroupID,
 			FromConv:       fromID,
 			ToConv:         r.ConvID,
@@ -854,6 +871,14 @@ func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv, primaryOri
 			CcRecipients:   ccRecipients,
 		})
 		if err != nil {
+			if full, ok := agentMessageQueueFull(err); ok {
+				out.Recipients = append(out.Recipients, recipient{
+					ConvID: r.ConvID, AgentID: peerAgentID(r.ConvID), Title: r.Title,
+					Pending: full.Pending, QueueFull: true, Limit: full.Limit,
+					Error: queueFullHint(full.Pending, full.Limit), RedirectedFrom: r.OriginalToConv,
+				})
+				continue
+			}
 			// Don't abort: the primary already landed. Surface the per-CC
 			// failure so the sender can retry just that one.
 			slog.Warn("multi-recipient: CC insert failed",
@@ -864,6 +889,7 @@ func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv, primaryOri
 				Title:     r.Title,
 				MessageID: 0,
 				Delivered: false,
+				Error:     "failed to queue message: " + err.Error(),
 			})
 			continue
 		}
@@ -873,7 +899,7 @@ func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv, primaryOri
 			Title:          r.Title,
 			MessageID:      id,
 			Queued:         true,
-			Pending:        queueDepthFor(r.ConvID, false),
+			Pending:        pending,
 			RedirectedFrom: r.OriginalToConv,
 		})
 	}
@@ -1038,11 +1064,25 @@ func handleMulticast(w http.ResponseWriter, fromID string, req *sendReq) {
 // send (handleMulticast) and group-targeted cron jobs (fireCronJob).
 // Keeping the two on this one path means a delivery fix lands for both
 // and they can never drift apart. Caller-supplied auth is the caller's
-// responsibility — fanOutToGroup itself does no permission checking.
+// responsibility — fanOutToGroup itself does no permission checking. Regular
+// group sends are bounded; cron uses the filtered core with bounded=false.
 func fanOutToGroup(g *db.AgentGroup, fromConv, subject, body, roleFilter string, memberFilter []string) ([]recipient, error) {
+	recipients, _, err := fanOutToGroupFiltered(
+		g, fromConv, subject, body, roleFilter, memberFilter, nil, true)
+	return recipients, err
+}
+
+// fanOutToGroupFiltered optionally applies recipientFilter after all normal
+// membership/role/subset/self filters. A rejected recipient is counted but no
+// inbox row is inserted. Cron uses this to discard offline ticks by default;
+// bounded=false also keeps correctness-critical cron traffic exempt from
+// regular-message backpressure.
+func fanOutToGroupFiltered(g *db.AgentGroup, fromConv, subject, body, roleFilter string, memberFilter []string,
+	recipientFilter func(string) bool, bounded bool,
+) ([]recipient, int, error) {
 	members, err := db.ListAgentGroupMembers(g.ID)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	roleFilter = strings.TrimSpace(roleFilter)
 	// memberFilter narrows the fan-out to the listed members. The
@@ -1075,6 +1115,7 @@ func fanOutToGroup(g *db.AgentGroup, fromConv, subject, body, roleFilter string,
 		}
 	}
 	out := []recipient{}
+	skipped := 0
 	for _, m := range members {
 		if m.ConvID == fromConv {
 			continue
@@ -1115,15 +1156,38 @@ func fanOutToGroup(g *db.AgentGroup, fromConv, subject, body, roleFilter string,
 				continue
 			}
 		}
-		id, err := queueAgentMessage(&db.AgentMessage{
+		if recipientFilter != nil && !recipientFilter(finalConv) {
+			skipped++
+			continue
+		}
+		message := &db.AgentMessage{
 			GroupID:        g.ID,
 			FromConv:       fromConv,
 			ToConv:         finalConv,
 			OriginalToConv: originalTo,
 			Subject:        subject,
 			Body:           body,
-		})
+		}
+		var id int64
+		var pending int
+		var err error
+		if bounded {
+			id, pending, err = queueRegularAgentMessage(message)
+		} else {
+			id, err = queueAgentMessage(message)
+			if err == nil {
+				pending = queueDepthFor(finalConv, false)
+			}
+		}
 		if err != nil {
+			if full, ok := agentMessageQueueFull(err); ok {
+				out = append(out, recipient{
+					ConvID: finalConv, AgentID: peerAgentID(finalConv), Title: agent.TitleFor(finalConv),
+					Pending: full.Pending, QueueFull: true, Limit: full.Limit,
+					Error: queueFullHint(full.Pending, full.Limit), RedirectedFrom: originalTo,
+				})
+				continue
+			}
 			// Don't abort the whole fan-out on one DB error; record it
 			// and continue. The caller sees per-recipient status and can
 			// retry the failures explicitly.
@@ -1135,6 +1199,7 @@ func fanOutToGroup(g *db.AgentGroup, fromConv, subject, body, roleFilter string,
 				Title:          agent.TitleFor(finalConv),
 				MessageID:      0,
 				Delivered:      false,
+				Error:          "failed to queue message: " + err.Error(),
 				RedirectedFrom: originalTo,
 			})
 			continue
@@ -1145,11 +1210,11 @@ func fanOutToGroup(g *db.AgentGroup, fromConv, subject, body, roleFilter string,
 			Title:          agent.TitleFor(finalConv),
 			MessageID:      id,
 			Queued:         true,
-			Pending:        queueDepthFor(finalConv, false),
+			Pending:        pending,
 			RedirectedFrom: originalTo,
 		})
 	}
-	return out, nil
+	return out, skipped, nil
 }
 
 // messageNudgeText builds the bracketed tmux nudge for a delivered agent
@@ -2241,7 +2306,7 @@ func handleMessageReply(w http.ResponseWriter, r *http.Request, idStr string) {
 			"cannot reply: original sender has been superseded by you; the predecessor's chain points back to your own conv")
 		return
 	}
-	newID, err := queueAgentMessage(&db.AgentMessage{
+	newID, pending, err := queueRegularAgentMessage(&db.AgentMessage{
 		GroupID:        replyGroupID,
 		FromConv:       myID,
 		ToConv:         replyTarget,
@@ -2251,13 +2316,17 @@ func handleMessageReply(w http.ResponseWriter, r *http.Request, idStr string) {
 		ParentID:       orig.ID,
 	})
 	if err != nil {
+		if full, ok := agentMessageQueueFull(err); ok {
+			writeQueueFull(w, replyTarget, full)
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, sendResp{
 		ID:             newID,
 		Queued:         true,
-		Pending:        queueDepthFor(replyTarget, false),
+		Pending:        pending,
 		ViaGroup:       replyViaName,
 		RedirectedFrom: replyOriginalTo,
 	})
@@ -2299,7 +2368,7 @@ func handleMessageByID(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "auth", "message is not addressed to you")
 		return
 	}
-	if !isOperator && r.URL.Query().Get("keep-unread") != "1" && m.ReadAt.IsZero() {
+	if !isOperator && r.URL.Query().Get("keep-unread") != "1" {
 		if err := db.MarkAgentMessageRead(id); err != nil {
 			// User asked us to mark read; if we can't, that's a real
 			// failure they should see — surface it instead of silently
@@ -2385,18 +2454,19 @@ func handleMessageByID(w http.ResponseWriter, r *http.Request) {
 // + Delivered are populated for sent messages (the outbox view, when
 // ?outbox=1 is set). Unused fields omit themselves via omitempty.
 type inboxItem struct {
-	ID        int64  `json:"id"`
-	From      string `json:"from,omitempty"`
-	FromShort string `json:"from_short,omitempty"`
-	To        string `json:"to,omitempty"`
-	ToShort   string `json:"to_short,omitempty"`
-	Group     string `json:"group"`
-	Subject   string `json:"subject,omitempty"`
-	Preview   string `json:"preview,omitempty"`
-	CreatedAt string `json:"created_at"`
-	Read      bool   `json:"read"`
-	Delivered bool   `json:"delivered,omitempty"`
-	ParentID  int64  `json:"parent_id,omitempty"`
+	ID               int64  `json:"id"`
+	From             string `json:"from,omitempty"`
+	FromShort        string `json:"from_short,omitempty"`
+	To               string `json:"to,omitempty"`
+	ToShort          string `json:"to_short,omitempty"`
+	Group            string `json:"group"`
+	Subject          string `json:"subject,omitempty"`
+	Preview          string `json:"preview,omitempty"`
+	CreatedAt        string `json:"created_at"`
+	Read             bool   `json:"read"`
+	Delivered        bool   `json:"delivered,omitempty"`
+	NudgeDiscardedAt string `json:"nudge_discarded_at,omitempty"`
+	ParentID         int64  `json:"parent_id,omitempty"`
 }
 
 func handleInbox(w http.ResponseWriter, r *http.Request) {
@@ -2455,7 +2525,10 @@ func handleInbox(w http.ResponseWriter, r *http.Request) {
 		if outbox {
 			item.To = m.ToConv
 			item.ToShort = agent.ShortAgentID(m.ToAgent, m.ToConv)
-			item.Delivered = !m.DeliveredAt.IsZero()
+			item.Delivered = !m.DeliveredAt.IsZero() && m.NudgeDiscardedAt.IsZero()
+			if !m.NudgeDiscardedAt.IsZero() {
+				item.NudgeDiscardedAt = m.NudgeDiscardedAt.Format(time.RFC3339)
+			}
 		} else {
 			item.From = m.FromConv
 			item.FromShort = agent.ShortAgentID(m.FromAgent, m.FromConv)

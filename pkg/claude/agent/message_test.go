@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -10,6 +11,58 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
+
+func TestOneShotCLIQueueFullIsActionableAndNonZero(t *testing.T) {
+	prev := DaemonRequestImpl
+	t.Cleanup(func() { DaemonRequestImpl = prev })
+	const hint = "target message backlog is full (10/10 unprocessed regular messages); no message was queued. Wait for the target to process or read pending messages, then retry"
+	DaemonRequestImpl = func(_, _ string, _, _ any, _ DaemonOpts) error {
+		return &DaemonError{Status: http.StatusTooManyRequests, Code: "queue_full", Msg: hint}
+	}
+
+	for _, run := range []struct {
+		name string
+		call func(stdout, stderr *bytes.Buffer) int
+	}{
+		{name: "message", call: func(stdout, stderr *bytes.Buffer) int {
+			return runMessageDaemon(&messageParams{Target: "worker"}, "hello", stdout, stderr)
+		}},
+		{name: "reply", call: func(stdout, stderr *bytes.Buffer) int {
+			return runReplyDaemon(42, "", "hello", stdout, stderr)
+		}},
+	} {
+		t.Run(run.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			rc := run.call(&stdout, &stderr)
+			assert.Equal(t, rcIOFailure, rc)
+			assert.Empty(t, stdout.String())
+			assert.Contains(t, stderr.String(), hint)
+		})
+	}
+}
+
+func TestMessageCLIGroupQueueFullReportsRecipientAndFails(t *testing.T) {
+	prev := DaemonRequestImpl
+	t.Cleanup(func() { DaemonRequestImpl = prev })
+	DaemonRequestImpl = func(_, _ string, _, out any, _ DaemonOpts) error {
+		return json.Unmarshal([]byte(`{
+			"via_group":"team",
+			"recipients":[
+				{"conv_id":"full-target","agent_id":"agt_111111111111","title":"full","pending":10,"limit":10,"queue_full":true,"error":"target message backlog is full (10/10 unprocessed regular messages); no message was queued. Wait for the target to process or read pending messages, then retry"},
+				{"conv_id":"free-target","agent_id":"agt_222222222222","title":"free","message_id":9,"queued":true,"pending":1}
+			]
+		}`), out)
+	}
+
+	var stdout, stderr bytes.Buffer
+	rc := runMessageDaemon(&messageParams{Target: "group:team"}, "hello", &stdout, &stderr)
+	assert.Equal(t, rcOK, rc, "partial fan-out remains successful")
+	assert.Contains(t, stderr.String(), "Warning: 1 recipient(s) were not queued")
+	assert.Contains(t, stdout.String(), "2 recipients (1 saved to inbox, 1 failed)")
+	assert.Contains(t, stdout.String(), "not queued: target message backlog is full")
+	assert.Contains(t, stdout.String(), "then retry")
+	assert.Contains(t, stdout.String(), "saved to target inbox")
+}
 
 func TestRunInboxReadDaemonShowsReplyability(t *testing.T) {
 	prev := DaemonRequestImpl

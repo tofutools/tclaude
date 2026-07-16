@@ -47,10 +47,13 @@ function CronSchedule({ job }) {
   const immediate = job.run_immediately
     ? html`<div class="muted" title="This job opted into an immediate run on create or when the setting was turned on">immediate opt-in</div>`
     : null;
+  const offline = job.queue_when_offline
+    ? html`<div class="muted" title="Scheduled messages are retained when recipients are offline">queues offline</div>`
+    : null;
   if (job.cron_expr) {
-    return html`<${Fragment}><span class="id" title=${job.cron_desc || ''}>cron: ${job.cron_expr}</span>${immediate}</${Fragment}>`;
+    return html`<${Fragment}><span class="id" title=${job.cron_desc || ''}>cron: ${job.cron_expr}</span>${immediate}${offline}</${Fragment}>`;
   }
-  return html`<${Fragment}><span class="id">every ${formatJobInterval(job.interval_seconds)}</span>${immediate}</${Fragment}>`;
+  return html`<${Fragment}><span class="id">every ${formatJobInterval(job.interval_seconds)}</span>${immediate}${offline}</${Fragment}>`;
 }
 
 function CronStatus({ status }) {

@@ -34,6 +34,7 @@ func TestDashboardOperatorMessageQueuesSenderlessMail(t *testing.T) {
 		Pending int   `json:"pending"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
+	agentd.WaitForBackgroundForTest()
 	assert.True(t, response.Queued)
 	assert.GreaterOrEqual(t, response.Pending, 1)
 	m, err := db.GetAgentMessage(response.ID)
@@ -43,7 +44,13 @@ func TestDashboardOperatorMessageQueuesSenderlessMail(t *testing.T) {
 	assert.Empty(t, m.Subject, "an omitted subject must remain omitted")
 	assert.Equal(t, target, m.ToConv)
 	assert.Equal(t, "Please check the failing test.", m.Body)
-	assert.True(t, m.DeliveredAt.IsZero(), "offline target remains durably queued")
+	assert.False(t, m.DeliveredAt.IsZero(), "offline notification attempt leaves the nudge queue")
+	assert.False(t, m.NudgeDiscardedAt.IsZero(), "offline notification attempt is recorded distinctly")
+	assert.True(t, m.ReadAt.IsZero(), "durable operator mail remains unread")
+
+	mailbox := getMailbox(t, mux, target)
+	require.Len(t, mailbox, 1)
+	assert.NotEmpty(t, mailbox[0].NudgeDiscardedAt)
 
 	read := testharness.Serve(agentd.BuildHandlerForTest(), agentd.AsAgentPeer(
 		testharness.JSONRequest(t, http.MethodGet, "/v1/messages/"+strconv.FormatInt(response.ID, 10), nil), target))

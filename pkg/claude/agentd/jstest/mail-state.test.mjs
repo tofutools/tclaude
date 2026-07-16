@@ -10,6 +10,14 @@ test('Messages delete routing distinguishes the human and agent stores', async (
   assert.equal(messageDeleteEndpoint('all'), '/api/mailbox/delete');
 });
 
+test('Messages delivery state distinguishes offline notification discard', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { messageDeliveryState } = await harness.importDashboardModule('js/mail-island.js');
+  assert.equal(messageDeliveryState({ nudge_discarded_at: '2026-07-16T12:00:00Z', delivered_at: '2026-07-16T12:00:00Z' }), 'discarded while offline');
+  assert.equal(messageDeliveryState({ delivered_at: '2026-07-16T12:00:00Z' }), 'delivered');
+  assert.equal(messageDeliveryState({ direction: 'out' }), 'undelivered');
+});
+
 test('Messages attention prioritizes the oldest pending access request, then the oldest unread notification', async (t) => {
   const harness = await createPreactHarness(t);
   const {

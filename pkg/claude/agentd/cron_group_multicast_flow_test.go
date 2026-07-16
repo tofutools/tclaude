@@ -94,10 +94,10 @@ func TestCronGroupMulticast_FiresToEveryMember(t *testing.T) {
 	assert.Empty(t, job.TargetConv, "group-target job has no conv target")
 	assert.NotZero(t, job.GroupID, "group_id points at the target group")
 
-	require.Equal(t, "ok", fireCronNow(t, f, id), "fire status")
+	require.Equal(t, "partial_offline", fireCronNow(t, f, id), "fire status")
 
 	// Every member except the owner received exactly one row.
-	for _, m := range []string{w1, w2} {
+	for _, m := range []string{w1} {
 		rows, err := db.ListAgentMessagesForConv(m, 100)
 		require.NoError(t, err)
 		require.Len(t, rows, 1, "member %s got the cron multicast", m)
@@ -106,6 +106,7 @@ func TestCronGroupMulticast_FiresToEveryMember(t *testing.T) {
 			"subject carries the cron-name tag")
 		assert.Equal(t, job.GroupID, rows[0].GroupID, "row stamped with the target group")
 	}
+	assert.Zero(t, msgRowCount(t, w2), "offline member's scheduled tick is discarded")
 	// The owner is skipped — a PO scheduling a team ping does not ping
 	// itself, exactly as a `group:` multicast skips its sender.
 	assert.Zero(t, msgRowCount(t, po), "the job owner is skipped from its own multicast")
@@ -131,9 +132,10 @@ func TestCronGroupMulticast_MembershipResolvedAtFireTime(t *testing.T) {
 	f.HaveMember("team", w2)
 
 	id := createCronJobAsAgent(t, f, po, map[string]any{
-		"target":   "group:team",
-		"interval": "10m",
-		"body":     "tick",
+		"target":             "group:team",
+		"interval":           "10m",
+		"body":               "tick",
+		"queue_when_offline": true,
 	})
 
 	// Fire #1 — roster is {po, w1, w2}; po (owner) is skipped.
@@ -178,10 +180,11 @@ func TestCronGroupMulticast_ConvTargetDeliversToExactlyOne(t *testing.T) {
 	// target, not a multicast.
 	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(
 		t, http.MethodPost, "/v1/cron", map[string]any{
-			"target":   w1,
-			"owner":    po,
-			"interval": "10m",
-			"body":     "one-to-one nudge",
+			"target":             w1,
+			"owner":              po,
+			"interval":           "10m",
+			"body":               "one-to-one nudge",
+			"queue_when_offline": true,
 		})))
 	require.Equal(t, http.StatusOK, rec.Code, "POST /v1/cron body=%s", rec.Body.String())
 	var cr struct {
@@ -243,27 +246,31 @@ func TestCronGroupMulticast_DashboardCreate(t *testing.T) {
 	g := f.HaveGroup("team")
 	const w1 = "cgm5-wkr1-aaaa-bbbb-cccc-000000000001"
 	f.HaveMember("team", w1)
+	f.HaveAliveSession(w1, "spwn-cgm5-w1", "tclaude-spwn-cgm5-w1", "/tmp/work")
 
 	mux := agentd.BuildDashboardHandlerForTest()
 	rec := testharness.Serve(mux, testharness.JSONRequest(
 		t, http.MethodPost, "/api/cron", map[string]any{
-			"target":   "group:team",
-			"interval": "15m",
-			"name":     "team-ping",
-			"body":     "dashboard multicast",
+			"target":             "group:team",
+			"interval":           "15m",
+			"name":               "team-ping",
+			"body":               "dashboard multicast",
+			"queue_when_offline": true,
 		}))
 	require.Equal(t, http.StatusOK, rec.Code, "dashboard POST /api/cron body=%s", rec.Body.String())
 
 	var resp struct {
-		ID         int64  `json:"id"`
-		TargetKind string `json:"target_kind"`
-		GroupID    int64  `json:"group_id"`
-		GroupName  string `json:"group_name"`
+		ID               int64  `json:"id"`
+		TargetKind       string `json:"target_kind"`
+		GroupID          int64  `json:"group_id"`
+		GroupName        string `json:"group_name"`
+		QueueWhenOffline bool   `json:"queue_when_offline"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp), "decode resp")
 	assert.Equal(t, "group", resp.TargetKind, "response marks the job group-kind")
 	assert.Equal(t, g.ID, resp.GroupID, "response carries the target group id")
 	assert.Equal(t, "team", resp.GroupName, "response carries the target group name")
+	assert.True(t, resp.QueueWhenOffline, "response carries the offline-queue opt-in")
 
 	job, err := db.GetAgentCronJob(resp.ID)
 	require.NoError(t, err)
@@ -272,6 +279,7 @@ func TestCronGroupMulticast_DashboardCreate(t *testing.T) {
 	assert.Equal(t, g.ID, job.GroupID, "stored group_id")
 	assert.Empty(t, job.TargetConv, "group-target job has no conv target")
 	assert.Empty(t, job.OwnerConv, "human-created job has no agent owner")
+	assert.True(t, job.QueueWhenOffline, "dashboard opt-in persists on the job")
 
 	// And it actually fans out when fired.
 	require.Equal(t, "ok", fireCronNow(t, f, resp.ID))

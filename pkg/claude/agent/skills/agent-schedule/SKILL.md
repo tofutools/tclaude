@@ -2,8 +2,8 @@
 name: agent-schedule
 description: >-
   Schedule recurring nudges and check-ins via `tclaude agent cron {ls, add, rm,
-  logs}`. The agentd scheduler ticks every 30s and fires due jobs through the
-  durable agent-message delivery queue for both grouped and solo targets. Use
+  logs}`. The agentd scheduler ticks every 30s, discards offline ticks by
+  default, and can opt jobs into durable offline delivery. Use
   to set up periodic status pings to peer agents (e.g. a
   Product Owner agent pinging workers every 10 minutes), self-check-ins, or any
   task that's currently a `/loop` or external cron. Self-targeted scheduling
@@ -17,9 +17,11 @@ description: >-
 You can ask the agentd scheduler to fire a message at a regular
 interval — to yourself or to a peer in a shared group — without
 spinning your own /loop. The scheduler ticks every 30 seconds, picks
-up due jobs, and delivers them through the same durable inbox queue used by
-manual messages. Offline and temporarily blocked targets keep the nudge until
-they can receive it.
+up due jobs, and delivers them to recipients that are online at fire time.
+Offline ticks are discarded by default so a crashed agent does not return to a
+backlog of stale automated nudges. `--queue-when-offline` opts a job into the
+durable inbox queue used by manual messages. A live pane temporarily blocked on
+human input is still online: its accepted nudge waits until the pane is safe.
 
 ## Verbs
 
@@ -29,8 +31,9 @@ they can receive it.
 | `tclaude agent cron add --target <sel> --interval 10m --body "..." [--subject "..."] [--name "..."]` | Schedule a new job. Defaults to self-target when `--target` is omitted and waits for the first due interval. Give the body inline with `--body`, or read it from a file with `--file <path>` (`--file -` reads stdin). |
 | `tclaude agent cron add --cron "*/5 * * * *" --body "..."` | Same, but on a cron expression instead of a fixed interval (mutually exclusive with `--interval`). Standard 5-field syntax plus `@hourly`/`@daily`/…; evaluated in the daemon's local timezone unless prefixed `CRON_TZ=<zone>`. |
 | `tclaude agent cron add --interval 10m --run-immediately --body "..."` | Opt into exactly one immediate first fire, then continue from that fire on the normal cadence. Omit the flag to wait. |
+| `tclaude agent cron add --interval 10m --queue-when-offline --body "..."` | Persist ticks for offline recipients. By default offline ticks are discarded so stale scheduled nudges do not build up. |
 | `tclaude agent cron rm <id>`                                | Delete a job by ID (from `cron ls`)                                                   |
-| `tclaude agent cron logs <id> [--limit N]`                  | Show recent fires (newest first), with status (`ok` / `send_failed` / `no_target`)    |
+| `tclaude agent cron logs <id> [--limit N]`                  | Show recent fires (newest first), including `ok`, `skipped_offline`, `partial_offline`, and failure statuses. |
 
 ## Permissions
 
@@ -73,7 +76,7 @@ You're a Product Owner agent in group `team-alpha` with two workers
 10 minutes so you can keep momentum without babysitting:
 
 ```bash
-# Self-pings the workers via the daemon's durable message queue.
+# Pings each worker while it is online; add --queue-when-offline to retain missed ticks.
 tclaude agent cron add \
   --target backend-worker \
   --interval 10m \
@@ -93,7 +96,9 @@ Workers will receive these as inbox messages with the subject
 auto-prefixed: `[cron:po-ping-backend] status check`. The prefix
 makes it obvious this is a scheduled nudge vs a hand-typed message.
 Both jobs wait ten minutes before their first delivery. Add
-`--run-immediately` when one immediate first ping is intentional.
+`--run-immediately` when one immediate first ping is intentional. If a worker
+is offline when a tick fires, that tick is discarded unless the job was created
+with `--queue-when-offline`.
 
 ### Long or code-heavy job body — use `--file`
 
@@ -138,14 +143,15 @@ same "implicit power" rule used by `agent.reincarnate`,
 
 ## Delivery semantics
 
-- **Group-routed (sender + target share a group):** scheduler
-  inserts an `agent_messages` row and triggers the existing flush
-  pipeline. The message survives the target being offline — it'll
-  land next time the target's pane is alive.
-- **Solo (no shared group):** scheduler types the body directly via
-  `tmux send-keys`. **Requires the target's pane to be alive at fire
-  time.** When it isn't, `cron logs` shows `no_target` for that fire
-  — the message is lost (no inbox row to retry from).
+- **Default:** liveness is checked before persistence. An offline solo target
+  gets no inbox row and the run records `skipped_offline`. A group job delivers
+  to its online eligible members, recording `partial_offline` when it skipped
+  others or `skipped_offline` when it skipped everyone.
+- **With `--queue-when-offline`:** the scheduler inserts durable inbox rows for
+  offline recipients too. The normal flush pipeline delivers them after the
+  recipient returns.
+- **Regular messages are unaffected:** peer, reply, operator, lifecycle, and
+  other non-cron messages retain their own durable delivery semantics.
 
 For reliable delivery to a target you don't share a group with: add
 yourself + target to a shared group first, then schedule the job.

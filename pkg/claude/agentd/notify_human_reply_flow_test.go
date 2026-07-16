@@ -172,6 +172,31 @@ func TestHumanReply_BusyAgent_QueuedHeld(t *testing.T) {
 	assert.True(t, rows[0].DeliveredAt.IsZero(), "held: delivered_at not stamped yet")
 }
 
+func TestHumanReply_BackpressureLeavesOriginalUnhandled(t *testing.T) {
+	f := newFlow(t)
+	const sender = "hrpl-full-bbbb-cccc-000000000005"
+	f.HaveGroup("tclaude-dev")
+	f.HaveMember("tclaude-dev", sender)
+	f.HaveAliveSession(sender, "hrpl-full", "tclaude-hrpl-full", "/tmp/work")
+
+	msgID, err := db.InsertHumanMessage(&db.HumanMessage{FromConv: sender, Body: "your question"})
+	require.NoError(t, err)
+	seedRegularBacklog(t, sender, regularMessageQueueLimitForTest)
+
+	rec := postDashReply(t, dashMessageMux(t), map[string]any{"id": msgID, "body": "the answer"})
+	require.Equal(t, http.StatusTooManyRequests, rec.Code, "body=%s", rec.Body.String())
+	full := decodeQueueFull(t, rec.Body.Bytes())
+	assert.Equal(t, sender, full.Target)
+
+	rows, err := db.ListAgentMessagesForConv(sender, 100)
+	require.NoError(t, err)
+	assert.Len(t, rows, regularMessageQueueLimitForTest, "rejected operator reply writes no row")
+	original, err := db.GetHumanMessage(msgID)
+	require.NoError(t, err)
+	require.NotNil(t, original)
+	assert.False(t, original.IsRead(), "rejected reply leaves the notification unanswered")
+}
+
 // Scenario: replying to an id that doesn't exist is a 404 — there is no
 // notification to answer.
 func TestHumanReply_UnknownMessage_NotFound(t *testing.T) {
