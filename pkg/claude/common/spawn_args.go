@@ -75,7 +75,8 @@ type SpawnArgs struct {
 	// in Cwd after tmux has established the pane's working-directory inode. The
 	// forked session launcher checks it immediately before executing the harness,
 	// closing pathname-swap races between daemon validation and launch. Fresh
-	// agent spawn only; empty on human launches and resumes.
+	// agent spawns use a caller proof; offline managed resumes use a daemon-owned
+	// target-provenance pin. Empty on direct human session launches.
 	CwdWriteProof string
 	// DirWriteProof is the same daemon challenge token when only extra
 	// repository roots (not cwd) require child-side marker verification.

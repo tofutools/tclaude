@@ -58,6 +58,14 @@ func gitRevParseDir(cwd, field string) (string, error) {
 // ~/.claude writable and undo the sandbox's protected-state posture. The main
 // worktree grant remains a narrow descendant and is retained.
 func GitWorktreeWriteDirs(cwd, gitCommonDir, home string) []string {
+	gitDir, _ := GitDir(cwd)
+	return GitWorktreeWriteDirsForIdentity(gitCommonDir, gitDir, home)
+}
+
+// GitWorktreeWriteDirsForIdentity derives repository grants from already
+// verified metadata paths. Offline resume uses this form so it never follows a
+// mutable cwd/.git indirection after validating durable target provenance.
+func GitWorktreeWriteDirsForIdentity(gitCommonDir, gitDir, home string) []string {
 	gitCommonDir = filepath.Clean(strings.TrimSpace(gitCommonDir))
 	if gitCommonDir == "." || !filepath.IsAbs(gitCommonDir) {
 		return nil
@@ -87,7 +95,8 @@ func GitWorktreeWriteDirs(cwd, gitCommonDir, home string) []string {
 	// and restores only the metadata this checkout needs. Failure to resolve it
 	// safely retains the existing parent grant; callers already treat a missing
 	// Git answer as a non-repository launch.
-	if gitDir, err := GitDir(cwd); err == nil && gitDir != "" {
+	gitDir = filepath.Clean(strings.TrimSpace(gitDir))
+	if gitDir != "." && filepath.IsAbs(gitDir) {
 		for _, dir := range dirs {
 			if dir == gitDir {
 				return dirs
@@ -122,7 +131,7 @@ func SandboxWorktreeContainer(gitCommonDir, home string) string {
 	// [container] only when the container is safe to expose; a home-guarded run
 	// grants [mainWorktree] instead, in which case there is no bare container to
 	// protect and we return "".
-	dirs := GitWorktreeWriteDirs("", gitCommonDir, home)
+	dirs := GitWorktreeWriteDirsForIdentity(gitCommonDir, "", home)
 	if len(dirs) == 1 && dirs[0] == container {
 		return container
 	}

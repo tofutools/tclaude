@@ -17,6 +17,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/conv"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/resumeprovenance"
 )
 
 // Flow wraps a World with a small Given/When/Then DSL so flow tests
@@ -109,6 +110,21 @@ type simSpawner struct {
 	w *World
 }
 
+func saveSessionWithResumeProvenance(row *db.SessionRow) error {
+	if row.ResumeProvenance == "" && row.Cwd != "" {
+		// Many non-lifecycle flow tests intentionally use synthetic absolute
+		// paths such as /work. Mirror production's legacy/unusable state when
+		// such a path cannot be physically identified; resume-specific fixtures
+		// use real directories and therefore receive valid provenance.
+		if captured, err := resumeprovenance.Capture(row.Cwd); err == nil {
+			if encoded, encodeErr := resumeprovenance.Encode(captured); encodeErr == nil {
+				row.ResumeProvenance = encoded
+			}
+		}
+	}
+	return db.SaveSession(row)
+}
+
 // SpawnNew builds the harness-appropriate pane sim, writes the SessionRow
 // the production hook callback would have written, and registers in
 // TmuxSim. harness=="codex" routes to a CodexSim + a harness="codex" row;
@@ -186,7 +202,7 @@ func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 	// in time. The pane is still registered so it behaves like a real
 	// slow-to-record launch, not a dead one.
 	if !s.w.SkipSpawnRow {
-		if err := db.SaveSession(&db.SessionRow{
+		if err := saveSessionWithResumeProvenance(&db.SessionRow{
 			ID:                 label,
 			TmuxSession:        label,
 			ConvID:             cc.ConvID,
@@ -250,7 +266,7 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	label := generateResumeLabel()
 	// Resume mints a fresh session row / TCLAUDE_SESSION_ID; track it.
 	cc.SessionID = label
-	if err := db.SaveSession(&db.SessionRow{
+	if err := saveSessionWithResumeProvenance(&db.SessionRow{
 		ID:                 label,
 		TmuxSession:        label,
 		ConvID:             convID,
@@ -357,7 +373,7 @@ func (s *simSpawner) spawnNewCodex(args clcommon.SpawnArgs) error {
 	// it keyed by conv-id so a flow test can assert what the launch prompt
 	// delivered — the Codex analogue of the CCSim path's RecordSpawnInitialPrompt.
 	s.w.RecordSpawnInitialPrompt(cx.ConvID, args.InitialPrompt)
-	if err := db.SaveSession(&db.SessionRow{
+	if err := saveSessionWithResumeProvenance(&db.SessionRow{
 		ID:                 label,
 		TmuxSession:        label,
 		ConvID:             cx.ConvID,
@@ -409,7 +425,7 @@ func (s *simSpawner) spawnResumeCodex(args clcommon.SpawnArgs) error {
 	s.w.RecordSpawnCodexGitCommonDir(convID, args.CodexGitCommonDir)
 	s.w.RecordSpawnCodexGitCommonDirPinned(convID, args.CodexGitCommonDirPinned)
 	label := generateResumeLabel()
-	if err := db.SaveSession(&db.SessionRow{
+	if err := saveSessionWithResumeProvenance(&db.SessionRow{
 		ID:                     label,
 		TmuxSession:            label,
 		ConvID:                 convID,
@@ -463,7 +479,7 @@ func (f *Flow) ensureAgentSpawnLaunchFixture() {
 	if row != nil {
 		return
 	}
-	if err := db.SaveSession(&db.SessionRow{
+	if err := saveSessionWithResumeProvenance(&db.SessionRow{
 		ID: "spawn-fixture-" + f.currAgentConv, ConvID: f.currAgentConv,
 		Cwd: f.World.HomeDir, Status: "running", Harness: harness.DefaultName,
 		SandboxMode: harness.ClaudeSandboxOff, ApprovalPolicy: "bypassPermissions",
@@ -626,7 +642,7 @@ func (f *Flow) HaveAliveSessionOnBranch(convID, label, tmuxSession, cwd, branch 
 			f.T.Fatalf("HaveAliveSessionOnBranch: WriteUserTurn: %v", err)
 		}
 	}
-	if err := db.SaveSession(&db.SessionRow{
+	if err := saveSessionWithResumeProvenance(&db.SessionRow{
 		ID:             label,
 		TmuxSession:    tmuxSession,
 		ConvID:         convID,
@@ -655,7 +671,7 @@ func (f *Flow) HaveAliveCodexSession(convID, label, tmuxSession, cwd string) *Co
 	if err := cx.Start(); err != nil {
 		f.T.Fatalf("HaveAliveCodexSession: cx.Start: %v", err)
 	}
-	if err := db.SaveSession(&db.SessionRow{
+	if err := saveSessionWithResumeProvenance(&db.SessionRow{
 		ID:             label,
 		TmuxSession:    tmuxSession,
 		ConvID:         convID,

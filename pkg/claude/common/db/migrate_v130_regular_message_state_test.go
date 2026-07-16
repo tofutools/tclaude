@@ -9,7 +9,7 @@ import (
 
 func TestMigrateV129toV130AddsRegularMessageState(t *testing.T) {
 	setupTestDB(t)
-	require.Equal(t, 130, currentVersion, "tripwire: bump this with the next migration")
+	require.Equal(t, 131, currentVersion, "tripwire: bump this with the next migration")
 	d, err := Open()
 	require.NoError(t, err)
 

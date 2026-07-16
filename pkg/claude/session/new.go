@@ -20,6 +20,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/ratelimit"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/resumeprovenance"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -794,6 +795,23 @@ func runNew(params *NewParams) error {
 			return err
 		}
 	}
+	resumeProvenance := ""
+	physicalCwd, provenanceErr := clcommon.LivePaneCwd(tmuxSession)
+	if provenanceErr == nil {
+		var captured resumeprovenance.Provenance
+		captured, provenanceErr = resumeprovenance.Capture(physicalCwd)
+		if provenanceErr == nil {
+			resumeProvenance, provenanceErr = resumeprovenance.Encode(captured)
+		}
+	}
+	if provenanceErr != nil {
+		if params.ManagedLaunch {
+			_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
+			return fmt.Errorf("capture managed launch resume provenance: %w", provenanceErr)
+		}
+		slog.Warn("could not capture resume provenance for direct session; a controlled stop will retry",
+			"session", sessionID, "error", provenanceErr)
+	}
 	// The pane shell now owns normal profile cleanup after Codex exits. Until
 	// this point any launch/readiness failure is cleaned by the parent defer.
 	launchProfileOwnedByPane = launchProfilePath != ""
@@ -832,6 +850,7 @@ func runNew(params *NewParams) error {
 		// only write of the column, so it can't be re-derived later.
 		SandboxMode:        sandboxDescr(sandboxMode, params.PermissionProfile),
 		EffectiveSandbox:   effectiveSandbox,
+		ResumeProvenance:   resumeProvenance,
 		ApprovalPolicy:     recordedApprovalPolicy,
 		ApprovalAutoReview: autoReview,
 		// Record the resolved AskUserQuestion idle-timeout so a relaunch (resume /
@@ -845,6 +864,16 @@ func runNew(params *NewParams) error {
 
 	if err := SaveSessionState(state); err != nil {
 		return fmt.Errorf("failed to save session state: %w", err)
+	}
+	if resumeProvenance != "" {
+		// SessionStart may have inserted this row before the launch parent got
+		// here. SaveSession deliberately never updates provenance on conflict so
+		// a stale hook cannot resurrect trust after stop invalidates it; the
+		// launch boundary therefore owns this explicit post-upsert write.
+		if err := db.SetSessionResumeProvenance(sessionID, resumeProvenance); err != nil {
+			_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
+			return fmt.Errorf("persist managed launch resume provenance: %w", err)
+		}
 	}
 	if h.Name == harness.CodexName {
 		if err := db.UpdateSessionModel(sessionID, model); err != nil {

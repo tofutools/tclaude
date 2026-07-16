@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -33,42 +31,53 @@ func TestRunStopPassesAskHumanToDaemon(t *testing.T) {
 	assert.Contains(t, stdout.String(), "Waiting up to 30s for human approval")
 }
 
-func TestRunResumeAnswersWriteProofChallenge(t *testing.T) {
+func TestRunResumePassesAskHumanToDaemon(t *testing.T) {
 	prevAvail, prevReq := DaemonAvailableImpl, DaemonRequestImpl
 	t.Cleanup(func() { DaemonAvailableImpl, DaemonRequestImpl = prevAvail, prevReq })
 	DaemonAvailableImpl = func() bool { return true }
 
-	dir := t.TempDir()
-	const token = "resume-proof-123"
-	filename := ".tclaude-write-proof-" + token
-	challenge, err := json.Marshal(map[string]any{
-		"code": WriteProofRequiredCode,
-		"write_proof": map[string]any{
-			"token": token, "filename": filename, "dirs": []string{dir},
-		},
-	})
-	require.NoError(t, err)
-
-	calls := 0
-	DaemonRequestImpl = func(method, path string, in, out any, _ DaemonOpts) error {
-		calls++
+	var gotOpts DaemonOpts
+	DaemonRequestImpl = func(method, path string, in, out any, opts DaemonOpts) error {
 		assert.Equal(t, http.MethodPost, method)
 		assert.Equal(t, "/v1/agent/worker/resume", path)
-		body, ok := in.(map[string]any)
-		require.True(t, ok)
-		if calls == 1 {
-			assert.Empty(t, body)
-			return &DaemonError{Status: http.StatusForbidden, Code: WriteProofRequiredCode, Raw: challenge}
-		}
-		assert.Equal(t, token, body["write_proof_token"])
+		assert.Nil(t, in)
+		gotOpts = opts
 		return json.Unmarshal([]byte(`{"conv_id":"worker-conv","action":"resumed"}`), out)
 	}
 
 	var stdout, stderr bytes.Buffer
-	rc := runResume(&resumeParams{Selector: "worker"}, &stdout, &stderr)
+	rc := runResume(&resumeParams{Selector: "worker", AskHuman: "30s"}, &stdout, &stderr)
 	require.Equal(t, rcOK, rc, "stderr=%s", stderr.String())
-	assert.Equal(t, 2, calls)
+	assert.Equal(t, 30*time.Second, gotOpts.AskHuman)
 	assert.Contains(t, stdout.String(), "worker-c: resumed")
-	assert.FileExists(t, filepath.Join(dir, filename))
-	require.NoError(t, os.Remove(filepath.Join(dir, filename)))
+	assert.NotContains(t, stdout.String(), "Waiting up to",
+		"resume must not claim an approval request exists before the daemon actually denies")
+}
+
+func TestResumeCmdExposesAskHumanFlag(t *testing.T) {
+	flag := resumeCmd().Flags().Lookup("ask-human")
+	require.NotNil(t, flag)
+	assert.Contains(t, flag.Usage, "permission denial")
+}
+
+func TestRunGroupsResumePassesAskHumanWithoutCallerProof(t *testing.T) {
+	prevAvail, prevReq := DaemonAvailableImpl, DaemonRequestImpl
+	t.Cleanup(func() { DaemonAvailableImpl, DaemonRequestImpl = prevAvail, prevReq })
+	DaemonAvailableImpl = func() bool { return true }
+
+	var gotOpts DaemonOpts
+	DaemonRequestImpl = func(method, path string, in, out any, opts DaemonOpts) error {
+		assert.Equal(t, http.MethodPost, method)
+		assert.Equal(t, "/v1/groups/team/resume", path)
+		assert.Nil(t, in)
+		gotOpts = opts
+		return json.Unmarshal([]byte(`{"group":"team","action":"resume","members":[{"conv_id":"worker-conv","action":"resumed"}]}`), out)
+	}
+
+	var stdout, stderr bytes.Buffer
+	rc := runGroupsResume(&groupsResumeParams{Name: "team", AskHuman: "30s"}, &stdout, &stderr)
+	require.Equal(t, rcOK, rc, "stderr=%s", stderr.String())
+	assert.Equal(t, 30*time.Second, gotOpts.AskHuman)
+	assert.Contains(t, stdout.String(), "resumed")
+	assert.NotContains(t, stdout.String(), "Waiting up to")
 }
