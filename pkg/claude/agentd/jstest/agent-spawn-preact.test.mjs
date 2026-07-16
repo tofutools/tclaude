@@ -21,6 +21,7 @@ const harnesses = [{
   sandbox_mode_help: { inherit: 'keep settings', on: 'force on', off: 'force off' },
   can_approval: true, approval_modes: ['inherit', 'plan'], default_approval: 'inherit',
   approval_mode_help: { inherit: 'keep rules', plan: 'read only' },
+  can_auto_review: false,
   can_ask_timeout: true, ask_timeout_modes: ['inherit', 'never'], default_ask_timeout: 'inherit',
   ask_timeout_mode_help: { inherit: 'keep settings', never: 'wait forever' },
   can_remote_control: true,
@@ -31,7 +32,12 @@ const harnesses = [{
   sandbox_modes: ['tclaude-agent', 'danger-full-access'],
   default_sandbox: 'tclaude-agent',
   sandbox_mode_help: { 'tclaude-agent': 'managed', 'danger-full-access': 'off' },
-  can_approval: true, approval_modes: [], default_approval: '',
+  can_approval: true, approval_modes: ['never', 'untrusted', 'on-failure', 'on-request'], default_approval: 'never',
+  approval_mode_help: {
+    never: 'never prompt', untrusted: 'ask for untrusted',
+    'on-failure': 'deprecated retry', 'on-request': 'ask when requested',
+  },
+  can_auto_review: true,
   can_ask_timeout: false, ask_timeout_modes: [], default_ask_timeout: '',
   can_remote_control: false,
 }];
@@ -42,7 +48,8 @@ const profiles = [{
   is_owner: true, permission_overrides: { 'groups.spawn': 'grant' },
 }, {
   name: 'codex-profile', aliases: ['codex-fast'], harness: 'codex',
-  model: 'gpt-5.6', sandbox: 'danger-full-access', trust_dir: false,
+  model: 'gpt-5.6', sandbox: 'danger-full-access', approval: 'on-request',
+  auto_review: true, trust_dir: false,
   remote_control: true,
 }];
 
@@ -126,9 +133,18 @@ test('agent-spawn model preserves precedence, sparse profiles, gates, and hidden
   assert.equal(draft.harness, 'codex');
   assert.equal(draft.model, 'gpt-5.6');
   assert.equal(draft.sandbox, 'danger-full-access');
+  assert.equal(draft.approval, 'on-request');
+  assert.equal(draft.approvalReviewer, 'auto_review');
+  assert.equal(model.spawnProfileSeed(draft, context).auto_review, true);
   assert.equal(draft.trustDirSpecified, true, 'profile false is explicit');
   assert.equal(draft.remoteControl, false, 'unsupported hidden remote state is cleared');
   assert.equal(model.spawnCapabilityView(draft, context).sandboxProfilesDisabled, true);
+
+  const sparseCodex = model.applySpawnProfile(draft, {
+    name: 'codex-default-reviewer', harness: 'codex',
+  }, context);
+  assert.equal(sparseCodex.approvalReviewer, '',
+    'switching to a sparse profile clears the previous explicit reviewer');
 
   const customBlank = { ...model.selectSpawnHarness(draft, 'claude', context), customModel: true };
   assert.equal(model.modelSelectValue(customBlank, context), model.MODEL_CUSTOM_VALUE);
@@ -137,6 +153,7 @@ test('agent-spawn model preserves precedence, sparse profiles, gates, and hidden
   assert.equal(draft.model, '', 'a harness namespace change clears the incompatible model');
   assert.equal(draft.trustDirSpecified, false);
   assert.equal(draft.sandbox, 'inherit');
+  assert.equal(draft.approvalReviewer, '');
   assert.equal(draft.remoteControl, false);
 
   draft = model.setSpawnCwd({
@@ -219,12 +236,18 @@ test('agent-spawn model normalizes names and builds exact launch bodies', async 
   const codex = model.selectSpawnHarness(draft, 'codex', context);
   const codexBody = model.buildSpawnRequest({
     ...codex, name: 'worker', sandbox: 'danger-full-access', sandboxProfile: 'stale',
+    approval: 'on-request', approvalReviewer: 'auto_review',
     trustDir: false, trustDirSpecified: true,
   }, context, { path: '', branch: '' }).body;
   assert.equal(codexBody.trust_dir, false);
   assert.equal('sandbox_profile' in codexBody, false);
   assert.equal('remote_control' in codexBody, false);
-  assert.equal('approval' in codexBody, false);
+  assert.equal(codexBody.approval, 'on-request');
+  assert.equal(codexBody.auto_review, true);
+  const humanBody = model.buildSpawnRequest({
+    ...codex, name: 'worker', approvalReviewer: 'human',
+  }, context, { path: '', branch: '' }).body;
+  assert.equal(humanBody.auto_review, false, 'explicit human review overrides a profile');
 });
 
 test('agent-spawn state snapshots opens and invalidates every async generation', async (t) => {
@@ -366,7 +389,13 @@ test('Preact agent-spawn owner renders profile/custom/capability states without 
   setValue(harnessSelect, 'codex');
   await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
   assert.equal(host.querySelector('#agent-spawn-model-codex-row').hidden, false);
-  assert.equal(host.querySelector('#agent-spawn-approval-row').hidden, true);
+  assert.equal(host.querySelector('#agent-spawn-approval-row').hidden, false);
+  assert.equal(host.querySelector('#agent-spawn-approval-reviewer-row').hidden, false);
+  assert.match(host.querySelector('#agent-spawn-approval').textContent, /Never ask — no approval prompts/);
+  const reviewer = host.querySelector('#agent-spawn-approval-reviewer');
+  setValue(reviewer, 'auto_review');
+  await harness.act(() => harness.fireEvent(reviewer, 'change'));
+  assert.match(host.querySelector('#agent-spawn-approval-reviewer-hint').textContent, /No effect with/);
   assert.equal(host.querySelector('#agent-spawn-remote-control-row').hidden, true);
   assert.equal(host.querySelector('#agent-spawn-trust-dir-row').hidden, false);
   mounted.cleanup();

@@ -1,3 +1,5 @@
+import { readReviewer, reviewerValue } from './approval-controls.js';
+
 export const TRI_OPTIONS = [
   ['', "Default (leave dialog's own)"], ['1', 'on'], ['0', 'off'],
 ];
@@ -24,6 +26,7 @@ export function harnessDefaults(harness) {
   return {
     sandbox: harness?.default_sandbox || harness?.sandbox_modes?.[0] || '',
     approval: harness?.default_approval || harness?.approval_modes?.[0] || '',
+    approval_reviewer: '',
     ask_user_question_timeout: harness?.default_ask_timeout || harness?.ask_timeout_modes?.[0] || '',
   };
 }
@@ -37,6 +40,7 @@ export function profileDraft(seed = null, { editExisting = true, local = null } 
     disabled: !!seed?.disabled, disabled_reason: seed?.disabled_reason || '',
     model: seed?.model || '', effort: seed?.effort || '', sandbox: seed?.sandbox || defaults.sandbox,
     approval: seed?.approval || defaults.approval, ask_user_question_timeout: seed?.ask_user_question_timeout || defaults.ask_user_question_timeout,
+    approval_reviewer: reviewerValue(seed?.auto_review),
     trust_dir: triValue(seed?.trust_dir), remote_control: triValue(seed?.remote_control),
     agent_name: seed?.agent_name || '', role: seed?.role || '', descr: seed?.descr || '',
     initial_message: seed?.initial_message || '', sync_worktree: triValue(seed?.sync_worktree),
@@ -58,6 +62,8 @@ export function profilePayload(draft, original = null, catalog = [], { local = f
   if (h?.can_sandbox && draft.sandbox) body.sandbox = draft.sandbox;
   const surfacesApproval = !!(h?.can_approval && h.approval_modes?.length);
   if (surfacesApproval && draft.approval) body.approval = draft.approval;
+  const reviewer = h?.can_auto_review ? readReviewer(draft.approval_reviewer) : null;
+  if (reviewer != null) body.auto_review = reviewer;
   if (h?.can_ask_timeout && h.ask_timeout_modes?.length && draft.ask_user_question_timeout) body.ask_user_question_timeout = draft.ask_user_question_timeout;
   const trust = draft.harness === 'codex' ? readTri(draft.trust_dir) : null;
   if (trust != null) body.trust_dir = trust;
@@ -70,7 +76,7 @@ export function profilePayload(draft, original = null, catalog = [], { local = f
   const norm = (name) => name || 'claude';
   if (original && norm(original.harness) === norm(draft.harness)) {
     if (!surfacesApproval && original.approval) body.approval = original.approval;
-    if (original.auto_review != null) body.auto_review = original.auto_review;
+    if (!h?.can_auto_review && original.auto_review != null) body.auto_review = original.auto_review;
   }
   if (local) {
     for (const key of ['name', 'aliases', 'disabled', 'disabled_reason', 'agent_name', 'role', 'descr', 'initial_message', 'sync_worktree', 'auto_focus', 'include_group_default_context']) delete body[key];

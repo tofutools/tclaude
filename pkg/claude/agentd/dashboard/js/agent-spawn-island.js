@@ -37,12 +37,13 @@ import {
   validateSpawnDraft,
 } from './agent-spawn-model.js';
 import { registerAgentSpawnController } from './agent-spawn-controller.js';
+import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } from './approval-controls.js';
 
 const html = htm.bind(h);
 const PASTE_REPEAT_MS = 1000;
 const PROFILE_OWNED_FIELDS = [
   'profile', 'name', 'role', 'descr', 'task', 'initialMessage',
-  'harness', 'model', 'customModel', 'effort', 'sandbox', 'approval', 'askTimeout',
+  'harness', 'model', 'customModel', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'askTimeout',
   'trustDir', 'trustDirSpecified', 'remoteControl', 'owner', 'permissionOverrides',
   'syncWorktree', 'autoFocus', 'includeGroupContext',
 ];
@@ -290,7 +291,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   };
   const changeHarness = (value) => {
     touched.current.add('harness');
-    for (const key of ['model', 'effort', 'sandbox', 'approval', 'askTimeout', 'trustDir', 'remoteControl']) {
+    for (const key of ['model', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'askTimeout', 'trustDir', 'remoteControl']) {
       touched.current.add(key);
     }
     setDraft((before) => selectSpawnHarness(before, value, context, rememberedEffort));
@@ -548,6 +549,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   const selectedModel = modelSelectValue(draft, context);
   const sandboxHelp = view.sandbox.help[draft.sandbox] || '';
   const approvalHelp = view.approval.help[draft.approval] || '';
+  const reviewerHelp = approvalReviewerHelp(draft.approvalReviewer, draft.approval);
   const askTimeoutHelp = view.askTimeout.help[draft.askTimeout] || '';
   const worktreeUsable = worktrees.phase === 'ready' && worktrees.isRepo;
   let worktreeEmptyLabel = '(no worktree — use CWD above)';
@@ -737,17 +739,23 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       help=${sandboxPolicy.preview} open=${helpOpen === 'agent-spawn-sandbox-profile'} setOpen=${setHelpOpen}
       disabled=${view.sandboxProfilesDisabled} busy=${busy} />
     <label class="cron-create-row" id="agent-spawn-approval-row" hidden=${!view.approval.visible}
-      title="Permission mode for the new agent.">
-      <span class="cron-create-label">Permission mode</span>
+      title="Controls when the new agent requests approval; it does not change the sandbox.">
+      <span class="cron-create-label">${draft.harness === 'codex' ? 'Approval policy' : 'Permission mode'}</span>
       <div class="cron-create-target">
         <select id="agent-spawn-approval" value=${draft.approval} disabled=${busy}
           aria-describedby="agent-spawn-approval-hint" onChange=${(event) => update('approval', event.currentTarget.value)}>
-          ${SettingOptions({ setting: view.approval }).map((option) => html`<option key=${option.value} value=${option.value}>${option.label}</option>`)}
+          ${view.approval.modes.map((mode) => html`<option key=${mode} value=${mode}>${approvalPolicyLabel(draft.harness, mode, view.approval.recommended)}</option>`)}
         </select>
         <div id="agent-spawn-approval-hint" class=${`spawn-field-hint${approvalHelp.includes('⚠') ? ' warn' : ''}`}
           aria-live="polite">${approvalHelp}</div>
       </div>
     </label>
+    <${HelpField} id="agent-spawn-approval-reviewer" label="Approval reviewer"
+      title="Controls who decides eligible approval requests; it does not change the approval policy or sandbox."
+      value=${draft.approvalReviewer} options=${approvalReviewerOptions(false)}
+      onChange=${(event) => update('approvalReviewer', event.currentTarget.value)}
+      help=${reviewerHelp} open=${helpOpen === 'agent-spawn-approval-reviewer'} setOpen=${setHelpOpen}
+      disabled=${!view.showApprovalReviewer} busy=${busy} />
     <label class="cron-create-row" id="agent-spawn-ask-timeout-row" hidden=${!view.askTimeout.visible}
       title="AskUserQuestion idle-timeout for the new agent.">
       <span class="cron-create-label">Question timeout</span>

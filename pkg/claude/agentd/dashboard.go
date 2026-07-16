@@ -1068,10 +1068,8 @@ type dashboardHarness struct {
 	SandboxModeHelp map[string]string `json:"sandbox_mode_help"`
 	// ApprovalModes lists the launch-time approval/permission modes this
 	// harness surfaces as a dropdown (Claude Code: inherit + its
-	// --permission-mode values). Empty for a harness whose approval is not
-	// surfaced as a dialog dropdown (Codex — CLI/profile-only for now), so the
-	// dialog hides the approval selector for it. The ApprovalCatalog parallel
-	// to SandboxModes.
+	// --permission-mode values; Codex: its --ask-for-approval policies).
+	// The ApprovalCatalog parallels SandboxModes.
 	ApprovalModes []string `json:"approval_modes"`
 	// DefaultApproval is the recommended approval mode the dialog pre-selects
 	// (Claude Code: inherit). "" when ApprovalModes is empty.
@@ -1103,10 +1101,14 @@ type dashboardHarness struct {
 	CanSandbox bool `json:"can_sandbox"`
 	// CanApproval reports whether the harness has a launch approval/permission
 	// catalog. The dialog's approval row additionally gates on a non-empty
-	// ApprovalModes (so Codex — which supports approval but surfaces no dialog
-	// modes yet — keeps the row hidden), mirroring how the sandbox row gates on
-	// can_sandbox && sandbox_modes.length.
+	// ApprovalModes, mirroring how the sandbox row gates on can_sandbox &&
+	// sandbox_modes.length.
 	CanApproval bool `json:"can_approval"`
+	// CanAutoReview reports whether approval requests can be routed to a
+	// harness-owned reviewer instead of a human. This is intentionally distinct
+	// from CanApproval: Codex exposes both axes, while Claude Code's permission
+	// catalog has no separate approvals_reviewer control.
+	CanAutoReview bool `json:"can_auto_review"`
 	// CanAskTimeout reports whether the harness has a launch AskUserQuestion
 	// idle-timeout catalog (Claude Code). The dialog's timeout row gates on this
 	// + a non-empty AskTimeoutModes, mirroring the sandbox row.
@@ -1139,6 +1141,7 @@ func buildHarnessCatalog() []dashboardHarness {
 			CanCompact:       h.CanCompact(),
 			CanSandbox:       h.SupportsSandbox(),
 			CanApproval:      h.SupportsApproval(),
+			CanAutoReview:    h.SupportsAutoReview(),
 			CanAskTimeout:    h.SupportsAskTimeout(),
 			CanRemoteControl: h.CanRemoteControl(),
 		}
@@ -1155,10 +1158,8 @@ func buildHarnessCatalog() []dashboardHarness {
 		} else {
 			dh.SandboxModes = []string{}
 		}
-		// Approval modes mirror the sandbox block. A harness can SupportApproval
-		// yet surface no dialog modes (Codex: Modes() returns nil — CLI-only),
-		// so the dialog gates its row on a non-empty ApprovalModes, not just
-		// CanApproval.
+		// Approval modes mirror the sandbox block. The dialog gates its row on a
+		// non-empty ApprovalModes as well as CanApproval.
 		dh.ApprovalModeHelp = map[string]string{}
 		dh.ApprovalModes = []string{}
 		if h.SupportsApproval() {

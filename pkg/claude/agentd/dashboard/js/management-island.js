@@ -12,6 +12,7 @@ import { useDialogFocus } from './dialog-focus.js';
 import { wizWord } from './slop.js';
 import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
 import { GroupCloneDialog, GroupContextDialog, GroupImportDialog, TemplateDeployDialog, TemplateDuplicateDialog, TemplateEditor, TemplateFromGroupDialog, TemplateImportDialog, TemplateManager, TemplateStartersDialog } from './template-management-island.js';
+import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } from './approval-controls.js';
 
 const html = htm.bind(h);
 
@@ -63,13 +64,18 @@ function HarnessFields({ draft, setDraft, catalog, profile = false }) {
     setDraft((current) => ({ ...current, harness, model: '', effort: '', ...defaults, trust_dir: '', remote_control: '' }));
   };
   const modelID = profile ? 'profile-editor-model' : 'role-editor-model';
+  const approvalID = profile ? 'profile-editor-approval' : 'role-editor-approval';
+  const approvalLabel = draft.harness === 'codex' ? 'Approval policy' : 'Permission mode';
+  const approvalHelp = hEntry?.approval_mode_help?.[draft.approval] || '';
+  const reviewerHelp = approvalReviewerHelp(draft.approval_reviewer, draft.approval);
   const modelControl = hasModelList ? html`<div class="cron-create-target"><${Select} id=${modelID} value=${customModel ? '__custom__' : draft.model} onChange=${(value) => { if (value === '__custom__') { setCustomModel(true); change(setDraft, 'model', ''); } else { setCustomModel(false); change(setDraft, 'model', value); } }} options=${[['', 'Default (unset)'], ...models.map((model) => [model, model]), ['__custom__', 'Custom model id…']]} />${customModel && html`<input id=${`${modelID}-custom`} type="text" aria-label="Custom model id" value=${draft.model} onInput=${(event) => change(setDraft, 'model', event.currentTarget.value)} placeholder="model id or alias" autocomplete="off" spellcheck="false" autofocus />`}</div>` : html`<input id=${modelID} type="text" aria-label="Model id" value=${draft.model} onInput=${(event) => change(setDraft, 'model', event.currentTarget.value)} placeholder="blank = unset; model id or alias" autocomplete="off" spellcheck="false"/>`;
   return html`
     <${Row} label="Harness"><${Select} id=${profile ? 'profile-editor-harness' : 'role-editor-harness'} value=${draft.harness} onChange=${updateHarness} options=${catalog.map((entry) => [entry.name, entry.display_name || entry.name])} /></${Row}>
     <${Row} label="Model" title="Model suggested by the selected harness. Blank leaves it unset; Custom model id accepts an out-of-catalog model supported by that harness.">${modelControl}</${Row}>
     <${Row} label="Effort"><${Select} value=${draft.effort} onChange=${(value) => change(setDraft, 'effort', value)} options=${[['', "Default (harness's own)"], ...(hEntry?.effort_levels || ['low', 'medium', 'high', 'xhigh', 'max']).map((value) => [value, value])]} /></${Row}>
     <${Row} label="Sandbox" hidden=${!hEntry?.can_sandbox}><${Select} value=${draft.sandbox} onChange=${(value) => change(setDraft, 'sandbox', value)} options=${(hEntry?.sandbox_modes || []).map((value) => [value, value + (value === hEntry.default_sandbox ? ' (recommended)' : '')])} /></${Row}>
-    <${Row} label="Permission mode" hidden=${!hEntry?.can_approval}><${Select} value=${draft.approval} onChange=${(value) => change(setDraft, 'approval', value)} options=${(hEntry?.approval_modes || []).map((value) => [value, value + (value === hEntry.default_approval ? ' (recommended)' : '')])} /></${Row}>
+    <${Row} label=${approvalLabel} hidden=${!hEntry?.can_approval} title="Controls when the harness requests approval; it does not change the sandbox."><div class="cron-create-target"><${Select} id=${approvalID} value=${draft.approval} onChange=${(value) => change(setDraft, 'approval', value)} options=${(hEntry?.approval_modes || []).map((value) => [value, approvalPolicyLabel(draft.harness, value, hEntry.default_approval)])} /><div id=${`${approvalID}-hint`} class="spawn-field-hint">${approvalHelp}</div></div></${Row}>
+    ${profile && html`<${Row} label="Approval reviewer" hidden=${!hEntry?.can_auto_review} title="Controls who decides eligible approval requests; it does not change the approval policy or sandbox."><div class="cron-create-target"><${Select} id="profile-editor-approval-reviewer" value=${draft.approval_reviewer} onChange=${(value) => change(setDraft, 'approval_reviewer', value)} options=${approvalReviewerOptions(true).map((option) => [option.value, option.label])} /><div id="profile-editor-approval-reviewer-hint" class=${`spawn-field-hint${reviewerHelp.includes('⚠') ? ' warn' : ''}`}>${reviewerHelp}</div></div></${Row}>`}
     ${profile && html`<${Row} label="Question timeout" hidden=${!hEntry?.can_ask_timeout}><${Select} id="profile-editor-ask-timeout" value=${draft.ask_user_question_timeout} onChange=${(value) => change(setDraft, 'ask_user_question_timeout', value)} options=${(hEntry?.ask_timeout_modes || []).map((value) => [value, value + (value === hEntry.default_ask_timeout ? ' (recommended)' : '')])} /></${Row}>`}
   `;
 }

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
 
-const catalog = [{ name: 'claude', display_name: 'Claude Code', models: ['sonnet'], effort_levels: ['low', 'high'], can_sandbox: true, sandbox_modes: ['inherit', 'on'], default_sandbox: 'inherit', can_approval: true, approval_modes: ['inherit', 'plan'], default_approval: 'inherit', can_ask_timeout: true, ask_timeout_modes: ['inherit', '60s'], default_ask_timeout: 'inherit', can_remote_control: true }, { name: 'codex', models: [], can_sandbox: true, sandbox_modes: ['workspace-write'], default_sandbox: 'workspace-write', can_approval: true, approval_modes: ['never', 'untrusted', 'on-failure', 'on-request'], default_approval: 'never', can_remote_control: false }];
+const catalog = [{ name: 'claude', display_name: 'Claude Code', models: ['sonnet'], effort_levels: ['low', 'high'], can_sandbox: true, sandbox_modes: ['inherit', 'on'], default_sandbox: 'inherit', can_approval: true, approval_modes: ['inherit', 'plan'], default_approval: 'inherit', approval_mode_help: { inherit: 'keep settings', plan: 'plan only' }, can_auto_review: false, can_ask_timeout: true, ask_timeout_modes: ['inherit', '60s'], default_ask_timeout: 'inherit', can_remote_control: true }, { name: 'codex', models: [], can_sandbox: true, sandbox_modes: ['workspace-write'], default_sandbox: 'workspace-write', can_approval: true, approval_modes: ['never', 'untrusted', 'on-failure', 'on-request'], default_approval: 'never', approval_mode_help: { never: 'never prompt', untrusted: 'ask for untrusted', 'on-failure': 'deprecated retry', 'on-request': 'ask when requested' }, can_auto_review: true, can_remote_control: false }];
 
 function choose(select, value) {
   for (const option of select.options) {
@@ -12,15 +12,24 @@ function choose(select, value) {
   Object.defineProperty(select, 'value', { configurable: true, writable: true, value });
 }
 
+function selectedValue(select) {
+  return select.getAttribute('value')
+    ?? Array.from(select.options).find((option) => option.selected)?.value
+    ?? select.value
+    ?? '';
+}
+
 test('management model preserves full-replace profile and role semantics', async (t) => {
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/management-model.js');
   const original = { name: 'old', aliases: ['codex-reviewer'], harness: 'codex', approval: 'never', auto_review: true, model: 'gpt-5', disabled: false, disabled_reason: 'previous outage' };
   const draft = model.profileDraft(original, {}, catalog); draft.name = 'renamed'; draft.trust_dir = '1';
+  assert.equal(draft.approval_reviewer, 'auto_review');
   draft.aliases_text += ', cold-reviewer';
   const payload = model.profilePayload(draft, original, catalog);
   assert.equal(payload.name, 'renamed'); assert.equal(payload.approval, 'never'); assert.equal(payload.auto_review, true); assert.equal(payload.trust_dir, true);
   assert.equal(payload.disabled, false); assert.equal(payload.disabled_reason, 'previous outage');
+  draft.approval_reviewer = 'human'; assert.equal(model.profilePayload(draft, original, catalog).auto_review, false);
   assert.deepEqual(payload.aliases, ['codex-reviewer', 'cold-reviewer']);
   draft.harness = 'claude'; draft.approval = 'plan'; draft.sandbox = 'on';
   const switched = model.profilePayload(draft, original, catalog);
@@ -30,8 +39,10 @@ test('management model preserves full-replace profile and role semantics', async
   const defaults = model.profileDraft(null, {}, catalog); assert.equal(defaults.sandbox, 'inherit'); assert.equal(defaults.approval, 'inherit'); assert.equal(defaults.ask_user_question_timeout, 'inherit');
   const legacyCodex = model.profileDraft({ name: 'legacy', harness: 'codex', approval: '' }, {}, catalog);
   assert.equal(legacyCodex.approval, 'never', 'an empty legacy Codex profile renders the explicit daemon default');
-  assert.equal(model.profilePayload(legacyCodex, { name: 'legacy', harness: 'codex', approval: '' }, catalog).approval, 'never');
-  assert.deepEqual(model.harnessDefaults({ sandbox_modes: ['on'], approval_modes: ['plan'], ask_timeout_modes: ['60s'] }), { sandbox: 'on', approval: 'plan', ask_user_question_timeout: '60s' });
+  const legacyPayload = model.profilePayload(legacyCodex, { name: 'legacy', harness: 'codex', approval: '' }, catalog);
+  assert.equal(legacyPayload.approval, 'never');
+  assert.equal('auto_review' in legacyPayload, false, 'unset reviewer stays sparse for lower-tier resolution');
+  assert.deepEqual(model.harnessDefaults({ sandbox_modes: ['on'], approval_modes: ['plan'], ask_timeout_modes: ['60s'] }), { sandbox: 'on', approval: 'plan', approval_reviewer: '', ask_user_question_timeout: '60s' });
 });
 
 test('Codex profile permission modes populate, survive harness switches, save, and reopen', async (t) => {
@@ -40,34 +51,46 @@ test('Codex profile permission modes populate, survive harness switches, save, a
     harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
   ]);
   const state = createManagementState();
-  state.openDialog({ kind: 'profile-editor', seed: { name: 'legacy', harness: 'codex', approval: '' }, options: {}, catalog });
+  state.openDialog({ kind: 'profile-editor', seed: { name: 'legacy', harness: 'codex', approval: '', auto_review: true }, options: {}, catalog });
   const saves = []; const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
   mountManagementIsland({ host, state, actions: { async saveProfile(value) { saves.push(value); } }, confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } });
   await harness.act(() => Promise.resolve());
 
-  const approval = harness.getByLabelText(host, /^Permission mode/);
+  const approval = harness.getByLabelText(host, /^Approval policy/);
   assert.deepEqual([...approval.options].map((option) => option.value), ['never', 'untrusted', 'on-failure', 'on-request']);
+  assert.match(approval.options[0].textContent, /Never ask — no approval prompts/);
   assert.match(approval.options[0].textContent, /recommended/, 'empty legacy value displays an explicit effective default');
+  assert.equal(host.querySelector('#profile-editor-approval-hint').textContent, 'never prompt');
+  const initialReviewer = host.querySelector('#profile-editor-approval-reviewer');
+  assert.deepEqual([...initialReviewer.options].map((option) => option.value), ['', 'human', 'auto_review']);
+  assert.equal(selectedValue(initialReviewer), 'auto_review');
   await harness.act(() => harness.fireEvent(host.querySelector('#profile-editor-submit'), 'click'));
   assert.equal(saves[0].payload.approval, 'never');
+  assert.equal(saves[0].payload.auto_review, true);
 
   const harnessSelect = host.querySelector('#profile-editor-harness');
   choose(harnessSelect, 'claude'); await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
   assert.deepEqual([...harness.getByLabelText(host, /^Permission mode/).options].map((option) => option.value), ['inherit', 'plan']);
+  assert.equal(host.querySelector('#profile-editor-approval-reviewer').closest('.cron-create-row').hidden, true);
   choose(harnessSelect, 'codex'); await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
-  const switchedApproval = harness.getByLabelText(host, /^Permission mode/);
+  const switchedApproval = harness.getByLabelText(host, /^Approval policy/);
   assert.deepEqual([...switchedApproval.options].map((option) => option.value), ['never', 'untrusted', 'on-failure', 'on-request']);
   assert.match(switchedApproval.options[0].textContent, /recommended/);
 
   choose(switchedApproval, 'untrusted'); await harness.act(() => harness.fireEvent(switchedApproval, 'change'));
+  const switchedReviewer = host.querySelector('#profile-editor-approval-reviewer');
+  choose(switchedReviewer, 'human'); await harness.act(() => harness.fireEvent(switchedReviewer, 'change'));
   await harness.act(() => harness.fireEvent(host.querySelector('#profile-editor-submit'), 'click'));
   assert.equal(saves.length, 2); assert.equal(saves[1].payload.approval, 'untrusted');
+  assert.equal(saves[1].payload.auto_review, false);
 
   state.closeDialog();
-  state.openDialog({ kind: 'profile-editor', seed: { name: 'legacy', harness: 'codex', approval: 'untrusted' }, options: {}, catalog });
+  await harness.act(() => Promise.resolve());
+  state.openDialog({ kind: 'profile-editor', seed: { name: 'legacy', harness: 'codex', approval: 'untrusted', auto_review: true }, options: {}, catalog });
   await harness.act(() => Promise.resolve());
   await harness.act(() => harness.fireEvent(host.querySelector('#profile-editor-submit'), 'click'));
   assert.equal(saves[2].payload.approval, 'untrusted', 'saved mode displays when reopened');
+  assert.equal(saves[2].payload.auto_review, true, 'saved reviewer displays when reopened');
   cleanups.reverse().forEach((fn) => fn());
 });
 
