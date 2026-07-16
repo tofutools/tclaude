@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 	"testing/quick"
+	"time"
 )
 
 const legacyJoinSource = `apiVersion: tclaude.dev/v1alpha1
@@ -228,6 +229,30 @@ func TestStaticScopeValidatorPropertyCompleteVsBypass(t *testing.T) {
 	}
 	if err := quick.Check(property, &quick.Config{MaxCount: 200}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDeterministicTopologicalOrderWideFrontierIsBounded(t *testing.T) {
+	const width = 25_000
+	indegree := make(map[string]int, width+1)
+	indegree["root"] = 0
+	outbound := map[string][]Edge{"root": make([]Edge, 0, width)}
+	for i := 0; i < width; i++ {
+		target := fmt.Sprintf("node-%05d", width-i-1)
+		indegree[target] = 1
+		outbound["root"] = append(outbound["root"], Edge{From: "root", Outcome: fmt.Sprintf("branch-%05d", i), To: target})
+	}
+
+	started := time.Now()
+	order := deterministicTopologicalOrder(indegree, outbound)
+	elapsed := time.Since(started)
+	if len(order) != width+1 || order[0] != "root" || order[1] != "node-00000" || order[len(order)-1] != "node-24999" {
+		t.Fatalf("unexpected order boundary: len=%d first=%q second=%q last=%q", len(order), order[0], order[1], order[len(order)-1])
+	}
+	// This deliberately generous bound distinguishes the heap traversal from
+	// re-sorting the growing ready frontier after every unlocked successor.
+	if elapsed > 3*time.Second {
+		t.Fatalf("wide-frontier topological traversal took %s", elapsed)
 	}
 }
 

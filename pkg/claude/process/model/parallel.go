@@ -1,6 +1,7 @@
 package model
 
 import (
+	"container/heap"
 	"fmt"
 	"slices"
 	"strings"
@@ -72,7 +73,6 @@ func validateParallelScopePlan(tmpl *Template, edges []Edge) Diagnostics {
 	if tmpl == nil {
 		return nil
 	}
-	actual := make([]Edge, 0, len(edges))
 	inbound := make(map[string][]Edge, len(tmpl.Nodes))
 	outbound := make(map[string][]Edge, len(tmpl.Nodes))
 	indegree := make(map[string]int, len(tmpl.Nodes))
@@ -89,7 +89,6 @@ func validateParallelScopePlan(tmpl *Template, edges []Edge) Diagnostics {
 		if _, toOK := tmpl.Nodes[edge.To]; !toOK {
 			continue
 		}
-		actual = append(actual, edge)
 		inbound[edge.To] = append(inbound[edge.To], edge)
 		outbound[edge.From] = append(outbound[edge.From], edge)
 		indegree[edge.To]++
@@ -101,26 +100,7 @@ func validateParallelScopePlan(tmpl *Template, edges []Edge) Diagnostics {
 		slices.SortFunc(outbound[nodeID], compareEdge)
 	}
 
-	ready := make([]string, 0, len(tmpl.Nodes))
-	for nodeID, degree := range indegree {
-		if degree == 0 {
-			ready = append(ready, nodeID)
-		}
-	}
-	slices.Sort(ready)
-	order := make([]string, 0, len(tmpl.Nodes))
-	for len(ready) > 0 {
-		nodeID := ready[0]
-		ready = ready[1:]
-		order = append(order, nodeID)
-		for _, edge := range outbound[nodeID] {
-			indegree[edge.To]--
-			if indegree[edge.To] == 0 {
-				ready = append(ready, edge.To)
-				slices.Sort(ready)
-			}
-		}
-	}
+	order := deterministicTopologicalOrder(indegree, outbound)
 	if len(order) != len(tmpl.Nodes) {
 		// validateAcyclic owns the diagnostic for unsupported cycles. Avoid
 		// deriving scope claims from an incomplete topological observation.
@@ -190,8 +170,48 @@ func validateParallelScopePlan(tmpl *Template, edges []Edge) Diagnostics {
 				"parallel fork branches must have one complete structural reducer before leaving their scope"))
 		}
 	}
-	_ = actual // retained as the normalized scope-plan input in debugger views.
 	return diagnostics
+}
+
+type nodeIDHeap []string
+
+func (h nodeIDHeap) Len() int           { return len(h) }
+func (h nodeIDHeap) Less(i, j int) bool { return h[i] < h[j] }
+func (h nodeIDHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+
+func (h *nodeIDHeap) Push(value any) {
+	*h = append(*h, value.(string))
+}
+
+func (h *nodeIDHeap) Pop() any {
+	old := *h
+	last := len(old) - 1
+	value := old[last]
+	old[last] = ""
+	*h = old[:last]
+	return value
+}
+
+func deterministicTopologicalOrder(indegree map[string]int, outbound map[string][]Edge) []string {
+	ready := make(nodeIDHeap, 0, len(indegree))
+	for nodeID, degree := range indegree {
+		if degree == 0 {
+			ready = append(ready, nodeID)
+		}
+	}
+	heap.Init(&ready)
+	order := make([]string, 0, len(indegree))
+	for ready.Len() > 0 {
+		nodeID := heap.Pop(&ready).(string)
+		order = append(order, nodeID)
+		for _, edge := range outbound[nodeID] {
+			indegree[edge.To]--
+			if indegree[edge.To] == 0 {
+				heap.Push(&ready, edge.To)
+			}
+		}
+	}
+	return order
 }
 
 func compareEdge(a, b Edge) int {

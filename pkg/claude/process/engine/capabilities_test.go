@@ -11,6 +11,7 @@ import (
 
 func TestInstantiationCapabilityMatrix(t *testing.T) {
 	legacy := capabilityLegacyTemplate()
+	localAny := capabilityLocalMergeTemplate(model.JoinAny)
 	parallel := capabilityParallelTemplate(model.JoinAll)
 	any := capabilityParallelTemplate(model.JoinAny)
 	foundation := FoundationEngineCapabilities()
@@ -24,6 +25,7 @@ func TestInstantiationCapabilityMatrix(t *testing.T) {
 		want string
 	}{
 		{name: "foundation accepts legacy", tmpl: legacy, caps: foundation},
+		{name: "foundation accepts local any without parallel", tmpl: localAny, caps: foundation},
 		{name: "foundation rejects parallel", tmpl: parallel, caps: foundation, want: string(CapabilityParallelAllV1)},
 		{name: "all accepts parallel all", tmpl: parallel, caps: parallelAll},
 		{name: "all rejects any", tmpl: any, caps: parallelAll, want: string(CapabilityParallelAnyV1)},
@@ -41,6 +43,45 @@ func TestInstantiationCapabilityMatrix(t *testing.T) {
 				t.Fatalf("error = %v, want %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestFoundationEngineInstantiatesPromotedLegacyAnyWithoutParallel(t *testing.T) {
+	parsed, err := model.ParseAuthoring([]byte(`apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: legacy-local-any
+start: choose
+nodes:
+  choose:
+    type: decision
+    performer: {kind: human, ask: choose}
+    next: {left: merge, right: merge}
+  merge:
+    type: end
+    metadata: {join: any}
+`))
+	if err != nil || parsed.Diagnostics.HasErrors() {
+		t.Fatalf("parse authoring = %v, diagnostics=%#v", err, parsed.Diagnostics.Errors())
+	}
+	if parsed.Template.Nodes["merge"].Join != model.JoinAny {
+		t.Fatalf("legacy join was not promoted: %#v", parsed.Template.Nodes["merge"])
+	}
+	fs, err := store.NewFS(filepath.Join(t.TempDir(), "store"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := fs.PutTemplate(t.Context(), parsed.Template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := Instantiate(t.Context(), fs, InstantiateRequest{
+		TemplateRef: record.Ref, RunID: "legacy-local-any-run", EngineCapabilities: FoundationEngineCapabilities(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.ID != "legacy-local-any-run" {
+		t.Fatalf("run = %#v", run)
 	}
 }
 
@@ -81,6 +122,19 @@ func capabilityLegacyTemplate() *model.Template {
 	return &model.Template{
 		APIVersion: model.APIVersion, Kind: model.Kind, ID: "legacy-capability", Start: "done",
 		Nodes: map[string]model.Node{"done": {Type: model.NodeTypeEnd}},
+	}
+}
+
+func capabilityLocalMergeTemplate(join model.JoinPolicy) *model.Template {
+	return &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "local-merge-capability", Start: "choose",
+		Nodes: map[string]model.Node{
+			"choose": {
+				Type: model.NodeTypeDecision, Performer: &model.Performer{Kind: model.PerformerHuman, Ask: "choose"},
+				Next: model.Next{"left": "merge", "right": "merge"},
+			},
+			"merge": {Type: model.NodeTypeEnd, Join: join},
+		},
 	}
 }
 

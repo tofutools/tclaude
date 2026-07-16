@@ -54,14 +54,21 @@ func requireInstantiationCapabilities(tmpl *model.Template, capabilities EngineC
 	if !capabilities.Supports(CapabilityFoundationV1) {
 		return fmt.Errorf("process engine does not provide %s", CapabilityFoundationV1)
 	}
-	required := CapabilityFoundationV1
+	hasParallel := false
+	hasAnyJoin := false
 	for _, node := range tmpl.Nodes {
 		if node.Type == model.NodeTypeParallel {
-			required = CapabilityParallelAllV1
+			hasParallel = true
 		}
 		if node.Join == model.JoinAny {
+			hasAnyJoin = true
+		}
+	}
+	required := CapabilityFoundationV1
+	if hasParallel {
+		required = CapabilityParallelAllV1
+		if hasAnyJoin {
 			required = CapabilityParallelAnyV1
-			break
 		}
 	}
 	if !capabilities.Supports(required) {
