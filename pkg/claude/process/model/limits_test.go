@@ -239,20 +239,22 @@ func TestRawGraphMalformedKeysFailClosedWithoutHidingCardinality(t *testing.T) {
 	for _, graphKey := range []struct {
 		name    string
 		rewrite func(string, int) string
-		path    string
+		path    func(int) string
 	}{
-		{"node key", replaceNodeKeyWithComplex, "nodes"},
-		{"outcome key", replaceOutcomeKeyWithComplex, "nodes.next"},
+		{"node key", replaceNodeKeyWithComplex, func(int) string { return "nodes" }},
+		{"outcome key", replaceOutcomeKeyWithComplex, func(nodes int) string {
+			return fmt.Sprintf("nodes.n%03d.next", nodes-1)
+		}},
 	} {
 		t.Run(graphKey.name, func(t *testing.T) {
 			t.Run("under boundary", func(t *testing.T) {
 				source := graphKey.rewrite(string(aliasedNextTemplateYAML(1, 1, false)), 0)
-				assertRejected(t, []byte(source), DiagnosticCodeInvalidGraphKey, graphKey.path)
+				assertRejected(t, []byte(source), DiagnosticCodeInvalidGraphKey, graphKey.path(1))
 			})
 
 			t.Run("exact edge boundary", func(t *testing.T) {
 				source := graphKey.rewrite(string(aliasedNextTemplateYAML(63, 65, false)), 0)
-				assertRejected(t, []byte(source), DiagnosticCodeInvalidGraphKey, graphKey.path)
+				assertRejected(t, []byte(source), DiagnosticCodeInvalidGraphKey, graphKey.path(63))
 			})
 
 			t.Run("edge boundary plus one before malformed key", func(t *testing.T) {
@@ -326,13 +328,24 @@ nodes:
 			[]string{"duplicate_key", DiagnosticCodeInvalidGraphKey},
 			diagnosticCodes(parsed.Diagnostics),
 		)
-		assert.Equal(t, "nodes.next", parsed.Diagnostics[1].Path)
+		assert.Equal(t, "nodes.source.next", parsed.Diagnostics[1].Path)
 	})
 
 	t.Run("independent overflow takes precedence over malformed node merge", func(t *testing.T) {
 		source := string(aliasedNextTemplateYAML(64, 64, false))
 		source = strings.Replace(source, "  n063:\n    type: end", "  n063:\n    <<: &node-defaults {type: end}\n    type: end", 1)
 		assertRejected(t, []byte(source), DiagnosticCodeNormalizedEdgeLimit, "nodes")
+	})
+
+	t.Run("malformed key does not hide node overflow", func(t *testing.T) {
+		var source strings.Builder
+		source.WriteString("apiVersion: tclaude.dev/v1alpha1\nkind: ProcessTemplate\nid: malformed-node-overflow\nnodes:\n")
+		for index := 0; index < MaxNormalizedNodes+1; index++ {
+			fmt.Fprintf(&source, "  n%04d: {type: end}\n", index)
+		}
+		malformed := strings.Replace(source.String(), "  n0000: {type: end}\n",
+			"  ? [malformed-node-key]\n  : {type: end}\n", 1)
+		assertRejected(t, []byte(malformed), DiagnosticCodeNormalizedNodeLimit, "nodes")
 	})
 }
 
@@ -669,6 +682,153 @@ func TestStructuralAliasResolutionUsesFiniteTreeBound(t *testing.T) {
 	cycle.Alias = cycle
 	_, status = structuralNode(cycle, 2)
 	assert.Equal(t, rawGraphAliasUnsafe, status)
+}
+
+func TestRawGraphStickyAliasIssuesPreserveSaturatedCounts(t *testing.T) {
+	for _, keyKind := range []string{"cycle", "depth"} {
+		for _, position := range []string{"before", "after"} {
+			t.Run(keyKind+"/exact/"+position, func(t *testing.T) {
+				root, next := rawGraphDocumentWithSharedNext(MaxNormalizedEdges, 1)
+				installUnsafeStructuralKey(root, next, position, keyKind)
+				counts, status, diagnostics := rawNormalizedGraphCardinality(root)
+				assert.Equal(t, MaxNormalizedEdges, counts.Edges)
+				assert.Equal(t, rawGraphRejected, status)
+				require.Len(t, diagnostics, 1)
+				assert.Equal(t, DiagnosticCodeGraphAliasLimit, diagnostics[0].Code)
+				assert.Equal(t, "nodes.n000.next", diagnostics[0].Path)
+			})
+
+			t.Run(keyKind+"/boundary-plus-one/"+position, func(t *testing.T) {
+				root, next := rawGraphDocumentWithSharedNext(MaxNormalizedEdges+1, 1)
+				installUnsafeStructuralKey(root, next, position, keyKind)
+				counts, status, diagnostics := rawNormalizedGraphCardinality(root)
+				assert.Equal(t, MaxNormalizedEdges+1, counts.Edges)
+				assert.Equal(t, rawGraphRejected, status)
+				assert.Equal(t, []string{DiagnosticCodeNormalizedEdgeLimit},
+					diagnosticCodes(normalizedGraphCardinalityDiagnostics(counts)))
+				require.Len(t, diagnostics, 1)
+				assert.Equal(t, DiagnosticCodeGraphAliasLimit, diagnostics[0].Code)
+			})
+		}
+	}
+
+	t.Run("indeterminate container does not stop independent overflow", func(t *testing.T) {
+		root, _ := rawGraphDocumentWithSharedNext(MaxNormalizedEdges+1, 1)
+		nodes := root.Content[0].Content[1]
+		cycle := &yaml.Node{Kind: yaml.AliasNode}
+		cycle.Alias = cycle
+		nodes.Content = append(nodes.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "indeterminate"}, cycle,
+		)
+		counts, status, diagnostics := rawNormalizedGraphCardinality(root)
+		assert.Equal(t, MaxNormalizedEdges+1, counts.Edges)
+		assert.Equal(t, rawGraphRejected, status)
+		assert.Equal(t, []string{DiagnosticCodeNormalizedEdgeLimit},
+			diagnosticCodes(normalizedGraphCardinalityDiagnostics(counts)))
+		require.Len(t, diagnostics, 1)
+		assert.Equal(t, DiagnosticCodeGraphAliasLimit, diagnostics[0].Code)
+		assert.Equal(t, "nodes.indeterminate", diagnostics[0].Path)
+	})
+
+	t.Run("cached shared issue binds to first authoritative occurrence", func(t *testing.T) {
+		root, next := rawGraphDocumentWithSharedNext(1, 2)
+		installUnsafeStructuralKey(root, next, "before", "cycle")
+		counts, status, diagnostics := rawNormalizedGraphCardinality(root)
+		assert.Equal(t, 2, counts.Edges, "the cached local count contributes once per alias occurrence")
+		assert.Equal(t, rawGraphRejected, status)
+		require.Len(t, diagnostics, 1)
+		assert.Equal(t, DiagnosticCodeGraphAliasLimit, diagnostics[0].Code)
+		assert.Equal(t, "nodes.n001.next", diagnostics[0].Path)
+	})
+
+	t.Run("alias status does not hide node overflow", func(t *testing.T) {
+		root, _ := rawGraphDocumentWithSharedNext(0, MaxNormalizedNodes+1)
+		nodes := root.Content[0].Content[1]
+		cycle := &yaml.Node{Kind: yaml.AliasNode}
+		cycle.Alias = cycle
+		nodes.Content[0] = cycle
+		counts, status, diagnostics := rawNormalizedGraphCardinality(root)
+		assert.Equal(t, MaxNormalizedNodes+1, counts.Nodes)
+		assert.Equal(t, rawGraphRejected, status)
+		assert.Equal(t, []string{DiagnosticCodeNormalizedNodeLimit},
+			diagnosticCodes(normalizedGraphCardinalityDiagnostics(counts)))
+		require.Len(t, diagnostics, 1)
+		assert.Equal(t, DiagnosticCodeGraphAliasLimit, diagnostics[0].Code)
+		encoded, err := json.Marshal(diagnostics)
+		require.NoError(t, err)
+		assert.Less(t, len(encoded), 1024)
+	})
+
+	for _, first := range []rawGraphStructuralIssue{rawGraphInvalidKey, rawGraphUnsafeAlias} {
+		name := "invalid-first"
+		if first == rawGraphUnsafeAlias {
+			name = "alias-first"
+		}
+		t.Run("first structural issue is deterministic/"+name, func(t *testing.T) {
+			root, next := rawGraphDocumentWithSharedNext(2, 1)
+			cycle := &yaml.Node{Kind: yaml.AliasNode}
+			cycle.Alias = cycle
+			complex := &yaml.Node{Kind: yaml.SequenceNode, Content: []*yaml.Node{{Kind: yaml.ScalarNode, Value: "bad"}}}
+			if first == rawGraphInvalidKey {
+				next.Content[0], next.Content[2] = complex, cycle
+			} else {
+				next.Content[0], next.Content[2] = cycle, complex
+			}
+			_, status, diagnostics := rawNormalizedGraphCardinality(root)
+			assert.Equal(t, rawGraphRejected, status)
+			require.Len(t, diagnostics, 1)
+			wantCode := DiagnosticCodeInvalidGraphKey
+			if first == rawGraphUnsafeAlias {
+				wantCode = DiagnosticCodeGraphAliasLimit
+			}
+			assert.Equal(t, wantCode, diagnostics[0].Code)
+			assert.Equal(t, "nodes.n000.next", diagnostics[0].Path)
+		})
+	}
+}
+
+func rawGraphDocumentWithSharedNext(outcomes, nodeCount int) (*yaml.Node, *yaml.Node) {
+	next := &yaml.Node{Kind: yaml.MappingNode}
+	for index := range outcomes {
+		next.Content = append(next.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("outcome-%04d", index)},
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "n000"},
+		)
+	}
+	nodes := &yaml.Node{Kind: yaml.MappingNode}
+	for index := range nodeCount {
+		node := &yaml.Node{Kind: yaml.MappingNode, Content: []*yaml.Node{
+			{Kind: yaml.ScalarNode, Value: "next"}, next,
+		}}
+		nodes.Content = append(nodes.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("n%03d", index)}, node,
+		)
+	}
+	root := &yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{
+		Kind: yaml.MappingNode,
+		Content: []*yaml.Node{
+			{Kind: yaml.ScalarNode, Value: "nodes"}, nodes,
+		},
+	}}}
+	return root, next
+}
+
+func installUnsafeStructuralKey(root, mapping *yaml.Node, position, kind string) {
+	index := 0
+	if position == "after" {
+		index = len(mapping.Content) - 2
+	}
+	if kind == "cycle" {
+		cycle := &yaml.Node{Kind: yaml.AliasNode}
+		cycle.Alias = cycle
+		mapping.Content[index] = cycle
+		return
+	}
+	node := &yaml.Node{Kind: yaml.ScalarNode, Value: "leaf"}
+	for range yamlTreeNodeCount(root) + 1 {
+		node = &yaml.Node{Kind: yaml.AliasNode, Alias: node}
+	}
+	mapping.Content[index] = node
 }
 
 func maximumFanoutTemplate() *Template {

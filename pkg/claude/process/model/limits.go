@@ -142,9 +142,13 @@ func requireNormalizedGraphBudget(tmpl *Template) error {
 }
 
 func graphAliasLimitDiagnostic() Diagnostic {
+	return graphAliasLimitDiagnosticAt("nodes")
+}
+
+func graphAliasLimitDiagnosticAt(path string) Diagnostic {
 	return diagError(
 		DiagnosticCodeGraphAliasLimit,
-		"nodes",
+		path,
 		"process template graph aliases exceed the parsed YAML structural-resolution budget",
 	)
 }

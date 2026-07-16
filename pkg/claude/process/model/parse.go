@@ -137,6 +137,19 @@ const (
 	rawGraphRejected
 )
 
+type rawGraphStructuralIssue uint8
+
+const (
+	rawGraphNoStructuralIssue rawGraphStructuralIssue = iota
+	rawGraphInvalidKey
+	rawGraphUnsafeAlias
+)
+
+type rawNextCountResult struct {
+	count int
+	issue rawGraphStructuralIssue
+}
+
 func rawNormalizedGraphCardinality(root *yaml.Node) (NormalizedGraphCardinality, rawGraphCardinalityStatus, Diagnostics) {
 	aliasSteps := yamlTreeNodeCount(root)
 	var structuralDiagnostics Diagnostics
@@ -148,9 +161,17 @@ func rawNormalizedGraphCardinality(root *yaml.Node) (NormalizedGraphCardinality,
 	recordInvalidGraphKey := func(path string) {
 		recordStructuralDiagnostic(invalidGraphKeyDiagnostic(path))
 	}
+	recordStructuralIssue := func(issue rawGraphStructuralIssue, path string) {
+		switch issue {
+		case rawGraphInvalidKey:
+			recordInvalidGraphKey(path)
+		case rawGraphUnsafeAlias:
+			recordStructuralDiagnostic(graphAliasLimitDiagnosticAt(path))
+		}
+	}
 	root, status := structuralNode(root, aliasSteps)
 	if status != rawGraphCounted {
-		return NormalizedGraphCardinality{}, status, nil
+		return NormalizedGraphCardinality{}, rawGraphRejected, Diagnostics{graphAliasLimitDiagnostic()}
 	}
 	if root.Kind == yaml.DocumentNode {
 		if len(root.Content) != 1 {
@@ -159,39 +180,29 @@ func rawNormalizedGraphCardinality(root *yaml.Node) (NormalizedGraphCardinality,
 		root, status = structuralNode(root.Content[0], aliasSteps)
 	}
 	if status != rawGraphCounted {
-		return NormalizedGraphCardinality{}, status, nil
+		return NormalizedGraphCardinality{}, rawGraphRejected, Diagnostics{graphAliasLimitDiagnostic()}
 	}
 	if root.Kind != yaml.MappingNode {
 		return NormalizedGraphCardinality{}, rawGraphUncountable, nil
 	}
-	if key := mappingMergeKey(root); key != nil {
+	if key := mappingMergeKey(root, aliasSteps); key != nil {
 		recordStructuralDiagnostic(mergeKeyDiag(key, ""))
 	}
 
 	counts := NormalizedGraphCardinality{}
-	start, keyStatus, invalidKey := mappingValue(root, "start", aliasSteps)
-	if invalidKey {
-		recordInvalidGraphKey("")
-	}
-	if keyStatus == rawGraphAliasUnsafe {
-		return counts, keyStatus, structuralDiagnostics
-	}
+	start, rootIssue := mappingValue(root, "start", aliasSteps)
+	recordStructuralIssue(rootIssue, "")
 	if start != nil {
 		startValue, startStatus := structuralMappingKey(start, aliasSteps)
 		if startStatus == rawGraphAliasUnsafe {
-			return counts, startStatus, structuralDiagnostics
+			recordStructuralIssue(rawGraphUnsafeAlias, "start")
 		}
 		if startStatus == rawGraphCounted && startValue != "" {
 			counts.Edges = 1
 		}
 	}
-	nodes, keyStatus, invalidKey := mappingValue(root, "nodes", aliasSteps)
-	if invalidKey {
-		recordInvalidGraphKey("")
-	}
-	if keyStatus == rawGraphAliasUnsafe {
-		return counts, keyStatus, structuralDiagnostics
-	}
+	nodes, rootIssue := mappingValue(root, "nodes", aliasSteps)
+	recordStructuralIssue(rootIssue, "")
 	if nodes == nil {
 		if len(structuralDiagnostics) > 0 {
 			return counts, rawGraphRejected, structuralDiagnostics
@@ -200,25 +211,23 @@ func rawNormalizedGraphCardinality(root *yaml.Node) (NormalizedGraphCardinality,
 	}
 	nodes, status = structuralNode(nodes, aliasSteps)
 	if status != rawGraphCounted {
-		return counts, status, structuralDiagnostics
+		recordStructuralIssue(rawGraphUnsafeAlias, "nodes")
+		return counts, rawGraphRejected, structuralDiagnostics
 	}
 	if nodes.Kind != yaml.MappingNode {
 		return counts, rawGraphUncountable, structuralDiagnostics
 	}
-	if key := mappingMergeKey(nodes); key != nil {
+	if key := mappingMergeKey(nodes, aliasSteps); key != nil {
 		recordStructuralDiagnostic(mergeKeyDiag(key, "nodes"))
 	}
 	seenNodes := make(map[string]struct{}, min(len(nodes.Content)/2, MaxNormalizedNodes+1))
-	nextCounts := make(map[*yaml.Node]int, min(len(nodes.Content)/2, MaxNormalizedNodes+1))
+	nextCounts := make(map[*yaml.Node]rawNextCountResult, min(len(nodes.Content)/2, MaxNormalizedNodes+1))
 	for index := len(nodes.Content) - 2; index >= 0; index -= 2 {
 		// Every surviving mapping entry consumes a normalized-node slot even
 		// when its key is malformed. Key decoding determines identity and the
 		// diagnostic, never whether hostile graph work is charged.
 		counts.Nodes = saturatingAdd(counts.Nodes, 1, MaxNormalizedNodes)
 		nodeID, nodeKeyStatus := structuralMappingKey(nodes.Content[index], aliasSteps)
-		if nodeKeyStatus == rawGraphAliasUnsafe {
-			return counts, nodeKeyStatus, structuralDiagnostics
-		}
 		nodePath := "nodes"
 		if nodeKeyStatus == rawGraphCounted {
 			if _, duplicate := seenNodes[nodeID]; duplicate {
@@ -226,57 +235,49 @@ func rawNormalizedGraphCardinality(root *yaml.Node) (NormalizedGraphCardinality,
 			}
 			seenNodes[nodeID] = struct{}{}
 			nodePath = joinPath("nodes", nodeID)
+		} else if nodeKeyStatus == rawGraphAliasUnsafe {
+			recordStructuralIssue(rawGraphUnsafeAlias, "nodes")
 		} else {
-			recordInvalidGraphKey("nodes")
+			recordStructuralIssue(rawGraphInvalidKey, "nodes")
 		}
 		if counts.Edges > MaxNormalizedEdges {
 			continue
 		}
 		node, nodeStatus := structuralNode(nodes.Content[index+1], aliasSteps)
-		if nodeStatus == rawGraphAliasUnsafe {
-			return counts, nodeStatus, structuralDiagnostics
-		}
-		if nodeStatus != rawGraphCounted || node.Kind != yaml.MappingNode {
+		if nodeStatus != rawGraphCounted {
+			recordStructuralIssue(rawGraphUnsafeAlias, nodePath)
 			continue
 		}
-		if key := mappingMergeKey(node); key != nil {
+		if node.Kind != yaml.MappingNode {
+			continue
+		}
+		if key := mappingMergeKey(node, aliasSteps); key != nil {
 			recordStructuralDiagnostic(mergeKeyDiag(key, nodePath))
 		}
-		next, nextKeyStatus, invalidKey := mappingValue(node, "next", aliasSteps)
-		if invalidKey {
-			recordInvalidGraphKey(nodePath)
-		}
-		if nextKeyStatus == rawGraphAliasUnsafe {
-			return counts, nextKeyStatus, structuralDiagnostics
-		}
+		next, nodeIssue := mappingValue(node, "next", aliasSteps)
+		recordStructuralIssue(nodeIssue, nodePath)
 		if next == nil {
 			continue
 		}
 		next, nextStatus := structuralNode(next, aliasSteps)
-		if nextStatus == rawGraphAliasUnsafe {
-			return counts, nextStatus, structuralDiagnostics
-		}
-		if nextStatus != rawGraphCounted || next.Kind != yaml.MappingNode {
+		if nextStatus != rawGraphCounted {
+			recordStructuralIssue(rawGraphUnsafeAlias, joinPath(nodePath, "next"))
 			continue
 		}
-		nextCount, cached := nextCounts[next]
-		if !cached {
-			var countStatus rawGraphCardinalityStatus
-			var invalidOutcome bool
-			nextCount, countStatus, invalidOutcome = rawNextEdgeCount(next, aliasSteps)
-			if invalidOutcome {
-				// Use a fixed structural location: a complex outcome key must
-				// never be stringified into a public path or message.
-				recordInvalidGraphKey("nodes.next")
-			}
-			if countStatus != rawGraphCounted {
-				return counts, countStatus, structuralDiagnostics
-			}
-			nextCounts[next] = nextCount
+		if next.Kind != yaml.MappingNode {
+			continue
 		}
+		result, cached := nextCounts[next]
+		if !cached {
+			result = rawNextEdgeCount(next, aliasSteps)
+			nextCounts[next] = result
+		}
+		// The cached issue is relative to the shared next map. Bind it to the
+		// authoritative occurrence being traversed, never to the anchor site.
+		recordStructuralIssue(result.issue, joinPath(nodePath, "next"))
 		// A cached anchored map still contributes once per referring node;
 		// caching bounds traversal without memoizing away alias multiplicity.
-		counts.Edges = saturatingAdd(counts.Edges, nextCount, MaxNormalizedEdges)
+		counts.Edges = saturatingAdd(counts.Edges, result.count, MaxNormalizedEdges)
 		if counts.Nodes > MaxNormalizedNodes && counts.Edges > MaxNormalizedEdges {
 			break
 		}
@@ -287,13 +288,17 @@ func rawNormalizedGraphCardinality(root *yaml.Node) (NormalizedGraphCardinality,
 	return counts, rawGraphCounted, nil
 }
 
-func rawNextEdgeCount(next *yaml.Node, maximumAliasSteps int) (int, rawGraphCardinalityStatus, bool) {
+func rawNextEdgeCount(next *yaml.Node, maximumAliasSteps int) rawNextCountResult {
 	seenOutcomes := make(map[string]struct{}, min(len(next.Content)/2, MaxNormalizedEdges+1))
 	count := 0
-	invalidKey := false
+	issue := rawGraphNoStructuralIssue
 	for edgeIndex := 0; edgeIndex+1 < len(next.Content); edgeIndex += 2 {
 		edgeKey := next.Content[edgeIndex]
-		if edgeKey.ShortTag() == mergeTag {
+		// Resolve aliases with the finite structural walker before consulting
+		// yaml.Node tags: ShortTag recursively follows aliases on its own and
+		// would overflow the Go stack on a cyclic programmatic node graph.
+		resolvedKey, keyStatus := structuralNode(edgeKey, maximumAliasSteps)
+		if keyStatus == rawGraphCounted && resolvedKey.ShortTag() == mergeTag {
 			// Next.UnmarshalYAML deliberately skips merge entries after the raw
 			// schema emits merge_key_unsupported, so they contribute no edge.
 			continue
@@ -302,12 +307,20 @@ func rawNextEdgeCount(next *yaml.Node, maximumAliasSteps int) (int, rawGraphCard
 		// yaml.v3 attempt a map insertion, so they cannot hide alias-amplified
 		// work from the allocation guard.
 		count = saturatingAdd(count, 1, MaxNormalizedEdges)
-		outcome, status := structuralMappingKey(edgeKey, maximumAliasSteps)
-		if status == rawGraphAliasUnsafe {
-			return count, status, invalidKey
+		if keyStatus != rawGraphCounted {
+			if issue == rawGraphNoStructuralIssue {
+				issue = rawGraphUnsafeAlias
+			}
+			if count > MaxNormalizedEdges {
+				break
+			}
+			continue
 		}
-		if status != rawGraphCounted {
-			invalidKey = true
+		outcome, ok := decodedStructuralScalar(resolvedKey)
+		if !ok {
+			if issue == rawGraphNoStructuralIssue {
+				issue = rawGraphInvalidKey
+			}
 			if count > MaxNormalizedEdges {
 				break
 			}
@@ -322,41 +335,47 @@ func rawNextEdgeCount(next *yaml.Node, maximumAliasSteps int) (int, rawGraphCard
 			break
 		}
 	}
-	return count, rawGraphCounted, invalidKey
+	return rawNextCountResult{count: count, issue: issue}
 }
 
-func mappingMergeKey(mapping *yaml.Node) *yaml.Node {
+func mappingMergeKey(mapping *yaml.Node, maximumAliasSteps int) *yaml.Node {
 	if mapping == nil || mapping.Kind != yaml.MappingNode {
 		return nil
 	}
 	for index := 0; index+1 < len(mapping.Content); index += 2 {
-		if mapping.Content[index].ShortTag() == mergeTag {
+		resolved, status := structuralNode(mapping.Content[index], maximumAliasSteps)
+		if status == rawGraphCounted && resolved.ShortTag() == mergeTag {
 			return mapping.Content[index]
 		}
 	}
 	return nil
 }
 
-func mappingValue(mapping *yaml.Node, key string, maximumAliasSteps int) (*yaml.Node, rawGraphCardinalityStatus, bool) {
+func mappingValue(mapping *yaml.Node, key string, maximumAliasSteps int) (*yaml.Node, rawGraphStructuralIssue) {
 	if mapping == nil || mapping.Kind != yaml.MappingNode {
-		return nil, rawGraphUncountable, false
+		return nil, rawGraphNoStructuralIssue
 	}
 	var found *yaml.Node
-	invalidKey := false
+	issue := rawGraphNoStructuralIssue
 	for index := 0; index+1 < len(mapping.Content); index += 2 {
 		resolved, status := structuralMappingKey(mapping.Content[index], maximumAliasSteps)
 		if status == rawGraphAliasUnsafe {
-			return nil, status, invalidKey
+			if issue == rawGraphNoStructuralIssue {
+				issue = rawGraphUnsafeAlias
+			}
+			continue
 		}
 		if status != rawGraphCounted {
-			invalidKey = true
+			if issue == rawGraphNoStructuralIssue {
+				issue = rawGraphInvalidKey
+			}
 			continue
 		}
 		if resolved == key {
 			found = mapping.Content[index+1]
 		}
 	}
-	return found, rawGraphCounted, invalidKey
+	return found, issue
 }
 
 func structuralMappingKey(key *yaml.Node, maximumAliasSteps int) (string, rawGraphCardinalityStatus) {
