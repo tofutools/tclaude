@@ -85,6 +85,16 @@ type PathV1ExecutionView struct {
 	Input          *pathv1.VerifiedExclusiveInput
 }
 
+// PathV1RunSnapshot is the detached checkpoint-only read shape for live API
+// and viewer callers. Unlike PathV1ExecutionView it may outlive the callback;
+// every byte slice and checkpoint value is independently decoded/copied.
+type PathV1RunSnapshot struct {
+	Run            RunRecord
+	CheckpointJSON []byte
+	TemplateSource []byte
+	Checkpoint     *pathv1.CheckpointV7
+}
+
 type PathV1AppendDisposition string
 
 const (

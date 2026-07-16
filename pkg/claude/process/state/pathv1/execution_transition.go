@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	legacy "github.com/tofutools/tclaude/pkg/claude/process/state"
@@ -129,6 +130,388 @@ type ExclusiveAttemptPlan struct {
 	nodeID    string
 	performer *model.Performer
 	params    map[string]string
+}
+
+// ExclusiveWaitPlan is the sealed durable lifecycle for one live wait-node
+// activation. Timer schedules bind both their scheduling instant and due
+// instant; signal waits bind the exact signal from the immutable template.
+// The command remains a perform_attempt_v1 because settlement/routing already
+// treats task, decision, and wait activation attempts uniformly.
+type ExclusiveWaitPlan struct {
+	command     CommandRecord
+	nodeID      string
+	waitKind    string
+	signal      string
+	scheduledAt time.Time
+	dueAt       time.Time
+}
+
+type exclusiveWaitPayload struct {
+	TemplateRef        string       `json:"templateRef"`
+	TemplateSourceHash string       `json:"templateSourceHash"`
+	NodeID             string       `json:"nodeId"`
+	SourceActivationID ActivationID `json:"sourceActivationId"`
+	SourceGeneration   uint64       `json:"sourceGeneration"`
+	Attempt            uint64       `json:"attempt"`
+	WaitKind           string       `json:"waitKind"`
+	Signal             string       `json:"signal,omitempty"`
+	ScheduledAt        string       `json:"scheduledAt,omitempty"`
+	DueAt              string       `json:"dueAt,omitempty"`
+}
+
+func (p *ExclusiveWaitPlan) Command() CommandRecord {
+	if p == nil {
+		return CommandRecord{}
+	}
+	return cloneCommandRecord(p.command)
+}
+
+func (p *ExclusiveWaitPlan) NodeID() string {
+	if p == nil {
+		return ""
+	}
+	return p.nodeID
+}
+
+func (p *ExclusiveWaitPlan) WaitKind() string {
+	if p == nil {
+		return ""
+	}
+	return p.waitKind
+}
+
+func (p *ExclusiveWaitPlan) Signal() string {
+	if p == nil {
+		return ""
+	}
+	return p.signal
+}
+
+func (p *ExclusiveWaitPlan) DueAt() time.Time {
+	if p == nil {
+		return time.Time{}
+	}
+	return p.dueAt
+}
+
+// PlanExclusiveWait creates the exact durable wait claim. now is authority
+// only for duration waits; until and signal semantics come solely from the
+// immutable exact template.
+func PlanExclusiveWait(ctx context.Context, input *VerifiedExclusiveInput, sourcePathID PathID, now time.Time) (*ExclusiveWaitPlan, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if input == nil || input.checkpoint == nil || input.template == nil || sourcePathID == "" {
+		return nil, fmt.Errorf("%w: complete sealed wait input is required", ErrExclusiveInputInvalid)
+	}
+	aggregate, err := CurrentAggregateCheckpoint(input.checkpoint)
+	if err != nil {
+		return nil, err
+	}
+	for _, command := range aggregate.Commands {
+		if command.State.Active() {
+			return nil, fmt.Errorf("%w: active command %q must recover before planning", ErrMutationInconsistent, command.ID)
+		}
+	}
+	source, ok := aggregate.Routing.Paths[sourcePathID]
+	if !ok || source.Kind != PathActivationOutput || source.State != PathLive {
+		return nil, fmt.Errorf("%w: source path is not a live activation output", ErrMutationInconsistent)
+	}
+	activation, ok := aggregate.Routing.Activations[source.SourceActivation.ID]
+	if !ok || activation.Ref != source.SourceActivation {
+		return nil, fmt.Errorf("%w: source activation is missing or mismatched", ErrMutationInconsistent)
+	}
+	reservation, ok := aggregate.Routing.Reservations[activation.ReservationID]
+	if !ok || reservation.State != ReservationActivated {
+		return nil, fmt.Errorf("%w: source reservation is not activated", ErrMutationInconsistent)
+	}
+	node, ok := input.template.Nodes[reservation.NodeID]
+	if !ok || node.Type != model.NodeTypeWait || node.Wait == nil {
+		return nil, fmt.Errorf("%w: node %q is not a wait", ErrExclusiveUnsupported, reservation.NodeID)
+	}
+	waitKind := exactWaitKind(node.Wait)
+	if waitKind != "signal" && waitKind != "duration" && waitKind != "until" {
+		return nil, fmt.Errorf("%w: wait node %q has no supported wait authority", ErrExclusiveUnsupported, reservation.NodeID)
+	}
+	plan := &ExclusiveWaitPlan{nodeID: reservation.NodeID, waitKind: waitKind}
+	if waitKind == "signal" {
+		plan.signal = strings.TrimSpace(node.Wait.Signal)
+		if plan.signal == "" {
+			return nil, fmt.Errorf("%w: signal wait is empty", ErrExclusiveInputInvalid)
+		}
+	} else {
+		plan.scheduledAt = now.UTC()
+		if plan.scheduledAt.IsZero() {
+			return nil, fmt.Errorf("%w: timer scheduling instant is required", ErrExclusiveInputInvalid)
+		}
+		if waitKind == "until" {
+			plan.dueAt, err = model.ParseRFC3339(strings.TrimSpace(node.Wait.Until))
+		} else {
+			var duration time.Duration
+			duration, err = time.ParseDuration(strings.TrimSpace(node.Wait.Duration))
+			if err == nil && duration <= 0 {
+				err = fmt.Errorf("duration must be positive")
+			}
+			if err == nil {
+				plan.dueAt = plan.scheduledAt.Add(duration)
+			}
+		}
+		if err != nil || plan.dueAt.IsZero() {
+			return nil, fmt.Errorf("%w: invalid %s wait schedule", ErrExclusiveInputInvalid, waitKind)
+		}
+		plan.dueAt = plan.dueAt.UTC()
+	}
+	payload := exclusiveWaitPayload{
+		TemplateRef: aggregate.TemplateRef, TemplateSourceHash: aggregate.TemplateSourceHash,
+		NodeID: reservation.NodeID, SourceActivationID: activation.ID,
+		SourceGeneration: activation.Ref.Generation, Attempt: 1,
+		WaitKind: waitKind, Signal: plan.signal,
+	}
+	if !plan.scheduledAt.IsZero() {
+		payload.ScheduledAt = plan.scheduledAt.Format(time.RFC3339Nano)
+		payload.DueAt = plan.dueAt.Format(time.RFC3339Nano)
+	}
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	identity := CommandIdentity{
+		RunID: aggregate.RunID, Kind: CommandPerformAttempt, PayloadSchema: 1,
+		SourceActivationID: activation.ID, SourceGeneration: activation.Ref.Generation,
+		Attempt: 1, PlanDigest: payloadDigest(payloadJSON),
+	}
+	plan.command, err = commandWithState(identity, payloadJSON, CommandIssued)
+	if err != nil {
+		return nil, err
+	}
+	return plan, nil
+}
+
+// ClaimExclusiveWait atomically records the exact pending wait and its
+// schedule before any timer or external signal may satisfy it.
+func ClaimExclusiveWait(ctx context.Context, input *VerifiedExclusiveInput, plan *ExclusiveWaitPlan) (*ExecutionTransition, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if input == nil || plan == nil {
+		return nil, fmt.Errorf("%w: sealed input and wait plan are required", ErrMutationInvalid)
+	}
+	validated, err := validateExclusiveWaitPlan(input, plan.command)
+	if err != nil {
+		return nil, err
+	}
+	if validated.nodeID != plan.nodeID || validated.waitKind != plan.waitKind || validated.signal != plan.signal ||
+		!validated.scheduledAt.Equal(plan.scheduledAt) || !validated.dueAt.Equal(plan.dueAt) {
+		return nil, fmt.Errorf("%w: supplied wait differs from its exact command", ErrMutationInvalid)
+	}
+	aggregate, err := CurrentAggregateCheckpoint(input.checkpoint)
+	if err != nil {
+		return nil, err
+	}
+	if _, exists := aggregate.Commands[plan.command.ID]; exists {
+		return nil, fmt.Errorf("%w: wait command already exists", ErrMutationInconsistent)
+	}
+	effect := SideEffectIdentity{
+		Kind: SideEffectWait, RunID: aggregate.RunID,
+		ActivationID: plan.command.Identity.SourceActivationID, Attempt: 1,
+		WaitKind: plan.waitKind, State: "pending",
+	}
+	effect.ID, err = WaitIdentity(effect.RunID, effect.ActivationID, effect.Attempt, effect.WaitKind)
+	if err != nil {
+		return nil, err
+	}
+	aggregate.Commands[plan.command.ID] = cloneCommandRecord(plan.command)
+	aggregate.SideEffects[effect.ID] = effect
+	next, err := advanceCheckpointV7(input.checkpoint, aggregate, CurrentRunStatus(input.checkpoint))
+	if err != nil {
+		return nil, err
+	}
+	return newExecutionTransition(input.checkpoint, next, "claim_wait")
+}
+
+// RecoverExclusiveWait returns the sole exact pending wait claim, if any.
+func RecoverExclusiveWait(ctx context.Context, input *VerifiedExclusiveInput) (*ExclusiveWaitPlan, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	if input == nil || input.checkpoint == nil {
+		return nil, false, fmt.Errorf("%w: sealed input is required", ErrExclusiveInputInvalid)
+	}
+	aggregate, err := CurrentAggregateCheckpoint(input.checkpoint)
+	if err != nil {
+		return nil, false, err
+	}
+	var found *ExclusiveWaitPlan
+	for _, command := range aggregate.Commands {
+		if command.Identity.Kind != CommandPerformAttempt || !command.State.Active() {
+			continue
+		}
+		plan, planErr := validateExclusiveWaitPlan(input, command)
+		if planErr != nil {
+			// An active task/decision attempt is not a wait claim.
+			var payload exclusiveWaitPayload
+			if decodeExactPayload(command.Payload, &payload) != nil || payload.WaitKind == "" {
+				continue
+			}
+			return nil, false, planErr
+		}
+		if found != nil {
+			return nil, false, fmt.Errorf("%w: multiple pending exclusive waits", ErrMutationInconsistent)
+		}
+		found = plan
+	}
+	return found, found != nil, nil
+}
+
+// ObserveExclusiveWait settles a previously claimed wait. Timer callers must
+// first compare DueAt with their clock; signal callers must match Signal.
+func ObserveExclusiveWait(ctx context.Context, input *VerifiedExclusiveInput, plan *ExclusiveWaitPlan, actor, evidenceRef string) (*ExecutionTransition, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	current, found, err := RecoverExclusiveWait(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	if !found || plan == nil || current.command.ID != plan.command.ID {
+		return nil, fmt.Errorf("%w: exact pending wait claim is absent", ErrMutationInconsistent)
+	}
+	aggregate, err := CurrentAggregateCheckpoint(input.checkpoint)
+	if err != nil {
+		return nil, err
+	}
+	command := aggregate.Commands[current.command.ID]
+	command.State = CommandObserved
+	aggregate.Commands[command.ID] = command
+	activation := aggregate.Routing.Activations[command.Identity.SourceActivationID]
+	source := aggregate.Routing.Paths[activation.OutputPathID]
+	node := input.template.Nodes[current.nodeID]
+	observation := ExclusiveObservation{
+		SourcePathID: source.ID, Attempt: 1, Outcome: "satisfied",
+		Actor: strings.TrimSpace(actor), EvidenceRef: strings.TrimSpace(evidenceRef),
+	}
+	perform, settle, effect, err := observedAttemptCommands(aggregate.View(), current.nodeID, node, source, observation)
+	if err != nil {
+		return nil, err
+	}
+	aggregate.Commands[perform.ID] = perform
+	aggregate.Commands[settle.ID] = settle
+	aggregate.SideEffects[effect.ID] = effect
+	next, err := advanceCheckpointV7(input.checkpoint, aggregate, CurrentRunStatus(input.checkpoint))
+	if err != nil {
+		return nil, err
+	}
+	return newExecutionTransition(input.checkpoint, next, "observe_wait")
+}
+
+// ExactExclusiveSignalObserved recognizes only an already-settled replay of
+// the same node, signal, and actor authority. It lets an API retry after an
+// ambiguous commit succeed without allowing a different caller to inherit the
+// first observation.
+func ExactExclusiveSignalObserved(ctx context.Context, input *VerifiedExclusiveInput, nodeID, signal, actor string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if input == nil || input.checkpoint == nil {
+		return false, fmt.Errorf("%w: sealed input is required", ErrExclusiveInputInvalid)
+	}
+	aggregate, err := CurrentAggregateCheckpoint(input.checkpoint)
+	if err != nil {
+		return false, err
+	}
+	wantedSignal := strings.TrimSpace(signal)
+	wantedActor := strings.TrimSpace(actor)
+	for _, command := range aggregate.Commands {
+		if command.Identity.Kind != CommandPerformAttempt || (command.State != CommandObserved && command.State != CommandReconciled) {
+			continue
+		}
+		plan, planErr := validateExclusiveWaitPlan(input, command)
+		if planErr != nil || plan.waitKind != "signal" || plan.nodeID != nodeID || plan.signal != wantedSignal {
+			continue
+		}
+		effectID, effectErr := WaitIdentity(aggregate.RunID, command.Identity.SourceActivationID, 1, "signal")
+		effect, ok := aggregate.SideEffects[effectID]
+		if effectErr != nil || !ok || effect.Kind != SideEffectWait || effect.State != "satisfied" {
+			return false, fmt.Errorf("%w: observed signal lacks its satisfied wait effect", ErrMutationInconsistent)
+		}
+		for _, settle := range aggregate.Commands {
+			if settle.Identity.Kind != CommandSettleAttempt || settle.Identity.InputDigest != command.ID {
+				continue
+			}
+			var payload settleAttemptObservationPayload
+			if err := decodeExactPayload(settle.Payload, &payload); err != nil {
+				return false, fmt.Errorf("%w: observed signal settlement is invalid", ErrMutationInvalid)
+			}
+			if payload.ResultCode != "satisfied" || payload.Actor != wantedActor || payload.EvidenceRef != "signal:"+wantedSignal {
+				return false, fmt.Errorf("%w: signal replay authority differs from the recorded observation", ErrMutationInvalid)
+			}
+			return true, nil
+		}
+		return false, fmt.Errorf("%w: observed signal settlement is absent", ErrMutationInconsistent)
+	}
+	return false, nil
+}
+
+func validateExclusiveWaitPlan(input *VerifiedExclusiveInput, command CommandRecord) (*ExclusiveWaitPlan, error) {
+	if input == nil || input.checkpoint == nil || input.template == nil {
+		return nil, fmt.Errorf("%w: sealed input is required", ErrExclusiveInputInvalid)
+	}
+	if err := ValidateCommand(command); err != nil || command.Identity.Kind != CommandPerformAttempt || command.Identity.Attempt != 1 {
+		return nil, fmt.Errorf("%w: invalid wait command", ErrMutationInvalid)
+	}
+	var payload exclusiveWaitPayload
+	if err := decodeExactPayload(command.Payload, &payload); err != nil {
+		return nil, fmt.Errorf("%w: wait payload: %v", ErrMutationInvalid, err)
+	}
+	aggregate, err := CurrentAggregateCheckpoint(input.checkpoint)
+	if err != nil {
+		return nil, err
+	}
+	activation, ok := aggregate.Routing.Activations[payload.SourceActivationID]
+	if !ok || activation.Ref.Generation != payload.SourceGeneration || command.Identity.SourceActivationID != activation.ID ||
+		command.Identity.SourceGeneration != activation.Ref.Generation || payload.Attempt != 1 ||
+		payload.TemplateRef != aggregate.TemplateRef || payload.TemplateSourceHash != aggregate.TemplateSourceHash {
+		return nil, fmt.Errorf("%w: wait command binding mismatch", ErrMutationInvalid)
+	}
+	reservation := aggregate.Routing.Reservations[activation.ReservationID]
+	node, ok := input.template.Nodes[reservation.NodeID]
+	if !ok || node.Type != model.NodeTypeWait || node.Wait == nil || payload.NodeID != reservation.NodeID || payload.WaitKind != exactWaitKind(node.Wait) {
+		return nil, fmt.Errorf("%w: wait command differs from exact template", ErrMutationInvalid)
+	}
+	plan := &ExclusiveWaitPlan{command: cloneCommandRecord(command), nodeID: payload.NodeID, waitKind: payload.WaitKind, signal: payload.Signal}
+	switch payload.WaitKind {
+	case "signal":
+		if payload.Signal != strings.TrimSpace(node.Wait.Signal) || payload.Signal == "" || payload.ScheduledAt != "" || payload.DueAt != "" {
+			return nil, fmt.Errorf("%w: signal wait payload mismatch", ErrMutationInvalid)
+		}
+	case "duration", "until":
+		if payload.Signal != "" {
+			return nil, fmt.Errorf("%w: timer wait carries a signal", ErrMutationInvalid)
+		}
+		plan.scheduledAt, err = time.Parse(time.RFC3339Nano, payload.ScheduledAt)
+		if err == nil {
+			plan.dueAt, err = time.Parse(time.RFC3339Nano, payload.DueAt)
+		}
+		if err != nil || plan.scheduledAt.IsZero() || plan.dueAt.IsZero() {
+			return nil, fmt.Errorf("%w: timer wait schedule is invalid", ErrMutationInvalid)
+		}
+		if payload.WaitKind == "until" {
+			var exact time.Time
+			exact, err = model.ParseRFC3339(strings.TrimSpace(node.Wait.Until))
+			if err != nil || !plan.dueAt.Equal(exact) {
+				return nil, fmt.Errorf("%w: until wait due time mismatch", ErrMutationInvalid)
+			}
+		} else {
+			var duration time.Duration
+			duration, err = time.ParseDuration(strings.TrimSpace(node.Wait.Duration))
+			if err != nil || duration <= 0 || !plan.dueAt.Equal(plan.scheduledAt.Add(duration)) {
+				return nil, fmt.Errorf("%w: duration wait due time mismatch", ErrMutationInvalid)
+			}
+		}
+	default:
+		return nil, fmt.Errorf("%w: unsupported wait kind %q", ErrExclusiveUnsupported, payload.WaitKind)
+	}
+	return plan, nil
 }
 
 func (p *ExclusiveAttemptPlan) Command() CommandRecord {
@@ -357,6 +740,7 @@ func ObserveExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput,
 	activation := view.Routing.Activations[plan.command.Identity.SourceActivationID]
 	source := view.Routing.Paths[activation.OutputPathID]
 	node := input.template.Nodes[plan.nodeID]
+	observation.Outcome = normalizeExclusiveTaskAction(node, observation.Outcome)
 	observation.Outcome, err = canonicalExclusiveOutcome(node, observation.Outcome)
 	if err != nil {
 		return nil, err
@@ -422,6 +806,93 @@ func ObserveExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput,
 		return nil, err
 	}
 	return newExecutionTransition(input.checkpoint, next, "observe_attempt")
+}
+
+// ExactExclusiveAttemptObserved recognizes an already-settled task or
+// decision observation. It returns the exact durable perform command so the
+// API layer can additionally bind its public command alias. Any observation
+// drift is rejected rather than inheriting authority from the first caller.
+func ExactExclusiveAttemptObserved(ctx context.Context, input *VerifiedExclusiveInput, nodeID, commandIDPrefix string, observation ExclusiveObservation) (CommandRecord, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return CommandRecord{}, false, err
+	}
+	if input == nil || input.checkpoint == nil || input.template == nil {
+		return CommandRecord{}, false, fmt.Errorf("%w: sealed input is required", ErrExclusiveInputInvalid)
+	}
+	actor := legacy.ActorRef(strings.TrimSpace(observation.Actor))
+	if strings.TrimSpace(observation.Outcome) == "" || !legacy.ValidateActorRef(actor) || legacy.IsEngineActor(actor) {
+		return CommandRecord{}, false, fmt.Errorf("%w: performer observation requires outcome and actor provenance", ErrMutationInvalid)
+	}
+	node, ok := input.template.Nodes[nodeID]
+	if !ok || (node.Type != model.NodeTypeTask && node.Type != model.NodeTypeDecision) {
+		return CommandRecord{}, false, fmt.Errorf("%w: node %q has no direct performer path", ErrExclusiveUnsupported, nodeID)
+	}
+	outcome, err := canonicalExclusiveOutcome(node, normalizeExclusiveTaskAction(node, observation.Outcome))
+	if err != nil {
+		return CommandRecord{}, false, err
+	}
+	aggregate, err := CurrentAggregateCheckpoint(input.checkpoint)
+	if err != nil {
+		return CommandRecord{}, false, err
+	}
+	wanted := settleAttemptObservationPayload{
+		TemplateRef: aggregate.TemplateRef, ResultCode: outcome, Actor: string(actor),
+		EvidenceRef: observation.EvidenceRef, EvidenceHash: observation.EvidenceHash,
+		ResolutionDigest: observation.ResolutionDigest, ExternalRef: observation.ExternalRef,
+		Feedback: observation.Feedback,
+	}
+	var matched CommandRecord
+	for _, perform := range aggregate.Commands {
+		if perform.Identity.Kind != CommandPerformAttempt || (perform.State != CommandObserved && perform.State != CommandReconciled) {
+			continue
+		}
+		if commandIDPrefix != "" && !strings.HasPrefix(perform.ID, commandIDPrefix) {
+			continue
+		}
+		var request performAttemptPayload
+		if decodeExactPayload(perform.Payload, &request) != nil || request.NodeID != nodeID {
+			continue
+		}
+		for _, settle := range aggregate.Commands {
+			if settle.Identity.Kind != CommandSettleAttempt || settle.Identity.InputDigest != perform.ID {
+				continue
+			}
+			var payload settleAttemptObservationPayload
+			if err := decodeExactPayload(settle.Payload, &payload); err != nil {
+				return CommandRecord{}, false, fmt.Errorf("%w: observed performer settlement is invalid", ErrMutationInvalid)
+			}
+			candidate := wanted
+			candidate.SourceCommandID = perform.ID
+			candidate.SourceActivationID = perform.Identity.SourceActivationID
+			candidate.SourceGeneration = perform.Identity.SourceGeneration
+			candidate.Attempt = perform.Identity.Attempt
+			if payload != candidate && commandIDPrefix != "" {
+				return CommandRecord{}, false, fmt.Errorf("%w: performer replay authority differs from the recorded observation", ErrMutationInvalid)
+			}
+			if payload != candidate {
+				continue
+			}
+			if matched.ID != "" && matched.ID != perform.ID {
+				return CommandRecord{}, false, fmt.Errorf("%w: performer replay is ambiguous across attempts", ErrMutationInconsistent)
+			}
+			matched = cloneCommandRecord(perform)
+		}
+	}
+	return matched, matched.ID != "", nil
+}
+
+func normalizeExclusiveTaskAction(node model.Node, outcome string) string {
+	if node.Type != model.NodeTypeTask {
+		return outcome
+	}
+	switch strings.ToLower(strings.TrimSpace(outcome)) {
+	case "approve":
+		return "pass"
+	case "reject", "ask-changes":
+		return "fail"
+	default:
+		return outcome
+	}
 }
 
 // PendingExclusiveObservation returns the sole routable observed settlement

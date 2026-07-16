@@ -1132,8 +1132,9 @@ func buildExclusiveEndDraft(ctx context.Context, input *VerifiedExclusiveInput, 
 		return exclusiveEndDraft{}, fmt.Errorf("%w: activated target is not an end node", ErrExclusiveUnsupported)
 	}
 	result := strings.ToLower(strings.TrimSpace(node.Result))
-	if result != "" && result != "pass" && result != "success" && result != "completed" && result != "complete" {
-		return exclusiveEndDraft{}, fmt.Errorf("%w: terminal result %q requires non-success authority outside this slice", ErrExclusiveUnsupported, node.Result)
+	failed := isFailOutcome(result)
+	if !failed && result != "" && result != "pass" && result != "success" && result != "succeeded" && result != "completed" && result != "complete" && result != "done" && result != "passed" && result != "ok" {
+		return exclusiveEndDraft{}, fmt.Errorf("%w: terminal result %q is not supported by the schema-7 release", ErrExclusiveUnsupported, node.Result)
 	}
 	activationRecord := activated.Routing.Activations[reservation.Activation.ID]
 	output := activated.Routing.Paths[activationRecord.OutputPathID]
@@ -1141,22 +1142,15 @@ func buildExclusiveEndDraft(ctx context.Context, input *VerifiedExclusiveInput, 
 		return exclusiveEndDraft{}, fmt.Errorf("%w: end activation output is not live", ErrMutationInconsistent)
 	}
 	eventSeq := activation.eventSeq + 1
-	before := Clone(activated.Routing)
-	after := Clone(before)
-	ended := after.Paths[output.ID]
-	ended.State = PathEnded
-	ended.UpdatedSeq = eventSeq
-	dispositionID, err := DispositionReceiptIdentity(ended.ID, PathLive, PathEnded, "completed", MutationCommandPlaceholder, "", uint64(eventSeq))
-	if err != nil {
-		return exclusiveEndDraft{}, err
+	outcome := "pass"
+	reason := "completed"
+	terminalState := PathEnded
+	if failed {
+		outcome = "failed"
+		reason = "end_failed"
+		terminalState = PathFailed
 	}
-	ended.Disposition = &DispositionReceipt{ID: dispositionID, PathID: ended.ID, FromState: PathLive, ToState: PathEnded, ReasonCode: "completed", CommandID: MutationCommandPlaceholder, EventSeq: eventSeq}
-	after.Paths[ended.ID] = ended
-	batch, err := NewMutationBatch(&before, &after, eventSeq)
-	if err != nil {
-		return exclusiveEndDraft{}, err
-	}
-	endObservation := ExclusiveObservation{SourcePathID: output.ID, Attempt: 1, Outcome: "pass"}
+	endObservation := ExclusiveObservation{SourcePathID: output.ID, Attempt: 1, Outcome: outcome}
 	post.Commands = cloneMap(post.Commands)
 	post.SideEffects = cloneMap(post.SideEffects)
 	perform, settle, effect, err := observedAttemptCommands(post, reservation.NodeID, node, output, endObservation)
@@ -1170,6 +1164,32 @@ func buildExclusiveEndDraft(ctx context.Context, input *VerifiedExclusiveInput, 
 		return exclusiveEndDraft{}, err
 	}
 	post.SideEffects[effect.ID] = effect
+	before := Clone(activated.Routing)
+	after := Clone(before)
+	ended := after.Paths[output.ID]
+	ended.State = terminalState
+	ended.UpdatedSeq = eventSeq
+	dispositionID, err := DispositionReceiptIdentity(ended.ID, PathLive, terminalState, reason, MutationCommandPlaceholder, "", uint64(eventSeq))
+	if err != nil {
+		return exclusiveEndDraft{}, err
+	}
+	ended.Disposition = &DispositionReceipt{ID: dispositionID, PathID: ended.ID, FromState: PathLive, ToState: terminalState, ReasonCode: reason, CommandID: MutationCommandPlaceholder, EventSeq: eventSeq}
+	if failed {
+		causeID, causeErr := CauseIdentity(ended.ID, TerminalFailed, reason, ended.SourceActivation.ID, MutationCommandPlaceholder, "", uint64(eventSeq))
+		if causeErr != nil {
+			return exclusiveEndDraft{}, causeErr
+		}
+		ended.TerminalCauseID = causeID
+		after.CauseRecords[causeID] = CauseRecord{
+			ID: causeID, SourcePathID: ended.ID, TerminalKind: TerminalFailed, DispositionReason: reason,
+			SourceActivationID: ended.SourceActivation.ID, SourceCommandID: MutationCommandPlaceholder, EventSeq: eventSeq,
+		}
+	}
+	after.Paths[ended.ID] = ended
+	batch, err := NewMutationBatch(&before, &after, eventSeq)
+	if err != nil {
+		return exclusiveEndDraft{}, err
+	}
 	post.Routing = &before
 	replayView := MutationReplayView{Aggregate: post, Checkpoint: input.binding}
 	emptyCause, err := CauseSetIdentity(nil)
@@ -1179,7 +1199,7 @@ func buildExclusiveEndDraft(ctx context.Context, input *VerifiedExclusiveInput, 
 	plan := RoutePathsPlan{
 		SettlementCommandID: settle.ID, SourceActivationID: output.SourceActivation.ID,
 		SourceGeneration: output.SourceActivation.Generation, SourcePathID: output.ID,
-		Attempt: 1, CauseDigest: emptyCause, ResultCode: "pass", ProducedPathIDs: []PathID{}, Batch: batch,
+		Attempt: 1, CauseDigest: emptyCause, ResultCode: outcome, ProducedPathIDs: []PathID{}, Batch: batch,
 	}
 	payload, err := EncodeRoutePathsPayload(replayView, plan)
 	if err != nil {
@@ -1189,7 +1209,7 @@ func buildExclusiveEndDraft(ctx context.Context, input *VerifiedExclusiveInput, 
 		RunID: post.RunID, Kind: CommandRoutePaths, PayloadSchema: 1,
 		SourceActivationID: output.SourceActivation.ID, SourceGeneration: output.SourceActivation.Generation,
 		SourcePathID: output.ID, Attempt: 1, InputDigest: settle.ID,
-		CauseDigest: emptyCause, PlanDigest: payloadDigest(payload), ResultCode: "pass",
+		CauseDigest: emptyCause, PlanDigest: payloadDigest(payload), ResultCode: outcome,
 	}
 	command, err := observedCommand(identity, payload)
 	if err != nil {
@@ -1557,12 +1577,16 @@ func observedAttemptCommands(view AggregateView, nodeID string, node model.Node,
 	if err != nil {
 		return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, err
 	}
-	settlePayload, err := json.Marshal(settleAttemptObservationPayload{
+	settlePayloadValue := settleAttemptObservationPayload{
 		TemplateRef: view.TemplateRef, SourceCommandID: perform.ID, SourceActivationID: source.SourceActivation.ID,
 		SourceGeneration: source.SourceActivation.Generation, Attempt: observation.Attempt, ResultCode: outcome,
 		Actor: observation.Actor, EvidenceRef: observation.EvidenceRef, EvidenceHash: observation.EvidenceHash,
 		ResolutionDigest: observation.ResolutionDigest, ExternalRef: observation.ExternalRef, Feedback: observation.Feedback,
-	})
+	}
+	if node.Type == model.NodeTypeEnd && isFailOutcome(outcome) {
+		settlePayloadValue.ReasonCode = "end_failed"
+	}
+	settlePayload, err := json.Marshal(settlePayloadValue)
 	if err != nil {
 		return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, err
 	}
@@ -1581,6 +1605,9 @@ func observedAttemptCommands(view AggregateView, nodeID string, node model.Node,
 		return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, fmt.Errorf("%w: settlement remains active", ErrMutationInconsistent)
 	}
 	effect := SideEffectIdentity{Kind: SideEffectAttempt, RunID: view.RunID, ActivationID: source.SourceActivation.ID, Attempt: observation.Attempt, State: "observed"}
+	if node.Type == model.NodeTypeEnd && isFailOutcome(outcome) {
+		effect.State = "failed"
+	}
 	if node.Type == model.NodeTypeWait {
 		effect.Kind = SideEffectWait
 		effect.WaitKind = exactWaitKind(node.Wait)
@@ -1603,14 +1630,16 @@ func exactWaitKind(wait *model.WaitConfig) string {
 	if wait == nil {
 		return "satisfied"
 	}
-	if strings.TrimSpace(wait.Signal) != "" {
-		return "signal"
+	// Match the live v6 planner exactly: an explicit until wins, duration is
+	// next, and signal is a pure signal wait only when no timer field exists.
+	if strings.TrimSpace(wait.Until) != "" {
+		return "until"
 	}
 	if strings.TrimSpace(wait.Duration) != "" {
 		return "duration"
 	}
-	if strings.TrimSpace(wait.Until) != "" {
-		return "until"
+	if strings.TrimSpace(wait.Signal) != "" {
+		return "signal"
 	}
 	return "satisfied"
 }

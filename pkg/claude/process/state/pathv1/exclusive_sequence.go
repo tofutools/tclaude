@@ -819,33 +819,24 @@ func buildExclusiveSequenceEnd(input *VerifiedExclusiveInput, post AggregateView
 		return CommandRecord{}, AggregateView{}, fmt.Errorf("%w: activated target is not an end node", ErrExclusiveUnsupported)
 	}
 	result := strings.ToLower(strings.TrimSpace(node.Result))
-	if result != "" && result != "pass" && result != "success" && result != "completed" && result != "complete" {
-		return CommandRecord{}, AggregateView{}, fmt.Errorf("%w: terminal result %q requires non-success authority outside this slice", ErrExclusiveUnsupported, node.Result)
+	failed := isFailOutcome(result)
+	if !failed && result != "" && result != "pass" && result != "success" && result != "succeeded" && result != "completed" && result != "complete" && result != "done" && result != "passed" && result != "ok" {
+		return CommandRecord{}, AggregateView{}, fmt.Errorf("%w: terminal result %q is not supported by the schema-7 release", ErrExclusiveUnsupported, node.Result)
 	}
 	activationRecord := post.Routing.Activations[reservation.Activation.ID]
 	output := post.Routing.Paths[activationRecord.OutputPathID]
 	if output.Kind != PathActivationOutput || output.State != PathLive {
 		return CommandRecord{}, AggregateView{}, fmt.Errorf("%w: end activation output is not live", ErrMutationInconsistent)
 	}
-	before := Clone(*post.Routing)
-	after := Clone(before)
-	ended := after.Paths[output.ID]
-	ended.State = PathEnded
-	ended.UpdatedSeq = eventSeq
-	dispositionID, err := DispositionReceiptIdentity(ended.ID, PathLive, PathEnded, "completed", MutationCommandPlaceholder, "", uint64(eventSeq))
-	if err != nil {
-		return CommandRecord{}, AggregateView{}, err
+	outcome := "pass"
+	reason := "completed"
+	terminalState := PathEnded
+	if failed {
+		outcome = "failed"
+		reason = "end_failed"
+		terminalState = PathFailed
 	}
-	ended.Disposition = &DispositionReceipt{
-		ID: dispositionID, PathID: ended.ID, FromState: PathLive, ToState: PathEnded,
-		ReasonCode: "completed", CommandID: MutationCommandPlaceholder, EventSeq: eventSeq,
-	}
-	after.Paths[ended.ID] = ended
-	batch, err := NewMutationBatch(&before, &after, eventSeq)
-	if err != nil {
-		return CommandRecord{}, AggregateView{}, err
-	}
-	endObservation := ExclusiveObservation{SourcePathID: output.ID, Attempt: 1, Outcome: "pass"}
+	endObservation := ExclusiveObservation{SourcePathID: output.ID, Attempt: 1, Outcome: outcome}
 	current := post
 	current.Commands = cloneMap(post.Commands)
 	current.SideEffects = cloneMap(post.SideEffects)
@@ -860,6 +851,35 @@ func buildExclusiveSequenceEnd(input *VerifiedExclusiveInput, post AggregateView
 		return CommandRecord{}, AggregateView{}, err
 	}
 	current.SideEffects[effect.ID] = effect
+	before := Clone(*post.Routing)
+	after := Clone(before)
+	ended := after.Paths[output.ID]
+	ended.State = terminalState
+	ended.UpdatedSeq = eventSeq
+	dispositionID, err := DispositionReceiptIdentity(ended.ID, PathLive, terminalState, reason, MutationCommandPlaceholder, "", uint64(eventSeq))
+	if err != nil {
+		return CommandRecord{}, AggregateView{}, err
+	}
+	ended.Disposition = &DispositionReceipt{
+		ID: dispositionID, PathID: ended.ID, FromState: PathLive, ToState: terminalState,
+		ReasonCode: reason, CommandID: MutationCommandPlaceholder, EventSeq: eventSeq,
+	}
+	if failed {
+		causeID, causeErr := CauseIdentity(ended.ID, TerminalFailed, reason, ended.SourceActivation.ID, MutationCommandPlaceholder, "", uint64(eventSeq))
+		if causeErr != nil {
+			return CommandRecord{}, AggregateView{}, causeErr
+		}
+		ended.TerminalCauseID = causeID
+		after.CauseRecords[causeID] = CauseRecord{
+			ID: causeID, SourcePathID: ended.ID, TerminalKind: TerminalFailed, DispositionReason: reason,
+			SourceActivationID: ended.SourceActivation.ID, SourceCommandID: MutationCommandPlaceholder, EventSeq: eventSeq,
+		}
+	}
+	after.Paths[ended.ID] = ended
+	batch, err := NewMutationBatch(&before, &after, eventSeq)
+	if err != nil {
+		return CommandRecord{}, AggregateView{}, err
+	}
 	current.Routing = &before
 	replayView := MutationReplayView{Aggregate: current, Checkpoint: input.binding}
 	emptyCause, err := CauseSetIdentity(nil)
@@ -869,7 +889,7 @@ func buildExclusiveSequenceEnd(input *VerifiedExclusiveInput, post AggregateView
 	plan := RoutePathsPlan{
 		SettlementCommandID: settle.ID, SourceActivationID: output.SourceActivation.ID,
 		SourceGeneration: output.SourceActivation.Generation, SourcePathID: output.ID,
-		Attempt: 1, CauseDigest: emptyCause, ResultCode: "pass", ProducedPathIDs: []PathID{}, Batch: batch,
+		Attempt: 1, CauseDigest: emptyCause, ResultCode: outcome, ProducedPathIDs: []PathID{}, Batch: batch,
 	}
 	payload, err := EncodeRoutePathsPayload(replayView, plan)
 	if err != nil {
@@ -879,7 +899,7 @@ func buildExclusiveSequenceEnd(input *VerifiedExclusiveInput, post AggregateView
 		RunID: post.RunID, Kind: CommandRoutePaths, PayloadSchema: 1,
 		SourceActivationID: output.SourceActivation.ID, SourceGeneration: output.SourceActivation.Generation,
 		SourcePathID: output.ID, Attempt: 1, InputDigest: settle.ID,
-		CauseDigest: emptyCause, PlanDigest: payloadDigest(payload), ResultCode: "pass",
+		CauseDigest: emptyCause, PlanDigest: payloadDigest(payload), ResultCode: outcome,
 	}
 	command, err := observedCommand(identity, payload)
 	if err != nil {

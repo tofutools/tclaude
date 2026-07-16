@@ -24,6 +24,7 @@ import (
 	processexec "github.com/tofutools/tclaude/pkg/claude/process/exec"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
+	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	processverify "github.com/tofutools/tclaude/pkg/claude/process/verify"
 	processview "github.com/tofutools/tclaude/pkg/claude/process/view"
@@ -194,6 +195,9 @@ func newProcessEngineHost(root string) (*processengine.Host, error) {
 		model.PerformerAgent:   processAgentAdapter{},
 		model.PerformerHuman:   processHumanAdapter{},
 	})
+	if err := host.EnableExclusiveV7(); err != nil {
+		return nil, err
+	}
 	return host, nil
 }
 
@@ -251,6 +255,27 @@ func handleProcessRuns(w http.ResponseWriter, r *http.Request) {
 	}
 	views := make([]runView, 0, len(runs))
 	for _, run := range runs {
+		schema, schemaErr := supportedProcessRunSchema(r.Context(), fs, run.ID)
+		if schemaErr != nil {
+			verification := processRunLoadFailure(run.ID, schemaErr)
+			views = append(views, runView{ID: run.ID, TemplateRef: run.TemplateRef, Status: verification.EffectiveStatus, Started: run.CreatedAt, Verification: verification})
+			continue
+		}
+		if schema == pathv1.CheckpointStateSchemaVersion {
+			checkpoint, loadErr := fs.LoadPathV1RunView(r.Context(), run.ID)
+			if loadErr != nil {
+				verification := processRunLoadFailure(run.ID, loadErr)
+				views = append(views, runView{ID: run.ID, TemplateRef: run.TemplateRef, Status: verification.EffectiveStatus, Started: run.CreatedAt, Verification: verification})
+				continue
+			}
+			status := state.RunStatus(pathv1.CurrentRunStatus(checkpoint.Checkpoint))
+			verification := processverify.Report{RunID: run.ID, EffectiveStatus: status}
+			views = append(views, runView{
+				ID: run.ID, TemplateRef: run.TemplateRef, Status: status, Started: run.CreatedAt,
+				CurrentActivity: currentPathV1Activity(checkpoint.Checkpoint), Verification: verification,
+			})
+			continue
+		}
 		verification := processverify.StoreRun(r.Context(), fs, run.ID)
 		st, _ := fs.LoadRunState(r.Context(), run.ID)
 		views = append(views, runView{
@@ -379,6 +404,28 @@ func handleProcessRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "process_store", err.Error())
 		return
 	}
+	schema, schemaErr := supportedProcessRunSchema(r.Context(), fs, runID)
+	if schemaErr != nil {
+		if errors.Is(schemaErr, store.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "process_run", "process run schema is unavailable")
+		return
+	}
+	if schema == pathv1.CheckpointStateSchemaVersion {
+		snapshot, loadErr := fs.LoadPathV1RunView(r.Context(), runID)
+		if loadErr != nil {
+			writeError(w, http.StatusInternalServerError, "process_run", "schema-7 process run is unavailable")
+			return
+		}
+		status := state.RunStatus(pathv1.CurrentRunStatus(snapshot.Checkpoint))
+		writeProcessJSON(w, http.StatusOK, map[string]any{
+			"run": snapshot.Run, "state": snapshot.Checkpoint,
+			"verification": processverify.Report{RunID: runID, EffectiveStatus: status},
+		})
+		return
+	}
 	snapshot, err := fs.LoadRun(r.Context(), runID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -400,6 +447,34 @@ func handleProcessRunView(w http.ResponseWriter, r *http.Request) {
 	fs, err := store.NewFS(processStoreRoot())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "process_view", "process run view is unavailable")
+		return
+	}
+	schema, schemaErr := supportedProcessRunSchema(r.Context(), fs, runID)
+	if schemaErr != nil {
+		if errors.Is(schemaErr, store.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		// A malformed header is not a schema decision. Preserve the established
+		// confirmed-existing degraded view below; valid unsupported schemas and
+		// filesystem failures remain closed.
+		if !store.IsDecodeError(schemaErr) {
+			writeError(w, http.StatusInternalServerError, "process_view", "process run view is unavailable")
+			return
+		}
+	}
+	if schema == pathv1.CheckpointStateSchemaVersion {
+		snapshot, loadErr := fs.LoadPathV1RunView(r.Context(), runID)
+		if loadErr != nil {
+			writeError(w, http.StatusInternalServerError, "process_view", "process run view is unavailable")
+			return
+		}
+		envelope, buildErr := processview.BuildCurrentPathV1Envelope(r.Context(), snapshot)
+		if buildErr != nil {
+			writeError(w, http.StatusInternalServerError, "process_view", "process run view is unavailable")
+			return
+		}
+		writeProcessJSON(w, http.StatusOK, envelope)
 		return
 	}
 	snapshot, err := fs.LoadRunView(r.Context(), runID)
@@ -508,6 +583,23 @@ func handleProcessReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "process_store", err.Error())
 		return
 	}
+	actor := state.ActorRef("agent:" + callerAgent)
+	schema, schemaErr := supportedProcessRunSchema(r.Context(), fs, r.PathValue("id"))
+	if schemaErr != nil {
+		writeError(w, http.StatusConflict, "process_report", "process run schema is unavailable")
+		return
+	}
+	if schema == pathv1.CheckpointStateSchemaVersion {
+		executor := processexec.NewExclusiveV7(fs, nil)
+		if _, err := executor.RecordObservation(r.Context(), r.PathValue("id"), r.PathValue("node"), body.CommandID, processexec.Observation{
+			Actor: actor, Verdict: body.Verdict, Feedback: strings.TrimSpace(body.Feedback), EvidenceRef: body.EvidenceRef,
+		}); err != nil {
+			writeError(w, http.StatusConflict, "process_report", err.Error())
+			return
+		}
+		writeProcessJSON(w, http.StatusOK, map[string]any{"recorded": true, "actor": actor})
+		return
+	}
 	snapshot, err := fs.LoadRun(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeError(w, http.StatusNotFound, "process_run", err.Error())
@@ -519,7 +611,6 @@ func handleProcessReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	executor := processexec.New(fs, nil)
-	actor := state.ActorRef("agent:" + callerAgent)
 	if _, err := executor.RecordOutstandingObservation(r.Context(), snapshot.Run.ID, body.CommandID, processexec.Observation{
 		Actor: actor, Verdict: body.Verdict, Feedback: strings.TrimSpace(body.Feedback), EvidenceRef: body.EvidenceRef,
 	}); err != nil {
@@ -527,6 +618,87 @@ func handleProcessReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeProcessJSON(w, http.StatusOK, map[string]any{"recorded": true, "actor": actor})
+}
+
+type processSignalRequest struct {
+	Signal string `json:"signal"`
+}
+
+func handleProcessSignal(w http.ResponseWriter, r *http.Request) {
+	callerConv, ok := requirePermission(w, r, PermProcessAdvance)
+	if !ok {
+		return
+	}
+	isHuman := callerConv == ""
+	actor := state.ActorRef("human:operator")
+	if !isHuman {
+		agentID := peerAgentID(callerConv)
+		if agentID == "" {
+			writeError(w, http.StatusForbidden, "forbidden", "caller has no stable agent identity")
+			return
+		}
+		actor = state.ActorRef("agent:" + agentID)
+	}
+	var body processSignalRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "json", err.Error())
+		return
+	}
+	body.Signal = strings.TrimSpace(body.Signal)
+	if body.Signal == "" || len(body.Signal) > 512 {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "signal is required")
+		return
+	}
+	fs, err := store.NewFS(processStoreRoot())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "process_store", err.Error())
+		return
+	}
+	schema, err := supportedProcessRunSchema(r.Context(), fs, r.PathValue("id"))
+	if err != nil || schema != pathv1.CheckpointStateSchemaVersion {
+		writeError(w, http.StatusConflict, "process_signal", "run has no schema-7 signal wait")
+		return
+	}
+	if _, err := processexec.NewExclusiveV7(fs, nil).SatisfySignal(r.Context(), r.PathValue("id"), r.PathValue("node"), body.Signal, actor); err != nil {
+		writeError(w, http.StatusConflict, "process_signal", err.Error())
+		return
+	}
+	writeProcessJSON(w, http.StatusOK, map[string]any{"recorded": true, "actor": actor})
+}
+
+func supportedProcessRunSchema(ctx context.Context, fs *store.FS, runID string) (int, error) {
+	schema, err := fs.RunStateSchemaVersion(ctx, runID)
+	if err != nil {
+		return 0, err
+	}
+	if schema == pathv1.CheckpointStateSchemaVersion || schema > 0 && schema <= pathv1.LegacyMaxSchemaVersion {
+		return schema, nil
+	}
+	return 0, fmt.Errorf("unsupported process state schema %d", schema)
+}
+
+func currentPathV1Activity(checkpoint *pathv1.CheckpointV7) string {
+	aggregate, err := pathv1.CurrentAggregateCheckpoint(checkpoint)
+	if err != nil {
+		return ""
+	}
+	var nodes []string
+	for _, path := range aggregate.Routing.Paths {
+		if path.Kind != pathv1.PathActivationOutput || path.State != pathv1.PathLive {
+			continue
+		}
+		activation := aggregate.Routing.Activations[path.SourceActivation.ID]
+		if reservation := aggregate.Routing.Reservations[activation.ReservationID]; reservation.NodeID != "" {
+			nodes = append(nodes, reservation.NodeID)
+		}
+	}
+	slices.Sort(nodes)
+	if len(nodes) == 0 {
+		return ""
+	}
+	return nodes[0]
 }
 
 func writeProcessJSON(w http.ResponseWriter, status int, value any) {

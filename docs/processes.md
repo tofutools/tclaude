@@ -400,15 +400,26 @@ only.
 The additive `viewerV2` discriminator does not change the schema-v1 history
 report. It publishes the declared checkpoint schema, the path protocol, an
 exact-template topology with canonical path-v1 edge IDs, and one authoritative
-`routingAvailable` decision. Current schema-v6 runs report `legacy_schema` and
-omit the routing payload. A future schema-7 path-v1 view may expose only a
-bounded overlay derived from a validated checkpoint aggregate; evidence and
-the schema-v1 `traversedEdges` history are never routing fallbacks. Closed
+`routingAvailable` decision. Schema-v6 runs report `legacy_schema` and omit the
+routing payload. Eligible quiescent runs migrate atomically before new planning
+to the exclusive schema-7 path-v1 executor; runs with active legacy commands or
+waits drain on schema 6 first. Schema-7 views expose only a bounded overlay
+derived from the validated checkpoint aggregate. Evidence and the schema-v1
+`traversedEdges` history are never routing fallbacks. Closed
 unavailability reasons are `legacy_schema`, `routing_absent`,
 `unsupported_schema`, `unsupported_protocol`, `over_budget`, and
 `inconsistent`. Before an exact topology is exposed, its encoded JSON shape is
 measured without constructing a second encoded copy and capped at 16 MiB;
 larger valid topologies are classified as `over_budget`.
+
+The schema-7 release supports direct task and decision performers, retries,
+start/end routing, and duration, `until`, and signal waits. Timer schedules and
+performer claims are persisted before external action. Signal satisfaction is
+available at `POST /v1/process/runs/{id}/nodes/{node}/signal`, requires the
+`process.advance` permission for agent callers, and is audited without copying
+the signal body into audit detail. Exact observation and signal retries after
+an ambiguous commit are idempotent; a changed command, node, actor, outcome, or
+evidence binding is rejected.
 Obligations and blocked nodes include only their recorded wait/contact state;
 missing legacy timestamps and schedules remain absent rather than being
 reconstructed. A conversation reference contains only the durable agent ID

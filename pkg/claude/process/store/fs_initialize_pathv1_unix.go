@@ -21,9 +21,9 @@ type PathV1InitializationResult struct {
 	Checkpoint  *pathv1.CheckpointV7
 }
 
-// InitializePathV1 is the concrete, deploy-disabled schema-7 transition. It
-// is intentionally absent from Store and from all Host/planner/executor/viewer
-// wiring. The append lock is acquired once; exact-template locking retains the
+// InitializePathV1 is the concrete schema-7 transition used by the explicitly
+// enabled production host. It remains absent from the legacy Store interface.
+// The append lock is acquired once; exact-template locking retains the
 // established run-then-template order through proof re-derivation and rename.
 func (s *FS) InitializePathV1(ctx context.Context, runID string, supplied pathv1.UpgradeNeeded) (PathV1InitializationResult, error) {
 	if err := ctx.Err(); err != nil {

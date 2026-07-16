@@ -196,6 +196,9 @@ var auditRoutes = []auditRoute{
 	// performers. Keep the describer nil: the body contains runtime params that
 	// may be secrets, and actor/source/status/path are sufficient attribution.
 	{method: http.MethodPost, segs: []string{"process", "runs"}, verb: "process.run.create"},
+	// Signal satisfaction advances a durable schema-7 wait. Keep the describer
+	// nil so the signal body is never copied into the audit detail.
+	{method: http.MethodPost, segs: []string{"process", "runs", "{id}", "nodes", "{node}", "signal"}, verb: "process.signal"},
 
 	// Remote-access administration (dashboard, cert-admin gated). Issuing a
 	// client cert / adding SAN hosts / (re)running setup are security-

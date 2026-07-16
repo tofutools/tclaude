@@ -110,6 +110,8 @@ func TestMatchAuditRoute(t *testing.T) {
 		{"dashboard template instantiate", http.MethodPost, "/api/templates/crew-tpl/instantiate", true, "template.instantiate", db.AuditSourceDashboard, map[string]string{"name": "crew-tpl"}},
 		{"process run create", http.MethodPost, "/v1/process/runs", true, "process.run.create", db.AuditSourceCLI, nil},
 		{"dashboard process run create", http.MethodPost, "/api/process/runs", true, "process.run.create", db.AuditSourceDashboard, nil},
+		{"process signal", http.MethodPost, "/v1/process/runs/run-42/nodes/wait/signal", true, "process.signal", db.AuditSourceCLI, map[string]string{"id": "run-42", "node": "wait"}},
+		{"dashboard process signal", http.MethodPost, "/api/process/runs/run-42/nodes/wait/signal", true, "process.signal", db.AuditSourceDashboard, map[string]string{"id": "run-42", "node": "wait"}},
 
 		// Security / daemon admin (dashboard).
 		{"remote-access add-client", http.MethodPost, "/api/remote-access/add-client", true, "remote-access.add-client", db.AuditSourceDashboard, nil},
