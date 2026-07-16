@@ -2418,8 +2418,8 @@ details[data-group-key][open] > summary .group-sandbox-profile {
 /* 🧠 default-model chips — the per-group one in each <summary> and the
    user-level one in the groups filter bar. Same look + inline-edit
    affordance as the other group-header chips (.group-default-cwd).
-   The per-group and global 🛡 sandbox-profile chips share the skin (and the
-   picker lifecycle in row-actions.js), so they ride every rule here too. */
+   The per-group and global 🛡 sandbox-profile chips share the skin and inline
+   picker interaction, so they ride every rule here too. */
 .group-default-model, .user-default-model, .group-sandbox-profile, .global-sandbox-profile {
   font-family: ui-monospace, monospace; font-size: 11px; color: #7d8590;
   margin-left: 8px; cursor: pointer; padding: 1px 6px; border-radius: 4px;
@@ -2430,6 +2430,7 @@ details[data-group-key][open] > summary .group-sandbox-profile {
 .group-default-model.unset:hover, .user-default-model.unset:hover, .group-sandbox-profile.unset:hover, .global-sandbox-profile.unset:hover { color: #d4d4d4; }
 .global-sandbox-profile, .user-default-model { background: transparent; }
 .global-sandbox-profile:disabled { cursor: wait; opacity: .65; }
+.toolbar-profile-control { display: inline-flex; min-width: 0; }
 /* Keyboard focus ring for the quick-option chip family (TCL-330) — the
    group-header spans carry tabindex="0" role="button" (activation is
    delegated in row-actions.js) and the two toolbar chips are native
@@ -2442,13 +2443,18 @@ details[data-group-key][open] > summary .group-sandbox-profile {
 .user-default-model:focus-visible, .global-sandbox-profile:focus-visible {
   outline: 2px solid #58a6ff; outline-offset: 1px;
 }
-/* The inline 🧠 profile picker — a <select> swapped in for the group / user
-   chip while choosing a default spawn profile (toolbar-profile-picker.js).
+/* The inline profile picker — a <select> swapped in for a group or toolbar
+   chip while choosing a spawn or sandbox profile.
    Same compact monospace look as the chip inputs above. */
-.group-default-profile-select {
+.group-default-profile-select, .toolbar-profile-select {
   background: #0d1117; border: 1px solid #58a6ff; border-radius: 3px;
   color: #d4d4d4; padding: 1px 6px; font: inherit;
   font-family: ui-monospace, monospace; font-size: 11px; margin-left: 8px;
+}
+.toolbar-profile-error {
+  align-self: center; color: #f85149; font-family: ui-monospace, monospace;
+  font-size: 11px; margin-left: 5px; max-width: 18em; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
 }
 .modal-context-textarea {
   width: 100%; box-sizing: border-box; resize: vertical;

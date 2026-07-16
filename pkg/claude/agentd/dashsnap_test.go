@@ -1448,10 +1448,10 @@ document.dispatchEvent(new CustomEvent('tclaude:wizard', {detail:{active:true}})
 			Key:   "dock-open",
 			Title: "Palette dock open",
 			// JOH-390 items 4/5/7: the dock head hosts the re-homed groups-toolbar
-			// globals ("+ new group" + ⚙ cog on row 1, the 🧠 default-profile chip
-			// on row 2); the profiles heading is spelled out ("Agent profiles" /
+			// globals ("+ new group" + ⚙ cog on row 1, the 🧠 default-profile and
+			// 🛡 sandbox-profile controls on row 2); the profiles heading is spelled out ("Agent profiles" /
 			// "Familiar patterns"); the top-bar Palette toggle is gone.
-			Caption: "Palette dock expanded (groups collapsed): re-homed + new group / ⚙ cog / 🧠 default-profile in the head, full 'Agent profiles' heading, no top-bar toggle.",
+			Caption: "Palette dock expanded (groups collapsed): re-homed + new group / ⚙ cog / 🧠 default-profile / 🛡 sandbox-profile in the head, full 'Agent profiles' heading, no top-bar toggle.",
 			JS:      showGroups + collapseGroups + `document.body.classList.add('dock-open');`,
 		},
 		{
@@ -1459,7 +1459,7 @@ document.dispatchEvent(new CustomEvent('tclaude:wizard', {detail:{active:true}})
 			Title: "Palette dock collapsed",
 			// JOH-390 item 4: collapsed, the re-homed controls render back in the
 			// toolbar exactly as before (the only reopen affordance is the edge tab).
-			Caption: "Palette dock collapsed, members expanded — main list reclaims the width; + new group / ⚙ cog / 🧠 default-profile are back in the toolbar.",
+			Caption: "Palette dock collapsed, members expanded — main list reclaims the width; + new group / ⚙ cog / 🧠 default-profile / 🛡 sandbox-profile are back in the toolbar.",
 			JS:      showGroups + expandGroups + ensureForceOpen + `document.body.classList.remove('dock-open');`,
 		},
 		{

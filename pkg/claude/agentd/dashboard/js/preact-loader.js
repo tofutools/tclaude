@@ -382,9 +382,12 @@ export function mountMessageAccessDialogsFeature(dependencies = {}) {
 const toolbarProfilePickerDescriptor = createIslandDescriptor({
   name: 'toolbar-profile-picker',
   label: 'Dashboard profile picker',
-  hosts: { host: '#toolbar-profile-picker-root' },
+  hosts: {
+    profileHost: '#dashboard-default-profile-control',
+    sandboxHost: '#dashboard-default-sandbox-profile-control',
+  },
   failureClass: 'toolbar-profile-picker-error',
-  load: async ({ hosts: { host }, dependencies }) => {
+  load: async ({ hosts: { profileHost, sandboxHost }, dependencies }) => {
     const islandModule = import('./toolbar-profile-picker-island.js');
     const stateModule = import('./toolbar-profile-picker-state.js');
     const actionsModule = import('./toolbar-profile-picker-actions.js');
@@ -397,7 +400,7 @@ const toolbarProfilePickerDescriptor = createIslandDescriptor({
     return {
       state,
       mount: (registerCleanup) => mountToolbarProfilePickerIsland({
-        host, state, actions, registerCleanup,
+        profileHost, sandboxHost, state, actions, registerCleanup,
       }),
     };
   },

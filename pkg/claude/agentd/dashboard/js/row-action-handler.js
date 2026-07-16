@@ -611,9 +611,7 @@ export async function handleRowAction(action) {
         // is also agentd's fallback after a group's own profile. The setter
         // awaits the shared validated API before updating the UI cache.
         const current = data.profile || '';
-        openToolbarProfilePicker({
-          producerId: action.producerId, kind: 'profile', current,
-        });
+        openToolbarProfilePicker({ kind: 'profile', current });
         return;
       }
       case 'set-dash-sandbox-profile': {
@@ -621,9 +619,7 @@ export async function handleRowAction(action) {
         // the sandbox registry, then repaint the snapshot-backed chip and
         // recompute the spawn dialog's composed policy preview.
         const current = data.sandboxProfile || '';
-        openToolbarProfilePicker({
-          producerId: action.producerId, kind: 'sandbox', current,
-        });
+        openToolbarProfilePicker({ kind: 'sandbox', current });
         return;
       }
       case 'export-group': {

@@ -48,7 +48,8 @@ func TestDashboardHTML_RefreshGuardCannotWedge(t *testing.T) {
 	if got := strings.Count(dashboardAssets, "dashboardState.discardRequest(requestId, { responded });"); got < 2 {
 		t.Errorf("post-request discard count = %d, want at least 2", got)
 	}
-	must(`id="toolbar-profile-picker-root"`, "profile picker has a stable Preact host")
+	must(`id="dashboard-default-profile-control"`, "profile picker has a stable Preact host")
+	must(`id="dashboard-default-sandbox-profile-control"`, "sandbox picker has a stable Preact host")
 	must("mountToolbarProfilePickerFeature", "profile picker is mounted before row routing")
 	must("createToolbarProfilePickerState", "profile picker draft has a state owner")
 	for _, retired := range []string{
