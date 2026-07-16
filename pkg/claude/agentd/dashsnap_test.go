@@ -742,6 +742,49 @@ func baseStates() []dashsnap.State {
 			SettleMS: 250,
 		},
 		{
+			Key:     "spawn-harness-policy",
+			Title:   "Cross-harness spawn policy matrix",
+			Caption: "The global policy matrix uses dashboard-native controls in the regular skin and becomes the cross-realm ward book, with matching vocabulary and arcane chrome, in wizard mode.",
+			JS: showGroups + `return (async function(){
+  document.querySelector('.filter-bar-cog .cog-btn').click();
+  var launcher = document.querySelector('#spawn-harness-policy-open');
+  var wizard = document.body.classList.contains('wizard');
+  var regularCopy = launcher.querySelector('.theme-copy-regular');
+  var wizardCopy = launcher.querySelector('.theme-copy-wizard');
+  if (wizard) {
+    if (getComputedStyle(wizardCopy).display === 'none' || getComputedStyle(regularCopy).display !== 'none') throw new Error('spawn-harness-policy: wizard cog copy missing');
+  } else if (getComputedStyle(regularCopy).display === 'none' || getComputedStyle(wizardCopy).display !== 'none') {
+    throw new Error('spawn-harness-policy: regular cog copy missing');
+  }
+  launcher.click();
+  var deadline = Date.now() + 3000;
+  while (!document.querySelector('#spawn-harness-policy-modal select') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 30); });
+  }
+  var modal = document.querySelector('#spawn-harness-policy-modal .cron-create-modal');
+  var title = document.querySelector('#spawn-harness-policy-title');
+  var select = document.querySelector('#spawn-harness-policy-modal select');
+  if (!modal || !title || !select) throw new Error('spawn-harness-policy: matrix did not render');
+  select.value = 'deny';
+  select.dispatchEvent(new Event('change', {bubbles:true}));
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var textarea = document.querySelector('#spawn-harness-policy-modal textarea');
+  if (!textarea) throw new Error('spawn-harness-policy: denial reason control did not render');
+  var surface = getComputedStyle(modal);
+  var control = getComputedStyle(select);
+  if (wizard) {
+    if (title.textContent.trim() !== 'Global cross-realm summons') throw new Error('spawn-harness-policy: wizard title missing');
+    if (!surface.backgroundImage.includes('gradient')) throw new Error('spawn-harness-policy: wizard surface lacks gradient chrome');
+    if (control.backgroundColor !== 'rgb(20, 15, 40)') throw new Error('spawn-harness-policy: wizard select is ' + control.backgroundColor);
+  } else {
+    if (title.textContent.trim() !== 'Global cross-harness spawn policy') throw new Error('spawn-harness-policy: regular title changed');
+    if (surface.backgroundImage !== 'none') throw new Error('spawn-harness-policy: wizard chrome leaked into regular mode');
+    if (control.backgroundColor !== 'rgb(13, 17, 23)') throw new Error('spawn-harness-policy: regular select is ' + control.backgroundColor);
+  }
+})();`,
+			SettleMS: 250,
+		},
+		{
 			Key:      "bounded-costs-normal",
 			Title:    "Bounded Preact — Costs normal",
 			Caption:  "Costs island completed its request and rendered controls for the fixture's empty-cost span.",
