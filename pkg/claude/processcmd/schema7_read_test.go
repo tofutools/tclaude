@@ -96,6 +96,66 @@ nodes:
 	}
 }
 
+func TestSchema7CLIAndWorklistReadPostSplitParallelCheckpoint(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "store")
+	templatePath := writeTemplate(t, `apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: schema7-parallel-reads
+start: fork
+nodes:
+  fork:
+    type: parallel
+    next: {left: left, right: right}
+  left:
+    type: task
+    performer: {kind: agent, profile: dev, prompt: left}
+    next: merge
+  right:
+    type: task
+    performer: {kind: agent, profile: dev, prompt: right}
+    next: merge
+  merge:
+    type: end
+    metadata: {join: all}
+    result: completed
+`)
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	var out bytes.Buffer
+	if err := runRun(cmd, &runParams{Template: templatePath, StoreRoot: root, RunID: "schema7-parallel-reads"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	fs, err := store.NewFS(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := processengine.New(fs, "test:schema7-parallel-reads", map[model.PerformerKind]processexec.Adapter{model.PerformerAgent: showDeferredAdapter{}})
+	if err := host.EnableExclusiveV7(); err != nil {
+		t.Fatal(err)
+	}
+	results, err := host.Tick(t.Context())
+	if err != nil || len(results) != 1 || results[0].Error != "" {
+		t.Fatalf("parallel schema-7 tick = %#v, %v", results, err)
+	}
+
+	out.Reset()
+	if err := runShow(cmd, &showParams{RunID: "schema7-parallel-reads", StoreRoot: root}, &out); err != nil {
+		t.Fatalf("show post-split parallel checkpoint: %v", err)
+	}
+	out.Reset()
+	if err := runVerify(t.Context(), &verifyParams{RunID: "schema7-parallel-reads", StoreRoot: root}, &out); err != nil || !strings.Contains(out.String(), "Diagnostics: none") {
+		t.Fatalf("verify post-split parallel checkpoint: %v\n%s", err, out.String())
+	}
+	out.Reset()
+	if err := runRunsLs(cmd, &runsLsParams{StoreRoot: root}, &out); err != nil || strings.Contains(out.String(), "load_error") {
+		t.Fatalf("list post-split parallel checkpoint: %v\n%s", err, out.String())
+	}
+	out.Reset()
+	if err := runWorklist(cmd, &worklistParams{StoreRoot: root, Run: "schema7-parallel-reads"}, &out); err != nil {
+		t.Fatalf("worklist post-split parallel checkpoint: %v", err)
+	}
+}
+
 func TestPathV1RoutingStatesKeepsNewestNodeGeneration(t *testing.T) {
 	aggregate := pathv1.AggregateCheckpoint{Routing: pathv1.RoutingState{Reservations: map[string]pathv1.ActivationReservation{
 		"older": {ID: "older", NodeID: "approve", Generation: 1, State: pathv1.ReservationOpen},

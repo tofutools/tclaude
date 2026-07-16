@@ -590,6 +590,9 @@ func buildExclusiveRouteDraft(ctx context.Context, input *VerifiedExclusiveInput
 			authority.Reservations[reservation.ID] = reservationAuthority(reservation)
 			after.Reservations[reservation.ID] = reservation
 		}
+		if reservation.State != ReservationOpen {
+			return exclusiveRouteDraft{}, fmt.Errorf("%w: exact route target %q is %q", ErrMutationInconsistent, reservation.ID, reservation.State)
+		}
 		candidate, ok := routeCandidateForEdge(reservation, edge.ID, source.BranchEdgeID)
 		if !ok {
 			return exclusiveRouteDraft{}, fmt.Errorf("%w: target reservation lacks exact edge candidate", ErrExclusiveInputInvalid)
@@ -722,7 +725,10 @@ func exactRouteReservation(input *VerifiedExclusiveInput, view AggregateView, au
 	reservationIDs := sortedMapKeys(routing.Reservations)
 	for _, reservationID := range reservationIDs {
 		reservation := routing.Reservations[reservationID]
-		if reservation.NodeID != edge.ToNodeID || reservation.State != ReservationOpen {
+		if reservation.NodeID != edge.ToNodeID || reservation.State != ReservationOpen || reservation.ScopeID != source.ScopeID {
+			continue
+		}
+		if !reservation.IsReducing && reservation.BranchEdgeID != source.BranchEdgeID {
 			continue
 		}
 		if _, ok := routeCandidateForEdge(reservation, edge.ID, source.BranchEdgeID); ok {
@@ -732,6 +738,12 @@ func exactRouteReservation(input *VerifiedExclusiveInput, view AggregateView, au
 	reservationID, err := ReservationIdentity(view.RunID, edge.ToNodeID, source.ScopeID, source.BranchEdgeID, 1)
 	if err != nil {
 		return ActivationReservation{}, false, err
+	}
+	if existing, exists := routing.Reservations[reservationID]; exists {
+		if _, ok := routeCandidateForEdge(existing, edge.ID, source.BranchEdgeID); !ok {
+			return ActivationReservation{}, false, fmt.Errorf("%w: exact route reservation %q conflicts with route context", ErrMutationInconsistent, existing.ID)
+		}
+		return existing, false, nil
 	}
 	wantSignature, ok := input.parallel.incomingSignature[edge.ID]
 	if !ok {

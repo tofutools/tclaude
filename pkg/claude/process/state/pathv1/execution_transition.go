@@ -208,11 +208,6 @@ func PlanExclusiveWait(ctx context.Context, input *VerifiedExclusiveInput, sourc
 	if err != nil {
 		return nil, err
 	}
-	for _, command := range aggregate.Commands {
-		if command.State.Active() {
-			return nil, fmt.Errorf("%w: active command %q must recover before planning", ErrMutationInconsistent, command.ID)
-		}
-	}
 	source, ok := aggregate.Routing.Paths[sourcePathID]
 	if !ok || source.Kind != PathActivationOutput || source.State != PathLive {
 		return nil, fmt.Errorf("%w: source path is not a live activation output", ErrMutationInconsistent)
@@ -220,6 +215,12 @@ func PlanExclusiveWait(ctx context.Context, input *VerifiedExclusiveInput, sourc
 	activation, ok := aggregate.Routing.Activations[source.SourceActivation.ID]
 	if !ok || activation.Ref != source.SourceActivation {
 		return nil, fmt.Errorf("%w: source activation is missing or mismatched", ErrMutationInconsistent)
+	}
+	for _, command := range aggregate.Commands {
+		otherWait := parallelActiveWaitCommand(input, aggregate, command) && command.Identity.SourceActivationID != source.SourceActivation.ID
+		if command.State.Active() && !otherWait {
+			return nil, fmt.Errorf("%w: active command %q must recover before planning", ErrMutationInconsistent, command.ID)
+		}
 	}
 	reservation, ok := aggregate.Routing.Reservations[activation.ReservationID]
 	if !ok || reservation.State != ReservationActivated {
@@ -563,11 +564,6 @@ func PlanExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput, so
 		return nil, err
 	}
 	view := aggregate.View()
-	for _, command := range view.Commands {
-		if command.State.Active() {
-			return nil, fmt.Errorf("%w: active command %q must recover before planning", ErrMutationInconsistent, command.ID)
-		}
-	}
 	source, ok := view.Routing.Paths[sourcePathID]
 	if !ok || source.Kind != PathActivationOutput || source.State != PathLive {
 		return nil, fmt.Errorf("%w: source path is not a live activation output", ErrMutationInconsistent)
@@ -575,6 +571,12 @@ func PlanExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput, so
 	activation, ok := view.Routing.Activations[source.SourceActivation.ID]
 	if !ok || activation.Ref != source.SourceActivation {
 		return nil, fmt.Errorf("%w: source activation is missing or mismatched", ErrMutationInconsistent)
+	}
+	for _, command := range view.Commands {
+		otherWait := parallelActiveWaitCommand(input, aggregate, command) && command.Identity.SourceActivationID != source.SourceActivation.ID
+		if command.State.Active() && !otherWait {
+			return nil, fmt.Errorf("%w: active command %q must recover before planning", ErrMutationInconsistent, command.ID)
+		}
 	}
 	reservation, ok := view.Routing.Reservations[activation.ReservationID]
 	if !ok || reservation.State != ReservationActivated {
@@ -614,6 +616,18 @@ func PlanExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput, so
 		return nil, err
 	}
 	return &ExclusiveAttemptPlan{command: command, nodeID: reservation.NodeID, performer: cloneExclusivePerformer(&performer), params: cloneExclusiveParams(params)}, nil
+}
+
+func parallelActiveWaitCommand(input *VerifiedExclusiveInput, aggregate AggregateCheckpoint, command CommandRecord) bool {
+	if input == nil || input.parallel == nil || command.Identity.Kind != CommandPerformAttempt {
+		return false
+	}
+	activation, ok := aggregate.Routing.Activations[command.Identity.SourceActivationID]
+	if !ok {
+		return false
+	}
+	reservation, ok := aggregate.Routing.Reservations[activation.ReservationID]
+	return ok && input.template.Nodes[reservation.NodeID].Type == model.NodeTypeWait
 }
 
 // ClaimExclusiveAttempt creates the exact durable self-only claim transition.
@@ -672,6 +686,11 @@ func RecoverExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput)
 	var command CommandRecord
 	for _, candidate := range aggregate.Commands {
 		if !candidate.State.Active() || candidate.Identity.Kind != CommandPerformAttempt {
+			continue
+		}
+		activation, activationOK := aggregate.Routing.Activations[candidate.Identity.SourceActivationID]
+		reservation, reservationOK := aggregate.Routing.Reservations[activation.ReservationID]
+		if activationOK && reservationOK && input.template.Nodes[reservation.NodeID].Type == model.NodeTypeWait {
 			continue
 		}
 		if command.ID != "" {
@@ -749,22 +768,17 @@ func ObserveExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput,
 	activation := view.Routing.Activations[plan.command.Identity.SourceActivationID]
 	source := view.Routing.Paths[activation.OutputPathID]
 	node := input.template.Nodes[plan.nodeID]
-	observation.Outcome = normalizeExclusiveTaskAction(node, observation.Outcome)
-	observation.Outcome, err = canonicalExclusiveOutcome(node, observation.Outcome)
+	normalizedOutcome, _, terminalParallelFailure, err := normalizeExclusiveObservationResult(node, observation.Outcome, input.parallel != nil)
 	if err != nil {
 		return nil, err
 	}
+	observation.Outcome = normalizedOutcome
 	outcome := observation.Outcome
 	observation.SourcePathID = source.ID
 	observation.Attempt = plan.command.Identity.Attempt
 	disposition, err := classifyExclusiveObservation(view, input.template, observation)
 	if err != nil {
 		return nil, err
-	}
-	terminalParallelFailure := input.parallel != nil && node.Type == model.NodeTypeTask && isFailOutcome(observation.Outcome) && model.FailTarget(node.Next) == ""
-	if terminalParallelFailure {
-		outcome = "failed"
-		observation.Outcome = outcome
 	}
 	if disposition == ExclusiveRouteReady && !terminalParallelFailure {
 		outgoing, err := exactOutgoingEdges(view.TemplateRef, plan.nodeID, node.Next)
@@ -871,7 +885,7 @@ func ExactExclusiveAttemptObserved(ctx context.Context, input *VerifiedExclusive
 	if !ok || (node.Type != model.NodeTypeTask && node.Type != model.NodeTypeDecision) {
 		return CommandRecord{}, false, fmt.Errorf("%w: node %q has no direct performer path", ErrExclusiveUnsupported, nodeID)
 	}
-	outcome, err := canonicalExclusiveOutcome(node, normalizeExclusiveTaskAction(node, observation.Outcome))
+	outcome, reasonCode, _, err := normalizeExclusiveObservationResult(node, observation.Outcome, input.parallel != nil)
 	if err != nil {
 		return CommandRecord{}, false, err
 	}
@@ -880,7 +894,7 @@ func ExactExclusiveAttemptObserved(ctx context.Context, input *VerifiedExclusive
 		return CommandRecord{}, false, err
 	}
 	wanted := settleAttemptObservationPayload{
-		TemplateRef: aggregate.TemplateRef, ResultCode: outcome, Actor: string(actor),
+		TemplateRef: aggregate.TemplateRef, ResultCode: outcome, ReasonCode: reasonCode, Actor: string(actor),
 		EvidenceRef: observation.EvidenceRef, EvidenceHash: observation.EvidenceHash,
 		ResolutionDigest: observation.ResolutionDigest, ExternalRef: observation.ExternalRef,
 		Feedback: observation.Feedback,
@@ -937,6 +951,18 @@ func normalizeExclusiveTaskAction(node model.Node, outcome string) string {
 	default:
 		return outcome
 	}
+}
+
+func normalizeExclusiveObservationResult(node model.Node, outcome string, parallel bool) (result, reason string, terminalParallelFailure bool, err error) {
+	result, err = canonicalExclusiveOutcome(node, normalizeExclusiveTaskAction(node, outcome))
+	if err != nil {
+		return "", "", false, err
+	}
+	terminalParallelFailure = parallel && node.Type == model.NodeTypeTask && isFailOutcome(result) && model.FailTarget(node.Next) == ""
+	if terminalParallelFailure {
+		return "failed", "performer_failed", true, nil
+	}
+	return result, "", false, nil
 }
 
 // PendingExclusiveObservation returns the sole routable observed settlement

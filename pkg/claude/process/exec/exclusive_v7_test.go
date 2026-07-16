@@ -194,11 +194,74 @@ func TestExclusiveV7ParallelFailurePropagatesThroughUnmaterializedBranchNode(t *
 	assert.Equal(t, 2, adapter.count(), "poisoned intermediate task must never be performed")
 	aggregate, err := pathv1.CurrentAggregateCheckpoint(checkpoint)
 	require.NoError(t, err)
+	foundIntermediate := false
 	for _, reservation := range aggregate.Routing.Reservations {
 		if reservation.NodeID == "left-next" {
+			foundIntermediate = true
 			assert.Equal(t, pathv1.ReservationClosedNoActivation, reservation.State)
 		}
 	}
+	assert.True(t, foundIntermediate, "poison propagation must materialize the intermediate reservation")
+}
+
+func TestExclusiveV7RecoveredParallelWaitDoesNotStarveRunnableSibling(t *testing.T) {
+	fs, runID := parallelAllV7WaitRun(t)
+	appendTransition := func(plan func(store.PathV1ExecutionView) (*pathv1.ExecutionTransition, error)) {
+		t.Helper()
+		var transition *pathv1.ExecutionTransition
+		require.NoError(t, fs.WithPathV1ExecutionView(t.Context(), runID, func(view store.PathV1ExecutionView) error {
+			var err error
+			transition, err = plan(view)
+			return err
+		}))
+		_, err := fs.AppendPathV1(t.Context(), runID, transition)
+		require.NoError(t, err)
+	}
+	appendTransition(func(view store.PathV1ExecutionView) (*pathv1.ExecutionTransition, error) {
+		aggregate, err := pathv1.CurrentAggregateCheckpoint(view.Checkpoint)
+		if err != nil {
+			return nil, err
+		}
+		for _, path := range aggregate.Routing.Paths {
+			if path.Kind == pathv1.PathActivationOutput && path.State == pathv1.PathLive {
+				return pathv1.AdvanceParallelSplit(t.Context(), view.Input, path.ID)
+			}
+		}
+		return nil, errors.New("parallel root output not found")
+	})
+	for range 2 {
+		appendTransition(func(view store.PathV1ExecutionView) (*pathv1.ExecutionTransition, error) {
+			return pathv1.AdvanceParallelExclusiveArrival(t.Context(), view.Input)
+		})
+	}
+	appendTransition(func(view store.PathV1ExecutionView) (*pathv1.ExecutionTransition, error) {
+		aggregate, err := pathv1.CurrentAggregateCheckpoint(view.Checkpoint)
+		if err != nil {
+			return nil, err
+		}
+		for _, path := range aggregate.Routing.Paths {
+			if path.Kind != pathv1.PathActivationOutput || path.State != pathv1.PathLive {
+				continue
+			}
+			activation := aggregate.Routing.Activations[path.SourceActivation.ID]
+			if aggregate.Routing.Reservations[activation.ReservationID].NodeID != "wait" {
+				continue
+			}
+			wait, planErr := pathv1.PlanExclusiveWait(t.Context(), view.Input, path.ID, time.Now())
+			if planErr != nil {
+				return nil, planErr
+			}
+			return pathv1.ClaimExclusiveWait(t.Context(), view.Input, wait)
+		}
+		return nil, errors.New("wait output not found")
+	})
+
+	adapter := &exclusiveV7Adapter{}
+	executor := NewExclusiveV7(fs, map[model.PerformerKind]Adapter{model.PerformerAgent: adapter})
+	checkpoint, err := executor.Drive(t.Context(), runID)
+	require.NoError(t, err)
+	assert.Equal(t, 1, adapter.count(), "runnable sibling must execute before the recovered wait fallback")
+	assert.Equal(t, "running", pathv1.CurrentRunStatus(checkpoint))
 }
 
 func TestExclusiveV7AdapterRunsAfterCoherentLocksRelease(t *testing.T) {
@@ -607,6 +670,38 @@ func parallelAllV7RunWithIntermediate(t *testing.T) (*store.FS, string) {
 	result, err := fs.InitializePathV1(t.Context(), runID, proof)
 	require.NoError(t, err)
 	require.Equal(t, pathv1.InitializationApplied, result.Disposition)
+	return fs, runID
+}
+
+func parallelAllV7WaitRun(t *testing.T) (*store.FS, string) {
+	t.Helper()
+	fs, err := store.NewFS(t.TempDir())
+	require.NoError(t, err)
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "parallel-all-v7-wait", Start: "fork",
+		Nodes: map[string]model.Node{
+			"fork":  {Type: model.NodeTypeParallel, Next: model.Next{"wait": "wait", "work": "work"}},
+			"wait":  {Type: model.NodeTypeWait, Wait: &model.WaitConfig{Signal: "release"}, Next: model.Next{"pass": "merge"}},
+			"work":  {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "work"}, Next: model.Next{"pass": "merge"}},
+			"merge": {Type: model.NodeTypeEnd, Join: model.JoinAll, Result: "completed"},
+		},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	require.NoError(t, err)
+	runID := "run-parallel-all-v7-wait"
+	st := state.New(runID, record.Ref, record.Ref, []state.NodeInit{
+		{ID: "fork", Type: model.NodeTypeParallel, Status: state.NodeStatusReady},
+		{ID: "wait", Type: model.NodeTypeWait, Status: state.NodeStatusPending},
+		{ID: "work", Type: model.NodeTypeTask, Status: state.NodeStatusPending},
+		{ID: "merge", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+	})
+	st.Status = state.RunStatusRunning
+	_, err = fs.CreateRun(t.Context(), store.RunRecord{ID: runID, TemplateRef: record.Ref}, st)
+	require.NoError(t, err)
+	proof, err := fs.UpgradeNeeded(t.Context(), runID)
+	require.NoError(t, err)
+	_, err = fs.InitializePathV1(t.Context(), runID, proof)
+	require.NoError(t, err)
 	return fs, runID
 }
 

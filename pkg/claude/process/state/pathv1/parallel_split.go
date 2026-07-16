@@ -91,6 +91,13 @@ func VerifyParallelInput(ctx context.Context, checkpointBytes, templateSource []
 	if len(topology.reducers) == 0 {
 		return nil, fmt.Errorf("%w: exact template has no parallel scope", ErrParallelUnsupported)
 	}
+	current, err := CurrentAggregateCheckpoint(base.checkpoint)
+	if err != nil {
+		return nil, fmt.Errorf("%w: current aggregate: %v", ErrParallelInputInvalid, err)
+	}
+	if err := validateParallelMaterializedTopology(ctx, current.View(), base.template, topology); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrParallelInputInvalid, err)
+	}
 	base.parallel = &topology
 	return &VerifiedParallelInput{base: base, topology: topology}, nil
 }
@@ -495,7 +502,7 @@ func buildParallelSplitDraft(ctx context.Context, input *VerifiedParallelInput, 
 	}
 	view := aggregate.View()
 	for _, command := range view.Commands {
-		if command.State.Active() {
+		if command.State.Active() && !parallelActiveWaitCommand(input.base, aggregate, command) {
 			return parallelSplitDraft{}, fmt.Errorf("%w: active command %q must recover before split", ErrMutationInconsistent, command.ID)
 		}
 	}

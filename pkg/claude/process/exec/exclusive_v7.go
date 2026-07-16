@@ -106,15 +106,18 @@ func (e *ExclusiveV7Executor) nextAction(ctx context.Context, runID string) (exc
 				return err
 			}
 		}
+		var recoveredWait *pathv1.ExclusiveWaitPlan
+		var recoveredWaitTransition *pathv1.ExecutionTransition
 		if wait, found, waitErr := pathv1.RecoverExclusiveWait(ctx, view.Input); waitErr != nil {
 			return waitErr
 		} else if found {
-			action.wait = wait
-			action.checkpoint = view.Checkpoint
+			recoveredWait = wait
 			if wait.WaitKind() != "signal" && !e.now().Before(wait.DueAt()) {
-				action.transition, err = pathv1.ObserveExclusiveWait(ctx, view.Input, wait, "engine:path-v1-timer", "")
+				recoveredWaitTransition, err = pathv1.ObserveExclusiveWait(ctx, view.Input, wait, "engine:path-v1-timer", "")
+				if err != nil {
+					return err
+				}
 			}
-			return err
 		}
 		if recovered, found, recoverErr := pathv1.RecoverExclusiveAttempt(ctx, view.Input); recoverErr != nil {
 			return recoverErr
@@ -177,55 +180,78 @@ func (e *ExclusiveV7Executor) nextAction(ctx context.Context, runID string) (exc
 			return fmt.Errorf("path-v1 executor found %d live activation outputs", len(live))
 		}
 		slices.SortFunc(live, func(a, b pathv1.PathRecord) int { return strings.Compare(a.ID, b.ID) })
-		if start, startErr := pathv1.AdvanceExclusiveStart(ctx, view.Input, live[0].ID); startErr == nil {
-			action.transition = start
-			return nil
-		} else if !errors.Is(startErr, pathv1.ErrExclusiveUnsupported) {
-			return startErr
-		}
-		if view.Input.ParallelEnabled() {
-			if split, splitErr := pathv1.AdvanceParallelSplit(ctx, view.Input, live[0].ID); splitErr == nil {
-				action.transition = split
+		for _, candidate := range live {
+			if start, startErr := pathv1.AdvanceExclusiveStart(ctx, view.Input, candidate.ID); startErr == nil {
+				action.transition = start
 				return nil
-			} else if !errors.Is(splitErr, pathv1.ErrParallelUnsupported) {
-				return splitErr
+			} else if !errors.Is(startErr, pathv1.ErrExclusiveUnsupported) {
+				return startErr
 			}
-			if end, endErr := pathv1.AdvanceParallelEnd(ctx, view.Input, live[0].ID); endErr == nil {
-				action.transition = end
-				return nil
-			} else if !errors.Is(endErr, pathv1.ErrExclusiveUnsupported) {
-				return endErr
+			if view.Input.ParallelEnabled() {
+				if split, splitErr := pathv1.AdvanceParallelSplit(ctx, view.Input, candidate.ID); splitErr == nil {
+					action.transition = split
+					return nil
+				} else if !errors.Is(splitErr, pathv1.ErrParallelUnsupported) {
+					return splitErr
+				}
+				if end, endErr := pathv1.AdvanceParallelEnd(ctx, view.Input, candidate.ID); endErr == nil {
+					action.transition = end
+					return nil
+				} else if !errors.Is(endErr, pathv1.ErrExclusiveUnsupported) {
+					return endErr
+				}
 			}
 		}
-		if wait, waitErr := pathv1.PlanExclusiveWait(ctx, view.Input, live[0].ID, e.now()); waitErr == nil {
-			action.wait = wait
-			action.transition, err = pathv1.ClaimExclusiveWait(ctx, view.Input, wait)
-			return err
-		} else if !errors.Is(waitErr, pathv1.ErrExclusiveUnsupported) {
-			return waitErr
-		}
-		attempt := uint64(1)
-		for _, command := range aggregate.Commands {
-			if command.Identity.Kind != pathv1.CommandPerformAttempt || command.Identity.SourceActivationID != live[0].SourceActivation.ID {
+		var fallbackWait *pathv1.ExclusiveWaitPlan
+		for _, candidate := range live {
+			if recoveredWait != nil && recoveredWait.Command().Identity.SourceActivationID == candidate.SourceActivation.ID {
 				continue
 			}
-			if command.Identity.Attempt == math.MaxUint64 {
-				return fmt.Errorf("path-v1 attempt counter exhausted")
+			if wait, waitErr := pathv1.PlanExclusiveWait(ctx, view.Input, candidate.ID, e.now()); waitErr == nil {
+				if fallbackWait == nil {
+					fallbackWait = wait
+				}
+			} else if !errors.Is(waitErr, pathv1.ErrExclusiveUnsupported) {
+				return waitErr
 			}
-			if command.Identity.Attempt >= attempt {
-				attempt = command.Identity.Attempt + 1
+			attempt := uint64(1)
+			for _, command := range aggregate.Commands {
+				if command.Identity.Kind != pathv1.CommandPerformAttempt || command.Identity.SourceActivationID != candidate.SourceActivation.ID {
+					continue
+				}
+				if command.Identity.Attempt == math.MaxUint64 {
+					return fmt.Errorf("path-v1 attempt counter exhausted")
+				}
+				if command.Identity.Attempt >= attempt {
+					attempt = command.Identity.Attempt + 1
+				}
 			}
-		}
-		planned, err := pathv1.PlanExclusiveAttempt(ctx, view.Input, live[0].ID, attempt, view.Run.Params)
-		if err != nil {
+			planned, planErr := pathv1.PlanExclusiveAttempt(ctx, view.Input, candidate.ID, attempt, view.Run.Params)
+			if errors.Is(planErr, pathv1.ErrExclusiveUnsupported) {
+				continue
+			}
+			if planErr != nil {
+				return planErr
+			}
+			if performer := planned.Performer(); performer != nil && performer.Kind == model.PerformerProgram {
+				return fmt.Errorf("path-v1 program performers require immutable audited authority and are not supported by the schema-v7 release")
+			}
+			action.plan = planned
+			action.transition, err = pathv1.ClaimExclusiveAttempt(ctx, view.Input, planned)
 			return err
 		}
-		if performer := planned.Performer(); performer != nil && performer.Kind == model.PerformerProgram {
-			return fmt.Errorf("path-v1 program performers require immutable audited authority and are not supported by the schema-v7 release")
+		if recoveredWait != nil {
+			action.wait = recoveredWait
+			action.transition = recoveredWaitTransition
+			action.checkpoint = view.Checkpoint
+			return nil
 		}
-		action.plan = planned
-		action.transition, err = pathv1.ClaimExclusiveAttempt(ctx, view.Input, planned)
-		return err
+		if fallbackWait != nil {
+			action.wait = fallbackWait
+			action.transition, err = pathv1.ClaimExclusiveWait(ctx, view.Input, fallbackWait)
+			return err
+		}
+		return fmt.Errorf("path-v1 executor found no runnable live activation output")
 	})
 	return action, err
 }

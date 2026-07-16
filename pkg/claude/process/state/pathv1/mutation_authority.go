@@ -344,6 +344,13 @@ func validatePropagationMutationSet(pre RoutingState, plan PropagateClosurePlan,
 		if !ok || len(mutation.After) == 0 {
 			return fmt.Errorf("%w: propagation intent %q lacks its exact transition", ErrMutationInvalid, intent.ID)
 		}
+		var persisted PropagationIntent
+		if err := decodeExactPayload(mutation.After, &persisted); err != nil {
+			return err
+		}
+		if !canonicalEqual(persisted, intent) {
+			return fmt.Errorf("%w: propagation intent %q differs from its persisted mutation", ErrMutationInvalid, intent.ID)
+		}
 		start := uint32(0)
 		if len(mutation.Before) > 0 {
 			var before PropagationIntent
@@ -355,7 +362,7 @@ func validatePropagationMutationSet(pre RoutingState, plan PropagateClosurePlan,
 				return fmt.Errorf("%w: propagation intent %q cursor/frontier regresses", ErrMutationInvalid, intent.ID)
 			}
 		}
-		for _, key := range intent.Frontier[start:intent.Cursor] {
+		for _, key := range persisted.Frontier[start:persisted.Cursor] {
 			processed[key] = struct{}{}
 		}
 		allowed[mutationTarget{kind: MutationPropagation, key: intent.ID}] = struct{}{}

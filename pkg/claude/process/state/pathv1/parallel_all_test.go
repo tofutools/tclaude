@@ -217,6 +217,105 @@ func TestParallelAllNestedNonSuccessSeedsAndReplaysDPE(t *testing.T) {
 	}
 }
 
+func TestParallelTerminalFailureObservationRetryIsExact(t *testing.T) {
+	source := parallelSplitSource(2)
+	input, err := VerifyExecutionInput(t.Context(), initializedExclusiveCheckpoint(t, source), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := livePathForNodeType(t, input, "parallel")
+	transition, err := AdvanceParallelSplit(t.Context(), input, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input = verifyParallelTransition(t, source, transition)
+	input = activateAllReadyExclusive(t, source, input)
+	paths := liveParallelTaskPaths(t, input)
+	plan, err := PlanExclusiveAttempt(t.Context(), input, paths[0], 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transition, err = ClaimExclusiveAttempt(t.Context(), input, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input = verifyParallelTransition(t, source, transition)
+	plan, found, err := RecoverExclusiveAttempt(t.Context(), input)
+	if err != nil || !found {
+		t.Fatalf("recover task = %v/%v", found, err)
+	}
+	observation := ExclusiveObservation{Outcome: "fail", Actor: "human:operator", EvidenceRef: "artifact:terminal-failure"}
+	transition, err = ObserveExclusiveAttempt(t.Context(), input, plan, observation, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input = verifyParallelTransition(t, source, transition)
+	aggregate, err := CurrentAggregateCheckpoint(input.checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activation := aggregate.Routing.Activations[plan.Command().Identity.SourceActivationID]
+	nodeID := aggregate.Routing.Reservations[activation.ReservationID].NodeID
+	recorded, exact, err := ExactExclusiveAttemptObserved(t.Context(), input, nodeID, plan.Command().ID, observation)
+	if err != nil || !exact || recorded.ID != plan.Command().ID {
+		t.Fatalf("terminal retry = command %q exact %v err %v", recorded.ID, exact, err)
+	}
+}
+
+func TestExactRouteReservationIgnoresWrongContextWithoutRecreatingClosedTarget(t *testing.T) {
+	source := parallelSplitSource(2)
+	input, err := VerifyExecutionInput(t.Context(), initializedExclusiveCheckpoint(t, source), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := livePathForNodeType(t, input, "parallel")
+	transition, err := AdvanceParallelSplit(t.Context(), input, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input = verifyParallelTransition(t, source, transition)
+	aggregate, err := CurrentAggregateCheckpoint(input.checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	routing := Clone(aggregate.Routing)
+	var target ActivationReservation
+	var edge EdgeKey
+	for _, reservation := range routing.Reservations {
+		if reservation.IsReducing || reservation.State != ReservationOpen || len(reservation.Candidates) == 0 {
+			continue
+		}
+		candidate := reservation.Candidates[0]
+		candidateEdge, ok := input.parallel.edges[EdgeID(candidate.MemberID)]
+		if ok {
+			target, edge = reservation, candidateEdge
+			break
+		}
+	}
+	if target.ID == "" {
+		t.Fatal("split branch reservation not found")
+	}
+	closed := target
+	closed.State = ReservationClosedNoActivation
+	routing.Reservations[closed.ID] = closed
+	wrong := target
+	wrong.ID = ReservationID("wrong-context")
+	wrong.ScopeID = ScopeID("other-scope")
+	routing.Reservations[wrong.ID] = wrong
+	view := aggregate.View()
+	authority := cloneExclusiveAuthority(view.Authority)
+	got, created, err := exactRouteReservation(input, view, authority, routing, PathRecord{ScopeID: target.ScopeID, BranchEdgeID: target.BranchEdgeID}, edge, 10)
+	if err != nil || created || got.ID != closed.ID || got.State != ReservationClosedNoActivation {
+		t.Fatalf("closed exact reservation lookup = %#v created=%v err=%v", got, created, err)
+	}
+}
+
+func TestAdvanceParallelEndRequiresSealedParallelInput(t *testing.T) {
+	if _, err := AdvanceParallelEnd(t.Context(), nil, "path"); !errors.Is(err, ErrParallelInputInvalid) {
+		t.Fatalf("nil parallel end input error = %v", err)
+	}
+}
+
 func activateAllReadyExclusive(t *testing.T, source []byte, input *VerifiedExclusiveInput) *VerifiedExclusiveInput {
 	t.Helper()
 	for {

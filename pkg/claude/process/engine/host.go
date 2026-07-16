@@ -492,6 +492,51 @@ func exclusiveV7Eligible(tmpl *model.Template) bool {
 			return false
 		}
 	}
+	if hasParallel && !parallelTerminalDPEEligible(tmpl) {
+		return false
+	}
+	return true
+}
+
+// parallelTerminalDPEEligible rejects only the nested-fork topology that the
+// released reducer cannot poison without inventing an activation/output pair:
+// a fallible pass-only task between an outer fork and an unactivated nested
+// fork. Directly nested forks and nested forks reached through explicit
+// failure routing remain admitted.
+func parallelTerminalDPEEligible(tmpl *model.Template) bool {
+	for outerID, outer := range tmpl.Nodes {
+		if outer.Type != model.NodeTypeParallel {
+			continue
+		}
+		type visit struct {
+			nodeID   string
+			fallible bool
+		}
+		stack := make([]visit, 0, len(outer.Next))
+		for _, nodeID := range outer.Next {
+			stack = append(stack, visit{nodeID: nodeID})
+		}
+		seen := make(map[visit]struct{})
+		for len(stack) > 0 {
+			current := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			if _, ok := seen[current]; ok {
+				continue
+			}
+			seen[current] = struct{}{}
+			node, ok := tmpl.Nodes[current.nodeID]
+			if !ok {
+				continue
+			}
+			if current.nodeID != outerID && node.Type == model.NodeTypeParallel && current.fallible {
+				return false
+			}
+			fallible := current.fallible || (node.Type == model.NodeTypeTask && model.FailTarget(node.Next) == "")
+			for _, nextID := range node.Next {
+				stack = append(stack, visit{nodeID: nextID, fallible: fallible})
+			}
+		}
+	}
 	return true
 }
 

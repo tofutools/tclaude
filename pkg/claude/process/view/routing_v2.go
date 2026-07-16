@@ -373,6 +373,11 @@ func exactTopologyV2StringBytes(value string) ExactTopologyV2EncodedBytes {
 	return ExactTopologyV2EncodedBytes(len(value)) + 2
 }
 
+type routingArrivalKey struct {
+	reservationID pathv1.ReservationID
+	candidateID   pathv1.CandidateID
+}
+
 func projectRoutingOverlay(aggregate pathv1.AggregateView, semanticHash string, topologyEdges map[string]TopologyEdgeV2) (*RoutingOverlayV2, bool) {
 	routing := aggregate.Routing
 	type overlayKey struct {
@@ -380,6 +385,7 @@ func projectRoutingOverlay(aggregate pathv1.AggregateView, semanticHash string, 
 		state  pathv1.PathState
 	}
 	counts := make(map[overlayKey]int)
+	arrivals := make(map[routingArrivalKey]struct{})
 	for _, path := range routing.Paths {
 		if path.Edge == nil {
 			continue
@@ -389,6 +395,9 @@ func projectRoutingOverlay(aggregate pathv1.AggregateView, semanticHash string, 
 			return nil, false
 		}
 		counts[overlayKey{edgeID: edge.ID, state: path.State}]++
+		if path.Kind == pathv1.PathEdge && (path.State == pathv1.PathArrived || path.State == pathv1.PathConsumed) {
+			arrivals[routingArrivalKey{reservationID: path.TargetReservationID, candidateID: path.CandidateID}] = struct{}{}
+		}
 	}
 	overlay := &RoutingOverlayV2{Protocol: pathv1.Protocol, Encoding: pathv1.Encoding, Edges: make([]RoutingEdgeOverlayV2, 0, len(counts))}
 	for key, count := range counts {
@@ -404,20 +413,39 @@ func projectRoutingOverlay(aggregate pathv1.AggregateView, semanticHash string, 
 		overlay.Scopes = append(overlay.Scopes, RoutingScopeOverlayV2{ID: scope.ID, ParentScopeID: scope.ParentScopeID, JoinReservationID: scope.JoinReservationID, State: scope.State, CloseReason: scope.CloseReason})
 	}
 	slices.SortFunc(overlay.Scopes, func(a, b RoutingScopeOverlayV2) int { return cmp.Compare(a.ID, b.ID) })
+	joins, ok := projectRoutingJoins(routing, arrivals)
+	if !ok {
+		return nil, false
+	}
+	overlay.Joins = joins
+	for _, closure := range routing.CandidateClosures {
+		overlay.Closures = append(overlay.Closures, RoutingClosureOverlayV2{ReservationID: closure.Key.ReservationID, CandidateID: closure.Key.CandidateID, TerminalKind: closure.TerminalKind})
+	}
+	slices.SortFunc(overlay.Closures, func(a, b RoutingClosureOverlayV2) int {
+		if n := cmp.Compare(a.ReservationID, b.ReservationID); n != 0 {
+			return n
+		}
+		return cmp.Compare(a.CandidateID, b.CandidateID)
+	})
+	overlay.Aggregate = RoutingAggregateOverlayV2{Paths: len(routing.Paths), Scopes: len(routing.Scopes), Reservations: len(routing.Reservations), Activations: len(routing.Activations), Closures: len(routing.CandidateClosures), Propagation: len(routing.Propagation)}
+	if completion, err := pathv1.AssessAggregateCompletion(aggregate); err == nil {
+		overlay.Aggregate.Settled = true
+		overlay.Aggregate.Result = completion.Result
+	} else if !errors.Is(err, pathv1.ErrAggregateUnsettled) {
+		return nil, false
+	}
+	return overlay, true
+}
+
+func projectRoutingJoins(routing *pathv1.RoutingState, arrivals map[routingArrivalKey]struct{}) ([]RoutingJoinOverlayV2, bool) {
+	joins := make([]RoutingJoinOverlayV2, 0)
 	for _, reservation := range routing.Reservations {
 		if reservation.JoinPolicy != pathv1.JoinAll && reservation.JoinPolicy != pathv1.JoinAny {
 			continue
 		}
 		join := RoutingJoinOverlayV2{ReservationID: reservation.ID, NodeID: reservation.NodeID, ScopeID: reservation.ScopeID, Policy: reservation.JoinPolicy, State: reservation.State}
 		for _, candidate := range reservation.Candidates {
-			arrived := false
-			for _, path := range routing.Paths {
-				if path.TargetReservationID == reservation.ID && path.CandidateID == candidate.ID && path.Kind == pathv1.PathEdge && (path.State == pathv1.PathArrived || path.State == pathv1.PathConsumed) {
-					arrived = true
-					break
-				}
-			}
-			if arrived {
+			if _, arrived := arrivals[routingArrivalKey{reservationID: reservation.ID, candidateID: candidate.ID}]; arrived {
 				join.Arrived++
 				continue
 			}
@@ -443,24 +471,8 @@ func projectRoutingOverlay(aggregate pathv1.AggregateView, semanticHash string, 
 				return nil, false
 			}
 		}
-		overlay.Joins = append(overlay.Joins, join)
+		joins = append(joins, join)
 	}
-	slices.SortFunc(overlay.Joins, func(a, b RoutingJoinOverlayV2) int { return cmp.Compare(a.ReservationID, b.ReservationID) })
-	for _, closure := range routing.CandidateClosures {
-		overlay.Closures = append(overlay.Closures, RoutingClosureOverlayV2{ReservationID: closure.Key.ReservationID, CandidateID: closure.Key.CandidateID, TerminalKind: closure.TerminalKind})
-	}
-	slices.SortFunc(overlay.Closures, func(a, b RoutingClosureOverlayV2) int {
-		if n := cmp.Compare(a.ReservationID, b.ReservationID); n != 0 {
-			return n
-		}
-		return cmp.Compare(a.CandidateID, b.CandidateID)
-	})
-	overlay.Aggregate = RoutingAggregateOverlayV2{Paths: len(routing.Paths), Scopes: len(routing.Scopes), Reservations: len(routing.Reservations), Activations: len(routing.Activations), Closures: len(routing.CandidateClosures), Propagation: len(routing.Propagation)}
-	if completion, err := pathv1.AssessAggregateCompletion(aggregate); err == nil {
-		overlay.Aggregate.Settled = true
-		overlay.Aggregate.Result = completion.Result
-	} else if !errors.Is(err, pathv1.ErrAggregateUnsettled) {
-		return nil, false
-	}
-	return overlay, true
+	slices.SortFunc(joins, func(a, b RoutingJoinOverlayV2) int { return cmp.Compare(a.ReservationID, b.ReservationID) })
+	return joins, true
 }

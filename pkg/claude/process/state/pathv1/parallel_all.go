@@ -215,6 +215,9 @@ func AdvanceParallelEnd(ctx context.Context, input *VerifiedExclusiveInput, sour
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if input == nil || input.checkpoint == nil || input.template == nil || input.parallel == nil {
+		return nil, fmt.Errorf("%w: verified parallel input is required", ErrParallelInputInvalid)
+	}
 	aggregate, err := CurrentAggregateCheckpoint(input.checkpoint)
 	if err != nil {
 		return nil, err

@@ -281,8 +281,8 @@ func (i *aggregateIndex) validatePropagation() {
 		if cmd, ok := i.view.Commands[intent.CommandID]; ok {
 			reservation := i.view.Routing.Reservations[intent.RootReservationID]
 			propagate := cmd.Identity.Kind == CommandPropagateCandidateClosure && cmd.Identity.CauseDigest == intent.RootCauseDigest
-			activate := cmd.Identity.Kind == CommandActivateGeneration && cmd.Identity.TargetReservationID == intent.RootReservationID
-			if (!propagate && !activate) || cmd.Identity.TargetGeneration != reservation.Generation {
+			activate := cmd.Identity.Kind == CommandActivateGeneration && cmd.Identity.TargetReservationID == intent.RootReservationID && cmd.Identity.TargetGeneration == reservation.Generation
+			if !propagate && !activate {
 				i.c.add("propagation_command_authority", path, "command does not own this exact root reservation generation")
 			}
 		}

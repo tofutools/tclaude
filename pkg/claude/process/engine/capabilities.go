@@ -82,5 +82,8 @@ func requireInstantiationCapabilities(tmpl *model.Template, capabilities EngineC
 	if !capabilities.Supports(required) {
 		return fmt.Errorf("template requires process engine capability %s", required)
 	}
+	if hasParallel && capabilities.Supports(CapabilityParallelAllV1) && !capabilities.Supports(CapabilityParallelAnyV1) && !exclusiveV7Eligible(tmpl) {
+		return fmt.Errorf("template is outside the executable schema-7 parallel-all subset")
+	}
 	return nil
 }
