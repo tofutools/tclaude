@@ -36,6 +36,21 @@ type NormalizedGraphCardinality struct {
 // exceed the normalized node or edge budget.
 var ErrNormalizedGraphBudget = errors.New("process template exceeds normalized graph budget")
 
+// HasNormalizedGraphBudgetError reports resource-limit diagnostics that must
+// reject persistence or graph-wide processing even where ordinary semantic
+// validation findings remain editable draft warnings.
+func (d Diagnostics) HasNormalizedGraphBudgetError() bool {
+	for _, diagnostic := range d {
+		switch diagnostic.Code {
+		case DiagnosticCodeNormalizedNodeLimit,
+			DiagnosticCodeNormalizedEdgeLimit,
+			DiagnosticCodeGraphAliasLimit:
+			return true
+		}
+	}
+	return false
+}
+
 // NormalizedGraphBudgetError prevents direct canonicalization/hash callers
 // from bypassing the validation boundary and performing graph-wide work on an
 // over-budget materialized template.

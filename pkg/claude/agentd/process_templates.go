@@ -82,6 +82,14 @@ type processEditModelError struct{ err error }
 func (e *processEditModelError) Error() string { return e.err.Error() }
 func (e *processEditModelError) Unwrap() error { return e.err }
 
+type processTemplateStoredValidationError struct {
+	diagnostics model.Diagnostics
+}
+
+func (e *processTemplateStoredValidationError) Error() string {
+	return "stored process template is incompatible with current validation limits"
+}
+
 func handleProcessTemplates(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requirePermission(w, r, PermProcessTemplatesRead); !ok {
 		return
@@ -231,6 +239,15 @@ func handleProcessTemplateGet(w http.ResponseWriter, r *http.Request, fs *store.
 		return
 	}
 	view, err := loadProcessTemplateEditView(r, fs, record.Ref, includeAuthorship)
+	var storedValidationErr *processTemplateStoredValidationError
+	if errors.As(err, &storedValidationErr) {
+		writeProcessJSON(w, http.StatusUnprocessableEntity, map[string]any{
+			"error":       storedValidationErr.Error(),
+			"code":        "process_template_invalid",
+			"diagnostics": diagnosticsForEditor(storedValidationErr.diagnostics, nil),
+		})
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "process_template", err.Error())
 		return
@@ -483,6 +500,9 @@ func loadProcessTemplateEditView(r *http.Request, fs *store.FS, ref string, incl
 	parsed, err := model.Parse(source)
 	if err != nil {
 		return nil, err
+	}
+	if parsed.Template == nil || parsed.Diagnostics.HasNormalizedGraphBudgetError() {
+		return nil, &processTemplateStoredValidationError{diagnostics: parsed.Diagnostics}
 	}
 	semantic := *parsed.Template
 	semantic.Layout = nil

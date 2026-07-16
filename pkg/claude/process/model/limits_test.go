@@ -144,6 +144,19 @@ func TestParseRejectsCompactAliasedNextMapsBeforeDecodeAndHash(t *testing.T) {
 		)
 	})
 
+	t.Run("aliased structural field keys cannot hide overflow", func(t *testing.T) {
+		source := string(aliasedNextTemplateYAML(64, 64, false))
+		source = strings.Replace(source,
+			"id: aliases\nstart:",
+			"id: aliases\ndescription: &nodesKey nodes\ndoc: &nextKey next\nstart:", 1)
+		source = strings.Replace(source, "nodes:\n", "*nodesKey:\n", 1)
+		source = strings.ReplaceAll(source, "    next: ", "    *nextKey: ")
+		parsed, err := Parse([]byte(source))
+		require.NoError(t, err)
+		assert.Nil(t, parsed.Template)
+		assert.Equal(t, []string{DiagnosticCodeNormalizedEdgeLimit}, diagnosticCodes(parsed.Diagnostics))
+	})
+
 	t.Run("invalid branch does not hide independent overflow", func(t *testing.T) {
 		parsed, err := Parse(aliasedNextTemplateYAML(64, 64, true))
 		require.NoError(t, err)
@@ -155,14 +168,64 @@ func TestParseRejectsCompactAliasedNextMapsBeforeDecodeAndHash(t *testing.T) {
 		source = strings.Replace(source, "    next: &shared\n", "    metadata:\n      defaults: &defaults\n        ignored: n000\n    next: &shared\n      <<: *defaults\n", 1)
 		parsed, err := Parse([]byte(source))
 		require.NoError(t, err)
-		codes := diagnosticCodes(parsed.Diagnostics)
-		require.Len(t, codes, 65)
-		for _, code := range codes[:len(codes)-1] {
-			assert.Equal(t, "merge_key_unsupported", code)
-		}
-		assert.Equal(t, DiagnosticCodeNormalizedEdgeLimit, codes[len(codes)-1])
+		// Cardinality has deliberate precedence over alias-expanding schema
+		// diagnostics. The schema walk must not emit one merge finding per
+		// reference before the saturating guard rejects the graph.
+		assert.Equal(t, []string{DiagnosticCodeNormalizedEdgeLimit}, diagnosticCodes(parsed.Diagnostics))
 		assert.Nil(t, parsed.Template)
 	})
+}
+
+func TestParseResolvesAliasedStructuralGraphKeysWithinFiniteBound(t *testing.T) {
+	tests := []struct {
+		name      string
+		source    string
+		wantNodes int
+		wantEdges int
+	}{
+		{
+			name: "root nodes key",
+			source: `apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: aliases
+description: &nodesKey nodes
+*nodesKey:
+  one: {type: end}
+`,
+			wantNodes: 1,
+		},
+		{
+			name: "node next key",
+			source: `apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: aliases
+start: one
+nodes:
+  one:
+    type: end
+    description: &nextKey next
+    *nextKey:
+      pass: one
+`,
+			wantNodes: 1,
+			wantEdges: 2,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var root yaml.Node
+			require.NoError(t, yaml.Unmarshal([]byte(test.source), &root))
+			var decoded Template
+			require.NoError(t, root.Decode(&decoded), "the existing decoder accepts scalar aliases as mapping keys")
+
+			parsed, err := Parse([]byte(test.source))
+			require.NoError(t, err)
+			require.NotNil(t, parsed.Template)
+			assert.Len(t, parsed.Template.Nodes, test.wantNodes)
+			assert.Len(t, parsed.Edges, test.wantEdges)
+			assert.NotContains(t, diagnosticCodes(parsed.Diagnostics), DiagnosticCodeGraphAliasLimit)
+		})
+	}
 }
 
 func TestRawGraphAliasInspectionDefersMalformedAndCyclicValuesToDecode(t *testing.T) {

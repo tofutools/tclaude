@@ -153,6 +153,33 @@ func TestProcessTemplateRESTListGetSaveAndConflict(t *testing.T) {
 	assert.NotEmpty(t, saved.SemanticHash)
 }
 
+func TestProcessTemplateGetRejectsLegacyOverBudgetSourceWithoutPanic(t *testing.T) {
+	f, root := processEngineFlow(t)
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	record, err := fs.PutTemplate(t.Context(), processRESTTemplate("legacy-large", "legacy source", 10))
+	require.NoError(t, err)
+
+	// Simulate a version written before normalized graph cardinality was an
+	// explicit store invariant. The immutable semantic record still selects the
+	// version, while the authoring source contains compact alias amplification.
+	source := processAliasedNextSource(64, 64)
+	sourcePath := filepath.Join(root, "templates", record.ID, "sha256-"+record.SemanticHash, "template.yaml")
+	require.NoError(t, os.WriteFile(sourcePath, source, 0o644))
+
+	rec := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates/legacy-large", nil)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	var response struct {
+		Code        string            `json:"code"`
+		Diagnostics []processEditDiag `json:"diagnostics"`
+	}
+	testharness.DecodeJSON(t, rec, &response)
+	assert.Equal(t, "process_template_invalid", response.Code)
+	require.Len(t, response.Diagnostics, 1)
+	assert.Equal(t, model.DiagnosticCodeNormalizedEdgeLimit, response.Diagnostics[0].Code)
+	assert.Equal(t, "template", response.Diagnostics[0].Scope)
+}
+
 func TestProcessTemplateSaveStoreFailureIsInternalError(t *testing.T) {
 	f, root := processEngineFlow(t)
 	fs, err := store.NewFS(root)
@@ -712,6 +739,23 @@ func processRESTTemplate(id, description string, x float64) *model.Template {
 			"begin": {X: x, Y: 30}, "done": {X: x + 200, Y: 30},
 		}},
 	}
+}
+
+func processAliasedNextSource(nodeCount, outcomes int) []byte {
+	var source strings.Builder
+	source.WriteString("apiVersion: tclaude.dev/v1alpha1\nkind: ProcessTemplate\nid: legacy-large\nstart: n000\nnodes:\n")
+	for nodeIndex := range nodeCount {
+		fmt.Fprintf(&source, "  n%03d:\n    type: end\n    next: ", nodeIndex)
+		if nodeIndex == 0 {
+			source.WriteString("&shared\n")
+			for outcome := range outcomes {
+				fmt.Fprintf(&source, "      outcome-%03d: n000\n", outcome)
+			}
+		} else {
+			source.WriteString("*shared\n")
+		}
+	}
+	return []byte(source.String())
 }
 
 func semanticProcessTemplate(tmpl *model.Template) *model.Template {
