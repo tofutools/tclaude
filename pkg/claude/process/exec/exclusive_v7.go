@@ -298,6 +298,9 @@ func (e *ExclusiveV7Executor) RecordObservation(ctx context.Context, runID, node
 	if e == nil || e.Store == nil {
 		return nil, fmt.Errorf("path-v1 exclusive executor store is required")
 	}
+	if strings.TrimSpace(commandID) == "" {
+		return nil, fmt.Errorf("path-v1 report command id is required")
+	}
 	checkpoint, _, err := e.recordObservation(ctx, runID, nodeID, commandID, observation)
 	return checkpoint, err
 }

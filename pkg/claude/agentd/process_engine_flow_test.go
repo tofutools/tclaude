@@ -1464,6 +1464,8 @@ func TestSchema7WorklistTaskAliasExactRetryAndDrift(t *testing.T) {
 	path := "/v1/process/worklist/" + pending.Items[0].ID + "/action"
 	first := humanReq(t, f, http.MethodPost, path, body)
 	require.Equal(t, http.StatusOK, first.Code, first.Body.String())
+	immediateReplay := humanReq(t, f, http.MethodPost, path, body)
+	require.Equal(t, http.StatusOK, immediateReplay.Code, immediateReplay.Body.String(), "observed worklist items must remain addressable before settlement")
 	results, err := agentd.RunProcessEngineTickForTest(t.Context(), host)
 	require.NoError(t, err)
 	require.Len(t, results, 1)

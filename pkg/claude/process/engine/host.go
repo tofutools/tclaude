@@ -441,7 +441,7 @@ func exclusiveV7Eligible(tmpl *model.Template) bool {
 	if tmpl == nil {
 		return false
 	}
-	for _, node := range tmpl.Nodes {
+	for nodeID, node := range tmpl.Nodes {
 		if node.IsCompound() {
 			return false
 		}
@@ -453,7 +453,13 @@ func exclusiveV7Eligible(tmpl *model.Template) bool {
 			if node.Type == model.NodeTypeTask && len(node.Performer.ChoiceOutcomes) != 0 {
 				return false
 			}
+			if node.Type == model.NodeTypeTask && model.FailTarget(node.Next) == "" {
+				return false
+			}
 		case model.NodeTypeEnd:
+			if nodeID == tmpl.Start {
+				return false
+			}
 			result := strings.ToLower(strings.TrimSpace(node.Result))
 			switch result {
 			case "", "pass", "passed", "success", "succeeded", "complete", "completed", "done", "ok",
@@ -461,12 +467,43 @@ func exclusiveV7Eligible(tmpl *model.Template) bool {
 			default:
 				return false
 			}
-		case model.NodeTypeStart, model.NodeTypeWait:
+		case model.NodeTypeWait:
+			if !exclusiveV7WaitEligible(node.Wait) {
+				return false
+			}
+		case model.NodeTypeStart:
 		default:
 			return false
 		}
 	}
 	return true
+}
+
+func exclusiveV7WaitEligible(wait *model.WaitConfig) bool {
+	if wait == nil {
+		return false
+	}
+	duration := strings.TrimSpace(wait.Duration)
+	until := strings.TrimSpace(wait.Until)
+	signal := strings.TrimSpace(wait.Signal)
+	configured := 0
+	for _, value := range []string{duration, until, signal} {
+		if value != "" {
+			configured++
+		}
+	}
+	if configured != 1 {
+		return false
+	}
+	if signal != "" {
+		return true
+	}
+	if until != "" {
+		instant, err := model.ParseRFC3339(until)
+		return err == nil && !instant.IsZero()
+	}
+	parsed, err := time.ParseDuration(duration)
+	return err == nil && parsed > 0
 }
 
 func (h *Host) tickPathV1Run(ctx context.Context, runID string) RunResult {

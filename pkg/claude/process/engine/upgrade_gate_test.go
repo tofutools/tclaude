@@ -522,6 +522,51 @@ func TestEnabledHostKeepsUnsupportedCanceledEndOnLegacySchema(t *testing.T) {
 	}
 }
 
+func TestExclusiveV7EligibilityRejectsInvalidWaitAuthority(t *testing.T) {
+	tests := []struct {
+		name string
+		wait *model.WaitConfig
+		want bool
+	}{
+		{name: "nil", wait: nil},
+		{name: "empty", wait: &model.WaitConfig{}},
+		{name: "ambiguous", wait: &model.WaitConfig{Signal: "deploy", Duration: "1m"}},
+		{name: "zero duration", wait: &model.WaitConfig{Duration: "0s"}},
+		{name: "negative duration", wait: &model.WaitConfig{Duration: "-1s"}},
+		{name: "malformed duration", wait: &model.WaitConfig{Duration: "later"}},
+		{name: "malformed until", wait: &model.WaitConfig{Until: "tomorrow"}},
+		{name: "signal", wait: &model.WaitConfig{Signal: "deploy"}, want: true},
+		{name: "duration", wait: &model.WaitConfig{Duration: "1m"}, want: true},
+		{name: "until", wait: &model.WaitConfig{Until: "2026-07-16T12:00:00Z"}, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpl := &model.Template{Nodes: map[string]model.Node{
+				"wait": {Type: model.NodeTypeWait, Wait: tt.wait},
+			}}
+			if got := exclusiveV7Eligible(tmpl); got != tt.want {
+				t.Fatalf("exclusiveV7Eligible() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExclusiveV7EligibilityKeepsUnsupportedTerminalShapesOnV6(t *testing.T) {
+	passOnlyTask := &model.Template{Start: "work", Nodes: map[string]model.Node{
+		"work": {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "work"}, Next: model.Next{"pass": "done"}},
+		"done": {Type: model.NodeTypeEnd, Result: "completed"},
+	}}
+	if exclusiveV7Eligible(passOnlyTask) {
+		t.Fatal("task without a failure edge must remain on v6 until terminal-failure parity is supported")
+	}
+	endOnly := &model.Template{Start: "done", Nodes: map[string]model.Node{
+		"done": {Type: model.NodeTypeEnd, Result: "completed"},
+	}}
+	if exclusiveV7Eligible(endOnly) {
+		t.Fatal("end-only entry template must remain on v6 until direct end activation is supported")
+	}
+}
+
 func validUpgradeNeeded() pathv1.UpgradeNeeded {
 	return pathv1.UpgradeNeeded{
 		Reason: pathv1.UpgradeMigrationRequired, RunID: "run", LegacyStateSchema: 6,

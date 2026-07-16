@@ -421,6 +421,7 @@ func ExactExclusiveSignalObserved(ctx context.Context, input *VerifiedExclusiveI
 	}
 	wantedSignal := strings.TrimSpace(signal)
 	wantedActor := strings.TrimSpace(actor)
+	authorityDrift := false
 	for _, command := range aggregate.Commands {
 		if command.Identity.Kind != CommandPerformAttempt || (command.State != CommandObserved && command.State != CommandReconciled) {
 			continue
@@ -434,20 +435,28 @@ func ExactExclusiveSignalObserved(ctx context.Context, input *VerifiedExclusiveI
 		if effectErr != nil || !ok || effect.Kind != SideEffectWait || effect.State != "satisfied" {
 			return false, fmt.Errorf("%w: observed signal lacks its satisfied wait effect", ErrMutationInconsistent)
 		}
+		foundSettlement := false
 		for _, settle := range aggregate.Commands {
 			if settle.Identity.Kind != CommandSettleAttempt || settle.Identity.InputDigest != command.ID {
 				continue
 			}
+			foundSettlement = true
 			var payload settleAttemptObservationPayload
 			if err := decodeExactPayload(settle.Payload, &payload); err != nil {
 				return false, fmt.Errorf("%w: observed signal settlement is invalid", ErrMutationInvalid)
 			}
 			if payload.ResultCode != "satisfied" || payload.Actor != wantedActor || payload.EvidenceRef != "signal:"+wantedSignal {
-				return false, fmt.Errorf("%w: signal replay authority differs from the recorded observation", ErrMutationInvalid)
+				authorityDrift = true
+				continue
 			}
 			return true, nil
 		}
-		return false, fmt.Errorf("%w: observed signal settlement is absent", ErrMutationInconsistent)
+		if !foundSettlement {
+			return false, fmt.Errorf("%w: observed signal settlement is absent", ErrMutationInconsistent)
+		}
+	}
+	if authorityDrift {
+		return false, fmt.Errorf("%w: signal replay authority differs from the recorded observation", ErrMutationInvalid)
 	}
 	return false, nil
 }

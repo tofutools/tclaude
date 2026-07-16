@@ -220,12 +220,6 @@ func pathV1WorklistItems(ctx context.Context, fs *store.FS, runID string) ([]wor
 	if err != nil {
 		return nil, err
 	}
-	settled := make(map[string]bool)
-	for _, command := range aggregate.Commands {
-		if command.Identity.Kind == pathv1.CommandSettleAttempt && (command.State == pathv1.CommandObserved || command.State == pathv1.CommandReconciled) {
-			settled[command.Identity.InputDigest] = true
-		}
-	}
 	items := make([]worklist.Item, 0)
 	for _, command := range aggregate.Commands {
 		if command.Identity.Kind != pathv1.CommandPerformAttempt {
@@ -233,9 +227,6 @@ func pathV1WorklistItems(ctx context.Context, fs *store.FS, runID string) ([]wor
 		}
 		status := state.WaitStatusPending
 		if command.State == pathv1.CommandObserved || command.State == pathv1.CommandReconciled {
-			if !settled[command.ID] {
-				continue
-			}
 			status = state.WaitStatusSatisfied
 		} else if !command.State.Active() {
 			continue

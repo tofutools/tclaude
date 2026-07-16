@@ -358,6 +358,16 @@ func TestExclusiveV7ReportReplayBindsExactLatestAttempt(t *testing.T) {
 	require.NoError(t, err, "node-only exact replay must select the unique matching observation")
 }
 
+func TestExclusiveV7RecordObservationRequiresCommandAlias(t *testing.T) {
+	fs, runID := exclusiveV7Run(t)
+	executor := NewExclusiveV7(fs, nil)
+	claimExclusiveAttemptForTest(t, fs, runID, 1)
+	_, err := executor.RecordObservation(t.Context(), runID, "work", "", Observation{
+		Actor: "agent:agt_test1", Verdict: "pass", EvidenceRef: "artifact:exact",
+	})
+	assert.ErrorContains(t, err, "command id is required")
+}
+
 func TestExclusiveV7SignalWaitBlocksSatisfiesAndReplaysExactly(t *testing.T) {
 	fs, runID := exclusiveV7WaitRun(t, &model.WaitConfig{Signal: "deploy/prod"})
 	executor := NewExclusiveV7(fs, nil)
