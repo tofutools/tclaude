@@ -281,16 +281,13 @@ func TestDashboardCSS_ModalScrollbarsThemed(t *testing.T) {
 	}
 }
 
-// TestDashboardJS_SelectTooltipWired guards the readability half of the
-// spawn-field fix: because the width-limited <select> clips long labels,
-// the Preact worktree options carry a full-path title and a shared helper
-// mirrors selected option labels/titles into ordinary <select> controls so
-// they remain legible on hover.
+// TestDashboardJS_SelectTooltipWired guards full-path tooltip ownership on
+// the maintained Preact worktree controls. Spawn gives each shortened option
+// its full path, while clone also derives the closed select's controlled title.
 func TestDashboardJS_SelectTooltipWired(t *testing.T) {
 	for _, needle := range []string{
-		"function syncSelectTitle(",                      // helper exists (helpers.js)
-		"function bindSelectTitles(",                     // shared binder exists (helpers.js)
 		"title=${`${branch}${main} — ${worktree.path}`}", // Preact worktree options retain the full path
+		"title=${selectTitle}",                           // clone's closed select follows controlled selection
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard JS missing %q — select tooltip wiring broken", needle)

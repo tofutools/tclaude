@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-// The worktree picker's empty-repo (unborn-HEAD) handling lives in the
-// Preact spawn island + the shared clone/template picker markup —
+// Empty-repo (unborn-HEAD) handling lives in the Preact spawn, clone, and
+// template-deploy owners —
 // no server path renders it, so this guards the wiring against a silent
 // drop in a future refactor. The actual orphan-worktree creation is
 // covered end-to-end by TestSpawnCLI_WorktreeInEmptyRepoCutsOrphan and
@@ -28,13 +28,4 @@ func TestDashboardHTML_EmptyRepoOrphanHintWired(t *testing.T) {
 	must(".wt-orphan-warn {", "orphan warning callout is styled")
 	must(`hidden=${draft.worktree !== WT_NEW || worktrees.hasCommits}`,
 		"spawn island toggles the warning from controlled state")
-
-	// The picker stamps the no-commits flag from the API response and
-	// reads it back when toggling the "+ create" rows.
-	must("select.dataset.hasCommits = data.has_commits === false ? '0' : '1';",
-		"picker stamps has_commits from the /api/worktrees response")
-	must("$(`#${prefix}-worktree`).dataset.hasCommits === '0'",
-		"wtToggleNew reads the no-commits flag")
-	must("`${prefix}-wt-orphan-hint`",
-		"wtToggleNew toggles the orphan hint element")
 }
