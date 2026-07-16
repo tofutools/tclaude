@@ -12,180 +12,276 @@ var paramRefPattern = regexp.MustCompile(`\{\{\s*params\.([A-Za-z_][A-Za-z0-9_]*
 var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
 
 func Validate(tmpl *Template, edges []Edge) Diagnostics {
-	var diagnostics Diagnostics
-	if tmpl == nil {
-		return Diagnostics{diagError("nil_template", "", "process template is nil")}
-	}
-	if diagnostics := normalizedGraphCardinalityDiagnostics(NormalizedGraphCardinality{
-		Nodes: saturatingCount(len(tmpl.Nodes), MaxNormalizedNodes),
-		Edges: saturatingCount(len(edges), MaxNormalizedEdges),
-	}); diagnostics.HasErrors() {
-		return diagnostics
-	}
-
-	diagnostics = append(diagnostics, validateHeader(tmpl)...)
-	diagnostics = append(diagnostics, validateNodes(tmpl)...)
-	diagnostics = append(diagnostics, validateExpansionCollisions(tmpl)...)
-	diagnostics = append(diagnostics, validateEdges(tmpl, edges)...)
-	diagnostics = append(diagnostics, validateJoinAndDegree(tmpl, edges)...)
-	diagnostics = append(diagnostics, validateParallelScopePlan(tmpl, edges)...)
-	diagnostics = append(diagnostics, validateOutcomeRouting(tmpl)...)
-	diagnostics = append(diagnostics, validateLoopBudgets(tmpl)...)
-	diagnostics = append(diagnostics, validatePoisonEscalations(tmpl)...)
-	diagnostics = append(diagnostics, validateReachability(tmpl, edges)...)
-	diagnostics = append(diagnostics, validateAcyclic(tmpl, edges)...)
-	diagnostics = append(diagnostics, validateParamRefs(tmpl)...)
-	diagnostics = append(diagnostics, validateLayout(tmpl)...)
-	return diagnostics
+	diagnostics := newTemplateDiagnosticCollector(nil)
+	validateWithDiagnosticCollector(tmpl, edges, diagnostics)
+	return diagnostics.Diagnostics()
 }
 
-func validateHeader(tmpl *Template) Diagnostics {
-	var diagnostics Diagnostics
+func validateWithDiagnosticCollector(tmpl *Template, edges []Edge, diagnostics *templateDiagnosticCollector) {
+	if tmpl == nil {
+		diagnostics.Add(diagError("nil_template", "", "process template is nil"))
+		return
+	}
+	if cardinalityDiagnostics := normalizedGraphCardinalityDiagnostics(NormalizedGraphCardinality{
+		Nodes: saturatingCount(len(tmpl.Nodes), MaxNormalizedNodes),
+		Edges: saturatingCount(len(edges), MaxNormalizedEdges),
+	}); cardinalityDiagnostics.HasErrors() {
+		diagnostics.AddAll(cardinalityDiagnostics)
+		return
+	}
+
+	if !validateHeader(tmpl, diagnostics) ||
+		!validateNodes(tmpl, diagnostics) ||
+		!validateExpansionCollisions(tmpl, diagnostics) {
+		return
+	}
+	for _, validate := range []func() Diagnostics{
+		func() Diagnostics { return validateEdges(tmpl, edges) },
+		func() Diagnostics { return validateJoinAndDegree(tmpl, edges) },
+		func() Diagnostics { return validateParallelScopePlan(tmpl, edges) },
+		func() Diagnostics { return validateOutcomeRouting(tmpl) },
+		func() Diagnostics { return validateLoopBudgets(tmpl) },
+	} {
+		if !diagnostics.AddAll(validate()) {
+			return
+		}
+	}
+	if !validatePoisonEscalations(tmpl, diagnostics) {
+		return
+	}
+	for _, validate := range []func() Diagnostics{
+		func() Diagnostics { return validateReachability(tmpl, edges) },
+		func() Diagnostics { return validateAcyclic(tmpl, edges) },
+	} {
+		if !diagnostics.AddAll(validate()) {
+			return
+		}
+	}
+	validateParamRefs(tmpl, diagnostics)
+	if diagnostics.Exhausted() {
+		return
+	}
+	validateLayout(tmpl, diagnostics)
+}
+
+func validateHeader(tmpl *Template, diagnostics *templateDiagnosticCollector) bool {
 	if tmpl.APIVersion != APIVersion {
-		diagnostics = append(diagnostics, diagError("invalid_api_version", "apiVersion", fmt.Sprintf("apiVersion must be %q", APIVersion)))
+		if !diagnostics.Add(diagError("invalid_api_version", "apiVersion", fmt.Sprintf("apiVersion must be %q", APIVersion))) {
+			return false
+		}
 	}
 	if tmpl.Kind != Kind {
-		diagnostics = append(diagnostics, diagError("invalid_kind", "kind", fmt.Sprintf("kind must be %q", Kind)))
+		if !diagnostics.Add(diagError("invalid_kind", "kind", fmt.Sprintf("kind must be %q", Kind))) {
+			return false
+		}
 	}
 	if strings.TrimSpace(tmpl.ID) == "" {
-		diagnostics = append(diagnostics, diagError("missing_id", "id", "template id is required"))
+		if !diagnostics.Add(diagError("missing_id", "id", "template id is required")) {
+			return false
+		}
 	} else if !idPattern.MatchString(tmpl.ID) {
-		diagnostics = append(diagnostics, diagError("invalid_id", "id", "template id must match "+idPattern.String()))
+		if !diagnostics.Add(diagError("invalid_id", "id", "template id must match "+idPattern.String())) {
+			return false
+		}
 	}
 	if strings.TrimSpace(tmpl.Start) == "" {
-		diagnostics = append(diagnostics, diagError("missing_start", "start", "top-level start node is required"))
+		if !diagnostics.Add(diagError("missing_start", "start", "top-level start node is required")) {
+			return false
+		}
 	} else if _, ok := tmpl.Nodes[tmpl.Start]; !ok {
-		diagnostics = append(diagnostics, diagError("unknown_start", "start", fmt.Sprintf("start node %q is not declared", tmpl.Start)))
+		if !diagnostics.Add(diagError("unknown_start", "start", fmt.Sprintf("start node %q is not declared", tmpl.Start))) {
+			return false
+		}
 	}
 	if len(tmpl.Nodes) == 0 {
-		diagnostics = append(diagnostics, diagError("missing_nodes", "nodes", "at least one node is required"))
+		if !diagnostics.Add(diagError("missing_nodes", "nodes", "at least one node is required")) {
+			return false
+		}
 	}
 	for _, paramID := range sortedKeys(tmpl.Params) {
 		if !idPattern.MatchString(paramID) {
-			diagnostics = append(diagnostics, diagError("invalid_id", "params."+paramID, "param id must match "+idPattern.String()))
+			if !diagnostics.Add(diagError("invalid_id", "params."+paramID, "param id must match "+idPattern.String())) {
+				return false
+			}
 		}
 	}
-	return diagnostics
+	return true
 }
 
-func validateNodes(tmpl *Template) Diagnostics {
-	var diagnostics Diagnostics
+func validateNodes(tmpl *Template, diagnostics *templateDiagnosticCollector) bool {
 	startNodeCount := 0
 	for _, nodeID := range sortedKeys(tmpl.Nodes) {
 		node := tmpl.Nodes[nodeID]
 		path := "nodes." + nodeID
 		if !idPattern.MatchString(nodeID) {
-			diagnostics = append(diagnostics, diagError("invalid_id", path, "node id must match "+idPattern.String()))
+			if !diagnostics.Add(diagError("invalid_id", path, "node id must match "+idPattern.String())) {
+				return false
+			}
 		}
 		if node.Type != NodeTypeEnd && !isBlank(node.Result) {
-			diagnostics = append(diagnostics, diagError("result_on_non_end_node", path+".result", "result is only valid on end nodes"))
+			if !diagnostics.Add(diagError("result_on_non_end_node", path+".result", "result is only valid on end nodes")) {
+				return false
+			}
 		}
-		diagnostics = append(diagnostics, validateCaptures(node, path)...)
+		if !validateCaptures(node, path, diagnostics) {
+			return false
+		}
 		switch node.Type {
 		case NodeTypeTask:
 			if node.Performer == nil {
-				diagnostics = append(diagnostics, diagError("missing_performer", path+".performer", "task node requires a performer"))
+				if !diagnostics.Add(diagError("missing_performer", path+".performer", "task node requires a performer")) {
+					return false
+				}
 			} else {
-				diagnostics = append(diagnostics, validatePerformer(*node.Performer, path+".performer", false)...)
+				if !validatePerformer(*node.Performer, path+".performer", false, diagnostics) {
+					return false
+				}
 			}
 			checkIDs := map[string]int{}
 			for i, check := range node.Checks {
 				checkPath := fmt.Sprintf("%s.checks[%d]", path, i)
-				diagnostics = append(diagnostics, validateStep(check, checkPath, false)...)
+				if !validateStep(check, checkPath, false, diagnostics) {
+					return false
+				}
 				if check.ID == "" {
 					continue
 				}
 				if first, ok := checkIDs[check.ID]; ok {
-					diagnostics = append(diagnostics, diagError("duplicate_step_id", checkPath+".id", fmt.Sprintf("check step id %q is already used by checks[%d]", check.ID, first)))
+					if !diagnostics.Add(diagError("duplicate_step_id", checkPath+".id", fmt.Sprintf("check step id %q is already used by checks[%d]", check.ID, first))) {
+						return false
+					}
 					continue
 				}
 				checkIDs[check.ID] = i
 			}
 			if node.Plan != nil {
-				diagnostics = append(diagnostics, validateStep(*node.Plan, path+".plan", true)...)
+				if !validateStep(*node.Plan, path+".plan", true, diagnostics) {
+					return false
+				}
 			}
 			if node.Review != nil {
-				diagnostics = append(diagnostics, validateStep(*node.Review, path+".review", false)...)
+				if !validateStep(*node.Review, path+".review", false, diagnostics) {
+					return false
+				}
 			}
-			diagnostics = append(diagnostics, validateRetry(node.Retry, path+".retry")...)
+			if !diagnostics.AddAll(validateRetry(node.Retry, path+".retry")) {
+				return false
+			}
 			if len(node.Next) == 0 {
-				diagnostics = append(diagnostics, diagError("missing_next", path+".next", "task node requires at least one next outcome"))
+				if !diagnostics.Add(diagError("missing_next", path+".next", "task node requires at least one next outcome")) {
+					return false
+				}
 			}
 		case NodeTypeDecision:
 			if node.Performer == nil {
-				diagnostics = append(diagnostics, diagError("missing_performer", path+".performer", "decision node requires a decider performer"))
+				if !diagnostics.Add(diagError("missing_performer", path+".performer", "decision node requires a decider performer")) {
+					return false
+				}
 			} else {
-				diagnostics = append(diagnostics, validatePerformer(*node.Performer, path+".performer", true)...)
+				if !validatePerformer(*node.Performer, path+".performer", true, diagnostics) {
+					return false
+				}
 			}
 			if len(node.Next) == 0 {
-				diagnostics = append(diagnostics, diagError("missing_next", path+".next", "decision node requires outcome edges"))
+				if !diagnostics.Add(diagError("missing_next", path+".next", "decision node requires outcome edges")) {
+					return false
+				}
 			}
 		case NodeTypeWait:
 			if node.Wait == nil || (isBlank(node.Wait.Duration) && isBlank(node.Wait.Until) && isBlank(node.Wait.Signal)) {
-				diagnostics = append(diagnostics, diagError("missing_wait", path+".wait", "wait node requires duration, until, or signal"))
+				if !diagnostics.Add(diagError("missing_wait", path+".wait", "wait node requires duration, until, or signal")) {
+					return false
+				}
 			}
 			if node.Wait != nil {
-				diagnostics = append(diagnostics, checkInertParamRef(path+".wait.duration", node.Wait.Duration)...)
-				diagnostics = append(diagnostics, validateDuration(path+".wait.duration", node.Wait.Duration)...)
-				diagnostics = append(diagnostics, checkInertParamRef(path+".wait.until", node.Wait.Until)...)
-				diagnostics = append(diagnostics, validateUntil(path+".wait.until", node.Wait.Until)...)
-				diagnostics = append(diagnostics, checkInertParamRef(path+".wait.signal", node.Wait.Signal)...)
+				for _, produced := range []Diagnostics{
+					checkInertParamRef(path+".wait.duration", node.Wait.Duration),
+					validateDuration(path+".wait.duration", node.Wait.Duration),
+					checkInertParamRef(path+".wait.until", node.Wait.Until),
+					validateUntil(path+".wait.until", node.Wait.Until),
+					checkInertParamRef(path+".wait.signal", node.Wait.Signal),
+				} {
+					if !diagnostics.AddAll(produced) {
+						return false
+					}
+				}
 			}
 			if len(node.Next) == 0 {
-				diagnostics = append(diagnostics, diagError("missing_next", path+".next", "wait node requires a next target"))
+				if !diagnostics.Add(diagError("missing_next", path+".next", "wait node requires a next target")) {
+					return false
+				}
 			}
 		case NodeTypeStart:
 			startNodeCount++
 			if len(node.Next) == 0 {
-				diagnostics = append(diagnostics, diagError("missing_next", path+".next", "start node requires a next target"))
+				if !diagnostics.Add(diagError("missing_next", path+".next", "start node requires a next target")) {
+					return false
+				}
 			}
 		case NodeTypeEnd:
 			if len(node.Next) > 0 {
-				diagnostics = append(diagnostics, diagError("end_has_next", path+".next", "end node must not have outgoing edges"))
+				if !diagnostics.Add(diagError("end_has_next", path+".next", "end node must not have outgoing edges")) {
+					return false
+				}
 			}
-			diagnostics = append(diagnostics, validateEndResult(node.Result, path+".result")...)
+			if !diagnostics.AddAll(validateEndResult(node.Result, path+".result")) {
+				return false
+			}
 		case NodeTypeParallel:
 			if len(node.Next) < 2 {
-				diagnostics = append(diagnostics, diagError("parallel_degree", path+".next", "parallel node requires at least two outgoing edges"))
+				if !diagnostics.Add(diagError("parallel_degree", path+".next", "parallel node requires at least two outgoing edges")) {
+					return false
+				}
 			}
 			if node.Performer != nil || node.Plan != nil || len(node.Checks) > 0 || node.Review != nil || node.Retry != nil || node.Wait != nil || !isBlank(node.Result) || len(node.Captures) > 0 {
-				diagnostics = append(diagnostics, diagError("parallel_fields", path, "parallel node cannot declare performer, plan, checks, review, retry, wait, result, or captures"))
+				if !diagnostics.Add(diagError("parallel_fields", path, "parallel node cannot declare performer, plan, checks, review, retry, wait, result, or captures")) {
+					return false
+				}
 			}
 		default:
-			diagnostics = append(diagnostics, diagError("invalid_node_type", path+".type", fmt.Sprintf("unsupported node type %q", node.Type)))
+			if !diagnostics.Add(diagError("invalid_node_type", path+".type", fmt.Sprintf("unsupported node type %q", node.Type))) {
+				return false
+			}
 		}
 	}
 	if startNodeCount > 1 {
-		diagnostics = append(diagnostics, diagError("multiple_start_nodes", "nodes", "at most one node may have type start"))
+		if !diagnostics.Add(diagError("multiple_start_nodes", "nodes", "at most one node may have type start")) {
+			return false
+		}
 	}
-	return diagnostics
+	return true
 }
 
 // validateCaptures keeps capture names task-scoped, id-shaped, and unique so
 // they can graduate into upstream-capture references without a breaking
 // change when the runtime plumbing lands.
-func validateCaptures(node Node, path string) Diagnostics {
+func validateCaptures(node Node, path string, diagnostics *templateDiagnosticCollector) bool {
 	if len(node.Captures) == 0 {
-		return nil
+		return true
 	}
-	var diagnostics Diagnostics
 	if node.Type != NodeTypeTask {
-		diagnostics = append(diagnostics, diagError("captures_on_non_task_node", path+".captures", "captures are only valid on task nodes"))
+		if !diagnostics.Add(diagError("captures_on_non_task_node", path+".captures", "captures are only valid on task nodes")) {
+			return false
+		}
 	}
 	seen := map[string]int{}
 	for i, name := range node.Captures {
 		capturePath := fmt.Sprintf("%s.captures[%d]", path, i)
 		if !idPattern.MatchString(name) {
-			diagnostics = append(diagnostics, diagError("invalid_id", capturePath, "capture name must match "+idPattern.String()))
+			if !diagnostics.Add(diagError("invalid_id", capturePath, "capture name must match "+idPattern.String())) {
+				return false
+			}
 			continue
 		}
 		if first, ok := seen[name]; ok {
-			diagnostics = append(diagnostics, diagError("duplicate_capture", capturePath, fmt.Sprintf("capture name %q is already used by captures[%d]", name, first)))
+			if !diagnostics.Add(diagError("duplicate_capture", capturePath, fmt.Sprintf("capture name %q is already used by captures[%d]", name, first))) {
+				return false
+			}
 			continue
 		}
 		seen[name] = i
 	}
-	return diagnostics
+	return true
 }
 
 func validateEndResult(result string, path string) Diagnostics {
@@ -202,31 +298,41 @@ func validateEndResult(result string, path string) Diagnostics {
 	}
 }
 
-func validateStep(step Step, path string, allowApproval bool) Diagnostics {
-	var diagnostics Diagnostics
+func validateStep(step Step, path string, allowApproval bool, diagnostics *templateDiagnosticCollector) bool {
 	if strings.TrimSpace(step.ID) == "" {
-		diagnostics = append(diagnostics, diagError("missing_step_id", path+".id", "step id is required"))
+		if !diagnostics.Add(diagError("missing_step_id", path+".id", "step id is required")) {
+			return false
+		}
 	} else if !idPattern.MatchString(step.ID) {
-		diagnostics = append(diagnostics, diagError("invalid_id", path+".id", "step id must match "+idPattern.String()))
+		if !diagnostics.Add(diagError("invalid_id", path+".id", "step id must match "+idPattern.String())) {
+			return false
+		}
 	}
 	switch {
 	case step.Approval == "":
 	case !allowApproval:
-		diagnostics = append(diagnostics, diagError("approval_on_non_plan_step", path+".approval", "approval is only valid on plan steps"))
+		if !diagnostics.Add(diagError("approval_on_non_plan_step", path+".approval", "approval is only valid on plan steps")) {
+			return false
+		}
 	case step.Approval != PlanApprovalHuman && step.Approval != PlanApprovalAuto:
-		diagnostics = append(diagnostics, diagError("invalid_plan_approval", path+".approval", fmt.Sprintf("plan approval must be %s or %s; got %q", PlanApprovalHuman, PlanApprovalAuto, step.Approval)))
+		if !diagnostics.Add(diagError("invalid_plan_approval", path+".approval", fmt.Sprintf("plan approval must be %s or %s; got %q", PlanApprovalHuman, PlanApprovalAuto, step.Approval))) {
+			return false
+		}
 	}
 	switch {
 	case step.ApprovalRetry == nil:
 	case !allowApproval:
-		diagnostics = append(diagnostics, diagError("approval_retry_on_non_plan_step", path+".approvalRetry", "approvalRetry is only valid on plan steps"))
+		if !diagnostics.Add(diagError("approval_retry_on_non_plan_step", path+".approvalRetry", "approvalRetry is only valid on plan steps")) {
+			return false
+		}
 	case step.Approval != PlanApprovalHuman:
-		diagnostics = append(diagnostics, diagError("approval_retry_without_human_approval", path+".approvalRetry", "approvalRetry requires approval: human"))
+		if !diagnostics.Add(diagError("approval_retry_without_human_approval", path+".approvalRetry", "approvalRetry requires approval: human")) {
+			return false
+		}
 	}
-	diagnostics = append(diagnostics, validatePerformer(step.Performer, path+".performer", false)...)
-	diagnostics = append(diagnostics, validateRetry(step.ApprovalRetry, path+".approvalRetry")...)
-	diagnostics = append(diagnostics, validateRetry(step.Retry, path+".retry")...)
-	return diagnostics
+	return validatePerformer(step.Performer, path+".performer", false, diagnostics) &&
+		diagnostics.AddAll(validateRetry(step.ApprovalRetry, path+".approvalRetry")) &&
+		diagnostics.AddAll(validateRetry(step.Retry, path+".retry"))
 }
 
 // validateExpansionCollisions rejects child-stage id collisions across the
@@ -235,68 +341,120 @@ func validateStep(step Step, path string, allowApproval bool) Diagnostics {
 // different compound nodes can derive the same child id (for example node "a"
 // with check id "do" and node "a.test" both derive "a.test.do"). Either kind
 // of collision would wedge the run at expansion time.
-func validateExpansionCollisions(tmpl *Template) Diagnostics {
-	var diagnostics Diagnostics
+func validateExpansionCollisions(tmpl *Template, diagnostics *templateDiagnosticCollector) bool {
 	derivedBy := map[string]string{}
 	for _, nodeID := range sortedKeys(tmpl.Nodes) {
-		for _, spec := range ExpandNode(nodeID, tmpl.Nodes[nodeID]) {
-			if owner, ok := derivedBy[spec.ChildID]; ok {
-				diagnostics = append(diagnostics, diagError(
+		node := tmpl.Nodes[nodeID]
+		if !node.IsCompound() {
+			continue
+		}
+		visitChildID := func(childID string) bool {
+			if owner, ok := derivedBy[childID]; ok {
+				return diagnostics.Add(diagError(
 					"node_id_collides_with_expansion",
 					"nodes."+nodeID,
-					fmt.Sprintf("compound nodes %q and %q both derive child stage %q", owner, nodeID, spec.ChildID),
+					fmt.Sprintf("compound nodes %q and %q both derive child stage %q", owner, nodeID, childID),
 				))
-				continue
 			}
-			derivedBy[spec.ChildID] = nodeID
-			if _, ok := tmpl.Nodes[spec.ChildID]; ok {
-				diagnostics = append(diagnostics, diagError(
+			derivedBy[childID] = nodeID
+			if _, ok := tmpl.Nodes[childID]; ok {
+				return diagnostics.Add(diagError(
 					"node_id_collides_with_expansion",
-					"nodes."+spec.ChildID,
-					fmt.Sprintf("node id %q collides with a child stage of compound node %q", spec.ChildID, nodeID),
+					"nodes."+childID,
+					fmt.Sprintf("node id %q collides with a child stage of compound node %q", childID, nodeID),
 				))
+			}
+			return true
+		}
+		if node.Plan != nil {
+			if !visitChildID(stageChildID(nodeID, StagePlan, "")) {
+				return false
+			}
+			if node.Plan.Approval == PlanApprovalHuman {
+				if !visitChildID(stageChildID(nodeID, StagePlanApproval, "")) {
+					return false
+				}
 			}
 		}
+		if !visitChildID(stageChildID(nodeID, StageDo, "")) {
+			return false
+		}
+		for _, check := range node.Checks {
+			if !visitChildID(stageChildID(nodeID, StageTest, check.ID)) {
+				return false
+			}
+		}
+		if node.Review != nil {
+			if !visitChildID(stageChildID(nodeID, StageReview, "")) {
+				return false
+			}
+		}
+		if !visitChildID(stageChildID(nodeID, StageDone, "")) {
+			return false
+		}
 	}
-	return diagnostics
+	return true
 }
 
-func validatePerformer(performer Performer, path string, decision bool) Diagnostics {
-	var diagnostics Diagnostics
+func validatePerformer(performer Performer, path string, decision bool, diagnostics *templateDiagnosticCollector) bool {
+	var finding *Diagnostic
 	switch performer.Kind {
 	case PerformerAgent:
 		if isBlank(performer.Prompt) {
-			diagnostics = append(diagnostics, diagError("missing_prompt", path+".prompt", "agent performer requires prompt"))
+			diagnostic := diagError("missing_prompt", path+".prompt", "agent performer requires prompt")
+			finding = &diagnostic
 		}
 	case PerformerHuman:
 		if isBlank(performer.Ask) && isBlank(performer.Prompt) {
-			diagnostics = append(diagnostics, diagError("missing_prompt", path+".ask", "human performer requires ask or prompt"))
+			diagnostic := diagError("missing_prompt", path+".ask", "human performer requires ask or prompt")
+			finding = &diagnostic
 		}
 	case PerformerProgram:
 		if isBlank(performer.Run) {
-			diagnostics = append(diagnostics, diagError("missing_run", path+".run", "program performer requires run"))
+			diagnostic := diagError("missing_run", path+".run", "program performer requires run")
+			finding = &diagnostic
 		}
 	default:
-		diagnostics = append(diagnostics, diagError("invalid_performer_kind", path+".kind", fmt.Sprintf("unsupported performer kind %q", performer.Kind)))
+		diagnostic := diagError("invalid_performer_kind", path+".kind", fmt.Sprintf("unsupported performer kind %q", performer.Kind))
+		finding = &diagnostic
 	}
-	diagnostics = append(diagnostics, validateKindScopedFields(performer, path)...)
-	diagnostics = append(diagnostics, validateChoiceOutcomes(performer, path, decision)...)
-	diagnostics = append(diagnostics, checkInertParamRef(path+".profile", performer.Profile)...)
-	diagnostics = append(diagnostics, checkInertParamRef(path+".timeout", performer.Timeout)...)
-	diagnostics = append(diagnostics, validateDuration(path+".timeout", performer.Timeout)...)
+	if finding != nil && !diagnostics.Add(*finding) {
+		return false
+	}
+	if !validateKindScopedFields(performer, path, diagnostics) ||
+		!validateChoiceOutcomes(performer, path, decision, diagnostics) {
+		return false
+	}
+	for _, produced := range []Diagnostics{
+		checkInertParamRef(path+".profile", performer.Profile),
+		checkInertParamRef(path+".timeout", performer.Timeout),
+		validateDuration(path+".timeout", performer.Timeout),
+	} {
+		if !diagnostics.AddAll(produced) {
+			return false
+		}
+	}
 	if performer.Contact != nil {
-		diagnostics = append(diagnostics, validateDuration(path+".contact.cadence", performer.Contact.Cadence)...)
+		if !diagnostics.AddAll(validateDuration(path+".contact.cadence", performer.Contact.Cadence)) {
+			return false
+		}
 		if strings.TrimSpace(performer.Contact.Cadence) == "" {
-			diagnostics = append(diagnostics, diagError("missing_contact_cadence", path+".contact.cadence", "contact schedule requires cadence"))
+			if !diagnostics.Add(diagError("missing_contact_cadence", path+".contact.cadence", "contact schedule requires cadence")) {
+				return false
+			}
 		}
 		if performer.Contact.Budget <= 0 {
-			diagnostics = append(diagnostics, diagError("invalid_contact_budget", path+".contact.budget", "contact schedule requires budget greater than zero"))
+			if !diagnostics.Add(diagError("invalid_contact_budget", path+".contact.budget", "contact schedule requires budget greater than zero")) {
+				return false
+			}
 		}
 		if strings.TrimSpace(performer.Contact.EscalationTarget) == "" {
-			diagnostics = append(diagnostics, diagError("missing_escalation_target", path+".contact.escalationTarget", "contact schedule requires an escalation target"))
+			if !diagnostics.Add(diagError("missing_escalation_target", path+".contact.escalationTarget", "contact schedule requires an escalation target")) {
+				return false
+			}
 		}
 	}
-	return diagnostics
+	return true
 }
 
 // validateKindScopedFields enforces the uniform-contract discipline rule
@@ -308,43 +466,54 @@ func validatePerformer(performer Performer, path string, decision bool) Diagnost
 // scoped here alongside the new fields. Prompt is shared by design: agent
 // instruction text or a human's long-form context. An unrecognized kind gets
 // its own invalid_performer_kind error; skip the scoping noise then.
-func validateKindScopedFields(performer Performer, path string) Diagnostics {
+func validateKindScopedFields(performer Performer, path string, diagnostics *templateDiagnosticCollector) bool {
 	if performer.Kind != PerformerHuman && performer.Kind != PerformerAgent && performer.Kind != PerformerProgram {
-		return nil
+		return true
 	}
-	var diagnostics Diagnostics
-	scoped := func(field string, set bool, kinds ...PerformerKind) {
+	scoped := func(field string, set bool, kinds ...PerformerKind) bool {
 		if !set || slices.Contains(kinds, performer.Kind) {
-			return
+			return true
 		}
 		kindNames := make([]string, len(kinds))
 		for i, kind := range kinds {
 			kindNames[i] = string(kind)
 		}
-		diagnostics = append(diagnostics, diagError("kind_scoped_field", path+"."+field,
+		return diagnostics.Add(diagError("kind_scoped_field", path+"."+field,
 			fmt.Sprintf("%s is only valid on %s performers", field, strings.Join(kindNames, " or "))))
 	}
-	scoped("ask", !isBlank(performer.Ask), PerformerHuman)
-	scoped("choices", len(performer.Choices) > 0, PerformerHuman)
-	scoped("choiceOutcomes", len(performer.ChoiceOutcomes) > 0, PerformerHuman)
-	scoped("assignee", !isBlank(performer.Assignee), PerformerHuman)
-	scoped("prompt", !isBlank(performer.Prompt), PerformerAgent, PerformerHuman)
-	scoped("model", !isBlank(performer.Model), PerformerAgent)
-	scoped("effort", !isBlank(performer.Effort), PerformerAgent)
-	scoped("run", !isBlank(performer.Run), PerformerProgram)
-	scoped("args", len(performer.Args) > 0, PerformerProgram)
+	if !scoped("ask", !isBlank(performer.Ask), PerformerHuman) ||
+		!scoped("choices", len(performer.Choices) > 0, PerformerHuman) ||
+		!scoped("choiceOutcomes", len(performer.ChoiceOutcomes) > 0, PerformerHuman) ||
+		!scoped("assignee", !isBlank(performer.Assignee), PerformerHuman) ||
+		!scoped("prompt", !isBlank(performer.Prompt), PerformerAgent, PerformerHuman) ||
+		!scoped("model", !isBlank(performer.Model), PerformerAgent) ||
+		!scoped("effort", !isBlank(performer.Effort), PerformerAgent) ||
+		!scoped("run", !isBlank(performer.Run), PerformerProgram) ||
+		!scoped("args", len(performer.Args) > 0, PerformerProgram) {
+		return false
+	}
 	for i, choice := range performer.Choices {
 		if isBlank(choice) {
-			diagnostics = append(diagnostics, diagError("invalid_choice", fmt.Sprintf("%s.choices[%d]", path, i), "choices must not be blank"))
+			if !diagnostics.Add(diagError("invalid_choice", fmt.Sprintf("%s.choices[%d]", path, i), "choices must not be blank")) {
+				return false
+			}
 		}
 	}
-	diagnostics = append(diagnostics, checkInertParamRef(path+".assignee", performer.Assignee)...)
-	diagnostics = append(diagnostics, checkInertParamRef(path+".model", performer.Model)...)
-	diagnostics = append(diagnostics, checkInertParamRef(path+".effort", performer.Effort)...)
-	for i, choice := range performer.Choices {
-		diagnostics = append(diagnostics, checkInertParamRef(fmt.Sprintf("%s.choices[%d]", path, i), choice)...)
+	for _, produced := range []Diagnostics{
+		checkInertParamRef(path+".assignee", performer.Assignee),
+		checkInertParamRef(path+".model", performer.Model),
+		checkInertParamRef(path+".effort", performer.Effort),
+	} {
+		if !diagnostics.AddAll(produced) {
+			return false
+		}
 	}
-	return diagnostics
+	for i, choice := range performer.Choices {
+		if !diagnostics.AddAll(checkInertParamRef(fmt.Sprintf("%s.choices[%d]", path, i), choice)) {
+			return false
+		}
+	}
+	return true
 }
 
 // ValidateChoiceRouting defensively validates the persisted performer shape at
@@ -352,25 +521,26 @@ func validateKindScopedFields(performer Performer, path string) Diagnostics {
 // but old or manually edited run records must fail loudly rather than expose
 // actions that cannot settle an attempt.
 func ValidateChoiceRouting(performer Performer, decision bool) error {
-	diagnostics := validateChoiceOutcomes(performer, "performer", decision)
+	collector := newTemplateDiagnosticCollector(nil)
+	validateChoiceOutcomes(performer, "performer", decision, collector)
+	diagnostics := collector.Diagnostics()
 	if len(diagnostics) == 0 {
 		return nil
 	}
 	return fmt.Errorf("%s: %s", diagnostics[0].Path, diagnostics[0].Message)
 }
 
-func validateChoiceOutcomes(performer Performer, path string, decision bool) Diagnostics {
+func validateChoiceOutcomes(performer Performer, path string, decision bool, diagnostics *templateDiagnosticCollector) bool {
 	if performer.Kind != PerformerHuman {
-		return nil
+		return true
 	}
 	if decision {
 		if len(performer.ChoiceOutcomes) > 0 {
-			return Diagnostics{diagError("choice_outcomes_on_decision", path+".choiceOutcomes",
-				"decision performer choices route through outcome edges; choiceOutcomes is not applicable")}
+			return diagnostics.Add(diagError("choice_outcomes_on_decision", path+".choiceOutcomes",
+				"decision performer choices route through outcome edges; choiceOutcomes is not applicable"))
 		}
-		return nil
+		return true
 	}
-	var diagnostics Diagnostics
 	labels := make([]string, 0, len(performer.Choices))
 	canonical := make(map[string]struct{}, len(performer.Choices))
 	for i, raw := range performer.Choices {
@@ -380,13 +550,17 @@ func validateChoiceOutcomes(performer Performer, path string, decision bool) Dia
 			continue // invalid_choice is emitted by validateKindScopedFields.
 		}
 		if raw != label {
-			diagnostics = append(diagnostics, diagError("noncanonical_choice", choicePath,
-				"choice labels must not have leading or trailing whitespace"))
+			if !diagnostics.Add(diagError("noncanonical_choice", choicePath,
+				"choice labels must not have leading or trailing whitespace")) {
+				return false
+			}
 		}
 		for first, existing := range labels {
 			if strings.EqualFold(existing, label) {
-				diagnostics = append(diagnostics, diagError("duplicate_choice", choicePath,
-					fmt.Sprintf("choice %q conflicts with choices[%d] under case-insensitive matching", label, first)))
+				if !diagnostics.Add(diagError("duplicate_choice", choicePath,
+					fmt.Sprintf("choice %q conflicts with choices[%d] under case-insensitive matching", label, first))) {
+					return false
+				}
 				break
 			}
 		}
@@ -394,24 +568,30 @@ func validateChoiceOutcomes(performer Performer, path string, decision bool) Dia
 		canonical[label] = struct{}{}
 		outcome, ok := performer.ChoiceOutcomes[label]
 		if !ok {
-			diagnostics = append(diagnostics, diagError("missing_choice_outcome", path+".choiceOutcomes."+label,
-				fmt.Sprintf("choice %q requires an explicit pass or fail outcome", label)))
+			if !diagnostics.Add(diagError("missing_choice_outcome", path+".choiceOutcomes."+label,
+				fmt.Sprintf("choice %q requires an explicit pass or fail outcome", label))) {
+				return false
+			}
 			continue
 		}
 		switch strings.TrimSpace(outcome) {
 		case "pass", "fail":
 		default:
-			diagnostics = append(diagnostics, diagError("invalid_choice_outcome", path+".choiceOutcomes."+label,
-				fmt.Sprintf("choice outcome must be pass or fail; got %q", outcome)))
+			if !diagnostics.Add(diagError("invalid_choice_outcome", path+".choiceOutcomes."+label,
+				fmt.Sprintf("choice outcome must be pass or fail; got %q", outcome))) {
+				return false
+			}
 		}
 	}
-	for key := range performer.ChoiceOutcomes {
+	for _, key := range sortedKeys(performer.ChoiceOutcomes) {
 		if _, ok := canonical[key]; !ok {
-			diagnostics = append(diagnostics, diagError("extra_choice_outcome", path+".choiceOutcomes."+key,
-				fmt.Sprintf("choice outcome key %q does not exactly match an authored choice label", key)))
+			if !diagnostics.Add(diagError("extra_choice_outcome", path+".choiceOutcomes."+key,
+				fmt.Sprintf("choice outcome key %q does not exactly match an authored choice label", key))) {
+				return false
+			}
 		}
 	}
-	return diagnostics
+	return true
 }
 
 func validateRetry(retry *RetryPolicy, path string) Diagnostics {
@@ -650,8 +830,7 @@ func validateReachability(tmpl *Template, edges []Edge) Diagnostics {
 // fail edge for the engine's generation-bound poison resolution bridge. The
 // v1 bridge intentionally supports only retrying that compound or canceling
 // the run, so an unsupported choice is rejected before a run can be created.
-func validatePoisonEscalations(tmpl *Template) Diagnostics {
-	var diagnostics Diagnostics
+func validatePoisonEscalations(tmpl *Template, diagnostics *templateDiagnosticCollector) bool {
 	for _, sourceID := range sortedKeys(tmpl.Nodes) {
 		source := tmpl.Nodes[sourceID]
 		if !source.IsCompound() {
@@ -664,18 +843,26 @@ func validatePoisonEscalations(tmpl *Template) Diagnostics {
 		}
 		path := "nodes." + decisionID + ".next"
 		if len(decision.Next) != 2 {
-			diagnostics = append(diagnostics, diagError("invalid_poison_escalation", path, "poison escalation requires exactly retry and cancel choices"))
+			if !diagnostics.Add(diagError("invalid_poison_escalation", path, "poison escalation requires exactly retry and cancel choices")) {
+				return false
+			}
 		}
 		if retryTarget, ok := decision.Next["retry"]; !ok || retryTarget != sourceID {
-			diagnostics = append(diagnostics, diagError("invalid_poison_escalation", path+".retry", fmt.Sprintf("poison escalation retry must target compound node %q", sourceID)))
+			if !diagnostics.Add(diagError("invalid_poison_escalation", path+".retry", fmt.Sprintf("poison escalation retry must target compound node %q", sourceID))) {
+				return false
+			}
 		}
 		cancelTarget, ok := decision.Next["cancel"]
 		cancelNode, targetOK := tmpl.Nodes[cancelTarget]
 		if !ok || !targetOK || cancelNode.Type != NodeTypeEnd || !IsCanceledResult(cancelNode.Result) {
-			diagnostics = append(diagnostics, diagError("invalid_poison_escalation", path+".cancel", "poison escalation cancel must target an end node with result canceled"))
+			if !diagnostics.Add(diagError("invalid_poison_escalation", path+".cancel", "poison escalation cancel must target an end node with result canceled")) {
+				return false
+			}
 		}
 		if tmpl.Start == decisionID {
-			diagnostics = append(diagnostics, diagError("invalid_poison_escalation", "start", fmt.Sprintf("poison escalation decision %q cannot also be the template start", decisionID)))
+			if !diagnostics.Add(diagError("invalid_poison_escalation", "start", fmt.Sprintf("poison escalation decision %q cannot also be the template start", decisionID))) {
+				return false
+			}
 		}
 		for _, incomingID := range sortedKeys(tmpl.Nodes) {
 			incoming := tmpl.Nodes[incomingID].Next
@@ -684,15 +871,17 @@ func validatePoisonEscalations(tmpl *Template) Diagnostics {
 				if target != decisionID || incomingID == sourceID && IsFailOutcomeLabel(outcome) {
 					continue
 				}
-				diagnostics = append(diagnostics, diagError(
+				if !diagnostics.Add(diagError(
 					"invalid_poison_escalation",
 					"nodes."+incomingID+".next."+outcome,
 					fmt.Sprintf("poison escalation decision %q may only be entered by compound node %q's fail edge", decisionID, sourceID),
-				))
+				)) {
+					return false
+				}
 			}
 		}
 	}
-	return diagnostics
+	return true
 }
 
 func validateAcyclic(tmpl *Template, edges []Edge) Diagnostics {
@@ -763,99 +952,121 @@ func adjacency(edges []Edge) map[string][]string {
 	return adj
 }
 
-func validateParamRefs(tmpl *Template) Diagnostics {
+func validateParamRefs(tmpl *Template, diagnostics *templateDiagnosticCollector) {
 	declared := map[string]bool{}
 	for name := range tmpl.Params {
 		declared[name] = true
 	}
 
-	var diagnostics Diagnostics
-	diagnostics = append(diagnostics, checkProseParamRefs(declared, "name", tmpl.Name)...)
-	diagnostics = append(diagnostics, checkProseParamRefs(declared, "description", tmpl.Description)...)
-	diagnostics = append(diagnostics, checkProseParamRefs(declared, "doc", tmpl.Doc)...)
+	if !collectProseParamRefs(diagnostics, declared, "name", tmpl.Name) ||
+		!collectProseParamRefs(diagnostics, declared, "description", tmpl.Description) ||
+		!collectProseParamRefs(diagnostics, declared, "doc", tmpl.Doc) {
+		return
+	}
 	for _, paramID := range sortedKeys(tmpl.Params) {
 		param := tmpl.Params[paramID]
 		path := "params." + paramID
-		diagnostics = append(diagnostics, checkProseParamRefs(declared, path+".name", param.Name)...)
-		diagnostics = append(diagnostics, checkProseParamRefs(declared, path+".description", param.Description)...)
-		diagnostics = append(diagnostics, checkProseParamRefs(declared, path+".doc", param.Doc)...)
+		if !collectProseParamRefs(diagnostics, declared, path+".name", param.Name) ||
+			!collectProseParamRefs(diagnostics, declared, path+".description", param.Description) ||
+			!collectProseParamRefs(diagnostics, declared, path+".doc", param.Doc) {
+			return
+		}
 	}
 	for _, nodeID := range sortedKeys(tmpl.Nodes) {
 		node := tmpl.Nodes[nodeID]
 		path := "nodes." + nodeID
-		diagnostics = append(diagnostics, checkProseParamRefs(declared, path+".name", node.Name)...)
-		diagnostics = append(diagnostics, checkProseParamRefs(declared, path+".description", node.Description)...)
-		diagnostics = append(diagnostics, checkProseParamRefs(declared, path+".doc", node.Doc)...)
+		if !collectProseParamRefs(diagnostics, declared, path+".name", node.Name) ||
+			!collectProseParamRefs(diagnostics, declared, path+".description", node.Description) ||
+			!collectProseParamRefs(diagnostics, declared, path+".doc", node.Doc) {
+			return
+		}
 		if node.Performer != nil {
-			diagnostics = append(diagnostics, checkPerformerParamRefs(declared, path+".performer", *node.Performer)...)
+			if !collectPerformerParamRefs(diagnostics, declared, path+".performer", *node.Performer) {
+				return
+			}
 		}
 		if node.Plan != nil {
-			diagnostics = append(diagnostics, checkStepParamRefs(declared, path+".plan", *node.Plan)...)
+			if !collectStepParamRefs(diagnostics, declared, path+".plan", *node.Plan) {
+				return
+			}
 		}
 		for i, check := range node.Checks {
-			diagnostics = append(diagnostics, checkStepParamRefs(declared, fmt.Sprintf("%s.checks[%d]", path, i), check)...)
+			if !collectStepParamRefs(diagnostics, declared, fmt.Sprintf("%s.checks[%d]", path, i), check) {
+				return
+			}
 		}
 		if node.Review != nil {
-			diagnostics = append(diagnostics, checkStepParamRefs(declared, path+".review", *node.Review)...)
+			if !collectStepParamRefs(diagnostics, declared, path+".review", *node.Review) {
+				return
+			}
 		}
 	}
-	return diagnostics
 }
 
-func checkStepParamRefs(declared map[string]bool, path string, step Step) Diagnostics {
-	var diagnostics Diagnostics
-	diagnostics = append(diagnostics, checkProseParamRefs(declared, path+".name", step.Name)...)
-	diagnostics = append(diagnostics, checkProseParamRefs(declared, path+".description", step.Description)...)
-	diagnostics = append(diagnostics, checkProseParamRefs(declared, path+".doc", step.Doc)...)
-	diagnostics = append(diagnostics, checkPerformerParamRefs(declared, path+".performer", step.Performer)...)
-	return diagnostics
+func collectStepParamRefs(diagnostics *templateDiagnosticCollector, declared map[string]bool, path string, step Step) bool {
+	return collectProseParamRefs(diagnostics, declared, path+".name", step.Name) &&
+		collectProseParamRefs(diagnostics, declared, path+".description", step.Description) &&
+		collectProseParamRefs(diagnostics, declared, path+".doc", step.Doc) &&
+		collectPerformerParamRefs(diagnostics, declared, path+".performer", step.Performer)
 }
 
-func checkPerformerParamRefs(declared map[string]bool, path string, performer Performer) Diagnostics {
-	var diagnostics Diagnostics
-	diagnostics = append(diagnostics, checkExecutableParamRefs(declared, path+".prompt", performer.Prompt)...)
-	diagnostics = append(diagnostics, checkExecutableParamRefs(declared, path+".ask", performer.Ask)...)
-	diagnostics = append(diagnostics, checkExecutableParamRefs(declared, path+".run", performer.Run)...)
-	for i, arg := range performer.Args {
-		diagnostics = append(diagnostics, checkExecutableParamRefs(declared, fmt.Sprintf("%s.args[%d]", path, i), arg)...)
+func collectPerformerParamRefs(diagnostics *templateDiagnosticCollector, declared map[string]bool, path string, performer Performer) bool {
+	if !collectExecutableParamRefs(diagnostics, declared, path+".prompt", performer.Prompt) ||
+		!collectExecutableParamRefs(diagnostics, declared, path+".ask", performer.Ask) ||
+		!collectExecutableParamRefs(diagnostics, declared, path+".run", performer.Run) {
+		return false
 	}
-	return diagnostics
+	for i, arg := range performer.Args {
+		if !collectExecutableParamRefs(diagnostics, declared, fmt.Sprintf("%s.args[%d]", path, i), arg) {
+			return false
+		}
+	}
+	return true
 }
 
-func checkExecutableParamRefs(declared map[string]bool, path, value string) Diagnostics {
-	return checkParamRefs(declared, path, value, SeverityError)
+func collectExecutableParamRefs(diagnostics *templateDiagnosticCollector, declared map[string]bool, path, value string) bool {
+	return collectParamRefs(diagnostics, declared, path, value, SeverityError)
 }
 
-func checkProseParamRefs(declared map[string]bool, path, value string) Diagnostics {
-	return checkParamRefs(declared, path, value, SeverityWarning)
+func collectProseParamRefs(diagnostics *templateDiagnosticCollector, declared map[string]bool, path, value string) bool {
+	return collectParamRefs(diagnostics, declared, path, value, SeverityWarning)
 }
 
-func checkParamRefs(declared map[string]bool, path, value string, severity Severity) Diagnostics {
-	var diagnostics Diagnostics
-	for _, match := range paramRefPattern.FindAllStringSubmatch(value, -1) {
-		name := match[1]
+func collectParamRefs(diagnostics *templateDiagnosticCollector, declared map[string]bool, path, value string, severity Severity) bool {
+	for offset := 0; offset < len(value); {
+		match := paramRefPattern.FindStringSubmatchIndex(value[offset:])
+		if match == nil {
+			return true
+		}
+		name := value[offset+match[2] : offset+match[3]]
+		offset += match[1]
 		if declared[name] {
 			continue
 		}
 		message := fmt.Sprintf("reference to undeclared param %q", name)
+		var diagnostic Diagnostic
 		if severity == SeverityWarning {
-			diagnostics = append(diagnostics, diagWarning("undeclared_param_ref", path, message))
+			diagnostic = diagWarning("undeclared_param_ref", path, message)
 		} else {
-			diagnostics = append(diagnostics, diagError("undeclared_param_ref", path, message))
+			diagnostic = diagError("undeclared_param_ref", path, message)
+		}
+		if !diagnostics.Add(diagnostic) {
+			return false
 		}
 	}
-	return diagnostics
+	return true
 }
 
-func validateLayout(tmpl *Template) Diagnostics {
+func validateLayout(tmpl *Template, diagnostics *templateDiagnosticCollector) bool {
 	if tmpl.Layout == nil {
-		return nil
+		return true
 	}
-	var diagnostics Diagnostics
 	for _, nodeID := range sortedKeys(tmpl.Layout.Nodes) {
 		if _, ok := tmpl.Nodes[nodeID]; !ok {
-			diagnostics = append(diagnostics, diagWarning("stale_layout_node", "layout.nodes."+nodeID, fmt.Sprintf("layout references undeclared node %q", nodeID)))
+			if !diagnostics.Add(diagWarning("stale_layout_node", "layout.nodes."+nodeID, fmt.Sprintf("layout references undeclared node %q", nodeID))) {
+				return false
+			}
 		}
 	}
-	return diagnostics
+	return true
 }

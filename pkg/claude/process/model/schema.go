@@ -70,7 +70,7 @@ func unknownFieldDiagnostics(root *yaml.Node, outputBudget *templateDiagnosticBu
 	relative := walk.inspect(root, schemaTemplate)
 	diagnostics := walk.instantiate("", relative)
 	if walk.exhausted || outputBudget.exhausted {
-		diagnostics = append(diagnostics, schemaBudgetDiagnostic())
+		diagnostics = append(diagnostics, templateDiagnosticBudgetDiagnostic())
 	}
 	return diagnostics
 }

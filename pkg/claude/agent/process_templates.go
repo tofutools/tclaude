@@ -278,7 +278,7 @@ func renderLocalGraphCardinalityDiagnostics(diagnostics model.Diagnostics, out i
 		switch diagnostic.Code {
 		case model.DiagnosticCodeNormalizedNodeLimit, model.DiagnosticCodeNormalizedEdgeLimit,
 			model.DiagnosticCodeGraphAliasLimit, model.DiagnosticCodeInvalidGraphKey,
-			model.DiagnosticCodeSchemaBudget:
+			model.DiagnosticCodeInvalidGraphShape, model.DiagnosticCodeDiagnosticBudget:
 			fmt.Fprintf(out, "%s %s [template] %s\n", strings.ToUpper(string(diagnostic.Severity)), diagnostic.Code, diagnostic.Message)
 			found = true
 		}

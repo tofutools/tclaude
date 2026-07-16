@@ -625,16 +625,21 @@ aliases, checks a materialized template again before allocating normalized
 edges, and performs the exact post-normalization check before scope,
 reachability, cycle, layout, canonicalization, or hashing work.
 
-Pre-decode duplicate-key and schema inspection share a global budget of 6,144
-findings and a conservative encoded-wire ceiling just below 4 MiB. Wire
-accounting reserves the terminal response envelope and charges fixed JSON
-object overhead, worst-case escaping, and a possible second copy of a path as
-an editor target. Schema inspection memoizes an aliased source subtree by its
-YAML-node and schema context, then instantiates occurrence-specific paths only
-within that shared budget. Saturation stops before decode with exactly one
-`template_schema_budget`; it never silently drops unknown or duplicate fields.
-The finding count is the node-plus-edge graph-work scale, while the wire ceiling
-keeps one accepted request from amplifying into a larger editor/API response.
+All authoring diagnostics—from duplicate/schema inspection through freeform
+normalization, legacy promotion, and semantic validation—share one global
+budget of 6,144 findings and a conservative encoded-wire ceiling just below 4
+MiB. Wire accounting reserves the terminal response envelope and charges fixed
+JSON object overhead, worst-case escaping, and a possible second copy of a path
+as an editor target. Schema inspection memoizes an aliased source subtree by
+its YAML-node and schema context, then instantiates occurrence-specific paths
+only within that shared budget. Pre-decode saturation stops before decode;
+later saturation stops before canonical hashing or persistence. Both return the
+deterministic prefix plus exactly one `template_diagnostic_budget`; findings
+are never silently dropped, and editor saves treat saturation as a hard
+resource rejection. The API also asserts that the encoded editor-diagnostic
+projection fits the same wire ceiling before writing it. The finding count is
+the node-plus-edge graph-work scale, while the wire ceiling keeps one accepted
+request from amplifying into a larger editor/API response.
 
 The node/edge budget bounds the authored graph used by validation and editor
 projection. It does not replace the independent execution limits: the path-v1

@@ -34,7 +34,8 @@ const (
 	DiagnosticCodeNormalizedEdgeLimit = "normalized_edge_limit"
 	DiagnosticCodeGraphAliasLimit     = "normalized_graph_alias_limit"
 	DiagnosticCodeInvalidGraphKey     = "invalid_graph_key"
-	DiagnosticCodeSchemaBudget        = "template_schema_budget"
+	DiagnosticCodeInvalidGraphShape   = "invalid_graph_shape"
+	DiagnosticCodeDiagnosticBudget    = "template_diagnostic_budget"
 )
 
 // NormalizedGraphCardinality is the bounded count used before and after edge
@@ -58,19 +59,25 @@ func (d Diagnostics) HasNormalizedGraphBudgetError() bool {
 		case DiagnosticCodeNormalizedNodeLimit,
 			DiagnosticCodeNormalizedEdgeLimit,
 			DiagnosticCodeGraphAliasLimit,
-			DiagnosticCodeSchemaBudget:
+			DiagnosticCodeDiagnosticBudget:
 			return true
 		}
 	}
 	return false
 }
 
-func schemaBudgetDiagnostic() Diagnostic {
+func templateDiagnosticBudgetDiagnostic() Diagnostic {
 	return diagError(
-		DiagnosticCodeSchemaBudget,
+		DiagnosticCodeDiagnosticBudget,
 		"",
-		fmt.Sprintf("process template source diagnostics exceed the bounded authoring budget (%d findings or %d encoded bytes)", MaxTemplateAuthoringDiagnostics, MaxTemplateDiagnosticWireBytes),
+		fmt.Sprintf("process template diagnostics exceed the bounded authoring budget (%d findings or %d encoded bytes)", MaxTemplateAuthoringDiagnostics, MaxTemplateDiagnosticWireBytes),
 	)
+}
+
+// TemplateDiagnosticBudgetDiagnostic returns the canonical public sentinel
+// used by defensive API/editor serialization checks.
+func TemplateDiagnosticBudgetDiagnostic() Diagnostic {
+	return templateDiagnosticBudgetDiagnostic()
 }
 
 type templateDiagnosticBudget struct {
@@ -87,13 +94,57 @@ func (b *templateDiagnosticBudget) fits(codeBytes, pathBytes, messageBytes int) 
 		return false
 	}
 	cost := templateDiagnosticWireCost(codeBytes, pathBytes, messageBytes)
-	sentinel := schemaBudgetDiagnostic()
+	sentinel := templateDiagnosticBudgetDiagnostic()
 	sentinelCost := templateDiagnosticWireCost(len(sentinel.Code), len(sentinel.Path), len(sentinel.Message))
 	if cost > MaxTemplateDiagnosticWireBytes-sentinelCost-b.wireBytes {
 		b.exhausted = true
 		return false
 	}
 	return true
+}
+
+// templateDiagnosticCollector shares one count/wire budget across every
+// authoring diagnostic producer. Add returns false at saturation so callers
+// can stop diagnostic-producing traversal instead of building then truncating
+// an unbounded intermediate slice. Diagnostics appends exactly one terminal
+// resource sentinel when saturation occurred.
+type templateDiagnosticCollector struct {
+	budget      *templateDiagnosticBudget
+	diagnostics Diagnostics
+}
+
+func newTemplateDiagnosticCollector(budget *templateDiagnosticBudget) *templateDiagnosticCollector {
+	if budget == nil {
+		budget = &templateDiagnosticBudget{}
+	}
+	return &templateDiagnosticCollector{budget: budget}
+}
+
+func (c *templateDiagnosticCollector) Add(diagnostic Diagnostic) bool {
+	return c != nil && c.budget.append(&c.diagnostics, diagnostic)
+}
+
+func (c *templateDiagnosticCollector) AddAll(diagnostics Diagnostics) bool {
+	for _, diagnostic := range diagnostics {
+		if !c.Add(diagnostic) {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *templateDiagnosticCollector) Diagnostics() Diagnostics {
+	if c == nil {
+		return nil
+	}
+	if c.budget.exhausted && (len(c.diagnostics) == 0 || c.diagnostics[len(c.diagnostics)-1].Code != DiagnosticCodeDiagnosticBudget) {
+		c.diagnostics = append(c.diagnostics, templateDiagnosticBudgetDiagnostic())
+	}
+	return c.diagnostics
+}
+
+func (c *templateDiagnosticCollector) Exhausted() bool {
+	return c != nil && c.budget.exhausted
 }
 
 func (b *templateDiagnosticBudget) append(diagnostics *Diagnostics, diagnostic Diagnostic) bool {
@@ -158,6 +209,14 @@ func invalidGraphKeyDiagnostic(path string) Diagnostic {
 		DiagnosticCodeInvalidGraphKey,
 		path,
 		"process template graph mapping keys must decode to strings",
+	)
+}
+
+func invalidGraphShapeDiagnostic(path string) Diagnostic {
+	return diagError(
+		DiagnosticCodeInvalidGraphShape,
+		path,
+		"process template next must be a target string or outcome map",
 	)
 }
 

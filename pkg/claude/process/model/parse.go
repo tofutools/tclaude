@@ -41,7 +41,7 @@ func parseSource(data []byte, authoring bool) (*ParsedTemplate, error) {
 	diagnostics := duplicateKeyDiagnostics(&root, diagnosticBudget)
 	if diagnosticBudget.exhausted {
 		return &ParsedTemplate{
-			Diagnostics: append(diagnostics, schemaBudgetDiagnostic()),
+			Diagnostics: append(diagnostics, templateDiagnosticBudgetDiagnostic()),
 			SourceHash:  hashBytes(data),
 		}, nil
 	}
@@ -50,7 +50,7 @@ func parseSource(data []byte, authoring bool) (*ParsedTemplate, error) {
 	if cardinalityDiagnostics := normalizedGraphCardinalityDiagnostics(cardinality); cardinalityDiagnostics.HasErrors() {
 		for _, diagnostic := range cardinalityDiagnostics {
 			if !diagnosticBudget.append(&diagnostics, diagnostic) {
-				diagnostics = append(diagnostics, schemaBudgetDiagnostic())
+				diagnostics = append(diagnostics, templateDiagnosticBudgetDiagnostic())
 				break
 			}
 		}
@@ -61,14 +61,14 @@ func parseSource(data []byte, authoring bool) (*ParsedTemplate, error) {
 	}
 	if cardinalityStatus == rawGraphAliasUnsafe {
 		if !diagnosticBudget.append(&diagnostics, graphAliasLimitDiagnostic()) {
-			diagnostics = append(diagnostics, schemaBudgetDiagnostic())
+			diagnostics = append(diagnostics, templateDiagnosticBudgetDiagnostic())
 		}
 		return &ParsedTemplate{Diagnostics: diagnostics, SourceHash: hashBytes(data)}, nil
 	}
 	if cardinalityStatus == rawGraphRejected {
 		for _, diagnostic := range structuralDiagnostics {
 			if !diagnosticBudget.append(&diagnostics, diagnostic) {
-				diagnostics = append(diagnostics, schemaBudgetDiagnostic())
+				diagnostics = append(diagnostics, templateDiagnosticBudgetDiagnostic())
 				break
 			}
 		}
@@ -92,19 +92,31 @@ func parseSource(data []byte, authoring bool) (*ParsedTemplate, error) {
 	}
 
 	normalizeTemplate(&tmpl)
-	diagnostics = append(diagnostics, normalizeFreeform(&tmpl)...)
-	if authoring {
-		diagnostics = append(diagnostics, promoteLegacyJoins(&tmpl)...)
+	postDecodeDiagnostics := newTemplateDiagnosticCollector(diagnosticBudget)
+	if !normalizeFreeform(&tmpl, postDecodeDiagnostics) || authoring && !promoteLegacyJoins(&tmpl, postDecodeDiagnostics) {
+		diagnostics = append(diagnostics, postDecodeDiagnostics.Diagnostics()...)
+		return &ParsedTemplate{Template: &tmpl, Diagnostics: diagnostics, SourceHash: hashBytes(data)}, nil
 	}
 	edges, cardinalityDiagnostics := NormalizeEdgesWithinBudget(&tmpl)
-	diagnostics = append(diagnostics, cardinalityDiagnostics...)
+	if !postDecodeDiagnostics.AddAll(cardinalityDiagnostics) {
+		diagnostics = append(diagnostics, postDecodeDiagnostics.Diagnostics()...)
+		return &ParsedTemplate{Template: &tmpl, Edges: edges, Diagnostics: diagnostics, SourceHash: hashBytes(data)}, nil
+	}
 	if cardinalityDiagnostics.HasErrors() {
+		diagnostics = append(diagnostics, postDecodeDiagnostics.Diagnostics()...)
 		return &ParsedTemplate{
 			Template: &tmpl, Edges: edges, Diagnostics: diagnostics,
 			SourceHash: hashBytes(data),
 		}, nil
 	}
-	diagnostics = append(diagnostics, Validate(&tmpl, edges)...)
+	validateWithDiagnosticCollector(&tmpl, edges, postDecodeDiagnostics)
+	diagnostics = append(diagnostics, postDecodeDiagnostics.Diagnostics()...)
+	if postDecodeDiagnostics.Exhausted() {
+		return &ParsedTemplate{
+			Template: &tmpl, Edges: edges, Diagnostics: diagnostics,
+			SourceHash: hashBytes(data),
+		}, nil
+	}
 
 	semanticHash, err := SemanticHash(&tmpl)
 	if err != nil {
@@ -142,6 +154,7 @@ type rawGraphStructuralIssue uint8
 const (
 	rawGraphNoStructuralIssue rawGraphStructuralIssue = iota
 	rawGraphInvalidKey
+	rawGraphInvalidShape
 	rawGraphUnsafeAlias
 )
 
@@ -165,6 +178,8 @@ func rawNormalizedGraphCardinality(root *yaml.Node) (NormalizedGraphCardinality,
 		switch issue {
 		case rawGraphInvalidKey:
 			recordInvalidGraphKey(path)
+		case rawGraphInvalidShape:
+			recordStructuralDiagnostic(invalidGraphShapeDiagnostic(path))
 		case rawGraphUnsafeAlias:
 			recordStructuralDiagnostic(graphAliasLimitDiagnosticAt(path))
 		}
@@ -264,7 +279,19 @@ func rawNormalizedGraphCardinality(root *yaml.Node) (NormalizedGraphCardinality,
 			recordStructuralIssue(rawGraphUnsafeAlias, joinPath(nodePath, "next"))
 			continue
 		}
+		if next.Kind == yaml.ScalarNode {
+			target, ok := decodedStructuralScalar(next)
+			if !ok {
+				recordStructuralIssue(rawGraphInvalidShape, joinPath(nodePath, "next"))
+				continue
+			}
+			if target != "" {
+				counts.Edges = saturatingAdd(counts.Edges, 1, MaxNormalizedEdges)
+			}
+			continue
+		}
 		if next.Kind != yaml.MappingNode {
+			recordStructuralIssue(rawGraphInvalidShape, joinPath(nodePath, "next"))
 			continue
 		}
 		result, cached := nextCounts[next]
@@ -436,11 +463,10 @@ func yamlTreeNodeCount(root *yaml.Node) int {
 // promoteLegacyJoins is deliberately confined to Parse, the authoring-source
 // boundary. Immutable template.json reads decode Template directly and must
 // never reinterpret advisory metadata under an already-pinned semantic hash.
-func promoteLegacyJoins(tmpl *Template) Diagnostics {
+func promoteLegacyJoins(tmpl *Template, diagnostics *templateDiagnosticCollector) bool {
 	if tmpl == nil {
-		return nil
+		return true
 	}
-	var diagnostics Diagnostics
 	for _, nodeID := range sortedKeys(tmpl.Nodes) {
 		node := tmpl.Nodes[nodeID]
 		legacy, present := node.Metadata["join"]
@@ -450,19 +476,23 @@ func promoteLegacyJoins(tmpl *Template) Diagnostics {
 		value, ok := legacy.(string)
 		policy := JoinPolicy(value)
 		if !ok || policy != JoinAll && policy != JoinAny {
-			diagnostics = append(diagnostics, diagError("invalid_legacy_join", "nodes."+nodeID+".metadata.join", "legacy metadata.join must be all or any"))
+			if !diagnostics.Add(diagError("invalid_legacy_join", "nodes."+nodeID+".metadata.join", "legacy metadata.join must be all or any")) {
+				return false
+			}
 			continue
 		}
 		if node.Join == "" {
 			node.Join = policy
 		} else if node.Join != policy {
-			diagnostics = append(diagnostics, diagError("join_metadata_conflict", "nodes."+nodeID+".metadata.join",
-				fmt.Sprintf("typed join %q disagrees with legacy metadata.join %q", node.Join, policy)))
+			if !diagnostics.Add(diagError("join_metadata_conflict", "nodes."+nodeID+".metadata.join",
+				fmt.Sprintf("typed join %q disagrees with legacy metadata.join %q", node.Join, policy))) {
+				return false
+			}
 		}
 		delete(node.Metadata, "join")
 		tmpl.Nodes[nodeID] = node
 	}
-	return diagnostics
+	return true
 }
 
 // mergeTag is the resolved short tag yaml.v3 assigns to a `<<` merge key.

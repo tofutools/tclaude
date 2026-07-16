@@ -2,20 +2,25 @@ package model
 
 import "fmt"
 
-func normalizeFreeform(tmpl *Template) Diagnostics {
+func normalizeFreeform(tmpl *Template, diagnostics *templateDiagnosticCollector) bool {
 	if tmpl == nil {
-		return nil
+		return true
 	}
-	var diagnostics Diagnostics
-	for paramID, param := range tmpl.Params {
-		value, diags := normalizeAny(param.Default, "params."+paramID+".default")
-		diagnostics = append(diagnostics, diags...)
+	for _, paramID := range sortedKeys(tmpl.Params) {
+		param := tmpl.Params[paramID]
+		value, ok := normalizeAny(param.Default, "params."+paramID+".default", diagnostics)
+		if !ok {
+			return false
+		}
 		param.Default = value
 		tmpl.Params[paramID] = param
 	}
-	for nodeID, node := range tmpl.Nodes {
-		value, diags := normalizeAny(map[string]any(node.Metadata), "nodes."+nodeID+".metadata")
-		diagnostics = append(diagnostics, diags...)
+	for _, nodeID := range sortedKeys(tmpl.Nodes) {
+		node := tmpl.Nodes[nodeID]
+		value, ok := normalizeAny(map[string]any(node.Metadata), "nodes."+nodeID+".metadata", diagnostics)
+		if !ok {
+			return false
+		}
 		if value == nil {
 			node.Metadata = nil
 		} else {
@@ -25,57 +30,62 @@ func normalizeFreeform(tmpl *Template) Diagnostics {
 		}
 		tmpl.Nodes[nodeID] = node
 	}
-	return diagnostics
+	return true
 }
 
-func normalizeAny(value any, path string) (any, Diagnostics) {
+func normalizeAny(value any, path string, diagnostics *templateDiagnosticCollector) (any, bool) {
 	switch typed := value.(type) {
 	case nil:
-		return nil, nil
+		return nil, true
 	case map[string]any:
-		return normalizeStringAnyMap(typed, path)
+		return normalizeStringAnyMap(typed, path, diagnostics)
 	case map[any]any:
-		return normalizeInterfaceAnyMap(typed, path)
+		return normalizeInterfaceAnyMap(typed, path, diagnostics)
 	case []any:
 		out := make([]any, len(typed))
-		var diagnostics Diagnostics
 		for i, item := range typed {
-			normalized, diags := normalizeAny(item, fmt.Sprintf("%s[%d]", path, i))
-			diagnostics = append(diagnostics, diags...)
+			normalized, ok := normalizeAny(item, fmt.Sprintf("%s[%d]", path, i), diagnostics)
+			if !ok {
+				return nil, false
+			}
 			out[i] = normalized
 		}
-		return out, diagnostics
+		return out, true
 	default:
-		return value, nil
+		return value, true
 	}
 }
 
-func normalizeStringAnyMap(values map[string]any, path string) (any, Diagnostics) {
+func normalizeStringAnyMap(values map[string]any, path string, diagnostics *templateDiagnosticCollector) (any, bool) {
 	out := make(map[string]any, len(values))
-	var diagnostics Diagnostics
 	for _, key := range sortedKeys(values) {
-		value, diags := normalizeAny(values[key], joinPath(path, key))
-		diagnostics = append(diagnostics, diags...)
+		value, ok := normalizeAny(values[key], joinPath(path, key), diagnostics)
+		if !ok {
+			return nil, false
+		}
 		out[key] = value
 	}
-	return out, diagnostics
+	return out, true
 }
 
-func normalizeInterfaceAnyMap(values map[any]any, path string) (any, Diagnostics) {
+func normalizeInterfaceAnyMap(values map[any]any, path string, diagnostics *templateDiagnosticCollector) (any, bool) {
 	out := make(map[string]any, len(values))
-	var diagnostics Diagnostics
 	keys := sortedAnyKeys(values)
 	for _, key := range keys {
 		stringKey, ok := key.(string)
 		if !ok {
 			stringKey = fmt.Sprint(key)
-			diagnostics = append(diagnostics, diagError("non_string_freeform_key", joinPath(path, stringKey), "freeform map keys must be strings"))
+			if !diagnostics.Add(diagError("non_string_freeform_key", joinPath(path, stringKey), "freeform map keys must be strings")) {
+				return nil, false
+			}
 		}
-		value, diags := normalizeAny(values[key], joinPath(path, stringKey))
-		diagnostics = append(diagnostics, diags...)
+		value, ok := normalizeAny(values[key], joinPath(path, stringKey), diagnostics)
+		if !ok {
+			return nil, false
+		}
 		out[stringKey] = value
 	}
-	return out, diagnostics
+	return out, true
 }
 
 func sortedAnyKeys(values map[any]any) []any {

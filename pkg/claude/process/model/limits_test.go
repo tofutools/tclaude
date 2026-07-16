@@ -223,6 +223,147 @@ func TestParseRejectsCompactAliasedNextMapsBeforeDecodeAndHash(t *testing.T) {
 	})
 }
 
+func TestRawGraphScalarNextParityAndMixedBoundaries(t *testing.T) {
+	t.Run("mixed mapping and scalar exact boundary", func(t *testing.T) {
+		parsed, err := Parse(mixedScalarNextTemplateYAML(63, 64, 64))
+		require.NoError(t, err)
+		require.NotNil(t, parsed.Template)
+		assert.Len(t, parsed.Edges, MaxNormalizedEdges)
+		assert.NotContains(t, diagnosticCodes(parsed.Diagnostics), DiagnosticCodeNormalizedEdgeLimit)
+	})
+
+	t.Run("mixed mapping and scalar boundary plus one", func(t *testing.T) {
+		parsed, err := Parse(mixedScalarNextTemplateYAML(63, 64, 65))
+		require.NoError(t, err)
+		assert.Nil(t, parsed.Template, "raw scalar charging must reject before Decode")
+		assert.Nil(t, parsed.Edges)
+		assert.Empty(t, parsed.SemanticHash)
+		assert.Equal(t, []string{DiagnosticCodeNormalizedEdgeLimit}, diagnosticCodes(parsed.Diagnostics))
+	})
+
+	t.Run("scalar-only exact and boundary-plus-one raw counts", func(t *testing.T) {
+		for _, count := range []int{MaxNormalizedEdges, MaxNormalizedEdges + 1} {
+			root := rawGraphDocumentWithScalarNext(count)
+			counts, status, diagnostics := rawNormalizedGraphCardinality(root)
+			assert.Equal(t, rawGraphCounted, status)
+			assert.Empty(t, diagnostics)
+			assert.Equal(t, count, counts.Edges)
+		}
+	})
+
+	for _, test := range []struct {
+		name, scalar string
+		wantEdges    int
+	}{
+		{"null", "null", 0}, {"tilde", "~", 0}, {"empty", "", 0},
+		{"quoted empty", `""`, 0}, {"explicit null", "!!null null", 0},
+		{"target", "target", 1}, {"explicit string null", "!!str null", 1},
+	} {
+		t.Run("decoded scalar/"+test.name, func(t *testing.T) {
+			source := []byte("apiVersion: tclaude.dev/v1alpha1\nkind: ProcessTemplate\nid: scalar\nstart: null\nnodes:\n  source:\n    type: decision\n    next: " + test.scalar + "\n  target: {type: end}\n")
+			parsed, err := Parse(source)
+			require.NoError(t, err)
+			require.NotNil(t, parsed.Template)
+			assert.Len(t, parsed.Edges, test.wantEdges)
+		})
+	}
+
+	t.Run("aliased tagged scalar", func(t *testing.T) {
+		source := []byte(`apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: scalar-alias
+description: &target !!str null
+start: null
+nodes:
+  source: {type: decision, next: *target}
+  target: {type: end}
+`)
+		parsed, err := Parse(source)
+		require.NoError(t, err)
+		require.NotNil(t, parsed.Template)
+		assert.Len(t, parsed.Edges, 1)
+		assert.Equal(t, "null", parsed.Template.Nodes["source"].Next[DefaultOutcome])
+	})
+
+	for _, aliasKind := range []string{"cycle", "depth"} {
+		for _, edgeCount := range []int{MaxNormalizedEdges, MaxNormalizedEdges + 1} {
+			name := "exact"
+			if edgeCount > MaxNormalizedEdges {
+				name = "boundary-plus-one"
+			}
+			t.Run("scalar alias "+aliasKind+"/"+name, func(t *testing.T) {
+				root, _ := rawGraphDocumentWithSharedNext(edgeCount, 1)
+				installUnsafeScalarNext(root, aliasKind)
+				counts, status, diagnostics := rawNormalizedGraphCardinality(root)
+				assert.Equal(t, edgeCount, counts.Edges)
+				assert.Equal(t, rawGraphRejected, status)
+				require.Len(t, diagnostics, 1)
+				assert.Equal(t, DiagnosticCodeGraphAliasLimit, diagnostics[0].Code)
+				assert.Equal(t, "nodes.scalar-alias.next", diagnostics[0].Path)
+				if edgeCount > MaxNormalizedEdges {
+					assert.Equal(t, []string{DiagnosticCodeNormalizedEdgeLimit},
+						diagnosticCodes(normalizedGraphCardinalityDiagnostics(counts)))
+				} else {
+					assert.Empty(t, normalizedGraphCardinalityDiagnostics(counts))
+				}
+			})
+		}
+	}
+
+	for _, independentEdges := range []int{MaxNormalizedEdges - 1, MaxNormalizedEdges} {
+		name := "exact"
+		if independentEdges == MaxNormalizedEdges {
+			name = "boundary-plus-one"
+		}
+		t.Run("scalar charge survives malformed node key/"+name, func(t *testing.T) {
+			root, _ := rawGraphDocumentWithSharedNext(independentEdges, 1)
+			nodes := root.Content[0].Content[1]
+			nodes.Content = append(nodes.Content,
+				&yaml.Node{Kind: yaml.SequenceNode, Content: []*yaml.Node{{Kind: yaml.ScalarNode, Value: "malformed"}}},
+				&yaml.Node{Kind: yaml.MappingNode, Content: []*yaml.Node{
+					{Kind: yaml.ScalarNode, Value: "next"}, {Kind: yaml.ScalarNode, Value: "target"},
+				}},
+			)
+			counts, status, diagnostics := rawNormalizedGraphCardinality(root)
+			assert.Equal(t, independentEdges+1, counts.Edges)
+			assert.Equal(t, rawGraphRejected, status)
+			require.Len(t, diagnostics, 1)
+			assert.Equal(t, DiagnosticCodeInvalidGraphKey, diagnostics[0].Code)
+			if independentEdges == MaxNormalizedEdges {
+				assert.Equal(t, []string{DiagnosticCodeNormalizedEdgeLimit},
+					diagnosticCodes(normalizedGraphCardinalityDiagnostics(counts)))
+			} else {
+				assert.Empty(t, normalizedGraphCardinalityDiagnostics(counts))
+			}
+		})
+	}
+
+	t.Run("duplicate node last-wins scalar authority", func(t *testing.T) {
+		source := []byte(`apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: scalar-last-wins
+start: null
+nodes:
+  source: {type: decision, next: {pass: target, fail: target}}
+  source: {type: decision, next: target}
+  target: {type: end}
+`)
+		parsed, err := Parse(source)
+		require.NoError(t, err)
+		require.NotNil(t, parsed.Template)
+		assert.Len(t, parsed.Edges, 1)
+		assert.Contains(t, diagnosticCodes(parsed.Diagnostics), "duplicate_key")
+	})
+
+	t.Run("JSON scalar parity", func(t *testing.T) {
+		source := []byte(`{"apiVersion":"tclaude.dev/v1alpha1","kind":"ProcessTemplate","id":"scalar-json","start":null,"nodes":{"source":{"type":"decision","next":"target"},"target":{"type":"end"}}}`)
+		parsed, err := Parse(source)
+		require.NoError(t, err)
+		require.NotNil(t, parsed.Template)
+		assert.Len(t, parsed.Edges, 1)
+	})
+}
+
 func TestRawGraphMalformedKeysFailClosedWithoutHidingCardinality(t *testing.T) {
 	assertRejected := func(t *testing.T, source []byte, wantCode, wantPath string) {
 		t.Helper()
@@ -502,7 +643,7 @@ func TestSchemaAliasTraversalAndDiagnosticsAreBounded(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, parsed.Template)
 		assert.Len(t, parsed.Template.Nodes, MaxNormalizedNodes)
-		assert.NotContains(t, diagnosticCodes(parsed.Diagnostics), DiagnosticCodeSchemaBudget)
+		assert.NotContains(t, diagnosticCodes(parsed.Diagnostics), DiagnosticCodeDiagnosticBudget)
 	})
 
 	t.Run("unknown findings saturate with deterministic occurrence prefix", func(t *testing.T) {
@@ -513,7 +654,7 @@ func TestSchemaAliasTraversalAndDiagnosticsAreBounded(t *testing.T) {
 		require.NotEmpty(t, parsed.Diagnostics)
 		assert.LessOrEqual(t, len(parsed.Diagnostics), MaxTemplateAuthoringDiagnostics)
 		assert.Equal(t, "nodes.n000.checks[0].unknown-000", parsed.Diagnostics[0].Path)
-		assert.Equal(t, DiagnosticCodeSchemaBudget, parsed.Diagnostics[len(parsed.Diagnostics)-1].Code)
+		assert.Equal(t, DiagnosticCodeDiagnosticBudget, parsed.Diagnostics[len(parsed.Diagnostics)-1].Code)
 		assert.Less(t, testing.AllocsPerRun(1, func() {
 			result, parseErr := Parse(source)
 			if parseErr != nil || result.Template != nil {
@@ -529,7 +670,7 @@ func TestSchemaAliasTraversalAndDiagnosticsAreBounded(t *testing.T) {
 		}}
 		diagnostics := unknownFieldDiagnostics(root, &templateDiagnosticBudget{})
 		require.Len(t, diagnostics, 1)
-		assert.Equal(t, DiagnosticCodeSchemaBudget, diagnostics[0].Code)
+		assert.Equal(t, DiagnosticCodeDiagnosticBudget, diagnostics[0].Code)
 		assert.Less(t, len(diagnostics[0].Message)+len(diagnostics[0].Path), 512)
 	})
 }
@@ -544,8 +685,8 @@ func TestPreDecodeDiagnosticBudgetIncludesDuplicateAndSchemaFindings(t *testing.
 		require.NotEmpty(t, parsed.Diagnostics)
 		assert.LessOrEqual(t, len(parsed.Diagnostics), MaxTemplateAuthoringDiagnostics)
 		assert.Equal(t, "duplicate_key", parsed.Diagnostics[0].Code)
-		assert.Equal(t, DiagnosticCodeSchemaBudget, parsed.Diagnostics[len(parsed.Diagnostics)-1].Code)
-		assert.Equal(t, 1, countDiagnosticCode(parsed.Diagnostics, DiagnosticCodeSchemaBudget))
+		assert.Equal(t, DiagnosticCodeDiagnosticBudget, parsed.Diagnostics[len(parsed.Diagnostics)-1].Code)
+		assert.Equal(t, 1, countDiagnosticCode(parsed.Diagnostics, DiagnosticCodeDiagnosticBudget))
 	})
 
 	t.Run("mixed findings preserve deterministic prefix", func(t *testing.T) {
@@ -555,8 +696,8 @@ func TestPreDecodeDiagnosticBudgetIncludesDuplicateAndSchemaFindings(t *testing.
 		require.NotEmpty(t, parsed.Diagnostics)
 		assert.Equal(t, []string{"duplicate_key", "duplicate_key", "unknown_field"}, diagnosticCodes(parsed.Diagnostics[:3]))
 		assert.Equal(t, "nodes.n000.checks[0].unknown-000", parsed.Diagnostics[2].Path)
-		assert.Equal(t, DiagnosticCodeSchemaBudget, parsed.Diagnostics[len(parsed.Diagnostics)-1].Code)
-		assert.Equal(t, 1, countDiagnosticCode(parsed.Diagnostics, DiagnosticCodeSchemaBudget))
+		assert.Equal(t, DiagnosticCodeDiagnosticBudget, parsed.Diagnostics[len(parsed.Diagnostics)-1].Code)
+		assert.Equal(t, 1, countDiagnosticCode(parsed.Diagnostics, DiagnosticCodeDiagnosticBudget))
 	})
 }
 
@@ -569,22 +710,22 @@ func TestTemplateDiagnosticBudgetExactCountBoundaryAndWireBound(t *testing.T) {
 			require.True(t, budget.append(&diagnostics, diagnostic))
 		}
 		assert.False(t, budget.append(&diagnostics, diagnostic), "boundary plus one must saturate")
-		diagnostics = append(diagnostics, schemaBudgetDiagnostic())
+		diagnostics = append(diagnostics, templateDiagnosticBudgetDiagnostic())
 		assert.Len(t, diagnostics, MaxTemplateAuthoringDiagnostics)
-		assert.Equal(t, 1, countDiagnosticCode(diagnostics, DiagnosticCodeSchemaBudget))
+		assert.Equal(t, 1, countDiagnosticCode(diagnostics, DiagnosticCodeDiagnosticBudget))
 		assertDiagnosticWireBudget(t, budget)
 	})
 
 	t.Run("wire bytes", func(t *testing.T) {
 		budget := &templateDiagnosticBudget{}
 		var diagnostics Diagnostics
-		sentinel := schemaBudgetDiagnostic()
+		sentinel := templateDiagnosticBudgetDiagnostic()
 		ordinaryLimit := MaxTemplateDiagnosticWireBytes - templateDiagnosticWireCost(len(sentinel.Code), len(sentinel.Path), len(sentinel.Message))
 		messageBytes := (ordinaryLimit-templateDiagnosticFixedWireBytes)/templateDiagnosticJSONExpansion - len("x")
 		require.True(t, budget.append(&diagnostics, diagError("x", "", strings.Repeat("<", messageBytes))))
 		assert.False(t, budget.append(&diagnostics, diagError("x", "", "x")), "wire boundary plus one must saturate")
 		diagnostics = append(diagnostics, sentinel)
-		assert.Equal(t, 1, countDiagnosticCode(diagnostics, DiagnosticCodeSchemaBudget))
+		assert.Equal(t, 1, countDiagnosticCode(diagnostics, DiagnosticCodeDiagnosticBudget))
 		assertDiagnosticWireBudget(t, budget)
 	})
 }
@@ -611,16 +752,88 @@ func TestTemplateDiagnosticWireCostCoversJSONEscaping(t *testing.T) {
 	}
 }
 
+func TestSemanticDiagnosticsShareEndToEndAuthoringBudget(t *testing.T) {
+	tmpl := semanticDiagnosticFloodTemplate(100_000)
+	edges, cardinalityDiagnostics := NormalizeEdgesWithinBudget(tmpl)
+	require.Empty(t, cardinalityDiagnostics)
+
+	t.Run("direct Validate", func(t *testing.T) {
+		diagnostics := Validate(tmpl, edges)
+		require.NotEmpty(t, diagnostics)
+		assert.LessOrEqual(t, len(diagnostics), MaxTemplateAuthoringDiagnostics)
+		assert.Equal(t, "undeclared_param_ref", diagnostics[0].Code)
+		assert.Equal(t, DiagnosticCodeDiagnosticBudget, diagnostics[len(diagnostics)-1].Code)
+		assert.Equal(t, 1, countDiagnosticCode(diagnostics, DiagnosticCodeDiagnosticBudget))
+		encoded, err := json.Marshal(diagnostics)
+		require.NoError(t, err)
+		assert.LessOrEqual(t, len(encoded), MaxTemplateDiagnosticWireBytes)
+	})
+
+	source, err := CanonicalYAML(tmpl)
+	require.NoError(t, err)
+	require.Less(t, len(source), MaxProcessTemplateSourceBytes)
+
+	t.Run("Parse stops before hash", func(t *testing.T) {
+		parsed, parseErr := Parse(source)
+		require.NoError(t, parseErr)
+		require.NotNil(t, parsed.Template)
+		assert.Empty(t, parsed.SemanticHash)
+		require.NotEmpty(t, parsed.Diagnostics)
+		assert.LessOrEqual(t, len(parsed.Diagnostics), MaxTemplateAuthoringDiagnostics)
+		assert.Equal(t, DiagnosticCodeDiagnosticBudget, parsed.Diagnostics[len(parsed.Diagnostics)-1].Code)
+		encoded, marshalErr := json.Marshal(parsed.Diagnostics)
+		require.NoError(t, marshalErr)
+		assert.LessOrEqual(t, len(encoded), MaxTemplateDiagnosticWireBytes)
+		assert.Less(t, testing.AllocsPerRun(1, func() {
+			result, runErr := Parse(source)
+			if runErr != nil || result.Template == nil || !result.Diagnostics.HasNormalizedGraphBudgetError() {
+				panic("unexpected semantic diagnostic saturation")
+			}
+		}), float64(300_000))
+	})
+
+	t.Run("predecode and semantic findings use one prefix", func(t *testing.T) {
+		mixed := bytes.Replace(source, []byte("kind: ProcessTemplate\n"),
+			[]byte("kind: ProcessTemplate\nname: first\nname: second\n"), 1)
+		parsed, parseErr := Parse(mixed)
+		require.NoError(t, parseErr)
+		require.NotEmpty(t, parsed.Diagnostics)
+		assert.LessOrEqual(t, len(parsed.Diagnostics), MaxTemplateAuthoringDiagnostics)
+		assert.Equal(t, "duplicate_key", parsed.Diagnostics[0].Code)
+		assert.Equal(t, "undeclared_param_ref", parsed.Diagnostics[1].Code)
+		assert.Equal(t, DiagnosticCodeDiagnosticBudget, parsed.Diagnostics[len(parsed.Diagnostics)-1].Code)
+		assert.Equal(t, 1, countDiagnosticCode(parsed.Diagnostics, DiagnosticCodeDiagnosticBudget))
+	})
+
+	t.Run("huge escaped semantic message saturates without wire amplification", func(t *testing.T) {
+		huge := semanticDiagnosticFloodTemplate(0)
+		huge.Nodes["source"] = Node{
+			Type: NodeTypeTask,
+			Performer: &Performer{Kind: PerformerAgent,
+				Prompt: "{{ params." + strings.Repeat("A", MaxTemplateDiagnosticWireBytes/2) + " }}"},
+			Next: Next{"pass": "target"},
+		}
+		hugeEdges, edgeDiagnostics := NormalizeEdgesWithinBudget(huge)
+		require.Empty(t, edgeDiagnostics)
+		diagnostics := Validate(huge, hugeEdges)
+		require.Len(t, diagnostics, 1)
+		assert.Equal(t, DiagnosticCodeDiagnosticBudget, diagnostics[0].Code)
+		encoded, marshalErr := json.Marshal(diagnostics)
+		require.NoError(t, marshalErr)
+		assert.Less(t, len(encoded), 1024)
+	})
+}
+
 func assertDiagnosticWireBudget(t *testing.T, budget *templateDiagnosticBudget) {
 	t.Helper()
-	sentinel := schemaBudgetDiagnostic()
+	sentinel := templateDiagnosticBudgetDiagnostic()
 	assert.LessOrEqual(t,
 		budget.wireBytes+templateDiagnosticWireCost(len(sentinel.Code), len(sentinel.Path), len(sentinel.Message)),
 		MaxTemplateDiagnosticWireBytes,
 	)
 }
 
-func TestRawGraphAliasInspectionDefersMalformedAndCyclicValuesToDecode(t *testing.T) {
+func TestRawGraphAliasInspectionFailsClosedOnWrongKindContainer(t *testing.T) {
 	malformed := []byte(`apiVersion: tclaude.dev/v1alpha1
 kind: ProcessTemplate
 id: malformed
@@ -633,9 +846,12 @@ nodes:
     type: task
     next: *shared
 `)
-	_, err := Parse(malformed)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "decode process template")
+	parsed, err := Parse(malformed)
+	require.NoError(t, err)
+	assert.Nil(t, parsed.Template)
+	require.Len(t, parsed.Diagnostics, 1)
+	assert.Equal(t, DiagnosticCodeInvalidGraphShape, parsed.Diagnostics[0].Code)
+	assert.Equal(t, "nodes.two.next", parsed.Diagnostics[0].Path)
 
 	cyclicValue := []byte(`apiVersion: tclaude.dev/v1alpha1
 kind: ProcessTemplate
@@ -813,6 +1029,25 @@ func rawGraphDocumentWithSharedNext(outcomes, nodeCount int) (*yaml.Node, *yaml.
 	return root, next
 }
 
+func rawGraphDocumentWithScalarNext(nodeCount int) *yaml.Node {
+	nodes := &yaml.Node{Kind: yaml.MappingNode}
+	for index := range nodeCount {
+		nodes.Content = append(nodes.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("n%04d", index)},
+			&yaml.Node{Kind: yaml.MappingNode, Content: []*yaml.Node{
+				{Kind: yaml.ScalarNode, Value: "next"},
+				{Kind: yaml.ScalarNode, Value: "target"},
+			}},
+		)
+	}
+	return &yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{
+		Kind: yaml.MappingNode,
+		Content: []*yaml.Node{
+			{Kind: yaml.ScalarNode, Value: "nodes"}, nodes,
+		},
+	}}}
+}
+
 func installUnsafeStructuralKey(root, mapping *yaml.Node, position, kind string) {
 	index := 0
 	if position == "after" {
@@ -829,6 +1064,28 @@ func installUnsafeStructuralKey(root, mapping *yaml.Node, position, kind string)
 		node = &yaml.Node{Kind: yaml.AliasNode, Alias: node}
 	}
 	mapping.Content[index] = node
+}
+
+func installUnsafeScalarNext(root *yaml.Node, kind string) {
+	nodes := root.Content[0].Content[1]
+	unsafe := &yaml.Node{Kind: yaml.AliasNode}
+	if kind == "cycle" {
+		unsafe.Alias = unsafe
+	} else {
+		leaf := &yaml.Node{Kind: yaml.ScalarNode, Value: "target"}
+		unsafe = leaf
+		// The enclosing node/key/value adds four source-tree nodes after this
+		// chain is built; stay beyond that finite traversal allowance.
+		for range yamlTreeNodeCount(root) + 8 {
+			unsafe = &yaml.Node{Kind: yaml.AliasNode, Alias: unsafe}
+		}
+	}
+	nodes.Content = append(nodes.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Value: "scalar-alias"},
+		&yaml.Node{Kind: yaml.MappingNode, Content: []*yaml.Node{
+			{Kind: yaml.ScalarNode, Value: "next"}, unsafe,
+		}},
+	)
 }
 
 func maximumFanoutTemplate() *Template {
@@ -885,6 +1142,26 @@ func templateOverBothCardinalityLimits() *Template {
 	return tmpl
 }
 
+func semanticDiagnosticFloodTemplate(references int) *Template {
+	return &Template{
+		APIVersion: APIVersion,
+		Kind:       Kind,
+		ID:         "semantic-diagnostic-flood",
+		Start:      "source",
+		Nodes: map[string]Node{
+			"source": {
+				Type: NodeTypeTask,
+				Performer: &Performer{
+					Kind:   PerformerAgent,
+					Prompt: strings.Repeat("{{ params.missing }}", references),
+				},
+				Next: Next{"pass": "target"},
+			},
+			"target": {Type: NodeTypeEnd},
+		},
+	}
+}
+
 func aliasedNextTemplateYAML(nodeCount, outcomes int, invalidBranch bool) []byte {
 	var source strings.Builder
 	source.WriteString("apiVersion: tclaude.dev/v1alpha1\nkind: ProcessTemplate\nid: aliases\nstart: n000\nnodes:\n")
@@ -902,6 +1179,27 @@ func aliasedNextTemplateYAML(nodeCount, outcomes int, invalidBranch bool) []byte
 			source.WriteString("*shared\n")
 		}
 	}
+	return []byte(source.String())
+}
+
+func mixedScalarNextTemplateYAML(mappingNodes, outcomes, scalarNodes int) []byte {
+	var source strings.Builder
+	source.WriteString("apiVersion: tclaude.dev/v1alpha1\nkind: ProcessTemplate\nid: mixed-scalar\nstart: null\nnodes:\n")
+	for nodeIndex := 0; nodeIndex < mappingNodes; nodeIndex++ {
+		fmt.Fprintf(&source, "  map-%03d:\n    type: decision\n    next: ", nodeIndex)
+		if nodeIndex == 0 {
+			source.WriteString("&shared\n")
+			for outcome := 0; outcome < outcomes; outcome++ {
+				fmt.Fprintf(&source, "      outcome-%03d: target\n", outcome)
+			}
+		} else {
+			source.WriteString("*shared\n")
+		}
+	}
+	for nodeIndex := 0; nodeIndex < scalarNodes; nodeIndex++ {
+		fmt.Fprintf(&source, "  scalar-%03d: {type: decision, next: target}\n", nodeIndex)
+	}
+	source.WriteString("  target: {type: end}\n")
 	return []byte(source.String())
 }
 

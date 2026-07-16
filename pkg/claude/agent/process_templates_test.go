@@ -129,8 +129,39 @@ nodes:
 	assert.Contains(t, stderr.String(), "ERROR invalid_graph_key [template]")
 }
 
+func TestRunProcessTemplatesSaveRejectsSemanticDiagnosticFloodLocally(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, ok(`{}`))
+	var stdout, stderr bytes.Buffer
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "semantic-budget", Start: "source",
+		Nodes: map[string]model.Node{
+			"source": {
+				Type: model.NodeTypeTask,
+				Performer: &model.Performer{Kind: model.PerformerAgent,
+					Prompt: strings.Repeat("{{ params.missing }}", 100_000)},
+				Next: model.Next{"pass": "target"},
+			},
+			"target": {Type: model.NodeTypeEnd},
+		},
+	}
+	source, err := model.CanonicalYAML(tmpl)
+	require.NoError(t, err)
+	require.Less(t, len(source), model.MaxProcessTemplateSourceBytes)
+
+	rc := runProcessTemplatesSave(&processTemplatesSaveParams{File: "-"}, bytes.NewReader(source), &stdout, &stderr)
+
+	assert.Equal(t, rcInvalidArg, rc)
+	assert.Empty(t, calls, "local diagnostic budget rejects before contacting agentd")
+	assert.Contains(t, stderr.String(), "ERROR template_diagnostic_budget [template]")
+}
+
 func TestRenderLocalGraphCardinalityDiagnosticsIncludesPredecodeRejections(t *testing.T) {
-	for _, code := range []string{model.DiagnosticCodeSchemaBudget, model.DiagnosticCodeInvalidGraphKey} {
+	for _, code := range []string{
+		model.DiagnosticCodeDiagnosticBudget,
+		model.DiagnosticCodeInvalidGraphKey,
+		model.DiagnosticCodeInvalidGraphShape,
+	} {
 		t.Run(code, func(t *testing.T) {
 			var stderr bytes.Buffer
 			found := renderLocalGraphCardinalityDiagnostics(model.Diagnostics{{
