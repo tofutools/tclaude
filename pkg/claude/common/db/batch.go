@@ -37,6 +37,101 @@ func chunkStrings(ids []string, size int) [][]string {
 	return out
 }
 
+func chunkInt64s(ids []int64, size int) [][]int64 {
+	if size <= 0 {
+		size = len(ids)
+	}
+	var out [][]int64
+	for len(ids) > 0 {
+		n := min(size, len(ids))
+		out = append(out, ids[:n])
+		ids = ids[n:]
+	}
+	return out
+}
+
+// ListAgentGroupMembersBatch loads all requested memberships in at most one
+// query per batchChunkSize groups. Empty input returns without opening SQLite.
+func ListAgentGroupMembersBatch(groupIDs []int64) (map[int64][]*AgentGroupMember, error) {
+	out := make(map[int64][]*AgentGroupMember, len(groupIDs))
+	if len(groupIDs) == 0 {
+		return out, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	for _, chunk := range chunkInt64s(groupIDs, batchChunkSize) {
+		args := make([]any, len(chunk))
+		for i, groupID := range chunk {
+			args[i] = groupID
+		}
+		rows, err := d.Query(`SELECT m.group_id, ag.current_conv_id, m.role, m.descr, m.joined_at
+			FROM agent_group_members m JOIN agents ag ON ag.agent_id = m.agent_id
+			WHERE m.group_id IN (`+sqlPlaceholders(len(chunk))+`)
+			ORDER BY m.group_id, m.joined_at, ag.current_conv_id`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			member, err := scanAgentGroupMember(rows)
+			if err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			out[member.GroupID] = append(out[member.GroupID], member)
+		}
+		err = rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// ListAgentGroupOwnersBatch is the owner-side companion to the membership
+// batch loader. Empty input likewise performs no DB open or query.
+func ListAgentGroupOwnersBatch(groupIDs []int64) (map[int64][]*AgentGroupOwner, error) {
+	out := make(map[int64][]*AgentGroupOwner, len(groupIDs))
+	if len(groupIDs) == 0 {
+		return out, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	for _, chunk := range chunkInt64s(groupIDs, batchChunkSize) {
+		args := make([]any, len(chunk))
+		for i, groupID := range chunk {
+			args[i] = groupID
+		}
+		rows, err := d.Query(`SELECT o.group_id, o.agent_id, ag.current_conv_id, o.granted_at, o.granted_by
+			FROM agent_group_owners o JOIN agents ag ON ag.agent_id = o.agent_id
+			WHERE o.group_id IN (`+sqlPlaceholders(len(chunk))+`)
+			ORDER BY o.group_id, o.granted_at DESC`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var owner AgentGroupOwner
+			var grantedAt string
+			if err := rows.Scan(&owner.GroupID, &owner.AgentID, &owner.ConvID, &grantedAt, &owner.GrantedBy); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			owner.GrantedAt = parseTimeOrZero(grantedAt)
+			out[owner.GroupID] = append(out[owner.GroupID], &owner)
+		}
+		err = rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
 // GetConvIndexBatch bulk-loads conv_index rows for the given conv-ids, keyed by
 // conv-id. A conv with no row simply has no map entry — the same "nil row"
 // signal GetConvIndex returns for an unknown conv.

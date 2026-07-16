@@ -16,6 +16,12 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// Snapshot collection fans out at most eight independent reads. Keep that
+// many SQLite connections warm: database/sql otherwise retains only two idle
+// connections, forcing the other six (and their per-connection PRAGMAs) to be
+// reopened on every two-second dashboard poll.
+const sqliteMaxIdleConnections = 8
+
 var (
 	// stateMu guards the singleton state below. A plain sync.Once is not
 	// enough: ResetForTest must be able to tear the singleton down while a
@@ -288,6 +294,7 @@ func Open() (*sql.DB, error) {
 	if initErr != nil {
 		return globalDB, initErr
 	}
+	globalDB.SetMaxIdleConns(sqliteMaxIdleConnections)
 
 	initErr = migrate(globalDB)
 	if initErr != nil {
