@@ -276,11 +276,17 @@ test('a synchronous double activation cannot issue duplicate destructive cleanup
   submit.click();
   submit.click();
   assert.equal(requests.length, 1, 'the synchronous submit lock admits only one POST');
+  await harness.act(() => Promise.resolve());
+  assert.equal(submit.querySelector('.theme-copy-regular').textContent, 'Removing…');
+  assert.equal(submit.querySelector('.theme-copy-wizard').textContent, 'Pruning…');
 
   first.reject(new Error('temporary cleanup failure'));
   await harness.act(() => first.promise.catch(() => {}));
   host.querySelector('#worktree-cleanup-submit').click();
+  await harness.act(() => Promise.resolve());
   assert.equal(requests.length, 2, 'a failed attempt re-arms one exact retry');
+  assert.equal(submit.querySelector('.theme-copy-regular').textContent, 'Removing…');
+  assert.equal(submit.querySelector('.theme-copy-wizard').textContent, 'Pruning…');
   second.resolve({ removed: 1, branches: 0, skipped: 0, failed: 0, outcomes: [
     { path: '/repo-orphan', result: 'removed', detail: 'gone' },
   ] });

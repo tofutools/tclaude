@@ -224,6 +224,8 @@ test('group retire preview preserves bulk-only worktree coupling, hidden checks,
     'group retirement stays in the canonical conv_id identity domain');
   assert.ok(Object.isFrozen(requests[0]));
   assert.ok(Object.isFrozen(requests[0].convs));
+  assert.equal(host.querySelector('#retire-preview-submit .theme-copy-regular').textContent, 'Retiring…');
+  assert.equal(host.querySelector('#retire-preview-submit .theme-copy-wizard').textContent, 'Banishing…');
   assert.equal(host.querySelector('#retire-preview-search').disabled, true);
   assert.equal(host.querySelector('#retire-preview-cancel').disabled, true);
 
@@ -242,6 +244,8 @@ test('group retire preview preserves bulk-only worktree coupling, hidden checks,
   await harness.act(() => Promise.resolve());
   assert.equal(requests.length, 2);
   assert.equal(requests[1], requests[0], 'retry reuses the exact frozen submitted request');
+  assert.equal(host.querySelector('#retire-preview-submit .theme-copy-regular').textContent, 'Retiring…');
+  assert.equal(host.querySelector('#retire-preview-submit .theme-copy-wizard').textContent, 'Banishing…');
 
   second.resolve({
     members: [

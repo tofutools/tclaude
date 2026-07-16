@@ -199,6 +199,8 @@ test('delete-retired submits only checked visible identities and failure returns
   assert.deepEqual(requests[0], { agents: ['agt_new'], deleteWorktrees: false });
   assert.ok(Object.isFrozen(requests[0]));
   assert.ok(Object.isFrozen(requests[0].agents));
+  assert.equal(host.querySelector('#delete-retired-submit .theme-copy-regular').textContent, 'Deleting…');
+  assert.equal(host.querySelector('#delete-retired-submit .theme-copy-wizard').textContent, 'Dispelling…');
   assert.equal(host.querySelector('#delete-retired-search').disabled, true);
   assert.equal(host.querySelector('#delete-retired-cancel').disabled, true);
 
@@ -226,6 +228,8 @@ test('delete-retired submits only checked visible identities and failure returns
   await harness.act(() => Promise.resolve());
   assert.deepEqual(requests[1], { agents: ['agt_future'], deleteWorktrees: true });
   assert.notEqual(requests[1], requests[0], 'editable retry freezes a new human-approved attempt');
+  assert.equal(host.querySelector('#delete-retired-submit .theme-copy-regular').textContent, 'Deleting…');
+  assert.equal(host.querySelector('#delete-retired-submit .theme-copy-wizard').textContent, 'Dispelling…');
 
   second.resolve({
     deleted: 1, skipped: 1, failed: 1,

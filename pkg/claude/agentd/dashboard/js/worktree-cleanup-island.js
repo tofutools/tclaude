@@ -314,7 +314,7 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
           onClick=${() => void submit()}>
           ${busyAction === 'submit'
             ? html`<span class="btn-spinner" aria-hidden="true"></span><${Words}
-              plain=${retrying ? 'Retrying…' : 'Removing…'} wizard=${retrying ? 'Retrying…' : 'Pruning…'} />`
+              plain="Removing…" wizard="Pruning…" />`
             : html`<${Words}
               plain=${`${retrying ? 'Retry ' : ''}Remove ${selected.length} worktree${selected.length === 1 ? '' : 's'}`}
               wizard=${`${retrying ? 'Retry ' : ''}Prune ${selected.length} worktree${selected.length === 1 ? '' : 's'}`}
