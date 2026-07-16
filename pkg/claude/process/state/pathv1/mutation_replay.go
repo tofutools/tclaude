@@ -178,7 +178,7 @@ func (p PropagateClosurePlan) Validate() error {
 }
 
 func (p SettleDetachedSinkPlan) Validate() error {
-	if p.SourcePathID == "" || p.ReservationID == "" || p.Generation == 0 || p.DetachmentSetID == "" || p.DetachmentID == "" || p.ResultCode == "" {
+	if p.SettlementCommandID == "" || p.SourceActivationID == "" || p.SourceGeneration == 0 || p.SourceAttempt == 0 || p.SettlementResultCode == "" || p.SourcePathID == "" || p.ReservationID == "" || p.Generation == 0 || p.DetachmentSetID == "" || p.DetachmentID == "" || p.ResultCode == "" {
 		return fmt.Errorf("%w: detached-sink plan lacks complete bindings", ErrMutationInvalid)
 	}
 	if p.ResultCode != "detached" {
@@ -621,8 +621,11 @@ func ValidateSettleDetachedSinkCommand(view MutationReplayView, command CommandR
 		return err
 	}
 	id := command.Identity
-	if id.SourcePathID != plan.SourcePathID || id.TargetReservationID != plan.ReservationID || id.TargetGeneration != plan.Generation || id.InputDigest != plan.DetachmentSetID || id.CauseDigest != plan.CauseDigest || id.ResultCode != plan.ResultCode {
+	if id.SourceActivationID != plan.SourceActivationID || id.SourceGeneration != plan.SourceGeneration || id.SourcePathID != plan.SourcePathID || id.Attempt != plan.SourceAttempt || id.TargetReservationID != plan.ReservationID || id.TargetGeneration != plan.Generation || id.InputDigest != plan.SettlementCommandID || id.CauseDigest != plan.CauseDigest || id.ResultCode != plan.ResultCode {
 		return fmt.Errorf("%w: detached-sink command identity differs from typed plan", ErrMutationInvalid)
+	}
+	if err := validateDetachedSinkAttemptAuthority(view.Aggregate, plan); err != nil {
+		return err
 	}
 	pre, err := plan.Batch.preState(view.Aggregate.Routing, command.ID)
 	if err != nil {
@@ -654,6 +657,9 @@ func ValidateSettleDetachedSinkCommand(view MutationReplayView, command CommandR
 	parentBefore, ok := pre.Paths[after.ParentPathID]
 	if !ok {
 		return fmt.Errorf("%w: detached sink parent is absent before routing", ErrMutationInvalid)
+	}
+	if parentBefore.SourceActivation.ID != plan.SourceActivationID || parentBefore.SourceActivation.Generation != plan.SourceGeneration || after.SourceActivation != parentBefore.SourceActivation {
+		return fmt.Errorf("%w: detached sink parent differs from bound performer activation", ErrMutationInvalid)
 	}
 	inheritedParent, inheritedRecords, err := derivePathDetachmentInheritance(&pre, parentBefore)
 	if err != nil {
@@ -687,6 +693,29 @@ func ValidateSettleDetachedSinkCommand(view MutationReplayView, command CommandR
 	return nil
 }
 
+func validateDetachedSinkAttemptAuthority(view AggregateView, plan SettleDetachedSinkPlan) error {
+	settlement, ok := view.Commands[plan.SettlementCommandID]
+	if !ok || settlement.Identity.Kind != CommandSettleAttempt || settlement.Identity.RunID != view.RunID || settlement.Identity.SourceActivationID != plan.SourceActivationID || settlement.Identity.SourceGeneration != plan.SourceGeneration || settlement.Identity.Attempt != plan.SourceAttempt || settlement.Identity.ResultCode != plan.SettlementResultCode || (settlement.State != CommandObserved && settlement.State != CommandReconciled) {
+		return fmt.Errorf("%w: detached sink lacks its exact observed settlement", ErrMutationInvalid)
+	}
+	if err := ValidateCommand(settlement); err != nil {
+		return fmt.Errorf("%w: detached sink settlement is invalid: %v", ErrMutationInvalid, err)
+	}
+	perform, ok := view.Commands[settlement.Identity.InputDigest]
+	if !ok || perform.Identity.Kind != CommandPerformAttempt || perform.Identity.RunID != view.RunID || perform.Identity.SourceActivationID != plan.SourceActivationID || perform.Identity.SourceGeneration != plan.SourceGeneration || perform.Identity.Attempt != plan.SourceAttempt || (perform.State != CommandObserved && perform.State != CommandReconciled) {
+		return fmt.Errorf("%w: detached sink settlement lacks exact perform-attempt authority", ErrMutationInvalid)
+	}
+	if err := ValidateCommand(perform); err != nil {
+		return fmt.Errorf("%w: detached sink perform attempt is invalid: %v", ErrMutationInvalid, err)
+	}
+	attemptID, err := AttemptIdentity(view.RunID, plan.SourceActivationID, plan.SourceAttempt)
+	effect, effectOK := view.SideEffects[attemptID]
+	if err != nil || !effectOK || effect.Kind != SideEffectAttempt || effect.RunID != view.RunID || effect.ActivationID != plan.SourceActivationID || effect.Attempt != plan.SourceAttempt || effect.State != "observed" {
+		return fmt.Errorf("%w: detached sink lacks exact observed attempt lifecycle", ErrMutationInvalid)
+	}
+	return nil
+}
+
 func ValidateInternDetachmentSetCommand(view MutationReplayView, command CommandRecord) error {
 	payload, err := decodeMutationCommand[InternDetachmentSetPlan](view, command, CommandInternDetachmentSet, true)
 	if err != nil {
@@ -707,8 +736,8 @@ func ValidateInternDetachmentSetCommand(view MutationReplayView, command Command
 		return err
 	}
 	reservation, ok := pre.Reservations[plan.ReservationID]
-	if !ok || reservation.State != ReservationOpen || reservation.Generation != plan.Generation || !reservation.IsReducing || (reservation.JoinPolicy != JoinAny && reservation.JoinPolicy != JoinAll) {
-		return fmt.Errorf("%w: detachment-set intern target is not an open reducer", ErrMutationInvalid)
+	if !ok || reservation.State != ReservationOpen || reservation.Generation != plan.Generation || (reservation.JoinPolicy != JoinAny && reservation.JoinPolicy != JoinAll) {
+		return fmt.Errorf("%w: detachment-set intern target is not an open any/all join", ErrMutationInvalid)
 	}
 	path, ok := pre.Paths[plan.SourcePathID]
 	if !ok || path.State != PathArrived || path.TargetReservationID != reservation.ID {

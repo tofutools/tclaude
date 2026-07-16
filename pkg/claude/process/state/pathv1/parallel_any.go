@@ -465,7 +465,10 @@ func AdvanceParallelDetachedSink(ctx context.Context, input *VerifiedExclusiveIn
 		return nil, err
 	}
 	plan := SettleDetachedSinkPlan{
-		SourcePathID: pathID, ReservationID: target.ID, Generation: target.Generation,
+		SettlementCommandID: settle.ID, SourceActivationID: source.SourceActivation.ID,
+		SourceGeneration: source.SourceActivation.Generation, SourceAttempt: observation.Attempt,
+		SettlementResultCode: settle.Identity.ResultCode,
+		SourcePathID:         pathID, ReservationID: target.ID, Generation: target.Generation,
 		DetachmentSetID: parent.DetachmentSetID, DetachmentID: detachment.ID,
 		CauseDigest: emptyCause, ResultCode: "detached", Batch: batch,
 	}
@@ -475,8 +478,9 @@ func AdvanceParallelDetachedSink(ctx context.Context, input *VerifiedExclusiveIn
 	}
 	identity := CommandIdentity{
 		RunID: view.RunID, Kind: CommandSettleDetachedSink, PayloadSchema: 1,
+		SourceActivationID: source.SourceActivation.ID, SourceGeneration: source.SourceActivation.Generation, Attempt: observation.Attempt,
 		SourcePathID: pathID, TargetReservationID: target.ID, TargetGeneration: target.Generation,
-		InputDigest: parent.DetachmentSetID, CauseDigest: emptyCause, PlanDigest: payloadDigest(payload), ResultCode: "detached",
+		InputDigest: settle.ID, CauseDigest: emptyCause, PlanDigest: payloadDigest(payload), ResultCode: "detached",
 	}
 	command, err := observedCommand(identity, payload)
 	if err != nil {

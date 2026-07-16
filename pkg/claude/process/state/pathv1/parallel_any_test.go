@@ -263,6 +263,115 @@ func TestNestedAllNonSuccessInternsBeforeConsumingArrivals(t *testing.T) {
 	}
 }
 
+func TestNonReducingAllInternsDetachedArrivalBeforeActivation(t *testing.T) {
+	policy := JoinAll
+	source := nonReducingDetachedJoinSource()
+	input, err := VerifyExecutionInput(t.Context(), initializedExclusiveCheckpoint(t, source), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := input.checkpoint.Initialize.Aggregate.Authority.Genesis.OutputPathID
+	transition, err := AdvanceParallelSplit(t.Context(), input, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input = verifyParallelTransition(t, source, transition)
+	transition, err = AdvanceParallelExclusiveArrival(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input = verifyParallelTransition(t, source, transition)
+	transition, err = AdvanceParallelSplit(t.Context(), input, livePathForNode(t, input, "middle-fork"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	input = verifyParallelTransition(t, source, transition)
+	transition, err = AdvanceParallelExclusiveArrival(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input = verifyParallelTransition(t, source, transition)
+	transition, err = AdvanceParallelSplit(t.Context(), input, livePathForNode(t, input, "inner-fork"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	input = verifyParallelTransition(t, source, transition)
+	for index := 0; index < 2; index++ {
+		transition, err = AdvanceParallelExclusiveArrival(t.Context(), input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		input = verifyParallelTransition(t, source, transition)
+	}
+	localSource := livePathForNode(t, input, "local-source")
+	input = observeParallelTask(t, source, input, localSource, "direct")
+	transition, err = AdvanceParallelRoute(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input = verifyParallelTransition(t, source, transition)
+	input = activateSpecificAnyReducer(t, source, input, "middle-merge")
+	input = activateSpecificAnyReducer(t, source, input, "outer-merge")
+	aggregate, err := CurrentAggregateCheckpoint(input.checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ordinary := reservationForNode(t, aggregate.View(), "local-left")
+	if ordinary.IsReducing || ordinary.State != ReservationOpen {
+		t.Fatalf("ordinary reservation = %#v", ordinary)
+	}
+	authority := aggregate.Authority.Reservations[ordinary.ID]
+	if ordinary.JoinPolicy != policy || authority.JoinPolicy != policy {
+		t.Fatalf("template-derived ordinary authority = routing %q, authority %q", ordinary.JoinPolicy, authority.JoinPolicy)
+	}
+	next, err := advanceCheckpointV7To(input.checkpoint, aggregate, CurrentRunStatus(input.checkpoint), CurrentLastLogSeq(input.checkpoint))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := EncodeCheckpointV7(next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err = VerifyExecutionInput(t.Context(), encoded, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	advance := AdvanceParallelAll
+	first, err := advance(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := advance(t.Context(), input)
+	if err != nil || first.Kind() != "parallel_detachment_intern" || first.PostBinding() != second.PostBinding() || string(first.postBytes) != string(second.postBytes) {
+		t.Fatalf("ordinary intern restart drift: kind=%q err=%v", first.Kind(), err)
+	}
+	if _, _, _, err := ValidateExecutionTransitionForAppend(t.Context(), encoded, source, first); err != nil {
+		t.Fatalf("ordinary intern CAS validation: %v", err)
+	}
+	input = verifyParallelTransition(t, source, first)
+	activation, err := advance(t.Context(), input)
+	if err != nil || activation.Kind() == "parallel_detachment_intern" {
+		t.Fatalf("ordinary activation = %q, %v", activation.Kind(), err)
+	}
+	input = verifyParallelTransition(t, source, activation)
+	after, _ := CurrentAggregateCheckpoint(input.checkpoint)
+	ordinary = after.Routing.Reservations[ordinary.ID]
+	if ordinary.State != ReservationActivated || ordinary.Activation == nil {
+		t.Fatalf("ordinary join activation = %#v", ordinary)
+	}
+	output := after.Routing.Paths[after.Routing.Activations[ordinary.Activation.ID].OutputPathID]
+	members, err := VerifyDetachmentSet(&after.Routing, output.DetachmentSetID)
+	wantMembers := make([]DetachmentID, 0, len(after.Routing.Detachments))
+	for _, detachment := range after.Routing.Detachments {
+		wantMembers = append(wantMembers, detachment.ID)
+	}
+	slices.Sort(wantMembers)
+	if err != nil || !slices.Equal(members, wantMembers) {
+		t.Fatalf("ordinary output detachments = %v, want %v: %v", members, wantMembers, err)
+	}
+}
+
 func activateSpecificAnyReducer(t *testing.T, source []byte, input *VerifiedExclusiveInput, nodeID string) *VerifiedExclusiveInput {
 	t.Helper()
 	aggregate, err := CurrentAggregateCheckpoint(input.checkpoint)
@@ -569,6 +678,51 @@ nodes:
     join: any
     result: completed
 `, policy, policy))
+}
+
+func nonReducingDetachedJoinSource() []byte {
+	return []byte(`apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: non-reducing-detached-all
+start: outer-fork
+nodes:
+  outer-fork:
+    type: parallel
+    next: {quick: outer-merge, nested: middle-fork}
+  middle-fork:
+    type: parallel
+    next: {quick: middle-merge, nested: inner-fork}
+  inner-fork:
+    type: parallel
+    next: {left: local-source, right: local-right}
+  local-source:
+    type: task
+    performer: {kind: agent, prompt: source}
+    next: {direct: local-left, alternate: local-left}
+  local-left:
+    type: task
+    join: all
+    performer: {kind: agent, prompt: left}
+    next: inner-merge
+  local-right:
+    type: task
+    performer: {kind: agent, prompt: right}
+    next: inner-merge
+  inner-merge:
+    type: task
+    join: all
+    performer: {kind: agent, prompt: inner}
+    next: middle-merge
+  middle-merge:
+    type: task
+    join: any
+    performer: {kind: agent, prompt: middle}
+    next: outer-merge
+  outer-merge:
+    type: end
+    join: any
+    result: completed
+`)
 }
 
 func TestParallelAnyRejectsUnavailableReducer(t *testing.T) {

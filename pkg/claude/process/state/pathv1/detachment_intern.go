@@ -82,7 +82,7 @@ func advanceReducerDetachmentIntern(ctx context.Context, input *VerifiedExclusiv
 func nextReducerDetachmentIntern(routing RoutingState) (ActivationReservation, PathID, DetachmentSetRecord, bool, error) {
 	ids := make([]ReservationID, 0)
 	for id, reservation := range routing.Reservations {
-		if reservation.State == ReservationOpen && reservation.IsReducing && (reservation.JoinPolicy == JoinAny || reservation.JoinPolicy == JoinAll) {
+		if reservation.State == ReservationOpen && (reservation.JoinPolicy == JoinAny || reservation.JoinPolicy == JoinAll) {
 			ids = append(ids, id)
 		}
 	}

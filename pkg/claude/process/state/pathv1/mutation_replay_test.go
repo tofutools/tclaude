@@ -1093,9 +1093,22 @@ func TestSettleDetachedSinkCreatesLateArrivalAtomically(t *testing.T) {
 	}
 	postView.Routing = &before
 	delete(postView.Commands, late.Disposition.CommandID)
+	var settlement CommandRecord
+	for _, candidate := range postView.Commands {
+		if candidate.Identity.Kind == CommandSettleAttempt && candidate.Identity.SourceActivationID == late.SourceActivation.ID && candidate.Identity.SourceGeneration == late.SourceActivation.Generation {
+			settlement = candidate
+			break
+		}
+	}
+	if settlement.ID == "" {
+		t.Fatal("late sink settlement authority missing")
+	}
 	replayView := MutationReplayView{Aggregate: postView, Checkpoint: CheckpointBinding{Generation: 8, Digest: strings.Repeat("8", 64)}}
 	plan := SettleDetachedSinkPlan{
-		SourcePathID: late.ID, ReservationID: late.TargetReservationID, Generation: late.SourceActivation.Generation,
+		SettlementCommandID: settlement.ID, SourceActivationID: settlement.Identity.SourceActivationID,
+		SourceGeneration: settlement.Identity.SourceGeneration, SourceAttempt: settlement.Identity.Attempt,
+		SettlementResultCode: settlement.Identity.ResultCode,
+		SourcePathID:         late.ID, ReservationID: late.TargetReservationID, Generation: late.SourceActivation.Generation,
 		DetachmentSetID: late.DetachmentSetID, DetachmentID: late.DetachedSink.DetachmentID,
 		ResultCode: "detached", Batch: batch,
 	}
@@ -1105,11 +1118,62 @@ func TestSettleDetachedSinkCreatesLateArrivalAtomically(t *testing.T) {
 	}
 	identity := CommandIdentity{
 		RunID: postView.RunID, Kind: CommandSettleDetachedSink, PayloadSchema: 1,
+		SourceActivationID: plan.SourceActivationID, SourceGeneration: plan.SourceGeneration, Attempt: plan.SourceAttempt,
 		SourcePathID: late.ID, TargetReservationID: late.TargetReservationID, TargetGeneration: late.SourceActivation.Generation,
-		InputDigest: late.DetachmentSetID, PlanDigest: payloadDigest(payload), ResultCode: "detached",
+		InputDigest: settlement.ID, PlanDigest: payloadDigest(payload), ResultCode: "detached",
 	}
 	command := commandWithPayload(t, identity, CommandObserved, payload)
 	replayView.Aggregate.Commands[command.ID] = command
+
+	missingSettlement := replayView
+	missingSettlement.Aggregate.Commands = cloneMap(replayView.Aggregate.Commands)
+	delete(missingSettlement.Aggregate.Commands, settlement.ID)
+	if err := ValidateSettleDetachedSinkCommand(missingSettlement, command); !errors.Is(err, ErrMutationInvalid) {
+		t.Fatalf("missing settlement authority error = %v", err)
+	}
+	missingAuthority := replayView
+	missingAuthority.Aggregate.Commands = cloneMap(replayView.Aggregate.Commands)
+	delete(missingAuthority.Aggregate.Commands, settlement.Identity.InputDigest)
+	if err := ValidateSettleDetachedSinkCommand(missingAuthority, command); !errors.Is(err, ErrMutationInvalid) {
+		t.Fatalf("missing perform-attempt authority error = %v", err)
+	}
+	missingLifecycle := replayView
+	missingLifecycle.Aggregate.SideEffects = cloneMap(replayView.Aggregate.SideEffects)
+	attemptID, _ := AttemptIdentity(replayView.Aggregate.RunID, plan.SourceActivationID, plan.SourceAttempt)
+	delete(missingLifecycle.Aggregate.SideEffects, attemptID)
+	if err := ValidateSettleDetachedSinkCommand(missingLifecycle, command); !errors.Is(err, ErrMutationInvalid) {
+		t.Fatalf("missing attempt lifecycle error = %v", err)
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*SettleDetachedSinkPlan)
+	}{
+		{name: "activation", mutate: func(p *SettleDetachedSinkPlan) { p.SourceActivationID = "other-activation" }},
+		{name: "generation", mutate: func(p *SettleDetachedSinkPlan) { p.SourceGeneration++ }},
+		{name: "attempt", mutate: func(p *SettleDetachedSinkPlan) { p.SourceAttempt++ }},
+		{name: "result", mutate: func(p *SettleDetachedSinkPlan) { p.SettlementResultCode = "other-result" }},
+	} {
+		t.Run("settlement_from_other_"+test.name, func(t *testing.T) {
+			wrongPlan := plan
+			test.mutate(&wrongPlan)
+			wrongPayload, encodeErr := EncodeSettleDetachedSinkPayload(replayView, wrongPlan)
+			if encodeErr != nil {
+				t.Fatal(encodeErr)
+			}
+			wrongIdentity := identity
+			wrongIdentity.SourceActivationID = wrongPlan.SourceActivationID
+			wrongIdentity.SourceGeneration = wrongPlan.SourceGeneration
+			wrongIdentity.Attempt = wrongPlan.SourceAttempt
+			wrongIdentity.PlanDigest = payloadDigest(wrongPayload)
+			wrongCommand := commandWithPayload(t, wrongIdentity, CommandObserved, wrongPayload)
+			wrongView := replayView
+			wrongView.Aggregate.Commands = cloneMap(replayView.Aggregate.Commands)
+			wrongView.Aggregate.Commands[wrongCommand.ID] = wrongCommand
+			if err := ValidateSettleDetachedSinkCommand(wrongView, wrongCommand); !errors.Is(err, ErrMutationInvalid) {
+				t.Fatalf("wrong settlement tuple error = %v", err)
+			}
+		})
+	}
 
 	// A globally present detachment does not authorize an unrelated immutable
 	// parent chain in this atomic sink route.
