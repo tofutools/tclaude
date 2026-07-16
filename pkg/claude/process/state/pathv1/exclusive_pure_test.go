@@ -5,9 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -658,50 +655,24 @@ nodes:
 	}
 }
 
-func TestPureExclusiveAPIRemainsStructurallyDormant(t *testing.T) {
+func TestPureExclusiveReleaseWiringPreservesLegacyIsolation(t *testing.T) {
 	root := filepath.Clean(filepath.Join("..", ".."))
-	active := []string{"plan", "engine", "exec", "store", "view"}
-	// TCL-505 admits only these explicitly constructed closed-gate library
-	// seams. Live host/scheduler/command/API files remain forbidden below.
-	allowed := map[string]bool{
-		"store/fs_pathv1_execution_unix.go": true,
-		"store/fs_pathv1_execution_test.go": true,
-		"exec/exclusive_v7.go":              true,
-		"exec/exclusive_v7_test.go":         true,
-		"view/pathv1_execution.go":          true,
-		"view/pathv1_execution_test.go":     true,
+	// TCL-506 deliberately replaces TCL-505's dormant API guard with an
+	// explicit production wiring guard. The daemon host must opt into the
+	// schema-7 executor; generic library hosts remain legacy-safe by default.
+	required := map[string][]string{
+		"engine/host.go":              {"func (h *Host) EnableExclusiveV7()", "processexec.NewExclusiveV7"},
+		"../agentd/process_engine.go": {"host.EnableExclusiveV7()", "LoadPathV1RunView"},
 	}
-	for _, directory := range active {
-		files, err := filepath.Glob(filepath.Join(root, directory, "*.go"))
+	for name, fragments := range required {
+		data, err := os.ReadFile(filepath.Join(root, name))
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, name := range files {
-			rel := filepath.ToSlash(filepath.Join(directory, filepath.Base(name)))
-			if allowed[rel] {
-				continue
+		for _, fragment := range fragments {
+			if !bytes.Contains(data, []byte(fragment)) {
+				t.Errorf("release wiring %s is missing %q", name, fragment)
 			}
-			data, err := os.ReadFile(name)
-			if err != nil {
-				t.Fatal(err)
-			}
-			file, err := parser.ParseFile(token.NewFileSet(), name, data, 0)
-			if err != nil {
-				t.Fatal(err)
-			}
-			ast.Inspect(file, func(node ast.Node) bool {
-				selector, ok := node.(*ast.SelectorExpr)
-				if !ok {
-					return true
-				}
-				switch selector.Sel.Name {
-				case "VerifyExclusiveInput", "PlanExclusiveRoute", "ReduceExclusiveRoute", "PlanExclusiveDeadPath", "ReduceExclusiveDeadPath", "PlanExclusiveDeadReservation", "ReduceExclusiveDeadReservation", "PlanExclusiveActivation", "ReduceExclusiveActivation", "PlanExclusiveEnd", "ReduceExclusiveEnd", "PlanExclusiveCompletion", "ReduceExclusiveCompletion", "ClassifyExclusiveObservation",
-					"ExclusiveRouteSequenceCommandBound", "PlanExclusiveRouteSequence", "RecoverExclusiveRouteSequence", "ReduceExclusiveRouteSequence",
-					"WithPathV1ExecutionView", "AppendPathV1", "PlanExclusiveAttempt", "ClaimExclusiveAttempt", "RecoverExclusiveAttempt", "ObserveExclusiveAttempt", "PendingExclusiveObservation", "AdvanceExclusiveRoute", "AdvanceExclusiveStart", "ClaimExclusiveCompletion", "ObserveExclusiveCompletion", "ProjectCurrentPathV1ViewerV2", "NewExclusiveV7":
-					t.Errorf("active package %s references dormant pure API %s", directory, selector.Sel.Name)
-				}
-				return true
-			})
 		}
 	}
 

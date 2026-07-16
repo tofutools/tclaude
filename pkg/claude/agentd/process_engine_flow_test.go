@@ -28,6 +28,7 @@ import (
 	processexec "github.com/tofutools/tclaude/pkg/claude/process/exec"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
+	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	processverify "github.com/tofutools/tclaude/pkg/claude/process/verify"
 	"github.com/tofutools/tclaude/pkg/claude/process/worklist"
@@ -271,6 +272,65 @@ func TestProcessRunCreateUsesDedicatedPermission(t *testing.T) {
 	}
 	assert.True(t, statuses[http.StatusForbidden], "denied attempt missing from audit")
 	assert.True(t, statuses[http.StatusCreated], "successful attempt missing from audit")
+}
+
+func TestSchema7SignalPermissionAuditAndReadSurfaces(t *testing.T) {
+	f, root := processEngineFlow(t)
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "schema7-signal-api", Start: "wait",
+		Nodes: map[string]model.Node{
+			"wait": {Type: model.NodeTypeWait, Wait: &model.WaitConfig{Signal: "deploy/prod"}, Next: model.Next{"pass": "done"}},
+			"done": {Type: model.NodeTypeEnd, Result: "completed"},
+		},
+	}
+	const runID = "schema7-signal-run"
+	fs := createEngineRun(t, root, runID, tmpl, false)
+	proof, err := fs.UpgradeNeeded(t.Context(), runID)
+	require.NoError(t, err)
+	_, err = fs.InitializePathV1(t.Context(), runID, proof)
+	require.NoError(t, err)
+	checkpoint, err := processexec.NewExclusiveV7(fs, nil).Drive(t.Context(), runID)
+	require.NoError(t, err)
+	assert.Equal(t, "running", pathv1.CurrentRunStatus(checkpoint))
+
+	list := processEngineGet(t, f, "/v1/process/runs")
+	require.Equal(t, http.StatusOK, list.Code, list.Body.String())
+	assert.Contains(t, list.Body.String(), `"id":"schema7-signal-run"`)
+	assert.Contains(t, list.Body.String(), `"status":"running"`)
+	raw := processEngineGet(t, f, "/v1/process/runs/"+runID)
+	require.Equal(t, http.StatusOK, raw.Code, raw.Body.String())
+	assert.Contains(t, raw.Body.String(), `"stateSchemaVersion":7`)
+	view := processEngineGet(t, f, "/v1/process/runs/"+runID+"/view")
+	require.Equal(t, http.StatusOK, view.Code, view.Body.String())
+	assert.Contains(t, view.Body.String(), `"protocol":"viewer_v2"`)
+	assert.Contains(t, view.Body.String(), `"routingAvailable":true`)
+
+	f.HaveGroup("signal-callers")
+	caller := f.Spawn("signal-callers", "signal-caller")
+	body := map[string]string{"signal": "deploy/prod"}
+	denied := agentReq(t, f, caller.ConvID, http.MethodPost, "/v1/process/runs/"+runID+"/nodes/wait/signal", body)
+	assert.Equal(t, http.StatusForbidden, denied.Code, denied.Body.String())
+	assert.Contains(t, denied.Body.String(), agentd.PermProcessAdvance)
+	require.NoError(t, db.GrantAgentPermission(caller.ConvID, agentd.PermProcessAdvance, "test"))
+	accepted := agentReq(t, f, caller.ConvID, http.MethodPost, "/v1/process/runs/"+runID+"/nodes/wait/signal", body)
+	require.Equal(t, http.StatusOK, accepted.Code, accepted.Body.String())
+	assert.Contains(t, accepted.Body.String(), `"actor":"agent:`)
+
+	rows, err := db.ListAuditLog(db.AuditLogFilter{Verb: "process.signal"})
+	require.NoError(t, err)
+	require.Len(t, rows, 2, "denied and successful signal attempts must both be audited")
+	statuses := map[int]bool{}
+	for _, row := range rows {
+		statuses[row.Status] = true
+		assert.Equal(t, http.MethodPost, row.Method)
+		assert.Equal(t, "/v1/process/runs/"+runID+"/nodes/wait/signal", row.Path)
+		assert.Empty(t, row.Detail, "signal body must not be buffered into audit detail")
+		encoded, marshalErr := json.Marshal(row)
+		require.NoError(t, marshalErr)
+		assert.NotContains(t, string(encoded), "deploy/prod")
+	}
+	assert.True(t, statuses[http.StatusForbidden])
+	assert.True(t, statuses[http.StatusOK])
 }
 
 func TestProcessRunCreateAskHumanPersistsOnlyRedactedParams(t *testing.T) {
@@ -1032,14 +1092,14 @@ func TestProcessEngineInvalidAgentOverrideFailsBeforeCommandClaim(t *testing.T) 
 	require.Len(t, results, 1)
 	assert.Contains(t, results[0].Error, "not-a-model")
 
-	snapshot, err := fs.LoadRun(t.Context(), "invalid-agent-override")
+	view, err := fs.LoadPathV1RunView(t.Context(), "invalid-agent-override")
 	require.NoError(t, err)
-	assert.Empty(t, snapshot.State.OutstandingCommands, "deterministic validation must fail before CommandIssued")
-	assert.Empty(t, snapshot.State.Obligations)
-	assert.Empty(t, snapshot.State.Contacts)
-	work := snapshot.State.Nodes["work"]
-	assert.Zero(t, work.Attempt)
-	assert.Nil(t, work.ActiveAttempt, "NodeAttemptStarted must not be recorded")
+	aggregate, err := pathv1.CurrentAggregateCheckpoint(view.Checkpoint)
+	require.NoError(t, err)
+	for _, command := range aggregate.Commands {
+		assert.NotEqual(t, pathv1.CommandPerformAttempt, command.Identity.Kind, "deterministic validation must fail before performer claim")
+	}
+	assert.Empty(t, aggregate.SideEffects)
 }
 
 func TestProcessEngineOwnInboxDeliveryDoesNotPreemptAgent(t *testing.T) {
@@ -1224,35 +1284,54 @@ func TestProcessEngineHumanObligationResolvesThroughDashboardMessages(t *testing
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.Equal(t, state.RunStatusCompleted, results[0].Status)
-	snapshot, err := fs.LoadRun(t.Context(), "human-dashboard-run")
+	view, err := fs.LoadPathV1RunView(t.Context(), "human-dashboard-run")
 	require.NoError(t, err)
-	assert.Equal(t, state.ActorRef("human:operator"), snapshot.State.Nodes["work"].ActiveAttempt.Actor)
-	assert.Equal(t, state.WaitStatusSatisfied, firstObligation(snapshot.State).Status)
+	input, err := pathv1.VerifyExclusiveInput(t.Context(), view.CheckpointJSON, view.TemplateSource)
+	require.NoError(t, err)
+	evidenceRef := fmt.Sprintf("human-message:%d:reply", message.ID)
+	_, exact, err := pathv1.ExactExclusiveAttemptObserved(t.Context(), input, "work", strings.TrimPrefix(message.ProcessCommandID, "cmd_"), pathv1.ExclusiveObservation{
+		Outcome: "pass", Actor: "human:operator", Feedback: "looks good in dashboard", EvidenceRef: evidenceRef, ExternalRef: evidenceRef,
+	})
+	require.NoError(t, err)
+	assert.True(t, exact)
 }
 
 func TestProcessEngineHumanDecisionAdvertisesAndPreservesEdgeVerdict(t *testing.T) {
-	_, root := processEngineFlow(t)
+	f, root := processEngineFlow(t)
 	performer := model.Performer{Kind: model.PerformerHuman, Profile: "operator", Ask: "Approve the release?"}
 	fs := createEngineRun(t, root, "human-decision-run", decisionTemplate("human-decision", performer), false)
 	host, err := agentd.NewProcessEngineHostForTest(root)
 	require.NoError(t, err)
 	_, err = agentd.RunProcessEngineTickForTest(t.Context(), host)
 	require.NoError(t, err)
-	snapshot, err := fs.LoadRun(t.Context(), "human-decision-run")
-	require.NoError(t, err)
-	assert.Equal(t, []string{"approve", "reject"}, firstObligation(snapshot.State).AvailableActions)
+	rec := processEngineGet(t, f, "/v1/process/worklist?run=human-decision-run&status=pending")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var listing struct {
+		Items []worklist.Item `json:"items"`
+	}
+	testharness.DecodeJSON(t, rec, &listing)
+	require.Len(t, listing.Items, 1)
+	assert.Equal(t, []string{"approve", "reject"}, listing.Items[0].AvailableActions)
 	messages, err := db.ListHumanMessages()
 	require.NoError(t, err)
 	require.NotEmpty(t, messages)
-	rec := postDashReply(t, dashMessageMux(t), map[string]any{"id": messages[0].ID, "body": "approve release reviewed"})
+	rec = postDashReply(t, dashMessageMux(t), map[string]any{"id": messages[0].ID, "body": "approve release reviewed"})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	results, err := agentd.RunProcessEngineTickForTest(t.Context(), host)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.Equal(t, state.RunStatusCompleted, results[0].Status)
-	snapshot, err = fs.LoadRun(t.Context(), "human-decision-run")
+	view, err := fs.LoadPathV1RunView(t.Context(), "human-decision-run")
 	require.NoError(t, err)
-	assert.Equal(t, "approve", snapshot.State.Nodes["decide"].ChosenEdge)
+	assert.Equal(t, "completed", pathv1.CurrentRunStatus(view.Checkpoint))
+	input, err := pathv1.VerifyExclusiveInput(t.Context(), view.CheckpointJSON, view.TemplateSource)
+	require.NoError(t, err)
+	evidenceRef := fmt.Sprintf("human-message:%d:reply", messages[0].ID)
+	_, exact, err := pathv1.ExactExclusiveAttemptObserved(t.Context(), input, "decide", strings.TrimPrefix(messages[0].ProcessCommandID, "cmd_"), pathv1.ExclusiveObservation{
+		Outcome: "approve", Actor: "human:operator", Feedback: "release reviewed", EvidenceRef: evidenceRef, ExternalRef: evidenceRef,
+	})
+	require.NoError(t, err)
+	assert.True(t, exact)
 }
 
 func TestProcessWorklistActionUsesObservationFunnelAndIsIdempotent(t *testing.T) {
@@ -1354,9 +1433,63 @@ func TestProcessWorklistDecisionActionPreservesAdvertisedCasing(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	_, err = agentd.RunProcessEngineTickForTest(t.Context(), host)
 	require.NoError(t, err)
-	snapshot, err := fs.LoadRun(t.Context(), "capital-decision-run")
+	v7, err := fs.LoadPathV1RunView(t.Context(), "capital-decision-run")
 	require.NoError(t, err)
-	assert.Equal(t, "Approve", snapshot.State.Nodes["decide"].ChosenEdge)
+	assert.Equal(t, "completed", pathv1.CurrentRunStatus(v7.Checkpoint))
+}
+
+func TestSchema7WorklistTaskAliasExactRetryAndDrift(t *testing.T) {
+	f, root := processEngineFlow(t)
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "v7-worklist-retry", Start: "work",
+		Nodes: map[string]model.Node{
+			"work": {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerHuman, Profile: "operator", Ask: "Review the change"}, Next: model.Next{"pass": "done", "fail": "failed"}},
+			"done": {Type: model.NodeTypeEnd, Result: "completed"}, "failed": {Type: model.NodeTypeEnd, Result: "failed"},
+		},
+	}
+	fs := createEngineRun(t, root, "v7-worklist-retry", tmpl, false)
+	host, err := agentd.NewProcessEngineHostForTest(root)
+	require.NoError(t, err)
+	_, err = agentd.RunProcessEngineTickForTest(t.Context(), host)
+	require.NoError(t, err)
+
+	rec := processEngineGet(t, f, "/v1/process/worklist?run=v7-worklist-retry&status=pending")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var pending struct {
+		Items []worklist.Item `json:"items"`
+	}
+	testharness.DecodeJSON(t, rec, &pending)
+	require.Len(t, pending.Items, 1)
+	body := map[string]string{"action": "ask-changes", "comment": "needs another pass", "idempotencyKey": "v7-action-1"}
+	path := "/v1/process/worklist/" + pending.Items[0].ID + "/action"
+	first := humanReq(t, f, http.MethodPost, path, body)
+	require.Equal(t, http.StatusOK, first.Code, first.Body.String())
+	immediateReplay := humanReq(t, f, http.MethodPost, path, body)
+	require.Equal(t, http.StatusOK, immediateReplay.Code, immediateReplay.Body.String(), "observed worklist items must remain addressable before settlement")
+	results, err := agentd.RunProcessEngineTickForTest(t.Context(), host)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, state.RunStatusFailed, results[0].Status, "ask-changes must normalize to fail")
+
+	rec = processEngineGet(t, f, "/v1/process/worklist?run=v7-worklist-retry&status=satisfied")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var settled struct {
+		Items []worklist.Item `json:"items"`
+	}
+	testharness.DecodeJSON(t, rec, &settled)
+	require.Len(t, settled.Items, 1)
+	assert.Equal(t, pending.Items[0].ID, settled.Items[0].ID)
+	exact := humanReq(t, f, http.MethodPost, path, body)
+	require.Equal(t, http.StatusOK, exact.Code, exact.Body.String())
+	driftBody := maps.Clone(body)
+	driftBody["comment"] = "different evidence authority"
+	drift := humanReq(t, f, http.MethodPost, path, driftBody)
+	assert.Equal(t, http.StatusConflict, drift.Code, drift.Body.String())
+	assert.Contains(t, drift.Body.String(), "replay authority differs")
+
+	v7, err := fs.LoadPathV1RunView(t.Context(), "v7-worklist-retry")
+	require.NoError(t, err)
+	assert.Equal(t, "failed", pathv1.CurrentRunStatus(v7.Checkpoint))
 }
 
 func TestProcessWorklistRejectsAgentObligationActionWithoutEvidence(t *testing.T) {
@@ -1378,9 +1511,14 @@ func TestProcessWorklistRejectsAgentObligationActionWithoutEvidence(t *testing.T
 	}
 	testharness.DecodeJSON(t, rec, &listing)
 	require.Len(t, listing.Items, 1)
-	snapshot, err := fs.LoadRun(t.Context(), "agent-obligation-run")
+	v7, err := fs.LoadPathV1RunView(t.Context(), "agent-obligation-run")
 	require.NoError(t, err)
-	commandID := outstandingCommandForNode(t, snapshot.State, "work", state.CommandKindStartAttempt)
+	input, err := pathv1.VerifyExclusiveInput(t.Context(), v7.CheckpointJSON, v7.TemplateSource)
+	require.NoError(t, err)
+	attempt, found, err := pathv1.RecoverExclusiveAttempt(t.Context(), input)
+	require.NoError(t, err)
+	require.True(t, found)
+	commandID := "cmd_" + attempt.Command().ID[:24]
 	agentRow, err := db.AgentForProcessCommand(commandID)
 	require.NoError(t, err)
 	require.NotNil(t, agentRow)
@@ -1390,9 +1528,14 @@ func TestProcessWorklistRejectsAgentObligationActionWithoutEvidence(t *testing.T
 	rec = testharness.Serve(f.Mux, agentd.AsAgentPeer(req, agentRow.CurrentConvID))
 	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "report route")
-	after, err := fs.LoadRun(t.Context(), "agent-obligation-run")
+	after, err := fs.LoadPathV1RunView(t.Context(), "agent-obligation-run")
 	require.NoError(t, err)
-	assert.Equal(t, state.CommandStatusIssued, after.State.OutstandingCommands[commandID].Status)
+	afterInput, err := pathv1.VerifyExclusiveInput(t.Context(), after.CheckpointJSON, after.TemplateSource)
+	require.NoError(t, err)
+	stillPending, found, err := pathv1.RecoverExclusiveAttempt(t.Context(), afterInput)
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, attempt.Command().ID, stillPending.Command().ID)
 }
 
 func TestProcessWorklistBlockedActionUsesUnblockFunnel(t *testing.T) {
@@ -2212,8 +2355,9 @@ func programTemplate(id string, performer model.Performer) *model.Template {
 		ID:         id,
 		Start:      "work",
 		Nodes: map[string]model.Node{
-			"work": {Type: model.NodeTypeTask, Performer: &performer, Next: model.Next{"pass": "end"}},
-			"end":  {Type: model.NodeTypeEnd},
+			"work":   {Type: model.NodeTypeTask, Performer: &performer, Next: model.Next{"pass": "end", "fail": "failed"}},
+			"end":    {Type: model.NodeTypeEnd},
+			"failed": {Type: model.NodeTypeEnd, Result: "failed"},
 		},
 	}
 }

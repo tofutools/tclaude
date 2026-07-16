@@ -371,6 +371,13 @@ func (a processHumanAdapter) ReconcileDeferred(_ context.Context, request proces
 	if err := a.Validate(request); err != nil {
 		return processexec.Observation{}, processexec.DeferredMissing, err
 	}
+	existing, err := db.FindHumanMessageForProcessCommand(request.Command.ID, "Process obligation")
+	if err != nil {
+		return processexec.Observation{}, processexec.DeferredMissing, err
+	}
+	if existing == nil {
+		return processexec.Observation{}, processexec.DeferredMissing, nil
+	}
 	return processexec.Observation{}, processexec.DeferredInFlight, nil
 }
 

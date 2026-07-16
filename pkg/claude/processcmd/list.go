@@ -8,6 +8,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 	processverify "github.com/tofutools/tclaude/pkg/claude/process/verify"
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -122,9 +123,19 @@ func runRunsLs(cmd *cobra.Command, p *runsLsParams, out io.Writer) error {
 	fmt.Fprintln(tw, "ID\tSTATUS\tTEMPLATE\tCREATED")
 	for _, run := range runs {
 		status := "load_error"
-		if snapshot, err := fs.LoadRun(cmd.Context(), run.ID); err == nil && snapshot.State != nil {
-			report := processverify.Snapshot(snapshot)
-			status = string(report.EffectiveStatus)
+		if schema, schemaErr := fs.RunStateSchemaVersion(cmd.Context(), run.ID); schemaErr == nil {
+			if schema == pathv1.CheckpointStateSchemaVersion {
+				if snapshot, loadErr := fs.LoadPathV1RunView(cmd.Context(), run.ID); loadErr == nil {
+					if _, verifyErr := pathv1.VerifyExclusiveInput(cmd.Context(), snapshot.CheckpointJSON, snapshot.TemplateSource); verifyErr == nil {
+						status = pathv1.CurrentRunStatus(snapshot.Checkpoint)
+					}
+				}
+			} else if schema > 0 && schema <= pathv1.LegacyMaxSchemaVersion {
+				if snapshot, loadErr := fs.LoadRun(cmd.Context(), run.ID); loadErr == nil && snapshot.State != nil {
+					report := processverify.Snapshot(snapshot)
+					status = string(report.EffectiveStatus)
+				}
+			}
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", run.ID, status, run.TemplateRef, formatTime(run.CreatedAt))
 	}

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -142,6 +143,35 @@ func TestExclusiveV7RetryUsesNextAttemptWithoutReperformingClaim(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "completed", pathv1.CurrentRunStatus(checkpoint))
 	assert.Equal(t, 2, adapter.count())
+}
+
+func TestExclusiveV7ExhaustedTaskFailureCompletesFailed(t *testing.T) {
+	fs, runID := exclusiveV7Run(t)
+	adapter := &exclusiveV7Adapter{results: []Observation{{
+		Actor: "agent:agt_test1", Verdict: "fail", EvidenceRef: "artifact:failed",
+	}}}
+	executor := NewExclusiveV7(fs, map[model.PerformerKind]Adapter{model.PerformerAgent: adapter})
+	checkpoint, err := executor.Drive(t.Context(), runID)
+	require.NoError(t, err)
+	assert.Equal(t, "failed", pathv1.CurrentRunStatus(checkpoint))
+	assert.Equal(t, 1, adapter.count())
+	aggregate, err := pathv1.CurrentAggregateCheckpoint(checkpoint)
+	require.NoError(t, err)
+	completion, err := pathv1.AssessAggregateCompletion(aggregate.View())
+	require.NoError(t, err)
+	assert.Equal(t, "failed", completion.Result)
+}
+
+func TestExclusiveV7TaskAliasNormalizesBeforeSettlement(t *testing.T) {
+	fs, runID := exclusiveV7Run(t)
+	executor := NewExclusiveV7(fs, nil)
+	commandID := claimExclusiveAttemptForTest(t, fs, runID, 1)
+	observation := Observation{Actor: "human:operator", Verdict: "ask-changes", EvidenceRef: "artifact:changes"}
+	_, err := executor.RecordObservation(t.Context(), runID, "work", commandID, observation)
+	require.NoError(t, err)
+	checkpoint, err := executor.Drive(t.Context(), runID)
+	require.NoError(t, err)
+	assert.Equal(t, "failed", pathv1.CurrentRunStatus(checkpoint), "ask-changes must normalize to fail, never the pass fallback")
 }
 
 func TestExclusiveV7CompositeEventSequencesAdvanceAcrossDecisionTaskChain(t *testing.T) {
@@ -282,6 +312,121 @@ func TestExclusiveV7AmbiguousObservationRecoversWithoutReperform(t *testing.T) {
 	assert.Equal(t, 1, adapter.count())
 }
 
+func TestExclusiveV7InlineEvidenceExactReplayAfterAmbiguousCommit(t *testing.T) {
+	fs, runID := exclusiveV7Run(t)
+	executor := NewExclusiveV7(fs, nil)
+	commandID := claimExclusiveAttemptForTest(t, fs, runID, 1)
+	observation := Observation{
+		Actor:    "agent:agt_test1",
+		Verdict:  "pass",
+		Feedback: "inline evidence",
+		Evidence: &Artifact{Name: "result.txt", Data: []byte("durable result")},
+	}
+
+	injected := errors.New("ambiguous inline observation")
+	restore := fs.SetPathV1AppendHooksForTest(nil, func() error { return injected })
+	_, err := executor.RecordObservation(t.Context(), runID, "work", commandID, observation)
+	restore()
+	assert.ErrorIs(t, err, injected)
+
+	checkpoint, err := executor.RecordObservation(t.Context(), runID, "work", commandID, observation)
+	require.NoError(t, err, "inline evidence must canonicalize to the stored ref/hash on exact replay")
+	assert.NotNil(t, checkpoint)
+}
+
+func TestExclusiveV7ReportReplayBindsExactLatestAttempt(t *testing.T) {
+	fs, runID := exclusiveV7RunWithRetry(t)
+	executor := NewExclusiveV7(fs, nil)
+	firstCommand := claimExclusiveAttemptForTest(t, fs, runID, 1)
+	first := Observation{Actor: "agent:agt_test1", Verdict: "fail", Feedback: "retry", EvidenceRef: "artifact:first"}
+	_, err := executor.RecordObservation(t.Context(), runID, "work", firstCommand, first)
+	require.NoError(t, err)
+	_, err = executor.RecordObservation(t.Context(), runID, "work", firstCommand, first)
+	require.NoError(t, err, "exact retry after committed observation must be idempotent")
+	changed := first
+	changed.Actor = "agent:agt_other1"
+	_, err = executor.RecordObservation(t.Context(), runID, "work", firstCommand, changed)
+	assert.ErrorContains(t, err, "replay authority differs")
+
+	secondCommand := claimExclusiveAttemptForTest(t, fs, runID, 2)
+	second := Observation{Actor: "agent:agt_test1", Verdict: "pass", Feedback: "done", EvidenceRef: "artifact:second"}
+	_, err = executor.RecordObservation(t.Context(), runID, "work", secondCommand, second)
+	require.NoError(t, err)
+	_, err = executor.RecordObservation(t.Context(), runID, "work", secondCommand, second)
+	require.NoError(t, err, "latest exact retry must skip an unrelated historical attempt")
+	_, _, err = executor.RecordNodeObservation(t.Context(), runID, "work", second)
+	require.NoError(t, err, "node-only exact replay must select the unique matching observation")
+}
+
+func TestExclusiveV7RecordObservationRequiresCommandAlias(t *testing.T) {
+	fs, runID := exclusiveV7Run(t)
+	executor := NewExclusiveV7(fs, nil)
+	claimExclusiveAttemptForTest(t, fs, runID, 1)
+	_, err := executor.RecordObservation(t.Context(), runID, "work", "", Observation{
+		Actor: "agent:agt_test1", Verdict: "pass", EvidenceRef: "artifact:exact",
+	})
+	assert.ErrorContains(t, err, "command id is required")
+}
+
+func TestExclusiveV7SignalWaitBlocksSatisfiesAndReplaysExactly(t *testing.T) {
+	fs, runID := exclusiveV7WaitRun(t, &model.WaitConfig{Signal: "deploy/prod"})
+	executor := NewExclusiveV7(fs, nil)
+	checkpoint, err := executor.Drive(t.Context(), runID)
+	require.NoError(t, err)
+	assert.Equal(t, "running", pathv1.CurrentRunStatus(checkpoint))
+
+	injected := errors.New("ambiguous signal observation")
+	restore := fs.SetPathV1AppendHooksForTest(nil, func() error { return injected })
+	_, err = executor.SatisfySignal(t.Context(), runID, "wait", "deploy/prod", "agent:agt_test1")
+	restore()
+	assert.ErrorIs(t, err, injected)
+	_, err = executor.SatisfySignal(t.Context(), runID, "wait", "deploy/prod", "agent:agt_test1")
+	require.NoError(t, err, "exact retry after committed signal must be idempotent")
+	_, err = executor.SatisfySignal(t.Context(), runID, "wait", "deploy/prod", "agent:agt_other1")
+	assert.ErrorContains(t, err, "authority differs")
+	_, err = executor.SatisfySignal(t.Context(), runID, "wait", "deploy/stage", "agent:agt_test1")
+	assert.Error(t, err)
+
+	checkpoint, err = executor.Drive(t.Context(), runID)
+	require.NoError(t, err)
+	assert.Equal(t, "completed", pathv1.CurrentRunStatus(checkpoint))
+}
+
+func TestExclusiveV7TimerWaitPersistsScheduleAndBlocksUntilDue(t *testing.T) {
+	t0 := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	fs, runID := exclusiveV7WaitRun(t, &model.WaitConfig{Duration: "5m"})
+	now := t0
+	executor := NewExclusiveV7(fs, nil)
+	executor.Now = func() time.Time { return now }
+	checkpoint, err := executor.Drive(t.Context(), runID)
+	require.NoError(t, err)
+	assert.Equal(t, "running", pathv1.CurrentRunStatus(checkpoint))
+
+	now = t0.Add(4*time.Minute + 59*time.Second)
+	checkpoint, err = executor.Drive(t.Context(), runID)
+	require.NoError(t, err)
+	assert.Equal(t, "running", pathv1.CurrentRunStatus(checkpoint))
+	now = t0.Add(5 * time.Minute)
+	checkpoint, err = executor.Drive(t.Context(), runID)
+	require.NoError(t, err)
+	assert.Equal(t, "completed", pathv1.CurrentRunStatus(checkpoint))
+}
+
+func TestExclusiveV7UntilWaitUsesImmutableDueInstant(t *testing.T) {
+	due := time.Date(2031, 2, 3, 4, 5, 6, 0, time.UTC)
+	fs, runID := exclusiveV7WaitRun(t, &model.WaitConfig{Until: due.Format(time.RFC3339)})
+	now := due.Add(-time.Second)
+	executor := NewExclusiveV7(fs, nil)
+	executor.Now = func() time.Time { return now }
+	checkpoint, err := executor.Drive(t.Context(), runID)
+	require.NoError(t, err)
+	assert.Equal(t, "running", pathv1.CurrentRunStatus(checkpoint))
+	now = due
+	checkpoint, err = executor.Drive(t.Context(), runID)
+	require.NoError(t, err)
+	assert.Equal(t, "completed", pathv1.CurrentRunStatus(checkpoint))
+}
+
 func TestExclusiveV7TerminalRetryReconfirmsDirectoryDurability(t *testing.T) {
 	fs, runID := exclusiveV7Run(t)
 	adapter := &exclusiveV7Adapter{}
@@ -355,6 +500,34 @@ func exclusiveV7RunAt(t *testing.T, root string, performer *model.Performer, ret
 	return fs, runID
 }
 
+func claimExclusiveAttemptForTest(t *testing.T, fs *store.FS, runID string, attempt uint64) string {
+	t.Helper()
+	var transition *pathv1.ExecutionTransition
+	var commandID string
+	require.NoError(t, fs.WithPathV1ExecutionView(t.Context(), runID, func(view store.PathV1ExecutionView) error {
+		aggregate, err := pathv1.CurrentAggregateCheckpoint(view.Checkpoint)
+		if err != nil {
+			return err
+		}
+		var live pathv1.PathID
+		for _, candidate := range aggregate.Routing.Paths {
+			if candidate.Kind == pathv1.PathActivationOutput && candidate.State == pathv1.PathLive {
+				live = candidate.ID
+			}
+		}
+		planned, err := pathv1.PlanExclusiveAttempt(t.Context(), view.Input, live, attempt, view.Run.Params)
+		if err != nil {
+			return err
+		}
+		commandID = exclusiveExternalCommandID(planned.Command().ID)
+		transition, err = pathv1.ClaimExclusiveAttempt(t.Context(), view.Input, planned)
+		return err
+	}))
+	_, err := fs.AppendPathV1(t.Context(), runID, transition)
+	require.NoError(t, err)
+	return commandID
+}
+
 func exclusiveV7DecisionTaskRun(t *testing.T) (*store.FS, string) {
 	t.Helper()
 	fs, err := store.NewFS(t.TempDir())
@@ -375,6 +548,34 @@ func exclusiveV7DecisionTaskRun(t *testing.T) (*store.FS, string) {
 		{ID: "choose", Type: model.NodeTypeDecision, Status: state.NodeStatusReady},
 		{ID: "work", Type: model.NodeTypeTask, Status: state.NodeStatusPending},
 		{ID: "held", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+		{ID: "done", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+	})
+	st.Status = state.RunStatusRunning
+	_, err = fs.CreateRun(t.Context(), store.RunRecord{ID: runID, TemplateRef: record.Ref}, st)
+	require.NoError(t, err)
+	proof, err := fs.UpgradeNeeded(t.Context(), runID)
+	require.NoError(t, err)
+	_, err = fs.InitializePathV1(t.Context(), runID, proof)
+	require.NoError(t, err)
+	return fs, runID
+}
+
+func exclusiveV7WaitRun(t *testing.T, wait *model.WaitConfig) (*store.FS, string) {
+	t.Helper()
+	fs, err := store.NewFS(t.TempDir())
+	require.NoError(t, err)
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "exclusive-v7-wait", Start: "wait",
+		Nodes: map[string]model.Node{
+			"wait": {Type: model.NodeTypeWait, Wait: wait, Next: model.Next{"pass": "done"}},
+			"done": {Type: model.NodeTypeEnd, Result: "completed"},
+		},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	require.NoError(t, err)
+	runID := "run-exclusive-v7-wait"
+	st := state.New(runID, record.Ref, record.Ref, []state.NodeInit{
+		{ID: "wait", Type: model.NodeTypeWait, Status: state.NodeStatusReady},
 		{ID: "done", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
 	})
 	st.Status = state.RunStatusRunning

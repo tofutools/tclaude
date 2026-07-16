@@ -7,11 +7,11 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 )
 
-// MigrationReadinessAuthority is the dormant pre-planning seam for the later
-// v7 release gate. UpgradeNeeded returns a detached candidate; before any
+// MigrationReadinessAuthority is the schema-7 pre-planning release seam.
+// UpgradeNeeded returns a detached candidate; before any
 // decision, ConfirmUpgradeNeeded must rederive authority from a coherent
-// source view and require an exact match with that candidate. The live v6 Host
-// deliberately does not hold or call this capability in TCL-502.
+// source view and require an exact match with that candidate. Hosts opt into
+// this capability explicitly so generic v6 embedders remain compatible.
 type MigrationReadinessAuthority interface {
 	UpgradeNeeded(context.Context, string) (pathv1.UpgradeNeeded, error)
 	ConfirmUpgradeNeeded(context.Context, string, pathv1.UpgradeNeeded) error

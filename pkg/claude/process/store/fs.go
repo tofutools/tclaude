@@ -121,7 +121,7 @@ func (s *FS) SetExecutionViewHooksForTest(runLocked, templateLocked, reobserve f
 }
 
 // SetPathV1InitializeHooksForTest installs deterministic crash-boundary hooks
-// around the dormant schema-7 atomic replacement. Install before concurrent
+// around the schema-7 atomic replacement. Install before concurrent
 // use. An after-commit error models an ambiguous acknowledgement after rename.
 func (s *FS) SetPathV1InitializeHooksForTest(beforeCommit, afterCommit func() error) func() {
 	oldBefore, oldAfter := s.pathV1InitializeBeforeCommit, s.pathV1InitializeAfterCommit
@@ -140,7 +140,7 @@ func (s *FS) SetPathV1InitializeDirSyncHookForTest(hook func() error) func() {
 	return func() { s.pathV1InitializeDirSync = old }
 }
 
-// SetPathV1AppendHooksForTest installs crash-boundary hooks around one dormant
+// SetPathV1AppendHooksForTest installs crash-boundary hooks around one
 // schema-7 execution append. An after-commit error models an ambiguous durable
 // rename acknowledgement; callers recover by exact desired-state replay.
 func (s *FS) SetPathV1AppendHooksForTest(beforeCommit, afterCommit func() error) func() {

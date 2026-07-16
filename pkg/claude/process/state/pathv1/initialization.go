@@ -95,7 +95,7 @@ const (
 	InitializationAlreadyApplied InitializationDisposition = "already_applied"
 )
 
-// ValidateUnambiguousLegacyInitialization limits this deploy-disabled slice
+// ValidateUnambiguousLegacyInitialization limits the schema-7 release
 // to the one legacy checkpoint whose complete path-v1 meaning is unique: the
 // pristine, newly instantiated exclusive run. Progressed-but-quiescent legacy
 // histories remain schema 6 for the later parity migrator.

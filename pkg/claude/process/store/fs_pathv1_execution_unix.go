@@ -5,6 +5,7 @@ package store
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -15,7 +16,72 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 )
 
-// WithPathV1ExecutionView exposes the deploy-disabled coherent schema-7 read
+// RunStateSchemaVersion reads only the bounded checkpoint header under the
+// run lock. It is the schema switch used by the live scheduler and API; the
+// legacy decoder cap remains fixed at schema 6.
+func (s *FS) RunStateSchemaVersion(ctx context.Context, runID string) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	if err := safeSegment(runID); err != nil {
+		return 0, fmt.Errorf("invalid run id: %w", err)
+	}
+	exists, err := s.HasRunView(runID)
+	if err != nil {
+		return 0, err
+	}
+	if !exists {
+		return 0, ErrNotFound
+	}
+	unlock, err := s.lockRunView(ctx, runID)
+	if err != nil {
+		return 0, err
+	}
+	defer unlock()
+	runDir, err := s.openPathV1InitializationRunDir(runID)
+	if err != nil {
+		return 0, err
+	}
+	defer runDir.Close()
+	data, err := readPathV1InitializationStateAt(ctx, runDir, s.newExecutionViewBudget(ctx))
+	if err != nil {
+		return 0, err
+	}
+	var header struct {
+		StateSchemaVersion int `json:"stateSchemaVersion"`
+	}
+	if err := json.Unmarshal(data, &header); err != nil {
+		return 0, &DecodeError{Component: "run state header", Err: err}
+	}
+	if header.StateSchemaVersion <= 0 {
+		return 0, &DecodeError{Component: "run state header", Err: fmt.Errorf("invalid state schema version %d", header.StateSchemaVersion)}
+	}
+	return header.StateSchemaVersion, nil
+}
+
+// LoadPathV1RunView returns a fully verified, detached schema-7 checkpoint and
+// exact template source. Evidence is intentionally not an input.
+func (s *FS) LoadPathV1RunView(ctx context.Context, runID string) (PathV1RunSnapshot, error) {
+	var snapshot PathV1RunSnapshot
+	err := s.WithPathV1ExecutionView(ctx, runID, func(view PathV1ExecutionView) error {
+		encoded, err := pathv1.EncodeCheckpointV7(view.Checkpoint)
+		if err != nil {
+			return err
+		}
+		checkpoint, err := pathv1.DecodeCheckpointV7(encoded)
+		if err != nil {
+			return err
+		}
+		snapshot = PathV1RunSnapshot{
+			Run: view.Run, CheckpointJSON: bytes.Clone(view.CheckpointJSON),
+			TemplateSource: bytes.Clone(view.TemplateSource), Checkpoint: checkpoint,
+		}
+		return nil
+	})
+	return snapshot, err
+}
+
+// WithPathV1ExecutionView exposes the coherent schema-7 read
 // boundary. The callback is pure: external adapters must never be invoked
 // while its run/template locks are held.
 func (s *FS) WithPathV1ExecutionView(ctx context.Context, runID string, callback func(PathV1ExecutionView) error) error {
@@ -226,7 +292,7 @@ func (s *FS) AppendPathV1(ctx context.Context, runID string, transition *pathv1.
 
 // ReconfirmPathV1Durability verifies the exact current terminal checkpoint
 // under the run/template lock order and fsyncs its held run directory. The
-// dormant executor uses this after an ambiguous terminal rename so visibility
+// executor uses this after an ambiguous terminal rename so visibility
 // alone is never reported as durable success.
 func (s *FS) ReconfirmPathV1Durability(ctx context.Context, runID string, expected pathv1.CheckpointBinding) (*pathv1.CheckpointV7, error) {
 	if err := ctx.Err(); err != nil {

@@ -3,8 +3,10 @@
 package worklist
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
+	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 )
 
@@ -74,6 +77,11 @@ type Filter struct {
 	Status   state.WaitStatus
 }
 
+// CommandAssigneeLookup resolves the live agent assigned to a schema-7
+// external command. Nil is valid for store-only callers that do not have the
+// daemon's agent registry available.
+type CommandAssigneeLookup func(context.Context, string) (string, error)
+
 // Derive projects snapshots into a stable, deterministically ordered worklist.
 func Derive(snapshots []store.Snapshot) []Item {
 	items := make([]Item, 0)
@@ -88,6 +96,108 @@ func Derive(snapshots []store.Snapshot) []Item {
 		return strings.Compare(a.ID, b.ID)
 	})
 	return items
+}
+
+// DerivePathV1 projects one verified schema-7 checkpoint into the same stable
+// worklist contract used for legacy snapshots. The checkpoint is the only
+// execution authority; template source is used solely for immutable node and
+// performer metadata.
+func DerivePathV1(ctx context.Context, snapshot store.PathV1RunSnapshot, lookup CommandAssigneeLookup) ([]Item, error) {
+	if _, err := pathv1.VerifyExclusiveInput(ctx, snapshot.CheckpointJSON, snapshot.TemplateSource); err != nil {
+		return nil, err
+	}
+	parsed, err := model.Parse(snapshot.TemplateSource)
+	if err != nil || parsed.Diagnostics.HasErrors() {
+		return nil, fmt.Errorf("schema-7 worklist template is invalid")
+	}
+	aggregate, err := pathv1.CurrentAggregateCheckpoint(snapshot.Checkpoint)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]Item, 0)
+	for _, command := range aggregate.Commands {
+		if command.Identity.Kind != pathv1.CommandPerformAttempt {
+			continue
+		}
+		status := state.WaitStatusPending
+		if command.State == pathv1.CommandObserved || command.State == pathv1.CommandReconciled {
+			status = state.WaitStatusSatisfied
+		} else if !command.State.Active() {
+			continue
+		}
+		activation, ok := aggregate.Routing.Activations[command.Identity.SourceActivationID]
+		if !ok {
+			continue
+		}
+		reservation, ok := aggregate.Routing.Reservations[activation.ReservationID]
+		if !ok {
+			continue
+		}
+		node, ok := parsed.Template.Nodes[reservation.NodeID]
+		if !ok || node.Performer == nil || (node.Type != model.NodeTypeTask && node.Type != model.NodeTypeDecision) {
+			continue
+		}
+		performer := model.InterpolatePerformer(*node.Performer, snapshot.Run.Params)
+		item, buildErr := buildPathV1Item(ctx, snapshot.Run.ID, parsed.Template, reservation.NodeID, &performer, command, status, lookup)
+		if buildErr != nil {
+			return nil, buildErr
+		}
+		items = append(items, item)
+	}
+	slices.SortFunc(items, func(a, b Item) int { return strings.Compare(a.ID, b.ID) })
+	return items, nil
+}
+
+func buildPathV1Item(ctx context.Context, runID string, tmpl *model.Template, nodeID string, performer *model.Performer, command pathv1.CommandRecord, status state.WaitStatus, lookup CommandAssigneeLookup) (Item, error) {
+	if performer == nil || tmpl == nil || len(command.ID) < 24 {
+		return Item{}, fmt.Errorf("schema-7 worklist command authority is invalid")
+	}
+	node := tmpl.Nodes[nodeID]
+	commandID := "cmd_" + command.ID[:24]
+	kind := KindAgentObligation
+	assignee := ""
+	summary := strings.TrimSpace(performer.Prompt)
+	actions := []string{"pass", "fail", "ask-changes"}
+	if performer.Kind == model.PerformerHuman {
+		kind = KindHumanWait
+		assignee = strings.TrimSpace(performer.Assignee)
+		if assignee == "" {
+			assignee = strings.TrimSpace(performer.Profile)
+		}
+		if assignee == "" {
+			assignee = "human:operator"
+		} else if !strings.HasPrefix(assignee, "human:") && !strings.HasPrefix(assignee, "role:") {
+			assignee = "human:" + assignee
+		}
+		summary = strings.TrimSpace(performer.Ask)
+		if summary == "" {
+			summary = strings.TrimSpace(performer.Prompt)
+		}
+		actions = []string{"approve", "reject", "ask-changes"}
+		if node.Type == model.NodeTypeDecision {
+			kind = KindDecisionNeeded
+			actions = make([]string, 0, len(node.Next))
+			for outcome := range node.Next {
+				actions = append(actions, outcome)
+			}
+			slices.Sort(actions)
+		} else if len(performer.Choices) > 0 {
+			actions = append([]string(nil), performer.Choices...)
+		}
+	} else if lookup != nil {
+		resolved, lookupErr := lookup(ctx, commandID)
+		if lookupErr != nil {
+			return Item{}, lookupErr
+		}
+		assignee = strings.TrimSpace(resolved)
+	}
+	attemptNumber := int(command.Identity.Attempt)
+	return Item{
+		ID: stableID(runID, nodeID, commandID, attemptNumber), Run: runID, Node: nodeID, Attempt: attemptNumber,
+		Kind: kind, Assignee: assignee, Status: status, Summary: summary,
+		AvailableActions: actions, Links: Links{RunID: runID, NodeID: nodeID},
+		Target: ActionTarget{CommandID: commandID},
+	}, nil
 }
 
 // ApplyFilter applies exact-match REST/CLI filters without changing order.

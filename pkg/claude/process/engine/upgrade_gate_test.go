@@ -2,14 +2,19 @@ package engine
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/tofutools/tclaude/pkg/claude/process/evidence"
+	processexec "github.com/tofutools/tclaude/pkg/claude/process/exec"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
 	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
+	"github.com/tofutools/tclaude/pkg/claude/process/store/storetest"
 )
 
 type fixedMigrationAuthority struct {
@@ -17,6 +22,26 @@ type fixedMigrationAuthority struct {
 	coherent          pathv1.UpgradeNeeded
 	calls             int
 	confirmationCalls int
+}
+
+type releaseGateAdapter struct{}
+
+func (releaseGateAdapter) Validate(processexec.Request) error { return nil }
+func (releaseGateAdapter) Perform(context.Context, processexec.Request) (processexec.Observation, error) {
+	return processexec.Observation{Actor: "agent:agt_release1", Verdict: "pass", EvidenceRef: "artifact:release"}, nil
+}
+
+type releaseGateDeferredAdapter struct{}
+
+func (releaseGateDeferredAdapter) Validate(processexec.Request) error { return nil }
+func (releaseGateDeferredAdapter) Perform(context.Context, processexec.Request) (processexec.Observation, error) {
+	panic("deferred adapter must not perform synchronously")
+}
+func (releaseGateDeferredAdapter) Dispatch(context.Context, processexec.Request) (processexec.DispatchResult, error) {
+	return processexec.DispatchResult{ExternalRef: "release:in-flight"}, nil
+}
+func (releaseGateDeferredAdapter) ReconcileDeferred(context.Context, processexec.Request) (processexec.Observation, processexec.DeferredStatus, error) {
+	return processexec.Observation{}, processexec.DeferredInFlight, nil
 }
 
 func (a *fixedMigrationAuthority) UpgradeNeeded(context.Context, string) (pathv1.UpgradeNeeded, error) {
@@ -338,6 +363,281 @@ func TestLiveV6HostDoesNotCallDormantMigrationAuthority(t *testing.T) {
 	_, _ = host.Tick(t.Context())
 	if capable.calls != 0 {
 		t.Fatalf("live v6 host called dormant migration authority %d times", capable.calls)
+	}
+}
+
+func TestEnabledHostMigratesAndCompletesExclusiveSchema7Run(t *testing.T) {
+	fs, err := store.NewFS(filepath.Join(t.TempDir(), "store"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "release-host", Start: "work",
+		Nodes: map[string]model.Node{
+			"work":   {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "work"}, Next: model.Next{"pass": "done", "fail": "failed"}},
+			"done":   {Type: model.NodeTypeEnd, Result: "completed"},
+			"failed": {Type: model.NodeTypeEnd, Result: "failed"},
+		},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint := state.New("run-v7-host", record.Ref, record.Ref, []state.NodeInit{
+		{ID: "work", Type: model.NodeTypeTask, Status: state.NodeStatusReady},
+		{ID: "done", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+		{ID: "failed", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+	})
+	checkpoint.Status = state.RunStatusRunning
+	if _, err := fs.CreateRun(t.Context(), store.RunRecord{ID: "run-v7-host", TemplateRef: record.Ref}, checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	host := New(fs, "test:release-host", map[model.PerformerKind]processexec.Adapter{model.PerformerAgent: releaseGateAdapter{}})
+	if err := host.EnableExclusiveV7(); err != nil {
+		t.Fatal(err)
+	}
+	results, err := host.Tick(t.Context())
+	if err != nil || len(results) != 1 || results[0].Error != "" || results[0].Status != state.RunStatusCompleted {
+		t.Fatalf("enabled host tick = %#v, %v", results, err)
+	}
+	schema, err := fs.RunStateSchemaVersion(t.Context(), "run-v7-host")
+	if err != nil || schema != pathv1.CheckpointStateSchemaVersion {
+		t.Fatalf("run schema = %d, %v", schema, err)
+	}
+	view, err := fs.LoadPathV1RunView(t.Context(), "run-v7-host")
+	if err != nil || pathv1.CurrentRunStatus(view.Checkpoint) != "completed" {
+		t.Fatalf("schema-7 checkpoint = %#v, %v", view.Checkpoint, err)
+	}
+}
+
+func TestEnabledHostDrainsActiveLegacyCommandBeforeMigration(t *testing.T) {
+	fs, err := store.NewFS(filepath.Join(t.TempDir(), "store"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "release-drain", Start: "work",
+		Nodes: map[string]model.Node{
+			"work":   {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "work"}, Next: model.Next{"pass": "done", "fail": "failed"}},
+			"done":   {Type: model.NodeTypeEnd, Result: "completed"},
+			"failed": {Type: model.NodeTypeEnd, Result: "failed"},
+		},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint := state.New("run-v6-drain", record.Ref, record.Ref, []state.NodeInit{
+		{ID: "work", Type: model.NodeTypeTask, Status: state.NodeStatusReady},
+		{ID: "done", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+		{ID: "failed", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+	})
+	checkpoint.Status = state.RunStatusRunning
+	if _, err := fs.CreateRun(t.Context(), store.RunRecord{ID: "run-v6-drain", TemplateRef: record.Ref}, checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	adapters := map[model.PerformerKind]processexec.Adapter{model.PerformerAgent: releaseGateDeferredAdapter{}}
+	legacy := New(fs, "test:legacy-dispatch", adapters)
+	results, err := legacy.Tick(t.Context())
+	if err != nil || len(results) != 1 || results[0].Error != "" {
+		t.Fatalf("legacy dispatch tick = %#v, %v", results, err)
+	}
+	enabled := New(fs, "test:release-drain", adapters)
+	if err := enabled.EnableExclusiveV7(); err != nil {
+		t.Fatal(err)
+	}
+	results, err = enabled.Tick(t.Context())
+	if err != nil || len(results) != 1 || results[0].Error != "" {
+		t.Fatalf("release drain tick = %#v, %v", results, err)
+	}
+	schema, err := fs.RunStateSchemaVersion(t.Context(), "run-v6-drain")
+	if err != nil || schema != state.StateSchemaVersion {
+		t.Fatalf("active legacy run schema = %d, %v; migrated before drain", schema, err)
+	}
+}
+
+func TestEnabledHostRecoversAfterCommittedAmbiguousInitialization(t *testing.T) {
+	fs, err := store.NewFS(filepath.Join(t.TempDir(), "store"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "release-ambiguous", Start: "work",
+		Nodes: map[string]model.Node{
+			"work":   {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "work"}, Next: model.Next{"pass": "done", "fail": "failed"}},
+			"done":   {Type: model.NodeTypeEnd, Result: "completed"},
+			"failed": {Type: model.NodeTypeEnd, Result: "failed"},
+		},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint := state.New("run-v7-ambiguous", record.Ref, record.Ref, []state.NodeInit{
+		{ID: "work", Type: model.NodeTypeTask, Status: state.NodeStatusReady},
+		{ID: "done", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+		{ID: "failed", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+	})
+	checkpoint.Status = state.RunStatusRunning
+	if _, err := fs.CreateRun(t.Context(), store.RunRecord{ID: "run-v7-ambiguous", TemplateRef: record.Ref}, checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	injected := fmt.Errorf("lost initialization acknowledgement")
+	restore := fs.SetPathV1InitializeHooksForTest(nil, func() error { return injected })
+	host := New(fs, "test:release-ambiguous", map[model.PerformerKind]processexec.Adapter{model.PerformerAgent: releaseGateAdapter{}})
+	if err := host.EnableExclusiveV7(); err != nil {
+		t.Fatal(err)
+	}
+	results, err := host.Tick(t.Context())
+	restore()
+	if err != nil || len(results) != 1 || results[0].Error != "" || results[0].Status != state.RunStatusCompleted {
+		t.Fatalf("ambiguous initialization recovery = %#v, %v", results, err)
+	}
+	schema, err := fs.RunStateSchemaVersion(t.Context(), "run-v7-ambiguous")
+	if err != nil || schema != pathv1.CheckpointStateSchemaVersion {
+		t.Fatalf("recovered schema = %d, %v", schema, err)
+	}
+}
+
+func TestEnabledHostFallsBackToLegacyForProgressedQuiescentRun(t *testing.T) {
+	for legacySchema := 1; legacySchema <= pathv1.LegacyMaxSchemaVersion; legacySchema++ {
+		t.Run(fmt.Sprintf("schema-%d", legacySchema), func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "store")
+			fs, err := store.NewFS(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tmpl := &model.Template{
+				APIVersion: model.APIVersion, Kind: model.Kind, ID: "release-progressed", Start: "work",
+				Nodes: map[string]model.Node{
+					"work":   {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "work"}, Next: model.Next{"pass": "done", "fail": "failed"}},
+					"done":   {Type: model.NodeTypeEnd, Result: "completed"},
+					"failed": {Type: model.NodeTypeEnd, Result: "failed"},
+				},
+			}
+			record, err := fs.PutTemplate(t.Context(), tmpl)
+			if err != nil {
+				t.Fatal(err)
+			}
+			runID := fmt.Sprintf("run-v%d-progressed", legacySchema)
+			checkpoint := state.New(runID, record.Ref, record.Ref, []state.NodeInit{
+				{ID: "work", Type: model.NodeTypeTask, Status: state.NodeStatusReady},
+				{ID: "done", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+				{ID: "failed", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+			})
+			checkpoint.Status = state.RunStatusRunning
+			if _, err := fs.CreateRun(t.Context(), store.RunRecord{ID: runID, TemplateRef: record.Ref}, checkpoint); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := fs.Append(t.Context(), runID, 0, []evidence.LogEntry{storetest.AdminLogEntry(runID, "work", 0)}); err != nil {
+				t.Fatal(err)
+			}
+			progressed, err := fs.LoadRun(t.Context(), runID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			progressed.State.StateSchemaVersion = legacySchema
+			encoded, err := state.Encode(progressed.State)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "runs", runID, "state.json"), encoded, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if schema, err := fs.RunStateSchemaVersion(t.Context(), runID); err != nil || schema != legacySchema {
+				t.Fatalf("fixture schema = %d, %v", schema, err)
+			}
+
+			host := New(fs, "test:release-progressed", map[model.PerformerKind]processexec.Adapter{model.PerformerAgent: releaseGateAdapter{}})
+			if err := host.EnableExclusiveV7(); err != nil {
+				t.Fatal(err)
+			}
+			results, err := host.Tick(t.Context())
+			if err != nil || len(results) != 1 || results[0].Error != "" || results[0].Status != state.RunStatusCompleted {
+				t.Fatalf("progressed legacy fallback tick = %#v, %v", results, err)
+			}
+			schema, err := fs.RunStateSchemaVersion(t.Context(), runID)
+			if err != nil || schema <= 0 || schema > pathv1.LegacyMaxSchemaVersion {
+				t.Fatalf("progressed run left legacy compatibility: schema = %d, %v", schema, err)
+			}
+		})
+	}
+}
+
+func TestEnabledHostKeepsUnsupportedCanceledEndOnLegacySchema(t *testing.T) {
+	fs, err := store.NewFS(filepath.Join(t.TempDir(), "store"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "release-canceled", Start: "done",
+		Nodes: map[string]model.Node{"done": {Type: model.NodeTypeEnd, Result: "canceled"}},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint := state.New("run-v6-canceled", record.Ref, record.Ref, []state.NodeInit{{ID: "done", Type: model.NodeTypeEnd, Status: state.NodeStatusReady}})
+	checkpoint.Status = state.RunStatusRunning
+	if _, err := fs.CreateRun(t.Context(), store.RunRecord{ID: "run-v6-canceled", TemplateRef: record.Ref}, checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	host := New(fs, "test:release-canceled", nil)
+	if err := host.EnableExclusiveV7(); err != nil {
+		t.Fatal(err)
+	}
+	results, err := host.Tick(t.Context())
+	if err != nil || len(results) != 1 || results[0].Error != "" || results[0].Status != state.RunStatusCanceled {
+		t.Fatalf("canceled legacy tick = %#v, %v", results, err)
+	}
+	schema, err := fs.RunStateSchemaVersion(t.Context(), "run-v6-canceled")
+	if err != nil || schema != state.StateSchemaVersion {
+		t.Fatalf("canceled legacy schema = %d, %v", schema, err)
+	}
+}
+
+func TestExclusiveV7EligibilityRejectsInvalidWaitAuthority(t *testing.T) {
+	tests := []struct {
+		name string
+		wait *model.WaitConfig
+		want bool
+	}{
+		{name: "nil", wait: nil},
+		{name: "empty", wait: &model.WaitConfig{}},
+		{name: "ambiguous", wait: &model.WaitConfig{Signal: "deploy", Duration: "1m"}},
+		{name: "zero duration", wait: &model.WaitConfig{Duration: "0s"}},
+		{name: "negative duration", wait: &model.WaitConfig{Duration: "-1s"}},
+		{name: "malformed duration", wait: &model.WaitConfig{Duration: "later"}},
+		{name: "malformed until", wait: &model.WaitConfig{Until: "tomorrow"}},
+		{name: "signal", wait: &model.WaitConfig{Signal: "deploy"}, want: true},
+		{name: "duration", wait: &model.WaitConfig{Duration: "1m"}, want: true},
+		{name: "until", wait: &model.WaitConfig{Until: "2026-07-16T12:00:00Z"}, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpl := &model.Template{Nodes: map[string]model.Node{
+				"wait": {Type: model.NodeTypeWait, Wait: tt.wait},
+			}}
+			if got := exclusiveV7Eligible(tmpl); got != tt.want {
+				t.Fatalf("exclusiveV7Eligible() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExclusiveV7EligibilityKeepsUnsupportedTerminalShapesOnV6(t *testing.T) {
+	passOnlyTask := &model.Template{Start: "work", Nodes: map[string]model.Node{
+		"work": {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "work"}, Next: model.Next{"pass": "done"}},
+		"done": {Type: model.NodeTypeEnd, Result: "completed"},
+	}}
+	if exclusiveV7Eligible(passOnlyTask) {
+		t.Fatal("task without a failure edge must remain on v6 until terminal-failure parity is supported")
+	}
+	endOnly := &model.Template{Start: "done", Nodes: map[string]model.Node{
+		"done": {Type: model.NodeTypeEnd, Result: "completed"},
+	}}
+	if exclusiveV7Eligible(endOnly) {
+		t.Fatal("end-only entry template must remain on v6 until direct end activation is supported")
 	}
 }
 

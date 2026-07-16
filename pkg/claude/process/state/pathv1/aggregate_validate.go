@@ -842,6 +842,8 @@ func (i *aggregateIndex) validateDisposition(path string, p PathRecord) {
 				want := CommandSettleAttempt
 				if d.FromState == PathArrived {
 					want = CommandActivateGeneration
+				} else if command.Identity.Kind == CommandRoutePaths {
+					want = CommandRoutePaths
 				}
 				i.validateTerminalCommand(path, p, d, command, want)
 			}
