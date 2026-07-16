@@ -1719,9 +1719,11 @@ func validateInitialAdminWrites(records []state.AdminRecord) error {
 		if record.Timestamp.IsZero() {
 			return fmt.Errorf("initial admin record %d: %s requires a timestamp for new writes", i, record.Type)
 		}
-		if record.Type == state.EventBlockResolutionRecorded &&
-			(record.Resolution == nil || record.Resolution.Timestamp.IsZero()) {
-			return fmt.Errorf("initial admin record %d: block_resolution_recorded requires a resolution timestamp for new writes", i)
+		if record.Resolution != nil && record.Resolution.Timestamp.IsZero() {
+			return fmt.Errorf("initial admin record %d: %s requires a resolution timestamp for new writes", i, record.Type)
+		}
+		if record.Type == state.EventBlockResolutionRecorded && record.Resolution == nil {
+			return fmt.Errorf("initial admin record %d: block_resolution_recorded requires a resolution payload for new writes", i)
 		}
 	}
 	return nil

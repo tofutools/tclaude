@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -90,8 +91,14 @@ func TestUpgradeNeededClassifiesUnsupportedTimestampLessAdminCheckpoint(t *testi
 	fs, runID := initializedRunAt(t, root)
 	snapshot, err := fs.LoadRun(t.Context(), runID)
 	require.NoError(t, err)
+	at := time.Date(2026, 7, 16, 0, 0, 0, 0, time.UTC)
 	snapshot.State.AdminRecords = append(snapshot.State.AdminRecords, state.AdminRecord{
-		Type: state.EventBlockResolutionRecorded, Actor: "human:operator", Reason: "forged resolution", EvidenceRef: "ticket:TCL-523",
+		Type: state.EventBlockResolutionRecorded, Actor: "human:operator", Reason: "forged resolution",
+		EvidenceRef: "ticket:TCL-523", Timestamp: at,
+		Resolution: &state.BlockResolution{
+			NodeID: "implement", BlockedAttempt: 1, Decision: state.BlockDecisionSkip,
+			Actor: "human:operator", Reason: "forged resolution", EvidenceRef: "ticket:TCL-523",
+		},
 	})
 	data, err := state.Encode(snapshot.State)
 	require.NoError(t, err)
@@ -103,7 +110,9 @@ func TestUpgradeNeededClassifiesUnsupportedTimestampLessAdminCheckpoint(t *testi
 	var missing *pathv1.LegacyAdminTimestampMissingError
 	require.ErrorAs(t, err, &missing)
 	assert.Equal(t, string(state.EventBlockResolutionRecorded), missing.AdminType)
-	assert.Contains(t, err.Error(), "restore its authoritative timestamp before migration")
+	assert.False(t, missing.RecordTimestampMissing)
+	assert.True(t, missing.ResolutionTimestampMissing)
+	assert.Contains(t, err.Error(), "restore it before migration")
 }
 
 func TestUpgradeNeededCancellationAndSourceMismatchFailClosed(t *testing.T) {

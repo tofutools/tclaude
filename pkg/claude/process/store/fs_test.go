@@ -872,6 +872,24 @@ func TestCreateRunRejectsTimestampLessInitialAdminRecordsWithoutWrite(t *testing
 			},
 			want: "block_resolution_recorded requires a resolution timestamp for new writes",
 		},
+		{
+			name: "non-resolution attached payload", runID: "run_initial_repair_resolution",
+			record: state.AdminRecord{
+				Type: state.EventAdminRepairRecorded, Actor: "human:operator", Reason: "repair", Timestamp: at,
+				Resolution: &state.BlockResolution{
+					NodeID: "implement", BlockedAttempt: 1, Decision: state.BlockDecisionSkip,
+					Actor: "human:operator", Reason: "waived", EvidenceRef: "ticket:TCL-523",
+				},
+			},
+			want: "admin_repair_recorded requires a resolution timestamp for new writes",
+		},
+		{
+			name: "block resolution missing payload", runID: "run_initial_resolution_missing",
+			record: state.AdminRecord{
+				Type: state.EventBlockResolutionRecorded, Actor: "human:operator", Reason: "waived", Timestamp: at,
+			},
+			want: "block_resolution_recorded requires a resolution payload for new writes",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()

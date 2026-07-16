@@ -14,19 +14,25 @@ var ErrLegacyAdminTimestampMissing = errors.New("inconsistent:legacy_admin_times
 // Callers can direct an operator to restore authoritative provenance instead
 // of inventing a timestamp during migration.
 type LegacyAdminTimestampMissingError struct {
-	AdminType          string
-	OriginalArrayIndex uint64
-	HasResolution      bool
+	AdminType                  string
+	OriginalArrayIndex         uint64
+	HasResolution              bool
+	RecordTimestampMissing     bool
+	ResolutionTimestampMissing bool
 }
 
 func (e *LegacyAdminTimestampMissingError) Error() string {
 	if e == nil {
 		return ""
 	}
-	return fmt.Sprintf(
-		"%v: adminRecords[%d] type %q is not a producer-valid timestamp-less non-resolution record; restore its authoritative timestamp before migration",
-		ErrLegacyAdminTimestampMissing, e.OriginalArrayIndex, e.AdminType,
-	)
+	missing := "record timestamp"
+	if e.RecordTimestampMissing && e.ResolutionTimestampMissing {
+		missing = "record and resolution timestamps"
+	} else if e.ResolutionTimestampMissing {
+		missing = "resolution timestamp"
+	}
+	return fmt.Sprintf("%v: adminRecords[%d] type %q lacks its authoritative %s; restore it before migration",
+		ErrLegacyAdminTimestampMissing, e.OriginalArrayIndex, e.AdminType, missing)
 }
 
 func (e *LegacyAdminTimestampMissingError) Unwrap() error { return ErrLegacyAdminTimestampMissing }
@@ -51,7 +57,7 @@ func ValidateAdminRecord(record PathV1AdminRecord, legacy bool, resolution *Bloc
 		return fmt.Errorf("admin record lacks required authority tuple")
 	}
 	if legacy {
-		if err := validateLegacyAdminTimestamp(record, resolution != nil); err != nil {
+		if err := validateLegacyAdminTimestamps(record, resolution); err != nil {
 			return err
 		}
 	}
@@ -96,12 +102,18 @@ func ValidateAdminRecord(record PathV1AdminRecord, legacy bool, resolution *Bloc
 	return nil
 }
 
-func validateLegacyAdminTimestamp(record PathV1AdminRecord, hasResolution bool) error {
-	if record.Timestamp != "" || timestampLessLegacyAdminCompatible(record.AdminType, hasResolution) {
+func validateLegacyAdminTimestamps(record PathV1AdminRecord, resolution *BlockResolution) error {
+	recordMissing := record.Timestamp == ""
+	resolutionMissing := resolution != nil && resolution.Timestamp == ""
+	if !recordMissing && !resolutionMissing {
+		return nil
+	}
+	if recordMissing && !resolutionMissing && timestampLessLegacyAdminCompatible(record.AdminType, resolution != nil) {
 		return nil
 	}
 	return &LegacyAdminTimestampMissingError{
-		AdminType: record.AdminType, OriginalArrayIndex: record.OriginalArrayIndex, HasResolution: hasResolution,
+		AdminType: record.AdminType, OriginalArrayIndex: record.OriginalArrayIndex, HasResolution: resolution != nil,
+		RecordTimestampMissing: recordMissing, ResolutionTimestampMissing: resolutionMissing,
 	}
 }
 

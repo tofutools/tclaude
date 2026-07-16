@@ -216,19 +216,25 @@ func TestPredecodeLegacyStateBindsProducerValidTimestampLessAdminRecords(t *test
 
 func TestPredecodeLegacyStateClassifiesUnsupportedTimestampLessAdminRecords(t *testing.T) {
 	for _, tc := range []struct {
-		name, record  string
-		adminType     string
-		hasResolution bool
+		name, record                     string
+		adminType                        string
+		hasResolution                    bool
+		recordMissing, resolutionMissing bool
 	}{
 		{
 			name:      "block resolution",
 			record:    `{"type":"block_resolution_recorded","actor":"human:operator","reason":"waived","evidenceRef":"ticket:TCL-523","resolution":{"nodeId":"work","blockedAttempt":1,"decision":"skip","actor":"human:operator","reason":"waived","evidenceRef":"ticket:TCL-523"}}`,
-			adminType: string(legacy.EventBlockResolutionRecorded), hasResolution: true,
+			adminType: string(legacy.EventBlockResolutionRecorded), hasResolution: true, recordMissing: true, resolutionMissing: true,
+		},
+		{
+			name:      "present record timestamp missing resolution timestamp",
+			record:    `{"type":"block_resolution_recorded","actor":"human:operator","reason":"waived","evidenceRef":"ticket:TCL-523","timestamp":"2026-07-16T00:00:00Z","resolution":{"nodeId":"work","blockedAttempt":1,"decision":"skip","actor":"human:operator","reason":"waived","evidenceRef":"ticket:TCL-523"}}`,
+			adminType: string(legacy.EventBlockResolutionRecorded), hasResolution: true, resolutionMissing: true,
 		},
 		{
 			name:      "unknown type",
 			record:    `{"type":"forged_admin","actor":"human:operator","reason":"forged"}`,
-			adminType: "forged_admin",
+			adminType: "forged_admin", recordMissing: true,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -237,10 +243,11 @@ func TestPredecodeLegacyStateClassifiesUnsupportedTimestampLessAdminRecords(t *t
 				t.Fatalf("error = %v, want %v", err, ErrLegacyAdminTimestampMissing)
 			}
 			var missing *LegacyAdminTimestampMissingError
-			if !errors.As(err, &missing) || missing.OriginalArrayIndex != 0 || missing.AdminType != tc.adminType || missing.HasResolution != tc.hasResolution {
+			if !errors.As(err, &missing) || missing.OriginalArrayIndex != 0 || missing.AdminType != tc.adminType || missing.HasResolution != tc.hasResolution ||
+				missing.RecordTimestampMissing != tc.recordMissing || missing.ResolutionTimestampMissing != tc.resolutionMissing {
 				t.Fatalf("typed timestamp error = %#v", missing)
 			}
-			if !strings.Contains(err.Error(), "restore its authoritative timestamp before migration") {
+			if !strings.Contains(err.Error(), "restore it before migration") {
 				t.Fatalf("error is not actionable: %v", err)
 			}
 		})
