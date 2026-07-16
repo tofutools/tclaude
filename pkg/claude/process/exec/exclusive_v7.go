@@ -106,17 +106,19 @@ func (e *ExclusiveV7Executor) nextAction(ctx context.Context, runID string) (exc
 				return err
 			}
 		}
-		var recoveredWait *pathv1.ExclusiveWaitPlan
-		var recoveredWaitTransition *pathv1.ExecutionTransition
-		if wait, found, waitErr := pathv1.RecoverExclusiveWait(ctx, view.Input); waitErr != nil {
+		recoveredWaits, waitErr := pathv1.RecoverExclusiveWaits(ctx, view.Input)
+		if waitErr != nil {
 			return waitErr
-		} else if found {
-			recoveredWait = wait
+		}
+		activeWaitActivations := make(map[pathv1.ActivationID]bool, len(recoveredWaits))
+		for _, wait := range recoveredWaits {
+			activeWaitActivations[wait.Command().Identity.SourceActivationID] = true
 			if wait.WaitKind() != "signal" && !e.now().Before(wait.DueAt()) {
-				recoveredWaitTransition, err = pathv1.ObserveExclusiveWait(ctx, view.Input, wait, "engine:path-v1-timer", "")
+				action.transition, err = pathv1.ObserveExclusiveWait(ctx, view.Input, wait, "engine:path-v1-timer", "")
 				if err != nil {
 					return err
 				}
+				return nil
 			}
 		}
 		if recovered, found, recoverErr := pathv1.RecoverExclusiveAttempt(ctx, view.Input); recoverErr != nil {
@@ -202,17 +204,21 @@ func (e *ExclusiveV7Executor) nextAction(ctx context.Context, runID string) (exc
 				}
 			}
 		}
-		var fallbackWait *pathv1.ExclusiveWaitPlan
 		for _, candidate := range live {
-			if recoveredWait != nil && recoveredWait.Command().Identity.SourceActivationID == candidate.SourceActivation.ID {
+			if activeWaitActivations[candidate.SourceActivation.ID] {
 				continue
 			}
 			if wait, waitErr := pathv1.PlanExclusiveWait(ctx, view.Input, candidate.ID, e.now()); waitErr == nil {
-				if fallbackWait == nil {
-					fallbackWait = wait
-				}
+				action.wait = wait
+				action.transition, err = pathv1.ClaimExclusiveWait(ctx, view.Input, wait)
+				return err
 			} else if !errors.Is(waitErr, pathv1.ErrExclusiveUnsupported) {
 				return waitErr
+			}
+		}
+		for _, candidate := range live {
+			if activeWaitActivations[candidate.SourceActivation.ID] {
+				continue
 			}
 			attempt := uint64(1)
 			for _, command := range aggregate.Commands {
@@ -240,16 +246,10 @@ func (e *ExclusiveV7Executor) nextAction(ctx context.Context, runID string) (exc
 			action.transition, err = pathv1.ClaimExclusiveAttempt(ctx, view.Input, planned)
 			return err
 		}
-		if recoveredWait != nil {
-			action.wait = recoveredWait
-			action.transition = recoveredWaitTransition
+		if len(recoveredWaits) > 0 {
+			action.wait = recoveredWaits[0]
 			action.checkpoint = view.Checkpoint
 			return nil
-		}
-		if fallbackWait != nil {
-			action.wait = fallbackWait
-			action.transition, err = pathv1.ClaimExclusiveWait(ctx, view.Input, fallbackWait)
-			return err
 		}
 		return fmt.Errorf("path-v1 executor found no runnable live activation output")
 	})
@@ -459,11 +459,20 @@ func (e *ExclusiveV7Executor) SatisfySignal(ctx context.Context, runID, nodeID, 
 		var current *pathv1.CheckpointV7
 		err := e.Store.WithPathV1ExecutionView(ctx, runID, func(view store.PathV1ExecutionView) error {
 			current = view.Checkpoint
-			wait, found, waitErr := pathv1.RecoverExclusiveWait(ctx, view.Input)
+			waits, waitErr := pathv1.RecoverExclusiveWaits(ctx, view.Input)
 			if waitErr != nil {
 				return waitErr
 			}
-			if !found {
+			var wait *pathv1.ExclusiveWaitPlan
+			for _, candidate := range waits {
+				if candidate.WaitKind() == "signal" && candidate.NodeID() == nodeID && candidate.Signal() == strings.TrimSpace(signal) {
+					if wait != nil {
+						return fmt.Errorf("path-v1 signal matches multiple pending waits")
+					}
+					wait = candidate
+				}
+			}
+			if wait == nil {
 				observed, observedErr := pathv1.ExactExclusiveSignalObserved(ctx, view.Input, nodeID, signal, string(actor))
 				if observedErr != nil {
 					return observedErr
@@ -471,9 +480,6 @@ func (e *ExclusiveV7Executor) SatisfySignal(ctx context.Context, runID, nodeID, 
 				if observed {
 					return nil
 				}
-				return fmt.Errorf("path-v1 signal does not match the pending wait")
-			}
-			if wait.WaitKind() != "signal" || wait.NodeID() != nodeID || wait.Signal() != strings.TrimSpace(signal) {
 				return fmt.Errorf("path-v1 signal does not match the pending wait")
 			}
 			transition, waitErr = pathv1.ObserveExclusiveWait(ctx, view.Input, wait, string(actor), "signal:"+strings.TrimSpace(signal))

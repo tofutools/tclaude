@@ -331,19 +331,21 @@ func ClaimExclusiveWait(ctx context.Context, input *VerifiedExclusiveInput, plan
 	return newExecutionTransition(input.checkpoint, next, "claim_wait")
 }
 
-// RecoverExclusiveWait returns the sole exact pending wait claim, if any.
-func RecoverExclusiveWait(ctx context.Context, input *VerifiedExclusiveInput) (*ExclusiveWaitPlan, bool, error) {
+// RecoverExclusiveWaits returns every exact pending wait claim in stable
+// command order. Verified parallel input may own sibling waits concurrently;
+// non-parallel execution retains the strict single-wait invariant.
+func RecoverExclusiveWaits(ctx context.Context, input *VerifiedExclusiveInput) ([]*ExclusiveWaitPlan, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	if input == nil || input.checkpoint == nil {
-		return nil, false, fmt.Errorf("%w: sealed input is required", ErrExclusiveInputInvalid)
+		return nil, fmt.Errorf("%w: sealed input is required", ErrExclusiveInputInvalid)
 	}
 	aggregate, err := CurrentAggregateCheckpoint(input.checkpoint)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
-	var found *ExclusiveWaitPlan
+	found := make([]*ExclusiveWaitPlan, 0, 1)
 	for _, command := range aggregate.Commands {
 		if command.Identity.Kind != CommandPerformAttempt || !command.State.Active() {
 			continue
@@ -355,14 +357,36 @@ func RecoverExclusiveWait(ctx context.Context, input *VerifiedExclusiveInput) (*
 			if decodeExactPayload(command.Payload, &payload) != nil || payload.WaitKind == "" {
 				continue
 			}
-			return nil, false, planErr
+			return nil, planErr
 		}
-		if found != nil {
-			return nil, false, fmt.Errorf("%w: multiple pending exclusive waits", ErrMutationInconsistent)
-		}
-		found = plan
+		found = append(found, plan)
 	}
-	return found, found != nil, nil
+	if len(found) > 1 && input.parallel == nil {
+		return nil, fmt.Errorf("%w: multiple pending exclusive waits", ErrMutationInconsistent)
+	}
+	slices.SortFunc(found, func(a, b *ExclusiveWaitPlan) int {
+		return strings.Compare(a.command.ID, b.command.ID)
+	})
+	for index := 1; index < len(found); index++ {
+		if found[index-1].command.Identity.SourceActivationID == found[index].command.Identity.SourceActivationID {
+			return nil, fmt.Errorf("%w: multiple pending waits own activation %q", ErrMutationInconsistent, found[index].command.Identity.SourceActivationID)
+		}
+	}
+	return found, nil
+}
+
+// RecoverExclusiveWait returns the first exact pending wait claim, if any.
+// Parallel callers that need to reason about every sibling use
+// RecoverExclusiveWaits.
+func RecoverExclusiveWait(ctx context.Context, input *VerifiedExclusiveInput) (*ExclusiveWaitPlan, bool, error) {
+	waits, err := RecoverExclusiveWaits(ctx, input)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(waits) == 0 {
+		return nil, false, nil
+	}
+	return waits[0], true, nil
 }
 
 // ObserveExclusiveWait settles a previously claimed wait. Timer callers must
@@ -371,11 +395,18 @@ func ObserveExclusiveWait(ctx context.Context, input *VerifiedExclusiveInput, pl
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	current, found, err := RecoverExclusiveWait(ctx, input)
+	waits, err := RecoverExclusiveWaits(ctx, input)
 	if err != nil {
 		return nil, err
 	}
-	if !found || plan == nil || current.command.ID != plan.command.ID {
+	var current *ExclusiveWaitPlan
+	for _, candidate := range waits {
+		if plan != nil && candidate.command.ID == plan.command.ID {
+			current = candidate
+			break
+		}
+	}
+	if current == nil {
 		return nil, fmt.Errorf("%w: exact pending wait claim is absent", ErrMutationInconsistent)
 	}
 	aggregate, err := CurrentAggregateCheckpoint(input.checkpoint)

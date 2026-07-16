@@ -355,6 +355,102 @@ func TestExclusiveV7ParallelPendingRoutesRestartOneAtATime(t *testing.T) {
 	assert.Equal(t, 1, reconciles, "task must be reconciled exactly once")
 }
 
+func TestExclusiveV7ParallelSiblingSignalsClaimRestartAndCompleteInEitherOrder(t *testing.T) {
+	orders := []struct {
+		name  string
+		nodes []string
+	}{
+		{name: "forward", nodes: []string{"wait-a", "wait-b"}},
+		{name: "reverse", nodes: []string{"wait-b", "wait-a"}},
+	}
+	for _, test := range orders {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			fs, runID := parallelAllV7SiblingWaitRunAt(t, root,
+				&model.WaitConfig{Signal: "release-a"}, &model.WaitConfig{Signal: "release-b"})
+			executor := NewExclusiveV7(fs, nil)
+			checkpoint, err := executor.Drive(t.Context(), runID)
+			require.NoError(t, err)
+			assert.Equal(t, "running", pathv1.CurrentRunStatus(checkpoint))
+
+			var claimedIDs []string
+			require.NoError(t, fs.WithPathV1ExecutionView(t.Context(), runID, func(view store.PathV1ExecutionView) error {
+				waits, waitErr := pathv1.RecoverExclusiveWaits(t.Context(), view.Input)
+				if waitErr != nil {
+					return waitErr
+				}
+				for _, wait := range waits {
+					claimedIDs = append(claimedIDs, wait.Command().ID)
+				}
+				return nil
+			}))
+			require.Len(t, claimedIDs, 2)
+			slices.Sort(claimedIDs)
+
+			restarted, err := store.NewFS(root)
+			require.NoError(t, err)
+			require.NoError(t, restarted.WithPathV1ExecutionView(t.Context(), runID, func(view store.PathV1ExecutionView) error {
+				waits, waitErr := pathv1.RecoverExclusiveWaits(t.Context(), view.Input)
+				if waitErr != nil {
+					return waitErr
+				}
+				restartedIDs := make([]string, 0, len(waits))
+				for _, wait := range waits {
+					restartedIDs = append(restartedIDs, wait.Command().ID)
+				}
+				slices.Sort(restartedIDs)
+				assert.Equal(t, claimedIDs, restartedIDs, "restart must preserve both exact claims without duplicates")
+				return nil
+			}))
+
+			restartedExecutor := NewExclusiveV7(restarted, nil)
+			for _, nodeID := range test.nodes {
+				signal := "release-a"
+				if nodeID == "wait-b" {
+					signal = "release-b"
+				}
+				_, err = restartedExecutor.SatisfySignal(t.Context(), runID, nodeID, signal, "agent:agt_test1")
+				require.NoError(t, err)
+			}
+			checkpoint, err = restartedExecutor.Drive(t.Context(), runID)
+			require.NoError(t, err)
+			assert.Equal(t, "completed", pathv1.CurrentRunStatus(checkpoint))
+		})
+	}
+}
+
+func TestExclusiveV7ParallelSiblingDurationsScheduleTogetherAndComplete(t *testing.T) {
+	root := t.TempDir()
+	fs, runID := parallelAllV7SiblingWaitRunAt(t, root,
+		&model.WaitConfig{Duration: "5m"}, &model.WaitConfig{Duration: "7m"})
+	scheduledAt := time.Date(2026, time.July, 16, 8, 0, 0, 0, time.UTC)
+	executor := NewExclusiveV7(fs, nil)
+	executor.Now = func() time.Time { return scheduledAt }
+	checkpoint, err := executor.Drive(t.Context(), runID)
+	require.NoError(t, err)
+	assert.Equal(t, "running", pathv1.CurrentRunStatus(checkpoint))
+
+	require.NoError(t, fs.WithPathV1ExecutionView(t.Context(), runID, func(view store.PathV1ExecutionView) error {
+		waits, waitErr := pathv1.RecoverExclusiveWaits(t.Context(), view.Input)
+		if waitErr != nil {
+			return waitErr
+		}
+		require.Len(t, waits, 2)
+		due := []time.Time{waits[0].DueAt(), waits[1].DueAt()}
+		slices.SortFunc(due, func(a, b time.Time) int { return a.Compare(b) })
+		assert.Equal(t, []time.Time{scheduledAt.Add(5 * time.Minute), scheduledAt.Add(7 * time.Minute)}, due)
+		return nil
+	}))
+
+	restarted, err := store.NewFS(root)
+	require.NoError(t, err)
+	restartedExecutor := NewExclusiveV7(restarted, nil)
+	restartedExecutor.Now = func() time.Time { return scheduledAt.Add(10 * time.Minute) }
+	checkpoint, err = restartedExecutor.Drive(t.Context(), runID)
+	require.NoError(t, err)
+	assert.Equal(t, "completed", pathv1.CurrentRunStatus(checkpoint))
+}
+
 func TestExclusiveV7AdapterRunsAfterCoherentLocksRelease(t *testing.T) {
 	fs, runID := exclusiveV7Run(t)
 	adapter := &exclusiveV7Adapter{}
@@ -824,6 +920,38 @@ func parallelAllV7RetryRun(t *testing.T) (*store.FS, string) {
 		{ID: "fork", Type: model.NodeTypeParallel, Status: state.NodeStatusReady},
 		{ID: "work", Type: model.NodeTypeTask, Status: state.NodeStatusPending},
 		{ID: "peer", Type: model.NodeTypeTask, Status: state.NodeStatusPending},
+		{ID: "merge", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+	})
+	st.Status = state.RunStatusRunning
+	_, err = fs.CreateRun(t.Context(), store.RunRecord{ID: runID, TemplateRef: record.Ref}, st)
+	require.NoError(t, err)
+	proof, err := fs.UpgradeNeeded(t.Context(), runID)
+	require.NoError(t, err)
+	_, err = fs.InitializePathV1(t.Context(), runID, proof)
+	require.NoError(t, err)
+	return fs, runID
+}
+
+func parallelAllV7SiblingWaitRunAt(t *testing.T, root string, waitA, waitB *model.WaitConfig) (*store.FS, string) {
+	t.Helper()
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "parallel-all-v7-sibling-waits", Start: "fork",
+		Nodes: map[string]model.Node{
+			"fork":   {Type: model.NodeTypeParallel, Next: model.Next{"wait-a": "wait-a", "wait-b": "wait-b"}},
+			"wait-a": {Type: model.NodeTypeWait, Wait: waitA, Next: model.Next{"pass": "merge"}},
+			"wait-b": {Type: model.NodeTypeWait, Wait: waitB, Next: model.Next{"pass": "merge"}},
+			"merge":  {Type: model.NodeTypeEnd, Join: model.JoinAll, Result: "completed"},
+		},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	require.NoError(t, err)
+	runID := "run-parallel-all-v7-sibling-waits"
+	st := state.New(runID, record.Ref, record.Ref, []state.NodeInit{
+		{ID: "fork", Type: model.NodeTypeParallel, Status: state.NodeStatusReady},
+		{ID: "wait-a", Type: model.NodeTypeWait, Status: state.NodeStatusPending},
+		{ID: "wait-b", Type: model.NodeTypeWait, Status: state.NodeStatusPending},
 		{ID: "merge", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
 	})
 	st.Status = state.RunStatusRunning
