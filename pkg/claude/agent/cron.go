@@ -264,7 +264,11 @@ func runCronAdd(p *cronAddParams, stdin io.Reader, stdout, stderr io.Writer) int
 	case resp.GroupID > 0:
 		fmt.Fprintf(stdout, "  Routed via group %d (will use agent_messages + flush nudge).\n", resp.GroupID)
 	default:
-		fmt.Fprintln(stdout, "  Solo target — scheduler will queue direct inbox mail and deliver when the target is ready.")
+		if resp.QueueWhenOffline {
+			fmt.Fprintln(stdout, "  Solo target — scheduler will queue direct inbox mail and deliver when the target is ready.")
+		} else {
+			fmt.Fprintln(stdout, "  Solo target — each tick is delivered via direct inbox mail only while the target is online.")
+		}
 	}
 	return rcOK
 }
