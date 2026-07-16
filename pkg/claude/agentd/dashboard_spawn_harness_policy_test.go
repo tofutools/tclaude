@@ -50,19 +50,21 @@ func TestDashboardSpawnHarnessPolicyRejectsDenyWithoutReason(t *testing.T) {
 
 func TestDashboardHTMLSpawnHarnessPolicyUI(t *testing.T) {
 	for needle, why := range map[string]string{
-		`id="spawn-harness-policy-open"`:                               "global cog launcher",
-		`cross-harness spawns…`:                                        "regular global and group menu label",
-		`theme-copy-wizard">⇄ cross-realm summons…`:                    "wizard global cog label",
-		`wizard="⇄ cross-realm summons…"`:                              "wizard group cog label",
-		`id="spawn-harness-policy-root"`:                               "stable Preact host",
-		`mountSpawnHarnessPolicyFeature`:                               "feature boot wiring",
-		`registerSpawnHarnessPolicyController`:                         "group-menu controller boundary",
-		`class="spawn-harness-matrix"`:                                 "directed matrix table",
-		`Reason returned to the spawning agent`:                        "regular denial reason input",
-		`: 'Global cross-realm summons'`:                               "wizard dialog title",
-		`<option value="inherit">${copy.inherit}</option>`:             "theme-aware group inheritance choice",
-		`.spawn-harness-cell select,`:                                  "dark form control styling",
-		`body.wizard #spawn-harness-policy-modal .cron-create-modal {`: "wizard dialog skin",
+		`id="spawn-harness-policy-open"`:                                   "global cog launcher",
+		`cross-harness spawns…`:                                            "regular global and group menu label",
+		`theme-copy-wizard">⇄ cross-realm summons…`:                        "wizard global cog label",
+		`wizard="⇄ cross-realm summons…"`:                                  "wizard group cog label",
+		`id="spawn-harness-policy-root"`:                                   "stable Preact host",
+		`mountSpawnHarnessPolicyFeature`:                                   "feature boot wiring",
+		`registerSpawnHarnessPolicyController`:                             "group-menu controller boundary",
+		`class="spawn-harness-matrix"`:                                     "directed matrix table",
+		`Reason returned to the spawning agent`:                            "regular denial reason input",
+		`: 'Global cross-realm summons'`:                                   "wizard dialog title",
+		`<option value="inherit">${copy.inherit}</option>`:                 "theme-aware group inheritance choice",
+		`.spawn-harness-cell select,`:                                      "dark form control styling",
+		`resizeKey="tclaude.dash.modalSize.spawn-harness-policy"`:          "persisted dialog resize wiring",
+		`.spawn-harness-matrix col.spawn-harness-target { width: 220px; }`: "equal target-column sizing",
+		`body.wizard #spawn-harness-policy-modal .cron-create-modal {`:     "wizard dialog skin",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard missing %q (%s)", needle, why)

@@ -114,6 +114,10 @@ type State struct {
 	Caption string
 	// Wizard loads the dashboard in the wizard skin (via ?wizard=1) before JS.
 	Wizard bool
+	// Width/Height optionally override the capture viewport for this state. A
+	// zero value inherits the Config dimension. This lets one state exercise a
+	// narrow responsive boundary without shrinking every later screenshot.
+	Width, Height int
 	// JS runs after the page's first snapshot render settles. It drives the DOM
 	// into the target state (open a dialog, collapse the dock, …). An empty JS
 	// captures the freshly-loaded page. A thrown error marks the shot failed but
@@ -305,6 +309,14 @@ func captureState(page *rod.Page, cfg Config, st State) (png []byte, err error) 
 	err = rod.Try(func() {
 		sp := page.Timeout(time.Duration(cfg.StateTimeoutMS) * time.Millisecond)
 		defer sp.CancelTimeout() // release the per-state timeout's timer
+		width, height := cfg.Width, cfg.Height
+		if st.Width > 0 {
+			width = st.Width
+		}
+		if st.Height > 0 {
+			height = st.Height
+		}
+		sp.MustSetViewport(width, height, 1, false)
 
 		url := cfg.BaseURL
 		if st.Wizard {
