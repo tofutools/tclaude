@@ -408,6 +408,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 			}
 		}
 	}
+	approval, autoReview := approvalForRelaunch(target, oldSess.Harness)
 	if err := SpawnDetachedTclaudeNew(clcommon.SpawnArgs{
 		EffectiveSandbox:       effectiveSandbox,
 		Label:                  label,
@@ -416,7 +417,8 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		Model:                  model,
 		Harness:                oldSess.Harness,
 		Sandbox:                reincarnateSandbox,
-		Approval:               approvalForHarness(oldSess.Harness),
+		Approval:               approval,
+		AutoReview:             autoReview,
 		AskUserQuestionTimeout: askTimeoutForRelaunch(target),
 		RemoteControl:          remoteControl,
 	}); err != nil {

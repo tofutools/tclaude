@@ -234,7 +234,7 @@ func TestSessionNewArgs_Approval(t *testing.T) {
 // TestSessionNewArgs_AutoReview covers the --auto-review flag: a bare boolean
 // flag appended only when the spawn opted in (true), omitted otherwise. The
 // opt-in is gated at the spawn boundary (harness.ResolveAutoReview) before it
-// reaches the argv builder; relaunch paths always pass false (JOH-200 part 2).
+// reaches the argv builder; relaunch paths preserve the recorded value.
 func TestSessionNewArgs_AutoReview(t *testing.T) {
 	if slices.Contains(sessionNewArgs(clcommon.SpawnArgs{Label: "lbl", Cwd: "/tmp/x", Harness: "codex", Sandbox: "workspace-write", Approval: "never"}), "--auto-review") {
 		t.Fatalf("autoReview=false must omit --auto-review")

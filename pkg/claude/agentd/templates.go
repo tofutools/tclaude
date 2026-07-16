@@ -1134,9 +1134,8 @@ func roleProfileSource(role *db.Role, profile *db.SpawnProfile) string {
 
 // traceMemberLaunch re-traces a live group member's OBSERVABLE launch fields
 // from its most-recent session row for a from-group template snapshot (JOH-239)
-// — harness, model, effort, sandbox. approval is not recorded on the session
-// row (Codex-only, re-applied as the secure default at re-instantiate), so it
-// is not traced. Each field is normalized through the traced harness's catalog
+// — harness, model, effort, sandbox, approval, and auto-review. Each field is
+// normalized through the traced harness's catalog
 // and dropped to "" if it doesn't validate (e.g. the session's model DISPLAY
 // alias rather than the resume-safe model_id), so a snapshot never stores a
 // value that would fail at the next instantiate. A member with no session row
@@ -1166,6 +1165,13 @@ func traceMemberLaunch(convID string) templateAgentLaunch {
 	}
 	if s, err := harness.ValidateSandboxMode(h, prof.SandboxMode); err == nil {
 		out.Sandbox = s
+	}
+	if a, err := harness.ValidateApprovalPolicy(h, prof.ApprovalPolicy); err == nil && a != "" {
+		out.Approval = a
+		if ar, err := harness.ResolveAutoReview(h, prof.ApprovalAutoReview); err == nil {
+			out.AutoReview = ar
+			out.AutoReviewSet = true
+		}
 	}
 	return out
 }
@@ -3634,7 +3640,7 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 		// starts life behind the read-only "legacy inline" notice.
 		launch := traceMemberLaunch(convID)
 		var inline *db.SpawnProfile
-		if launch.Harness != "" || launch.Model != "" || launch.Effort != "" || launch.Sandbox != "" || len(perms) > 0 {
+		if launch.Harness != "" || launch.Model != "" || launch.Effort != "" || launch.Sandbox != "" || launch.Approval != "" || launch.AutoReviewSet || len(perms) > 0 {
 			po := map[string]string{}
 			for _, s := range perms {
 				po[s] = db.PermEffectGrant
@@ -3644,7 +3650,12 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 				Model:               launch.Model,
 				Effort:              launch.Effort,
 				Sandbox:             launch.Sandbox,
+				Approval:            launch.Approval,
 				PermissionOverrides: po,
+			}
+			if launch.AutoReviewSet {
+				autoReview := launch.AutoReview
+				inline.AutoReview = &autoReview
 			}
 		}
 		t.Agents = append(t.Agents, db.GroupTemplateAgent{

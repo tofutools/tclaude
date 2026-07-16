@@ -753,6 +753,7 @@ func resumeOneConvWithGrant(convID string, recreateMissingDir bool, grant *resum
 			persistedAgentID = agentID
 		}
 	}
+	approval, autoReview := approvalForRelaunch(convID, harnessName)
 	if err := SpawnDetachedTclaudeResume(clcommon.SpawnArgs{
 		EffectiveSandbox:           effectiveSandbox,
 		ConvID:                     convID,
@@ -766,7 +767,8 @@ func resumeOneConvWithGrant(convID string, recreateMissingDir bool, grant *resum
 		CodexGitCommonDirPinned:    exactGrantPinned,
 		GitWorktreeWriteDirs:       gitWriteDirs,
 		GitWorktreeWriteDirsPinned: exactGrantPinned,
-		Approval:                   approvalForHarness(harnessName),
+		Approval:                   approval,
+		AutoReview:                 autoReview,
 		AskUserQuestionTimeout:     askTimeoutForRelaunch(convID),
 		RemoteControl:              remoteControl,
 	}); err != nil {
@@ -1994,6 +1996,16 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, http.StatusBadRequest, "invalid_sandbox", sbErr.Error())
 		return
 	}
+	approvalPolicy, apErr := harness.ResolveApprovalPolicy(h, body.ApprovalPolicy)
+	if apErr != nil {
+		writeError(w, http.StatusBadRequest, "invalid_approval", apErr.Error())
+		return
+	}
+	autoReview, arErr := harness.ResolveAutoReview(h, body.AutoReview)
+	if arErr != nil {
+		writeError(w, http.StatusBadRequest, "invalid_auto_review", arErr.Error())
+		return
+	}
 	if home, herr := os.UserHomeDir(); herr == nil && harness.CodexSandboxCwdConflict(sandboxMode, cwd, home) {
 		writeError(w, http.StatusBadRequest, "invalid_cwd", fmt.Sprintf(
 			"refusing to spawn a %s agent in %q under sandbox %q: it would expose "+
@@ -2010,6 +2022,10 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// for the other spawn callers (templates/waves/process adapters) that
 	// don't pass through this HTTP boundary.
 	if fail := spawnSandboxLineageFailure(spawnerConvID, h.Name, sandboxMode); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	}
+	if fail := spawnApprovalLineageFailure(spawnerConvID, h.Name, approvalPolicy, autoReview); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
@@ -2149,20 +2165,6 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		}
 	}
 
-	// Resolve the approval/permission posture for the chosen harness: a Codex
-	// agent gets its non-escalating default (never) when unset, a Claude agent
-	// gets its inherit default (normalized to "" — no `--permission-mode`), and
-	// an explicit value is validated per-harness (Codex's policy vs Claude's
-	// permission mode). The Codex default is what stops a detached, unattended
-	// pane from deadlocking on an approval prompt no human can answer (JOH-200)
-	// — safe because the agent is sandbox-confined above; Claude's approval
-	// prompts are handled out-of-band by the agentd popup, so inherit is safe.
-	approvalPolicy, apErr := harness.ResolveApprovalPolicy(h, body.ApprovalPolicy)
-	if apErr != nil {
-		writeError(w, http.StatusBadRequest, "invalid_approval", apErr.Error())
-		return
-	}
-
 	// Resolve the AskUserQuestion idle-timeout for the chosen harness: a
 	// Claude-Code-only settings.json override (never|60s|5m|10m) delivered via
 	// `--settings`, so an explicit value for a harness with no AskUserQuestion
@@ -2173,16 +2175,6 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	askTimeout, atErr := harness.ResolveAskTimeoutMode(h, body.AskUserQuestionTimeout)
 	if atErr != nil {
 		writeError(w, http.StatusBadRequest, "invalid_ask_user_question_timeout", atErr.Error())
-		return
-	}
-
-	// Gate the experimental auto-review (guardian) opt-in: it is allowed only
-	// for a harness with an approvals subsystem (Codex). Requesting it for a
-	// harness with no guardian (Claude Code) is a 400 here rather than a flag
-	// silently dropped. Off by default (the human reviews). See JOH-200 part 2.
-	autoReview, arErr := harness.ResolveAutoReview(h, body.AutoReview)
-	if arErr != nil {
-		writeError(w, http.StatusBadRequest, "invalid_auto_review", arErr.Error())
 		return
 	}
 
@@ -2881,7 +2873,7 @@ func resolveBoolLaunchField(
 // while foreign model/vendor-specific values are skipped and fall through.
 //
 // This is the SAFETY-NET fill for any caller that reaches executeSpawn WITHOUT
-// going through handleGroupSpawn (today only the group-template instantiator).
+// going through handleGroupSpawn (templates, waves, processes, and scribes).
 // handleGroupSpawn itself overlays the profiles onto the request BEFORE
 // its own harness/model/sandbox resolution, leaving these fields already
 // resolved here — so on that path the fills are no-ops and secure-default
@@ -2905,11 +2897,8 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	// blank, and validate — the same resolution handleGroupSpawn runs before
 	// building its params. Idempotent on the handleGroupSpawn path (already
 	// resolved); the load-bearing case is any other caller that reaches
-	// executeSpawn with a profile-carrying group/global default, where this is
-	// what keeps a Codex spawn sandboxed. Skipped when no profile participates.
-	if len(tiers) == 0 {
-		return nil
-	}
+	// executeSpawn, where this keeps a Codex spawn sandboxed and gives lineage
+	// authorization concrete defaults even when no profile participates.
 	h, err := resolveSpawnHarness(p.Harness)
 	if err != nil {
 		return &spawnFailure{http.StatusBadRequest, "invalid_harness", err.Error()}
@@ -3077,6 +3066,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 			"agent-initiated spawns may pre-trust only tclaude's verified default sibling worktrees; leave trust_dir off or ask the human to spawn this child"}
 	}
 	if fail := spawnSandboxLineageFailure(p.SpawnedByConv, p.Harness, p.SandboxMode); fail != nil {
+		return nil, fail
+	}
+	if fail := spawnApprovalLineageFailure(p.SpawnedByConv, p.Harness, p.ApprovalPolicy, p.AutoReview); fail != nil {
 		return nil, fail
 	}
 	if strings.TrimSpace(p.DirWriteProofToken) == "" {

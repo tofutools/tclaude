@@ -599,6 +599,7 @@ permission gate:
 | **Rate limit** — spawns per caller-agent per rolling hour | 10 | `429 rate_limited` |
 | **Cross-harness matrix** — the fully resolved child harness must be allowed for the caller's harness | allow | `403 cross_harness_spawn_denied` |
 | **Sandbox lineage** — the child may not have a weaker launch sandbox than the spawning agent | on | `403 sandbox_restricted` |
+| **Approval lineage** — the child may not automatically accept a broader class of commands than the spawning agent | on | `403 approval_restricted` |
 | **Dir write-proof** — the caller must prove its own sandbox can write in the child's launch dirs | on | `403 write_proof_required` / `403 write_proof_failed` |
 | **Max group size** — `agent_groups.max_members`; binds the human too | unlimited (0) | `409 group_full` |
 
@@ -634,6 +635,47 @@ default spawn profile has filled blank fields. In short:
 - Raw Codex `workspace-write` parents can spawn only raw Codex
   `workspace-write` or `read-only`; raw Codex `read-only` parents can spawn
   only raw Codex `read-only`.
+
+The approval-lineage guard separately compares the spawning agent's recorded
+approval policy and auto-review setting with the fully resolved child launch.
+It models automatic acceptance as capability sets rather than pretending every
+mode has a useful linear rank:
+
+| Parent posture | Child postures allowed by the approval guard |
+|----------------|-----------------------------------------------|
+| Claude `inherit` / `plan` / `default` / `dontAsk` / `acceptEdits` / `auto` | none |
+| Codex `untrusted`, auto-review off | Codex `untrusted`, auto-review off |
+| Codex `on-failure` / `on-request` / `never`, without active classifier review | Codex without active classifier review |
+| Codex `untrusted` with active classifier review | Codex `untrusted`, with classifier review on or off |
+| Codex `on-failure` / `on-request` with active classifier review | any Codex posture |
+| Claude `bypassPermissions` | any posture |
+
+`acceptEdits` and classifier approval are intentionally incomparable:
+`acceptEdits` automatically permits filesystem operations a classifier may
+reject, while a classifier may approve non-edit actions `acceptEdits` would
+prompt for. More importantly, only an explicitly `bypassPermissions` Claude
+parent may delegate any child. Claude merges permission rules, hooks, and
+sandbox settings from files in the child's cwd; a parent that can write that
+cwd can change a Claude child's effective posture independently of the
+command-line mode. A Codex child is not an equivalent escape hatch: Codex
+automatically executes commands that remain inside its OS sandbox, while
+non-bypass Claude modes may prompt, deny, or classify those same actions.
+Codex parents may still delegate to Codex children when both the approval and
+separate sandbox-lineage checks pass.
+
+For Codex, `untrusted` is more restrictive than the other approval policies:
+without auto-review it asks before every command outside Codex's trusted set.
+`on-failure`, `on-request`, and `never` may execute commands automatically
+while they remain inside the OS sandbox. Active classifier review is a second,
+incomparable capability: `untrusted` plus classifier review may approve actions
+that plain `untrusted` would ask a human about, but it may still reject an
+in-sandbox action that `never` would run. `never` never produces an approval
+request, so setting `auto_review=true` alongside it does not activate the
+classifier capability.
+
+A legacy session row with no recorded approval posture fails closed; relaunch
+it under the current version or ask the human to spawn the child. The human
+spawn path bypasses approval lineage, as it does the sandbox-lineage guard.
 
 The **dir write-proof** closes the lineage guard's remaining gap: sandboxes
 grant write access rooted at the launch cwd, so an agent that picks the

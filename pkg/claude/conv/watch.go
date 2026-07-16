@@ -2294,6 +2294,10 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	// session.ApplyClaudeResumeEnv.
 	session.ApplyClaudeResumeEnv(h, resumeEnv)
 	sandboxMode, resumeCwd := resumeSandboxState(convID)
+	approvalPolicy, autoReview, err := resumeApprovalState(h, convID)
+	if err != nil {
+		return "", nil, err
+	}
 	if h.Name == harness.DefaultName && len(denyDirs) > 0 && sandboxMode != harness.ClaudeSandboxOn {
 		return "", nil, fmt.Errorf("unsupported_sandbox_profile_filesystem: Claude filesystem deny rules require sandbox %s", harness.ClaudeSandboxOn)
 	}
@@ -2324,6 +2328,8 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		SandboxReadDirs:  readDirs,
 		SandboxWriteDirs: writeDirs,
 		SandboxDenyDirs:  denyDirs,
+		ApprovalPolicy:   approvalPolicy,
+		AutoReview:       autoReview,
 	}
 	cleanupPath := ""
 	if h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile {
@@ -2355,6 +2361,35 @@ func resumeSandboxState(convID string) (mode, cwd string) {
 func resumeSandboxMode(convID string) string {
 	mode, _ := resumeSandboxState(convID)
 	return mode
+}
+
+// resumeApprovalState carries the most recently recorded posture onto the
+// next session generation. Legacy rows have no posture; pin those to the
+// harness's daemon-safe default instead of creating another unknown row.
+func resumeApprovalState(h *harness.Harness, convID string) (string, bool, error) {
+	row, err := db.FindSessionByConvID(convID)
+	if err != nil {
+		return "", false, fmt.Errorf("load approval posture for conversation %s: %w", convID, err)
+	}
+	policy := ""
+	autoReview := false
+	if row != nil {
+		policy = strings.TrimSpace(row.ApprovalPolicy)
+		autoReview = row.ApprovalAutoReview
+	}
+	if policy == "" {
+		policy, err = harness.ResolveApprovalPolicy(h, "")
+	} else {
+		policy, err = harness.ValidateApprovalPolicy(h, policy)
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("invalid recorded approval posture for conversation %s: %w", convID, err)
+	}
+	autoReview, err = harness.ResolveAutoReview(h, autoReview)
+	if err != nil {
+		return "", false, fmt.Errorf("invalid recorded auto-review posture for conversation %s: %w", convID, err)
+	}
+	return policy, autoReview, nil
 }
 
 func resumeGitWorktreeWriteDirs(cwd string) ([]string, error) {
@@ -2435,6 +2470,10 @@ func createSessionForConv(conv *SessionEntry) error {
 	if err != nil {
 		return err
 	}
+	approvalPolicy, autoReview, err := resumeApprovalState(h, conv.SessionID)
+	if err != nil {
+		return err
+	}
 
 	tmuxArgs := []string{
 		"new-session", "-d",
@@ -2456,17 +2495,19 @@ func createSessionForConv(conv *SessionEntry) error {
 	// coalesced back to "claude" — closes the inline TODO(JOH-155) for the
 	// watch-resume path now that codex resume lands here.
 	state := &session.SessionState{
-		ID:               sessionID,
-		TmuxSession:      tmuxSession,
-		PID:              pid,
-		Cwd:              cwd,
-		ConvID:           conv.SessionID,
-		Status:           session.StatusIdle,
-		Harness:          h.Name,
-		SandboxMode:      resumeSandboxMode(conv.SessionID),
-		EffectiveSandbox: resumeEffectiveSandboxForState(conv.SessionID),
-		Created:          time.Now(),
-		Updated:          time.Now(),
+		ID:                 sessionID,
+		TmuxSession:        tmuxSession,
+		PID:                pid,
+		Cwd:                cwd,
+		ConvID:             conv.SessionID,
+		Status:             session.StatusIdle,
+		Harness:            h.Name,
+		SandboxMode:        resumeSandboxMode(conv.SessionID),
+		EffectiveSandbox:   resumeEffectiveSandboxForState(conv.SessionID),
+		ApprovalPolicy:     approvalPolicy,
+		ApprovalAutoReview: autoReview,
+		Created:            time.Now(),
+		Updated:            time.Now(),
 	}
 
 	if err := session.SaveSessionState(state); err != nil {

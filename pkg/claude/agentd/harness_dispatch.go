@@ -104,15 +104,9 @@ func sandboxForHarness(name string) string {
 	return ""
 }
 
-// approvalForHarness returns the launch approval policy the daemon re-applies
-// when it relaunches an existing conv (resume / clone / reincarnate). Like
-// sandboxForHarness, the policy is not persisted per-conv, so a Codex agent is
-// re-defaulted to its non-escalating mode (never) on relaunch rather than
-// coming back with an escalating policy that would deadlock the detached,
-// unattended pane; a harness with no launch approval flag (Claude Code) or an
-// unknown tag yields "" (omit the flag). Same fail-safe-direction rationale as
-// sandboxForHarness: a relaunch always returns to the non-deadlocking default.
-// See JOH-200.
+// approvalForHarness returns the safe launch default used for legacy rows that
+// have no recorded posture. Current relaunches use approvalForRelaunch to
+// preserve the source generation exactly.
 func approvalForHarness(name string) string {
 	if h, err := harness.Resolve(strings.TrimSpace(name)); err == nil && h.SupportsApproval() {
 		// Validate the harness default before threading it. Claude Code's default
@@ -128,11 +122,39 @@ func approvalForHarness(name string) string {
 	return ""
 }
 
+// approvalForRelaunch preserves the source generation's recorded authority.
+// Legacy rows fall back to the harness default; current rows carry both
+// approval inputs so the relaunched process and the authorization record stay
+// identical.
+func approvalForRelaunch(sourceConv, harnessName string) (string, bool) {
+	row, err := db.FindSessionByConvID(sourceConv)
+	if err != nil {
+		slog.Warn("relaunch: approval posture lookup failed; using harness default",
+			"conv", sourceConv, "error", err)
+		return approvalForHarness(harnessName), false
+	}
+	if row == nil || strings.TrimSpace(row.ApprovalPolicy) == "" {
+		return approvalForHarness(harnessName), false
+	}
+	h, err := harness.Resolve(harnessName)
+	if err != nil {
+		return approvalForHarness(harnessName), false
+	}
+	policy, err := harness.ValidateApprovalPolicy(h, row.ApprovalPolicy)
+	if err != nil {
+		return approvalForHarness(harnessName), false
+	}
+	autoReview, err := harness.ResolveAutoReview(h, row.ApprovalAutoReview)
+	if err != nil {
+		return approvalForHarness(harnessName), false
+	}
+	return policy, autoReview
+}
+
 // remoteControlForRelaunch resolves whether a relaunch (resume / reincarnate /
 // clone) should re-arm Claude Code's built-in Remote Access on the new pane,
 // carried from the SOURCE conversation's persisted best-known state (JOH-256).
-// Unlike sandboxForHarness / approvalForHarness — which re-default a launch
-// property the harness owns — remote-control IS persisted per-conv, so this
+// Like approval posture, remote-control is persisted per-conv, so this
 // carries the source's actual flag rather than a harness default: an agent the
 // operator armed for phone access must survive the handoff, the operator-decided
 // carry-over semantics for all three paths (JOH-261).
@@ -160,9 +182,8 @@ func remoteControlForRelaunch(sourceConv, harnessName string) bool {
 
 // askTimeoutForRelaunch resolves the AskUserQuestion idle-timeout a relaunch
 // (resume / clone / reincarnate) threads onto the new pane, carried from the
-// SOURCE conversation's persisted value (schema v97). Unlike sandboxForHarness /
-// approvalForHarness — which re-DEFAULT their launch property on every relaunch
-// — the operator wants a per-agent timeout PRESERVED across the handoff: a
+// SOURCE conversation's persisted value (schema v97). Like approval posture,
+// the operator wants a per-agent timeout PRESERVED across the handoff: a
 // reincarnated agentic worker set to auto-continue at 5m must come back on 5m,
 // not revert to global settings.json. So this reads the source's actual recorded
 // value rather than a harness default (the same preserve semantics as

@@ -97,12 +97,17 @@ func TestSpawnProfile_FromAgentSeed(t *testing.T) {
 	var seed struct {
 		Name                string            `json:"name"`
 		Model               string            `json:"model"`
+		Approval            string            `json:"approval"`
+		AutoReview          *bool             `json:"auto_review"`
 		PermissionOverrides map[string]string `json:"permission_overrides"`
 	}
 	testharness.DecodeJSON(t, rec, &seed)
 	assert.Empty(t, seed.Name, "a seed is unnamed — the editor makes the human name it")
 	assert.Equal(t, nonDefaultModel, seed.Model,
 		"the seed captures the agent's exact (non-preset) model id, not a blank")
+	assert.Equal(t, "inherit", seed.Approval, "the seed preserves the recorded approval posture")
+	require.NotNil(t, seed.AutoReview, "the seed preserves an explicit resolved auto-review setting")
+	assert.False(t, *seed.AutoReview)
 	assert.Equal(t, "grant", seed.PermissionOverrides["human.notify"],
 		"the seed captures the agent's granted permission as a grant override")
 

@@ -16,6 +16,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/conv"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // Flow wraps a World with a small Given/When/Then DSL so flow tests
@@ -34,9 +35,10 @@ type Flow struct {
 	World *World
 	Mux   http.Handler
 
-	humanWrap func(*http.Request) *http.Request
-	agentWrap func(*http.Request, string) *http.Request
-	currPeer  func(*http.Request) *http.Request
+	humanWrap     func(*http.Request) *http.Request
+	agentWrap     func(*http.Request, string) *http.Request
+	currPeer      func(*http.Request) *http.Request
+	currAgentConv string
 }
 
 // NewFlow wires a World + http.Handler + the agentd peer wrappers.
@@ -185,11 +187,16 @@ func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 	// slow-to-record launch, not a dead one.
 	if !s.w.SkipSpawnRow {
 		if err := db.SaveSession(&db.SessionRow{
-			ID:          label,
-			TmuxSession: label,
-			ConvID:      cc.ConvID,
-			Cwd:         cc.Cwd,
-			Status:      "running",
+			ID:                 label,
+			TmuxSession:        label,
+			ConvID:             cc.ConvID,
+			Cwd:                cc.Cwd,
+			Status:             "running",
+			Harness:            args.Harness,
+			SandboxMode:        args.Sandbox,
+			EffectiveSandbox:   args.EffectiveSandbox,
+			ApprovalPolicy:     args.Approval,
+			ApprovalAutoReview: args.AutoReview,
 			// Mirror production's session/new.go, which records the resolved
 			// ask-timeout on the row so a relaunch (resume/clone/reincarnate) can
 			// preserve it (schema v97). "" for a Codex/omitted spawn.
@@ -244,14 +251,16 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	// Resume mints a fresh session row / TCLAUDE_SESSION_ID; track it.
 	cc.SessionID = label
 	if err := db.SaveSession(&db.SessionRow{
-		ID:               label,
-		TmuxSession:      label,
-		ConvID:           convID,
-		Cwd:              cc.Cwd,
-		Status:           "running",
-		Harness:          args.Harness,
-		SandboxMode:      args.Sandbox,
-		EffectiveSandbox: args.EffectiveSandbox,
+		ID:                 label,
+		TmuxSession:        label,
+		ConvID:             convID,
+		Cwd:                cc.Cwd,
+		Status:             "running",
+		Harness:            args.Harness,
+		SandboxMode:        args.Sandbox,
+		EffectiveSandbox:   args.EffectiveSandbox,
+		ApprovalPolicy:     args.Approval,
+		ApprovalAutoReview: args.AutoReview,
 		// The resume mints a fresh row; carry the preserved ask-timeout onto it so
 		// a subsequent relaunch keeps it too (production session/new.go does this).
 		AskUserQuestionTimeout: args.AskUserQuestionTimeout,
@@ -349,11 +358,13 @@ func (s *simSpawner) spawnNewCodex(args clcommon.SpawnArgs) error {
 	// delivered — the Codex analogue of the CCSim path's RecordSpawnInitialPrompt.
 	s.w.RecordSpawnInitialPrompt(cx.ConvID, args.InitialPrompt)
 	if err := db.SaveSession(&db.SessionRow{
-		ID:          label,
-		TmuxSession: label,
-		ConvID:      cx.ConvID,
-		Cwd:         cx.Cwd,
-		Status:      "running",
+		ID:                 label,
+		TmuxSession:        label,
+		ConvID:             cx.ConvID,
+		Cwd:                cx.Cwd,
+		Status:             "running",
+		ApprovalPolicy:     args.Approval,
+		ApprovalAutoReview: args.AutoReview,
 		// "" for Codex (ask-timeout is Claude-only), but written uniformly to
 		// mirror production's row-write across harnesses.
 		AskUserQuestionTimeout: args.AskUserQuestionTimeout,
@@ -408,6 +419,8 @@ func (s *simSpawner) spawnResumeCodex(args clcommon.SpawnArgs) error {
 		Harness:                codexHarnessName,
 		SandboxMode:            args.Sandbox,
 		EffectiveSandbox:       args.EffectiveSandbox,
+		ApprovalPolicy:         args.Approval,
+		ApprovalAutoReview:     args.AutoReview,
 	}); err != nil {
 		return err
 	}
@@ -421,6 +434,7 @@ func (s *simSpawner) spawnResumeCodex(args clcommon.SpawnArgs) error {
 func (f *Flow) AsHuman() *Flow {
 	cp := *f
 	cp.currPeer = f.humanWrap
+	cp.currAgentConv = ""
 	return &cp
 }
 
@@ -431,7 +445,31 @@ func (f *Flow) AsAgent(convID string) *Flow {
 	cp.currPeer = func(r *http.Request) *http.Request {
 		return f.agentWrap(r, convID)
 	}
+	cp.currAgentConv = convID
 	return &cp
+}
+
+// ensureAgentSpawnLaunchFixture gives generic AsAgent(...).Spawn* flow tests a
+// known maximally-authorized launch row. Tests exercising lineage install a
+// narrower row themselves; production never has this fixture shortcut.
+func (f *Flow) ensureAgentSpawnLaunchFixture() {
+	if f.currAgentConv == "" {
+		return
+	}
+	row, err := db.FindSessionByConvID(f.currAgentConv)
+	if err != nil {
+		f.T.Fatalf("agent spawn launch fixture lookup: %v", err)
+	}
+	if row != nil {
+		return
+	}
+	if err := db.SaveSession(&db.SessionRow{
+		ID: "spawn-fixture-" + f.currAgentConv, ConvID: f.currAgentConv,
+		Cwd: f.World.HomeDir, Status: "running", Harness: harness.DefaultName,
+		SandboxMode: harness.ClaudeSandboxOff, ApprovalPolicy: "bypassPermissions",
+	}); err != nil {
+		f.T.Fatalf("agent spawn launch fixture: %v", err)
+	}
 }
 
 // -- Given (state setup) --
@@ -589,11 +627,12 @@ func (f *Flow) HaveAliveSessionOnBranch(convID, label, tmuxSession, cwd, branch 
 		}
 	}
 	if err := db.SaveSession(&db.SessionRow{
-		ID:          label,
-		TmuxSession: tmuxSession,
-		ConvID:      convID,
-		Cwd:         cwd,
-		Status:      "running",
+		ID:             label,
+		TmuxSession:    tmuxSession,
+		ConvID:         convID,
+		Cwd:            cwd,
+		Status:         "running",
+		ApprovalPolicy: "bypassPermissions",
 	}); err != nil {
 		f.T.Fatalf("HaveAliveSessionOnBranch: %v", err)
 	}
@@ -617,12 +656,13 @@ func (f *Flow) HaveAliveCodexSession(convID, label, tmuxSession, cwd string) *Co
 		f.T.Fatalf("HaveAliveCodexSession: cx.Start: %v", err)
 	}
 	if err := db.SaveSession(&db.SessionRow{
-		ID:          label,
-		TmuxSession: tmuxSession,
-		ConvID:      convID,
-		Cwd:         cwd,
-		Status:      "running",
-		Harness:     codexHarnessName,
+		ID:             label,
+		TmuxSession:    tmuxSession,
+		ConvID:         convID,
+		Cwd:            cwd,
+		Status:         "running",
+		Harness:        codexHarnessName,
+		ApprovalPolicy: harness.ApprovalNever,
 	}); err != nil {
 		f.T.Fatalf("HaveAliveCodexSession: %v", err)
 	}
@@ -707,6 +747,7 @@ func (s SpawnResp) TmuxTarget() string { return s.TmuxSession + ":0.0" }
 // agentd.Spawn — see flow_setup_test.go).
 func (f *Flow) Spawn(group, name string) SpawnResp {
 	f.T.Helper()
+	f.ensureAgentSpawnLaunchFixture()
 	rec := f.do(http.MethodPost,
 		"/v1/groups/"+group+"/spawn",
 		map[string]any{"name": name})
@@ -732,6 +773,7 @@ func (f *Flow) Spawn(group, name string) SpawnResp {
 // non-200 so a spawn-path regression surfaces at the call site.
 func (f *Flow) SpawnHarness(group, name, harness string) SpawnResp {
 	f.T.Helper()
+	f.ensureAgentSpawnLaunchFixture()
 	rec := f.do(http.MethodPost,
 		"/v1/groups/"+group+"/spawn",
 		map[string]any{"name": name, "harness": harness})
@@ -757,6 +799,7 @@ func (f *Flow) SpawnHarness(group, name, harness string) SpawnResp {
 // Code + Raw fields carry the daemon's response for assertion.
 func (f *Flow) SpawnWith(group string, body map[string]any) SpawnResp {
 	f.T.Helper()
+	f.ensureAgentSpawnLaunchFixture()
 	rec := f.do(http.MethodPost, "/v1/groups/"+group+"/spawn", body)
 	var resp SpawnResp
 	resp.Code = rec.Code

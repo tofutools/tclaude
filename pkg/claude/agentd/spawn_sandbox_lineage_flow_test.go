@@ -23,13 +23,14 @@ func TestSpawnSandboxLineage_Matrix(t *testing.T) {
 		wantStatus    int
 	}{
 		{
-			name:          "codex agent profile can spawn claude inherit",
-			parentHarness: harness.CodexName,
-			parentSandbox: harness.SandboxManagedProfile,
+			name:          "claude on can spawn claude on",
+			parentHarness: harness.DefaultName,
+			parentSandbox: harness.ClaudeSandboxOn,
 			body: map[string]any{
-				"name":    "worker",
-				"harness": harness.DefaultName,
-				"sandbox": harness.ClaudeSandboxInherit,
+				"name":     "worker",
+				"harness":  harness.DefaultName,
+				"sandbox":  harness.ClaudeSandboxOn,
+				"approval": "default",
 			},
 			wantStatus: http.StatusOK,
 		},
@@ -262,13 +263,18 @@ func haveSpawnCapableSandboxParent(t *testing.T, f *testharness.Flow, group, con
 	t.Helper()
 	f.HaveMember(group, convID)
 	require.NoError(t, db.GrantAgentPermission(convID, agentd.PermGroupsSpawn, "test"))
+	approval := "bypassPermissions"
+	if h == harness.CodexName {
+		approval = harness.ApprovalNever
+	}
 	require.NoError(t, db.SaveSession(&db.SessionRow{
-		ID:          "sess-" + convID[:8],
-		TmuxSession: "tmux-" + convID[:8],
-		ConvID:      convID,
-		Cwd:         f.World.HomeDir,
-		Status:      "running",
-		Harness:     h,
-		SandboxMode: sandbox,
+		ID:             "sess-" + convID,
+		TmuxSession:    "tmux-" + convID,
+		ConvID:         convID,
+		Cwd:            f.World.HomeDir,
+		Status:         "running",
+		Harness:        h,
+		SandboxMode:    sandbox,
+		ApprovalPolicy: approval,
 	}))
 }
