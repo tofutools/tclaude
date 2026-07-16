@@ -3,6 +3,7 @@ package harness
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -46,6 +47,249 @@ func TestCodexTelemetryFollower_IncrementalMatchesFullScan(t *testing.T) {
 	// incremental mutations.
 	appendBytes(t, path, []byte("{not-json}\n"))
 	assertFollowerMatchesFull(t, follower, home, id, path)
+}
+
+func TestCodexTelemetryFollower_CheckpointSurvivesRestartWithFoldState(t *testing.T) {
+	home := t.TempDir()
+	const id = "019ec004-4250-79b1-9ade-ebaea41354f1"
+	path := newFollowerTestRollout(t, home, id)
+	appendSubagentActivity(t, path, "child-a", "interrupted", "")
+	appendTokenCount(t, path, 1000, 100, 1100)
+	// The correlated activity lands after the simulated daemon restart. The
+	// pending call-id therefore proves the checkpoint carries parser state, not
+	// merely an offset that would be meaningless on its own.
+	appendRolloutEnvelope(t, path, "response_item", map[string]any{
+		"type": "function_call", "name": "followup_task", "call_id": "call-after-restart",
+	})
+
+	beforeRestart := &CodexTelemetryFollower{}
+	first := assertFollowerMatchesFull(t, beforeRestart, home, id, path)
+	assert.Contains(t, first.InterruptedSubagents, "child-a")
+	checkpoint, ok, err := beforeRestart.Checkpoint()
+	require.NoError(t, err)
+	require.True(t, ok)
+	checkpointOffset := beforeRestart.offset
+
+	restored := &CodexTelemetryFollower{}
+	require.NoError(t, restored.RestoreCheckpoint(checkpoint))
+	unchanged, err := restored.RuntimeTelemetry(home, id)
+	require.NoError(t, err)
+	assert.Equal(t, first, unchanged)
+	assert.Equal(t, checkpointOffset, restored.offset)
+	assert.False(t, restored.restored, "the first read validates and adopts the durable cursor")
+
+	appendRolloutEnvelope(t, path, "event_msg", map[string]any{
+		"type": "sub_agent_activity", "event_id": "call-after-restart",
+		"agent_thread_id": "child-a", "kind": "interacted",
+	})
+	appendTokenCount(t, path, 9000, 900, 9900)
+	got := assertFollowerMatchesFull(t, restored, home, id, path)
+	assert.NotContains(t, got.InterruptedSubagents, "child-a",
+		"followup call-id from before restart clears the interrupted child")
+	assert.Equal(t, int64(9000), got.Context.TokensInput)
+	assert.Greater(t, restored.offset, checkpointOffset)
+
+	nextCheckpoint, ok, err := restored.Checkpoint()
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.NotEqual(t, string(checkpoint), string(nextCheckpoint), "advanced state produces a new checkpoint")
+}
+
+func TestCodexTelemetryFollower_CheckpointInvalidationRebuilds(t *testing.T) {
+	home := t.TempDir()
+	const id = "019ec004-4250-79b1-9ade-ebaea41354f2"
+	path := newFollowerTestRollout(t, home, id)
+	appendSubagentActivity(t, path, "old-child", "interrupted", "")
+	appendTokenCount(t, path, 100, 10, 110)
+
+	beforeRotation := &CodexTelemetryFollower{}
+	_, err := beforeRotation.RuntimeTelemetry(home, id)
+	require.NoError(t, err)
+	checkpoint, ok, err := beforeRotation.Checkpoint()
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	require.NoError(t, os.Rename(path, path+".old"))
+	require.NoError(t, os.WriteFile(path, nil, 0o600))
+	appendRolloutEnvelope(t, path, "session_meta", map[string]any{"id": id})
+	appendSubagentActivity(t, path, "new-child", "interrupted", "")
+	appendTokenCount(t, path, 800, 80, 880)
+
+	restored := &CodexTelemetryFollower{}
+	require.NoError(t, restored.RestoreCheckpoint(checkpoint))
+	got, err := restored.RuntimeTelemetry(home, id)
+	require.NoError(t, err)
+	assert.NotContains(t, got.InterruptedSubagents, "old-child")
+	assert.Contains(t, got.InterruptedSubagents, "new-child")
+	assert.Equal(t, int64(800), got.Context.TokensInput,
+		"rotated/truncated path rejects the durable cursor and rebuilds")
+}
+
+func TestCodexTelemetryFollower_CheckpointShrinkRebuilds(t *testing.T) {
+	home := t.TempDir()
+	const id = "019ec004-4250-79b1-9ade-ebaea41354f7"
+	path := newFollowerTestRollout(t, home, id)
+	appendSubagentActivity(t, path, "old-child-with-a-long-name", "interrupted", "")
+	appendTokenCount(t, path, 1000, 100, 1100)
+
+	beforeShrink := &CodexTelemetryFollower{}
+	_, err := beforeShrink.RuntimeTelemetry(home, id)
+	require.NoError(t, err)
+	checkpoint, ok, err := beforeShrink.Checkpoint()
+	require.NoError(t, err)
+	require.True(t, ok)
+	oldInfo, err := os.Stat(path)
+	require.NoError(t, err)
+
+	shrunk := append(rolloutEnvelope(t, "event_msg", map[string]any{
+		"type": "sub_agent_activity", "agent_thread_id": "new", "kind": "interrupted",
+	}), '\n')
+	require.Less(t, int64(len(shrunk)), oldInfo.Size())
+	require.NoError(t, os.WriteFile(path, shrunk, 0o600))
+	newInfo, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.True(t, os.SameFile(oldInfo, newInfo), "shrink keeps the same file identity")
+
+	restored := &CodexTelemetryFollower{}
+	require.NoError(t, restored.RestoreCheckpoint(checkpoint))
+	got, err := restored.RuntimeTelemetry(home, id)
+	require.NoError(t, err)
+	assert.NotContains(t, got.InterruptedSubagents, "old-child-with-a-long-name")
+	assert.Contains(t, got.InterruptedSubagents, "new", "size shrink rejects the durable cursor")
+}
+
+func TestCodexTelemetryFollower_CheckpointSameSizeRewriteRebuilds(t *testing.T) {
+	home := t.TempDir()
+	const id = "019ec004-4250-79b1-9ade-ebaea41354f5"
+	path := newFollowerTestRollout(t, home, id)
+	appendSubagentActivity(t, path, "old-child", "interrupted", "")
+	appendTokenCount(t, path, 100, 10, 110)
+
+	beforeRewrite := &CodexTelemetryFollower{}
+	_, err := beforeRewrite.RuntimeTelemetry(home, id)
+	require.NoError(t, err)
+	checkpoint, ok, err := beforeRewrite.Checkpoint()
+	require.NoError(t, err)
+	require.True(t, ok)
+	originalInfo, err := os.Stat(path)
+	require.NoError(t, err)
+
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	rewritten := bytes.Replace(raw, []byte("old-child"), []byte("new-child"), 1)
+	require.Equal(t, len(raw), len(rewritten), "precondition: rewrite keeps file size")
+	require.NoError(t, os.WriteFile(path, rewritten, 0o600))
+	changedTime := originalInfo.ModTime().Add(time.Second)
+	require.NoError(t, os.Chtimes(path, changedTime, changedTime))
+
+	restored := &CodexTelemetryFollower{}
+	require.NoError(t, restored.RestoreCheckpoint(checkpoint))
+	got, err := restored.RuntimeTelemetry(home, id)
+	require.NoError(t, err)
+	assert.NotContains(t, got.InterruptedSubagents, "old-child")
+	assert.Contains(t, got.InterruptedSubagents, "new-child",
+		"same-size rewrite with changed mtime rejects the checkpoint")
+}
+
+func TestCodexTelemetryFollower_RejectsMalformedCheckpoint(t *testing.T) {
+	follower := &CodexTelemetryFollower{}
+	assert.Error(t, follower.RestoreCheckpoint([]byte(`{"version":99}`)))
+	assert.Error(t, follower.RestoreCheckpoint([]byte(`{"version":1,"offset":42}`)))
+	assert.Error(t, follower.RestoreCheckpoint(nil))
+}
+
+func TestCodexTelemetryFollower_RejectsOversizedCheckpoint(t *testing.T) {
+	follower := &CodexTelemetryFollower{
+		home: "/tmp/home", convID: "conv", path: "/tmp/rollout.jsonl", offset: 64,
+		checkpointSize: 64, checkpointAnchor: bytes.Repeat([]byte("a"), 64),
+		state: newCodexRuntimeScanState(),
+	}
+	follower.state.followupCallIDs[string(bytes.Repeat([]byte("x"), maxCodexTelemetryCheckpointBytes))] = struct{}{}
+	checkpoint, ok, err := follower.Checkpoint()
+	assert.ErrorIs(t, err, ErrCodexTelemetryCheckpointTooLarge)
+	assert.False(t, ok)
+	assert.Nil(t, checkpoint)
+}
+
+func TestCaptureCodexTelemetryCheckpointUsesScannedDescriptor(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	fileA := append(rolloutEnvelope(t, "event_msg", map[string]any{
+		"type": "sub_agent_activity", "agent_thread_id": "file-a", "kind": "interrupted",
+	}), '\n')
+	require.NoError(t, os.WriteFile(path, fileA, 0o600))
+	opened, err := os.Open(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = opened.Close() })
+	fileAInfo, err := opened.Stat()
+	require.NoError(t, err)
+
+	// Replace the pathname after opening A. Metadata and the anchor must still
+	// come from the descriptor that supplied the fold state, and the caller's
+	// final SameFile check must detect that the pathname now resolves to B.
+	require.NoError(t, os.Rename(path, path+".old"))
+	fileB := append(rolloutEnvelope(t, "event_msg", map[string]any{
+		"type": "sub_agent_activity", "agent_thread_id": "file-b", "kind": "interrupted",
+	}), '\n')
+	require.NoError(t, os.WriteFile(path, fileB, 0o600))
+	metadata, err := captureCodexTelemetryCheckpoint(opened, int64(len(fileA)))
+	require.NoError(t, err)
+	assert.True(t, os.SameFile(fileAInfo, metadata.info))
+	pathInfo, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.False(t, os.SameFile(metadata.info, pathInfo), "replacement is rejected before state is committed")
+	assert.Equal(t, fileA[max(len(fileA)-codexTelemetryAnchorBytes, 0):], metadata.anchor)
+}
+
+func TestScanCodexTelemetryToStableConsumesAppendAfterEOF(t *testing.T) {
+	home := t.TempDir()
+	const id = "019ec004-4250-79b1-9ade-ebaea41354fb"
+	path := newFollowerTestRollout(t, home, id)
+	appendTokenCount(t, path, 100, 10, 110)
+	file, err := os.Open(path)
+	require.NoError(t, err)
+	defer func() { _ = file.Close() }()
+
+	state := newCodexRuntimeScanState()
+	injected := false
+	scanner := func(r io.Reader, rolloutPath string, scanState *codexRuntimeScanState, strict bool) (int64, bool, error) {
+		read, doubt, scanErr := scanCompleteCodexLines(r, rolloutPath, scanState, strict)
+		if !injected {
+			injected = true
+			appendTokenCount(t, path, 900, 90, 990)
+		}
+		return read, doubt, scanErr
+	}
+	offset, metadata, doubt, err := scanCodexTelemetryToStableWithScanner(file, path, &state, 0, false, scanner)
+	require.NoError(t, err)
+	assert.False(t, doubt)
+	assert.True(t, injected)
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, info.Size(), offset, "the complete append racing with EOF is consumed")
+	assert.Equal(t, offset, metadata.size)
+	assert.Equal(t, int64(900), state.snapshot().Context.TokensInput)
+}
+
+func TestCodexTelemetryFollower_MissingRolloutClearsCheckpoint(t *testing.T) {
+	home := t.TempDir()
+	const id = "019ec004-4250-79b1-9ade-ebaea41354f8"
+	path := newFollowerTestRollout(t, home, id)
+	appendTokenCount(t, path, 100, 10, 110)
+	follower := &CodexTelemetryFollower{}
+	_, err := follower.RuntimeTelemetry(home, id)
+	require.NoError(t, err)
+	_, ok, err := follower.Checkpoint()
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	require.NoError(t, os.Remove(path))
+	got, err := follower.RuntimeTelemetry(home, id)
+	require.NoError(t, err)
+	assert.Equal(t, CodexRuntimeSnapshot{}, got)
+	checkpoint, ok, err := follower.Checkpoint()
+	require.NoError(t, err)
+	assert.False(t, ok)
+	assert.Nil(t, checkpoint)
 }
 
 func TestCodexTelemetryFollower_PartialLineIsRetried(t *testing.T) {

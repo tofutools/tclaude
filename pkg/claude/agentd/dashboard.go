@@ -16,6 +16,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -1721,6 +1722,37 @@ func stateForConvInSessionsTimed(rows []*db.SessionRow, aliveSet map[string]stru
 // the page renders: groups + members, all known agents, the live
 // permission state (defaults + per-conv grants), and the slug
 // registry. Read-only.
+const snapshotLoadConcurrency = 8
+
+var snapshotLoadSlots = make(chan struct{}, snapshotLoadConcurrency)
+
+func runSnapshotLoads(loads ...func()) {
+	if len(loads) == 0 {
+		return
+	}
+	jobs := make(chan func(), len(loads))
+	for _, load := range loads {
+		jobs <- load
+	}
+	close(jobs)
+	workers := min(len(loads), snapshotLoadConcurrency)
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for range workers {
+		go func() {
+			defer wg.Done()
+			for load := range jobs {
+				snapshotLoadSlots <- struct{}{}
+				func() {
+					defer func() { <-snapshotLoadSlots }()
+					load()
+				}()
+			}
+		}()
+	}
+	wg.Wait()
+}
+
 func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
@@ -1751,12 +1783,37 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	aliveSessions, _ := cachedLiveTmuxSessions()
 	span.mark("tmux_ls")
 
-	groups, _ := db.ListAgentGroups()
-	sandboxProfiles, _ := db.ListSandboxProfiles()
-	globalSandboxProfile, _ := db.GetGlobalSandboxProfile()
-	allGrants, _ := db.ListAllAgentPermissions()
-	allOverrides, _ := db.ListAllAgentPermissionOverrides()
-	cfg, _ := config.Load()
+	var (
+		groups               []*db.AgentGroup
+		sandboxProfiles      []*db.SandboxProfile
+		globalSandboxProfile *db.SandboxProfile
+		allGrants            map[string][]string
+		allOverrides         map[string]map[string]string
+		cfg                  *config.Config
+		notifyPrefs          map[string]string
+		retiredAgents        []*db.Agent
+		successions          []*db.AgentConvSuccession
+		activeAgents         []*db.Agent
+		activeAgentsErr      error
+		sudoGrants           []*db.SudoGrant
+	)
+	// The snapshot preload is a set of independent SQLite WAL reads plus one
+	// config-file read. Run them as one fan-out so its wall clock is the slowest
+	// read, not the sum of ~dozen fixed round trips (which dominated even with
+	// only a handful of agents).
+	runSnapshotLoads(
+		func() { groups, _ = db.ListAgentGroups() },
+		func() { sandboxProfiles, _ = db.ListSandboxProfiles() },
+		func() { globalSandboxProfile, _ = db.GetGlobalSandboxProfile() },
+		func() { allGrants, _ = db.ListAllAgentPermissions() },
+		func() { allOverrides, _ = db.ListAllAgentPermissionOverrides() },
+		func() { cfg, _ = config.Load() },
+		func() { notifyPrefs, _ = db.ListConvNotifyPrefs() },
+		func() { retiredAgents, _ = db.ListRetiredAgents() },
+		func() { successions, _ = db.ListAgentConvSuccessions() },
+		func() { activeAgents, activeAgentsErr = db.ListActiveAgents() },
+		func() { sudoGrants, _ = db.ListAllActiveSudoGrants() },
+	)
 	defaults := []string{}
 	if cfg != nil && cfg.Agent != nil {
 		defaults = append(defaults, cfg.Agent.DefaultPermissions...)
@@ -1772,13 +1829,30 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// and ListAgentGroupOwners once in the group loop; keying both by group id
 	// here lets inMutedGroup, the conv-set collect and the group loop all reuse
 	// a single read.
+	membersByIndex := make([][]*db.AgentGroupMember, len(groups))
+	ownersByIndex := make([][]*db.AgentGroupOwner, len(groups))
+	membersErrByIndex := make([]error, len(groups))
+	ownersErrByIndex := make([]error, len(groups))
+	groupLoads := make([]func(), 0, len(groups)*2)
+	for i, g := range groups {
+		i, groupID := i, g.ID
+		groupLoads = append(groupLoads,
+			func() { membersByIndex[i], membersErrByIndex[i] = db.ListAgentGroupMembers(groupID) },
+			func() { ownersByIndex[i], ownersErrByIndex[i] = db.ListAgentGroupOwners(groupID) },
+		)
+	}
+	runSnapshotLoads(groupLoads...)
 	membersByGroup := make(map[int64][]*db.AgentGroupMember, len(groups))
 	ownersByGroup := make(map[int64][]*db.AgentGroupOwner, len(groups))
-	for _, g := range groups {
-		members, _ := db.ListAgentGroupMembers(g.ID)
-		membersByGroup[g.ID] = members
-		owners, _ := db.ListAgentGroupOwners(g.ID)
-		ownersByGroup[g.ID] = owners
+	for i, g := range groups {
+		if membersErrByIndex[i] != nil {
+			slog.Warn("snapshot: failed to preload group members", "group_id", g.ID, "error", membersErrByIndex[i])
+		}
+		if ownersErrByIndex[i] != nil {
+			slog.Warn("snapshot: failed to preload group owners", "group_id", g.ID, "error", ownersErrByIndex[i])
+		}
+		membersByGroup[g.ID] = membersByIndex[i]
+		ownersByGroup[g.ID] = ownersByIndex[i]
 	}
 
 	// Notification-filter state: the per-agent overrides plus the set
@@ -1786,7 +1860,6 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// notifyEffective mirrors notify.AllowedForConv — agent pref wins,
 	// else any muted group silences — so the bells the dashboard
 	// renders agree with what the notify path will actually do.
-	notifyPrefs, _ := db.ListConvNotifyPrefs()
 	inMutedGroup := map[string]bool{}
 	for _, g := range groups {
 		if g.IsArchived() || g.NotifyEnabled {
@@ -1815,7 +1888,6 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// actor-level roster is keyed on agents.retired_at, which only a human
 	// retire sets (a reincarnate / Claude Code /clear predecessor stays a
 	// generation of its active actor, so it is NOT here).
-	retiredAgents, _ := db.ListRetiredAgents()
 	retiredSet := make(map[string]bool, len(retiredAgents))
 	for _, e := range retiredAgents {
 		retiredSet[e.CurrentConvID] = true
@@ -1826,10 +1898,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// current conv), so supersededSet is a redundant read-time belt-and-braces
 	// guard — symmetric with retiredSet.
 	supersededSet := map[string]bool{}
-	if successions, err := db.ListAgentConvSuccessions(); err == nil {
-		for _, s := range successions {
-			supersededSet[s.OldConvID] = true
-		}
+	for _, s := range successions {
+		supersededSet[s.OldConvID] = true
 	}
 
 	// Every active ACTOR — the canonical roster (JOH-26 PR3b reads the
@@ -1838,11 +1908,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// conv that was an agent yesterday keeps showing after its tmux pane closed,
 	// instead of silently vanishing. Plain conversations that were never
 	// promoted are not here — they surface in out.Conversations.
-	activeAgents, activeAgentsErr := db.ListActiveAgents()
-
-	// Active sudo grants across every agent. One DB scan; bucketed per conv-id
-	// below for O(1) per-agent Active rendering plus the top-level Sudo[] tab.
-	sudoGrants, _ := db.ListAllActiveSudoGrants()
+	// Active sudo grants across every agent were loaded in the initial fan-out;
+	// they are bucketed per conv-id below for O(1) per-agent rendering.
 
 	// Collect the full conv set the snapshot will render — group members ∪
 	// owners ∪ grant/override holders ∪ active agents ∪ sudo holders — then
@@ -1882,24 +1949,31 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	for convID := range convSet {
 		convIDs = append(convIDs, convID)
 	}
+	var (
+		taskRefs     map[string]db.AgentTaskRef
+		presentedPRs map[string][]db.AgentPR
+		allTags      map[string][]string
+	)
 	rc := newSnapshotRowCache(convIDs, aliveSessions)
+	runSnapshotLoads(
+		func() { taskRefs, _ = db.ListAgentTaskRefs() },
+		func() { presentedPRs = preloadPresentedPRsForDashboard(time.Now()) },
+		func() { allTags, _ = db.ListAllAgentTags() },
+	)
 
 	// Preload every agent's task-reference link once (a single query)
 	// rather than a lookup per member/agent in this 2s-polled path.
 	// Keyed by agent_id; callers pass the row's cached agent_id (from rc)
 	// so no per-row AgentIDForConv query is needed.
-	taskRefs, _ := db.ListAgentTaskRefs()
 	taskRefFor := func(agentID string) taskRefView {
 		return taskRefViewFor(taskRefs[agentID])
 	}
-	presentedPRs := preloadPresentedPRsForDashboard(time.Now())
 	presentedPRsFor := func(agentID string) []presentedPRView {
 		return presentedPRViews(presentedPRs[agentID])
 	}
 	// Same preload discipline as taskRefs: one ListAllAgentTags per snapshot,
 	// keyed by agent_id, looked up per row (not a query per member/agent in
 	// this 2s-polled path). The stored set is already sorted alphabetically.
-	allTags, _ := db.ListAllAgentTags()
 	tagsFor := func(agentID string) tagsView {
 		return tagsView{Tags: allTags[agentID]}
 	}
@@ -2268,15 +2342,48 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// endpoints (GET /api/retired, /api/conversations, /api/replaced). The
 	// snapshot still loads the cheap retiredSet / supersededSet conv-id sets
 	// above to guard the roster.
-	out.Pending = collectPendingSnapshot(aliveSessions)
-	out.Cron = collectCronSnapshot()
+	var (
+		pending          []dashboardPending
+		cron             []dashboardCronJob
+		exportJobsActive int
+		links            []dashboardLink
+		usage            dashboardUsage
+		hasRealCost      bool
+		costErr          error
+		templates        []templateJSON
+		profiles         []spawnProfileJSON
+		defaultProfile   *db.SpawnProfile
+		roles            []roleJSON
+		messages         []dashboardHumanMessage
+		messagesUnread   int
+		plugins          []dashboardPlugin
+		pluginsWarn      int
+		pluginsErr       error
+	)
+	// These collectors do not depend on each other. Most are one or two small
+	// SQLite reads; serial execution made their fixed per-query overhead add up
+	// to >10 ms even on tiny rosters.
+	runSnapshotLoads(
+		func() { pending = collectPendingSnapshot(aliveSessions) },
+		func() { cron = collectCronSnapshot() },
+		func() { exportJobsActive, _ = db.CountActiveExportJobs() },
+		func() { links = collectLinksSnapshot() },
+		func() { usage = collectUsageSnapshot(cfg.ResolvedUsageIdleTimeout()) },
+		func() { hasRealCost, costErr = db.HasAnyRealCost() },
+		func() { templates = collectTemplatesSnapshot() },
+		func() { profiles = collectProfilesSnapshot() },
+		func() { defaultProfile = globalDefaultProfile() },
+		func() { roles = collectRolesSnapshot() },
+		func() { messages, messagesUnread = buildHumanMessagesSnapshot() },
+		func() { plugins, pluginsWarn, pluginsErr = collectPluginsSnapshot() },
+	)
+	out.Pending = pending
+	out.Cron = cron
 	// Badge-only: the Jobs tab's row window comes from /api/jobs, not the
 	// snapshot. A count read error degrades to 0 (no badge), never a failed poll.
-	if n, err := db.CountActiveExportJobs(); err == nil {
-		out.ExportJobsActive = n
-	}
-	out.Links = collectLinksSnapshot()
-	out.Usage = collectUsageSnapshot(cfg.ResolvedUsageIdleTimeout())
+	out.ExportJobsActive = exportJobsActive
+	out.Links = links
+	out.Usage = usage
 	// Costs-tab visibility: show when there is real pay-per-token spend to
 	// display, OR a subscription account has opted into the WHAT-IF view
 	// (cost.show_on_subscription). A subscription-only account with the opt-in
@@ -2285,26 +2392,24 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// estimate behind a banner and fetches /api/costs?whatif=1. A DB error
 	// degrades to "no real cost" (the opt-in still governs), matching how the
 	// cost figures themselves degrade to 0.
-	hasRealCost, costErr := db.HasAnyRealCost()
 	if costErr != nil {
 		slog.Debug("snapshot: HasAnyRealCost failed; treating as no real cost", "error", costErr)
 	}
 	showOnSub := cfg != nil && cfg.Cost != nil && cfg.Cost.ShowOnSubscription
 	out.CostTabVisible = hasRealCost || showOnSub
 	out.CostTabWhatIf = !hasRealCost && showOnSub
-	out.Templates = collectTemplatesSnapshot()
-	out.Profiles = collectProfilesSnapshot()
-	if profile := globalDefaultProfile(); profile != nil {
-		out.SpawnProfileDefault = profile.Name
+	out.Templates = templates
+	out.Profiles = profiles
+	if defaultProfile != nil {
+		out.SpawnProfileDefault = defaultProfile.Name
 	}
-	out.Roles = collectRolesSnapshot()
-	out.Messages, out.MessagesUnread = buildHumanMessagesSnapshot()
+	out.Roles = roles
+	out.Messages, out.MessagesUnread = messages, messagesUnread
 	out.AccessRequests = approvals.dashboardSnapshot()
 	// Only the actionable (pending) ones drive the blink/banner/badge — the
 	// list also carries recently-handled history, which must not count.
 	out.AccessRequestsPending = approvals.pendingCount()
-	var pluginsErr error
-	out.Plugins, out.PluginsWarn, pluginsErr = collectPluginsSnapshot()
+	out.Plugins, out.PluginsWarn = plugins, pluginsWarn
 	if pluginsErr != nil {
 		out.PluginsError = pluginsErr.Error()
 	}

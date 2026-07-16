@@ -71,11 +71,16 @@ func newSnapshotRowCache(convIDs []string, alive map[string]struct{}) *snapshotR
 		memo:  make(map[string]*convRowBundle, len(convIDs)),
 		locs:  make(map[string]agentLocationView, len(convIDs)),
 	}
-	rc.convIndex, _ = db.GetConvIndexBatch(convIDs)
-	rc.sessions, _ = db.FindSessionsByConvIDs(convIDs)
-	rc.workdirs, _ = db.ListAgentWorkdirsByConv(convIDs)
-	rc.workspaces, _ = db.ListAgentWorkspacesByConv(convIDs)
-	rc.agents, _ = db.AgentsByConv(convIDs)
+	// These tables are independent WAL reads. Running them concurrently keeps
+	// preload wall-clock bounded by the slowest batch instead of summing six
+	// SQLite round trips on every 2-second dashboard poll.
+	runSnapshotLoads(
+		func() { rc.convIndex, _ = db.GetConvIndexBatch(convIDs) },
+		func() { rc.sessions, _ = db.FindSessionsByConvIDs(convIDs) },
+		func() { rc.workdirs, _ = db.ListAgentWorkdirsByConv(convIDs) },
+		func() { rc.workspaces, _ = db.ListAgentWorkspacesByConv(convIDs) },
+		func() { rc.agents, _ = db.AgentsByConv(convIDs) },
+	)
 
 	// Precompute every conv's location so we know which (dir, branch) pairs the
 	// branch-link lookups will key on, then load all their git_cache rows in one
