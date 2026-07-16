@@ -9,12 +9,10 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	processexec "github.com/tofutools/tclaude/pkg/claude/process/exec"
-	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
 	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
@@ -182,7 +180,18 @@ func loadProcessWorklist(ctx context.Context, fs *store.FS) (processWorklistLoad
 			continue
 		}
 		if schema == pathv1.CheckpointStateSchemaVersion {
-			items, itemErr := pathV1WorklistItems(ctx, fs, run.ID)
+			snapshot, loadErr := fs.LoadPathV1RunView(ctx, run.ID)
+			if loadErr != nil {
+				degraded = append(degraded, degradedRun{Run: run.ID, Error: loadErr.Error()})
+				continue
+			}
+			items, itemErr := worklist.DerivePathV1(ctx, snapshot, func(_ context.Context, commandID string) (string, error) {
+				agent, lookupErr := db.AgentForProcessCommand(commandID)
+				if lookupErr != nil || agent == nil {
+					return "", lookupErr
+				}
+				return "agent:" + agent.AgentID, nil
+			})
 			if itemErr != nil {
 				degraded = append(degraded, degradedRun{Run: run.ID, Error: itemErr.Error()})
 				continue
@@ -200,105 +209,6 @@ func loadProcessWorklist(ctx context.Context, fs *store.FS) (processWorklistLoad
 	items := append(worklist.Derive(snapshots), v7Items...)
 	slices.SortFunc(items, func(a, b worklist.Item) int { return strings.Compare(a.ID, b.ID) })
 	return processWorklistLoadResult{Items: items, DegradedRuns: degraded}, nil
-}
-
-func pathV1WorklistItems(ctx context.Context, fs *store.FS, runID string) ([]worklist.Item, error) {
-	snapshot, err := fs.LoadPathV1RunView(ctx, runID)
-	if err != nil {
-		return nil, err
-	}
-	input, err := pathv1.VerifyExclusiveInput(ctx, snapshot.CheckpointJSON, snapshot.TemplateSource)
-	if err != nil {
-		return nil, err
-	}
-	parsed, err := model.Parse(snapshot.TemplateSource)
-	if err != nil || parsed.Diagnostics.HasErrors() {
-		return nil, fmt.Errorf("schema-7 worklist template is invalid")
-	}
-	_ = input // verification above is the authority for every projected record.
-	aggregate, err := pathv1.CurrentAggregateCheckpoint(snapshot.Checkpoint)
-	if err != nil {
-		return nil, err
-	}
-	items := make([]worklist.Item, 0)
-	for _, command := range aggregate.Commands {
-		if command.Identity.Kind != pathv1.CommandPerformAttempt {
-			continue
-		}
-		status := state.WaitStatusPending
-		if command.State == pathv1.CommandObserved || command.State == pathv1.CommandReconciled {
-			status = state.WaitStatusSatisfied
-		} else if !command.State.Active() {
-			continue
-		}
-		activation, ok := aggregate.Routing.Activations[command.Identity.SourceActivationID]
-		if !ok {
-			continue
-		}
-		reservation, ok := aggregate.Routing.Reservations[activation.ReservationID]
-		node := parsed.Template.Nodes[reservation.NodeID]
-		if !ok || node.Performer == nil || (node.Type != model.NodeTypeTask && node.Type != model.NodeTypeDecision) {
-			continue
-		}
-		performer := model.InterpolatePerformer(*node.Performer, snapshot.Run.Params)
-		projected, buildErr := buildPathV1WorklistItem(runID, parsed.Template, reservation.NodeID, &performer, command, status)
-		if buildErr != nil {
-			return nil, buildErr
-		}
-		items = append(items, projected...)
-	}
-	return items, nil
-}
-
-func buildPathV1WorklistItem(runID string, tmpl *model.Template, nodeID string, performer *model.Performer, command pathv1.CommandRecord, status state.WaitStatus) ([]worklist.Item, error) {
-	if performer == nil || tmpl == nil {
-		return nil, fmt.Errorf("schema-7 worklist performer is absent")
-	}
-	node := tmpl.Nodes[nodeID]
-	commandID := "cmd_" + command.ID[:24]
-	kind := worklist.KindAgentObligation
-	assignee := ""
-	summary := strings.TrimSpace(performer.Prompt)
-	actions := []string{"pass", "fail", "ask-changes"}
-	if performer.Kind == model.PerformerHuman {
-		kind = worklist.KindHumanWait
-		assignee = strings.TrimSpace(performer.Assignee)
-		if assignee == "" {
-			assignee = strings.TrimSpace(performer.Profile)
-		}
-		if assignee == "" {
-			assignee = "human:operator"
-		} else if !strings.HasPrefix(assignee, "human:") && !strings.HasPrefix(assignee, "role:") {
-			assignee = "human:" + assignee
-		}
-		summary = strings.TrimSpace(performer.Ask)
-		if summary == "" {
-			summary = strings.TrimSpace(performer.Prompt)
-		}
-		actions = []string{"approve", "reject", "ask-changes"}
-		if node.Type == model.NodeTypeDecision {
-			kind = worklist.KindDecisionNeeded
-			actions = make([]string, 0, len(node.Next))
-			for outcome := range node.Next {
-				actions = append(actions, outcome)
-			}
-			slices.Sort(actions)
-		} else if len(performer.Choices) > 0 {
-			actions = append([]string(nil), performer.Choices...)
-		}
-	} else if agent, lookupErr := db.AgentForProcessCommand(commandID); lookupErr != nil {
-		return nil, lookupErr
-	} else if agent != nil {
-		assignee = "agent:" + agent.AgentID
-	}
-	attemptNumber := int(command.Identity.Attempt)
-	stable := sha256.Sum256([]byte(runID + "\x00" + nodeID + "\x00" + commandID + "\x00" + strconv.Itoa(attemptNumber)))
-	return []worklist.Item{{
-		ID: "wi_" + hex.EncodeToString(stable[:12]), Run: runID, Node: nodeID, Attempt: attemptNumber,
-		Kind: kind, Assignee: assignee, Status: status, Summary: summary,
-		AvailableActions: actions, Links: worklist.Links{RunID: runID, NodeID: nodeID},
-		Target: worklist.ActionTarget{CommandID: commandID},
-	}}, nil
 }
 
 func worklistActionEvidence(itemID string, body processWorklistActionRequest) string {
