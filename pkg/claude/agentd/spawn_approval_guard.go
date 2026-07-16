@@ -27,8 +27,25 @@ func spawnApprovalLineageFailure(parentConvID, childHarness, childPolicy string,
 	parentHarness := harnessOrDefault(parent.Harness)
 	parentPolicy := strings.TrimSpace(parent.ApprovalPolicy)
 	parentAutoReview := parent.ApprovalAutoReview
+	if parentHarness == harness.CodexName && parentPolicy == "" {
+		legacyPolicy, proven, inferErr := db.LegacyCodexApprovalForConv(parentConvID)
+		if inferErr != nil {
+			return &spawnFailure{http.StatusInternalServerError, "io", "spawn approval guard: " + inferErr.Error()}
+		}
+		if proven {
+			parentPolicy = legacyPolicy
+			// Every reconstructable legacy never path either launched without a
+			// reviewer or had an idle reviewer (never emits no approval request).
+			parentAutoReview = false
+		}
+	}
 	childHarness = harnessOrDefault(childHarness)
 	childPolicy = strings.TrimSpace(childPolicy)
+	if parentPolicy == "" {
+		return &spawnFailure{http.StatusForbidden, "approval_restricted",
+			fmt.Sprintf("agent %s has a legacy %s launch whose approval posture cannot be reconstructed; relaunch it with current tclaude to record the conservative untrusted posture before spawning a matching child",
+				short8(parentConvID), parentHarness)}
+	}
 	if !harness.ApprovalLineageAllowed(parentHarness, parentPolicy, parentAutoReview,
 		childHarness, childPolicy, childAutoReview) {
 		return &spawnFailure{http.StatusForbidden, "approval_restricted",

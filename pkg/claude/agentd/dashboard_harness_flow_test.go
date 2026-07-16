@@ -90,11 +90,12 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	}
 	assert.NotContains(t, codex.SandboxModeHelp["tclaude-agent"], "⚠", "recommended profile carries no caveat marker")
 	assert.Contains(t, codex.SandboxModeHelp["read-only"], "⚠", "read-only flags its no-agentd caveat")
-	// Codex supports approval (the daemon's non-escalating default + the CLI),
-	// but surfaces NO dialog modes yet — the "Claude only" scope. So its
-	// approval row stays hidden (the dialog gates on a non-empty ApprovalModes).
 	assert.True(t, codex.CanApproval, "codex supports approval (daemon default + CLI)")
-	assert.Empty(t, codex.ApprovalModes, "codex surfaces no dialog approval modes yet (Claude-only scope)")
+	assert.Equal(t, []string{"never", "untrusted", "on-failure", "on-request"}, codex.ApprovalModes)
+	assert.Equal(t, "never", codex.DefaultApproval)
+	for _, mode := range codex.ApprovalModes {
+		assert.NotEmpty(t, codex.ApprovalModeHelp[mode], "help for %s", mode)
+	}
 }
 
 // Scenario: a per-agent harness + sandbox badge needs the snapshot to

@@ -2,7 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
 
-const catalog = [{ name: 'claude', display_name: 'Claude Code', models: ['sonnet'], effort_levels: ['low', 'high'], can_sandbox: true, sandbox_modes: ['inherit', 'on'], default_sandbox: 'inherit', can_approval: true, approval_modes: ['inherit', 'plan'], default_approval: 'inherit', can_ask_timeout: true, ask_timeout_modes: ['inherit', '60s'], default_ask_timeout: 'inherit', can_remote_control: true }, { name: 'codex', models: [], can_sandbox: true, sandbox_modes: ['workspace-write'], default_sandbox: 'workspace-write', can_approval: false, can_remote_control: false }];
+const catalog = [{ name: 'claude', display_name: 'Claude Code', models: ['sonnet'], effort_levels: ['low', 'high'], can_sandbox: true, sandbox_modes: ['inherit', 'on'], default_sandbox: 'inherit', can_approval: true, approval_modes: ['inherit', 'plan'], default_approval: 'inherit', can_ask_timeout: true, ask_timeout_modes: ['inherit', '60s'], default_ask_timeout: 'inherit', can_remote_control: true }, { name: 'codex', models: [], can_sandbox: true, sandbox_modes: ['workspace-write'], default_sandbox: 'workspace-write', can_approval: true, approval_modes: ['never', 'untrusted', 'on-failure', 'on-request'], default_approval: 'never', can_remote_control: false }];
+
+function choose(select, value) {
+  for (const option of select.options) {
+    if (option.value === value) option.setAttribute('selected', '');
+    else option.removeAttribute('selected');
+  }
+  Object.defineProperty(select, 'value', { configurable: true, writable: true, value });
+}
 
 test('management model preserves full-replace profile and role semantics', async (t) => {
   const harness = await createPreactHarness(t);
@@ -20,7 +28,47 @@ test('management model preserves full-replace profile and role semantics', async
   const role = model.roleDraft({ name: 'reviewer', permissions: ['read'] }, catalog);
   assert.deepEqual(model.rolePayload(role, catalog).permissions, ['read']);
   const defaults = model.profileDraft(null, {}, catalog); assert.equal(defaults.sandbox, 'inherit'); assert.equal(defaults.approval, 'inherit'); assert.equal(defaults.ask_user_question_timeout, 'inherit');
+  const legacyCodex = model.profileDraft({ name: 'legacy', harness: 'codex', approval: '' }, {}, catalog);
+  assert.equal(legacyCodex.approval, 'never', 'an empty legacy Codex profile renders the explicit daemon default');
+  assert.equal(model.profilePayload(legacyCodex, { name: 'legacy', harness: 'codex', approval: '' }, catalog).approval, 'never');
   assert.deepEqual(model.harnessDefaults({ sandbox_modes: ['on'], approval_modes: ['plan'], ask_timeout_modes: ['60s'] }), { sandbox: 'on', approval: 'plan', ask_user_question_timeout: '60s' });
+});
+
+test('Codex profile permission modes populate, survive harness switches, save, and reopen', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({ kind: 'profile-editor', seed: { name: 'legacy', harness: 'codex', approval: '' }, options: {}, catalog });
+  const saves = []; const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
+  mountManagementIsland({ host, state, actions: { async saveProfile(value) { saves.push(value); } }, confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } });
+  await harness.act(() => Promise.resolve());
+
+  const approval = harness.getByLabelText(host, /^Permission mode/);
+  assert.deepEqual([...approval.options].map((option) => option.value), ['never', 'untrusted', 'on-failure', 'on-request']);
+  assert.match(approval.options[0].textContent, /recommended/, 'empty legacy value displays an explicit effective default');
+  await harness.act(() => harness.fireEvent(host.querySelector('#profile-editor-submit'), 'click'));
+  assert.equal(saves[0].payload.approval, 'never');
+
+  const harnessSelect = host.querySelector('#profile-editor-harness');
+  choose(harnessSelect, 'claude'); await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
+  assert.deepEqual([...harness.getByLabelText(host, /^Permission mode/).options].map((option) => option.value), ['inherit', 'plan']);
+  choose(harnessSelect, 'codex'); await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
+  const switchedApproval = harness.getByLabelText(host, /^Permission mode/);
+  assert.deepEqual([...switchedApproval.options].map((option) => option.value), ['never', 'untrusted', 'on-failure', 'on-request']);
+  assert.match(switchedApproval.options[0].textContent, /recommended/);
+
+  choose(switchedApproval, 'untrusted'); await harness.act(() => harness.fireEvent(switchedApproval, 'change'));
+  await harness.act(() => harness.fireEvent(host.querySelector('#profile-editor-submit'), 'click'));
+  assert.equal(saves.length, 2); assert.equal(saves[1].payload.approval, 'untrusted');
+
+  state.closeDialog();
+  state.openDialog({ kind: 'profile-editor', seed: { name: 'legacy', harness: 'codex', approval: 'untrusted' }, options: {}, catalog });
+  await harness.act(() => Promise.resolve());
+  await harness.act(() => harness.fireEvent(host.querySelector('#profile-editor-submit'), 'click'));
+  assert.equal(saves[2].payload.approval, 'untrusted', 'saved mode displays when reopened');
+  cleanups.reverse().forEach((fn) => fn());
 });
 
 test('profile choices expose aliases as distinct handles tied to one profile', async (t) => {

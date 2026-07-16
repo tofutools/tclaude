@@ -2,14 +2,39 @@ package agent
 
 import (
 	"bytes"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRunSpawn_AskHumanDoesNotClaimPendingPopupBeforeLineageDenial(t *testing.T) {
+	prevAvail, prevReq := DaemonAvailableImpl, DaemonRequestImpl
+	t.Cleanup(func() { DaemonAvailableImpl, DaemonRequestImpl = prevAvail, prevReq })
+	DaemonAvailableImpl = func() bool { return true }
+	DaemonRequestImpl = func(_, _ string, _, _ any, opts DaemonOpts) error {
+		assert.Equal(t, time.Minute, opts.AskHuman)
+		return &DaemonError{
+			Status: http.StatusForbidden, Code: "approval_restricted",
+			Msg: "approval lineage cannot be overridden by an authorization popup",
+		}
+	}
+
+	stdout, stderr := new(bytes.Buffer), new(bytes.Buffer)
+	resp, rc := RunSpawn(&SpawnParams{
+		Group: "alpha", Name: "worker", Harness: "codex", AskHuman: "60s",
+	}, stdout, stderr, new(bytes.Buffer))
+	assert.Nil(t, resp)
+	assert.NotEqual(t, rcOK, rc)
+	assert.NotContains(t, stdout.String(), "Waiting", "no popup was known to be pending")
+	assert.Contains(t, stdout.String(), "may be requested")
+	assert.Contains(t, stderr.String(), "approval lineage")
+}
 
 // A --file brief over the 16384-byte cap is rejected with the same
 // error as an oversize --initial-message: the file-input path enforces

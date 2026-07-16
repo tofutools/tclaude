@@ -78,6 +78,103 @@ func TestSpawnApprovalLineage_MissingParentSessionFailsClosed(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "no recorded launch approval posture")
 }
 
+func TestSpawnApprovalLineage_LegacyCodexDefaultIsReconstructedFromSpawnProvenance(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parent = "approval-legacy-parent-aaaa-bbbb-cccccccccccc"
+	haveSpawnCapableApprovalParent(t, f, "alpha", parent, harness.CodexName, "", false)
+	agentID, err := db.AgentIDForConv(parent)
+	require.NoError(t, err)
+	require.NotEmpty(t, agentID)
+	require.NoError(t, db.SetAgentInitialSpawnConfig(agentID, `{"harness":"codex"}`))
+
+	resp := f.AsAgent(parent).SpawnWith("alpha", map[string]any{
+		"name": "worker", "harness": harness.CodexName,
+		"sandbox": harness.SandboxDangerFull,
+	})
+	require.Equalf(t, http.StatusOK, resp.Code, "spawn body=%s", resp.Raw)
+}
+
+func TestSpawnApprovalLineage_AmbiguousLegacyCodexPolicyStillFailsClosed(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parent = "approval-ambiguous-parent-aaaa-bbbb-cccccccccccc"
+	haveSpawnCapableApprovalParent(t, f, "alpha", parent, harness.CodexName, "", false)
+	agentID, err := db.AgentIDForConv(parent)
+	require.NoError(t, err)
+	require.NoError(t, db.SetAgentInitialSpawnConfig(agentID,
+		`{"harness":"codex","approval":"untrusted"}`))
+
+	resp := f.AsAgent(parent).SpawnWith("alpha", map[string]any{
+		"name": "worker", "harness": harness.CodexName,
+		"sandbox": harness.SandboxDangerFull, "approval": harness.ApprovalUntrusted,
+	})
+	require.Equalf(t, http.StatusForbidden, resp.Code, "spawn body=%s", resp.Raw)
+	assert.Contains(t, string(resp.Raw), "cannot be reconstructed")
+	assert.Contains(t, string(resp.Raw), "relaunch")
+}
+
+func TestSpawnApprovalLineage_CompatiblePolicyAfterEveryProfileTierResolves(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(*testing.T, *testharness.Flow)
+		body  map[string]any
+	}{
+		{"harness default", func(*testing.T, *testharness.Flow) {}, map[string]any{}},
+		{"explicit policy", func(*testing.T, *testharness.Flow) {}, map[string]any{"approval": harness.ApprovalNever}},
+		{"named profile", func(t *testing.T, f *testharness.Flow) {
+			require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+				"name": "compatible", "harness": harness.CodexName, "approval": harness.ApprovalNever,
+			}).Code)
+		}, map[string]any{"profile": "compatible"}},
+		{"group default profile", func(t *testing.T, f *testharness.Flow) {
+			require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+				"name": "compatible", "harness": harness.CodexName, "approval": harness.ApprovalNever,
+			}).Code)
+			require.Equal(t, http.StatusOK, setGroupProfile(t, f, "alpha", "compatible").Code)
+		}, map[string]any{}},
+		{"global default profile", func(t *testing.T, f *testharness.Flow) {
+			require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+				"name": "compatible", "harness": harness.CodexName, "approval": harness.ApprovalNever,
+			}).Code)
+			require.Equal(t, http.StatusOK, setGlobalProfile(t, f, "compatible").Code)
+		}, map[string]any{}},
+		{"dashboard repaired legacy profile", func(t *testing.T, f *testharness.Flow) {
+			require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+				"name": "dashboard", "harness": harness.CodexName,
+			}).Code)
+			rec := profileReq(t, f, http.MethodPatch, "/v1/spawn-profiles/dashboard", map[string]any{
+				"name": "dashboard", "harness": harness.CodexName, "approval": harness.ApprovalNever,
+			})
+			require.Equalf(t, http.StatusOK, rec.Code, "profile patch body=%s", rec.Body.String())
+		}, map[string]any{"profile": "dashboard"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFlow(t)
+			f.HaveGroup("alpha")
+			tc.setup(t, f)
+			const parent = "approval-tier-parent-aaaa-bbbb-cccccccccccc"
+			haveSpawnCapableApprovalParent(t, f, "alpha", parent, harness.CodexName, "", false)
+			agentID, err := db.AgentIDForConv(parent)
+			require.NoError(t, err)
+			require.NoError(t, db.SetAgentInitialSpawnConfig(agentID, `{"harness":"codex"}`))
+
+			body := map[string]any{
+				"name": "worker", "harness": harness.CodexName,
+				"sandbox": harness.SandboxDangerFull,
+			}
+			for key, value := range tc.body {
+				body[key] = value
+			}
+			resp := f.AsAgent(parent).SpawnWith("alpha", body)
+			require.Equalf(t, http.StatusOK, resp.Code, "spawn body=%s", resp.Raw)
+			approval, ok := f.World.SpawnApproval(resp.ConvID)
+			require.True(t, ok)
+			assert.Equal(t, harness.ApprovalNever, approval)
+		})
+	}
+}
+
 func TestSpawnApprovalLineage_TemplateInstantiateRejectsBypass(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")

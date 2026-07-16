@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -27,6 +28,30 @@ func TestCodexApproval_ValidatePolicy(t *testing.T) {
 	}
 	if _, err := ca.ValidatePolicy("yolo"); err == nil {
 		t.Fatalf("ValidatePolicy(yolo) must error")
+	}
+}
+
+func TestCodexApproval_ModesShareValidationCatalog(t *testing.T) {
+	ca := codexApproval{}
+	want := []string{ApprovalNever, ApprovalUntrusted, ApprovalOnFailure, ApprovalOnRequest}
+	if got := ca.Modes(); !slices.Equal(got, want) {
+		t.Fatalf("Modes() = %v, want %v", got, want)
+	}
+	for _, mode := range ca.Modes() {
+		if got, err := ca.ValidatePolicy(mode); err != nil || got != mode {
+			t.Fatalf("ValidatePolicy(%q) = (%q, %v)", mode, got, err)
+		}
+		if strings.TrimSpace(ca.ModeHelp(mode)) == "" {
+			t.Fatalf("ModeHelp(%q) is empty", mode)
+		}
+	}
+	got := ca.Modes()
+	got[0] = "mutated"
+	if ca.Modes()[0] != ApprovalNever {
+		t.Fatal("Modes must return a fresh slice")
+	}
+	if ca.ModeHelp("unknown") != "" {
+		t.Fatal("unknown mode must have no help")
 	}
 }
 

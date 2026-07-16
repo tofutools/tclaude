@@ -32,13 +32,8 @@ type ApprovalCatalog interface {
 	ValidatePolicy(policy string) (string, error)
 	// Modes lists the selectable approval/permission policies for spawn UIs —
 	// the ApprovalCatalog parallel to SandboxCatalog.Modes, driving the spawn
-	// dialog / profile editor's approval <select>. A harness whose approval is
-	// real but NOT yet surfaced as a dropdown returns nil/empty (its policy
-	// stays CLI/profile-only); the dialog gates its row on a non-empty list, so
-	// an empty Modes() keeps the control hidden while DefaultPolicy still drives
-	// the daemon's secure default. (Codex returns nil today — its
-	// `--ask-for-approval` policy is CLI-only; Claude Code returns its
-	// permission modes.)
+	// dialog / profile editor's approval <select>. The same set must drive
+	// validation so CLI, profiles, and dashboard authoring cannot drift.
 	Modes() []string
 	// ModeHelp returns a one-line human description of a policy for spawn UIs
 	// — notably whether it is safe for an unattended/detached agent — or "" for

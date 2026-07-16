@@ -12,8 +12,9 @@ import (
 // research.
 //
 //   - never        : never ask the user; execution failures return to the
-//     model. The ONLY non-escalating posture — the one safe
-//     default for an unattended/detached pane (JOH-200).
+//     model. The no-human-prompt default for an unattended/detached pane
+//     (JOH-200). It may automatically execute more in-sandbox commands than
+//     prompt-oriented modes, so it is not the least-authority lattice member.
 //   - on-request   : the model decides when to ask (Codex's own default) —
 //     escalates to a human, so it deadlocks an unattended pane.
 //   - on-failure   : DEPRECATED upstream; still escalates on failure.
@@ -42,26 +43,39 @@ func (codexApproval) DefaultPolicy() string { return ApprovalNever }
 
 func (codexApproval) ValidatePolicy(policy string) (string, error) {
 	policy = strings.TrimSpace(policy)
-	switch policy {
-	case "", ApprovalUntrusted, ApprovalOnFailure, ApprovalOnRequest, ApprovalNever:
+	if policy == "" {
 		return policy, nil
-	default:
-		return "", fmt.Errorf("invalid codex approval policy %q (want %s|%s|%s|%s)",
-			policy, ApprovalUntrusted, ApprovalOnFailure, ApprovalOnRequest, ApprovalNever)
 	}
+	for _, mode := range codexApprovalModes {
+		if policy == mode {
+			return policy, nil
+		}
+	}
+	return "", fmt.Errorf("invalid codex approval policy %q (want %s)",
+		policy, strings.Join(codexApprovalModes, "|"))
 }
 
-// Modes returns nil: Codex's `--ask-for-approval` policy is real (DefaultPolicy
-// still drives the daemon's non-escalating default, and the CLI / profile
-// accept it), but it is NOT surfaced as a spawn-dialog dropdown yet — the
-// dialog's approval row gates on a non-empty mode list, so nil keeps it Codex-
-// hidden. Only Claude Code surfaces its permission modes today (the deliberate
-// "Claude only" scope); wiring a Codex approval dropdown is a clean follow-up.
-func (codexApproval) Modes() []string { return nil }
+// codexApprovalModes is the canonical ordered policy set shared by validation,
+// the CLI/profile API, and dashboard selectors. Keep never first: it is the
+// daemon launch default for detached agents, so an empty legacy profile renders
+// an explicit effective choice instead of a blank control.
+var codexApprovalModes = []string{
+	ApprovalNever, ApprovalUntrusted, ApprovalOnFailure, ApprovalOnRequest,
+}
 
-// ModeHelp returns "" for the same reason Modes() is nil — Codex approval has
-// no dropdown to caption yet.
-func (codexApproval) ModeHelp(string) string { return "" }
+// Modes returns a fresh copy so callers cannot mutate the validation source.
+func (codexApproval) Modes() []string { return append([]string(nil), codexApprovalModes...) }
+
+var codexApprovalModeHelp = map[string]string{
+	ApprovalNever:     "Never request approval; commands allowed by the sandbox run automatically and failures return to the model. Recommended for detached agents.",
+	ApprovalUntrusted: "Ask before commands outside Codex's trusted set. A detached agent can block waiting for a human unless auto-review is enabled.",
+	ApprovalOnFailure: "Deprecated upstream: run in the sandbox, then ask to retry outside it after failure. A detached agent can block waiting for a human.",
+	ApprovalOnRequest: "Let the model request approval when it wants to run outside the sandbox. A detached agent can block waiting for a human unless auto-review is enabled.",
+}
+
+func (codexApproval) ModeHelp(policy string) string {
+	return codexApprovalModeHelp[strings.TrimSpace(policy)]
+}
 
 // Codex auto-review (guardian) — the orthogonal "who answers an approval
 // prompt" axis. `--ask-for-approval` decides WHEN Codex asks; this config

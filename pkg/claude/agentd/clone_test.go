@@ -1,13 +1,40 @@
 package agentd
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
+
+func TestApprovalForRelaunchRepairsLegacyCodexWithoutBroadeningAmbiguousRows(t *testing.T) {
+	setupTestDB(t)
+	for _, tc := range []struct {
+		name, config, want string
+	}{
+		{"proven daemon default", `{"harness":"codex"}`, harness.ApprovalNever},
+		{"ambiguous explicit birth or later resume", `{"harness":"codex","approval":"on-request"}`, harness.ApprovalUntrusted},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			conv := "conv-" + strings.ReplaceAll(tc.name, " ", "-")
+			agentID, _, err := db.EnsureAgentForConv(conv, "spawn")
+			require.NoError(t, err)
+			require.NoError(t, db.SetAgentInitialSpawnConfig(agentID, tc.config))
+			require.NoError(t, db.SaveSession(&db.SessionRow{
+				ID: "session-" + conv, ConvID: conv, Harness: harness.CodexName,
+				Status: "running",
+			}))
+
+			policy, autoReview := approvalForRelaunch(conv, harness.CodexName)
+			assert.Equal(t, tc.want, policy)
+			assert.False(t, autoReview)
+		})
+	}
+}
 
 func TestInheritEffectiveSandboxSnapshotPreservesPrePersistedCloneSnapshot(t *testing.T) {
 	setupTestDB(t)
