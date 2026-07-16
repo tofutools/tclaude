@@ -10,6 +10,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/plan"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
+	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	processverify "github.com/tofutools/tclaude/pkg/claude/process/verify"
 )
@@ -220,6 +221,49 @@ func TestEmptyDerivationIsAnEmptyList(t *testing.T) {
 	}
 }
 
+func TestDerivePathV1KeepsLiveDetachedWaitAndNeverSynthesizesJoinWork(t *testing.T) {
+	fs, runID := pathV1DetachedWaitRun(t)
+	executor := processexec.NewExclusiveV7(fs, map[model.PerformerKind]processexec.Adapter{
+		model.PerformerAgent: pathV1PassAdapter{},
+	})
+	var checkpoint *pathv1.CheckpointV7
+	var err error
+	for range 4 {
+		checkpoint, err = executor.Drive(t.Context(), runID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pathv1.CurrentRunStatus(checkpoint) == "completed" {
+			break
+		}
+	}
+	if status := pathv1.CurrentRunStatus(checkpoint); status != "running" && status != "completed" {
+		t.Fatalf("run status = %q", status)
+	}
+	snapshot, err := fs.LoadPathV1RunView(t.Context(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := DerivePathV1(t.Context(), snapshot, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wait *Item
+	for index := range items {
+		item := &items[index]
+		if item.Node == "merge" {
+			t.Fatalf("synthetic join work item: %#v", item)
+		}
+		if item.Node == "wait" {
+			wait = item
+		}
+	}
+	if wait == nil || wait.Kind != KindWaiting || wait.Status != state.WaitStatusPending ||
+		!wait.Detached || wait.DetachmentCount < 1 || wait.Target.CommandID != "" || len(wait.AvailableActions) != 0 {
+		t.Fatalf("detached wait item = %#v; all items = %#v", wait, items)
+	}
+}
+
 func TestFilterAndStableIDs(t *testing.T) {
 	created := time.Now()
 	st := &state.State{RunID: "run", Nodes: map[string]state.NodeState{
@@ -273,4 +317,52 @@ func (verifiedHumanAdapter) Dispatch(_ context.Context, request processexec.Requ
 
 func (verifiedHumanAdapter) ReconcileDeferred(context.Context, processexec.Request) (processexec.Observation, processexec.DeferredStatus, error) {
 	return processexec.Observation{}, processexec.DeferredInFlight, nil
+}
+
+type pathV1PassAdapter struct{}
+
+func (pathV1PassAdapter) Validate(processexec.Request) error { return nil }
+
+func (pathV1PassAdapter) Perform(context.Context, processexec.Request) (processexec.Observation, error) {
+	return processexec.Observation{Actor: "agent:agt_test1", Verdict: "pass"}, nil
+}
+
+func pathV1DetachedWaitRun(t *testing.T) (*store.FS, string) {
+	t.Helper()
+	fs, err := store.NewFS(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "worklist-detached-wait", Start: "fork",
+		Nodes: map[string]model.Node{
+			"fork":  {Type: model.NodeTypeParallel, Next: model.Next{"wait": "wait", "work": "work"}},
+			"wait":  {Type: model.NodeTypeWait, Wait: &model.WaitConfig{Signal: "release"}, Next: model.Next{"pass": "merge"}},
+			"work":  {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "finish first"}, Next: model.Next{"pass": "merge"}},
+			"merge": {Type: model.NodeTypeEnd, Join: model.JoinAny, Result: "completed"},
+		},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const runID = "run-worklist-detached-wait"
+	st := state.New(runID, record.Ref, record.Ref, []state.NodeInit{
+		{ID: "fork", Type: model.NodeTypeParallel, Status: state.NodeStatusReady},
+		{ID: "wait", Type: model.NodeTypeWait, Status: state.NodeStatusPending},
+		{ID: "work", Type: model.NodeTypeTask, Status: state.NodeStatusPending},
+		{ID: "merge", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+	})
+	st.Status = state.RunStatusRunning
+	if _, err := fs.CreateRun(t.Context(), store.RunRecord{ID: runID, TemplateRef: record.Ref}, st); err != nil {
+		t.Fatal(err)
+	}
+	proof, err := fs.UpgradeNeeded(t.Context(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.InitializePathV1(t.Context(), runID, proof); err != nil {
+		t.Fatal(err)
+	}
+	return fs, runID
 }

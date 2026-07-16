@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -445,6 +446,11 @@ func handleProcessRun(w http.ResponseWriter, r *http.Request) {
 
 func handleProcessRunView(w http.ResponseWriter, r *http.Request) {
 	runID := r.PathValue("id")
+	page, err := processViewerPageRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
 	fs, err := store.NewFS(processStoreRoot())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "process_view", "process run view is unavailable")
@@ -470,7 +476,7 @@ func handleProcessRunView(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "process_view", "process run view is unavailable")
 			return
 		}
-		envelope, buildErr := processview.BuildCurrentPathV1Envelope(r.Context(), snapshot)
+		envelope, buildErr := processview.BuildCurrentPathV1EnvelopePage(r.Context(), snapshot, page)
 		if buildErr != nil {
 			writeError(w, http.StatusInternalServerError, "process_view", "process run view is unavailable")
 			return
@@ -502,6 +508,25 @@ func handleProcessRunView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeProcessJSON(w, http.StatusOK, processview.Build(snapshot, tmpl, verification))
+}
+
+func processViewerPageRequest(r *http.Request) (processview.RoutingPageRequestV2, error) {
+	request := processview.RoutingPageRequestV2{}
+	if raw := strings.TrimSpace(r.URL.Query().Get("detailOffset")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 0 {
+			return request, fmt.Errorf("detailOffset must be a non-negative integer")
+		}
+		request.Offset = value
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("detailLimit")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 1 || value > processview.MaxRoutingPageLimit {
+			return request, fmt.Errorf("detailLimit must be between 1 and %d", processview.MaxRoutingPageLimit)
+		}
+		request.Limit = value
+	}
+	return request, nil
 }
 
 func degradableProcessViewError(err error) bool {

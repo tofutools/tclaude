@@ -31,6 +31,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	processverify "github.com/tofutools/tclaude/pkg/claude/process/verify"
+	processview "github.com/tofutools/tclaude/pkg/claude/process/view"
 	"github.com/tofutools/tclaude/pkg/claude/process/worklist"
 	"github.com/tofutools/tclaude/pkg/claude/processcmd"
 	"github.com/tofutools/tclaude/pkg/claude/remoteaccess"
@@ -304,6 +305,19 @@ func TestSchema7SignalPermissionAuditAndReadSurfaces(t *testing.T) {
 	require.Equal(t, http.StatusOK, view.Code, view.Body.String())
 	assert.Contains(t, view.Body.String(), `"protocol":"viewer_v2"`)
 	assert.Contains(t, view.Body.String(), `"routingAvailable":true`)
+	paged := processEngineGet(t, f, "/v1/process/runs/"+runID+"/view?detailOffset=1&detailLimit=1")
+	require.Equal(t, http.StatusOK, paged.Code, paged.Body.String())
+	var pagedView processview.Envelope
+	testharness.DecodeJSON(t, paged, &pagedView)
+	require.NotNil(t, pagedView.ViewerV2.Routing)
+	assert.Equal(t, 1, pagedView.ViewerV2.Routing.Details.Generations.Page.Offset)
+	assert.Equal(t, 1, pagedView.ViewerV2.Routing.Details.Generations.Page.Limit)
+	assert.LessOrEqual(t, len(pagedView.ViewerV2.Routing.Details.Generations.Items), 1)
+	for _, query := range []string{"detailOffset=-1", "detailLimit=101", "detailLimit=not-a-number"} {
+		invalid := processEngineGet(t, f, "/v1/process/runs/"+runID+"/view?"+query)
+		assert.Equal(t, http.StatusBadRequest, invalid.Code, invalid.Body.String())
+		assert.Contains(t, invalid.Body.String(), `"code":"invalid_arg"`)
+	}
 
 	f.HaveGroup("signal-callers")
 	caller := f.Spawn("signal-callers", "signal-caller")

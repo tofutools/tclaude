@@ -3,10 +3,13 @@
 package worklist
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
 	"slices"
 	"strconv"
 	"strings"
@@ -26,6 +29,7 @@ const (
 	KindReviewNeeded    Kind = "review-needed"
 	KindBlocked         Kind = "blocked"
 	KindAgentObligation Kind = "agent-obligation"
+	KindWaiting         Kind = "waiting"
 )
 
 type Nudge struct {
@@ -65,6 +69,8 @@ type Item struct {
 	ChangedAt        time.Time    `json:"changedAt,omitzero"`
 	Nudge            *Nudge       `json:"nudge,omitempty"`
 	Summary          string       `json:"summary"`
+	Detached         bool         `json:"detached,omitempty"`
+	DetachmentCount  int          `json:"detachmentCount,omitempty"`
 	AvailableActions []string     `json:"availableActions,omitempty"`
 	Links            Links        `json:"links"`
 	Target           ActionTarget `json:"-"`
@@ -115,6 +121,7 @@ func DerivePathV1(ctx context.Context, snapshot store.PathV1RunSnapshot, lookup 
 		return nil, err
 	}
 	items := make([]Item, 0)
+	coveredEffects := make(map[string]struct{})
 	for _, command := range aggregate.Commands {
 		if command.Identity.Kind != pathv1.CommandPerformAttempt {
 			continue
@@ -125,33 +132,103 @@ func DerivePathV1(ctx context.Context, snapshot store.PathV1RunSnapshot, lookup 
 		} else if !command.State.Active() {
 			continue
 		}
-		activation, ok := aggregate.Routing.Activations[command.Identity.SourceActivationID]
-		if !ok {
+		work, contextErr := pathV1WorkContext(&aggregate.Routing, parsed.Template, command.Identity.SourceActivationID)
+		if contextErr != nil {
+			return nil, contextErr
+		}
+		node := work.node
+		if node.Type == model.NodeTypeWait {
+			item, effectID, buildErr := buildPathV1WaitItem(snapshot.Run.ID, aggregate, work, command, status)
+			if buildErr != nil {
+				return nil, buildErr
+			}
+			coveredEffects[effectID] = struct{}{}
+			items = append(items, item)
 			continue
 		}
-		reservation, ok := aggregate.Routing.Reservations[activation.ReservationID]
-		if !ok {
-			continue
-		}
-		node, ok := parsed.Template.Nodes[reservation.NodeID]
-		if !ok || node.Performer == nil || (node.Type != model.NodeTypeTask && node.Type != model.NodeTypeDecision) {
+		if node.Performer == nil || (node.Type != model.NodeTypeTask && node.Type != model.NodeTypeDecision) {
 			continue
 		}
 		performer := model.InterpolatePerformer(*node.Performer, snapshot.Run.Params)
-		item, buildErr := buildPathV1Item(ctx, snapshot.Run.ID, parsed.Template, reservation.NodeID, &performer, command, status, lookup)
+		item, buildErr := buildPathV1Item(ctx, snapshot.Run.ID, parsed.Template, work, &performer, command, status, lookup)
 		if buildErr != nil {
 			return nil, buildErr
 		}
+		items = append(items, item)
+	}
+	for _, effect := range aggregate.SideEffects {
+		if _, covered := coveredEffects[effect.ID]; covered {
+			continue
+		}
+		if effect.Kind != pathv1.SideEffectObligation && effect.Kind != pathv1.SideEffectBlock {
+			continue
+		}
+		work, contextErr := pathV1WorkContext(&aggregate.Routing, parsed.Template, effect.ActivationID)
+		if contextErr != nil {
+			return nil, contextErr
+		}
+		item := buildPathV1SideEffectItem(snapshot.Run.ID, work, effect)
 		items = append(items, item)
 	}
 	slices.SortFunc(items, func(a, b Item) int { return strings.Compare(a.ID, b.ID) })
 	return items, nil
 }
 
-func buildPathV1Item(ctx context.Context, runID string, tmpl *model.Template, nodeID string, performer *model.Performer, command pathv1.CommandRecord, status state.WaitStatus, lookup CommandAssigneeLookup) (Item, error) {
+type pathV1WorkContextRecord struct {
+	activation      pathv1.ActivationRecord
+	reservation     pathv1.ActivationReservation
+	node            model.Node
+	detachmentCount int
+}
+
+func pathV1WorkContext(routing *pathv1.RoutingState, tmpl *model.Template, activationID string) (pathV1WorkContextRecord, error) {
+	if routing == nil || tmpl == nil {
+		return pathV1WorkContextRecord{}, fmt.Errorf("schema-7 worklist routing authority is absent")
+	}
+	activation, ok := routing.Activations[activationID]
+	if !ok {
+		return pathV1WorkContextRecord{}, fmt.Errorf("schema-7 worklist activation is absent")
+	}
+	reservation, ok := routing.Reservations[activation.ReservationID]
+	if !ok {
+		return pathV1WorkContextRecord{}, fmt.Errorf("schema-7 worklist reservation is absent")
+	}
+	node, ok := tmpl.Nodes[reservation.NodeID]
+	if !ok {
+		return pathV1WorkContextRecord{}, fmt.Errorf("schema-7 worklist node is absent from the exact template")
+	}
+	output, ok := routing.Paths[activation.OutputPathID]
+	if !ok && activation.OutputPathID != "" {
+		return pathV1WorkContextRecord{}, fmt.Errorf("schema-7 worklist activation output is absent")
+	}
+	detachments, err := pathv1.VerifyDetachmentSet(routing, output.DetachmentSetID)
+	if err != nil {
+		return pathV1WorkContextRecord{}, fmt.Errorf("schema-7 worklist detachment set: %w", err)
+	}
+	detachmentIDs := make(map[pathv1.DetachmentID]struct{}, len(detachments))
+	for _, detachmentID := range detachments {
+		detachmentIDs[detachmentID] = struct{}{}
+	}
+	// A live parallel-any loser has not emitted a detached sink yet, so its
+	// output path may not carry a materialized detachment set. Its immutable
+	// candidate lineage still binds it to the reservation-relative detachment.
+	for _, frame := range output.CandidateLineage {
+		key, identityErr := pathv1.DetachmentKeyIdentity(frame.ReservationID, frame.CandidateID)
+		if identityErr != nil {
+			return pathV1WorkContextRecord{}, fmt.Errorf("schema-7 worklist detachment key: %w", identityErr)
+		}
+		if detachment, exists := routing.Detachments[key]; exists {
+			detachmentIDs[detachment.ID] = struct{}{}
+		}
+	}
+	return pathV1WorkContextRecord{activation: activation, reservation: reservation, node: node, detachmentCount: len(detachmentIDs)}, nil
+}
+
+func buildPathV1Item(ctx context.Context, runID string, tmpl *model.Template, work pathV1WorkContextRecord, performer *model.Performer, command pathv1.CommandRecord, status state.WaitStatus, lookup CommandAssigneeLookup) (Item, error) {
 	if performer == nil || tmpl == nil || len(command.ID) < 24 {
 		return Item{}, fmt.Errorf("schema-7 worklist command authority is invalid")
 	}
+	nodeID := work.reservation.NodeID
 	node := tmpl.Nodes[nodeID]
 	commandID := "cmd_" + command.ID[:24]
 	kind := KindAgentObligation
@@ -195,9 +272,115 @@ func buildPathV1Item(ctx context.Context, runID string, tmpl *model.Template, no
 	return Item{
 		ID: stableID(runID, nodeID, commandID, attemptNumber), Run: runID, Node: nodeID, Attempt: attemptNumber,
 		Kind: kind, Assignee: assignee, Status: status, Summary: summary,
+		Detached: work.detachmentCount > 0, DetachmentCount: work.detachmentCount,
 		AvailableActions: actions, Links: Links{RunID: runID, NodeID: nodeID},
 		Target: ActionTarget{CommandID: commandID},
 	}, nil
+}
+
+type pathV1WaitPayload struct {
+	TemplateRef        string `json:"templateRef"`
+	TemplateSourceHash string `json:"templateSourceHash"`
+	NodeID             string `json:"nodeId"`
+	SourceActivationID string `json:"sourceActivationId"`
+	SourceGeneration   uint64 `json:"sourceGeneration"`
+	Attempt            uint64 `json:"attempt"`
+	WaitKind           string `json:"waitKind"`
+	Signal             string `json:"signal,omitempty"`
+	ScheduledAt        string `json:"scheduledAt,omitempty"`
+	DueAt              string `json:"dueAt,omitempty"`
+}
+
+func buildPathV1WaitItem(runID string, aggregate pathv1.AggregateCheckpoint, work pathV1WorkContextRecord, command pathv1.CommandRecord, commandStatus state.WaitStatus) (Item, string, error) {
+	var payload pathV1WaitPayload
+	decoder := json.NewDecoder(bytes.NewReader(command.Payload))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&payload); err != nil {
+		return Item{}, "", fmt.Errorf("schema-7 worklist wait payload: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return Item{}, "", fmt.Errorf("schema-7 worklist wait payload has trailing data")
+	}
+	if payload.TemplateRef != aggregate.TemplateRef || payload.TemplateSourceHash != aggregate.TemplateSourceHash ||
+		payload.NodeID != work.reservation.NodeID || payload.SourceActivationID != work.activation.ID ||
+		payload.SourceGeneration != work.activation.Ref.Generation || payload.Attempt != command.Identity.Attempt {
+		return Item{}, "", fmt.Errorf("schema-7 worklist wait payload binding is invalid")
+	}
+	effectID, err := pathv1.WaitIdentity(runID, work.activation.ID, command.Identity.Attempt, payload.WaitKind)
+	if err != nil {
+		return Item{}, "", err
+	}
+	effect, ok := aggregate.SideEffects[effectID]
+	if !ok || effect.Kind != pathv1.SideEffectWait {
+		return Item{}, "", fmt.Errorf("schema-7 worklist wait side effect is absent")
+	}
+	status := pathV1EffectWaitStatus(effect.State)
+	if status == "" || status != commandStatus {
+		return Item{}, "", fmt.Errorf("schema-7 worklist wait state is inconsistent")
+	}
+	var summary string
+	var dueAt time.Time
+	switch payload.WaitKind {
+	case "signal":
+		if payload.Signal == "" || work.node.Wait == nil || payload.Signal != strings.TrimSpace(work.node.Wait.Signal) {
+			return Item{}, "", fmt.Errorf("schema-7 worklist signal wait is inconsistent")
+		}
+		summary = "Waiting for signal " + payload.Signal
+	case "duration", "until":
+		dueAt, err = time.Parse(time.RFC3339Nano, payload.DueAt)
+		if err != nil || dueAt.IsZero() {
+			return Item{}, "", fmt.Errorf("schema-7 worklist timer due time is invalid")
+		}
+		summary = "Waiting until " + dueAt.UTC().Format(time.RFC3339)
+	default:
+		return Item{}, "", fmt.Errorf("schema-7 worklist wait kind is unsupported")
+	}
+	return Item{
+		ID:  stableID(runID, work.reservation.NodeID, effectID, int(command.Identity.Attempt)),
+		Run: runID, Node: work.reservation.NodeID, Attempt: int(command.Identity.Attempt), Kind: KindWaiting,
+		Status: status, DueAt: dueAt, Summary: summary,
+		Detached: work.detachmentCount > 0, DetachmentCount: work.detachmentCount,
+		Links: Links{RunID: runID, NodeID: work.reservation.NodeID},
+	}, effectID, nil
+}
+
+func buildPathV1SideEffectItem(runID string, work pathV1WorkContextRecord, effect pathv1.SideEffectIdentity) Item {
+	status := pathV1EffectWaitStatus(effect.State)
+	kind := KindHumanWait
+	summary := "Waiting for " + effect.WaitKind
+	attempt := int(effect.Attempt)
+	assignee := effect.Assignee
+	if effect.Kind == pathv1.SideEffectBlock {
+		kind = KindBlocked
+		attempt = int(effect.BlockedAttempt)
+		assignee = ""
+		summary = "Blocked at checkpoint; resolution detail unavailable"
+		if effect.State == "blocked" {
+			status = state.WaitStatusPending
+		} else {
+			status = state.WaitStatusSatisfied
+		}
+	}
+	return Item{
+		ID: stableID(runID, work.reservation.NodeID, effect.ID, attempt), Run: runID,
+		Node: work.reservation.NodeID, Attempt: attempt, Kind: kind, Assignee: assignee,
+		Status: status, Summary: summary,
+		Detached: work.detachmentCount > 0, DetachmentCount: work.detachmentCount,
+		Links: Links{RunID: runID, NodeID: work.reservation.NodeID},
+	}
+}
+
+func pathV1EffectWaitStatus(value string) state.WaitStatus {
+	switch value {
+	case "pending", "blocked":
+		return state.WaitStatusPending
+	case "satisfied", "resolved_retry", "resolved_skip", "resolved_cancel":
+		return state.WaitStatusSatisfied
+	case "canceled":
+		return state.WaitStatusCanceled
+	default:
+		return ""
+	}
 }
 
 // ApplyFilter applies exact-match REST/CLI filters without changing order.
