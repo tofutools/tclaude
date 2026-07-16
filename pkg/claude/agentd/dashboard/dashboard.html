@@ -150,8 +150,8 @@
       <div id="groups-filter-root"></div>
       <button id="groups-cost-toggle" class="cost-toggle" type="button" aria-pressed="true" title="Show or hide the per-agent cost badge on each row. On a subscription this shows the hypothetical pay-per-token-equivalent cost (WHAT-IF); on pay-per-token it shows the real spend.">💲</button>
       <span class="spacer"></span>
-      <button type="button" id="dashboard-default-profile" class="user-default-model unset" data-act="set-dash-profile" data-profile="" aria-label="Set dashboard default spawn profile" title="Dashboard default spawn profile — pre-fills the spawn dialog when a group has no default of its own. Click to set.">🧠 …</button>
-      <button type="button" id="dashboard-default-sandbox-profile" class="global-sandbox-profile unset" data-act="set-dash-sandbox-profile" data-sandbox-profile="" aria-label="Set global sandbox profile" title="No global sandbox profile — click to set one. Newly launched agents inherit it unless their group adds another assignment.">🛡</button>
+      <span id="dashboard-default-profile-control" class="toolbar-profile-control"></span>
+      <span id="dashboard-default-sandbox-profile-control" class="toolbar-profile-control"></span>
       <!-- Label copy swaps per theme (pure-CSS span swap, like the spawn
            dialog's .spawn-title-* pair): a plain "+ new group" normally, an
            arcane "⚔ Form a party" in 🧙 wizard mode. -->
@@ -402,8 +402,8 @@
          off the floating filter bar (JOH-390 item 4): row 1 is the "+ new group"
          primary + the ⚙ more-actions cog (moved into #dock-actions-primary),
          with the in-dock collapse affordance ("Hide ›"/"Furl ›") right-aligned;
-         row 2 is the 🧠 dashboard-default-profile chip on its own line. dock.js's
-         syncDockActions() moves those nodes here on open and back to the toolbar
+         row 2 holds the 🧠 dashboard default and 🛡 global sandbox controls.
+         dock.js's syncDockActions() moves those stable hosts here on open and back to the toolbar
          on collapse (the toolbar renders them exactly as before when the dock is
          closed). The containers are STATIC, outside the #dock-body Preact
          ownership boundary. -->
@@ -489,9 +489,6 @@
 <!-- Message compose, human reply, sudo, permission and shared chooser overlays
      are Preact-owned under this stable host. -->
 <div id="message-access-dialog-root"></div>
-<!-- The dashboard-level profile chips remain stable/re-homed shell controls;
-     their picker draft and overlay are exclusively Preact-owned here. -->
-<div id="toolbar-profile-picker-root"></div>
 <!-- Small action dialogs are Preact-owned under this stable host. Their legacy
      ids remain on rendered overlays so scoped plain/wizard CSS keeps working. -->
 <div id="action-dialog-root"></div>

@@ -583,9 +583,9 @@ func TestDashboardAssets_QuickChipKeyboardOperability(t *testing.T) {
 		"restoreFocusRef.current = true;",
 		"if (active || !restoreFocusRef.current) return;",
 		"triggerRef.current?.focus();",
-		// dashboard.html — the toolbar 🧠 chip keeps native keyboard
-		// semantics, like its 🛡 sibling.
-		`<button type="button" id="dashboard-default-profile"`,
+		// toolbar-profile-picker-island.js — each toolbar chip keeps native
+		// button semantics until Preact swaps it for the inline select.
+		`<button ref=${triggerRef} type="button" id=${copy.id}`,
 		// toolbar-profile-renderers.js — its accessible name tracks the picked profile.
 		"'Set dashboard default spawn profile'",
 		// dashboard.css — tabbing onto a collapsed group's chips reveals the
