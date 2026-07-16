@@ -7,11 +7,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tofutools/tclaude/pkg/claude/process/evidence"
 	processexec "github.com/tofutools/tclaude/pkg/claude/process/exec"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
 	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
+	"github.com/tofutools/tclaude/pkg/claude/process/store/storetest"
 )
 
 type fixedMigrationAuthority struct {
@@ -493,6 +495,51 @@ func TestEnabledHostRecoversAfterCommittedAmbiguousInitialization(t *testing.T) 
 	schema, err := fs.RunStateSchemaVersion(t.Context(), "run-v7-ambiguous")
 	if err != nil || schema != pathv1.CheckpointStateSchemaVersion {
 		t.Fatalf("recovered schema = %d, %v", schema, err)
+	}
+}
+
+func TestEnabledHostFallsBackToLegacyForProgressedQuiescentRun(t *testing.T) {
+	fs, err := store.NewFS(filepath.Join(t.TempDir(), "store"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "release-progressed", Start: "work",
+		Nodes: map[string]model.Node{
+			"work":   {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "work"}, Next: model.Next{"pass": "done", "fail": "failed"}},
+			"done":   {Type: model.NodeTypeEnd, Result: "completed"},
+			"failed": {Type: model.NodeTypeEnd, Result: "failed"},
+		},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const runID = "run-v6-progressed"
+	checkpoint := state.New(runID, record.Ref, record.Ref, []state.NodeInit{
+		{ID: "work", Type: model.NodeTypeTask, Status: state.NodeStatusReady},
+		{ID: "done", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+		{ID: "failed", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+	})
+	checkpoint.Status = state.RunStatusRunning
+	if _, err := fs.CreateRun(t.Context(), store.RunRecord{ID: runID, TemplateRef: record.Ref}, checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.Append(t.Context(), runID, 0, []evidence.LogEntry{storetest.AdminLogEntry(runID, "work", 0)}); err != nil {
+		t.Fatal(err)
+	}
+
+	host := New(fs, "test:release-progressed", map[model.PerformerKind]processexec.Adapter{model.PerformerAgent: releaseGateAdapter{}})
+	if err := host.EnableExclusiveV7(); err != nil {
+		t.Fatal(err)
+	}
+	results, err := host.Tick(t.Context())
+	if err != nil || len(results) != 1 || results[0].Error != "" || results[0].Status != state.RunStatusCompleted {
+		t.Fatalf("progressed legacy fallback tick = %#v, %v", results, err)
+	}
+	schema, err := fs.RunStateSchemaVersion(t.Context(), runID)
+	if err != nil || schema != state.StateSchemaVersion {
+		t.Fatalf("progressed legacy schema = %d, %v", schema, err)
 	}
 }
 

@@ -327,6 +327,9 @@ func (h *Host) tickRun(ctx context.Context, runID string) RunResult {
 				if schema == pathv1.CheckpointStateSchemaVersion {
 					return h.drivePathV1Leased(runCtx, runID, result, heartbeatErr)
 				}
+				if schema == pathv1.LegacyMaxSchemaVersion && errors.Is(initErr, pathv1.ErrInitializationAmbiguous) {
+					goto legacyPlanning
+				}
 				result.Error = initErr.Error()
 				return result
 			} else {
