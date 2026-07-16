@@ -209,6 +209,21 @@ func TestCodexTelemetryFollower_RejectsOversizedCheckpoint(t *testing.T) {
 	assert.ErrorIs(t, err, ErrCodexTelemetryCheckpointTooLarge)
 	assert.False(t, ok)
 	assert.Nil(t, checkpoint)
+
+	checkpoint, ok, err = follower.Checkpoint()
+	assert.NoError(t, err, "unchanged oversized state is suppressed instead of re-encoded")
+	assert.False(t, ok)
+	assert.Nil(t, checkpoint)
+
+	revisionChangingLine := rolloutEnvelope(t, "response_item", map[string]any{
+		"type": "function_call", "name": "followup_task", "call_id": "another-call",
+	})
+	require.True(t, follower.state.consumeLine(revisionChangingLine))
+	checkpoint, ok, err = follower.Checkpoint()
+	assert.ErrorIs(t, err, ErrCodexTelemetryCheckpointTooLarge,
+		"a collaboration-ledger change makes the follower retry encoding")
+	assert.False(t, ok)
+	assert.Nil(t, checkpoint)
 }
 
 func TestCaptureCodexTelemetryCheckpointUsesScannedDescriptor(t *testing.T) {
