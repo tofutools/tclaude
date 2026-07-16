@@ -227,7 +227,11 @@ func fireCronJob(j *db.AgentCronJob, now time.Time) string {
 	}
 
 	if j.IsGroupTarget() {
-		return fireCronGroupJob(j, subject)
+		var alive map[string]struct{}
+		if !j.QueueWhenOffline {
+			alive = cronLiveTmuxSessions(j.ID)
+		}
+		return fireCronGroupJob(j, subject, alive)
 	}
 
 	// Conv target: j.TargetConv is the target actor's CURRENT conv, resolved
@@ -240,7 +244,7 @@ func fireCronJob(j *db.AgentCronJob, now time.Time) string {
 	// (which redirects via agent.ResolveSelector). originalTo is non-empty only
 	// when a redirect actually happened.
 	targetConv, originalTo := walkSuccession(j.TargetConv)
-	if !j.QueueWhenOffline && !isConvOnline(targetConv) {
+	if !j.QueueWhenOffline && !isConvOnlineIn(targetConv, cronLiveTmuxSessions(j.ID)) {
 		slog.Info("cron: skipped offline target", "job", j.ID, "target", targetConv)
 		return "skipped_offline"
 	}
@@ -277,7 +281,7 @@ func fireCronJob(j *db.AgentCronJob, now time.Time) string {
 // "send_failed" if any recipient row failed to insert; "skipped_offline" if
 // every eligible recipient was offline; "partial_offline" if a mixed roster
 // delivered only to online recipients; "ok" otherwise.
-func fireCronGroupJob(j *db.AgentCronJob, subject string) string {
+func fireCronGroupJob(j *db.AgentCronJob, subject string, alive map[string]struct{}) string {
 	g, err := db.GetAgentGroupByID(j.GroupID)
 	if err != nil {
 		slog.Warn("cron: group lookup failed",
@@ -294,7 +298,7 @@ func fireCronGroupJob(j *db.AgentCronJob, subject string) string {
 	// correct. "" = whole group (fanOutToGroup reads an empty filter that way).
 	var onlineOnly func(string) bool
 	if !j.QueueWhenOffline {
-		onlineOnly = isConvOnline
+		onlineOnly = func(convID string) bool { return isConvOnlineIn(convID, alive) }
 	}
 	recipients, skippedOffline, err := fanOutToGroupFiltered(
 		g, j.OwnerConv, subject, j.Body, j.TargetRole, nil, onlineOnly)
@@ -317,4 +321,17 @@ func fireCronGroupJob(j *db.AgentCronJob, subject string) string {
 		return "partial_offline"
 	}
 	return "ok"
+}
+
+// cronLiveTmuxSessions takes one timeout-bounded batch snapshot for a fire.
+// Probe failure fails closed to "all offline": the job records a skipped tick
+// instead of queuing stale automation or wedging every cron authority holder.
+func cronLiveTmuxSessions(jobID int64) map[string]struct{} {
+	alive, err := liveTmuxSessionsWithTimeout()
+	if err != nil {
+		slog.Warn("cron: tmux liveness snapshot failed; treating targets as offline",
+			"job", jobID, "error", err)
+		return map[string]struct{}{}
+	}
+	return alive
 }

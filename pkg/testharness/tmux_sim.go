@@ -159,6 +159,23 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 			return exec.Command(trueBin)
 		}
 		return exec.Command(falseBin)
+	case len(args) >= 1 && args[0] == "list-sessions":
+		// The bounded production snapshot uses Command + Output rather than
+		// the unbounded ListSessions interface. Echo the same live names so
+		// flow tests exercise the real timeout/parse path.
+		t.mu.Lock()
+		names := make([]string, 0, len(t.sessions))
+		for name := range t.sessions {
+			names = append(names, name)
+		}
+		t.mu.Unlock()
+		alive := names[:0]
+		for _, name := range names {
+			if t.IsAlive(name) {
+				alive = append(alive, name)
+			}
+		}
+		return exec.Command(echoBin, strings.Join(alive, "\n"))
 	case len(args) >= 4 && args[0] == "send-keys" && args[1] == "-t":
 		t.routeSendKeys(args[2], args[3])
 	case len(args) >= 5 && args[0] == "send-keys" && args[1] == "-l" && args[2] == "-t":

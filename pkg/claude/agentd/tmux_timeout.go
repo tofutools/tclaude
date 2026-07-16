@@ -29,6 +29,32 @@ func runTmuxCommand(args ...string) error {
 	return runCommandWithTimeout(clcommon.TmuxCommand(args...), tmuxCommandTimeout)
 }
 
+// liveTmuxSessionsWithTimeout returns one batch liveness snapshot under the
+// same subprocess deadline as the nudge path. Snapshot-shaped delivery (cron
+// group fan-out) must not fork one has-session command per recipient, and a
+// wedged tmux server must not hold cronAuthorityMu forever.
+func liveTmuxSessionsWithTimeout() (map[string]struct{}, error) {
+	cmd := clcommon.TmuxCommand("list-sessions", "-F", "#{session_name}")
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	if err := runCommandWithTimeout(cmd, tmuxCommandTimeout); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			// tmux exits non-zero when no server exists. That is the normal
+			// all-offline state, matching common.LiveTmux.ListSessions.
+			return map[string]struct{}{}, nil
+		}
+		return nil, err
+	}
+	alive := map[string]struct{}{}
+	for line := range strings.SplitSeq(stdout.String(), "\n") {
+		if name := strings.TrimSpace(line); name != "" {
+			alive[name] = struct{}{}
+		}
+	}
+	return alive, nil
+}
+
 // runCommandWithTimeout is deliberately expressed over *exec.Cmd rather than
 // exec.CommandContext: the injected clcommon.Tmux boundary constructs the
 // command (real tmux in production, TmuxSim in flows). Killing the process on
