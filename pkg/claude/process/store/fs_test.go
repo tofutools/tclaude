@@ -836,6 +836,79 @@ func TestCreateRunConflictIsSerialized(t *testing.T) {
 	}
 }
 
+func TestCreateRunRejectsTimestampLessInitialAdminRecordsWithoutWrite(t *testing.T) {
+	at := time.Date(2026, 7, 16, 1, 45, 0, 0, time.UTC)
+	resolution := &state.BlockResolution{
+		NodeID: "implement", BlockedAttempt: 1, Decision: state.BlockDecisionSkip,
+		Actor: "human:operator", Reason: "waived", EvidenceRef: "ticket:TCL-523", Timestamp: at,
+	}
+	for _, tc := range []struct {
+		name, runID, want string
+		record            state.AdminRecord
+	}{
+		{
+			name: "repair", runID: "run_initial_repair",
+			record: state.AdminRecord{Type: state.EventAdminRepairRecorded, Actor: "human:operator", Reason: "repair"},
+			want:   "admin_repair_recorded requires a timestamp for new writes",
+		},
+		{
+			name: "program opt-in", runID: "run_initial_programs",
+			record: state.AdminRecord{Type: state.EventAdminProgramsAllowed, Actor: "human:operator", Reason: "opt in"},
+			want:   "admin_programs_allowed requires a timestamp for new writes",
+		},
+		{
+			name: "block resolution record", runID: "run_initial_resolution_record",
+			record: state.AdminRecord{Type: state.EventBlockResolutionRecorded, Actor: "human:operator", Reason: "waived", Resolution: resolution},
+			want:   "block_resolution_recorded requires a timestamp for new writes",
+		},
+		{
+			name: "block resolution payload", runID: "run_initial_resolution_payload",
+			record: state.AdminRecord{
+				Type: state.EventBlockResolutionRecorded, Actor: "human:operator", Reason: "waived", Timestamp: at,
+				Resolution: &state.BlockResolution{
+					NodeID: "implement", BlockedAttempt: 1, Decision: state.BlockDecisionSkip,
+					Actor: "human:operator", Reason: "waived", EvidenceRef: "ticket:TCL-523",
+				},
+			},
+			want: "block_resolution_recorded requires a resolution timestamp for new writes",
+		},
+		{
+			name: "non-resolution attached payload", runID: "run_initial_repair_resolution",
+			record: state.AdminRecord{
+				Type: state.EventAdminRepairRecorded, Actor: "human:operator", Reason: "repair", Timestamp: at,
+				Resolution: &state.BlockResolution{
+					NodeID: "implement", BlockedAttempt: 1, Decision: state.BlockDecisionSkip,
+					Actor: "human:operator", Reason: "waived", EvidenceRef: "ticket:TCL-523",
+				},
+			},
+			want: "admin_repair_recorded requires a resolution timestamp for new writes",
+		},
+		{
+			name: "block resolution missing payload", runID: "run_initial_resolution_missing",
+			record: state.AdminRecord{
+				Type: state.EventBlockResolutionRecorded, Actor: "human:operator", Reason: "waived", Timestamp: at,
+			},
+			want: "block_resolution_recorded requires a resolution payload for new writes",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			fs := newStoreAt(t, root)
+			template, err := fs.PutTemplate(t.Context(), storetest.Template())
+			require.NoError(t, err)
+			initial := state.New(tc.runID, template.Ref, template.Ref, []state.NodeInit{{ID: "implement"}})
+			initial.AdminRecords = []state.AdminRecord{tc.record}
+
+			_, err = fs.CreateRun(t.Context(), store.RunRecord{ID: tc.runID, TemplateRef: template.Ref}, initial)
+			require.ErrorContains(t, err, tc.want)
+			_, statErr := os.Stat(filepath.Join(root, "runs", tc.runID))
+			require.ErrorIs(t, statErr, os.ErrNotExist)
+			_, loadErr := fs.GetRun(t.Context(), tc.runID)
+			require.ErrorIs(t, loadErr, store.ErrNotFound)
+		})
+	}
+}
+
 func TestListRuns(t *testing.T) {
 	ctx := t.Context()
 	fs := newStore(t)
@@ -1100,6 +1173,50 @@ func TestBatchedAppendValidationFailureDoesNotPartiallyCommit(t *testing.T) {
 	if len(manifest) != 0 || len(nodeLog) != 0 {
 		t.Fatalf("batch partially committed: manifest=%d nodeLog=%d", len(manifest), len(nodeLog))
 	}
+}
+
+func TestAppendTimestampRequirementsInventoryLegacyAdminWrites(t *testing.T) {
+	for _, eventType := range []state.EventType{
+		state.EventAdminRepairRecorded,
+		state.EventAdminProgramsAllowed,
+	} {
+		t.Run(string(eventType), func(t *testing.T) {
+			fs, runID := initializedRun(t)
+			entry := storetest.AdminLogEntry(runID, "implement", 0)
+			entry.Scope = evidence.Scope{Kind: evidence.ScopeRun}
+			entry.Event.Type = eventType
+			entry.Event.At = time.Time{}
+			// The envelope timestamp cannot substitute for the authority timestamp
+			// that the legacy reducer persists into AdminRecords.
+			require.False(t, entry.At.IsZero())
+
+			_, err := fs.Append(t.Context(), runID, 0, []evidence.LogEntry{entry})
+			require.ErrorContains(t, err, string(eventType)+" requires a timestamp for new writes")
+			manifest, readErr := fs.ReadManifest(t.Context(), runID)
+			require.NoError(t, readErr)
+			runLog, readErr := fs.ReadRunLog(t.Context(), runID)
+			require.NoError(t, readErr)
+			checkpoint, readErr := fs.LoadRunState(t.Context(), runID)
+			require.NoError(t, readErr)
+			assert.Empty(t, manifest)
+			assert.Empty(t, runLog)
+			assert.Empty(t, checkpoint.AdminRecords)
+		})
+	}
+
+	t.Run("block resolution remains strict", func(t *testing.T) {
+		fs, runID := initializedRun(t)
+		entry := storetest.AdminLogEntry(runID, "implement", 0)
+		entry.Event = &state.Event{Type: state.EventBlockResolutionRecorded, Resolution: &state.BlockResolution{
+			NodeID: "implement", BlockedAttempt: 1, Decision: state.BlockDecisionSkip,
+			Actor: "human:operator", Reason: "waived", EvidenceRef: "ticket:TCL-523",
+		}}
+		_, err := fs.Append(t.Context(), runID, 0, []evidence.LogEntry{entry})
+		require.ErrorContains(t, err, "block resolution requires timestamp")
+		manifest, readErr := fs.ReadManifest(t.Context(), runID)
+		require.NoError(t, readErr)
+		assert.Empty(t, manifest)
+	})
 }
 
 func TestRunScopeLogRoundTrip(t *testing.T) {

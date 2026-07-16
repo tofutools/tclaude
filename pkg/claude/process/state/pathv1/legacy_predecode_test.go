@@ -184,8 +184,82 @@ func TestPredecodeLegacyStateDerivesDeterministicAdminProvenance(t *testing.T) {
 	}
 }
 
+func TestPredecodeLegacyStateBindsProducerValidTimestampLessAdminRecords(t *testing.T) {
+	for _, adminType := range []legacy.EventType{
+		legacy.EventAdminRepairRecorded,
+		legacy.EventAdminProgramsAllowed,
+	} {
+		t.Run(string(adminType), func(t *testing.T) {
+			input := legacyStateWithAdminRecords(`[{"type":"` + string(adminType) + `","actor":"human:operator","reason":"historical audit","evidenceRef":"ticket:TCL-523"}]`)
+			first, err := PredecodeLegacyState(input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			second, err := PredecodeLegacyState(input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(first.AdminRecords) != 1 || len(first.AdminResolutions) != 0 {
+				t.Fatalf("provenance = records %d resolutions %d", len(first.AdminRecords), len(first.AdminResolutions))
+			}
+			for id, record := range first.AdminRecords {
+				if record.Timestamp != "" || record.AdminType != string(adminType) || record.ID != id {
+					t.Fatalf("timestamp-less record = %#v", record)
+				}
+				if second.AdminRecords[id] != record {
+					t.Fatal("timestamp-less identity changed across predecode")
+				}
+			}
+		})
+	}
+}
+
+func TestPredecodeLegacyStateClassifiesUnsupportedTimestampLessAdminRecords(t *testing.T) {
+	for _, tc := range []struct {
+		name, record                     string
+		adminType                        string
+		hasResolution                    bool
+		recordMissing, resolutionMissing bool
+	}{
+		{
+			name:      "block resolution",
+			record:    `{"type":"block_resolution_recorded","actor":"human:operator","reason":"waived","evidenceRef":"ticket:TCL-523","resolution":{"nodeId":"work","blockedAttempt":1,"decision":"skip","actor":"human:operator","reason":"waived","evidenceRef":"ticket:TCL-523"}}`,
+			adminType: string(legacy.EventBlockResolutionRecorded), hasResolution: true, recordMissing: true, resolutionMissing: true,
+		},
+		{
+			name:      "present record timestamp missing resolution timestamp",
+			record:    `{"type":"block_resolution_recorded","actor":"human:operator","reason":"waived","evidenceRef":"ticket:TCL-523","timestamp":"2026-07-16T00:00:00Z","resolution":{"nodeId":"work","blockedAttempt":1,"decision":"skip","actor":"human:operator","reason":"waived","evidenceRef":"ticket:TCL-523"}}`,
+			adminType: string(legacy.EventBlockResolutionRecorded), hasResolution: true, resolutionMissing: true,
+		},
+		{
+			name:      "unknown type",
+			record:    `{"type":"forged_admin","actor":"human:operator","reason":"forged"}`,
+			adminType: "forged_admin", recordMissing: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := PredecodeLegacyState(legacyStateWithAdminRecords("[" + tc.record + "]"))
+			if !errors.Is(err, ErrLegacyAdminTimestampMissing) {
+				t.Fatalf("error = %v, want %v", err, ErrLegacyAdminTimestampMissing)
+			}
+			var missing *LegacyAdminTimestampMissingError
+			if !errors.As(err, &missing) || missing.OriginalArrayIndex != 0 || missing.AdminType != tc.adminType || missing.HasResolution != tc.hasResolution ||
+				missing.RecordTimestampMissing != tc.recordMissing || missing.ResolutionTimestampMissing != tc.resolutionMissing {
+				t.Fatalf("typed timestamp error = %#v", missing)
+			}
+			if !strings.Contains(err.Error(), "restore it before migration") {
+				t.Fatalf("error is not actionable: %v", err)
+			}
+		})
+	}
+}
+
 func legacyStateWithPauseUntil(raw string) []byte {
 	return []byte(`{"stateSchemaVersion":6,"runId":"run","status":"paused","pause":{"kind":"rate_limited","reason":"rate","until":` + raw + `},"originalTemplateRef":"demo@sha256:x","currentTemplateRef":"demo@sha256:x","nodes":{},"lastLogSeq":0,"logChecksum":""}`)
+}
+
+func legacyStateWithAdminRecords(records string) []byte {
+	return []byte(`{"stateSchemaVersion":6,"runId":"run","status":"pending","originalTemplateRef":"demo@sha256:x","currentTemplateRef":"demo@sha256:x","nodes":{},"adminRecords":` + records + `,"lastLogSeq":0,"logChecksum":""}`)
 }
 
 func declaredTimePaths(typ reflect.Type, prefix string) []string {

@@ -1340,6 +1340,9 @@ func (s *FS) CreateRun(ctx context.Context, run RunRecord, initial state.State) 
 	if strings.TrimSpace(run.TemplateRef) == "" {
 		return RunRecord{}, fmt.Errorf("templateRef is required")
 	}
+	if err := validateInitialAdminWrites(initial.AdminRecords); err != nil {
+		return RunRecord{}, err
+	}
 	pinnedTemplate, err := s.GetTemplate(ctx, run.TemplateRef)
 	if err != nil {
 		return RunRecord{}, fmt.Errorf("pin run template %q: %w", run.TemplateRef, err)
@@ -1648,6 +1651,9 @@ func (s *FS) Append(ctx context.Context, runID string, expectedSeq int64, entrie
 			event := *entry.Event
 			event.Seq = entry.Seq
 			event.LogChecksum = ""
+			if err := validateLegacyAdminWrite(event); err != nil {
+				return AppendResult{}, fmt.Errorf("validate event seq %d: %w", entry.Seq, err)
+			}
 			entry.Event = &event
 		}
 		manifestEntry, err := evidence.ManifestEntryForLog(entry, previousChecksum)
@@ -1689,6 +1695,38 @@ func (s *FS) Append(ctx context.Context, runID string, expectedSeq int64, entrie
 		return AppendResult{}, err
 	}
 	return AppendResult{Entries: appendedEntries, Manifest: appendedManifest, State: &nextState}, nil
+}
+
+// validateLegacyAdminWrite is the durable producer boundary. The reducer must
+// continue accepting zero-At historical repair/program-opt-in events so old
+// logs remain replayable, but no new append may create another such record.
+func validateLegacyAdminWrite(event state.Event) error {
+	switch event.Type {
+	case state.EventAdminRepairRecorded, state.EventAdminProgramsAllowed:
+		if event.At.IsZero() {
+			return fmt.Errorf("%s requires a timestamp for new writes", event.Type)
+		}
+	}
+	return nil
+}
+
+// validateInitialAdminWrites closes the other legacy checkpoint creation
+// boundary. CreateRun accepts materialized state rather than events, so it must
+// validate the persisted record and resolution timestamps before creating the
+// run directory. Already-persisted checkpoints continue through predecode.
+func validateInitialAdminWrites(records []state.AdminRecord) error {
+	for i, record := range records {
+		if record.Timestamp.IsZero() {
+			return fmt.Errorf("initial admin record %d: %s requires a timestamp for new writes", i, record.Type)
+		}
+		if record.Resolution != nil && record.Resolution.Timestamp.IsZero() {
+			return fmt.Errorf("initial admin record %d: %s requires a resolution timestamp for new writes", i, record.Type)
+		}
+		if record.Type == state.EventBlockResolutionRecorded && record.Resolution == nil {
+			return fmt.Errorf("initial admin record %d: block_resolution_recorded requires a resolution payload for new writes", i)
+		}
+	}
+	return nil
 }
 
 type plannedAppend struct {

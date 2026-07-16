@@ -612,12 +612,20 @@ func deriveLegacyAdminProvenance(st *legacy.State) (map[string]PathV1AdminRecord
 				EvidenceRef:    source.Resolution.EvidenceRef,
 				Timestamp:      CanonicalTimestamp(source.Resolution.Timestamp),
 			}
-			digest, err := ValidateBlockResolution(value)
+			resolution = &value
+		}
+		// Classify absent outer or attached-resolution timestamps before strict
+		// resolution validation so migration callers always receive the stable,
+		// actionable compatibility error.
+		if err := validateLegacyAdminTimestamps(record, resolution); err != nil {
+			return nil, nil, err
+		}
+		if resolution != nil {
+			digest, err := ValidateBlockResolution(*resolution)
 			if err != nil {
 				return nil, nil, fmt.Errorf("adminRecords[%d] resolution: %w", index, err)
 			}
 			record.ResolutionDigest = digest
-			resolution = &value
 		}
 		id, err := LegacyAdminRecordIdentity(record)
 		if err != nil {
