@@ -792,14 +792,16 @@ of `groups stop` / `groups resume`, and require `agent.stop` /
 
 ### cron
 
-Recurring scheduled nudges. The daemon's scheduler ticks every 30s and fires
-due jobs through the same durable inbox and delivery queue as peer, operator,
-and system messages. This includes solo jobs, so an offline target no longer
-loses a scheduled nudge.
+Recurring scheduled nudges. The daemon's scheduler ticks every 30s. By default,
+a due tick is delivered only to recipients that are online at fire time; an
+offline tick is recorded as skipped and creates no inbox row. Use
+`--queue-when-offline` for jobs whose messages should survive downtime through
+the same durable inbox and delivery queue as ordinary messages.
 
 ```bash
 tclaude agent cron add --interval 10m --body "status check?" [--target SEL --name N]
 tclaude agent cron add --interval 10m --run-immediately --body "start now, then repeat"
+tclaude agent cron add --interval 10m --queue-when-offline --body "retain until resume"
 tclaude agent cron add --cron "0 9 * * 1-5" --body "morning standup"   # cron expression instead of interval
 tclaude agent cron ls
 tclaude agent cron disable <id>      # pause without deleting
@@ -819,6 +821,12 @@ that fire. The persisted setting is also editable in the dashboard: changing
 it from off to on fires once; saving it on again is inert, and turning it off
 does not fire. `run-now` remains the explicit one-off action independent of
 that setting. Daemon restarts never replay the immediate opt-in.
+
+Offline delivery is a separate, default-off setting. `--queue-when-offline`
+opts the job into durable delivery while its target is down. Group jobs apply
+the policy per member: online members still receive a tick when other members
+are offline. `cron logs` records `skipped_offline` when all eligible recipients
+were offline and `partial_offline` for a mixed group delivery.
 
 ### permissions / sudo
 

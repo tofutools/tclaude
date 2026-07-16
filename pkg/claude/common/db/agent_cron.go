@@ -72,6 +72,10 @@ type AgentCronJob struct {
 	// one fire. The scheduler never consumes it, so restarts cannot replay the
 	// opt-in delivery.
 	RunImmediately bool
+	// QueueWhenOffline opts this job back into durable inbox delivery when a
+	// target has no live tmux pane. The default is false: scheduled nudges are
+	// time-sensitive, so offline ticks are discarded instead of accumulating.
+	QueueWhenOffline bool
 	// DisabledReason marks WHY a job is disabled (schema v94): '' for a normal,
 	// human-managed enable/disable, or CronDisabledReasonGroupRetired for a
 	// group-target job tclaude auto-paused when a retire emptied its group. A
@@ -124,14 +128,14 @@ func cronConvToAgent(convID string) (string, error) {
 // CURRENT conv so OwnerConv / TargetConv present (and the fire path delivers to)
 // the live generation. LEFT JOIN + COALESCE so a group-target job (target_agent
 // ”) or an owner-less job keeps an empty string rather than dropping the row.
-// The 19 projected columns match scanAgentCronJob's field order. owner_agent /
+// The 20 projected columns match scanAgentCronJob's field order. owner_agent /
 // target_agent are projected raw (the stable keys) alongside the LEFT-JOIN-
 // resolved current convs.
 const cronSelect = `SELECT j.id, j.name,
 	COALESCE(ow.current_conv_id, ''), j.target_kind, COALESCE(tg.current_conv_id, ''),
 	j.group_id, j.interval_seconds, j.subject, j.body, j.enabled, j.created_at,
 	j.last_run_at, j.last_run_status, j.owner_agent, j.target_agent, j.cron_expr, j.target_role,
-	j.disabled_reason, j.run_immediately
+	j.disabled_reason, j.run_immediately, j.queue_when_offline
 	FROM agent_cron_jobs j
 	LEFT JOIN agents ow ON ow.agent_id = j.owner_agent
 	LEFT JOIN agents tg ON tg.agent_id = j.target_agent`
@@ -158,13 +162,13 @@ func InsertAgentCronJob(j *AgentCronJob) (int64, error) {
 	}
 	res, err := d.Exec(`INSERT INTO agent_cron_jobs
 		(name, owner_agent, target_kind, target_agent, group_id, target_role, interval_seconds,
-		 cron_expr, subject, body, enabled, run_immediately, created_at, last_run_at, last_run_status)
-		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ''
+		 cron_expr, subject, body, enabled, run_immediately, queue_when_offline, created_at, last_run_at, last_run_status)
+		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ''
 		WHERE ? = '' OR EXISTS (
 			SELECT 1 FROM agents WHERE agent_id = ? AND retired_at = ''
 		)`,
 		j.Name, ownerAgent, kind, targetAgent, j.GroupID, j.TargetRole, j.IntervalSeconds,
-		j.CronExpr, j.Subject, j.Body, boolToInt(j.Enabled), boolToInt(j.RunImmediately), now,
+		j.CronExpr, j.Subject, j.Body, boolToInt(j.Enabled), boolToInt(j.RunImmediately), boolToInt(j.QueueWhenOffline), now,
 		ownerAgent, ownerAgent)
 	if err != nil {
 		return 0, err
@@ -439,18 +443,19 @@ func DeleteGroupTargetCronJobs(groupID int64) (int, error) {
 // nil → leave field unchanged. Pointer-shaped so callers can distinguish
 // "set to zero" from "don't touch".
 type UpdateCronPatch struct {
-	Name            *string
-	OwnerConv       *string
-	TargetKind      *string
-	TargetConv      *string
-	GroupID         *int64
-	TargetRole      *string
-	IntervalSeconds *int64
-	CronExpr        *string
-	Subject         *string
-	Body            *string
-	Enabled         *bool
-	RunImmediately  *bool
+	Name             *string
+	OwnerConv        *string
+	TargetKind       *string
+	TargetConv       *string
+	GroupID          *int64
+	TargetRole       *string
+	IntervalSeconds  *int64
+	CronExpr         *string
+	Subject          *string
+	Body             *string
+	Enabled          *bool
+	RunImmediately   *bool
+	QueueWhenOffline *bool
 }
 
 // UpdateAgentCronJobFields applies a partial update to one row. Only
@@ -534,6 +539,10 @@ func UpdateAgentCronJobFields(id int64, p UpdateCronPatch) (int, error) {
 	if p.RunImmediately != nil {
 		sets = append(sets, "run_immediately = ?")
 		args = append(args, boolToInt(*p.RunImmediately))
+	}
+	if p.QueueWhenOffline != nil {
+		sets = append(sets, "queue_when_offline = ?")
+		args = append(args, boolToInt(*p.QueueWhenOffline))
 	}
 	if len(sets) == 0 {
 		return 0, nil
@@ -638,12 +647,12 @@ func ListAgentCronRunsForJob(jobID int64, limit int) ([]*AgentCronRun, error) {
 
 func scanAgentCronJob(s rowScanner) (*AgentCronJob, error) {
 	var j AgentCronJob
-	var enabled, runImmediately int
+	var enabled, runImmediately, queueWhenOffline int
 	var created, lastRun string
 	err := s.Scan(&j.ID, &j.Name, &j.OwnerConv, &j.TargetKind, &j.TargetConv, &j.GroupID,
 		&j.IntervalSeconds, &j.Subject, &j.Body, &enabled, &created,
 		&lastRun, &j.LastRunStatus, &j.OwnerAgent, &j.TargetAgent, &j.CronExpr, &j.TargetRole,
-		&j.DisabledReason, &runImmediately)
+		&j.DisabledReason, &runImmediately, &queueWhenOffline)
 	if err != nil {
 		return nil, err
 	}
@@ -652,6 +661,7 @@ func scanAgentCronJob(s rowScanner) (*AgentCronJob, error) {
 	}
 	j.Enabled = enabled != 0
 	j.RunImmediately = runImmediately != 0
+	j.QueueWhenOffline = queueWhenOffline != 0
 	j.CreatedAt = parseTimeOrZero(created)
 	j.LastRunAt = parseTimeOrZero(lastRun)
 	return &j, nil

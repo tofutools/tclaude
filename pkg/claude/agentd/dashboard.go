@@ -1205,29 +1205,30 @@ type dashboardLink struct {
 // dashboard can render a self-contained table without a second
 // fetch per row.
 type dashboardCronJob struct {
-	ID              int64  `json:"id"`
-	Name            string `json:"name"`
-	OwnerAgent      string `json:"owner_agent,omitempty"`
-	OwnerConv       string `json:"owner_conv"`
-	OwnerLabel      string `json:"owner_label"`
-	TargetKind      string `json:"target_kind"`
-	TargetAgent     string `json:"target_agent,omitempty"`
-	TargetConv      string `json:"target_conv,omitempty"`
-	TargetLabel     string `json:"target_label,omitempty"`
-	GroupID         int64  `json:"group_id"`
-	GroupName       string `json:"group_name,omitempty"`
-	TargetRole      string `json:"target_role,omitempty"`
-	IntervalSeconds int64  `json:"interval_seconds"`
-	CronExpr        string `json:"cron_expr,omitempty"`
-	CronDesc        string `json:"cron_desc,omitempty"` // English rendering of CronExpr; best-effort, may be empty
-	Subject         string `json:"subject,omitempty"`
-	Body            string `json:"body"`
-	Enabled         bool   `json:"enabled"`
-	RunImmediately  bool   `json:"run_immediately"`
-	CreatedAt       string `json:"created_at,omitempty"`
-	LastRunAt       string `json:"last_run_at,omitempty"`
-	LastRunStatus   string `json:"last_run_status,omitempty"`
-	NextDueAt       string `json:"next_due_at,omitempty"`
+	ID               int64  `json:"id"`
+	Name             string `json:"name"`
+	OwnerAgent       string `json:"owner_agent,omitempty"`
+	OwnerConv        string `json:"owner_conv"`
+	OwnerLabel       string `json:"owner_label"`
+	TargetKind       string `json:"target_kind"`
+	TargetAgent      string `json:"target_agent,omitempty"`
+	TargetConv       string `json:"target_conv,omitempty"`
+	TargetLabel      string `json:"target_label,omitempty"`
+	GroupID          int64  `json:"group_id"`
+	GroupName        string `json:"group_name,omitempty"`
+	TargetRole       string `json:"target_role,omitempty"`
+	IntervalSeconds  int64  `json:"interval_seconds"`
+	CronExpr         string `json:"cron_expr,omitempty"`
+	CronDesc         string `json:"cron_desc,omitempty"` // English rendering of CronExpr; best-effort, may be empty
+	Subject          string `json:"subject,omitempty"`
+	Body             string `json:"body"`
+	Enabled          bool   `json:"enabled"`
+	RunImmediately   bool   `json:"run_immediately"`
+	QueueWhenOffline bool   `json:"queue_when_offline"`
+	CreatedAt        string `json:"created_at,omitempty"`
+	LastRunAt        string `json:"last_run_at,omitempty"`
+	LastRunStatus    string `json:"last_run_status,omitempty"`
+	NextDueAt        string `json:"next_due_at,omitempty"`
 }
 
 type snapshotPermissionsView struct {
@@ -2518,24 +2519,25 @@ func collectCronSnapshot() []dashboardCronJob {
 // /api/jobs listing (dashboard_jobs.go).
 func cronJobToView(j *db.AgentCronJob, groupNames map[int64]string) dashboardCronJob {
 	row := dashboardCronJob{
-		ID:              j.ID,
-		Name:            j.Name,
-		OwnerAgent:      j.OwnerAgent,
-		OwnerConv:       j.OwnerConv,
-		OwnerLabel:      labelForConv(j.OwnerConv),
-		TargetKind:      j.TargetKind,
-		TargetAgent:     j.TargetAgent,
-		TargetConv:      j.TargetConv,
-		GroupID:         j.GroupID,
-		TargetRole:      j.TargetRole,
-		IntervalSeconds: j.IntervalSeconds,
-		CronExpr:        j.CronExpr,
-		CronDesc:        cronexpr.Describe(j.CronExpr),
-		Subject:         j.Subject,
-		Body:            j.Body,
-		Enabled:         j.Enabled,
-		RunImmediately:  j.RunImmediately,
-		LastRunStatus:   j.LastRunStatus,
+		ID:               j.ID,
+		Name:             j.Name,
+		OwnerAgent:       j.OwnerAgent,
+		OwnerConv:        j.OwnerConv,
+		OwnerLabel:       labelForConv(j.OwnerConv),
+		TargetKind:       j.TargetKind,
+		TargetAgent:      j.TargetAgent,
+		TargetConv:       j.TargetConv,
+		GroupID:          j.GroupID,
+		TargetRole:       j.TargetRole,
+		IntervalSeconds:  j.IntervalSeconds,
+		CronExpr:         j.CronExpr,
+		CronDesc:         cronexpr.Describe(j.CronExpr),
+		Subject:          j.Subject,
+		Body:             j.Body,
+		Enabled:          j.Enabled,
+		RunImmediately:   j.RunImmediately,
+		QueueWhenOffline: j.QueueWhenOffline,
+		LastRunStatus:    j.LastRunStatus,
 	}
 	if j.TargetConv != "" {
 		row.TargetLabel = labelForConv(j.TargetConv)

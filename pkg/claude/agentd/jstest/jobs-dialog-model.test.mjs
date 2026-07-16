@@ -20,6 +20,7 @@ test('cron dialog model preserves create, edit, duplicate, and validation contra
     payload: {
       name: 'daily', body: 'Report', subject: 'Status', enabled: true,
       run_immediately: false,
+      queue_when_offline: false,
       owner: 'agt_owner', interval: '5m', cron_expr: '',
     },
   }, 'an untouched solo target is omitted from PATCH');
@@ -28,6 +29,7 @@ test('cron dialog model preserves create, edit, duplicate, and validation contra
   assert.deepEqual(model.buildCronMutation(edit, retargeted).payload, {
     name: 'daily', body: 'Report', subject: 'Status', enabled: true,
     run_immediately: false,
+    queue_when_offline: false,
     owner: 'agt_owner', interval: '5m', cron_expr: '', target: 'agt_next', group_id: 0,
   });
 
@@ -39,7 +41,7 @@ test('cron dialog model preserves create, edit, duplicate, and validation contra
     path: '/api/cron', method: 'POST',
     payload: {
       name: 'fanout', target: 'group:alpha', subject: '', body: 'Standup',
-      enabled: false, run_immediately: false, cron_expr: '@daily', role: 'dev',
+      enabled: false, run_immediately: false, queue_when_offline: false, cron_expr: '@daily', role: 'dev',
     },
   });
 
@@ -53,6 +55,7 @@ test('cron dialog model preserves create, edit, duplicate, and validation contra
     target: 'agt_target', interval: '5m', body: 'now', runImmediately: true,
   });
   assert.equal(model.buildCronMutation({ kind: 'create' }, immediate).payload.run_immediately, true);
+  assert.equal(model.buildCronMutation({ kind: 'create' }, immediate).payload.queue_when_offline, false);
   immediate.enabled = false;
   assert.equal(model.validateCronDraft({ kind: 'create' }, immediate).code, 'immediate-disabled');
 

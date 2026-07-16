@@ -16,6 +16,7 @@ export function cronJobToPrefill(job = {}, { duplicate = false } = {}) {
     body: text(job.body),
     enabled: !!job.enabled,
     runImmediately: !!job.run_immediately,
+    queueWhenOffline: !!job.queue_when_offline,
     role: groupTarget ? text(job.target_role) : '',
   };
 }
@@ -40,6 +41,7 @@ export function createCronDraft(prefill = {}) {
     body: text(prefill.body),
     enabled: prefill.enabled === undefined ? true : !!prefill.enabled,
     runImmediately: prefill.runImmediately === undefined ? false : !!prefill.runImmediately,
+    queueWhenOffline: prefill.queueWhenOffline === undefined ? false : !!prefill.queueWhenOffline,
   };
 }
 
@@ -90,6 +92,7 @@ export function buildCronMutation(dialog, draft) {
     const payload = {
       name, body: draft.body, subject, enabled: draft.enabled,
       run_immediately: draft.runImmediately,
+      queue_when_offline: draft.queueWhenOffline,
     };
     if (owner) payload.owner = owner;
     if (draft.scheduleMode === 'cron') payload.cron_expr = cronExpr;
@@ -110,6 +113,7 @@ export function buildCronMutation(dialog, draft) {
   const payload = {
     name, target, subject, body: draft.body, enabled: draft.enabled,
     run_immediately: draft.runImmediately,
+    queue_when_offline: draft.queueWhenOffline,
   };
   if (draft.scheduleMode === 'cron') payload.cron_expr = cronExpr;
   else payload.interval = interval;

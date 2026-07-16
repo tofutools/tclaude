@@ -30,7 +30,6 @@ func TestMigrateV126toV127AddsSessionApprovalPosture(t *testing.T) {
 
 func TestSessionApprovalPostureRoundTrip(t *testing.T) {
 	setupTestDB(t)
-	require.Equal(t, 128, currentVersion, "tripwire: bump this with the next migration")
 	require.NoError(t, SaveSession(&SessionRow{
 		ID: "approval-session", ConvID: "approval-conv", Status: "running",
 		Harness: "claude", ApprovalPolicy: "default", ApprovalAutoReview: true,

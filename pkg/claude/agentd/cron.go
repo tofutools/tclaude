@@ -205,9 +205,10 @@ func runSudoGrantsCleanup(now time.Time) {
 //   - group target → fan the body out to every CURRENT member of the
 //     target group (fireCronGroupJob). Membership is resolved at fire
 //     time so a recurring job tracks the live roster.
-//   - conv target → insert one agent_messages row (group-routed or direct)
-//     and let the shared async delivery pipeline handle online/offline,
-//     contention, retries, and inline-vs-pointer policy.
+//   - conv target → when online, insert one agent_messages row (group-routed
+//     or direct) and let the shared async delivery pipeline handle contention,
+//     retries, and inline-vs-pointer policy. Offline delivery is discarded
+//     unless the job explicitly opts into QueueWhenOffline.
 //
 // For a conv target the stored conv is walked to its live successor
 // before delivery (walkSuccession), so a job whose target has since
@@ -239,6 +240,10 @@ func fireCronJob(j *db.AgentCronJob, now time.Time) string {
 	// (which redirects via agent.ResolveSelector). originalTo is non-empty only
 	// when a redirect actually happened.
 	targetConv, originalTo := walkSuccession(j.TargetConv)
+	if !j.QueueWhenOffline && !isConvOnline(targetConv) {
+		slog.Info("cron: skipped offline target", "job", j.ID, "target", targetConv)
+		return "skipped_offline"
+	}
 
 	if _, err := queueAgentMessage(&db.AgentMessage{
 		GroupID:        j.GroupID,
@@ -264,12 +269,14 @@ func fireCronJob(j *db.AgentCronJob, now time.Time) string {
 // The owner conv is the message sender, and (like a `group:` multicast)
 // is skipped if it is itself a member — a PO that schedules a recurring
 // team ping does not ping itself. Each recipient gets its own
-// agent_messages row + a tmux nudge when alive.
+// agent_messages row + a tmux nudge when alive. By default offline members are
+// omitted before persistence; QueueWhenOffline restores the old durable-queue
+// behaviour for jobs whose reminder should survive downtime.
 //
 // Status: "no_target" if the group was deleted out from under the job;
-// "send_failed" if any recipient row failed to insert; "ok" otherwise
-// — including a fan-out to zero other members, which (as with an
-// empty-group multicast) is a successful no-op, not an error.
+// "send_failed" if any recipient row failed to insert; "skipped_offline" if
+// every eligible recipient was offline; "partial_offline" if a mixed roster
+// delivered only to online recipients; "ok" otherwise.
 func fireCronGroupJob(j *db.AgentCronJob, subject string) string {
 	g, err := db.GetAgentGroupByID(j.GroupID)
 	if err != nil {
@@ -285,7 +292,12 @@ func fireCronGroupJob(j *db.AgentCronJob, subject string) string {
 	// TargetRole (JOH-244) filters the fan-out to matching members, resolved
 	// against the LIVE roster here at fire time so membership changes stay
 	// correct. "" = whole group (fanOutToGroup reads an empty filter that way).
-	recipients, err := fanOutToGroup(g, j.OwnerConv, subject, j.Body, j.TargetRole, nil)
+	var onlineOnly func(string) bool
+	if !j.QueueWhenOffline {
+		onlineOnly = isConvOnline
+	}
+	recipients, skippedOffline, err := fanOutToGroupFiltered(
+		g, j.OwnerConv, subject, j.Body, j.TargetRole, nil, onlineOnly)
 	if err != nil {
 		slog.Warn("cron: group fan-out failed",
 			"job", j.ID, "group", g.Name, "error", err)
@@ -297,6 +309,12 @@ func fireCronGroupJob(j *db.AgentCronJob, subject string) string {
 		if r.MessageID == 0 {
 			return "send_failed"
 		}
+	}
+	if skippedOffline > 0 {
+		if len(recipients) == 0 {
+			return "skipped_offline"
+		}
+		return "partial_offline"
 	}
 	return "ok"
 }

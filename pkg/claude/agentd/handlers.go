@@ -1040,9 +1040,21 @@ func handleMulticast(w http.ResponseWriter, fromID string, req *sendReq) {
 // and they can never drift apart. Caller-supplied auth is the caller's
 // responsibility — fanOutToGroup itself does no permission checking.
 func fanOutToGroup(g *db.AgentGroup, fromConv, subject, body, roleFilter string, memberFilter []string) ([]recipient, error) {
+	recipients, _, err := fanOutToGroupFiltered(
+		g, fromConv, subject, body, roleFilter, memberFilter, nil)
+	return recipients, err
+}
+
+// fanOutToGroupFiltered optionally applies recipientFilter after all normal
+// membership/role/subset/self filters. A rejected recipient is counted but no
+// inbox row is inserted. Cron uses this to discard offline ticks by default;
+// regular group messages pass nil and retain their durable queue semantics.
+func fanOutToGroupFiltered(g *db.AgentGroup, fromConv, subject, body, roleFilter string, memberFilter []string,
+	recipientFilter func(string) bool,
+) ([]recipient, int, error) {
 	members, err := db.ListAgentGroupMembers(g.ID)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	roleFilter = strings.TrimSpace(roleFilter)
 	// memberFilter narrows the fan-out to the listed members. The
@@ -1075,6 +1087,7 @@ func fanOutToGroup(g *db.AgentGroup, fromConv, subject, body, roleFilter string,
 		}
 	}
 	out := []recipient{}
+	skipped := 0
 	for _, m := range members {
 		if m.ConvID == fromConv {
 			continue
@@ -1115,6 +1128,10 @@ func fanOutToGroup(g *db.AgentGroup, fromConv, subject, body, roleFilter string,
 				continue
 			}
 		}
+		if recipientFilter != nil && !recipientFilter(finalConv) {
+			skipped++
+			continue
+		}
 		id, err := queueAgentMessage(&db.AgentMessage{
 			GroupID:        g.ID,
 			FromConv:       fromConv,
@@ -1149,7 +1166,7 @@ func fanOutToGroup(g *db.AgentGroup, fromConv, subject, body, roleFilter string,
 			RedirectedFrom: originalTo,
 		})
 	}
-	return out, nil
+	return out, skipped, nil
 }
 
 // messageNudgeText builds the bracketed tmux nudge for a delivered agent
