@@ -36,23 +36,51 @@ func TestRunInboxReadDaemonShowsReplyability(t *testing.T) {
 }
 
 func TestReadBody(t *testing.T) {
-	var stderr bytes.Buffer
+	tests := []struct {
+		name       string
+		params     messageParams
+		stdin      string
+		wantBody   string
+		wantRC     int
+		wantErrSub string
+	}{
+		{name: "positional", params: messageParams{Text: "positional text"}, wantBody: "positional text", wantRC: rcOK},
+		{name: "body flag", params: messageParams{Body: "flag text"}, wantBody: "flag text", wantRC: rcOK},
+		{name: "stdin", params: messageParams{Stdin: true}, stdin: "from stdin", wantBody: "from stdin", wantRC: rcOK},
+		{name: "missing", wantRC: rcInvalidArg, wantErrSub: "--body"},
+		{
+			name:       "positional and body flag conflict",
+			params:     messageParams{Text: "positional", Body: "flag"},
+			wantRC:     rcInvalidArg,
+			wantErrSub: "only one",
+		},
+		{
+			name:       "body flag and stdin conflict",
+			params:     messageParams{Body: "flag", Stdin: true},
+			wantRC:     rcInvalidArg,
+			wantErrSub: "only one",
+		},
+	}
 
-	body, rc := readBody(&messageParams{Body: "literal"}, strings.NewReader(""), &stderr)
-	assert.Equal(t, rcOK, rc, "literal body rc")
-	assert.Equal(t, "literal", body, "literal body")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stderr bytes.Buffer
+			body, rc := readBody(&tt.params, true, strings.NewReader(tt.stdin), &stderr)
+			assert.Equal(t, tt.wantRC, rc)
+			assert.Equal(t, tt.wantBody, body)
+			if tt.wantErrSub != "" {
+				assert.Contains(t, stderr.String(), tt.wantErrSub)
+			}
+		})
+	}
+}
 
-	body, rc = readBody(&messageParams{Stdin: true}, strings.NewReader("from stdin"), &stderr)
-	assert.Equal(t, rcOK, rc, "stdin body rc")
-	assert.Equal(t, "from stdin", body, "stdin body")
-
-	stderr.Reset()
-	_, rc = readBody(&messageParams{}, strings.NewReader(""), &stderr)
-	assert.Equal(t, rcInvalidArg, rc, "no body")
-
-	stderr.Reset()
-	_, rc = readBody(&messageParams{Body: "x", Stdin: true}, strings.NewReader(""), &stderr)
-	assert.Equal(t, rcInvalidArg, rc, "conflicting body sources should fail")
+func TestMessageCmdSupportsBodyFlag(t *testing.T) {
+	cmd := messageCmd()
+	flag := cmd.Flags().Lookup("body")
+	require.NotNil(t, flag)
+	assert.Equal(t, "string", flag.Value.Type())
+	assert.Contains(t, cmd.UseLine(), "[text]")
 }
 
 // TestFormatRecipientList covers the audience renderer in inbox read:

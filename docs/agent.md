@@ -244,6 +244,7 @@ group acts as an allow-list.
 ```bash
 # direct
 tclaude agent message <peer> "your message text"
+tclaude agent message <peer> --body "your message text"  # equivalent flag form
 tclaude agent message <peer> --subject "ack" --stdin <<EOF
 multi-line body
 EOF

@@ -27,7 +27,8 @@ func queuedState(pending int) string {
 
 type messageParams struct {
 	Target  string   `pos:"true" help:"Target conv (UUID/prefix/title), 'group:<name|id>' to broadcast, or bare 'group:' for your own group"`
-	Body    string   `pos:"true" optional:"true" help:"Message body (or use --stdin / --file)"`
+	Text    string   `pos:"true" optional:"true" help:"Message body (or use --body / --stdin / --file)"`
+	Body    string   `long:"body" optional:"true" help:"Message body as a flag instead of positional text"`
 	Subject string   `long:"subject" short:"s" optional:"true" help:"Optional subject line"`
 	Stdin   bool     `long:"stdin" help:"Read body from stdin"`
 	File    string   `long:"file" short:"f" optional:"true" help:"Read body from a file ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing bodies (the shell eats backticks from an inline body)."`
@@ -72,7 +73,7 @@ func runMessage(p *messageParams, stdout, stderr io.Writer, stdin io.Reader) int
 		fmt.Fprintf(stderr, "Error: --gen is only valid on a direct (non-group, non-cc) send\n")
 		return rcInvalidArg
 	}
-	body, status := readBody(p, stdin, stderr)
+	body, status := readBody(p, true, stdin, stderr)
 	if status != rcOK {
 		return status
 	}
@@ -215,8 +216,11 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 	return rcOK
 }
 
-func readBody(p *messageParams, stdin io.Reader, stderr io.Writer) (string, int) {
+func readBody(p *messageParams, allowBodyFlag bool, stdin io.Reader, stderr io.Writer) (string, int) {
 	count := 0
+	if p.Text != "" {
+		count++
+	}
 	if p.Body != "" {
 		count++
 	}
@@ -227,11 +231,19 @@ func readBody(p *messageParams, stdin io.Reader, stderr io.Writer) (string, int)
 		count++
 	}
 	if count == 0 {
-		fmt.Fprintf(stderr, "Error: provide a body, --stdin, or --file\n")
+		if allowBodyFlag {
+			fmt.Fprintf(stderr, "Error: provide positional text, --body, --stdin, or --file\n")
+		} else {
+			fmt.Fprintf(stderr, "Error: provide a body, --stdin, or --file\n")
+		}
 		return "", rcInvalidArg
 	}
 	if count > 1 {
-		fmt.Fprintf(stderr, "Error: pass only one of body / --stdin / --file\n")
+		if allowBodyFlag {
+			fmt.Fprintf(stderr, "Error: pass only one of positional text / --body / --stdin / --file\n")
+		} else {
+			fmt.Fprintf(stderr, "Error: pass only one of body / --stdin / --file\n")
+		}
 		return "", rcInvalidArg
 	}
 	switch {
@@ -258,8 +270,10 @@ func readBody(p *messageParams, stdin io.Reader, stderr io.Writer) (string, int)
 			return "", rcIOFailure
 		}
 		return string(data), rcOK
+	case p.Body != "":
+		return p.Body, rcOK
 	}
-	return p.Body, rcOK
+	return p.Text, rcOK
 }
 
 // titleFor returns convID's display title from the conv_index cache,
