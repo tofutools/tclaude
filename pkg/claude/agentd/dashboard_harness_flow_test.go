@@ -57,6 +57,7 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	// Claude Code surfaces its --permission-mode values as the dialog's
 	// "Permission mode" dropdown (the approval axis), inherit-first.
 	assert.True(t, claude.CanApproval, "claude exposes a permission-mode (approval) catalog")
+	assert.False(t, claude.CanAutoReview, "claude has no separate approvals reviewer control")
 	assert.Equal(t, []string{"inherit", "plan", "default", "acceptEdits", "auto", "dontAsk", "bypassPermissions"}, claude.ApprovalModes)
 	assert.Equal(t, "inherit", claude.DefaultApproval, "inherit (= no override) is pre-selected")
 	require.NotNil(t, claude.ApprovalModeHelp, "claude exposes per-mode approval help")
@@ -91,6 +92,7 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	assert.NotContains(t, codex.SandboxModeHelp["tclaude-agent"], "⚠", "recommended profile carries no caveat marker")
 	assert.Contains(t, codex.SandboxModeHelp["read-only"], "⚠", "read-only flags its no-agentd caveat")
 	assert.True(t, codex.CanApproval, "codex supports approval (daemon default + CLI)")
+	assert.True(t, codex.CanAutoReview, "codex exposes its separate approvals reviewer")
 	assert.Equal(t, []string{"never", "untrusted", "on-failure", "on-request"}, codex.ApprovalModes)
 	assert.Equal(t, "never", codex.DefaultApproval)
 	for _, mode := range codex.ApprovalModes {

@@ -1,3 +1,5 @@
+import { readReviewer, reviewerValue } from './approval-controls.js';
+
 export const MODEL_CUSTOM_VALUE = '__custom__';
 export const WT_NEW = '__new__';
 export const MAX_SPAWN_NAME_LEN = 64;
@@ -142,6 +144,7 @@ export function spawnCapabilityView(draft, context) {
     sandbox,
     approval,
     askTimeout,
+    showApprovalReviewer: !!harness?.can_auto_review,
     showTrustDir: draft.harness === 'codex',
     showRemoteControl: harness ? !!harness.can_remote_control : draft.harness === 'claude',
     sandboxProfilesDisabled,
@@ -179,6 +182,7 @@ function harnessDefaults(harness, rememberedEffort = () => '') {
     effort: rememberedEffort('') || '',
     sandbox,
     approval,
+    approvalReviewer: '',
     askTimeout,
     trustDir: false,
     trustDirSpecified: false,
@@ -282,6 +286,14 @@ export function applySpawnProfile(
   if (profile.approval) {
     next.approval = compatibleValue(profile.approval, view.approval.modes, next.approval);
   }
+  if (view.showApprovalReviewer) {
+    // A sparse profile means "inherit", not "keep the last selected profile's
+    // reviewer". Clear the prior selection so switching from an auto-review
+    // profile cannot accidentally send an explicit true for the new profile.
+    next.approvalReviewer = reviewerValue(profile.auto_review);
+  } else {
+    next.approvalReviewer = '';
+  }
   if (profile.ask_user_question_timeout) {
     next.askTimeout = compatibleValue(
       profile.ask_user_question_timeout, view.askTimeout.modes, next.askTimeout,
@@ -334,6 +346,7 @@ export function clearSpawnProfileFields(draft, context, {
     effort: defaults.effort,
     sandbox: defaults.sandbox,
     approval: defaults.approval,
+    approvalReviewer: defaults.approvalReviewer,
     askTimeout: defaults.askTimeout,
     trustDir: false,
     trustDirSpecified: false,
@@ -425,6 +438,8 @@ export function spawnProfileSeed(draft, context) {
   }
   if (view.sandbox.visible) seed.sandbox = draft.sandbox;
   if (view.approval.visible) seed.approval = draft.approval;
+  const reviewer = view.showApprovalReviewer ? readReviewer(draft.approvalReviewer) : null;
+  if (reviewer != null) seed.auto_review = reviewer;
   if (view.askTimeout.visible) seed.ask_user_question_timeout = draft.askTimeout;
   if (draft.harness === 'codex') seed.trust_dir = !!draft.trustDir;
   return seed;
@@ -433,7 +448,7 @@ export function spawnProfileSeed(draft, context) {
 const DIRTY_FIELDS = [
   'group', 'profile', 'name', 'role', 'descr', 'task', 'initialMessage',
   'harness', 'model', 'customModel', 'effort', 'sandbox', 'sandboxProfile', 'approval',
-  'askTimeout', 'trustDir', 'trustDirSpecified', 'remoteControl', 'owner',
+  'approvalReviewer', 'askTimeout', 'trustDir', 'trustDirSpecified', 'remoteControl', 'owner',
   'cwd', 'wtRepo', 'worktree', 'worktreeBranch', 'worktreeBase',
   'syncWorktree', 'autoFocus', 'includeGroupContext',
 ];
@@ -495,6 +510,8 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
     body.sandbox_profile = draft.sandboxProfile;
   }
   if (view.approval.visible && draft.approval) body.approval = draft.approval;
+  const reviewer = view.showApprovalReviewer ? readReviewer(draft.approvalReviewer) : null;
+  if (reviewer != null) body.auto_review = reviewer;
   if (view.askTimeout.visible && draft.askTimeout) {
     body.ask_user_question_timeout = draft.askTimeout;
   }

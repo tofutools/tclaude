@@ -166,6 +166,7 @@ type dashHarness struct {
 	CanCompact       bool              `json:"can_compact"`
 	CanSandbox       bool              `json:"can_sandbox"`
 	CanApproval      bool              `json:"can_approval"`
+	CanAutoReview    bool              `json:"can_auto_review"`
 	CanRemoteControl bool              `json:"can_remote_control"`
 }
 

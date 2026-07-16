@@ -244,6 +244,13 @@ axis: `never` (daemon default/recommended), `untrusted`, deprecated
 source used by CLI and profile validation, so UI options cannot drift from the
 accepted policy set.
 
+The dashboard spawn dialog and spawn-profile editor show Codex's **Approval
+reviewer** as a separate control: leave it unset/use the human reviewer, or
+route eligible requests to **Codex auto-review**. This changes who decides an
+approval request, not when one is created or what the sandbox permits. In
+particular, auto-review has no effect with `never`, because that policy creates
+no approval requests.
+
 Agent-initiated spawns also enforce approval lineage: a parent cannot choose a
 child posture with broader automatic command acceptance than its recorded
 launch posture. Because Claude Code also consumes parent-writable project
