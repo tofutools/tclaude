@@ -283,15 +283,13 @@ func TestDashboardCSS_ModalScrollbarsThemed(t *testing.T) {
 
 // TestDashboardJS_SelectTooltipWired guards the readability half of the
 // spawn-field fix: because the width-limited <select> clips long labels,
-// the worktree options carry a full-path title and a helper mirrors the
-// selected option's label/title into the <select> so it's legible on
-// hover. The three pieces — helper, worktree option title, and the
-// modal-level binding — must stay wired together.
+// the Preact worktree options carry a full-path title and a shared helper
+// mirrors selected option labels/titles into ordinary <select> controls so
+// they remain legible on hover.
 func TestDashboardJS_SelectTooltipWired(t *testing.T) {
 	for _, needle := range []string{
 		"function syncSelectTitle(",                      // helper exists (helpers.js)
-		"function bindSelectTitles(",                     // modal-level binder exists (helpers.js)
-		"syncSelectTitle(select)",                        // worktree picker syncs after repopulate (modal-link-wt.js)
+		"function bindSelectTitles(",                     // shared binder exists (helpers.js)
 		"title=${`${branch}${main} — ${worktree.path}`}", // Preact worktree options retain the full path
 	} {
 		if !strings.Contains(dashboardAssets, needle) {

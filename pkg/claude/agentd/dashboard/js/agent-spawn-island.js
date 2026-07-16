@@ -1,7 +1,10 @@
 import { h, render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import {
+  ManagementOverlay as Overlay,
+  useGuardedOverlayClose,
+} from './management-overlay.js';
 import { shortCwd } from './helpers.js';
 import {
   MODEL_CUSTOM_VALUE,
@@ -115,6 +118,7 @@ function AttachmentList({ attachments, remove, busy }) {
 }
 
 function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
+  const { requestClose, registerClose } = useGuardedOverlayClose();
   const context = useMemo(() => ({
     groups: current.groups,
     harnesses: current.harnesses,
@@ -473,11 +477,6 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     });
   };
 
-  const close = async () => {
-    if (busyRef.current) return;
-    if (!dirty || await confirmDiscard()) state.close();
-  };
-
   const submit = async () => {
     if (submitLock.current) return;
     submitLock.current = true;
@@ -566,6 +565,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     dirty=${dirty}
     blocked=${busy}
     confirmDiscard=${confirmDiscard}
+    registerClose=${registerClose}
     resizeKey="tclaude.dash.modalSize.agent-spawn"
     guardBackdropDrag=${true}
     initialFocusRef=${nameRef}
@@ -861,7 +861,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     </label>
     <${ErrorBanner} error=${error} onDismiss=${() => setError('')} />
     <div class="modal-buttons">
-      <button id="agent-spawn-cancel" type="button" disabled=${busy} onClick=${() => { void close(); }}>Cancel</button>
+      <button id="agent-spawn-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
       <span class="spacer"></span>
       <button id="agent-spawn-submit" class=${`primary${busy ? ' slop-pull-active' : ''}`} type="button"
         disabled=${busy} aria-busy=${busy ? 'true' : undefined} onClick=${() => { void submit(); }}>

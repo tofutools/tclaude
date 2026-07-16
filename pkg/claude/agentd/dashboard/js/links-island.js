@@ -1,7 +1,10 @@
 import { h, render } from 'preact';
 import { useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import {
+  ManagementOverlay as Overlay,
+  useGuardedOverlayClose,
+} from './management-overlay.js';
 import { registerLinksController } from './links-controller.js';
 import { relTime } from './helpers.js';
 import { LINK_COLS } from './sort.js';
@@ -141,6 +144,7 @@ function optionsFor(groups, ...selected) {
 }
 
 function LinkEditor({ descriptor, groups, actions, confirmDiscard }) {
+  const { requestClose, registerClose } = useGuardedOverlayClose();
   const edit = descriptor.kind === 'edit';
   const preset = edit ? descriptor : descriptor.preset;
   // The keyed editor owns one draft lifetime. Snapshot publishes keep the
@@ -192,6 +196,7 @@ function LinkEditor({ descriptor, groups, actions, confirmDiscard }) {
       dirty=${dirty}
       blocked=${busy}
       confirmDiscard=${confirmDiscard}
+      registerClose=${registerClose}
     >
       <h3 id="link-modal-title"><${Words}
         plain=${edit ? 'Edit link mode' : 'Add inter-group link'}
@@ -229,7 +234,7 @@ function LinkEditor({ descriptor, groups, actions, confirmDiscard }) {
       `}
       <${ErrorBanner} error=${error} />
       <div class="modal-buttons">
-        <button id="link-modal-cancel" type="button" disabled=${busy} onClick=${actions.closeEditor}><${Words} plain="Cancel" wizard="Dispel" /></button>
+        <button id="link-modal-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel" /></button>
         <span class="spacer"></span>
         <button id="link-modal-submit" class="primary" type="button" disabled=${busy} onClick=${submit}>
           <${Words}

@@ -1,7 +1,10 @@
 import { Fragment, h, render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import {
+  ManagementOverlay as Overlay,
+  useGuardedOverlayClose,
+} from './management-overlay.js';
 import { registerMessageAccessDialogController } from './message-access-dialog-controller.js';
 import {
   agentCandidates, groupMembers, groupsForPicker, permissionRows,
@@ -54,6 +57,7 @@ function OperatorAttachmentList({ files, busy, remove }) {
 }
 
 function OperatorMessageDialog({ descriptor, state, actions, confirmDiscard }) {
+  const { requestClose, registerClose } = useGuardedOverlayClose();
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [files, setFiles] = useState([]);
@@ -62,7 +66,6 @@ function OperatorMessageDialog({ descriptor, state, actions, confirmDiscard }) {
   const busyRef = useRef(false);
   const bodyRef = useRef(null);
   const fileInputRef = useRef(null);
-  const closeRef = useRef(null);
   const dirty = !!subject || !!body || files.length > 0;
 
   const addFiles = (incoming) => {
@@ -112,7 +115,7 @@ function OperatorMessageDialog({ descriptor, state, actions, confirmDiscard }) {
     confirmDiscard=${confirmDiscard}
     resizeKey="tclaude.dash.modalSize.operator-message"
     initialFocusRef=${bodyRef}
-    registerClose=${(close) => { closeRef.current = close; return () => { if (closeRef.current === close) closeRef.current = null; }; }}
+    registerClose=${registerClose}
     guardBackdropDrag=${true}
     onPaste=${(event) => {
       const pasted = Array.from(event.clipboardData?.files || []);
@@ -151,7 +154,7 @@ function OperatorMessageDialog({ descriptor, state, actions, confirmDiscard }) {
         <span class="spawn-attachments-hint"><${Words} plain="…or drag files here / paste a screenshot" wizard="…or draw relics here / paste a captured vision"/></span>
       </div><${OperatorAttachmentList} files=${files} busy=${busy} remove=${removeFile}/></div></div>
     <${ErrorLine} id="operator-message-error" value=${error}/>
-    <div class="modal-buttons"><button id="operator-message-cancel" type="button" disabled=${busy} onClick=${() => { void closeRef.current?.(); }}><${Words} plain="Cancel" wizard="Dispel"/></button>
+    <div class="modal-buttons"><button id="operator-message-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></button>
       <span class="spacer"></span><button id="operator-message-submit" class="primary operator-message-submit" type="button" disabled=${busy} onClick=${submit}>
         <${Words} plain=${busy ? 'Queueing…' : 'Send'} wizard=${busy ? '✒ Sending missive…' : '✒ Send missive'}/></button></div>
   </${Overlay}>`;
@@ -269,6 +272,7 @@ function AgentPicker({ descriptor, state, snapshot, confirmDiscard }) {
 }
 
 function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard }) {
+  const { requestClose, registerClose } = useGuardedOverlayClose();
   useLiveTheme();
   const initial = descriptor.prefill || {};
   const scopedGroup = initial.targetMode === 'group' && initial.groupName ? initial.groupName : '';
@@ -338,7 +342,8 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
     finally { busyRef.current = false; setBusy(false); }
   };
   return html`<${Overlay} id="message-create-modal" labelledby="message-create-title"
-    onClose=${state.close} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}>
+    onClose=${state.close} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}
+    registerClose=${registerClose}>
     <h3 id="message-create-title"><${Words}
       plain=${scopedGroup ? `Send a message to group “${scopedGroup}”` : 'Send a message'}
       wizard=${scopedGroup ? `Send a missive to party “${scopedGroup}”` : 'Send a missive'}/></h3>
@@ -375,13 +380,14 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Body" wizard="Missive"/></span><textarea id="message-create-body" rows="4"
       value=${body} placeholder=${wizWord('message text (required)', 'missive text (required)')} spellcheck="false" onInput=${(event) => setBody(event.currentTarget.value)} onKeyDown=${fieldSubmit(submit)}></textarea></label>
     <${ErrorLine} id="message-create-error" value=${error}/>
-    <div class="modal-buttons"><button id="message-create-cancel" type="button" disabled=${busy} onClick=${state.close}><${Words} plain="Cancel" wizard="Dispel"/></button>
+    <div class="modal-buttons"><button id="message-create-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></button>
       <span class="spacer"></span><button id="message-create-submit" class="primary" type="button" disabled=${busy || (scopedGroup && (!groupExists || !selectedMembers.length))} onClick=${submit}>
         <${Words} plain=${busy ? 'Sending…' : 'Send'} wizard=${busy ? 'Sending…' : '✒ Send missive'}/></button></div>
   </${Overlay}>`;
 }
 
 function HumanReplyDialog({ descriptor, state, actions, snapshot, confirmDiscard }) {
+  const { requestClose, registerClose } = useGuardedOverlayClose();
   const context = descriptor.context || {};
   const [body, setBody] = useState('');
   const [busy, setBusy] = useState(false);
@@ -403,7 +409,8 @@ function HumanReplyDialog({ descriptor, state, actions, snapshot, confirmDiscard
     finally { busyRef.current = false; setBusy(false); }
   };
   return html`<${Overlay} id="human-reply-modal" labelledby="human-reply-title"
-    onClose=${state.close} dirty=${!!body} blocked=${busy} confirmDiscard=${confirmDiscard}>
+    onClose=${state.close} dirty=${!!body} blocked=${busy} confirmDiscard=${confirmDiscard}
+    registerClose=${registerClose}>
     <h3 id="human-reply-title"><span class="human-reply-title-regular">Reply to agent</span><span class="human-reply-title-wizard">✒ Answer the familiar</span></h3>
     <p id="human-reply-desc" class="modal-hint">Sends your answer to this agent's inbox and nudges its terminal. Delivered as a message from you, the operator.</p>
     <label class="cron-create-row"><span class="cron-create-label">To</span><div class="cron-create-target"><div id="human-reply-to">
@@ -414,13 +421,14 @@ function HumanReplyDialog({ descriptor, state, actions, snapshot, confirmDiscard
     <label class="cron-create-row"><span class="cron-create-label">Reply</span><textarea id="human-reply-body" rows="4" value=${body}
       placeholder="your reply (required) — ⌘/Ctrl+Enter to send" spellcheck="false" onInput=${(event) => setBody(event.currentTarget.value)} onKeyDown=${fieldSubmit(submit)}></textarea></label>
     <${ErrorLine} id="human-reply-error" value=${error}/><div class="modal-buttons">
-      <button id="human-reply-cancel" type="button" disabled=${busy} onClick=${state.close}>Cancel</button><span class="spacer"></span>
+      <button id="human-reply-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button><span class="spacer"></span>
       <button id="human-reply-submit" class="primary" type="button" disabled=${busy || !online} onClick=${submit}>${busy ? 'Sending…' : 'Send reply'}</button>
     </div>
   </${Overlay}>`;
 }
 
 function SudoGrantDialog({ descriptor, state, actions, snapshot, confirmDiscard }) {
+  const { requestClose, registerClose } = useGuardedOverlayClose();
   const [conv, setConv] = useState(descriptor.conv || '');
   const [selected, setSelected] = useState(() => new Set());
   const [duration, setDuration] = useState('');
@@ -445,7 +453,8 @@ function SudoGrantDialog({ descriptor, state, actions, snapshot, confirmDiscard 
     finally { busyRef.current = false; setBusy(false); }
   };
   return html`<${Overlay} id="sudo-grant-modal" dialogClass="sudo-grant-modal" labelledby="sudo-grant-title"
-    onClose=${state.close} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}>
+    onClose=${state.close} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}
+    registerClose=${registerClose}>
     <h3 id="sudo-grant-title">Grant sudo</h3><p class="sudo-grant-hint"><${Words}
       plain="Proactively elevate an agent for a bounded window." wizard="Bestow a bounded sudo boon on a familiar."/> Same blocklist + duration cap as the agent-initiated path; granted_by records <code>${'<human-dashboard>:proactive'}</code> on the audit row.</p>
     <label class="sudo-grant-row"><span class="sudo-grant-label">Conv</span><input id="sudo-grant-conv" type="text" value=${conv}
@@ -461,13 +470,14 @@ function SudoGrantDialog({ descriptor, state, actions, snapshot, confirmDiscard 
     <label class="sudo-grant-row"><span class="sudo-grant-label">Reason</span><input id="sudo-grant-reason" type="text" value=${reason}
       placeholder="optional — surfaced in the audit row" autocomplete="off" spellcheck="false" onInput=${(event) => setReason(event.currentTarget.value)} onKeyDown=${fieldSubmit(submit)} /></label>
     <${ErrorLine} id="sudo-grant-error" className="sudo-grant-error" value=${error}/><div class="modal-buttons">
-      <button id="sudo-grant-cancel" type="button" disabled=${busy} onClick=${state.close}>Cancel</button>
+      <button id="sudo-grant-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
       <button id="sudo-grant-submit" class="primary" type="button" disabled=${busy} onClick=${submit}>${busy ? 'Granting…' : 'Grant'}</button>
     </div>
   </${Overlay}>`;
 }
 
 function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscard }) {
+  const { requestClose, registerClose } = useGuardedOverlayClose();
   // Seed and dirty comparison tuple are frozen for this keyed launch. Snapshot
   // updates may change rows/effective sources, never the draft baseline.
   const [baseline] = useState(() => permissionSeed(snapshot, descriptor));
@@ -501,7 +511,8 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
     : descriptor.mode === 'agent' ? `Familiar: ${descriptor.label || shortConv} · ${shortConv}`
     : `New familiar${descriptor.label ? ` “${descriptor.label}”` : ''}${descriptor.group ? ` → ${descriptor.group}` : ''} · bestowed when summoned`;
   return html`<${Overlay} id="perm-edit-modal" dialogClass="perm-edit-modal" labelledby="perm-edit-title"
-    onClose=${state.close} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}>
+    onClose=${state.close} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}
+    registerClose=${registerClose}>
     <h3 id="perm-edit-title"><span class="perm-edit-title-regular">${groupMode ? 'Edit group permissions' : 'Edit permanent permissions'}</span>
       <span class="perm-edit-title-wizard">${groupMode ? '✨ Party Boons' : '📕 The Grimoire'}</span></h3>
     <div class="perm-edit-banner" id="perm-edit-banner">${groupMode
@@ -526,7 +537,7 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
         : row.granted ? `✓ ${row.sources.join(' + ')}` : '✗ denied (no source)'}</span>
     </div>`) : html`<div class="empty" style="padding:10px">${rows.length ? 'No matching permission slugs.' : 'No permission slugs registered.'}</div>`}</div>
     <${ErrorLine} id="perm-edit-error" className="sudo-grant-error" value=${error}/><div class="modal-buttons">
-      <button id="perm-edit-cancel" type="button" disabled=${busy} onClick=${state.close}><span class="pe-btn-regular">Cancel</span><span class="pe-btn-wizard">Dispel</span></button>
+      <button id="perm-edit-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><span class="pe-btn-regular">Cancel</span><span class="pe-btn-wizard">Dispel</span></button>
       <button id="perm-edit-submit" class="primary" type="button" disabled=${busy} onClick=${submit}>${busy ? 'Saving…' : 'Save'}</button>
     </div>
   </${Overlay}>`;

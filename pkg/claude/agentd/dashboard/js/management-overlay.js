@@ -7,6 +7,26 @@ import { isTopmostOverlay } from './overlay-stack.js';
 
 const html = htm.bind(h);
 
+// Explicit Cancel/Close controls must enter the same serialized close
+// transaction as Escape and backdrop dismissal. The overlay publishes that
+// transaction through registerClose; this hook keeps the ref/cleanup contract
+// consistent for every caller without duplicating dirty, busy, focus, or
+// stacked-confirmation state.
+export function useGuardedOverlayClose() {
+  const closeRef = useRef(null);
+  const registerClose = useCallback((close) => {
+    closeRef.current = close;
+    return () => {
+      if (closeRef.current === close) closeRef.current = null;
+    };
+  }, []);
+  const requestClose = useCallback(
+    () => closeRef.current?.() ?? Promise.resolve(false),
+    [],
+  );
+  return { requestClose, registerClose };
+}
+
 export function ManagementOverlay({
   id,
   manage = false,

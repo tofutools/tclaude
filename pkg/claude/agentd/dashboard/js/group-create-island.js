@@ -1,7 +1,10 @@
 import { h, render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import {
+  ManagementOverlay as Overlay,
+  useGuardedOverlayClose,
+} from './management-overlay.js';
 import {
   createGroupCreateDraft,
   findGroupCreateTemplate,
@@ -38,6 +41,7 @@ function TemplatePreview({ template, name }) {
 function GroupCreateDialog({
   current, state, actions, confirmDiscard, words,
 }) {
+  const { requestClose, registerClose } = useGuardedOverlayClose();
   const baseline = useMemo(() => createGroupCreateDraft({
     templates: current.templates,
     groups: current.groups,
@@ -76,11 +80,6 @@ function GroupCreateDialog({
     selectGroupCreateTemplate(value, name, modelOptions));
   const changeSource = (name) => setDraft((value) =>
     selectGroupCreateSource(value, name, modelOptions));
-
-  const close = async () => {
-    if (busy) return;
-    if (!dirty || await confirmDiscard()) state.close();
-  };
 
   const submit = async () => {
     // Preact signal/state publication is asynchronous. This ref is deliberately
@@ -193,6 +192,7 @@ function GroupCreateDialog({
     dirty=${dirty}
     blocked=${busy}
     confirmDiscard=${confirmDiscard}
+    registerClose=${registerClose}
     initialFocusRef=${nameRef}
   >
     <h3 id="group-create-title"><${Words}
@@ -284,7 +284,7 @@ function GroupCreateDialog({
     </label>
     <div class="cron-create-error" id="group-create-error" role=${error ? 'alert' : undefined}>${error}</div>
     <div class="modal-buttons">
-      <button id="group-create-cancel" type="button" disabled=${busy} onClick=${() => { void close(); }}>Cancel</button>
+      <button id="group-create-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
       <span class="spacer"></span>
       <button id="group-create-submit" class="primary" type="button" disabled=${busy}
         aria-busy=${busy ? 'true' : undefined}

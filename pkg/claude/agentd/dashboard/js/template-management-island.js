@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { profileSummary, getDashDefaultProfile, findProfileByHandle, profileChoices } from './profiles.js';
 import { pickDirectory } from './helpers.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
 import { wizWord } from './slop.js';
 import {
   agentHasLegacyLaunch,
@@ -328,6 +328,7 @@ export function TemplateDuplicateDialog({
   actions,
   confirmDiscard,
 }) {
+  const { requestClose, registerClose } = useGuardedOverlayClose();
   const [name, setName] = useState(`${descriptor.source.name}-copy`);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -361,6 +362,7 @@ export function TemplateDuplicateDialog({
       dirty: name !== `${descriptor.source.name}-copy`,
       blocked: busy,
       confirmDiscard,
+      registerClose,
     },
     html`<h3 id="template-duplicate-title">
         <${Words} plain="Duplicate a template" wizard="🪞 Mirror the circle" />
@@ -397,7 +399,7 @@ export function TemplateDuplicateDialog({
         <button
           id="template-duplicate-cancel"
           disabled=${busy}
-          onClick=${state.closeDialog}
+          onClick=${() => { void requestClose(); }}
         >
           Cancel</button
         ><span class="spacer"></span
@@ -414,6 +416,7 @@ export function TemplateDuplicateDialog({
 }
 
 export function TemplateImportDialog({ state, actions, confirmDiscard }) {
+  const { requestClose, registerClose } = useGuardedOverlayClose();
   const [raw, setRaw] = useState('');
   const [file, setFile] = useState(null);
   const [as, setAs] = useState('');
@@ -447,6 +450,7 @@ export function TemplateImportDialog({ state, actions, confirmDiscard }) {
       dirty: !!(file || raw || as || update),
       blocked: busy,
       confirmDiscard,
+      registerClose,
     },
     html`<h3 id="template-import-title">
         <${Words}
@@ -509,7 +513,7 @@ export function TemplateImportDialog({ state, actions, confirmDiscard }) {
         <button
           id="template-import-cancel"
           disabled=${busy}
-          onClick=${state.closeDialog}
+          onClick=${() => { void requestClose(); }}
         >
           Cancel</button
         ><span class="spacer"></span
@@ -532,6 +536,7 @@ export function TemplateFromGroupDialog({
   actions,
   confirmDiscard,
 }) {
+  const { requestClose, registerClose } = useGuardedOverlayClose();
   const [group, setGroup] = useState(
     descriptor.presetGroup || descriptor.groups[0] || '',
   );
@@ -572,6 +577,7 @@ export function TemplateFromGroupDialog({
         group !== (descriptor.presetGroup || descriptor.groups[0] || ''),
       blocked: busy,
       confirmDiscard,
+      registerClose,
     },
     html`<h3 id="template-from-group-title">
         <${Words}
@@ -628,7 +634,7 @@ export function TemplateFromGroupDialog({
         <button
           id="template-from-group-cancel"
           disabled=${busy}
-          onClick=${state.closeDialog}
+          onClick=${() => { void requestClose(); }}
         >
           Cancel</button
         ><span class="spacer"></span
@@ -844,6 +850,7 @@ function GroupImportPreview({ inspection, into }) {
 }
 
 export function GroupImportDialog({ state, actions, confirmDiscard }) {
+  const { requestClose, registerClose } = useGuardedOverlayClose();
   const [file, setFile] = useState(null);
   const [into, setInto] = useState('');
   const [as, setAs] = useState('');
@@ -907,6 +914,7 @@ export function GroupImportDialog({ state, actions, confirmDiscard }) {
       dirty: !!(file || into || as),
       blocked: phase === 'importing',
       confirmDiscard,
+      registerClose,
     },
     html`<h3 id="group-import-title">
         <${Words}
@@ -968,7 +976,7 @@ export function GroupImportDialog({ state, actions, confirmDiscard }) {
         <button
           id="group-import-cancel"
           disabled=${phase === 'importing'}
-          onClick=${state.closeDialog}
+          onClick=${() => { void requestClose(); }}
         >
           Cancel</button
         ><span class="spacer"></span
@@ -990,6 +998,7 @@ export function GroupContextDialog({
   actions,
   confirmDiscard,
 }) {
+  const { requestClose, registerClose } = useGuardedOverlayClose();
   const [context, setContext] = useState(descriptor.context);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -1014,6 +1023,7 @@ export function GroupContextDialog({
       dirty: context !== descriptor.context,
       blocked: busy,
       confirmDiscard,
+      registerClose,
     },
     html`<h3 id="group-context-title">
         <${Words}
@@ -1049,7 +1059,7 @@ export function GroupContextDialog({
         <button
           id="group-context-cancel"
           disabled=${busy}
-          onClick=${state.closeDialog}
+          onClick=${() => { void requestClose(); }}
         >
           Cancel</button
         ><span class="spacer"></span
@@ -1123,6 +1133,7 @@ export function GroupCloneDialog({
   actions,
   confirmDiscard,
 }) {
+  const { requestClose, registerClose } = useGuardedOverlayClose();
   const [name, setName] = useState(descriptor.defaultName);
   const [withAgents, setWithAgents] = useState(false);
   const [copyOwners, setCopyOwners] = useState(false);
@@ -1155,6 +1166,7 @@ export function GroupCloneDialog({
       dirty: name !== descriptor.defaultName || withAgents || copyOwners,
       blocked: busy,
       confirmDiscard,
+      registerClose,
     },
     html`<h3 id="group-clone-title">
         <${Words} plain="Clone group" wizard="⧉ Mirror the party" />
@@ -1214,7 +1226,7 @@ export function GroupCloneDialog({
         <button
           id="group-clone-cancel"
           disabled=${busy}
-          onClick=${state.closeDialog}
+          onClick=${() => { void requestClose(); }}
         >
           Cancel</button
         ><span class="spacer"></span
@@ -1308,6 +1320,7 @@ export function TemplateDeployDialog({
   actions,
   confirmDiscard,
 }) {
+  const { requestClose, registerClose } = useGuardedOverlayClose();
   const groups = current.templateGroups;
   const initialTemplate =
     current.templates.find((item) => item.name === descriptor.presetName) ||
@@ -1664,6 +1677,7 @@ export function TemplateDeployDialog({
       dirty,
       blocked: busy || worktreeLoading,
       confirmDiscard,
+      registerClose,
     },
     html`<h3 id="template-deploy-title">
         <${Words} plain="Deploy a task force" wizard="🧙 Summon a hero party" />
@@ -1970,8 +1984,8 @@ export function TemplateDeployDialog({
       <div class="modal-buttons">
         <button
           id="template-deploy-cancel"
-          disabled=${busy}
-          onClick=${state.closeDialog}
+          disabled=${busy || worktreeLoading}
+          onClick=${() => { void requestClose(); }}
         >
           Cancel</button
         ><span class="spacer"></span
@@ -2553,6 +2567,7 @@ export function TemplateEditor({
   confirmDiscard,
   confirm,
 }) {
+  const { requestClose, registerClose } = useGuardedOverlayClose();
   const baseline = useMemo(() => templateDraft(descriptor.seed), [descriptor]);
   const [draft, setDraft] = useState(() => clone(baseline));
   const dirty = JSON.stringify(draft) !== JSON.stringify(baseline);
@@ -2583,10 +2598,6 @@ export function TemplateEditor({
       payload: templatePayload(draft),
     });
   };
-  const close = async () => {
-    if (!saving && (!dirty || (await confirmDiscard())))
-      state.closeTemplateDialog();
-  };
   const handoff = async () => {
     if (saving || (dirty && !(await confirmDiscard()))) return;
     state.closeTemplateDialog();
@@ -2604,6 +2615,7 @@ export function TemplateEditor({
       dirty,
       blocked: saving,
       confirmDiscard,
+      registerClose,
       resizeKey: 'tclaude.dash.modalSize.template-editor',
     },
     html`<h3 id="template-editor-title">
@@ -3015,7 +3027,7 @@ export function TemplateEditor({
           id="template-editor-cancel"
           type="button"
           disabled=${saving}
-          onClick=${close}
+          onClick=${() => { void requestClose(); }}
         >
           Cancel</button
         ><button

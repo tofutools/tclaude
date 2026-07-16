@@ -2,7 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
 
-async function mountDialogs(t, kind, descriptor, overrides = {}) {
+async function mountDialogs(
+  t,
+  kind,
+  descriptor,
+  overrides = {},
+  confirmDiscard = async () => false,
+) {
   const harness = await createPreactHarness(t);
   const [{ createActionDialogState }, { ActionDialogApp }] = await Promise.all([
     harness.importDashboardModule('js/action-dialog-state.js'),
@@ -43,10 +49,40 @@ async function mountDialogs(t, kind, descriptor, overrides = {}) {
   };
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
   const mounted = await harness.mount(harness.html`
-    <${ActionDialogApp} state=${state} actions=${actions} confirmDiscard=${async () => false} />
+    <${ActionDialogApp} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} />
   `, host);
   return { harness, host, state, actions, calls, cleanup: () => mounted.unmount() };
 }
+
+test('dirty clone Cancel rejects and accepts through the overlay close transaction', async (t) => {
+  let allowDiscard = false;
+  let confirmations = 0;
+  const mounted = await mountDialogs(
+    t,
+    'clone-agent',
+    { conv: 'abcdefgh-1234', label: 'worker', cwd: '/repo' },
+    {},
+    async () => {
+      confirmations += 1;
+      return allowDiscard;
+    },
+  );
+  const { harness, host } = mounted;
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  await harness.input(host.querySelector('#clone-agent-followup'), 'keep this draft');
+
+  host.querySelector('#clone-agent-cancel').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(confirmations, 1);
+  assert.ok(host.querySelector('#clone-agent-modal'));
+
+  allowDiscard = true;
+  host.querySelector('#clone-agent-cancel').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(confirmations, 2);
+  assert.equal(host.querySelector('#clone-agent-modal'), null);
+  await mounted.cleanup();
+});
 
 test('clone dialog owns worktree state, dirty discard, and exact submit payload', async (t) => {
   const mounted = await mountDialogs(t, 'clone-agent', { conv: 'abcdefgh-1234', label: 'worker', cwd: '/repo' });

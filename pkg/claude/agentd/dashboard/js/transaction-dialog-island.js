@@ -1,7 +1,10 @@
 import { h, render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import {
+  ManagementOverlay as Overlay,
+  useGuardedOverlayClose,
+} from './management-overlay.js';
 import { relTime } from './helpers.js';
 import { registerTransactionDialogController } from './transaction-dialog-controller.js';
 
@@ -46,6 +49,7 @@ export function TransactionDialogFrame({
 }) {
   const submitRef = useRef(null);
   const submitLock = useRef(false);
+  const { requestClose, registerClose } = useGuardedOverlayClose();
   const baseID = id.endsWith('-modal') ? id.slice(0, -6) : id;
   useEffect(() => {
     // A completed/failed transaction publishes busy=false and explicitly
@@ -78,13 +82,14 @@ export function TransactionDialogFrame({
       guardBackdropDrag=${true}
       initialFocusRef=${submitRef}
       dialogClass=${dialogClass}
+      registerClose=${registerClose}
     >
       <h3 id=${labelledby}>${title}</h3>
       ${meta ? html`<div class="modal-meta" id=${metaID || undefined}>${meta}</div>` : null}
       ${children}
       <div class="cleanup-error" id=${errorID || undefined} role=${error ? 'alert' : undefined}>${error}</div>
       <div class="modal-buttons">
-        ${hideCancel ? null : html`<button id=${cancelID || `${baseID}-cancel`} type="button" disabled=${busy} onClick=${close}>Cancel</button>`}
+        ${hideCancel ? null : html`<button id=${cancelID || `${baseID}-cancel`} type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>`}
         <span class="spacer"></span>
         ${alternateLabel ? html`<button
           id=${alternateID || `${baseID}-alternate`}
