@@ -36,6 +36,19 @@ func TestCodexManagedProfileCarriesSnapshotNetworkPolicy(t *testing.T) {
 	assert.Contains(t, content, ".network.unix_sockets]")
 }
 
+func TestSandboxSnapshotEnvironmentCarriesMaterializedAgentDirectory(t *testing.T) {
+	snapshot := &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{Environment: []sandboxpolicy.EnvironmentEntry{
+		{Name: "GOBIN", Value: "/private/GOBIN"},
+		{Name: "PROFILE_VERSION", Value: "v2"},
+	}}}
+
+	assert.Equal(t, map[string]string{
+		"GOBIN":           "/private/GOBIN",
+		"PROFILE_VERSION": "v2",
+	}, sandboxSnapshotEnvironment(snapshot))
+	assert.Nil(t, sandboxSnapshotEnvironment(nil))
+}
+
 func TestSandboxSnapshotDirsOmitsMissingRuleUntilLaterLaunch(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)

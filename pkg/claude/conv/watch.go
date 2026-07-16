@@ -2259,6 +2259,7 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		return "", nil, fmt.Errorf("cannot resume conversation %s: %w", convID, err)
 	}
 	resumeEnv := map[string]string{"TCLAUDE_SESSION_ID": sessionID}
+	var shellEnvironment map[string]string
 	effectiveSandbox, err := db.AgentEffectiveSandboxConfigForConv(convID)
 	if err != nil {
 		return "", nil, fmt.Errorf("load effective sandbox snapshot for conversation %s: %w", convID, err)
@@ -2270,8 +2271,10 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		if err != nil {
 			return "", nil, fmt.Errorf("sandbox_profile_changed: %w", err)
 		}
+		shellEnvironment = make(map[string]string, len(validated.Effective.Environment))
 		for _, entry := range validated.Effective.Environment {
 			resumeEnv[entry.Name] = entry.Value
+			shellEnvironment[entry.Name] = entry.Value
 		}
 		networkAccess = validated.Effective.NetworkAccess
 		launchFilesystem, err := sandboxpolicy.FilesystemForLaunch(validated.Effective)
@@ -2322,6 +2325,7 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	}
 	spec := harness.SpawnSpec{
 		EnvExports:       clcommon.BuildEnvExports(resumeEnv),
+		ShellEnvironment: shellEnvironment,
 		ResumeID:         convID,
 		ExtraArgs:        extraArgs,
 		SandboxMode:      sandboxMode,

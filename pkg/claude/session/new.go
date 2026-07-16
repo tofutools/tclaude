@@ -740,6 +740,7 @@ func runNew(params *NewParams) error {
 
 	harnessCmd := h.Spawn.BuildCommand(harness.SpawnSpec{
 		EnvExports:             envExports,
+		ShellEnvironment:       sandboxSnapshotEnvironment(effectiveSandbox),
 		ResumeID:               fullConvID,
 		SessionID:              params.SessionID,
 		Name:                   params.Name,
@@ -971,6 +972,17 @@ func sandboxSnapshotNetworkAccess(snapshot *sandboxpolicy.Snapshot) sandboxpolic
 		return sandboxpolicy.NetworkAccessInherit
 	}
 	return snapshot.Effective.NetworkAccess
+}
+
+func sandboxSnapshotEnvironment(snapshot *sandboxpolicy.Snapshot) map[string]string {
+	if snapshot == nil || len(snapshot.Effective.Environment) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(snapshot.Effective.Environment))
+	for _, entry := range snapshot.Effective.Environment {
+		out[entry.Name] = entry.Value
+	}
+	return out
 }
 
 func sandboxSnapshotDirs(snapshot *sandboxpolicy.Snapshot, access sandboxpolicy.Access) []string {
