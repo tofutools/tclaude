@@ -65,15 +65,19 @@ type MutationBatch struct {
 }
 
 type RoutePathsPlan struct {
-	SettlementCommandID string        `json:"settlementCommandId"`
-	SourceActivationID  ActivationID  `json:"sourceActivationId"`
-	SourceGeneration    uint64        `json:"sourceGeneration"`
-	SourcePathID        PathID        `json:"sourcePathId"`
-	Attempt             uint64        `json:"attempt"`
-	CauseDigest         CauseDigest   `json:"causeDigest"`
-	ResultCode          string        `json:"resultCode"`
-	ProducedPathIDs     []PathID      `json:"producedPathIds"`
-	Batch               MutationBatch `json:"batch"`
+	SettlementCommandID string       `json:"settlementCommandId"`
+	SourceActivationID  ActivationID `json:"sourceActivationId"`
+	SourceGeneration    uint64       `json:"sourceGeneration"`
+	SourcePathID        PathID       `json:"sourcePathId"`
+	Attempt             uint64       `json:"attempt"`
+	CauseDigest         CauseDigest  `json:"causeDigest"`
+	ResultCode          string       `json:"resultCode"`
+	// SelectedEdgeIDs is populated only for parallel fan-out and preserves
+	// canonical EdgeKey tuple order. ProducedPathIDs remains opaque-ID sorted
+	// record order and must not be used to choose materialization order.
+	SelectedEdgeIDs []EdgeID      `json:"selectedEdgeIds,omitempty"`
+	ProducedPathIDs []PathID      `json:"producedPathIds"`
+	Batch           MutationBatch `json:"batch"`
 }
 
 type ActivateGenerationPlan struct {
